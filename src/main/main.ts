@@ -717,7 +717,7 @@ const turnExecutor = new PiTurnExecutor({
   // One name, wherever it is drawn or spoken: the prompt now asks configuration
   // who this agent is instead of hard-coding a name the transcript disagreed
   // with. The root Thread is `main`; a child is named by its Agent type.
-  resolvePersona: (thread) => agentConfigurationLoader.resolveThreadPersona(thread),
+  resolvePersona: (thread) => agentConfigurationLoader.resolveThreadPersona(thread, reportError),
 });
 threadService = ThreadService.open(
   resolvedUserDataDir,
@@ -731,9 +731,15 @@ threadService = ThreadService.open(
     ),
     resolveRole: (name, cwd) => agentConfigurationLoader.resolveRole(name, cwd),
     resolveAgentType: (name, cwd) => agentConfigurationLoader.resolveAgentType(name, cwd),
-    resolveRoleCatalog: (cwd) => agentConfigurationLoader.buildRoleCatalogSnapshot(cwd),
-    resolveIdentityCatalog: (cwd) => agentConfigurationLoader.resolveIdentityCatalog(cwd),
-    resolvePersona: (thread) => agentConfigurationLoader.resolveThreadPersona(thread),
+    resolveRoleCatalog: (cwd, reportFailure) => (
+      agentConfigurationLoader.buildRoleCatalogSnapshotForUserPath(cwd, reportFailure)
+    ),
+    resolveIdentityCatalog: (cwd, reportFailure) => (
+      agentConfigurationLoader.resolveIdentityCatalogForUserPath(cwd, reportFailure)
+    ),
+    resolvePersona: (thread, reportFailure) => (
+      agentConfigurationLoader.resolveThreadPersona(thread, reportFailure)
+    ),
     resolveProviderModelIds: (providerId) => rankedModels(providerId).map((model) => model.id),
     resolveSubagentTokenBudget: async () => (await getAgentRuntimeSettings()).subagentTokenBudget,
     resolveSubagentLimits: async () => {

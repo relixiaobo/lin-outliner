@@ -18,6 +18,7 @@ import {
 } from '../../core/agent/configuration';
 import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../../core/agent/tools';
 import type { AgentIdentityEntry, RoleCatalogContextPayload, RoleCatalogEntry } from '../../core/agent/protocol';
+import type { ErrorReport } from '../../core/errorObservability';
 import type {
   AgentBuiltInDefinition,
   AgentEditableRole,
@@ -41,6 +42,8 @@ interface ConfigurationLayer {
    */
   readonly presentationOverrides: ReadonlyMap<string, AgentPresentationOverride>;
 }
+
+export type AgentConfigurationReadFailureReporter = (report: ErrorReport) => void;
 
 const EMPTY_LAYER: ConfigurationLayer = Object.freeze({
   defaultProfile: null,
@@ -225,7 +228,28 @@ export const RESERVED_AGENT_TYPE_NAMES: readonly string[] = Object.freeze([
   ...BUILT_IN_AGENT_TYPES.map((entry) => entry.backingRole),
 ]);
 
+const DEFAULT_IDENTITY_CATALOG: readonly AgentIdentityEntry[] = Object.freeze([
+  defaultIdentityEntry(MAIN_PRESENTATION_KEY),
+  ...BUILT_IN_AGENT_TYPES.map((entry) => defaultIdentityEntry(entry.canonicalType)),
+]);
+const BUILT_IN_AGENT_TYPE_CANDIDATES: readonly ResolvedAgentType[] = Object.freeze(
+  BUILT_IN_AGENT_TYPES.map((entry): ResolvedAgentType => Object.freeze({
+    canonicalType: entry.canonicalType,
+    role: BUILT_IN_AGENT_ROLE_DEFINITIONS[entry.backingRole]!,
+    kind: entry.canonicalType,
+  })),
+);
+const DEFAULT_ROLE_CATALOG = roleCatalogSnapshot(BUILT_IN_AGENT_TYPE_CANDIDATES);
+const MAX_TRACKED_USER_PATH_FAILURES = 64;
+
 export class AgentConfigurationLoader {
+  /**
+   * Configuration paths already reported during their current failure episode.
+   * Each layer clears its own episode as soon as that file reads successfully;
+   * the fixed cap bounds workspaces seen even when none of them recovers.
+   */
+  private readonly activeUserPathFailures = new Set<string>();
+
   constructor(private readonly userDataPath: string) {}
 
   resolveProfile(requestedName: string | undefined, cwd: string): EffectiveThreadConfiguration {
@@ -266,31 +290,24 @@ export class AgentConfigurationLoader {
   }
 
   buildRoleCatalogSnapshot(cwd: string): RoleCatalogContextPayload {
-    const entries = this.agentTypeCandidates(cwd).map((candidate) => (
-      roleCatalogEntry(candidate.role, candidate.canonicalType, candidate.kind === 'role'
-        ? candidate.role.description
-        : BUILT_IN_AGENT_TYPES.find((entry) => entry.canonicalType === candidate.canonicalType)!.description)
-    ));
-    const catalogHash = createHash('sha256').update(JSON.stringify(entries.map((entry) => ({
-      name: entry.name,
-      displayName: entry.displayName,
-      source: entry.source,
-      identity: entry.identity,
-      contentHash: entry.contentHash,
-      description: entry.description,
-    })))).digest('hex');
-    return {
-      schemaVersion: 1,
-      kind: 'roleCatalog',
-      mode: 'baseline',
-      previousCatalogHash: null,
-      catalogHash,
-      entries,
-    };
+    return roleCatalogSnapshot(this.agentTypeCandidates(cwd));
   }
 
   buildAgentTypeCatalogSnapshot(cwd: string): RoleCatalogContextPayload {
     return this.buildRoleCatalogSnapshot(cwd);
+  }
+
+  /** The per-Turn Role read: invalid configuration retracts custom Roles. */
+  buildRoleCatalogSnapshotForUserPath(
+    cwd: string,
+    reportFailure?: AgentConfigurationReadFailureReporter,
+  ): RoleCatalogContextPayload {
+    return this.readForUserPath(
+      'resolve-role-catalog',
+      () => this.buildRoleCatalogSnapshot(cwd),
+      () => DEFAULT_ROLE_CATALOG,
+      reportFailure,
+    );
   }
 
   /**
@@ -312,39 +329,24 @@ export class AgentConfigurationLoader {
     // path read both files twice per request.
     const merged = this.loadMerged(cwd);
     const candidates = this.agentTypeCandidates(cwd, merged);
-    const overlay = (key: string, base: AgentPresentation): AgentPresentation => {
-      const override = merged.presentationOverrides.get(key);
-      return {
-        persona: override?.persona ?? base.persona,
-        color: override?.color ?? base.color,
-      };
-    };
-    const main = overlay(
-      MAIN_PRESENTATION_KEY,
-      DEFAULT_AGENT_PRESENTATIONS[MAIN_PRESENTATION_KEY]!,
-    );
-    const entries: AgentIdentityEntry[] = [{
-      agentType: MAIN_PRESENTATION_KEY,
-      persona: main.persona,
-      color: main.color,
-      source: 'built-in',
-    }];
+    const entries: AgentIdentityEntry[] = [identityEntryForKey(merged, MAIN_PRESENTATION_KEY)!];
     for (const candidate of candidates) {
-      const type = candidate.canonicalType;
-      const declared = candidate.role.presentation;
-      const base: AgentPresentation = {
-        persona: declared?.persona ?? DEFAULT_AGENT_PRESENTATIONS[type]?.persona ?? type,
-        color: declared?.color ?? DEFAULT_AGENT_PRESENTATIONS[type]?.color ?? deriveIdentityColor(type),
-      };
-      const resolved = overlay(type, base);
-      entries.push({
-        agentType: type,
-        persona: resolved.persona,
-        color: resolved.color,
-        source: candidate.role.source === 'builtIn' ? 'built-in' : candidate.role.source,
-      });
+      entries.push(identityEntryForKey(merged, candidate.canonicalType)!);
     }
     return Object.freeze(entries);
+  }
+
+  /** The transcript/dock read: a broken catalog becomes the built-in roster. */
+  resolveIdentityCatalogForUserPath(
+    cwd: string,
+    reportFailure?: AgentConfigurationReadFailureReporter,
+  ): readonly AgentIdentityEntry[] {
+    return this.readForUserPath(
+      'resolve-identity-catalog',
+      () => this.resolveIdentityCatalog(cwd),
+      () => DEFAULT_IDENTITY_CATALOG,
+      reportFailure,
+    );
   }
 
   /**
@@ -356,16 +358,69 @@ export class AgentConfigurationLoader {
    * keeps `persona` out of the recorded configuration and its codec, where a
    * display name would have to be versioned forever.
    */
-  resolveAgentPersona(agentType: string | null, cwd: string): string {
+  resolveAgentPersona(
+    agentType: string | null,
+    cwd: string,
+    reportFailure?: AgentConfigurationReadFailureReporter,
+  ): string {
     // A Thread records its BACKING Role (`explorer`), while identity is keyed on
     // the canonical Agent type (`explore`). Without this hop a subagent would be
     // told a name the reader never sees.
     const backing = BUILT_IN_AGENT_TYPES.find((entry) => entry.backingRole === agentType);
     const key = backing?.canonicalType ?? agentType ?? MAIN_PRESENTATION_KEY;
-    const entry = this.resolveIdentityCatalog(cwd).find((row) => row.agentType === key);
-    // Named after itself when the catalog has nothing — the same degradation the
-    // renderer's resolver makes, so the two never disagree about who is talking.
-    return entry?.persona.trim() || key;
+    // Resolve only this participant rather than constructing and freezing the
+    // whole catalog on every Turn. The shared entry resolver also builds the
+    // renderer catalog, so prompt and transcript keep identical fallback rules.
+    return this.readForUserPath(
+      'resolve-agent-persona',
+      () => identityEntryForKey(this.loadMerged(cwd), key)?.persona.trim() || key,
+      () => defaultIdentityEntry(key).persona,
+      reportFailure,
+    );
+  }
+
+  /**
+   * A configuration read on the user path. Only typed configuration failures
+   * degrade; a programming or injected resolver error still propagates.
+   */
+  private readForUserPath<T>(
+    operation: string,
+    read: () => T,
+    fallback: () => T,
+    reportFailure?: AgentConfigurationReadFailureReporter,
+  ): T {
+    try {
+      return read();
+    } catch (error) {
+      if (!(error instanceof AgentConfigurationReadError)) throw error;
+      this.reportUserPathFailure(operation, error, reportFailure);
+      return fallback();
+    }
+  }
+
+  private reportUserPathFailure(
+    operation: string,
+    error: AgentConfigurationReadError,
+    reportFailure?: AgentConfigurationReadFailureReporter,
+  ): void {
+    if (!reportFailure || this.activeUserPathFailures.has(error.configurationPath)) return;
+    if (this.activeUserPathFailures.size >= MAX_TRACKED_USER_PATH_FAILURES) {
+      const oldest = this.activeUserPathFailures.values().next().value;
+      if (oldest !== undefined) this.activeUserPathFailures.delete(oldest);
+    }
+    this.activeUserPathFailures.add(error.configurationPath);
+    try {
+      reportFailure({
+        domain: 'runtime',
+        severity: 'warn',
+        code: 'agent-configuration-user-path-degraded',
+        message: 'Agent configuration was unreadable on a user path; the read degraded instead of ending the user action.',
+        context: { operation, source: error.configurationSource },
+        error,
+      });
+    } catch (reportError) {
+      console.warn('[agent] Failed to report a degraded configuration read', reportError);
+    }
   }
 
   /**
@@ -381,11 +436,12 @@ export class AgentConfigurationLoader {
     readonly agentRole: string | null;
     readonly agentNickname: string | null;
     readonly cwd: string;
-  }): string {
+  }, reportFailure?: AgentConfigurationReadFailureReporter): string {
     return thread.agentNickname?.trim()
       || this.resolveAgentPersona(
         thread.parentThreadId === null ? null : thread.agentRole,
         thread.cwd,
+        reportFailure,
       );
   }
 
@@ -399,8 +455,8 @@ export class AgentConfigurationLoader {
    * can be rewritten in place.
    */
   listEditableRoles(cwd: string): readonly AgentEditableRole[] {
-    const user = readLayer(userConfigurationPath(this.userDataPath), 'user');
-    const project = readLayer(projectConfigurationPath(cwd), 'project');
+    const user = this.readLayerAndClearFailure(userConfigurationPath(this.userDataPath), 'user');
+    const project = this.readLayerAndClearFailure(projectConfigurationPath(cwd), 'project');
     const rows: AgentEditableRole[] = [];
     for (const [layer, source] of [[user, 'user'], [project, 'project']] as const) {
       for (const role of layer.roles.values()) {
@@ -431,8 +487,8 @@ export class AgentConfigurationLoader {
   resolveEditableProfile(cwd: string): AgentProfileView {
     const merged = this.loadMerged(cwd);
     const name = merged.defaultProfile ?? DEFAULT_PROFILE.name;
-    const user = readLayer(userConfigurationPath(this.userDataPath), 'user');
-    const project = readLayer(projectConfigurationPath(cwd), 'project');
+    const user = this.readLayerAndClearFailure(userConfigurationPath(this.userDataPath), 'user');
+    const project = this.readLayerAndClearFailure(projectConfigurationPath(cwd), 'project');
     // Project replaces user entry-by-entry, matching how the layers resolve.
     const written = project.profiles.get(name) ?? user.profiles.get(name) ?? null;
     const layer = project.profiles.has(name)
@@ -473,8 +529,8 @@ export class AgentConfigurationLoader {
    * after which a later change to that default never reaches the user again.
    */
   listPresentationOverrides(cwd: string): readonly AgentPresentationOverrideRow[] {
-    const user = readLayer(userConfigurationPath(this.userDataPath), 'user');
-    const project = readLayer(projectConfigurationPath(cwd), 'project');
+    const user = this.readLayerAndClearFailure(userConfigurationPath(this.userDataPath), 'user');
+    const project = this.readLayerAndClearFailure(projectConfigurationPath(cwd), 'project');
     const rows: AgentPresentationOverrideRow[] = [];
     for (const [layer, source] of [[user, 'user'], [project, 'project']] as const) {
       for (const [agentType, override] of layer.presentationOverrides) {
@@ -491,25 +547,20 @@ export class AgentConfigurationLoader {
 
   private agentTypeCandidates(cwd: string, preloaded?: ConfigurationLayer): ResolvedAgentType[] {
     const merged = preloaded ?? this.loadMerged(cwd);
-    const builtIns = BUILT_IN_AGENT_TYPES.map((entry): ResolvedAgentType => ({
-      canonicalType: entry.canonicalType,
-      role: BUILT_IN_AGENT_ROLE_DEFINITIONS[entry.backingRole]!,
-      kind: entry.canonicalType,
-    }));
     const dynamic = [...merged.roles.values()]
-      .filter((role) => !builtIns.some((candidate) => candidate.canonicalType === role.name))
+      .filter((role) => !BUILT_IN_AGENT_TYPE_CANDIDATES.some((candidate) => candidate.canonicalType === role.name))
       .sort((left, right) => compareStableText(left.name, right.name))
       .map((role): ResolvedAgentType => ({
         canonicalType: role.name,
         role,
         kind: 'role',
       }));
-    return [...builtIns, ...dynamic];
+    return [...BUILT_IN_AGENT_TYPE_CANDIDATES, ...dynamic];
   }
 
   private loadMerged(cwd: string): ConfigurationLayer {
-    const user = readLayer(userConfigurationPath(this.userDataPath), 'user');
-    const project = readLayer(projectConfigurationPath(cwd), 'project');
+    const user = this.readLayerAndClearFailure(userConfigurationPath(this.userDataPath), 'user');
+    const project = this.readLayerAndClearFailure(projectConfigurationPath(cwd), 'project');
     return {
       defaultProfile: project.defaultProfile ?? user.defaultProfile,
       profiles: new Map([...user.profiles, ...project.profiles]),
@@ -517,6 +568,83 @@ export class AgentConfigurationLoader {
       presentationOverrides: new Map([...user.presentationOverrides, ...project.presentationOverrides]),
     };
   }
+
+  private readLayerAndClearFailure(
+    path: string,
+    source: 'user' | 'project',
+  ): ConfigurationLayer {
+    const layer = readLayer(path, source);
+    this.activeUserPathFailures.delete(path);
+    return layer;
+  }
+}
+
+function identityEntryForKey(
+  merged: ConfigurationLayer,
+  key: string,
+): AgentIdentityEntry | null {
+  if (key === MAIN_PRESENTATION_KEY) {
+    const resolved = overlayPresentation(
+      merged,
+      key,
+      defaultAgentPresentation(key) ?? {
+        persona: key,
+        color: deriveIdentityColor(key),
+      },
+    );
+    return {
+      agentType: key,
+      persona: resolved.persona,
+      color: resolved.color,
+      source: 'built-in',
+    };
+  }
+
+  const builtIn = BUILT_IN_AGENT_TYPES.find((entry) => entry.canonicalType === key);
+  const role = builtIn
+    ? BUILT_IN_AGENT_ROLE_DEFINITIONS[builtIn.backingRole]!
+    : merged.roles.get(key);
+  if (!role) return null;
+  const declared = role.presentation;
+  const defaults = defaultAgentPresentation(key);
+  const resolved = overlayPresentation(merged, key, {
+    persona: declared?.persona ?? defaults?.persona ?? key,
+    color: declared?.color ?? defaults?.color ?? deriveIdentityColor(key),
+  });
+  return {
+    agentType: key,
+    persona: resolved.persona,
+    color: resolved.color,
+    source: role.source === 'builtIn' ? 'built-in' : role.source,
+  };
+}
+
+function overlayPresentation(
+  merged: ConfigurationLayer,
+  key: string,
+  base: AgentPresentation,
+): AgentPresentation {
+  const override = merged.presentationOverrides.get(key);
+  return {
+    persona: override?.persona ?? base.persona,
+    color: override?.color ?? base.color,
+  };
+}
+
+function defaultIdentityEntry(key: string): AgentIdentityEntry {
+  const presentation = defaultAgentPresentation(key);
+  return {
+    agentType: key,
+    persona: presentation?.persona.trim() || key,
+    color: presentation?.color ?? deriveIdentityColor(key),
+    source: 'built-in',
+  };
+}
+
+function defaultAgentPresentation(key: string): AgentPresentation | null {
+  return Object.hasOwn(DEFAULT_AGENT_PRESENTATIONS, key)
+    ? DEFAULT_AGENT_PRESENTATIONS[key] ?? null
+    : null;
 }
 
 function roleCatalogEntry(role: AgentRole, name = role.name, description = role.description): RoleCatalogEntry {
@@ -542,6 +670,30 @@ function roleCatalogEntry(role: AgentRole, name = role.name, description = role.
   };
 }
 
+function roleCatalogSnapshot(candidates: readonly ResolvedAgentType[]): RoleCatalogContextPayload {
+  const entries = Object.freeze(candidates.map((candidate) => (
+    roleCatalogEntry(candidate.role, candidate.canonicalType, candidate.kind === 'role'
+      ? candidate.role.description
+      : BUILT_IN_AGENT_TYPES.find((entry) => entry.canonicalType === candidate.canonicalType)!.description)
+  )));
+  const catalogHash = createHash('sha256').update(JSON.stringify(entries.map((entry) => ({
+    name: entry.name,
+    displayName: entry.displayName,
+    source: entry.source,
+    identity: entry.identity,
+    contentHash: entry.contentHash,
+    description: entry.description,
+  })))).digest('hex');
+  return Object.freeze({
+    schemaVersion: 1,
+    kind: 'roleCatalog',
+    mode: 'baseline',
+    previousCatalogHash: null,
+    catalogHash,
+    entries,
+  });
+}
+
 export function userConfigurationPath(userDataPath: string): string {
   return join(userDataPath, 'agent', 'config.json');
 }
@@ -559,13 +711,25 @@ export function defaultEffectiveThreadConfiguration(
 
 function readLayer(path: string, source: 'user' | 'project'): ConfigurationLayer {
   if (!existsSync(path)) return EMPTY_LAYER;
-  let value: unknown;
   try {
-    value = JSON.parse(readFileSync(path, 'utf8'));
+    const value: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    return decodeConfigurationLayer(value, source, path);
   } catch (error) {
-    throw new Error(`Invalid Agent configuration at ${path}: ${errorMessage(error)}`);
+    if (error instanceof AgentConfigurationReadError) throw error;
+    throw new AgentConfigurationReadError(path, source, error);
   }
-  return decodeConfigurationLayer(value, source, path);
+}
+
+class AgentConfigurationReadError extends Error {
+  readonly name = 'AgentConfigurationReadError';
+
+  constructor(
+    readonly configurationPath: string,
+    readonly configurationSource: 'user' | 'project',
+    cause: unknown,
+  ) {
+    super(`Invalid Agent configuration at ${configurationPath}: ${errorMessage(cause)}`);
+  }
 }
 
 /**

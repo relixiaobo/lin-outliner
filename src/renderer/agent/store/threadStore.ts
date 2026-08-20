@@ -65,11 +65,11 @@ export interface ThreadStoreSnapshot {
    */
   readonly subagentExecutionsByAgentId: ReadonlyMap<ThreadId, SubagentExecutionProjection>;
   /**
-   * Who the participants are and what they look like, keyed by Agent type.
-   * Configuration rather than history: one catalog serves every conversation,
-   * and a renamed persona renames its speaker everywhere at once.
+   * Who each Thread's participants are and what they look like, keyed first by
+   * Thread and then by Agent type. A Thread owns the cwd that resolves its
+   * project configuration, so a worktree child cannot borrow its root's roster.
    */
-  readonly identityCatalog: AgentIdentityCatalog;
+  readonly identityCatalogByThread: ReadonlyMap<ThreadId, AgentIdentityCatalog>;
   readonly loading: boolean;
   readonly error: string | null;
 }
@@ -85,7 +85,7 @@ const EMPTY_SNAPSHOT: ThreadStoreSnapshot = {
   providerRetryByThread: new Map(),
   planByThread: new Map(),
   subagentExecutionsByAgentId: new Map(),
-  identityCatalog: EMPTY_IDENTITY_CATALOG,
+  identityCatalogByThread: new Map(),
   loading: true,
   error: null,
 };
@@ -103,7 +103,7 @@ export class ThreadStore {
   private unsubscribeSettings: (() => void) | null = null;
   private initializePromise: Promise<void> | null = null;
   private readonly loadGenerations = new Map<ThreadId, number>();
-  private identityCatalogGeneration = 0;
+  private readonly identityCatalogGenerations = new Map<ThreadId, number>();
   private readonly historyRevisions = new Map<ThreadId, number>();
   private readonly configurationRevisions = new Map<ThreadId, number>();
   private readonly outputTextCache = new Map<string, Promise<string | null>>();
@@ -134,7 +134,7 @@ export class ThreadStore {
     // conversations.
     if (!this.unsubscribeSettings) {
       this.unsubscribeSettings = this.client.onSettingsChanged?.(() => {
-        void this.reloadIdentityCatalog();
+        this.reloadLoadedIdentityCatalogs();
       }) ?? null;
     }
     if (this.initializePromise) return this.initializePromise;
@@ -151,25 +151,42 @@ export class ThreadStore {
   /**
    * Re-resolve who the participants are.
    *
-   * Scoped to the selected conversation because a project may define both Roles
-   * and re-skins, and a Thread is what names a working directory. A failure is
-   * swallowed to the existing catalog: names and faces are decoration over a
-   * transcript that has to render either way (A12).
+   * Scoped explicitly to one Thread because a project may define both Roles and
+   * re-skins, and a Thread is what names a working directory. A failure is
+   * swallowed to that Thread's existing catalog: names and faces are decoration
+   * over a transcript that has to render either way (A12).
    */
-  async reloadIdentityCatalog(): Promise<void> {
-    const threadId = this.snapshot.selectedThreadId;
-    // Generation-guarded like every other read in this store: two selections in
-    // quick succession — or startup racing the first one — otherwise let the
-    // slower answer land last and leave the roster resolved for a working
-    // directory the reader already left.
-    const generation = ++this.identityCatalogGeneration;
+  async reloadIdentityCatalog(threadId: ThreadId): Promise<void> {
+    // Generation-guarded per Thread like every other read in this store: a live
+    // break and recovery can overlap, while an unrelated root and child must be
+    // allowed to resolve concurrently without invalidating each other.
+    const generation = (this.identityCatalogGenerations.get(threadId) ?? 0) + 1;
+    this.identityCatalogGenerations.set(threadId, generation);
     try {
       const response = await this.client.agentCoreRequest('identities/get', { threadId });
-      if (generation !== this.identityCatalogGeneration) return;
-      this.patch({ identityCatalog: identityCatalogFrom(response.entries) });
+      if (generation !== this.identityCatalogGenerations.get(threadId)) return;
+      const identityCatalogByThread = new Map(this.snapshot.identityCatalogByThread);
+      identityCatalogByThread.set(threadId, identityCatalogFrom(response.entries));
+      this.patch({ identityCatalogByThread });
     } catch {
-      // Keep whatever the last successful resolution produced.
+      // Keep whatever the last successful resolution for this Thread produced.
     }
+  }
+
+  private reloadLoadedIdentityCatalogs(): void {
+    const threadIds = new Set([
+      ...this.snapshot.identityCatalogByThread.keys(),
+      ...this.identityCatalogGenerations.keys(),
+    ]);
+    if (this.snapshot.selectedThreadId) threadIds.add(this.snapshot.selectedThreadId);
+    for (const threadId of threadIds) void this.reloadIdentityCatalog(threadId);
+  }
+
+  private refreshIdentityCatalogAfterTurnAdmission(threadId: ThreadId): void {
+    // A configuration file may be edited outside the settings window. Turn
+    // admission is the first product boundary guaranteed to observe that live
+    // break or recovery, so let the submitted transcript follow the same read.
+    void this.reloadIdentityCatalog(threadId);
   }
 
   dispose(): void {
@@ -213,9 +230,9 @@ export class ThreadStore {
       error: null,
     });
     // A restored conversation can live in a project that defines its own Roles
-    // or re-skins; until this resolves against its cwd, the roster is only the
-    // user layer and the built-ins.
-    void this.reloadIdentityCatalog();
+    // or re-skins; until this resolves against its cwd, speakers fall back to
+    // their raw type instead of borrowing another Thread's roster.
+    if (selected) void this.reloadIdentityCatalog(selected);
     if (selected) {
       // The same two reads a selection makes: `thread/list` is roots-only, so a
       // restored conversation knows neither its Agents nor their child Threads
@@ -237,7 +254,7 @@ export class ThreadStore {
     void this.loadSubagentExecutions(threadId).catch(() => undefined);
     // A different conversation can mean a different working directory, and a
     // project layer names its own participants.
-    void this.reloadIdentityCatalog();
+    void this.reloadIdentityCatalog(threadId);
     await this.loadTurns(threadId);
   }
 
@@ -276,7 +293,10 @@ export class ThreadStore {
    */
   async ensureThreadHistory(threadId: ThreadId): Promise<void> {
     await this.ensureThreadRecord(threadId);
-    await this.loadTurns(threadId);
+    await Promise.all([
+      this.loadTurns(threadId),
+      this.reloadIdentityCatalog(threadId),
+    ]);
   }
 
   private async ensureThreadRecord(threadId: ThreadId): Promise<void> {
@@ -349,8 +369,10 @@ export class ThreadStore {
     const providerRetryByThread = new Map(this.snapshot.providerRetryByThread);
     const planByThread = new Map(this.snapshot.planByThread);
     const subagentExecutionsByAgentId = new Map(this.snapshot.subagentExecutionsByAgentId);
+    const identityCatalogByThread = new Map(this.snapshot.identityCatalogByThread);
     for (const deletedId of deletedIds) {
       this.loadGenerations.set(deletedId, (this.loadGenerations.get(deletedId) ?? 0) + 1);
+      this.identityCatalogGenerations.delete(deletedId);
       turnsByThread.delete(deletedId);
       latestTurnByThread.delete(deletedId);
       configurationsByThread.delete(deletedId);
@@ -359,6 +381,7 @@ export class ThreadStore {
       providerRetryByThread.delete(deletedId);
       planByThread.delete(deletedId);
       subagentExecutionsByAgentId.delete(deletedId);
+      identityCatalogByThread.delete(deletedId);
     }
     const selectedThreadWasDeleted = Boolean(
       this.snapshot.selectedThreadId && deletedIds.has(this.snapshot.selectedThreadId),
@@ -379,9 +402,15 @@ export class ThreadStore {
       providerRetryByThread,
       planByThread,
       subagentExecutionsByAgentId,
+      identityCatalogByThread,
       selectedThreadId: replacementThreadId,
     });
-    if (selectedThreadWasDeleted && replacementThreadId) await this.loadTurns(replacementThreadId);
+    if (selectedThreadWasDeleted && replacementThreadId) {
+      await Promise.all([
+        this.loadTurns(replacementThreadId),
+        this.reloadIdentityCatalog(replacementThreadId),
+      ]);
+    }
   }
 
   async send(
@@ -438,6 +467,7 @@ export class ThreadStore {
       ...(userView ? { userView } : {}),
       ...withContext,
     });
+    this.refreshIdentityCatalogAfterTurnAdmission(threadId);
     return response.turn;
   }
 
@@ -543,6 +573,7 @@ export class ThreadStore {
       clientUserMessageId: crypto.randomUUID(),
       ...(userView ? { userView } : {}),
     });
+    this.refreshIdentityCatalogAfterTurnAdmission(threadId);
   }
 
   async retryTurn(threadId: ThreadId, turnId: TurnId): Promise<void> {
@@ -1008,14 +1039,19 @@ export function useThreadTurns(
 }
 
 /**
- * Who the participants are. Replaced only when configuration resolves again, so
- * every speaker header in a streaming transcript reads it without re-rendering.
+ * Who one Thread's participants are. Replaced only when that Thread resolves
+ * configuration again, so its speaker headers update without an unrelated
+ * transcript re-rendering.
  */
 export function useIdentityCatalog(
+  threadId: ThreadId,
   source: ThreadSnapshotSource = threadStore,
 ): AgentIdentityCatalog {
   const subscribe = useCallback((listener: () => void) => source.subscribe(listener), [source]);
-  const getSnapshot = useCallback(() => source.getSnapshot().identityCatalog, [source]);
+  const getSnapshot = useCallback(
+    () => source.getSnapshot().identityCatalogByThread.get(threadId) ?? EMPTY_IDENTITY_CATALOG,
+    [source, threadId],
+  );
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 

@@ -189,12 +189,50 @@ anchored to `DEFAULT_AGENT_PRESENTATIONS.main` so one constant drives both.
 
 It is resolved **per Turn** (`resolveAgentPersona`), not recorded in the
 configuration a resumed Turn replays: a rename reaches the next Turn, and a
-display name never has to be versioned into the configuration codec. A Thread
-records its BACKING Role (`explorer`) while identity is keyed on the canonical
-type (`explore`), so the resolver maps one to the other. A recorded **nickname
-wins**: an isolated Skill is spawned as `role: 'default'` with the Skill's name
-as its nickname, and resolving it by type would tell it it is `Bruno` when its
-own name is what it is.
+display name never has to be versioned into the configuration codec. It reads
+both configuration layers but resolves only the requested identity, rather than
+building the whole identity catalog on every Turn. It is not cached: a rename
+must reach the next Turn. A Thread records its BACKING Role (`explorer`) while
+identity is keyed on the canonical type (`explore`), so the resolver maps one
+to the other. A recorded **nickname wins**: an isolated Skill is spawned as
+`role: 'default'` with the Skill's name as its nickname, and resolving it by
+type would tell it it is `Bruno` when its own name is what it is.
+
+Because this runs on the USER path, it **degrades rather than throws** (A12): a
+configuration the loader cannot read leaves the participant named by its
+built-in default; a type without a built-in default is named after its own key.
+`identities/get` returns the same built-in fallback catalog, so the prompt and
+renderer never disagree about a built-in participant during degradation. The
+same rule covers the Role catalog, which is also announced per Turn: an
+unreadable catalog becomes a stable built-in-only baseline. Normal catalog
+journaling therefore retracts any custom Roles announced before the file broke
+instead of leaving them selectable in model context. Only typed
+configuration-read failures degrade; unrelated resolver defects still
+propagate. `identities/get` is scoped to a Thread because that Thread's cwd is
+the authority for its project layer. The renderer retains catalogs per loaded
+Thread: opening a child reads the child's catalog, and an unresolved child
+falls back to its raw type rather than borrowing the selected root's identity.
+After every successful Turn admission, the renderer re-reads the submitted
+Thread's catalog, so an external configuration break or recovery reaches that
+transcript without a thread switch or settings event. A settings change
+re-resolves every already-loaded Thread catalog. One stable warning is sent to
+the diagnostic log per configuration file's continuous failure episode. Each
+user/project layer ends its own episode as soon as that layer reads
+successfully, even when the other layer still fails, and the in-memory episode
+tracker has a fixed upper bound.
+
+The paths that stay **fail-closed** are the ones where continuing would be
+worse. Spawn resolution (`resolveProfile`, `resolveRole`, `resolveAgentType`),
+the raw Role and identity catalogs (`buildRoleCatalogSnapshot`,
+`resolveIdentityCatalog`), editor reads (`listEditableRoles`,
+`resolveEditableProfile`, `listPresentationOverrides`), and writer validation
+all reject unreadable configuration. A spawn must not start a Thread on a
+configuration nobody could read, since everything it does afterwards is
+decided by it. The editor and writer must expose the broken file because that is
+where it is actionable; presenting a healthy-looking partial configuration
+would hide the problem. The distinction is the whole of A12: a typo in the
+user's file is theirs to fix, not a reason to kill the answer they are waiting
+for.
 
 The reserved names a Role may not take are `main`, every built-in canonical
 type, AND every built-in BACKING name — `resolveRole` prefers a configured entry
@@ -254,9 +292,9 @@ still reaches the user. Deleting a Role affects future spawns only: a running
 child keeps the configuration it resolved at spawn, and past transcripts fall
 through the identity chain rather than losing their speaker. Every write
 broadcasts the settings-changed notification the settings window already uses,
-and the dock re-reads its catalog on it — so an Agent renamed in the editor is
-renamed in an open transcript at once, rather than at the next conversation
-switch.
+and the dock re-reads every loaded Thread's catalog on it — so an Agent renamed
+in the editor is renamed in each open transcript at once, rather than at the
+next conversation switch.
 
 Defaults are Aspen (teal, `main`), Rena (orange, `explore`), Ada (blue,
 `plan`), and Bruno (amber, `general-purpose`) — pinned, well-separated hues. An

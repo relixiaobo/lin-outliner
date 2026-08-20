@@ -1,4 +1,5 @@
 import { useCallback, useRef, type PointerEvent, type ReactNode } from 'react';
+import type { ThreadId } from '../../../core/agent/protocol';
 import { MAIN_IDENTITY_KEY, resolveAgentIdentity } from '../agentIdentity';
 import type { MarkMood } from '../agentMarkGeometry';
 import { useIdentityCatalog, type ThreadSnapshotSource } from '../store/threadStore';
@@ -64,6 +65,7 @@ export function ThreadSpeakerGroup({
   meta,
   source,
   speaker,
+  threadId,
 }: {
   readonly children: ReactNode;
   /**
@@ -74,10 +76,12 @@ export function ThreadSpeakerGroup({
    */
   readonly meta?: ReactNode;
   readonly speaker: ThreadSpeaker;
-  /** The roster to resolve against; the app's own store unless a test says otherwise. */
+  /** The transcript whose cwd resolves the roster. */
+  readonly threadId: ThreadId;
+  /** The roster source; the app's own store unless a test says otherwise. */
   readonly source?: ThreadSnapshotSource;
 }) {
-  const catalog = useIdentityCatalog(source);
+  const catalog = useIdentityCatalog(threadId, source);
   // Resolved from the TYPE the caller named, with the caller's own name as the
   // fallback: a participant that is not a type at all — an isolated Skill —
   // keeps the name it came with and simply has no persona to find.

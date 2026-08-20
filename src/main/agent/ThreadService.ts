@@ -86,6 +86,7 @@ import type { ErrorReport } from '../../core/errorObservability';
 import {
 BUILT_IN_AGENT_ROLE_DEFINITIONS,
 defaultEffectiveThreadConfiguration,
+type AgentConfigurationReadFailureReporter,
 type ResolvedAgentType,
 } from './AgentConfigurationLoader';
 import type { ReferencedAssetResolution } from './capabilities/agentReferencedAssets';
@@ -223,13 +224,20 @@ export interface ThreadServiceOptions {
   readonly resolveAgentType?: (name: string | undefined, cwd: string) => ResolvedAgentType;
   readonly resolveRoleCatalog?: (
     cwd: string,
-  ) => RoleCatalogContextPayload | Promise<RoleCatalogContextPayload>;
-  readonly resolveIdentityCatalog?: (cwd: string) => readonly AgentIdentityEntry[];
+    reportFailure?: AgentConfigurationReadFailureReporter,
+  ) => RoleCatalogContextPayload | null | Promise<RoleCatalogContextPayload | null>;
+  readonly resolveIdentityCatalog?: (
+    cwd: string,
+    reportFailure?: AgentConfigurationReadFailureReporter,
+  ) => readonly AgentIdentityEntry[];
   /**
    * The name a Thread's agent answers to. Resolved per Turn rather than read
    * from the recorded configuration, so a rename reaches the next Turn.
    */
-  readonly resolvePersona?: (thread: Thread) => string;
+  readonly resolvePersona?: (
+    thread: Thread,
+    reportFailure?: AgentConfigurationReadFailureReporter,
+  ) => string;
   readonly resolveProviderModelIds?: (
     providerId: string,
   ) => readonly string[] | Promise<readonly string[]>;
@@ -462,6 +470,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       options.stores.payloads,
       this.extensions,
     );
+    this.reportError = async (report) => { await options.reportError?.(report); };
     this.getDocumentProjection = options.getDocumentProjection ?? (() => null);
     this.getRecentDocumentOperations = options.getRecentDocumentOperations;
     this.resolveReferencedAsset = options.resolveReferencedAsset;
@@ -472,11 +481,22 @@ export class ThreadService implements ThreadServiceExtensionHost {
     };
     const resolveRole = options.resolveRole ?? defaultAgentRole;
     const resolveAgentType = options.resolveAgentType ?? defaultResolvedAgentType;
-    this.resolveRoleCatalog = async (cwd) => await options.resolveRoleCatalog?.(cwd) ?? null;
-    this.resolveIdentityCatalog = options.resolveIdentityCatalog ?? (() => []);
+    const reportConfigurationReadFailure: AgentConfigurationReadFailureReporter = (report) => {
+      void this.reportError(report).catch((error) => {
+        console.warn('[agent] Failed to report a degraded configuration read', error);
+      });
+    };
+    this.resolveRoleCatalog = async (cwd) => (
+      await options.resolveRoleCatalog?.(cwd, reportConfigurationReadFailure) ?? null
+    );
+    this.resolveIdentityCatalog = (cwd) => (
+      options.resolveIdentityCatalog?.(cwd, reportConfigurationReadFailure) ?? []
+    );
     // Null when nothing resolves it: the environment then says what it said
     // before there was a configured name, rather than inventing one.
-    this.resolvePersona = (thread) => options.resolvePersona?.(thread) ?? null;
+    this.resolvePersona = (thread) => (
+      options.resolvePersona?.(thread, reportConfigurationReadFailure) ?? null
+    );
     this.resolveProviderModelIds = async (providerId) => (
       await options.resolveProviderModelIds?.(providerId) ?? []
     );
@@ -525,7 +545,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.recoverAgentWorktree = options.recoverAgentWorktree;
     this.cleanupResidualAgentWorktree = options.cleanupResidualAgentWorktree;
     this.settleAgentWorktree = options.settleAgentWorktree;
-    this.reportError = async (report) => { await options.reportError?.(report); };
     this.resourceOps = new ThreadResourceOps(
       this.core,
       options.attachmentScratchRoot,

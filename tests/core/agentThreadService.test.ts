@@ -42,7 +42,11 @@ import {
 } from '../../src/main/agent/ThreadService';
 import { SubagentBudgetExhaustedError } from '../../src/main/agent/SubagentBudgetExhaustedError';
 import { SubagentRequestClosedError } from '../../src/main/agent/SubagentRequestClosedError';
-import { defaultEffectiveThreadConfiguration } from '../../src/main/agent/AgentConfigurationLoader';
+import {
+  AgentConfigurationLoader,
+  defaultEffectiveThreadConfiguration,
+  userConfigurationPath,
+} from '../../src/main/agent/AgentConfigurationLoader';
 import { SubagentDepthLimitError } from '../../src/main/agent/SubagentStructuralLimitError';
 import { GoalStore } from '../../src/main/agent/extensions/goal/GoalStore';
 import { RolloutStore } from '../../src/main/agent/persistence/RolloutStore';
@@ -2323,6 +2327,132 @@ describe('ThreadService', () => {
     noSpawn.executor.finish();
     await noSpawn.service.waitForIdle(noSpawnThread.id);
     await noSpawn.service.close();
+  });
+
+  test('a live configuration failure retracts custom Roles without ending the Turn', async () => {
+    // A12: the Role catalog is announced per Turn, on the user path. A typo is
+    // the user's to fix, but the failure baseline must still retract a custom
+    // Role the preceding Turn announced.
+    const configurationRoot = await mkdtemp(join(tmpdir(), 'tenon-thread-service-agent-config-'));
+    roots.push(configurationRoot);
+    const userData = join(configurationRoot, 'user-data');
+    await mkdir(join(userData, 'agent'), { recursive: true });
+    const configurationPath = userConfigurationPath(userData);
+    await writeFile(configurationPath, JSON.stringify({
+      roles: {
+        reviewer: {
+          description: 'Reviews the current change.',
+          developerInstructions: 'Read the change and report correctness issues.',
+        },
+      },
+    }), 'utf8');
+    const loader = new AgentConfigurationLoader(userData);
+    const roleCatalogRead = spyOn(loader, 'buildRoleCatalogSnapshot');
+    const identityCatalogRead = spyOn(loader, 'resolveIdentityCatalog');
+    const reports: ErrorReport[] = [];
+    const fixture = await createFixture(undefined, {
+      resolveRoleCatalog: (cwd, reportFailure) => (
+        loader.buildRoleCatalogSnapshotForUserPath(cwd, reportFailure)
+      ),
+      resolveIdentityCatalog: (cwd, reportFailure) => (
+        loader.resolveIdentityCatalogForUserPath(cwd, reportFailure)
+      ),
+      resolvePersona: (thread, reportFailure) => loader.resolveThreadPersona(thread, reportFailure),
+      reportError: (report) => { reports.push(report); },
+    });
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Use the reviewer' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    const firstTurn = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns![0]!;
+    const firstRoleItem = firstTurn.items.find((item) => (
+      item.type === 'contextEvidence' && item.kind === 'roleCatalog'
+    ));
+    expect(firstRoleItem).toBeDefined();
+    expect((await fixture.stores.payloads.readContext(thread.id, firstRoleItem!.payloadRef)))
+      .toMatchObject({
+        mode: 'baseline',
+        entries: [
+          { name: 'general-purpose', change: 'available' },
+          { name: 'explore', change: 'available' },
+          { name: 'plan', change: 'available' },
+          { name: 'reviewer', change: 'available' },
+        ],
+      });
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(thread.id);
+
+    await writeFile(configurationPath, '{ oops', 'utf8');
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Still answer me' }],
+    });
+    await fixture.executor.waitUntilWaiting(1);
+
+    const secondTurn = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns![1]!;
+    const secondRoleItem = secondTurn.items.find((item) => (
+      item.type === 'contextEvidence' && item.kind === 'roleCatalog'
+    ));
+    expect(roleCatalogRead).toHaveBeenCalledTimes(2);
+    expect(secondRoleItem).toBeDefined();
+    expect((await fixture.stores.payloads.readContext(thread.id, secondRoleItem!.payloadRef)))
+      .toMatchObject({
+        mode: 'delta',
+        entries: [{ name: 'reviewer', change: 'removed' }],
+      });
+    // The Turn reached the model: the environment evidence is there and the
+    // executor is waiting, rather than the Turn having failed at admission.
+    expect(secondTurn.items).toContainEqual(expect.objectContaining({ kind: 'turnEnvironment' }));
+    const identities = await fixture.service.request('identities/get', { threadId: thread.id });
+    expect(identityCatalogRead).toHaveBeenCalledTimes(1);
+    expect(identities.entries).toEqual([
+      { agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' },
+      { agentType: 'general-purpose', persona: 'Bruno', color: 'amber', source: 'built-in' },
+      { agentType: 'explore', persona: 'Rena', color: 'orange', source: 'built-in' },
+      { agentType: 'plan', persona: 'Ada', color: 'blue', source: 'built-in' },
+    ]);
+    // Role, persona, and identity reads hit the same broken file, so the loader
+    // emits one stable diagnostic for that failure episode through ThreadService.
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toMatchObject({
+      code: 'agent-configuration-user-path-degraded',
+      context: { operation: 'resolve-role-catalog', source: 'user' },
+    });
+    fixture.executor.finish(1);
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
+  test('does not hide a non-configuration Role catalog resolver failure', async () => {
+    let catalogReads = 0;
+    const fixture = await createFixture(undefined, {
+      resolveRoleCatalog: () => {
+        catalogReads += 1;
+        throw new Error('Role catalog resolver defect');
+      },
+    });
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+
+    await expect(fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Do not hide resolver defects' }],
+    })).rejects.toThrow('Role catalog resolver defect');
+    expect(catalogReads).toBe(1);
+    expect(fixture.executor.contexts).toHaveLength(0);
+    await fixture.service.close();
   });
 
   test('publishes steering evidence and user input as one atomic Item batch', async () => {
@@ -12940,6 +13070,8 @@ async function createFixture(
     | 'resolveAgentType'
     | 'resolveAgentStartupContext'
     | 'resolveRoleCatalog'
+    | 'resolveIdentityCatalog'
+    | 'resolvePersona'
     | 'resolveSubagentTokenBudget'
     | 'resolveSkillAdmission'
     | 'resolveUserContent'
@@ -13064,6 +13196,8 @@ async function openFixture(
     | 'resolveAgentType'
     | 'resolveAgentStartupContext'
     | 'resolveRoleCatalog'
+    | 'resolveIdentityCatalog'
+    | 'resolvePersona'
     | 'resolveSubagentTokenBudget'
     | 'resolveSkillAdmission'
     | 'resolveUserContent'
