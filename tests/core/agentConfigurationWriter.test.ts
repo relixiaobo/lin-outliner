@@ -10,6 +10,7 @@ import {
 } from '../../src/main/agent/AgentConfigurationLoader';
 import { AgentConfigurationWriter } from '../../src/main/agent/AgentConfigurationWriter';
 import { resolveChildConfiguration } from '../../src/core/agent/configuration';
+import type { ErrorReport } from '../../src/core/errorObservability';
 
 const roots: string[] = [];
 
@@ -428,43 +429,78 @@ describe('AgentConfigurationWriter', () => {
     await mkdir(dirname(projectConfigurationPath(cwd)), { recursive: true });
     await writeFile(projectConfigurationPath(cwd), '{ oops', 'utf8');
     const thread = { parentThreadId: 'parent', agentRole: 'explorer', agentNickname: null, cwd };
+    const reports: ErrorReport[] = [];
+    const reportFailure = (report: ErrorReport) => { reports.push(report); };
 
     // USER path — every Turn of every Thread. A12: a typo in the user's own file
-    // must not end the answer they are waiting for, so the participant is named
-    // after its type instead.
-    // Falls through to the built-in default rather than the raw key, so the
-    // conversation agent is still `Aspen` and not "You are main".
-    expect(loader.resolveThreadPersona(thread)).toBe('Rena');
-    expect(loader.resolveThreadPersona({ ...thread, parentThreadId: null })).toBe('Aspen');
+    // must not end the answer they are waiting for. Built-ins keep the same
+    // names the renderer's fallback catalog draws.
+    expect(loader.resolveThreadPersona(thread, reportFailure)).toBe('Rena');
+    expect(loader.resolveThreadPersona({ ...thread, parentThreadId: null }, reportFailure)).toBe('Aspen');
     // A type the defaults do not know is named after itself.
-    expect(loader.resolveThreadPersona({ ...thread, agentRole: 'auditor' })).toBe('auditor');
+    expect(loader.resolveThreadPersona({ ...thread, agentRole: 'auditor' }, reportFailure)).toBe('auditor');
+    // Prototype names are ordinary Role names, not inherited default entries.
+    expect(loader.resolveThreadPersona({ ...thread, agentRole: 'constructor' }, reportFailure))
+      .toBe('constructor');
+    expect(loader.resolveIdentityCatalogForUserPath(cwd, reportFailure)).toEqual([
+      { agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' },
+      { agentType: 'general-purpose', persona: 'Bruno', color: 'amber', source: 'built-in' },
+      { agentType: 'explore', persona: 'Rena', color: 'orange', source: 'built-in' },
+      { agentType: 'plan', persona: 'Ada', color: 'blue', source: 'built-in' },
+    ]);
+    expect(loader.buildRoleCatalogSnapshotForUserPath(cwd, reportFailure)).toBeNull();
+    // Parse offsets and messages move while the file is being edited. The path
+    // still represents one continuous failure episode.
+    await writeFile(projectConfigurationPath(cwd), '{ a different broken shape', 'utf8');
+    expect(loader.resolveThreadPersona(thread, reportFailure)).toBe('Rena');
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toMatchObject({
+      domain: 'runtime',
+      severity: 'warn',
+      code: 'agent-configuration-user-path-degraded',
+      context: { source: 'project' },
+    });
 
     // SPAWN path stays fail-closed: a Thread must not start on a configuration
     // nobody could read, because everything it does afterwards is decided by it.
     expect(() => loader.resolveProfile(undefined, cwd)).toThrow(/Invalid Agent configuration/);
+    expect(() => loader.resolveRole('explorer', cwd)).toThrow(/Invalid Agent configuration/);
     expect(() => loader.resolveAgentType('explore', cwd)).toThrow(/Invalid Agent configuration/);
 
-    // EDITOR path stays fail-closed too: the Agents page is where a broken file
-    // is actionable, so it has to say so rather than render a healthy-looking
-    // list of what happens to parse.
+    // Raw catalog and EDITOR paths stay fail-closed: the Agents page is where a
+    // broken file is actionable, so it must expose the error.
+    expect(() => loader.buildRoleCatalogSnapshot(cwd)).toThrow(/Invalid Agent configuration/);
     expect(() => loader.resolveIdentityCatalog(cwd)).toThrow(/Invalid Agent configuration/);
     expect(() => loader.listEditableRoles(cwd)).toThrow(/Invalid Agent configuration/);
+    expect(() => loader.resolveEditableProfile(cwd)).toThrow(/Invalid Agent configuration/);
+    expect(() => loader.listPresentationOverrides(cwd)).toThrow(/Invalid Agent configuration/);
   });
 
   test('a repaired config is picked up on the next Turn, not cached past the fix', async () => {
-    const { writer, loader, cwd } = await fixture();
+    const { loader, cwd } = await fixture();
     await mkdir(dirname(projectConfigurationPath(cwd)), { recursive: true });
     await writeFile(projectConfigurationPath(cwd), '{ oops', 'utf8');
     const thread = { parentThreadId: 'parent', agentRole: 'explorer', agentNickname: null, cwd };
-    expect(loader.resolveThreadPersona(thread)).toBe('Rena');
+    const reports: ErrorReport[] = [];
+    const reportFailure = (report: ErrorReport) => { reports.push(report); };
+    expect(loader.resolveThreadPersona(thread, reportFailure)).toBe('Rena');
 
-    await writeFile(projectConfigurationPath(cwd), '{}', 'utf8');
-    expect(loader.resolveThreadPersona(thread)).toBe('Rena');
+    await writeFile(projectConfigurationPath(cwd), JSON.stringify({
+      presentationOverrides: { explore: { persona: 'Juniper' } },
+    }), 'utf8');
+    expect(loader.resolveThreadPersona(thread, reportFailure)).toBe('Juniper');
 
     // And a rename still reaches the very next Turn — the reason this resolves
     // live rather than being recorded at spawn.
-    await writer.writePresentation('project', cwd, 'explore', { persona: 'Juniper' });
-    expect(loader.resolveThreadPersona(thread)).toBe('Juniper');
+    await writeFile(projectConfigurationPath(cwd), JSON.stringify({
+      presentationOverrides: { explore: { persona: 'Scout' } },
+    }), 'utf8');
+    expect(loader.resolveThreadPersona(thread, reportFailure)).toBe('Scout');
+
+    // Recovery ends the failure episode. A later break reports once again.
+    await writeFile(projectConfigurationPath(cwd), '{ broken again', 'utf8');
+    expect(loader.resolveThreadPersona(thread, reportFailure)).toBe('Rena');
+    expect(reports).toHaveLength(2);
   });
 
   test('deleting a Role that is not there says so instead of writing a no-op', async () => {

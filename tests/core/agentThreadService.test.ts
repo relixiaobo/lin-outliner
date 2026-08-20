@@ -42,7 +42,11 @@ import {
 } from '../../src/main/agent/ThreadService';
 import { SubagentBudgetExhaustedError } from '../../src/main/agent/SubagentBudgetExhaustedError';
 import { SubagentRequestClosedError } from '../../src/main/agent/SubagentRequestClosedError';
-import { defaultEffectiveThreadConfiguration } from '../../src/main/agent/AgentConfigurationLoader';
+import {
+  AgentConfigurationLoader,
+  defaultEffectiveThreadConfiguration,
+  userConfigurationPath,
+} from '../../src/main/agent/AgentConfigurationLoader';
 import { SubagentDepthLimitError } from '../../src/main/agent/SubagentStructuralLimitError';
 import { GoalStore } from '../../src/main/agent/extensions/goal/GoalStore';
 import { RolloutStore } from '../../src/main/agent/persistence/RolloutStore';
@@ -2330,10 +2334,24 @@ describe('ThreadService', () => {
     // `.tenon/agent.json` is the user's to fix — not a reason to end the answer
     // they are waiting for. Null is already what a Thread that cannot spawn
     // Agents gets, so the model falls back to the types it always knows.
+    const configurationRoot = await mkdtemp(join(tmpdir(), 'tenon-thread-service-agent-config-'));
+    roots.push(configurationRoot);
+    const userData = join(configurationRoot, 'user-data');
+    await mkdir(join(userData, 'agent'), { recursive: true });
+    await writeFile(userConfigurationPath(userData), '{ oops', 'utf8');
+    const loader = new AgentConfigurationLoader(userData);
+    const roleCatalogRead = spyOn(loader, 'buildRoleCatalogSnapshot');
+    const identityCatalogRead = spyOn(loader, 'resolveIdentityCatalog');
+    const reports: ErrorReport[] = [];
     const fixture = await createFixture(undefined, {
-      resolveRoleCatalog: () => {
-        throw new Error('Invalid Agent configuration at /x/.tenon/agent.json: JSON Parse error');
-      },
+      resolveRoleCatalog: (cwd, reportFailure) => (
+        loader.buildRoleCatalogSnapshotForUserPath(cwd, reportFailure)
+      ),
+      resolveIdentityCatalog: (cwd, reportFailure) => (
+        loader.resolveIdentityCatalogForUserPath(cwd, reportFailure)
+      ),
+      resolvePersona: (thread, reportFailure) => loader.resolveThreadPersona(thread, reportFailure),
+      reportError: (report) => { reports.push(report); },
     });
     const thread = (await fixture.service.startThread({
       source: 'app',
@@ -2350,12 +2368,52 @@ describe('ThreadService', () => {
 
     const items = fixture.service.readThread({ threadId: thread.id, includeTurns: true })
       .thread.turns![0]!.items;
+    expect(roleCatalogRead).toHaveBeenCalledTimes(1);
     expect(items).not.toContainEqual(expect.objectContaining({ kind: 'roleCatalog' }));
     // The Turn reached the model: the environment evidence is there and the
     // executor is waiting, rather than the Turn having failed at admission.
     expect(items).toContainEqual(expect.objectContaining({ kind: 'turnEnvironment' }));
+    const identities = await fixture.service.request('identities/get', { threadId: thread.id });
+    expect(identityCatalogRead).toHaveBeenCalledTimes(1);
+    expect(identities.entries).toEqual([
+      { agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' },
+      { agentType: 'general-purpose', persona: 'Bruno', color: 'amber', source: 'built-in' },
+      { agentType: 'explore', persona: 'Rena', color: 'orange', source: 'built-in' },
+      { agentType: 'plan', persona: 'Ada', color: 'blue', source: 'built-in' },
+    ]);
+    // Role, persona, and identity reads hit the same broken file, so the loader
+    // emits one stable diagnostic for that failure episode through ThreadService.
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toMatchObject({
+      code: 'agent-configuration-user-path-degraded',
+      context: { operation: 'resolve-role-catalog', source: 'user' },
+    });
     fixture.executor.finish();
     await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
+  test('does not hide a non-configuration Role catalog resolver failure', async () => {
+    let catalogReads = 0;
+    const fixture = await createFixture(undefined, {
+      resolveRoleCatalog: () => {
+        catalogReads += 1;
+        throw new Error('Role catalog resolver defect');
+      },
+    });
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+
+    await expect(fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Do not hide resolver defects' }],
+    })).rejects.toThrow('Role catalog resolver defect');
+    expect(catalogReads).toBe(1);
+    expect(fixture.executor.contexts).toHaveLength(0);
     await fixture.service.close();
   });
 
@@ -12685,6 +12743,8 @@ async function createFixture(
     | 'resolveAgentType'
     | 'resolveAgentStartupContext'
     | 'resolveRoleCatalog'
+    | 'resolveIdentityCatalog'
+    | 'resolvePersona'
     | 'resolveSubagentTokenBudget'
     | 'resolveSkillAdmission'
     | 'resolveUserContent'
@@ -12809,6 +12869,8 @@ async function openFixture(
     | 'resolveAgentType'
     | 'resolveAgentStartupContext'
     | 'resolveRoleCatalog'
+    | 'resolveIdentityCatalog'
+    | 'resolvePersona'
     | 'resolveSubagentTokenBudget'
     | 'resolveSkillAdmission'
     | 'resolveUserContent'

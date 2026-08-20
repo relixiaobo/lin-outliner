@@ -18,6 +18,7 @@ import {
 } from '../../core/agent/configuration';
 import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../../core/agent/tools';
 import type { AgentIdentityEntry, RoleCatalogContextPayload, RoleCatalogEntry } from '../../core/agent/protocol';
+import type { ErrorReport } from '../../core/errorObservability';
 import type {
   AgentBuiltInDefinition,
   AgentEditableRole,
@@ -41,6 +42,8 @@ interface ConfigurationLayer {
    */
   readonly presentationOverrides: ReadonlyMap<string, AgentPresentationOverride>;
 }
+
+export type AgentConfigurationReadFailureReporter = (report: ErrorReport) => void;
 
 const EMPTY_LAYER: ConfigurationLayer = Object.freeze({
   defaultProfile: null,
@@ -225,13 +228,19 @@ export const RESERVED_AGENT_TYPE_NAMES: readonly string[] = Object.freeze([
   ...BUILT_IN_AGENT_TYPES.map((entry) => entry.backingRole),
 ]);
 
+const DEFAULT_IDENTITY_CATALOG: readonly AgentIdentityEntry[] = Object.freeze([
+  defaultIdentityEntry(MAIN_PRESENTATION_KEY),
+  ...BUILT_IN_AGENT_TYPES.map((entry) => defaultIdentityEntry(entry.canonicalType)),
+]);
+const MAX_TRACKED_USER_PATH_FAILURES = 64;
+
 export class AgentConfigurationLoader {
   /**
-   * Read failures already reported, so a broken configuration says so once
-   * rather than once per Turn. Keyed by the whole message, so a DIFFERENT
-   * breakage in the same file is still heard.
+   * Configuration paths already reported during their current failure episode.
+   * A successful read clears the episode; the fixed cap bounds workspaces seen
+   * over a long-running process even when none of them recovers.
    */
-  private readonly reportedReadFailures = new Set<string>();
+  private readonly activeUserPathFailures = new Set<string>();
 
   constructor(private readonly userDataPath: string) {}
 
@@ -300,6 +309,20 @@ export class AgentConfigurationLoader {
     return this.buildRoleCatalogSnapshot(cwd);
   }
 
+  /** The per-Turn Role read: an invalid configuration omits this Turn's catalog. */
+  buildRoleCatalogSnapshotForUserPath(
+    cwd: string,
+    reportFailure?: AgentConfigurationReadFailureReporter,
+  ): RoleCatalogContextPayload | null {
+    return this.readForUserPath(
+      cwd,
+      'resolve-role-catalog',
+      () => this.buildRoleCatalogSnapshot(cwd),
+      () => null,
+      reportFailure,
+    );
+  }
+
   /**
    * Every identity the reader can meet, with its name and face settled.
    *
@@ -319,39 +342,25 @@ export class AgentConfigurationLoader {
     // path read both files twice per request.
     const merged = this.loadMerged(cwd);
     const candidates = this.agentTypeCandidates(cwd, merged);
-    const overlay = (key: string, base: AgentPresentation): AgentPresentation => {
-      const override = merged.presentationOverrides.get(key);
-      return {
-        persona: override?.persona ?? base.persona,
-        color: override?.color ?? base.color,
-      };
-    };
-    const main = overlay(
-      MAIN_PRESENTATION_KEY,
-      DEFAULT_AGENT_PRESENTATIONS[MAIN_PRESENTATION_KEY]!,
-    );
-    const entries: AgentIdentityEntry[] = [{
-      agentType: MAIN_PRESENTATION_KEY,
-      persona: main.persona,
-      color: main.color,
-      source: 'built-in',
-    }];
+    const entries: AgentIdentityEntry[] = [identityEntryForKey(merged, MAIN_PRESENTATION_KEY)!];
     for (const candidate of candidates) {
-      const type = candidate.canonicalType;
-      const declared = candidate.role.presentation;
-      const base: AgentPresentation = {
-        persona: declared?.persona ?? DEFAULT_AGENT_PRESENTATIONS[type]?.persona ?? type,
-        color: declared?.color ?? DEFAULT_AGENT_PRESENTATIONS[type]?.color ?? deriveIdentityColor(type),
-      };
-      const resolved = overlay(type, base);
-      entries.push({
-        agentType: type,
-        persona: resolved.persona,
-        color: resolved.color,
-        source: candidate.role.source === 'builtIn' ? 'built-in' : candidate.role.source,
-      });
+      entries.push(identityEntryForKey(merged, candidate.canonicalType)!);
     }
     return Object.freeze(entries);
+  }
+
+  /** The transcript/dock read: a broken catalog becomes the built-in roster. */
+  resolveIdentityCatalogForUserPath(
+    cwd: string,
+    reportFailure?: AgentConfigurationReadFailureReporter,
+  ): readonly AgentIdentityEntry[] {
+    return this.readForUserPath(
+      cwd,
+      'resolve-identity-catalog',
+      () => this.resolveIdentityCatalog(cwd),
+      () => DEFAULT_IDENTITY_CATALOG,
+      reportFailure,
+    );
   }
 
   /**
@@ -363,47 +372,77 @@ export class AgentConfigurationLoader {
    * keeps `persona` out of the recorded configuration and its codec, where a
    * display name would have to be versioned forever.
    */
-  resolveAgentPersona(agentType: string | null, cwd: string): string {
+  resolveAgentPersona(
+    agentType: string | null,
+    cwd: string,
+    reportFailure?: AgentConfigurationReadFailureReporter,
+  ): string {
     // A Thread records its BACKING Role (`explorer`), while identity is keyed on
     // the canonical Agent type (`explore`). Without this hop a subagent would be
     // told a name the reader never sees.
     const backing = BUILT_IN_AGENT_TYPES.find((entry) => entry.backingRole === agentType);
     const key = backing?.canonicalType ?? agentType ?? MAIN_PRESENTATION_KEY;
-    // Degrades rather than throws (A12). This runs on the USER path — every Turn
-    // of every Thread — where a configuration the loader cannot read is the
-    // user's typo, not a reason to kill the answer they are waiting for. The
-    // write boundary and the editor still fail closed, which is where a broken
-    // file is both actionable and reported.
-    const entry = this.readForUserPath(cwd, 'identity catalog', () => this.resolveIdentityCatalog(cwd))
-      ?.find((row) => row.agentType === key);
-    // Falls back through the built-in default before the bare key: with the
-    // catalog unreadable the conversation agent would otherwise be told "You are
-    // main", when what the transcript draws for an unconfigured install is
-    // `Aspen`. A type with no default is named after itself — the same
-    // degradation the renderer's resolver makes, so the two never disagree
-    // about who is talking.
-    return entry?.persona.trim()
-      || DEFAULT_AGENT_PRESENTATIONS[key]?.persona.trim()
-      || key;
+    // Resolve only this participant rather than constructing and freezing the
+    // whole catalog on every Turn. The shared entry resolver also builds the
+    // renderer catalog, so prompt and transcript keep identical fallback rules.
+    return this.readForUserPath(
+      cwd,
+      'resolve-agent-persona',
+      () => identityEntryForKey(this.loadMerged(cwd), key)?.persona.trim() || key,
+      () => defaultIdentityEntry(key).persona,
+      reportFailure,
+    );
   }
 
   /**
-   * A read on the user path, which answers `null` instead of throwing.
-   *
-   * The failure is still SAID — once per distinct message, because this runs
-   * per Turn and a broken file would otherwise fill the log with one line per
-   * message the user sends.
+   * A configuration read on the user path. Only typed configuration failures
+   * degrade; a programming or injected resolver error still propagates.
    */
-  private readForUserPath<T>(cwd: string, what: string, read: () => T): T | null {
+  private readForUserPath<T>(
+    cwd: string,
+    operation: string,
+    read: () => T,
+    fallback: () => T,
+    reportFailure?: AgentConfigurationReadFailureReporter,
+  ): T {
     try {
-      return read();
+      const result = read();
+      this.clearUserPathFailure(cwd);
+      return result;
     } catch (error) {
-      const message = `[agent] ${what} unreadable for ${cwd}: ${errorMessage(error)}`;
-      if (!this.reportedReadFailures.has(message)) {
-        this.reportedReadFailures.add(message);
-        console.warn(message);
-      }
-      return null;
+      if (!(error instanceof AgentConfigurationReadError)) throw error;
+      this.reportUserPathFailure(operation, error, reportFailure);
+      return fallback();
+    }
+  }
+
+  private clearUserPathFailure(cwd: string): void {
+    this.activeUserPathFailures.delete(userConfigurationPath(this.userDataPath));
+    this.activeUserPathFailures.delete(projectConfigurationPath(cwd));
+  }
+
+  private reportUserPathFailure(
+    operation: string,
+    error: AgentConfigurationReadError,
+    reportFailure?: AgentConfigurationReadFailureReporter,
+  ): void {
+    if (!reportFailure || this.activeUserPathFailures.has(error.configurationPath)) return;
+    if (this.activeUserPathFailures.size >= MAX_TRACKED_USER_PATH_FAILURES) {
+      const oldest = this.activeUserPathFailures.values().next().value;
+      if (oldest !== undefined) this.activeUserPathFailures.delete(oldest);
+    }
+    this.activeUserPathFailures.add(error.configurationPath);
+    try {
+      reportFailure({
+        domain: 'runtime',
+        severity: 'warn',
+        code: 'agent-configuration-user-path-degraded',
+        message: 'Agent configuration was unreadable on a user path; the read degraded instead of ending the user action.',
+        context: { operation, source: error.configurationSource },
+        error,
+      });
+    } catch (reportError) {
+      console.warn('[agent] Failed to report a degraded configuration read', reportError);
     }
   }
 
@@ -420,11 +459,12 @@ export class AgentConfigurationLoader {
     readonly agentRole: string | null;
     readonly agentNickname: string | null;
     readonly cwd: string;
-  }): string {
+  }, reportFailure?: AgentConfigurationReadFailureReporter): string {
     return thread.agentNickname?.trim()
       || this.resolveAgentPersona(
         thread.parentThreadId === null ? null : thread.agentRole,
         thread.cwd,
+        reportFailure,
       );
   }
 
@@ -558,6 +598,74 @@ export class AgentConfigurationLoader {
   }
 }
 
+function identityEntryForKey(
+  merged: ConfigurationLayer,
+  key: string,
+): AgentIdentityEntry | null {
+  if (key === MAIN_PRESENTATION_KEY) {
+    const resolved = overlayPresentation(
+      merged,
+      key,
+      defaultAgentPresentation(key) ?? {
+        persona: key,
+        color: deriveIdentityColor(key),
+      },
+    );
+    return {
+      agentType: key,
+      persona: resolved.persona,
+      color: resolved.color,
+      source: 'built-in',
+    };
+  }
+
+  const builtIn = BUILT_IN_AGENT_TYPES.find((entry) => entry.canonicalType === key);
+  const role = builtIn
+    ? BUILT_IN_AGENT_ROLE_DEFINITIONS[builtIn.backingRole]!
+    : merged.roles.get(key);
+  if (!role) return null;
+  const declared = role.presentation;
+  const defaults = defaultAgentPresentation(key);
+  const resolved = overlayPresentation(merged, key, {
+    persona: declared?.persona ?? defaults?.persona ?? key,
+    color: declared?.color ?? defaults?.color ?? deriveIdentityColor(key),
+  });
+  return {
+    agentType: key,
+    persona: resolved.persona,
+    color: resolved.color,
+    source: role.source === 'builtIn' ? 'built-in' : role.source,
+  };
+}
+
+function overlayPresentation(
+  merged: ConfigurationLayer,
+  key: string,
+  base: AgentPresentation,
+): AgentPresentation {
+  const override = merged.presentationOverrides.get(key);
+  return {
+    persona: override?.persona ?? base.persona,
+    color: override?.color ?? base.color,
+  };
+}
+
+function defaultIdentityEntry(key: string): AgentIdentityEntry {
+  const presentation = defaultAgentPresentation(key);
+  return {
+    agentType: key,
+    persona: presentation?.persona.trim() || key,
+    color: presentation?.color ?? deriveIdentityColor(key),
+    source: 'built-in',
+  };
+}
+
+function defaultAgentPresentation(key: string): AgentPresentation | null {
+  return Object.hasOwn(DEFAULT_AGENT_PRESENTATIONS, key)
+    ? DEFAULT_AGENT_PRESENTATIONS[key] ?? null
+    : null;
+}
+
 function roleCatalogEntry(role: AgentRole, name = role.name, description = role.description): RoleCatalogEntry {
   const source = role.source === 'builtIn' ? 'built-in' : role.source;
   // Presentation is deliberately absent: this hash gates re-announcing the
@@ -598,13 +706,25 @@ export function defaultEffectiveThreadConfiguration(
 
 function readLayer(path: string, source: 'user' | 'project'): ConfigurationLayer {
   if (!existsSync(path)) return EMPTY_LAYER;
-  let value: unknown;
   try {
-    value = JSON.parse(readFileSync(path, 'utf8'));
+    const value: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    return decodeConfigurationLayer(value, source, path);
   } catch (error) {
-    throw new Error(`Invalid Agent configuration at ${path}: ${errorMessage(error)}`);
+    if (error instanceof AgentConfigurationReadError) throw error;
+    throw new AgentConfigurationReadError(path, source, error);
   }
-  return decodeConfigurationLayer(value, source, path);
+}
+
+class AgentConfigurationReadError extends Error {
+  readonly name = 'AgentConfigurationReadError';
+
+  constructor(
+    readonly configurationPath: string,
+    readonly configurationSource: 'user' | 'project',
+    cause: unknown,
+  ) {
+    super(`Invalid Agent configuration at ${configurationPath}: ${errorMessage(cause)}`);
+  }
 }
 
 /**
