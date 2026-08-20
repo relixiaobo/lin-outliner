@@ -1535,3 +1535,32 @@ path can prove that the boolean means what its name claims while the spacer is
 present. Re-run the exact counterexample as well as the new judge: after the fix,
 both the shell-top delta and the `scrollTop` delta were zero while the disclosure
 control moved downward with the revealed text.
+
+## A replacement replays admission units, not the first matching message
+
+Manual retry in PR #567 replaces one failed Turn with a new Turn. The first
+implementation searched the old Turn for its first `userMessage`, copied that
+message and nearby evidence, and rebound its client ID. That looked complete for
+a Turn created by one submit, but a running Turn can accept steering: each steer
+adds another evidence-plus-user-message batch, its own accepted timestamp, and
+its own stable client identity. Selecting one presentation Item silently dropped
+every later accepted request even though the provider had already consumed it.
+
+The mistake was treating an event-sourced admission record as a bag of messages.
+Its unit is the command boundary that was accepted: ordered evidence, structured
+input, timestamp, identity, and provenance. A retry, fork, rollback, or other
+replacement that preserves only visible text does not preserve the request, and
+searching with `find()` cannot prove that the source cardinality is one.
+
+**Rebuild replacements from every ordered admission unit and commit the swap only
+after the complete replacement is durable.** Preserve batch boundaries and
+stable identities, exclude output produced by the failed attempt, and rebind
+external identities only after the atomic history event succeeds. If any
+preparation or persistence step fails, the old canonical record must remain
+unchanged and retryable.
+
+The regression judge must cross the boundary that exposed the cardinality: start
+a Turn, admit steering while it runs, fail the provider, retry, and assert both
+the replacement history and the first replacement provider request. Also assert
+that every client identity now resolves to the replacement. A single-message
+fixture can prove the happy path while leaving the data-loss path untouched.

@@ -99,6 +99,32 @@ Entries reference the pull request that introduced them.
 
 ### Fixed
 
+- **Provider failures recover without losing what the user actually asked
+  (PR #567, codex-2)** — the initial provider request is no longer counted as a
+  retry: transient request failures now show `Retrying 1/5` through
+  `Retrying 5/5`, while recovery after a stream starts says `Reconnecting`.
+  Structured provider failures use pi-ai's canonical transient classifier, so
+  an OpenAI concurrency `rate_limit_exceeded` can recover without broadening
+  permanent quota, authentication, or validation failures into retry loops.
+  Tenon's replay-safety gates still stop automatic recovery after material
+  output or replay-unsafe tool activity, and successful recovery clears the
+  runtime-only status instead of leaving a stale terminal error. When the
+  automatic budget is exhausted, Retry is now a main-admitted `turn/retry`
+  command rather than renderer-side message reconstruction: one durable
+  `history/retry` event keeps the old terminal Turn until admission succeeds,
+  then atomically replaces it while preserving the original trigger and host
+  provenance. The replacement replays every accepted input batch in order —
+  initial input and steering, each with its evidence boundary, accepted time,
+  and stable client ID — while excluding failed-attempt assistant/tool output
+  and runtime-only evidence. This also makes host-authored subagent delivery
+  retryable without laundering it into a user message. Gate: `/code-review
+  ultra` found that the first implementation selected only the first user
+  message and silently dropped accepted steering; `a6295449` rebuilt the full
+  sequence and the re-review cleared it. Verified on the clean merge state with
+  typecheck, `docs:check`, focused retry tests, and the full core suite (2572
+  pass, 6 skipped, 0 fail). The earlier branch head's full renderer suite passed
+  1324 tests, the review fix changed no renderer production code, and all five
+  CI E2E samples plus baseline subtraction were green.
 - **Long messages and model flyouts now expand from a fixed edge (PR #568,
   cc)** — `Show more` used to hold the control below a long message while every
   revealed line appeared above it, pushing the text the reader was looking at

@@ -912,9 +912,11 @@ anything.
 
 - **Render-body ref writes in `ThreadTurnView`** (P3, *fast-track, no plan file*, filed 2026-08-14
   at the #539 gate) — `ThreadTurnView` (`src/renderer/agent/components/ThreadView.tsx`) assigns
-  `turnRef.current` / `responseTailTurnRef.current` in the render body, plus two more render-body
-  ref writes (`contentGrouperRef` lazy-init, `retryContentRef` after its `useMemo` — none are
-  inside `useMemo`; corrected 2026-08-17, and #544/#550 left all four unchanged). A render React starts and discards still advances them, so a committed handler
+  `turnRef.current` / `responseTailTurnRef.current` in the render body, plus one more render-body
+  ref write (`contentGrouperRef` lazy-init — none are inside `useMemo`; corrected 2026-08-17,
+  #544/#550 left all four then-known writes unchanged, and #567 removed `retryContentRef` while
+  leaving these three unchanged). A render React starts and discards still advances them, so a
+  committed handler
   (`editUserMessage`, `copyTurn`, `continueInNewChat`, `openTurnDetails`, `retryTurn`) can act on a
   `Turn` snapshot the committed tree never rendered. Left open at the gate because the blast radius
   is small — the component is keyed by `turn.id`, so it is always the same Turn at a different
@@ -1112,6 +1114,18 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **provider-retry-state-machine** (codex-2, PR #567, merged 2026-08-20 —
+  [plan](plans/archive/provider-retry-state-machine.md)) — provider execution now
+  separates the initial request from five explicit transient retries, names
+  request retry and stream reconnection accurately, and keeps replay-safety
+  gates around material output and tool execution. An exhausted latest Turn can
+  be retried through one main-owned durable replacement that preserves its
+  trigger, provenance, and every accepted initial/steering input batch. Gate:
+  `/code-review ultra` found one Medium — reconstruction selected only the first
+  user message and dropped accepted steering; `a6295449` fixed the full ordered
+  replay and re-review found no further high-confidence issue. Merge-state
+  typecheck, `docs:check`, and core passed (2572/6 skipped/0 failed), with five
+  green CI samples.
 - **fixed-edge-expansion** (cc, PR #568, merged 2026-08-20 — fast-track, no
   plan file) — long user messages now open downward from their own top edge
   unless the transcript is riding a real scrollable tail; collapsing keeps the
