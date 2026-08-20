@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
+import { clamp } from './clamp';
 
 export type OverlayPlacement =
   | 'bottom-start'
@@ -45,10 +46,6 @@ const CONTENT_MEASUREMENT_STYLE: CSSProperties = {
 };
 
 const UNMEASURED_CONTENT = Symbol('unmeasured-content');
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
-}
 
 function readAnchorRect(options: UseAnchoredOverlayOptions): OverlayAnchorRect | null {
   if (options.anchorRect) return options.anchorRect;

@@ -308,6 +308,7 @@ function turnProps(indexStore: DocumentIndexStore) {
       captureAnchor: () => undefined,
       holdAnchorUntilSettled: () => null,
       isExpanded: () => false,
+      isFollowingBottom: () => false,
       restoreAnchor: () => undefined,
       toggle: () => undefined,
     },

@@ -1067,10 +1067,40 @@ export function ThreadView({
     capturePendingAnchor(captureDisclosureScrollAnchor(anchorElement, scroller));
   }, [cancelPendingVirtualScrollAdjustment, capturePendingAnchor]);
 
+  /**
+   * Riding a tail the reader could actually scroll away from.
+   *
+   * `follow` alone is not that. `isTranscriptFollowing` measures distance to the
+   * bottom, which a transcript shorter than its viewport satisfies at rest, and
+   * `follow` starts true besides — so every short Thread reports itself as
+   * riding a tail it does not have. A disclosure asking this question is asking
+   * whether holding its control means "stay at the bottom"; in a view that shows
+   * all of itself there is no bottom to stay at, and the answer has to be no or
+   * the commonest Subagent transcript there is — one brief, one short result —
+   * keeps the very behavior this predicate exists to end.
+   *
+   * A mounted send spacer owns the rendered bottom, so `follow` describes that
+   * synthetic range rather than a real-content tail. It is a stronger answer
+   * than subtracting the spacer's height: the content flex gap is synthetic too,
+   * and the disclosure control can still sit near the top while the scroller is
+   * at that rendered bottom. The anchor runway is likewise renderer-only range.
+   * `follow` still gates the remaining case, because it is the pin's own state
+   * and the two must not disagree about one layout transaction.
+   */
+  const isFollowingBottom = useCallback(() => {
+    if (!followRef.current || sendAnchorSpacerRef.current) return false;
+    const scroll = scrollRef.current;
+    if (!scroll) return false;
+    const contentHeight = scroll.scrollHeight
+      - disclosureAnchorRunwayRef.current;
+    return contentHeight - scroll.clientHeight > 1;
+  }, []);
+
   const expandState = useMemo<ThreadDisclosureState>(() => ({
     captureAnchor: captureLocalDisclosureAnchor,
     holdAnchorUntilSettled: holdUntilSettled,
     isExpanded: (id, defaultExpanded = false) => disclosureOverrides[id] ?? defaultExpanded,
+    isFollowingBottom,
     restoreAnchor: restorePendingAnchor,
     toggle: (id, currentlyExpanded, anchorElement) => {
       cancelPendingVirtualScrollAdjustment();
@@ -1093,6 +1123,7 @@ export function ThreadView({
     capturePendingAnchor,
     disclosureOverrides,
     holdUntilSettled,
+    isFollowingBottom,
     restorePendingAnchor,
     threadId,
   ]);

@@ -67,6 +67,7 @@ import { IconButton } from '../../../ui/primitives/IconButton';
 import { ButtonControl } from '../../../ui/primitives/ButtonControl';
 import { WorkingText } from '../../../ui/primitives/WorkingText';
 import { canEditUserContentText, replaceUserContentText } from '../../threadInput';
+import { messageDisclosureAnchor } from '../../messageDisclosureAnchor';
 import {
   threadNodeReferenceDisplayLabel,
   threadNodeReferenceHref,
@@ -143,6 +144,11 @@ export interface ThreadDisclosureState {
   readonly captureAnchor: (anchorElement: HTMLElement | null) => void;
   readonly holdAnchorUntilSettled: () => DisclosureScrollAnchorHold | null;
   readonly isExpanded: (id: string, defaultExpanded?: boolean) => boolean;
+  /** Whether the transcript is riding the bottom right now. A disclosure whose
+   *  control sits BELOW the content it opens has to know: pinning that control
+   *  is the same thing as staying at the bottom, and is only what the reader
+   *  wants while they are already there. */
+  readonly isFollowingBottom: () => boolean;
   readonly restoreAnchor: () => void;
   readonly toggle: (id: string, currentlyExpanded: boolean, anchorElement?: HTMLElement | null) => void;
 }
@@ -572,9 +578,11 @@ function UserMessageCollapsibleContent({
 }) {
   const t = useT();
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const shellRef = useRef<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [canCollapse, setCanCollapse] = useState(false);
   const captureDisclosureAnchor = useLocalDisclosureAnchor(expanded, expandState);
+  const isFollowingBottom = expandState.isFollowingBottom;
 
   useLayoutEffect(() => {
     setExpanded(false);
@@ -601,7 +609,7 @@ function UserMessageCollapsibleContent({
 
   const collapsed = canCollapse && !expanded;
   return (
-    <div className="thread-user-content-shell">
+    <div className="thread-user-content-shell" ref={shellRef}>
       <div
         className={`thread-user-content-body${collapsed ? ' is-collapsed' : ''}`}
         ref={contentRef}
@@ -613,7 +621,13 @@ function UserMessageCollapsibleContent({
           aria-expanded={expanded}
           className="thread-user-expand-button"
           onClick={(event) => {
-            captureDisclosureAnchor(event.currentTarget);
+            const anchor = messageDisclosureAnchor({
+              closing: expanded,
+              ridingScrollableBottom: isFollowingBottom(),
+            });
+            captureDisclosureAnchor(
+              anchor === 'control' ? event.currentTarget : shellRef.current,
+            );
             setExpanded((current) => !current);
           }}
         >

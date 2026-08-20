@@ -16,6 +16,7 @@ import type { AgentModelOption, AgentProviderSettingsView } from '../../api/type
 import { useT } from '../../i18n/I18nProvider';
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ICON_SIZE } from '../../ui/icons';
 import { ButtonControl } from '../../ui/primitives/ButtonControl';
+import { resolveFlyoutPlacement } from '../../ui/primitives/flyoutPlacement';
 import { useAnchoredOverlay } from '../../ui/primitives/useAnchoredOverlay';
 import { useMenuKeyboard } from '../../ui/primitives/useMenuKeyboard';
 import { formatProviderName } from '../../ui/agent/providerNames';
@@ -97,7 +98,8 @@ function ThreadComposerModelControlImpl({
     submenuAnchor,
     open && submenu !== 'none',
     260,
-    `${submenu}:${configuration.model}:${configuration.reasoningEffort}:${expandedKey}`,
+    `${submenu}:${configuration.model}:${configuration.reasoningEffort}`,
+    expandedKey,
   );
 
   useEffect(() => {
@@ -441,38 +443,78 @@ function reasoningLabel(
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 }
 
+function hiddenFlyoutStyle(width: number): CSSProperties {
+  return { position: 'fixed', left: -9999, top: -9999, width };
+}
+
+/**
+ * `placementKey` names the SURFACE — a different submenu, or the same one beside
+ * a different row — and re-measures the height that decides where it goes.
+ * `contentKey` names what is inside it, and deliberately does not: re-measuring
+ * there is what would move a flyout the reader just made taller.
+ */
 function useFlyoutStyle(
   ref: RefObject<HTMLDivElement | null>,
   anchorRef: RefObject<HTMLElement | null>,
   open: boolean,
   width: number,
-  layoutKey: string,
+  placementKey: string,
+  contentKey: string,
 ): CSSProperties {
-  const [style, setStyle] = useState<CSSProperties>({ position: 'fixed', left: -9999, top: -9999, width });
+  const [style, setStyle] = useState<CSSProperties>(() => hiddenFlyoutStyle(width));
+  const placementHeightRef = useRef<{ readonly height: number; readonly key: string } | null>(null);
   useLayoutEffect(() => {
-    if (!open) return undefined;
+    if (!open) {
+      // Back to the off-screen seed. A closed flyout that keeps the last
+      // surface's `maxHeight` hands it to the NEXT one, which then measures
+      // itself already clipped and — the placement being a fixed point — stays
+      // that size for the rest of the menu session.
+      placementHeightRef.current = null;
+      setStyle((current) => (current.top === -9999 ? current : hiddenFlyoutStyle(width)));
+      return undefined;
+    }
     const update = () => {
       const anchor = anchorRef.current?.getBoundingClientRect();
       const element = ref.current;
       if (!anchor || !element) return;
-      const margin = 8;
-      const gap = 4;
-      const fitsLeft = anchor.left - gap - width >= margin;
-      const left = fitsLeft
-        ? Math.max(margin, anchor.left - gap - width)
-        : clamp(anchor.right + gap, margin, Math.max(margin, window.innerWidth - width - margin));
-      const top = clamp(
-        anchor.top - margin,
-        margin,
-        Math.max(margin, window.innerHeight - element.offsetHeight - margin),
-      );
-      setStyle({
-        position: 'fixed',
-        left,
-        top,
+      const placed = placementHeightRef.current;
+      // `scrollHeight` on the opening pass, because the surface may still be
+      // wearing a previous flyout's ceiling and `offsetHeight` would report that
+      // rather than what this content needs. Afterwards the frozen height is
+      // reused, so growth inside the flyout changes the ceiling, never the spot.
+      const placementHeight = placed?.key === placementKey
+        ? placed.height
+        : element.scrollHeight;
+      placementHeightRef.current = { height: placementHeight, key: placementKey };
+      const placement = resolveFlyoutPlacement({
+        anchorLeft: anchor.left,
+        anchorRight: anchor.right,
+        anchorTop: anchor.top,
+        gap: 4,
+        margin: 8,
+        placementHeight,
+        viewportHeight: window.innerHeight,
+        viewportWidth: window.innerWidth,
         width,
-        maxHeight: Math.max(0, window.innerHeight - 2 * margin),
       });
+      // Scrolling INSIDE the flyout reaches this listener too (capture phase on
+      // `window`), and a taller list is exactly what makes the flyout scrollable
+      // — so an unconditional write would re-render the whole control every
+      // frame of a drag to reproduce the position it already had.
+      setStyle((current) => (
+        current.left === placement.left
+          && current.top === placement.top
+          && current.maxHeight === placement.maxHeight
+          && current.width === width
+          ? current
+          : {
+            position: 'fixed',
+            left: placement.left,
+            top: placement.top,
+            width,
+            maxHeight: placement.maxHeight,
+          }
+      ));
     };
     update();
     const frame = window.requestAnimationFrame(update);
@@ -483,10 +525,6 @@ function useFlyoutStyle(
       window.removeEventListener('scroll', update, true);
       window.removeEventListener('resize', update);
     };
-  }, [anchorRef, layoutKey, open, ref, width]);
+  }, [anchorRef, contentKey, open, placementKey, ref, width]);
   return style;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(Number.isFinite(value) ? value : 0, max));
 }
