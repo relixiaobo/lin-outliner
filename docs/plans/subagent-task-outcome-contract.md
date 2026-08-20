@@ -206,18 +206,29 @@ pool identity and rows, validation, comments, and contract fixtures. Spawn,
 resume, and isolated Skills all receive the configured generation default;
 there is no per-call override or descendant inheritance rule.
 
-**FR-04: Warning, hard stop, and parent settlement.** The 80% notice asks the
-Agent not to imply completion merely because the limit is near and, if work
-remains, to preserve the same handoff facts early: concrete progress, verified
-evidence, unknown or unchecked work, and the next action. Hard exhaustion uses
-the existing typed kernel interruption. Transcript, Items, partial text, tool
-results, worktree, and settled usage persist before delivery. An already
-accepted terminal answer keeps the existing last-call overshoot rule.
+**FR-04: Warning, hard stop, terminal routing, and parent settlement.** The 80%
+notice asks the Agent not to imply completion merely because the limit is near
+and, if work remains, to preserve the same handoff facts early: concrete
+progress, verified evidence, unknown or unchecked work, and the next action.
+Hard exhaustion uses the existing typed kernel interruption. Transcript, Items,
+partial text, tool results, worktree, and settled usage persist before delivery.
+An already accepted terminal answer keeps the existing last-call overshoot
+rule.
 
 Hard exhaustion never starts another call in the stopped child. It does not,
 however, suppress the canonical provider continuation through which a delegated
-parent consumes background child notifications. Only two pre-epilogue outcomes
-are eligible for the exceptional continuation:
+parent consumes background child notifications. The actual terminal event,
+rather than its token total, persists one routing disposition before the
+generation can become idle:
+
+| Persisted pre-continuation origin | Routing disposition |
+|---|---|
+| ordinary `finished + none` whose last accepted call did not overshoot | `ordinary` - keep the generation cutoff open and preserve canonical notification delivery |
+| `budgetInterrupted` | `exhaustedSettlement` - close through the bounded exceptional path below |
+| `normalOvershoot` | `exhaustedSettlement` - close through the bounded exceptional path below |
+| provider/context/non-restart host failure, Renderer Stop, `task_stop`, or host restart | `closeWithoutProvider` - close and carry notifications forward without another provider call, regardless of usage |
+
+The two `exhaustedSettlement` origins are:
 
 - `budgetInterrupted`: the kernel hard-interrupted the parent between provider
   rounds because its breaker was exhausted; and
@@ -225,23 +236,23 @@ are eligible for the exceptional continuation:
   crossed its breaker on that last call, and remained reserved only because
   direct background children were outstanding.
 
-Persist that origin from the actual pre-epilogue Turn. Do not infer it later
-from `usage >= cap`. A provider failure, user/model stop, or host-restart
-interruption does not become eligible merely because usage also crossed the
-breaker. Before publishing either an eligible or noneligible stopped generation
-as idle, persist the generation-closing latch defined below. Once its descendants
-settle, a noneligible generation closes with its existing terminal fact and
-reclassifies all unconsumed direct-child notifications as carry-forward in the
-cutoff transaction. It neither deadlocks nor starts provider work that would
-erase the stop boundary.
+Persist the origin and routing disposition from the actual pre-continuation
+Turn. Do not infer either later from `usage >= cap`. A provider failure,
+user/model stop, or host-restart interruption always chooses
+`closeWithoutProvider`, including below the breaker and whether its owning
+request remains open or was user-closed. Once descendants settle, that route
+closes with the existing terminal fact and reclassifies all unconsumed direct-
+child notifications as carry-forward in the cutoff transaction. It neither
+deadlocks nor starts provider work that would erase the stop boundary.
 
-An eligible generation settles as follows:
+A generation routed to `exhaustedSettlement` settles as follows:
 
 1. Wait until every direct background child is terminal and its notification is
    durable, preserving the existing descendant-before-parent ordering.
 2. Build a candidate bounded envelope from that immutable terminal snapshot.
    Under the parent-generation gate, recheck the full descendant and notification
-   set. A changed snapshot releases the gate and restarts this step; a stable one
+   set. A changed snapshot releases the gate and restarts this step. A stable
+   empty snapshot closes without an extra Turn; a stable nonempty snapshot
    closes the cutoff and prepares one batch in `goals.sqlite` with its origin,
    reserved Turn ID, and complete ordered `{agentId, generation, turnId}` member
    set.
@@ -347,19 +358,20 @@ Final status comes from the persisted origin plus the actual epilogue outcome:
 |---|---|---|
 | `budgetInterrupted` | assistant round finishes | `interrupted + budget` |
 | `normalOvershoot` | assistant round finishes | `finished + none` |
-| either eligible origin | provider, context, or non-restart host failure | `failed + none`, with the typed epilogue error |
-| either eligible origin | Renderer Stop | `interrupted + user` |
-| either eligible origin | `task_stop` | `killed + model` |
-| either eligible origin | restart after provider attempt may have begun | `interrupted + hostRestart` |
+| either settlement origin | provider, context, or non-restart host failure | `failed + none`, with the typed epilogue error |
+| either settlement origin | Renderer Stop | `interrupted + user` |
+| either settlement origin | `task_stop` | `killed + model` |
+| either settlement origin | restart after provider attempt may have begun | `interrupted + hostRestart` |
 
 Partial epilogue output and settlement coverage survive every row. A successful
 epilogue preserves the pre-epilogue execution meaning; a failed or explicitly
 stopped epilogue reports what actually ended the generation. Crossing the cap
 alone never rewrites a normal answer into a budget interruption.
 
-**Generation-closing cutoff.** Every eligible and noneligible exhausted parent
-uses one `open -> closing -> closed` generation record. The actual pre-epilogue
-terminal event writes `closing` before the idle hook can claim ordinary delivery;
+**Generation-closing cutoff.** Every delegated generation routed to
+`exhaustedSettlement` or `closeWithoutProvider` uses one `open -> closing ->
+closed` generation record. The actual pre-continuation terminal event persists
+that route and writes `closing` before the idle hook can claim ordinary delivery;
 startup resumes that closing work without provider I/O. The closing pipeline
 waits for descendants outside the lock, then takes one parent-generation gate
 shared by direct-child generation admission, terminal-notification commit,
@@ -372,20 +384,21 @@ At the cutoff linearization point, recheck that no direct child generation is
 live, prepared, or in terminal settlement and that no pre-cutoff notification is
 already delivering. One `goals.sqlite` transaction then records `closed` and:
 
-- for an eligible origin, freezes every pending pre-cutoff row into the prepared
-  epilogue batch; or
-- for a noneligible origin, leaves no Turn to run and atomically reclassifies
+- for a nonempty `exhaustedSettlement` origin, freezes every pending pre-cutoff
+  row into the prepared epilogue batch;
+- for an empty `exhaustedSettlement` origin, leaves no Turn to run; or
+- for `closeWithoutProvider`, leaves no Turn to run and atomically reclassifies
   every pending pre-cutoff row as carry-forward with
   `eligibleAfterGeneration = G`.
 
-An explicit parent admission that wins the gate before an eligible epilogue
-prepare uses the same closing transaction with an `explicitAdmission`
+An explicit parent admission that wins the gate before either closing route
+commits uses the same closing transaction with an `explicitAdmission`
 disposition: all pending pre-cutoff rows first become carry-forward eligible
 after `G`, and only the residual-capacity subset is claimed into prepared
-generation `G+1`. Rows that do not fit remain pending; the generation rollback
+generation `G+1`. Rows that do not fit remain pending; generation rollback
 restores the cutoff to `closing` and every row to its pre-prepare classification,
-so the eligible epilogue may compete again. Only a rollout commit makes the
-`explicitAdmission` cutoff and carry-forward classification final.
+so the persisted closing route may compete again. Only a rollout commit makes
+the `explicitAdmission` cutoff and carry-forward classification final.
 
 If direct-child resume linearizes first, its newly prepared generation makes the
 cutoff recheck fail and the closing pipeline waits for that generation's durable
@@ -496,19 +509,31 @@ remains in the canonical Turn for audit.
 
 The same logical assistant round then retries exactly the stable prompt, tools,
 explicit input, evidence, attachments, and response reserve that the no-backlog
-generation would have sent. It adds no compaction or replacement Turn. If the
-durable detach write itself fails, fail closed as an independent persistence
-error; if any output/tool admission already occurred, no sidecar-free retry is
-allowed and the actual provider failure settles normally with the existing links
+generation would have sent. The asynchronous detach callback returns only its
+durable result and attempt identity; it does not construct the retry source.
+After that await, the retry loop synchronously rechecks that the same Turn and
+attempt remain active, `settled` is false, and the Turn signal is not aborted.
+The successful check and retry-source construction/invocation have no intervening
+await, so Stop cannot linearize between them. If Renderer Stop, `task_stop`, or
+host interruption wins, the batch remains detached, every member stays pending,
+the authoritative stop provenance settles the Turn, and no base request starts.
+
+The fallback adds no compaction or replacement Turn. If the durable detach write
+fails while the Turn remains active, fail closed as an independent persistence
+error; if Stop already won, issue no retry and preserve its terminal provenance.
+If any output/tool admission already occurred, no sidecar-free retry is allowed
+and the actual provider failure settles normally with the existing links
 authoritative. If the base-only retry also overflows, it enters the unchanged
 ordinary overflow path with the full canonical compaction retry still available.
 This fallback protects explicit work from estimator error without claiming that
 provider tokenization is locally exact.
 
-Non-exhausted delegated parents and root Threads keep the ordinary notification
-path. The unified cutoff applies only when an exhausted delegated generation has
-already reached its pre-epilogue terminal boundary: eligible origins receive the
-one bounded continuation, while noneligible origins close without provider work.
+An ordinary `finished + none` delegated generation whose terminal event chose
+`ordinary`, plus root Threads outside this delegated-generation contract, keeps
+the existing notification path. `exhaustedSettlement` receives at most one
+bounded continuation; `closeWithoutProvider` closes without provider work at any
+usage level. Crossing the breaker is neither necessary nor sufficient for that
+non-provider route.
 
 ### Retirement of tree conservation
 
@@ -555,24 +580,24 @@ at greater total cost.
 
 ### Persistence, recovery, and delivery
 
-**FR-05:** Persist the frozen cap, settled usage, warning latch, pre-epilogue
-origin, `open | closing | closed` notification state, exhausted-settlement mode,
-prepared admission and previous-generation snapshot, fixed batch identity and
-digest, immutable member manifest, batch link state (`prepared | linked |
-detachedForOverflow | admissionFailed`), member coverage,
-child-generation carry-forward class, `eligibleAfterGeneration`, provider-
-attempt marker, and continuation identity beside the execution generation.
-Carry that state through initial admission, explicit resume, rollback, each Turn
-settlement, terminal settlement, and startup recovery with compare-and-set
-guards. An older terminal pipeline cannot debit, rebind, or overwrite a resumed
-generation.
+**FR-05:** Persist the frozen cap, settled usage, warning latch, pre-continuation
+origin, `ordinary | exhaustedSettlement | closeWithoutProvider` terminal routing,
+`open | closing | closed` notification state, exhausted-settlement mode, prepared
+admission and previous-generation snapshot, fixed batch identity and digest,
+immutable member manifest, batch link state (`prepared | linked |
+detachedForOverflow | admissionFailed`), member coverage, child-generation
+carry-forward class, `eligibleAfterGeneration`, provider-attempt marker, and
+continuation identity beside the execution generation. Carry that state through
+initial admission, explicit resume, rollback, each Turn settlement, terminal
+settlement, and startup recovery with compare-and-set guards. An older terminal
+pipeline cannot debit, rebind, or overwrite a resumed generation.
 
-Recovery treats rollout `turn/started` as the only cross-store commit fact and
-runs prepared-admission reconciliation before generic crashed-Turn settlement,
-notification delivery, or child terminal replay. The read projection may be
-rebuilt after that decision but cannot cause a generation rollback or finalize a
-batch by itself. Batch detachment after recognized pre-output overflow is a
-durable ledger transition, so restart cannot reinsert the omitted sidecar or
+Recovery treats rollout `turn/started` as the only cross-store admission commit
+fact and runs prepared-admission reconciliation before generic crashed-Turn
+settlement, notification delivery, or child terminal replay. The read projection
+may be rebuilt after that decision but cannot cause a generation rollback or
+finalize a batch by itself. Batch detachment after recognized pre-output overflow
+is a durable ledger transition, so restart cannot reinsert the omitted sidecar or
 lose the rows returned to pending.
 
 Usage becomes durable at ordinary or failure Turn settlement, as it does today.
@@ -581,8 +606,37 @@ startup preserves the last settled value and marks the crashed Turn
 `interrupted + hostRestart`, but does not reconstruct provider usage or add a
 per-call journal. The next explicit generation still receives a fresh breaker.
 
-Extend `SubagentExecutionProjection` with the typed terminal error, exact parent
-`deliveryTurnId`, and bounded settlement-coverage summary, including its origin.
+**Retry-stable delivery identity.** When an ordinary root notification first
+commits into Turn `T`, the Agent ledger stores `deliveryTurnId = T` as the
+immutable delivery root and never rebinds that row. Each canonical rollout
+`history/retry` already contains exactly one omitted Turn ID and one replacement
+`turn/started`; treat it as the durable alias edge `T -> T2`. The rollout append
+is the only alias commit point, so a crash before it still resolves `T`, while a
+crash after it resolves `T2` without a cross-store write. A later retry follows
+the same rule transitively (`T -> T2 -> T3`).
+
+Live projection and cold-reopen rebuild construct the same per-Thread alias map
+from canonical rollout events before joining Agent delivery rows. The ledger's
+root ID stays host-only; `SubagentExecutionProjection.deliveryTurnId` is the
+current alias-resolved canonical Turn ID, typed as `TurnId | null`. A cycle,
+duplicate successor, or later non-retry rollback degrades this inspection-only
+field to `null` and leaves the report unanchored; it never falls back to ordinal
+matching or fails a user Turn. Malformed rollout data still fails closed at its
+codec boundary. #567 permits manual Retry only for root user Threads, and
+`exhaustedSettlement` remains ineligible, so this rule covers the only retryable
+notification-delivery surface without changing notification ownership.
+
+After a live `history/retry` append commits, retry completion invalidates and
+republishes each affected execution projection whose immutable delivery root
+resolves through the omitted Turn. The renderer may briefly show no report while
+it replaces `T` with `T2`, but it never attaches that report to a different Turn
+or waits for an unrelated Agent event. A failed transient publication degrades;
+the next registry read derives the alias from rollout, and cold reopen uses the
+same path.
+
+Extend `SubagentExecutionProjection` with the typed terminal error, resolved
+parent `deliveryTurnId`, and bounded settlement-coverage summary, including its
+origin.
 The new error projection carries its bounded code plus a UTF-8-safe message
 preview capped at 4,096 bytes and the exact omitted-byte count. Every other field
 added by this plan is a bounded enum, validated ID, safe integer, or aggregate
@@ -606,13 +660,14 @@ delivery route for open, ordinary rows and may start the direct parent's
 notification Turn. They must take the parent-generation gate and skip a closing
 or closed generation's carry-forward rows. Their provider work lets the parent
 judge already-recorded child output; it never rewrites the child output or
-resumes the child. Exhausted delegated parents use FR-04's single bounded
-settlement continuation. When that continuation did not receive every full
-member output, its foreground result or next parent notification and Agent
-detail show the host-recorded included/excerpted/omitted counts and whether
-provider I/O began. Carry-forward rows deferred for timing, capacity, or
-pre-output overflow show as a separate pending count until claimed; model prose
-cannot hide either gap.
+resumes the child. Delegated generations routed to `exhaustedSettlement` use
+FR-04's single bounded settlement continuation; those routed to
+`closeWithoutProvider` never enter this delivery path. When the bounded
+continuation did not receive every full member output, its foreground result or
+next parent notification and Agent detail show the host-recorded included/
+excerpted/omitted counts and whether provider I/O began. Carry-forward rows
+deferred for timing, capacity, or pre-output overflow show as a separate pending
+count until claimed; model prose cannot hide either gap.
 
 `subagentPresentation` uses the single execution axis plus provenance. A normal
 run says `Finished`, not `Complete`; a budget stop may say `Interrupted - Budget
@@ -638,11 +693,14 @@ semantics rather than a hidden reuse of the new-Agent counter.
   `subagentExecutionProjection` - generation budget, ownership split, durable
   fixed-identity batch manifest, durable-after-admission carry-forward,
   bounded envelope, resume, recovery, and delivery.
-- `ThreadService`, `PiTurnExecutor`, `ContextBudgetPlanner`, and native kernel
-  and provider-retry fixtures - pre-mutation steering rejection,
-  base-request-first capacity planning, sidecar-aware overflow recovery,
-  ordinary generation enforcement, and the tool-free single-round settlement
-  mode.
+- `ThreadService`, `PiTurnExecutor`, `ContextBudgetPlanner`, kernel `retryPolicy`,
+  and provider-retry fixtures - pre-mutation steering rejection, base-request-
+  first capacity planning, sidecar-aware overflow recovery with a post-await Stop
+  gate, ordinary generation enforcement, and the tool-free single-round
+  settlement mode.
+- `RolloutStore`, `ThreadHistoryProjectionStore`, and `ThreadCatalogOps` - derive
+  the transitive, retry-stable delivery alias from canonical `history/retry`
+  markers and publish its live replacement without rebinding the Agent ledger.
 - `ContextProjector` - omit a durably detached carry-forward sidecar from every
   later provider projection of that generation without deleting its canonical
   audit reference.
@@ -686,6 +744,10 @@ board item, retired-premise sweep, and changelog at merge.
   replay a logical round after an ambiguous crash. This can leave a weaker
   parent handoff, but preserves user-stop authority, stable delivery identity,
   and a finite overshoot. Fresh explicit input remains the recovery path.
+- Terminal routing follows the actual stop origin, not budget usage. Abnormal
+  provider/user/model/restart stops therefore defer child evidence to a fresh
+  explicit generation even below the breaker; this sacrifices an automatic
+  parent judgment round in order to preserve the stop boundary.
 - Child generations that finish after a parent cutoff can accumulate durable
   carry-forward notifications. A row becomes eligible only after its own durable
   commit and waits for the first later explicit parent generation with marker
@@ -699,11 +761,16 @@ board item, retired-premise sweep, and changelog at merge.
   transaction. Durable prepare records, rollout `turn/started` as commit point,
   provider-launch gating, and startup reconciliation replace crash atomicity.
   A mismatch fails admission rather than guessing which store won.
+- An ordinary root notification Turn may be replaced by manual Retry. Its
+  immutable ledger delivery root resolves through the rollout's transitive
+  `history/retry` alias; ambiguous or non-retry-removed targets render unanchored
+  rather than reattaching the child report by position.
 - A provider can reject an estimated-to-fit fresh request before output. The
   sidecar-detach fallback may spend one extra rejected provider attempt, but the
   retry is the unchanged base request, every row returns to pending, #567's
   canonical compaction allowance remains intact, and no second logical assistant
-  round or replacement Turn is created.
+  round or replacement Turn is created. Stop during asynchronous detach wins the
+  final active/signal gate and prevents that extra attempt.
 - The coordination manifest is unbounded in member count but contains only fixed
   identities and scalar facts and never crosses IPC. Aggregate coverage and
   per-generation dispositions cross as bounded projection fields; full text
@@ -757,21 +824,23 @@ board item, retired-premise sweep, and changelog at merge.
 - **AC-05:** The model and host collaboration seams contain no
   `max_total_tokens`, `maxTotalTokens`, `childTokenCap`, member `tokenCap`, or
   capped-child pool; `subagentTokenBudget` is the only breaker input.
-- **AC-06:** An eligible exhausted delegated parent claims one immutable batch
-  and admits one `exhaustedSettlement` Turn with no tools, steering, warning
-  injection, descendant work, or manual Retry. It makes at most one logical
-  assistant round under the bounded automatic provider-attempt policy, records
-  overshoot usage, and reaches terminal on every outcome without rebinding any
-  member's active `deliveryTurnId`. Its unified notification cutoff prevents a
-  later child generation from admitting a second epilogue.
+- **AC-06:** A delegated parent routed to `exhaustedSettlement` claims at most
+  one immutable nonempty batch and admits at most one `exhaustedSettlement` Turn
+  with no tools, steering, warning injection, descendant work, or manual Retry.
+  It makes at most one logical assistant round under the bounded automatic
+  provider-attempt policy, records overshoot usage, and reaches terminal on every
+  outcome without rebinding any member's active `deliveryTurnId`. Its unified
+  notification cutoff prevents a later child generation from admitting a second
+  epilogue; an empty cutoff closes without an extra Turn.
 - **AC-07:** Crash recovery preserves terminal status, provenance, typed error,
-  neutral output, exact delivery Turn, pre-epilogue origin, member coverage,
-  notification cutoff/closing state, `eligibleAfterGeneration`, prepared batch
-  identity/digest, provider-attempt fact, and usage committed before the crash.
-  A prepared epilogue with no rollout commit returns its rows to pending while
-  retaining the closed cutoff; settlement recovery may prepare again without
-  prior provider I/O. Post-attempt recovery cannot replay it. Tests retain the
-  ordinary in-flight usage-loss residual.
+  neutral output, immutable delivery root and its retry-alias-resolved canonical
+  Turn, pre-continuation origin/routing, member coverage, notification cutoff/
+  closing state, `eligibleAfterGeneration`, prepared batch identity/digest,
+  provider-attempt fact, and usage committed before the crash. A prepared
+  epilogue with no rollout commit returns its rows to pending while retaining the
+  closed cutoff; settlement recovery may prepare again without prior provider
+  I/O. Post-attempt recovery cannot replay it. Tests retain the ordinary in-
+  flight usage-loss residual.
 - **AC-08:** No stop, warning, output, delivery retry, idle hook, rejected
   steering, or Turn Retry resumes a stopped child or manufactures its handoff.
   Renderer and Agent input racing an active epilogue mutates no target state;
@@ -824,12 +893,14 @@ board item, retired-premise sweep, and changelog at merge.
   when one source member is oversized.
 - **AC-17:** Cutoff race fixtures put a direct-child resume between the terminal
   observation and cutoff. Resume-first makes the parent recheck fail and wait;
-  cutoff-first admits only a carry-forward child generation. For provider
-  failure, user stop, model stop, and host restart whose settled usage is also at
-  or above the breaker, fixtures place a notification both before and after
-  cutoff and prove that the parent closes with its original terminal fact,
-  ordinary delivery starts no provider work, and every row stays visible and
-  eligible for a later explicit generation.
+  cutoff-first admits only a carry-forward child generation. A routing matrix
+  covers provider/context/non-restart host failure, Renderer Stop, `task_stop`,
+  and host restart both below and at/above the breaker, with the owning request
+  open and user-closed. Each case places a notification before and after cutoff
+  and proves that `closeWithoutProvider` preserves the original terminal fact,
+  starts no ordinary provider delivery, and keeps every row visible and eligible
+  for a later explicit generation. The below-cap `finished + none` control keeps
+  `ordinary` delivery instead.
 - **AC-18:** Cross-store admission fixtures crash an explicit carry-forward
   generation after ledger prepare but before rollout append, after the exact
   `turn/started` append but before ledger finalization, and after ledger
@@ -842,6 +913,20 @@ board item, retired-premise sweep, and changelog at merge.
   starts no provider work. After every recovery, each notification is either
   pending with its pre-prepare eligibility or linked once to that durable initial
   Turn, and history projection rebuild cannot change the decision.
+- **AC-19:** An ordinary root notification delivered to Turn `T` stores one
+  immutable delivery root. A crash before the `history/retry` append still
+  resolves `T`; a crash after the append but before projection/hook completion
+  rebuilds the alias and resolves replacement `T2` without a ledger update. Cold
+  reopen and the live retry response attach the child report exactly to `T2`
+  without waiting for another Agent event, and a second retry resolves
+  transitively to `T3`. An ambiguous alias graph or non-retry-removed target
+  projects no anchor and never falls back to the old count-from-the-end join.
+- **AC-20:** A provider fixture pauses the sidecar-detach transaction after the
+  initial overflow, stops the Turn through each of Renderer Stop, `task_stop`,
+  and host interruption, then releases detach. The batch stays detached, every
+  row is pending with unchanged eligibility, terminal provenance reflects the
+  winning stop, and total provider attempts remain exactly one: no base retry
+  source is constructed after the abort.
 
 ## Build Checklist
 
@@ -852,11 +937,12 @@ board item, retired-premise sweep, and changelog at merge.
 - [ ] Delete the unreachable per-child cap seam and make the configured setting
   the sole breaker authority at every generation admission.
 - [ ] Preserve ordinary parent notification continuation; add the idempotent
-  batched, bounded, tool-free single-round settlement path for an eligible
-  exhausted parent, including rejection of steering and manual Retry.
-- [ ] Add one persisted generation-closing cutoff for eligible and noneligible
-  origins; serialize child resume, notification commit, ordinary delivery, and
-  explicit parent admission through the parent-generation gate.
+  batched, bounded, tool-free single-round `exhaustedSettlement` path, including
+  rejection of steering and manual Retry.
+- [ ] Persist terminal-origin routing; keep below-cap ordinary finish open, and
+  close every abnormal provider/user/model/restart origin without provider work
+  at any usage. Serialize child resume, notification commit, ordinary delivery,
+  and explicit parent admission through the parent-generation gate.
 - [ ] Preserve output on every stop path; persist typed error and delivery Turn
   plus batch origin, coverage, and attempt identity across resume/rollback/
   restart races, while retaining hard-crash in-flight usage loss explicitly.
@@ -866,9 +952,13 @@ board item, retired-premise sweep, and changelog at merge.
 - [ ] Extend prepared-generation admission across the sidecar/batch identity,
   use rollout `turn/started` as commit point, and pin rollback/finalization for
   every cross-store crash window.
+- [ ] Keep the original notification delivery Turn immutable in the ledger and
+  derive its transitive replacement from rollout `history/retry` aliases for
+  live projection and cold reopen.
 - [ ] Protect the complete base request before allocating residual sidecar
   capacity; on recognized pre-output overflow, durably detach the sidecar and
-  retry the unchanged base while returning its rows to pending.
+  retry the unchanged base while returning its rows to pending, guarded by a
+  post-detach active/signal check that lets Stop suppress the retry.
 - [ ] Add the canonical final-handoff instruction to every delegated Thread and
   pin that it remains model-authored output rather than settlement state.
 - [ ] Rewrite the named spec sections and sweep active plans/board premises at
