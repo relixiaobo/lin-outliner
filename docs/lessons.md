@@ -1621,3 +1621,22 @@ commit coverage before returning. A layout effect instead prepares state in one
 pass and performs the dependent DOM write from a later layout pass that React
 still completes before paint. Share the pure calculation, not an impossible
 commit mechanism, and place acceptance samples at each phase's real guarantee.
+
+## Async recovery must reacquire execution authority
+
+The subagent task-outcome plan (#569) first treated a successful durable sidecar
+detach as enough authority to construct the base-only provider retry. Stop can
+settle the Turn while that detach is awaiting storage; the callback then returns
+into an execution attempt that no longer owns the right to start provider work.
+
+**A completed persistence step proves data state, not that its caller still owns
+the runtime action.** An asynchronous recovery callback should return durable
+state and stable operation identity only. After the await, synchronously recheck
+the same Turn and attempt, unsettled state, and `AbortSignal` before constructing
+or invoking the next source. If cancellation won, keep the durable recovery but
+suppress the downstream action and preserve the winning terminal provenance.
+
+Test the authority boundary by pausing the durable callback, winning every Stop
+path, releasing the callback, and asserting both the final provenance and the
+total external-attempt count. A normal recovery fixture cannot expose the stale-
+continuation race.

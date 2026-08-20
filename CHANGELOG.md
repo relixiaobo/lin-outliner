@@ -284,6 +284,18 @@ Entries reference the pull request that introduced them.
 
 ### Internal
 
+- **Subagent task-outcome contract plan (PR #569, codex-3, plan-only)** — ratifies
+  execution facts instead of task-completion claims: a normal delegated run is
+  `finished`, one configured breaker belongs to each execution generation, and
+  useful output survives every terminal path with its actual stop provenance.
+  Nested parents receive one bounded, omission-aware settlement path; abnormal
+  terminal origins close without hidden provider work; carry-forward evidence
+  protects explicit input and uses prepared cross-store admission, immutable
+  delivery roots, rollout-owned Retry aliases, and a Stop-aware overflow detach.
+  The plan absorbs the cold-reopen error and delivery-anchor tail left by #544.
+  Six review passes closed 17 findings across liveness, capacity, crash recovery,
+  routing, Retry identity, and cancellation races. Product behavior is unchanged
+  until the implementation PR ships.
 - **Thread transcript paint-continuity plan (PR #571, cc, plan-only)** — ratifies
   one paint owner per Turn: ordinary layout for the flow cohort and the measured
   renderer virtualizer for longer transcripts. The implementation will normalize

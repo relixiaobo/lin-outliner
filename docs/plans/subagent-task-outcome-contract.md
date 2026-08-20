@@ -792,20 +792,23 @@ board item, retired-premise sweep, and changelog at merge.
 
 ## Collision Result
 
-- This branch is rebased onto `main` at `42409996`, including merged PR #567
-  (`provider-retry-state-machine`) and #570 (`agent-config-turn-path-degrades`).
-  Their Retry, typed-error, prepared-generation, `ThreadService`, and fail-soft
-  config contracts are baseline. `exhaustedSettlement` remains the explicit
-  no-manual-Retry exception to #567.
-- Open Draft PR #571 (`thread-transcript-paint-continuity`) plans changes to
+- The implementation baseline includes merged PR #567
+  (`provider-retry-state-machine`), PR #570
+  (`agent-config-turn-path-degrades`), and plan PR #571
+  (`thread-transcript-paint-continuity`). Their Retry, typed-error,
+  prepared-generation, `ThreadService`, fail-soft configuration, and transcript-
+  paint contracts are baseline. `exhaustedSettlement` remains the explicit no-
+  manual-Retry exception to #567.
+- The #571 product implementation has not started. Its future changes to
   `ThreadView.tsx`, `tests/e2e/agent-thread.spec.ts`, and
-  `docs/spec/agent-thread-rendering.md`, which this plan also names. #571 should
-  implement and land first because its renderer-only paint ownership is
+  `docs/spec/agent-thread-rendering.md` overlap files this plan also names. #571
+  implements and lands first because its renderer-only paint ownership is
   independent and smaller; this implementation then rebases and preserves that
-  baseline while changing Agent execution presentation. The overlap is a file
-  radar signal and does not serialize plan review.
+  baseline while changing Agent execution presentation.
 - `subagent-projection-error-surface` is absorbed, not parallel work.
-- The significant review queue is at its cap of two: #569 and #571.
+- After both plan-only merges, no open PR claim remains; the known #571 overlap
+  is a board-level implementation-order constraint until either build opens its
+  next claim.
 
 ## Acceptance Criteria
 

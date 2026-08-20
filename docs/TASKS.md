@@ -174,6 +174,17 @@ before any directional/security-sensitive build.
   outcome is explicitly `settled` / `abandoned` / `failed`, and the invoking
   Turn's `AbortSignal` races that wait. Design folded into
   `docs/spec/agent-tool-design.md`.
+- **subagent-task-outcome-contract** (`draft`, ratified 2026-08-20; plan PR #569,
+  codex-3; priority pending PM assignment) — record delegated execution facts
+  without claiming task completion, replace request-tree token sharing with one
+  breaker per execution generation, and make nested-parent settlement bounded,
+  durable, omission-aware, and safe across cutoff, Retry, overflow, Stop, and
+  restart races. This absorbs `subagent-projection-error-surface`: typed terminal
+  errors and retry-stable delivery anchors ship as part of the same coordinated
+  protocol change. Product implementation has not started; the #571 transcript-
+  paint implementation lands first, then this ships as one complete PR with its
+  specs, focused restart/race fixtures, and light/dark verification. Design:
+  [`subagent-task-outcome-contract`](plans/subagent-task-outcome-contract.md).
 - **agent-view-surface** (P2, `done` 2026-08-18) — both PRs shipped: mode
   awareness (#556) and view sort/filter/group/column configuration (#559), both
   codex-3. The Agent reads and writes a node's view mode and its persisted
@@ -836,16 +847,6 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   replaced the nested `SubagentRunDetail` drill. Spec updated in the same PR
   (`agent-subagent-threads`, `agent-thread-rendering`, `design-system`,
   `workspace-layout`); archived at `docs/plans/archive/subagent-interaction.md`.
-- **subagent-projection-error-surface** (P3, `draft` 2026-08-16) — two
-  legibility gaps the #544 fix rounds deliberately left, because each needs an
-  A4 protocol-surface addition: a failed Agent's `TurnError` is unreachable
-  after a cold reopen (`SubagentExecutionProjection` has no terminal-error
-  field — the chip says only `Failed`), and a delivered report card maps to
-  its child Turn by count-from-the-end, so a settled-but-undelivered Turn (a
-  private detail-composer exchange during an active parent Turn) transiently
-  shows the wrong run until the deferred delivery lands — a durable
-  delivery→Turn link closes it. Flagged at the #544 gate; small, coordinated
-  change.
 - **interaction-jank-cleanups** (P2, `draft` 2026-08-11) — scroll/menu-path
   forced layouts and identity-keyed caches that can never hit:
   `useAnchoredOverlay` (≈20 consumers) capture-scroll + unbatched rect reads +
