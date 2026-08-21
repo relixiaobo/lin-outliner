@@ -174,17 +174,17 @@ before any directional/security-sensitive build.
   outcome is explicitly `settled` / `abandoned` / `failed`, and the invoking
   Turn's `AbortSignal` races that wait. Design folded into
   `docs/spec/agent-tool-design.md`.
-- **subagent-task-outcome-contract** (`draft`, ratified 2026-08-20; plan PR #569,
-  codex-3; priority pending PM assignment) — record delegated execution facts
-  without claiming task completion, replace request-tree token sharing with one
-  breaker per execution generation, and make nested-parent settlement bounded,
-  durable, omission-aware, and safe across cutoff, Retry, overflow, Stop, and
-  restart races. This absorbs `subagent-projection-error-surface`: typed terminal
-  errors and retry-stable delivery anchors ship as part of the same coordinated
-  protocol change. Product implementation has not started; Draft PR #572 claims
-  the #571 transcript-paint implementation and lands first, then this ships as
-  one complete PR with its specs, focused restart/race fixtures, and light/dark
-  verification. Design:
+- **subagent-task-outcome-contract** (`in-progress`, ratified 2026-08-20; plan PR
+  #569, implementation Draft PR #573, codex-3; priority pending PM assignment) —
+  record delegated execution facts without claiming task completion, replace
+  request-tree token sharing with one breaker per execution generation, and make
+  nested-parent settlement bounded, durable, omission-aware, and safe across
+  cutoff, Retry, overflow, Stop, and restart races. This absorbs
+  `subagent-projection-error-surface`: typed terminal errors and retry-stable
+  delivery anchors ship as part of the same coordinated protocol change. The
+  transcript-paint baseline (#572) has landed first; #573 is the active claim and
+  must preserve that renderer baseline while changing Agent execution
+  presentation. Design:
   [`subagent-task-outcome-contract`](plans/subagent-task-outcome-contract.md).
 - **agent-view-surface** (P2, `done` 2026-08-18) — both PRs shipped: mode
   awareness (#556) and view sort/filter/group/column configuration (#559), both
@@ -732,15 +732,6 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ### Performance
 
-- **thread-transcript-paint-continuity** (`draft`, ratified 2026-08-20; plan PR
-  #571, implementation Draft PR #572, cc; priority pending PM assignment) —
-  prevent empty Agent transcript frames by giving each Turn one paint owner,
-  normalizing virtual-window math to the Turn container, and repairing uncovered
-  ranges through separate event/rAF and layout-effect commit contracts. #572 is
-  the active claim, but product code has not started; ship it as one complete PR
-  with the plan's boundary cohorts, first-frame coverage judges, performance
-  traces, and light/dark visual check.
-  Design: [`thread-transcript-paint-continuity`](plans/thread-transcript-paint-continuity.md).
 - **performance-optimization** (P0–P3 program, PR #116) — prioritized catalog from a three-way
   perf audit (`docs/plans/performance-optimization.md`). **P0 (#117) · P1 PR-A (#119) + PR-B (#121)
   · P2 (#275) · P3 hot-path cleanup #380 + core sparse transactions #413 + document read model #414 + rich-text patch runtime #415 + Agent node_create read-model routing #416 + definition create routing #417 + renderer formatting cache #418 + diagnostic log coalescing #419 + renderer delta reducer surface #420 + search query complexity budget #421 + panel date navigation index #422 + system reference values overlay #424 + field-name reuse candidate index #426 + tag selector active-tag index #427 shipped** — `ProjectionUpdate` delta over the core↔renderer seam, reverse-edge
@@ -1125,6 +1116,17 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **thread-transcript-paint-continuity** (cc, PR #572, merged 2026-08-21 —
+  [plan](plans/archive/thread-transcript-paint-continuity.md)) — long Agent
+  transcripts now keep a painted Turn through flow layout, virtual jumps, Thread
+  restore, send anchoring, long-message disclosure, virtual-height compensation,
+  and Jump to latest. Turns have one paint owner: eight or fewer use normal
+  layout, nine or more use the measured virtual window, and virtual coverage is
+  repaired through phase-specific scroll transactions. Gate: `/code-review`
+  found one Medium — interactive transcript controls were being treated as
+  scroll intent and canceled send anchors; `277f9eb7` fixed the pointerdown
+  classifier and covered the real click path. Merge-state focused E2E and all CI
+  samples plus baseline subtraction passed.
 - **agent-config-turn-path-degrades** (cc-2, PR #570, merged 2026-08-20 —
   fast-track, no plan file) — malformed user or project Agent configuration now
   degrades the Turn-time persona, Role snapshot, and identity roster to

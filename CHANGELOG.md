@@ -99,6 +99,31 @@ Entries reference the pull request that introduced them.
 
 ### Fixed
 
+- **Long Thread transcripts now stay painted through jumps, restores, and send
+  anchors (PR #572, cc)** — the transcript has one paint owner at every size:
+  eight or fewer Turns use ordinary flow layout, nine or more use the measured
+  virtual window, and no Turn delegates paint timing to `content-visibility`.
+  Virtual math now uses `.thread-transcript-turns` as the coordinate origin, so
+  a tall Goal, content padding, or the Goal-to-Turn gap cannot make the window
+  mount the wrong rows. Coverage is a pre-paint invariant rather than an overscan
+  hope: imperative scroll/event/rAF writers read the browser-clamped viewport and
+  synchronously commit an uncovered range before returning, while layout-effect
+  writers prepare coverage in one pass and write `scrollTop` from a later
+  generation-tagged layout pass that React still completes before paint. Send
+  anchoring stages its optimistic and canonical targets, waits for long-message
+  disclosure measurement, keeps ownership until two independent stable frames,
+  and no longer lets disclosure captures erase a mounted send spacer. Restore
+  and virtual-height compensation now use real visible Turn anchors instead of
+  relying on a height delta alone, and first-render long user messages start
+  clamped until measurement proves they are short. The intended perf trade is
+  explicit: distant uncovered jumps can spend one urgent coverage commit, while
+  covered incremental scrolling remains coalesced. Gate: `/code-review` found
+  one Medium — transcript control `pointerdown` was canceling send anchors before
+  the control click ran; `277f9eb7` fixed the classifier and switched the guard
+  to a real Playwright click. Verified with typecheck, `docs:check`, the full
+  renderer suite, focused Agent Thread E2E coverage, light/dark visual checks,
+  a focused merge-state E2E re-run, and five green CI samples plus baseline
+  subtraction.
 - **A broken Agent configuration no longer kills the Turn waiting on it
   (PR #570, cc-2)** — a malformed user or project `.tenon/agent.json` used to
   throw while every Turn resolved its persona and Role catalog, ending the

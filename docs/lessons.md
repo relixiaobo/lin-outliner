@@ -1640,3 +1640,19 @@ Test the authority boundary by pausing the durable callback, winning every Stop
 path, releasing the callback, and asserting both the final provenance and the
 total external-attempt count. A normal recovery fixture cannot expose the stale-
 continuation race.
+
+## Pointerdown is not scroll intent until it moves the scroller
+
+PR #572's transcript paint repair initially used transcript-level `pointerdown`
+as proof that the reader had taken scroll ownership. That caught scrollbar drag,
+but it also caught ordinary controls inside the transcript. Clicking Show more
+on a sent long message fired the parent's `pointerdown` before the button's
+`click`, cleared the send anchor spacer, and removed the very rendered range the
+disclosure anchor needed to preserve.
+
+**Do not classify an input primitive by its low-level event alone when nested
+controls share the surface.** A pointerdown on an interactive descendant is not
+scroll intent by itself; if the browser or control action really moves the
+scroller, the later scroll event can arbitrate ownership. Tests for this class
+must use real pointer/click paths, not DOM `element.click()`, because the latter
+skips the event that decides ownership.

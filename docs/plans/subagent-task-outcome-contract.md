@@ -799,16 +799,17 @@ board item, retired-premise sweep, and changelog at merge.
   prepared-generation, `ThreadService`, fail-soft configuration, and transcript-
   paint contracts are baseline. `exhaustedSettlement` remains the explicit no-
   manual-Retry exception to #567.
-- Open Draft implementation PR #572 claims #571, although its product code has
-  not started. Its intended changes to `ThreadView.tsx`,
-  `tests/e2e/agent-thread.spec.ts`, and `docs/spec/agent-thread-rendering.md`
-  overlap files this plan also names. #572 implements and lands first because its
+- PR #572 implemented and landed the #571 transcript-paint contract first. Its
   renderer-only paint ownership is independent and smaller; this implementation
-  then rebases and preserves that baseline while changing Agent execution
+  rebases on that baseline and preserves it while changing Agent execution
   presentation.
+- Draft implementation PR #573 now claims this plan. Its overlapping files must
+  treat #572's `ThreadView.tsx`, `tests/e2e/agent-thread.spec.ts`, and
+  `docs/spec/agent-thread-rendering.md` behavior as the baseline, not as a
+  parallel target to overwrite.
 - `subagent-projection-error-surface` is absorbed, not parallel work.
-- The significant review queue contains #572 only; this plan has no
-  implementation claim yet.
+- Open PR #574 is a planning claim for the Agent trajectory workspace and does
+  not overlap this plan's implementation files.
 
 ## Acceptance Criteria
 
