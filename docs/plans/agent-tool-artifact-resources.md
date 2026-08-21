@@ -10,8 +10,9 @@ resource contract before converting individual tools.
 Make non-image files produced by Agent tools durable Thread resources instead of
 unregistered scratch files.
 
-The minimum acceptable outcome is that completed tool-produced files from
-`web_fetch`, shell output capture, and managed-Skill output directories have:
+The minimum acceptable outcome is that completed, resource-admissible
+tool-produced files from `web_fetch`, shell output capture, and managed-Skill
+output directories have:
 
 - a canonical `ThreadResourceReference` owned by the tool Item that produced
   them;
@@ -106,6 +107,11 @@ explicit fake or scratch-backed sink. Production tool creation must not silently
 fall back to unmanaged `agent-web-fetch` or `agent-tool-outputs` directories for
 completed artifacts.
 
+The sink enforces the same single-resource byte ceiling as the Thread resource
+store before it reads a file into memory. A caller that hands the sink an
+oversized file receives a typed artifact-admission failure and must report that
+failure in its own envelope rather than exposing a fake durable reference.
+
 ### Tool result shape
 
 Extend `AgentToolResult` with a non-model-visible resource manifest:
@@ -157,21 +163,57 @@ Foreground shell output that exceeds the inline cap is finalized into one text
 log, then registered with `ToolArtifactSink.persistFile`. The old flat saved log
 path is not exposed as the durable artifact path after registration succeeds.
 
+Shell capture must become resource-admissible before this conversion lands. The
+implementation chooses a dedicated shell saved-output artifact cap that is no
+larger than `MAX_MANAGED_ATTACHMENT_BYTES` and enforces it at the capture
+boundary, not only at the later resource write. When a foreground command crosses
+that cap, the command returns a bounded `output_limit_exceeded` error or partial
+envelope with a warning that the full log was not admitted as a durable Thread
+resource. It may include a capped persisted log resource if the captured bytes
+fit the artifact cap, but it must not return a successful `persistedOutput` with
+neither `resourceRef` nor an explicit oversized warning.
+
 Background shell startup remains a live-process contract. While the command is
 running, the returned output path is explicitly temporary and is not recorded as
 a resource. When `task_stop` returns final output for a stopped or already
 completed task, it registers the final log and returns the same
-`persistedOutput` shape as foreground shell.
+`persistedOutput` shape as foreground shell. The same artifact cap and
+oversized-output result rule apply at stop/finalization time.
 
 #### Managed-Skill output roots
 
 Managed Skills already receive per-Turn output directories through their host
-environment. The implementation adds a bounded collector around each isolated
-managed-Skill invocation:
+environment, but environment variables are not ownership. Add a typed output-root
+seam to the managed shell environment contribution:
 
-1. snapshot the output root before invocation;
+```ts
+interface AgentShellOutputRoot {
+  id: string;
+  skillId: string;
+  path: string;
+  label: string;
+}
+
+interface AgentShellProcessEnvironment {
+  env?: NodeJS.ProcessEnv;
+  leadingToolPathSegments?: readonly string[];
+  declaredOutputRoots?: readonly AgentShellOutputRoot[];
+}
+```
+
+`ManagedSkillShellEnvironmentRegistry` merges only roots declared by active
+contributors, validates each root as an app-owned physical directory under that
+contributor's Turn-scoped scratch area, and passes the typed declarations to the
+managed-Skill invocation collector. Existing env vars such as Browser Pilot's
+output directory may continue to point the external CLI at the same directory,
+but the env var is not parsed back as authority.
+
+The implementation adds a bounded collector around each isolated managed-Skill
+invocation:
+
+1. snapshot each typed declared output root before invocation;
 2. after the invocation finishes, enumerate new or changed regular files under
-   that root;
+   those declared roots only;
 3. reject symlinks, directories, hidden control files, oversized files, and
    excess file counts;
 4. persist accepted files through the sink; and
@@ -227,9 +269,12 @@ Expected implementation files:
   `src/main/agent/context/contextDependencies` for lifecycle coverage;
 - `src/main/agent/capabilities/agentTools`, `agentWebTools`,
   `agentLocalTools`, and `agentSkillShell` for producer conversion;
+- `src/main/managedSkillShellEnvironment.ts` and `src/main/browserPilotHost.ts`
+  for typed declared output roots;
 - `tests/core/agentWebTools.test.ts`,
   `tests/core/agentLocalTools.test.ts`,
-  `tests/core/agentThreadService.test.ts`,
+  `tests/core/managedSkillShellEnvironment.test.ts`,
+  `tests/core/browserPilotHost.test.ts`, `tests/core/agentThreadService.test.ts`,
   `tests/core/agentContextComposer.test.ts`, and focused codec/resource-store
   tests; and
 - `docs/spec/agent-core.md`, `docs/spec/agent-model-runtime.md`, and
@@ -242,6 +287,12 @@ Required test coverage:
   `agent-web-fetch` storage.
 - foreground shell capped output and `task_stop` final output return
   `persistedOutput.resourceRef` plus a readable path.
+- foreground shell and `task_stop` oversized logs follow the explicit
+  `output_limit_exceeded` / partial-warning path and never claim durable output
+  without a `resourceRef`.
+- managed shell contributors expose output roots through typed
+  `declaredOutputRoots`; the collector does not discover roots by parsing env
+  vars or scanning scratch.
 - managed-Skill output-root collection admits only bounded safe regular files
   and reports skipped files without failing the invocation.
 - completed tool Item `resourceRefs` survive codec round trip, restart, fork,
