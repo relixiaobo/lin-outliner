@@ -64,8 +64,6 @@ import {
   createAgentLocalWorkspaceContext,
   resolveAgentLocalReadPath,
   type AgentLocalWorkspaceContext,
-  type AgentShellProcessEnvironment,
-  type AgentShellProcessEnvironmentContext,
   type AgentWorkspaceWriteBoundary,
 } from './agent/capabilities/agentLocalTools';
 import { AgentWorktree } from './agent/worktree/AgentWorktree';
@@ -107,10 +105,7 @@ import { ManagedSkillShellEnvironmentRegistry } from './managedSkillShellEnviron
 import { AgentImportService } from './agent/capabilities/agentImportService';
 import { AgentImportApiServer } from './agent/capabilities/agentImportApi';
 import { configureTenonImportRuntime } from './tenonImportRuntime';
-import {
-  isTenonImportCommitCommand,
-  TENON_IMPORT_CAUSATION_TOKEN_ENV,
-} from './tenonImportProtocol';
+import { createTenonImportShellEnvironmentProvider } from './tenonImportShellEnvironment';
 import { isRendererPermissionAllowed } from './rendererPermissions';
 import {
   clearUrlPreviewSessionData,
@@ -1005,32 +1000,18 @@ function parseSkillReasoningEffort(value: string): ReasoningEffort {
   throw new Error(`Unsupported isolated Skill reasoning effort: ${value}`);
 }
 
-async function shellProcessEnvironmentForTurn(
-  context: Parameters<ToolRuntime['createTools']>[0],
-  shell: AgentShellProcessEnvironmentContext,
-): Promise<AgentShellProcessEnvironment> {
-  const managed = await managedSkillShellEnvironment!.processEnvironment(context.thread.id, context.turn.id);
-  if (!shell.toolCallId || !isTenonImportCommitCommand(shell.command)) return managed;
-  const causationToken = importApiServer.issueCausationToken({
+function localWorkspaceForTurn(context: Parameters<ToolRuntime['createTools']>[0]): AgentLocalWorkspaceContext {
+  const processEnvironment = createTenonImportShellEnvironmentProvider({
     threadId: context.thread.id,
     turnId: context.turn.id,
-    itemId: shell.toolCallId,
+    baseEnvironment: () => managedSkillShellEnvironment!.processEnvironment(context.thread.id, context.turn.id),
+    issueCausationToken: (causation) => importApiServer.issueCausationToken(causation),
   });
-  return {
-    ...managed,
-    env: {
-      ...managed.env,
-      [TENON_IMPORT_CAUSATION_TOKEN_ENV]: causationToken,
-    },
-  };
-}
-
-function localWorkspaceForTurn(context: Parameters<ToolRuntime['createTools']>[0]): AgentLocalWorkspaceContext {
   return createAgentLocalWorkspaceContext(
     context.thread.cwd,
     agentScratchRoot,
     skillRuntimeForTurn(context),
-    (shell) => shellProcessEnvironmentForTurn(context, shell),
+    processEnvironment,
     agentWriteBoundaryForThread(context.thread.id),
     context.thread.id,
   );

@@ -5,12 +5,19 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import type { EffectiveThreadConfiguration } from '../../src/core/agent/configuration';
+import type { AgentMutationCausation } from '../../src/core/agent/protocol';
 import { Core } from '../../src/core/core';
 import { buildTextSearchIndex } from '../../src/core/searchEngine';
+import type { ThreadService } from '../../src/main/agent/ThreadService';
 import type { ImportPack } from '../../src/main/agent/capabilities/agentDataImportPack';
 import { AgentImportApiServer, type ImportApiDescriptor, type ImportApiResponse } from '../../src/main/agent/capabilities/agentImportApi';
 import { AgentImportService, importYieldEveryNodesForStats, resolvePackFilePath } from '../../src/main/agent/capabilities/agentImportService';
-import { createAgentLocalWorkspaceContext } from '../../src/main/agent/capabilities/agentLocalTools';
+import {
+  createAgentLocalWorkspaceContext,
+  createLocalTools,
+  type BashData,
+} from '../../src/main/agent/capabilities/agentLocalTools';
 import {
   checkedState,
   fieldReads,
@@ -18,11 +25,20 @@ import {
   normalChildIds,
 } from '../../src/main/agent/capabilities/agentNodeToolProjection';
 import type { OutlinerToolHost } from '../../src/main/agent/capabilities/agentNodeTools';
+import type { ToolEnvelope } from '../../src/main/agent/capabilities/agentToolEnvelope';
+import { ToolRuntime } from '../../src/main/agent/runtime/ToolRuntime';
+import type { TurnExecutionContext } from '../../src/main/agent/runtime/types';
 import {
   TENON_IMPORT_CAUSATION_TOKEN_ENV,
   TENON_IMPORT_CAUSATION_TOKEN_HEADER,
 } from '../../src/main/tenonImportProtocol';
-import { TENON_IMPORT_API_DESCRIPTOR_ENV } from '../../src/main/tenonImportRuntime';
+import {
+  resolveTenonImportRuntime,
+  TENON_IMPORT_API_DESCRIPTOR_ENV,
+  TENON_IMPORT_CLI_ENTRY_ENV,
+  TENON_IMPORT_CLI_RUNTIME_ENV,
+} from '../../src/main/tenonImportRuntime';
+import { createTenonImportShellEnvironmentProvider } from '../../src/main/tenonImportShellEnvironment';
 
 const execFile = promisify(execFileCallback);
 const TENON_IMPORT_TOOL = path.join(
@@ -41,6 +57,17 @@ const IMPORT_CAUSATION = {
   turnId: 'turn:import-test',
   itemId: 'item:import-test',
 } as const;
+const ROOT_CONFIGURATION = {
+  profileName: 'tenon-import-integration',
+  developerInstructions: [],
+  model: 'test-model',
+  reasoningEffort: 'medium',
+  tools: ['bash'],
+  skills: [],
+  preloadedSkills: [],
+  plugins: [],
+  mcpServers: [],
+} as const satisfies EffectiveThreadConfiguration;
 
 function hostFor(core: Core): OutlinerToolHost {
   return {
@@ -229,6 +256,35 @@ function samplePack(): ImportPack {
       }],
     }],
   };
+}
+
+function rootRuntimeService(): ThreadService {
+  return {
+    collaborationToolContributions: () => [],
+    extensionToolContributions: async () => [],
+    subagentExecution: () => null,
+    notifyToolStarted: async () => {},
+    notifyToolCompleted: async () => {},
+  } as unknown as ThreadService;
+}
+
+interface ImportCliResponse {
+  readonly ok: boolean;
+  readonly data?: Readonly<Record<string, unknown>>;
+}
+
+type AuditedBashEnvelope = ToolEnvelope<BashData> & {
+  readonly capabilityAudit?: {
+    readonly behavior?: string;
+    readonly descriptors?: ReadonlyArray<{ readonly actionKind?: string }>;
+  };
+};
+
+function cliResponse(envelope: ToolEnvelope<BashData>): ImportCliResponse {
+  if (!envelope.ok) {
+    throw new Error(`Tenon import Bash command failed: ${JSON.stringify(envelope)}`);
+  }
+  return JSON.parse(envelope.data?.stdout ?? '{}') as ImportCliResponse;
 }
 
 describe('Tenon import service', () => {
@@ -543,6 +599,111 @@ describe('Tenon import service', () => {
       }
     } finally {
       await rm(userData, { recursive: true, force: true });
+    }
+  });
+
+  test('root Agent Bash commits through the Skill CLI with Item-bound causation', async () => {
+    const userData = await mkdtemp(path.join(tmpdir(), 'tenon-root-bash-import-user-data-'));
+    const workspaceRoot = await mkdtemp(path.join(tmpdir(), 'tenon-root-bash-import-workspace-'));
+    try {
+      const packFile = await writePack(workspaceRoot, samplePack());
+      const previewFile = path.join(workspaceRoot, 'preview.md');
+      const core = Core.new();
+      const service = createImportService(core, workspaceRoot);
+      const api = new AgentImportApiServer(service, { userDataDir: userData });
+      await api.start();
+      try {
+        const cli = resolveTenonImportRuntime({
+          isPackaged: false,
+          moduleDir: path.resolve(import.meta.dir, '..', '..', 'src', 'main'),
+          resourcesPath: path.join(path.sep, 'unused'),
+          processExecPath: path.join(path.sep, 'unused', 'Tenon'),
+        });
+        const issuedCausation: AgentMutationCausation[] = [];
+        const processEnvironment = createTenonImportShellEnvironmentProvider({
+          threadId: IMPORT_CAUSATION.threadId,
+          turnId: IMPORT_CAUSATION.turnId,
+          baseEnvironment: async () => ({
+            env: {
+              [TENON_IMPORT_API_DESCRIPTOR_ENV]: api.descriptorPath,
+              [TENON_IMPORT_CLI_ENTRY_ENV]: cli.cliEntry,
+              [TENON_IMPORT_CLI_RUNTIME_ENV]: cli.cliRuntime,
+            },
+            leadingToolPathSegments: [cli.binDir],
+          }),
+          issueCausationToken: (causation) => {
+            issuedCausation.push(causation);
+            return api.issueCausationToken(causation);
+          },
+        });
+        const workspace = createAgentLocalWorkspaceContext(
+          workspaceRoot,
+          undefined,
+          undefined,
+          processEnvironment,
+        );
+        const runtime = new ToolRuntime(rootRuntimeService(), {
+          capabilityTools: () => createLocalTools({ workspace }),
+          capabilityConfig: { blocks: [] },
+        });
+        const context = {
+          thread: {
+            id: IMPORT_CAUSATION.threadId,
+            parentThreadId: null,
+            cwd: workspaceRoot,
+          },
+          turn: { id: IMPORT_CAUSATION.turnId },
+          configuration: ROOT_CONFIGURATION,
+        } as unknown as TurnExecutionContext;
+        const bash = (await runtime.createTools(context)).find((tool) => tool.name === 'bash');
+        if (!bash) throw new Error('Expected Bash in the root Agent tool catalog.');
+
+        const preview = cliResponse((await bash.execute('item:preview', {
+          command: `tenon-import preview ${JSON.stringify(packFile)} --out ${JSON.stringify(previewFile)} --json`,
+        })).details as ToolEnvelope<BashData>);
+        const previewId = preview.data?.previewId;
+        expect(preview.ok).toBe(true);
+        expect(typeof previewId).toBe('string');
+        expect(previewId as string).toStartWith('preview:');
+        expect(issuedCausation).toEqual([]);
+
+        const commitEnvelope = (await bash.execute(IMPORT_CAUSATION.itemId, {
+          command: `tenon-import commit ${JSON.stringify(packFile)} --preview-id ${JSON.stringify(previewId)} --json`,
+        })).details as AuditedBashEnvelope;
+        expect(commitEnvelope.capabilityAudit?.behavior).toBe('allow');
+        expect(commitEnvelope.capabilityAudit?.descriptors?.map((descriptor) => descriptor.actionKind))
+          .toContain('outline.edit');
+        const committed = cliResponse(commitEnvelope);
+
+        expect(committed).toMatchObject({
+          ok: true,
+          data: {
+            status: 'staged',
+            verification: { ok: true },
+          },
+        });
+        const stagingRootId = committed.data?.stagingRootId;
+        const operationId = committed.data?.operationId;
+        expect(typeof stagingRootId).toBe('string');
+        expect(typeof operationId).toBe('string');
+        expect(operationId as string).toStartWith('op:');
+        expect(issuedCausation).toEqual([IMPORT_CAUSATION]);
+        expect(stagingRoots(core)).toEqual([stagingRootId]);
+        expect(core.operationHistory({ action: 'list', origin: 'agent' }).items).toEqual([
+          expect.objectContaining({
+            operationId,
+            tool: 'tenon-import',
+            causation: IMPORT_CAUSATION,
+          }),
+        ]);
+      } finally {
+        await api.stop();
+      }
+    } finally {
+      await Promise.all([
+        rm(userData, { recursive: true, force: true }),
+        rm(workspaceRoot, { recursive: true, force: true }),
+      ]);
     }
   });
 
