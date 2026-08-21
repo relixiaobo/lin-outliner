@@ -47,9 +47,12 @@ theme-section entry below; this list is the ordering, not a second record):
   remains an uncapped background lane (trail + remaining items under **Performance**).
 - **Lane B — agent reliability**: `foreground-agent-settlement-wait` shipped
   #562 + #563, clearing the root-Turn deadlock that led the lane;
-  `responses-tool-contract-hardening` shipped #527, so
-  `agent-tool-artifact-resources` leads, then `computer-pilot-managed-skill` on
-  top of it. The next *major* agent bet is a PM direction call, not a backlog pop.
+  `responses-tool-contract-hardening` shipped #527, and the PM selected
+  `agent-trajectory-workspace` (#574 plan) as the next major agent bet:
+  replace Model Interactions with a Thread-wide Trajectory workspace. It leads
+  the lane as one implementation PR; protocol and projection foundations land
+  before renderer consumers inside that PR. `agent-tool-artifact-resources`
+  and `computer-pilot-managed-skill` follow.
 - **Lane C — product surface**: `update-check-and-prompt` shipped #514; next is the
   `file-preview` Office tail (apply its refresh note first), then the
   `agent-skills-authoring` security tail. `signed-builds-and-auto-update` stays
@@ -183,6 +186,20 @@ before any directional/security-sensitive build.
   outcome is explicitly `settled` / `abandoned` / `failed`, and the invoking
   Turn's `AbortSignal` races that wait. Design folded into
   `docs/spec/agent-tool-design.md`.
+- **[agent-trajectory-workspace](plans/agent-trajectory-workspace.md)**
+  (P1, `draft` 2026-08-21; plan PR #574, codex) — PM-selected DeepSeek Harness
+  Trajectory target for replacing the single-Turn Model Interactions inspector
+  with a Thread-wide investigation workspace: Input / Assistant / Tools
+  overview, Turn-grouped tail ledger, synchronized search/selection, paging,
+  virtualization, record-specific lazy inspector, Thread summary, and typed
+  export. Tenon keeps canonical Thread/Turn/Item authority, diagnostics
+  redaction, audited payload reads, child-Thread navigation, the Electron
+  process boundary, and design-system constraints. The PM explicitly selected
+  one complete implementation PR even though the work touches protocol/codec;
+  that PR must establish the protocol and main-owned projection before renderer
+  consumers and gate as a protocol/shared large diff. Prior overlap PRs #572 and
+  #573 are merged; the implementation branch still reruns the open-PR collision
+  check before claiming product files.
 - **agent-view-surface** (P2, `done` 2026-08-18) — both PRs shipped: mode
   awareness (#556) and view sort/filter/group/column configuration (#559), both
   codex-3. The Agent reads and writes a node's view mode and its persisted

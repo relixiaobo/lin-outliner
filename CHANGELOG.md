@@ -335,6 +335,17 @@ Entries reference the pull request that introduced them.
 
 ### Internal
 
+- **Agent trajectory workspace plan (PR #574, codex, plan-only)** — ratifies the
+  DeepSeek Harness Trajectory interaction target for Tenon: a Thread-wide
+  investigation workspace with Input / Assistant / Tools overview, Turn-grouped
+  tail ledger, synchronized search and selection, folding, zoom/pan, paging,
+  virtualization, record-specific lazy inspector, Thread summary, and typed
+  export. The plan retires the pre-release single-Turn Model Interactions route
+  rather than maintaining a compatibility path. Tenon keeps canonical
+  Thread/Turn/Item authority, audited redacted evidence reads, child-Thread
+  navigation instead of flattened descendants, the Electron process boundary,
+  and the design system. Product behavior is unchanged until the implementation
+  PR ships.
 - **Subagent task-outcome contract plan (PR #569, codex-3, plan-only)** — ratifies
   execution facts instead of task-completion claims: a normal delegated run is
   `finished`, one configured breaker belongs to each execution generation, and
