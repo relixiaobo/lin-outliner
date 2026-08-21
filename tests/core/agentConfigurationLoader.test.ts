@@ -85,7 +85,7 @@ describe('AgentConfigurationLoader', () => {
       role: { name: 'plan' },
     });
     expect(loader.resolveAgentType('general-purpose', cwd).role.developerInstructions)
-      .toContain('Complete the task fully—don\'t gold-plate, but don\'t leave it half-done.');
+      .toContain('Your final response is a concise handoff for the caller');
     expect(loader.resolveAgentType('explore', cwd).role.developerInstructions)
       .toContain('multiple parallel tool calls for grepping and reading files');
     expect(loader.resolveAgentType('plan', cwd).role.developerInstructions)

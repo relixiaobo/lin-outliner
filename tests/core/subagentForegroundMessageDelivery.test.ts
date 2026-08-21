@@ -12,6 +12,26 @@ const PARENT_ID = 'parent-thread';
 const FIRST_AGENT_ID = 'first-agent';
 const SECOND_AGENT_ID = 'second-agent';
 
+function subagentRequestLedgerStub() {
+  return {
+    readRequest: () => null,
+    readChild: () => null,
+    childrenForOriginTurn: () => [],
+    createAdmission: (input: {
+      readonly request: { readonly originTurnId: string; readonly originThreadId: string };
+      readonly child: { readonly threadId: string; readonly originTurnId: string };
+    }) => ({
+      request: { ...input.request, closedAt: null },
+      child: { ...input.child },
+    }),
+    closeRequest: () => null,
+    deleteChild: () => false,
+    deleteRequestIfEmpty: () => false,
+    clearThread: () => false,
+    clearThreadsForRecovery: () => false,
+  };
+}
+
 interface DeliverySeam {
   deliverParentMessages(
     parentThreadId: string,
@@ -301,6 +321,7 @@ describe('foreground Agent main-message delivery', () => {
           : threadId === SECOND_AGENT_ID
             ? 'second-turn'
             : null,
+        isActiveTurnFinishing: () => false,
         steerTurn: async () => { steerCalls += 1; },
         interruptTurn: async () => { interruptCalls += 1; },
       } as never,
@@ -395,6 +416,7 @@ describe('foreground Agent main-message delivery', () => {
       {
         requireActiveTurn: () => undefined,
         activeTurnId: () => 'first-turn',
+        isActiveTurnFinishing: () => false,
         steerTurn: async () => { steerCalls += 1; },
         interruptTurn: async () => { interruptCalls += 1; },
       } as never,
@@ -441,7 +463,7 @@ describe('foreground Agent main-message delivery', () => {
       const execution = originalRead(agentId);
       if (agentId !== FIRST_AGENT_ID || !execution) return execution;
       targetReads += 1;
-      return targetReads < 3
+      return targetReads < 2
         ? execution
         : { ...execution, initialAdmissionState: 'pending' };
     };
@@ -472,7 +494,7 @@ describe('foreground Agent main-message delivery', () => {
         activeTurnId: () => null,
         startPrivilegedTurn: async () => { privilegedStarts += 1; },
       } as never,
-      {} as never,
+      subagentRequestLedgerStub() as never,
       ledger,
       (() => { throw new Error('unused'); }) as never,
       (() => { throw new Error('unused'); }) as never,
@@ -500,7 +522,7 @@ describe('foreground Agent main-message delivery', () => {
       success: false,
       message: `No agent with ID '${FIRST_AGENT_ID}' is reachable.\nUse the agent ID from a background agent's spawn result.`,
     });
-    expect(targetReads).toBe(3);
+    expect(targetReads).toBe(2);
     expect(privilegedStarts).toBe(0);
     database.close();
   });
@@ -853,6 +875,7 @@ describe('foreground Agent main-message delivery', () => {
       turnId: 'replacement-turn',
       toolUseId: 'replacement-tool',
       runMode: 'foreground',
+      tokenBudget: null,
       previous: snapshot,
       updatedAt: 101,
     })).not.toBeNull();
@@ -896,7 +919,8 @@ describe('foreground Agent main-message delivery', () => {
     await fixture.seam.terminalPipelines.get(`${child.id}:1`);
 
     expect(fixture.ledger.terminalNotification(child.id, 1)).toMatchObject({
-      status: 'completed',
+      status: 'finished',
+      stopProvenance: 'none',
       state: 'delivered',
     });
     await Promise.resolve();
@@ -1255,6 +1279,7 @@ describe('foreground Agent main-message delivery', () => {
       turnId: 'second-turn',
       toolUseId: 'second-tool',
       runMode: 'background',
+      tokenBudget: null,
       previous: ledger.generationSnapshot(FIRST_AGENT_ID),
       updatedAt: 101,
     })?.generation).toBe(2);
@@ -1723,7 +1748,11 @@ describe('foreground Agent main-message delivery', () => {
       parentThreadId: PARENT_ID,
       turnId: 'first-turn',
       toolUseId: 'first-tool',
-      status: 'completed',
+      status: 'finished',
+      stopProvenance: 'none',
+      error: null,
+      tokensUsed: 0,
+      settlementCoverage: null,
       createdAt: 1,
     });
     let privilegedStarts = 0;
@@ -1787,7 +1816,11 @@ describe('foreground Agent main-message delivery', () => {
       parentThreadId: PARENT_ID,
       turnId: 'first-turn',
       toolUseId: 'first-tool',
-      status: 'completed',
+      status: 'finished',
+      stopProvenance: 'none',
+      error: null,
+      tokensUsed: 0,
+      settlementCoverage: null,
       createdAt: 1,
     });
     const childTurn = terminalTurn('first-turn');
@@ -1866,7 +1899,11 @@ describe('foreground Agent main-message delivery', () => {
         parentThreadId: PARENT_ID,
         turnId,
         toolUseId,
-        status: 'completed',
+        status: 'finished',
+        stopProvenance: 'none',
+        error: null,
+        tokensUsed: 0,
+        settlementCoverage: null,
         createdAt,
       });
     }
@@ -1935,7 +1972,11 @@ describe('foreground Agent main-message delivery', () => {
         parentThreadId: PARENT_ID,
         turnId,
         toolUseId,
-        status: 'completed',
+        status: 'finished',
+        stopProvenance: 'none',
+        error: null,
+        tokensUsed: 0,
+        settlementCoverage: null,
         createdAt,
       });
     }
@@ -2007,7 +2048,11 @@ describe('foreground Agent main-message delivery', () => {
       parentThreadId: PARENT_ID,
       turnId: 'first-turn',
       toolUseId: 'first-tool',
-      status: 'completed',
+      status: 'finished',
+      stopProvenance: 'none',
+      error: null,
+      tokensUsed: 0,
+      settlementCoverage: null,
       createdAt: 1,
     });
     const childTurn = terminalTurn('first-turn');
@@ -2067,7 +2112,11 @@ describe('foreground Agent main-message delivery', () => {
       parentThreadId: PARENT_ID,
       turnId: 'first-turn',
       toolUseId: 'first-tool',
-      status: 'completed',
+      status: 'finished',
+      stopProvenance: 'none',
+      error: null,
+      tokensUsed: 0,
+      settlementCoverage: null,
       createdAt: 2,
     });
     ledger.recordTerminal({
@@ -2076,7 +2125,11 @@ describe('foreground Agent main-message delivery', () => {
       parentThreadId: PARENT_ID,
       turnId: 'second-turn',
       toolUseId: 'second-tool',
-      status: 'completed',
+      status: 'finished',
+      stopProvenance: 'none',
+      error: null,
+      tokensUsed: 0,
+      settlementCoverage: null,
       createdAt: 1,
     });
     const previous = ledger.generationSnapshot(FIRST_AGENT_ID);
@@ -2087,6 +2140,7 @@ describe('foreground Agent main-message delivery', () => {
       turnId: 'first-turn-resumed',
       toolUseId: 'resume-tool',
       runMode: 'background',
+      tokenBudget: null,
       previous,
       updatedAt: 3,
     });
@@ -2139,6 +2193,7 @@ describe('foreground Agent main-message delivery', () => {
       runMode: 'background',
       currentTurnId: 'first-turn',
       toolUseId: 'first-tool',
+      tokenBudget: null,
       worktree: null,
       toolPolicy: {
         kind: 'general-purpose',
@@ -2195,6 +2250,7 @@ describe('foreground Agent main-message delivery', () => {
       turnId: 'second-turn',
       toolUseId: 'second-tool',
       runMode: 'background',
+      tokenBudget: null,
       previous: ledger.generationSnapshot(FIRST_AGENT_ID),
       updatedAt: 2,
     });
@@ -2209,7 +2265,11 @@ describe('foreground Agent main-message delivery', () => {
       parentThreadId: PARENT_ID,
       turnId: 'first-turn',
       toolUseId: 'first-tool',
-      status: 'completed',
+      status: 'finished',
+      stopProvenance: 'none',
+      error: null,
+      tokensUsed: 0,
+      settlementCoverage: null,
       createdAt: 3,
     })).toBe(false);
     expect(ledger.recordTerminal({
@@ -2218,7 +2278,11 @@ describe('foreground Agent main-message delivery', () => {
       parentThreadId: PARENT_ID,
       turnId: 'second-turn',
       toolUseId: 'second-tool',
-      status: 'completed',
+      status: 'finished',
+      stopProvenance: 'none',
+      error: null,
+      tokensUsed: 0,
+      settlementCoverage: null,
       createdAt: 4,
     })).toBe(true);
     expect(ledger.pendingForParent(PARENT_ID).map((notification) => notification.generation)).toEqual([2]);
@@ -2254,7 +2318,11 @@ describe('foreground Agent main-message delivery', () => {
       parentThreadId: 'missing-parent',
       turnId: 'first-turn',
       toolUseId: 'first-tool',
-      status: 'completed',
+      status: 'finished',
+      stopProvenance: 'none',
+      error: null,
+      tokensUsed: 0,
+      settlementCoverage: null,
       createdAt: 1,
     })).toBe(true);
     const previous = ledger.generationSnapshot(FIRST_AGENT_ID);
@@ -2265,6 +2333,7 @@ describe('foreground Agent main-message delivery', () => {
       turnId: 'second-turn',
       toolUseId: 'second-tool',
       runMode: 'background',
+      tokenBudget: null,
       previous,
       updatedAt: 2,
     })).not.toBeNull();
@@ -2275,7 +2344,11 @@ describe('foreground Agent main-message delivery', () => {
       parentThreadId: PARENT_ID,
       turnId: 'second-turn',
       toolUseId: 'second-tool',
-      status: 'completed',
+      status: 'finished',
+      stopProvenance: 'none',
+      error: null,
+      tokensUsed: 0,
+      settlementCoverage: null,
       createdAt: 2,
     })).toBe(true);
     ledger.enqueueParentMessage({
@@ -2307,6 +2380,7 @@ describe('foreground Agent main-message delivery', () => {
       expectedGeneration: previous.generation,
       expectedTurnId: previous.currentTurnId,
       turnId: 'missing-turn',
+      tokenBudget: null,
       previous,
       updatedAt: 2,
     });
@@ -2336,6 +2410,7 @@ describe('foreground Agent main-message delivery', () => {
       turnId: 'committed-turn',
       toolUseId: 'resume-tool',
       runMode: 'background',
+      tokenBudget: null,
       previous,
       updatedAt: 2,
     });
@@ -2426,6 +2501,7 @@ describe('foreground Agent main-message delivery', () => {
       turnId: 'second-turn',
       toolUseId: 'resume-tool',
       runMode: 'background',
+      tokenBudget: null,
       previous: stopped,
       updatedAt: 2,
     });
@@ -2456,6 +2532,7 @@ describe('foreground Agent main-message delivery', () => {
     const turnLifecycle = {
       hasActiveTurn: (threadId: string) => activeAgents.has(threadId),
       activeTurnId: (threadId: string) => threadId === PARENT_ID && parentActive ? 'parent-turn' : null,
+      isActiveTurnFinishing: () => false,
       steerTurn: async (request: { readonly clientUserMessageId?: string }) => {
         deliveredIds.push(request.clientUserMessageId ?? '');
       },
@@ -2521,6 +2598,7 @@ describe('foreground Agent main-message delivery', () => {
       turnId: 'first-turn-2',
       toolUseId: 'first-tool-2',
       runMode: 'foreground',
+      tokenBudget: null,
       previous: ledger.generationSnapshot(FIRST_AGENT_ID),
       updatedAt: 2,
     });
@@ -2578,6 +2656,7 @@ describe('foreground Agent main-message delivery', () => {
       {
         hasActiveTurn: () => false,
         activeTurnId: (threadId: string) => threadId === PARENT_ID ? 'parent-turn' : null,
+        isActiveTurnFinishing: () => false,
         steerTurn: async (request: { readonly clientUserMessageId?: string }) => {
           delivered.push(request.clientUserMessageId ?? '');
         },
@@ -2703,7 +2782,7 @@ describe('foreground Agent main-message delivery', () => {
       // Recovery may start a background parent continuation before the sweep;
       // that new Turn is never the foreground envelope's invoking Turn.
       { hasActiveTurn: () => true } as never,
-      {} as never,
+      subagentRequestLedgerStub() as never,
       ledger,
       (() => { throw new Error('unused'); }) as never,
       (() => { throw new Error('unused'); }) as never,
@@ -2834,6 +2913,7 @@ function foregroundSettlementFixture() {
       activeTurnId: (threadId: string) => (
         activeThreadIds.has(threadId) ? `${threadId}-active-turn` : null
       ),
+      isActiveTurnFinishing: () => false,
       hasActiveTurn: (threadId: string) => activeThreadIds.has(threadId),
       waitForIdle: async (threadId: string) => {
         if (!activeThreadIds.has(threadId)) return;
@@ -2845,7 +2925,7 @@ function foregroundSettlementFixture() {
       },
       interruptTurn: async (threadId: string) => { setActive(threadId, false); },
     } as never,
-    {} as never,
+    subagentRequestLedgerStub() as never,
     ledger,
     () => role,
     () => ({ canonicalType: 'general-purpose', role, kind: 'general-purpose' }),
@@ -3034,9 +3114,13 @@ function spawnAdmissionCollaboration(
     } as never,
     {
       requireActiveTurn: options.requireActiveTurn ?? (() => undefined),
+      assertSubagentRequestOpen: () => undefined,
       assertSubagentSpawnBudgetAvailable: () => null,
     } as never,
-    {} as never,
+    {
+      deleteChild: () => false,
+      deleteRequestIfEmpty: () => false,
+    } as never,
     {
       read: () => null,
       beginInitialAdmission: () => undefined,
@@ -3117,11 +3201,12 @@ function createExecution(
     agentId,
     parentThreadId,
     description: agentId,
-    agentType: 'general-purpose',
-    runMode: 'foreground',
-    currentTurnId: turnId,
-    toolUseId,
-    worktree: null,
+      agentType: 'general-purpose',
+      runMode: 'foreground',
+      currentTurnId: turnId,
+      toolUseId,
+      tokenBudget: null,
+      worktree: null,
     toolPolicy: {
       kind: 'general-purpose',
       runInBackground: false,
@@ -3151,6 +3236,7 @@ function createPendingExecution(
     runMode: 'foreground',
     currentTurnId: turnId,
     toolUseId,
+    tokenBudget: null,
     worktree: null,
     toolPolicy: {
       kind: 'general-purpose',
@@ -3182,6 +3268,7 @@ function createBackgroundExecution(
     runMode: 'background',
     currentTurnId: turnId,
     toolUseId,
+    tokenBudget: null,
     worktree,
     toolPolicy: {
       kind: 'general-purpose',
@@ -3212,7 +3299,7 @@ function recoveryCollaboration(
     {} as never,
     {} as never,
     { hasActiveTurn: () => false, activeTurnId: () => null } as never,
-    {} as never,
+    subagentRequestLedgerStub() as never,
     ledger,
     (() => { throw new Error('unused'); }) as never,
     (() => { throw new Error('unused'); }) as never,

@@ -400,7 +400,7 @@ function completedExecution(): SubagentExecutionRecord {
 function completedNotification(): SubagentPendingNotification {
   return {
     ...budgetNotification(),
-    status: 'completed',
+    status: 'finished',
   };
 }
 

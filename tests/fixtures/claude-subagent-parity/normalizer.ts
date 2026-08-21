@@ -52,7 +52,7 @@ Reach for this when the task matches an available agent type, when you have inde
 - Use agent_message with the agent's ID to continue a previously spawned agent with its context intact; a new agent call starts fresh.
 - Each agent type's model, reasoning effort, and tools come from its Tenon Role.
 - \`isolation: "worktree"\` gives the agent its own git worktree (auto-cleaned if unchanged).
-- Subagents run in the background by default; you'll be notified when one completes. Pass \`run_in_background: false\` only when your very next action depends on the result and nothing else could usefully happen while it runs — otherwise background it so the user can interject. Never fabricate or predict a pending agent's results — the notification is never something you write yourself; if the user asks before it arrives, say it's still running.`;
+- Subagents run in the background by default; you'll be notified when one finishes or stops. Pass \`run_in_background: false\` only when your very next action depends on the result and nothing else could usefully happen while it runs — otherwise background it so the user can interject. Never fabricate or predict a pending agent's results — the notification is never something you write yourself; if the user asks before it arrives, say it's still running.`;
 
 const SEND_MESSAGE_DESCRIPTION = `# SendMessage
 
@@ -122,6 +122,8 @@ const MODEL_DESCRIPTION = 'Optional model override for this agent. Takes precede
 const TENON_MODEL_DESCRIPTION = "Optional model override for this agent. Takes precedence over the Role's model. If omitted, uses the Role's model, or inherits from the parent.";
 const ISOLATION_DESCRIPTION = 'Isolation mode. "worktree" creates a temporary git worktree so the agent works on an isolated copy of the repo. "remote" launches the agent in a remote cloud environment (always runs in background; availability is gated).';
 const TENON_ISOLATION_DESCRIPTION = 'Isolation mode. "worktree" creates a temporary git worktree so the agent works on an isolated copy of the repo.';
+const RUN_IN_BACKGROUND_DESCRIPTION = "Agents run in the background by default; you will be notified when one completes. Set to false only when your very next action depends on this agent's result and nothing else could usefully happen while it runs — otherwise leave it in the background so the user can hand you other work.";
+const TENON_RUN_IN_BACKGROUND_DESCRIPTION = "Agents run in the background by default; you will be notified when one finishes or stops. Set to false only when your very next action depends on this agent's result and nothing else could usefully happen while it runs — otherwise leave it in the background so the user can hand you other work.";
 
 const DEFAULT_TOOL_CATALOG_MANIFEST: readonly NormalizerOperation[] = [
   { kind: 'project', path: [], indexes: [0, 3, 4], names: ['Agent', 'SendMessage', 'TaskStop'] },
@@ -129,6 +131,7 @@ const DEFAULT_TOOL_CATALOG_MANIFEST: readonly NormalizerOperation[] = [
   { kind: 'replace', path: [0, 'description'], from: AGENT_DESCRIPTION, to: TENON_AGENT_DESCRIPTION },
   { kind: 'replace', path: [0, 'input_schema', 'properties', 'model', 'description'], from: MODEL_DESCRIPTION, to: TENON_MODEL_DESCRIPTION },
   { kind: 'replace', path: [0, 'input_schema', 'properties', 'model', 'enum'], from: ['sonnet', 'opus', 'haiku', 'fable'], to: ['claude-sonnet-test', 'claude-opus-test'] },
+  { kind: 'replace', path: [0, 'input_schema', 'properties', 'run_in_background', 'description'], from: RUN_IN_BACKGROUND_DESCRIPTION, to: TENON_RUN_IN_BACKGROUND_DESCRIPTION },
   { kind: 'replace', path: [0, 'input_schema', 'properties', 'isolation', 'description'], from: ISOLATION_DESCRIPTION, to: TENON_ISOLATION_DESCRIPTION },
   { kind: 'replace', path: [0, 'input_schema', 'properties', 'isolation', 'enum'], from: ['worktree', 'remote'], to: ['worktree'] },
   { kind: 'replace', path: [1, 'name'], from: 'SendMessage', to: 'agent_message' },
@@ -211,6 +214,7 @@ export function normalizeOutputHelpers(raw: unknown): unknown {
       text: replaceSlots(stringAt(backgroundLaunch, ['text']), [
         ['Use SendMessage with', 'Use agent_message with'],
         ['full subagent JSONL transcript', 'full subagent transcript'],
+        ['You will be notified automatically when it completes. You know nothing about its results until that notification arrives — do not report, assume, or predict them; continue other work or respond to the user in the meantime.', 'You will be notified automatically when its run settles. You know nothing about its results until that notification arrives - do not report, assume, or predict them; continue other work or respond to the user in the meantime.'],
       ]),
       cacheControl: readPath(backgroundLaunch, ['cacheControl']),
     },
@@ -224,7 +228,12 @@ export function normalizeOutputHelpers(raw: unknown): unknown {
       cacheControl: readPath(foregroundGeneral, ['cacheControl']),
     },
     backgroundNotification: {
-      text: stringAt(backgroundNotification, ['text']),
+      text: replaceSlots(stringAt(backgroundNotification, ['text']), [
+        ['<status>completed</status>', '<status>finished</status>'],
+        ['<summary>Agent "Inspect agent contract" finished</summary>', '<summary>Agent "Inspect agent contract" run finished</summary>'],
+        ['<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>', '<note>A task-notification fires each time this agent run settles with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>'],
+        ['<result>CHILD_MARKER</result>', '<instruction>This output records where the Agent run stopped, not whether the assignment is complete. Inspect its reported work, evidence, and gaps; then use it, resume the Agent with concrete missing work, ask the user, or report the limitation.</instruction>\n<output>CHILD_MARKER</output>'],
+      ]),
     },
     foregroundSendMain: foregroundSendMain.map((entry, index) => {
       if (!isRecord(entry)) throw new Error(`Output helper fixture row ${index} must be an object`);

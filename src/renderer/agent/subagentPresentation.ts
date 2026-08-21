@@ -27,7 +27,7 @@ export type SubagentRegistryStatus =
   | 'running'
   | 'idle'
   | 'interrupted'
-  | 'completed'
+  | 'finished'
   | 'errored'
   | 'notFound';
 
@@ -230,7 +230,7 @@ export function projectSubagentConversation(
     : reuseEntryMap(previous?.byAgentId ?? null, entries);
   const deliveryByTurnId = reuseDeliveryMap(
     previous?.deliveryByTurnId ?? null,
-    deliveries(owners, input.turnsByThread, agentByCallItemId),
+    deliveries(owners, input.turnsByThread, input.executions),
   );
   const anchors = reuseAnchorMap(previous?.anchorsByTurnId ?? null, anchorsByTurnId);
   const projection = previous
@@ -337,40 +337,33 @@ function spawnAnchor(item: SubAgentActivityThreadItem): SubagentAnchor {
 function deliveries(
   owners: readonly ThreadId[],
   turnsByThread: ReadonlyMap<ThreadId, readonly Turn[]>,
-  agentByCallItemId: ReadonlyMap<ThreadItemId, ThreadId>,
+  executions: ReadonlyMap<ThreadId, SubagentExecutionProjection>,
 ): Map<TurnId, SubagentDelivery> {
-  const ordered = new Map<TurnId, { readonly agentId: ThreadId }>();
-  const deliveredByAgent = new Map<ThreadId, number>();
+  const visibleTurnIds = new Set<TurnId>();
   for (const ownerThreadId of owners) {
     for (const turn of turnsByThread.get(ownerThreadId) ?? []) {
-      const trigger = turn.provenance.trigger;
-      if (
-        trigger.kind !== 'subagent'
-        || turn.provenance.originThreadId !== ownerThreadId
-        || trigger.parentThreadId !== ownerThreadId
-      ) continue;
-      const agentId = agentByCallItemId.get(trigger.parentItemId);
-      if (agentId === undefined) continue;
-      deliveredByAgent.set(agentId, (deliveredByAgent.get(agentId) ?? 0) + 1);
-      ordered.set(turn.id, { agentId });
+      visibleTurnIds.add(turn.id);
     }
   }
-  // Counted BACKWARDS from the newest delivery, and matched against the child's
-  // settled Turns counted backwards too. Forwards, the two sequences only line
-  // up while nothing is ever missing from either — and something can be: a
-  // notification the host never materialized into a Turn because the Agent was
-  // deleted meanwhile, or a generation that ran in the foreground and reported
-  // through its tool call instead. A forward index that silently slipped by one
-  // stayed in range and showed a different run of the same Agent as the report.
   const resolved = new Map<TurnId, SubagentDelivery>();
-  const seenByAgent = new Map<ThreadId, number>();
-  for (const [turnId, { agentId }] of ordered) {
-    const index = seenByAgent.get(agentId) ?? 0;
-    seenByAgent.set(agentId, index + 1);
+  const ambiguous = new Set<TurnId>();
+  for (const execution of executions.values()) {
+    const turnId = execution.deliveryTurnId;
+    if (
+      turnId === null
+      || execution.terminalStatus === null
+      || !visibleTurnIds.has(turnId)
+    ) continue;
+    if (resolved.has(turnId)) {
+      resolved.delete(turnId);
+      ambiguous.add(turnId);
+      continue;
+    }
+    if (ambiguous.has(turnId)) continue;
     resolved.set(turnId, {
-      agentId,
-      generationIndex: index,
-      fromLatest: (deliveredByAgent.get(agentId) ?? 1) - 1 - index,
+      agentId: execution.agentId,
+      generationIndex: Math.max(0, execution.generation - 1),
+      fromLatest: 0,
     });
   }
   return resolved;
@@ -465,6 +458,16 @@ function recordlessChildren(
         stopProvenance: 'none',
         terminalStatus: null,
         notificationState: 'none',
+        terminalError: null,
+        deliveryTurnId: null,
+        deliveryClass: null,
+        eligibleAfterGeneration: null,
+        coverageDisposition: null,
+        omittedOutputBytes: 0,
+        omittedOutputTokens: 0,
+        notificationCutoff: 'open',
+        executionMode: 'ordinary',
+        settlementCoverage: null,
         worktree: null,
         createdAt: thread.createdAt,
         updatedAt: thread.updatedAt,
@@ -541,7 +544,7 @@ function liveState(
         ? 'errored'
         : currentTurn.status === 'interrupted'
           ? 'interrupted'
-          : 'completed',
+          : 'finished',
     };
   }
   if (execution.terminalStatus !== null) {
@@ -550,8 +553,8 @@ function liveState(
       error: null,
       settledAt: execution.updatedAt,
       startedAt: null,
-      status: execution.terminalStatus === 'completed'
-        ? 'completed'
+      status: execution.terminalStatus === 'finished'
+        ? 'finished'
         : execution.terminalStatus === 'failed'
           ? 'errored'
           : 'interrupted',

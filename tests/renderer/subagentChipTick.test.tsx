@@ -61,7 +61,7 @@ describe('Agent chip elapsed ticking', () => {
     const { document, root } = installDom();
     const entry: SubagentRegistryEntry = {
       ...runningEntry(Date.now() - 4_000),
-      status: 'completed',
+      status: 'finished',
       startedAt: null,
       durationMs: 192_000,
     };
@@ -75,7 +75,7 @@ describe('Agent chip elapsed ticking', () => {
       </SubagentRegistryProvider>
     ));
     const settled = document.querySelector('.thread-agent-chip-meta')?.textContent;
-    expect(settled).toBe('Completed · 3m 12s');
+    expect(settled).toBe('Finished · 3m 12s');
 
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 1_100));
@@ -139,7 +139,7 @@ describe('background work strip clock', () => {
     try {
       const settled: SubagentRegistryEntry = {
         ...runningEntry(clock - 4_000),
-        status: 'completed',
+        status: 'finished',
         settledAt: clock - 1_000,
       };
       const byAgentId = new Map<ThreadId, SubagentRegistryEntry>([[settled.agentId, settled]]);

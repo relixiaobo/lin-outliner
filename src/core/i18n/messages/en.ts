@@ -1369,7 +1369,7 @@ export const en = {
         running: 'Running',
         idle: 'Idle',
         interrupted: 'Interrupted',
-        completed: 'Completed',
+        finished: 'Finished',
         errored: 'Failed',
         notFound: 'Not found',
       },

@@ -339,7 +339,7 @@ Reach for this when the task matches an available agent type, when you have inde
 - Use agent_message with the agent's ID to continue a previously spawned agent with its context intact; a new agent call starts fresh.
 - Each agent type's model, reasoning effort, and tools come from its Tenon Role.
 - \`isolation: "worktree"\` gives the agent its own git worktree (auto-cleaned if unchanged).
-- Subagents run in the background by default; you'll be notified when one completes. Pass \`run_in_background: false\` only when your very next action depends on the result and nothing else could usefully happen while it runs — otherwise background it so the user can interject. Never fabricate or predict a pending agent's results — the notification is never something you write yourself; if the user asks before it arrives, say it's still running.`;
+- Subagents run in the background by default; you'll be notified when one finishes or stops. Pass \`run_in_background: false\` only when your very next action depends on the result and nothing else could usefully happen while it runs — otherwise background it so the user can interject. Never fabricate or predict a pending agent's results — the notification is never something you write yourself; if the user asks before it arrives, say it's still running.`;
 
 export const AGENT_MESSAGE_TOOL_DESCRIPTION = `# agent_message
 
@@ -395,7 +395,7 @@ export function agentInputSchema(modelIds: readonly string[]): ObjectJsonSchema 
         },
       }),
       run_in_background: {
-        description: "Agents run in the background by default; you will be notified when one completes. Set to false only when your very next action depends on this agent's result and nothing else could usefully happen while it runs — otherwise leave it in the background so the user can hand you other work.",
+        description: "Agents run in the background by default; you will be notified when one finishes or stops. Set to false only when your very next action depends on this agent's result and nothing else could usefully happen while it runs — otherwise leave it in the background so the user can hand you other work.",
         type: 'boolean',
       },
       isolation: {

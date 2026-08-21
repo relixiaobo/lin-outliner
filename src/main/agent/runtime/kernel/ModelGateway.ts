@@ -28,6 +28,7 @@ export interface ModelGateway {
 export interface PiModelGatewayOptions {
   streamSimple?: StreamFn;
   onProviderContext?: (context: Context) => void | Promise<void>;
+  onProviderAttempt?: () => void | Promise<void>;
   onPayload?: SimpleStreamOptions['onPayload'];
   onResponse?: (response: ProviderResponse) => void;
 }
@@ -44,12 +45,17 @@ export class PiModelGateway implements ModelGateway {
       onPayload: this.hooks.onPayload,
       onResponse: this.hooks.onResponse,
     };
+    const openStream = async (context: Context, options: SimpleStreamOptions) => {
+      if (options.signal?.aborted) throw options.signal.reason ?? new Error('Provider request aborted');
+      await this.hooks.onProviderAttempt?.();
+      return streamSimple(request.model, context, options);
+    };
     if (!hasSignedThinking(request.context)) {
-      return await streamSimple(request.model, request.context, streamOptions);
+      return await openStream(request.context, streamOptions);
     }
 
     let payloadPrepared = false;
-    const source = await streamSimple(request.model, request.context, {
+    const source = await openStream(request.context, {
       ...streamOptions,
       onPayload: async (payload, model) => {
         payloadPrepared = true;
@@ -61,8 +67,7 @@ export class PiModelGateway implements ModelGateway {
       try {
         const shouldRetry = await forwardProviderStream(source, output, () => !payloadPrepared);
         if (!shouldRetry) return;
-        const fallback = await streamSimple(
-          request.model,
+        const fallback = await openStream(
           withoutSignedThinking(request.context),
           streamOptions,
         );

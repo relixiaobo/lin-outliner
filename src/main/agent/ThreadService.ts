@@ -100,13 +100,11 @@ import { GoalStore } from './extensions/goal/GoalStore';
 import { KeyedMutex } from './Mutex';
 import {
 RolloutStore,
+type RolloutEntry,
 type ThreadHistoryRollbackMarker
 } from './persistence/RolloutStore';
 import { openSqlite } from './persistence/sqlite';
-import {
-requestPoolIdForTurn,
-SubagentRequestLedger
-} from './persistence/SubagentRequestLedger';
+import { SubagentRequestLedger } from './persistence/SubagentRequestLedger';
 import {
   type AgentStartupContextSnapshot,
   SubagentExecutionLedger,
@@ -160,6 +158,84 @@ export interface DocumentOperationRecord {
 
 /** Shared empty result, so "no drift" allocates nothing on the common path. */
 const NO_DOCUMENT_DRIFT = Object.freeze({ context: null, settle: () => undefined });
+
+interface RetryDeliveryAliasIndex {
+  readonly currentTurnIds: ReadonlySet<TurnId>;
+  readonly directAliases: ReadonlyMap<TurnId, TurnId | null>;
+  readonly nonRetryRemovedTurnIds: ReadonlySet<TurnId>;
+}
+
+function buildRetryDeliveryAliasIndex(entries: readonly RolloutEntry[]): RetryDeliveryAliasIndex {
+  const currentTurnIds = new Set<TurnId>();
+  const directAliases = new Map<TurnId, TurnId | null>();
+  const targetOwners = new Map<TurnId, TurnId | null>();
+  const nonRetryRemovedTurnIds = new Set<TurnId>();
+  for (const entry of entries) {
+    const event = entry.event;
+    if (event.type === 'turn/started') {
+      currentTurnIds.add(event.turnId);
+      continue;
+    }
+    if (event.type === 'history/retry') {
+      const source = event.omittedTurnIds[0]!;
+      const target = event.replacement.turnId;
+      currentTurnIds.delete(source);
+      currentTurnIds.add(target);
+      addRetryDeliveryAlias(directAliases, targetOwners, source, target);
+      continue;
+    }
+    if (event.type === 'history/rollback') {
+      for (const omittedTurnId of event.omittedTurnIds) {
+        currentTurnIds.delete(omittedTurnId);
+        if (!directAliases.has(omittedTurnId)) nonRetryRemovedTurnIds.add(omittedTurnId);
+      }
+    }
+  }
+  return { currentTurnIds, directAliases, nonRetryRemovedTurnIds };
+}
+
+function addRetryDeliveryAlias(
+  directAliases: Map<TurnId, TurnId | null>,
+  targetOwners: Map<TurnId, TurnId | null>,
+  source: TurnId,
+  target: TurnId,
+): void {
+  if (directAliases.has(source)) {
+    directAliases.set(source, null);
+    return;
+  }
+  const owner = targetOwners.get(target);
+  if (owner === null) {
+    directAliases.set(source, null);
+    return;
+  }
+  if (owner !== undefined && owner !== source) {
+    directAliases.set(owner, null);
+    directAliases.set(source, null);
+    targetOwners.set(target, null);
+    return;
+  }
+  targetOwners.set(target, source);
+  directAliases.set(source, target);
+}
+
+function resolveRetryDeliveryAlias(index: RetryDeliveryAliasIndex, deliveryRootId: TurnId): TurnId | null {
+  const visited = new Set<TurnId>();
+  let current = deliveryRootId;
+  while (true) {
+    if (visited.has(current)) return null;
+    visited.add(current);
+    const next = index.directAliases.get(current);
+    if (next === null) return null;
+    if (next !== undefined) {
+      current = next;
+      continue;
+    }
+    if (index.currentTurnIds.has(current)) return current;
+    if (index.nonRetryRemovedTurnIds.has(current)) return null;
+    return null;
+  }
+}
 
 export interface AgentCorePaths {
   readonly root: string;
@@ -374,7 +450,6 @@ export interface SpawnChildThreadInput {
   /** Additional child-only ceiling. Values absent from the parent/role result are ignored. */
   readonly allowedTools?: readonly string[];
   readonly additionalContext?: AdditionalContext;
-  readonly maxTotalTokens?: number;
   /** Selects the parent-facing result channel while retaining one child-Thread mechanism. */
   readonly childKind: 'collaboration' | 'isolatedSkill';
   /** Host-owned execution policy prepared before any child state is written. */
@@ -437,6 +512,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly settleAgentWorktree: ThreadServiceOptions['settleAgentWorktree'];
   private readonly reportError: (report: ErrorReport) => Promise<void>;
   private readonly startupQuarantinedThreadIds = new Set<ThreadId>();
+  private readonly retryDeliveryAliases = new Map<ThreadId, RetryDeliveryAliasIndex>();
   /**
    * The subset quarantined because their recorded history does not decode. Kept
    * apart from the admission-recovery quarantine above: those Threads read fine
@@ -604,12 +680,19 @@ export class ThreadService implements ThreadServiceExtensionHost {
         threadBecameIdle: (threadId) => this.collaboration.threadBecameIdle(threadId),
         startupContextForTurn: (threadId, turnId) => options.stores.subagentExecutions.startupContextForTurn(threadId, turnId),
         commitInitialAdmission: (threadId, turnId) => this.collaboration.commitInitialAdmission(threadId, turnId),
+        commitDeliveryAdmission: (threadId, turnId, admission) => (
+          this.collaboration.commitDeliveryAdmission(threadId, turnId, admission)
+        ),
+        detachCarryForwardSidecarForOverflow: (threadId, turnId, batchId) => (
+          this.collaboration.detachCarryForwardSidecarForOverflow(threadId, turnId, batchId)
+        ),
       },
       { enqueueTurn: (...args) => this.transcripts.enqueueTurn(...args) },
       { noticeFor: (threadId, projection) => this.documentDriftContext(threadId, projection) },
       this.executor,
       this.extensions,
       this.subagentBudgets,
+      this.subagentExecutions,
       this.getDocumentProjection,
       this.resolveReferencedAsset,
       this.resolveSkillAdmission,
@@ -723,6 +806,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     // Before any Turn can complete: the subject resolver reads this synchronously.
     await this.transcriptExclusions.load();
     await this.recoverInitialSubagentAdmissions();
+    await this.collaboration.reconcilePreparedDeliveryAdmissions();
     await this.recoverOrphanSubagentExecutions();
     await this.removeDelegatedThreadsWithoutExecutions();
     const knownThreadIds: ThreadId[] = [];
@@ -780,6 +864,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       // identities stay inert in this process and the next launch retries.
       console.warn('[agent] Agent ledger orphan cleanup deferred during startup', error);
     }
+    await this.rebuildRetryDeliveryAliases(reconciledThreadIds);
     await Promise.all([
       // Transcript reclamation is the same kind of work as payload pruning, so it
       // joins the same startup batch rather than adding a serial step.
@@ -1650,10 +1735,58 @@ export class ThreadService implements ThreadServiceExtensionHost {
     return { data };
   }
   private projectExecution(record: SubagentExecutionRecord): SubagentExecutionProjection {
+    const terminal = this.subagentExecutions.terminalNotification(record.agentId, record.generation);
+    const resolvedTerminal = terminal?.deliveryTurnId
+      ? {
+          ...terminal,
+          deliveryTurnId: this.resolveDeliveryTurnId(
+            record.parentThreadId,
+            terminal.deliveryTurnId,
+          ),
+        }
+      : terminal;
     return projectSubagentExecution(
       record,
-      this.subagentExecutions.terminalNotification(record.agentId, record.generation),
+      resolvedTerminal,
     );
+  }
+
+  private async rebuildRetryDeliveryAliases(threadIds: readonly ThreadId[]): Promise<void> {
+    await Promise.all(threadIds.map((threadId) => this.refreshRetryDeliveryAliases(threadId)));
+  }
+
+  private async refreshRetryDeliveryAliases(threadId: ThreadId): Promise<void> {
+    const record = this.core.metadata.read(threadId);
+    if (
+      !record
+      || record.thread.ephemeral
+      || record.thread.parentThreadId !== null
+      || record.thread.threadSource !== 'user'
+    ) {
+      this.retryDeliveryAliases.delete(threadId);
+      return;
+    }
+    try {
+      this.retryDeliveryAliases.set(
+        threadId,
+        buildRetryDeliveryAliasIndex(await this.core.rollout.read(threadId)),
+      );
+    } catch (error) {
+      this.retryDeliveryAliases.delete(threadId);
+      console.warn(`[agent] Retry delivery alias rebuild deferred for ${threadId}`, error);
+    }
+  }
+
+  private resolveDeliveryTurnId(parentThreadId: ThreadId, deliveryRootId: TurnId): TurnId | null {
+    const index = this.retryDeliveryAliases.get(parentThreadId);
+    const resolved = index ? resolveRetryDeliveryAlias(index, deliveryRootId) : deliveryRootId;
+    return resolved && this.core.readTurn(parentThreadId, resolved) ? resolved : null;
+  }
+
+  private publishSubagentExecutionsForParent(parentThreadId: ThreadId): void {
+    for (const execution of this.subagentExecutions.listByParent(parentThreadId)) {
+      if (execution.initialAdmissionState === 'committed') this.publishSubagentExecution(execution.agentId);
+    }
   }
   /**
    * Announces one Agent's execution state to the conversation that delegated
@@ -1853,6 +1986,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
           inputBatches,
           replacedTurn: target,
         }, () => this.assertRendererSubmissionOpen());
+        await this.refreshRetryDeliveryAliases(request.threadId);
+        this.publishSubagentExecutionsForParent(request.threadId);
         return {
           thread: this.core.requireThread(request.threadId).thread,
           turn: started.turn,
@@ -1907,12 +2042,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
       // Spawn and Stop share this admission lock. A child committed first is in
       // this snapshot; a spawn arriving second observes the aborted parent and
       // is rejected by requireActiveTurn.
-      await this.turnLifecycle.interruptTurn(threadId, turnId);
       if (addressedExecution) this.collaboration.recordUserStopIfCurrent(addressedExecution);
-      const request = this.subagentBudgets.readPool(requestPoolIdForTurn(turnId));
-      if (request && request.originTurnId === turnId) {
-        this.subagentBudgets.closePool(request.poolId, this.now());
-      }
+      await this.turnLifecycle.interruptTurn(threadId, turnId);
+      this.subagentBudgets.closeRequest(turnId, this.now());
       settling = this.requestMembersUnder(threadId, turnId).map((memberThreadId) => ({
         memberThreadId,
         execution: this.collaboration.execution(memberThreadId),
@@ -1926,9 +2058,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
         if (execution) this.collaboration.recordUserStopIfCurrent(execution);
         continue;
       }
-      const interrupted = await this.turnLifecycle.interruptTurn(memberThreadId, activeTurnId)
+      if (execution) this.collaboration.recordUserStopIfCurrent(execution);
+      await this.turnLifecycle.interruptTurn(memberThreadId, activeTurnId)
         .then(() => true, () => false);
-      if (interrupted && execution) this.collaboration.recordUserStopIfCurrent(execution);
     }
   }
   /**
@@ -1937,14 +2069,14 @@ export class ThreadService implements ThreadServiceExtensionHost {
    * `originTurnId` records one hop, so the Turn's own members are its direct
    * children; a grandchild records ITS parent's Turn. Membership is therefore
    * the lineage closure of those direct members — not the raw per-hop set,
-   * which would leave a grandchild running with an interrupted consumer, and
-   * not raw pool membership, which a capped child escapes by binding its spend
-   * to its own pool while the request still owns it.
+   * which would leave a grandchild running with an interrupted consumer.
+   * Token spend is generation-local and deliberately not part of this request
+   * ownership closure.
    */
   private requestMembersUnder(threadId: ThreadId, turnId: string): readonly ThreadId[] {
-    const direct = new Set(this.subagentBudgets.membersForOriginTurn(turnId)
-      .map((member) => member.threadId)
-      .filter((memberThreadId) => this.isSelfOrDescendant(memberThreadId, threadId)));
+    const direct = new Set(this.subagentBudgets.childrenForOriginTurn(turnId)
+      .map((child) => child.threadId)
+      .filter((childThreadId) => this.isSelfOrDescendant(childThreadId, threadId)));
     if (direct.size === 0) return [];
     const subtree = this.catalogOps.listThreadDescendants({ threadId }).data;
     return [

@@ -690,7 +690,13 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
       break;
     case 'turn/started':
     case 'turn/completed': {
-      exactKeys(record, ['type', 'threadId', 'turnId', 'turn'], 'notification');
+      exactKeys(
+        record,
+        type === 'turn/started'
+          ? ['type', 'threadId', 'turnId', 'turn', 'subagentAdmission']
+          : ['type', 'threadId', 'turnId', 'turn'],
+        'notification',
+      );
       const turn = decodeTurn(record.turn);
       const turnId = uuidV7(record.turnId, 'notification.turnId');
       if (turn.id !== turnId) fail('notification.turnId', 'must match turn.id');
@@ -703,7 +709,16 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
       if (type === 'turn/completed' && turn.status === 'inProgress') {
         fail('notification.turn', 'turn/completed requires a terminal Turn');
       }
-      result = { type, threadId: uuidV7(record.threadId, 'notification.threadId'), turnId, turn };
+      const subagentAdmission = type === 'turn/started' && record.subagentAdmission !== undefined
+        ? decodeSubagentTurnAdmission(record.subagentAdmission)
+        : undefined;
+      result = {
+        type,
+        threadId: uuidV7(record.threadId, 'notification.threadId'),
+        turnId,
+        turn,
+        ...(subagentAdmission === undefined ? {} : { subagentAdmission }),
+      };
       break;
     }
     case 'turn/providerRetry/changed': {
@@ -866,6 +881,28 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
       fail('notification.type', `unknown notification: ${type}`);
   }
   return deepFreeze(result);
+}
+
+function decodeSubagentTurnAdmission(value: unknown): import('./protocol').SubagentTurnAdmission {
+  const record = recordValue(value, 'notification.subagentAdmission');
+  exactKeys(record, ['kind', 'batchId', 'envelopeDigest'], 'notification.subagentAdmission');
+  const batchId = stringValue(record.batchId, 'notification.subagentAdmission.batchId');
+  const envelopeDigest = stringValue(
+    record.envelopeDigest,
+    'notification.subagentAdmission.envelopeDigest',
+  );
+  if (!/^[0-9a-f]{64}$/u.test(envelopeDigest)) {
+    fail('notification.subagentAdmission.envelopeDigest', 'expected a lowercase SHA-256 digest');
+  }
+  return {
+    kind: enumValue(
+      record.kind,
+      ['exhaustedSettlement', 'explicitAdmission'],
+      'notification.subagentAdmission.kind',
+    ),
+    batchId,
+    envelopeDigest,
+  };
 }
 
 export function decodeAgentCoreRecordedNotification(value: unknown): AgentCoreRecordedNotification {
@@ -1583,7 +1620,9 @@ function decodeSubagentExecution(value: unknown, path: string): SubagentExecutio
   exactKeys(record, [
     'agentId', 'parentThreadId', 'description', 'agentType', 'runMode', 'generation',
     'currentTurnId', 'stopProvenance', 'terminalStatus', 'notificationState', 'worktree',
-    'createdAt', 'updatedAt',
+    'terminalError', 'deliveryTurnId', 'deliveryClass', 'eligibleAfterGeneration',
+    'coverageDisposition', 'omittedOutputBytes', 'omittedOutputTokens',
+    'notificationCutoff', 'executionMode', 'settlementCoverage', 'createdAt', 'updatedAt',
   ], path);
   return {
     agentId: uuidV7(record.agentId, `${path}.agentId`),
@@ -1600,7 +1639,7 @@ function decodeSubagentExecution(value: unknown, path: string): SubagentExecutio
     ),
     terminalStatus: record.terminalStatus === null ? null : enumValue(
       record.terminalStatus,
-      ['completed', 'failed', 'interrupted', 'killed'],
+      ['finished', 'failed', 'interrupted', 'killed'],
       `${path}.terminalStatus`,
     ),
     notificationState: enumValue(
@@ -1608,9 +1647,78 @@ function decodeSubagentExecution(value: unknown, path: string): SubagentExecutio
       ['none', 'pending', 'delivering', 'delivered'],
       `${path}.notificationState`,
     ),
+    terminalError: decodeSubagentTerminalError(record.terminalError, `${path}.terminalError`),
+    deliveryTurnId: record.deliveryTurnId === null
+      ? null
+      : uuidV7(record.deliveryTurnId, `${path}.deliveryTurnId`),
+    deliveryClass: record.deliveryClass === null
+      ? null
+      : enumValue(record.deliveryClass, ['ordinary', 'carryForward'], `${path}.deliveryClass`),
+    eligibleAfterGeneration: record.eligibleAfterGeneration === null
+      ? null
+      : positiveInteger(record.eligibleAfterGeneration, `${path}.eligibleAfterGeneration`),
+    coverageDisposition: record.coverageDisposition === null
+      ? null
+      : enumValue(record.coverageDisposition, ['full', 'excerpted', 'omitted'], `${path}.coverageDisposition`),
+    omittedOutputBytes: nonNegativeInteger(record.omittedOutputBytes, `${path}.omittedOutputBytes`),
+    omittedOutputTokens: nonNegativeInteger(record.omittedOutputTokens, `${path}.omittedOutputTokens`),
+    notificationCutoff: enumValue(
+      record.notificationCutoff,
+      ['open', 'closing', 'closed'],
+      `${path}.notificationCutoff`,
+    ),
+    executionMode: enumValue(
+      record.executionMode,
+      ['ordinary', 'exhaustedSettlement'],
+      `${path}.executionMode`,
+    ),
+    settlementCoverage: decodeSubagentSettlementCoverage(
+      record.settlementCoverage,
+      `${path}.settlementCoverage`,
+    ),
     worktree: decodeSubagentWorktree(record.worktree, `${path}.worktree`),
     createdAt: nonNegativeInteger(record.createdAt, `${path}.createdAt`),
     updatedAt: nonNegativeInteger(record.updatedAt, `${path}.updatedAt`),
+  };
+}
+
+function decodeSubagentTerminalError(
+  value: unknown,
+  path: string,
+): SubagentExecutionProjection['terminalError'] {
+  if (value === null) return null;
+  const record = recordValue(value, path);
+  exactKeys(record, ['code', 'messagePreview', 'omittedBytes'], path);
+  const code = stringValue(record.code, `${path}.code`, true);
+  const messagePreview = stringValue(record.messagePreview, `${path}.messagePreview`, true);
+  if (new TextEncoder().encode(code).byteLength > 128) fail(`${path}.code`, 'must be at most 128 UTF-8 bytes');
+  if (new TextEncoder().encode(messagePreview).byteLength > 4_096) {
+    fail(`${path}.messagePreview`, 'must be at most 4096 UTF-8 bytes');
+  }
+  return {
+    code,
+    messagePreview,
+    omittedBytes: nonNegativeInteger(record.omittedBytes, `${path}.omittedBytes`),
+  };
+}
+
+function decodeSubagentSettlementCoverage(
+  value: unknown,
+  path: string,
+): SubagentExecutionProjection['settlementCoverage'] {
+  if (value === null) return null;
+  const record = recordValue(value, path);
+  exactKeys(record, ['origin', 'full', 'excerpted', 'omitted', 'providerAttempted'], path);
+  return {
+    origin: enumValue(
+      record.origin,
+      ['budgetInterrupted', 'normalOvershoot', 'explicitAdmission'],
+      `${path}.origin`,
+    ),
+    full: nonNegativeInteger(record.full, `${path}.full`),
+    excerpted: nonNegativeInteger(record.excerpted, `${path}.excerpted`),
+    omitted: nonNegativeInteger(record.omitted, `${path}.omitted`),
+    providerAttempted: booleanValue(record.providerAttempted, `${path}.providerAttempted`),
   };
 }
 

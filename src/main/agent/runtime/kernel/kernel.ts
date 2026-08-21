@@ -247,6 +247,7 @@ async function streamAssistantResponse(
     signal,
     ...options.retryOptions,
     recoverContextOverflow: options.recoverContextOverflow,
+    recoverOptionalContextOverflow: options.recoverOptionalContextOverflow,
     attempt: (refreshedMessages, attemptSignal) => options.gateway.stream({
       model: options.initialState.model,
       context: {

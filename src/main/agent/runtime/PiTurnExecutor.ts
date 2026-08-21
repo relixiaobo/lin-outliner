@@ -154,6 +154,62 @@ export interface PiAgentRuntime {
 export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
   constructor(private readonly options: PiTurnExecutorOptions = {}) {}
 
+  async planInputCapacity(
+    context: TurnExecutionContext,
+  ): Promise<{ readonly remainingInputTokens: number }> {
+    const internalMemory = context.thread.threadSource === 'memory_consolidation';
+    const runtime = await (this.options.resolveRuntime ?? resolveDefaultRuntime)(context);
+    const tools = internalMemory
+      ? []
+      : canonicalizeAgentTools(await this.options.createTools?.(context) ?? []);
+    const stablePrompt = internalMemory
+      ? null
+      : composeStablePrompt({
+          thread: context.thread,
+          configuration: context.configuration,
+          availableToolNames: tools.map((tool) => tool.name),
+          transcriptIndexPath: this.options.transcriptIndexPath ?? null,
+          startupContext: context.startupContext ?? null,
+          persona: this.options.resolvePersona?.(context.thread) ?? null,
+        });
+    const systemPrompt = stablePrompt?.text
+      ?? context.configuration.developerInstructions.join('\n\n');
+    const projector = new CanonicalContextProjector(runtime.model, context);
+    const projection = await projector.projectTurnsWithBoundaries([
+      ...context.historyBeforeTurn,
+      context.turn,
+    ]);
+    const initialUser = context.turn.items.find((item) => item.type === 'userMessage');
+    const protectedBoundary = initialUser
+      ? projection.userBoundaries.find((boundary) => (
+          boundary.turnId === context.turn.id && boundary.itemId === initialUser.id
+        ))
+      : null;
+    if (!protectedBoundary) {
+      throw new Error('Input capacity planning did not preserve the explicit user Item.');
+    }
+    try {
+      const budget = planContextBudget({
+        model: runtime.model,
+        systemPrompt,
+        tools,
+        messages: projection.messages,
+        protectedFromMessageIndex: protectedBoundary.messageIndex,
+      });
+      return {
+        remainingInputTokens: Math.max(
+          0,
+          budget.inputTokenLimit - budget.estimatedInputTokens,
+        ),
+      };
+    } catch (error) {
+      if (error instanceof ContextCompactionRequiredError) {
+        return { remainingInputTokens: 0 };
+      }
+      throw error;
+    }
+  }
+
   async execute(context: TurnExecutionContext): Promise<TurnExecutionResult> {
     if (context.signal.aborted) return { status: 'interrupted' };
     let agent: PiAgentRuntime | null = null;
@@ -262,6 +318,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
           )),
         });
       }
+      let sidecarFreeProviderContext: Message[] | null = null;
       const transformContext = internalMemory
         ? undefined
         : async () => {
@@ -279,7 +336,9 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
                 persist: (payload, summary) => context.persistContextEvidence(payload, summary),
                 onActiveOutputKeys: turnScopedReads.retainOutputReads,
               });
-              return await projectCanonicalProviderContext(
+              const sidecar = context.carryForwardSidecar;
+              const omitSidecar = sidecar?.isDetached() === true;
+              const projected = await projectCanonicalProviderContext(
                 projectionContext,
                 runtime.model,
                 systemPrompt,
@@ -291,13 +350,31 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
                   prepared: (prepared) => diagnostics.prepareProviderPlan(prepared),
                   compacted: (compacted) => diagnostics.captureContextCompaction(compacted),
                 },
+                omitSidecar ? { omitUserItemIds: new Set([sidecar.itemId]) } : undefined,
               );
+              if (sidecar) {
+                sidecarFreeProviderContext = omitSidecar
+                  ? [...projected]
+                  : await projectCanonicalProviderContext(
+                      projectionContext,
+                      runtime.model,
+                      systemPrompt,
+                      tools,
+                      prompt,
+                      reasoningReplay,
+                      liveModelToolCalls,
+                      undefined,
+                      { omitUserItemIds: new Set([sidecar.itemId]) },
+                    );
+              }
+              return projected;
             } finally {
               turnScopedReads.finishBoundary();
             }
           };
       const gatewayOptions: PiModelGatewayOptions = {
         onProviderContext: (providerContext) => diagnostics.captureProviderContext(providerContext),
+        onProviderAttempt: context.onProviderAttempt,
         onPayload: async (payload, model) => {
           const transformed = agentProviderPayload(payload, model, stablePrompt, tools);
           if (diagnostics.available) {
@@ -339,6 +416,19 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
               );
               if (compacted) diagnostics.captureContextCompaction(compacted);
               return compacted ? await transformContext() : null;
+            }
+          : undefined,
+        recoverOptionalContextOverflow: context.carryForwardSidecar
+          ? async () => {
+              const detached = await context.carryForwardSidecar!.detachForOverflow();
+              if (
+                !detached
+                || !sidecarFreeProviderContext
+                || !context.carryForwardSidecar!.canRetryAfterDetach(
+                  detached.providerAttemptSerial,
+                )
+              ) return null;
+              return [...sidecarFreeProviderContext];
             }
           : undefined,
         admitToolCall: async (request) => {
@@ -416,6 +506,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         return {
           status: 'failed',
           error: { message: agent.state.errorMessage ?? normalizer.errorMessage ?? 'Model execution failed' },
+          failureOrigin: 'providerFailure',
           execution: persisted.details,
           refreshDiagnostics: persisted.refresh,
         };
@@ -459,6 +550,9 @@ async function projectCanonicalProviderContext(
     }) => void;
     readonly compacted?: (item: Extract<ThreadItem, { type: 'contextCompaction' }>) => void;
   },
+  options?: {
+    readonly omitUserItemIds?: ReadonlySet<string>;
+  },
 ): Promise<Message[]> {
   const build = async (stagedCompaction?: ContextCompactionThreadItem) => {
     const sourceTurns = [
@@ -475,6 +569,7 @@ async function projectCanonicalProviderContext(
       liveToolCall: (turnId, itemId) => (
         turnId === context.turn.id ? liveModelToolCalls.get(itemId) ?? null : null
       ),
+      ...(options?.omitUserItemIds ? { omitUserItemIds: options.omitUserItemIds } : {}),
     });
     const canonicalProjection = await projector.projectTurnsWithBoundaries(sourceTurns);
     const projection = reasoningReplay?.reattach(canonicalProjection, model) ?? canonicalProjection;

@@ -1,9 +1,8 @@
 import type {
   SubagentExecutionProjection,
-  SubagentNotificationState,
-  SubagentTerminalStatus,
 } from '../../../core/agent/protocol';
 import type { SubagentExecutionRecord } from '../persistence/SubagentExecutionLedger';
+import type { SubagentPendingNotification } from '../persistence/SubagentExecutionLedger';
 
 /**
  * The renderer-facing half of an Agent execution record.
@@ -16,10 +15,18 @@ import type { SubagentExecutionRecord } from '../persistence/SubagentExecutionLe
  */
 export function projectSubagentExecution(
   record: SubagentExecutionRecord,
-  terminal: {
-    readonly status: SubagentTerminalStatus;
-    readonly state: SubagentNotificationState;
-  } | null,
+  terminal: Pick<
+    SubagentPendingNotification,
+    | 'status'
+    | 'state'
+    | 'error'
+    | 'deliveryTurnId'
+    | 'deliveryClass'
+    | 'eligibleAfterGeneration'
+    | 'coverageDisposition'
+    | 'omittedBytes'
+    | 'omittedTokens'
+  > | null,
 ): SubagentExecutionProjection {
   return {
     agentId: record.agentId,
@@ -32,6 +39,16 @@ export function projectSubagentExecution(
     stopProvenance: record.stopProvenance,
     terminalStatus: terminal?.status ?? null,
     notificationState: terminal?.state ?? 'none',
+    terminalError: terminal?.error ?? null,
+    deliveryTurnId: terminal?.deliveryTurnId ?? null,
+    deliveryClass: terminal?.deliveryClass ?? null,
+    eligibleAfterGeneration: terminal?.eligibleAfterGeneration ?? null,
+    coverageDisposition: terminal?.coverageDisposition ?? null,
+    omittedOutputBytes: terminal?.omittedBytes ?? 0,
+    omittedOutputTokens: terminal?.omittedTokens ?? 0,
+    notificationCutoff: record.notificationCutoff,
+    executionMode: record.executionMode,
+    settlementCoverage: record.settlementCoverage,
     // A removed worktree is a tombstone, not a retained one: the branch it
     // names no longer exists, so a footer offering to reveal it would point
     // the user at a directory the host has already deleted.

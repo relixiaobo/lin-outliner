@@ -91,6 +91,11 @@ describe('stable agent prompt composition', () => {
     // split the transcript header makes.
     expect(child.text).toContain('You are Rena, a headless Tenon Subagent Thread');
     expect(child.text).toContain('Role: explorer');
+    expect(child.text).toContain('Your final response is a handoff, not a host-verified completion claim.');
+    expect(child.text).toContain('what you produced or concluded');
+    expect(child.text).toContain('what remains incomplete/uncertain/unchecked and why');
+    expect(child.text).toContain('do not invent a completion percentage');
+    expect(child.text).not.toContain('Complete the assigned task and return a concise');
 
     // A participant with no resolved name keeps the sentence it had before
     // there was one, rather than being called after its Role key.
@@ -130,8 +135,8 @@ describe('stable agent prompt composition', () => {
       'agent-identity',
     ]);
     expect(prompt.text).toContain('# Agents');
-    expect(prompt.text).toContain('work product to synthesize');
-    expect(prompt.text).toContain('Background completion is delivered automatically');
+    expect(prompt.text).toContain('work product to inspect and synthesize');
+    expect(prompt.text).toContain('Background finish notification is delivered automatically');
     expect(prompt.text).toContain('# Skills');
     expect(prompt.text).toContain('the latest invocation is authoritative');
     expect(prompt.text).toContain('[[file:Display name^/absolute/path]]');
@@ -231,8 +236,8 @@ describe('stable agent prompt composition', () => {
     }).text;
     const spawn = 'A new agent call starts a fresh Agent';
     const sharedState = 'Agents share host files, processes, credentials, ports, and application state';
-    const backgroundCompletion = 'Background completion is delivered automatically';
-    const workProduct = 'A completed Agent result is work product to synthesize';
+    const backgroundCompletion = 'Background finish notification is delivered automatically';
+    const workProduct = 'A finished Agent output is work product to inspect and synthesize';
     const steer = 'Use agent_message with the Agent ID to steer or resume';
     const stop = 'Use task_stop with the task ID to stop a running task';
 

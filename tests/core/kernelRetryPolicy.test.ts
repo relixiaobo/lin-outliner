@@ -82,6 +82,7 @@ function createPolicyStreamFn(
     maxStreamRetries?: number;
     maxRetryDelayMs?: number;
     onContextOverflow?: (errorMessage: string) => Promise<readonly Context['messages'][number][] | null>;
+    onOptionalContextOverflow?: (errorMessage: string) => Promise<readonly Context['messages'][number][] | null>;
   } = {},
 ): StreamFn {
   return (model, context, options = {}) => streamWithPolicy({
@@ -95,6 +96,7 @@ function createPolicyStreamFn(
       signal,
     }),
     recoverContextOverflow: retryOptions.onContextOverflow,
+    recoverOptionalContextOverflow: retryOptions.onOptionalContextOverflow,
     requestRetryDelayMs: retryOptions.requestRetryDelayMs,
     onProviderRetry: retryOptions.onProviderRetry,
     maxRequestRetries: retryOptions.maxRequestRetries,
@@ -304,6 +306,79 @@ describe('kernel retry policy', () => {
     ]);
     expect(retryEvents).toEqual([]);
     expect(events.map((event) => event.type)).toEqual(['start', 'text_start', 'text_delta', 'text_end', 'done']);
+  });
+
+  test('retries optional overflow once before spending canonical compaction', async () => {
+    let attempts = 0;
+    let optionalDetaches = 0;
+    let compactions = 0;
+    const providerContexts: Context[] = [];
+    const streamFn = createPolicyStreamFn(((model, context) => {
+      attempts += 1;
+      providerContexts.push(context);
+      if (attempts <= 2) {
+        return errorStream('context_length_exceeded: request has too many input tokens', model);
+      }
+      return textStream('recovered after optional detach and compaction', model);
+    }) as StreamFn, {
+      onOptionalContextOverflow: async () => {
+        optionalDetaches += 1;
+        return [{ role: 'user', content: 'BASE WITHOUT SIDECAR', timestamp: 2 }];
+      },
+      onContextOverflow: async () => {
+        compactions += 1;
+        return [{ role: 'user', content: 'COMPACTED BASE', timestamp: 3 }];
+      },
+    });
+
+    const stream = streamFn(MODEL, {
+      messages: [{ role: 'user', content: 'BASE WITH SIDECAR', timestamp: 1 }],
+      tools: [],
+    });
+    const events = [];
+    for await (const event of stream) events.push(event);
+
+    expect(attempts).toBe(3);
+    expect(optionalDetaches).toBe(1);
+    expect(compactions).toBe(1);
+    expect(providerContexts.map((context) => context.messages[0])).toEqual([
+      { role: 'user', content: 'BASE WITH SIDECAR', timestamp: 1 },
+      { role: 'user', content: 'BASE WITHOUT SIDECAR', timestamp: 2 },
+      { role: 'user', content: 'COMPACTED BASE', timestamp: 3 },
+    ]);
+    expect(events.map((event) => event.type)).toEqual(['start', 'text_start', 'text_delta', 'text_end', 'done']);
+  });
+
+  test('does not fall through to canonical compaction when optional overflow recovery declines', async () => {
+    let attempts = 0;
+    let optionalDetaches = 0;
+    let compactions = 0;
+    const streamFn = createPolicyStreamFn(((model) => {
+      attempts += 1;
+      return errorStream('context_length_exceeded: request has too many input tokens', model);
+    }) as StreamFn, {
+      onOptionalContextOverflow: async () => {
+        optionalDetaches += 1;
+        return null;
+      },
+      onContextOverflow: async () => {
+        compactions += 1;
+        return [{ role: 'user', content: 'COMPACTED CONTEXT', timestamp: 2 }];
+      },
+    });
+
+    const stream = streamFn(MODEL, { messages: [], tools: [] });
+    const events = [];
+    for await (const event of stream) events.push(event);
+
+    expect(attempts).toBe(1);
+    expect(optionalDetaches).toBe(1);
+    expect(compactions).toBe(0);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: 'error',
+      error: { errorMessage: expect.stringContaining('no eligible context could be compacted') },
+    });
   });
 
   test('keeps transient and overflow retry budgets separate across alternating failures', async () => {

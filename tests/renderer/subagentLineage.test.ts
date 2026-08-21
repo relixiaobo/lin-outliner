@@ -53,7 +53,7 @@ function registry(
     form: 'agent' as const,
     runMode: 'background' as const,
     generation: 1,
-    status: 'completed' as const,
+    status: 'finished' as const,
     stoppedByUser: false,
     startedAt: null,
     durationMs: null,
