@@ -52,7 +52,7 @@ theme-section entry below; this list is the ordering, not a second record):
   replace Model Interactions with a Thread-wide Trajectory workspace. It leads
   the lane as one implementation PR; protocol and projection foundations land
   before renderer consumers inside that PR. `agent-tool-artifact-resources`
-  and `computer-pilot-managed-skill` follow.
+  (#576 plan) and `computer-pilot-managed-skill` follow.
 - **Lane C — product surface**: `update-check-and-prompt` shipped #514; next is the
   `file-preview` Office tail (apply its refresh note first), then the
   `agent-skills-authoring` security tail. `signed-builds-and-auto-update` stays
@@ -546,18 +546,17 @@ Standalone agent items (not part of the program):
   Windows currently falls back to the user-profile ACL with no extra restriction.
   Add Windows ACL hardening if/when Windows becomes a supported target. See
   `[[agent-secrets-plaintext-decision]]` rationale.
-- **agent-tool-artifact-resources** (P3, `draft`, *no plan file* — re-filed 2026-08-09;
-  **narrowed by the 2026-08-17 audit**: the image half shipped with #490's line —
-  `persistOutputImage` / `persistOutputResource` (`runtime/types.ts`,
-  `TurnLifecycle.ts`) mint durable artifact references that `file_read` resolves
-  to a materialized path, and a per-Turn output root exists for managed Skills
-  (`browserPilotHost.ts` `prepareBrowserPilotOutputDirectory`,
-  `<scratch>/browser-pilot/<threadId>/<turnId>`)) — the remaining gap is
-  **non-image** artifacts: `web_fetch` downloads and generic tool outputs still
-  land in flat per-workspace scratch dirs (`agent-web-fetch`,
-  `agent-tool-outputs` — `agentTools.ts` / `agentLocalTools.ts`) with no
-  resource registration and no pruning. Not browser-specific; also carries the
-  artifact story for **computer-pilot-managed-skill** above.
+- **[agent-tool-artifact-resources](plans/agent-tool-artifact-resources.md)**
+  (P3, `draft` 2026-08-21; plan PR #576, codex-3) — completed non-image
+  artifacts from `web_fetch`, bounded shell logs, and declared managed-Skill
+  output roots become tool-Item-owned `ThreadResourceReference`s in the existing
+  dependency graph. One complete implementation PR adds `ToolArtifactSink`,
+  typed output-root ownership, lifecycle coverage, and replay-time path
+  rematerialization; persisted history keeps stable identity rather than a
+  disposed Turn path. The implementation overlaps #575 on protocol, runtime,
+  resource inspection, and specs, so it starts only after #575 merges or is
+  explicitly re-scoped. It also carries the artifact mechanism required by
+  **computer-pilot-managed-skill** above.
 - **agent-dream-followups** — **REMOVED 2026-08-03.** Seven polish items for a subsystem
   that no longer exists: `dream-channel-and-memory-retire` retired Dream in full (#324, #328,
   #329) and `rg -i dream src/` is empty. It survived the retirement because nothing links a

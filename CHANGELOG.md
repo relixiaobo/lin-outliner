@@ -349,6 +349,18 @@ Entries reference the pull request that introduced them.
 
 ### Internal
 
+- **Agent tool artifact resources plan (PR #576, codex-3, plan-only)** — ratifies
+  one existing Thread-resource graph for completed non-image tool artifacts:
+  `web_fetch` binaries, bounded foreground and finalized background shell logs,
+  and bounded files from typed managed-Skill output roots. Tool Items own the
+  references, first-party producers share a runtime artifact sink, and fork,
+  rollback, pruning, deletion, and renderer inspection reuse current lifecycle
+  authority. Live paths remain execution-scoped access handles; persisted tool
+  output keeps stable resource identity, and later Turn, restart, and fork
+  projection rematerialize a current `file_read` path. Review closed three plan
+  gaps around oversized logs, output-root authority, and stale replay paths. The
+  implementation waits for overlapping #575; product behavior is unchanged
+  until that PR ships.
 - **Agent trajectory workspace plan (PR #574, codex, plan-only)** — ratifies the
   DeepSeek Harness Trajectory interaction target for Tenon: a Thread-wide
   investigation workspace with Input / Assistant / Tools overview, Turn-grouped

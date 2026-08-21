@@ -1695,3 +1695,23 @@ Regression tests for this class need an in-transaction partial write followed by
 a model-visible failure result, plus an assertion that revision, node set, and
 operation history stayed unchanged. A preflight-only invalid argument case does
 not prove the rollback boundary.
+
+## Ephemeral paths are not durable replay contracts
+
+PR #576's first artifact-resource plan made the canonical file durable but kept
+the producing Turn's readable path in persisted tool output. The runtime deletes
+that materialization when `resourceObservation.dispose()` closes the execution,
+so the next Turn could replay a path that no longer existed even though the
+Thread still owned valid bytes.
+
+**Persist durable identity and derive access handles at the boundary that uses
+them.** A path into disposable scratch is live execution state, not artifact
+history. Persist the resource reference and stable metadata, then rematerialize a
+current path during historical projection, Preview, export, or another path-based
+consumer. A fork must resolve from the copied target-Thread resource, never from
+the source Thread's old path.
+
+Tests for durable artifacts must tear down the producing observation before they
+assert readability. Cover the next Turn, restart, and fork; an immediate
+same-Turn `file_read` proves only that the original scratch directory was still
+alive.
