@@ -9,8 +9,9 @@ their renderer consumers.
 
 Replace the single-Turn, document-style Model Interactions inspector with a
 Thread-wide Trajectory workspace. A technical user can locate and inspect
-input, context, model, tool, retry, compaction, and delegation activity across
-the complete execution history without losing the surrounding conversation.
+input, context, assistant, tool, retry, compaction, and delegation activity
+across the complete execution history without losing the surrounding
+conversation.
 
 The selected target adopts the DeepSeek Harness Trajectory product logic and
 interactions while retaining Tenon's canonical Thread, Turn, and Item authority,
@@ -45,7 +46,7 @@ and inspect the exact retained evidence without leaving that Thread's context.
 Trajectory is a Thread-wide investigation workspace, not a Turn details modal.
 It combines three synchronized surfaces:
 
-1. An Input / Model / Tools overview establishes ordering, timing, and scale.
+1. An Input / Assistant / Tools overview establishes ordering, timing, and scale.
 2. A tail-first ledger groups stable records by Turn and provides bounded
    previews, states, timing, and usage.
 3. A record-specific inspector lazily reads the exact retained evidence for one
@@ -63,11 +64,14 @@ reference components.
 
 ### Concept alignment and record taxonomy
 
-Trajectory records are not canonical Thread Items. They are projection records:
-bounded, stable, inspection-only summaries derived by main from canonical
-Thread, Turn, Item, and immutable diagnostics facts. Adding Trajectory therefore
-must not widen the `ThreadItem` union, create another durable transcript, or make
-debug visibility an execution precondition.
+Trajectory uses message-first presentation and evidence-first identity. The
+ledger reads like DeepSeek Harness: input, context, Assistant work, tools,
+retries, compaction, delegation, then the next Assistant work. The backing data
+does not copy DeepSeek Harness records. Trajectory records are projection
+records: bounded, stable, inspection-only summaries derived by main from
+canonical Thread, Turn, Item, and immutable diagnostics facts. Adding Trajectory
+therefore must not widen the `ThreadItem` union, create another durable
+transcript, or make debug visibility an execution precondition.
 
 The top-level Trajectory record kind set is:
 
@@ -75,27 +79,45 @@ The top-level Trajectory record kind set is:
 |---|---|---|
 | `input` | Initial user input and steering admission. | Input |
 | `context` | Stable prompt, tool catalog, context evidence, and context reset evidence. | Input |
-| `model` | One provider/model call with request, response, reasoning, usage, and timing facts. | Model |
+| `assistant` | One provider/model call presented as Assistant work, with request, response, reasoning, usage, and timing facts. | Assistant |
 | `tool` | Shell, file, MCP, dynamic tool, search, and other non-delegating tool work. | Tools |
-| `retry` | Request or stream retry linked to its source and next model calls. | Model |
+| `retry` | Request or stream retry linked to its source and next Assistant/provider calls. | Assistant |
 | `compaction` | Manual, automatic-preflight, or provider-overflow context compaction. | Input |
 | `delegation` | Child Agent spawn, message, stop, outcome, and child-Trajectory navigation. | Tools |
 
-Steering is an `input` source, not a separate record kind. Assistant messages and
-reasoning are inspector content within a `model` record, not duplicate ledger
-rows. DeepSeek Harness `tool` and `subtool` map to one hierarchical `tool` kind
-with parent call identity rather than two top-level kinds. Agent-related tool
-calls collapse into one `delegation` record so the same activity is not shown as
-both a generic tool and an Agent row. Turn headers, model-call summaries,
-older-history controls, timeline ellipses, and fold placeholders are structural
-rows, not record kinds.
+An `assistant` record is not a canonical `AgentMessageThreadItem`. Its primary
+evidence is exactly one provider call addressed by Thread, Turn, and provider
+call index from immutable Turn diagnostics. Transcript Items, assistant text,
+and reasoning are related evidence or preview content for that Assistant record
+when available; they never replace the provider-call identity. If a provider
+call did not produce visible transcript text because it requested tools, failed,
+or was interrupted, it still remains one Assistant record with its recorded
+request, response, timing, and state.
+
+Every Trajectory record has one primary evidence reference and may have related
+evidence references. Detail reads resolve from the primary evidence and then
+authorize related evidence through the same owning Thread and Turn. Missing,
+corrupt, redacted, or unavailable evidence marks only that record or tab as
+partial or unavailable; the projector must not infer provider-call order from
+Item adjacency, attach tool results to the nearest Assistant row by guesswork,
+fill missing values with zero, or treat a transcript Item as proof of a provider
+call that was not recorded.
+
+Steering is an `input` source, not a separate record kind. DeepSeek Harness
+`tool` and `subtool` map to one hierarchical `tool` kind with parent call
+identity rather than two top-level kinds. Agent-related tool calls collapse into
+one `delegation` record so the same activity is not shown as both a generic tool
+and an Agent row. Turn headers, Assistant/provider-call summaries, older-history
+controls, timeline ellipses, and fold placeholders are structural rows, not
+record kinds.
 
 ### Entry and navigation
 
 The active Thread header opens Trajectory for the complete Thread. A Details
-action on a Turn, message, model call, or tool record opens the same workspace
-with the exact owning record selected. The entry contract is Thread-addressed;
-selection is an optional deep link, not a separate Turn-addressed page.
+action on a Turn, message, Assistant/provider call, or tool record opens the
+same workspace with the exact owning record selected. The entry contract is
+Thread-addressed; selection is an optional deep link, not a separate
+Turn-addressed page.
 
 On entry:
 
@@ -117,7 +139,8 @@ the narrowest record or inspector tab; canonical Turns and Items remain visible.
 
 Main owns a paged, lightweight trajectory projection derived from canonical
 Turns and Items plus immutable Turn diagnostics. It preserves recorded activity
-order and never reconstructs model-call relationships from Item adjacency.
+order and never reconstructs Assistant/provider-call relationships from Item
+adjacency.
 Stable record identities survive paging, restoration, live replacement, and
 history prepends.
 
@@ -160,14 +183,15 @@ new projection composes those authorities; it does not duplicate their payloads.
 
 ### Overview interaction contract
 
-The overview has three lanes: Input, Model, and Tools. It supports two modes:
+The overview has three lanes: Input, Assistant, and Tools. It supports two
+modes:
 
 - **Duration** places spans against recorded wall-clock time and exposes actual
   gaps and overlap.
 - **Sequence** gives ordered activity readable space without claiming that width
   represents elapsed time.
 
-Hover exposes exact clock and duration facts. Model spans distinguish
+Hover exposes exact clock and duration facts. Assistant spans distinguish
 time-to-first-token from decoding when both are recorded. Running operations use
 a start marker and running state and never fabricate a duration.
 
@@ -178,11 +202,11 @@ paging, range, and fold state.
 
 ### Ledger interaction contract
 
-The ledger is ordered by recorded activity and grouped by Turn. Turn and model
-call folds preserve one summary row and stable selection semantics. Search
-filters the currently loaded window; it does not imply that unloaded history was
-searched. The UI states that scope and offers earlier-page loading from an
-explicit ledger row and overview ellipsis.
+The ledger is ordered by recorded activity and grouped by Turn. Turn and
+Assistant/provider-call folds preserve one summary row and stable selection
+semantics. Search filters the currently loaded window; it does not imply that
+unloaded history was searched. The UI states that scope and offers earlier-page
+loading from an explicit ledger row and overview ellipsis.
 
 The initial view follows the tail. User scrolling, time-range selection, or
 detail inspection suspends following until the user explicitly restores it.
@@ -203,16 +227,18 @@ compressing both surfaces below their readable minimum.
 Tabs are record-specific:
 
 - Input and Context: Summary, Preview, Source, Timing.
-- Model Call: Summary, Request, Response, Timing, Export.
+- Assistant: Summary, Request, Response, Timing, Export.
 - Tool: Summary, Arguments, Result, Schema, Audit, Timing.
 - Retry and Compaction: Summary, Details, Timing.
 - Delegation: Summary, Outcome, Timing, Open child Trajectory.
 
-Large content and syntax presentation mount lazily. Raw means Tenon's typed,
-secret-redacted diagnostic representation. It never means an unrecorded HTTP
-body, arbitrary headers, image bytes, or credentials. Missing, corrupt,
-redacted, or unavailable evidence leaves the selected record and its siblings
-intact and explains the limitation in the affected tab.
+The Assistant inspector may title the backing evidence as a Model Call because
+the details are provider-call diagnostics. That title is evidence vocabulary,
+not a top-level ledger kind. Large content and syntax presentation mount lazily.
+Raw means Tenon's typed, secret-redacted diagnostic representation. It never
+means an unrecorded HTTP body, arbitrary headers, image bytes, or credentials.
+Missing, corrupt, redacted, or unavailable evidence leaves the selected record
+and its siblings intact and explains the limitation in the affected tab.
 
 ### Child Threads
 
@@ -225,9 +251,10 @@ into the parent projection merely to support navigation.
 ### Summary and export
 
 The workspace summary reports whole-Thread counts and totals that can be derived
-truthfully from retained evidence: Turns, model calls, tools, recorded duration,
-tokens, cache use, and cost when available. Missing contributors produce typed
-partial coverage rather than an apparently complete zero.
+truthfully from retained evidence: Turns, Assistant/provider calls, tools,
+recorded duration, tokens, cache use, and cost when available. Missing
+contributors produce typed partial coverage rather than an apparently complete
+zero.
 
 Export creates a user-selected Thread trajectory bundle from the same typed
 projection and retained diagnostics used by the inspector. It states omissions
@@ -282,7 +309,7 @@ the feature. Current behavior is folded into `agent-core.md`,
 
 - Opening Trajectory from a Thread header shows that complete Thread; opening
   Details from an existing record selects the exact matching Thread, Turn,
-  Item, and model-call identities in the same workspace.
+  Item, and Assistant/provider-call identities in the same workspace.
 - While a Turn runs, lifecycle rows and bounded previews update without manual
   refresh. After restart, completed history reconstructs in the same recorded
   order without consulting current provider settings or tool catalogs.
