@@ -850,7 +850,7 @@
   padding: 0 0 var(--space-4);
 }
 
-.thread-trajectory-code {
+.agent-code-block.thread-trajectory-code {
   min-height: 0;
   margin: 0 var(--space-6) var(--space-6);
 }
