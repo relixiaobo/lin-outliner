@@ -23,7 +23,7 @@ import {
   type SearchQueryExpr,
   type TagConfigPatch,
 } from '../../../core/types';
-import { agentToolResult, errorEnvelope, successEnvelope, type ToolEnvelope } from './agentToolEnvelope';
+import { agentToolResult, errorEnvelope, isToolEnvelope, successEnvelope, type ToolEnvelope } from './agentToolEnvelope';
 import {
   parseLinOutline,
   type OutlineDocument,
@@ -218,9 +218,30 @@ function withAgentToolTransaction(tool: AgentTool<any>, host: OutlinerToolHost):
   if (!host.transaction) return tool;
   return {
     ...tool,
-    execute: (toolCallId: string, params: unknown) =>
-      host.transaction!({ origin: 'agent', tool: tool.name }, () => tool.execute(toolCallId, params)),
+    execute: async (toolCallId: string, params: unknown, signal?: AbortSignal, onUpdate?: Parameters<AgentTool<any>['execute']>[3]) => {
+      try {
+        return await host.transaction!({ origin: 'agent', tool: tool.name }, async () => {
+          const result = await tool.execute(toolCallId, params, signal, onUpdate);
+          if (isFailedToolEnvelopeResult(result)) throw new ToolResultRollback(result);
+          return result;
+        });
+      } catch (error) {
+        if (error instanceof ToolResultRollback) return error.result;
+        throw error;
+      }
+    },
   };
+}
+
+class ToolResultRollback extends Error {
+  constructor(readonly result: AgentToolResult<ToolEnvelope>) {
+    super('Tool result requested document transaction rollback.');
+    this.name = 'ToolResultRollback';
+  }
+}
+
+function isFailedToolEnvelopeResult(result: AgentToolResult<unknown>): result is AgentToolResult<ToolEnvelope> {
+  return isToolEnvelope(result.details) && result.details.ok === false;
 }
 
 function createOutlineUndoStackTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope<OperationHistoryData>> {

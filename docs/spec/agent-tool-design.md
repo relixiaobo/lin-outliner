@@ -72,6 +72,11 @@ contribute tools through this seam rather than adding domain logic to runtime.
 Node writes always use document commands. Tool helpers never mutate Loro or a
 projection directly. Read and write scopes are explicit; an empty scope denies
 all access. Definition resolution is deterministic and rejects ambiguous names.
+All Node catalog tools except `outline_undo_stack` execute inside one document
+transaction; if they return an `ok:false` `ToolEnvelope`, document writes from
+that transaction roll back while the original model-visible error is preserved.
+`outline_undo_stack` is excluded because it owns explicit undo and redo
+semantics.
 
 Node outline text represents an owner's effective non-list view mode with
 `%%view:<mode>%%` on that owner's line. `node_read` and user-view context emit
