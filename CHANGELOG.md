@@ -99,6 +99,18 @@ Entries reference the pull request that introduced them.
 
 ### Fixed
 
+- **Agent writes no longer duplicate or flatten the first rich value in a reused
+  field (PR #579, cc)** — when `node_create` or `node_edit` resolves a field name
+  to an existing definition without a stored entry on that owner, the first
+  non-option value now crosses the field-slot boundary as canonical `RichText`
+  through `appendNodes` instead of literal `appendText`. Marks, link
+  destinations, and inline-reference targets therefore survive the first write,
+  and the same identity used by reconciliation consumes that occurrence rather
+  than appending a second value. Repeated identical desired values still retain
+  their multiplicity; empty values keep the virtual slot unmaterialized; option
+  and whole-value reference paths are unchanged. Gate review found no reportable
+  issues. Verified with typecheck, `docs:check`, 146 focused Agent Node tests,
+  and the full Core suite (2586 passed, 6 skipped, 0 failed).
 - **CLI-only imports now recover without a write-bypass gap (PR #578,
   codex-2)** — `data_import` is gone from the default model-visible tool
   catalog; `/tenon-import` is the single Agent import workflow. Commit writes now

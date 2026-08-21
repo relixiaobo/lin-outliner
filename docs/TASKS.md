@@ -1129,6 +1129,10 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **[agent-rich-field-value-materialization](plans/archive/agent-rich-field-value-materialization.md)**
+  (cc, PR #579, merged 2026-08-21) — Agent writes to a reused field definition now
+  preserve the first value's marks, links, inline references, and intentional
+  duplicate multiplicity through one atomic slot mutation; gate and Core verification passed.
 - **cli-only-data-import-recovery** (codex-2, PR #578, merged 2026-08-21 —
   fast-track, no plan file) — `/tenon-import` is now the sole Agent bulk-import
   workflow, with Item-bound CLI/API causation tokens, duplicate tag/field
