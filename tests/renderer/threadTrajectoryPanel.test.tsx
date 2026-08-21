@@ -3,6 +3,7 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import type {
+  AgentCoreNotification,
   AgentCoreMethod,
   AgentCoreRequestByMethod,
   AgentCoreResponseByMethod,
@@ -152,6 +153,45 @@ describe('ThreadTrajectoryPanel', () => {
     expect(inspector?.style.width).toBe('320px');
 
     clickAriaButton(rendered.document, 'Close Trajectory inspector');
+    expect(rendered.document.querySelector('[aria-label="Trajectory inspector"]')).toBeNull();
+  });
+
+  test('consumes Turn focus once so live refresh does not reopen a closed inspector', async () => {
+    const readInputs: AgentCoreRequestByMethod['thread/trajectory/read'][] = [];
+    const rendered = renderPanel(async (method, input) => {
+      if (method === 'thread/trajectory/read') {
+        readInputs.push(input);
+        return trajectoryReadResponse(
+          trajectoryRecords(),
+          input.focus?.turnId === TURN_ID ? ASSISTANT_ID : null,
+        );
+      }
+      if (method === 'thread/trajectory/detail/read') return assistantDetailResponse();
+      if (method === 'thread/trajectory/export') return { status: 'canceled' };
+      throw new Error(`Unexpected Agent Core method: ${method}`);
+    }, { turnId: TURN_ID });
+
+    rendered.render();
+    await flush();
+    await flush();
+
+    expect(readInputs[0]?.focus).toEqual({ recordId: null, turnId: TURN_ID });
+    expect(rendered.document.querySelector('[aria-label="Trajectory inspector"]')).not.toBeNull();
+
+    clickAriaButton(rendered.document, 'Close Trajectory inspector');
+    await flush();
+    expect(rendered.document.querySelector('[aria-label="Trajectory inspector"]')).toBeNull();
+
+    rendered.notify({
+      type: 'turn/providerRetry/changed',
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      status: null,
+    });
+    await wait(150);
+    await flush();
+
+    expect(readInputs.at(-1)?.focus).toBeNull();
     expect(rendered.document.querySelector('[aria-label="Trajectory inspector"]')).toBeNull();
   });
 
@@ -513,6 +553,7 @@ function renderPanel(
 ) {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
+  let notificationListener: ((notification: AgentCoreNotification) => void) | null = null;
   Object.assign(window, {
     requestAnimationFrame: (callback: FrameRequestCallback) => {
       callback(Date.now());
@@ -522,7 +563,12 @@ function renderPanel(
     lin: {
       initialLanguage: 'en',
       agentCoreRequest,
-      onAgentCoreNotification: () => () => undefined,
+      onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => {
+        notificationListener = listener;
+        return () => {
+          if (notificationListener === listener) notificationListener = null;
+        };
+      },
       onLanguageChanged: () => () => undefined,
     },
   });
@@ -531,6 +577,9 @@ function renderPanel(
   const root = createRoot(rootElement);
   return {
     document,
+    notify: (notification: AgentCoreNotification) => {
+      act(() => notificationListener?.(notification));
+    },
     window,
     render: () => {
       act(() => {
@@ -556,6 +605,7 @@ function renderPanel(
 
 function trajectoryReadResponse(
   records: readonly ThreadTrajectoryRecordSummary[] = trajectoryRecords(),
+  selectedRecordId: string | null = null,
 ): ThreadTrajectoryReadResponse {
   const usage = records.reduce((total, entry) => total + (entry.usage?.totalTokens ?? 0), 0);
   return {
@@ -588,7 +638,7 @@ function trajectoryReadResponse(
     records,
     nextCursor: null,
     hasMore: false,
-    selectedRecordId: null,
+    selectedRecordId,
   };
 }
 
@@ -890,6 +940,12 @@ async function flush(): Promise<void> {
   await act(async () => {
     await Promise.resolve();
     await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
+async function wait(ms: number): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, ms));
   });
 }
 

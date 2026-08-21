@@ -93,7 +93,7 @@ const materialSurfaceSelectors = new Map([
   // opens full-width under the header — still an overlay above the transcript
   // viewport, and still level-1 chrome rather than transcript content.
   ['src/renderer/styles/thread.css|.thread-work-strip-list', 'Background Agent work-strip overlay.'],
-  ['src/renderer/styles/thread.css|.thread-response-usage-card', 'Thread response usage overlay.'],
+  ['src/renderer/styles/thread.css|.thread-response-trajectory-card', 'Thread response Trajectory overlay.'],
   ['src/renderer/styles/code.css|.agent-code-header > span', 'Floating code-block language label chrome.'],
   ['src/renderer/styles/code.css|.agent-code-copy, .code-block-copy', 'Floating code-block copy chrome.'],
   ['src/renderer/styles/code.css|.code-block-language', 'Floating code-block language trigger.'],
@@ -121,7 +121,7 @@ const borderlessOverlaySurfaceSelectors = new Map([
   ['src/renderer/styles/thread.css|.thread-composer-file-preview-popover', 'Thread composer file preview popover.'],
   ['src/renderer/styles/thread.css|.thread-composer-model-popover', 'Thread composer model menu.'],
   ['src/renderer/styles/thread.css|.thread-list', 'Thread history popover.'],
-  ['src/renderer/styles/thread.css|.thread-response-usage-card', 'Thread response usage overlay.'],
+  ['src/renderer/styles/thread.css|.thread-response-trajectory-card', 'Thread response Trajectory overlay.'],
   ['src/renderer/styles/code.css|.code-block-language-menu', 'Code-block language menu.'],
   ['src/renderer/styles/confirm-dialog.css|.confirm-dialog', 'Confirm dialog level-2 surface.'],
   ['src/renderer/styles/file-preview.css|.document-outline-popover', 'Document outline popover.'],
@@ -153,7 +153,6 @@ const runtimeTokenInputs = new Map([
   ['src/renderer/styles/outliner.css|--flat-indent-guide-height', 'Flat indent guides receive measured geometry from the outliner runtime.'],
   ['src/renderer/styles/outliner.css|--table-columns', 'Table owners provide one live column template to aligned header and body rows.'],
   ['src/renderer/styles/outliner.css|--table-min-width', 'Table owners provide the live horizontal extent derived from configured column widths.'],
-  ['src/renderer/styles/thread.css|--segment-size', 'Thread usage segments receive their live proportional width from response usage.'],
   ['src/renderer/styles/thread-trajectory.css|--trajectory-turn-left', 'Trajectory Turn boundaries receive their live timeline position.'],
   ['src/renderer/styles/thread-trajectory.css|--trajectory-span-lane', 'Trajectory records receive their derived Input, Assistant, or Tools lane.'],
   ['src/renderer/styles/thread-trajectory.css|--trajectory-span-left', 'Trajectory records receive their live timeline start position.'],

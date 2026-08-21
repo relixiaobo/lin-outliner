@@ -49,7 +49,7 @@ import {
   useDocumentIndexSnapshot,
   type DocumentIndexStore,
 } from '../../state/documentIndexStore';
-import { useI18n, useT } from '../../i18n/I18nProvider';
+import { useT } from '../../i18n/I18nProvider';
 import {
   acknowledgeThreadComposerContext,
   acknowledgeThreadComposerNodeReferenceRequest,
@@ -115,8 +115,6 @@ import {
   type DisclosureScrollAnchorRestoreResult,
 } from '../../ui/interactions/disclosureScrollAnchor';
 import { useAnchoredOverlay } from '../../ui/primitives/useAnchoredOverlay';
-import { formatDateTime } from '../../ui/formatting';
-import { ThreadUsageBreakdown } from './ThreadUsageBreakdown';
 import {
   hasTranscriptContentBelow,
   isTranscriptFollowing,
@@ -3404,10 +3402,10 @@ function ThreadResponseTail({
   readonly workingTextOwnsMotion: boolean;
 }) {
   const t = useT();
-  const [usageHoverOpen, setUsageHoverOpen] = useState(false);
+  const [trajectoryHoverOpen, setTrajectoryHoverOpen] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
-  const detailsButtonRef = useRef<HTMLButtonElement | null>(null);
+  const trajectoryButtonRef = useRef<HTMLButtonElement | null>(null);
   const streaming = turn.status === 'inProgress';
   const interrupted = turn.status === 'interrupted' && !statusOwnedElsewhere;
   const errorText = turn.error
@@ -3486,22 +3484,22 @@ function ThreadResponseTail({
               <IconButton
                 icon={InfoIcon}
                 iconSize={ICON_SIZE.menu}
-                label={t.agent.message.details}
-                onBlur={() => setUsageHoverOpen(false)}
+                label={t.agent.message.openTrajectory}
+                onBlur={() => setTrajectoryHoverOpen(false)}
                 onClick={(event) => {
-                  setUsageHoverOpen(false);
+                  setTrajectoryHoverOpen(false);
                   event.currentTarget.blur();
                   onOpenDetails();
                 }}
-                onFocus={() => setUsageHoverOpen(true)}
-                onMouseEnter={() => setUsageHoverOpen(true)}
-                onMouseLeave={() => setUsageHoverOpen(false)}
-                ref={detailsButtonRef}
+                onFocus={() => setTrajectoryHoverOpen(true)}
+                onMouseEnter={() => setTrajectoryHoverOpen(true)}
+                onMouseLeave={() => setTrajectoryHoverOpen(false)}
+                ref={trajectoryButtonRef}
                 title=""
                 variant="message"
               />
-              {usageHoverOpen ? (
-                <ThreadUsageHoverCard anchorRef={detailsButtonRef} turn={turn} />
+              {trajectoryHoverOpen ? (
+                <ThreadTrajectoryHoverCard anchorRef={trajectoryButtonRef} turn={turn} />
               ) : null}
             </span>
           </div>
@@ -3511,7 +3509,7 @@ function ThreadResponseTail({
   );
 }
 
-function ThreadUsageHoverCard({
+function ThreadTrajectoryHoverCard({
   anchorRef,
   turn,
 }: {
@@ -3519,32 +3517,19 @@ function ThreadUsageHoverCard({
   readonly turn: Turn;
 }) {
   const t = useT();
-  const { locale } = useI18n();
   const cardRef = useRef<HTMLDivElement | null>(null);
-  const usage = turn.execution.usage;
   const style = useAnchoredOverlay(cardRef, {
     anchorRef,
     gap: 8,
-    layoutKey: `${turn.completedAt ?? turn.startedAt}:${turn.execution.modelProvider}:${turn.execution.model}:${turn.execution.reasoningEffort}:${usage.input}:${usage.output}:${usage.cacheRead}:${usage.cacheWrite}:${usage.totalTokens}:${usage.cost?.total ?? 0}`,
-    maxHeight: 420,
+    layoutKey: `${turn.completedAt ?? turn.startedAt}:${turn.id}`,
+    maxHeight: 160,
     placement: 'top-end',
-    width: 320,
+    width: 220,
   });
   return createPortal(
-    <div className="thread-response-usage-card" ref={cardRef} role="tooltip" style={style}>
-      <dl className="thread-response-usage-context">
-        <div>
-          <dt>{t.agent.message.timestamp}</dt>
-          <dd>{formatDateTime(turn.completedAt ?? turn.startedAt, locale, {
-            dateStyle: 'medium',
-            timeStyle: 'medium',
-          })}</dd>
-        </div>
-        <div><dt>{t.agent.message.provider}</dt><dd>{turn.execution.modelProvider}</dd></div>
-        <div><dt>{t.agent.message.model}</dt><dd>{turn.execution.model}</dd></div>
-        <div><dt>{t.agent.message.reasoningEffort}</dt><dd>{turn.execution.reasoningEffort}</dd></div>
-      </dl>
-      <ThreadUsageBreakdown usage={usage} />
+    <div className="thread-response-trajectory-card" ref={cardRef} role="tooltip" style={style}>
+      <div className="thread-response-trajectory-title">{t.agent.message.openTrajectory}</div>
+      <div className="thread-response-trajectory-hint">{t.agent.message.openTrajectoryHint}</div>
     </div>,
     document.body,
   );

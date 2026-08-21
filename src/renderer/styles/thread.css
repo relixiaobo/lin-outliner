@@ -1116,7 +1116,7 @@
   display: inline-flex;
 }
 
-.thread-response-usage-card {
+.thread-response-trajectory-card {
   z-index: var(--z-agent-menu);
   display: flex;
   overflow: auto;
@@ -1129,178 +1129,24 @@
   color: var(--text-strong);
 }
 
-.thread-response-usage-card {
-  gap: var(--space-3);
-  padding: var(--space-4);
+.thread-response-trajectory-card {
+  gap: var(--space-2);
+  padding: var(--space-3);
   pointer-events: none;
   user-select: none;
 }
 
-.thread-response-usage-context {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-2);
-  border-bottom: 1px solid var(--separator);
-  margin: 0;
-  padding-bottom: var(--space-3);
-}
-
-.thread-response-usage-context > div {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: 76px minmax(0, 1fr);
-  gap: var(--space-4);
-}
-
-.thread-response-usage-context dt,
-.thread-response-usage-context dd {
-  min-width: 0;
-  margin: 0;
-  font-size: var(--font-ui-xs);
-  line-height: var(--line-ui-xs);
-}
-
-.thread-response-usage-context dt {
-  color: var(--text-faint);
-}
-
-.thread-response-usage-context dd {
-  overflow: hidden;
-  color: var(--text-soft);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.thread-response-usage-title-row {
-  display: flex;
-  min-width: 0;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-4);
-}
-
-.thread-response-usage-title {
+.thread-response-trajectory-title {
   color: var(--text-strong);
   font-size: var(--font-ui-sm);
   font-weight: 650;
   line-height: var(--line-ui-sm-tight);
 }
 
-.thread-response-usage-meta {
-  flex: 0 0 auto;
-  color: var(--text-faint);
-  font-size: var(--font-ui-xs);
-  line-height: var(--line-ui-xs);
-  white-space: nowrap;
-}
-
-.thread-response-usage-meta strong {
-  color: var(--text-strong);
-  font-weight: 650;
-}
-
-.thread-response-usage-bar {
-  display: flex;
-  width: 100%;
-  height: 6px;
-  overflow: hidden;
-  border-radius: var(--radius-pill);
-  background: var(--fill-1);
-}
-
-.thread-response-usage-bar > span {
-  display: block;
-  width: var(--segment-size);
-  min-width: 0;
-}
-
-.thread-response-usage-bar .is-input,
-.thread-response-usage-breakdown i.is-input {
-  background: var(--usage-input);
-}
-
-.thread-response-usage-bar .is-output,
-.thread-response-usage-breakdown i.is-output {
-  background: var(--usage-output);
-}
-
-.thread-response-usage-bar .is-cache-read,
-.thread-response-usage-breakdown i.is-cache-read {
-  background: var(--usage-cache-read);
-}
-
-.thread-response-usage-bar .is-cache-write,
-.thread-response-usage-breakdown i.is-cache-write {
-  background: var(--usage-cache-write);
-}
-
-.thread-response-usage-breakdown {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-1);
+.thread-response-trajectory-hint {
   color: var(--text-soft);
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs);
-}
-
-.thread-response-usage-breakdown > div {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: minmax(0, 90px) minmax(42px, auto) minmax(58px, auto);
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.thread-response-usage-breakdown > div.is-zero {
-  color: var(--text-faint);
-}
-
-.thread-response-usage-breakdown > div.is-total {
-  color: var(--text-strong);
-  font-weight: 650;
-}
-
-.thread-response-usage-breakdown > div > span:first-child {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--space-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.thread-response-usage-breakdown i {
-  display: inline-block;
-  width: 12px;
-  height: 7px;
-  flex: 0 0 12px;
-  border-radius: var(--radius-pill);
-}
-
-.thread-response-usage-breakdown i.is-total {
-  background: transparent;
-}
-
-.thread-response-usage-breakdown strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-strong);
-  font-variant-numeric: tabular-nums;
-  font-weight: 500;
-  text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.thread-response-usage-breakdown .is-total strong {
-  font-weight: 650;
-}
-
-.thread-response-usage-breakdown .is-zero strong {
-  color: var(--text-faint);
 }
 
 .thread-provider-retry {

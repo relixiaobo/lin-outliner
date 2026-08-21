@@ -2714,7 +2714,7 @@ function registerIpc() {
       }
       if (request?.canShowDetails === true) {
         if (template.length > 0) template.push({ type: 'separator' });
-        template.push({ label: messages.message.details, click: () => pick('details') });
+        template.push({ label: messages.message.openTrajectory, click: () => pick('details') });
       }
       if (template.length === 0) {
         resolve(null);

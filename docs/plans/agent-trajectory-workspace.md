@@ -138,11 +138,13 @@ record kinds.
 
 ### Entry and navigation
 
-The active Thread header opens Trajectory for the complete Thread. A Details
-action on a Turn, message, Assistant/provider call, or tool record opens the
-same workspace with the exact owning record selected. The entry contract is
-Thread-addressed; selection is an optional deep link, not a separate
-Turn-addressed page.
+The active Thread header opens Trajectory for the complete Thread. An Open
+Trajectory action on a Turn, message, Assistant/provider call, or tool record
+opens the same workspace with the exact owning record selected. The entry
+contract is Thread-addressed; selection is an optional deep link, not a separate
+Turn-addressed page. Renderer focus from that deep link is consumed once on
+entry; live refresh preserves the user's current inspector state and never
+reopens a closed inspector from the original Turn focus.
 
 On entry:
 
@@ -369,7 +371,7 @@ the feature. Current behavior is folded into `agent-core.md`,
 ## Acceptance Criteria
 
 - Opening Trajectory from a Thread header shows that complete Thread; opening
-  Details from an existing record selects the exact matching Thread, Turn,
+  Trajectory from an existing record selects the exact matching Thread, Turn,
   Item, and Assistant/provider-call identities in the same workspace.
 - While a Turn runs, lifecycle rows and bounded previews update without manual
   refresh. After restart, completed history reconstructs in the same recorded

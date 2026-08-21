@@ -526,7 +526,7 @@ test.describe('canonical agent Thread surface', () => {
     ))).toEqual([
       'Copy message',
       'Continue in new chat',
-      'Details',
+      'Open Trajectory',
     ]);
     const [responseBodyBox, responseActionsBox] = await Promise.all([
       response.locator('.thread-agent-message-body').boundingBox(),
@@ -536,21 +536,16 @@ test.describe('canonical agent Thread surface', () => {
     expect(responseActionsBox).toBeTruthy();
     expect(responseActionsBox!.y).toBeGreaterThanOrEqual(responseBodyBox!.y + responseBodyBox!.height - 1);
 
-    const messageDetailsButton = responseActions.getByRole('button', { name: 'Details' });
+    const messageDetailsButton = responseActions.getByRole('button', { name: 'Open Trajectory' });
     await messageDetailsButton.hover();
-    const usage = page.getByRole('tooltip');
-    await expect(usage).toHaveCount(1);
-    await expect(usage.locator('.thread-response-usage-context')).toContainText('Timestamp');
-    await expect(usage.locator('.thread-response-usage-context')).toContainText('Provideropenai');
-    await expect(usage.locator('.thread-response-usage-context')).toContainText('Modelopenai/gpt-5.4');
-    await expect(usage.locator('.thread-response-usage-context')).toContainText('Reasoningmedium');
-    await expect(usage).toContainText('Usage details');
-    await expect(usage).toContainText('Cached: 21%');
-    await expect(usage).toContainText('Input120');
+    const trajectoryHint = page.getByRole('tooltip');
+    await expect(trajectoryHint).toHaveCount(1);
+    await expect(trajectoryHint).toContainText('Open Trajectory');
+    await expect(trajectoryHint).toContainText('Inspect this turn’s context, tools, events, and evidence.');
     const paneCountBeforeDetails = await page.locator('.outline-panel-surface').count();
     await messageDetailsButton.click();
     await expect(page.getByRole('dialog', { name: 'Details' })).toHaveCount(0);
-    await expect(usage).toHaveCount(0);
+    await expect(trajectoryHint).toHaveCount(0);
     const trajectory = page.locator('.outline-panel-surface.is-thread-trajectory');
     await expect(trajectory).toBeVisible();
     await expect(trajectory).toHaveClass(/active-panel/);
@@ -2008,7 +2003,7 @@ test.describe('canonical agent Thread surface', () => {
       await expect(compactionTurn.getByRole('button', { name: 'Copy message' })).toHaveCount(0);
       await expect(compactionTurn.getByRole('button', { name: 'Continue in new chat' })).toHaveCount(0);
       await compactionTurn.hover();
-      await compactionTurn.getByRole('button', { name: 'Details' }).click();
+      await compactionTurn.getByRole('button', { name: 'Open Trajectory' }).click();
       const trajectory = page.locator('.outline-panel-surface.is-thread-trajectory');
       await expect(trajectory).toContainText('Trajectory');
       await expect(trajectory.locator('[data-kind="compaction"]')).toContainText('COMPACTED');
@@ -8296,7 +8291,7 @@ test.describe('terminal Thread history actions', () => {
       'Retry',
       'Copy message',
       'Continue in new chat',
-      'Details',
+      'Open Trajectory',
     ]);
     const [errorBox, actionsBox] = await Promise.all([error.boundingBox(), actions.boundingBox()]);
     expect(errorBox).toBeTruthy();

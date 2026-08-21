@@ -65,6 +65,7 @@ export function ThreadTrajectoryPanel({
   const t = useT();
   const stickyBreadcrumbRef = useRef<HTMLDivElement | null>(null);
   const loadSeqRef = useRef(0);
+  const focusConsumedRef = useRef(false);
   const recordsRef = useRef<readonly ThreadTrajectoryRecordSummary[]>(EMPTY_RECORDS);
   const selectedIdRef = useRef<string | null>(selectedRecordId ?? null);
   const [page, setPage] = useState<ThreadTrajectoryReadResponse | null>(null);
@@ -93,6 +94,13 @@ export function ThreadTrajectoryPanel({
     const seq = loadSeqRef.current + 1;
     loadSeqRef.current = seq;
     const loadingOlderPage = Boolean(options.cursor);
+    const focus = trajectoryReadFocus({
+      cursor: options.cursor ?? null,
+      focusConsumed: focusConsumedRef.current,
+      selectedRecordId: selectedIdRef.current ?? selectedRecordId ?? null,
+      turnId,
+    });
+    const applyingFocus = focus !== null;
     if (loadingOlderPage) setLoadingOlder(true);
     else if (!options.silent && recordsRef.current.length === 0) setLoading(true);
     setError(null);
@@ -101,12 +109,10 @@ export function ThreadTrajectoryPanel({
         threadId,
         cursor: options.cursor ?? null,
         limit: PAGE_LIMIT,
-        focus: options.cursor ? null : {
-          recordId: selectedIdRef.current ?? selectedRecordId ?? null,
-          turnId: selectedIdRef.current ? null : turnId ?? null,
-        },
+        focus,
       });
       if (loadSeqRef.current !== seq) return;
+      if (applyingFocus) focusConsumedRef.current = true;
       const current = recordsRef.current;
       const nextRecords = current.length === 0
         ? response.records
@@ -115,7 +121,12 @@ export function ThreadTrajectoryPanel({
       setPage(response);
       setRecords(nextRecords);
       if (current.length === 0 || loadingOlderPage) setNextCursor(response.nextCursor);
-      setSelectedId((currentSelection) => currentSelection ?? response.selectedRecordId);
+      const focusSelection = applyingFocus ? response.selectedRecordId : null;
+      setSelectedId((currentSelection) => {
+        const nextSelection = currentSelection ?? focusSelection;
+        selectedIdRef.current = nextSelection;
+        return nextSelection;
+      });
     } catch (loadError) {
       if (loadSeqRef.current === seq) setError(errorMessage(loadError));
     } finally {
@@ -127,6 +138,7 @@ export function ThreadTrajectoryPanel({
   }, [selectedRecordId, threadId, turnId]);
 
   useEffect(() => {
+    focusConsumedRef.current = false;
     recordsRef.current = EMPTY_RECORDS;
     selectedIdRef.current = selectedRecordId ?? null;
     setPage(null);
@@ -194,8 +206,16 @@ export function ThreadTrajectoryPanel({
     && [...callIds].every((recordId) => collapsedCalls.has(recordId));
 
   const selectRecord = useCallback((recordId: string) => {
+    selectedIdRef.current = recordId;
+    focusConsumedRef.current = true;
     setSelectedId(recordId);
     setFollowingTail(false);
+  }, []);
+
+  const closeInspector = useCallback(() => {
+    selectedIdRef.current = null;
+    focusConsumedRef.current = true;
+    setSelectedId(null);
   }, []);
 
   const changeRange = useCallback((nextRange: TrajectoryTimeRange | null) => {
@@ -314,7 +334,7 @@ export function ThreadTrajectoryPanel({
               />
               {selectedRecord ? (
                 <TrajectoryInspector
-                  onClose={() => setSelectedId(null)}
+                  onClose={closeInspector}
                   onOpenChildTrajectory={onOpenThreadTrajectory}
                   record={selectedRecord}
                   threadId={threadId}
@@ -330,6 +350,22 @@ export function ThreadTrajectoryPanel({
       </div>
     </main>
   );
+}
+
+function trajectoryReadFocus({
+  cursor,
+  focusConsumed,
+  selectedRecordId,
+  turnId,
+}: {
+  readonly cursor: string | null;
+  readonly focusConsumed: boolean;
+  readonly selectedRecordId: string | null;
+  readonly turnId?: string;
+}): { readonly recordId: string | null; readonly turnId: string | null } | null {
+  if (cursor !== null || focusConsumed) return null;
+  if (selectedRecordId) return { recordId: selectedRecordId, turnId: null };
+  return turnId ? { recordId: null, turnId } : null;
 }
 
 function toggledSet(current: ReadonlySet<string>, value: string): ReadonlySet<string> {

@@ -818,9 +818,9 @@ An active Turn ends with one rose shape indicator after all currently visible
 process and response content. It is the stable generating affordance for both
 empty and streaming responses; Markdown does not add a second caret. The
 indicator occupies the same persistent response-footer slot as the terminal
-Copy, Continue in new chat, and Details controls, and swaps to those controls
-without moving the response. User-message actions likewise fill a persistent
-slot that remains empty and non-interactive while the Turn is live. The indicator
+Copy, Continue in new chat, and Open Trajectory controls, and swaps to those
+controls without moving the response. User-message actions likewise fill a
+persistent slot that remains empty and non-interactive while the Turn is live. The indicator
 stays present but static while that Turn has a `WorkingText` owner, and reconnect
 recovery replaces it in the same footer slot; one Turn therefore never presents
 two concurrent motion owners. Increased contrast removes the text sweep and
@@ -974,7 +974,7 @@ document deltas do not render the Turn. Copy resolves Node names from the curren
 document index at click time rather than from the last rendered snapshot.
 
 A terminal response owns one action row directly below its visible content.
-Every terminal response exposes Copy, Continue in new chat, and Details as
+Every terminal response exposes Copy, Continue in new chat, and Open Trajectory as
 applicable. Continue in new chat is the only user-visible history fork action
 and uses the `afterTurn` boundary. There is no separate Turn footer or second
 action surface. A
@@ -1001,15 +1001,17 @@ command, file-change, MCP/dynamic display, Agent-task, or result fields. A parti
 failed response remains the copy authority; its
 error summary is used only when the Turn has no copyable assistant content.
 Right-clicking the terminal response opens the native message menu with the same
-Copy, Continue in new chat, and Details commands.
+Copy, Continue in new chat, and Open Trajectory commands.
 
-The Details icon preserves the established two-level interaction without
+The Open Trajectory icon preserves the established two-level interaction without
 duplicating information surfaces. Hover or keyboard focus shows one
-non-interactive card containing timestamp, provider, model, reasoning effort,
-and the complete token/cost usage breakdown. The card is anchored in a portal
-and cannot be clipped by transcript scrolling. Clicking the icon, or choosing
-Details from the native message menu, opens Trajectory in the active workspace
-pane, focused to that Turn.
+non-interactive card whose primary text says that the action opens Trajectory,
+followed by a one-sentence inspection hint. It does not repeat timestamp,
+provider, model, reasoning effort, tokens, cost, or cache details; those belong
+in Trajectory. The card is anchored in a portal and cannot be clipped by
+transcript scrolling. Clicking the icon, or choosing Open Trajectory from the
+native message menu, opens Trajectory in the active workspace pane, focused to
+that Turn.
 
 Trajectory is the Thread-wide technical workspace. It is a main-owned,
 inspection-only projection over canonical Turns, retained diagnostics, context
@@ -1132,8 +1134,11 @@ cursor, and the selected record. The response deliberately does not return a
 full `Thread` because that object contains host details such as `cwd` that are
 not part of the Trajectory UI contract. A read without `recordId` or `turnId`
 focus returns no selection; focus is a deep link, not an implicit tail-row
-choice. Search is scoped to the loaded page; the user can load older records
-from the tail-first cursor and overview ellipsis.
+choice. Renderer entry consumes `recordId` / `turnId` focus once when opening
+the panel; live refreshes preserve the user's current ledger/inspector state and
+must not reopen a closed inspector from the original focus. Search is scoped to
+the loaded page; the user can load older records from the tail-first cursor and
+overview ellipsis.
 
 Record details are lazy. `thread/trajectory/detail/read` returns the selected
 record plus sanitized detail evidence only: bounded Turn evidence, bounded Item
