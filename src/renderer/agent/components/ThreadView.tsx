@@ -115,6 +115,7 @@ import {
   type DisclosureScrollAnchorRestoreResult,
 } from '../../ui/interactions/disclosureScrollAnchor';
 import { useAnchoredOverlay } from '../../ui/primitives/useAnchoredOverlay';
+import { formatNumber } from '../../ui/formatting';
 import {
   hasTranscriptContentBelow,
   isTranscriptFollowing,
@@ -3518,21 +3519,52 @@ function ThreadTrajectoryHoverCard({
 }) {
   const t = useT();
   const cardRef = useRef<HTMLDivElement | null>(null);
+  const facts = trajectoryHoverFacts(turn, t);
   const style = useAnchoredOverlay(cardRef, {
     anchorRef,
     gap: 8,
     layoutKey: `${turn.completedAt ?? turn.startedAt}:${turn.id}`,
     maxHeight: 160,
     placement: 'top-end',
-    width: 220,
+    width: 'content',
   });
   return createPortal(
     <div className="thread-response-trajectory-card" ref={cardRef} role="tooltip" style={style}>
       <div className="thread-response-trajectory-title">{t.agent.message.openTrajectory}</div>
-      <div className="thread-response-trajectory-hint">{t.agent.message.openTrajectoryHint}</div>
+      {facts.length > 0 ? (
+        <div className="thread-response-trajectory-facts">
+          {facts.map((fact) => <span className="thread-response-trajectory-fact" key={fact}>{fact}</span>)}
+        </div>
+      ) : null}
     </div>,
     document.body,
   );
+}
+
+export function trajectoryHoverFacts(turn: Turn, t: Messages): readonly string[] {
+  const facts: string[] = [];
+  const totalTokens = turn.execution.usage.totalTokens;
+  if (totalTokens > 0) {
+    facts.push(t.agent.message.openTrajectoryTokenCount({ tokens: formatHoverInteger(totalTokens) }));
+  }
+  const cost = turn.execution.usage.cost;
+  if (cost && cost.total > 0) {
+    facts.push(t.agent.message.openTrajectoryCost({ cost: formatHoverUsd(cost.total) }));
+  }
+  return facts;
+}
+
+function formatHoverInteger(value: number): string {
+  return formatNumber(Math.max(0, Math.round(value)), 'en-US');
+}
+
+function formatHoverUsd(value: number): string {
+  const bounded = Math.max(0, value);
+  if (bounded > 0 && bounded < 0.000001) return '<$0.000001';
+  if (bounded >= 1) return `$${bounded.toFixed(2)}`;
+  const [, fraction = ''] = bounded.toFixed(6).split('.');
+  const trimmed = fraction.replace(/0+$/u, '').padEnd(2, '0');
+  return `$0.${trimmed}`;
 }
 
 function ThreadProviderRetryStatus({ status }: { readonly status: ProviderRetryStatus }) {
