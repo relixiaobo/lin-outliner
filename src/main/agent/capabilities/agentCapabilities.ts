@@ -13,6 +13,7 @@ import {
   type ToolActionDescriptor,
 } from './agentCapabilityRules';
 import { canonicalPathPreservingSuffix } from './agentAttachmentMaterialization';
+import { isTenonImportCommitCommand } from '../../tenonImportProtocol';
 
 export type {
   AgentToolActionKind,
@@ -267,7 +268,7 @@ function classifyShellSegment(segmentInput: string, fullCommand: string): ToolAc
   if (/\b(?:npm|pnpm|yarn|bun)\s+(?:run|test|build|dev|lint|check)\b/i.test(segment)) {
     return values('shell.project_script', 'project script', segment);
   }
-  if (/\btenon-import\s+commit\b/i.test(segment)) {
+  if (isTenonImportCommitCommand(fullCommand) && isTenonImportCommitCommand(segment)) {
     // electron-vite 5's ESM shim scanner misreads this title as a static import
     // when the words are one literal, corrupting the packaged main-process chunk.
     return values('outline.edit', ['outline', 'import'].join(' '), segment);

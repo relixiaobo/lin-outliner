@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
+import type { AgentMutationCausation } from '../../../core/agent/protocol';
 import { plainText, type CreateNodeTree } from '../../../core/types';
 import {
   checkedState,
@@ -43,24 +44,46 @@ export interface ImportPackContentRequest {
 
 export interface ImportPackCommitFileRequest extends ImportPackFileRequest {
   previewId?: string;
+  causation: AgentMutationCausation;
 }
 
 export interface ImportPackCommitContentRequest extends ImportPackContentRequest {
   previewId?: string;
+  causation: AgentMutationCausation;
 }
 
-export interface ImportServiceResult {
+interface ImportServiceResultBase {
   importId: string;
-  previewId?: string;
-  stagingRootId?: string;
   sectionCount: number;
   nodeCount: number;
   createdRootIds: string[];
   warnings: ImportWarning[];
   stats: ImportStats;
-  operationId?: string;
-  verification?: ImportVerification;
 }
+
+export interface ImportPreviewResult extends ImportServiceResultBase {
+  status: 'previewed';
+  previewId: string;
+}
+
+interface ImportStagedResultBase extends ImportServiceResultBase {
+  stagingRootId: string;
+  operationId: string;
+  verification: ImportVerification;
+}
+
+export interface ImportStagedResult extends ImportStagedResultBase {
+  status: 'staged';
+}
+
+export interface ImportStagedWithErrorsResult extends ImportStagedResultBase {
+  status: 'staged_with_errors';
+  mismatches: string[];
+  retryAllowed: false;
+}
+
+export type ImportCommitResult = ImportStagedResult | ImportStagedWithErrorsResult;
+export type ImportServiceResult = ImportPreviewResult | ImportCommitResult;
 
 export interface ImportVerification {
   ok: boolean;
@@ -118,7 +141,7 @@ export class AgentImportService {
     this.idGenerator = options.idGenerator ?? randomUUID;
   }
 
-  async previewFromFile(input: ImportPackFileRequest): Promise<ImportServiceResult> {
+  async previewFromFile(input: ImportPackFileRequest): Promise<ImportPreviewResult> {
     const normalized = normalizeImportRequest(input);
     const loaded = await loadImportPackFromFile(normalized.packFile, this.options);
     const parentId = this.resolveParentId(normalized.parentId);
@@ -133,7 +156,7 @@ export class AgentImportService {
     return resultForPreview(loaded, previewId);
   }
 
-  async previewFromContent(input: ImportPackContentRequest): Promise<ImportServiceResult> {
+  async previewFromContent(input: ImportPackContentRequest): Promise<ImportPreviewResult> {
     const normalized = normalizeContentImportRequest(input);
     const loaded = loadImportPackFromContent(normalized.packContent, normalized.packLabel);
     const parentId = this.resolveParentId(normalized.parentId);
@@ -148,30 +171,33 @@ export class AgentImportService {
     return resultForPreview(loaded, previewId);
   }
 
-  async commitFromFile(input: ImportPackCommitFileRequest): Promise<ImportServiceResult> {
+  async commitFromFile(input: ImportPackCommitFileRequest): Promise<ImportCommitResult> {
     const normalized = normalizeImportRequest(input);
     const loaded = await loadImportPackFromFile(normalized.packFile, this.options);
     return this.commitLoadedPack(loaded, {
       parentId: normalized.parentId,
       mode: normalized.mode,
       previewId: input.previewId,
+      causation: input.causation,
     });
   }
 
-  async commitFromContent(input: ImportPackCommitContentRequest): Promise<ImportServiceResult> {
+  async commitFromContent(input: ImportPackCommitContentRequest): Promise<ImportCommitResult> {
     const normalized = normalizeContentImportRequest(input);
     const loaded = loadImportPackFromContent(normalized.packContent, normalized.packLabel);
     return this.commitLoadedPack(loaded, {
       parentId: normalized.parentId,
       mode: normalized.mode,
       previewId: input.previewId,
+      causation: input.causation,
     });
   }
 
   private async commitLoadedPack(
     loaded: LoadedPack,
-    input: { parentId?: string; mode: 'stage'; previewId?: string },
-  ): Promise<ImportServiceResult> {
+    input: { parentId?: string; mode: 'stage'; previewId?: string; causation: AgentMutationCausation },
+  ): Promise<ImportCommitResult> {
+    const causation = normalizeImportCausation(input.causation);
     const parentId = this.resolveParentId(input.parentId);
     const previewError = validatePreview(this.previewRecords, input.previewId, {
       packHash: loaded.packHash,
@@ -186,13 +212,22 @@ export class AgentImportService {
       );
     }
 
-    const materialized = await materializeImportPack(this.host, loaded.pack, parentId, this.toolName);
+    const operationId = `op:${this.idGenerator()}`;
+    const materialized = await materializeImportPack(
+      this.host,
+      loaded.pack,
+      parentId,
+      this.toolName,
+      operationId,
+      causation,
+    );
     const stagingRootId = materialized.createdRootIds[0];
     if (!stagingRootId) throw new Error('Import did not create a staging root.');
     const verification = verifyImportedSubtree(this.host, stagingRootId, loaded.pack.stats);
-    const data: ImportServiceResult = {
+    const base = {
       importId: `import:${this.idGenerator()}`,
       stagingRootId,
+      operationId,
       sectionCount: loaded.pack.stats.sections,
       nodeCount: loaded.pack.stats.nodes,
       createdRootIds: materialized.createdRootIds,
@@ -201,15 +236,14 @@ export class AgentImportService {
       verification,
     };
     if (!verification.ok) {
-      throw new ImportServiceFailure(
-        'verification_failed',
-        'Import wrote a staging subtree, but post-import verification found mismatched counts.',
-        'Inspect the staging root, use outline_undo_stack to undo if needed, and report the mismatch before retrying.',
-        data,
-        verification.mismatches,
-      );
+      return {
+        ...base,
+        status: 'staged_with_errors',
+        mismatches: verification.mismatches,
+        retryAllowed: false,
+      };
     }
-    return data;
+    return { ...base, status: 'staged' };
   }
 
   private resolveParentId(parentIdInput: string | undefined): string {
@@ -270,20 +304,6 @@ export function resolvePackFilePath(packFileInput: string, options: Pick<ImportS
   return path.resolve(path.isAbsolute(expanded) ? expanded : path.join(root, expanded));
 }
 
-export function visibleImportServiceResult(data: ImportServiceResult): unknown {
-  return {
-    importId: data.importId,
-    ...(data.previewId ? { previewId: data.previewId } : {}),
-    ...(data.stagingRootId ? { stagingRootId: data.stagingRootId } : {}),
-    sectionCount: data.sectionCount,
-    nodeCount: data.nodeCount,
-    createdRootIds: data.createdRootIds,
-    warnings: data.warnings.slice(0, 20),
-    stats: data.stats,
-    ...(data.verification ? { verification: data.verification } : {}),
-  };
-}
-
 function normalizeImportRequest<T extends ImportPackFileRequest>(input: T): Required<Pick<ImportPackFileRequest, 'packFile' | 'mode'>> & Pick<ImportPackFileRequest, 'parentId'> {
   const packFile = typeof input.packFile === 'string' ? input.packFile.trim() : '';
   if (!packFile) throw new ImportServiceFailure('invalid_args', 'pack_file is required.');
@@ -309,8 +329,30 @@ function normalizeContentImportRequest<T extends ImportPackContentRequest>(input
   };
 }
 
-function resultForPreview(loaded: LoadedPack, previewId: string): ImportServiceResult {
+function normalizeImportCausation(value: unknown): AgentMutationCausation {
+  const candidate = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  if (
+    typeof candidate.threadId !== 'string'
+    || !candidate.threadId.trim()
+    || typeof candidate.turnId !== 'string'
+    || !candidate.turnId.trim()
+    || typeof candidate.itemId !== 'string'
+    || !candidate.itemId.trim()
+  ) {
+    throw new ImportServiceFailure('causation_required', 'Import commit requires valid Thread, Turn, and Item causation.');
+  }
   return {
+    threadId: candidate.threadId,
+    turnId: candidate.turnId,
+    itemId: candidate.itemId,
+  };
+}
+
+function resultForPreview(loaded: LoadedPack, previewId: string): ImportPreviewResult {
+  return {
+    status: 'previewed',
     importId: `import:${loaded.packHash.slice(0, 16)}`,
     previewId,
     sectionCount: loaded.pack.stats.sections,
@@ -355,12 +397,16 @@ async function materializeImportPack(
   pack: ImportPack,
   parentId: string,
   toolName: string,
+  operationId: string,
+  causation: AgentMutationCausation,
 ): Promise<{ createdRootIds: string[] }> {
   const rootTree = importPackToCreateNodeTree(pack);
   const meta = {
     origin: 'agent',
+    operationId,
     tool: toolName,
     summary: `Created import staging tree for ${pack.stats.nodes} cleaned nodes.`,
+    causation,
   } as const;
   const yieldEveryNodes = importYieldEveryNodesForStats(pack.stats);
   const outcome = host.createNodesFromTreeYielding

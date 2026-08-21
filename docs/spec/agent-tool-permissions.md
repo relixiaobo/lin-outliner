@@ -94,11 +94,16 @@ selection and blocks govern only new execution.
 Blocks operate on normalized action descriptors such as outline read/write,
 local file read/write/delete, shell execution classes, web access, publishing,
 external messaging, Goal control, Agent orchestration, Skill invocation, image
-generation, and data import.
+generation. Import is not a separate model-tool action: a directly executable
+`tenon-import commit` Bash segment is additionally classified as
+`outline.edit`.
 
 Command matching normalizes whitespace outside quotes while preserving quoted
-content. Unknown shell behavior is classified conservatively. Blocks do not
-silently rewrite a command into a safer variant.
+content. Import-commit recognition ignores quoted examples, comments, and
+heredoc bodies. Unknown shell behavior is classified conservatively. Blocks do
+not silently rewrite a command into a safer variant. An inherited worktree
+policy rejects any Bash command classified as an outline mutation before the
+process starts.
 
 Capability configuration is local host state. It is not Thread history and does
 not travel through document synchronization.
@@ -125,6 +130,13 @@ Each executed or unavailable tool result records:
 Audit data is attached to structured tool details and the corresponding Item.
 Document operations also carry immutable Thread/Turn/Item causation in Core
 transaction metadata.
+
+CLI import commits preserve the same audit identity without accepting raw IDs
+from the process or request body. After capability admission, the host issues a
+short-lived, single-use token bound to the current Thread, Turn, and Bash Item.
+Only the recognized commit process receives it, and the local API consumes it
+before request-body parsing. A missing, expired, evicted, or reused token fails
+without a document write.
 
 Audit and diagnostics retain canonical identity, admission disposition, schema digest,
 and redacted observable arguments. Raw secret-like model values and host credentials do

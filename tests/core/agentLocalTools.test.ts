@@ -184,13 +184,17 @@ posixBashProcessTest('foreground and background bash receive the same host proce
     await mkdir(managedBin, { recursive: true });
     await writeFile(bpPath, '#!/bin/sh\nprintf browser-pilot-test\n', 'utf8');
     await chmod(bpPath, 0o700);
-    const processEnvironment = async () => ({
-      env: {
-        BROWSER_PILOT_CLIENT_KEY: 'tenon.thread-key',
-        BROWSER_PILOT_OUTPUT_DIR: outputDirectory,
-      },
-      leadingToolPathSegments: [managedBin],
-    });
+    const environmentCalls: Array<{ toolCallId?: string; command: string }> = [];
+    const processEnvironment = async (context: { toolCallId?: string; command: string }) => {
+      environmentCalls.push(context);
+      return {
+        env: {
+          BROWSER_PILOT_CLIENT_KEY: 'tenon.thread-key',
+          BROWSER_PILOT_OUTPUT_DIR: outputDirectory,
+        },
+        leadingToolPathSegments: [managedBin],
+      };
+    };
     const workspace = createAgentLocalWorkspaceContext(
       workspaceRoot,
       undefined,
@@ -216,9 +220,17 @@ posixBashProcessTest('foreground and background bash receive the same host proce
     expect(persistedOutputPath).toBeDefined();
     const output = await waitForFileContent(
       persistedOutputPath!,
-      (content) => content.includes('status: completed'),
+      (content) => content.includes('status: completed')
+        && content.includes(`tenon.thread-key|${outputDirectory}|${bpPath}`),
     );
     expect(output).toContain(`tenon.thread-key|${outputDirectory}|${bpPath}`);
+    expect(environmentCalls).toEqual([{
+      toolCallId: 'foreground-env',
+      command: 'printf "%s|%s|%s" "$BROWSER_PILOT_CLIENT_KEY" "$BROWSER_PILOT_OUTPUT_DIR" "$(command -v bp)"',
+    }, {
+      toolCallId: 'background-env',
+      command: 'printf "%s|%s|%s" "$BROWSER_PILOT_CLIENT_KEY" "$BROWSER_PILOT_OUTPUT_DIR" "$(command -v bp)"',
+    }]);
   });
 });
 

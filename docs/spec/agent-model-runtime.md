@@ -528,8 +528,10 @@ Specialized execution is fail-closed at the argument-dependent boundary.
 every action is repository inspection. They may execute an extension or MCP tool
 only when every classified action kind is read-only; an empty, unknown,
 mixed-write, or new classification yields a structured unavailable result. A
-worktree policy likewise rejects live-outline import commits, and all descendant
-file and shell writes use the persisted worktree path as their containment root.
+worktree policy likewise rejects Bash commands classified as live-outline
+mutations before process launch, including `tenon-import commit`, and all
+descendant file and shell writes use the persisted worktree path as their
+containment root.
 
 The kernel freezes a schema-valid canonical call
 before `ToolRuntime` evaluates argument-dependent capability blocks. A valid blocked
@@ -539,8 +541,11 @@ canonical Item, and every admission receives a terminal Item, including rejectio
 native unavailable, cancellation, or a thrown result.
 
 The current Item identity is bound through asynchronous execution context.
-Outliner transactions and bulk imports therefore receive exact
-`threadId`/`turnId`/`itemId` causation even when multiple tools overlap.
+Outliner tool transactions therefore receive exact
+`threadId`/`turnId`/`itemId` causation even when multiple tools overlap. A
+recognized CLI import commit receives equivalent causation through a
+short-lived, single-use host token bound to the Bash Item; the local API rejects
+raw causation fields and consumes the token before request-body parsing.
 
 Capability audit data is attached to tool result details. It describes action
 kinds, access classification, source, and unavailable reason; it is not an

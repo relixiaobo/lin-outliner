@@ -5,6 +5,10 @@ import path from 'node:path';
 import { validateImportPack } from '../../../agent/capabilities/agentDataImportPack';
 import { errorMessage } from '../../../agent/capabilities/agentNodeToolUtils';
 import {
+  TENON_IMPORT_CAUSATION_TOKEN_ENV,
+  TENON_IMPORT_CAUSATION_TOKEN_HEADER,
+} from '../../../tenonImportProtocol';
+import {
   optionFlag,
   optionValue,
   readJson,
@@ -223,6 +227,9 @@ function validatePackContent(packContent: string): (
 async function callImportApi(pathname: '/preview' | '/commit', body: Record<string, unknown>): Promise<ImportApiResponse> {
   const descriptor = await readApiDescriptor();
   const payload = `${JSON.stringify(body)}\n`;
+  const causationToken = pathname === '/commit'
+    ? process.env[TENON_IMPORT_CAUSATION_TOKEN_ENV]
+    : undefined;
   const response = await new Promise<ImportApiResponse>((resolve, reject) => {
     const request = httpRequest({
       socketPath: descriptor.socketPath,
@@ -230,6 +237,7 @@ async function callImportApi(pathname: '/preview' | '/commit', body: Record<stri
       method: 'POST',
       headers: {
         authorization: `Bearer ${descriptor.token}`,
+        ...(causationToken ? { [TENON_IMPORT_CAUSATION_TOKEN_HEADER]: causationToken } : {}),
         'content-type': 'application/json; charset=utf-8',
         'content-length': Buffer.byteLength(payload),
       },

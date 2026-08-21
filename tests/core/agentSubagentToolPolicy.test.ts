@@ -55,7 +55,6 @@ describe('Subagent tool policy', () => {
         'file_write',
         'file_delete',
         'generate_image',
-        'data_import',
       ];
       for (const key of forbidden) expect(keys).not.toContain(key);
       expect(keys).toEqual(expect.arrayContaining(['node_read', 'file_read', 'bash', 'web_fetch', 'skill']));
@@ -72,6 +71,8 @@ describe('Subagent tool policy', () => {
       expect(subagentBashExecutionAllowed(policy, ['shell.unknown'])).toBe(false);
     }
     expect(subagentBashExecutionAllowed(foreground, ['file.edit.local_path'])).toBe(true);
+    expect(subagentBashExecutionAllowed({ ...foreground, worktree: true }, ['outline.edit'])).toBe(false);
+    expect(subagentBashExecutionAllowed({ ...foreground, worktree: true }, ['shell.local_code_execution'])).toBe(true);
   });
 
   test('keeps extension tools visible while enforcing specialized mutation actions at execution', () => {
@@ -104,7 +105,7 @@ describe('Subagent tool policy', () => {
       ...foreground,
       runInBackground: true,
     }).map(toolKey);
-    for (const forbidden of ['update_plan', 'get_goal', 'generate_image', 'data_import']) {
+    for (const forbidden of ['update_plan', 'get_goal', 'generate_image']) {
       expect(keys).not.toContain(forbidden);
     }
     expect(keys).toEqual(expect.arrayContaining(['node_read', 'file_write', 'bash', 'web_fetch', 'skill', 'docs.lookup']));

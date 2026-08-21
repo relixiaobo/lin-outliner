@@ -1075,6 +1075,10 @@ describe('agent skills', () => {
     expect(skill?.body).toContain('# Tenon Data Cleanup and Import');
     expect(skill?.body).toContain('tenon-import preview');
     expect(skill?.body).toContain('tenon-import commit');
+    expect(skill?.body).toContain('data.status: "staged_with_errors"');
+    expect(skill?.body).toContain('retry the commit or manually delete the staging subtree.');
+    expect(skill?.body).toContain('`stagingRootId`, `operationId`, and `mismatches`');
+    expect(skill?.body).toContain('`operation_id: <operationId>`');
   });
 
   test('resolves bundled built-in resource roots for dev and packaged modes', () => {

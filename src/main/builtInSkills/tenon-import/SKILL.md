@@ -31,6 +31,10 @@ result through `tenon-import`.
 7. When the original request authorizes importing and the preview passes the
    gates below, run `tenon-import commit <pack.json> --preview-id <preview:id>`
    without a second confirmation.
+8. Inspect the commit JSON. `status: "staged"` completes the import. If the
+   command exits non-zero with `data.status: "staged_with_errors"`, stop. Do not
+   retry the commit or manually delete the staging subtree. Report the returned
+   `stagingRootId`, `operationId`, and `mismatches` to the parent Agent.
 
 ## Boundaries
 
@@ -43,6 +47,11 @@ result through `tenon-import`.
 - `tenon-import commit` is the only bulk document mutation path for cleaned
   import data. It calls the running Tenon app; scripts must not write document
   storage directly.
+- A verification mismatch has already written one staging subtree. Preserve it
+  for inspection and do not create another copy. The parent Agent may request an
+  exact undo with `outline_undo_stack` using `action: "undo"` and
+  `operation_id: <operationId>`. If that operation is no longer the stack top,
+  the guarded undo is rejected; never replace it with an unguarded undo.
 - Stop before writing if validation fails. If the source profile is
   low-confidence or unsupported structures create a material cleanup choice,
   ask only for that unresolved choice; otherwise report dropped/unsupported

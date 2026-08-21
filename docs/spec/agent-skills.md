@@ -271,6 +271,15 @@ is explicit; arbitrary optional Skills are not copied into the application
 bundle. The packaged import wrapper is required: the macOS packaging hook
 restores its executable mode and fails the build when the resource is absent.
 
+Import is CLI/API-only rather than a default model tool. The Skill creates and
+previews Import Pack v1 through `tenon-import`; `AgentImportService` remains an
+internal writer. A commit verification mismatch exits non-zero with preserved
+`staged_with_errors` data for exactly one staging subtree. The Skill stops
+without retrying or manually deleting that subtree and reports its
+`stagingRootId`, `operationId`, and `mismatches` to the parent Agent. Exact
+reversal uses that operation ID as the `outline_undo_stack` stack-top guard; a
+newer operation causes refusal rather than undoing unrelated work.
+
 ## Settings
 
 Agent settings control additional directories and disabled Skill identities.

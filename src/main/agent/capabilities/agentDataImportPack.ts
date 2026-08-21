@@ -1,3 +1,5 @@
+import { normalizeFieldNameKey } from '../../../core/fieldResolution';
+
 export type ImportPackFidelity = 'content' | 'clean' | 'full';
 export type ImportPackDateGrouping = 'stage_headings' | 'none';
 export type ImportPackFieldsMode = 'omit' | 'text_children' | 'field_rows';
@@ -184,6 +186,14 @@ function validateNodes(nodes: unknown[], depth: number): ImportNodeValidation {
     }
     if (node.tags !== undefined) {
       if (!Array.isArray(node.tags) || !node.tags.every(nonEmptyString)) return invalid('invalid_node', 'Node tags must be non-empty strings.');
+      const tagKeys = new Set<string>();
+      for (const tag of node.tags) {
+        const key = tag.trim().toLowerCase();
+        if (tagKeys.has(key)) {
+          return invalid('duplicate_tag', `Node "${node.title}" contains duplicate tag "${tag}" after normalization.`);
+        }
+        tagKeys.add(key);
+      }
       stats.tags += node.tags.length;
     }
     if (node.checked !== undefined) {
@@ -197,9 +207,15 @@ function validateNodes(nodes: unknown[], depth: number): ImportNodeValidation {
     }
     if (node.fields !== undefined) {
       if (!Array.isArray(node.fields)) return invalid('invalid_node', 'Node fields must be an array.');
+      const fieldKeys = new Set<string>();
       for (const fieldValue of node.fields) {
         const field = asRecord(fieldValue);
         if (!nonEmptyString(field.name)) return invalid('invalid_node', 'Field name is required.');
+        const fieldKey = normalizeFieldNameKey(field.name);
+        if (fieldKeys.has(fieldKey)) {
+          return invalid('duplicate_field', `Node "${node.title}" contains duplicate field "${field.name}" after normalization.`);
+        }
+        fieldKeys.add(fieldKey);
         if (!Array.isArray(field.values) || field.values.length === 0 || !field.values.every((value) => typeof value === 'string' && value.trim().length > 0)) {
           return invalid('invalid_node', 'Field values must be non-empty strings.');
         }
