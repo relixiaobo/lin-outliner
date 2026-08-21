@@ -1079,11 +1079,10 @@ preview. Context Preview uses captured model-visible context text from the
 prepared canonical provider context whenever diagnostics retained it. That text
 is the `<system-reminder>` / `<context-evidence ...>` projection supplied at the
 provider-context boundary after projection, budgeting, compaction, and
-renderer-facing sanitization. If the projector emitted no model-visible text for
-a retained context Item, Preview states that explicitly; it never falls back to
-the Item summary or a readable payload projection. The retained context payload
-remains Raw evidence: it is the typed source evidence, not the Preview and not
-the exact post-adapter provider request.
+renderer-facing sanitization. If a retained `contextEvidence` Item emitted no
+model-visible text, it is not a Trajectory message row. The retained context
+payload remains Raw storage evidence: it is not the Preview and not the exact
+post-adapter provider request.
 
 The ledger record taxonomy is fixed: `input`, `context`, `assistant`, `tool`,
 `retry`, `compaction`, and `delegation`. Assistant records are grounded on the

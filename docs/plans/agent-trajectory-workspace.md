@@ -266,14 +266,13 @@ Context Preview uses captured model-visible context text from the prepared
 canonical provider context whenever diagnostics retained it. That is the
 `<system-reminder>` / `<context-evidence ...>` text the model saw at the
 provider-context boundary, after projection, budgeting, compaction, and
-renderer-facing sanitization. If the projector emitted no model-visible text for
-a retained context Item, the inspector Preview states that explicitly; it never
-falls back to the Item summary or a readable payload projection. The retained
-context payload remains Raw evidence; it is the typed source evidence, not the
-Preview and not the exact post-adapter provider request. A context row may use
-the Item summary as its ledger preview, but the inspector must not collapse
-Skill Catalog, Role Catalog, User View, Turn Environment, or Additional Context
-evidence to the generic `contextEvidence` storage type or summary string.
+renderer-facing sanitization. If a retained `contextEvidence` Item emitted no
+model-visible text, it is not a Trajectory message row. The retained context
+payload remains Raw storage evidence; it is not the Preview and not the exact
+post-adapter provider request. A context row may use the Item summary as its
+ledger preview, but the inspector must not collapse Skill Catalog, Role Catalog,
+User View, Turn Environment, or Additional Context evidence to the generic
+`contextEvidence` storage type or summary string.
 
 The Assistant inspector may title the backing evidence as a Model Call because
 the details are provider-call diagnostics. That title is evidence vocabulary,

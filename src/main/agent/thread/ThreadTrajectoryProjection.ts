@@ -766,6 +766,7 @@ function appendFallbackTurnRecords(records: ThreadTrajectoryRecordSummary[], loa
 function appendContextRecords(records: ThreadTrajectoryRecordSummary[], loaded: LoadedTurn): void {
   for (const item of loaded.turn.items) {
     if (item.type !== 'contextEvidence' && item.type !== 'contextReset') continue;
+    if (item.type === 'contextEvidence' && !contextEvidenceWasModelVisible(loaded, item)) continue;
     records.push(record({
       kind: 'context',
       lane: 'input',
@@ -784,6 +785,15 @@ function appendContextRecords(records: ThreadTrajectoryRecordSummary[], loaded: 
       usage: null,
     }));
   }
+}
+
+function contextEvidenceWasModelVisible(
+  loaded: LoadedTurn,
+  item: ContextEvidenceThreadItem,
+): boolean {
+  const payload = loaded.diagnostics?.payload ?? null;
+  if (!payload) return true;
+  return systemContextTextForKind(payload, item.kind) !== null;
 }
 
 function appendManualCompactionRecords(

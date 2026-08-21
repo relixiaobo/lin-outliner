@@ -108,6 +108,7 @@ describe('ThreadTrajectoryProjection', () => {
       },
     ]));
     expect(contexts.map((record) => record.preview)).toContain('Turn environment');
+    expect(contexts.map((record) => record.title)).not.toContain('Additional Context');
 
     if (!input) throw new Error('Expected input record');
     const detail = await projection.readDetail({ threadId: THREAD_ID, recordId: input.id });
@@ -242,6 +243,7 @@ function inputEnvelopeTurn(): Turn {
     ...trajectoryTurn(),
     items: [
       contextItem(),
+      emptyAdditionalContextItem(),
       {
         type: 'userMessage',
         id: 'user-message-1',
@@ -262,6 +264,26 @@ function contextItem(): ThreadItem {
     kind: 'turnEnvironment',
     payloadRef: CONTEXT_REF,
     summary: 'Turn environment',
+    contextRefs: [],
+    resourceRefs: [],
+    outputRefs: [],
+  };
+}
+
+function emptyAdditionalContextItem(): ThreadItem {
+  return {
+    type: 'contextEvidence',
+    id: 'context-additional',
+    provenance: itemProvenance('context-additional'),
+    kind: 'additionalContext',
+    payloadRef: {
+      id: 'd'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json',
+      byteLength: 128,
+      schemaVersion: 1,
+      kind: 'additionalContext',
+    },
+    summary: 'Additional context (0 turn, 0 state)',
     contextRefs: [],
     resourceRefs: [],
     outputRefs: [],

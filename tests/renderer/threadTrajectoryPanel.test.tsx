@@ -300,7 +300,7 @@ describe('ThreadTrajectoryPanel', () => {
     expect(inspector?.textContent).toContain('"name": "browser-pilot"');
   });
 
-  test('does not use retained payload or item summary as CONTEXT preview when no model-visible text was emitted', async () => {
+  test('defensively refuses retained payload or item summary as CONTEXT preview when no model-visible text was emitted', async () => {
     const context = record({
       id: `turn:${TURN_ID}:context:item:context-additional`,
       kind: 'context',
