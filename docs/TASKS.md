@@ -158,6 +158,15 @@ before any directional/security-sensitive build.
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/reference/agent-program.md`.
+- **[subagent-task-outcome-contract](plans/archive/subagent-task-outcome-contract.md)**
+  (P1, `done` 2026-08-21; plan PR #569, implementation PR #573, codex-3) —
+  delegated execution now records factual generation outcomes instead of task
+  completion claims; each generation owns its local breaker; terminal delivery,
+  parent settlement, Retry identity, cutoff, overflow, Stop, and restart paths are
+  durable and bounded. This absorbed `subagent-projection-error-surface`: typed
+  terminal errors and retry-stable delivery anchors are part of the shipped
+  protocol. Design folded into `docs/spec/agent-model-runtime.md`,
+  `docs/spec/agent-subagent-threads.md`, and `docs/spec/agent-tool-design.md`.
 - **[subagent-customization-and-identity](plans/archive/subagent-customization-and-identity.md)**
   (P2, `done` 2026-08-19) — both PRs shipped, both cc-2: the identity model
   (`presentation { persona, color }`, `presentationOverrides`, `identities/get`),
@@ -174,18 +183,6 @@ before any directional/security-sensitive build.
   outcome is explicitly `settled` / `abandoned` / `failed`, and the invoking
   Turn's `AbortSignal` races that wait. Design folded into
   `docs/spec/agent-tool-design.md`.
-- **subagent-task-outcome-contract** (`in-progress`, ratified 2026-08-20; plan PR
-  #569, implementation Draft PR #573, codex-3; priority pending PM assignment) —
-  record delegated execution facts without claiming task completion, replace
-  request-tree token sharing with one breaker per execution generation, and make
-  nested-parent settlement bounded, durable, omission-aware, and safe across
-  cutoff, Retry, overflow, Stop, and restart races. This absorbs
-  `subagent-projection-error-surface`: typed terminal errors and retry-stable
-  delivery anchors ship as part of the same coordinated protocol change. The
-  transcript-paint baseline (#572) has landed first; #573 is the active claim and
-  must preserve that renderer baseline while changing Agent execution
-  presentation. Design:
-  [`subagent-task-outcome-contract`](plans/subagent-task-outcome-contract.md).
 - **agent-view-surface** (P2, `done` 2026-08-18) — both PRs shipped: mode
   awareness (#556) and view sort/filter/group/column configuration (#559), both
   codex-3. The Agent reads and writes a node's view mode and its persisted
@@ -1116,6 +1113,16 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **subagent-task-outcome-contract** (codex-3, PR #573, merged 2026-08-21 —
+  [plan](plans/archive/subagent-task-outcome-contract.md)) — delegated Agent
+  outcomes now state factual generation status, local budget exhaustion, terminal
+  error details, and delivery identity without claiming the task succeeded. The
+  shared request-tree token pool is gone; each generation has its own breaker, and
+  parent settlement is bounded, omission-aware, and durable across cutoff, Retry,
+  overflow, Stop, and restart races. Gate: `/code-review` found one Medium —
+  delivery projection initially kept only the current generation and dropped older
+  report cards after resume; `705b085e` fixed the per-generation delivery list.
+  Re-review, focused tests, and all CI samples plus baseline subtraction passed.
 - **thread-transcript-paint-continuity** (cc, PR #572, merged 2026-08-21 —
   [plan](plans/archive/thread-transcript-paint-continuity.md)) — long Agent
   transcripts now keep a painted Turn through flow layout, virtual jumps, Thread

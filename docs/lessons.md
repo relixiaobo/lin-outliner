@@ -1656,3 +1656,21 @@ scroll intent by itself; if the browser or control action really moves the
 scroller, the later scroll event can arbitrate ownership. Tests for this class
 must use real pointer/click paths, not DOM `element.click()`, because the latter
 skips the event that decides ownership.
+
+## A current entity record is not a history index
+
+PR #573 made the stable Subagent execution record the renderer's authority for
+delivery identity. That fixed ordinal matching for the current generation, but
+the first implementation projected only `terminalNotification(agentId,
+currentGeneration)`. After the same Agent resumed, generation 1's already
+delivered parent Turn vanished from `deliveryByTurnId`, so the raw host notice
+reappeared where the child report card belonged.
+
+**When one stable entity spans multiple historical episodes, project the episodes
+as first-class rows.** A current record may summarize lifecycle, but it cannot be
+the only source for per-generation UI anchors, retry aliases, report cards, or
+audit facts. If old screen content must remain attached after a resume, rollback,
+or retry, the process-seam DTO needs a list keyed by the historical identity, and
+renderer memo equality must compare that list. A test that advances the stable
+record without asserting the earlier row is still visible is testing the
+replacement, not the preservation contract.

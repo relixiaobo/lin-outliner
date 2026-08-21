@@ -99,6 +99,32 @@ Entries reference the pull request that introduced them.
 
 ### Fixed
 
+- **Subagent outcomes now state execution facts instead of task completion (PR
+  #573, codex-3)** — a delegated Agent generation no longer reports `completed`
+  as though the task itself had been judged done. The terminal vocabulary is now
+  factual (`finished` / `failed` / `interrupted` / `killed`), with typed terminal
+  errors, stop provenance, local generation usage, retained worktree state, and
+  retry-stable delivery Turn identity crossing the process seam. Cold reopen can
+  show the settled outcome without loading every child Turn, and renderer delivery
+  cards remain attached to the exact parent Turn even after manual Retry or a
+  later Agent resume.
+- **Subagent budgets and parent settlement are now generation-local and bounded
+  (PR #573, codex-3)** — the old shared request-tree token pool is gone: each
+  delegated execution generation freezes its own breaker, accrues in-flight usage
+  before exposing idle admission, and can soft-land or interrupt without borrowing
+  or erasing sibling budget state. When a parent must settle while descendants
+  exhausted or overshot, it now uses one durable settlement envelope with explicit
+  full/excerpted/omitted coverage, prepared admission, overflow detach, and
+  carry-forward rows that survive restart. Provider failures, explicit Stop,
+  host restart, task_stop, and close-without-provider paths preserve useful
+  output and actual stop provenance rather than launching hidden provider work.
+  Gate: `/code-review` found one Medium — the first renderer projection kept only
+  the stable Agent record's current delivery Turn, so older delivered generations
+  lost their report cards after resume; `705b085e` projected delivered
+  notifications per generation and the re-review found no further reportable
+  issue. Verified with typecheck, `docs:check`, focused core/renderer tests, and
+  five green CI E2E samples plus baseline subtraction.
+
 - **Long Thread transcripts now stay painted through jumps, restores, and send
   anchors (PR #572, cc)** — the transcript has one paint owner at every size:
   eight or fewer Turns use ordinary flow layout, nine or more use the measured
