@@ -338,7 +338,11 @@ function PreviewEvidence({
       {text}
     </div>
   ) : (
-    <p className="thread-trajectory-note">{t.agent.trajectory.noRetainedEvidence}</p>
+    <p className="thread-trajectory-note">
+      {detail.kind === 'context'
+        ? t.agent.trajectory.noModelContextText
+        : t.agent.trajectory.noRetainedEvidence}
+    </p>
   );
 }
 
@@ -490,11 +494,7 @@ function previewText(
     return userMessageText(detail.message?.content ?? null) ?? record.preview;
   }
   if (detail.kind === 'context') {
-    return detail.modelContextText
-      ?? contextPayloadText(detail.payload)
-      ?? semanticText(detail.payload)
-      ?? record.preview
-      ?? record.title;
+    return detail.modelContextText;
   }
   if (detail.kind === 'tool') return detail.outputText ?? record.preview;
   if (detail.kind === 'delegation') return detail.outputText ?? record.preview;

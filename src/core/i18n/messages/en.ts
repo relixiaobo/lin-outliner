@@ -1594,6 +1594,7 @@ export const en = {
         `Exported ${fileName} (${byteLength} bytes).`,
       exportCanceled: 'Export canceled.',
       noRetainedEvidence: 'No retained evidence.',
+      noModelContextText: 'No model-visible context text was emitted for this record.',
       started: 'Started',
       firstToken: 'First token',
       duration: 'Duration',

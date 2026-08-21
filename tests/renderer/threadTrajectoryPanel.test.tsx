@@ -300,6 +300,57 @@ describe('ThreadTrajectoryPanel', () => {
     expect(inspector?.textContent).toContain('"name": "browser-pilot"');
   });
 
+  test('does not use retained payload or item summary as CONTEXT preview when no model-visible text was emitted', async () => {
+    const context = record({
+      id: `turn:${TURN_ID}:context:item:context-additional`,
+      kind: 'context',
+      lane: 'input',
+      sequence: 0,
+      title: 'Additional Context',
+      subtitle: 'contextEvidence',
+      preview: 'Additional context (0 turn, 0 state)',
+      primaryEvidence: {
+        type: 'threadItem',
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        itemId: 'context-additional',
+      },
+    });
+    const rendered = renderPanel(async (method, request) => {
+      if (method === 'thread/trajectory/read') return trajectoryReadResponse([context]);
+      if (method === 'thread/trajectory/detail/read') {
+        expect(request).toEqual({ threadId: THREAD_ID, recordId: context.id });
+        return contextDetailResponse(context, {
+          schemaVersion: 1,
+          kind: 'additionalContext',
+          turnEntries: [],
+          threadState: [],
+        });
+      }
+      if (method === 'thread/trajectory/export') return { status: 'canceled' };
+      throw new Error(`Unexpected Agent Core method: ${method}`);
+    });
+
+    rendered.render();
+    await flush();
+    expect(recordRow(rendered.document, context.id).textContent)
+      .toContain('CONTEXTAdditional Context · Additional context (0 turn, 0 state)');
+
+    clickRecord(rendered.document, context.id);
+    await flush();
+    const inspector = rendered.document.querySelector<HTMLElement>('[aria-label="Trajectory inspector"]');
+    expect(inspector?.textContent).toContain('SourceadditionalContext');
+    expect(inspector?.textContent).toContain('No model-visible context text was emitted for this record.');
+    expect(inspector?.textContent).not.toContain('Additional context (0 turn, 0 state)');
+
+    clickButton(rendered.document, 'Preview');
+    expect(inspector?.textContent).toContain('No model-visible context text was emitted for this record.');
+
+    clickButton(rendered.document, 'Raw');
+    expect(inspector?.textContent).toContain('"kind": "additionalContext"');
+    expect(inspector?.textContent).toContain('"turnEntries": []');
+  });
+
   test('opens a delegation target as the child Thread own Trajectory', async () => {
     const opened: string[] = [];
     const delegation = record({
