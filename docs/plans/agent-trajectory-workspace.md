@@ -9,8 +9,8 @@ their renderer consumers.
 
 Replace the single-Turn, document-style Model Interactions inspector with a
 Thread-wide Trajectory workspace. A technical user can locate and inspect
-input, model, tool, retry, steering, and compaction activity across the complete
-execution history without losing the surrounding conversation.
+input, context, model, tool, retry, compaction, and delegation activity across
+the complete execution history without losing the surrounding conversation.
 
 The selected target adopts the DeepSeek Harness Trajectory product logic and
 interactions while retaining Tenon's canonical Thread, Turn, and Item authority,
@@ -60,6 +60,35 @@ references for synchronized selection, range navigation, folding, and adaptive
 inspection. Tenon's implementation is decomposed around its own process seam,
 protocol codecs, renderer store, and design tokens rather than transplanting the
 reference components.
+
+### Concept alignment and record taxonomy
+
+Trajectory records are not canonical Thread Items. They are projection records:
+bounded, stable, inspection-only summaries derived by main from canonical
+Thread, Turn, Item, and immutable diagnostics facts. Adding Trajectory therefore
+must not widen the `ThreadItem` union, create another durable transcript, or make
+debug visibility an execution precondition.
+
+The top-level Trajectory record kind set is:
+
+| Kind | Meaning | Lane |
+|---|---|---|
+| `input` | Initial user input and steering admission. | Input |
+| `context` | Stable prompt, tool catalog, context evidence, and context reset evidence. | Input |
+| `model` | One provider/model call with request, response, reasoning, usage, and timing facts. | Model |
+| `tool` | Shell, file, MCP, dynamic tool, search, and other non-delegating tool work. | Tools |
+| `retry` | Request or stream retry linked to its source and next model calls. | Model |
+| `compaction` | Manual, automatic-preflight, or provider-overflow context compaction. | Input |
+| `delegation` | Child Agent spawn, message, stop, outcome, and child-Trajectory navigation. | Tools |
+
+Steering is an `input` source, not a separate record kind. Assistant messages and
+reasoning are inspector content within a `model` record, not duplicate ledger
+rows. DeepSeek Harness `tool` and `subtool` map to one hierarchical `tool` kind
+with parent call identity rather than two top-level kinds. Agent-related tool
+calls collapse into one `delegation` record so the same activity is not shown as
+both a generic tool and an Agent row. Turn headers, model-call summaries,
+older-history controls, timeline ellipses, and fold placeholders are structural
+rows, not record kinds.
 
 ### Entry and navigation
 
@@ -176,7 +205,7 @@ Tabs are record-specific:
 - Input and Context: Summary, Preview, Source, Timing.
 - Model Call: Summary, Request, Response, Timing, Export.
 - Tool: Summary, Arguments, Result, Schema, Audit, Timing.
-- Retry, Steering, and Compaction: Summary, Details, Timing.
+- Retry and Compaction: Summary, Details, Timing.
 - Delegation: Summary, Outcome, Timing, Open child Trajectory.
 
 Large content and syntax presentation mount lazily. Raw means Tenon's typed,
