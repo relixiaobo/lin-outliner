@@ -90,7 +90,7 @@ The top-level Trajectory record kind set is:
 | Kind | Meaning | Lane |
 |---|---|---|
 | `input` | One canonical `userMessage` Item admitted as initial input or steering. | Input |
-| `context` | Stable prompt, tool catalog, context evidence, and context reset evidence. | Input |
+| `context` | Stable prompt changes and prepared provider-context parts that emitted model-visible context text. | Input |
 | `assistant` | One provider/model call presented as Assistant work, with request, response, reasoning, usage, and timing facts. | Assistant |
 | `tool` | Shell, file, MCP, dynamic tool, search, and other non-delegating tool work. | Tools |
 | `retry` | Request or stream retry linked to its source and next Assistant/provider calls. | Assistant |
@@ -109,12 +109,14 @@ request, response, timing, and state.
 An `input` record is one canonical `userMessage` Item. Its primary evidence is
 the Thread Item itself; the accepted-input diagnostic activity and the first
 provider call that consumed it are related evidence. Context Items admitted in
-the same envelope remain separate `context` records. A USER preview/detail must
-therefore render the original user content only and must not concatenate
-`contextEvidence`, stable prompt, user view, skills, roles, tool-output
-projection, or additional-context summaries into the USER row. Provider request
-payloads are shown as request evidence on the consumed provider call, not as
-USER content.
+the same envelope do not automatically become `context` records. A CONTEXT row
+exists only for stable prompt text or for a prepared provider-context part whose
+diagnostics prove that model-visible context text was emitted. A USER
+preview/detail must therefore render the original user content only and must not
+concatenate `contextEvidence`, stable prompt, user view, skills, roles,
+tool-output projection, or additional-context summaries into the USER row.
+Provider request payloads are shown as request evidence on the consumed provider
+call, not as USER content.
 
 Every Trajectory record has one primary evidence reference and may have related
 evidence references. Detail reads resolve from the primary evidence and then
@@ -266,13 +268,15 @@ Context Preview uses captured model-visible context text from the prepared
 canonical provider context whenever diagnostics retained it. That is the
 `<system-reminder>` / `<context-evidence ...>` text the model saw at the
 provider-context boundary, after projection, budgeting, compaction, and
-renderer-facing sanitization. If a retained `contextEvidence` Item emitted no
-model-visible text, it is not a Trajectory message row. The retained context
-payload remains Raw storage evidence; it is not the Preview and not the exact
-post-adapter provider request. A context row may use the Item summary as its
-ledger preview, but the inspector must not collapse Skill Catalog, Role Catalog,
-User View, Turn Environment, or Additional Context evidence to the generic
-`contextEvidence` storage type or summary string.
+renderer-facing sanitization. Non-stable context rows are keyed by a
+diagnostics-backed prepared-context-part evidence reference, not by the retained
+`contextEvidence` Item. If a retained `contextEvidence` Item emitted no
+model-visible text, it is not a Trajectory message row. Frozen tool-output
+projection Items are storage evidence for replaying tool results; they do not
+appear as CONTEXT rows unless their text is explicitly emitted inside prepared
+provider context. The retained context payload remains Raw storage evidence
+when it is selected through another authority; it is not the Preview and not the
+exact post-adapter provider request.
 
 The Assistant inspector may title the backing evidence as a Model Call because
 the details are provider-call diagnostics. That title is evidence vocabulary,

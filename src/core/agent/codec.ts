@@ -2226,7 +2226,16 @@ function decodeThreadTrajectoryEvidenceRef(value: unknown, path: string): Thread
   const record = recordValue(value, path);
   const type = enumValue(
     record.type,
-    ['providerCall', 'threadItem', 'diagnosticActivity', 'toolExecution', 'threadTurn', 'stablePrompt', 'subagent'],
+    [
+      'providerCall',
+      'threadItem',
+      'diagnosticActivity',
+      'toolExecution',
+      'threadTurn',
+      'stablePrompt',
+      'preparedContextPart',
+      'subagent',
+    ],
     `${path}.type`,
   );
   const threadId = uuidV7(record.threadId, `${path}.threadId`);
@@ -2271,6 +2280,26 @@ function decodeThreadTrajectoryEvidenceRef(value: unknown, path: string): Thread
   if (type === 'threadTurn' || type === 'stablePrompt') {
     exactKeys(record, ['type', 'threadId', 'turnId'], path);
     return { type, threadId, turnId };
+  }
+  if (type === 'preparedContextPart') {
+    exactKeys(record, [
+      'type',
+      'threadId',
+      'turnId',
+      'callIndex',
+      'messageIndex',
+      'partIndex',
+      'entryIndex',
+    ], path);
+    return {
+      type,
+      threadId,
+      turnId,
+      callIndex: nonNegativeInteger(record.callIndex, `${path}.callIndex`),
+      messageIndex: nonNegativeInteger(record.messageIndex, `${path}.messageIndex`),
+      partIndex: nonNegativeInteger(record.partIndex, `${path}.partIndex`),
+      entryIndex: nonNegativeInteger(record.entryIndex, `${path}.entryIndex`),
+    };
   }
   exactKeys(record, ['type', 'threadId', 'turnId', 'agentThreadId', 'itemId'], path);
   return {

@@ -1079,15 +1079,22 @@ preview. Context Preview uses captured model-visible context text from the
 prepared canonical provider context whenever diagnostics retained it. That text
 is the `<system-reminder>` / `<context-evidence ...>` projection supplied at the
 provider-context boundary after projection, budgeting, compaction, and
-renderer-facing sanitization. If a retained `contextEvidence` Item emitted no
-model-visible text, it is not a Trajectory message row. The retained context
-payload remains Raw storage evidence: it is not the Preview and not the exact
-post-adapter provider request.
+renderer-facing sanitization. Non-stable CONTEXT rows are keyed by
+prepared-context-part diagnostics evidence, not by retained `contextEvidence`
+Items. If a retained `contextEvidence` Item emitted no model-visible text, it is
+not a Trajectory message row. Frozen tool-output projection Items are storage
+evidence for replaying tool results and do not appear as CONTEXT rows unless
+their text is explicitly emitted inside prepared provider context. The retained
+context payload remains Raw storage evidence when selected through another
+authority: it is not the Preview and not the exact post-adapter provider
+request.
 
 The ledger record taxonomy is fixed: `input`, `context`, `assistant`, `tool`,
 `retry`, `compaction`, and `delegation`. Assistant records are grounded on the
 provider-call evidence `(threadId, turnId, providerCall.index)`, not on a
-transcript Item. Tool, retry, compaction, and delegation records use retained
+transcript Item. Prepared context rows are grounded on
+`(threadId, turnId, providerCall.index, messageIndex, partIndex, entryIndex)`.
+Tool, retry, compaction, and delegation records use retained
 diagnostic activities when available and degrade to canonical Item evidence when
 diagnostics are unavailable. Delegation records link to the child Thread's own
 Trajectory; descendants are not flattened into the parent ledger. Every

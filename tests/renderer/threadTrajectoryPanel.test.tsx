@@ -25,6 +25,7 @@ const THREAD_ID = '01910000-0000-7000-8000-000000000001';
 const TURN_ID = '01910000-0000-7000-8000-000000000002';
 const CHILD_THREAD_ID = '01910000-0000-7000-8000-000000000003';
 const INPUT_ID = `turn:${TURN_ID}:input:0`;
+const CONTEXT_ID = `turn:${TURN_ID}:context:prepared:0:0:1:0`;
 const ASSISTANT_ID = `turn:${TURN_ID}:assistant:0`;
 const TOOL_ID = `turn:${TURN_ID}:tool:2:call%3Aread`;
 const DELEGATION_ID = `turn:${TURN_ID}:delegation:2:call%3Aagent`;
@@ -178,17 +179,21 @@ describe('ThreadTrajectoryPanel', () => {
       ],
     });
     const context = record({
-      id: `turn:${TURN_ID}:context:item:context-turn-environment`,
+      id: CONTEXT_ID,
       kind: 'context',
       lane: 'input',
       sequence: 1,
       title: 'Turn Environment',
-      preview: 'Turn environment',
+      subtitle: 'application · observation',
+      preview: '<context-evidence kind="turnEnvironment">working_directory=/workspace</context-evidence>',
       primaryEvidence: {
-        type: 'threadItem',
+        type: 'preparedContextPart',
         threadId: THREAD_ID,
         turnId: TURN_ID,
-        itemId: 'context-turn-environment',
+        callIndex: 0,
+        messageIndex: 0,
+        partIndex: 1,
+        entryIndex: 0,
       },
     });
     const rendered = renderPanel(async (method, request) => {
@@ -221,18 +226,21 @@ describe('ThreadTrajectoryPanel', () => {
 
   test('renders CONTEXT preview from captured model context text instead of the item summary', async () => {
     const context = record({
-      id: `turn:${TURN_ID}:context:item:context-skill-catalog`,
+      id: CONTEXT_ID,
       kind: 'context',
       lane: 'input',
       sequence: 0,
       title: 'Skill Catalog',
-      subtitle: 'contextEvidence',
+      subtitle: 'application · instruction',
       preview: 'Available Skills (2)',
       primaryEvidence: {
-        type: 'threadItem',
+        type: 'preparedContextPart',
         threadId: THREAD_ID,
         turnId: TURN_ID,
-        itemId: 'context-skill-catalog',
+        callIndex: 0,
+        messageIndex: 0,
+        partIndex: 1,
+        entryIndex: 0,
       },
     });
     const modelContextText = [
@@ -247,33 +255,7 @@ describe('ThreadTrajectoryPanel', () => {
       if (method === 'thread/trajectory/read') return trajectoryReadResponse([context]);
       if (method === 'thread/trajectory/detail/read') {
         expect(request).toEqual({ threadId: THREAD_ID, recordId: context.id });
-        return contextDetailResponse(context, {
-          schemaVersion: 1,
-          kind: 'skillCatalog',
-          mode: 'baseline',
-          previousCatalogHash: null,
-          catalogHash: 'catalog-hash',
-          entries: [
-            {
-              change: 'available',
-              name: 'browser-pilot',
-              displayName: 'Browser Pilot',
-              source: 'user',
-              identity: 'skill:user:browser-pilot',
-              contentHash: 'browser-hash',
-              description: 'Control authenticated browser tabs.',
-            },
-            {
-              change: 'available',
-              name: 'code-review',
-              displayName: 'code-review',
-              source: 'project',
-              identity: 'skill:project:code-review',
-              contentHash: 'review-hash',
-              description: 'Review pull requests and local diffs.',
-            },
-          ],
-        }, modelContextText);
+        return contextDetailResponse(context, null, modelContextText);
       }
       if (method === 'thread/trajectory/export') return { status: 'canceled' };
       throw new Error(`Unexpected Agent Core method: ${method}`);
@@ -286,7 +268,7 @@ describe('ThreadTrajectoryPanel', () => {
     clickRecord(rendered.document, context.id);
     await flush();
     const inspector = rendered.document.querySelector<HTMLElement>('[aria-label="Trajectory inspector"]');
-    expect(inspector?.textContent).toContain('SourceskillCatalog');
+    expect(inspector?.textContent).toContain('Sourceapplication · instruction');
     expect(inspector?.textContent).toContain('<system-reminder>');
     expect(inspector?.textContent).toContain('<context-evidence kind="skillCatalog"');
     expect(inspector?.textContent).toContain('Use Browser Pilot for signed-in browser work.');
@@ -296,59 +278,8 @@ describe('ThreadTrajectoryPanel', () => {
     expect(inspector?.textContent).toContain('Use code-review for local diffs and pull requests.');
 
     clickButton(rendered.document, 'Raw');
-    expect(inspector?.textContent).toContain('"kind": "skillCatalog"');
-    expect(inspector?.textContent).toContain('"name": "browser-pilot"');
-  });
-
-  test('defensively refuses retained payload or item summary as CONTEXT preview when no model-visible text was emitted', async () => {
-    const context = record({
-      id: `turn:${TURN_ID}:context:item:context-additional`,
-      kind: 'context',
-      lane: 'input',
-      sequence: 0,
-      title: 'Additional Context',
-      subtitle: 'contextEvidence',
-      preview: 'Additional context (0 turn, 0 state)',
-      primaryEvidence: {
-        type: 'threadItem',
-        threadId: THREAD_ID,
-        turnId: TURN_ID,
-        itemId: 'context-additional',
-      },
-    });
-    const rendered = renderPanel(async (method, request) => {
-      if (method === 'thread/trajectory/read') return trajectoryReadResponse([context]);
-      if (method === 'thread/trajectory/detail/read') {
-        expect(request).toEqual({ threadId: THREAD_ID, recordId: context.id });
-        return contextDetailResponse(context, {
-          schemaVersion: 1,
-          kind: 'additionalContext',
-          turnEntries: [],
-          threadState: [],
-        });
-      }
-      if (method === 'thread/trajectory/export') return { status: 'canceled' };
-      throw new Error(`Unexpected Agent Core method: ${method}`);
-    });
-
-    rendered.render();
-    await flush();
-    expect(recordRow(rendered.document, context.id).textContent)
-      .toContain('CONTEXTAdditional Context · Additional context (0 turn, 0 state)');
-
-    clickRecord(rendered.document, context.id);
-    await flush();
-    const inspector = rendered.document.querySelector<HTMLElement>('[aria-label="Trajectory inspector"]');
-    expect(inspector?.textContent).toContain('SourceadditionalContext');
-    expect(inspector?.textContent).toContain('No model-visible context text was emitted for this record.');
-    expect(inspector?.textContent).not.toContain('Additional context (0 turn, 0 state)');
-
-    clickButton(rendered.document, 'Preview');
-    expect(inspector?.textContent).toContain('No model-visible context text was emitted for this record.');
-
-    clickButton(rendered.document, 'Raw');
-    expect(inspector?.textContent).toContain('"kind": "additionalContext"');
-    expect(inspector?.textContent).toContain('"turnEntries": []');
+    expect(inspector?.textContent).toContain('"item": null');
+    expect(inspector?.textContent).toContain('"modelContextText"');
   });
 
   test('opens a delegation target as the child Thread own Trajectory', async () => {
@@ -689,7 +620,7 @@ function inputDetailResponse(input: ThreadTrajectoryRecordSummary): ThreadTrajec
 
 function contextDetailResponse(
   context: ThreadTrajectoryRecordSummary,
-  payload: JsonValue,
+  payload: JsonValue | null,
   modelContextText: string | null = null,
 ): ThreadTrajectoryDetailReadResponse {
   return {
@@ -698,13 +629,15 @@ function contextDetailResponse(
     detail: {
       kind: 'context',
       turn: turnEvidence(),
-      item: {
-        itemId: 'context-skill-catalog',
-        type: 'contextEvidence',
-        title: 'Skill Catalog',
-        preview: context.preview,
-        status: null,
-      },
+      item: context.primaryEvidence.type === 'threadItem'
+        ? {
+          itemId: context.primaryEvidence.itemId,
+          type: 'contextEvidence',
+          title: context.title,
+          preview: context.preview,
+          status: null,
+        }
+        : null,
       modelContextText,
       payload,
     },

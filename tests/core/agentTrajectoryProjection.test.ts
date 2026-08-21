@@ -86,6 +86,8 @@ describe('ThreadTrajectoryProjection', () => {
     const contexts = response.records.filter((record) => record.kind === 'context');
 
     expect(input?.preview).toBe('nihao');
+    expect(contexts.map((record) => record.title)).toEqual(['Turn Environment', 'User View']);
+    expect(new Set(contexts.map((record) => record.id)).size).toBe(contexts.length);
     expect(input?.primaryEvidence).toEqual({
       type: 'threadItem',
       threadId: THREAD_ID,
@@ -107,8 +109,11 @@ describe('ThreadTrajectoryProjection', () => {
         callIndex: 0,
       },
     ]));
-    expect(contexts.map((record) => record.preview)).toContain('Turn environment');
+    expect(contexts.map((record) => record.preview)).toContain(
+      '<context-evidence kind="turnEnvironment" authority="application" purpose="observation"> working_directory=/workspace </context-evidence>',
+    );
     expect(contexts.map((record) => record.title)).not.toContain('Additional Context');
+    expect(contexts.map((record) => record.title)).not.toContain('Tool Output Projection');
 
     if (!input) throw new Error('Expected input record');
     const detail = await projection.readDetail({ threadId: THREAD_ID, recordId: input.id });
@@ -127,11 +132,19 @@ describe('ThreadTrajectoryProjection', () => {
     const contextDetail = await projection.readDetail({ threadId: THREAD_ID, recordId: context.id });
     expect(contextDetail.detail?.kind).toBe('context');
     if (contextDetail.detail?.kind !== 'context') throw new Error('Expected context detail');
-    expect(contextDetail.detail.payload).toEqual({
-      ...turnEnvironmentPayload(),
-      workingDirectory: '‹redacted›',
+    expect(contextDetail.detail.item).toBeNull();
+    expect(contextDetail.detail.payload).toBeNull();
+    expect(context.primaryEvidence).toEqual({
+      type: 'preparedContextPart',
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      callIndex: 0,
+      messageIndex: 0,
+      partIndex: 1,
+      entryIndex: 0,
     });
-    expect(contextDetail.detail.modelContextText).toContain('<system-reminder>');
+    expect(context.relatedEvidence).toEqual([{ type: 'providerCall', threadId: THREAD_ID, turnId: TURN_ID, callIndex: 0 }]);
+    expect(contextDetail.detail.modelContextText).not.toContain('<system-reminder>');
     expect(contextDetail.detail.modelContextText).toContain('<context-evidence kind="turnEnvironment"');
     expect(contextDetail.detail.modelContextText).toContain('working_directory=/workspace');
     expect(decodeAgentCoreResponse('thread/trajectory/detail/read', contextDetail)).toEqual(contextDetail);
@@ -244,6 +257,7 @@ function inputEnvelopeTurn(): Turn {
     items: [
       contextItem(),
       emptyAdditionalContextItem(),
+      toolOutputProjectionItem(),
       {
         type: 'userMessage',
         id: 'user-message-1',
@@ -253,6 +267,26 @@ function inputEnvelopeTurn(): Turn {
         acceptedAt: 106,
       },
     ],
+  };
+}
+
+function toolOutputProjectionItem(): ThreadItem {
+  return {
+    type: 'contextEvidence',
+    id: 'context-tool-output-projection',
+    provenance: itemProvenance('context-tool-output-projection'),
+    kind: 'toolOutputProjection',
+    payloadRef: {
+      id: 'e'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json',
+      byteLength: 128,
+      schemaVersion: 1,
+      kind: 'toolOutputProjection',
+    },
+    summary: 'Frozen tool output projection',
+    contextRefs: [],
+    resourceRefs: [],
+    outputRefs: [],
   };
 }
 
@@ -446,6 +480,9 @@ function inputEnvelopeDiagnostics(): TurnDiagnosticsPayload {
     '<context-evidence kind="turnEnvironment" authority="application" purpose="observation">',
     'working_directory=/workspace',
     '</context-evidence>',
+    '<context-evidence kind="userView" authority="untrusted" purpose="observation">',
+    'active_panel_id=panel-1',
+    '</context-evidence>',
     '</system-reminder>',
   ].join('\n');
   return {
@@ -483,6 +520,10 @@ function inputEnvelopeDiagnostics(): TurnDiagnosticsPayload {
             entries: [{
               kind: 'turnEnvironment',
               authority: 'application',
+              purpose: 'observation',
+            }, {
+              kind: 'userView',
+              authority: 'untrusted',
               purpose: 'observation',
             }],
           },

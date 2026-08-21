@@ -26,6 +26,7 @@ import type {
   Turn,
   TurnDiagnosticsPayload,
   TurnDiagnosticsPayloadReference,
+  TurnDiagnosticsSystemContextEntry,
   UserMessageThreadItem,
 } from '../../../core/agent/protocol';
 import { ThreadCore } from './ThreadCore';
@@ -227,7 +228,7 @@ export class ThreadTrajectoryProjection {
         kind: 'context',
         turn,
         item: item ? itemEvidence(item) : null,
-        modelContextText: modelContextTextForContextRecord(loaded.diagnostics?.payload ?? null, record, item),
+        modelContextText: modelContextTextForContextRecord(loaded.diagnostics?.payload ?? null, record),
         payload,
       };
     }
@@ -429,13 +430,13 @@ function materializeProviderRequest(
 function modelContextTextForContextRecord(
   payload: TurnDiagnosticsPayload | null,
   record: ThreadTrajectoryRecordSummary,
-  item: ThreadItem | null,
 ): string | null {
   if (!payload) return null;
   if (record.primaryEvidence.type === 'stablePrompt') return stablePromptModelText(payload);
-  const kind = item?.type === 'contextEvidence' ? item.kind : null;
-  if (!kind) return null;
-  return systemContextTextForKind(payload, kind);
+  if (record.primaryEvidence.type === 'preparedContextPart') {
+    return modelContextTextForPreparedContextPart(payload, record.primaryEvidence);
+  }
+  return null;
 }
 
 function stablePromptModelText(payload: TurnDiagnosticsPayload): string | null {
@@ -450,24 +451,97 @@ function stablePromptModelText(payload: TurnDiagnosticsPayload): string | null {
   return text ? sanitizeTextEvidence(text) : null;
 }
 
-function systemContextTextForKind(
+type PreparedContextPartEvidenceRef = Extract<ThreadTrajectoryEvidenceRef, { readonly type: 'preparedContextPart' }>;
+interface PreparedContextPartRecord {
+  readonly callIndex: number;
+  readonly messageIndex: number;
+  readonly partIndex: number;
+  readonly entryIndex: number;
+  readonly entry: TurnDiagnosticsSystemContextEntry;
+  readonly text: string;
+  readonly requestedAt: number;
+}
+
+function modelContextTextForPreparedContextPart(
   payload: TurnDiagnosticsPayload,
-  kind: ContextEvidenceThreadItem['kind'],
+  ref: PreparedContextPartEvidenceRef,
 ): string | null {
+  return preparedContextPartRecord(payload, ref)?.text ?? null;
+}
+
+function preparedContextPartRecord(
+  payload: TurnDiagnosticsPayload,
+  ref: PreparedContextPartEvidenceRef,
+): PreparedContextPartRecord | null {
   const messagesById = new Map(payload.canonicalMessages.map((message) => [message.id, message.value]));
-  for (const call of payload.providerCalls) {
-    for (const [messageIndex, messageId] of call.preparedContext.messageIds.entries()) {
-      const message = messagesById.get(messageId);
-      const partProvenance = call.preparedContext.messagePartProvenance[messageIndex] ?? [];
-      for (const [partIndex, provenance] of partProvenance.entries()) {
-        if (provenance.source !== 'systemContext') continue;
-        if (!provenance.entries.some((entry) => entry.kind === kind)) continue;
-        const text = textForMessagePart(message ?? null, partIndex);
-        if (text) return sanitizeTextEvidence(text);
-      }
-    }
-  }
-  return null;
+  const call = payload.providerCalls[ref.callIndex] ?? null;
+  if (!call) return null;
+  const messageId = call.preparedContext.messageIds[ref.messageIndex];
+  if (!messageId) return null;
+  const provenance = call.preparedContext.messagePartProvenance[ref.messageIndex]?.[ref.partIndex] ?? null;
+  if (provenance?.source !== 'systemContext') return null;
+  const entry = provenance.entries[ref.entryIndex] ?? null;
+  if (!entry) return null;
+  const partText = textForMessagePart(messagesById.get(messageId) ?? null, ref.partIndex);
+  if (!partText) return null;
+  const text = systemContextEntryText(partText, ref.entryIndex);
+  if (!text) return null;
+  return {
+    callIndex: ref.callIndex,
+    messageIndex: ref.messageIndex,
+    partIndex: ref.partIndex,
+    entryIndex: ref.entryIndex,
+    entry,
+    text: sanitizeTextEvidence(text),
+    requestedAt: call.requestedAt,
+  };
+}
+
+function preparedContextPartRecords(
+  payload: TurnDiagnosticsPayload,
+  callIndex: number | null,
+): readonly PreparedContextPartRecord[] {
+  const call = callIndex === null ? payload.providerCalls[0] ?? null : payload.providerCalls[callIndex] ?? null;
+  if (!call) return [];
+  const messagesById = new Map(payload.canonicalMessages.map((message) => [message.id, message.value]));
+  const messageIndex = call.protectedFromMessageIndex;
+  const messageId = call.preparedContext.messageIds[messageIndex];
+  if (!messageId) return [];
+  const message = messagesById.get(messageId) ?? null;
+  const parts = call.preparedContext.messagePartProvenance[messageIndex] ?? [];
+  return parts.flatMap((provenance, partIndex): PreparedContextPartRecord[] => {
+    if (provenance.source !== 'systemContext') return [];
+    const partText = textForMessagePart(message, partIndex);
+    if (!partText) return [];
+    return provenance.entries.flatMap((entry, entryIndex): PreparedContextPartRecord[] => {
+      const text = systemContextEntryText(partText, entryIndex);
+      return text
+        ? [{
+          callIndex: call.index,
+          messageIndex,
+          partIndex,
+          entryIndex,
+          entry,
+          text: sanitizeTextEvidence(text),
+          requestedAt: call.requestedAt,
+        }]
+        : [];
+    });
+  });
+}
+
+function systemContextEntryText(partText: string, entryIndex: number): string | null {
+  const blocks = contextEvidenceBlocks(partText);
+  if (blocks.length > 0) return blocks[entryIndex] ?? null;
+  return entryIndex === 0 ? partText : null;
+}
+
+function contextEvidenceBlocks(text: string): readonly string[] {
+  const blocks: string[] = [];
+  const pattern = /<context-evidence\b[^>]*>[\s\S]*?<\/context-evidence>/gu;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) blocks.push(match[0]);
+  return blocks;
 }
 
 function textForMessagePart(message: JsonValue | null, partIndex: number): string | null {
@@ -600,13 +674,13 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
           }));
         }
         if (!contextInserted) {
-          appendContextRecords(records, loaded);
+          appendPreparedContextRecords(records, loaded, activity.consumedByCallIndex);
           contextInserted = true;
         }
         return;
       }
       if (!contextInserted) {
-        appendContextRecords(records, loaded);
+        appendPreparedContextRecords(records, loaded, null);
         contextInserted = true;
       }
       if (activity.type === 'modelCall') {
@@ -709,7 +783,7 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
         usage: null,
       }));
     });
-    if (!contextInserted) appendContextRecords(records, loaded);
+    if (!contextInserted) appendPreparedContextRecords(records, loaded, null);
     appendManualCompactionRecords(records, loaded, coveredCompactionItemIds);
     return;
   }
@@ -738,7 +812,6 @@ function appendFallbackTurnRecords(records: ThreadTrajectoryRecordSummary[], loa
       usage: null,
     }));
   }
-  appendContextRecords(records, loaded);
   appendManualCompactionRecords(records, loaded, new Set());
   for (const item of loaded.turn.items) {
     if (!isToolItem(item)) continue;
@@ -763,37 +836,32 @@ function appendFallbackTurnRecords(records: ThreadTrajectoryRecordSummary[], loa
   }
 }
 
-function appendContextRecords(records: ThreadTrajectoryRecordSummary[], loaded: LoadedTurn): void {
-  for (const item of loaded.turn.items) {
-    if (item.type !== 'contextEvidence' && item.type !== 'contextReset') continue;
-    if (item.type === 'contextEvidence' && !contextEvidenceWasModelVisible(loaded, item)) continue;
+function appendPreparedContextRecords(
+  records: ThreadTrajectoryRecordSummary[],
+  loaded: LoadedTurn,
+  callIndex: number | null,
+): void {
+  const payload = loaded.diagnostics?.payload ?? null;
+  if (!payload) return;
+  for (const context of preparedContextPartRecords(payload, callIndex)) {
     records.push(record({
       kind: 'context',
       lane: 'input',
       threadId: loaded.threadId,
       turn: loaded.turn,
       records,
-      title: item.type === 'contextReset' ? 'Context reset' : contextEvidenceTitle(item),
-      subtitle: item.type,
-      preview: compact(itemSummary(item)),
+      title: contextEntryTitle(context.entry),
+      subtitle: `${context.entry.authority} · ${context.entry.purpose}`,
+      preview: compact(context.text),
       state: 'completed',
-      timing: timing(loaded.turn.startedAt, null, loaded.turn.startedAt),
-      primaryEvidence: itemEvidenceRef(loaded.threadId, loaded.turn, item.id),
-      relatedEvidence: [],
+      timing: timing(context.requestedAt, null, context.requestedAt),
+      primaryEvidence: preparedContextPartEvidence(loaded.threadId, loaded.turn, context),
+      relatedEvidence: [providerCallEvidence(loaded.threadId, loaded.turn, context.callIndex)],
       availability: loaded.availability,
       childThreadId: null,
       usage: null,
     }));
   }
-}
-
-function contextEvidenceWasModelVisible(
-  loaded: LoadedTurn,
-  item: ContextEvidenceThreadItem,
-): boolean {
-  const payload = loaded.diagnostics?.payload ?? null;
-  if (!payload) return true;
-  return systemContextTextForKind(payload, item.kind) !== null;
 }
 
 function appendManualCompactionRecords(
@@ -978,6 +1046,15 @@ function trajectoryRecordId(
   if (evidence.type === 'diagnosticActivity') {
     return `turn:${turnId}:${kind}:${evidence.activityIndex}`;
   }
+  if (evidence.type === 'preparedContextPart') {
+    return [
+      `turn:${turnId}:${kind}:prepared`,
+      evidence.callIndex,
+      evidence.messageIndex,
+      evidence.partIndex,
+      evidence.entryIndex,
+    ].join(':');
+  }
   if (evidence.type === 'threadItem') return `turn:${turnId}:${kind}:item:${evidence.itemId}`;
   if (evidence.type === 'subagent') return `turn:${turnId}:delegation:${evidence.agentThreadId}`;
   return `turn:${turnId}:${kind}`;
@@ -993,6 +1070,22 @@ function providerCallEvidence(threadId: ThreadId, turn: Turn, callIndex: number)
 
 function stablePromptEvidenceRef(threadId: ThreadId, turn: Turn): ThreadTrajectoryEvidenceRef {
   return { type: 'stablePrompt', threadId, turnId: turn.id };
+}
+
+function preparedContextPartEvidence(
+  threadId: ThreadId,
+  turn: Turn,
+  context: Pick<PreparedContextPartRecord, 'callIndex' | 'messageIndex' | 'partIndex' | 'entryIndex'>,
+): ThreadTrajectoryEvidenceRef {
+  return {
+    type: 'preparedContextPart',
+    threadId,
+    turnId: turn.id,
+    callIndex: context.callIndex,
+    messageIndex: context.messageIndex,
+    partIndex: context.partIndex,
+    entryIndex: context.entryIndex,
+  };
 }
 
 function itemEvidenceRef(threadId: ThreadId, turn: Turn, itemId: string): ThreadTrajectoryEvidenceRef {
@@ -1291,7 +1384,15 @@ function itemCompletedAt(item: ThreadItem, turn: Turn): number | null {
 }
 
 function contextEvidenceTitle(item: ContextEvidenceThreadItem): string {
-  return item.kind.replace(/([A-Z])/g, ' $1').replace(/^./, (value) => value.toUpperCase());
+  return contextKindTitle(item.kind);
+}
+
+function contextEntryTitle(entry: TurnDiagnosticsSystemContextEntry): string {
+  return contextKindTitle(entry.kind);
+}
+
+function contextKindTitle(kind: string): string {
+  return kind.replace(/([A-Z])/g, ' $1').replace(/^./, (value) => value.toUpperCase());
 }
 
 function toolTitle(item: ThreadItem | null, fallback: string): string {

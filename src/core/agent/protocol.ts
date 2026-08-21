@@ -1558,6 +1558,15 @@ export type ThreadTrajectoryEvidenceRef =
       readonly turnId: TurnId;
     }
   | {
+      readonly type: 'preparedContextPart';
+      readonly threadId: ThreadId;
+      readonly turnId: TurnId;
+      readonly callIndex: number;
+      readonly messageIndex: number;
+      readonly partIndex: number;
+      readonly entryIndex: number;
+    }
+  | {
       readonly type: 'subagent';
       readonly threadId: ThreadId;
       readonly turnId: TurnId;
