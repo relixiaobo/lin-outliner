@@ -22,6 +22,7 @@ import {
   type ThreadTrajectoryReadResponse,
   type ThreadTrajectoryRecordKind,
   type ThreadTrajectoryRecordSummary,
+  type ThreadTrajectoryReplacementRange,
   type ThreadTrajectoryRuntimeEvidence,
   type ThreadTrajectorySummary,
   type ThreadTrajectoryTimingSummary,
@@ -36,7 +37,12 @@ import {
   type ThreadUserContent,
   type UserMessageThreadItem,
 } from '../../../core/agent/protocol';
-import { redactSecretLikeContent } from '../capabilities/agentSecretRedaction';
+import {
+  DIAGNOSTIC_SECRET_REDACTION_OMISSION,
+  redactSecretLikeContent,
+  redactSecretLikeJsonForDiagnostics,
+} from '../capabilities/agentSecretRedaction';
+import { secretStringFieldConfidence } from '../capabilities/agentSecretStringScanner';
 import { ThreadCore } from './ThreadCore';
 
 const DEFAULT_TRAJECTORY_LIMIT = 100;
@@ -46,7 +52,6 @@ const MAX_DETAIL_TEXT_LENGTH = 20_000;
 const MAX_JSON_DEPTH = 16;
 const MAX_JSON_ARRAY_LENGTH = 500;
 const MAX_JSON_OBJECT_KEYS = 500;
-const MAX_TRAJECTORY_TURN_WINDOW = 120;
 const DIAGNOSTICS_READ_CONCURRENCY = 4;
 const TRAJECTORY_SEQUENCE_STRIDE = 100_000;
 
@@ -62,6 +67,7 @@ type TrajectoryCursor = {
 
 type TrajectoryPage = {
   readonly data: readonly ThreadTrajectoryRecordSummary[];
+  readonly replacementRange: ThreadTrajectoryReplacementRange | null;
   readonly olderCursor: string | null;
   readonly newerCursor: string | null;
 };
@@ -90,14 +96,9 @@ interface BuiltTrajectoryWindow {
   readonly turns: readonly LoadedTurn[];
   readonly records: readonly ThreadTrajectoryRecordSummary[];
   readonly summary: ThreadTrajectorySummary;
+  readonly replacementRange: ThreadTrajectoryReplacementRange | null;
   readonly olderCursor: string | null;
   readonly newerCursor: string | null;
-}
-
-interface TurnWindowSelection {
-  readonly turns: readonly { readonly turn: Turn; readonly turnIndex: number }[];
-  readonly hasOlder: boolean;
-  readonly hasNewer: boolean;
 }
 
 interface ThreadTrajectoryThreadEvidence {
@@ -147,6 +148,7 @@ export class ThreadTrajectoryProjection {
       threadId: request.threadId,
       summary: built.summary,
       records: built.records,
+      replacementRange: built.replacementRange,
       olderCursor: built.olderCursor,
       newerCursor: built.newerCursor,
       hasOlder: built.olderCursor !== null,
@@ -187,17 +189,17 @@ export class ThreadTrajectoryProjection {
   private async buildWindow(request: ThreadTrajectoryReadRequest): Promise<BuiltTrajectoryWindow> {
     this.core.requireThread(request.threadId);
     const allTurns = this.core.allTurns(request.threadId);
-    const selection = selectTurnWindow(allTurns, request);
-    const turns = await this.loadTurns(request.threadId, selection.turns);
+    const turns = await this.loadTurns(
+      request.threadId,
+      allTurns.map((turn, turnIndex) => ({ turn, turnIndex })),
+    );
     const records = this.projectRecords(turns);
-    const page = pageTrajectoryRecords(records, request, {
-      older: selection.hasOlder,
-      newer: selection.hasNewer,
-    });
+    const page = pageTrajectoryRecords(records, request);
     return {
       turns,
       records: page.data,
-      summary: summarizeTrajectory(request.threadId, turns, page.data, allTurns),
+      summary: summarizeProjectedTrajectory(request.threadId, allTurns, records, turns),
+      replacementRange: page.replacementRange,
       olderCursor: page.olderCursor,
       newerCursor: page.newerCursor,
     };
@@ -217,7 +219,7 @@ export class ThreadTrajectoryProjection {
       thread,
       turns,
       records,
-      summary: summarizeTrajectory(threadId, turns, records, allTurns),
+      summary: summarizeProjectedTrajectory(threadId, allTurns, records, turns),
     };
   }
 
@@ -230,7 +232,7 @@ export class ThreadTrajectoryProjection {
       thread,
       turns,
       records,
-      summary: summarizeTrajectory(threadId, turns, records, allTurns),
+      summary: summarizeProjectedTrajectory(threadId, allTurns, records, turns),
     };
   }
 
@@ -279,7 +281,14 @@ export class ThreadTrajectoryProjection {
         ? this.readActiveDiagnostics?.(threadId, turn.id) ?? null
         : null;
       if (activePayload) {
-        const activeBundle = activeDiagnosticsBundle(activePayload);
+        const projectedPayload = await redactDiagnosticsPayloadForProjection(activePayload);
+        if (!projectedPayload) {
+          return {
+            bundle: null,
+            availability: [availability('partialCoverage', 'Active Turn diagnostics were omitted after secret redaction failed.')],
+          };
+        }
+        const activeBundle = activeDiagnosticsBundle(projectedPayload);
         if (activeBundle) return { bundle: activeBundle, availability: [] };
         return {
           bundle: null,
@@ -301,7 +310,14 @@ export class ThreadTrajectoryProjection {
           availability: [availability('diagnosticsUnavailable', 'Turn diagnostics are no longer available.')],
         };
       }
-      return { bundle: { ref, payload }, availability: [] };
+      const projectedPayload = await redactDiagnosticsPayloadForProjection(payload);
+      if (!projectedPayload) {
+        return {
+          bundle: null,
+          availability: [availability('partialCoverage', 'Turn diagnostics were omitted after secret redaction failed.')],
+        };
+      }
+      return { bundle: { ref, payload: projectedPayload }, availability: [] };
     } catch {
       return {
         bundle: null,
@@ -410,10 +426,10 @@ export class ThreadTrajectoryProjection {
     if (!item) return null;
     try {
       if (item.type === 'contextEvidence') {
-        return sanitizeJsonEvidence(await this.core.payloads.readContext(threadId, item.payloadRef));
+        return await sanitizeJsonEvidenceAsync(await this.core.payloads.readContext(threadId, item.payloadRef));
       }
       if (item.type === 'contextCompaction') {
-        return sanitizeJsonEvidence(await this.core.payloads.readContext(threadId, item.summaryRef));
+        return await sanitizeJsonEvidenceAsync(await this.core.payloads.readContext(threadId, item.summaryRef));
       }
     } catch {
       return null;
@@ -425,7 +441,7 @@ export class ThreadTrajectoryProjection {
     if (!item || !('outputRef' in item) || !item.outputRef) return null;
     try {
       const text = await this.core.payloads.readTextReference(threadId, item.outputRef);
-      return text === null ? null : sanitizeTextEvidence(text);
+      return text === null ? null : await sanitizeTextEvidenceAsync(text);
     } catch {
       return null;
     }
@@ -465,6 +481,18 @@ function activeDiagnosticsBundle(payload: TurnDiagnosticsPayload): DiagnosticsBu
     },
     payload,
   };
+}
+
+async function redactDiagnosticsPayloadForProjection(
+  payload: TurnDiagnosticsPayload,
+): Promise<TurnDiagnosticsPayload | null> {
+  try {
+    const redacted = await redactSecretLikeJsonForDiagnostics(payload);
+    if (redacted.value === DIAGNOSTIC_SECRET_REDACTION_OMISSION) return null;
+    return redacted.value as TurnDiagnosticsPayload;
+  } catch {
+    return null;
+  }
 }
 
 function diagnosticsEvidence(
@@ -748,15 +776,43 @@ function sanitizeJsonEvidence(value: unknown, depth = 0): JsonValue {
   return result;
 }
 
+async function sanitizeJsonEvidenceAsync(value: unknown): Promise<JsonValue> {
+  try {
+    const redacted = await redactSecretLikeJsonForDiagnostics(value);
+    if (redacted.value === DIAGNOSTIC_SECRET_REDACTION_OMISSION) return '‹redacted›';
+    return sanitizeJsonEvidence(redacted.value);
+  } catch {
+    return '‹redacted›';
+  }
+}
+
 function sanitizeTextEvidence(value: string): string {
   const sanitized = sanitizeStringEvidence(value);
   if (sanitized.length <= MAX_DETAIL_TEXT_LENGTH) return sanitized;
   return `${sanitized.slice(0, MAX_DETAIL_TEXT_LENGTH)}\n… [truncated]`;
 }
 
+async function sanitizeTextEvidenceAsync(value: string): Promise<string> {
+  try {
+    const redacted = await redactSecretLikeJsonForDiagnostics({ body: value });
+    if (redacted.value === DIAGNOSTIC_SECRET_REDACTION_OMISSION) return '‹redacted›';
+    const candidate = typeof redacted.value === 'object'
+      && redacted.value !== null
+      && !Array.isArray(redacted.value)
+      && typeof (redacted.value as { readonly body?: unknown }).body === 'string'
+      ? (redacted.value as { readonly body: string }).body
+      : DIAGNOSTIC_SECRET_REDACTION_OMISSION;
+    return sanitizeTextEvidence(candidate);
+  } catch {
+    return '‹redacted›';
+  }
+}
+
 function sensitiveEvidenceKey(key: string): boolean {
-  return /(^|[-_])(?:authorization|api[-_]?key|token|secret|password|cookie|set[-_]?cookie|headers?|configuredbaseurl|workingdirectory|cwd|path|resource[-_]?root)(?:$|[-_])/iu
-    .test(key);
+  if (secretStringFieldConfidence(key) !== null) return true;
+  const normalized = key.replace(/[^A-Za-z0-9]/gu, '').toLowerCase();
+  return /^(?:authorization|cookie|cookies|setcookie|header|headers|configuredbaseurl|workingdirectory|cwd|path|resourceroot)$/u
+    .test(normalized);
 }
 
 function sanitizeStringEvidence(value: string): string {
@@ -766,10 +822,28 @@ function sanitizeStringEvidence(value: string): string {
   const pathRedacted = value
     .replace(/(^|[\s([{"'=])\/(?:Users|private|var|tmp|Volumes|Applications|workspace)(?:\/[^\s'",)\]}<>]+)+/gu, '$1‹path:redacted›')
     .replace(/(^|[\s([{"'=])[A-Za-z]:\\(?:[^\\/:*?"<>|\r\n]+\\?)+/gu, '$1‹path:redacted›');
+  const structuredRedacted = redactJsonEncodedStringEvidence(pathRedacted);
   try {
-    return redactSecretLikeContent(pathRedacted);
+    return redactSecretLikeContent(structuredRedacted);
   } catch {
     return '‹redacted›';
+  }
+}
+
+function redactJsonEncodedStringEvidence(value: string): string {
+  const trimmed = value.trim();
+  if (!/^[{["]/u.test(trimmed)) return value;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (typeof parsed === 'string') {
+      const redacted = redactJsonEncodedStringEvidence(parsed);
+      return redacted === parsed ? value : JSON.stringify(redacted);
+    }
+    if (parsed === null || typeof parsed !== 'object') return value;
+    const redacted = sanitizeJsonEvidence(parsed);
+    return JSON.stringify(redacted);
+  } catch {
+    return value;
   }
 }
 
@@ -1160,11 +1234,11 @@ function record(input: {
   };
 }
 
-function summarizeTrajectory(
+function summarizeProjectedTrajectory(
   threadId: ThreadId,
-  turns: readonly LoadedTurn[],
+  allTurns: readonly Turn[],
   records: readonly ThreadTrajectoryRecordSummary[],
-  allTurns: readonly Turn[] = turns.map((entry) => entry.turn),
+  loadedTurns: readonly LoadedTurn[],
 ): ThreadTrajectorySummary {
   const usage = usageSummaryFromTurns(allTurns) ?? records.reduce<ThreadTrajectoryUsageSummary | null>((accumulator, entry) => (
     entry.usage ? addUsage(accumulator, entry.usage) : accumulator
@@ -1188,8 +1262,31 @@ function summarizeTrajectory(
     completedAt,
     durationMs: startedAt === null || completedAt === null ? null : Math.max(0, completedAt - startedAt),
     usage,
-    availability: turns.flatMap((entry) => entry.availability),
+    availability: canonicalTrajectoryAvailability(allTurns, loadedTurns),
   };
+}
+
+function canonicalTrajectoryAvailability(
+  allTurns: readonly Turn[],
+  loadedTurns: readonly LoadedTurn[],
+): readonly ThreadTrajectoryAvailability[] {
+  const entries: ThreadTrajectoryAvailability[] = [];
+  const seen = new Set<string>();
+  const push = (entry: ThreadTrajectoryAvailability) => {
+    const key = `${entry.reason}\n${entry.message}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    entries.push(entry);
+  };
+  for (const turn of allTurns) {
+    if (turn.status !== 'inProgress' && !turn.execution.diagnosticsRef) {
+      push(availability('diagnosticsUnavailable', 'One or more Turns did not retain diagnostics.'));
+    }
+  }
+  for (const loaded of loadedTurns) {
+    for (const entry of loaded.availability) push(entry);
+  }
+  return entries;
 }
 
 function usageSummaryFromTurns(turns: readonly Turn[]): ThreadTrajectoryUsageSummary | null {
@@ -1211,47 +1308,58 @@ function usageSummaryFromTurns(turns: readonly Turn[]): ThreadTrajectoryUsageSum
 function pageTrajectoryRecords(
   records: readonly ThreadTrajectoryRecordSummary[],
   request: ThreadTrajectoryReadRequest,
-  outerGaps: { readonly older: boolean; readonly newer: boolean } = { older: false, newer: false },
 ): TrajectoryPage {
   const limit = trajectoryLimit(request.limit);
   const cursor = decodeTrajectoryCursor(request.cursor ?? null);
   if (cursor?.direction === 'before') {
     const boundary = records.findIndex((entry) => entry.id === cursor.recordId);
     const end = boundary < 0 ? records.length : boundary;
-    return trajectoryPage(records, Math.max(0, end - limit), end, outerGaps);
+    return trajectoryPage(records, Math.max(0, end - limit), end);
   }
   if (cursor?.direction === 'after') {
     const boundary = records.findIndex((entry) => entry.id === cursor.recordId);
     const start = boundary < 0 ? 0 : boundary + 1;
-    return trajectoryPage(records, start, Math.min(records.length, start + limit), outerGaps);
+    return trajectoryPage(records, start, Math.min(records.length, start + limit));
   }
   const focusIndex = focusIndexForRecords(records, request);
   if (focusIndex >= 0) {
     const end = Math.min(records.length, focusIndex + Math.ceil(limit / 3) + 1);
     const start = Math.max(0, end - limit);
-    return trajectoryPage(records, start, end, outerGaps);
+    return trajectoryPage(records, start, end);
   }
-  return trajectoryPage(records, Math.max(0, records.length - limit), records.length, outerGaps);
+  return trajectoryPage(records, Math.max(0, records.length - limit), records.length);
 }
 
 function trajectoryPage(
   records: readonly ThreadTrajectoryRecordSummary[],
   start: number,
   end: number,
-  outerGaps: { readonly older: boolean; readonly newer: boolean },
 ): TrajectoryPage {
+  const coveredRecords = records.slice(start, end);
   const data = expandStructuralRecords(records, start, end);
   const first = data[0] ?? null;
   const last = data.at(-1) ?? null;
   const firstIndex = first ? records.findIndex((record) => record.id === first.id) : -1;
   const lastIndex = last ? records.findIndex((record) => record.id === last.id) : -1;
+  const replacementRange = trajectoryReplacementRange(coveredRecords);
   return {
     data,
-    olderCursor: first && (firstIndex > 0 || outerGaps.older) ? encodeTrajectoryCursor('before', first.id) : null,
-    newerCursor: last && (lastIndex >= 0 && (lastIndex < records.length - 1 || outerGaps.newer))
+    replacementRange,
+    olderCursor: first && firstIndex > 0 ? encodeTrajectoryCursor('before', first.id) : null,
+    newerCursor: last && (lastIndex >= 0 && lastIndex < records.length - 1)
       ? encodeTrajectoryCursor('after', last.id)
       : null,
   };
+}
+
+function trajectoryReplacementRange(
+  records: readonly ThreadTrajectoryRecordSummary[],
+): ThreadTrajectoryReplacementRange | null {
+  const first = records[0] ?? null;
+  const last = records.at(-1) ?? null;
+  return first && last
+    ? { startSequence: first.sequence, endSequence: last.sequence + 1 }
+    : null;
 }
 
 function expandStructuralRecords(
@@ -1504,46 +1612,6 @@ async function mapWithConcurrency<T, U>(
     }
   }));
   return results;
-}
-
-function selectTurnWindow(
-  turns: readonly Turn[],
-  request: ThreadTrajectoryReadRequest,
-): TurnWindowSelection {
-  const count = turns.length;
-  if (count === 0) return { turns: [], hasOlder: false, hasNewer: false };
-  const limit = Math.min(MAX_TRAJECTORY_TURN_WINDOW, trajectoryLimit(request.limit));
-  const cursor = decodeTrajectoryCursor(request.cursor ?? null);
-  if (cursor) {
-    const turnIndex = turnIndexForCursor(turns, cursor);
-    if (cursor.direction === 'after') {
-      return turnWindow(turns, Math.max(0, turnIndex), Math.min(count, Math.max(0, turnIndex) + limit));
-    }
-    const end = turnIndex < 0 ? count : Math.min(count, turnIndex + 1);
-    return turnWindow(turns, Math.max(0, end - limit), end);
-  }
-  const focusTurnId = request.focus?.turnId
-    ?? (request.focus?.recordId ? turnIdFromTrajectoryRecordId(request.focus.recordId) : null);
-  const focusIndex = focusTurnId ? turns.findIndex((turn) => turn.id === focusTurnId) : -1;
-  if (focusIndex >= 0) {
-    const newerCount = Math.ceil(limit / 3);
-    const end = Math.min(count, focusIndex + newerCount + 1);
-    return turnWindow(turns, Math.max(0, end - limit), end);
-  }
-  return turnWindow(turns, Math.max(0, count - limit), count);
-}
-
-function turnWindow(turns: readonly Turn[], start: number, end: number): TurnWindowSelection {
-  return {
-    turns: turns.slice(start, end).map((turn, offset) => ({ turn, turnIndex: start + offset })),
-    hasOlder: start > 0,
-    hasNewer: end < turns.length,
-  };
-}
-
-function turnIndexForCursor(turns: readonly Turn[], cursor: TrajectoryCursor): number {
-  const turnId = turnIdFromTrajectoryRecordId(cursor.recordId);
-  return turnId ? turns.findIndex((turn) => turn.id === turnId) : -1;
 }
 
 function turnIdFromTrajectoryRecordId(recordId: string): TurnId | null {

@@ -12,6 +12,7 @@ import type {
   ThreadTrajectoryDiagnosticsEvidence,
   ThreadTrajectoryReadResponse,
   ThreadTrajectoryRecordSummary,
+  ThreadTrajectoryReplacementRange,
 } from '../../src/core/agent/protocol';
 import { ThreadTrajectoryPanel } from '../../src/renderer/agent/components/ThreadTrajectoryPanel';
 import {
@@ -239,6 +240,148 @@ describe('ThreadTrajectoryPanel', () => {
 
     expect(recordRowOrNull(rendered.document, fallbackTool.id)).toBeNull();
     expect(recordRow(rendered.document, TOOL_ID).textContent).toContain('package.json');
+  });
+
+  test('preserves older same-Turn records outside the authoritative refresh range', async () => {
+    const olderTool = record({
+      id: `turn:${TURN_ID}:tool:old`,
+      kind: 'tool',
+      lane: 'tools',
+      sequence: 4,
+      title: 'Older tool',
+      preview: 'Loaded older evidence',
+      primaryEvidence: {
+        type: 'threadItem',
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        itemId: 'old-tool',
+      },
+    });
+    const staleTail = record({
+      id: `turn:${TURN_ID}:tool:stale-tail`,
+      kind: 'tool',
+      lane: 'tools',
+      sequence: 120,
+      title: 'Stale fallback',
+      preview: 'Running stale tail',
+      state: 'running',
+      primaryEvidence: {
+        type: 'threadItem',
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        itemId: 'stale-tool',
+      },
+    });
+    const refreshedTail = record({
+      id: `turn:${TURN_ID}:tool:refreshed-tail`,
+      kind: 'tool',
+      lane: 'tools',
+      sequence: 120,
+      title: 'Refreshed tool',
+      preview: 'Canonical tail evidence',
+      primaryEvidence: {
+        type: 'threadItem',
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        itemId: 'refreshed-tool',
+      },
+    });
+    let readCount = 0;
+    const rendered = renderPanel(async (method) => {
+      if (method === 'thread/trajectory/read') {
+        readCount += 1;
+        return readCount === 1
+          ? trajectoryReadResponse([olderTool, staleTail], null, {
+            replacementRange: { startSequence: 4, endSequence: 121 },
+          })
+          : trajectoryReadResponse([refreshedTail], null, {
+            replacementRange: { startSequence: 120, endSequence: 121 },
+          });
+      }
+      if (method === 'thread/trajectory/detail/read') return toolDetailResponse();
+      if (method === 'thread/trajectory/export') return { status: 'canceled' };
+      throw new Error(`Unexpected Agent Core method: ${method}`);
+    });
+
+    rendered.render();
+    await flush();
+    expect(recordRow(rendered.document, olderTool.id).textContent).toContain('Loaded older evidence');
+    expect(recordRow(rendered.document, staleTail.id).textContent).toContain('Running stale tail');
+
+    rendered.notify({
+      type: 'turn/completed',
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      turn: {} as never,
+    });
+    await wait(150);
+    await flush();
+
+    expect(recordRow(rendered.document, olderTool.id).textContent).toContain('Loaded older evidence');
+    expect(recordRowOrNull(rendered.document, staleTail.id)).toBeNull();
+    expect(recordRow(rendered.document, refreshedTail.id).textContent).toContain('Canonical tail evidence');
+  });
+
+  test('loads the real tail when following live from an older window', async () => {
+    const readInputs: AgentCoreRequestByMethod['thread/trajectory/read'][] = [];
+    const olderRecord = record({
+      id: `turn:${TURN_ID}:input:older`,
+      kind: 'input',
+      lane: 'input',
+      sequence: 0,
+      title: 'Input',
+      preview: 'Older focused window',
+      primaryEvidence: {
+        type: 'threadItem',
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        itemId: 'older-input',
+      },
+    });
+    const tailRecord = record({
+      id: `turn:${TURN_ID}:assistant:tail`,
+      kind: 'assistant',
+      lane: 'assistant',
+      sequence: 20,
+      title: 'Assistant call 2',
+      preview: 'Latest tail response',
+      primaryEvidence: { type: 'providerCall', threadId: THREAD_ID, turnId: TURN_ID, callIndex: 1 },
+    });
+    let readCount = 0;
+    const rendered = renderPanel(async (method, input) => {
+      if (method === 'thread/trajectory/read') {
+        readInputs.push(input);
+        readCount += 1;
+        return readCount === 1
+          ? trajectoryReadResponse([olderRecord], null, {
+            newerCursor: `after:${encodeURIComponent(olderRecord.id)}`,
+            replacementRange: { startSequence: 0, endSequence: 1 },
+          })
+          : trajectoryReadResponse([tailRecord], null, {
+            olderCursor: `before:${encodeURIComponent(tailRecord.id)}`,
+            replacementRange: { startSequence: 20, endSequence: 21 },
+          });
+      }
+      if (method === 'thread/trajectory/detail/read') return inputDetailResponse(olderRecord);
+      if (method === 'thread/trajectory/export') return { status: 'canceled' };
+      throw new Error(`Unexpected Agent Core method: ${method}`);
+    });
+
+    rendered.render();
+    await flush();
+    clickRecord(rendered.document, olderRecord.id);
+    await flush();
+    clickAriaButton(rendered.document, 'Follow live Trajectory');
+    await flush();
+
+    expect(readInputs.at(-1)).toEqual({
+      threadId: THREAD_ID,
+      cursor: null,
+      limit: 120,
+      focus: null,
+    });
+    expect(recordRowOrNull(rendered.document, olderRecord.id)).toBeNull();
+    expect(recordRow(rendered.document, tailRecord.id).textContent).toContain('Latest tail response');
   });
 
   test('renders provider-visible tool catalog records as first-class Tools evidence', async () => {
@@ -672,6 +815,7 @@ function trajectoryReadResponse(
   cursors: {
     readonly olderCursor?: string | null;
     readonly newerCursor?: string | null;
+    readonly replacementRange?: ThreadTrajectoryReplacementRange | null;
   } = {},
 ): ThreadTrajectoryReadResponse {
   const usage = records.reduce((total, entry) => total + (entry.usage?.totalTokens ?? 0), 0);
@@ -703,12 +847,21 @@ function trajectoryReadResponse(
       availability: [],
     },
     records,
+    replacementRange: cursors.replacementRange ?? replacementRangeForRecords(records),
     olderCursor: cursors.olderCursor ?? null,
     newerCursor: cursors.newerCursor ?? null,
     hasOlder: (cursors.olderCursor ?? null) !== null,
     hasNewer: (cursors.newerCursor ?? null) !== null,
     selectedRecordId,
   };
+}
+
+function replacementRangeForRecords(
+  records: readonly ThreadTrajectoryRecordSummary[],
+): ThreadTrajectoryReplacementRange | null {
+  const first = records[0] ?? null;
+  const last = records.at(-1) ?? null;
+  return first && last ? { startSequence: first.sequence, endSequence: last.sequence + 1 } : null;
 }
 
 function trajectoryRecords(): readonly ThreadTrajectoryRecordSummary[] {

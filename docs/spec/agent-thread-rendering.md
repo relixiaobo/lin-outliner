@@ -1006,12 +1006,13 @@ Copy, Continue in new chat, and Open Trajectory commands.
 The Open Trajectory icon preserves the established two-level interaction without
 duplicating information surfaces. Hover or keyboard focus shows one
 non-interactive card whose primary text says that the action opens Trajectory,
-followed by a one-sentence inspection hint. It does not repeat timestamp,
-provider, model, reasoning effort, tokens, cost, or cache details; those belong
-in Trajectory. The card is anchored in a portal and cannot be clipped by
-transcript scrolling. Clicking the icon, or choosing Open Trajectory from the
-native message menu, opens Trajectory in the active workspace pane, focused to
-that Turn.
+followed only by compact total token and cost facts when those values were
+recorded. It does not show explanatory inspection copy, timestamp, provider,
+model, reasoning effort, tool count, duration, or cache details; those belong in
+Trajectory. The card is content-sized, anchored in a portal, and cannot be
+clipped by transcript scrolling. Clicking the icon, or choosing Open Trajectory
+from the native message menu, opens Trajectory in the active workspace pane,
+focused to that Turn.
 
 Trajectory is the Thread-wide technical workspace. It is a main-owned,
 inspection-only projection over canonical Turns, retained diagnostics, context
@@ -1130,19 +1131,21 @@ detail render the original user message content only.
 
 The renderer first performs `thread/trajectory/read`. Main returns `threadId`,
 Thread-level summary facts, an ordered record window, `olderCursor` /
-`newerCursor`, `hasOlder` / `hasNewer`, and the selected record. The response
-deliberately does not return a full `Thread` because that object contains host
-details such as `cwd` that are not part of the Trajectory UI contract. A read
-without `recordId` or `turnId` focus returns no selection; focus is a deep link,
-not an implicit tail-row choice. Renderer entry consumes `recordId` / `turnId`
-focus once when opening the panel; live refreshes preserve the user's current
-ledger/inspector state and must not reopen a closed inspector from the original
-focus. Search and range filtering are scoped to the loaded window, but the
-selected record and its ancestor rows remain visible even when they do not match
-the current search, range, or fold state. The user can load older and newer
-record windows from stable identity cursors; a live refresh without a cursor is
-an authoritative replacement for the returned Turn window, so stale fallback rows
-are removed when retained diagnostics become available.
+`newerCursor`, `hasOlder` / `hasNewer`, an authoritative `replacementRange`, and
+the selected record. Summary facts are whole-Thread totals; records are the
+loaded window. The response deliberately does not return a full `Thread` because
+that object contains host details such as `cwd` that are not part of the
+Trajectory UI contract. A read without `recordId` or `turnId` focus returns no
+selection; focus is a deep link, not an implicit tail-row choice. Renderer entry
+consumes `recordId` / `turnId` focus once when opening the panel; live refreshes
+preserve the user's current ledger/inspector state and must not reopen a closed
+inspector from the original focus. Search and range filtering are scoped to the
+loaded window, but the selected record and its ancestor rows remain visible even
+when they do not match the current search, range, or fold state. The user can
+load older and newer record windows from stable identity cursors; a live refresh
+without a cursor uses `replacementRange` to replace only the canonical sequence
+window the server declares, so stale fallback rows are removed without deleting
+older records already loaded from the same Turn.
 
 Record details are lazy. `thread/trajectory/detail/read` returns the selected
 record plus sanitized detail evidence only. Main locates the owning Turn first

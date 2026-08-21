@@ -1985,7 +1985,17 @@ function decodeThreadTrajectoryReadResponse(
   const record = recordValue(value, 'thread/trajectory/read response');
   exactKeys(
     record,
-    ['threadId', 'summary', 'records', 'olderCursor', 'newerCursor', 'hasOlder', 'hasNewer', 'selectedRecordId'],
+    [
+      'threadId',
+      'summary',
+      'records',
+      'replacementRange',
+      'olderCursor',
+      'newerCursor',
+      'hasOlder',
+      'hasNewer',
+      'selectedRecordId',
+    ],
     'thread/trajectory/read response',
   );
   const threadId = uuidV7(record.threadId, 'thread/trajectory/read response.threadId');
@@ -2019,12 +2029,30 @@ function decodeThreadTrajectoryReadResponse(
     threadId,
     summary,
     records,
+    replacementRange: record.replacementRange === null
+      ? null
+      : decodeThreadTrajectoryReplacementRange(
+        record.replacementRange,
+        'thread/trajectory/read response.replacementRange',
+      ),
     olderCursor: nullableString(record.olderCursor, 'thread/trajectory/read response.olderCursor'),
     newerCursor: nullableString(record.newerCursor, 'thread/trajectory/read response.newerCursor'),
     hasOlder: booleanValue(record.hasOlder, 'thread/trajectory/read response.hasOlder'),
     hasNewer: booleanValue(record.hasNewer, 'thread/trajectory/read response.hasNewer'),
     selectedRecordId,
   });
+}
+
+function decodeThreadTrajectoryReplacementRange(
+  value: unknown,
+  path: string,
+): AgentCoreResponseByMethod['thread/trajectory/read']['replacementRange'] {
+  const record = recordValue(value, path);
+  exactKeys(record, ['startSequence', 'endSequence'], path);
+  const startSequence = nonNegativeInteger(record.startSequence, `${path}.startSequence`);
+  const endSequence = nonNegativeInteger(record.endSequence, `${path}.endSequence`);
+  if (endSequence <= startSequence) fail(`${path}.endSequence`, 'must be greater than startSequence');
+  return deepFreeze({ startSequence, endSequence });
 }
 
 function decodeThreadTrajectoryDetailReadResponse(

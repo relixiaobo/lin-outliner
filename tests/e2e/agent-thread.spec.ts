@@ -541,7 +541,9 @@ test.describe('canonical agent Thread surface', () => {
     const trajectoryHint = page.getByRole('tooltip');
     await expect(trajectoryHint).toHaveCount(1);
     await expect(trajectoryHint).toContainText('Open Trajectory');
-    await expect(trajectoryHint).toContainText('Inspect this turn’s context, tools, events, and evidence.');
+    await expect(trajectoryHint).toContainText('200 tok');
+    await expect(trajectoryHint).toContainText('$0.00061');
+    await expect(trajectoryHint).not.toContainText('Inspect this turn’s context, tools, events, and evidence.');
     const paneCountBeforeDetails = await page.locator('.outline-panel-surface').count();
     await messageDetailsButton.click();
     await expect(page.getByRole('dialog', { name: 'Details' })).toHaveCount(0);

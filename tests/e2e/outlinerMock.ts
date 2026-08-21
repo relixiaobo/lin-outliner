@@ -3204,6 +3204,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               availability: [],
             },
             records,
+            replacementRange: records.length > 0
+              ? {
+                startSequence: Number(records[0]!.sequence),
+                endSequence: Number(records.at(-1)!.sequence) + 1,
+              }
+              : null,
             olderCursor: null,
             newerCursor: null,
             hasOlder: false,

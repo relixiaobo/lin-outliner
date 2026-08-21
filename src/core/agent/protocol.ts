@@ -1616,6 +1616,11 @@ export interface ThreadTrajectoryRecordSummary {
   readonly childThreadId: ThreadId | null;
 }
 
+export interface ThreadTrajectoryReplacementRange {
+  readonly startSequence: number;
+  readonly endSequence: number;
+}
+
 export interface ThreadTrajectorySummary {
   readonly threadId: ThreadId;
   readonly turnCount: number;
@@ -1650,6 +1655,12 @@ export interface ThreadTrajectoryReadResponse {
   readonly summary: ThreadTrajectorySummary;
   /** Records are returned in recorded order within the loaded window. */
   readonly records: readonly ThreadTrajectoryRecordSummary[];
+  /**
+   * The authoritative canonical sequence range covered by this response before
+   * structural ancestor expansion. Live refresh uses it to replace stale records
+   * without deleting older loaded records from the same Turn.
+   */
+  readonly replacementRange: ThreadTrajectoryReplacementRange | null;
   readonly olderCursor: string | null;
   readonly newerCursor: string | null;
   readonly hasOlder: boolean;

@@ -195,8 +195,9 @@ invariants degrade by recording, healing, or skipping at the affected record.
 The Agent protocol exposes:
 
 - a bounded trajectory query addressed by Thread with stable `olderCursor` /
-  `newerCursor` keyset paging;
-- a bounded live-change notification carrying invalidation or replacement facts;
+  `newerCursor` keyset paging and an authoritative replacement sequence range;
+- a bounded live-change notification that invalidates the affected Thread so the
+  renderer can refresh and replace only the server-declared range;
 - a record-detail query addressed by exact Thread, Turn, and record identity;
 - a Thread trajectory export command that returns a user-selected file result.
 

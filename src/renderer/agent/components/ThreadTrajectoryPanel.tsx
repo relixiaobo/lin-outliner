@@ -9,6 +9,7 @@ import type {
   AgentCoreNotification,
   ThreadTrajectoryReadResponse,
   ThreadTrajectoryRecordSummary,
+  ThreadTrajectoryReplacementRange,
 } from '../../../core/agent/protocol';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
@@ -91,6 +92,7 @@ export function ThreadTrajectoryPanel({
 
   const loadTrajectory = useCallback(async (options: {
     readonly cursor?: string | null;
+    readonly forceTail?: boolean;
     readonly silent?: boolean;
   } = {}) => {
     const seq = loadSeqRef.current + 1;
@@ -99,12 +101,14 @@ export function ThreadTrajectoryPanel({
     const loadingOlderPage = options.cursor !== undefined
       && options.cursor !== null
       && !loadingNewerPage;
-    const focus = trajectoryReadFocus({
-      cursor: options.cursor ?? null,
-      focusConsumed: focusConsumedRef.current,
-      selectedRecordId: selectedIdRef.current ?? selectedRecordId ?? null,
-      turnId,
-    });
+    const focus = options.forceTail
+      ? null
+      : trajectoryReadFocus({
+        cursor: options.cursor ?? null,
+        focusConsumed: focusConsumedRef.current,
+        selectedRecordId: selectedIdRef.current ?? selectedRecordId ?? null,
+        turnId,
+      });
     const applyingFocus = focus !== null;
     if (loadingNewerPage) setLoadingNewer(true);
     else if (loadingOlderPage) setLoadingOlder(true);
@@ -120,16 +124,16 @@ export function ThreadTrajectoryPanel({
       if (loadSeqRef.current !== seq) return;
       if (applyingFocus) focusConsumedRef.current = true;
       const current = recordsRef.current;
-      const nextRecords = current.length === 0
+      const nextRecords = current.length === 0 || options.forceTail
         ? response.records
         : loadingOlderPage || loadingNewerPage
           ? mergeRecords(current, response.records)
-          : replaceRecordsForIncomingTurns(current, response.records);
+          : replaceRecordsForIncomingWindow(current, response.records, response.replacementRange);
       recordsRef.current = nextRecords;
       setPage(response);
       setRecords(nextRecords);
-      if (current.length === 0 || loadingOlderPage) setOlderCursor(response.olderCursor);
-      if (current.length === 0 || loadingNewerPage) setNewerCursor(response.newerCursor);
+      if (current.length === 0 || loadingOlderPage || options.forceTail) setOlderCursor(response.olderCursor);
+      if (current.length === 0 || loadingNewerPage || options.forceTail) setNewerCursor(response.newerCursor);
       const focusSelection = applyingFocus ? response.selectedRecordId : null;
       setSelectedId((currentSelection) => {
         const nextSelection = currentSelection ?? focusSelection;
@@ -245,6 +249,11 @@ export function ThreadTrajectoryPanel({
     await loadTrajectory({ cursor: newerCursor });
   }, [loadTrajectory, loadingNewer, newerCursor]);
 
+  const followTail = useCallback(async () => {
+    setFollowingTail(true);
+    if (newerCursor) await loadTrajectory({ forceTail: true });
+  }, [loadTrajectory, newerCursor]);
+
   const exportTrajectory = useCallback(async () => {
     if (exportBusy) return;
     setExportBusy(true);
@@ -301,7 +310,7 @@ export function ThreadTrajectoryPanel({
               followingTail={followingTail}
               mode={mode}
               onExport={() => void exportTrajectory()}
-              onFollowTail={() => setFollowingTail(true)}
+              onFollowTail={() => void followTail()}
               onModeChange={(nextMode) => {
                 setMode(nextMode);
                 setRange(null);
@@ -405,15 +414,21 @@ function mergeRecords(
   return [...byId.values()].sort((left, right) => left.sequence - right.sequence);
 }
 
-function replaceRecordsForIncomingTurns(
+function replaceRecordsForIncomingWindow(
   current: readonly ThreadTrajectoryRecordSummary[],
   incoming: readonly ThreadTrajectoryRecordSummary[],
+  replacementRange: ThreadTrajectoryReplacementRange | null,
 ): readonly ThreadTrajectoryRecordSummary[] {
-  const incomingTurnIds = new Set(incoming.map((record) => record.turnId));
+  if (!replacementRange) return incoming;
+  const incomingIds = new Set(incoming.map((record) => record.id));
   return mergeRecords(
-    current.filter((record) => !incomingTurnIds.has(record.turnId)),
+    current.filter((record) => !incomingIds.has(record.id) && !sequenceInRange(record.sequence, replacementRange)),
     incoming,
   );
+}
+
+function sequenceInRange(sequence: number, range: ThreadTrajectoryReplacementRange): boolean {
+  return sequence >= range.startSequence && sequence < range.endSequence;
 }
 
 function trajectoryRelevantNotification(notification: AgentCoreNotification, threadId: string): boolean {

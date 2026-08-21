@@ -6,6 +6,7 @@ import type {
   ThreadContextPayloadReference,
   ThreadItem,
   ThreadTrajectoryReadResponse,
+  ThreadTrajectoryReplacementRange,
   Turn,
   TurnDiagnosticsPayload,
   TurnDiagnosticsPayloadReference,
@@ -246,6 +247,96 @@ describe('ThreadTrajectoryProjection', () => {
     expect(JSON.stringify(exported)).not.toContain(secret);
   });
 
+  test('redacts camelCase fields and JSON-encoded secrets from detail and export evidence', async () => {
+    const secret = '9f3a2c8d5e71b04a';
+    const itemId = 'tool-json-secret';
+    const jsonArguments = JSON.stringify({ password: secret });
+    const baseDiagnostics = trajectoryDiagnostics();
+    const diagnostics: TurnDiagnosticsPayload = {
+      ...baseDiagnostics,
+      providerCalls: [{
+        ...baseDiagnostics.providerCalls[0]!,
+        request: {
+          kind: 'value',
+          value: {
+            clientSecret: secret,
+            arguments: jsonArguments,
+          },
+        },
+      }],
+      activities: [
+        baseDiagnostics.activities[0]!,
+        {
+          type: 'toolExecutionBatch',
+          sourceCallIndex: 0,
+          consumedByCallIndex: null,
+          executions: [{
+            callId: 'call:secret',
+            toolName: 'secret_tool',
+            itemId,
+            admissionDisposition: 'accepted',
+            canonicalIdentity: null,
+            schemaDigest: null,
+            startedAt: 190,
+            completedAt: 210,
+            status: 'completed',
+          }],
+        },
+      ],
+    };
+    const turn: Turn = {
+      ...trajectoryTurn(),
+      items: [{
+        type: 'mcpToolCall',
+        id: itemId,
+        provenance: itemProvenance(itemId),
+        server: 'server',
+        tool: 'secret_tool',
+        arguments: {
+          clientSecret: secret,
+          arguments: jsonArguments,
+        },
+        status: 'completed',
+        result: JSON.stringify({ clientSecret: secret, body: jsonArguments }),
+        error: null,
+        outputRef: {
+          id: 'f'.repeat(64),
+          mimeType: 'text/plain',
+          byteLength: 128,
+          summary: JSON.stringify({ clientSecret: secret }),
+        },
+        durationMs: 10,
+      }],
+    };
+    const projection = trajectoryProjection({
+      diagnostics,
+      toolOutput: JSON.stringify({ clientSecret: secret, body: jsonArguments }),
+      turn,
+    });
+
+    const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    expect(JSON.stringify(response)).not.toContain(secret);
+
+    const assistant = response.records.find((record) => record.kind === 'assistant');
+    if (!assistant) throw new Error('Expected Assistant record');
+    const assistantDetail = await projection.readDetail({ threadId: THREAD_ID, recordId: assistant.id });
+    const assistantJson = JSON.stringify(assistantDetail);
+    expect(assistantJson).not.toContain(secret);
+    expect(assistantJson).not.toContain(jsonArguments);
+
+    const tool = response.records.find((record) => record.kind === 'tool');
+    if (!tool) throw new Error('Expected Tool record');
+    const toolDetail = await projection.readDetail({ threadId: THREAD_ID, recordId: tool.id });
+    const toolJson = JSON.stringify(toolDetail);
+    expect(toolJson).not.toContain(secret);
+    expect(toolJson).not.toContain(jsonArguments);
+
+    const exported = await projection.exportBundle(THREAD_ID);
+    const exportJson = JSON.stringify(exported);
+    expect(exportJson).not.toContain(secret);
+    expect(exportJson).not.toContain(jsonArguments);
+  });
+
   test('projects active in-memory diagnostics before the Turn has a final diagnostics reference', async () => {
     const activeTurn = {
       ...trajectoryTurn(),
@@ -366,9 +457,13 @@ describe('ThreadTrajectoryProjection', () => {
       limit: 3,
       focus: { turnId: turns[3]!.id },
     });
+    expect(focused.summary.turnCount).toBe(8);
+    expect(focused.summary.recordCount).toBe(8);
+    expect(focused.summary.inputCount).toBe(8);
     expect(focused.olderCursor).not.toBeNull();
     expect(focused.newerCursor).not.toBeNull();
     expect(focused.records.map((record) => record.turnId)).toContain(turns[3]!.id);
+    expect(focused.replacementRange).toEqual(replacementRangeForRecords(focused.records));
 
     const newer = await projection.read({
       threadId: THREAD_ID,
@@ -376,11 +471,19 @@ describe('ThreadTrajectoryProjection', () => {
       cursor: focused.newerCursor,
     });
     expect(newer.records[0]?.turnId).toBe(turns[5]!.id);
-    expect(newer.records.at(-1)?.turnId).toBe(turns[6]!.id);
+    expect(newer.records.at(-1)?.turnId).toBe(turns[7]!.id);
     expect(newer.olderCursor).not.toBeNull();
-    expect(newer.newerCursor).not.toBeNull();
+    expect(newer.newerCursor).toBeNull();
   });
 });
+
+function replacementRangeForRecords(
+  records: readonly { readonly sequence: number }[],
+): ThreadTrajectoryReplacementRange | null {
+  const first = records[0] ?? null;
+  const last = records.at(-1) ?? null;
+  return first && last ? { startSequence: first.sequence, endSequence: last.sequence + 1 } : null;
+}
 
 function trajectoryProjection(overrides: {
   readonly contextPayload?: ThreadContextPayload | null;

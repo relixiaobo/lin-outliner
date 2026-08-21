@@ -1703,6 +1703,7 @@ describe('Codex Agent Core protocol codec', () => {
           availability: [],
         },
         records: [],
+        replacementRange: null,
         olderCursor: null,
         newerCursor: null,
         hasOlder: false,
