@@ -230,7 +230,7 @@ export function projectSubagentConversation(
     : reuseEntryMap(previous?.byAgentId ?? null, entries);
   const deliveryByTurnId = reuseDeliveryMap(
     previous?.deliveryByTurnId ?? null,
-    deliveries(owners, input.turnsByThread, input.executions),
+    deliveries(owners, input.turnsByThread, input.latestTurnByThread, input.executions),
   );
   const anchors = reuseAnchorMap(previous?.anchorsByTurnId ?? null, anchorsByTurnId);
   const projection = previous
@@ -337,6 +337,7 @@ function spawnAnchor(item: SubAgentActivityThreadItem): SubagentAnchor {
 function deliveries(
   owners: readonly ThreadId[],
   turnsByThread: ReadonlyMap<ThreadId, readonly Turn[]>,
+  latestTurnByThread: ReadonlyMap<ThreadId, Turn>,
   executions: ReadonlyMap<ThreadId, SubagentExecutionProjection>,
 ): Map<TurnId, SubagentDelivery> {
   const visibleTurnIds = new Set<TurnId>();
@@ -348,25 +349,65 @@ function deliveries(
   const resolved = new Map<TurnId, SubagentDelivery>();
   const ambiguous = new Set<TurnId>();
   for (const execution of executions.values()) {
-    const turnId = execution.deliveryTurnId;
-    if (
-      turnId === null
-      || execution.terminalStatus === null
-      || !visibleTurnIds.has(turnId)
-    ) continue;
-    if (resolved.has(turnId)) {
-      resolved.delete(turnId);
-      ambiguous.add(turnId);
-      continue;
+    const latestSettled = latestSettledGeneration(execution, turnsByThread, latestTurnByThread);
+    for (const delivery of deliveredGenerations(execution)) {
+      const turnId = delivery.deliveryTurnId;
+      if (!visibleTurnIds.has(turnId)) continue;
+      if (resolved.has(turnId)) {
+        resolved.delete(turnId);
+        ambiguous.add(turnId);
+        continue;
+      }
+      if (ambiguous.has(turnId)) continue;
+      resolved.set(turnId, {
+        agentId: execution.agentId,
+        generationIndex: Math.max(0, delivery.generation - 1),
+        fromLatest: Math.max(0, latestSettled - delivery.generation),
+      });
     }
-    if (ambiguous.has(turnId)) continue;
-    resolved.set(turnId, {
-      agentId: execution.agentId,
-      generationIndex: Math.max(0, execution.generation - 1),
-      fromLatest: 0,
-    });
   }
   return resolved;
+}
+
+function deliveredGenerations(
+  execution: SubagentExecutionProjection,
+): readonly { readonly generation: number; readonly deliveryTurnId: TurnId }[] {
+  const byGeneration = new Map<number, TurnId>();
+  for (const notification of execution.deliveredNotifications) {
+    byGeneration.set(notification.generation, notification.deliveryTurnId);
+  }
+  if (
+    execution.notificationState === 'delivered'
+    && execution.deliveryTurnId !== null
+    && execution.terminalStatus !== null
+  ) {
+    byGeneration.set(execution.generation, execution.deliveryTurnId);
+  }
+  return [...byGeneration]
+    .sort(([left], [right]) => left - right)
+    .map(([generation, deliveryTurnId]) => ({ generation, deliveryTurnId }));
+}
+
+function latestSettledGeneration(
+  execution: SubagentExecutionProjection,
+  turnsByThread: ReadonlyMap<ThreadId, readonly Turn[]>,
+  latestTurnByThread: ReadonlyMap<ThreadId, Turn>,
+): number {
+  const latestTurn = latestTurnByThread.get(execution.agentId) ?? null;
+  const latestTurnSettled = latestTurn !== null
+    && latestTurn.status !== 'inProgress'
+    && latestTurn.provenance.trigger.kind !== 'feature';
+  const durableLowerBound = execution.terminalStatus !== null || latestTurnSettled
+    ? execution.generation
+    : Math.max(0, execution.generation - 1);
+  const turns = turnsByThread.get(execution.agentId);
+  if (turns) {
+    const settledCount = turns.filter((candidate) => (
+      candidate.status !== 'inProgress' && candidate.provenance.trigger.kind !== 'feature'
+    )).length;
+    return Math.max(settledCount, durableLowerBound);
+  }
+  return durableLowerBound;
 }
 
 function projectRegistryEntries(input: SubagentProjectionInput): Map<ThreadId, SubagentRegistryEntry> {
@@ -465,6 +506,7 @@ function recordlessChildren(
         coverageDisposition: null,
         omittedOutputBytes: 0,
         omittedOutputTokens: 0,
+        deliveredNotifications: [],
         notificationCutoff: 'open',
         executionMode: 'ordinary',
         settlementCoverage: null,
@@ -768,7 +810,11 @@ function reuseDeliveryMap(
   if (!previous || previous.size !== next.size) return next;
   for (const [turnId, delivery] of next) {
     const before = previous.get(turnId);
-    if (before?.agentId !== delivery.agentId || before.generationIndex !== delivery.generationIndex) {
+    if (
+      before?.agentId !== delivery.agentId
+      || before.generationIndex !== delivery.generationIndex
+      || before.fromLatest !== delivery.fromLatest
+    ) {
       return next;
     }
   }

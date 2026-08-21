@@ -8847,6 +8847,7 @@ describe('ThreadService', () => {
       coverageDisposition: null,
       omittedOutputBytes: 0,
       omittedOutputTokens: 0,
+      deliveredNotifications: [],
       notificationCutoff: 'open',
       notificationState: 'none',
       worktree: null,
@@ -8855,8 +8856,8 @@ describe('ThreadService', () => {
     // policy or startup snapshot the renderer cannot render must not be
     // rendered by accident.
     expect(Object.keys(running[0]!).sort()).toEqual([
-      'agentId', 'agentType', 'coverageDisposition', 'createdAt', 'currentTurnId', 'deliveryClass',
-      'deliveryTurnId', 'description', 'eligibleAfterGeneration', 'executionMode', 'generation',
+      'agentId', 'agentType', 'coverageDisposition', 'createdAt', 'currentTurnId', 'deliveredNotifications',
+      'deliveryClass', 'deliveryTurnId', 'description', 'eligibleAfterGeneration', 'executionMode', 'generation',
       'notificationCutoff', 'notificationState', 'omittedOutputBytes', 'omittedOutputTokens',
       'parentThreadId', 'runMode', 'settlementCoverage', 'stopProvenance', 'terminalError',
       'terminalStatus', 'updatedAt', 'worktree',
@@ -8886,6 +8887,70 @@ describe('ThreadService', () => {
       notification.type === 'subagent/execution/changed'
       && notification.execution.stopProvenance === 'user'
     ))).not.toEqual([]);
+    await fixture.service.close();
+  });
+
+  test('projects delivered notification rows from earlier Agent generations after resume', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate and later resume the same Agent' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'historic-delivery-spawn');
+    const child = await spawnBackgroundAgent(
+      fixture,
+      root.id,
+      rootTurn.turn.id,
+      'historic-delivery-spawn',
+      'historic delivery',
+      'Return a first result',
+    );
+    await fixture.executor.waitUntilWaiting(1);
+
+    fixture.executor.finish(1, completedExecutionResult(1));
+    await fixture.service.waitForIdle(child.thread.id);
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(root.id);
+
+    await fixture.executor.waitUntilWaiting(2);
+    fixture.executor.finish(2, completedExecutionResult(0));
+    await fixture.service.waitForIdle(root.id);
+    await waitUntil(() => (
+      fixture.stores.subagentExecutions.terminalNotification(child.thread.id, 1)?.state === 'delivered'
+    ));
+    const firstDeliveryTurnId = fixture.stores.subagentExecutions
+      .terminalNotification(child.thread.id, 1)?.deliveryTurnId;
+    expect(firstDeliveryTurnId).toBeTruthy();
+
+    const firstGeneration = fixture.stores.subagentExecutions.generationSnapshot(child.thread.id);
+    expect(fixture.stores.subagentExecutions.beginNextGenerationIfCurrent({
+      agentId: child.thread.id,
+      expectedGeneration: firstGeneration.generation,
+      expectedTurnId: firstGeneration.currentTurnId,
+      turnId: uuidV7(fixture.clock()),
+      toolUseId: 'historic-delivery-resume',
+      runMode: 'background',
+      tokenBudget: null,
+      previous: firstGeneration,
+      updatedAt: fixture.clock(),
+    })?.generation).toBe(2);
+
+    expect(fixture.service.listThreadSubagents({ threadId: root.id }).data[0]).toMatchObject({
+      agentId: child.thread.id,
+      generation: 2,
+      terminalStatus: null,
+      deliveryTurnId: null,
+      deliveredNotifications: [
+        { generation: 1, deliveryTurnId: firstDeliveryTurnId },
+      ],
+    });
     await fixture.service.close();
   });
 

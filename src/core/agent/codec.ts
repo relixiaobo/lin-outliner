@@ -1621,7 +1621,7 @@ function decodeSubagentExecution(value: unknown, path: string): SubagentExecutio
     'agentId', 'parentThreadId', 'description', 'agentType', 'runMode', 'generation',
     'currentTurnId', 'stopProvenance', 'terminalStatus', 'notificationState', 'worktree',
     'terminalError', 'deliveryTurnId', 'deliveryClass', 'eligibleAfterGeneration',
-    'coverageDisposition', 'omittedOutputBytes', 'omittedOutputTokens',
+    'coverageDisposition', 'omittedOutputBytes', 'omittedOutputTokens', 'deliveredNotifications',
     'notificationCutoff', 'executionMode', 'settlementCoverage', 'createdAt', 'updatedAt',
   ], path);
   return {
@@ -1662,6 +1662,11 @@ function decodeSubagentExecution(value: unknown, path: string): SubagentExecutio
       : enumValue(record.coverageDisposition, ['full', 'excerpted', 'omitted'], `${path}.coverageDisposition`),
     omittedOutputBytes: nonNegativeInteger(record.omittedOutputBytes, `${path}.omittedOutputBytes`),
     omittedOutputTokens: nonNegativeInteger(record.omittedOutputTokens, `${path}.omittedOutputTokens`),
+    deliveredNotifications: arrayValue(record.deliveredNotifications, `${path}.deliveredNotifications`)
+      .map((delivery, index) => decodeSubagentDeliveredNotification(
+        delivery,
+        `${path}.deliveredNotifications[${index}]`,
+      )),
     notificationCutoff: enumValue(
       record.notificationCutoff,
       ['open', 'closing', 'closed'],
@@ -1680,6 +1685,18 @@ function decodeSubagentExecution(value: unknown, path: string): SubagentExecutio
     createdAt: nonNegativeInteger(record.createdAt, `${path}.createdAt`),
     updatedAt: nonNegativeInteger(record.updatedAt, `${path}.updatedAt`),
   };
+}
+
+function decodeSubagentDeliveredNotification(
+  value: unknown,
+  path: string,
+): SubagentExecutionProjection['deliveredNotifications'][number] {
+  const record = recordValue(value, path);
+  exactKeys(record, ['generation', 'deliveryTurnId'], path);
+  return deepFreeze({
+    generation: positiveInteger(record.generation, `${path}.generation`),
+    deliveryTurnId: uuidV7(record.deliveryTurnId, `${path}.deliveryTurnId`),
+  });
 }
 
 function decodeSubagentTerminalError(

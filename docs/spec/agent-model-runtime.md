@@ -592,6 +592,10 @@ The output scanner runs exactly once before either boundary. Pending completion
 events are idempotent across restart and cannot overtake already-admitted genuine
 user input. Nested delivery advances one parent edge at a time so only a parent's
 synthesized result reaches its own parent.
+Renderer-facing execution projection is stable-Agent current state plus
+delivered per-generation anchors. The current generation's terminal fields do
+not replace older delivered rows; after resume, those rows continue to identify
+which parent Turn consumed each earlier result.
 
 Completion notifications and Agent-to-`main` message envelopes remain durable
 queued work while either endpoint has an undelivered row. Catalog projection uses

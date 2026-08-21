@@ -97,7 +97,12 @@ describe('Agent registry projection', () => {
     const projection = projectSubagentConversation(input({
       turnsByThread: new Map([[PARENT_ID, [spawnTurn, continuation]]]),
       executions: executionMap([
-        execution({ terminalStatus: 'finished', notificationState: 'delivered', deliveryTurnId: 'turn-2' }),
+        execution({
+          terminalStatus: 'finished',
+          notificationState: 'delivered',
+          deliveryTurnId: 'turn-2',
+          deliveredNotifications: [{ generation: 1, deliveryTurnId: 'turn-2' }],
+        }),
       ]),
     }));
 
@@ -106,7 +111,7 @@ describe('Agent registry projection', () => {
     expect(projection.deliveryByTurnId.get('turn-1')).toBeUndefined();
   });
 
-  test('uses only the resolved delivery root, never ordinal delivery fallback', () => {
+  test('keeps delivered generations anchored after the Agent resumes', () => {
     const spawn = activity('spawn', 'started', null, 'agent-call');
     const spawnTurn = parentTurn('turn-1', [collaborationItem('agent-call', 'agent', 'completed', CHILD_ID), spawn]);
     const firstDelivery = continuationTurn('turn-2', 'agent-call');
@@ -122,13 +127,18 @@ describe('Agent registry projection', () => {
           terminalStatus: 'finished',
           notificationState: 'delivered',
           deliveryTurnId: 'turn-4',
+          deliveredNotifications: [
+            { generation: 1, deliveryTurnId: 'turn-2' },
+            { generation: 2, deliveryTurnId: 'turn-4' },
+          ],
         }),
       ]),
     }));
 
-    // The ledger owns delivery identity. The renderer must not reconstruct old
-    // generations by counting host-authored continuation Turns.
-    expect(projection.deliveryByTurnId.get('turn-2')).toBeUndefined();
+    // The ledger owns delivery identity for every delivered generation, not
+    // only for the stable Agent record's current generation.
+    expect(projection.deliveryByTurnId.get('turn-2'))
+      .toEqual({ agentId: CHILD_ID, generationIndex: 0, fromLatest: 1 });
     expect(projection.deliveryByTurnId.get('turn-4'))
       .toEqual({ agentId: CHILD_ID, generationIndex: 1, fromLatest: 0 });
   });
@@ -436,6 +446,7 @@ function execution(overrides: Partial<SubagentExecutionProjection> = {}): Subage
     coverageDisposition: null,
     omittedOutputBytes: 0,
     omittedOutputTokens: 0,
+    deliveredNotifications: [],
     notificationCutoff: 'open',
     executionMode: 'ordinary',
     settlementCoverage: null,

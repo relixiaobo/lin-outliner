@@ -2282,6 +2282,27 @@ export class SubagentExecutionLedger {
     return row ? notificationFromRow(row) : null;
   }
 
+  deliveredTerminalNotificationsForAgents(
+    agentIds: readonly ThreadId[],
+  ): ReadonlyMap<ThreadId, readonly SubagentPendingNotification[]> {
+    const liveAgentIds = [...new Set(agentIds)].filter((agentId) => !this.deletedAgentIds.has(agentId));
+    if (liveAgentIds.length === 0) return new Map();
+    const rows = this.db.prepare(`
+      SELECT * FROM subagent_generation_notifications
+      WHERE state = 'delivered'
+        AND delivery_turn_id IS NOT NULL
+        AND agent_id IN (${liveAgentIds.map(() => '?').join(', ')})
+      ORDER BY agent_id, generation
+    `).all(...liveAgentIds) as unknown as NotificationRow[];
+    const grouped = new Map<ThreadId, SubagentPendingNotification[]>();
+    for (const notification of rows.map(notificationFromRow)) {
+      const entries = grouped.get(notification.agentId) ?? [];
+      entries.push(notification);
+      grouped.set(notification.agentId, entries);
+    }
+    return grouped;
+  }
+
   parentsWithPending(): readonly ThreadId[] {
     const rows = this.db.prepare(`
       SELECT parent_thread_id, agent_id FROM subagent_generation_notifications

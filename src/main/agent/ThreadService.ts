@@ -1724,17 +1724,27 @@ export class ThreadService implements ThreadServiceExtensionHost {
    */
   listThreadSubagents(request: ThreadSubagentsRequest): ThreadSubagentsResponse {
     const subtree = this.catalogOps.subtreeThreadIds(request.threadId);
-    const data = subtree
+    const records = subtree
       .flatMap((threadId) => this.subagentExecutions.listByParent(threadId))
       // An uncommitted admission may still be rolled back, and the host
       // publishes no start for one; projecting it would put a chip in the
       // conversation for a delegation that never happened.
       .filter((record) => record.initialAdmissionState === 'committed')
-      .map((record) => this.projectExecution(record))
       .sort((left, right) => left.createdAt - right.createdAt || left.agentId.localeCompare(right.agentId));
+    const deliveredByAgent = this.subagentExecutions.deliveredTerminalNotificationsForAgents(
+      records.map((record) => record.agentId),
+    );
+    const data = records.map((record) => this.projectExecution(
+      record,
+      deliveredByAgent.get(record.agentId) ?? [],
+    ));
     return { data };
   }
-  private projectExecution(record: SubagentExecutionRecord): SubagentExecutionProjection {
+  private projectExecution(
+    record: SubagentExecutionRecord,
+    deliveredNotifications = this.subagentExecutions.deliveredTerminalNotificationsForAgents([record.agentId])
+      .get(record.agentId) ?? [],
+  ): SubagentExecutionProjection {
     const terminal = this.subagentExecutions.terminalNotification(record.agentId, record.generation);
     const resolvedTerminal = terminal?.deliveryTurnId
       ? {
@@ -1743,11 +1753,23 @@ export class ThreadService implements ThreadServiceExtensionHost {
             record.parentThreadId,
             terminal.deliveryTurnId,
           ),
-        }
+      }
       : terminal;
+    const delivered = deliveredNotifications
+      .map((notification) => ({
+        generation: notification.generation,
+        deliveryTurnId: this.resolveDeliveryTurnId(
+          notification.parentThreadId,
+          notification.deliveryTurnId!,
+        ),
+      }))
+      .filter((notification): notification is { readonly generation: number; readonly deliveryTurnId: TurnId } => (
+        notification.deliveryTurnId !== null
+      ));
     return projectSubagentExecution(
       record,
       resolvedTerminal,
+      delivered,
     );
   }
 

@@ -459,6 +459,7 @@ const subagentExecution: SubagentExecutionProjection = {
   coverageDisposition: null,
   omittedOutputBytes: 0,
   omittedOutputTokens: 0,
+  deliveredNotifications: [{ generation: 2, deliveryTurnId: TURN_ID }],
   notificationCutoff: 'open',
   executionMode: 'ordinary',
   settlementCoverage: null,

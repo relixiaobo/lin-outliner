@@ -1098,6 +1098,12 @@ export interface SubagentWorktreeSummary {
   readonly path: string;
 }
 
+/** One background generation whose result has reached its parent Turn. */
+export interface SubagentDeliveredNotificationProjection {
+  readonly generation: number;
+  readonly deliveryTurnId: TurnId;
+}
+
 /**
  * The canonical Agent execution record, projected across the process seam.
  *
@@ -1134,6 +1140,11 @@ export interface SubagentExecutionProjection {
   readonly coverageDisposition: SubagentCoverageDisposition | null;
   readonly omittedOutputBytes: number;
   readonly omittedOutputTokens: number;
+  /**
+   * Delivered background generations for this stable Agent, including earlier
+   * generations after a later resume advances the execution record.
+   */
+  readonly deliveredNotifications: readonly SubagentDeliveredNotificationProjection[];
   readonly notificationCutoff: SubagentNotificationCutoff;
   readonly executionMode: SubagentExecutionMode;
   readonly settlementCoverage: SubagentSettlementCoverage | null;

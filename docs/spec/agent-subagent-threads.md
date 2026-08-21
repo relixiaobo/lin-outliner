@@ -568,6 +568,12 @@ completed pending events recover on restart. A child that was still running at
 host restart follows the typed host-restart failure path and emits a failed
 notification rather than replaying side effects.
 
+Delivered notifications remain per-generation facts after the stable Agent
+execution record advances. The current record's `deliveryTurnId` describes only
+the current generation; presentation receives the delivered notification rows
+for every already-delivered generation so an earlier report card stays anchored
+to its original parent Turn after the same Agent is resumed.
+
 Terminal settlement can discover a live descendant after its initial guard,
 including while the transcript flush is in flight. That condition is an internal
 deferral: the pipeline resolves normally, retains its reservation, schedules no
@@ -835,9 +841,12 @@ the same visible child anchor, but their terminal output remains owned only by
 The execution record crosses the process seam as a narrow projection: Agent ID,
 direct parent, description, Agent type, run mode, generation, current Turn,
 stop provenance, terminal status, notification state, and retained worktree
-branch and path. The tool policy, startup snapshot, and worktree recovery intent
-never cross — they describe how the host executes an Agent, not what the user is
-looking at, and a field that never crosses cannot be rendered by accident.
+branch and path. It also carries the delivered `{generation, deliveryTurnId}`
+rows that presentation needs to keep historical report cards attached to the
+parent Turns that consumed them. The tool policy, startup snapshot, and worktree
+recovery intent never cross — they describe how the host executes an Agent, not
+what the user is looking at, and a field that never crosses cannot be rendered
+by accident.
 `thread/subagents/list` reads one conversation subtree's COMMITTED records; an
 uncommitted admission is absent, because the host publishes no start for one and
 may still roll it back. `subagent/execution/changed` announces each write to the

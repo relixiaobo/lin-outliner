@@ -1,4 +1,5 @@
 import type {
+  SubagentDeliveredNotificationProjection,
   SubagentExecutionProjection,
 } from '../../../core/agent/protocol';
 import type { SubagentExecutionRecord } from '../persistence/SubagentExecutionLedger';
@@ -27,6 +28,7 @@ export function projectSubagentExecution(
     | 'omittedBytes'
     | 'omittedTokens'
   > | null,
+  deliveredNotifications: readonly SubagentDeliveredNotificationProjection[] = [],
 ): SubagentExecutionProjection {
   return {
     agentId: record.agentId,
@@ -46,6 +48,7 @@ export function projectSubagentExecution(
     coverageDisposition: terminal?.coverageDisposition ?? null,
     omittedOutputBytes: terminal?.omittedBytes ?? 0,
     omittedOutputTokens: terminal?.omittedTokens ?? 0,
+    deliveredNotifications,
     notificationCutoff: record.notificationCutoff,
     executionMode: record.executionMode,
     settlementCoverage: record.settlementCoverage,
