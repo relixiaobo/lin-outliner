@@ -22,9 +22,11 @@ import type {
   ThreadTrajectoryTimingSummary,
   ThreadTrajectoryTurnEvidence,
   ThreadTrajectoryUsageSummary,
+  ThreadTrajectoryUserMessageEvidence,
   Turn,
   TurnDiagnosticsPayload,
   TurnDiagnosticsPayloadReference,
+  UserMessageThreadItem,
 } from '../../../core/agent/protocol';
 import { ThreadCore } from './ThreadCore';
 
@@ -40,6 +42,11 @@ type DiagnosticsBundle = {
   readonly ref: TurnDiagnosticsPayloadReference;
   readonly payload: TurnDiagnosticsPayload;
 };
+
+type TrajectoryToolExecution = Extract<
+  TurnDiagnosticsPayload['activities'][number],
+  { readonly type: 'toolExecutionBatch' }
+>['executions'][number];
 
 interface LoadedTurn {
   readonly threadId: ThreadId;
@@ -92,7 +99,7 @@ export class ThreadTrajectoryProjection {
   async read(request: ThreadTrajectoryReadRequest): Promise<ThreadTrajectoryReadResponse> {
     const built = await this.build(request.threadId);
     const records = pageTrajectoryRecords(built.records, request);
-    const selectedRecordId = selectRecordId(records.data, built.records, request);
+    const selectedRecordId = selectRecordId(records.data, request);
     return {
       threadId: request.threadId,
       summary: built.summary,
@@ -143,7 +150,13 @@ export class ThreadTrajectoryProjection {
       };
     }));
     const records: ThreadTrajectoryRecordSummary[] = [];
+    let stablePromptFingerprint: string | null = null;
     for (const loaded of turns) {
+      const nextFingerprint = loaded.diagnostics?.payload.stablePrompt?.fingerprints.complete ?? null;
+      if (nextFingerprint !== null && nextFingerprint !== stablePromptFingerprint) {
+        appendStablePromptRecord(records, loaded, stablePromptFingerprint !== null);
+        stablePromptFingerprint = nextFingerprint;
+      }
       appendTurnRecords(records, loaded);
     }
     return {
@@ -194,25 +207,28 @@ export class ThreadTrajectoryProjection {
     const turn = turnEvidence(loaded.turn);
     const diagnostics = loaded.diagnostics;
     if (record.kind === 'input') {
-      const activityIndex = diagnosticActivityIndex(record.primaryEvidence);
-      const itemIds = activityIndex === null
-        ? relatedItemIds(record)
-        : inputActivityItemIds(diagnostics?.payload, activityIndex);
+      const message = userMessageForEvidence(loaded.turn, record.primaryEvidence);
+      const activityIndex = relatedDiagnosticActivityIndex(record, 'acceptedInput');
+      const providerCallIndex = relatedProviderCallIndex(record);
       return {
         kind: 'input',
         turn,
-        items: evidenceForItems(loaded.turn, itemIds),
-        diagnostics: diagnosticsEvidence(diagnostics, activityIndex, null),
+        message: message ? userMessageEvidence(message) : null,
+        diagnostics: diagnosticsEvidence(diagnostics, activityIndex, providerCallIndex),
         activityIndex,
       };
     }
     if (record.kind === 'context') {
       const item = itemForEvidence(loaded.turn, record.primaryEvidence);
+      const payload = record.primaryEvidence.type === 'stablePrompt'
+        ? stablePromptEvidence(loaded.diagnostics)
+        : await this.readContextPayload(record.threadId, item);
       return {
         kind: 'context',
         turn,
         item: item ? itemEvidence(item) : null,
-        payload: await this.readContextPayload(record.threadId, item),
+        modelContextText: modelContextTextForContextRecord(loaded.diagnostics?.payload ?? null, record, item),
+        payload,
       };
     }
     if (record.kind === 'assistant') {
@@ -227,6 +243,7 @@ export class ThreadTrajectoryProjection {
     }
     if (record.kind === 'tool') {
       const item = itemForToolRecord(loaded.turn, record);
+      const execution = toolExecutionForRecord(loaded.diagnostics?.payload ?? null, record);
       return {
         kind: 'tool',
         turn,
@@ -234,7 +251,9 @@ export class ThreadTrajectoryProjection {
         diagnostics: diagnosticsEvidence(diagnostics, diagnosticActivityIndex(record.primaryEvidence), null),
         activityIndex: diagnosticActivityIndex(record.primaryEvidence),
         executionCallId: toolExecutionCallId(record),
+        input: toolInputEvidence(item),
         outputText: await this.readToolOutput(record.threadId, item),
+        schema: toolSchemaEvidence(loaded.diagnostics?.payload ?? null, execution?.toolName ?? null),
       };
     }
     if (record.kind === 'retry') {
@@ -257,6 +276,7 @@ export class ThreadTrajectoryProjection {
       };
     }
     const item = itemForToolRecord(loaded.turn, record);
+    const execution = toolExecutionForRecord(loaded.diagnostics?.payload ?? null, record);
     return {
       kind: 'delegation',
       turn,
@@ -264,6 +284,9 @@ export class ThreadTrajectoryProjection {
       diagnostics: diagnosticsEvidence(diagnostics, diagnosticActivityIndex(record.primaryEvidence), null),
       activityIndex: diagnosticActivityIndex(record.primaryEvidence),
       executionCallId: toolExecutionCallId(record),
+      input: toolInputEvidence(item),
+      outputText: await this.readToolOutput(record.threadId, item),
+      schema: toolSchemaEvidence(loaded.diagnostics?.payload ?? null, execution?.toolName ?? null),
       childThreadId: record.childThreadId,
     };
   }
@@ -331,7 +354,7 @@ function diagnosticsEvidence(
       : sanitizeJsonEvidence(bundle.payload.activities[activityIndex] ?? null),
     providerCall: providerCallIndex === null
       ? null
-      : providerCallDiagnosticsEvidence(bundle.payload.providerCalls[providerCallIndex] ?? null),
+      : providerCallDiagnosticsEvidence(bundle.payload, bundle.payload.providerCalls[providerCallIndex] ?? null),
   };
 }
 
@@ -354,6 +377,7 @@ function runtimeEvidence(runtime: TurnDiagnosticsPayload['runtime']): ThreadTraj
 }
 
 function providerCallDiagnosticsEvidence(
+  payload: TurnDiagnosticsPayload,
   call: TurnDiagnosticsPayload['providerCalls'][number] | null,
 ): ThreadTrajectoryProviderCallEvidence | null {
   if (!call) return null;
@@ -366,10 +390,94 @@ function providerCallDiagnosticsEvidence(
     commonPrefixMessageCount: call.commonPrefixMessageCount,
     requestFingerprint: call.requestFingerprint,
     cacheBreakpoints: call.cacheBreakpoints,
-    request: sanitizeJsonEvidence(call.request),
+    request: sanitizeJsonEvidence(materializeProviderRequest(payload, call)),
     response: call.response ? sanitizeJsonEvidence(call.response) : null,
     transportResponse: call.transportResponse,
   };
+}
+
+function materializeProviderRequest(
+  payload: TurnDiagnosticsPayload,
+  call: TurnDiagnosticsPayload['providerCalls'][number],
+): JsonValue | null {
+  const request = call.request;
+  if (request.kind === 'value') return request.value;
+  const fragments = new Map(payload.requestFragments.map((fragment) => [fragment.id, fragment.value]));
+  const result: Record<string, JsonValue> = {};
+  for (const field of request.fields) {
+    if (field.representation === 'inline') {
+      result[field.name] = field.value;
+      continue;
+    }
+    const values: JsonValue[] = [];
+    for (const id of field.fragmentIds) {
+      const value = fragments.get(id);
+      if (value === undefined) return null;
+      values.push(value);
+    }
+    if (field.container === 'array') {
+      result[field.name] = values;
+    } else {
+      const value = values[0];
+      if (value === undefined) return null;
+      result[field.name] = value;
+    }
+  }
+  return result;
+}
+
+function modelContextTextForContextRecord(
+  payload: TurnDiagnosticsPayload | null,
+  record: ThreadTrajectoryRecordSummary,
+  item: ThreadItem | null,
+): string | null {
+  if (!payload) return null;
+  if (record.primaryEvidence.type === 'stablePrompt') return stablePromptModelText(payload);
+  const kind = item?.type === 'contextEvidence' ? item.kind : null;
+  if (!kind) return null;
+  return systemContextTextForKind(payload, kind);
+}
+
+function stablePromptModelText(payload: TurnDiagnosticsPayload): string | null {
+  for (const call of payload.providerCalls) {
+    const fragment = payload.requestFragments.find((candidate) => (
+      candidate.id === call.preparedContext.systemPromptFragmentId
+    ));
+    const text = semanticText(fragment?.value ?? null);
+    if (text) return sanitizeTextEvidence(text);
+  }
+  const text = payload.stablePrompt?.blocks.map((block) => block.text).filter(Boolean).join('\n\n') ?? '';
+  return text ? sanitizeTextEvidence(text) : null;
+}
+
+function systemContextTextForKind(
+  payload: TurnDiagnosticsPayload,
+  kind: ContextEvidenceThreadItem['kind'],
+): string | null {
+  const messagesById = new Map(payload.canonicalMessages.map((message) => [message.id, message.value]));
+  for (const call of payload.providerCalls) {
+    for (const [messageIndex, messageId] of call.preparedContext.messageIds.entries()) {
+      const message = messagesById.get(messageId);
+      const partProvenance = call.preparedContext.messagePartProvenance[messageIndex] ?? [];
+      for (const [partIndex, provenance] of partProvenance.entries()) {
+        if (provenance.source !== 'systemContext') continue;
+        if (!provenance.entries.some((entry) => entry.kind === kind)) continue;
+        const text = textForMessagePart(message ?? null, partIndex);
+        if (text) return sanitizeTextEvidence(text);
+      }
+    }
+  }
+  return null;
+}
+
+function textForMessagePart(message: JsonValue | null, partIndex: number): string | null {
+  if (message === null) return null;
+  if (typeof message === 'string') return partIndex === 0 ? message : null;
+  if (typeof message !== 'object' || Array.isArray(message)) return null;
+  const record = message as Readonly<Record<string, JsonValue>>;
+  const content = record.content ?? record.parts;
+  if (Array.isArray(content)) return semanticText(content[partIndex] ?? null);
+  return partIndex === 0 ? semanticText(content ?? message) : null;
 }
 
 function sanitizeJsonEvidence(value: unknown, depth = 0): JsonValue {
@@ -419,6 +527,41 @@ function sanitizeStringEvidence(value: string): string {
     .replace(/(^|[\s([{"'=])[A-Za-z]:\\(?:[^\\/:*?"<>|\r\n]+\\?)+/gu, '$1‹path:redacted›');
 }
 
+function appendStablePromptRecord(
+  records: ThreadTrajectoryRecordSummary[],
+  loaded: LoadedTurn,
+  update: boolean,
+): void {
+  const diagnostics = loaded.diagnostics;
+  const stablePrompt = diagnostics?.payload.stablePrompt;
+  if (!diagnostics || !stablePrompt) return;
+  records.push(record({
+    kind: 'context',
+    lane: 'input',
+    threadId: loaded.threadId,
+    turn: loaded.turn,
+    records,
+    title: update ? 'System Prompt Update' : 'Initial System Prompt',
+    subtitle: 'stablePrompt',
+    preview: compact(stablePrompt.blocks.map((block) => block.text).join(' ')),
+    state: 'completed',
+    timing: timing(loaded.turn.startedAt, null, loaded.turn.startedAt),
+    primaryEvidence: stablePromptEvidenceRef(loaded.threadId, loaded.turn),
+    relatedEvidence: [],
+    availability: loaded.availability,
+    childThreadId: null,
+    usage: null,
+  }));
+}
+
+function stablePromptEvidence(bundle: DiagnosticsBundle | null): JsonValue | null {
+  if (!bundle) return null;
+  return sanitizeJsonEvidence({
+    stablePrompt: bundle.payload.stablePrompt,
+    toolSchemas: bundle.payload.toolSchemas,
+  });
+}
+
 function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: LoadedTurn): void {
   const { diagnostics, turn } = loaded;
   const itemsById = new Map(turn.items.map((item) => [item.id, item]));
@@ -428,23 +571,34 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
   if (diagnostics) {
     diagnostics.payload.activities.forEach((activity, activityIndex) => {
       if (activity.type === 'acceptedInput') {
-        records.push(record({
-          kind: 'input',
-          lane: 'input',
-          threadId: loaded.threadId,
-          turn,
-          records,
-          title: activity.source === 'initial' ? 'Input' : 'Steering',
-          subtitle: null,
-          preview: compact(activity.itemIds.map((itemId) => itemSummary(itemsById.get(itemId))).filter(Boolean).join(' ')),
-          state: 'completed',
-          timing: timing(activity.acceptedAt, null, activity.acceptedAt),
-          primaryEvidence: diagnosticEvidence(loaded.threadId, turn, activityIndex, activity.type),
-          relatedEvidence: activity.itemIds.map((itemId) => itemEvidenceRef(loaded.threadId, turn, itemId)),
-          availability: loaded.availability,
-          childThreadId: null,
-          usage: null,
-        }));
+        const activityRef = diagnosticEvidence(loaded.threadId, turn, activityIndex, activity.type);
+        const providerCallRef = activity.consumedByCallIndex === null
+          ? null
+          : providerCallEvidence(loaded.threadId, turn, activity.consumedByCallIndex);
+        for (const itemId of activity.itemIds) {
+          const item = itemsById.get(itemId);
+          if (item?.type !== 'userMessage') continue;
+          records.push(record({
+            kind: 'input',
+            lane: 'input',
+            threadId: loaded.threadId,
+            turn,
+            records,
+            title: activity.source === 'initial' ? 'Input' : 'Steering',
+            subtitle: null,
+            preview: compact(itemSummary(item)),
+            state: 'completed',
+            timing: timing(item.acceptedAt, null, item.acceptedAt),
+            primaryEvidence: itemEvidenceRef(loaded.threadId, turn, item.id),
+            relatedEvidence: [
+              activityRef,
+              ...(providerCallRef ? [providerCallRef] : []),
+            ],
+            availability: loaded.availability,
+            childThreadId: null,
+            usage: null,
+          }));
+        }
         if (!contextInserted) {
           appendContextRecords(records, loaded);
           contextInserted = true;
@@ -495,13 +649,17 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
             preview: compact(itemSummary(item) ?? execution.callId),
             state: execution.status === 'inProgress' ? 'running' : execution.status,
             timing: timing(execution.startedAt, null, execution.completedAt),
-            primaryEvidence: diagnosticEvidence(loaded.threadId, turn, activityIndex, activity.type),
+            primaryEvidence: toolExecutionEvidence(
+              loaded.threadId,
+              turn,
+              activityIndex,
+              execution.callId,
+            ),
             relatedEvidence: execution.itemId ? [itemEvidenceRef(loaded.threadId, turn, execution.itemId)] : [],
             availability: loaded.availability,
             childThreadId: childThreadIdForItem(item),
             usage: null,
             parentRecordId: assistantRecordId(turn.id, activity.sourceCallIndex),
-            toolCallId: execution.callId,
           }));
         }
         return;
@@ -561,7 +719,7 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
 
 function appendFallbackTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: LoadedTurn): void {
   const userItems = loaded.turn.items.filter((item) => item.type === 'userMessage');
-  if (userItems.length > 0) {
+  for (const item of userItems) {
     records.push(record({
       kind: 'input',
       lane: 'input',
@@ -570,11 +728,11 @@ function appendFallbackTurnRecords(records: ThreadTrajectoryRecordSummary[], loa
       records,
       title: 'Input',
       subtitle: null,
-      preview: compact(userItems.map(itemSummary).filter(Boolean).join(' ')),
+      preview: compact(itemSummary(item)),
       state: loaded.turn.status === 'inProgress' ? 'running' : 'partial',
-      timing: timing(userItems[0]?.acceptedAt ?? loaded.turn.startedAt, null, null),
-      primaryEvidence: itemEvidenceRef(loaded.threadId, loaded.turn, userItems[0]!.id),
-      relatedEvidence: userItems.map((item) => itemEvidenceRef(loaded.threadId, loaded.turn, item.id)),
+      timing: timing(item.acceptedAt, null, null),
+      primaryEvidence: itemEvidenceRef(loaded.threadId, loaded.turn, item.id),
+      relatedEvidence: [],
       availability: loaded.availability,
       childThreadId: null,
       usage: null,
@@ -672,11 +830,10 @@ function record(input: {
   readonly childThreadId: ThreadId | null;
   readonly usage: ThreadTrajectoryUsageSummary | null;
   readonly parentRecordId?: string | null;
-  readonly toolCallId?: string;
 }): ThreadTrajectoryRecordSummary {
   const sequence = input.records.length;
   return {
-    id: trajectoryRecordId(input.turn.id, input.kind, input.primaryEvidence, input.toolCallId),
+    id: trajectoryRecordId(input.turn.id, input.kind, input.primaryEvidence),
     kind: input.kind,
     lane: input.lane,
     threadId: input.threadId,
@@ -751,13 +908,12 @@ function pageTrajectoryRecords(
 
 function selectRecordId(
   page: readonly ThreadTrajectoryRecordSummary[],
-  all: readonly ThreadTrajectoryRecordSummary[],
   request: ThreadTrajectoryReadRequest,
 ): string | null {
   const focus = request.focus ?? null;
   if (focus?.recordId && page.some((entry) => entry.id === focus.recordId)) return focus.recordId;
   if (focus?.turnId) return focusRecordForTurn(page, focus.turnId)?.id ?? null;
-  return page.at(-1)?.id ?? all.at(-1)?.id ?? null;
+  return null;
 }
 
 function focusRecordForTurn(
@@ -804,13 +960,13 @@ function trajectoryRecordId(
   turnId: string,
   kind: ThreadTrajectoryRecordKind,
   evidence: ThreadTrajectoryEvidenceRef,
-  toolCallId?: string,
 ): string {
   if (kind === 'assistant' && evidence.type === 'providerCall') return `turn:${turnId}:assistant:${evidence.callIndex}`;
+  if (evidence.type === 'toolExecution') {
+    return `turn:${turnId}:${kind}:${evidence.activityIndex}:${encodeURIComponent(evidence.callId)}`;
+  }
   if (evidence.type === 'diagnosticActivity') {
-    return toolCallId
-      ? `turn:${turnId}:${kind}:${evidence.activityIndex}:${toolCallId}`
-      : `turn:${turnId}:${kind}:${evidence.activityIndex}`;
+    return `turn:${turnId}:${kind}:${evidence.activityIndex}`;
   }
   if (evidence.type === 'threadItem') return `turn:${turnId}:${kind}:item:${evidence.itemId}`;
   if (evidence.type === 'subagent') return `turn:${turnId}:delegation:${evidence.agentThreadId}`;
@@ -823,6 +979,10 @@ function assistantRecordId(turnId: string, callIndex: number): string {
 
 function providerCallEvidence(threadId: ThreadId, turn: Turn, callIndex: number): ThreadTrajectoryEvidenceRef {
   return { type: 'providerCall', threadId, turnId: turn.id, callIndex };
+}
+
+function stablePromptEvidenceRef(threadId: ThreadId, turn: Turn): ThreadTrajectoryEvidenceRef {
+  return { type: 'stablePrompt', threadId, turnId: turn.id };
 }
 
 function itemEvidenceRef(threadId: ThreadId, turn: Turn, itemId: string): ThreadTrajectoryEvidenceRef {
@@ -841,6 +1001,21 @@ function diagnosticEvidence(
     turnId: turn.id,
     activityIndex,
     activityType,
+  };
+}
+
+function toolExecutionEvidence(
+  threadId: ThreadId,
+  turn: Turn,
+  activityIndex: number,
+  callId: string,
+): ThreadTrajectoryEvidenceRef {
+  return {
+    type: 'toolExecution',
+    threadId,
+    turnId: turn.id,
+    activityIndex,
+    callId,
   };
 }
 
@@ -929,12 +1104,25 @@ function itemEvidence(item: ThreadItem): ThreadTrajectoryItemEvidence {
   };
 }
 
+function userMessageEvidence(item: UserMessageThreadItem): ThreadTrajectoryUserMessageEvidence {
+  return {
+    itemId: item.id,
+    acceptedAt: item.acceptedAt,
+    content: item.content,
+  };
+}
+
 function evidenceForItems(turn: Turn, itemIds: readonly string[]): readonly ThreadTrajectoryItemEvidence[] {
   const byId = new Map(turn.items.map((item) => [item.id, item]));
   return itemIds.flatMap((itemId) => {
     const item = byId.get(itemId);
     return item ? [itemEvidence(item)] : [];
   });
+}
+
+function userMessageForEvidence(turn: Turn, evidence: ThreadTrajectoryEvidenceRef): UserMessageThreadItem | null {
+  const item = itemForEvidence(turn, evidence);
+  return item?.type === 'userMessage' ? item : null;
 }
 
 function itemForEvidence(turn: Turn, evidence: ThreadTrajectoryEvidenceRef): ThreadItem | null {
@@ -956,11 +1144,35 @@ function itemForToolRecord(turn: Turn, record: ThreadTrajectoryRecordSummary): T
 }
 
 function diagnosticActivityIndex(evidence: ThreadTrajectoryEvidenceRef): number | null {
-  return evidence.type === 'diagnosticActivity' ? evidence.activityIndex : null;
+  return evidence.type === 'diagnosticActivity' || evidence.type === 'toolExecution'
+    ? evidence.activityIndex
+    : null;
 }
 
 function providerCallIndexForEvidence(evidence: ThreadTrajectoryEvidenceRef): number | null {
   return evidence.type === 'providerCall' ? evidence.callIndex : null;
+}
+
+function relatedDiagnosticActivityIndex(
+  record: ThreadTrajectoryRecordSummary,
+  activityType: TurnDiagnosticsPayload['activities'][number]['type'],
+): number | null {
+  for (const evidence of record.relatedEvidence) {
+    if (evidence.type === 'diagnosticActivity' && evidence.activityType === activityType) {
+      return evidence.activityIndex;
+    }
+  }
+  return diagnosticActivityIndex(record.primaryEvidence);
+}
+
+function relatedProviderCallIndex(record: ThreadTrajectoryRecordSummary): number | null {
+  const primary = providerCallIndexForEvidence(record.primaryEvidence);
+  if (primary !== null) return primary;
+  for (const evidence of record.relatedEvidence) {
+    const callIndex = providerCallIndexForEvidence(evidence);
+    if (callIndex !== null) return callIndex;
+  }
+  return null;
 }
 
 function relatedItemIds(record: ThreadTrajectoryRecordSummary): readonly string[] {
@@ -969,15 +1181,61 @@ function relatedItemIds(record: ThreadTrajectoryRecordSummary): readonly string[
   ));
 }
 
-function inputActivityItemIds(payload: TurnDiagnosticsPayload | null | undefined, activityIndex: number): readonly string[] {
-  const activity = payload?.activities[activityIndex];
-  return activity?.type === 'acceptedInput' ? activity.itemIds : [];
+function toolExecutionCallId(record: ThreadTrajectoryRecordSummary): string | null {
+  return record.primaryEvidence.type === 'toolExecution'
+    ? record.primaryEvidence.callId
+    : null;
 }
 
-function toolExecutionCallId(record: ThreadTrajectoryRecordSummary): string | null {
-  const match = /:([^:]+)$/.exec(record.id);
-  if (!match) return null;
-  return record.primaryEvidence.type === 'diagnosticActivity' ? match[1]! : null;
+function toolExecutionForRecord(
+  payload: TurnDiagnosticsPayload | null,
+  record: ThreadTrajectoryRecordSummary,
+): TrajectoryToolExecution | null {
+  if (!payload) return null;
+  const activityIndex = diagnosticActivityIndex(record.primaryEvidence);
+  const activity = activityIndex === null ? null : payload.activities[activityIndex] ?? null;
+  if (activity?.type !== 'toolExecutionBatch') return null;
+  const callId = toolExecutionCallId(record);
+  if (!callId) return activity.executions.length === 1 ? activity.executions[0] ?? null : null;
+  return activity.executions.find((execution) => execution.callId === callId) ?? null;
+}
+
+function toolInputEvidence(item: ThreadItem | null): JsonValue | null {
+  if (!item) return null;
+  switch (item.type) {
+    case 'commandExecution':
+      return sanitizeJsonEvidence({
+        command: item.command,
+        description: item.description,
+        cwd: item.cwd,
+      });
+    case 'fileChange':
+      return sanitizeJsonEvidence({ changes: item.changes });
+    case 'mcpToolCall':
+    case 'dynamicToolCall':
+      return sanitizeJsonEvidence(item.arguments);
+    case 'collabAgentToolCall':
+      return sanitizeJsonEvidence({
+        tool: item.tool,
+        prompt: item.prompt,
+        model: item.model,
+        reasoningEffort: item.reasoningEffort,
+        receiverThreadIds: item.receiverThreadIds,
+      });
+    case 'webSearch':
+      return sanitizeJsonEvidence({ query: item.query });
+    default:
+      return null;
+  }
+}
+
+function toolSchemaEvidence(
+  payload: TurnDiagnosticsPayload | null,
+  toolName: string | null,
+): JsonValue | null {
+  if (!payload || !toolName) return null;
+  const schema = payload.toolSchemas.find((candidate) => candidate.name === toolName) ?? null;
+  return schema ? sanitizeJsonEvidence(schema) : null;
 }
 
 function providerCallState(
@@ -1098,7 +1356,7 @@ function providerResponsePreview(value: JsonValue | null): string | null {
   return semanticText(value) ?? jsonPreview(value);
 }
 
-function semanticText(value: JsonValue): string | null {
+function semanticText(value: JsonValue | null): string | null {
   if (typeof value === 'string') return value;
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const record = value as Readonly<Record<string, JsonValue>>;

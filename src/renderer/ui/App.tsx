@@ -7,6 +7,7 @@ import { parseIsoLocalDate, todayIsoLocalDate, type AssetMetadata, type FocusHin
 import { flattenVisibleRows, useProjectionStore, useUiState } from '../state/document';
 import { selectableRowForId } from '../state/selectableRows';
 import { ThreadDock, type ThreadRailState } from '../agent/components/ThreadDock';
+import { threadStore } from '../agent/store/threadStore';
 import { buildRendererUserViewHints } from './agent/userViewContext';
 import { Sidebar } from './Sidebar';
 import { WindowChrome } from './WindowChrome';
@@ -733,6 +734,12 @@ export function App() {
           onNavigatePanelBack={navigatePanelBack}
           onNavigatePanelPreview={navigatePanelPreview}
           onNavigatePanelRoot={navigatePanelRoot}
+          onOpenThreadTrajectory={(threadId) => {
+            openThreadTrajectoryPanel(threadId);
+            void threadStore.selectThread(threadId).catch((selectionError) => {
+              setError(selectionError instanceof Error ? selectionError.message : String(selectionError));
+            });
+          }}
           onPanelScrollPositionChange={updatePanelScroll}
           onPanelResizeKeyDown={resizePanelPairWithKeyboard}
           onPanelResizeReset={resetPanelPair}

@@ -3172,7 +3172,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             ? focus.recordId
             : focus?.turnId
               ? String(focusedTrajectoryRecord(records, focus.turnId)?.id ?? records.at(-1)?.id ?? '')
-              : String(records.at(-1)?.id ?? '');
+              : null;
           const usage = turns.reduce((accumulator, turn) => ({
             input: accumulator.input + turn.execution.usage.input,
             output: accumulator.output + turn.execution.usage.output,
@@ -3267,16 +3267,71 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             preview: item.type === 'agentMessage' ? item.text : null,
             status: 'status' in item ? item.status : null,
           } : null;
+          const diagnosticsEvidence = kind === 'assistant' ? {
+            ref: {
+              id: 'd'.repeat(64),
+              mimeType: 'application/vnd.tenon.agent-turn-diagnostics+json',
+              byteLength: 1024,
+              schemaVersion: 1,
+            },
+            runtime: {
+              provider: turn.execution.modelProvider,
+              model: turn.execution.model,
+              api: 'responses',
+              transportSelection: 'sse',
+              contextWindow: 128000,
+              maxOutputTokens: 8192,
+              thinkingLevel: turn.execution.reasoningEffort,
+              timeoutMs: null,
+              maxRetries: 2,
+              maxRetryDelayMs: 1000,
+              cacheRetention: 'short',
+              toolExecution: 'parallel',
+              steeringMode: 'all',
+            },
+            activity: null,
+            providerCall: {
+              index: 0,
+              requestedAt: turn.startedAt,
+              estimatedInputTokens: turn.execution.usage.input,
+              inputTokenLimit: 128000,
+              reservedOutputTokens: 8192,
+              commonPrefixMessageCount: 0,
+              requestFingerprint: 'e'.repeat(64),
+              cacheBreakpoints: [],
+              request: { input: 'Mock request' },
+              response: { outputText: 'Mock response' },
+              transportResponse: {
+                headersReceivedAt: turn.startedAt,
+                httpStatus: 200,
+                requestId: 'mock-request',
+              },
+            },
+          } : null;
           return clone({
             threadId: thread.id,
             record: summary,
             detail: kind === 'assistant'
-              ? { kind, turn: turnEvidence, diagnostics: null, providerCallIndex: 0, relatedItems: itemEvidence ? [itemEvidence] : [] }
+              ? {
+                kind,
+                turn: turnEvidence,
+                diagnostics: diagnosticsEvidence,
+                providerCallIndex: 0,
+                relatedItems: itemEvidence ? [itemEvidence] : [],
+              }
               : kind === 'context'
-                ? { kind, turn: turnEvidence, item: itemEvidence, payload: null }
+                ? { kind, turn: turnEvidence, item: itemEvidence, modelContextText: null, payload: null }
                 : kind === 'compaction'
                   ? { kind, turn: turnEvidence, item: itemEvidence, diagnostics: null, activityIndex: null }
-                  : { kind, turn: turnEvidence, items: itemEvidence ? [itemEvidence] : [], diagnostics: null, activityIndex: null },
+                  : {
+                    kind,
+                    turn: turnEvidence,
+                    message: item?.type === 'userMessage'
+                      ? { itemId: item.id, acceptedAt: item.acceptedAt, content: item.content }
+                      : null,
+                    diagnostics: null,
+                    activityIndex: null,
+                  },
           }) as T;
         }
         if (method === 'thread/trajectory/export') {

@@ -732,7 +732,16 @@ tail-first page of ordered records, paging state, and the selected record. Recor
 kinds are `input`, `context`, `assistant`, `tool`, `retry`, `compaction`, and
 `delegation`. Assistant records use provider-call evidence as their primary
 identity; tool and runtime records use diagnostic activities when retained and
-degrade to canonical Item evidence when not.
+degrade to canonical Item evidence when not. With no explicit focus, the read
+returns `selectedRecordId: null`; opening the Thread-wide workspace must not
+manufacture a selection merely because records exist.
+
+Every record carries exactly one typed `primaryEvidence` reference. A Provider
+Call is addressed by `(threadId, turnId, callIndex)`. One execution inside a
+tool batch is addressed by `(threadId, turnId, activityIndex, callId)`; the batch
+activity alone is not unique evidence for any one of its calls. The record ID is
+stable projection identity for paging and selection, not evidence authority.
+Detail resolution never parses an evidence coordinate from that string.
 
 `thread/trajectory/detail/read` returns sanitized evidence for one record. It
 does not return full `Thread`, `Turn`, `ThreadItem`, or raw diagnostics payloads.
@@ -740,7 +749,11 @@ It may return bounded Turn/Item evidence, sanitized runtime facts, sanitized
 provider-call request/response values, sanitized activity evidence, sanitized
 context payloads, and sanitized/truncated tool output. It must not expose host
 filesystem paths, payload storage paths, digest-only read authority, raw secrets,
-credentials, arbitrary response headers, or image bytes.
+credentials, arbitrary response headers, or image bytes. Main resolves the
+record's typed primary reference against its owning Thread and Turn, then uses
+only explicitly related references for supporting evidence. Missing inspection
+evidence degrades that record or detail field and cannot change canonical
+history or fail a running Turn.
 
 `thread/trajectory/export` writes the same sanitized projection from main and
 returns only status, file name, and byte length. The renderer never receives the
@@ -789,7 +802,10 @@ Trajectory is the complete technical surface for a canonical Thread. It receives
 main-owned sanitized projection over the same canonical Turns, retained diagnostics,
 context payloads, and output references used by execution. It does not recreate the
 retired conversation/run/round debug projection, derive history from renderer
-pagination, or introduce an alternative execution ledger. The exact page contract lives in
+pagination, or introduce an alternative execution ledger. USER rows are grounded
+on canonical `userMessage` Items, CONTEXT rows are grounded on context evidence,
+and REQUEST detail is the materialized provider payload captured in diagnostics.
+The exact page contract lives in
 [`agent-thread-rendering.md`](agent-thread-rendering.md).
 
 ## Document Drift Notice

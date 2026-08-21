@@ -1,0 +1,518 @@
+import { describe, expect, test } from 'bun:test';
+import { decodeAgentCoreResponse } from '../../src/core/agent/codec';
+import type {
+  Thread,
+  ThreadContextPayload,
+  ThreadContextPayloadReference,
+  ThreadItem,
+  ThreadTrajectoryReadResponse,
+  Turn,
+  TurnDiagnosticsPayload,
+  TurnDiagnosticsPayloadReference,
+} from '../../src/core/agent/protocol';
+import { ThreadCore } from '../../src/main/agent/thread/ThreadCore';
+import { ThreadTrajectoryProjection } from '../../src/main/agent/thread/ThreadTrajectoryProjection';
+
+const THREAD_ID = '01910000-0000-7000-8000-000000000011';
+const TURN_ID = '01910000-0000-7000-8000-000000000012';
+const DIAGNOSTICS_REF: TurnDiagnosticsPayloadReference = {
+  id: 'a'.repeat(64),
+  mimeType: 'application/vnd.tenon.agent-turn-diagnostics+json',
+  byteLength: 4096,
+  schemaVersion: 1,
+};
+
+describe('ThreadTrajectoryProjection', () => {
+  test('keeps every tool execution evidence unique and resolves colon-bearing call ids exactly', async () => {
+    const projection = trajectoryProjection();
+    const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    const tools = response.records.filter((record) => record.kind === 'tool');
+
+    expect(response.selectedRecordId).toBeNull();
+    expect(tools).toHaveLength(2);
+    expect(new Set(tools.map((record) => record.id)).size).toBe(2);
+    expect(tools.map((record) => record.primaryEvidence)).toEqual([
+      {
+        type: 'toolExecution',
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        activityIndex: 1,
+        callId: 'call:one',
+      },
+      {
+        type: 'toolExecution',
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        activityIndex: 1,
+        callId: 'call:two:with:colon',
+      },
+    ]);
+
+    const detail = await projection.readDetail({ threadId: THREAD_ID, recordId: tools[1]!.id });
+    expect(detail.detail?.kind).toBe('tool');
+    if (detail.detail?.kind !== 'tool') throw new Error('Expected Tool detail');
+    expect(detail.detail.executionCallId).toBe('call:two:with:colon');
+    expect(detail.detail.schema).toEqual({
+      name: 'second_tool',
+      description: 'Second tool',
+      parameters: { type: 'object' },
+    });
+  });
+
+  test('emits one stable-prompt record and round-trips exact tool evidence through the codec', async () => {
+    const projection = trajectoryProjection();
+    const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
+
+    expect(response.records.filter((record) => record.primaryEvidence.type === 'stablePrompt')).toHaveLength(1);
+    expect(decodeAgentCoreResponse('thread/trajectory/read', response)).toEqual(response);
+
+    const invalid = structuredClone(response) as ThreadTrajectoryReadResponse;
+    const toolIndex = invalid.records.findIndex((record) => record.primaryEvidence.type === 'toolExecution');
+    const wire = structuredClone(invalid) as unknown as {
+      records: Array<{ primaryEvidence: Record<string, unknown> }>;
+    };
+    delete wire.records[toolIndex]!.primaryEvidence.callId;
+    expect(() => decodeAgentCoreResponse('thread/trajectory/read', wire)).toThrow(/callId/);
+  });
+
+  test('separates accepted user message from context envelope and materializes the consumed request', async () => {
+    const projection = trajectoryProjection({
+      diagnostics: inputEnvelopeDiagnostics(),
+      contextPayload: turnEnvironmentPayload(),
+      turn: inputEnvelopeTurn(),
+    });
+    const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    const input = response.records.find((record) => record.kind === 'input');
+    const contexts = response.records.filter((record) => record.kind === 'context');
+
+    expect(input?.preview).toBe('nihao');
+    expect(input?.primaryEvidence).toEqual({
+      type: 'threadItem',
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      itemId: 'user-message-1',
+    });
+    expect(input?.relatedEvidence).toEqual(expect.arrayContaining([
+      {
+        type: 'diagnosticActivity',
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        activityIndex: 0,
+        activityType: 'acceptedInput',
+      },
+      {
+        type: 'providerCall',
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        callIndex: 0,
+      },
+    ]));
+    expect(contexts.map((record) => record.preview)).toContain('Turn environment');
+
+    if (!input) throw new Error('Expected input record');
+    const detail = await projection.readDetail({ threadId: THREAD_ID, recordId: input.id });
+    expect(detail.detail?.kind).toBe('input');
+    if (detail.detail?.kind !== 'input') throw new Error('Expected input detail');
+    expect(detail.detail.message?.content).toEqual([{ type: 'text', text: 'nihao' }]);
+    expect(detail.detail.diagnostics?.providerCall?.request).toEqual({
+      model: 'gpt-5',
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'nihao' }] }],
+    });
+    expect(JSON.stringify(detail.detail)).not.toContain('Turn environment');
+    expect(decodeAgentCoreResponse('thread/trajectory/detail/read', detail)).toEqual(detail);
+
+    const context = contexts.find((record) => record.title === 'Turn Environment');
+    if (!context) throw new Error('Expected context record');
+    const contextDetail = await projection.readDetail({ threadId: THREAD_ID, recordId: context.id });
+    expect(contextDetail.detail?.kind).toBe('context');
+    if (contextDetail.detail?.kind !== 'context') throw new Error('Expected context detail');
+    expect(contextDetail.detail.payload).toEqual({
+      ...turnEnvironmentPayload(),
+      workingDirectory: '‹redacted›',
+    });
+    expect(contextDetail.detail.modelContextText).toContain('<system-reminder>');
+    expect(contextDetail.detail.modelContextText).toContain('<context-evidence kind="turnEnvironment"');
+    expect(contextDetail.detail.modelContextText).toContain('working_directory=/workspace');
+    expect(decodeAgentCoreResponse('thread/trajectory/detail/read', contextDetail)).toEqual(contextDetail);
+  });
+});
+
+function trajectoryProjection(overrides: {
+  readonly contextPayload?: ThreadContextPayload | null;
+  readonly diagnostics?: TurnDiagnosticsPayload;
+  readonly turn?: Turn;
+} = {}): ThreadTrajectoryProjection {
+  const thread = trajectoryThread();
+  const turn = overrides.turn ?? trajectoryTurn();
+  const diagnostics = overrides.diagnostics ?? trajectoryDiagnostics();
+  const contextPayload = overrides.contextPayload ?? null;
+  const core = {
+    requireThread: (threadId: string) => {
+      if (threadId !== THREAD_ID) throw new Error('Unknown Thread');
+      return { thread };
+    },
+    allTurns: (threadId: string) => {
+      if (threadId !== THREAD_ID) throw new Error('Unknown Thread');
+      return [turn];
+    },
+    payloads: {
+      readTurnDiagnostics: async (threadId: string, ref: TurnDiagnosticsPayloadReference) => (
+        threadId === THREAD_ID && ref.id === DIAGNOSTICS_REF.id ? diagnostics : null
+      ),
+      readTextReference: async () => null,
+      readContext: async (_threadId: string, ref: ThreadContextPayloadReference) => (
+        contextPayload && ref.id === CONTEXT_REF.id ? contextPayload : null
+      ),
+    },
+  } as unknown as ThreadCore;
+  return new ThreadTrajectoryProjection(core, () => 500);
+}
+
+const CONTEXT_REF: ThreadContextPayloadReference = {
+  id: 'c'.repeat(64),
+  mimeType: 'application/vnd.tenon.agent-context+json',
+  byteLength: 128,
+  schemaVersion: 1,
+  kind: 'turnEnvironment',
+};
+
+function trajectoryThread(): Thread {
+  return {
+    id: THREAD_ID,
+    sessionId: 'trajectory-test',
+    parentThreadId: null,
+    forkedFromId: null,
+    agentNickname: null,
+    agentRole: null,
+    name: 'Trajectory test',
+    preview: 'Trajectory test',
+    ephemeral: false,
+    source: 'test',
+    threadSource: { kind: 'user' },
+    modelProvider: 'openai',
+    cwd: '/redacted',
+    createdAt: 100,
+    updatedAt: 300,
+    status: { type: 'idle' },
+    historyMode: 'paginated',
+  };
+}
+
+function trajectoryTurn(): Turn {
+  return {
+    id: TURN_ID,
+    items: [],
+    itemsView: 'full',
+    provenance: {
+      originThreadId: THREAD_ID,
+      originTurnId: TURN_ID,
+      trigger: { kind: 'user' },
+    },
+    status: 'completed',
+    error: null,
+    execution: {
+      modelProvider: 'openai',
+      model: 'gpt-5',
+      reasoningEffort: 'medium',
+      usage: {
+        input: 10,
+        output: 4,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 14,
+        cost: {
+          input: 0.00001,
+          output: 0.00002,
+          cacheRead: 0,
+          cacheWrite: 0,
+          total: 0.00003,
+          currency: 'USD',
+        },
+      },
+      diagnosticsRef: DIAGNOSTICS_REF,
+    },
+    startedAt: 100,
+    completedAt: 300,
+    durationMs: 200,
+  };
+}
+
+function inputEnvelopeTurn(): Turn {
+  return {
+    ...trajectoryTurn(),
+    items: [
+      contextItem(),
+      {
+        type: 'userMessage',
+        id: 'user-message-1',
+        provenance: itemProvenance('user-message-1'),
+        clientId: null,
+        content: [{ type: 'text', text: 'nihao' }],
+        acceptedAt: 106,
+      },
+    ],
+  };
+}
+
+function contextItem(): ThreadItem {
+  return {
+    type: 'contextEvidence',
+    id: 'context-turn-environment',
+    provenance: itemProvenance('context-turn-environment'),
+    kind: 'turnEnvironment',
+    payloadRef: CONTEXT_REF,
+    summary: 'Turn environment',
+    contextRefs: [],
+    resourceRefs: [],
+    outputRefs: [],
+  };
+}
+
+function itemProvenance(itemId: string) {
+  return {
+    originThreadId: THREAD_ID,
+    originTurnId: TURN_ID,
+    originItemId: itemId,
+  };
+}
+
+function turnEnvironmentPayload(): ThreadContextPayload {
+  return {
+    schemaVersion: 1,
+    kind: 'turnEnvironment',
+    acceptedAt: 106,
+    utcInstant: '2026-08-21T00:00:00.000Z',
+    localDate: '2026-08-21',
+    localTime: '08:00:00',
+    timeZone: 'Asia/Shanghai',
+    utcOffsetMinutes: 480,
+    locale: 'en-US',
+    workingDirectory: '/redacted',
+    conversationMode: 'interactive',
+    executionMode: 'root',
+    replyIdentity: null,
+    todayNodeId: null,
+    todayNodeTitle: null,
+  };
+}
+
+function trajectoryDiagnostics(): TurnDiagnosticsPayload {
+  return {
+    schemaVersion: 1,
+    contextEpochId: 'epoch-1',
+    cacheAffinity: 'affinity-1',
+    configuration: {
+      profileName: null,
+      developerInstructions: [],
+      model: 'gpt-5',
+      reasoningEffort: 'medium',
+      tools: ['first_tool', 'second_tool'],
+      skills: [],
+      plugins: [],
+      mcpServers: [],
+    },
+    stablePrompt: {
+      blocks: [{
+        id: 'system',
+        layer: 'L0',
+        text: 'System instructions',
+        fingerprint: 'block-fingerprint',
+      }],
+      fingerprints: {
+        l0: 'l0-fingerprint',
+        l1: 'l1-fingerprint',
+        l2: 'l2-fingerprint',
+        complete: 'complete-fingerprint',
+      },
+    },
+    toolSchemas: [
+      { name: 'first_tool', description: 'First tool', parameters: { type: 'object' } },
+      { name: 'second_tool', description: 'Second tool', parameters: { type: 'object' } },
+    ],
+    runtime: {
+      provider: 'openai',
+      model: 'gpt-5',
+      api: 'responses',
+      configuredBaseUrl: 'https://example.invalid',
+      transportSelection: 'sse',
+      contextWindow: 128000,
+      maxOutputTokens: 8192,
+      thinkingLevel: 'medium',
+      timeoutMs: null,
+      maxRetries: 2,
+      maxRetryDelayMs: 1000,
+      cacheRetention: 'short',
+      toolExecution: 'parallel',
+      steeringMode: 'all',
+    },
+    canonicalMessages: [],
+    requestFragments: [],
+    providerCalls: [{
+      index: 0,
+      requestedAt: 120,
+      preparedContext: {
+        systemPromptFragmentId: 'system',
+        toolNames: ['first_tool', 'second_tool'],
+        messageIds: [],
+        messagePartProvenance: [],
+      },
+      protectedFromMessageIndex: 0,
+      estimatedInputTokens: 10,
+      inputTokenLimit: 128000,
+      reservedOutputTokens: 8192,
+      commonPrefixMessageCount: 0,
+      request: { kind: 'value', value: { input: 'test' } },
+      requestFingerprint: 'request-fingerprint',
+      cacheBreakpoints: [],
+      transportResponse: { headersReceivedAt: 130, httpStatus: 200, requestId: 'request-1' },
+      response: {
+        receivedAt: 180,
+        stopReason: 'toolUse',
+        errorMessage: null,
+        usage: {
+          input: 10,
+          output: 4,
+          cacheRead: 0,
+          cacheWrite: 0,
+          cacheWrite1h: null,
+          reasoning: null,
+          totalTokens: 14,
+          cost: { input: 0.00001, output: 0.00002, cacheRead: 0, cacheWrite: 0, total: 0.00003 },
+        },
+        value: { role: 'assistant', content: [] },
+      },
+    }],
+    activities: [
+      { type: 'modelCall', callIndex: 0 },
+      {
+        type: 'toolExecutionBatch',
+        sourceCallIndex: 0,
+        consumedByCallIndex: null,
+        executions: [
+          {
+            callId: 'call:one',
+            toolName: 'first_tool',
+            itemId: null,
+            admissionDisposition: 'accepted',
+            canonicalIdentity: null,
+            schemaDigest: null,
+            startedAt: 190,
+            completedAt: 210,
+            status: 'completed',
+          },
+          {
+            callId: 'call:two:with:colon',
+            toolName: 'second_tool',
+            itemId: null,
+            admissionDisposition: 'accepted',
+            canonicalIdentity: null,
+            schemaDigest: null,
+            startedAt: 190,
+            completedAt: 220,
+            status: 'completed',
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function inputEnvelopeDiagnostics(): TurnDiagnosticsPayload {
+  const messageId = '4'.repeat(64);
+  const modelContextText = [
+    '<system-reminder>',
+    '<context-evidence kind="turnEnvironment" authority="application" purpose="observation">',
+    'working_directory=/workspace',
+    '</context-evidence>',
+    '</system-reminder>',
+  ].join('\n');
+  return {
+    ...trajectoryDiagnostics(),
+    stablePrompt: null,
+    canonicalMessages: [{
+      id: messageId,
+      estimatedTokens: 8,
+      value: {
+        role: 'user',
+        content: [
+          { type: 'input_text', text: 'nihao' },
+          { type: 'text', text: modelContextText },
+        ],
+      },
+    }],
+    requestFragments: [
+      { id: '1'.repeat(64), value: '' },
+      {
+        id: '2'.repeat(64),
+        value: { role: 'user', content: [{ type: 'input_text', text: 'nihao' }] },
+      },
+    ],
+    providerCalls: [{
+      index: 0,
+      requestedAt: 120,
+      preparedContext: {
+        systemPromptFragmentId: '1'.repeat(64),
+        toolNames: ['first_tool', 'second_tool'],
+        messageIds: [messageId],
+        messagePartProvenance: [[
+          { source: 'userInput' },
+          {
+            source: 'systemContext',
+            entries: [{
+              kind: 'turnEnvironment',
+              authority: 'application',
+              purpose: 'observation',
+            }],
+          },
+        ]],
+      },
+      protectedFromMessageIndex: 0,
+      estimatedInputTokens: 10,
+      inputTokenLimit: 128000,
+      reservedOutputTokens: 8192,
+      commonPrefixMessageCount: 0,
+      request: {
+        kind: 'object',
+        fields: [
+          { name: 'model', representation: 'inline', value: 'gpt-5' },
+          {
+            name: 'input',
+            representation: 'fragments',
+            container: 'array',
+            fragmentIds: ['2'.repeat(64)],
+            fragmentPartProvenance: [null],
+          },
+        ],
+      },
+      requestFingerprint: '3'.repeat(64),
+      cacheBreakpoints: [],
+      transportResponse: { headersReceivedAt: 130, httpStatus: 200, requestId: 'request-1' },
+      response: {
+        receivedAt: 180,
+        stopReason: 'stop',
+        errorMessage: null,
+        usage: {
+          input: 10,
+          output: 4,
+          cacheRead: 0,
+          cacheWrite: 0,
+          cacheWrite1h: null,
+          reasoning: null,
+          totalTokens: 14,
+          cost: { input: 0.00001, output: 0.00002, cacheRead: 0, cacheWrite: 0, total: 0.00003 },
+        },
+        value: { role: 'assistant', content: [{ type: 'output_text', text: 'hello' }] },
+      },
+    }],
+    activities: [
+      {
+        type: 'acceptedInput',
+        source: 'initial',
+        acceptedAt: 106,
+        itemIds: ['context-turn-environment', 'user-message-1'],
+        consumedByCallIndex: 0,
+      },
+      { type: 'modelCall', callIndex: 0 },
+    ],
+  };
+}

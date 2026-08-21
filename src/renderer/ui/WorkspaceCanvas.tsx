@@ -32,6 +32,7 @@ interface WorkspaceCanvasProps {
   onNavigatePanelBack: (panelId: string) => void;
   onNavigatePanelPreview: (panelId: string, target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
   onNavigatePanelRoot: (panelId: string, nodeId: NodeId, options?: NavigateRootOptions) => void;
+  onOpenThreadTrajectory: (threadId: string) => void;
   onPanelScrollPositionChange: (panelId: string, scrollTop: number) => void;
   onPanelResizeReset: (leftPanelId: string, rightPanelId: string) => void;
   onPanelResizeStart: (
@@ -315,6 +316,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                     ? props.onNavigatePanelBack(panel.id)
                     : props.onClosePanel(panel.id)
                 )}
+                onOpenThreadTrajectory={props.onOpenThreadTrajectory}
                 panelDragHandle={panelDragHandleFor(panel)}
                 selectedRecordId={panel.view.selectedRecordId}
                 showClose={activePanels.length > 1}

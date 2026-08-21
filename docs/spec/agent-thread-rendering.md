@@ -1014,9 +1014,74 @@ pane, focused to that Turn.
 Trajectory is the Thread-wide technical workspace. It is a main-owned,
 inspection-only projection over canonical Turns, retained diagnostics, context
 payload references, and tool output references; it is not a second execution
-ledger and it is not derived from renderer transcript pagination. Its default
-surface is a summary, a compact overview, an ordered ledger grouped by Turn, and
-a lazy inspector for the selected record.
+ledger and it is not derived from renderer transcript pagination.
+
+DeepSeek Harness `TrajectoryView`, `TrajectoryToolbar`, `TrajectoryTimeline`,
+and `TrajectoryTable` are the product-interface authority for this workspace's
+composition, density, information hierarchy, synchronized selection, range
+navigation, folding, and adaptive inspection. Tenon retains its own breadcrumb,
+workspace navigation, process boundary, security rules, and design tokens. The
+result is a compact sequence of full-width bands: the Tenon breadcrumb, one
+34-pixel toolbar, a three-lane Input / Assistant / Tools overview, then a dense
+ledger with a conditional inspector. It is not a generic reading page, a stack
+of summary cards, or a copy of the DeepSeek Harness application shell.
+
+The toolbar owns the Duration / Sequence mode, whole-Turn and
+whole-Assistant-call fold controls, compact truthful totals, loaded-window
+search, tail-follow restore, refresh, and export. Search filters the loaded
+ledger and dims unmatched overview spans; it does not claim to search unloaded
+history. Loading an earlier page prepends records while anchoring the reader's
+visible content.
+
+The overview uses recorded geometry rather than decorative equal-width blocks.
+Duration mode places spans against wall-clock time, preserving gaps and overlap;
+Sequence mode allocates ordered reading space without claiming elapsed time.
+Input, Assistant, and Tools occupy fixed lanes. A span selects the same record in
+the ledger. Primary-button range drag filters the ledger to intersecting records,
+wheel input zooms around the pointer, and secondary-button drag pans the visible
+domain. Assistant spans distinguish time-to-first-token when that fact exists;
+running or untimed work uses a marker and never fabricates duration. Live record
+updates may extend the full domain but do not erase an explicit viewport or
+range.
+
+The ledger is message-first: every record occupies one fixed 30-pixel table row,
+with a compact role tag followed immediately by its content preview. Internal
+titles, IDs, evidence references, lifecycle metadata, timing, and usage remain
+secondary scanning aids and cannot displace the content column. Records preserve
+recorded activity order and group by Turn. Turn folds and Assistant-call folds
+leave one stable summary row rather than removing all context. The selected row
+stays reachable through folding, filtering, paging, and virtualization. More
+than 100 visible candidates use a fixed-row virtual window with bounded
+overscan; search indexes, record maps, grouping, and timeline geometry are
+derived once per relevant input instead of recomputing at pointer frequency.
+
+The initial Thread-header entry has no selected record and therefore shows the
+ledger at full width with no empty inspector. A Details deep link selects its
+exact record and opens detail immediately. Selecting any row suspends tail
+follow; scrolling away from the tail, choosing a range, or inspecting old
+evidence also prevents live updates from pulling the reader back. Follow resumes
+only through the explicit toolbar action.
+
+Selection lazily mounts the record-specific inspector. Above the narrow-layout
+breakpoint it is a resizable companion beside the ledger; at or below that
+breakpoint it replaces the ledger and exposes Back, so neither surface is
+compressed below its readable width. Closing the wide inspector returns to the
+full-width ledger without navigating away from Trajectory. Inspector tabs remain
+content-first: Input uses Summary / Preview / Request / Raw; Context uses
+Summary / Preview / Raw, with System Prompt and Tools for stable-prompt
+evidence; Assistant uses Summary / Preview / Request / Raw; Tool uses Summary /
+Input / Output / Schema / Raw; Retry, Compaction, and Delegation use Summary /
+Preview / Raw, and Delegation can open the child Thread's own Trajectory. Raw
+means Tenon's typed, bounded, redacted evidence, not an unfiltered transport
+body. The Request tab is the consumed provider call's materialized post-adapter
+payload after renderer-facing sanitization; it is never folded into the USER
+preview. Context Preview uses captured model-visible context text from the
+prepared canonical provider context whenever diagnostics retained it. That text
+is the `<system-reminder>` / `<context-evidence ...>` projection supplied at the
+provider-context boundary after projection, budgeting, compaction, and
+renderer-facing sanitization. The retained context payload remains Raw evidence:
+it is the typed source evidence, not the Preview and not the exact post-adapter
+provider request.
 
 The ledger record taxonomy is fixed: `input`, `context`, `assistant`, `tool`,
 `retry`, `compaction`, and `delegation`. Assistant records are grounded on the
@@ -1024,14 +1089,28 @@ provider-call evidence `(threadId, turnId, providerCall.index)`, not on a
 transcript Item. Tool, retry, compaction, and delegation records use retained
 diagnostic activities when available and degrade to canonical Item evidence when
 diagnostics are unavailable. Delegation records link to the child Thread's own
-Trajectory; descendants are not flattened into the parent ledger.
+Trajectory; descendants are not flattened into the parent ledger. Every
+diagnostic-backed tool or delegation row has its own `toolExecution` primary
+evidence `(threadId, turnId, activityIndex, callId)`. A shared tool-batch activity
+is not unique evidence for each child call, and record IDs are never parsed to
+recover call identity.
+
+Input records are grounded on one canonical `userMessage` Item. The related
+accepted-input activity records the admission envelope, and the related provider
+call records the first request that consumed it, but neither is the USER content
+source. Context Items admitted alongside the user message, including turn
+environment, user view, skills, roles, additional context, inherited context, and
+tool-output projection evidence, remain separate Context rows. USER preview and
+detail render the original user message content only.
 
 The renderer first performs `thread/trajectory/read`. Main returns `threadId`,
 Thread-level summary counts, a tail-first page of ordered records, the next
 cursor, and the selected record. The response deliberately does not return a
 full `Thread` because that object contains host details such as `cwd` that are
-not part of the Trajectory UI contract. Search is scoped to the loaded page; the
-user can load older records from the tail-first cursor.
+not part of the Trajectory UI contract. A read without `recordId` or `turnId`
+focus returns no selection; focus is a deep link, not an implicit tail-row
+choice. Search is scoped to the loaded page; the user can load older records
+from the tail-first cursor and overview ellipsis.
 
 Record details are lazy. `thread/trajectory/detail/read` returns the selected
 record plus sanitized detail evidence only: bounded Turn evidence, bounded Item

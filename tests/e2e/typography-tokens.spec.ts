@@ -154,6 +154,14 @@ const runtimeTokenInputs = new Map([
   ['src/renderer/styles/outliner.css|--table-columns', 'Table owners provide one live column template to aligned header and body rows.'],
   ['src/renderer/styles/outliner.css|--table-min-width', 'Table owners provide the live horizontal extent derived from configured column widths.'],
   ['src/renderer/styles/thread.css|--segment-size', 'Thread usage segments receive their live proportional width from response usage.'],
+  ['src/renderer/styles/thread-trajectory.css|--trajectory-turn-left', 'Trajectory Turn boundaries receive their live timeline position.'],
+  ['src/renderer/styles/thread-trajectory.css|--trajectory-span-lane', 'Trajectory records receive their derived Input, Assistant, or Tools lane.'],
+  ['src/renderer/styles/thread-trajectory.css|--trajectory-span-left', 'Trajectory records receive their live timeline start position.'],
+  ['src/renderer/styles/thread-trajectory.css|--trajectory-span-width', 'Trajectory records receive their live timeline extent.'],
+  ['src/renderer/styles/thread-trajectory.css|--trajectory-span-ttft', 'Assistant spans receive the recorded first-token fraction.'],
+  ['src/renderer/styles/thread-trajectory.css|--trajectory-range-left', 'Trajectory range selection receives its live start position.'],
+  ['src/renderer/styles/thread-trajectory.css|--trajectory-range-width', 'Trajectory range selection receives its live extent.'],
+  ['src/renderer/styles/thread-trajectory.css|--trajectory-ledger-spacer-height', 'Trajectory virtualization receives the omitted fixed-row height.'],
 ]);
 const layoutTransitionProperties = new Set([
   'all',

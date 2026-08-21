@@ -556,13 +556,32 @@ test.describe('canonical agent Thread surface', () => {
     await expect(trajectory).toHaveClass(/active-panel/);
     await expect(page.locator('.outline-panel-surface')).toHaveCount(paneCountBeforeDetails);
     await expect(trajectory).toContainText('Trajectory');
-    await expect(trajectory.getByLabel('Trajectory summary')).toBeVisible();
-    await expect(trajectory).toContainText('Assistant call 1');
-    await expect(trajectory).toContainText('Mock response');
-    await expect(trajectory.getByRole('tab', { name: 'Request' })).toBeVisible();
-    await expect(trajectory.getByRole('tab', { name: 'Response' })).toBeVisible();
-    await trajectory.getByRole('tab', { name: 'Export' }).click();
-    await expect(trajectory).toContainText('Export uses the same redacted Trajectory projection');
+    const assistantTrajectoryRow = trajectory.locator('[data-kind="assistant"]');
+    await expect(assistantTrajectoryRow).toContainText('ASSISTANT');
+    await expect(assistantTrajectoryRow).toContainText('Mock response');
+    await expect(trajectory.getByRole('tab', { name: 'Summary' })).toBeVisible();
+    await expect(trajectory.getByRole('tab', { name: 'Preview' })).toBeVisible();
+    await expect(trajectory.getByRole('tab', { name: 'Raw' })).toBeVisible();
+    await trajectory.getByRole('tab', { name: 'Raw' }).click();
+    await expect(trajectory).toContainText('Typed redacted evidence');
+    await expect(trajectory).toContainText('Mock request');
+
+    await trajectory.getByRole('button', { name: 'Close Trajectory inspector' }).click();
+    const trajectorySearch = trajectory.getByRole('searchbox', { name: 'Search loaded records' });
+    await trajectorySearch.fill('Mock request');
+    await expect(trajectory.locator('[data-kind="input"]')).toBeVisible();
+    await expect(trajectory.locator('[data-kind="assistant"]')).toHaveCount(0);
+    await expect(trajectory).toContainText('Search is scoped to the currently loaded Trajectory window.');
+    await trajectorySearch.fill('');
+    await expect(trajectory.locator('[data-kind="assistant"]')).toBeVisible();
+
+    const durationToggle = trajectory.getByRole('button', { name: 'Duration' });
+    await expect(durationToggle).toHaveAttribute('aria-pressed', 'true');
+    await durationToggle.click();
+    await expect(durationToggle).toHaveAttribute('aria-pressed', 'false');
+
+    await trajectory.getByRole('button', { name: 'Export Thread Trajectory' }).click();
+    await expect(trajectory).toContainText('Exported tenon-trajectory-mock.json (128 bytes).');
     await trajectory.getByRole('button', { name: 'Previous page' }).click();
     await expect(page.locator('.outline-panel-surface.active-panel.is-outliner')).toBeVisible();
 
@@ -1992,7 +2011,7 @@ test.describe('canonical agent Thread surface', () => {
       await compactionTurn.getByRole('button', { name: 'Details' }).click();
       const trajectory = page.locator('.outline-panel-surface.is-thread-trajectory');
       await expect(trajectory).toContainText('Trajectory');
-      await expect(trajectory).toContainText('Context compaction');
+      await expect(trajectory.locator('[data-kind="compaction"]')).toContainText('COMPACTED');
       await expect(trajectory).toContainText('Mock diagnostics are unavailable for this record.');
       await expect.poll(() => trajectory.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0);
     });

@@ -34,8 +34,11 @@ and inspect the exact retained evidence without leaving that Thread's context.
   parent record that opens the child Thread's own Trajectory.
 - Do not replace application-wide error diagnostics or Settings diagnostics
   export.
-- Do not copy DeepSeek Harness styling, plugin architecture, equal-duration
-  claims, floating composer, or source code wholesale.
+- Do not copy DeepSeek Harness brand tokens, fonts, application shell, plugin
+  architecture, floating composer, or source code wholesale. Its Trajectory
+  composition, density, information hierarchy, and interaction model are the
+  product-interface authority; Tenon expresses them through its own tokens and
+  process boundary.
 - Do not retain a compatibility reader or route for the retired pre-release
   Model Interactions workspace.
 
@@ -44,6 +47,13 @@ and inspect the exact retained evidence without leaving that Thread's context.
 ### Product model
 
 Trajectory is a Thread-wide investigation workspace, not a Turn details modal.
+Its central surface follows the DeepSeek Harness Trajectory interface rather
+than a generic Tenon reading page: full-width horizontal bands, a compact
+three-lane overview, a dense event ledger, and an inspector that appears beside
+the ledger only while a record is selected. Summary metadata is integrated into
+the toolbar and inspector; the workspace must not become a vertical stack of
+framed cards.
+
 It combines three synchronized surfaces:
 
 1. An Input / Assistant / Tools overview establishes ordering, timing, and scale.
@@ -56,11 +66,13 @@ The active workspace pane shows Trajectory while the Thread dock remains visible
 as the conversation surface. Tenon does not reproduce the DeepSeek Harness
 floating composer because Thread input already has one owner.
 
-DeepSeek Harness `TrajectoryTimeline` and `TrajectoryTable` are behavioral
-references for synchronized selection, range navigation, folding, and adaptive
-inspection. Tenon's implementation is decomposed around its own process seam,
-protocol codecs, renderer store, and design tokens rather than transplanting the
-reference components.
+DeepSeek Harness `TrajectoryTimeline`, `TrajectoryToolbar`, and
+`TrajectoryTable` are the layout and behavioral references for density,
+message-first rows, synchronized selection, range navigation, folding, and
+adaptive inspection. Deviations require a Tenon-specific product constraint,
+not a preference for an existing generic panel primitive. Tenon's implementation
+is decomposed around its own process seam, protocol codecs, renderer store, and
+design tokens rather than transplanting the reference components.
 
 ### Concept alignment and record taxonomy
 
@@ -77,7 +89,7 @@ The top-level Trajectory record kind set is:
 
 | Kind | Meaning | Lane |
 |---|---|---|
-| `input` | Initial user input and steering admission. | Input |
+| `input` | One canonical `userMessage` Item admitted as initial input or steering. | Input |
 | `context` | Stable prompt, tool catalog, context evidence, and context reset evidence. | Input |
 | `assistant` | One provider/model call presented as Assistant work, with request, response, reasoning, usage, and timing facts. | Assistant |
 | `tool` | Shell, file, MCP, dynamic tool, search, and other non-delegating tool work. | Tools |
@@ -93,6 +105,16 @@ when available; they never replace the provider-call identity. If a provider
 call did not produce visible transcript text because it requested tools, failed,
 or was interrupted, it still remains one Assistant record with its recorded
 request, response, timing, and state.
+
+An `input` record is one canonical `userMessage` Item. Its primary evidence is
+the Thread Item itself; the accepted-input diagnostic activity and the first
+provider call that consumed it are related evidence. Context Items admitted in
+the same envelope remain separate `context` records. A USER preview/detail must
+therefore render the original user content only and must not concatenate
+`contextEvidence`, stable prompt, user view, skills, roles, tool-output
+projection, or additional-context summaries into the USER row. Provider request
+payloads are shown as request evidence on the consumed provider call, not as
+USER content.
 
 Every Trajectory record has one primary evidence reference and may have related
 evidence references. Detail reads resolve from the primary evidence and then
@@ -202,11 +224,15 @@ paging, range, and fold state.
 
 ### Ledger interaction contract
 
-The ledger is ordered by recorded activity and grouped by Turn. Turn and
-Assistant/provider-call folds preserve one summary row and stable selection
-semantics. Search filters the currently loaded window; it does not imply that
-unloaded history was searched. The UI states that scope and offers earlier-page
-loading from an explicit ledger row and overview ellipsis.
+The ledger is ordered by recorded activity and grouped by Turn. Each record is
+one compact, table-like row whose leading tag names the message/event role and
+whose main column starts with the actual content preview. Internal titles,
+identifiers, evidence references, and lifecycle metadata must not displace the
+message content as the primary scan target. Turn and Assistant/provider-call
+folds preserve one summary row and stable selection semantics. Search filters
+the currently loaded window; it does not imply that unloaded history was
+searched. The UI states that scope and offers earlier-page loading from an
+explicit ledger row and overview ellipsis.
 
 The initial view follows the tail. User scrolling, time-range selection, or
 detail inspection suspends following until the user explicitly restores it.
@@ -224,13 +250,28 @@ On wide desktop layouts, selection opens a resizable companion pane. At narrow
 widths the inspector replaces the ledger and provides Back rather than
 compressing both surfaces below their readable minimum.
 
-Tabs are record-specific:
+Tabs are record-specific and follow the DeepSeek Harness content-first model:
 
-- Input and Context: Summary, Preview, Source, Timing.
-- Assistant: Summary, Request, Response, Timing, Export.
-- Tool: Summary, Arguments, Result, Schema, Audit, Timing.
-- Retry and Compaction: Summary, Details, Timing.
-- Delegation: Summary, Outcome, Timing, Open child Trajectory.
+- Input: Summary, Preview, Raw.
+- Context: Summary, Preview, Raw; stable prompt records additionally
+  expose System Prompt and Tools.
+- Assistant: Summary, Preview, Raw. Summary integrates source request, state,
+  usage, rendered response, and timing; Raw contains the typed redacted request
+  and response evidence.
+- Tool: Summary, Input, Output, Schema, Raw.
+- Retry and Compaction: Summary, Preview, Raw.
+- Delegation: Summary, Preview, Raw, Open child Trajectory.
+
+Context Preview uses captured model-visible context text from the prepared
+canonical provider context whenever diagnostics retained it. That is the
+`<system-reminder>` / `<context-evidence ...>` text the model saw at the
+provider-context boundary, after projection, budgeting, compaction, and
+renderer-facing sanitization. The retained context payload remains Raw evidence;
+it is the typed source evidence, not the Preview and not the exact post-adapter
+provider request. A context row may use the Item summary as its ledger preview,
+but the inspector must not collapse Skill Catalog, Role Catalog, User View, Turn
+Environment, or Additional Context evidence to the generic `contextEvidence`
+storage type or summary string.
 
 The Assistant inspector may title the backing evidence as a Model Call because
 the details are provider-call diagnostics. That title is evidence vocabulary,

@@ -77,6 +77,7 @@ import {
   type ThreadTrajectoryTimingSummary,
   type ThreadTrajectoryTurnEvidence,
   type ThreadTrajectoryUsageSummary,
+  type ThreadTrajectoryUserMessageEvidence,
   type TurnDiagnosticsMessagePartProvenance,
   type TurnDiagnosticsPayloadReference,
   type TurnProvenance,
@@ -2225,7 +2226,7 @@ function decodeThreadTrajectoryEvidenceRef(value: unknown, path: string): Thread
   const record = recordValue(value, path);
   const type = enumValue(
     record.type,
-    ['providerCall', 'threadItem', 'diagnosticActivity', 'threadTurn', 'subagent'],
+    ['providerCall', 'threadItem', 'diagnosticActivity', 'toolExecution', 'threadTurn', 'stablePrompt', 'subagent'],
     `${path}.type`,
   );
   const threadId = uuidV7(record.threadId, `${path}.threadId`);
@@ -2257,7 +2258,17 @@ function decodeThreadTrajectoryEvidenceRef(value: unknown, path: string): Thread
       ),
     };
   }
-  if (type === 'threadTurn') {
+  if (type === 'toolExecution') {
+    exactKeys(record, ['type', 'threadId', 'turnId', 'activityIndex', 'callId'], path);
+    return {
+      type,
+      threadId,
+      turnId,
+      activityIndex: nonNegativeInteger(record.activityIndex, `${path}.activityIndex`),
+      callId: stringValue(record.callId, `${path}.callId`),
+    };
+  }
+  if (type === 'threadTurn' || type === 'stablePrompt') {
     exactKeys(record, ['type', 'threadId', 'turnId'], path);
     return { type, threadId, turnId };
   }
@@ -2281,7 +2292,7 @@ function decodeThreadTrajectoryRecordDetail(
   const kind = enumValue(record.kind, THREAD_TRAJECTORY_RECORD_KINDS, `${path}.kind`);
   if (kind !== summary.kind) fail(`${path}.kind`, 'must match the record summary');
   if (kind === 'input') {
-    exactKeys(record, ['kind', 'turn', 'items', 'diagnostics', 'activityIndex'], path);
+    exactKeys(record, ['kind', 'turn', 'message', 'diagnostics', 'activityIndex'], path);
     const turn = decodeTrajectoryDetailTurn(record.turn, summary, path);
     const diagnostics = decodeThreadTrajectoryDiagnostics(record.diagnostics, `${path}.diagnostics`);
     const activityIndex = nullableNonNegativeInteger(record.activityIndex, `${path}.activityIndex`);
@@ -2289,18 +2300,20 @@ function decodeThreadTrajectoryRecordDetail(
     return {
       kind,
       turn,
-      items: arrayValue(record.items, `${path}.items`)
-        .map((entry, index) => decodeThreadTrajectoryItemEvidence(entry, `${path}.items[${index}]`)),
+      message: record.message === null
+        ? null
+        : decodeThreadTrajectoryUserMessageEvidence(record.message, `${path}.message`),
       diagnostics,
       activityIndex,
     };
   }
   if (kind === 'context') {
-    exactKeys(record, ['kind', 'turn', 'item', 'payload'], path);
+    exactKeys(record, ['kind', 'turn', 'item', 'modelContextText', 'payload'], path);
     return {
       kind,
       turn: decodeTrajectoryDetailTurn(record.turn, summary, path),
       item: record.item === null ? null : decodeThreadTrajectoryItemEvidence(record.item, `${path}.item`),
+      modelContextText: nullableString(record.modelContextText, `${path}.modelContextText`, true),
       payload: record.payload === null ? null : jsonValue(record.payload, `${path}.payload`),
     };
   }
@@ -2322,7 +2335,9 @@ function decodeThreadTrajectoryRecordDetail(
     };
   }
   if (kind === 'tool') {
-    exactKeys(record, ['kind', 'turn', 'item', 'diagnostics', 'activityIndex', 'executionCallId', 'outputText'], path);
+    exactKeys(record, [
+      'kind', 'turn', 'item', 'diagnostics', 'activityIndex', 'executionCallId', 'input', 'outputText', 'schema',
+    ], path);
     const turn = decodeTrajectoryDetailTurn(record.turn, summary, path);
     const diagnostics = decodeThreadTrajectoryDiagnostics(record.diagnostics, `${path}.diagnostics`);
     const activityIndex = nullableNonNegativeInteger(record.activityIndex, `${path}.activityIndex`);
@@ -2334,7 +2349,9 @@ function decodeThreadTrajectoryRecordDetail(
       diagnostics,
       activityIndex,
       executionCallId: nullableString(record.executionCallId, `${path}.executionCallId`),
+      input: record.input === null ? null : jsonValue(record.input, `${path}.input`),
       outputText: nullableString(record.outputText, `${path}.outputText`, true),
+      schema: record.schema === null ? null : jsonValue(record.schema, `${path}.schema`),
     };
   }
   if (kind === 'retry') {
@@ -2360,7 +2377,8 @@ function decodeThreadTrajectoryRecordDetail(
     };
   }
   exactKeys(record, [
-    'kind', 'turn', 'item', 'diagnostics', 'activityIndex', 'executionCallId', 'childThreadId',
+    'kind', 'turn', 'item', 'diagnostics', 'activityIndex', 'executionCallId', 'input', 'outputText',
+    'schema', 'childThreadId',
   ], path);
   const turn = decodeTrajectoryDetailTurn(record.turn, summary, path);
   const diagnostics = decodeThreadTrajectoryDiagnostics(record.diagnostics, `${path}.diagnostics`);
@@ -2373,6 +2391,9 @@ function decodeThreadTrajectoryRecordDetail(
     diagnostics,
     activityIndex,
     executionCallId: nullableString(record.executionCallId, `${path}.executionCallId`),
+    input: record.input === null ? null : jsonValue(record.input, `${path}.input`),
+    outputText: nullableString(record.outputText, `${path}.outputText`, true),
+    schema: record.schema === null ? null : jsonValue(record.schema, `${path}.schema`),
     childThreadId: nullableUuidV7(record.childThreadId, `${path}.childThreadId`),
   };
 }
@@ -2430,6 +2451,20 @@ function decodeThreadTrajectoryItemEvidence(value: unknown, path: string): Threa
     title: stringValue(record.title, `${path}.title`),
     preview: nullableString(record.preview, `${path}.preview`, true),
     status: record.status === null ? null : itemExecutionStatus(record.status, `${path}.status`),
+  };
+}
+
+function decodeThreadTrajectoryUserMessageEvidence(
+  value: unknown,
+  path: string,
+): ThreadTrajectoryUserMessageEvidence {
+  const record = recordValue(value, path);
+  exactKeys(record, ['itemId', 'acceptedAt', 'content'], path);
+  return {
+    itemId: stringValue(record.itemId, `${path}.itemId`),
+    acceptedAt: nonNegativeNumber(record.acceptedAt, `${path}.acceptedAt`),
+    content: arrayValue(record.content, `${path}.content`)
+      .map((entry, index) => decodeUserContent(entry, `${path}.content[${index}]`)),
   };
 }
 
@@ -2812,36 +2847,37 @@ function decodeItemProvenance(value: unknown): ItemProvenance {
   });
 }
 
-function decodeUserContent(value: unknown): ThreadUserContent {
-  const record = recordValue(value, 'userContent');
-  const type = enumValue(record.type, ['text', 'attachment', 'nodeReference'], 'userContent.type');
+function decodeUserContent(value: unknown, pathOrIndex: string | number = 'userContent'): ThreadUserContent {
+  const path = typeof pathOrIndex === 'string' ? pathOrIndex : 'userContent';
+  const record = recordValue(value, path);
+  const type = enumValue(record.type, ['text', 'attachment', 'nodeReference'], `${path}.type`);
   if (type === 'text') {
-    exactKeys(record, ['type', 'text'], 'userContent');
-    return deepFreeze<ThreadTextContent>({ type, text: stringValue(record.text, 'userContent.text', true) });
+    exactKeys(record, ['type', 'text'], path);
+    return deepFreeze<ThreadTextContent>({ type, text: stringValue(record.text, `${path}.text`, true) });
   }
   if (type === 'nodeReference') {
-    exactKeys(record, ['type', 'nodeId', 'note'], 'userContent');
+    exactKeys(record, ['type', 'nodeId', 'note'], path);
     return deepFreeze<ThreadNodeReferenceContent>({
       type,
-      nodeId: stringValue(record.nodeId, 'userContent.nodeId'),
-      ...(record.note === undefined ? {} : { note: stringValue(record.note, 'userContent.note', true) }),
+      nodeId: stringValue(record.nodeId, `${path}.nodeId`),
+      ...(record.note === undefined ? {} : { note: stringValue(record.note, `${path}.note`, true) }),
     });
   }
-  exactKeys(record, ['type', 'id', 'name', 'mimeType', 'sizeBytes', 'source', 'artifactRef', 'extractedText'], 'userContent');
-  const decodedSource = decodeThreadFileSource(record.source, 'userContent.source');
+  exactKeys(record, ['type', 'id', 'name', 'mimeType', 'sizeBytes', 'source', 'artifactRef', 'extractedText'], path);
+  const decodedSource = decodeThreadFileSource(record.source, `${path}.source`);
   return deepFreeze<ThreadAttachmentContent>({
     type,
-    id: stringValue(record.id, 'userContent.id'),
-    name: stringValue(record.name, 'userContent.name'),
-    mimeType: stringValue(record.mimeType, 'userContent.mimeType'),
-    sizeBytes: nonNegativeInteger(record.sizeBytes, 'userContent.sizeBytes'),
+    id: stringValue(record.id, `${path}.id`),
+    name: stringValue(record.name, `${path}.name`),
+    mimeType: stringValue(record.mimeType, `${path}.mimeType`),
+    sizeBytes: nonNegativeInteger(record.sizeBytes, `${path}.sizeBytes`),
     source: decodedSource,
     ...(record.artifactRef === undefined
       ? {}
-      : { artifactRef: decodeThreadImageArtifactReference(record.artifactRef, 'userContent.artifactRef') }),
+      : { artifactRef: decodeThreadImageArtifactReference(record.artifactRef, `${path}.artifactRef`) }),
     ...(record.extractedText === undefined
       ? {}
-      : { extractedText: stringValue(record.extractedText, 'userContent.extractedText', true) }),
+      : { extractedText: stringValue(record.extractedText, `${path}.extractedText`, true) }),
   });
 }
 

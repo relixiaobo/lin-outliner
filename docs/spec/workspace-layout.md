@@ -284,6 +284,14 @@ history entry. Back and the Trajectory close action return to the originating
 view. If sanitization leaves no Back destination and another pane remains, Close
 removes the Trajectory pane instead of presenting a no-op control.
 
+The optional focus is a deep link, not required view state. Thread-header entry
+stores no focus and Trajectory initially gives the full pane to its ledger.
+Selecting a record opens a renderer-local inspector beside the ledger when the
+pane is wide enough; in a pane at or below the Trajectory narrow-layout
+breakpoint the inspector replaces the ledger and provides its own Back control.
+Inspector width, timeline viewport/range, folds, search, and tail-follow are
+ephemeral workspace interaction state and do not enter the persisted panel view.
+
 The tile ratio (`size`) lives **on the panel**, not in a separate parallel map —
 one array is the whole layout truth, so adding/closing a pane cannot desync a
 side table. The layout is persisted to `localStorage`

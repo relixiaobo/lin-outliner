@@ -4,42 +4,37 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactNode,
 } from 'react';
 import type {
   AgentCoreNotification,
-  JsonValue,
-  ThreadTrajectoryDetailReadResponse,
-  ThreadTrajectoryRecordDetail,
-  ThreadTrajectoryRecordKind,
-  ThreadTrajectoryRecordSummary,
   ThreadTrajectoryReadResponse,
-  ThreadTrajectorySummary,
-  ThreadTrajectoryTimingSummary,
-  ThreadTrajectoryUsageSummary,
+  ThreadTrajectoryRecordSummary,
 } from '../../../core/agent/protocol';
 import { api } from '../../api/client';
-import { useI18n, useT } from '../../i18n/I18nProvider';
-import { formatDateTime, formatNumber } from '../../ui/formatting';
-import {
-  ClockIcon,
-  CopyIcon,
-  DownloadIcon,
-  ICON_SIZE,
-  LoaderIcon,
-  RefreshIcon,
-  SearchIcon,
-} from '../../ui/icons';
+import { useT } from '../../i18n/I18nProvider';
+import { formatNumber } from '../../ui/formatting';
+import { LoaderIcon } from '../../ui/icons';
 import { PanelStickyBreadcrumb, type PanelDragHandle } from '../../ui/PanelShared';
-import { ReadOnlyCodeBlock } from '../../ui/editor/CodeBlockSurface';
-import { Button } from '../../ui/primitives/Button';
 import { EmptyState, ErrorState } from '../../ui/primitives/FeedbackState';
-import { IconButton } from '../../ui/primitives/IconButton';
+import { TrajectoryInspector } from './trajectory/TrajectoryInspector';
+import { TrajectoryLedger } from './trajectory/TrajectoryLedger';
+import { TrajectoryTimeline } from './trajectory/TrajectoryTimeline';
+import { TrajectoryToolbar } from './trajectory/TrajectoryToolbar';
+import {
+  buildTrajectoryLedgerRows,
+  buildTrajectoryTimeline,
+  groupTrajectoryRecords,
+  trajectoryRecordsInRange,
+  trajectorySearchMatches,
+  type TrajectoryTimelineMode,
+  type TrajectoryTimeRange,
+} from './trajectory/trajectoryModel';
 
 interface ThreadTrajectoryPanelProps {
   readonly canGoBack: boolean;
   readonly onBack: () => void;
   readonly onClose: () => void;
+  readonly onOpenThreadTrajectory: (threadId: string) => void;
   readonly panelDragHandle?: PanelDragHandle;
   readonly selectedRecordId?: string;
   readonly showClose: boolean;
@@ -47,8 +42,6 @@ interface ThreadTrajectoryPanelProps {
   readonly turnId?: string;
 }
 
-type TimelineMode = 'sequence' | 'duration';
-type InspectorTab = 'summary' | 'request' | 'response' | 'arguments' | 'result' | 'schema' | 'audit' | 'timing' | 'export' | 'source';
 type TrajectoryExportResult =
   | { readonly status: 'written'; readonly fileName: string; readonly byteLength: number }
   | { readonly status: 'canceled' }
@@ -61,6 +54,7 @@ export function ThreadTrajectoryPanel({
   canGoBack,
   onBack,
   onClose,
+  onOpenThreadTrajectory,
   panelDragHandle,
   selectedRecordId,
   showClose,
@@ -69,18 +63,26 @@ export function ThreadTrajectoryPanel({
 }: ThreadTrajectoryPanelProps) {
   const t = useT();
   const stickyBreadcrumbRef = useRef<HTMLDivElement | null>(null);
+  const loadSeqRef = useRef(0);
+  const recordsRef = useRef<readonly ThreadTrajectoryRecordSummary[]>(EMPTY_RECORDS);
+  const selectedIdRef = useRef<string | null>(selectedRecordId ?? null);
   const [page, setPage] = useState<ThreadTrajectoryReadResponse | null>(null);
   const [records, setRecords] = useState<readonly ThreadTrajectoryRecordSummary[]>(EMPTY_RECORDS);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(selectedRecordId ?? null);
   const [query, setQuery] = useState('');
-  const [mode, setMode] = useState<TimelineMode>('sequence');
+  const [mode, setMode] = useState<TrajectoryTimelineMode>('duration');
+  const [range, setRange] = useState<TrajectoryTimeRange | null>(null);
+  const [collapsedTurns, setCollapsedTurns] = useState<ReadonlySet<string>>(() => new Set());
+  const [collapsedCalls, setCollapsedCalls] = useState<ReadonlySet<string>>(() => new Set());
+  const [followingTail, setFollowingTail] = useState(true);
   const [loading, setLoading] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportStatus, setExportStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const loadSeqRef = useRef(0);
-  const selectedIdRef = useRef<string | null>(selectedRecordId ?? null);
 
+  useEffect(() => { recordsRef.current = records; }, [records]);
   useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
 
   const loadTrajectory = useCallback(async (options: {
@@ -89,8 +91,9 @@ export function ThreadTrajectoryPanel({
   } = {}) => {
     const seq = loadSeqRef.current + 1;
     loadSeqRef.current = seq;
-    if (options.cursor) setLoadingOlder(true);
-    else if (!options.silent) setLoading(true);
+    const loadingOlderPage = Boolean(options.cursor);
+    if (loadingOlderPage) setLoadingOlder(true);
+    else if (!options.silent && recordsRef.current.length === 0) setLoading(true);
     setError(null);
     try {
       const response = await api.agentCoreRequest('thread/trajectory/read', {
@@ -103,12 +106,15 @@ export function ThreadTrajectoryPanel({
         },
       });
       if (loadSeqRef.current !== seq) return;
+      const current = recordsRef.current;
+      const nextRecords = current.length === 0
+        ? response.records
+        : mergeRecords(current, response.records);
+      recordsRef.current = nextRecords;
       setPage(response);
-      setNextCursor(response.nextCursor);
-      setRecords((current) => options.cursor
-        ? mergeRecords(response.records, current)
-        : response.records);
-      setSelectedId((current) => current ?? response.selectedRecordId);
+      setRecords(nextRecords);
+      if (current.length === 0 || loadingOlderPage) setNextCursor(response.nextCursor);
+      setSelectedId((currentSelection) => currentSelection ?? response.selectedRecordId);
     } catch (loadError) {
       if (loadSeqRef.current === seq) setError(errorMessage(loadError));
     } finally {
@@ -120,11 +126,17 @@ export function ThreadTrajectoryPanel({
   }, [selectedRecordId, threadId, turnId]);
 
   useEffect(() => {
+    recordsRef.current = EMPTY_RECORDS;
     selectedIdRef.current = selectedRecordId ?? null;
-    setSelectedId(selectedRecordId ?? null);
-    setRecords(EMPTY_RECORDS);
     setPage(null);
+    setRecords(EMPTY_RECORDS);
     setNextCursor(null);
+    setSelectedId(selectedRecordId ?? null);
+    setQuery('');
+    setRange(null);
+    setCollapsedTurns(new Set());
+    setCollapsedCalls(new Set());
+    setFollowingTail(true);
     void loadTrajectory();
   }, [loadTrajectory, selectedRecordId, threadId, turnId]);
 
@@ -148,12 +160,62 @@ export function ThreadTrajectoryPanel({
     () => new Map(records.map((record) => [record.id, record])),
     [records],
   );
+  const turnGroups = useMemo(() => groupTrajectoryRecords(records), [records]);
+  const turnIndexById = useMemo(
+    () => new Map(turnGroups.map((group) => [group.turnId, group.index])),
+    [turnGroups],
+  );
+  const callIds = useMemo(() => {
+    const result = new Set<string>();
+    for (const record of records) {
+      if (record.parentRecordId) result.add(record.parentRecordId);
+    }
+    return result;
+  }, [records]);
+  const searchMatches = useMemo(() => trajectorySearchMatches(records, query), [query, records]);
+  const timeline = useMemo(() => buildTrajectoryTimeline(records, mode), [mode, records]);
+  const rangeMatches = useMemo(() => trajectoryRecordsInRange(timeline, range), [range, timeline]);
+  const ledgerRows = useMemo(() => buildTrajectoryLedgerRows({
+    collapsedCalls,
+    collapsedTurns,
+    rangeMatches,
+    records,
+    searchMatches,
+  }), [collapsedCalls, collapsedTurns, rangeMatches, records, searchMatches]);
   const selectedRecord = selectedId ? recordById.get(selectedId) ?? null : null;
-  const filteredRecords = useMemo(() => {
-    const normalized = query.trim().toLocaleLowerCase();
-    if (!normalized) return records;
-    return records.filter((record) => recordSearchText(record).includes(normalized));
-  }, [query, records]);
+  const allTurnsCollapsed = turnGroups.length > 0
+    && turnGroups.every((group) => collapsedTurns.has(group.turnId));
+  const allCallsCollapsed = callIds.size > 0
+    && [...callIds].every((recordId) => collapsedCalls.has(recordId));
+
+  const selectRecord = useCallback((recordId: string) => {
+    setSelectedId(recordId);
+    setFollowingTail(false);
+  }, []);
+
+  const changeRange = useCallback((nextRange: TrajectoryTimeRange | null) => {
+    setRange(nextRange);
+    if (nextRange) setFollowingTail(false);
+  }, []);
+
+  const loadOlder = useCallback(async () => {
+    if (!nextCursor || loadingOlder) return;
+    await loadTrajectory({ cursor: nextCursor });
+  }, [loadTrajectory, loadingOlder, nextCursor]);
+
+  const exportTrajectory = useCallback(async () => {
+    if (exportBusy) return;
+    setExportBusy(true);
+    setExportStatus(null);
+    try {
+      const result = await api.agentCoreRequest('thread/trajectory/export', { threadId });
+      setExportStatus(exportResultText(result, t));
+    } catch (exportError) {
+      setExportStatus(errorMessage(exportError));
+    } finally {
+      setExportBusy(false);
+    }
+  }, [exportBusy, t, threadId]);
 
   return (
     <main className="main-panel thread-trajectory-panel">
@@ -177,23 +239,11 @@ export function ThreadTrajectoryPanel({
           </span>
         </span>
       </PanelStickyBreadcrumb>
-      <div className="panel-inner thread-trajectory-content">
-        <TrajectoryToolbar
-          canLoadOlder={nextCursor !== null}
-          loadingOlder={loadingOlder}
-          mode={mode}
-          onLoadOlder={() => {
-            if (nextCursor) void loadTrajectory({ cursor: nextCursor });
-          }}
-          onModeChange={setMode}
-          onQueryChange={setQuery}
-          onRefresh={() => void loadTrajectory()}
-          query={query}
-        />
+      <div className="thread-trajectory-content">
         {loading && records.length === 0 ? (
           <EmptyState icon={LoaderIcon} loading role="status" title={t.agent.trajectory.loading} />
         ) : null}
-        {error ? (
+        {error && records.length === 0 ? (
           <ErrorState
             message={error}
             onRetry={() => void loadTrajectory()}
@@ -202,25 +252,70 @@ export function ThreadTrajectoryPanel({
         ) : null}
         {page && records.length > 0 ? (
           <>
-            <TrajectorySummaryView summary={page.summary} />
-            <TrajectoryOverview
+            <TrajectoryToolbar
+              allCallsCollapsed={allCallsCollapsed}
+              allTurnsCollapsed={allTurnsCollapsed}
+              exportBusy={exportBusy}
+              followingTail={followingTail}
               mode={mode}
-              onSelect={setSelectedId}
-              records={filteredRecords}
+              onExport={() => void exportTrajectory()}
+              onFollowTail={() => setFollowingTail(true)}
+              onModeChange={(nextMode) => {
+                setMode(nextMode);
+                setRange(null);
+              }}
+              onQueryChange={setQuery}
+              onRefresh={() => void loadTrajectory()}
+              onToggleAllCalls={() => setCollapsedCalls(
+                allCallsCollapsed ? new Set() : new Set(callIds),
+              )}
+              onToggleAllTurns={() => setCollapsedTurns(
+                allTurnsCollapsed ? new Set() : new Set(turnGroups.map((group) => group.turnId)),
+              )}
+              query={query}
+              summary={page.summary}
+            />
+            {exportStatus ? (
+              <div className="thread-trajectory-export-status" role="status">{exportStatus}</div>
+            ) : null}
+            <TrajectoryTimeline
+              key={threadId}
+              hasEarlierRecords={nextCursor !== null}
+              loadingEarlier={loadingOlder}
+              mode={mode}
+              model={timeline}
+              onLoadEarlier={() => void loadOlder()}
+              onRangeChange={changeRange}
+              onRecordSelect={selectRecord}
+              range={range}
+              searchMatches={searchMatches}
               selectedRecordId={selectedRecord?.id ?? null}
             />
-            <div className="thread-trajectory-workspace">
+            <div className={`thread-trajectory-workspace${selectedRecord ? ' has-selection' : ''}`}>
               <TrajectoryLedger
-                onSelect={setSelectedId}
-                records={filteredRecords}
+                key={threadId}
+                following={followingTail}
+                hasEarlierRecords={nextCursor !== null}
+                loadingEarlier={loadingOlder}
+                onFollowingChange={setFollowingTail}
+                onLoadEarlier={loadOlder}
+                onRecordSelect={selectRecord}
+                onToggleCall={(recordId) => setCollapsedCalls((current) => toggledSet(current, recordId))}
+                onToggleTurn={(turnIdValue) => setCollapsedTurns((current) => toggledSet(current, turnIdValue))}
+                rangeActive={range !== null}
+                rows={ledgerRows}
                 searchActive={query.trim().length > 0}
                 selectedRecordId={selectedRecord?.id ?? null}
               />
-              <TrajectoryInspector
-                onExportThread={async () => await api.agentCoreRequest('thread/trajectory/export', { threadId })}
-                record={selectedRecord}
-                threadId={threadId}
-              />
+              {selectedRecord ? (
+                <TrajectoryInspector
+                  onClose={() => setSelectedId(null)}
+                  onOpenChildTrajectory={onOpenThreadTrajectory}
+                  record={selectedRecord}
+                  threadId={threadId}
+                  turnIndex={turnIndexById.get(selectedRecord.turnId) ?? 0}
+                />
+              ) : null}
             </div>
           </>
         ) : null}
@@ -232,497 +327,20 @@ export function ThreadTrajectoryPanel({
   );
 }
 
-function TrajectoryToolbar({
-  canLoadOlder,
-  loadingOlder,
-  mode,
-  onLoadOlder,
-  onModeChange,
-  onQueryChange,
-  onRefresh,
-  query,
-}: {
-  readonly canLoadOlder: boolean;
-  readonly loadingOlder: boolean;
-  readonly mode: TimelineMode;
-  readonly onLoadOlder: () => void;
-  readonly onModeChange: (mode: TimelineMode) => void;
-  readonly onQueryChange: (query: string) => void;
-  readonly onRefresh: () => void;
-  readonly query: string;
-}) {
-  const t = useT();
-  return (
-    <section className="thread-trajectory-toolbar" aria-label={t.agent.trajectory.toolbar}>
-      <label className="thread-trajectory-search">
-        <SearchIcon size={ICON_SIZE.menu} />
-        <input
-          aria-label={t.agent.trajectory.search}
-          onChange={(event) => onQueryChange(event.currentTarget.value)}
-          placeholder={t.agent.trajectory.search}
-          type="search"
-          value={query}
-        />
-      </label>
-      <div className="thread-trajectory-toolbar-actions">
-        <Button
-          disabled={!canLoadOlder || loadingOlder}
-          onClick={onLoadOlder}
-          type="button"
-          variant="secondary"
-        >
-          {loadingOlder ? t.agent.trajectory.loadingOlder : t.agent.trajectory.loadOlder}
-        </Button>
-        <Button
-          onClick={() => onModeChange(mode === 'sequence' ? 'duration' : 'sequence')}
-          type="button"
-          variant="secondary"
-        >
-          <ClockIcon size={ICON_SIZE.menu} />
-          {mode === 'sequence' ? t.agent.trajectory.sequenceMode : t.agent.trajectory.durationMode}
-        </Button>
-        <IconButton icon={RefreshIcon} label={t.agent.trajectory.refresh} onClick={onRefresh} variant="chrome" />
-      </div>
-    </section>
-  );
-}
-
-function TrajectorySummaryView({ summary }: { readonly summary: ThreadTrajectorySummary }) {
-  const t = useT();
-  return (
-    <section className="thread-trajectory-summary" aria-label={t.agent.trajectory.summary}>
-      <SummaryFact label={t.agent.trajectory.turns} value={formatNumber(summary.turnCount)} />
-      <SummaryFact label={t.agent.trajectory.records} value={formatNumber(summary.recordCount)} />
-      <SummaryFact label={t.agent.trajectory.assistantCalls} value={formatNumber(summary.assistantCount)} />
-      <SummaryFact label={t.agent.trajectory.tools} value={formatNumber(summary.toolCount + summary.delegationCount)} />
-      <SummaryFact label={t.agent.trajectory.tokens} value={summary.usage ? formatNumber(summary.usage.totalTokens) : '-'} />
-      <SummaryFact label={t.agent.trajectory.coverage} value={summary.availability.length === 0 ? t.agent.trajectory.complete : t.agent.trajectory.partial} />
-    </section>
-  );
-}
-
-function SummaryFact({ label, value }: { readonly label: string; readonly value: string }) {
-  return <div><dt>{label}</dt><dd>{value}</dd></div>;
-}
-
-function TrajectoryOverview({
-  mode,
-  onSelect,
-  records,
-  selectedRecordId,
-}: {
-  readonly mode: TimelineMode;
-  readonly onSelect: (recordId: string) => void;
-  readonly records: readonly ThreadTrajectoryRecordSummary[];
-  readonly selectedRecordId: string | null;
-}) {
-  const t = useT();
-  const byLane = useMemo(() => ({
-    input: records.filter((record) => record.lane === 'input'),
-    assistant: records.filter((record) => record.lane === 'assistant'),
-    tools: records.filter((record) => record.lane === 'tools'),
-  }), [records]);
-  return (
-    <section className="thread-trajectory-overview" aria-label={t.agent.trajectory.overview}>
-      {(['input', 'assistant', 'tools'] as const).map((lane) => (
-        <div className="thread-trajectory-lane" key={lane}>
-          <span className="thread-trajectory-lane-label">{t.agent.trajectory.lane[lane]}</span>
-          <div className={`thread-trajectory-lane-track is-${mode}`}>
-            {byLane[lane].map((record) => (
-              <button
-                aria-pressed={record.id === selectedRecordId}
-                className={`thread-trajectory-span is-${record.kind}${record.id === selectedRecordId ? ' is-selected' : ''}`}
-                key={record.id}
-                onClick={() => onSelect(record.id)}
-                title={`${record.title}${record.preview ? ` · ${record.preview}` : ''}`}
-                type="button"
-              >
-                <span>{kindGlyph(record.kind)}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      ))}
-    </section>
-  );
-}
-
-function TrajectoryLedger({
-  onSelect,
-  records,
-  searchActive,
-  selectedRecordId,
-}: {
-  readonly onSelect: (recordId: string) => void;
-  readonly records: readonly ThreadTrajectoryRecordSummary[];
-  readonly searchActive: boolean;
-  readonly selectedRecordId: string | null;
-}) {
-  const t = useT();
-  const { locale } = useI18n();
-  const grouped = useMemo(() => groupByTurn(records), [records]);
-  return (
-    <section className="thread-trajectory-ledger" aria-label={t.agent.trajectory.ledger}>
-      {searchActive ? <p className="thread-trajectory-scope-note">{t.agent.trajectory.searchScope}</p> : null}
-      {grouped.map((group) => (
-        <section className="thread-trajectory-turn-group" key={group.turnId}>
-          <header className="thread-trajectory-turn-header">
-            <span>{t.agent.trajectory.turnLabel({ index: group.index + 1 })}</span>
-            <code>{shortId(group.turnId)}</code>
-          </header>
-          {group.records.map((record) => (
-            <button
-              aria-pressed={record.id === selectedRecordId}
-              className={`thread-trajectory-row is-${record.kind}${record.id === selectedRecordId ? ' is-selected' : ''}`}
-              key={record.id}
-              onClick={() => onSelect(record.id)}
-              type="button"
-            >
-              <span className="thread-trajectory-row-kind">{kindGlyph(record.kind)}</span>
-              <span className="thread-trajectory-row-main">
-                <strong>{record.title}</strong>
-                {record.preview ? <span>{record.preview}</span> : null}
-              </span>
-              <span className="thread-trajectory-row-meta">
-                {stateLabel(record.state)}
-                {record.timing.startedAt === null ? null : (
-                  <time dateTime={new Date(record.timing.startedAt).toISOString()}>
-                    {formatTrajectoryDateTime(record.timing.startedAt, locale)}
-                  </time>
-                )}
-              </span>
-            </button>
-          ))}
-        </section>
-      ))}
-    </section>
-  );
-}
-
-function TrajectoryInspector({
-  onExportThread,
-  record,
-  threadId,
-}: {
-  readonly onExportThread: () => Promise<TrajectoryExportResult>;
-  readonly record: ThreadTrajectoryRecordSummary | null;
-  readonly threadId: string;
-}) {
-  const t = useT();
-  const [detail, setDetail] = useState<ThreadTrajectoryDetailReadResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [tab, setTab] = useState<InspectorTab>('summary');
-  const [exportResult, setExportResult] = useState<string | null>(null);
-  const requestSeqRef = useRef(0);
-
-  useEffect(() => {
-    setTab('summary');
-    setExportResult(null);
-  }, [record?.id]);
-
-  useEffect(() => {
-    if (!record) {
-      setDetail(null);
-      setError(null);
-      setLoading(false);
-      return;
-    }
-    const seq = requestSeqRef.current + 1;
-    requestSeqRef.current = seq;
-    setDetail(null);
-    setLoading(true);
-    setError(null);
-    void api.agentCoreRequest('thread/trajectory/detail/read', { threadId, recordId: record.id })
-      .then((response) => {
-        if (requestSeqRef.current === seq) setDetail(response);
-      })
-      .catch((detailError) => {
-        if (requestSeqRef.current === seq) setError(errorMessage(detailError));
-      })
-      .finally(() => {
-        if (requestSeqRef.current === seq) setLoading(false);
-      });
-  }, [record, threadId]);
-
-  if (!record) {
-    return (
-      <aside className="thread-trajectory-inspector" aria-label={t.agent.trajectory.inspector}>
-        <EmptyState title={t.agent.trajectory.selectRecord} />
-      </aside>
-    );
-  }
-
-  const detailBody = detail?.detail ?? null;
-  const tabs = tabsForRecord(record.kind);
-  const activeTab = tabs.includes(tab) ? tab : 'summary';
-  return (
-    <aside className="thread-trajectory-inspector" aria-label={t.agent.trajectory.inspector}>
-      <header className="thread-trajectory-inspector-header">
-        <div>
-          <span className="thread-trajectory-inspector-kind">{record.kind}</span>
-          <h3>{record.title}</h3>
-          {record.preview ? <p>{record.preview}</p> : null}
-        </div>
-      </header>
-      <div className="thread-trajectory-tabs" role="tablist" aria-label={t.agent.trajectory.inspectorTabs}>
-        {tabs.map((entry) => (
-          <button
-            aria-selected={activeTab === entry}
-            className={activeTab === entry ? 'is-selected' : ''}
-            key={entry}
-            onClick={() => setTab(entry)}
-            role="tab"
-            type="button"
-          >
-            {t.agent.trajectory.tab[entry]}
-          </button>
-        ))}
-      </div>
-      {loading && !detail ? <EmptyState icon={LoaderIcon} loading title={t.agent.trajectory.loadingDetail} /> : null}
-      {error ? <ErrorState message={error} /> : null}
-      {detailBody ? (
-        <InspectorTabBody
-          detail={detailBody}
-          exportResult={exportResult}
-          onCopyRecord={() => void navigator.clipboard.writeText(JSON.stringify(detail, null, 2))}
-          onExportThread={async () => {
-            const result = await onExportThread();
-            setExportResult(exportResultText(result, t));
-          }}
-          record={record}
-          tab={activeTab}
-        />
-      ) : null}
-    </aside>
-  );
-}
-
-function InspectorTabBody({
-  detail,
-  exportResult,
-  onCopyRecord,
-  onExportThread,
-  record,
-  tab,
-}: {
-  readonly detail: ThreadTrajectoryRecordDetail;
-  readonly exportResult: string | null;
-  readonly onCopyRecord: () => void;
-  readonly onExportThread: () => Promise<void>;
-  readonly record: ThreadTrajectoryRecordSummary;
-  readonly tab: InspectorTab;
-}) {
-  const t = useT();
-  if (tab === 'summary') {
-    return (
-      <div className="thread-trajectory-inspector-body">
-        <FactGrid
-          entries={[
-            [t.agent.trajectory.kind, record.kind],
-            [t.agent.trajectory.state, stateLabel(record.state)],
-            [t.agent.trajectory.turn, shortId(record.turnId)],
-            [t.agent.trajectory.recordId, record.id],
-          ]}
-        />
-        <Availability availability={record.availability} />
-        <EvidenceList record={record} />
-      </div>
-    );
-  }
-  if (tab === 'timing') {
-    return (
-      <div className="thread-trajectory-inspector-body">
-        <TimingView timing={record.timing} usage={record.usage} />
-      </div>
-    );
-  }
-  if (tab === 'export') {
-    return (
-      <div className="thread-trajectory-inspector-body">
-        <p className="thread-trajectory-note">{t.agent.trajectory.exportCopy}</p>
-        <div className="thread-trajectory-action-row">
-          <Button onClick={onCopyRecord} type="button" variant="secondary">
-            <CopyIcon size={ICON_SIZE.menu} />
-            {t.agent.trajectory.copyRecord}
-          </Button>
-          <Button onClick={() => void onExportThread()} type="button" variant="secondary">
-            <DownloadIcon size={ICON_SIZE.menu} />
-            {t.agent.trajectory.exportThread}
-          </Button>
-        </div>
-        {exportResult ? <p className="thread-trajectory-note">{exportResult}</p> : null}
-      </div>
-    );
-  }
-  if (detail.kind === 'assistant') {
-    const call = detail.diagnostics?.providerCall ?? null;
-    if (tab === 'request') return <JsonPanel title={t.agent.trajectory.providerRequest} value={call?.request ?? null} />;
-    if (tab === 'response') return <JsonPanel title={t.agent.trajectory.providerResponse} value={call?.response ?? null} />;
-  }
-  if (detail.kind === 'input' && tab === 'source') {
-    return <JsonPanel title={t.agent.trajectory.source} value={detail.items} />;
-  }
-  if (detail.kind === 'context' && tab === 'source') {
-    return <JsonPanel title={t.agent.trajectory.source} value={detail.payload} />;
-  }
-  if ((detail.kind === 'tool' || detail.kind === 'delegation') && tab === 'result') {
-    return detail.kind === 'tool'
-      ? <TextPanel title={t.agent.trajectory.result} text={detail.outputText} />
-      : <JsonPanel title={t.agent.trajectory.result} value={detail} />;
-  }
-  if ((detail.kind === 'tool' || detail.kind === 'delegation') && tab === 'audit') {
-    return <JsonPanel title={t.agent.trajectory.audit} value={detail.diagnostics?.activity ?? null} />;
-  }
-  if (tab === 'arguments' || tab === 'schema') {
-    return <JsonPanel title={t.agent.trajectory.tab[tab]} value={null} />;
-  }
-  return <JsonPanel title={t.agent.trajectory.details} value={detail} />;
-}
-
-function TimingView({
-  timing,
-  usage,
-}: {
-  readonly timing: ThreadTrajectoryTimingSummary;
-  readonly usage: ThreadTrajectoryUsageSummary | null;
-}) {
-  const t = useT();
-  const { locale } = useI18n();
-  return (
-    <>
-      <FactGrid
-        entries={[
-          [t.agent.trajectory.started, timing.startedAt === null ? '-' : formatTrajectoryDateTime(timing.startedAt, locale)],
-          [t.agent.trajectory.firstToken, timing.firstTokenAt === null ? '-' : formatTrajectoryDateTime(timing.firstTokenAt, locale)],
-          [t.agent.trajectory.completed, timing.completedAt === null ? '-' : formatTrajectoryDateTime(timing.completedAt, locale)],
-          [t.agent.trajectory.duration, timing.durationMs === null ? '-' : `${formatNumber(Math.round(timing.durationMs))} ms`],
-        ]}
-      />
-      {usage ? (
-        <FactGrid
-          entries={[
-            [t.agent.trajectory.inputTokens, formatNumber(usage.input)],
-            [t.agent.trajectory.outputTokens, formatNumber(usage.output)],
-            [t.agent.trajectory.cacheRead, formatNumber(usage.cacheRead)],
-            [t.agent.trajectory.cacheWrite, formatNumber(usage.cacheWrite)],
-            [t.agent.trajectory.totalTokens, formatNumber(usage.totalTokens)],
-            [t.agent.trajectory.cost, usage.costUsd === null ? '-' : `$${usage.costUsd.toFixed(6)}`],
-          ]}
-        />
-      ) : null}
-    </>
-  );
-}
-
-function JsonPanel({ title, value }: { readonly title: string; readonly value: unknown }) {
-  const t = useT();
-  return (
-    <div className="thread-trajectory-inspector-body">
-      <h4>{title}</h4>
-      {value === null || value === undefined ? (
-        <p className="thread-trajectory-note">{t.agent.trajectory.noRetainedEvidence}</p>
-      ) : (
-        <ReadOnlyCodeBlock className="thread-trajectory-code" code={JSON.stringify(value, null, 2)} language="json" />
-      )}
-    </div>
-  );
-}
-
-function TextPanel({ title, text }: { readonly title: string; readonly text: string | null }) {
-  const t = useT();
-  return (
-    <div className="thread-trajectory-inspector-body">
-      <h4>{title}</h4>
-      {text ? <ReadOnlyCodeBlock className="thread-trajectory-code" code={text} language="text" /> : <p className="thread-trajectory-note">{t.agent.trajectory.noRetainedOutput}</p>}
-    </div>
-  );
-}
-
-function FactGrid({ entries }: { readonly entries: readonly (readonly [string, string])[] }) {
-  return (
-    <dl className="thread-trajectory-facts">
-      {entries.map(([label, value]) => (
-        <div key={label}>
-          <dt>{label}</dt>
-          <dd>{value}</dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
-
-function Availability({ availability }: { readonly availability: ThreadTrajectoryRecordSummary['availability'] }) {
-  if (availability.length === 0) return null;
-  return (
-    <div className="thread-trajectory-availability">
-      {availability.map((entry) => (
-        <p key={`${entry.reason}:${entry.message}`}>
-          <strong>{entry.reason}</strong>
-          <span>{entry.message}</span>
-        </p>
-      ))}
-    </div>
-  );
-}
-
-function EvidenceList({ record }: { readonly record: ThreadTrajectoryRecordSummary }) {
-  const t = useT();
-  return (
-    <dl className="thread-trajectory-evidence">
-      <div>
-        <dt>{t.agent.trajectory.primaryEvidence}</dt>
-        <dd><code>{evidenceLabel(record.primaryEvidence)}</code></dd>
-      </div>
-      {record.relatedEvidence.map((entry, index) => (
-        <div key={`${index}:${evidenceLabel(entry)}`}>
-          <dt>{t.agent.trajectory.relatedEvidence}</dt>
-          <dd><code>{evidenceLabel(entry)}</code></dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
-
-function tabsForRecord(kind: ThreadTrajectoryRecordKind): readonly InspectorTab[] {
-  switch (kind) {
-    case 'input':
-    case 'context':
-      return ['summary', 'source', 'timing'];
-    case 'assistant':
-      return ['summary', 'request', 'response', 'timing', 'export'];
-    case 'tool':
-      return ['summary', 'arguments', 'result', 'schema', 'audit', 'timing'];
-    case 'retry':
-    case 'compaction':
-      return ['summary', 'audit', 'timing'];
-    case 'delegation':
-      return ['summary', 'result', 'audit', 'timing'];
-  }
-}
-
-function groupByTurn(records: readonly ThreadTrajectoryRecordSummary[]) {
-  const groups: Array<{ readonly turnId: string; readonly index: number; readonly records: ThreadTrajectoryRecordSummary[] }> = [];
-  const byTurn = new Map<string, ThreadTrajectoryRecordSummary[]>();
-  for (const record of records) {
-    const group = byTurn.get(record.turnId) ?? [];
-    group.push(record);
-    byTurn.set(record.turnId, group);
-  }
-  let index = 0;
-  for (const [turnIdValue, groupRecords] of byTurn) {
-    groups.push({ turnId: turnIdValue, index, records: groupRecords });
-    index += 1;
-  }
-  return groups;
+function toggledSet(current: ReadonlySet<string>, value: string): ReadonlySet<string> {
+  const next = new Set(current);
+  if (next.has(value)) next.delete(value);
+  else next.add(value);
+  return next;
 }
 
 function mergeRecords(
-  older: readonly ThreadTrajectoryRecordSummary[],
   current: readonly ThreadTrajectoryRecordSummary[],
+  incoming: readonly ThreadTrajectoryRecordSummary[],
 ): readonly ThreadTrajectoryRecordSummary[] {
   const byId = new Map<string, ThreadTrajectoryRecordSummary>();
-  for (const record of [...older, ...current]) byId.set(record.id, record);
+  for (const record of current) byId.set(record.id, record);
+  for (const record of incoming) byId.set(record.id, record);
   return [...byId.values()].sort((left, right) => left.sequence - right.sequence);
 }
 
@@ -737,52 +355,6 @@ function trajectoryRelevantNotification(notification: AgentCoreNotification, thr
     || notification.type === 'turn/providerRetry/changed'
     || notification.type === 'turn/plan/updated'
     || notification.type === 'subagent/execution/changed';
-}
-
-function recordSearchText(record: ThreadTrajectoryRecordSummary): string {
-  return [
-    record.kind,
-    record.title,
-    record.subtitle ?? '',
-    record.preview ?? '',
-    record.state,
-    record.turnId,
-  ].join(' ').toLocaleLowerCase();
-}
-
-function evidenceLabel(evidence: ThreadTrajectoryRecordSummary['primaryEvidence']): string {
-  if (evidence.type === 'providerCall') return `providerCall:${shortId(evidence.turnId)}:${evidence.callIndex}`;
-  if (evidence.type === 'threadItem') return `item:${shortId(evidence.itemId)}`;
-  if (evidence.type === 'diagnosticActivity') return `activity:${evidence.activityIndex}:${evidence.activityType}`;
-  if (evidence.type === 'subagent') return `subagent:${shortId(evidence.agentThreadId)}`;
-  return `turn:${shortId(evidence.turnId)}`;
-}
-
-function kindGlyph(kind: ThreadTrajectoryRecordKind): string {
-  switch (kind) {
-    case 'input': return 'I';
-    case 'context': return 'C';
-    case 'assistant': return 'A';
-    case 'tool': return 'T';
-    case 'retry': return 'R';
-    case 'compaction': return 'K';
-    case 'delegation': return 'D';
-  }
-}
-
-function stateLabel(state: ThreadTrajectoryRecordSummary['state']): string {
-  return state;
-}
-
-function shortId(id: string): string {
-  return id.length <= 10 ? id : `${id.slice(0, 8)}…`;
-}
-
-function formatTrajectoryDateTime(value: number, locale: Parameters<typeof formatDateTime>[1]): string {
-  return formatDateTime(value, locale, {
-    dateStyle: 'short',
-    timeStyle: 'medium',
-  });
 }
 
 function exportResultText(result: TrajectoryExportResult, t: ReturnType<typeof useT>): string {

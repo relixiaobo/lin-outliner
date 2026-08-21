@@ -1541,7 +1541,19 @@ export type ThreadTrajectoryEvidenceRef =
       readonly activityType: TurnDiagnosticsActivity['type'];
     }
   | {
+      readonly type: 'toolExecution';
+      readonly threadId: ThreadId;
+      readonly turnId: TurnId;
+      readonly activityIndex: number;
+      readonly callId: string;
+    }
+  | {
       readonly type: 'threadTurn';
+      readonly threadId: ThreadId;
+      readonly turnId: TurnId;
+    }
+  | {
+      readonly type: 'stablePrompt';
       readonly threadId: ThreadId;
       readonly turnId: TurnId;
     }
@@ -1654,6 +1666,12 @@ export interface ThreadTrajectoryItemEvidence {
   readonly status: ItemExecutionStatus | null;
 }
 
+export interface ThreadTrajectoryUserMessageEvidence {
+  readonly itemId: ThreadItemId;
+  readonly acceptedAt: number;
+  readonly content: readonly ThreadUserContent[];
+}
+
 export interface ThreadTrajectoryRuntimeEvidence {
   readonly provider: string;
   readonly model: string;
@@ -1679,6 +1697,7 @@ export interface ThreadTrajectoryProviderCallEvidence {
   readonly commonPrefixMessageCount: number;
   readonly requestFingerprint: string;
   readonly cacheBreakpoints: readonly string[];
+  /** Materialized post-adapter provider payload, after renderer-facing evidence sanitization. */
   readonly request: JsonValue | null;
   readonly response: JsonValue | null;
   readonly transportResponse: TurnDiagnosticsTransportResponse | null;
@@ -1695,7 +1714,7 @@ export type ThreadTrajectoryRecordDetail =
   | {
       readonly kind: 'input';
       readonly turn: ThreadTrajectoryTurnEvidence;
-      readonly items: readonly ThreadTrajectoryItemEvidence[];
+      readonly message: ThreadTrajectoryUserMessageEvidence | null;
       readonly diagnostics: ThreadTrajectoryDiagnosticsEvidence | null;
       readonly activityIndex: number | null;
     }
@@ -1703,6 +1722,8 @@ export type ThreadTrajectoryRecordDetail =
       readonly kind: 'context';
       readonly turn: ThreadTrajectoryTurnEvidence;
       readonly item: ThreadTrajectoryItemEvidence | null;
+      /** Captured model-visible context text from the prepared provider context, when retained. */
+      readonly modelContextText: string | null;
       readonly payload: JsonValue | null;
     }
   | {
@@ -1719,7 +1740,9 @@ export type ThreadTrajectoryRecordDetail =
       readonly diagnostics: ThreadTrajectoryDiagnosticsEvidence | null;
       readonly activityIndex: number | null;
       readonly executionCallId: string | null;
+      readonly input: JsonValue | null;
       readonly outputText: string | null;
+      readonly schema: JsonValue | null;
     }
   | {
       readonly kind: 'retry';
@@ -1741,6 +1764,9 @@ export type ThreadTrajectoryRecordDetail =
       readonly diagnostics: ThreadTrajectoryDiagnosticsEvidence | null;
       readonly activityIndex: number | null;
       readonly executionCallId: string | null;
+      readonly input: JsonValue | null;
+      readonly outputText: string | null;
+      readonly schema: JsonValue | null;
       readonly childThreadId: ThreadId | null;
     };
 
