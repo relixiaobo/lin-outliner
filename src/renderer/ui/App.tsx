@@ -186,7 +186,7 @@ export function App() {
     navigateRoot: setActivePanelRoot,
     openPanel,
     openPreview,
-    openThreadTurnDetailsPanel,
+    openThreadTrajectoryPanel,
     panels,
     repairInvalidPanelViews,
     resizePanelPair,
@@ -199,7 +199,7 @@ export function App() {
     preparePanelCount,
   });
   // Global Back/Forward (Cmd+[ / Cmd+]) act on the active workspace pane's view
-  // history, including Turn Diagnostics and file previews.
+  // history, including Trajectory and file previews.
   const pageHistoryPanel = activeWorkspacePanel;
 
   const {
@@ -752,7 +752,7 @@ export function App() {
           indexStore={indexStore}
           railState={agentRailState}
           onOpenNodeReference={openNodeReferenceFromAgent}
-          onOpenTurnDetails={openThreadTurnDetailsPanel}
+          onOpenTurnDetails={(threadId, turnId) => openThreadTrajectoryPanel(threadId, { turnId })}
           onResizeKeyDown={resizeAgentWithKeyboard}
           onResizeReset={resetAgentWidth}
           onResizeStart={beginAgentResize}

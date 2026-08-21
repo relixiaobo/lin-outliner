@@ -1481,6 +1481,293 @@ export interface ThreadTurnDetailsReadResponse {
   } | null;
 }
 
+export const THREAD_TRAJECTORY_RECORD_KINDS = [
+  'input',
+  'context',
+  'assistant',
+  'tool',
+  'retry',
+  'compaction',
+  'delegation',
+] as const;
+export type ThreadTrajectoryRecordKind = typeof THREAD_TRAJECTORY_RECORD_KINDS[number];
+
+export const THREAD_TRAJECTORY_LANES = ['input', 'assistant', 'tools'] as const;
+export type ThreadTrajectoryLane = typeof THREAD_TRAJECTORY_LANES[number];
+
+export const THREAD_TRAJECTORY_RECORD_STATES = [
+  'pending',
+  'running',
+  'completed',
+  'failed',
+  'interrupted',
+  'partial',
+] as const;
+export type ThreadTrajectoryRecordState = typeof THREAD_TRAJECTORY_RECORD_STATES[number];
+
+export const THREAD_TRAJECTORY_AVAILABILITY_REASONS = [
+  'diagnosticsUnavailable',
+  'diagnosticsCorrupt',
+  'evidenceUnavailable',
+  'payloadUnavailable',
+  'redacted',
+  'partialCoverage',
+] as const;
+export type ThreadTrajectoryAvailabilityReason = typeof THREAD_TRAJECTORY_AVAILABILITY_REASONS[number];
+
+export interface ThreadTrajectoryAvailability {
+  readonly reason: ThreadTrajectoryAvailabilityReason;
+  readonly message: string;
+}
+
+export type ThreadTrajectoryEvidenceRef =
+  | {
+      readonly type: 'providerCall';
+      readonly threadId: ThreadId;
+      readonly turnId: TurnId;
+      readonly callIndex: number;
+    }
+  | {
+      readonly type: 'threadItem';
+      readonly threadId: ThreadId;
+      readonly turnId: TurnId;
+      readonly itemId: ThreadItemId;
+    }
+  | {
+      readonly type: 'diagnosticActivity';
+      readonly threadId: ThreadId;
+      readonly turnId: TurnId;
+      readonly activityIndex: number;
+      readonly activityType: TurnDiagnosticsActivity['type'];
+    }
+  | {
+      readonly type: 'threadTurn';
+      readonly threadId: ThreadId;
+      readonly turnId: TurnId;
+    }
+  | {
+      readonly type: 'subagent';
+      readonly threadId: ThreadId;
+      readonly turnId: TurnId;
+      readonly agentThreadId: ThreadId;
+      readonly itemId: ThreadItemId | null;
+    };
+
+export interface ThreadTrajectoryUsageSummary {
+  readonly input: number;
+  readonly output: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+  readonly reasoning: number | null;
+  readonly totalTokens: number;
+  readonly costUsd: number | null;
+}
+
+export interface ThreadTrajectoryTimingSummary {
+  readonly startedAt: number | null;
+  readonly firstTokenAt: number | null;
+  readonly completedAt: number | null;
+  readonly durationMs: number | null;
+}
+
+export interface ThreadTrajectoryRecordSummary {
+  readonly id: string;
+  readonly kind: ThreadTrajectoryRecordKind;
+  readonly lane: ThreadTrajectoryLane;
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId;
+  readonly sequence: number;
+  readonly parentRecordId: string | null;
+  readonly title: string;
+  readonly subtitle: string | null;
+  readonly preview: string | null;
+  readonly state: ThreadTrajectoryRecordState;
+  readonly timing: ThreadTrajectoryTimingSummary;
+  readonly usage: ThreadTrajectoryUsageSummary | null;
+  readonly primaryEvidence: ThreadTrajectoryEvidenceRef;
+  readonly relatedEvidence: readonly ThreadTrajectoryEvidenceRef[];
+  readonly availability: readonly ThreadTrajectoryAvailability[];
+  readonly childThreadId: ThreadId | null;
+}
+
+export interface ThreadTrajectorySummary {
+  readonly threadId: ThreadId;
+  readonly turnCount: number;
+  readonly recordCount: number;
+  readonly inputCount: number;
+  readonly contextCount: number;
+  readonly assistantCount: number;
+  readonly toolCount: number;
+  readonly retryCount: number;
+  readonly compactionCount: number;
+  readonly delegationCount: number;
+  readonly startedAt: number | null;
+  readonly completedAt: number | null;
+  readonly durationMs: number | null;
+  readonly usage: ThreadTrajectoryUsageSummary | null;
+  readonly availability: readonly ThreadTrajectoryAvailability[];
+}
+
+export interface ThreadTrajectoryReadRequest {
+  readonly threadId: ThreadId;
+  /** Tail-first cursor. A response cursor loads records older than the current window. */
+  readonly cursor?: string | null;
+  readonly limit?: number | null;
+  readonly focus?: {
+    readonly recordId?: string | null;
+    readonly turnId?: TurnId | null;
+  } | null;
+}
+
+export interface ThreadTrajectoryReadResponse {
+  readonly threadId: ThreadId;
+  readonly summary: ThreadTrajectorySummary;
+  /** Records are returned in recorded order within the loaded tail-first window. */
+  readonly records: readonly ThreadTrajectoryRecordSummary[];
+  readonly nextCursor: string | null;
+  readonly hasMore: boolean;
+  readonly selectedRecordId: string | null;
+}
+
+export interface ThreadTrajectoryDetailReadRequest {
+  readonly threadId: ThreadId;
+  readonly recordId: string;
+}
+
+export interface ThreadTrajectoryTurnEvidence {
+  readonly id: TurnId;
+  readonly status: TurnStatus;
+  readonly error: TurnError | null;
+  readonly startedAt: number;
+  readonly completedAt: number | null;
+  readonly durationMs: number | null;
+  readonly modelProvider: string;
+  readonly model: string;
+  readonly reasoningEffort: ReasoningEffort;
+}
+
+export interface ThreadTrajectoryItemEvidence {
+  readonly itemId: ThreadItemId;
+  readonly type: ThreadItem['type'];
+  readonly title: string;
+  readonly preview: string | null;
+  readonly status: ItemExecutionStatus | null;
+}
+
+export interface ThreadTrajectoryRuntimeEvidence {
+  readonly provider: string;
+  readonly model: string;
+  readonly api: string;
+  readonly transportSelection: TurnDiagnosticsRuntime['transportSelection'];
+  readonly contextWindow: number;
+  readonly maxOutputTokens: number;
+  readonly thinkingLevel: string;
+  readonly timeoutMs: number | null;
+  readonly maxRetries: number | null;
+  readonly maxRetryDelayMs: number | null;
+  readonly cacheRetention: TurnDiagnosticsRuntime['cacheRetention'];
+  readonly toolExecution: TurnDiagnosticsRuntime['toolExecution'];
+  readonly steeringMode: TurnDiagnosticsRuntime['steeringMode'];
+}
+
+export interface ThreadTrajectoryProviderCallEvidence {
+  readonly index: number;
+  readonly requestedAt: number;
+  readonly estimatedInputTokens: number;
+  readonly inputTokenLimit: number;
+  readonly reservedOutputTokens: number;
+  readonly commonPrefixMessageCount: number;
+  readonly requestFingerprint: string;
+  readonly cacheBreakpoints: readonly string[];
+  readonly request: JsonValue | null;
+  readonly response: JsonValue | null;
+  readonly transportResponse: TurnDiagnosticsTransportResponse | null;
+}
+
+export interface ThreadTrajectoryDiagnosticsEvidence {
+  readonly ref: TurnDiagnosticsPayloadReference;
+  readonly runtime: ThreadTrajectoryRuntimeEvidence;
+  readonly activity: JsonValue | null;
+  readonly providerCall: ThreadTrajectoryProviderCallEvidence | null;
+}
+
+export type ThreadTrajectoryRecordDetail =
+  | {
+      readonly kind: 'input';
+      readonly turn: ThreadTrajectoryTurnEvidence;
+      readonly items: readonly ThreadTrajectoryItemEvidence[];
+      readonly diagnostics: ThreadTrajectoryDiagnosticsEvidence | null;
+      readonly activityIndex: number | null;
+    }
+  | {
+      readonly kind: 'context';
+      readonly turn: ThreadTrajectoryTurnEvidence;
+      readonly item: ThreadTrajectoryItemEvidence | null;
+      readonly payload: JsonValue | null;
+    }
+  | {
+      readonly kind: 'assistant';
+      readonly turn: ThreadTrajectoryTurnEvidence;
+      readonly diagnostics: ThreadTrajectoryDiagnosticsEvidence | null;
+      readonly providerCallIndex: number;
+      readonly relatedItems: readonly ThreadTrajectoryItemEvidence[];
+    }
+  | {
+      readonly kind: 'tool';
+      readonly turn: ThreadTrajectoryTurnEvidence;
+      readonly item: ThreadTrajectoryItemEvidence | null;
+      readonly diagnostics: ThreadTrajectoryDiagnosticsEvidence | null;
+      readonly activityIndex: number | null;
+      readonly executionCallId: string | null;
+      readonly outputText: string | null;
+    }
+  | {
+      readonly kind: 'retry';
+      readonly turn: ThreadTrajectoryTurnEvidence;
+      readonly diagnostics: ThreadTrajectoryDiagnosticsEvidence | null;
+      readonly activityIndex: number | null;
+    }
+  | {
+      readonly kind: 'compaction';
+      readonly turn: ThreadTrajectoryTurnEvidence;
+      readonly item: ThreadTrajectoryItemEvidence | null;
+      readonly diagnostics: ThreadTrajectoryDiagnosticsEvidence | null;
+      readonly activityIndex: number | null;
+    }
+  | {
+      readonly kind: 'delegation';
+      readonly turn: ThreadTrajectoryTurnEvidence;
+      readonly item: ThreadTrajectoryItemEvidence | null;
+      readonly diagnostics: ThreadTrajectoryDiagnosticsEvidence | null;
+      readonly activityIndex: number | null;
+      readonly executionCallId: string | null;
+      readonly childThreadId: ThreadId | null;
+    };
+
+export interface ThreadTrajectoryDetailReadResponse {
+  readonly threadId: ThreadId;
+  readonly record: ThreadTrajectoryRecordSummary | null;
+  readonly detail: ThreadTrajectoryRecordDetail | null;
+}
+
+export interface ThreadTrajectoryExportRequest {
+  readonly threadId: ThreadId;
+}
+
+export type ThreadTrajectoryExportResponse =
+  | {
+      readonly status: 'written';
+      readonly fileName: string;
+      readonly byteLength: number;
+    }
+  | {
+      readonly status: 'canceled';
+    }
+  | {
+      readonly status: 'failed';
+      readonly error: string;
+    };
+
 export interface ProviderRetryStatus {
   readonly kind: 'request' | 'stream';
   readonly attempt: number;
@@ -1662,6 +1949,9 @@ export const AGENT_CORE_METHODS = [
   'thread/item/output/read',
   'thread/context/read',
   'thread/turn/details/read',
+  'thread/trajectory/read',
+  'thread/trajectory/detail/read',
+  'thread/trajectory/export',
   'turn/submit',
   'turn/start',
   'turn/steer',
@@ -1698,6 +1988,9 @@ export interface AgentCoreRequestByMethod {
   readonly 'thread/item/output/read': ThreadItemOutputReadRequest;
   readonly 'thread/context/read': ThreadContextReadRequest;
   readonly 'thread/turn/details/read': ThreadTurnDetailsReadRequest;
+  readonly 'thread/trajectory/read': ThreadTrajectoryReadRequest;
+  readonly 'thread/trajectory/detail/read': ThreadTrajectoryDetailReadRequest;
+  readonly 'thread/trajectory/export': ThreadTrajectoryExportRequest;
   readonly 'turn/submit': RendererTurnSubmitRequest;
   readonly 'turn/start': RendererTurnStartRequest;
   readonly 'turn/steer': RendererTurnSteerRequest;
@@ -1732,6 +2025,9 @@ export interface AgentCoreResponseByMethod {
   readonly 'thread/item/output/read': ThreadItemOutputReadResponse;
   readonly 'thread/context/read': ThreadContextReadResponse;
   readonly 'thread/turn/details/read': ThreadTurnDetailsReadResponse;
+  readonly 'thread/trajectory/read': ThreadTrajectoryReadResponse;
+  readonly 'thread/trajectory/detail/read': ThreadTrajectoryDetailReadResponse;
+  readonly 'thread/trajectory/export': ThreadTrajectoryExportResponse;
   readonly 'turn/submit': TurnSubmitResponse;
   readonly 'turn/start': TurnStartResponse;
   readonly 'turn/steer': TurnSteerResponse;

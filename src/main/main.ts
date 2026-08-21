@@ -755,6 +755,30 @@ threadService = ThreadService.open(
     recoverAgentWorktree: (input) => agentWorktree.recover(input),
     cleanupResidualAgentWorktree: (input) => agentWorktree.cleanupResidual(input),
     reportError,
+    writeTrajectoryExport: async ({ defaultFileName, bundle }) => {
+      try {
+        const window = mainWindow ?? BrowserWindow.getFocusedWindow();
+        const result = window
+          ? await dialog.showSaveDialog(window, {
+              defaultPath: join(app.getPath('desktop'), defaultFileName),
+              filters: [{ name: 'JSON', extensions: ['json'] }],
+            })
+          : await dialog.showSaveDialog({
+              defaultPath: join(app.getPath('desktop'), defaultFileName),
+              filters: [{ name: 'JSON', extensions: ['json'] }],
+            });
+        if (result.canceled || !result.filePath) return { status: 'canceled' };
+        const content = JSON.stringify(bundle, null, 2);
+        await writeFile(result.filePath, content, 'utf8');
+        return {
+          status: 'written',
+          fileName: basename(result.filePath),
+          byteLength: Buffer.byteLength(content, 'utf8'),
+        };
+      } catch (error) {
+        return { status: 'failed', error: error instanceof Error ? error.message : String(error) };
+      }
+    },
     resolveRendererStartDefaults: (request) => resolveRendererThreadStartDefaults({
       request,
       remembered: loadAppPreferences().lastAgentThreadConfiguration,

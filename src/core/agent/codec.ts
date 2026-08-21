@@ -12,6 +12,10 @@ import {
   MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES,
   THREAD_HISTORY_MODE,
   THREAD_ITEM_TYPES,
+  THREAD_TRAJECTORY_AVAILABILITY_REASONS,
+  THREAD_TRAJECTORY_LANES,
+  THREAD_TRAJECTORY_RECORD_KINDS,
+  THREAD_TRAJECTORY_RECORD_STATES,
   REQUEST_USER_INPUT_MAX_AUTO_RESOLUTION_MS,
   REQUEST_USER_INPUT_MIN_AUTO_RESOLUTION_MS,
   isReservedThreadSource,
@@ -61,6 +65,18 @@ import {
   type SubagentExecutionState,
   type SubagentWorktreeSummary,
   type TurnDiagnosticsPayload,
+  type ThreadTrajectoryAvailability,
+  type ThreadTrajectoryDiagnosticsEvidence,
+  type ThreadTrajectoryEvidenceRef,
+  type ThreadTrajectoryItemEvidence,
+  type ThreadTrajectoryProviderCallEvidence,
+  type ThreadTrajectoryRecordDetail,
+  type ThreadTrajectoryRecordSummary,
+  type ThreadTrajectoryRuntimeEvidence,
+  type ThreadTrajectorySummary,
+  type ThreadTrajectoryTimingSummary,
+  type ThreadTrajectoryTurnEvidence,
+  type ThreadTrajectoryUsageSummary,
   type TurnDiagnosticsMessagePartProvenance,
   type TurnDiagnosticsPayloadReference,
   type TurnProvenance,
@@ -1096,6 +1112,15 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
     case 'thread/turn/details/read':
       decoded = decodeThreadTurnDetailsReadRequest(value);
       break;
+    case 'thread/trajectory/read':
+      decoded = decodeThreadTrajectoryReadRequest(value);
+      break;
+    case 'thread/trajectory/detail/read':
+      decoded = decodeThreadTrajectoryDetailReadRequest(value);
+      break;
+    case 'thread/trajectory/export':
+      decoded = decodeThreadTrajectoryExportRequest(value);
+      break;
     case 'turn/submit':
       decoded = decodeRendererTurnSubmitRequest(value);
       break;
@@ -1190,6 +1215,15 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
       break;
     case 'thread/turn/details/read':
       decoded = decodeThreadTurnDetailsReadResponse(value);
+      break;
+    case 'thread/trajectory/read':
+      decoded = decodeThreadTrajectoryReadResponse(value);
+      break;
+    case 'thread/trajectory/detail/read':
+      decoded = decodeThreadTrajectoryDetailReadResponse(value);
+      break;
+    case 'thread/trajectory/export':
+      decoded = decodeThreadTrajectoryExportResponse(value);
       break;
     case 'turn/submit':
       decoded = decodeTurnSubmitResponse(value);
@@ -1520,6 +1554,65 @@ function decodeThreadTurnDetailsReadRequest(
   return deepFreeze({
     threadId: uuidV7(record.threadId, 'thread/turn/details/read.threadId'),
     turnId: uuidV7(record.turnId, 'thread/turn/details/read.turnId'),
+  });
+}
+
+function decodeThreadTrajectoryReadRequest(
+  value: unknown,
+): AgentCoreRequestByMethod['thread/trajectory/read'] {
+  const record = recordValue(value, 'thread/trajectory/read');
+  exactKeys(record, ['threadId', 'cursor', 'limit', 'focus'], 'thread/trajectory/read');
+  return deepFreeze({
+    threadId: uuidV7(record.threadId, 'thread/trajectory/read.threadId'),
+    ...(record.cursor === undefined
+      ? {}
+      : { cursor: record.cursor === null ? null : stringValue(record.cursor, 'thread/trajectory/read.cursor') }),
+    ...(record.limit === undefined
+      ? {}
+      : { limit: record.limit === null ? null : positiveInteger(record.limit, 'thread/trajectory/read.limit') }),
+    ...(record.focus === undefined
+      ? {}
+      : { focus: decodeThreadTrajectoryFocus(record.focus, 'thread/trajectory/read.focus') }),
+  });
+}
+
+function decodeThreadTrajectoryFocus(
+  value: unknown,
+  path: string,
+): NonNullable<AgentCoreRequestByMethod['thread/trajectory/read']['focus']> | null {
+  if (value === null) return null;
+  const record = recordValue(value, path);
+  exactKeys(record, ['recordId', 'turnId'], path);
+  const result = {
+    ...(record.recordId === undefined
+      ? {}
+      : { recordId: record.recordId === null ? null : stringValue(record.recordId, `${path}.recordId`) }),
+    ...(record.turnId === undefined
+      ? {}
+      : { turnId: record.turnId === null ? null : uuidV7(record.turnId, `${path}.turnId`) }),
+  };
+  if (!('recordId' in result) && !('turnId' in result)) fail(path, 'must include recordId or turnId');
+  return result;
+}
+
+function decodeThreadTrajectoryDetailReadRequest(
+  value: unknown,
+): AgentCoreRequestByMethod['thread/trajectory/detail/read'] {
+  const record = recordValue(value, 'thread/trajectory/detail/read');
+  exactKeys(record, ['threadId', 'recordId'], 'thread/trajectory/detail/read');
+  return deepFreeze({
+    threadId: uuidV7(record.threadId, 'thread/trajectory/detail/read.threadId'),
+    recordId: stringValue(record.recordId, 'thread/trajectory/detail/read.recordId'),
+  });
+}
+
+function decodeThreadTrajectoryExportRequest(
+  value: unknown,
+): AgentCoreRequestByMethod['thread/trajectory/export'] {
+  const record = recordValue(value, 'thread/trajectory/export');
+  exactKeys(record, ['threadId'], 'thread/trajectory/export');
+  return deepFreeze({
+    threadId: uuidV7(record.threadId, 'thread/trajectory/export.threadId'),
   });
 }
 
@@ -1883,6 +1976,569 @@ function decodeThreadTurnDetailsReadResponse(
     fail('thread/turn/details/read response.diagnostics.ref', 'must match the Turn execution reference');
   }
   return deepFreeze({ thread, turn, diagnostics: { ref, payload } });
+}
+
+function decodeThreadTrajectoryReadResponse(
+  value: unknown,
+): AgentCoreResponseByMethod['thread/trajectory/read'] {
+  const record = recordValue(value, 'thread/trajectory/read response');
+  exactKeys(
+    record,
+    ['threadId', 'summary', 'records', 'nextCursor', 'hasMore', 'selectedRecordId'],
+    'thread/trajectory/read response',
+  );
+  const threadId = uuidV7(record.threadId, 'thread/trajectory/read response.threadId');
+  const summary = decodeThreadTrajectorySummary(record.summary, 'thread/trajectory/read response.summary');
+  if (summary.threadId !== threadId) {
+    fail('thread/trajectory/read response.summary.threadId', 'must match the response Thread ID');
+  }
+  const records = arrayValue(record.records, 'thread/trajectory/read response.records')
+    .map((entry, index) => decodeThreadTrajectoryRecordSummary(
+      entry,
+      `thread/trajectory/read response.records[${index}]`,
+    ));
+  requireUnique(records.map((entry) => entry.id), 'thread/trajectory/read response.records', 'record ids');
+  records.forEach((entry, index) => {
+    if (entry.threadId !== threadId) {
+      fail(`thread/trajectory/read response.records[${index}].threadId`, 'must match the response Thread ID');
+    }
+    const previous = records[index - 1];
+    if (previous && previous.sequence >= entry.sequence) {
+      fail(`thread/trajectory/read response.records[${index}].sequence`, 'must be ascending');
+    }
+  });
+  const selectedRecordId = nullableString(
+    record.selectedRecordId,
+    'thread/trajectory/read response.selectedRecordId',
+  );
+  if (selectedRecordId !== null && !records.some((entry) => entry.id === selectedRecordId)) {
+    fail('thread/trajectory/read response.selectedRecordId', 'must reference a returned record');
+  }
+  return deepFreeze({
+    threadId,
+    summary,
+    records,
+    nextCursor: nullableString(record.nextCursor, 'thread/trajectory/read response.nextCursor'),
+    hasMore: booleanValue(record.hasMore, 'thread/trajectory/read response.hasMore'),
+    selectedRecordId,
+  });
+}
+
+function decodeThreadTrajectoryDetailReadResponse(
+  value: unknown,
+): AgentCoreResponseByMethod['thread/trajectory/detail/read'] {
+  const record = recordValue(value, 'thread/trajectory/detail/read response');
+  exactKeys(record, ['threadId', 'record', 'detail'], 'thread/trajectory/detail/read response');
+  const threadId = uuidV7(record.threadId, 'thread/trajectory/detail/read response.threadId');
+  if (record.record === null) {
+    if (record.detail !== null) fail('thread/trajectory/detail/read response.detail', 'must be null without a record');
+    return deepFreeze({ threadId, record: null, detail: null });
+  }
+  const summary = decodeThreadTrajectoryRecordSummary(
+    record.record,
+    'thread/trajectory/detail/read response.record',
+  );
+  if (summary.threadId !== threadId) {
+    fail('thread/trajectory/detail/read response.record.threadId', 'must match the response Thread ID');
+  }
+  const detail = decodeThreadTrajectoryRecordDetail(
+    record.detail,
+    summary,
+    'thread/trajectory/detail/read response.detail',
+  );
+  return deepFreeze({ threadId, record: summary, detail });
+}
+
+function decodeThreadTrajectoryExportResponse(
+  value: unknown,
+): AgentCoreResponseByMethod['thread/trajectory/export'] {
+  const record = recordValue(value, 'thread/trajectory/export response');
+  const status = enumValue(record.status, ['written', 'canceled', 'failed'], 'thread/trajectory/export response.status');
+  if (status === 'written') {
+    exactKeys(record, ['status', 'fileName', 'byteLength'], 'thread/trajectory/export response');
+    return deepFreeze({
+      status,
+      fileName: stringValue(record.fileName, 'thread/trajectory/export response.fileName'),
+      byteLength: nonNegativeInteger(record.byteLength, 'thread/trajectory/export response.byteLength'),
+    });
+  }
+  if (status === 'canceled') {
+    exactKeys(record, ['status'], 'thread/trajectory/export response');
+    return deepFreeze({ status });
+  }
+  exactKeys(record, ['status', 'error'], 'thread/trajectory/export response');
+  return deepFreeze({
+    status,
+    error: stringValue(record.error, 'thread/trajectory/export response.error'),
+  });
+}
+
+function decodeThreadTrajectorySummary(value: unknown, path: string): ThreadTrajectorySummary {
+  const record = recordValue(value, path);
+  exactKeys(record, [
+    'threadId',
+    'turnCount',
+    'recordCount',
+    'inputCount',
+    'contextCount',
+    'assistantCount',
+    'toolCount',
+    'retryCount',
+    'compactionCount',
+    'delegationCount',
+    'startedAt',
+    'completedAt',
+    'durationMs',
+    'usage',
+    'availability',
+  ], path);
+  const usage = record.usage === null
+    ? null
+    : decodeThreadTrajectoryUsageSummary(record.usage, `${path}.usage`);
+  return {
+    threadId: uuidV7(record.threadId, `${path}.threadId`),
+    turnCount: nonNegativeInteger(record.turnCount, `${path}.turnCount`),
+    recordCount: nonNegativeInteger(record.recordCount, `${path}.recordCount`),
+    inputCount: nonNegativeInteger(record.inputCount, `${path}.inputCount`),
+    contextCount: nonNegativeInteger(record.contextCount, `${path}.contextCount`),
+    assistantCount: nonNegativeInteger(record.assistantCount, `${path}.assistantCount`),
+    toolCount: nonNegativeInteger(record.toolCount, `${path}.toolCount`),
+    retryCount: nonNegativeInteger(record.retryCount, `${path}.retryCount`),
+    compactionCount: nonNegativeInteger(record.compactionCount, `${path}.compactionCount`),
+    delegationCount: nonNegativeInteger(record.delegationCount, `${path}.delegationCount`),
+    startedAt: nullableNumber(record.startedAt, `${path}.startedAt`),
+    completedAt: nullableNumber(record.completedAt, `${path}.completedAt`),
+    durationMs: nullableNumber(record.durationMs, `${path}.durationMs`),
+    usage,
+    availability: decodeThreadTrajectoryAvailabilityList(record.availability, `${path}.availability`),
+  };
+}
+
+function decodeThreadTrajectoryRecordSummary(value: unknown, path: string): ThreadTrajectoryRecordSummary {
+  const record = recordValue(value, path);
+  exactKeys(record, [
+    'id',
+    'kind',
+    'lane',
+    'threadId',
+    'turnId',
+    'sequence',
+    'parentRecordId',
+    'title',
+    'subtitle',
+    'preview',
+    'state',
+    'timing',
+    'usage',
+    'primaryEvidence',
+    'relatedEvidence',
+    'availability',
+    'childThreadId',
+  ], path);
+  const threadId = uuidV7(record.threadId, `${path}.threadId`);
+  const turnId = uuidV7(record.turnId, `${path}.turnId`);
+  const primaryEvidence = decodeThreadTrajectoryEvidenceRef(record.primaryEvidence, `${path}.primaryEvidence`);
+  if (primaryEvidence.threadId !== threadId || primaryEvidence.turnId !== turnId) {
+    fail(`${path}.primaryEvidence`, 'must be owned by the record Thread and Turn');
+  }
+  const relatedEvidence = arrayValue(record.relatedEvidence, `${path}.relatedEvidence`)
+    .map((entry, index) => decodeThreadTrajectoryEvidenceRef(entry, `${path}.relatedEvidence[${index}]`));
+  relatedEvidence.forEach((entry, index) => {
+    if (entry.threadId !== threadId || entry.turnId !== turnId) {
+      fail(`${path}.relatedEvidence[${index}]`, 'must be owned by the record Thread and Turn');
+    }
+  });
+  return {
+    id: stringValue(record.id, `${path}.id`),
+    kind: enumValue(record.kind, THREAD_TRAJECTORY_RECORD_KINDS, `${path}.kind`),
+    lane: enumValue(record.lane, THREAD_TRAJECTORY_LANES, `${path}.lane`),
+    threadId,
+    turnId,
+    sequence: nonNegativeInteger(record.sequence, `${path}.sequence`),
+    parentRecordId: nullableString(record.parentRecordId, `${path}.parentRecordId`),
+    title: stringValue(record.title, `${path}.title`),
+    subtitle: nullableString(record.subtitle, `${path}.subtitle`, true),
+    preview: nullableString(record.preview, `${path}.preview`, true),
+    state: enumValue(record.state, THREAD_TRAJECTORY_RECORD_STATES, `${path}.state`),
+    timing: decodeThreadTrajectoryTimingSummary(record.timing, `${path}.timing`),
+    usage: record.usage === null
+      ? null
+      : decodeThreadTrajectoryUsageSummary(record.usage, `${path}.usage`),
+    primaryEvidence,
+    relatedEvidence,
+    availability: decodeThreadTrajectoryAvailabilityList(record.availability, `${path}.availability`),
+    childThreadId: nullableUuidV7(record.childThreadId, `${path}.childThreadId`),
+  };
+}
+
+function decodeThreadTrajectoryTimingSummary(value: unknown, path: string): ThreadTrajectoryTimingSummary {
+  const record = recordValue(value, path);
+  exactKeys(record, ['startedAt', 'firstTokenAt', 'completedAt', 'durationMs'], path);
+  const startedAt = nullableNumber(record.startedAt, `${path}.startedAt`);
+  const firstTokenAt = nullableNumber(record.firstTokenAt, `${path}.firstTokenAt`);
+  const completedAt = nullableNumber(record.completedAt, `${path}.completedAt`);
+  const durationMs = nullableNumber(record.durationMs, `${path}.durationMs`);
+  if (startedAt !== null && firstTokenAt !== null && firstTokenAt < startedAt) {
+    fail(`${path}.firstTokenAt`, 'cannot precede startedAt');
+  }
+  if (startedAt !== null && completedAt !== null && completedAt < startedAt) {
+    fail(`${path}.completedAt`, 'cannot precede startedAt');
+  }
+  return { startedAt, firstTokenAt, completedAt, durationMs };
+}
+
+function decodeThreadTrajectoryUsageSummary(value: unknown, path: string): ThreadTrajectoryUsageSummary {
+  const record = recordValue(value, path);
+  exactKeys(record, ['input', 'output', 'cacheRead', 'cacheWrite', 'reasoning', 'totalTokens', 'costUsd'], path);
+  const input = nonNegativeInteger(record.input, `${path}.input`);
+  const output = nonNegativeInteger(record.output, `${path}.output`);
+  const cacheRead = nonNegativeInteger(record.cacheRead, `${path}.cacheRead`);
+  const cacheWrite = nonNegativeInteger(record.cacheWrite, `${path}.cacheWrite`);
+  const totalTokens = nonNegativeInteger(record.totalTokens, `${path}.totalTokens`);
+  if (totalTokens < input + output + cacheRead + cacheWrite) {
+    fail(`${path}.totalTokens`, 'must cover input, output, cache-read, and cache-write tokens');
+  }
+  return {
+    input,
+    output,
+    cacheRead,
+    cacheWrite,
+    reasoning: nullableNonNegativeInteger(record.reasoning, `${path}.reasoning`),
+    totalTokens,
+    costUsd: record.costUsd === null ? null : nonNegativeNumber(record.costUsd, `${path}.costUsd`),
+  };
+}
+
+function decodeThreadTrajectoryAvailabilityList(value: unknown, path: string): readonly ThreadTrajectoryAvailability[] {
+  return arrayValue(value, path).map((entry, index) => {
+    const entryPath = `${path}[${index}]`;
+    const record = recordValue(entry, entryPath);
+    exactKeys(record, ['reason', 'message'], entryPath);
+    return {
+      reason: enumValue(record.reason, THREAD_TRAJECTORY_AVAILABILITY_REASONS, `${entryPath}.reason`),
+      message: stringValue(record.message, `${entryPath}.message`),
+    };
+  });
+}
+
+function decodeThreadTrajectoryEvidenceRef(value: unknown, path: string): ThreadTrajectoryEvidenceRef {
+  const record = recordValue(value, path);
+  const type = enumValue(
+    record.type,
+    ['providerCall', 'threadItem', 'diagnosticActivity', 'threadTurn', 'subagent'],
+    `${path}.type`,
+  );
+  const threadId = uuidV7(record.threadId, `${path}.threadId`);
+  const turnId = uuidV7(record.turnId, `${path}.turnId`);
+  if (type === 'providerCall') {
+    exactKeys(record, ['type', 'threadId', 'turnId', 'callIndex'], path);
+    return {
+      type,
+      threadId,
+      turnId,
+      callIndex: nonNegativeInteger(record.callIndex, `${path}.callIndex`),
+    };
+  }
+  if (type === 'threadItem') {
+    exactKeys(record, ['type', 'threadId', 'turnId', 'itemId'], path);
+    return { type, threadId, turnId, itemId: stringValue(record.itemId, `${path}.itemId`) };
+  }
+  if (type === 'diagnosticActivity') {
+    exactKeys(record, ['type', 'threadId', 'turnId', 'activityIndex', 'activityType'], path);
+    return {
+      type,
+      threadId,
+      turnId,
+      activityIndex: nonNegativeInteger(record.activityIndex, `${path}.activityIndex`),
+      activityType: enumValue(
+        record.activityType,
+        ['acceptedInput', 'modelCall', 'toolExecutionBatch', 'providerRetry', 'contextCompaction'],
+        `${path}.activityType`,
+      ),
+    };
+  }
+  if (type === 'threadTurn') {
+    exactKeys(record, ['type', 'threadId', 'turnId'], path);
+    return { type, threadId, turnId };
+  }
+  exactKeys(record, ['type', 'threadId', 'turnId', 'agentThreadId', 'itemId'], path);
+  return {
+    type,
+    threadId,
+    turnId,
+    agentThreadId: uuidV7(record.agentThreadId, `${path}.agentThreadId`),
+    itemId: nullableString(record.itemId, `${path}.itemId`),
+  };
+}
+
+function decodeThreadTrajectoryRecordDetail(
+  value: unknown,
+  summary: ThreadTrajectoryRecordSummary,
+  path: string,
+): ThreadTrajectoryRecordDetail {
+  if (value === null) fail(path, 'is required when a record is present');
+  const record = recordValue(value, path);
+  const kind = enumValue(record.kind, THREAD_TRAJECTORY_RECORD_KINDS, `${path}.kind`);
+  if (kind !== summary.kind) fail(`${path}.kind`, 'must match the record summary');
+  if (kind === 'input') {
+    exactKeys(record, ['kind', 'turn', 'items', 'diagnostics', 'activityIndex'], path);
+    const turn = decodeTrajectoryDetailTurn(record.turn, summary, path);
+    const diagnostics = decodeThreadTrajectoryDiagnostics(record.diagnostics, `${path}.diagnostics`);
+    const activityIndex = nullableNonNegativeInteger(record.activityIndex, `${path}.activityIndex`);
+    validateTrajectoryActivityEvidence(diagnostics?.activity ?? null, activityIndex, 'acceptedInput', `${path}.activityIndex`);
+    return {
+      kind,
+      turn,
+      items: arrayValue(record.items, `${path}.items`)
+        .map((entry, index) => decodeThreadTrajectoryItemEvidence(entry, `${path}.items[${index}]`)),
+      diagnostics,
+      activityIndex,
+    };
+  }
+  if (kind === 'context') {
+    exactKeys(record, ['kind', 'turn', 'item', 'payload'], path);
+    return {
+      kind,
+      turn: decodeTrajectoryDetailTurn(record.turn, summary, path),
+      item: record.item === null ? null : decodeThreadTrajectoryItemEvidence(record.item, `${path}.item`),
+      payload: record.payload === null ? null : jsonValue(record.payload, `${path}.payload`),
+    };
+  }
+  if (kind === 'assistant') {
+    exactKeys(record, ['kind', 'turn', 'diagnostics', 'providerCallIndex', 'relatedItems'], path);
+    const turn = decodeTrajectoryDetailTurn(record.turn, summary, path);
+    const diagnostics = decodeThreadTrajectoryDiagnostics(record.diagnostics, `${path}.diagnostics`);
+    const providerCallIndex = nonNegativeInteger(record.providerCallIndex, `${path}.providerCallIndex`);
+    if (diagnostics?.providerCall && diagnostics.providerCall.index !== providerCallIndex) {
+      fail(`${path}.providerCallIndex`, 'must match the retained provider-call evidence');
+    }
+    return {
+      kind,
+      turn,
+      diagnostics,
+      providerCallIndex,
+      relatedItems: arrayValue(record.relatedItems, `${path}.relatedItems`)
+        .map((entry, index) => decodeThreadTrajectoryItemEvidence(entry, `${path}.relatedItems[${index}]`)),
+    };
+  }
+  if (kind === 'tool') {
+    exactKeys(record, ['kind', 'turn', 'item', 'diagnostics', 'activityIndex', 'executionCallId', 'outputText'], path);
+    const turn = decodeTrajectoryDetailTurn(record.turn, summary, path);
+    const diagnostics = decodeThreadTrajectoryDiagnostics(record.diagnostics, `${path}.diagnostics`);
+    const activityIndex = nullableNonNegativeInteger(record.activityIndex, `${path}.activityIndex`);
+    validateTrajectoryActivityEvidence(diagnostics?.activity ?? null, activityIndex, 'toolExecutionBatch', `${path}.activityIndex`);
+    return {
+      kind,
+      turn,
+      item: record.item === null ? null : decodeThreadTrajectoryItemEvidence(record.item, `${path}.item`),
+      diagnostics,
+      activityIndex,
+      executionCallId: nullableString(record.executionCallId, `${path}.executionCallId`),
+      outputText: nullableString(record.outputText, `${path}.outputText`, true),
+    };
+  }
+  if (kind === 'retry') {
+    exactKeys(record, ['kind', 'turn', 'diagnostics', 'activityIndex'], path);
+    const turn = decodeTrajectoryDetailTurn(record.turn, summary, path);
+    const diagnostics = decodeThreadTrajectoryDiagnostics(record.diagnostics, `${path}.diagnostics`);
+    const activityIndex = nullableNonNegativeInteger(record.activityIndex, `${path}.activityIndex`);
+    validateTrajectoryActivityEvidence(diagnostics?.activity ?? null, activityIndex, 'providerRetry', `${path}.activityIndex`);
+    return { kind, turn, diagnostics, activityIndex };
+  }
+  if (kind === 'compaction') {
+    exactKeys(record, ['kind', 'turn', 'item', 'diagnostics', 'activityIndex'], path);
+    const turn = decodeTrajectoryDetailTurn(record.turn, summary, path);
+    const diagnostics = decodeThreadTrajectoryDiagnostics(record.diagnostics, `${path}.diagnostics`);
+    const activityIndex = nullableNonNegativeInteger(record.activityIndex, `${path}.activityIndex`);
+    validateTrajectoryActivityEvidence(diagnostics?.activity ?? null, activityIndex, 'contextCompaction', `${path}.activityIndex`);
+    return {
+      kind,
+      turn,
+      item: record.item === null ? null : decodeThreadTrajectoryItemEvidence(record.item, `${path}.item`),
+      diagnostics,
+      activityIndex,
+    };
+  }
+  exactKeys(record, [
+    'kind', 'turn', 'item', 'diagnostics', 'activityIndex', 'executionCallId', 'childThreadId',
+  ], path);
+  const turn = decodeTrajectoryDetailTurn(record.turn, summary, path);
+  const diagnostics = decodeThreadTrajectoryDiagnostics(record.diagnostics, `${path}.diagnostics`);
+  const activityIndex = nullableNonNegativeInteger(record.activityIndex, `${path}.activityIndex`);
+  validateTrajectoryActivityEvidence(diagnostics?.activity ?? null, activityIndex, 'toolExecutionBatch', `${path}.activityIndex`);
+  return {
+    kind,
+    turn,
+    item: record.item === null ? null : decodeThreadTrajectoryItemEvidence(record.item, `${path}.item`),
+    diagnostics,
+    activityIndex,
+    executionCallId: nullableString(record.executionCallId, `${path}.executionCallId`),
+    childThreadId: nullableUuidV7(record.childThreadId, `${path}.childThreadId`),
+  };
+}
+
+function decodeTrajectoryDetailTurn(
+  value: unknown,
+  summary: ThreadTrajectoryRecordSummary,
+  path: string,
+): ThreadTrajectoryTurnEvidence {
+  const turn = decodeThreadTrajectoryTurnEvidence(value, `${path}.turn`);
+  if (turn.id !== summary.turnId) fail(`${path}.turn.id`, 'must match the record summary');
+  return turn;
+}
+
+function decodeThreadTrajectoryTurnEvidence(value: unknown, path: string): ThreadTrajectoryTurnEvidence {
+  const record = recordValue(value, path);
+  exactKeys(record, [
+    'id',
+    'status',
+    'error',
+    'startedAt',
+    'completedAt',
+    'durationMs',
+    'modelProvider',
+    'model',
+    'reasoningEffort',
+  ], path);
+  const status = enumValue(record.status, ['inProgress', 'completed', 'interrupted', 'failed'], `${path}.status`);
+  const completedAt = nullableNumber(record.completedAt, `${path}.completedAt`);
+  if (status === 'inProgress' && completedAt !== null) {
+    fail(`${path}.completedAt`, 'an in-progress Turn cannot have a completion time');
+  }
+  if (status !== 'inProgress' && completedAt === null) {
+    fail(`${path}.completedAt`, 'a terminal Turn requires a completion time');
+  }
+  return {
+    id: uuidV7(record.id, `${path}.id`),
+    status,
+    error: decodeTurnError(record.error),
+    startedAt: finiteNumber(record.startedAt, `${path}.startedAt`),
+    completedAt,
+    durationMs: nullableNumber(record.durationMs, `${path}.durationMs`),
+    modelProvider: stringValue(record.modelProvider, `${path}.modelProvider`),
+    model: stringValue(record.model, `${path}.model`),
+    reasoningEffort: enumValue(record.reasoningEffort, REASONING_EFFORTS, `${path}.reasoningEffort`),
+  };
+}
+
+function decodeThreadTrajectoryItemEvidence(value: unknown, path: string): ThreadTrajectoryItemEvidence {
+  const record = recordValue(value, path);
+  exactKeys(record, ['itemId', 'type', 'title', 'preview', 'status'], path);
+  return {
+    itemId: stringValue(record.itemId, `${path}.itemId`),
+    type: enumValue(record.type, THREAD_ITEM_TYPES, `${path}.type`),
+    title: stringValue(record.title, `${path}.title`),
+    preview: nullableString(record.preview, `${path}.preview`, true),
+    status: record.status === null ? null : itemExecutionStatus(record.status, `${path}.status`),
+  };
+}
+
+function decodeThreadTrajectoryDiagnostics(
+  value: unknown,
+  path: string,
+): ThreadTrajectoryDiagnosticsEvidence | null {
+  if (value === null) return null;
+  const record = recordValue(value, path);
+  exactKeys(record, ['ref', 'runtime', 'activity', 'providerCall'], path);
+  const ref = decodeTurnDiagnosticsPayloadReference(record.ref, `${path}.ref`);
+  return {
+    ref,
+    runtime: decodeThreadTrajectoryRuntimeEvidence(record.runtime, `${path}.runtime`),
+    activity: record.activity === null ? null : jsonValue(record.activity, `${path}.activity`),
+    providerCall: record.providerCall === null
+      ? null
+      : decodeThreadTrajectoryProviderCallEvidence(record.providerCall, `${path}.providerCall`),
+  };
+}
+
+function decodeThreadTrajectoryRuntimeEvidence(value: unknown, path: string): ThreadTrajectoryRuntimeEvidence {
+  const record = recordValue(value, path);
+  exactKeys(record, [
+    'provider',
+    'model',
+    'api',
+    'transportSelection',
+    'contextWindow',
+    'maxOutputTokens',
+    'thinkingLevel',
+    'timeoutMs',
+    'maxRetries',
+    'maxRetryDelayMs',
+    'cacheRetention',
+    'toolExecution',
+    'steeringMode',
+  ], path);
+  return {
+    provider: stringValue(record.provider, `${path}.provider`),
+    model: stringValue(record.model, `${path}.model`),
+    api: stringValue(record.api, `${path}.api`),
+    transportSelection: enumValue(
+      record.transportSelection,
+      ['sse', 'websocket', 'websocket-cached', 'auto'],
+      `${path}.transportSelection`,
+    ),
+    contextWindow: nonNegativeInteger(record.contextWindow, `${path}.contextWindow`),
+    maxOutputTokens: nonNegativeInteger(record.maxOutputTokens, `${path}.maxOutputTokens`),
+    thinkingLevel: stringValue(record.thinkingLevel, `${path}.thinkingLevel`),
+    timeoutMs: nullableNonNegativeInteger(record.timeoutMs, `${path}.timeoutMs`),
+    maxRetries: nullableNonNegativeInteger(record.maxRetries, `${path}.maxRetries`),
+    maxRetryDelayMs: nullableNonNegativeInteger(record.maxRetryDelayMs, `${path}.maxRetryDelayMs`),
+    cacheRetention: enumValue(record.cacheRetention, ['none', 'short', 'long'], `${path}.cacheRetention`),
+    toolExecution: enumValue(record.toolExecution, ['parallel'], `${path}.toolExecution`),
+    steeringMode: enumValue(record.steeringMode, ['all'], `${path}.steeringMode`),
+  };
+}
+
+function decodeThreadTrajectoryProviderCallEvidence(
+  value: unknown,
+  path: string,
+): ThreadTrajectoryProviderCallEvidence {
+  const record = recordValue(value, path);
+  exactKeys(record, [
+    'index',
+    'requestedAt',
+    'estimatedInputTokens',
+    'inputTokenLimit',
+    'reservedOutputTokens',
+    'commonPrefixMessageCount',
+    'requestFingerprint',
+    'cacheBreakpoints',
+    'request',
+    'response',
+    'transportResponse',
+  ], path);
+  return {
+    index: nonNegativeInteger(record.index, `${path}.index`),
+    requestedAt: nonNegativeNumber(record.requestedAt, `${path}.requestedAt`),
+    estimatedInputTokens: nonNegativeInteger(record.estimatedInputTokens, `${path}.estimatedInputTokens`),
+    inputTokenLimit: nonNegativeInteger(record.inputTokenLimit, `${path}.inputTokenLimit`),
+    reservedOutputTokens: nonNegativeInteger(record.reservedOutputTokens, `${path}.reservedOutputTokens`),
+    commonPrefixMessageCount: nonNegativeInteger(record.commonPrefixMessageCount, `${path}.commonPrefixMessageCount`),
+    requestFingerprint: sha256(record.requestFingerprint, `${path}.requestFingerprint`),
+    cacheBreakpoints: arrayValue(record.cacheBreakpoints, `${path}.cacheBreakpoints`)
+      .map((entry, index) => sha256(entry, `${path}.cacheBreakpoints[${index}]`)),
+    request: record.request === null ? null : jsonValue(record.request, `${path}.request`),
+    response: record.response === null ? null : jsonValue(record.response, `${path}.response`),
+    transportResponse: record.transportResponse === null
+      ? null
+      : decodeTurnDiagnosticsTransportResponse(record.transportResponse, `${path}.transportResponse`),
+  };
+}
+
+function validateTrajectoryActivityEvidence(
+  activity: JsonValue | null,
+  index: number | null,
+  expectedType: TurnDiagnosticsPayload['activities'][number]['type'],
+  path: string,
+): void {
+  if (index === null || activity === null) return;
+  if (typeof activity !== 'object' || Array.isArray(activity)) {
+    fail(path, `must reference a ${expectedType} activity`);
+  }
+  const activityType = (activity as { readonly type?: JsonValue }).type;
+  if (activityType !== expectedType) {
+    fail(path, `must reference a ${expectedType} activity`);
+  }
 }
 
 function decodeTurnStartResponse(value: unknown): AgentCoreResponseByMethod['turn/start'] {

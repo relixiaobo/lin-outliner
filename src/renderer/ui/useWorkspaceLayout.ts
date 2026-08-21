@@ -8,7 +8,7 @@ import type {
   FilePreviewPresentation,
   OutlinerPanelView,
   PanelView,
-  ThreadTurnDetailsPanelView,
+  ThreadTrajectoryPanelView,
   WorkspaceContentPanelState,
   WorkspaceLayout,
   WorkspacePanelState,
@@ -78,8 +78,16 @@ function filePreviewView(
   }, scrollTop);
 }
 
-function threadTurnDetailsView(threadId: string, turnId: string): ThreadTurnDetailsPanelView {
-  return { kind: 'thread-turn-details', threadId, turnId };
+function threadTrajectoryView(
+  threadId: string,
+  focus?: { readonly selectedRecordId?: string; readonly turnId?: string },
+): ThreadTrajectoryPanelView {
+  return {
+    kind: 'thread-trajectory',
+    threadId,
+    ...(focus?.selectedRecordId ? { selectedRecordId: focus.selectedRecordId } : {}),
+    ...(focus?.turnId ? { turnId: focus.turnId } : {}),
+  };
 }
 
 function isWorkspacePanel(
@@ -105,7 +113,9 @@ function viewOutlineRootId(view: PanelView): NodeId | null {
 
 function panelViewKey(view: PanelView): string {
   if (view.kind === 'outliner') return `outliner:${view.rootId}`;
-  if (view.kind === 'thread-turn-details') return `thread-turn-details:${view.threadId}:${view.turnId}`;
+  if (view.kind === 'thread-trajectory') {
+    return `thread-trajectory:${view.threadId}:${view.selectedRecordId ?? ''}:${view.turnId ?? ''}`;
+  }
   if (view.nodeId) return `file-preview-node:${view.nodeId}:${view.presentation ?? 'node'}`;
   return `file-preview:${previewTargetKey(view.target)}:${view.presentation ?? 'default'}`;
 }
@@ -184,10 +194,14 @@ function sanitizePanelView(value: unknown, nodeIds: NodeLookup): PanelView | nul
     // its outliner node. Drop legacy asset-targeted previews that have no node id.
     return target && (target.kind !== 'asset' || nodeId) ? filePreviewView(target, nodeId, scrollTop, presentation) : null;
   }
-  if (value.kind === 'thread-turn-details') {
+  if (value.kind === 'thread-trajectory') {
     return typeof value.threadId === 'string' && value.threadId.length > 0
-      && typeof value.turnId === 'string' && value.turnId.length > 0
-      ? threadTurnDetailsView(value.threadId, value.turnId)
+      ? threadTrajectoryView(value.threadId, {
+        ...(typeof value.selectedRecordId === 'string' && value.selectedRecordId.length > 0
+          ? { selectedRecordId: value.selectedRecordId }
+          : {}),
+        ...(typeof value.turnId === 'string' && value.turnId.length > 0 ? { turnId: value.turnId } : {}),
+      })
       : null;
   }
   return null;
@@ -748,15 +762,18 @@ export function useWorkspaceLayout({
     focusNode(nodeId);
   }, [canFitPanelCount, focusNode, panels, preparePanelCount, rootId]);
 
-  const openThreadTurnDetailsPanel = useCallback((threadId: string, turnId: string) => {
+  const openThreadTrajectoryPanel = useCallback((
+    threadId: string,
+    focus?: { readonly selectedRecordId?: string; readonly turnId?: string },
+  ) => {
     const targetPanel = panels.find((panel) => panel.id === activePanelId) ?? panels[0];
     if (!targetPanel) return;
-    const nextView = threadTurnDetailsView(threadId, turnId);
+    const nextView = threadTrajectoryView(threadId, focus);
     setActivePanelId(targetPanel.id);
     setPanels((prev) => prev.map((panel) => {
       if (panel.id !== targetPanel.id) return panel;
       if (samePanelView(panel.view, nextView)) return panel;
-      if (panel.view.kind === 'thread-turn-details') {
+      if (panel.view.kind === 'thread-trajectory') {
         return { ...panel, view: nextView };
       }
       return navigateWorkspacePanel(panel, nextView);
@@ -819,7 +836,7 @@ export function useWorkspaceLayout({
     const nextScrollTop = normalizeScrollTop(scrollTop);
     setPanels((prev) => prev.map((panel) => {
       if (panel.id !== panelId || !isWorkspacePanel(panel)) return panel;
-      if (panel.view.kind === 'thread-turn-details') return panel;
+      if (panel.view.kind === 'thread-trajectory') return panel;
       if (panel.view.scrollTop === nextScrollTop) return panel;
       return { ...panel, view: withScrollTop(panel.view, nextScrollTop) };
     }));
@@ -842,7 +859,7 @@ export function useWorkspaceLayout({
     navigateRoot,
     openPanel,
     openPreview,
-    openThreadTurnDetailsPanel,
+    openThreadTrajectoryPanel,
     panels,
     repairInvalidPanelViews,
     resizePanelPair,

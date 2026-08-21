@@ -19,6 +19,7 @@ import {
   BackIcon,
   ChevronDownIcon,
   ICON_SIZE,
+  ListIcon,
   ScheduledIcon,
   SettingsIcon,
   WarningIcon,
@@ -50,7 +51,7 @@ interface ThreadDockProps {
   readonly indexStore: DocumentIndexStore;
   readonly railState: ThreadRailState;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
-  readonly onOpenTurnDetails: (threadId: string, turnId: string) => void;
+  readonly onOpenTurnDetails: (threadId: string, turnId?: string) => void;
   readonly onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
   readonly onResizeReset: () => void;
   readonly onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
@@ -452,6 +453,19 @@ export const ThreadDock = memo(function ThreadDock({
           ) : null}
           {surface === 'thread' && openAgentId === null ? (
             <SubagentWorkStrip byAgentId={subagentProjection.byAgentId} />
+          ) : null}
+          {surface === 'thread' && openAgentId === null && thread ? (
+            <IconButton
+              className="thread-dock-surface-action"
+              icon={ListIcon}
+              label={t.agent.trajectory.title}
+              onClick={() => {
+                setListOpen(false);
+                onOpenTurnDetails(thread.id);
+              }}
+              strokeWidth={1.7}
+              variant="chrome"
+            />
           ) : null}
           {surface === 'thread' && openAgentId === null ? (
             <IconButton

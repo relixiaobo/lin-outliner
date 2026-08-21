@@ -461,7 +461,7 @@ staged fork. The copied Thread therefore remains
 readable after its source is deleted. Content-addressed resource references do not
 contain a Thread path and remain unchanged in the copied Items and payloads. Every
 terminal Turn's diagnostics payload is copied under the fork's ownership with the same
-content-addressed reference before publication, so Turn Diagnostics also remains readable
+content-addressed reference before publication, so Trajectory and audited diagnostics remain readable
 after source deletion.
 
 ## Persistence
@@ -703,8 +703,8 @@ The renderer uses one request channel and one notification channel. Methods are
 grouped by the concept they own:
 
 - `thread/*`: list, read, start, resume, fork, rollback, name, archive, delete, paged
-  Turn/Item reads, exact full-output and context-evidence reads, and authoritative
-  Turn Diagnostics reads
+  Turn/Item reads, exact full-output and context-evidence reads, authoritative
+  audited diagnostics reads, and Trajectory projection/detail/export reads
 - `turn/*`: start, steer, and interrupt
 - `goal/*`: get, create, and update
 - `userInput/respond`: resolve an active structured input request
@@ -724,7 +724,27 @@ diagnostics reference. A Turn without a reference returns `diagnostics: null`; a
 with a reference must return the exact matching payload or fail. Missing bytes,
 digest/length corruption, a mismatched reference, unknown diagnostics fields, and an
 invalid payload version fail closed. Renderer code cannot read diagnostics by digest
-alone.
+alone. This is an audited raw evidence reader, not the product workspace route.
+
+`thread/trajectory/read` builds a Thread-wide, inspection-only projection from
+canonical Turns plus retained evidence. It returns only `threadId`, a summary, a
+tail-first page of ordered records, paging state, and the selected record. Record
+kinds are `input`, `context`, `assistant`, `tool`, `retry`, `compaction`, and
+`delegation`. Assistant records use provider-call evidence as their primary
+identity; tool and runtime records use diagnostic activities when retained and
+degrade to canonical Item evidence when not.
+
+`thread/trajectory/detail/read` returns sanitized evidence for one record. It
+does not return full `Thread`, `Turn`, `ThreadItem`, or raw diagnostics payloads.
+It may return bounded Turn/Item evidence, sanitized runtime facts, sanitized
+provider-call request/response values, sanitized activity evidence, sanitized
+context payloads, and sanitized/truncated tool output. It must not expose host
+filesystem paths, payload storage paths, digest-only read authority, raw secrets,
+credentials, arbitrary response headers, or image bytes.
+
+`thread/trajectory/export` writes the same sanitized projection from main and
+returns only status, file name, and byte length. The renderer never receives the
+absolute export path.
 
 Recorded lifecycle notifications are the only notifications accepted by
 rollout and history projection stores. `thread/name/updated`, provider-retry
@@ -765,11 +785,11 @@ enter Core stores. See [`agent-automations.md`](agent-automations.md).
 ## Renderer Detail Surfaces
 
 Thread Details describes the durable Thread container and its Thread-level controls.
-Turn Diagnostics is the complete diagnostic surface for one canonical Turn. It receives one
-main-owned snapshot containing the same Thread, full Turn, Items, and immutable
-provider-boundary diagnostics used by execution. It does not recreate the retired
-conversation/run/round debug projection, derive history from renderer pagination, or
-introduce an alternative execution ledger. The exact page contract lives in
+Trajectory is the complete technical surface for a canonical Thread. It receives a
+main-owned sanitized projection over the same canonical Turns, retained diagnostics,
+context payloads, and output references used by execution. It does not recreate the
+retired conversation/run/round debug projection, derive history from renderer
+pagination, or introduce an alternative execution ledger. The exact page contract lives in
 [`agent-thread-rendering.md`](agent-thread-rendering.md).
 
 ## Document Drift Notice

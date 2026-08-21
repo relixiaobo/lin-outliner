@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 describe('useWorkspaceLayout history focus', () => {
-  test('opens Turn Diagnostics in the current pane and preserves Back navigation', () => {
+  test('opens Trajectory in the current pane and preserves Back navigation', () => {
     const h = renderLayout({
       activePanelId: 'panel-test',
       panels: [{
@@ -33,26 +33,26 @@ describe('useWorkspaceLayout history focus', () => {
     });
 
     act(() => {
-      h.api.openThreadTurnDetailsPanel('thread-alpha', 'turn-one');
+      h.api.openThreadTrajectoryPanel('thread-alpha', { turnId: 'turn-one' });
     });
 
     expect(h.api.panels).toHaveLength(1);
     expect(h.api.panels[0]).toMatchObject({
       id: 'panel-test',
       type: 'workspace',
-      view: { kind: 'thread-turn-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+      view: { kind: 'thread-trajectory', threadId: 'thread-alpha', turnId: 'turn-one' },
       backStack: [{ kind: 'outliner', rootId: 'today' }],
       forwardStack: [],
     });
     expect(h.api.activePanelId).toBe('panel-test');
 
     act(() => {
-      h.api.openThreadTurnDetailsPanel('thread-beta', 'turn-two');
+      h.api.openThreadTrajectoryPanel('thread-beta', { turnId: 'turn-two' });
     });
 
     expect(h.api.panels).toHaveLength(1);
     expect(h.api.panels[0]).toMatchObject({
-      view: { kind: 'thread-turn-details', threadId: 'thread-beta', turnId: 'turn-two' },
+      view: { kind: 'thread-trajectory', threadId: 'thread-beta', turnId: 'turn-two' },
       backStack: [{ kind: 'outliner', rootId: 'today' }],
     });
     expect(h.clearFocusAndSelectionCalls).toBe(2);
@@ -62,18 +62,18 @@ describe('useWorkspaceLayout history focus', () => {
     });
     expect(h.api.panels[0]).toMatchObject({
       view: { kind: 'outliner', rootId: 'today' },
-      forwardStack: [{ kind: 'thread-turn-details', threadId: 'thread-beta', turnId: 'turn-two' }],
+      forwardStack: [{ kind: 'thread-trajectory', threadId: 'thread-beta', turnId: 'turn-two' }],
     });
   });
 
-  test('restores a same-day Turn Diagnostics view with its outliner history', () => {
+  test('restores a same-day Trajectory view with its outliner history', () => {
     const h = renderLayout({
       activePanelId: 'panel-debug',
       panels: [{
         id: 'panel-debug',
         type: 'workspace',
         size: 1,
-        view: { kind: 'thread-turn-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+        view: { kind: 'thread-trajectory', threadId: 'thread-alpha', turnId: 'turn-one' },
         backStack: [{ kind: 'outliner', rootId: 'today' }],
         forwardStack: [],
       }],
@@ -84,7 +84,7 @@ describe('useWorkspaceLayout history focus', () => {
       id: 'panel-debug',
       type: 'workspace',
       size: 1,
-      view: { kind: 'thread-turn-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+      view: { kind: 'thread-trajectory', threadId: 'thread-alpha', turnId: 'turn-one' },
       backStack: [{ kind: 'outliner', rootId: 'today' }],
       forwardStack: [],
     });
@@ -105,7 +105,7 @@ describe('useWorkspaceLayout history focus', () => {
           { kind: 'outliner', rootId: 'today', scrollTop: 120 },
           { kind: 'outliner', rootId: 'missing' },
           { kind: 'outliner', rootId: 'alpha', scrollTop: 240 },
-          { kind: 'thread-turn-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+          { kind: 'thread-trajectory', threadId: 'thread-alpha', turnId: 'turn-one' },
         ],
         forwardStack: [{ kind: 'outliner', rootId: 'today', scrollTop: 360 }],
       }],
@@ -121,7 +121,7 @@ describe('useWorkspaceLayout history focus', () => {
       backStack: [{ kind: 'outliner', rootId: 'today', scrollTop: 120 }],
       forwardStack: [
         { kind: 'outliner', rootId: 'today', scrollTop: 360 },
-        { kind: 'thread-turn-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+        { kind: 'thread-trajectory', threadId: 'thread-alpha', turnId: 'turn-one' },
       ],
     }]);
   });
@@ -325,7 +325,7 @@ describe('useWorkspaceLayout history focus', () => {
     expect(h.api.panels.map((panel) => panel.id)).toEqual(['panel-first', 'panel-second']);
   });
 
-  test('global root navigation leaves active Turn Diagnostics and reuses an existing outliner pane', () => {
+  test('global root navigation leaves active Trajectory and reuses an existing outliner pane', () => {
     const h = renderLayout({
       activePanelId: 'panel-details',
       panels: [
@@ -341,7 +341,7 @@ describe('useWorkspaceLayout history focus', () => {
           id: 'panel-details',
           type: 'workspace',
           size: 1,
-          view: { kind: 'thread-turn-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+          view: { kind: 'thread-trajectory', threadId: 'thread-alpha', turnId: 'turn-one' },
           backStack: [{ kind: 'outliner', rootId: 'alpha' }],
           forwardStack: [],
         },
@@ -366,21 +366,21 @@ describe('useWorkspaceLayout history focus', () => {
         id: 'panel-details',
         type: 'workspace',
         size: 1,
-        view: { kind: 'thread-turn-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+        view: { kind: 'thread-trajectory', threadId: 'thread-alpha', turnId: 'turn-one' },
         backStack: [{ kind: 'outliner', rootId: 'alpha' }],
         forwardStack: [],
       },
     ]);
   });
 
-  test('global root navigation adds an outliner beside a lone Turn Diagnostics pane', () => {
+  test('global root navigation adds an outliner beside a lone Trajectory pane', () => {
     const h = renderLayout({
       activePanelId: 'panel-details',
       panels: [{
         id: 'panel-details',
         type: 'workspace',
         size: 1,
-        view: { kind: 'thread-turn-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+        view: { kind: 'thread-trajectory', threadId: 'thread-alpha', turnId: 'turn-one' },
         backStack: [{ kind: 'outliner', rootId: 'today' }],
         forwardStack: [],
       }],
@@ -393,7 +393,7 @@ describe('useWorkspaceLayout history focus', () => {
     expect(h.api.panels).toHaveLength(2);
     expect(h.api.panels[0]).toMatchObject({
       id: 'panel-details',
-      view: { kind: 'thread-turn-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+      view: { kind: 'thread-trajectory', threadId: 'thread-alpha', turnId: 'turn-one' },
     });
     expect(h.api.panels[1]).toMatchObject({
       type: 'workspace',

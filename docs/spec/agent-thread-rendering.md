@@ -523,7 +523,7 @@ reach it.
   Turn, all activity for the same Agent ID and child Thread collapses into one
   presentation row. That row stands in for the tool call that delegated the work
   — `skill` or `agent`, named by the spawn-time Item's `spawnItemId` — and takes
-  its canonical slot. The raw tool exchange stays in Turn Diagnostics. Only
+  its canonical slot. The raw tool exchange stays inspectable in Trajectory. Only
   spawn-time activity claims a slot; a terminal event flushed into a later Turn
   keeps the original row rather than claiming an unrelated call.
 - Projection membership comes from canonical parent lineage and Agent execution
@@ -576,11 +576,11 @@ reach it.
   mounted child status owns motion instead of the parent tool summary
 - Memory used by an answer renders through the ordinary inline Node-reference
   affordance next to the supported claim; `node_search` and `node_read` remain
-  in the process and Turn Diagnostics, with no separate Memory Item or disclosure
+  in the process and Trajectory, with no separate Memory Item or disclosure
 - context evidence stays hidden from the ordinary transcript; `contextReset` and
   `contextCompaction` render dedicated `Context cleared.` and compaction boundary rows
   at their exact canonical positions. A completed standalone `/clear` or `/compact`
-  feature Turn exposes Turn Diagnostics from that boundary and does not synthesize an empty
+  feature Turn opens Trajectory focused from that boundary and does not synthesize an empty
   response row with Copy or Continue-in-New-Chat actions
 
 ### Agent Anchors And The Work Strip
@@ -948,7 +948,7 @@ wrapper; every gallery tile retains the same scoped identity and opens the share
 reader. Image attachments resolve through their artifact's original-then-observation
 fallback without changing the attachment's canonical file identity; an unavailable
 rendition leaves the rest of the message usable. Replay, fork, context projection, and
-Model Interactions consume the
+Trajectory consume the
 unchanged canonical ordering rather than reconstructing attachment placement from
 this presentation projection. Free-text editing is exposed only when
 canonical content contains at most one text part, and replacement preserves every
@@ -1008,128 +1008,62 @@ duplicating information surfaces. Hover or keyboard focus shows one
 non-interactive card containing timestamp, provider, model, reasoning effort,
 and the complete token/cost usage breakdown. The card is anchored in a portal
 and cannot be clipped by transcript scrolling. Clicking the icon, or choosing
-Details from the native message menu, opens Turn Diagnostics in the active workspace
-pane.
+Details from the native message menu, opens Trajectory in the active workspace
+pane, focused to that Turn.
 
-Turn Diagnostics is the technical workspace view for one canonical Turn; its user-facing
-title is **Model Interactions**. The default surface is Summary plus an Interaction Timeline
-grounded on the provider boundary. Tenon's accepted-input records, canonical Items,
-configuration, projection evidence, and provenance live behind one collapsed Internal
-diagnostics disclosure and mount only on demand. They never appear as peers of an outbound
-Request or masquerade as provider `user` messages. There is no independent Context
-Construction section: attachments, stable instructions, system reminders, Skill/Role/view/
-compaction evidence, tool definitions, and provider options are visible in the Request that
-actually carried them, while their Tenon source records remain available in Internal
-diagnostics.
-Summary reads model, timing, status, Model Call count, tool-execution count,
-input/output/cache token usage, cost, and any terminal error code/message/detail from the
-immutable Turn and diagnostics. Canonical Item counts remain internal. `Input tokens`
-means `usage.input`; cache reads and writes remain separate facts and are never relabeled
-as input context.
+Trajectory is the Thread-wide technical workspace. It is a main-owned,
+inspection-only projection over canonical Turns, retained diagnostics, context
+payload references, and tool output references; it is not a second execution
+ledger and it is not derived from renderer transcript pagination. Its default
+surface is a summary, a compact overview, an ordered ledger grouped by Turn, and
+a lazy inspector for the selected record.
 
-The renderer performs one `thread/turn/details/read` request. Main returns the exact
-Thread, Turn, and immutable diagnostics payload referenced by
-`Turn.execution.diagnosticsRef`; renderer code never scans Turn pages, recomputes a
-context epoch or cache affinity, or substitutes current configuration for historical
-facts. A Turn without a diagnostics reference explicitly reports that request
-diagnostics were not recorded. A referenced payload that is missing, corrupt, or does
-not match the Turn fails closed instead of appearing absent.
+The ledger record taxonomy is fixed: `input`, `context`, `assistant`, `tool`,
+`retry`, `compaction`, and `delegation`. Assistant records are grounded on the
+provider-call evidence `(threadId, turnId, providerCall.index)`, not on a
+transcript Item. Tool, retry, compaction, and delegation records use retained
+diagnostic activities when available and degrade to canonical Item evidence when
+diagnostics are unavailable. Delegation records link to the child Thread's own
+Trajectory; descendants are not flattened into the parent ledger.
 
-Interaction Timeline renders every Model Call plus the tool-execution, retry, and compaction
-activities that bridge Calls in their recorded order; the renderer never derives the sequence
-by scanning canonical Items. Accepted initial and steering input remain recorded, but are
-input-admission evidence rather than model interaction and therefore appear only in Internal
-diagnostics. A Model Call owns exactly one Request and its corresponding Response. Tool
-execution is a sibling activity after its source Call and before the Call that consumes its
-results, not a child of either Response or Request. Parallel tools from one model response form
-one batch; a transient tool with no canonical Item remains an explicit execution fact.
-Wrapper-level retries create another Call and a typed retry activity; retries hidden inside a
-provider SDK remain part of that SDK invocation.
-Each tool entry exposes its recorded admission disposition, canonical identity, and
-admission-time schema digest when present. Those are historical facts rather than a
-revalidation against the currently loaded tool catalog. Rejected admission is labelled
-argument/tool admission, never permission denial; a later capability-unavailable result
-remains a separate execution fact.
-The timeline expresses hierarchy with disclosure indentation and horizontal activity
-separators only; it does not draw a vertical guide-line axis through nested content.
+The renderer first performs `thread/trajectory/read`. Main returns `threadId`,
+Thread-level summary counts, a tail-first page of ordered records, the next
+cursor, and the selected record. The response deliberately does not return a
+full `Thread` because that object contains host details such as `cwd` that are
+not part of the Trajectory UI contract. Search is scoped to the loaded page; the
+user can load older records from the tail-first cursor.
 
-Request first renders the content-bearing fields from the final post-adapter **Provider
-Request** observed immediately before transport. Stable provider parameters such as model,
-streaming, output limits, reasoning options, and tool-selection controls stay out of the main
-content flow and appear in the Model Call information surface and copied Model Call export.
-Provider fields preserve top-level insertion order only as a serialization fact; they receive no
-synthetic numeric context order. `messages`,
-`input`, `contents`, and equivalent sequence fields preserve element order and every
-message's content-part order. The renderer may add presentation labels such as attachment
-or System Context, but never derives authority, reorders, merges, or substitutes the
-recorded value. Main records exact, unambiguous adapter-to-canonical content-part matches as
-typed provenance; unmatched fragments stay unlabeled. A System Context part expands to its
-ordered semantic entries (Environment, User View, Available Skills, Available Roles, and
-other typed kinds) with authority and purpose, plus the untouched raw provider part. The
-renderer never parses reminder XML, and literal user text that resembles a reminder remains
-ordinary text. The complete image-sanitized provider request is available as JSON from
-the same call's copy action. The recorded pre-adapter Model Context remains available in that
-export in semantic order: System Instructions, Tool Definitions, then Messages. It is nested
-under Request as Tenon's adapter input, not presented as a second transport payload. The main
-Request/Response reading flow contains no parallel raw-JSON, pre-adapter, or metadata
-disclosures; the semantic Provider Request Content and Model Response are the only peers.
+Record details are lazy. `thread/trajectory/detail/read` returns the selected
+record plus sanitized detail evidence only: bounded Turn evidence, bounded Item
+evidence, sanitized runtime facts, sanitized activity/provider-call request and
+response values, sanitized context payloads, and sanitized/truncated tool output.
+It never returns raw `Thread`, raw `Turn`, raw `ThreadItem`, a diagnostics payload
+path, digest-only payload authority, raw secrets, credentials, arbitrary response
+headers, image bytes, or host filesystem paths. Missing or corrupt diagnostics,
+payloads, and output remain explicit local availability facts rather than killing
+the whole workspace.
 
-Each call distinguishes request time,
-HTTP-headers time and latency,
-and assistant-response completion time and total duration. It exposes an HTTP status and
-allowlisted provider request ID when available, but never arbitrary response headers. It
-also exposes the protected message boundary, token budget, common-prefix count, request
-fingerprint, cache-breakpoint paths, complete provider request, and assistant response.
-Provider-reported input/output/cache/reasoning usage and
-stop reason, plus locally calculated cost and normalized error details, are typed call
-facts rather than renderer inferences. The
-Call summary derives completed, failed, or
-interrupted from the response stop reason rather than treating every response as success.
-The Model Call header keeps only its ordinal and derived result status in the main reading
-flow. Its trailing information control exposes the recorded model, provider, request time,
-HTTP timing/status/request ID, token budget, common-prefix count, provider parameters,
-stop reason, provider-reported token/cache/reasoning usage, calculated cost, and normalized
-error on hover or keyboard focus. The adjacent copy control materializes one typed Model Call
-diagnostics export only when invoked. It contains runtime selection; Request with the complete
-recorded Model Context, ordered image-sanitized Provider Payload, and Request Facts; and
-Response with allowlisted transport facts plus the provider-neutral normalized model response,
-usage, stop reason, and error. A limitations object states that image bytes are omitted with
-length/digest markers and that secret headers and the raw provider response body were not
-recorded. The export does not claim to be a byte-for-byte HTTP exchange.
-Repetition-heavy request fields use the diagnostics fragment pool without losing a value
-or its position. Each fragmented request field carries an aligned optional provenance array;
-the codec requires exact fragment and content-part cardinality whenever provenance exists.
-Image bytes are never returned to the renderer: binary/base64/data-URL
-content is represented by an omission marker containing its byte length and SHA-256.
+Export uses `thread/trajectory/export` and writes from main. The renderer receives
+only status, file name, and byte length; it never receives the absolute save path.
+The saved bundle uses sanitized Thread metadata and sanitized retained diagnostics
+alongside the same record projection, so it is a portable evidence bundle rather
+than a renderer-visible host-state dump.
 
-Internal diagnostics exposes accepted-input admission records, accepted user records,
-canonical Thread/Turn/Session and provenance identities, context epoch, cache affinity,
-effective configuration, L0/L1/L2 prompt blocks and fingerprints, canonical tool schemas,
-the resolved runtime, the prepared message pool, and exhaustive Canonical Items including
-context evidence, reset, and compaction Items. These facts explain or verify a request; they
-do not compete with the post-adapter Request as a second account of what was sent. The whole
-section is collapsed and lazy by default. Large prompt blocks,
-schemas, provider messages, responses, and Item JSON mount
-only while their disclosure is open. Expanding an evidence Item issues one exact
-`(threadId, turnId, itemId, contextId)` audit read and renders the decoded semantic
-payload; it never receives a canonical payload path or gains digest-only read authority.
-The same IPC method may read payload-backed tool arguments only when main derives the
-requested reference from that exact Item's canonical `modelCall`; another Item or digest
-is rejected. Renderer caching keys the immutable Thread-owned payload identity and stores
-only its bounded display projection. New argument-bearing views consume the required
-canonical envelope. Diagnostics and exports show
-only structured secret-redacted values and RFC 6901 redaction paths; they never reveal a
-raw model-authored secret or host-injected credential.
-Missing, corrupt, rolled-back, or mismatched evidence remains explicitly unavailable.
-Opening Turn Diagnostics pushes the current view onto the pane's Back stack and never creates a
-split. Opening another Turn while Turn Diagnostics is current replaces only the target,
-without adding history noise; Back or close returns to the prior view. If layout
-sanitization leaves no prior view and another pane remains, Close removes the
-Diagnostics pane instead of invoking an empty Back stack.
+The lower-level `thread/turn/details/read` audited reader remains available for
+internal evidence validation. It still resolves one reachable full Turn and its
+Thread-owned diagnostics reference fail-closed, but it is not a product workspace
+route and the Trajectory UI must not depend on its raw response shape.
+
+Opening Trajectory pushes the current view onto the pane's Back stack and never
+creates a split. Opening another record or Turn while Trajectory is current
+replaces only the focus target, without adding history noise; Back or close
+returns to the prior view. If layout sanitization leaves no prior view and
+another pane remains, Close removes the Trajectory pane instead of invoking an
+empty Back stack.
 
 Normal Thread UI may visually group Items by Turn without printing every Turn
-ID. Turn Diagnostics must show the same Thread, Turn, and Item
-identities as the transport.
+ID. Trajectory must show the same Thread, Turn, Item, provider-call, and activity
+identities as the transport, while keeping renderer evidence sanitized.
 
 Thread Details exposes `ThreadMemoryMode` only for persistent root user Threads.
 Its loading, disabled, busy, and error states reuse the existing switch and

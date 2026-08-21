@@ -1727,7 +1727,7 @@ describe('Codex Agent Core protocol codec', () => {
     })).toThrow('unknown fields: turnId');
   });
 
-  test('fails closed when Turn Diagnostics are absent, mismatched, or malformed', () => {
+  test('fails closed when raw Turn diagnostics are absent, mismatched, or malformed', () => {
     const byteLength = new TextEncoder().encode(encodeTurnDiagnosticsPayload(turnDiagnosticsPayload)).byteLength;
     const ref = {
       id: '3'.repeat(64),

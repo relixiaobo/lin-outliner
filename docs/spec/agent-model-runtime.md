@@ -837,7 +837,7 @@ breakpoint. The adapter sanitizes both the payload block and the text reconstruc
 the same breakpoints. It never parses textual markers and adds no Anthropic metadata to
 other providers.
 
-## Turn Diagnostics
+## Diagnostics And Trajectory Evidence
 
 `PiTurnExecutor` creates one `TurnDiagnosticsCollector` from the effective configuration
 and resolved runtime at Turn start. Every Provider Call records two different facts. At
@@ -867,6 +867,12 @@ provider/model/API/configured-base-URL/transport selection, model limits, and re
 settings. Configured-base-URL diagnostics remove URL userinfo, query, and fragment data
 before persistence. These audit facts explain how the call was prepared; they are not a
 renderer-reconstructed request or another context authority.
+
+Trajectory consumes these diagnostics through a main-owned sanitized projection.
+The retained diagnostics payload remains the audited provider-boundary evidence;
+the renderer-facing Trajectory detail does not receive the raw payload, configured
+base URL, host paths, arbitrary headers, credentials, image bytes, or payload
+storage paths.
 
 Each tool execution diagnostic records its admission disposition, canonical identity,
 and schema digest when one exists. Assistant responses and tool observations pass the
