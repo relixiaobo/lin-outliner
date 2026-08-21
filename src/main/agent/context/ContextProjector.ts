@@ -71,6 +71,7 @@ export interface LiveModelToolCall {
 
 export interface CanonicalContextProjectorOptions {
   readonly liveToolCall?: (turnId: string, itemId: string) => LiveModelToolCall | null;
+  readonly omitUserItemIds?: ReadonlySet<string>;
 }
 
 interface ProjectedContextBlock extends TurnDiagnosticsSystemContextEntry {
@@ -225,6 +226,7 @@ export class CanonicalContextProjector {
           }
         }
       } else if (item.type === 'userMessage') {
+        if (this.options.omitUserItemIds?.has(item.id)) continue;
         flushContextBlocks();
         timestamp = item.acceptedAt;
         content.push(...await serializeUserContent(item.content, this.resources));
@@ -352,6 +354,7 @@ export class CanonicalContextProjector {
         continue;
       }
       if (item.type === 'userMessage') {
+        if (this.options.omitUserItemIds?.has(item.id)) continue;
         flushContextBlocks();
         const userContent = await serializeUserContent(item.content, this.resources);
         pendingUserContent.push(...userContent);

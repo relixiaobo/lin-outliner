@@ -568,6 +568,12 @@ completed pending events recover on restart. A child that was still running at
 host restart follows the typed host-restart failure path and emits a failed
 notification rather than replaying side effects.
 
+Delivered notifications remain per-generation facts after the stable Agent
+execution record advances. The current record's `deliveryTurnId` describes only
+the current generation; presentation receives the delivered notification rows
+for every already-delivered generation so an earlier report card stays anchored
+to its original parent Turn after the same Agent is resumed.
+
 Terminal settlement can discover a live descendant after its initial guard,
 including while the transcript flush is in flight. That condition is an internal
 deferral: the pipeline resolves normally, retains its reservation, schedules no
@@ -781,42 +787,38 @@ because doing so would break the isolation promise.
 
 ## Request Budget
 
-`subagentTokenBudget` is a host circuit breaker and defaults to `1,500,000`;
-`null` makes a request unbounded. The setting is not an `agent` parameter and no
-model-visible result exposes live remaining or total values.
+`subagentTokenBudget` is a host circuit breaker and defaults to `1,500,000`.
+`null` makes a generation unbounded. The setting is not an `agent` parameter and
+no model-visible result exposes live remaining or total values. Initial spawn,
+explicit resume, and isolated-Skill admission read the current setting once and
+freeze it on that execution generation. Siblings and descendants never debit one
+another; each `{agentId, generation}` owns its persisted usage, live in-flight
+tally, 80% warning latch, and cap.
 
-One delegating Turn owns a request pool. Its nested Agent tree shares that pool,
-while the delegator's own model work does not debit it. The grant is frozen when
-the request opens. Every child has a membership row that records its owning Turn
-and contribution, including when the pool is unbounded. A later user Turn starts
-a new request rather than accumulating lifetime conversation spend.
+`SubagentRequestLedger` records cancellation ownership only. Persistent rows live
+in `subagent_request_owners` and `subagent_request_children`; ephemeral Threads
+mirror them in memory. A request owner is the delegating Turn that may close and
+cancel the descendant set it admitted. Ownership does not carry token allowance,
+resolve a budget, or bind descendants to a shared resource pool. Admission
+creates the request owner and child row atomically; rollback removes the newly
+staged ownership without deleting sibling ownership that still covers surviving
+children. Startup subtree cleanup removes child rows and newly empty request
+owners in one transaction.
 
-`SubagentRequestLedger` is the persistence authority. Persistent rows live in
-`subagent_request_pools` and `subagent_request_members`; ephemeral Threads mirror
-them in memory. There is no legacy reader for former budget table names. Pool
-creation and membership are one fail-closed admission transaction, including
-the request pool and an explicit-cap pool when both are new. Startup subtree
-cleanup likewise removes members and newly empty pools in one transaction.
-Resolution, rebind, usage accrual, and ordinary runtime cleanup failures audit
-and degrade under A12 rather than killing an otherwise usable runtime path.
+The runtime normalizer feeds live usage to the current generation's breaker.
+Completion and failure settlement persist usage before exposing an idle admission
+window. At the first 80% crossing, the host admits one ordinary steering notice
+asking the Agent to preserve a handoff early: concrete progress, verified
+evidence, unknown or unchecked work, and the next action. Exhaustion between
+model calls interrupts only outstanding model work, preserves partial output,
+keeps the Agent explicitly resumable, and emits the interrupted notification
+defined above with usage. A terminal answer already produced remains a normal
+finished Turn even if its final call overshot the breaker.
 
-The runtime normalizer feeds live generation usage to the request tally.
-Completion accrues usage before exposing an idle admission window. At the first
-80% crossing, the host admits one ordinary steering notice asking the Agent to
-synthesize and conclude. At exhaustion, a new `agent` spawn or terminal-Agent
-resume refuses before a new Turn with exactly
-`Subagent token budget exhausted ({tokensUsed} of {tokenBudget} tokens); the child refuses new work. Interrupt, review its output, or spawn a fresh child.`
-Steering an already-running Agent remains available so it can conclude.
-Exhaustion between model calls interrupts only outstanding work, preserves
-partial output, keeps the Agent resumable, and emits the interrupted notification
-defined above with usage. A terminal answer already produced remains completed
-even if its final call overshot the budget.
-
-Stopping the request-owning user Turn closes that request and interrupts its
-owned descendant membership closure. Stopping one child interrupts only that
-subtree; the request remains open for its still-running delegator. Closed
-requests refuse new delegated work and never re-admit queued model traffic as
-user-authored work.
+Stopping the request-owning user Turn closes that ownership record and interrupts
+its owned descendant closure. Stopping one child interrupts only that subtree;
+the request remains open for its still-running delegator. Closed requests refuse
+new delegated work and never re-admit queued model traffic as user-authored work.
 
 ## Canonical Activity And Presentation
 
@@ -839,9 +841,12 @@ the same visible child anchor, but their terminal output remains owned only by
 The execution record crosses the process seam as a narrow projection: Agent ID,
 direct parent, description, Agent type, run mode, generation, current Turn,
 stop provenance, terminal status, notification state, and retained worktree
-branch and path. The tool policy, startup snapshot, and worktree recovery intent
-never cross — they describe how the host executes an Agent, not what the user is
-looking at, and a field that never crosses cannot be rendered by accident.
+branch and path. It also carries the delivered `{generation, deliveryTurnId}`
+rows that presentation needs to keep historical report cards attached to the
+parent Turns that consumed them. The tool policy, startup snapshot, and worktree
+recovery intent never cross — they describe how the host executes an Agent, not
+what the user is looking at, and a field that never crosses cannot be rendered
+by accident.
 `thread/subagents/list` reads one conversation subtree's COMMITTED records; an
 uncommitted admission is absent, because the host publishes no start for one and
 may still roll it back. `subagent/execution/changed` announces each write to the

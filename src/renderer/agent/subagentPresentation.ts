@@ -27,7 +27,7 @@ export type SubagentRegistryStatus =
   | 'running'
   | 'idle'
   | 'interrupted'
-  | 'completed'
+  | 'finished'
   | 'errored'
   | 'notFound';
 
@@ -230,7 +230,7 @@ export function projectSubagentConversation(
     : reuseEntryMap(previous?.byAgentId ?? null, entries);
   const deliveryByTurnId = reuseDeliveryMap(
     previous?.deliveryByTurnId ?? null,
-    deliveries(owners, input.turnsByThread, agentByCallItemId),
+    deliveries(owners, input.turnsByThread, input.latestTurnByThread, input.executions),
   );
   const anchors = reuseAnchorMap(previous?.anchorsByTurnId ?? null, anchorsByTurnId);
   const projection = previous
@@ -337,43 +337,77 @@ function spawnAnchor(item: SubAgentActivityThreadItem): SubagentAnchor {
 function deliveries(
   owners: readonly ThreadId[],
   turnsByThread: ReadonlyMap<ThreadId, readonly Turn[]>,
-  agentByCallItemId: ReadonlyMap<ThreadItemId, ThreadId>,
+  latestTurnByThread: ReadonlyMap<ThreadId, Turn>,
+  executions: ReadonlyMap<ThreadId, SubagentExecutionProjection>,
 ): Map<TurnId, SubagentDelivery> {
-  const ordered = new Map<TurnId, { readonly agentId: ThreadId }>();
-  const deliveredByAgent = new Map<ThreadId, number>();
+  const visibleTurnIds = new Set<TurnId>();
   for (const ownerThreadId of owners) {
     for (const turn of turnsByThread.get(ownerThreadId) ?? []) {
-      const trigger = turn.provenance.trigger;
-      if (
-        trigger.kind !== 'subagent'
-        || turn.provenance.originThreadId !== ownerThreadId
-        || trigger.parentThreadId !== ownerThreadId
-      ) continue;
-      const agentId = agentByCallItemId.get(trigger.parentItemId);
-      if (agentId === undefined) continue;
-      deliveredByAgent.set(agentId, (deliveredByAgent.get(agentId) ?? 0) + 1);
-      ordered.set(turn.id, { agentId });
+      visibleTurnIds.add(turn.id);
     }
   }
-  // Counted BACKWARDS from the newest delivery, and matched against the child's
-  // settled Turns counted backwards too. Forwards, the two sequences only line
-  // up while nothing is ever missing from either — and something can be: a
-  // notification the host never materialized into a Turn because the Agent was
-  // deleted meanwhile, or a generation that ran in the foreground and reported
-  // through its tool call instead. A forward index that silently slipped by one
-  // stayed in range and showed a different run of the same Agent as the report.
   const resolved = new Map<TurnId, SubagentDelivery>();
-  const seenByAgent = new Map<ThreadId, number>();
-  for (const [turnId, { agentId }] of ordered) {
-    const index = seenByAgent.get(agentId) ?? 0;
-    seenByAgent.set(agentId, index + 1);
-    resolved.set(turnId, {
-      agentId,
-      generationIndex: index,
-      fromLatest: (deliveredByAgent.get(agentId) ?? 1) - 1 - index,
-    });
+  const ambiguous = new Set<TurnId>();
+  for (const execution of executions.values()) {
+    const latestSettled = latestSettledGeneration(execution, turnsByThread, latestTurnByThread);
+    for (const delivery of deliveredGenerations(execution)) {
+      const turnId = delivery.deliveryTurnId;
+      if (!visibleTurnIds.has(turnId)) continue;
+      if (resolved.has(turnId)) {
+        resolved.delete(turnId);
+        ambiguous.add(turnId);
+        continue;
+      }
+      if (ambiguous.has(turnId)) continue;
+      resolved.set(turnId, {
+        agentId: execution.agentId,
+        generationIndex: Math.max(0, delivery.generation - 1),
+        fromLatest: Math.max(0, latestSettled - delivery.generation),
+      });
+    }
   }
   return resolved;
+}
+
+function deliveredGenerations(
+  execution: SubagentExecutionProjection,
+): readonly { readonly generation: number; readonly deliveryTurnId: TurnId }[] {
+  const byGeneration = new Map<number, TurnId>();
+  for (const notification of execution.deliveredNotifications) {
+    byGeneration.set(notification.generation, notification.deliveryTurnId);
+  }
+  if (
+    execution.notificationState === 'delivered'
+    && execution.deliveryTurnId !== null
+    && execution.terminalStatus !== null
+  ) {
+    byGeneration.set(execution.generation, execution.deliveryTurnId);
+  }
+  return [...byGeneration]
+    .sort(([left], [right]) => left - right)
+    .map(([generation, deliveryTurnId]) => ({ generation, deliveryTurnId }));
+}
+
+function latestSettledGeneration(
+  execution: SubagentExecutionProjection,
+  turnsByThread: ReadonlyMap<ThreadId, readonly Turn[]>,
+  latestTurnByThread: ReadonlyMap<ThreadId, Turn>,
+): number {
+  const latestTurn = latestTurnByThread.get(execution.agentId) ?? null;
+  const latestTurnSettled = latestTurn !== null
+    && latestTurn.status !== 'inProgress'
+    && latestTurn.provenance.trigger.kind !== 'feature';
+  const durableLowerBound = execution.terminalStatus !== null || latestTurnSettled
+    ? execution.generation
+    : Math.max(0, execution.generation - 1);
+  const turns = turnsByThread.get(execution.agentId);
+  if (turns) {
+    const settledCount = turns.filter((candidate) => (
+      candidate.status !== 'inProgress' && candidate.provenance.trigger.kind !== 'feature'
+    )).length;
+    return Math.max(settledCount, durableLowerBound);
+  }
+  return durableLowerBound;
 }
 
 function projectRegistryEntries(input: SubagentProjectionInput): Map<ThreadId, SubagentRegistryEntry> {
@@ -465,6 +499,17 @@ function recordlessChildren(
         stopProvenance: 'none',
         terminalStatus: null,
         notificationState: 'none',
+        terminalError: null,
+        deliveryTurnId: null,
+        deliveryClass: null,
+        eligibleAfterGeneration: null,
+        coverageDisposition: null,
+        omittedOutputBytes: 0,
+        omittedOutputTokens: 0,
+        deliveredNotifications: [],
+        notificationCutoff: 'open',
+        executionMode: 'ordinary',
+        settlementCoverage: null,
         worktree: null,
         createdAt: thread.createdAt,
         updatedAt: thread.updatedAt,
@@ -541,7 +586,7 @@ function liveState(
         ? 'errored'
         : currentTurn.status === 'interrupted'
           ? 'interrupted'
-          : 'completed',
+          : 'finished',
     };
   }
   if (execution.terminalStatus !== null) {
@@ -550,8 +595,8 @@ function liveState(
       error: null,
       settledAt: execution.updatedAt,
       startedAt: null,
-      status: execution.terminalStatus === 'completed'
-        ? 'completed'
+      status: execution.terminalStatus === 'finished'
+        ? 'finished'
         : execution.terminalStatus === 'failed'
           ? 'errored'
           : 'interrupted',
@@ -765,7 +810,11 @@ function reuseDeliveryMap(
   if (!previous || previous.size !== next.size) return next;
   for (const [turnId, delivery] of next) {
     const before = previous.get(turnId);
-    if (before?.agentId !== delivery.agentId || before.generationIndex !== delivery.generationIndex) {
+    if (
+      before?.agentId !== delivery.agentId
+      || before.generationIndex !== delivery.generationIndex
+      || before.fromLatest !== delivery.fromLatest
+    ) {
       return next;
     }
   }

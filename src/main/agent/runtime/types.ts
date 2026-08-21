@@ -111,6 +111,13 @@ export interface TurnExecutionContext {
     preserveFrom?: ContextCursor,
   ): Promise<StagedContextCompaction | null>;
   onProviderRetry(status: import('../../../core/agent/protocol').ProviderRetryStatus | null): void;
+  readonly onProviderAttempt?: () => void | Promise<void>;
+  readonly carryForwardSidecar?: {
+    readonly itemId: string;
+    isDetached(): boolean;
+    detachForOverflow(): Promise<{ readonly providerAttemptSerial: number } | null>;
+    canRetryAfterDetach(providerAttemptSerial: number): boolean;
+  };
   onSteer(handler: (input: SteeredTurnInput) => void | Promise<void>): void;
   readonly onModelCallUsage?: (tokens: number) => void;
   readonly remainingTokenBudget?: () => TokenBudgetUsage | null;
@@ -122,10 +129,15 @@ export interface TurnExecutionResult {
   readonly error?: TurnError | null;
   readonly execution?: TurnExecutionDetails;
   readonly refreshDiagnostics?: () => Promise<TurnDiagnosticsPayloadReference | null>;
+  readonly failureOrigin?: 'providerFailure' | 'contextFailure' | 'hostFailure';
 }
 
 export interface TurnExecutor {
   execute(context: TurnExecutionContext): Promise<TurnExecutionResult>;
+  /** Read-only admission probe used before optional carry-forward is attached. */
+  planInputCapacity?(context: TurnExecutionContext): Promise<{
+    readonly remainingInputTokens: number;
+  }>;
 }
 
 export interface ThreadNameGenerationContext {

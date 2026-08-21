@@ -462,7 +462,7 @@ Reach for this when the task matches an available agent type, when you have inde
 - Use agent_message with the agent's ID to continue a previously spawned agent with its context intact; a new agent call starts fresh.
 - Each agent type's model, reasoning effort, and tools come from its Tenon Role.
 - `isolation: "worktree"` gives the agent its own git worktree (auto-cleaned if unchanged).
-- Subagents run in the background by default; you'll be notified when one completes. Pass `run_in_background: false` only when your very next action depends on the result and nothing else could usefully happen while it runs — otherwise background it so the user can interject. Never fabricate or predict a pending agent's results — the notification is never something you write yourself; if the user asks before it arrives, say it's still running.
+- Subagents run in the background by default; you'll be notified when one finishes or stops. Pass `run_in_background: false` only when your very next action depends on the result and nothing else could usefully happen while it runs — otherwise background it so the user can interject. Never fabricate or predict a pending agent's results — the notification is never something you write yourself; if the user asks before it arrives, say it's still running.
 ```
 
 Its parameter descriptions are:
@@ -473,7 +473,7 @@ Its parameter descriptions are:
 | `prompt` | `The task for the agent to perform` |
 | `subagent_type` | `The type of specialized agent to use for this task` |
 | `model` | `Optional model override for this agent. Takes precedence over the Role's model. If omitted, uses the Role's model, or inherits from the parent.` |
-| `run_in_background` | `Agents run in the background by default; you will be notified when one completes. Set to false only when your very next action depends on this agent's result and nothing else could usefully happen while it runs — otherwise leave it in the background so the user can hand you other work.` |
+| `run_in_background` | `Agents run in the background by default; you will be notified when one finishes or stops. Set to false only when your very next action depends on this agent's result and nothing else could usefully happen while it runs — otherwise leave it in the background so the user can hand you other work.` |
 | `isolation` | `Isolation mode. "worktree" creates a temporary git worktree so the agent works on an isolated copy of the repo.` |
 
 `agent_message` requires `to` and `message`; `summary` is optional. Its complete
@@ -566,8 +566,8 @@ Initial-admission failure and terminal retry exhaustion report `failed`, with
 the original admission error or the stable recovery error. Generation
 replacement, Thread deletion, and service close report `abandoned`. Those
 outcomes reject the foreground operation before it reads execution or Turn
-state, so teardown cannot fabricate a completed Agent result. Foreground
-completion therefore consumes the level-triggered settlement state machine
+state, so teardown cannot fabricate a successful Agent result. Foreground
+settlement therefore consumes the level-triggered settlement state machine
 directly; it does not maintain a second edge-triggered idle/activity predicate
 or run a duplicate terminal pipeline wait afterwards.
 

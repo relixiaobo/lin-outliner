@@ -168,6 +168,7 @@ export interface KernelAgentOptions {
   retryOptions?: RetryPolicyOptions;
   transformContext?: () => Promise<Message[]>;
   recoverContextOverflow?: () => Promise<Message[] | null>;
+  recoverOptionalContextOverflow?: () => Promise<Message[] | null>;
   admitToolCall?: (request: ToolCallAdmissionRequest) => Promise<ToolCallAdmissionDecision>;
   getApiKey?: (providerId: string) => Promise<string | undefined> | string | undefined;
   sessionId?: string;

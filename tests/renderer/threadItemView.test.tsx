@@ -910,12 +910,12 @@ describe('ThreadItemView Agent chips', () => {
     const rendered = renderItem(spawnActivity('chip-settled'), {
       onInterruptThread: async () => undefined,
       anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-settled' },
-      registry: registryOf({ durationMs: 192_000, status: 'completed' }),
+      registry: registryOf({ durationMs: 192_000, status: 'finished' }),
     });
     await flush();
 
     const chip = rendered.document.querySelector('.thread-agent-chip');
-    expect(chip?.querySelector('.thread-agent-chip-meta')?.textContent).toBe('Completed · 3m 12s');
+    expect(chip?.querySelector('.thread-agent-chip-meta')?.textContent).toBe('Finished · 3m 12s');
     expect(chip?.querySelector('.working-text')).toBeNull();
     // A settled Agent has nothing left to stop; the chip keeps its slot anyway,
     // so the delegation is still read where it was decided.
@@ -927,7 +927,7 @@ describe('ThreadItemView Agent chips', () => {
     const rendered = renderItem(spawnActivity('chip-open'), {
       anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-open' },
       onOpenAgent: (agentId) => opened.push(agentId),
-      registry: registryOf({ status: 'completed' }),
+      registry: registryOf({ status: 'finished' }),
     });
     await flush();
 
@@ -1000,7 +1000,7 @@ describe('ThreadItemView Agent chips', () => {
       agentPath: '/root/research',
       error: null,
       spawnItemId: null,
-    }, { registry: registryOf({ status: 'completed' }) });
+    }, { registry: registryOf({ status: 'finished' }) });
     await flush();
 
     expect(rendered.document.querySelector('.thread-agent-chip')).toBeNull();

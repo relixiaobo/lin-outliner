@@ -1271,10 +1271,25 @@ function subagentExecutionEqual(
       if (left.worktree?.path !== right.worktree?.path) return false;
       continue;
     }
+    if (key === 'deliveredNotifications') {
+      if (!deliveredNotificationsEqual(left.deliveredNotifications, right.deliveredNotifications)) return false;
+      continue;
+    }
     const field = key as keyof SubagentExecutionProjection;
     if (left[field] !== right[field]) return false;
   }
   return true;
+}
+
+function deliveredNotificationsEqual(
+  left: SubagentExecutionProjection['deliveredNotifications'],
+  right: SubagentExecutionProjection['deliveredNotifications'],
+): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((delivery, index) => (
+    delivery.generation === right[index]?.generation
+    && delivery.deliveryTurnId === right[index]?.deliveryTurnId
+  ));
 }
 
 function errorMessage(error: unknown): string {

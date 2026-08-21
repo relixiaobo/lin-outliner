@@ -1272,7 +1272,7 @@ export const zhHans: PartialMessages = {
         running: '进行中',
         idle: '空闲',
         interrupted: '已中断',
-        completed: '已完成',
+        finished: '已结束',
         errored: '失败',
         notFound: '未找到',
       },

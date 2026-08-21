@@ -109,11 +109,13 @@ export const RUNTIME_FAILURE_ERROR_CODE = 'runtime_failure';
 export const HOST_RESTART_ERROR_CODE = 'host_restart';
 export const SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE = 'subagent_budget_exhausted';
 export const SUBAGENT_STRUCTURAL_LIMIT_ERROR_CODE = 'subagent_structural_limit';
+export const SUBAGENT_DELIVERY_ADMISSION_ERROR_CODE = 'subagent_delivery_admission_failed';
 export const TURN_ERROR_CODES = [
   RUNTIME_FAILURE_ERROR_CODE,
   HOST_RESTART_ERROR_CODE,
   SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE,
   SUBAGENT_STRUCTURAL_LIMIT_ERROR_CODE,
+  SUBAGENT_DELIVERY_ADMISSION_ERROR_CODE,
 ] as const;
 export type TurnErrorCode = typeof TURN_ERROR_CODES[number];
 
@@ -142,6 +144,13 @@ export interface TurnProvenance {
   readonly originThreadId: ThreadId;
   readonly originTurnId: TurnId;
   readonly trigger: TurnTrigger;
+}
+
+/** Host-only coordination identity persisted on the admission commit event. */
+export interface SubagentTurnAdmission {
+  readonly kind: 'exhaustedSettlement' | 'explicitAdmission';
+  readonly batchId: string;
+  readonly envelopeDigest: string;
 }
 
 export interface ItemProvenance {
@@ -1061,13 +1070,38 @@ export type SubagentStopProvenance = 'none' | 'model' | 'user' | 'budget' | 'hos
  */
 export type SubagentNotificationState = 'none' | 'pending' | 'delivering' | 'delivered';
 
-/** How one background generation ended, as the host recorded it. */
-export type SubagentTerminalStatus = 'completed' | 'failed' | 'interrupted' | 'killed';
+/** How one delegated generation ended, as the host recorded it. */
+export type SubagentTerminalStatus = 'finished' | 'failed' | 'interrupted' | 'killed';
+
+export type SubagentExecutionMode = 'ordinary' | 'exhaustedSettlement';
+export type SubagentNotificationCutoff = 'open' | 'closing' | 'closed';
+export type SubagentDeliveryClass = 'ordinary' | 'carryForward';
+export type SubagentCoverageDisposition = 'full' | 'excerpted' | 'omitted';
+
+export interface SubagentTerminalError {
+  readonly code: string;
+  readonly messagePreview: string;
+  readonly omittedBytes: number;
+}
+
+export interface SubagentSettlementCoverage {
+  readonly origin: 'budgetInterrupted' | 'normalOvershoot' | 'explicitAdmission';
+  readonly full: number;
+  readonly excerpted: number;
+  readonly omitted: number;
+  readonly providerAttempted: boolean;
+}
 
 /** The retained managed worktree a settled generation left behind. */
 export interface SubagentWorktreeSummary {
   readonly branch: string;
   readonly path: string;
+}
+
+/** One background generation whose result has reached its parent Turn. */
+export interface SubagentDeliveredNotificationProjection {
+  readonly generation: number;
+  readonly deliveryTurnId: TurnId;
 }
 
 /**
@@ -1098,6 +1132,22 @@ export interface SubagentExecutionProjection {
    */
   readonly terminalStatus: SubagentTerminalStatus | null;
   readonly notificationState: SubagentNotificationState;
+  readonly terminalError: SubagentTerminalError | null;
+  /** First committed delivery Turn, resolved through canonical Retry aliases. */
+  readonly deliveryTurnId: TurnId | null;
+  readonly deliveryClass: SubagentDeliveryClass | null;
+  readonly eligibleAfterGeneration: number | null;
+  readonly coverageDisposition: SubagentCoverageDisposition | null;
+  readonly omittedOutputBytes: number;
+  readonly omittedOutputTokens: number;
+  /**
+   * Delivered background generations for this stable Agent, including earlier
+   * generations after a later resume advances the execution record.
+   */
+  readonly deliveredNotifications: readonly SubagentDeliveredNotificationProjection[];
+  readonly notificationCutoff: SubagentNotificationCutoff;
+  readonly executionMode: SubagentExecutionMode;
+  readonly settlementCoverage: SubagentSettlementCoverage | null;
   /** Present only while a managed worktree is retained for this Agent. */
   readonly worktree: SubagentWorktreeSummary | null;
   readonly createdAt: number;
@@ -1713,7 +1763,13 @@ export type AgentCoreNotification =
       readonly threadId: ThreadId;
       readonly status: ThreadStatus;
     }
-  | { readonly type: 'turn/started'; readonly threadId: ThreadId; readonly turnId: TurnId; readonly turn: Turn }
+  | {
+      readonly type: 'turn/started';
+      readonly threadId: ThreadId;
+      readonly turnId: TurnId;
+      readonly turn: Turn;
+      readonly subagentAdmission?: SubagentTurnAdmission;
+    }
   | {
       readonly type: 'item/started';
       readonly threadId: ThreadId;

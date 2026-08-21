@@ -552,37 +552,36 @@ The executor registers one steering handler. Input accepted before registration
 is queued and delivered in order. Steering is added to provider input without
 rewriting persisted prior Items.
 
-Every descendant Turn feeds a live in-flight tally from
-`PiEventNormalizer.completeAssistant`, immediately after the normalizer accumulates each
-assistant message's `totalTokens`. Diagnostics capture is inspection-only and cannot drop
-or duplicate accounting. Non-user descendant Turns also expose a live budget port
-(`remaining`, `used`, `total`) to the native kernel. Each read resolves the authoritative
-ancestor pool, re-reads persisted usage, and includes every active Turn's observed usage,
-including the current Turn. When a per-child contribution cap has less remaining, the
-same port reports that tighter binding constraint.
+Every delegated execution generation feeds a live in-flight tally from
+`PiEventNormalizer.completeAssistant`, immediately after the normalizer
+accumulates each assistant message's `totalTokens`. Diagnostics capture is
+inspection-only and cannot drop or duplicate accounting. Non-user delegated
+Turns expose a live budget port (`remaining`, `used`, `total`) to the native
+kernel when their current generation has a frozen `subagentTokenBudget`; an
+unbounded generation returns `null`. Each read re-reads that generation's
+persisted usage and adds only that generation's observed in-flight usage,
+including the current Turn. There is no ancestor-pool walk, sibling debit,
+covered-member predicate, or per-child contribution cap.
 
-The executor passes the port through without overlaying its normalizer total. The kernel
-uses `remaining` directly and never subtracts snapshots, so a switch between pool and cap
-denominations cannot falsely interrupt a healthy Turn or bypass an exhausted cap. An
-uncapped top-level spawner that holds the pool is outside it; an explicitly capped child
-that anchors a pool remains a covered member. Explicit covered descendant user Turns omit
-the port and warning callback while their usage remains in the sibling tally and accrues
-on completion. While a descendant is uncovered, the observer retains its usage locally
-and the port returns `null`; if an ancestor pool appears mid-Turn, that contribution joins
-the live pool tally immediately. The first model call is never blocked. At every later
-model-call boundary, before draining steering or emitting the next `turn_start`,
-`remaining <= 0` interrupts only genuinely outstanding model work, such as completed
-tool calls. A terminal assistant answer stays completed even when exhausted and racing
-steering remains queued and undelivered. Thus every emitted `turn_start` still has its
-matching `turn_end`.
+The executor passes the port through without overlaying its normalizer total.
+The kernel uses `remaining` directly and never subtracts snapshots, so a
+generation-local breaker cannot falsely interrupt a sibling or descendant. The
+first model call is never blocked. At every later model-call boundary, before
+draining steering or emitting the next `turn_start`, `remaining <= 0`
+interrupts only genuinely outstanding model work, such as completed tool calls.
+A terminal assistant answer stays completed even when the final accepted call
+overshot the breaker, and racing steering remains queued and undelivered. Thus
+every emitted `turn_start` still has its matching `turn_end`.
 
-The first 80% crossing of the binding constraint requests one host-generated budget
-notice carrying its actual `used` and `total`. The notice uses the same
-canonical steering admission and diagnostics path as external steering, so it is a
-durable `userMessage` rather than a private runtime message. Warning delivery is
-advisory: failure is logged and execution continues. Steering diagnostics become
-consumed only when the native queue is drained into a later provider context; queue
-acceptance alone does not mark delivery.
+The first 80% crossing of the generation breaker requests one host-generated
+budget notice carrying its actual `used` and `total`. The notice asks for an
+early handoff with concrete progress, verified evidence, unknown or unchecked
+work, and the next action. It uses the same canonical steering admission and
+diagnostics path as external steering, so it is a durable `userMessage` rather
+than a private runtime message. Warning delivery is advisory: failure is logged
+and execution continues. Steering diagnostics become consumed only when the
+native queue is drained into a later provider context; queue acceptance alone
+does not mark delivery.
 
 Background Agent completion is host-pushed, never model-polled. Once the child
 Turn and transcript append settle, a persisted `{agentId, generation}` event
@@ -593,6 +592,10 @@ The output scanner runs exactly once before either boundary. Pending completion
 events are idempotent across restart and cannot overtake already-admitted genuine
 user input. Nested delivery advances one parent edge at a time so only a parent's
 synthesized result reaches its own parent.
+Renderer-facing execution projection is stable-Agent current state plus
+delivered per-generation anchors. The current generation's terminal fields do
+not replace older delivered rows; after resume, those rows continue to identify
+which parent Turn consumed each earlier result.
 
 Completion notifications and Agent-to-`main` message envelopes remain durable
 queued work while either endpoint has an undelivered row. Catalog projection uses

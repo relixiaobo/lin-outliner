@@ -1085,11 +1085,22 @@ export class ThreadCatalogOps {
         cursor = page.nextCursor;
       } while (cursor);
       const latest = this.core.history.listTurns({ threadId, limit: 1, sortDirection: 'desc', itemsView: 'full' }).data[0];
+      let resumedCommittedSettlement = false;
       if (latest?.status === 'inProgress') {
         this.core.history.restoreOpenItemsFromRollout(threadId, latest.id, entries);
         const recovered = this.core.history.readTurn(threadId, latest.id, 'full');
         if (!recovered) throw new Error(`Recovered Turn is missing from history: ${latest.id}`);
-        await this.finishCrashedTurn(threadId, recovered);
+        resumedCommittedSettlement = this.turnLifecycle.recoverCommittedExhaustedSettlementTurn(
+          threadId,
+          recovered,
+        );
+        if (!resumedCommittedSettlement) {
+          await this.finishCrashedTurn(
+            threadId,
+            recovered,
+            this.turnLifecycle.crashedTurnRecoveryError(threadId, recovered.id),
+          );
+        }
       }
       const record = this.core.metadata.require(threadId);
       if (record.nameOrigin === 'automatic' && this.core.allTurns(threadId).length === 0) {
@@ -1100,7 +1111,10 @@ export class ThreadCatalogOps {
       // persists, and both rollback and Turn admission refuse anything but
       // `idle`, so the conversation stayed dead across restarts. Healing it here
       // is what gives those Threads back — nothing writes the status any more.
-      if (record.thread.status.type === 'active' || record.thread.status.type === 'systemError') {
+      if (
+        !resumedCommittedSettlement
+        && (record.thread.status.type === 'active' || record.thread.status.type === 'systemError')
+      ) {
         await this.turnLifecycle.setStatus(threadId, { type: 'idle' });
       }
     }
@@ -1132,14 +1146,18 @@ export class ThreadCatalogOps {
       }
     }
 
-  private async finishCrashedTurn(threadId: ThreadId, turn: Turn): Promise<void> {
+  private async finishCrashedTurn(
+    threadId: ThreadId,
+    turn: Turn,
+    recoveryError: Turn['error'] = null,
+  ): Promise<void> {
       const completedAt = this.now();
       const unfinishedItemIds = new Set(
         this.core.history.unfinishedItems(threadId, turn.id).map((item) => item.id),
       );
       const items = turn.items.map((item) => {
         if (!unfinishedItemIds.has(item.id) || !('status' in item) || item.status !== 'inProgress') return item;
-        return decodeThreadItem({ ...item, status: 'interrupted' });
+        return decodeThreadItem({ ...item, status: recoveryError ? 'failed' : 'interrupted' });
       });
       for (const item of items) {
         if (!unfinishedItemIds.has(item.id)) continue;
@@ -1155,8 +1173,8 @@ export class ThreadCatalogOps {
       const interrupted = decodeTurn({
         ...turn,
         items,
-        status: 'interrupted',
-        error: { message: 'Turn interrupted by host restart', code: HOST_RESTART_ERROR_CODE },
+        status: recoveryError ? 'failed' : 'interrupted',
+        error: recoveryError ?? { message: 'Turn interrupted by host restart', code: HOST_RESTART_ERROR_CODE },
         completedAt,
         durationMs: Math.max(0, completedAt - turn.startedAt),
       });

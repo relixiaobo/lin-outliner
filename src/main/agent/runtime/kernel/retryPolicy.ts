@@ -16,7 +16,12 @@ import {
 } from './types';
 
 type AssistantToolCall = Extract<AssistantMessage['content'][number], { type: 'toolCall' }>;
-type RetryOutcome = 'settled' | 'retry-request' | 'retry-stream' | 'retry-overflow';
+type RetryOutcome =
+  | 'settled'
+  | 'retry-request'
+  | 'retry-stream'
+  | 'retry-overflow'
+  | 'retry-optional-overflow';
 
 const MAX_RETRYABLE_RESPONSES_REQUEST_FAILURES = 5;
 const MAX_RETRYABLE_RESPONSES_TERMINATIONS = 1;
@@ -30,6 +35,7 @@ type StreamWithPolicyInput = RetryPolicyOptions & {
   attempt: (messages: Message[] | null, signal: AbortSignal) => AssistantMessageEventStream
     | Promise<AssistantMessageEventStream>;
   recoverContextOverflow?: (errorMessage: string) => Promise<readonly Message[] | null>;
+  recoverOptionalContextOverflow?: (errorMessage: string) => Promise<readonly Message[] | null>;
   signal?: AbortSignal;
 };
 
@@ -61,6 +67,14 @@ export function streamWithPolicy(input: StreamWithPolicyInput): AssistantMessage
           return true;
         }
       : undefined,
+    retryOptionalContextOnOverflow: input.recoverOptionalContextOverflow
+      ? async (errorMessage) => {
+          const messages = await input.recoverOptionalContextOverflow!(errorMessage);
+          if (!messages) return false;
+          refreshedMessages = [...messages];
+          return true;
+        }
+      : undefined,
   });
 }
 
@@ -69,6 +83,7 @@ type AbortSettlingOptions = RetryPolicyOptions & {
   model: Model<Api>;
   retrySource?: () => Promise<AssistantMessageEventStream>;
   retryContextOnOverflow?: (errorMessage: string) => Promise<boolean>;
+  retryOptionalContextOnOverflow?: (errorMessage: string) => Promise<boolean>;
 };
 
 export function wrapStreamWithAbortSettling(
@@ -83,6 +98,7 @@ export function wrapStreamWithAbortSettling(
     maxStreamRetries: configuredMaxStreamRetries,
     maxRetryDelayMs,
     retryContextOnOverflow,
+    retryOptionalContextOnOverflow,
   }: AbortSettlingOptions,
 ): AssistantMessageEventStream {
   const out = createAssistantMessageEventStream();
@@ -108,6 +124,7 @@ export function wrapStreamWithAbortSettling(
       : Math.min(delay, maxRetryDelayMs);
   });
   const canRetryOverflow = Boolean(retrySource && retryContextOnOverflow);
+  const canRetryOptionalOverflow = Boolean(retrySource && retryOptionalContextOnOverflow);
   let activeRetryStatus: Omit<ProviderRetryLifecycleEvent, 'phase'> | null = null;
   let pendingOverflowMessage: AssistantMessage | null = null;
 
@@ -167,6 +184,7 @@ export function wrapStreamWithAbortSettling(
     let requestRetryCount = 0;
     let streamRetryCount = 0;
     let overflowRetryCount = 0;
+    let optionalOverflowRetryCount = 0;
     try {
       while (!settled) {
         const outcome = await consumeSourceAttempt(
@@ -174,18 +192,26 @@ export function wrapStreamWithAbortSettling(
           requestRetryCount,
           streamRetryCount,
           overflowRetryCount,
+          optionalOverflowRetryCount,
         );
         if (outcome === 'settled') break;
-        if (outcome === 'retry-overflow') {
+        if (outcome === 'retry-optional-overflow' || outcome === 'retry-overflow') {
           const overflow = pendingOverflowMessage as AssistantMessage | null;
           pendingOverflowMessage = null;
           if (!overflow) throw new Error('Context-overflow retry lost its provider error.');
           clearProviderRetry();
-          overflowRetryCount += 1;
-          const recovered = await retryContextOnOverflow?.(overflow.errorMessage ?? 'Provider context overflow');
+          const errorMessage = overflow.errorMessage ?? 'Provider context overflow';
+          const recovered = outcome === 'retry-optional-overflow'
+            ? await retryOptionalContextOnOverflow?.(errorMessage)
+            : await retryContextOnOverflow?.(errorMessage);
           if (!recovered) {
             settleWithTerminalMessage(contextOverflowFailure(overflow, false), 'error');
             break;
+          }
+          if (outcome === 'retry-optional-overflow') {
+            optionalOverflowRetryCount += 1;
+          } else {
+            overflowRetryCount += 1;
           }
         } else if (outcome === 'retry-request') {
           requestRetryCount += 1;
@@ -223,6 +249,7 @@ export function wrapStreamWithAbortSettling(
     requestRetryCount: number,
     streamRetryCount: number,
     overflowRetryCount: number,
+    optionalOverflowRetryCount: number,
   ): Promise<RetryOutcome> {
     let bufferedEvents: AssistantMessageEvent[] = [];
     let flushed = false;
@@ -246,6 +273,10 @@ export function wrapStreamWithAbortSettling(
         || completedToolCallIds.size > 0
         || classifyModelFailure(message)?.kind !== 'contextOverflow'
       ) return null;
+      if (canRetryOptionalOverflow && optionalOverflowRetryCount === 0) {
+        pendingOverflowMessage = message;
+        return 'retry-optional-overflow';
+      }
       if (canRetryOverflow && overflowRetryCount === 0) {
         pendingOverflowMessage = message;
         return 'retry-overflow';

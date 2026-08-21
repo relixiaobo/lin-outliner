@@ -81,7 +81,7 @@ describe('Agent registry projection', () => {
     expect(projection.anchorsByTurnId.get('turn-1')?.items.map((item) => item.id)).toEqual(['main-message']);
   });
 
-  test('names whose result each delivery carries, and which of its runs, across Turns', () => {
+  test('names whose result a durable delivery Turn carries', () => {
     const spawn = activity('spawn', 'started', null, 'agent-call');
     const spawnTurn = parentTurn('turn-1', [collaborationItem('agent-call', 'agent', 'completed', CHILD_ID), spawn]);
     const continuation: Turn = {
@@ -96,6 +96,14 @@ describe('Agent registry projection', () => {
 
     const projection = projectSubagentConversation(input({
       turnsByThread: new Map([[PARENT_ID, [spawnTurn, continuation]]]),
+      executions: executionMap([
+        execution({
+          terminalStatus: 'finished',
+          notificationState: 'delivered',
+          deliveryTurnId: 'turn-2',
+          deliveredNotifications: [{ generation: 1, deliveryTurnId: 'turn-2' }],
+        }),
+      ]),
     }));
 
     expect(projection.deliveryByTurnId.get('turn-2'))
@@ -103,7 +111,7 @@ describe('Agent registry projection', () => {
     expect(projection.deliveryByTurnId.get('turn-1')).toBeUndefined();
   });
 
-  test('counts each Agent\'s deliveries in order, so a resume shows its own run', () => {
+  test('keeps delivered generations anchored after the Agent resumes', () => {
     const spawn = activity('spawn', 'started', null, 'agent-call');
     const spawnTurn = parentTurn('turn-1', [collaborationItem('agent-call', 'agent', 'completed', CHILD_ID), spawn]);
     const firstDelivery = continuationTurn('turn-2', 'agent-call');
@@ -112,13 +120,23 @@ describe('Agent registry projection', () => {
 
     const projection = projectSubagentConversation(input({
       turnsByThread: new Map([[PARENT_ID, [spawnTurn, firstDelivery, resumeTurn, secondDelivery]]]),
+      executions: executionMap([
+        execution({
+          generation: 2,
+          currentTurnId: 'child-turn-2',
+          terminalStatus: 'finished',
+          notificationState: 'delivered',
+          deliveryTurnId: 'turn-4',
+          deliveredNotifications: [
+            { generation: 1, deliveryTurnId: 'turn-2' },
+            { generation: 2, deliveryTurnId: 'turn-4' },
+          ],
+        }),
+      ]),
     }));
 
-    // One generation is one child Turn, so the Nth delivery from an Agent is
-    // the Nth run — which is the report that anchor can show.
-    // Counted from the newest as well as from the start: the report reads the
-    // Agent's settled Turns backwards, so a delivery the host never
-    // materialized cannot slide every earlier card onto the wrong run.
+    // The ledger owns delivery identity for every delivered generation, not
+    // only for the stable Agent record's current generation.
     expect(projection.deliveryByTurnId.get('turn-2'))
       .toEqual({ agentId: CHILD_ID, generationIndex: 0, fromLatest: 1 });
     expect(projection.deliveryByTurnId.get('turn-4'))
@@ -157,7 +175,7 @@ describe('Agent registry projection', () => {
     const settledTurn = projectSubagentConversation(input({
       latestTurnByThread: new Map([[CHILD_ID, childTurn('child-turn', 'completed', 500, 800)]]),
     })).byAgentId.get(CHILD_ID);
-    expect(settledTurn).toMatchObject({ status: 'completed', durationMs: 10, settledAt: 800 });
+    expect(settledTurn).toMatchObject({ status: 'finished', durationMs: 10, settledAt: 800 });
 
     // No Turn in hand — a conversation reopened days later — still states the
     // outcome, because the terminal status is durable.
@@ -321,7 +339,7 @@ describe('Agent registry identity stability', () => {
     }));
     const after = projectSubagentConversation(input({
       executions: executionMap([
-        execution({ terminalStatus: 'completed', notificationState: 'pending' }),
+        execution({ terminalStatus: 'finished', notificationState: 'pending' }),
         execution({ agentId: SECOND_CHILD_ID, description: 'draft the note' }),
       ]),
     }), before);
@@ -346,7 +364,7 @@ describe('work strip membership', () => {
   });
 
   test('keeps a just-finished row briefly, then lets it leave', () => {
-    const settled = entryOf({ terminalStatus: 'completed', notificationState: 'pending', updatedAt: now - 1_000 });
+    const settled = entryOf({ terminalStatus: 'finished', notificationState: 'pending', updatedAt: now - 1_000 });
     expect(stripRows(settled, now)).toHaveLength(1);
     expect(stripRows(settled, now + SUBAGENT_STRIP_LINGER_MS)).toEqual([]);
   });
@@ -354,7 +372,7 @@ describe('work strip membership', () => {
   test('sorts running before stopped before just-finished', () => {
     const byAgentId = projectSubagentConversation(input({
       executions: executionMap([
-        execution({ agentId: 'agent-finished', terminalStatus: 'completed', updatedAt: now - 500 }),
+        execution({ agentId: 'agent-finished', terminalStatus: 'finished', updatedAt: now - 500 }),
         execution({ agentId: 'agent-stopped', stopProvenance: 'user', terminalStatus: 'interrupted', updatedAt: now - 500 }),
         execution({ agentId: 'agent-running' }),
       ]),
@@ -368,7 +386,7 @@ describe('work strip membership', () => {
   test('shows nothing for a conversation whose Agents finished before it was opened', () => {
     // No settlement time the renderer can trust means the work is history, and
     // the idle deck and the everything-finished deck must look identical.
-    const old = entryOf({ terminalStatus: 'completed', updatedAt: 0 });
+    const old = entryOf({ terminalStatus: 'finished', updatedAt: 0 });
     expect(stripRows(old, now)).toEqual([]);
   });
 });
@@ -421,6 +439,17 @@ function execution(overrides: Partial<SubagentExecutionProjection> = {}): Subage
     stopProvenance: 'none',
     terminalStatus: null,
     notificationState: 'none',
+    terminalError: null,
+    deliveryTurnId: null,
+    deliveryClass: null,
+    eligibleAfterGeneration: null,
+    coverageDisposition: null,
+    omittedOutputBytes: 0,
+    omittedOutputTokens: 0,
+    deliveredNotifications: [],
+    notificationCutoff: 'open',
+    executionMode: 'ordinary',
+    settlementCoverage: null,
     worktree: null,
     createdAt: 10,
     updatedAt: 10,
