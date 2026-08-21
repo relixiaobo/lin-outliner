@@ -15,6 +15,7 @@ import {
   TRAJECTORY_VIRTUALIZATION_THRESHOLD,
   TRAJECTORY_VIRTUAL_OVERSCAN,
   trajectoryRecordContent,
+  trajectoryRecordKindClass,
   trajectoryRecordRole,
   type TrajectoryLedgerRow,
 } from './trajectoryModel';
@@ -264,7 +265,7 @@ function RecordRow({
             {t.agent.trajectory.turnLabel({ index: row.turnIndex + 1 })}
           </button>
         ) : null}
-        <span className={`thread-trajectory-kind is-${record.kind}`}>
+        <span className={`thread-trajectory-kind ${trajectoryRecordKindClass(record)}`}>
           {trajectoryRecordRole(record)}
         </span>
       </td>
@@ -328,19 +329,7 @@ function TurnSummaryRow({
       }}
       tabIndex={0}
     >
-      <td className="thread-trajectory-event-cell">
-        <button
-          aria-label={t.agent.trajectory.expandTurn({ index: row.turnIndex + 1 })}
-          className="thread-trajectory-turn-label is-collapsed"
-          onClick={(event) => {
-            event.stopPropagation();
-            onToggleTurn(row.turnId);
-          }}
-          type="button"
-        >
-          {t.agent.trajectory.turnLabel({ index: row.turnIndex + 1 })}
-        </button>
-      </td>
+      <td className="thread-trajectory-event-cell" />
       <td className="thread-trajectory-content-cell">
         <span className="thread-trajectory-row-content">
           <ChevronRightIcon size={ICON_SIZE.tiny} />

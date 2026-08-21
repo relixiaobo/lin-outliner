@@ -24,6 +24,7 @@ import {
   buildTrajectoryLedgerRows,
   buildTrajectoryTimeline,
   groupTrajectoryRecords,
+  isSystemLevelRecord,
   trajectoryRecordsInRange,
   trajectorySearchMatches,
   type TrajectoryTimelineMode,
@@ -161,6 +162,10 @@ export function ThreadTrajectoryPanel({
     [records],
   );
   const turnGroups = useMemo(() => groupTrajectoryRecords(records), [records]);
+  const collapsibleTurnGroups = useMemo(
+    () => turnGroups.filter((group) => group.records.some((record) => !isSystemLevelRecord(record))),
+    [turnGroups],
+  );
   const turnIndexById = useMemo(
     () => new Map(turnGroups.map((group) => [group.turnId, group.index])),
     [turnGroups],
@@ -183,8 +188,8 @@ export function ThreadTrajectoryPanel({
     searchMatches,
   }), [collapsedCalls, collapsedTurns, rangeMatches, records, searchMatches]);
   const selectedRecord = selectedId ? recordById.get(selectedId) ?? null : null;
-  const allTurnsCollapsed = turnGroups.length > 0
-    && turnGroups.every((group) => collapsedTurns.has(group.turnId));
+  const allTurnsCollapsed = collapsibleTurnGroups.length > 0
+    && collapsibleTurnGroups.every((group) => collapsedTurns.has(group.turnId));
   const allCallsCollapsed = callIds.size > 0
     && [...callIds].every((recordId) => collapsedCalls.has(recordId));
 
@@ -270,7 +275,7 @@ export function ThreadTrajectoryPanel({
                 allCallsCollapsed ? new Set() : new Set(callIds),
               )}
               onToggleAllTurns={() => setCollapsedTurns(
-                allTurnsCollapsed ? new Set() : new Set(turnGroups.map((group) => group.turnId)),
+                allTurnsCollapsed ? new Set() : new Set(collapsibleTurnGroups.map((group) => group.turnId)),
               )}
               query={query}
               summary={page.summary}

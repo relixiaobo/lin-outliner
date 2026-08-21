@@ -90,7 +90,7 @@ The top-level Trajectory record kind set is:
 | Kind | Meaning | Lane |
 |---|---|---|
 | `input` | One canonical `userMessage` Item admitted as initial input or steering. | Input |
-| `context` | Stable prompt changes and prepared provider-context parts that emitted model-visible context text. | Input |
+| `context` | Stable prompt changes, provider-visible tool catalog changes, and prepared provider-context parts that emitted model-visible context text. | Input |
 | `assistant` | One provider/model call presented as Assistant work, with request, response, reasoning, usage, and timing facts. | Assistant |
 | `tool` | Shell, file, MCP, dynamic tool, search, and other non-delegating tool work. | Tools |
 | `retry` | Request or stream retry linked to its source and next Assistant/provider calls. | Assistant |
@@ -110,7 +110,8 @@ An `input` record is one canonical `userMessage` Item. Its primary evidence is
 the Thread Item itself; the accepted-input diagnostic activity and the first
 provider call that consumed it are related evidence. Context Items admitted in
 the same envelope do not automatically become `context` records. A CONTEXT row
-exists only for stable prompt text or for a prepared provider-context part whose
+exists only for stable prompt text, a provider-call tool catalog snapshot that
+changed the model-visible tool schemas, or a prepared provider-context part whose
 diagnostics prove that model-visible context text was emitted. A USER
 preview/detail must therefore render the original user content only and must not
 concatenate `contextEvidence`, stable prompt, user view, skills, roles,
@@ -230,8 +231,10 @@ The ledger is ordered by recorded activity and grouped by Turn. Each record is
 one compact, table-like row whose leading tag names the message/event role and
 whose main column starts with the actual content preview. Internal titles,
 identifiers, evidence references, and lifecycle metadata must not displace the
-message content as the primary scan target. Turn and Assistant/provider-call
-folds preserve one summary row and stable selection semantics. Search filters
+message content as the primary scan target. Turn folds preserve the first
+ordinary content row plus one summary row; System and provider-visible Tools
+request-header rows stay outside the fold. Assistant/provider-call folds
+preserve one summary row and stable selection semantics. Search filters
 the currently loaded window; it does not imply that unloaded history was
 searched. The UI states that scope and offers earlier-page loading from an
 explicit ledger row and overview ellipsis.
@@ -255,8 +258,8 @@ compressing both surfaces below their readable minimum.
 Tabs are record-specific and follow the DeepSeek Harness content-first model:
 
 - Input: Summary, Preview, Raw.
-- Context: Summary, Preview, Raw; stable prompt records additionally
-  expose System Prompt and Tools.
+- Context: Summary, Preview, Raw; stable prompt records expose System Prompt,
+  and provider-visible tool catalog records expose Tools.
 - Assistant: Summary, Preview, Raw. Summary integrates source request, state,
   usage, rendered response, and timing; Raw contains the typed redacted request
   and response evidence.
@@ -274,7 +277,14 @@ diagnostics-backed prepared-context-part evidence reference, not by the retained
 one `<system-reminder>` part contains multiple `<context-evidence>` blocks, it
 appears as one CONTEXT row and the inspector shows the whole part text. If a
 retained `contextEvidence` Item emitted no
-model-visible text, it is not a Trajectory message row. Frozen tool-output
+model-visible text, it is not a Trajectory message row. Tool catalog Preview is
+not message text; its row is grounded on the provider call's prepared
+`toolNames` and retained canonical schemas. It appears once when the first
+non-empty catalog is sent and again only when a later provider call changes the
+prepared catalog; repeated calls with the same tool schemas do not add duplicate
+rows. Tool catalog rows are system-like request-header rows: they sit with
+stable prompt changes before the Turn's ordinary USER / CONTEXT / ASSISTANT
+body rows, and Turn folding never hides them. Frozen tool-output
 projection Items are storage evidence for replaying tool results; they do not
 appear as CONTEXT rows unless their text is explicitly emitted inside prepared
 provider context. The retained context payload remains Raw storage evidence
@@ -317,7 +327,9 @@ Trajectory uses the existing opaque workspace base, tokenized content surfaces,
 and material only where existing chrome permits it. Selection, hover, focus, and
 active state remain neutral; status colors convey status only. Icon controls use
 the existing icon library, native tooltip and focus conventions, and do not add
-rounded-square hover fills.
+rounded-square hover fills. Type chips may use identity/status tokens for
+message/event scanning, but those colors never paint selection, hover, active,
+or focus state.
 
 Keyboard users can reach the toolbar, timeline records, ledger rows, fold
 controls, tabs, resize control, and Back/close actions with visible focus.

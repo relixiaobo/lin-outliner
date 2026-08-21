@@ -1049,11 +1049,15 @@ with a compact role tag followed immediately by its content preview. Internal
 titles, IDs, evidence references, lifecycle metadata, timing, and usage remain
 secondary scanning aids and cannot displace the content column. Records preserve
 recorded activity order and group by Turn. Turn folds and Assistant-call folds
-leave one stable summary row rather than removing all context. The selected row
+leave one stable content row plus a stable summary row rather than removing all
+context. System-like rows (`SYSTEM` and provider-visible `TOOLS`) are outside
+Turn folding, so collapsing a Turn never hides the request header evidence. The selected row
 stays reachable through folding, filtering, paging, and virtualization. More
 than 100 visible candidates use a fixed-row virtual window with bounded
 overscan; search indexes, record maps, grouping, and timeline geometry are
 derived once per relevant input instead of recomputing at pointer frequency.
+Type chips use identity/status tokens for scan color while hover, selection, and
+focus remain neutral functional state.
 
 The initial Thread-header entry has no selected record and therefore shows the
 ledger at full width with no empty inspector. A Details deep link selects its
@@ -1068,9 +1072,10 @@ breakpoint it replaces the ledger and exposes Back, so neither surface is
 compressed below its readable width. Closing the wide inspector returns to the
 full-width ledger without navigating away from Trajectory. Inspector tabs remain
 content-first: Input uses Summary / Preview / Request / Raw; Context uses
-Summary / Preview / Raw, with System Prompt and Tools for stable-prompt
-evidence; Assistant uses Summary / Preview / Request / Raw; Tool uses Summary /
-Input / Output / Schema / Raw; Retry, Compaction, and Delegation use Summary /
+Summary / Preview / Raw, with System Prompt for stable-prompt evidence and Tools
+for provider-visible tool catalog evidence; Assistant uses Summary / Preview /
+Request / Raw; Tool uses Summary / Input / Output / Schema / Raw; Retry,
+Compaction, and Delegation use Summary /
 Preview / Raw, and Delegation can open the child Thread's own Trajectory. Raw
 means Tenon's typed, bounded, redacted evidence, not an unfiltered transport
 body. The Request tab is the consumed provider call's materialized post-adapter
@@ -1085,7 +1090,13 @@ Items. A prepared provider content part is the ledger unit: if one
 `<system-reminder>` part contains multiple `<context-evidence>` blocks, it
 appears as one CONTEXT row and the inspector shows the whole part text. If a
 retained `contextEvidence` Item emitted no model-visible text, it is
-not a Trajectory message row. Frozen tool-output projection Items are storage
+not a Trajectory message row. Provider-visible tool catalogs are CONTEXT rows
+grounded on a provider call's prepared `toolNames` plus retained canonical
+schemas; they are not message text. The first non-empty catalog appears once,
+and later provider calls add another row only when the prepared schemas change.
+Tool catalog rows are system-like request-header rows: they sit with stable
+prompt changes before the Turn's ordinary USER / CONTEXT / ASSISTANT body rows,
+and Turn folding never hides them. Frozen tool-output projection Items are storage
 evidence for replaying tool results and do not appear as CONTEXT rows unless
 their text is explicitly emitted inside prepared provider context. The retained
 context payload remains Raw storage evidence when selected through another
@@ -1096,7 +1107,8 @@ The ledger record taxonomy is fixed: `input`, `context`, `assistant`, `tool`,
 `retry`, `compaction`, and `delegation`. Assistant records are grounded on the
 provider-call evidence `(threadId, turnId, providerCall.index)`, not on a
 transcript Item. Prepared context rows are grounded on
-`(threadId, turnId, providerCall.index, messageIndex, partIndex)`.
+`(threadId, turnId, providerCall.index, messageIndex, partIndex)`. Tool catalog
+rows are grounded on `(threadId, turnId, providerCall.index)`.
 Tool, retry, compaction, and delegation records use retained
 diagnostic activities when available and degrade to canonical Item evidence when
 diagnostics are unavailable. Delegation records link to the child Thread's own

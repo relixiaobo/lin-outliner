@@ -2233,6 +2233,7 @@ function decodeThreadTrajectoryEvidenceRef(value: unknown, path: string): Thread
       'toolExecution',
       'threadTurn',
       'stablePrompt',
+      'toolCatalog',
       'preparedContextPart',
       'subagent',
     ],
@@ -2280,6 +2281,15 @@ function decodeThreadTrajectoryEvidenceRef(value: unknown, path: string): Thread
   if (type === 'threadTurn' || type === 'stablePrompt') {
     exactKeys(record, ['type', 'threadId', 'turnId'], path);
     return { type, threadId, turnId };
+  }
+  if (type === 'toolCatalog') {
+    exactKeys(record, ['type', 'threadId', 'turnId', 'callIndex'], path);
+    return {
+      type,
+      threadId,
+      turnId,
+      callIndex: nonNegativeInteger(record.callIndex, `${path}.callIndex`),
+    };
   }
   if (type === 'preparedContextPart') {
     exactKeys(record, [

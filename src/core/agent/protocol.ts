@@ -1558,6 +1558,12 @@ export type ThreadTrajectoryEvidenceRef =
       readonly turnId: TurnId;
     }
   | {
+      readonly type: 'toolCatalog';
+      readonly threadId: ThreadId;
+      readonly turnId: TurnId;
+      readonly callIndex: number;
+    }
+  | {
       readonly type: 'preparedContextPart';
       readonly threadId: ThreadId;
       readonly turnId: TurnId;

@@ -29,7 +29,12 @@ import {
 import { ReadOnlyCodeBlock } from '../../../ui/editor/CodeBlockSurface';
 import { Button } from '../../../ui/primitives/Button';
 import { EmptyState, ErrorState } from '../../../ui/primitives/FeedbackState';
-import { trajectoryRecordRole, isStablePromptRecord } from './trajectoryModel';
+import {
+  trajectoryRecordKindClass,
+  trajectoryRecordRole,
+  isStablePromptRecord,
+  isToolCatalogRecord,
+} from './trajectoryModel';
 
 type InspectorTab =
   | 'summary'
@@ -80,7 +85,7 @@ export const TrajectoryInspector = memo(function TrajectoryInspector({
   const [width, setWidth] = useState<number | null>(null);
 
   useEffect(() => {
-    setTab(isStablePromptRecord(record) ? 'systemPrompt' : 'summary');
+    setTab(isStablePromptRecord(record) ? 'systemPrompt' : isToolCatalogRecord(record) ? 'tools' : 'summary');
   }, [record.id]);
 
   useEffect(() => {
@@ -182,7 +187,9 @@ export const TrajectoryInspector = memo(function TrajectoryInspector({
           <BackIcon size={ICON_SIZE.menu} />
         </button>
         <div className="thread-trajectory-inspector-title">
-          <span className={`thread-trajectory-kind is-${record.kind}`}>{trajectoryRecordRole(record)}</span>
+          <span className={`thread-trajectory-kind ${trajectoryRecordKindClass(record)}`}>
+            {trajectoryRecordRole(record)}
+          </span>
           <span>{t.agent.trajectory.turnStep({ turn: turnIndex + 1, step: record.sequence + 1 })}</span>
         </div>
         <button
@@ -451,6 +458,9 @@ function tabsForRecord(
 ): readonly { readonly id: InspectorTab; readonly label: string }[] {
   if (isStablePromptRecord(record)) return [
     { id: 'systemPrompt', label: t.systemPrompt },
+    { id: 'raw', label: t.raw },
+  ];
+  if (isToolCatalogRecord(record)) return [
     { id: 'tools', label: t.tools },
     { id: 'raw', label: t.raw },
   ];
@@ -490,7 +500,7 @@ function previewText(
     return userMessageText(detail.message?.content ?? null) ?? record.preview;
   }
   if (detail.kind === 'context') {
-    return detail.modelContextText;
+    return detail.modelContextText ?? contextPayloadText(detail.payload) ?? record.preview;
   }
   if (detail.kind === 'tool') return detail.outputText ?? record.preview;
   if (detail.kind === 'delegation') return detail.outputText ?? record.preview;
@@ -536,6 +546,8 @@ function contextPayloadText(value: JsonValue | null): string | null {
       return catalogText(value, 'skill');
     case 'roleCatalog':
       return catalogText(value, 'role');
+    case 'toolCatalog':
+      return toolCatalogText(value);
     case 'skillInvocation':
       return skillInvocationText(value);
     case 'toolOutputProjection':
@@ -684,6 +696,25 @@ function catalogText(payload: JsonObject, label: 'skill' | 'role'): string | nul
     ].filter(Boolean).join(' ');
     lines.push(`- ${fields}`);
     const description = stringField(entry, 'description');
+    if (description) lines.push(`  description=${description}`);
+  }
+  return lines.join('\n') || null;
+}
+
+function toolCatalogText(payload: JsonObject): string | null {
+  const toolNames = arrayField(payload, 'toolNames')
+    .filter((entry): entry is string => typeof entry === 'string');
+  const tools = arrayField(payload, 'tools');
+  const lines = [
+    `request=${jsonValueText(payload.requestIndex) ?? 'unknown'}`,
+    `tools=${toolNames.length}`,
+  ];
+  for (const [index, value] of tools.entries()) {
+    if (!isJsonObject(value)) continue;
+    const name = stringField(value, 'name') ?? toolNames[index] ?? 'unknown';
+    const description = stringField(value, 'description');
+    const unavailable = value.schemaUnavailable === true ? ' schema_unavailable=true' : '';
+    lines.push(`- ${name}${unavailable}`);
     if (description) lines.push(`  description=${description}`);
   }
   return lines.join('\n') || null;
@@ -852,6 +883,7 @@ function stablePromptText(detail: ThreadTrajectoryRecordDetail): string | null {
 
 function stablePromptTools(detail: ThreadTrajectoryRecordDetail): JsonValue | null {
   if (detail.kind !== 'context' || !isJsonObject(detail.payload)) return null;
+  if (detail.payload.kind === 'toolCatalog') return detail.payload.tools ?? null;
   return detail.payload.toolSchemas ?? null;
 }
 
@@ -878,6 +910,7 @@ function evidenceSource(record: ThreadTrajectoryRecordSummary): string {
   if (evidence.type === 'toolExecution') return evidence.callId;
   if (evidence.type === 'threadItem') return record.title;
   if (evidence.type === 'stablePrompt') return 'Stable prompt';
+  if (evidence.type === 'toolCatalog') return `Request #${evidence.callIndex + 1}`;
   if (evidence.type === 'subagent') return 'Child Thread';
   return 'Turn';
 }

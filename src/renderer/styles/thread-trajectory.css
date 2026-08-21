@@ -468,6 +468,8 @@
 }
 
 .thread-trajectory-kind {
+  --trajectory-kind-accent: var(--text-secondary);
+
   display: inline-flex;
   max-width: 76px;
   height: 19px;
@@ -476,8 +478,8 @@
   overflow: hidden;
   padding: 0 var(--space-2);
   border-radius: var(--radius-xs);
-  color: var(--text-secondary);
-  background: var(--fill-2);
+  color: color-mix(in srgb, var(--trajectory-kind-accent) 82%, var(--text-primary) 18%);
+  background: color-mix(in srgb, var(--trajectory-kind-accent) 12%, transparent);
   font-size: var(--font-ui-2xs);
   font-weight: 600;
   line-height: var(--line-ui-2xs-tight);
@@ -485,14 +487,34 @@
   white-space: nowrap;
 }
 
+.thread-trajectory-kind.is-system {
+  --trajectory-kind-accent: var(--identity-tint-6);
+}
+
+.thread-trajectory-kind.is-input {
+  --trajectory-kind-accent: var(--identity-tint-5);
+}
+
+.thread-trajectory-kind.is-context {
+  --trajectory-kind-accent: var(--identity-tint-4);
+}
+
+.thread-trajectory-kind.is-tool-catalog {
+  --trajectory-kind-accent: var(--identity-tint-2);
+}
+
 .thread-trajectory-kind.is-assistant {
-  color: var(--text-primary);
-  background: var(--fill-3);
+  --trajectory-kind-accent: var(--identity-tint-7);
+}
+
+.thread-trajectory-kind.is-tool,
+.thread-trajectory-kind.is-delegation {
+  --trajectory-kind-accent: var(--identity-tint-1);
 }
 
 .thread-trajectory-kind.is-retry,
 .thread-trajectory-kind.is-compaction {
-  color: var(--status-warning);
+  --trajectory-kind-accent: var(--status-warning);
 }
 
 .thread-trajectory-content-cell {

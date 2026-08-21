@@ -26,6 +26,7 @@ const TURN_ID = '01910000-0000-7000-8000-000000000002';
 const CHILD_THREAD_ID = '01910000-0000-7000-8000-000000000003';
 const INPUT_ID = `turn:${TURN_ID}:input:0`;
 const CONTEXT_ID = `turn:${TURN_ID}:context:prepared:0:0:1`;
+const TOOL_CATALOG_ID = `turn:${TURN_ID}:context:tools:0`;
 const ASSISTANT_ID = `turn:${TURN_ID}:assistant:0`;
 const TOOL_ID = `turn:${TURN_ID}:tool:2:call%3Aread`;
 const DELEGATION_ID = `turn:${TURN_ID}:delegation:2:call%3Aagent`;
@@ -110,8 +111,9 @@ describe('ThreadTrajectoryPanel', () => {
     expect(recordRow(rendered.document, ASSISTANT_ID).textContent).toContain('1 record');
 
     clickTitleButton(rendered.document, 'Collapse all Turns');
-    expect(rendered.document.querySelectorAll('[data-trajectory-record-id]').length).toBe(0);
-    expect(rendered.document.body.textContent).toContain('3 records');
+    expect(rendered.document.querySelectorAll('[data-trajectory-record-id]').length).toBe(1);
+    expect(recordRow(rendered.document, INPUT_ID).textContent).toContain('USERPlan the release');
+    expect(rendered.document.body.textContent).toContain('2 records');
   });
 
   test('shows Tool payload, result, and schema tabs and supports keyboard inspector resizing', async () => {
@@ -151,6 +153,52 @@ describe('ThreadTrajectoryPanel', () => {
 
     clickAriaButton(rendered.document, 'Close Trajectory inspector');
     expect(rendered.document.querySelector('[aria-label="Trajectory inspector"]')).toBeNull();
+  });
+
+  test('renders provider-visible tool catalog records as first-class Tools evidence', async () => {
+    const toolCatalog = record({
+      id: TOOL_CATALOG_ID,
+      kind: 'context',
+      lane: 'input',
+      sequence: 0,
+      title: 'Available Tools',
+      subtitle: '2 tools · Request #1',
+      preview: 'first_tool, second_tool',
+      primaryEvidence: {
+        type: 'toolCatalog',
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        callIndex: 0,
+      },
+      relatedEvidence: [{ type: 'providerCall', threadId: THREAD_ID, turnId: TURN_ID, callIndex: 0 }],
+    });
+    const rendered = renderPanel(async (method, request) => {
+      if (method === 'thread/trajectory/read') return trajectoryReadResponse([toolCatalog]);
+      if (method === 'thread/trajectory/detail/read') {
+        expect(request).toEqual({ threadId: THREAD_ID, recordId: TOOL_CATALOG_ID });
+        return contextDetailResponse(toolCatalog, {
+          kind: 'toolCatalog',
+          requestIndex: 0,
+          toolNames: ['first_tool', 'second_tool'],
+          tools: [
+            { name: 'first_tool', description: 'First tool', parameters: { type: 'object' } },
+            { name: 'second_tool', description: 'Second tool', parameters: { type: 'object' } },
+          ],
+        });
+      }
+      if (method === 'thread/trajectory/export') return { status: 'canceled' };
+      throw new Error(`Unexpected Agent Core method: ${method}`);
+    });
+
+    rendered.render();
+    await flush();
+    expect(recordRow(rendered.document, TOOL_CATALOG_ID).textContent).toContain('TOOLSAvailable Tools');
+
+    clickRecord(rendered.document, TOOL_CATALOG_ID);
+    await flush();
+    expect(buttonLabels(rendered.document)).toEqual(expect.arrayContaining(['Tools', 'Raw']));
+    expect(rendered.document.body.textContent).toContain('first_tool');
+    expect(rendered.document.body.textContent).toContain('First tool');
   });
 
   test('renders USER preview from the canonical user message instead of the accepted context envelope', async () => {
@@ -401,6 +449,53 @@ describe('Trajectory projection model', () => {
     });
     expect(folded.flatMap((row) => row.type === 'record' ? [row.record.id] : [])).toEqual([
       ASSISTANT_ID,
+    ]);
+  });
+
+  test('keeps system-level prompt and tool catalog rows outside Turn folds', () => {
+    const system = record({
+      id: `turn:${TURN_ID}:context`,
+      kind: 'context',
+      lane: 'input',
+      sequence: 0,
+      title: 'Initial System Prompt',
+      primaryEvidence: { type: 'stablePrompt', threadId: THREAD_ID, turnId: TURN_ID },
+    });
+    const tools = record({
+      id: TOOL_CATALOG_ID,
+      kind: 'context',
+      lane: 'input',
+      sequence: 1,
+      title: 'Available Tools',
+      primaryEvidence: { type: 'toolCatalog', threadId: THREAD_ID, turnId: TURN_ID, callIndex: 0 },
+    });
+    const input = record({
+      ...trajectoryRecords()[0]!,
+      sequence: 2,
+    });
+    const assistant = record({
+      ...trajectoryRecords()[1]!,
+      sequence: 3,
+    });
+
+    const rows = buildTrajectoryLedgerRows({
+      collapsedCalls: new Set(),
+      collapsedTurns: new Set([TURN_ID]),
+      rangeMatches: null,
+      records: [system, tools, input, assistant],
+      searchMatches: null,
+    });
+
+    expect(rows.map((row) => row.type === 'record' ? row.record.id : row.type)).toEqual([
+      system.id,
+      tools.id,
+      input.id,
+      'turnSummary',
+    ]);
+    expect(rows.filter((row) => row.type === 'record').map((row) => row.turnStart)).toEqual([
+      false,
+      false,
+      true,
     ]);
   });
 });

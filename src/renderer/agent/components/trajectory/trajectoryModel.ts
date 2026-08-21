@@ -1,7 +1,4 @@
-import type {
-  ThreadTrajectoryRecordKind,
-  ThreadTrajectoryRecordSummary,
-} from '../../../../core/agent/protocol';
+import type { ThreadTrajectoryRecordSummary } from '../../../../core/agent/protocol';
 
 export type TrajectoryTimelineMode = 'sequence' | 'duration';
 
@@ -188,14 +185,26 @@ export function buildTrajectoryLedgerRows({
     if (matchingIds.size === 0) continue;
 
     if (collapsedTurns.has(group.turnId)) {
-      rows.push({
-        type: 'turnSummary',
-        key: `turn-summary:${group.turnId}`,
-        turnId: group.turnId,
-        turnIndex: group.index,
-        count: directMatches.length,
-        preview: trajectoryRecordContent(directMatches.at(-1) ?? group.records.at(-1)!),
-      });
+      const visibleSystemRecords = directMatches.filter(isSystemLevelRecord);
+      for (const record of visibleSystemRecords) {
+        rows.push(recordRow(record, group.index, false, childrenByParent, collapsedCalls));
+      }
+      const contentRecords = directMatches.filter((record) => !isSystemLevelRecord(record));
+      const firstContent = contentRecords[0] ?? null;
+      if (firstContent) {
+        rows.push(recordRow(firstContent, group.index, true, childrenByParent, collapsedCalls));
+        const folded = contentRecords.slice(1);
+        if (folded.length > 0) {
+          rows.push({
+            type: 'turnSummary',
+            key: `turn-summary:${group.turnId}`,
+            turnId: group.turnId,
+            turnIndex: group.index,
+            count: folded.length,
+            preview: summarizeFoldedRecords(folded),
+          });
+        }
+      }
       continue;
     }
 
@@ -204,26 +213,46 @@ export function buildTrajectoryLedgerRows({
       if (record.parentRecordId && collapsedCalls.has(record.parentRecordId)) return false;
       return true;
     });
-    const turnStartId = visible.find((record) => !isStablePromptRecord(record))?.id ?? null;
+    const turnStartId = visible.find((record) => !isSystemLevelRecord(record))?.id ?? null;
     for (const record of visible) {
-      const callChildren = childrenByParent.get(record.id) ?? [];
-      rows.push({
-        type: 'record',
-        key: record.id,
-        record,
-        turnIndex: group.index,
-        turnStart: record.id === turnStartId,
-        depth: record.parentRecordId ? 1 : 0,
-        callChildCount: callChildren.length,
-        callCollapsed: collapsedCalls.has(record.id),
-      });
+      rows.push(recordRow(record, group.index, record.id === turnStartId, childrenByParent, collapsedCalls));
     }
   }
   return rows;
 }
 
+function recordRow(
+  record: ThreadTrajectoryRecordSummary,
+  turnIndex: number,
+  turnStart: boolean,
+  childrenByParent: ReadonlyMap<string, readonly ThreadTrajectoryRecordSummary[]>,
+  collapsedCalls: ReadonlySet<string>,
+): Extract<TrajectoryLedgerRow, { readonly type: 'record' }> {
+  const callChildren = childrenByParent.get(record.id) ?? [];
+  return {
+    type: 'record',
+    key: record.id,
+    record,
+    turnIndex,
+    turnStart,
+    depth: record.parentRecordId ? 1 : 0,
+    callChildCount: callChildren.length,
+    callCollapsed: collapsedCalls.has(record.id),
+  };
+}
+
+function summarizeFoldedRecords(records: readonly ThreadTrajectoryRecordSummary[]): string {
+  const counts = new Map<string, number>();
+  for (const record of records) {
+    const role = trajectoryRecordRole(record);
+    counts.set(role, (counts.get(role) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([role, count]) => `${role.toLowerCase()}×${count}`).join(' · ');
+}
+
 export function trajectoryRecordRole(record: ThreadTrajectoryRecordSummary): string {
   if (isStablePromptRecord(record)) return 'SYSTEM';
+  if (isToolCatalogRecord(record)) return 'TOOLS';
   switch (record.kind) {
     case 'input': return 'USER';
     case 'context': return 'CONTEXT';
@@ -250,12 +279,22 @@ export function trajectoryRecordContent(record: ThreadTrajectoryRecordSummary): 
   return record.preview ?? record.title;
 }
 
-export function trajectoryRecordKindClass(kind: ThreadTrajectoryRecordKind): string {
-  return `is-${kind}`;
+export function trajectoryRecordKindClass(record: ThreadTrajectoryRecordSummary): string {
+  if (isStablePromptRecord(record)) return 'is-system';
+  if (isToolCatalogRecord(record)) return 'is-tool-catalog';
+  return `is-${record.kind}`;
+}
+
+export function isSystemLevelRecord(record: ThreadTrajectoryRecordSummary): boolean {
+  return isStablePromptRecord(record) || isToolCatalogRecord(record);
 }
 
 export function isStablePromptRecord(record: ThreadTrajectoryRecordSummary): boolean {
   return record.kind === 'context' && record.primaryEvidence.type === 'stablePrompt';
+}
+
+export function isToolCatalogRecord(record: ThreadTrajectoryRecordSummary): boolean {
+  return record.kind === 'context' && record.primaryEvidence.type === 'toolCatalog';
 }
 
 export function orderedRange(left: number, right: number): TrajectoryTimeRange {

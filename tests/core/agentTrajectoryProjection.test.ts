@@ -59,12 +59,42 @@ describe('ThreadTrajectoryProjection', () => {
     });
   });
 
-  test('emits one stable-prompt record and round-trips exact tool evidence through the codec', async () => {
+  test('emits stable-prompt and tool-catalog records and round-trips exact tool evidence through the codec', async () => {
     const projection = trajectoryProjection();
     const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    const toolCatalog = response.records.find((record) => record.primaryEvidence.type === 'toolCatalog');
 
     expect(response.records.filter((record) => record.primaryEvidence.type === 'stablePrompt')).toHaveLength(1);
+    expect(toolCatalog).toMatchObject({
+      kind: 'context',
+      lane: 'input',
+      title: 'Available Tools',
+      subtitle: '2 tools · Request #1',
+      preview: 'first_tool, second_tool',
+      primaryEvidence: {
+        type: 'toolCatalog',
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        callIndex: 0,
+      },
+    });
     expect(decodeAgentCoreResponse('thread/trajectory/read', response)).toEqual(response);
+
+    if (!toolCatalog) throw new Error('Expected tool catalog record');
+    const catalogDetail = await projection.readDetail({ threadId: THREAD_ID, recordId: toolCatalog.id });
+    expect(catalogDetail.detail?.kind).toBe('context');
+    if (catalogDetail.detail?.kind !== 'context') throw new Error('Expected context detail');
+    expect(catalogDetail.detail.modelContextText).toBeNull();
+    expect(catalogDetail.detail.payload).toEqual({
+      kind: 'toolCatalog',
+      requestIndex: 0,
+      toolNames: ['first_tool', 'second_tool'],
+      tools: [
+        { name: 'first_tool', description: 'First tool', parameters: { type: 'object' } },
+        { name: 'second_tool', description: 'Second tool', parameters: { type: 'object' } },
+      ],
+    });
+    expect(decodeAgentCoreResponse('thread/trajectory/detail/read', catalogDetail)).toEqual(catalogDetail);
 
     const invalid = structuredClone(response) as ThreadTrajectoryReadResponse;
     const toolIndex = invalid.records.findIndex((record) => record.primaryEvidence.type === 'toolExecution');
@@ -84,9 +114,11 @@ describe('ThreadTrajectoryProjection', () => {
     const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
     const input = response.records.find((record) => record.kind === 'input');
     const contexts = response.records.filter((record) => record.kind === 'context');
+    const systemContexts = contexts.filter((record) => record.primaryEvidence.type === 'preparedContextPart');
 
     expect(input?.preview).toBe('nihao');
-    expect(contexts.map((record) => record.title)).toEqual(['System Reminder']);
+    expect(contexts.map((record) => record.title)).toEqual(['Available Tools', 'System Reminder']);
+    expect(systemContexts.map((record) => record.title)).toEqual(['System Reminder']);
     expect(input?.primaryEvidence).toEqual({
       type: 'threadItem',
       threadId: THREAD_ID,
@@ -108,9 +140,9 @@ describe('ThreadTrajectoryProjection', () => {
         callIndex: 0,
       },
     ]));
-    expect(contexts[0]?.preview).toContain('<system-reminder>');
-    expect(contexts[0]?.preview).toContain('<context-evidence kind="turnEnvironment"');
-    expect(contexts[0]?.preview).toContain('<context-evidence kind="userView"');
+    expect(systemContexts[0]?.preview).toContain('<system-reminder>');
+    expect(systemContexts[0]?.preview).toContain('<context-evidence kind="turnEnvironment"');
+    expect(systemContexts[0]?.preview).toContain('<context-evidence kind="userView"');
     expect(contexts.map((record) => record.title)).not.toContain('Additional Context');
     expect(contexts.map((record) => record.title)).not.toContain('Tool Output Projection');
 

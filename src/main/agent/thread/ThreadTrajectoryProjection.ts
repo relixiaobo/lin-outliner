@@ -152,12 +152,14 @@ export class ThreadTrajectoryProjection {
     }));
     const records: ThreadTrajectoryRecordSummary[] = [];
     let stablePromptFingerprint: string | null = null;
+    const toolCatalogState: ToolCatalogProjectionState = { fingerprint: null };
     for (const loaded of turns) {
       const nextFingerprint = loaded.diagnostics?.payload.stablePrompt?.fingerprints.complete ?? null;
       if (nextFingerprint !== null && nextFingerprint !== stablePromptFingerprint) {
         appendStablePromptRecord(records, loaded, stablePromptFingerprint !== null);
         stablePromptFingerprint = nextFingerprint;
       }
+      appendToolCatalogRecords(records, loaded, toolCatalogState);
       appendTurnRecords(records, loaded);
     }
     return {
@@ -223,6 +225,8 @@ export class ThreadTrajectoryProjection {
       const item = itemForEvidence(loaded.turn, record.primaryEvidence);
       const payload = record.primaryEvidence.type === 'stablePrompt'
         ? stablePromptEvidence(loaded.diagnostics)
+        : record.primaryEvidence.type === 'toolCatalog'
+          ? toolCatalogEvidence(loaded.diagnostics?.payload ?? null, record.primaryEvidence.callIndex)
         : await this.readContextPayload(record.threadId, item);
       return {
         kind: 'context',
@@ -461,6 +465,18 @@ interface PreparedContextPartRecord {
   readonly requestedAt: number;
 }
 
+interface ToolCatalogRecord {
+  readonly callIndex: number;
+  readonly toolNames: readonly string[];
+  readonly tools: readonly JsonValue[];
+  readonly fingerprint: string;
+  readonly requestedAt: number;
+}
+
+interface ToolCatalogProjectionState {
+  fingerprint: string | null;
+}
+
 function modelContextTextForPreparedContextPart(
   payload: TurnDiagnosticsPayload,
   ref: PreparedContextPartEvidenceRef,
@@ -516,6 +532,54 @@ function preparedContextPartRecords(
       requestedAt: call.requestedAt,
     }];
   });
+}
+
+function toolCatalogRecord(
+  payload: TurnDiagnosticsPayload,
+  callIndex: number,
+): ToolCatalogRecord | null {
+  const call = payload.providerCalls[callIndex] ?? null;
+  if (!call) return null;
+  const schemasByName = new Map(payload.toolSchemas.map((schema) => [schema.name, schema]));
+  const tools = call.preparedContext.toolNames.map((name): JsonValue => {
+    const schema = schemasByName.get(name);
+    return schema ? sanitizeJsonEvidence(schema) : { name, schemaUnavailable: true };
+  });
+  return {
+    callIndex: call.index,
+    toolNames: call.preparedContext.toolNames,
+    tools,
+    fingerprint: JSON.stringify(tools),
+    requestedAt: call.requestedAt,
+  };
+}
+
+function toolCatalogEvidence(
+  payload: TurnDiagnosticsPayload | null,
+  callIndex: number,
+): JsonValue | null {
+  if (!payload) return null;
+  const catalog = toolCatalogRecord(payload, callIndex);
+  if (!catalog) return null;
+  return sanitizeJsonEvidence({
+    kind: 'toolCatalog',
+    requestIndex: catalog.callIndex,
+    toolNames: catalog.toolNames,
+    tools: catalog.tools,
+  });
+}
+
+function toolCatalogTitle(update: boolean): string {
+  return update ? 'Tools Updated' : 'Available Tools';
+}
+
+function toolCatalogSubtitle(catalog: ToolCatalogRecord): string {
+  const count = catalog.toolNames.length;
+  return `${count} ${count === 1 ? 'tool' : 'tools'} · Request #${catalog.callIndex + 1}`;
+}
+
+function toolCatalogPreview(catalog: ToolCatalogRecord): string {
+  return catalog.toolNames.length > 0 ? catalog.toolNames.join(', ') : 'No tools in this request';
 }
 
 function textForMessagePart(message: JsonValue | null, partIndex: number): string | null {
@@ -606,7 +670,6 @@ function stablePromptEvidence(bundle: DiagnosticsBundle | null): JsonValue | nul
   if (!bundle) return null;
   return sanitizeJsonEvidence({
     stablePrompt: bundle.payload.stablePrompt,
-    toolSchemas: bundle.payload.toolSchemas,
   });
 }
 
@@ -838,6 +901,50 @@ function appendPreparedContextRecords(
   }
 }
 
+function appendToolCatalogRecords(
+  records: ThreadTrajectoryRecordSummary[],
+  loaded: LoadedTurn,
+  state: ToolCatalogProjectionState,
+): void {
+  const calls = loaded.diagnostics?.payload.providerCalls ?? [];
+  for (const call of calls) {
+    appendToolCatalogRecordIfChanged(records, loaded, call.index, state);
+  }
+}
+
+function appendToolCatalogRecordIfChanged(
+  records: ThreadTrajectoryRecordSummary[],
+  loaded: LoadedTurn,
+  callIndex: number,
+  state: ToolCatalogProjectionState,
+): void {
+  const payload = loaded.diagnostics?.payload ?? null;
+  if (!payload) return;
+  const catalog = toolCatalogRecord(payload, callIndex);
+  if (!catalog) return;
+  if (catalog.fingerprint === state.fingerprint) return;
+  const initial = state.fingerprint === null;
+  if (initial && catalog.toolNames.length === 0) return;
+  state.fingerprint = catalog.fingerprint;
+  records.push(record({
+    kind: 'context',
+    lane: 'input',
+    threadId: loaded.threadId,
+    turn: loaded.turn,
+    records,
+    title: toolCatalogTitle(!initial),
+    subtitle: toolCatalogSubtitle(catalog),
+    preview: compact(toolCatalogPreview(catalog)),
+    state: 'completed',
+    timing: timing(catalog.requestedAt, null, catalog.requestedAt),
+    primaryEvidence: toolCatalogEvidenceRef(loaded.threadId, loaded.turn, catalog.callIndex),
+    relatedEvidence: [providerCallEvidence(loaded.threadId, loaded.turn, catalog.callIndex)],
+    availability: loaded.availability,
+    childThreadId: null,
+    usage: null,
+  }));
+}
+
 function appendManualCompactionRecords(
   records: ThreadTrajectoryRecordSummary[],
   loaded: LoadedTurn,
@@ -1028,6 +1135,7 @@ function trajectoryRecordId(
       evidence.partIndex,
     ].join(':');
   }
+  if (evidence.type === 'toolCatalog') return `turn:${turnId}:${kind}:tools:${evidence.callIndex}`;
   if (evidence.type === 'threadItem') return `turn:${turnId}:${kind}:item:${evidence.itemId}`;
   if (evidence.type === 'subagent') return `turn:${turnId}:delegation:${evidence.agentThreadId}`;
   return `turn:${turnId}:${kind}`;
@@ -1043,6 +1151,10 @@ function providerCallEvidence(threadId: ThreadId, turn: Turn, callIndex: number)
 
 function stablePromptEvidenceRef(threadId: ThreadId, turn: Turn): ThreadTrajectoryEvidenceRef {
   return { type: 'stablePrompt', threadId, turnId: turn.id };
+}
+
+function toolCatalogEvidenceRef(threadId: ThreadId, turn: Turn, callIndex: number): ThreadTrajectoryEvidenceRef {
+  return { type: 'toolCatalog', threadId, turnId: turn.id, callIndex };
 }
 
 function preparedContextPartEvidence(
