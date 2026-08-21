@@ -76,7 +76,9 @@ All Node catalog tools except `outline_undo_stack` execute inside one document
 transaction; if they return an `ok:false` `ToolEnvelope`, document writes from
 that transaction roll back while the original model-visible error is preserved.
 `outline_undo_stack` is excluded because it owns explicit undo and redo
-semantics.
+semantics. Undo and redo accept an optional `operation_id` stack-top guard. A
+guard mismatch performs no mutation, so a caller requesting an exact reversal
+must not fall back to an unguarded stack operation.
 
 Node outline text represents an owner's effective non-list view mode with
 `%%view:<mode>%%` on that owner's line. `node_read` and user-view context emit
@@ -295,16 +297,11 @@ per command. The installation identity is cached only after a successful load;
 a transient read failure drops that Turn's optional contribution and can retry on
 a later Turn.
 
-### Web, Image, And Import
+### Web And Image
 
 - `web_search`: bounded web or image discovery
 - `web_fetch`: HTTP retrieval with redirect, size, and content extraction limits
 - `generate_image`: configured image-provider generation
-- `data_import`: preview and commit a validated import pack
-
-Worktree-isolated Agents may use `data_import` preview operations, but its
-`commit_file` and `commit_content` operations are unavailable because the
-Outliner is live shared state rather than part of the Git worktree.
 
 `web_fetch` uses a credential-free Electron `Session.fetch` partition with
 automatic redirect following, then applies its byte, timeout, and extraction
@@ -362,9 +359,53 @@ diagnose scaling mistakes. The image artifact layer does not inspect, validate, 
 or rewrite later tool arguments. Any additional coordinate semantics belong to the tool
 that consumes them.
 
-Import commit requires a matching, unexpired preview identity. It writes one
-staging subtree through the Outliner host and verifies the materialized counts.
-The write carries the executing Item's causation.
+### Import CLI And API
+
+Bulk import is not a canonical model tool. The built-in `tenon-import` Skill
+coordinates inspection, deterministic conversion, validation, preview, and
+commit through the CLI. Preview uses the running app's local API without write
+authority. `AgentImportService` remains the internal document writer; it is not
+exposed directly to the model.
+
+The host recognizes only a directly executable `tenon-import commit` shell
+segment, after optional environment assignments and `env`, `command`, or `exec`
+wrappers. Quoted examples, comments, and heredoc bodies do not qualify. After
+ordinary tool and Agent-policy admission, the host issues a short-lived,
+single-use causation token bound to the current Thread, Turn, and Bash Item and
+injects it only into that process environment. The CLI forwards it in a private
+header. The API consumes an authenticated commit token before decoding or
+validating the body, rejects missing, expired, evicted, or reused tokens, and
+rejects request-body causation fields. Preview does not need a causation token.
+Capability classification and token issuance consume the same parsed shell
+segments. A recognized commit segment always contributes `outline.edit` before
+generic shell classification without suppressing other recognized actions in
+that segment, and the CLI rejects unexpected positional arguments plus unknown,
+missing-value, or duplicate commit options before reading the pack or calling
+the API.
+
+Import Pack preview validation rejects tags duplicated after trimmed,
+case-insensitive normalization and fields duplicated after canonical field-name
+normalization. Multiple values in one field entry remain valid.
+
+Materialization executes as one public document transaction even when yielding
+and committing internal chunks. Any materialization exception rolls back its
+projection, operation history, and all document writes. A successful commit
+returns `status: "staged"`, one staging root, and the transaction's stable
+`operationId`.
+
+Post-write verification is different from a materialization failure. A count
+mismatch preserves the single written staging subtree and returns an `ok:false`
+API response whose data has `status: "staged_with_errors"`, `stagingRootId`,
+`operationId`, `mismatches`, and `retryAllowed: false`. The CLI preserves that
+data while exiting non-zero. The Skill must stop, avoid retrying or manually
+deleting the subtree, and report those values to its parent Agent. An exact
+reversal uses `outline_undo_stack` with the returned `operation_id`; the
+stack-top guard refuses rather than undoing a newer operation.
+
+Worktree-isolated Agents may run read-only import inspection and preview. A
+shell command classified as a live-outline mutation, including
+`tenon-import commit`, is rejected before process launch, so the host issues no
+causation token and the local commit API cannot be used as a write bypass.
 
 ### Core Control
 

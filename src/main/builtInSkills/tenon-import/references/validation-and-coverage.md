@@ -24,3 +24,9 @@ Validation gates:
 4. Post-import verification: `tenon-import commit` asks the app import service
    to read back the created staging subtree and compare section/node/preserved
    structure counts.
+
+A materialization exception rolls back the whole import. A post-import count
+mismatch instead retains the one staging subtree and returns
+`staged_with_errors` with its staging root, operation ID, and mismatches. Stop
+without retrying or manually deleting it; report those values for inspection or
+a guarded exact undo.

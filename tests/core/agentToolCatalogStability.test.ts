@@ -142,21 +142,28 @@ describe('canonical provider tool catalog', () => {
     );
   });
 
-
-  test('reuses the data-import schema across runtime catalogs', async () => {
+  test('keeps data import behind the CLI/API boundary', async () => {
     const runtime = new ToolRuntime(runtimeService(), {
       outliner: OUTLINER,
-      capabilityTools: () => runtimeSchemaTools().filter((tool) => tool.name !== 'data_import'),
+      capabilityTools: runtimeSchemaTools,
       assembleRegistry: true,
     });
-    const first = await runtime.createTools(RUNTIME_CONTEXT);
-    const second = await runtime.createTools(RUNTIME_CONTEXT);
 
-    expect(first.find((tool) => tool.name === 'data_import')?.parameters)
-      .toBe(second.find((tool) => tool.name === 'data_import')?.parameters);
+    expect(MODEL_TOOL_CATALOG.some((contract) => canonicalModelToolKey(contract.identity) === 'data_import')).toBe(false);
+    expect((await runtime.createTools(RUNTIME_CONTEXT)).some((tool) => tool.name === 'data_import')).toBe(false);
   });
 
-  test('keeps worktree import previews but blocks live-outline commits before execution', async () => {
+  test('blocks worktree import commits before Bash execution', async () => {
+    let executed = false;
+    const tools = runtimeSchemaTools().map((tool) => tool.name === 'bash'
+      ? {
+          ...tool,
+          execute: async () => {
+            executed = true;
+            return { content: [{ type: 'text' as const, text: 'unexpected execution' }], details: { ok: true } };
+          },
+        }
+      : tool);
     const runtime = new ToolRuntime(runtimeService([], {
       kind: 'general-purpose',
       runInBackground: false,
@@ -164,28 +171,34 @@ describe('canonical provider tool catalog', () => {
       allowNesting: true,
       requestedTools: null,
     }), {
-      outliner: OUTLINER,
-      capabilityTools: () => runtimeSchemaTools().filter((tool) => tool.name !== 'data_import'),
+      capabilityTools: () => tools,
       capabilityConfig: { blocks: [] },
       assembleRegistry: true,
     });
-    const tool = (await runtime.createTools({
+    const childContext = {
       ...RUNTIME_CONTEXT,
       thread: { ...RUNTIME_CONTEXT.thread, parentThreadId: '00000000-0000-7000-8000-000000000009' },
-    })).find((candidate) => candidate.name === 'data_import');
-    if (!tool) throw new Error('Expected data_import tool.');
+    } as unknown as TurnExecutionContext;
+    const bash = (await runtime.createTools(childContext)).find((tool) => tool.name === 'bash');
+    if (!bash) throw new Error('Expected Bash in the worktree Agent catalog.');
 
-    const result = await tool.execute('commit-import', {
-      operation: 'commit_content',
-      pack_content: '{}',
-    });
+    for (const command of [
+      'tenon-import commit pack.json --preview-id preview:1',
+      'tenon-import commit pack.json --preview-id preview:1 npm install',
+      'tenon-import commit pack.json --preview-id preview:1 & npm install',
+      'tenon-import commit pack.json --preview-id preview:1 "$(npm install)"',
+    ]) {
+      const result = await bash.execute(`commit-import-${command.length}`, { command });
 
-    expect(result.details).toMatchObject({
-      error: {
-        code: 'operation_unavailable',
-        details: { reason: 'subagent_repository_mutation_restricted' },
-      },
-    });
+      expect(executed, command).toBe(false);
+      expect(result.details, command).toMatchObject({
+        error: {
+          code: 'operation_unavailable',
+          message: 'Worktree Agents cannot mutate the live outline through Bash.',
+          details: { reason: 'subagent_repository_mutation_restricted' },
+        },
+      });
+    }
   });
 });
 

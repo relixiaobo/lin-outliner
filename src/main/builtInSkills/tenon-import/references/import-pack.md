@@ -25,6 +25,11 @@ Each `ImportNode` may contain:
 - `children`
 - `sourceId`
 
+Within one node, tags must be unique after trimming and case folding. Fields
+must be unique after Tenon's canonical field-name normalization; represent
+multiple values in one field entry's `values` array rather than repeating the
+field.
+
 Adapters should keep source-specific concepts out of the write path. Convert
 them to user-meaningful Tenon content, warnings, or dropped/unsupported coverage
 entries.

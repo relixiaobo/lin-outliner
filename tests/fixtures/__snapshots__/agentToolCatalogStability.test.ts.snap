@@ -123,43 +123,6 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
     }
   },
   {
-    "name": "data_import",
-    "description": "Preview or commit a validated Tenon Import Pack into the Outliner.",
-    "parameters": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "operation"
-      ],
-      "properties": {
-        "operation": {
-          "type": "string",
-          "enum": [
-            "preview_file",
-            "commit_file",
-            "preview_content",
-            "commit_content"
-          ]
-        },
-        "pack_file": {
-          "type": "string"
-        },
-        "pack_content": {
-          "type": "string"
-        },
-        "pack_label": {
-          "type": "string"
-        },
-        "parent_id": {
-          "type": "string"
-        },
-        "preview_id": {
-          "type": "string"
-        }
-      }
-    }
-  },
-  {
     "name": "file_delete",
     "description": "Moves a local file or directory to agent trash instead of permanently deleting it.\\nUse this for reversible cleanup. It cannot delete the Thread working directory root.\\nThe result includes the trash path so the item can be recovered if needed.",
     "parameters": {

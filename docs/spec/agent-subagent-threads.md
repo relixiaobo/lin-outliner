@@ -756,8 +756,10 @@ sandbox treats the shared Git object database as append-only: commits may create
 new loose objects, while existing objects plus `objects/pack` and `objects/info`
 cannot be modified or removed. The tool pool also removes `node_create`,
 `node_edit`, and `node_delete`, because a git worktree cannot isolate the user's
-live outline; `data_import` previews remain available but commit operations are
-rejected before they can change the live outline. Read operations remain
+live outline. Bash commands dynamically classified as `outline.edit` or
+`outline.delete`, including `tenon-import commit`, are rejected before process
+launch. A rejected import commit receives no Item causation token, and the local
+API refuses a commit without one. Read-only import inspection and preview remain
 available when otherwise permitted.
 
 Planning a managed worktree is read-only. It resolves and persists the source

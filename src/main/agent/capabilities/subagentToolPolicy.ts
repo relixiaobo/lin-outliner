@@ -43,7 +43,6 @@ const REPOSITORY_MUTATION_ACTION_KINDS = new Set<ModelToolActionKind>([
 ]);
 const SPECIALIZED_EXCLUDED_ACTION_KINDS = new Set<ModelToolActionKind>([
   'agent.image.generate',
-  'agent.data.import',
 ]);
 const SPECIALIZED_BASH_ACTION_KINDS = new Set<ModelToolActionKind>([
   'shell.read_search',
@@ -136,13 +135,14 @@ export function subagentToolAllowed(
 }
 
 /**
- * Explore and Plan retain Bash for captured provider parity, but only commands
- * that the capability classifier can prove are repository inspections may run.
+ * Worktrees cannot isolate live outline writes. Explore and Plan retain Bash
+ * for captured provider parity, but only proven repository inspections may run.
  */
 export function subagentBashExecutionAllowed(
   policy: SubagentToolPolicy,
   actionKinds: readonly ModelToolActionKind[],
 ): boolean {
+  if (policy.worktree && actionKinds.some((kind) => OUTLINE_MUTATION_ACTION_KINDS.has(kind))) return false;
   if (policy.kind !== 'explore' && policy.kind !== 'plan') return true;
   return actionKinds.length > 0 && actionKinds.every((kind) => SPECIALIZED_BASH_ACTION_KINDS.has(kind));
 }

@@ -79,7 +79,12 @@ export interface AgentShellProcessEnvironment {
   leadingToolPathSegments?: readonly string[];
 }
 
-export type AgentShellProcessEnvironmentProvider = () => (
+export interface AgentShellProcessEnvironmentContext {
+  readonly toolCallId?: string;
+  readonly command: string;
+}
+
+export type AgentShellProcessEnvironmentProvider = (context: AgentShellProcessEnvironmentContext) => (
   AgentShellProcessEnvironment | Promise<AgentShellProcessEnvironment>
 );
 
@@ -678,6 +683,7 @@ export async function runLocalBashCommand(
     command: string;
     timeout?: number;
     signal?: AbortSignal;
+    toolCallId?: string;
     processEnvironment?: AgentShellProcessEnvironmentProvider;
     writeBoundary?: AgentWorkspaceWriteBoundary;
   },
@@ -694,7 +700,7 @@ export async function runLocalBashCommand(
     timeout: options.timeout,
     run_in_background: false,
   });
-  const result = await runForegroundCommand(workspace, params, options.signal);
+  const result = await runForegroundCommand(workspace, params, options.signal, options.toolCallId);
   const interpretation = interpretCommandResult(result.command ?? params.command, result.exitCode);
   const interrupted = result.interrupted;
   const isError = interrupted || interpretation.isError;
@@ -1519,18 +1525,18 @@ function createBashTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelop
     ].join('\n'),
     parameters: BASH_PARAMETERS,
     executionMode: 'sequential',
-    execute: async (_toolCallId, rawParams: unknown, signal?: AbortSignal) => {
+    execute: async (toolCallId, rawParams: unknown, signal?: AbortSignal) => {
       const started = Date.now();
       try {
         const params = normalizeBashParams(rawParams);
         if (params.run_in_background) {
-          const data = await startBackgroundCommand(workspace, params);
+          const data = await startBackgroundCommand(workspace, params, toolCallId);
           return agentToolResult(successEnvelope('bash', data, {
             instructions: `Command is running in the background as ${data.backgroundTaskId}. Use task_stop with task_id if it needs to be stopped.`,
             metrics: metrics(started, data),
           }), visibleBash(data));
         }
-        const result = await runForegroundCommand(workspace, params, signal);
+        const result = await runForegroundCommand(workspace, params, signal, toolCallId);
         const interpretation = interpretCommandResult(result.command ?? params.command, result.exitCode);
         const ok = result.backgroundTaskId !== undefined || (!result.interrupted && !interpretation.isError);
         const envelope = ok
@@ -1990,12 +1996,20 @@ function extractBaseCommand(command: string): string {
   return (rawCommand ?? '').replace(/^["']|["']$/g, '').split('/').at(-1) ?? '';
 }
 
-async function runForegroundCommand(workspace: WorkspaceContext, params: BashParams, signal?: AbortSignal): Promise<BashData> {
+async function runForegroundCommand(
+  workspace: WorkspaceContext,
+  params: BashParams,
+  signal?: AbortSignal,
+  toolCallId?: string,
+): Promise<BashData> {
   const timeoutMs = clampInteger(params.timeout, 1, BASH_MAX_TIMEOUT_MS, BASH_DEFAULT_TIMEOUT_MS);
   const capture = await createForegroundOutputCapture(workspace);
   let processHandle: BashProcessHandle;
   try {
-    const env = await buildWorkspaceShellProcessEnv(workspace);
+    const env = await buildWorkspaceShellProcessEnv(workspace, {
+      ...(toolCallId !== undefined ? { toolCallId } : {}),
+      command: params.command,
+    });
     const child = await getAgentProcessExecutor().spawnShell({
       command: params.command,
       cwd: workspace.root,
@@ -2087,8 +2101,11 @@ async function runForegroundCommand(workspace: WorkspaceContext, params: BashPar
   });
 }
 
-async function startBackgroundCommand(workspace: WorkspaceContext, params: BashParams): Promise<BashData> {
-  return registerBackgroundTask(workspace, params, { backgroundedByUser: true });
+async function startBackgroundCommand(workspace: WorkspaceContext, params: BashParams, toolCallId?: string): Promise<BashData> {
+  return registerBackgroundTask(workspace, params, {
+    backgroundedByUser: true,
+    ...(toolCallId !== undefined ? { toolCallId } : {}),
+  });
 }
 
 async function registerBackgroundTask(
@@ -2099,6 +2116,7 @@ async function registerBackgroundTask(
     foregroundCapture?: ForegroundOutputCapture;
     backgroundedByUser?: boolean;
     assistantAutoBackgrounded?: boolean;
+    toolCallId?: string;
   } = {},
 ): Promise<BashData> {
   pruneBackgroundTasks();
@@ -2125,7 +2143,10 @@ async function registerBackgroundTask(
     stdoutPath = capture.stdoutPath;
     stderrPath = capture.stderrPath;
     try {
-      const env = await buildWorkspaceShellProcessEnv(workspace);
+      const env = await buildWorkspaceShellProcessEnv(workspace, {
+        ...(options.toolCallId !== undefined ? { toolCallId: options.toolCallId } : {}),
+        command: params.command,
+      });
       const child = await getAgentProcessExecutor().spawnShell({
         command: params.command,
         cwd: workspace.root,
@@ -2185,10 +2206,13 @@ async function registerBackgroundTask(
   };
 }
 
-async function buildWorkspaceShellProcessEnv(workspace: WorkspaceContext): Promise<NodeJS.ProcessEnv> {
+async function buildWorkspaceShellProcessEnv(
+  workspace: WorkspaceContext,
+  context: AgentShellProcessEnvironmentContext,
+): Promise<NodeJS.ProcessEnv> {
   let host: AgentShellProcessEnvironment | undefined;
   try {
-    host = await workspace.processEnvironment?.();
+    host = await workspace.processEnvironment?.(context);
   } catch (error) {
     console.warn('[agent] shell environment provider failed; continuing with the ordinary tool environment', error);
   }

@@ -89,7 +89,6 @@ export const RETAINED_CAPABILITY_TOOL_NAMES = [
   'web_search',
   'web_fetch',
   'generate_image',
-  'data_import',
 ] as const;
 
 export const CONFIGURATION_TOOL_NAMES = ['agent', 'skill'] as const;
@@ -129,7 +128,6 @@ export const MODEL_TOOL_ACTION_KINDS = [
   'agent.subagent.interrupt',
   'agent.skill.invoke',
   'agent.image.generate',
-  'agent.data.import',
 ] as const;
 
 export type ModelToolActionKind = typeof MODEL_TOOL_ACTION_KINDS[number];
@@ -568,7 +566,6 @@ const CAPABILITY_ACTION_KINDS = {
   web_search: ['web.search'],
   web_fetch: ['web.fetch'],
   generate_image: ['agent.image.generate'],
-  data_import: ['agent.data.import'],
 } as const satisfies Record<typeof RETAINED_CAPABILITY_TOOL_NAMES[number], readonly ModelToolActionKind[]>;
 
 const retainedCapabilityToolContracts: readonly StaticModelToolContract[] = RETAINED_CAPABILITY_TOOL_NAMES.map((name) => ({

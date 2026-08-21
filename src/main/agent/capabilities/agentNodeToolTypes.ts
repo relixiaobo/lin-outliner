@@ -16,6 +16,7 @@ import type { AgentMutationCausation } from '../../../core/agent/protocol';
 
 export interface OutlinerToolMutationMeta {
   origin?: 'user' | 'agent' | 'system';
+  operationId?: string;
   command?: string;
   tool?: string;
   summary?: string;

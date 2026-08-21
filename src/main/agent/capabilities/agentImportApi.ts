@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import type { AgentMutationCausation } from '../../../core/agent/protocol';
+import { TENON_IMPORT_CAUSATION_TOKEN_HEADER } from '../../tenonImportProtocol';
 import { AgentImportService, ImportServiceFailure, type ImportServiceResult } from './agentImportService';
 import { LocalToolFailure } from './agentLocalTools';
 import { errorMessage } from './agentNodeToolUtils';
@@ -24,20 +26,34 @@ export interface ImportApiResponse {
   warnings?: readonly string[];
 }
 
-interface ImportApiServerOptions {
+export interface ImportApiServerOptions {
   userDataDir: string;
   descriptorFileName?: string;
+  now?: () => number;
+  causationTokenTtlMs?: number;
+  maxCausationTokens?: number;
+}
+
+interface ImportCausationTokenRecord {
+  readonly causation: AgentMutationCausation;
+  readonly expiresAt: number;
 }
 
 const IMPORT_API_DIR = 'import-api';
 const IMPORT_API_SOCKET = 'tenon-import.sock';
 const IMPORT_API_DESCRIPTOR = 'tenon-import-api.json';
 const MAX_API_BODY_BYTES = 55 * 1024 * 1024;
+export const IMPORT_CAUSATION_TOKEN_TTL_MS = 60_000;
+const MAX_IMPORT_CAUSATION_TOKENS = 256;
 
 export class AgentImportApiServer {
   private server: Server | null = null;
   private descriptor: ImportApiDescriptor | null = null;
   private descriptorPathValue: string;
+  private readonly causationTokens = new Map<string, ImportCausationTokenRecord>();
+  private readonly now: () => number;
+  private readonly causationTokenTtlMs: number;
+  private readonly maxCausationTokens: number;
 
   constructor(
     private readonly service: AgentImportService,
@@ -48,10 +64,34 @@ export class AgentImportApiServer {
       IMPORT_API_DIR,
       options.descriptorFileName ?? IMPORT_API_DESCRIPTOR,
     );
+    this.now = options.now ?? Date.now;
+    this.causationTokenTtlMs = positiveSafeInteger(
+      options.causationTokenTtlMs ?? IMPORT_CAUSATION_TOKEN_TTL_MS,
+      'causationTokenTtlMs',
+    );
+    this.maxCausationTokens = positiveSafeInteger(
+      options.maxCausationTokens ?? MAX_IMPORT_CAUSATION_TOKENS,
+      'maxCausationTokens',
+    );
   }
 
   get descriptorPath(): string {
     return this.descriptorPathValue;
+  }
+
+  issueCausationToken(causation: AgentMutationCausation): string {
+    this.deleteExpiredCausationTokens();
+    const token = randomUUID();
+    this.causationTokens.set(token, {
+      causation: { ...causation },
+      expiresAt: this.now() + this.causationTokenTtlMs,
+    });
+    while (this.causationTokens.size > this.maxCausationTokens) {
+      const oldest = this.causationTokens.keys().next().value;
+      if (typeof oldest !== 'string') break;
+      this.causationTokens.delete(oldest);
+    }
+    return token;
   }
 
   async start(): Promise<ImportApiDescriptor> {
@@ -86,6 +126,7 @@ export class AgentImportApiServer {
     const server = this.server;
     this.server = null;
     this.descriptor = null;
+    this.causationTokens.clear();
     if (server) {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
@@ -101,6 +142,16 @@ export class AgentImportApiServer {
     if (auth !== `Bearer ${token}`) {
       writeApiResponse(response, 401, { ok: false, error: { code: 'unauthorized', message: 'Import API token is missing or invalid.' } });
       return;
+    }
+
+    let commitCausation: AgentMutationCausation | undefined;
+    if (request.url === '/commit') {
+      try {
+        commitCausation = this.consumeCausationToken(request);
+      } catch (error) {
+        writeApiResponse(response, 200, normalizeImportApiError(error));
+        return;
+      }
     }
 
     let body: unknown;
@@ -123,13 +174,61 @@ export class AgentImportApiServer {
         const previewId = typeof (body as { previewId?: unknown }).previewId === 'string'
           ? (body as { previewId: string }).previewId
           : undefined;
-        const data = await this.service.commitFromContent({ ...input, ...(previewId ? { previewId } : {}) });
+        const data = await this.service.commitFromContent({
+          ...input,
+          ...(previewId ? { previewId } : {}),
+          causation: commitCausation!,
+        });
+        if (data.status === 'staged_with_errors') {
+          writeApiResponse(response, 200, {
+            ok: false,
+            data,
+            error: {
+              code: 'verification_failed',
+              message: 'Import wrote one staging subtree, but post-import verification found mismatched counts.',
+              instructions: 'Stop without retrying or manually deleting nodes. Report the staging root and operation id so the parent Agent can inspect or request an exact undo.',
+            },
+          });
+          return;
+        }
         writeApiResponse(response, 200, { ok: true, data });
         return;
       }
       writeApiResponse(response, 404, { ok: false, error: { code: 'not_found', message: 'Unknown import API endpoint.' } });
     } catch (error) {
       writeApiResponse(response, 200, normalizeImportApiError(error));
+    }
+  }
+
+  private consumeCausationToken(request: IncomingMessage): AgentMutationCausation {
+    const header = request.headers[TENON_IMPORT_CAUSATION_TOKEN_HEADER];
+    if (typeof header !== 'string' || !header) {
+      throw new ImportServiceFailure(
+        'causation_token_required',
+        'Import commit requires a causation token issued for the current Agent Item.',
+      );
+    }
+    const record = this.causationTokens.get(header);
+    if (!record) {
+      throw new ImportServiceFailure(
+        'causation_token_invalid',
+        'Import commit causation token is invalid or has already been used.',
+      );
+    }
+    this.causationTokens.delete(header);
+    if (record.expiresAt <= this.now()) {
+      throw new ImportServiceFailure(
+        'causation_token_expired',
+        'Import commit causation token has expired.',
+      );
+    }
+    return record.causation;
+  }
+
+  private deleteExpiredCausationTokens(): void {
+    const now = this.now();
+    for (const [token, record] of this.causationTokens) {
+      if (record.expiresAt <= now) this.causationTokens.delete(token);
     }
   }
 }
@@ -141,6 +240,21 @@ function normalizePackBody(body: unknown): {
   mode?: 'stage';
 } {
   const value = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {};
+  const rawCausationKey = [
+    'causation',
+    'threadId',
+    'turnId',
+    'itemId',
+    'thread_id',
+    'turn_id',
+    'item_id',
+  ].find((key) => value[key] !== undefined);
+  if (rawCausationKey) {
+    throw new ImportServiceFailure(
+      'invalid_args',
+      `Import API request bodies must not provide raw causation field "${rawCausationKey}".`,
+    );
+  }
   const packContent = typeof value.packContent === 'string' ? value.packContent : '';
   if (!packContent.trim()) throw new ImportServiceFailure('invalid_args', 'packContent is required.');
   const packLabel = typeof value.packLabel === 'string' && value.packLabel.trim() ? value.packLabel.trim() : undefined;
@@ -207,4 +321,11 @@ function writeApiResponse(response: ServerResponse, statusCode: number, body: Im
     'content-length': Buffer.byteLength(text),
   });
   response.end(text);
+}
+
+function positiveSafeInteger(value: number, optionName: string): number {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new RangeError(`${optionName} must be a positive safe integer.`);
+  }
+  return value;
 }

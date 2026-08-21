@@ -68,9 +68,15 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
 
   if (specializedBlocked) {
     await append();
+    const worktreeOutlineBlocked = input.subagentPolicy?.worktree
+      && decision.descriptors.some((descriptor) => (
+        descriptor.actionKind === 'outline.edit' || descriptor.actionKind === 'outline.delete'
+      ));
     throw new AgentSkillShellError(
       'operation_unavailable',
-      'Explore and Plan Agents may use embedded Skill shell only for repository inspection.',
+      worktreeOutlineBlocked
+        ? 'Worktree Agents cannot mutate the live outline through embedded Skill shell.'
+        : 'Explore and Plan Agents may use embedded Skill shell only for repository inspection.',
     );
   }
   if (decision.behavior === 'unavailable') {
@@ -90,6 +96,7 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
       scratchRoot: input.scratchRoot,
       command: input.command,
       signal: input.signal,
+      toolCallId: toolCall.id,
       processEnvironment: input.processEnvironment,
       writeBoundary: input.writeBoundary,
     });

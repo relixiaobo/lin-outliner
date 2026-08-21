@@ -16,7 +16,6 @@ import {
 } from '../../../core/agent/tools';
 import type { AgentMutationCausation, JsonValue } from '../../../core/agent/protocol';
 import type { AgentImageGenerationRuntime } from '../capabilities/agentImageGenerationTool';
-import { AgentImportService, visibleImportServiceResult } from '../capabilities/agentImportService';
 import {
   hasBackgroundShellTask,
   stopBackgroundShellTaskResult,
@@ -39,20 +38,6 @@ import type { AgentCapabilityConfig } from '../capabilities/agentCapabilityRules
 import type { ThreadService } from '../ThreadService';
 import type { TurnExecutionContext } from './types';
 import { compileToolParameters } from './kernel/exactToolArguments';
-
-const DATA_IMPORT_PARAMETERS = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['operation'],
-  properties: {
-    operation: { type: 'string', enum: ['preview_file', 'commit_file', 'preview_content', 'commit_content'] },
-    pack_file: { type: 'string' },
-    pack_content: { type: 'string' },
-    pack_label: { type: 'string' },
-    parent_id: { type: 'string' },
-    preview_id: { type: 'string' },
-  },
-} as TSchema;
 
 export interface ToolRuntimeOptions {
   readonly outliner?: OutlinerToolHost;
@@ -77,7 +62,6 @@ export class ToolRuntime {
   private readonly mutationCausation = new AsyncLocalStorage<AgentMutationCausation>();
   private readonly reportedUnavailableToolSchemas = new Set<string>();
   private readonly outliner: OutlinerToolHost | undefined;
-  private readonly importService: AgentImportService | null;
 
   constructor(
     private readonly service: ThreadService,
@@ -90,7 +74,6 @@ export class ToolRuntime {
           options.outlinerProjectionFilter,
         )
       : undefined;
-    this.importService = this.outliner ? new AgentImportService(this.outliner) : null;
   }
 
   async createTools(context: TurnExecutionContext): Promise<readonly AgentTool[]> {
@@ -119,7 +102,6 @@ export class ToolRuntime {
     const dynamicToolSet = new Set(dynamicTools);
     const tools = [
       ...capabilityTools,
-      ...(this.importService ? [this.createDataImportTool()] : []),
       ...this.createControlTools(context),
       ...collaborationTools,
       ...dynamicTools,
@@ -391,52 +373,6 @@ export class ToolRuntime {
     ];
   }
 
-  private createDataImportTool(): AgentTool {
-    const service = this.importService!;
-    return {
-      name: 'data_import',
-      label: 'Import Data',
-      description: 'Preview or commit a validated Tenon Import Pack into the Outliner.',
-      parameters: DATA_IMPORT_PARAMETERS,
-      executionMode: 'sequential',
-      execute: async (_itemId, params) => {
-        const input = record(params, 'data_import');
-        const operation = requiredString(input.operation, 'data_import.operation');
-        const parentId = optionalString(input.parent_id);
-        const previewId = optionalString(input.preview_id);
-        let result;
-        if (operation === 'preview_file') {
-          result = await service.previewFromFile({
-            packFile: requiredString(input.pack_file, 'pack_file'),
-            ...(parentId ? { parentId } : {}),
-          });
-        } else if (operation === 'commit_file') {
-          result = await service.commitFromFile({
-            packFile: requiredString(input.pack_file, 'pack_file'),
-            ...(parentId ? { parentId } : {}),
-            ...(previewId ? { previewId } : {}),
-          });
-        } else if (operation === 'preview_content') {
-          result = await service.previewFromContent({
-            packContent: requiredString(input.pack_content, 'pack_content'),
-            ...(optionalString(input.pack_label) ? { packLabel: optionalString(input.pack_label) } : {}),
-            ...(parentId ? { parentId } : {}),
-          });
-        } else if (operation === 'commit_content') {
-          result = await service.commitFromContent({
-            packContent: requiredString(input.pack_content, 'pack_content'),
-            ...(optionalString(input.pack_label) ? { packLabel: optionalString(input.pack_label) } : {}),
-            ...(parentId ? { parentId } : {}),
-            ...(previewId ? { previewId } : {}),
-          });
-        } else {
-          throw new Error(`Unknown data_import operation: ${operation}`);
-        }
-        return toolResult(visibleImportServiceResult(result));
-      },
-    };
-  }
-
   private instrumentTool(
     context: TurnExecutionContext,
     tool: AgentTool,
@@ -481,23 +417,25 @@ export class ToolRuntime {
             activeSubagentPolicy,
             capability.descriptors.map((descriptor) => descriptor.actionKind),
           );
+        const worktreeBashOutlineBlocked = specializedBashBlocked
+          && activeSubagentPolicy.worktree
+          && capability.descriptors.some((descriptor) => (
+            descriptor.actionKind === 'outline.edit' || descriptor.actionKind === 'outline.delete'
+          ));
         const specializedMutationBlocked = contract.schemaOwner === 'extension'
           && !subagentToolExecutionAllowed(
             activeSubagentPolicy,
             capability.descriptors.map((descriptor) => descriptor.actionKind),
           );
-        const worktreeImportCommitBlocked = canonicalIdentity === 'data_import'
-          && activeSubagentPolicy.worktree
-          && isDataImportCommit(args);
-        const specializedPolicyBlocked = specializedBashBlocked || specializedMutationBlocked || worktreeImportCommitBlocked;
+        const specializedPolicyBlocked = specializedBashBlocked || specializedMutationBlocked;
         if (capability.behavior === 'unavailable' || specializedPolicyBlocked) {
           const reason = capability.behavior === 'unavailable'
             ? capability.reason
             : specializedBashBlocked
-              ? 'Explore and Plan Agents may use Bash only for repository inspection.'
-              : worktreeImportCommitBlocked
-                ? 'Worktree Agents may preview import packs but cannot commit them to the live outline.'
-                : 'Explore and Plan Agents cannot execute repository mutations.';
+              ? worktreeBashOutlineBlocked
+                ? 'Worktree Agents cannot mutate the live outline through Bash.'
+                : 'Explore and Plan Agents may use Bash only for repository inspection.'
+              : 'Explore and Plan Agents cannot execute repository mutations.';
           const code = capability.behavior === 'unavailable'
             ? capability.code
             : 'subagent_repository_mutation_restricted';
@@ -732,11 +670,6 @@ function identityFromProviderName(name: string): ModelToolIdentity {
     : { namespace: name.slice(0, separator), name: name.slice(separator + 2) };
 }
 
-function isDataImportCommit(args: JsonValue): boolean {
-  if (!isRecord(args)) return false;
-  return args.operation === 'commit_file' || args.operation === 'commit_content';
-}
-
 function assertExtensionContractStructure(contract: ModelToolContract): string {
   const canonical = canonicalModelToolKey(contract.identity);
   if (contract.schemaOwner !== 'extension') {
@@ -784,10 +717,6 @@ function record(value: unknown, path: string): Record<string, unknown> {
 function requiredString(value: unknown, path: string): string {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`${path} must be a non-empty string`);
   return value.trim();
-}
-
-function optionalString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
 function optionalPositiveInteger(value: unknown, path: string): number | undefined {

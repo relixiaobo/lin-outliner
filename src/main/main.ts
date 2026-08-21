@@ -64,6 +64,8 @@ import {
   createAgentLocalWorkspaceContext,
   resolveAgentLocalReadPath,
   type AgentLocalWorkspaceContext,
+  type AgentShellProcessEnvironment,
+  type AgentShellProcessEnvironmentContext,
   type AgentWorkspaceWriteBoundary,
 } from './agent/capabilities/agentLocalTools';
 import { AgentWorktree } from './agent/worktree/AgentWorktree';
@@ -105,6 +107,10 @@ import { ManagedSkillShellEnvironmentRegistry } from './managedSkillShellEnviron
 import { AgentImportService } from './agent/capabilities/agentImportService';
 import { AgentImportApiServer } from './agent/capabilities/agentImportApi';
 import { configureTenonImportRuntime } from './tenonImportRuntime';
+import {
+  isTenonImportCommitCommand,
+  TENON_IMPORT_CAUSATION_TOKEN_ENV,
+} from './tenonImportProtocol';
 import { isRendererPermissionAllowed } from './rendererPermissions';
 import {
   clearUrlPreviewSessionData,
@@ -999,12 +1005,32 @@ function parseSkillReasoningEffort(value: string): ReasoningEffort {
   throw new Error(`Unsupported isolated Skill reasoning effort: ${value}`);
 }
 
+async function shellProcessEnvironmentForTurn(
+  context: Parameters<ToolRuntime['createTools']>[0],
+  shell: AgentShellProcessEnvironmentContext,
+): Promise<AgentShellProcessEnvironment> {
+  const managed = await managedSkillShellEnvironment!.processEnvironment(context.thread.id, context.turn.id);
+  if (!shell.toolCallId || !isTenonImportCommitCommand(shell.command)) return managed;
+  const causationToken = importApiServer.issueCausationToken({
+    threadId: context.thread.id,
+    turnId: context.turn.id,
+    itemId: shell.toolCallId,
+  });
+  return {
+    ...managed,
+    env: {
+      ...managed.env,
+      [TENON_IMPORT_CAUSATION_TOKEN_ENV]: causationToken,
+    },
+  };
+}
+
 function localWorkspaceForTurn(context: Parameters<ToolRuntime['createTools']>[0]): AgentLocalWorkspaceContext {
   return createAgentLocalWorkspaceContext(
     context.thread.cwd,
     agentScratchRoot,
     skillRuntimeForTurn(context),
-    () => managedSkillShellEnvironment!.processEnvironment(context.thread.id, context.turn.id),
+    (shell) => shellProcessEnvironmentForTurn(context, shell),
     agentWriteBoundaryForThread(context.thread.id),
     context.thread.id,
   );

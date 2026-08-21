@@ -7,6 +7,7 @@ import { unavailableToolResultMessage } from '../../src/main/agent/capabilities/
 import { parseAgentCapabilitySettings } from '../../src/main/agent/capabilities/agentCapabilityRules';
 import { executeAgentSkillShellCommand } from '../../src/main/agent/capabilities/agentSkillShell';
 import type { SubagentToolPolicy } from '../../src/main/agent/capabilities/subagentToolPolicy';
+import { isTenonImportCommitCommand } from '../../src/main/tenonImportProtocol';
 
 const roots: string[] = [];
 
@@ -54,6 +55,73 @@ describe('agent capabilities', () => {
     for (const [command, actionKind] of cases) {
       const decision = evaluateAgentToolCapability({ toolName: 'bash', args: { command }, policy: { workspaceRoot: workspace } });
       expect(decision).toMatchObject({ behavior: 'allow', descriptor: { actionKind } });
+    }
+  });
+
+  test('recognizes executable tenon-import commit segments without matching quoted text', async () => {
+    for (const command of [
+      'tenon-import commit pack.json --preview-id preview:1',
+      'set -e; /app/bin/tenon-import commit pack.json --preview-id preview:1',
+      'TENON_MODE=stage env -i HOME=/tmp tenon-import commit pack.json --preview-id preview:1',
+      'command tenon-import commit pack.json --preview-id preview:1',
+    ]) {
+      expect(isTenonImportCommitCommand(command), command).toBe(true);
+    }
+    for (const command of [
+      'echo "tenon-import commit pack.json"',
+      "printf '%s' 'tenon-import commit pack.json'",
+      '# tenon-import commit pack.json',
+      "cat <<'EOF'\ntenon-import commit pack.json\nEOF",
+    ]) {
+      expect(isTenonImportCommitCommand(command), command).toBe(false);
+    }
+
+    const { workspace } = await workspaceFixture();
+    expect(evaluateAgentToolCapability({
+      toolName: 'bash',
+      args: { command: 'echo "tenon-import commit pack.json"' },
+      policy: { workspaceRoot: workspace },
+    }).descriptors.some((descriptor) => descriptor.actionKind === 'outline.edit')).toBe(false);
+
+    for (const command of [
+      'tenon-import commit pack.json --preview-id preview:1 npm install',
+      'tenon-import commit pack.json --preview-id preview:1 & npm install',
+      'tenon-import commit pack.json --preview-id preview:1 "$(npm install)"',
+    ]) {
+      const decision = evaluateAgentToolCapability({
+        toolName: 'bash',
+        args: { command },
+        policy: { workspaceRoot: workspace },
+      });
+      expect(isTenonImportCommitCommand(command), command).toBe(true);
+      expect(decision.descriptors.map((descriptor) => descriptor.actionKind), command).toEqual([
+        'outline.edit',
+        'shell.dependency_install',
+      ]);
+      expect(evaluateAgentToolCapability({
+        toolName: 'bash',
+        args: { command },
+        policy: {
+          workspaceRoot: workspace,
+          capabilityConfig: { blocks: ['Action(outline.edit)'] },
+        },
+      }), command).toMatchObject({
+        behavior: 'unavailable',
+        code: 'user_blocked',
+        descriptor: { actionKind: 'outline.edit' },
+      });
+      expect(evaluateAgentToolCapability({
+        toolName: 'bash',
+        args: { command },
+        policy: {
+          workspaceRoot: workspace,
+          capabilityConfig: { blocks: ['Action(shell.dependency_install)'] },
+        },
+      }), command).toMatchObject({
+        behavior: 'unavailable',
+        code: 'user_blocked',
+        descriptor: { actionKind: 'shell.dependency_install' },
+      });
     }
   });
 
