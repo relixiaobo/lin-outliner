@@ -852,7 +852,7 @@
 
 .thread-trajectory-code {
   min-height: 0;
-  margin: 0 var(--space-5) var(--space-5);
+  margin: 0 var(--space-6) var(--space-6);
 }
 
 .thread-trajectory-inspector-body > .button {
