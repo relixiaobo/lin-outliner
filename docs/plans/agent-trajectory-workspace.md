@@ -194,7 +194,8 @@ invariants degrade by recording, healing, or skipping at the affected record.
 
 The Agent protocol exposes:
 
-- a tail-first paged trajectory query addressed by Thread;
+- a bounded trajectory query addressed by Thread with stable `olderCursor` /
+  `newerCursor` keyset paging;
 - a bounded live-change notification carrying invalidation or replacement facts;
 - a record-detail query addressed by exact Thread, Turn, and record identity;
 - a Thread trajectory export command that returns a user-selected file result.
@@ -320,8 +321,9 @@ zero.
 Export creates a user-selected Thread trajectory bundle from the same typed
 projection and retained diagnostics used by the inspector. It states omissions
 and limitations, excludes secrets and unrecorded transport data, and makes no
-byte-for-byte HTTP fidelity claim. Export failure leaves the workspace unchanged
-and provides a retryable local error.
+byte-for-byte HTTP fidelity claim. Export failure leaves the workspace unchanged;
+main logs the complete write error and returns only a fixed path-free failure
+message to the renderer.
 
 ### Visual and accessibility contract
 

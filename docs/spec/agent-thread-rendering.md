@@ -1129,32 +1129,40 @@ tool-output projection evidence, remain separate Context rows. USER preview and
 detail render the original user message content only.
 
 The renderer first performs `thread/trajectory/read`. Main returns `threadId`,
-Thread-level summary counts, a tail-first page of ordered records, the next
-cursor, and the selected record. The response deliberately does not return a
-full `Thread` because that object contains host details such as `cwd` that are
-not part of the Trajectory UI contract. A read without `recordId` or `turnId`
-focus returns no selection; focus is a deep link, not an implicit tail-row
-choice. Renderer entry consumes `recordId` / `turnId` focus once when opening
-the panel; live refreshes preserve the user's current ledger/inspector state and
-must not reopen a closed inspector from the original focus. Search is scoped to
-the loaded page; the user can load older records from the tail-first cursor and
-overview ellipsis.
+Thread-level summary facts, an ordered record window, `olderCursor` /
+`newerCursor`, `hasOlder` / `hasNewer`, and the selected record. The response
+deliberately does not return a full `Thread` because that object contains host
+details such as `cwd` that are not part of the Trajectory UI contract. A read
+without `recordId` or `turnId` focus returns no selection; focus is a deep link,
+not an implicit tail-row choice. Renderer entry consumes `recordId` / `turnId`
+focus once when opening the panel; live refreshes preserve the user's current
+ledger/inspector state and must not reopen a closed inspector from the original
+focus. Search and range filtering are scoped to the loaded window, but the
+selected record and its ancestor rows remain visible even when they do not match
+the current search, range, or fold state. The user can load older and newer
+record windows from stable identity cursors; a live refresh without a cursor is
+an authoritative replacement for the returned Turn window, so stale fallback rows
+are removed when retained diagnostics become available.
 
 Record details are lazy. `thread/trajectory/detail/read` returns the selected
-record plus sanitized detail evidence only: bounded Turn evidence, bounded Item
-evidence, sanitized runtime facts, sanitized activity/provider-call request and
-response values, sanitized context payloads, and sanitized/truncated tool output.
-It never returns raw `Thread`, raw `Turn`, raw `ThreadItem`, a diagnostics payload
-path, digest-only payload authority, raw secrets, credentials, arbitrary response
-headers, image bytes, or host filesystem paths. Missing or corrupt diagnostics,
-payloads, and output remain explicit local availability facts rather than killing
-the whole workspace.
+record plus sanitized detail evidence only. Main locates the owning Turn first
+and reads only that Turn's diagnostics for detail materialization. Returned
+evidence is bounded Turn evidence, bounded Item evidence, sanitized runtime
+facts, sanitized activity/provider-call request and response values, sanitized
+context payloads, and sanitized/truncated tool output. It never returns raw
+`Thread`, raw `Turn`, raw `ThreadItem`, a diagnostics payload path, digest-only
+payload authority, raw secrets, credentials, arbitrary response headers, image
+bytes, or host filesystem paths. Missing or corrupt diagnostics, payloads, and
+output remain explicit local availability facts rather than killing the whole
+workspace.
 
 Export uses `thread/trajectory/export` and writes from main. The renderer receives
 only status, file name, and byte length; it never receives the absolute save path.
 The saved bundle uses sanitized Thread metadata and sanitized retained diagnostics
 alongside the same record projection, so it is a portable evidence bundle rather
-than a renderer-visible host-state dump.
+than a renderer-visible host-state dump. If the write fails, main records the
+complete error in diagnostics and returns only a fixed path-free failure message
+to the renderer.
 
 The lower-level `thread/turn/details/read` audited reader remains available for
 internal evidence validation. It still resolves one reachable full Turn and its

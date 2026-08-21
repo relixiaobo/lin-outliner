@@ -70,7 +70,8 @@ export function ThreadTrajectoryPanel({
   const selectedIdRef = useRef<string | null>(selectedRecordId ?? null);
   const [page, setPage] = useState<ThreadTrajectoryReadResponse | null>(null);
   const [records, setRecords] = useState<readonly ThreadTrajectoryRecordSummary[]>(EMPTY_RECORDS);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [olderCursor, setOlderCursor] = useState<string | null>(null);
+  const [newerCursor, setNewerCursor] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(selectedRecordId ?? null);
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState<TrajectoryTimelineMode>('duration');
@@ -80,6 +81,7 @@ export function ThreadTrajectoryPanel({
   const [followingTail, setFollowingTail] = useState(true);
   const [loading, setLoading] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const [loadingNewer, setLoadingNewer] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -93,7 +95,10 @@ export function ThreadTrajectoryPanel({
   } = {}) => {
     const seq = loadSeqRef.current + 1;
     loadSeqRef.current = seq;
-    const loadingOlderPage = Boolean(options.cursor);
+    const loadingNewerPage = options.cursor?.startsWith('after:') ?? false;
+    const loadingOlderPage = options.cursor !== undefined
+      && options.cursor !== null
+      && !loadingNewerPage;
     const focus = trajectoryReadFocus({
       cursor: options.cursor ?? null,
       focusConsumed: focusConsumedRef.current,
@@ -101,7 +106,8 @@ export function ThreadTrajectoryPanel({
       turnId,
     });
     const applyingFocus = focus !== null;
-    if (loadingOlderPage) setLoadingOlder(true);
+    if (loadingNewerPage) setLoadingNewer(true);
+    else if (loadingOlderPage) setLoadingOlder(true);
     else if (!options.silent && recordsRef.current.length === 0) setLoading(true);
     setError(null);
     try {
@@ -116,11 +122,14 @@ export function ThreadTrajectoryPanel({
       const current = recordsRef.current;
       const nextRecords = current.length === 0
         ? response.records
-        : mergeRecords(current, response.records);
+        : loadingOlderPage || loadingNewerPage
+          ? mergeRecords(current, response.records)
+          : replaceRecordsForIncomingTurns(current, response.records);
       recordsRef.current = nextRecords;
       setPage(response);
       setRecords(nextRecords);
-      if (current.length === 0 || loadingOlderPage) setNextCursor(response.nextCursor);
+      if (current.length === 0 || loadingOlderPage) setOlderCursor(response.olderCursor);
+      if (current.length === 0 || loadingNewerPage) setNewerCursor(response.newerCursor);
       const focusSelection = applyingFocus ? response.selectedRecordId : null;
       setSelectedId((currentSelection) => {
         const nextSelection = currentSelection ?? focusSelection;
@@ -133,6 +142,7 @@ export function ThreadTrajectoryPanel({
       if (loadSeqRef.current === seq) {
         setLoading(false);
         setLoadingOlder(false);
+        setLoadingNewer(false);
       }
     }
   }, [selectedRecordId, threadId, turnId]);
@@ -143,7 +153,8 @@ export function ThreadTrajectoryPanel({
     selectedIdRef.current = selectedRecordId ?? null;
     setPage(null);
     setRecords(EMPTY_RECORDS);
-    setNextCursor(null);
+    setOlderCursor(null);
+    setNewerCursor(null);
     setSelectedId(selectedRecordId ?? null);
     setQuery('');
     setRange(null);
@@ -198,7 +209,8 @@ export function ThreadTrajectoryPanel({
     rangeMatches,
     records,
     searchMatches,
-  }), [collapsedCalls, collapsedTurns, rangeMatches, records, searchMatches]);
+    selectedRecordId: selectedId,
+  }), [collapsedCalls, collapsedTurns, rangeMatches, records, searchMatches, selectedId]);
   const selectedRecord = selectedId ? recordById.get(selectedId) ?? null : null;
   const allTurnsCollapsed = collapsibleTurnGroups.length > 0
     && collapsibleTurnGroups.every((group) => collapsedTurns.has(group.turnId));
@@ -224,9 +236,14 @@ export function ThreadTrajectoryPanel({
   }, []);
 
   const loadOlder = useCallback(async () => {
-    if (!nextCursor || loadingOlder) return;
-    await loadTrajectory({ cursor: nextCursor });
-  }, [loadTrajectory, loadingOlder, nextCursor]);
+    if (!olderCursor || loadingOlder) return;
+    await loadTrajectory({ cursor: olderCursor });
+  }, [loadTrajectory, loadingOlder, olderCursor]);
+
+  const loadNewer = useCallback(async () => {
+    if (!newerCursor || loadingNewer) return;
+    await loadTrajectory({ cursor: newerCursor });
+  }, [loadTrajectory, loadingNewer, newerCursor]);
 
   const exportTrajectory = useCallback(async () => {
     if (exportBusy) return;
@@ -305,7 +322,7 @@ export function ThreadTrajectoryPanel({
             ) : null}
             <TrajectoryTimeline
               key={threadId}
-              hasEarlierRecords={nextCursor !== null}
+              hasEarlierRecords={olderCursor !== null}
               loadingEarlier={loadingOlder}
               mode={mode}
               model={timeline}
@@ -320,10 +337,13 @@ export function ThreadTrajectoryPanel({
               <TrajectoryLedger
                 key={threadId}
                 following={followingTail}
-                hasEarlierRecords={nextCursor !== null}
+                hasEarlierRecords={olderCursor !== null}
+                hasLaterRecords={newerCursor !== null}
                 loadingEarlier={loadingOlder}
+                loadingLater={loadingNewer}
                 onFollowingChange={setFollowingTail}
                 onLoadEarlier={loadOlder}
+                onLoadLater={loadNewer}
                 onRecordSelect={selectRecord}
                 onToggleCall={(recordId) => setCollapsedCalls((current) => toggledSet(current, recordId))}
                 onToggleTurn={(turnIdValue) => setCollapsedTurns((current) => toggledSet(current, turnIdValue))}
@@ -383,6 +403,17 @@ function mergeRecords(
   for (const record of current) byId.set(record.id, record);
   for (const record of incoming) byId.set(record.id, record);
   return [...byId.values()].sort((left, right) => left.sequence - right.sequence);
+}
+
+function replaceRecordsForIncomingTurns(
+  current: readonly ThreadTrajectoryRecordSummary[],
+  incoming: readonly ThreadTrajectoryRecordSummary[],
+): readonly ThreadTrajectoryRecordSummary[] {
+  const incomingTurnIds = new Set(incoming.map((record) => record.turnId));
+  return mergeRecords(
+    current.filter((record) => !incomingTurnIds.has(record.turnId)),
+    incoming,
+  );
 }
 
 function trajectoryRelevantNotification(notification: AgentCoreNotification, threadId: string): boolean {

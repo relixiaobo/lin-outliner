@@ -1,7 +1,7 @@
 import { decodePrivilegedTurnStartRequest,decodeThread,decodeThreadItem,decodeTurn } from '../../../core/agent/codec';
 import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import { createHostRootTurnAdmissionBarrierSnapshot,createThreadAdmissionBarrierSnapshot } from '../../../core/agent/extensions';
-import { RUNTIME_FAILURE_ERROR_CODE,SUBAGENT_DELIVERY_ADMISSION_ERROR_CODE,normalizeTurnErrorCode,type AdditionalContext,type ContextCompactionThreadItem,type ContextCursor,type ContextEvidenceKind,type ContextEvidenceThreadItem,type PrivilegedTurnStartRequest,type RendererTurnStartRequest,type RequestUserInputRequest,type RequestUserInputResponse,type RoleCatalogContextPayload,type SubagentTurnAdmission,type Thread,type ThreadContextPayload,type ThreadContextPayloadReference,type ThreadId,type ThreadItem,type ThreadResourceReference,type ThreadStatus,type ThreadUserContent,type Turn,type TurnError,type TurnErrorCode,type TurnId,type TurnStartResponse,type TurnStatus,type TurnSteerRequest,type TurnSteerResponse } from '../../../core/agent/protocol';
+import { RUNTIME_FAILURE_ERROR_CODE,SUBAGENT_DELIVERY_ADMISSION_ERROR_CODE,normalizeTurnErrorCode,type AdditionalContext,type ContextCompactionThreadItem,type ContextCursor,type ContextEvidenceKind,type ContextEvidenceThreadItem,type PrivilegedTurnStartRequest,type RendererTurnStartRequest,type RequestUserInputRequest,type RequestUserInputResponse,type RoleCatalogContextPayload,type SubagentTurnAdmission,type Thread,type ThreadContextPayload,type ThreadContextPayloadReference,type ThreadId,type ThreadItem,type ThreadResourceReference,type ThreadStatus,type ThreadUserContent,type Turn,type TurnDiagnosticsPayload,type TurnError,type TurnErrorCode,type TurnId,type TurnStartResponse,type TurnStatus,type TurnSteerRequest,type TurnSteerResponse } from '../../../core/agent/protocol';
 import { threadPreviewFromContent } from '../../../core/agent/threadPreview';
 import { normalizeRequestUserInputToolInput } from '../../../core/agent/tools';
 import { MAX_PROMPT_IMAGE_BYTES,MAX_PROMPT_IMAGE_DIMENSION } from '../../../core/agentAttachmentLimits';
@@ -51,6 +51,7 @@ interface ActiveTurn {
   readonly mode: 'ordinary' | 'exhaustedSettlement';
   admissionCommitted: boolean;
   lifecyclePublished: boolean;
+  diagnosticsSnapshot: (() => TurnDiagnosticsPayload | null) | null;
 }
 interface PendingUserInput { readonly request: RequestUserInputRequest; readonly resolve: (response: RequestUserInputResponse) => void;
   readonly reject: (error: Error) => void; readonly abort: () => void; timer: ReturnType<typeof setTimeout> | null; }
@@ -156,6 +157,15 @@ export class TurnLifecycle {
     private readonly isThreadBusyError: (error: unknown) => boolean,
   ) {}
   activeTurnsForInspection(): Map<ThreadId, ActiveTurn> { return this.activeTurns; } pendingUserInputsForInspection(): Map<ThreadId, PendingUserInput> { return this.pendingUserInputs; }
+  activeTurnDiagnosticsForInspection(threadId: ThreadId, turnId: TurnId): TurnDiagnosticsPayload | null {
+    const active = this.activeTurns.get(threadId);
+    if (!active || active.turnId !== turnId) return null;
+    try {
+      return active.diagnosticsSnapshot?.() ?? null;
+    } catch {
+      return null;
+    }
+  }
   activeTurnId(threadId: ThreadId): string | null { return this.activeTurns.get(threadId)?.turnId ?? null; } hasActiveTurn(threadId: ThreadId): boolean { return this.activeTurns.has(threadId); }
   isActiveTurnFinishing(threadId: ThreadId): boolean { return this.activeTurns.get(threadId)?.finishing ?? false; }
   async abortForSubtreeStop(threadId: ThreadId): Promise<void> {
@@ -512,6 +522,7 @@ export class TurnLifecycle {
         mode: 'exhaustedSettlement',
         admissionCommitted: true,
         lifecyclePublished: true,
+        diagnosticsSnapshot: null,
       };
       this.activeTurns.set(threadId, active);
       void this.executeActiveTurn(active)
@@ -1206,6 +1217,7 @@ export class TurnLifecycle {
           : 'ordinary',
         admissionCommitted: !delegatedAdmission,
         lifecyclePublished: !delegatedAdmission,
+        diagnosticsSnapshot: null,
       };
       const startedNotification = {
         type: 'turn/started',
@@ -1490,6 +1502,15 @@ export class TurnLifecycle {
             summary,
           ),
           persistTurnDiagnostics: (payload) => this.core.payloads.writeTurnDiagnostics(active.threadId, payload),
+          inspectTurnDiagnostics: (read) => {
+            if (this.activeTurns.get(active.threadId) !== active) return () => undefined;
+            active.diagnosticsSnapshot = read;
+            return () => {
+              if (this.activeTurns.get(active.threadId) === active && active.diagnosticsSnapshot === read) {
+                active.diagnosticsSnapshot = null;
+              }
+            };
+          },
           onTurnDiagnosticsError: (error) => {
             const message = error instanceof Error ? error.message : String(error);
             console.warn(`[agent] Turn diagnostics persistence failed: ${message}`);

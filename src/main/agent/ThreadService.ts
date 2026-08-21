@@ -640,7 +640,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
       options.attachmentScratchRoot,
       options.resolveUserContent ?? ((content) => content),
     );
-    this.trajectory = new ThreadTrajectoryProjection(this.core, this.now);
     options.stores.payloads.setImageRetentionInventoryProvider((threadId) => (
       this.resourceOps.threadImageRetentionInventory(threadId)
     ));
@@ -718,6 +717,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.now,
       (message, rendererSubmissionRetryable) => new ThreadBusyError(message, rendererSubmissionRetryable),
       (error) => error instanceof ThreadBusyError,
+    );
+    this.trajectory = new ThreadTrajectoryProjection(
+      this.core,
+      this.now,
+      (threadId, turnId) => this.turnLifecycle.activeTurnDiagnosticsForInspection(threadId, turnId),
     );
     this.collaboration = new SubagentCollaboration(
       this.core,

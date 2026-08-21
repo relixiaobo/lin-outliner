@@ -776,7 +776,15 @@ threadService = ThreadService.open(
           byteLength: Buffer.byteLength(content, 'utf8'),
         };
       } catch (error) {
-        return { status: 'failed', error: error instanceof Error ? error.message : String(error) };
+        reportError({
+          domain: 'persistence',
+          severity: 'error',
+          code: 'trajectory-export-write-failed',
+          message: 'Trajectory export write failed.',
+          context: { operation: 'writeTrajectoryExport' },
+          error,
+        });
+        return { status: 'failed', error: 'Trajectory export failed.' };
       }
     },
     resolveRendererStartDefaults: (request) => resolveRendererThreadStartDefaults({

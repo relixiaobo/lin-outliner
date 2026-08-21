@@ -1648,10 +1648,12 @@ export interface ThreadTrajectoryReadRequest {
 export interface ThreadTrajectoryReadResponse {
   readonly threadId: ThreadId;
   readonly summary: ThreadTrajectorySummary;
-  /** Records are returned in recorded order within the loaded tail-first window. */
+  /** Records are returned in recorded order within the loaded window. */
   readonly records: readonly ThreadTrajectoryRecordSummary[];
-  readonly nextCursor: string | null;
-  readonly hasMore: boolean;
+  readonly olderCursor: string | null;
+  readonly newerCursor: string | null;
+  readonly hasOlder: boolean;
+  readonly hasNewer: boolean;
   readonly selectedRecordId: string | null;
 }
 

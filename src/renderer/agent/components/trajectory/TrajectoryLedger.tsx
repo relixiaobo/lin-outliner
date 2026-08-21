@@ -23,9 +23,12 @@ import {
 interface TrajectoryLedgerProps {
   readonly following: boolean;
   readonly hasEarlierRecords: boolean;
+  readonly hasLaterRecords: boolean;
   readonly loadingEarlier: boolean;
+  readonly loadingLater: boolean;
   readonly onFollowingChange: (following: boolean) => void;
   readonly onLoadEarlier: () => Promise<void>;
+  readonly onLoadLater: () => Promise<void>;
   readonly onRecordSelect: (recordId: string) => void;
   readonly onToggleCall: (recordId: string) => void;
   readonly onToggleTurn: (turnId: string) => void;
@@ -53,9 +56,12 @@ const TAIL_THRESHOLD_PX = 2;
 export const TrajectoryLedger = memo(function TrajectoryLedger({
   following,
   hasEarlierRecords,
+  hasLaterRecords,
   loadingEarlier,
+  loadingLater,
   onFollowingChange,
   onLoadEarlier,
+  onLoadLater,
   onRecordSelect,
   onToggleCall,
   onToggleTurn,
@@ -163,7 +169,10 @@ export const TrajectoryLedger = memo(function TrajectoryLedger({
         </div>
       ) : null}
       <div className="thread-trajectory-ledger-scroll" onScroll={handleScroll} ref={paneRef}>
-        <table className="thread-trajectory-table" aria-rowcount={rows.length + (hasEarlierRecords ? 1 : 0)}>
+        <table
+          className="thread-trajectory-table"
+          aria-rowcount={rows.length + (hasEarlierRecords ? 1 : 0) + (hasLaterRecords ? 1 : 0)}
+        >
           <colgroup>
             <col className="thread-trajectory-event-column" />
             <col />
@@ -198,6 +207,20 @@ export const TrajectoryLedger = memo(function TrajectoryLedger({
               />
             ))}
             {end < rows.length ? <VirtualSpacer count={rows.length - end} /> : null}
+            {hasLaterRecords ? (
+              <tr className="thread-trajectory-history-row">
+                <td colSpan={2}>
+                  <button
+                    aria-label={loadingLater ? t.agent.trajectory.loadingNewer : t.agent.trajectory.loadNewer}
+                    disabled={loadingLater}
+                    onClick={() => void onLoadLater()}
+                    type="button"
+                  >
+                    {loadingLater ? t.agent.trajectory.loadingNewer : t.agent.trajectory.loadNewer}
+                  </button>
+                </td>
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>

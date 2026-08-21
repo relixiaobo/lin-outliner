@@ -195,6 +195,52 @@ describe('ThreadTrajectoryPanel', () => {
     expect(rendered.document.querySelector('[aria-label="Trajectory inspector"]')).toBeNull();
   });
 
+  test('replaces same-Turn fallback records on authoritative live refresh', async () => {
+    const fallbackTool = record({
+      id: `turn:${TURN_ID}:tool:item:running-tool`,
+      kind: 'tool',
+      lane: 'tools',
+      sequence: 1,
+      title: 'mcpToolCall',
+      preview: 'Running fallback',
+      state: 'running',
+      primaryEvidence: {
+        type: 'threadItem',
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        itemId: 'running-tool',
+      },
+    });
+    let readCount = 0;
+    const rendered = renderPanel(async (method) => {
+      if (method === 'thread/trajectory/read') {
+        readCount += 1;
+        return readCount === 1
+          ? trajectoryReadResponse([trajectoryRecords()[0]!, fallbackTool])
+          : trajectoryReadResponse(trajectoryRecords());
+      }
+      if (method === 'thread/trajectory/detail/read') return toolDetailResponse();
+      if (method === 'thread/trajectory/export') return { status: 'canceled' };
+      throw new Error(`Unexpected Agent Core method: ${method}`);
+    });
+
+    rendered.render();
+    await flush();
+    expect(recordRow(rendered.document, fallbackTool.id).textContent).toContain('Running fallback');
+
+    rendered.notify({
+      type: 'turn/completed',
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      turn: {} as never,
+    });
+    await wait(150);
+    await flush();
+
+    expect(recordRowOrNull(rendered.document, fallbackTool.id)).toBeNull();
+    expect(recordRow(rendered.document, TOOL_ID).textContent).toContain('package.json');
+  });
+
   test('renders provider-visible tool catalog records as first-class Tools evidence', async () => {
     const toolCatalog = record({
       id: TOOL_CATALOG_ID,
@@ -492,6 +538,23 @@ describe('Trajectory projection model', () => {
     ]);
   });
 
+  test('keeps the selected row and its Assistant ancestor visible across search and folds', () => {
+    const records = trajectoryRecords();
+    const rows = buildTrajectoryLedgerRows({
+      collapsedCalls: new Set([ASSISTANT_ID]),
+      collapsedTurns: new Set([TURN_ID]),
+      rangeMatches: null,
+      records,
+      searchMatches: trajectorySearchMatches(records, 'does-not-match'),
+      selectedRecordId: TOOL_ID,
+    });
+
+    expect(rows.flatMap((row) => row.type === 'record' ? [row.record.id] : [])).toEqual([
+      ASSISTANT_ID,
+      TOOL_ID,
+    ]);
+  });
+
   test('keeps system-level prompt and tool catalog rows outside Turn folds', () => {
     const system = record({
       id: `turn:${TURN_ID}:context`,
@@ -606,6 +669,10 @@ function renderPanel(
 function trajectoryReadResponse(
   records: readonly ThreadTrajectoryRecordSummary[] = trajectoryRecords(),
   selectedRecordId: string | null = null,
+  cursors: {
+    readonly olderCursor?: string | null;
+    readonly newerCursor?: string | null;
+  } = {},
 ): ThreadTrajectoryReadResponse {
   const usage = records.reduce((total, entry) => total + (entry.usage?.totalTokens ?? 0), 0);
   return {
@@ -636,8 +703,10 @@ function trajectoryReadResponse(
       availability: [],
     },
     records,
-    nextCursor: null,
-    hasMore: false,
+    olderCursor: cursors.olderCursor ?? null,
+    newerCursor: cursors.newerCursor ?? null,
+    hasOlder: (cursors.olderCursor ?? null) !== null,
+    hasNewer: (cursors.newerCursor ?? null) !== null,
     selectedRecordId,
   };
 }

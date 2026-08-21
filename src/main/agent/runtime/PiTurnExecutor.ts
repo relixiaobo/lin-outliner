@@ -214,6 +214,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
     if (context.signal.aborted) return { status: 'interrupted' };
     let agent: PiAgentRuntime | null = null;
     let unsubscribe: (() => void) | null = null;
+    let releaseDiagnosticsInspection: (() => void) | null = null;
     const abort = () => agent?.abort();
     context.signal.addEventListener('abort', abort, { once: true });
     try {
@@ -274,6 +275,9 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
           itemIds: context.turn.items.map((item) => item.id),
         },
       });
+      releaseDiagnosticsInspection = context.inspectTurnDiagnostics?.(() => (
+        diagnostics.available ? diagnostics.payload() : null
+      )) ?? null;
       const disableDiagnostics = (error: unknown) => {
         if (!diagnostics.available) return;
         diagnostics.disable();
@@ -519,6 +523,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         refreshDiagnostics: persisted.refresh,
       };
     } finally {
+      releaseDiagnosticsInspection?.();
       context.signal.removeEventListener('abort', abort);
       unsubscribe?.();
     }

@@ -1,34 +1,42 @@
-import type {
-  CollabAgentToolCallThreadItem,
-  ContextEvidenceThreadItem,
-  JsonValue,
-  Thread,
-  ThreadId,
-  ThreadItem,
-  ThreadItemId,
-  ThreadTrajectoryAvailability,
-  ThreadTrajectoryDetailReadRequest,
-  ThreadTrajectoryDetailReadResponse,
-  ThreadTrajectoryDiagnosticsEvidence,
-  ThreadTrajectoryEvidenceRef,
-  ThreadTrajectoryItemEvidence,
-  ThreadTrajectoryProviderCallEvidence,
-  ThreadTrajectoryReadRequest,
-  ThreadTrajectoryReadResponse,
-  ThreadTrajectoryRecordKind,
-  ThreadTrajectoryRecordSummary,
-  ThreadTrajectoryRuntimeEvidence,
-  ThreadTrajectorySummary,
-  ThreadTrajectoryTimingSummary,
-  ThreadTrajectoryTurnEvidence,
-  ThreadTrajectoryUsageSummary,
-  ThreadTrajectoryUserMessageEvidence,
-  Turn,
-  TurnDiagnosticsPayload,
-  TurnDiagnosticsPayloadReference,
-  TurnDiagnosticsSystemContextEntry,
-  UserMessageThreadItem,
+import { createHash } from 'node:crypto';
+import {
+  MAX_TURN_DIAGNOSTICS_PAYLOAD_BYTES,
+  type CollabAgentToolCallThreadItem,
+  type ContextEvidenceThreadItem,
+  type JsonValue,
+  type Thread,
+  type ThreadId,
+  type ThreadFileSource,
+  type ThreadImageArtifactReference,
+  type ThreadItem,
+  type ThreadItemId,
+  type ThreadResourceReference,
+  type ThreadTrajectoryAvailability,
+  type ThreadTrajectoryDetailReadRequest,
+  type ThreadTrajectoryDetailReadResponse,
+  type ThreadTrajectoryDiagnosticsEvidence,
+  type ThreadTrajectoryEvidenceRef,
+  type ThreadTrajectoryItemEvidence,
+  type ThreadTrajectoryProviderCallEvidence,
+  type ThreadTrajectoryReadRequest,
+  type ThreadTrajectoryReadResponse,
+  type ThreadTrajectoryRecordKind,
+  type ThreadTrajectoryRecordSummary,
+  type ThreadTrajectoryRuntimeEvidence,
+  type ThreadTrajectorySummary,
+  type ThreadTrajectoryTimingSummary,
+  type ThreadTrajectoryTurnEvidence,
+  type ThreadTrajectoryUsageSummary,
+  type ThreadTrajectoryUserMessageEvidence,
+  type Turn,
+  type TurnId,
+  type TurnDiagnosticsPayload,
+  type TurnDiagnosticsPayloadReference,
+  type TurnDiagnosticsSystemContextEntry,
+  type ThreadUserContent,
+  type UserMessageThreadItem,
 } from '../../../core/agent/protocol';
+import { redactSecretLikeContent } from '../capabilities/agentSecretRedaction';
 import { ThreadCore } from './ThreadCore';
 
 const DEFAULT_TRAJECTORY_LIMIT = 100;
@@ -38,10 +46,24 @@ const MAX_DETAIL_TEXT_LENGTH = 20_000;
 const MAX_JSON_DEPTH = 16;
 const MAX_JSON_ARRAY_LENGTH = 500;
 const MAX_JSON_OBJECT_KEYS = 500;
+const MAX_TRAJECTORY_TURN_WINDOW = 120;
+const DIAGNOSTICS_READ_CONCURRENCY = 4;
+const TRAJECTORY_SEQUENCE_STRIDE = 100_000;
 
 type DiagnosticsBundle = {
   readonly ref: TurnDiagnosticsPayloadReference;
   readonly payload: TurnDiagnosticsPayload;
+};
+
+type TrajectoryCursor = {
+  readonly direction: 'before' | 'after';
+  readonly recordId: string;
+};
+
+type TrajectoryPage = {
+  readonly data: readonly ThreadTrajectoryRecordSummary[];
+  readonly olderCursor: string | null;
+  readonly newerCursor: string | null;
 };
 
 type TrajectoryToolExecution = Extract<
@@ -52,6 +74,7 @@ type TrajectoryToolExecution = Extract<
 interface LoadedTurn {
   readonly threadId: ThreadId;
   readonly turn: Turn;
+  readonly turnIndex: number;
   readonly diagnostics: DiagnosticsBundle | null;
   readonly availability: readonly ThreadTrajectoryAvailability[];
 }
@@ -61,6 +84,20 @@ interface BuiltTrajectory {
   readonly turns: readonly LoadedTurn[];
   readonly records: readonly ThreadTrajectoryRecordSummary[];
   readonly summary: ThreadTrajectorySummary;
+}
+
+interface BuiltTrajectoryWindow {
+  readonly turns: readonly LoadedTurn[];
+  readonly records: readonly ThreadTrajectoryRecordSummary[];
+  readonly summary: ThreadTrajectorySummary;
+  readonly olderCursor: string | null;
+  readonly newerCursor: string | null;
+}
+
+interface TurnWindowSelection {
+  readonly turns: readonly { readonly turn: Turn; readonly turnIndex: number }[];
+  readonly hasOlder: boolean;
+  readonly hasNewer: boolean;
 }
 
 interface ThreadTrajectoryThreadEvidence {
@@ -95,24 +132,32 @@ export interface ThreadTrajectoryExportBundle {
 }
 
 export class ThreadTrajectoryProjection {
-  constructor(private readonly core: ThreadCore, private readonly now: () => number = Date.now) {}
+  constructor(
+    private readonly core: ThreadCore,
+    private readonly now: () => number = Date.now,
+    private readonly readActiveDiagnostics: (
+      (threadId: ThreadId, turnId: TurnId) => TurnDiagnosticsPayload | null
+  ) | null = null,
+  ) {}
 
   async read(request: ThreadTrajectoryReadRequest): Promise<ThreadTrajectoryReadResponse> {
-    const built = await this.build(request.threadId);
-    const records = pageTrajectoryRecords(built.records, request);
-    const selectedRecordId = selectRecordId(records.data, request);
+    const built = await this.buildWindow(request);
+    const selectedRecordId = selectRecordId(built.records, request);
     return {
       threadId: request.threadId,
       summary: built.summary,
-      records: records.data,
-      nextCursor: records.nextCursor,
-      hasMore: records.nextCursor !== null,
+      records: built.records,
+      olderCursor: built.olderCursor,
+      newerCursor: built.newerCursor,
+      hasOlder: built.olderCursor !== null,
+      hasNewer: built.newerCursor !== null,
       selectedRecordId,
     };
   }
 
   async readDetail(request: ThreadTrajectoryDetailReadRequest): Promise<ThreadTrajectoryDetailReadResponse> {
-    const built = await this.build(request.threadId);
+    const built = await this.buildDetailWindow(request.threadId, request.recordId);
+    if (!built) return { threadId: request.threadId, record: null, detail: null };
     const record = built.records.find((candidate) => candidate.id === request.recordId) ?? null;
     if (!record) return { threadId: request.threadId, record: null, detail: null };
     const loaded = built.turns.find((candidate) => candidate.turn.id === record.turnId) ?? null;
@@ -139,17 +184,73 @@ export class ThreadTrajectoryProjection {
     };
   }
 
+  private async buildWindow(request: ThreadTrajectoryReadRequest): Promise<BuiltTrajectoryWindow> {
+    this.core.requireThread(request.threadId);
+    const allTurns = this.core.allTurns(request.threadId);
+    const selection = selectTurnWindow(allTurns, request);
+    const turns = await this.loadTurns(request.threadId, selection.turns);
+    const records = this.projectRecords(turns);
+    const page = pageTrajectoryRecords(records, request, {
+      older: selection.hasOlder,
+      newer: selection.hasNewer,
+    });
+    return {
+      turns,
+      records: page.data,
+      summary: summarizeTrajectory(request.threadId, turns, page.data, allTurns),
+      olderCursor: page.olderCursor,
+      newerCursor: page.newerCursor,
+    };
+  }
+
+  private async buildDetailWindow(threadId: ThreadId, recordId: string): Promise<BuiltTrajectory | null> {
+    const thread = this.core.requireThread(threadId).thread;
+    const turnId = turnIdFromTrajectoryRecordId(recordId);
+    if (!turnId) return null;
+    const allTurns = this.core.allTurns(threadId);
+    const turnIndex = allTurns.findIndex((candidate) => candidate.id === turnId);
+    const turn = turnIndex < 0 ? null : allTurns[turnIndex] ?? null;
+    if (!turn) return null;
+    const turns = await this.loadTurns(threadId, [{ turn, turnIndex }]);
+    const records = this.projectRecords(turns);
+    return {
+      thread,
+      turns,
+      records,
+      summary: summarizeTrajectory(threadId, turns, records, allTurns),
+    };
+  }
+
   private async build(threadId: ThreadId): Promise<BuiltTrajectory> {
     const thread = this.core.requireThread(threadId).thread;
-    const turns = await Promise.all(this.core.allTurns(threadId).map(async (turn): Promise<LoadedTurn> => {
+    const allTurns = this.core.allTurns(threadId);
+    const turns = await this.loadTurns(threadId, allTurns.map((turn, turnIndex) => ({ turn, turnIndex })));
+    const records = this.projectRecords(turns);
+    return {
+      thread,
+      turns,
+      records,
+      summary: summarizeTrajectory(threadId, turns, records, allTurns),
+    };
+  }
+
+  private async loadTurns(
+    threadId: ThreadId,
+    turns: readonly { readonly turn: Turn; readonly turnIndex: number }[],
+  ): Promise<readonly LoadedTurn[]> {
+    return await mapWithConcurrency(turns, DIAGNOSTICS_READ_CONCURRENCY, async ({ turn, turnIndex }) => {
       const diagnostics = await this.readDiagnostics(threadId, turn);
       return {
         threadId,
         turn,
+        turnIndex,
         diagnostics: diagnostics.bundle,
         availability: diagnostics.availability,
       };
-    }));
+    });
+  }
+
+  private projectRecords(turns: readonly LoadedTurn[]): readonly ThreadTrajectoryRecordSummary[] {
     const records: ThreadTrajectoryRecordSummary[] = [];
     let stablePromptFingerprint: string | null = null;
     const toolCatalogState: ToolCatalogProjectionState = { fingerprint: null };
@@ -162,12 +263,7 @@ export class ThreadTrajectoryProjection {
       appendToolCatalogRecords(records, loaded, toolCatalogState);
       appendTurnRecords(records, loaded);
     }
-    return {
-      thread,
-      turns,
-      records,
-      summary: summarizeTrajectory(threadId, turns, records),
-    };
+    return records;
   }
 
   private async readDiagnostics(
@@ -179,6 +275,17 @@ export class ThreadTrajectoryProjection {
   }> {
     const ref = turn.execution.diagnosticsRef;
     if (!ref) {
+      const activePayload = turn.status === 'inProgress'
+        ? this.readActiveDiagnostics?.(threadId, turn.id) ?? null
+        : null;
+      if (activePayload) {
+        const activeBundle = activeDiagnosticsBundle(activePayload);
+        if (activeBundle) return { bundle: activeBundle, availability: [] };
+        return {
+          bundle: null,
+          availability: [availability('partialCoverage', 'Active Turn diagnostics exceeded the inspection budget.')],
+        };
+      }
       return {
         bundle: null,
         availability: turn.status === 'inProgress'
@@ -330,18 +437,33 @@ function threadEvidence(thread: Thread): ThreadTrajectoryThreadEvidence {
     id: thread.id,
     parentThreadId: thread.parentThreadId,
     forkedFromId: thread.forkedFromId,
-    agentNickname: thread.agentNickname,
-    agentRole: thread.agentRole,
-    name: thread.name,
-    preview: thread.preview,
+    agentNickname: thread.agentNickname ? sanitizeStringEvidence(thread.agentNickname) : null,
+    agentRole: thread.agentRole ? sanitizeStringEvidence(thread.agentRole) : null,
+    name: thread.name ? sanitizeStringEvidence(thread.name) : null,
+    preview: sanitizeTextEvidence(thread.preview),
     ephemeral: thread.ephemeral,
-    source: thread.source,
+    source: sanitizeStringEvidence(thread.source),
     threadSource: thread.threadSource,
-    modelProvider: thread.modelProvider,
+    modelProvider: sanitizeStringEvidence(thread.modelProvider),
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,
     status: thread.status,
     historyMode: thread.historyMode,
+  };
+}
+
+function activeDiagnosticsBundle(payload: TurnDiagnosticsPayload): DiagnosticsBundle | null {
+  const encoded = JSON.stringify(payload);
+  const byteLength = Buffer.byteLength(encoded, 'utf8');
+  if (byteLength > MAX_TURN_DIAGNOSTICS_PAYLOAD_BYTES) return null;
+  return {
+    ref: {
+      id: createHash('sha256').update(encoded).digest('hex'),
+      mimeType: 'application/vnd.tenon.agent-turn-diagnostics+json',
+      byteLength,
+      schemaVersion: 1,
+    },
+    payload,
   };
 }
 
@@ -534,6 +656,13 @@ function preparedContextPartRecords(
   });
 }
 
+function preparedContextFingerprint(context: PreparedContextPartRecord): string {
+  return JSON.stringify({
+    entries: context.entries,
+    text: context.text,
+  });
+}
+
 function toolCatalogRecord(
   payload: TurnDiagnosticsPayload,
   callIndex: number,
@@ -634,9 +763,14 @@ function sanitizeStringEvidence(value: string): string {
   if (/^data:image\//iu.test(value) || /^data:application\/octet-stream/iu.test(value)) {
     return '‹binary:redacted›';
   }
-  return value
+  const pathRedacted = value
     .replace(/(^|[\s([{"'=])\/(?:Users|private|var|tmp|Volumes|Applications|workspace)(?:\/[^\s'",)\]}<>]+)+/gu, '$1‹path:redacted›')
     .replace(/(^|[\s([{"'=])[A-Za-z]:\\(?:[^\\/:*?"<>|\r\n]+\\?)+/gu, '$1‹path:redacted›');
+  try {
+    return redactSecretLikeContent(pathRedacted);
+  } catch {
+    return '‹redacted›';
+  }
 }
 
 function appendStablePromptRecord(
@@ -653,6 +787,7 @@ function appendStablePromptRecord(
     threadId: loaded.threadId,
     turn: loaded.turn,
     records,
+    sequenceBase: loaded.turnIndex * TRAJECTORY_SEQUENCE_STRIDE,
     title: update ? 'System Prompt Update' : 'Initial System Prompt',
     subtitle: 'stablePrompt',
     preview: compact(stablePrompt.blocks.map((block) => block.text).join(' ')),
@@ -677,7 +812,7 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
   const { diagnostics, turn } = loaded;
   const itemsById = new Map(turn.items.map((item) => [item.id, item]));
   const coveredCompactionItemIds = new Set<string>();
-  let contextInserted = false;
+  const insertedPreparedContexts = new Set<string>();
 
   if (diagnostics) {
     diagnostics.payload.activities.forEach((activity, activityIndex) => {
@@ -695,6 +830,7 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
             threadId: loaded.threadId,
             turn,
             records,
+            sequenceBase: loaded.turnIndex * TRAJECTORY_SEQUENCE_STRIDE,
             title: activity.source === 'initial' ? 'Input' : 'Steering',
             subtitle: null,
             preview: compact(itemSummary(item)),
@@ -710,25 +846,22 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
             usage: null,
           }));
         }
-        if (!contextInserted) {
-          appendPreparedContextRecords(records, loaded, activity.consumedByCallIndex);
-          contextInserted = true;
+        if (activity.consumedByCallIndex !== null) {
+          appendPreparedContextRecords(records, loaded, activity.consumedByCallIndex, insertedPreparedContexts);
         }
         return;
-      }
-      if (!contextInserted) {
-        appendPreparedContextRecords(records, loaded, null);
-        contextInserted = true;
       }
       if (activity.type === 'modelCall') {
         const call = diagnostics.payload.providerCalls[activity.callIndex];
         if (!call) return;
+        appendPreparedContextRecords(records, loaded, call.index, insertedPreparedContexts);
         records.push(record({
           kind: 'assistant',
           lane: 'assistant',
           threadId: loaded.threadId,
           turn,
           records,
+          sequenceBase: loaded.turnIndex * TRAJECTORY_SEQUENCE_STRIDE,
           title: `Assistant call ${call.index + 1}`,
           subtitle: `${diagnostics.payload.runtime.provider} · ${diagnostics.payload.runtime.model}`,
           preview: compact(providerResponsePreview(call.response?.value ?? null)),
@@ -753,6 +886,7 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
             threadId: loaded.threadId,
             turn,
             records,
+            sequenceBase: loaded.turnIndex * TRAJECTORY_SEQUENCE_STRIDE,
             title: delegation ? delegationTitle(item, execution.toolName) : toolTitle(item, execution.toolName),
             subtitle: execution.canonicalIdentity
               ? [execution.canonicalIdentity.namespace, execution.canonicalIdentity.name].filter(Boolean).join('.')
@@ -782,6 +916,7 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
           threadId: loaded.threadId,
           turn,
           records,
+          sequenceBase: loaded.turnIndex * TRAJECTORY_SEQUENCE_STRIDE,
           title: `${activity.retryKind === 'request' ? 'Request' : 'Stream'} retry ${activity.attempt}/${activity.maxRetries}`,
           subtitle: `After assistant call ${activity.sourceCallIndex + 1}`,
           preview: null,
@@ -808,6 +943,7 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
         threadId: loaded.threadId,
         turn,
         records,
+        sequenceBase: loaded.turnIndex * TRAJECTORY_SEQUENCE_STRIDE,
         title: 'Context compaction',
         subtitle: activity.trigger,
         preview: compact(itemSummary(itemsById.get(activity.itemId)) ?? activity.trigger),
@@ -820,7 +956,9 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
         usage: null,
       }));
     });
-    if (!contextInserted) appendPreparedContextRecords(records, loaded, null);
+    for (const call of diagnostics.payload.providerCalls) {
+      appendPreparedContextRecords(records, loaded, call.index, insertedPreparedContexts);
+    }
     appendManualCompactionRecords(records, loaded, coveredCompactionItemIds);
     return;
   }
@@ -837,6 +975,7 @@ function appendFallbackTurnRecords(records: ThreadTrajectoryRecordSummary[], loa
       threadId: loaded.threadId,
       turn: loaded.turn,
       records,
+      sequenceBase: loaded.turnIndex * TRAJECTORY_SEQUENCE_STRIDE,
       title: 'Input',
       subtitle: null,
       preview: compact(itemSummary(item)),
@@ -859,6 +998,7 @@ function appendFallbackTurnRecords(records: ThreadTrajectoryRecordSummary[], loa
       threadId: loaded.threadId,
       turn: loaded.turn,
       records,
+      sequenceBase: loaded.turnIndex * TRAJECTORY_SEQUENCE_STRIDE,
       title: delegation ? delegationTitle(item, item.type) : toolTitle(item, item.type),
       subtitle: item.type,
       preview: compact(itemSummary(item)),
@@ -877,16 +1017,21 @@ function appendPreparedContextRecords(
   records: ThreadTrajectoryRecordSummary[],
   loaded: LoadedTurn,
   callIndex: number | null,
+  inserted: Set<string>,
 ): void {
   const payload = loaded.diagnostics?.payload ?? null;
   if (!payload) return;
   for (const context of preparedContextPartRecords(payload, callIndex)) {
+    const fingerprint = preparedContextFingerprint(context);
+    if (inserted.has(fingerprint)) continue;
+    inserted.add(fingerprint);
     records.push(record({
       kind: 'context',
       lane: 'input',
       threadId: loaded.threadId,
       turn: loaded.turn,
       records,
+      sequenceBase: loaded.turnIndex * TRAJECTORY_SEQUENCE_STRIDE,
       title: contextPartTitle(context.entries),
       subtitle: contextPartSubtitle(context.entries),
       preview: compact(context.text),
@@ -932,6 +1077,7 @@ function appendToolCatalogRecordIfChanged(
     threadId: loaded.threadId,
     turn: loaded.turn,
     records,
+    sequenceBase: loaded.turnIndex * TRAJECTORY_SEQUENCE_STRIDE,
     title: toolCatalogTitle(!initial),
     subtitle: toolCatalogSubtitle(catalog),
     preview: compact(toolCatalogPreview(catalog)),
@@ -958,6 +1104,7 @@ function appendManualCompactionRecords(
       threadId: loaded.threadId,
       turn: loaded.turn,
       records,
+      sequenceBase: loaded.turnIndex * TRAJECTORY_SEQUENCE_STRIDE,
       title: 'Context compaction',
       subtitle: item.trigger,
       preview: compact(itemSummary(item)),
@@ -978,6 +1125,7 @@ function record(input: {
   readonly threadId: ThreadId;
   readonly turn: Turn;
   readonly records: readonly ThreadTrajectoryRecordSummary[];
+  readonly sequenceBase: number;
   readonly title: string;
   readonly subtitle: string | null;
   readonly preview: string | null;
@@ -990,7 +1138,7 @@ function record(input: {
   readonly usage: ThreadTrajectoryUsageSummary | null;
   readonly parentRecordId?: string | null;
 }): ThreadTrajectoryRecordSummary {
-  const sequence = input.records.length;
+  const sequence = input.sequenceBase + input.records.filter((entry) => entry.turnId === input.turn.id).length;
   return {
     id: trajectoryRecordId(input.turn.id, input.kind, input.primaryEvidence),
     kind: input.kind,
@@ -999,9 +1147,9 @@ function record(input: {
     turnId: input.turn.id,
     sequence,
     parentRecordId: input.parentRecordId ?? null,
-    title: input.title,
-    subtitle: input.subtitle,
-    preview: input.preview,
+    title: sanitizeStringEvidence(input.title),
+    subtitle: input.subtitle === null ? null : sanitizeStringEvidence(input.subtitle),
+    preview: input.preview === null ? null : sanitizeTextEvidence(input.preview),
     state: input.availability.length > 0 && input.state === 'completed' ? 'partial' : input.state,
     timing: input.timing,
     usage: input.usage,
@@ -1016,17 +1164,18 @@ function summarizeTrajectory(
   threadId: ThreadId,
   turns: readonly LoadedTurn[],
   records: readonly ThreadTrajectoryRecordSummary[],
+  allTurns: readonly Turn[] = turns.map((entry) => entry.turn),
 ): ThreadTrajectorySummary {
-  const usage = records.reduce<ThreadTrajectoryUsageSummary | null>((accumulator, entry) => (
+  const usage = usageSummaryFromTurns(allTurns) ?? records.reduce<ThreadTrajectoryUsageSummary | null>((accumulator, entry) => (
     entry.usage ? addUsage(accumulator, entry.usage) : accumulator
   ), null);
-  const startedAt = minNullable(turns.map((entry) => entry.turn.startedAt));
-  const completedAt = turns.some((entry) => entry.turn.completedAt === null)
+  const startedAt = minNullable(allTurns.map((turn) => turn.startedAt));
+  const completedAt = allTurns.some((turn) => turn.completedAt === null)
     ? null
-    : maxNullable(turns.map((entry) => entry.turn.completedAt));
+    : maxNullable(allTurns.map((turn) => turn.completedAt));
   return {
     threadId,
-    turnCount: turns.length,
+    turnCount: allTurns.length,
     recordCount: records.length,
     inputCount: countKind(records, 'input'),
     contextCount: countKind(records, 'context'),
@@ -1043,26 +1192,95 @@ function summarizeTrajectory(
   };
 }
 
+function usageSummaryFromTurns(turns: readonly Turn[]): ThreadTrajectoryUsageSummary | null {
+  return turns.reduce<ThreadTrajectoryUsageSummary | null>((accumulator, turn) => {
+    const usage = turn.execution.usage;
+    if (!usage) return accumulator;
+    return addUsage(accumulator, {
+      input: usage.input,
+      output: usage.output,
+      cacheRead: usage.cacheRead,
+      cacheWrite: usage.cacheWrite,
+      reasoning: null,
+      totalTokens: usage.totalTokens,
+      costUsd: usage.cost?.total ?? null,
+    });
+  }, null);
+}
+
 function pageTrajectoryRecords(
   records: readonly ThreadTrajectoryRecordSummary[],
   request: ThreadTrajectoryReadRequest,
-): { readonly data: readonly ThreadTrajectoryRecordSummary[]; readonly nextCursor: string | null } {
+  outerGaps: { readonly older: boolean; readonly newer: boolean } = { older: false, newer: false },
+): TrajectoryPage {
   const limit = trajectoryLimit(request.limit);
-  const beforeSequence = decodeTrajectoryCursor(request.cursor ?? null);
-  if (beforeSequence !== null) {
-    const older = records.filter((entry) => entry.sequence < beforeSequence);
-    const data = older.slice(Math.max(0, older.length - limit));
-    return { data, nextCursor: data[0] && data[0].sequence > 0 ? encodeTrajectoryCursor(data[0].sequence) : null };
+  const cursor = decodeTrajectoryCursor(request.cursor ?? null);
+  if (cursor?.direction === 'before') {
+    const boundary = records.findIndex((entry) => entry.id === cursor.recordId);
+    const end = boundary < 0 ? records.length : boundary;
+    return trajectoryPage(records, Math.max(0, end - limit), end, outerGaps);
+  }
+  if (cursor?.direction === 'after') {
+    const boundary = records.findIndex((entry) => entry.id === cursor.recordId);
+    const start = boundary < 0 ? 0 : boundary + 1;
+    return trajectoryPage(records, start, Math.min(records.length, start + limit), outerGaps);
   }
   const focusIndex = focusIndexForRecords(records, request);
   if (focusIndex >= 0) {
     const end = Math.min(records.length, focusIndex + Math.ceil(limit / 3) + 1);
     const start = Math.max(0, end - limit);
-    const data = records.slice(start, end);
-    return { data, nextCursor: data[0] && data[0].sequence > 0 ? encodeTrajectoryCursor(data[0].sequence) : null };
+    return trajectoryPage(records, start, end, outerGaps);
   }
-  const data = records.slice(Math.max(0, records.length - limit));
-  return { data, nextCursor: data[0] && data[0].sequence > 0 ? encodeTrajectoryCursor(data[0].sequence) : null };
+  return trajectoryPage(records, Math.max(0, records.length - limit), records.length, outerGaps);
+}
+
+function trajectoryPage(
+  records: readonly ThreadTrajectoryRecordSummary[],
+  start: number,
+  end: number,
+  outerGaps: { readonly older: boolean; readonly newer: boolean },
+): TrajectoryPage {
+  const data = expandStructuralRecords(records, start, end);
+  const first = data[0] ?? null;
+  const last = data.at(-1) ?? null;
+  const firstIndex = first ? records.findIndex((record) => record.id === first.id) : -1;
+  const lastIndex = last ? records.findIndex((record) => record.id === last.id) : -1;
+  return {
+    data,
+    olderCursor: first && (firstIndex > 0 || outerGaps.older) ? encodeTrajectoryCursor('before', first.id) : null,
+    newerCursor: last && (lastIndex >= 0 && (lastIndex < records.length - 1 || outerGaps.newer))
+      ? encodeTrajectoryCursor('after', last.id)
+      : null,
+  };
+}
+
+function expandStructuralRecords(
+  records: readonly ThreadTrajectoryRecordSummary[],
+  start: number,
+  end: number,
+): readonly ThreadTrajectoryRecordSummary[] {
+  const included = new Set(records.slice(start, end).map((record) => record.id));
+  const byId = new Map(records.map((record) => [record.id, record]));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const record of records) {
+      const parentIncluded = record.parentRecordId !== null && included.has(record.parentRecordId);
+      const selfIncluded = included.has(record.id);
+      if (selfIncluded && record.parentRecordId && !included.has(record.parentRecordId)) {
+        const parent = byId.get(record.parentRecordId);
+        if (parent) {
+          included.add(parent.id);
+          changed = true;
+        }
+      }
+      if (parentIncluded && !selfIncluded) {
+        included.add(record.id);
+        changed = true;
+      }
+    }
+  }
+  return records.filter((record) => included.has(record.id));
 }
 
 function selectRecordId(
@@ -1104,15 +1322,22 @@ function trajectoryLimit(value: number | null | undefined): number {
   return Math.min(value, MAX_TRAJECTORY_LIMIT);
 }
 
-function encodeTrajectoryCursor(sequence: number): string {
-  return `before:${sequence}`;
+function encodeTrajectoryCursor(direction: TrajectoryCursor['direction'], recordId: string): string {
+  return `${direction}:${encodeURIComponent(recordId)}`;
 }
 
-function decodeTrajectoryCursor(value: string | null): number | null {
+function decodeTrajectoryCursor(value: string | null): TrajectoryCursor | null {
   if (!value) return null;
-  const match = /^before:(\d+)$/.exec(value);
+  const match = /^(before|after):(.+)$/.exec(value);
   if (!match) return null;
-  return Number(match[1]);
+  const direction = match[1];
+  const encoded = match[2];
+  if ((direction !== 'before' && direction !== 'after') || !encoded) return null;
+  try {
+    return { direction, recordId: decodeURIComponent(encoded) };
+  } catch {
+    return null;
+  }
 }
 
 function trajectoryRecordId(
@@ -1263,6 +1488,69 @@ function maxNullable(values: readonly (number | null)[]): number | null {
   return present.length === 0 ? null : Math.max(...present);
 }
 
+async function mapWithConcurrency<T, U>(
+  values: readonly T[],
+  concurrency: number,
+  map: (value: T, index: number) => Promise<U>,
+): Promise<U[]> {
+  const limit = Math.max(1, Math.min(concurrency, values.length || 1));
+  const results = new Array<U>(values.length);
+  let nextIndex = 0;
+  await Promise.all(Array.from({ length: limit }, async () => {
+    while (nextIndex < values.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await map(values[index]!, index);
+    }
+  }));
+  return results;
+}
+
+function selectTurnWindow(
+  turns: readonly Turn[],
+  request: ThreadTrajectoryReadRequest,
+): TurnWindowSelection {
+  const count = turns.length;
+  if (count === 0) return { turns: [], hasOlder: false, hasNewer: false };
+  const limit = Math.min(MAX_TRAJECTORY_TURN_WINDOW, trajectoryLimit(request.limit));
+  const cursor = decodeTrajectoryCursor(request.cursor ?? null);
+  if (cursor) {
+    const turnIndex = turnIndexForCursor(turns, cursor);
+    if (cursor.direction === 'after') {
+      return turnWindow(turns, Math.max(0, turnIndex), Math.min(count, Math.max(0, turnIndex) + limit));
+    }
+    const end = turnIndex < 0 ? count : Math.min(count, turnIndex + 1);
+    return turnWindow(turns, Math.max(0, end - limit), end);
+  }
+  const focusTurnId = request.focus?.turnId
+    ?? (request.focus?.recordId ? turnIdFromTrajectoryRecordId(request.focus.recordId) : null);
+  const focusIndex = focusTurnId ? turns.findIndex((turn) => turn.id === focusTurnId) : -1;
+  if (focusIndex >= 0) {
+    const newerCount = Math.ceil(limit / 3);
+    const end = Math.min(count, focusIndex + newerCount + 1);
+    return turnWindow(turns, Math.max(0, end - limit), end);
+  }
+  return turnWindow(turns, Math.max(0, count - limit), count);
+}
+
+function turnWindow(turns: readonly Turn[], start: number, end: number): TurnWindowSelection {
+  return {
+    turns: turns.slice(start, end).map((turn, offset) => ({ turn, turnIndex: start + offset })),
+    hasOlder: start > 0,
+    hasNewer: end < turns.length,
+  };
+}
+
+function turnIndexForCursor(turns: readonly Turn[], cursor: TrajectoryCursor): number {
+  const turnId = turnIdFromTrajectoryRecordId(cursor.recordId);
+  return turnId ? turns.findIndex((turn) => turn.id === turnId) : -1;
+}
+
+function turnIdFromTrajectoryRecordId(recordId: string): TurnId | null {
+  const match = /^turn:([^:]+):/.exec(recordId);
+  return match?.[1] ?? null;
+}
+
 function availability(reason: ThreadTrajectoryAvailability['reason'], message: string): ThreadTrajectoryAvailability {
   return { reason, message };
 }
@@ -1271,12 +1559,16 @@ function turnEvidence(turn: Turn): ThreadTrajectoryTurnEvidence {
   return {
     id: turn.id,
     status: turn.status,
-    error: turn.error,
+    error: turn.error ? {
+      ...turn.error,
+      message: sanitizeTextEvidence(turn.error.message),
+      ...(turn.error.detail === undefined ? {} : { detail: sanitizeTextEvidence(turn.error.detail) }),
+    } : null,
     startedAt: turn.startedAt,
     completedAt: turn.completedAt,
     durationMs: turn.durationMs,
-    modelProvider: turn.execution.modelProvider,
-    model: turn.execution.model,
+    modelProvider: sanitizeStringEvidence(turn.execution.modelProvider),
+    model: sanitizeStringEvidence(turn.execution.model),
     reasoningEffort: turn.execution.reasoningEffort,
   };
 }
@@ -1285,7 +1577,7 @@ function itemEvidence(item: ThreadItem): ThreadTrajectoryItemEvidence {
   return {
     itemId: item.id,
     type: item.type,
-    title: itemTitle(item),
+    title: sanitizeStringEvidence(itemTitle(item)),
     preview: compact(itemSummary(item)),
     status: isToolItem(item) ? item.status : null,
   };
@@ -1295,7 +1587,46 @@ function userMessageEvidence(item: UserMessageThreadItem): ThreadTrajectoryUserM
   return {
     itemId: item.id,
     acceptedAt: item.acceptedAt,
-    content: item.content,
+    content: item.content.map(userContentEvidence),
+  };
+}
+
+function userContentEvidence(content: ThreadUserContent): ThreadUserContent {
+  if (content.type === 'text') {
+    return { ...content, text: sanitizeTextEvidence(content.text) };
+  }
+  if (content.type === 'nodeReference') {
+    return {
+      ...content,
+      ...(content.note === undefined ? {} : { note: sanitizeTextEvidence(content.note) }),
+    };
+  }
+  return {
+    ...content,
+    name: sanitizeStringEvidence(content.name),
+    source: fileSourceEvidence(content.source),
+    ...(content.extractedText === undefined ? {} : { extractedText: sanitizeTextEvidence(content.extractedText) }),
+    ...(content.artifactRef === undefined ? {} : {
+      artifactRef: imageArtifactEvidence(content.artifactRef),
+    }),
+  };
+}
+
+function fileSourceEvidence(source: ThreadFileSource): ThreadFileSource {
+  return source.kind === 'localFile'
+    ? { ...source, path: sanitizeStringEvidence(source.path) }
+    : { ...source, ref: resourceEvidence(source.ref) };
+}
+
+function resourceEvidence(ref: ThreadResourceReference): ThreadResourceReference {
+  return { ...ref, fileName: sanitizeStringEvidence(ref.fileName) };
+}
+
+function imageArtifactEvidence(ref: ThreadImageArtifactReference): ThreadImageArtifactReference {
+  return {
+    ...ref,
+    original: ref.original ? fileSourceEvidence(ref.original) : null,
+    observation: resourceEvidence(ref.observation),
   };
 }
 
@@ -1585,7 +1916,7 @@ function jsonPreview(value: JsonValue | null): string | null {
 
 function compact(value: string | null | undefined): string | null {
   if (!value) return null;
-  const normalized = value.replace(/\s+/g, ' ').trim();
+  const normalized = sanitizeStringEvidence(value).replace(/\s+/g, ' ').trim();
   if (!normalized) return null;
   return normalized.length > PREVIEW_LIMIT ? `${normalized.slice(0, PREVIEW_LIMIT - 1)}…` : normalized;
 }

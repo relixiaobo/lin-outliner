@@ -1985,7 +1985,7 @@ function decodeThreadTrajectoryReadResponse(
   const record = recordValue(value, 'thread/trajectory/read response');
   exactKeys(
     record,
-    ['threadId', 'summary', 'records', 'nextCursor', 'hasMore', 'selectedRecordId'],
+    ['threadId', 'summary', 'records', 'olderCursor', 'newerCursor', 'hasOlder', 'hasNewer', 'selectedRecordId'],
     'thread/trajectory/read response',
   );
   const threadId = uuidV7(record.threadId, 'thread/trajectory/read response.threadId');
@@ -2019,8 +2019,10 @@ function decodeThreadTrajectoryReadResponse(
     threadId,
     summary,
     records,
-    nextCursor: nullableString(record.nextCursor, 'thread/trajectory/read response.nextCursor'),
-    hasMore: booleanValue(record.hasMore, 'thread/trajectory/read response.hasMore'),
+    olderCursor: nullableString(record.olderCursor, 'thread/trajectory/read response.olderCursor'),
+    newerCursor: nullableString(record.newerCursor, 'thread/trajectory/read response.newerCursor'),
+    hasOlder: booleanValue(record.hasOlder, 'thread/trajectory/read response.hasOlder'),
+    hasNewer: booleanValue(record.hasNewer, 'thread/trajectory/read response.hasNewer'),
     selectedRecordId,
   });
 }

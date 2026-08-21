@@ -181,16 +181,220 @@ describe('ThreadTrajectoryProjection', () => {
     expect(contextDetail.detail.modelContextText).toContain('active_panel_id=panel-1');
     expect(decodeAgentCoreResponse('thread/trajectory/detail/read', contextDetail)).toEqual(contextDetail);
   });
+
+  test('redacts credential-looking strings from previews, details, tool output, and export bundles', async () => {
+    const secret = `sk-${'a'.repeat(32)}`;
+    const diagnostics = {
+      ...trajectoryDiagnostics(),
+      stablePrompt: {
+        ...trajectoryDiagnostics().stablePrompt!,
+        blocks: [{
+          ...trajectoryDiagnostics().stablePrompt!.blocks[0]!,
+          text: `System ${secret}`,
+        }],
+      },
+      providerCalls: [{
+        ...trajectoryDiagnostics().providerCalls[0]!,
+        request: { kind: 'value' as const, value: { input: `Authorization: Bearer ${secret}` } },
+        response: {
+          ...trajectoryDiagnostics().providerCalls[0]!.response!,
+          value: { role: 'assistant', content: [{ type: 'output_text', text: `token ${secret}` }] },
+        },
+      }],
+    };
+    const turn = {
+      ...trajectoryTurn(),
+      items: [{
+        type: 'mcpToolCall' as const,
+        id: 'tool-with-output',
+        provenance: itemProvenance('tool-with-output'),
+        server: 'server',
+        tool: 'tool',
+        arguments: { token: secret },
+        status: 'completed' as const,
+        result: `Tool returned ${secret}`,
+        error: null,
+        outputRef: {
+          id: 'f'.repeat(64),
+          mimeType: 'text/plain' as const,
+          byteLength: 64,
+          summary: `Tool returned ${secret}`,
+        },
+        durationMs: 10,
+      }],
+    };
+    const projection = trajectoryProjection({
+      diagnostics,
+      toolOutput: `Raw tool output ${secret}`,
+      turn,
+    });
+    const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    expect(JSON.stringify(response)).not.toContain(secret);
+    expect(JSON.stringify(response)).toContain('[redacted secret-like content]');
+
+    const assistant = response.records.find((record) => record.kind === 'assistant');
+    if (!assistant) throw new Error('Expected Assistant record');
+    const assistantDetail = await projection.readDetail({ threadId: THREAD_ID, recordId: assistant.id });
+    expect(JSON.stringify(assistantDetail)).not.toContain(secret);
+
+    const tool = response.records.find((record) => record.kind === 'tool');
+    if (!tool) throw new Error('Expected Tool record');
+    const toolDetail = await projection.readDetail({ threadId: THREAD_ID, recordId: tool.id });
+    expect(JSON.stringify(toolDetail)).not.toContain(secret);
+
+    const exported = await projection.exportBundle(THREAD_ID);
+    expect(JSON.stringify(exported)).not.toContain(secret);
+  });
+
+  test('projects active in-memory diagnostics before the Turn has a final diagnostics reference', async () => {
+    const activeTurn = {
+      ...trajectoryTurn(),
+      status: 'inProgress' as const,
+      completedAt: null,
+      durationMs: null,
+      execution: { ...trajectoryTurn().execution, diagnosticsRef: null },
+    };
+    const activeDiagnostics = {
+      ...trajectoryDiagnostics(),
+      providerCalls: [{
+        ...trajectoryDiagnostics().providerCalls[0]!,
+        response: null,
+      }],
+    };
+    const projection = trajectoryProjection({
+      turn: activeTurn,
+      activeDiagnostics: (_threadId, turnId) => turnId === activeTurn.id ? activeDiagnostics : null,
+    });
+
+    const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    const assistant = response.records.find((record) => record.kind === 'assistant');
+    expect(assistant).toMatchObject({
+      kind: 'assistant',
+      state: 'running',
+      title: 'Assistant call 1',
+    });
+    expect(response.records.some((record) => record.kind === 'tool')).toBe(true);
+  });
+
+  test('projects prepared system context for each consumed Provider Call without duplicating identical context', async () => {
+    const first = inputEnvelopeDiagnostics();
+    const firstCall = first.providerCalls[0]!;
+    const secondMessageId = '5'.repeat(64);
+    const secondContext = '<system-reminder>\nnew steering context\n</system-reminder>';
+    const diagnostics: TurnDiagnosticsPayload = {
+      ...first,
+      canonicalMessages: [
+        ...first.canonicalMessages,
+        {
+          id: secondMessageId,
+          estimatedTokens: 4,
+          value: {
+            role: 'user',
+            content: [
+              { type: 'input_text', text: 'later' },
+              { type: 'text', text: secondContext },
+            ],
+          },
+        },
+      ],
+      providerCalls: [
+        firstCall,
+        {
+          ...firstCall,
+          index: 1,
+          requestedAt: 160,
+          preparedContext: {
+            ...firstCall.preparedContext,
+            messageIds: [secondMessageId],
+            messagePartProvenance: [[
+              { source: 'userInput' },
+              {
+                source: 'systemContext',
+                entries: [{
+                  kind: 'turnEnvironment',
+                  authority: 'application',
+                  purpose: 'observation',
+                }],
+              },
+            ]],
+          },
+          requestFingerprint: '6'.repeat(64),
+        },
+      ],
+      activities: [
+        first.activities[0]!,
+        first.activities[1]!,
+        {
+          type: 'acceptedInput',
+          source: 'steering',
+          acceptedAt: 150,
+          itemIds: ['user-message-2'],
+          consumedByCallIndex: 1,
+        },
+        { type: 'modelCall', callIndex: 1 },
+      ],
+    };
+    const turn = {
+      ...inputEnvelopeTurn(),
+      items: [
+        ...inputEnvelopeTurn().items,
+        {
+          type: 'userMessage' as const,
+          id: 'user-message-2',
+          provenance: itemProvenance('user-message-2'),
+          clientId: null,
+          content: [{ type: 'text' as const, text: 'later' }],
+          acceptedAt: 150,
+        },
+      ],
+    };
+    const projection = trajectoryProjection({ diagnostics, turn });
+    const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    const contexts = response.records.filter((record) => record.primaryEvidence.type === 'preparedContextPart');
+    expect(contexts).toHaveLength(2);
+    expect(contexts.map((record) => record.primaryEvidence)).toEqual([
+      { type: 'preparedContextPart', threadId: THREAD_ID, turnId: TURN_ID, callIndex: 0, messageIndex: 0, partIndex: 1 },
+      { type: 'preparedContextPart', threadId: THREAD_ID, turnId: TURN_ID, callIndex: 1, messageIndex: 0, partIndex: 1 },
+    ]);
+  });
+
+  test('uses stable bidirectional cursors for focused windows', async () => {
+    const turns = Array.from({ length: 8 }, (_, index) => trajectoryTurnWithInput(index));
+    const projection = trajectoryProjection({ turns, diagnosticsByRef: new Map() });
+    const focused = await projection.read({
+      threadId: THREAD_ID,
+      limit: 3,
+      focus: { turnId: turns[3]!.id },
+    });
+    expect(focused.olderCursor).not.toBeNull();
+    expect(focused.newerCursor).not.toBeNull();
+    expect(focused.records.map((record) => record.turnId)).toContain(turns[3]!.id);
+
+    const newer = await projection.read({
+      threadId: THREAD_ID,
+      limit: 3,
+      cursor: focused.newerCursor,
+    });
+    expect(newer.records[0]?.turnId).toBe(turns[5]!.id);
+    expect(newer.records.at(-1)?.turnId).toBe(turns[6]!.id);
+    expect(newer.olderCursor).not.toBeNull();
+    expect(newer.newerCursor).not.toBeNull();
+  });
 });
 
 function trajectoryProjection(overrides: {
   readonly contextPayload?: ThreadContextPayload | null;
   readonly diagnostics?: TurnDiagnosticsPayload;
+  readonly diagnosticsByRef?: ReadonlyMap<string, TurnDiagnosticsPayload>;
+  readonly activeDiagnostics?: (threadId: string, turnId: string) => TurnDiagnosticsPayload | null;
+  readonly toolOutput?: string | null;
   readonly turn?: Turn;
+  readonly turns?: readonly Turn[];
 } = {}): ThreadTrajectoryProjection {
   const thread = trajectoryThread();
-  const turn = overrides.turn ?? trajectoryTurn();
+  const turns = overrides.turns ?? [overrides.turn ?? trajectoryTurn()];
   const diagnostics = overrides.diagnostics ?? trajectoryDiagnostics();
+  const diagnosticsByRef = overrides.diagnosticsByRef ?? new Map([[DIAGNOSTICS_REF.id, diagnostics]]);
   const contextPayload = overrides.contextPayload ?? null;
   const core = {
     requireThread: (threadId: string) => {
@@ -199,19 +403,19 @@ function trajectoryProjection(overrides: {
     },
     allTurns: (threadId: string) => {
       if (threadId !== THREAD_ID) throw new Error('Unknown Thread');
-      return [turn];
+      return turns;
     },
     payloads: {
       readTurnDiagnostics: async (threadId: string, ref: TurnDiagnosticsPayloadReference) => (
-        threadId === THREAD_ID && ref.id === DIAGNOSTICS_REF.id ? diagnostics : null
+        threadId === THREAD_ID ? diagnosticsByRef.get(ref.id) ?? null : null
       ),
-      readTextReference: async () => null,
+      readTextReference: async () => overrides.toolOutput ?? null,
       readContext: async (_threadId: string, ref: ThreadContextPayloadReference) => (
         contextPayload && ref.id === CONTEXT_REF.id ? contextPayload : null
       ),
     },
   } as unknown as ThreadCore;
-  return new ThreadTrajectoryProjection(core, () => 500);
+  return new ThreadTrajectoryProjection(core, () => 500, overrides.activeDiagnostics ?? null);
 }
 
 const CONTEXT_REF: ThreadContextPayloadReference = {
@@ -299,6 +503,36 @@ function inputEnvelopeTurn(): Turn {
         acceptedAt: 106,
       },
     ],
+  };
+}
+
+function trajectoryTurnWithInput(index: number): Turn {
+  const turnId = `01910000-0000-7000-8000-${String(index + 100).padStart(12, '0')}`;
+  const itemId = `user-message-${index}`;
+  return {
+    ...trajectoryTurn(),
+    id: turnId,
+    items: [{
+      type: 'userMessage',
+      id: itemId,
+      provenance: {
+        originThreadId: THREAD_ID,
+        originTurnId: turnId,
+        originItemId: itemId,
+      },
+      clientId: null,
+      content: [{ type: 'text', text: `message ${index}` }],
+      acceptedAt: 100 + index,
+    }],
+    provenance: {
+      originThreadId: THREAD_ID,
+      originTurnId: turnId,
+      trigger: { kind: 'user' },
+    },
+    execution: { ...trajectoryTurn().execution, diagnosticsRef: null },
+    startedAt: 100 + index,
+    completedAt: 101 + index,
+    durationMs: 1,
   };
 }
 

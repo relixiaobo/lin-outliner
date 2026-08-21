@@ -158,14 +158,17 @@ export function buildTrajectoryLedgerRows({
   rangeMatches,
   records,
   searchMatches,
+  selectedRecordId = null,
 }: {
   readonly collapsedCalls: ReadonlySet<string>;
   readonly collapsedTurns: ReadonlySet<string>;
   readonly rangeMatches: ReadonlySet<string> | null;
   readonly records: readonly ThreadTrajectoryRecordSummary[];
   readonly searchMatches: ReadonlySet<string> | null;
+  readonly selectedRecordId?: string | null;
 }): readonly TrajectoryLedgerRow[] {
   const rows: TrajectoryLedgerRow[] = [];
+  const pinnedIds = pinnedRecordIds(records, selectedRecordId);
   for (const group of groupTrajectoryRecords(records)) {
     const childrenByParent = new Map<string, ThreadTrajectoryRecordSummary[]>();
     for (const record of group.records) {
@@ -175,8 +178,11 @@ export function buildTrajectoryLedgerRows({
       else childrenByParent.set(record.parentRecordId, [record]);
     }
     const directMatches = group.records.filter((record) => (
-      (searchMatches === null || searchMatches.has(record.id))
-      && (rangeMatches === null || rangeMatches.has(record.id))
+      pinnedIds.has(record.id)
+      || (
+        (searchMatches === null || searchMatches.has(record.id))
+        && (rangeMatches === null || rangeMatches.has(record.id))
+      )
     ));
     const matchingIds = new Set(directMatches.map((record) => record.id));
     for (const record of directMatches) {
@@ -184,7 +190,10 @@ export function buildTrajectoryLedgerRows({
     }
     if (matchingIds.size === 0) continue;
 
-    if (collapsedTurns.has(group.turnId)) {
+    const selectedInCollapsedContent = group.records.some((record) => (
+      pinnedIds.has(record.id) && !isSystemLevelRecord(record)
+    ));
+    if (collapsedTurns.has(group.turnId) && !selectedInCollapsedContent) {
       const visibleSystemRecords = directMatches.filter(isSystemLevelRecord);
       for (const record of visibleSystemRecords) {
         rows.push(recordRow(record, group.index, false, childrenByParent, collapsedCalls));
@@ -210,7 +219,11 @@ export function buildTrajectoryLedgerRows({
 
     const visible = group.records.filter((record) => {
       if (!matchingIds.has(record.id)) return false;
-      if (record.parentRecordId && collapsedCalls.has(record.parentRecordId)) return false;
+      if (
+        record.parentRecordId
+        && collapsedCalls.has(record.parentRecordId)
+        && !pinnedIds.has(record.id)
+      ) return false;
       return true;
     });
     const turnStartId = visible.find((record) => !isSystemLevelRecord(record))?.id ?? null;
@@ -219,6 +232,21 @@ export function buildTrajectoryLedgerRows({
     }
   }
   return rows;
+}
+
+function pinnedRecordIds(
+  records: readonly ThreadTrajectoryRecordSummary[],
+  selectedRecordId: string | null,
+): ReadonlySet<string> {
+  if (!selectedRecordId) return new Set();
+  const byId = new Map(records.map((record) => [record.id, record]));
+  const pinned = new Set<string>();
+  let current = byId.get(selectedRecordId) ?? null;
+  while (current) {
+    pinned.add(current.id);
+    current = current.parentRecordId ? byId.get(current.parentRecordId) ?? null : null;
+  }
+  return pinned;
 }
 
 function recordRow(

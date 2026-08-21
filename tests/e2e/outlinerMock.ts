@@ -3204,8 +3204,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               availability: [],
             },
             records,
-            nextCursor: null,
-            hasMore: false,
+            olderCursor: null,
+            newerCursor: null,
+            hasOlder: false,
+            hasNewer: false,
             selectedRecordId: selectedRecordId || null,
           }) as T;
         }

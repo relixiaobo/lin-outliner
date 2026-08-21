@@ -98,6 +98,7 @@ export interface TurnExecutionContext {
   persistTurnDiagnostics(
     payload: TurnDiagnosticsPayload,
   ): Promise<TurnDiagnosticsPayloadReference>;
+  inspectTurnDiagnostics?(read: () => TurnDiagnosticsPayload | null): () => void;
   onTurnDiagnosticsError(error: unknown): void;
   persistSkillCatalog(
     snapshot: SkillCatalogContextPayload,
