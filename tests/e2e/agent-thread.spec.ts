@@ -5,6 +5,10 @@ import { clipboardText, commandCalls, ids, openMockedApp, rowBody } from './outl
 import { ATTACHMENT_UPLOAD_CHUNK_BYTES } from '../../src/core/agentAttachmentLimits';
 import { en } from '../../src/core/i18n/messages/en';
 import { zhHans } from '../../src/core/i18n/messages/zh-Hans';
+import {
+  TRANSCRIPT_VIRTUAL_MIN_TURNS,
+  TRANSCRIPT_VIRTUAL_OVERSCAN_PX,
+} from '../../src/renderer/agent/transcriptVirtualWindow';
 
 const FORMER_SHARED_ATTACHMENT_LIMIT_BYTES = 10 * 1024 * 1024;
 
@@ -187,6 +191,124 @@ async function seedTallFlowTranscript(page: Page, turnCount: number): Promise<vo
     }
   }, turnCount);
   await expect(page.locator('.thread-transcript-turns')).toHaveAttribute('data-virtualized', 'false');
+}
+
+async function seedPaintContinuityTranscript(page: Page, turnCount: number): Promise<void> {
+  await page.evaluate((count) => {
+    const target = window as Window & {
+      lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+      __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+    };
+    return target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {}).then((response) => {
+      const threadId = response.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      for (let index = 0; index < count; index += 1) {
+        const suffix = String(index + 1).padStart(12, '0');
+        const turnId = `01920000-0000-7000-8000-${suffix}`;
+        const itemId = `01920000-0000-7001-8000-${suffix}`;
+        target.__LIN_E2E__?.emitAgentCoreNotification({
+          type: 'turn/completed',
+          threadId,
+          turnId,
+          turn: {
+            id: turnId,
+            items: [{
+              id: itemId,
+              type: 'agentMessage',
+              provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: itemId },
+              text: `Paint continuity answer ${index + 1}. ${'Stable visible evidence. '.repeat(8)}`,
+              phase: 'final_answer',
+              memoryCitation: null,
+            }],
+            itemsView: 'full',
+            provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+            status: 'completed',
+            error: null,
+            startedAt: index * 2 + 1,
+            completedAt: index * 2 + 2,
+            durationMs: 1,
+          },
+        });
+      }
+    });
+  }, turnCount);
+  await expect(page.locator('.thread-transcript-turns')).toHaveAttribute(
+    'data-virtualized',
+    turnCount > TRANSCRIPT_VIRTUAL_MIN_TURNS ? 'true' : 'false',
+  );
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => (
+    requestAnimationFrame(() => resolve())
+  ))));
+}
+
+interface TranscriptCoverageSample {
+  readonly covered: boolean;
+  readonly intersectingRows: number;
+  readonly mountedRows: number;
+  readonly scrollTop: number;
+}
+
+async function sampleTranscriptJumpCoverage(
+  page: Page,
+  target: 'bottom' | 'turnMiddle' | 'turnStart',
+): Promise<TranscriptCoverageSample[]> {
+  return page.locator('.thread-transcript').evaluate(async (element, jumpTarget) => {
+    const readCoverage = (): TranscriptCoverageSample => {
+      const turns = element.querySelector<HTMLElement>('.thread-transcript-turns');
+      if (!turns) throw new Error('Missing Turn container');
+      const scrollBounds = element.getBoundingClientRect();
+      const turnsBounds = turns.getBoundingClientRect();
+      const viewportTop = scrollBounds.top + element.clientTop;
+      const viewportBottom = viewportTop + element.clientHeight;
+      const contentTop = Math.max(viewportTop, turnsBounds.top);
+      const contentBottom = Math.min(viewportBottom, turnsBounds.bottom);
+      const rows = Array.from(turns.querySelectorAll<HTMLElement>('[data-thread-turn-row]'));
+      if (contentBottom <= contentTop) {
+        return { covered: true, intersectingRows: 0, mountedRows: rows.length, scrollTop: element.scrollTop };
+      }
+      const intersectingRows = rows.filter((row) => {
+        const bounds = row.getBoundingClientRect();
+        return bounds.bottom > contentTop
+          && bounds.top < contentBottom
+          && row.checkVisibility({ contentVisibilityAuto: true });
+      }).length;
+      return {
+        covered: intersectingRows > 0,
+        intersectingRows,
+        mountedRows: rows.length,
+        scrollTop: element.scrollTop,
+      };
+    };
+
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event('scroll'));
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const turns = element.querySelector<HTMLElement>('.thread-transcript-turns');
+    if (!turns) throw new Error('Missing Turn container');
+    const scrollBounds = element.getBoundingClientRect();
+    const turnOrigin = element.scrollTop
+      + turns.getBoundingClientRect().top
+      - (scrollBounds.top + element.clientTop);
+    const nextTop = jumpTarget === 'bottom'
+      ? element.scrollHeight
+      : jumpTarget === 'turnStart'
+        ? turnOrigin
+        : turnOrigin + turns.scrollHeight / 2;
+    element.scrollTop = nextTop;
+    element.dispatchEvent(new Event('scroll'));
+    const samples = [readCoverage()];
+    for (let frame = 0; frame < 2; frame += 1) {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      samples.push(readCoverage());
+    }
+    return samples;
+  }, target);
+}
+
+function expectTranscriptCoverage(samples: readonly TranscriptCoverageSample[]): void {
+  expect(samples).toHaveLength(3);
+  expect(samples.every((sample) => sample.covered)).toBe(true);
+  expect(Math.min(...samples.map((sample) => sample.intersectingRows))).toBeGreaterThan(0);
 }
 
 interface ReadingAnchor {
@@ -2316,7 +2438,8 @@ test.describe('canonical agent Thread surface', () => {
 
   test('drills root to depth three in one Subagent container and backs out one level at a time', async ({ page }) => {
     await createNewThread(page);
-    const fixture = await page.evaluate(async () => {
+    const parentTurnCount = TRANSCRIPT_VIRTUAL_MIN_TURNS;
+    const fixture = await page.evaluate(async (flowTurnCount) => {
       const target = window as Window & {
         lin?: { agentCoreRequest: <T>(m: string, i?: Record<string, unknown>) => Promise<T> };
         __LIN_E2E__?: {
@@ -2363,8 +2486,9 @@ test.describe('canonical agent Thread surface', () => {
         originThreadId: threadId, originTurnId: turnId, originItemId: itemId,
       });
       const researchCallId = '01910000-0000-7000-8000-00000000ecaa';
-      // Enough parent Turns that the transcript scrolls at all.
-      for (let index = 0; index < 12; index += 1) {
+      // Enough parent Turns that the transcript scrolls at all, while staying
+      // in flow layout so the offscreen Agent chip remains mounted.
+      for (let index = 0; index < flowTurnCount; index += 1) {
         const turnId = `01910000-0000-7000-8000-0000000eb0${index.toString(16)}`;
         const itemId = `01910000-0000-7000-8000-0000000ec0${index.toString(16)}`;
         target.__LIN_E2E__?.emitAgentCoreNotification({
@@ -2373,7 +2497,7 @@ test.describe('canonical agent Thread surface', () => {
           turnId,
           turn: {
             id: turnId,
-            items: index === 11
+            items: index === flowTurnCount - 1
               ? [{
                   // The real shape: the delegating call is in the Turn and the
                   // spawn claims it, so the child's own Turn trigger names a
@@ -2552,7 +2676,7 @@ test.describe('canonical agent Thread surface', () => {
       target.__LIN_E2E__?.setMockThreadTurns(greatGrandchild.id, []);
       target.__LIN_E2E__?.setMockThreadTurns(sibling.id, []);
       return { parentThreadId };
-    });
+    }, parentTurnCount);
 
     // Scrolled by hand, so the transcript stops following the tail the way it
     // would for a reader who scrolled up to re-read something.
@@ -6404,9 +6528,10 @@ test.describe('canonical agent Thread surface', () => {
     });
 
     const transcript = page.locator('.thread-transcript');
+    await expect(page.locator('.thread-transcript-turns')).toHaveAttribute('data-virtualized', 'true');
     await expect(
-      page.locator('.thread-user-message').filter({ hasText: 'Earlier scroll evidence' }),
-    ).toHaveCount(10);
+      page.locator('.thread-user-message').filter({ hasText: 'Earlier scroll evidence 10' }),
+    ).toBeVisible();
     await expect.poll(() => transcript.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
     const composer = page.getByRole('textbox', { name: 'Message this Thread' });
     await composer.fill([
@@ -6541,9 +6666,10 @@ test.describe('canonical agent Thread surface', () => {
       }
     });
     const transcript = page.locator('.thread-transcript');
+    await expect(page.locator('.thread-transcript-turns')).toHaveAttribute('data-virtualized', 'true');
     await expect(
-      page.locator('.thread-user-message').filter({ hasText: 'Earlier scroll evidence' }),
-    ).toHaveCount(10);
+      page.locator('.thread-user-message').filter({ hasText: 'Earlier scroll evidence 10' }),
+    ).toBeVisible();
     await expect.poll(() => transcript.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
 
     // The mock answers `turn/submit` in the same microtask as the notification
@@ -6620,9 +6746,10 @@ test.describe('canonical agent Thread surface', () => {
       }
     });
     const transcript = page.locator('.thread-transcript');
+    await expect(page.locator('.thread-transcript-turns')).toHaveAttribute('data-virtualized', 'true');
     await expect(
-      page.locator('.thread-user-message').filter({ hasText: 'Earlier travel evidence' }),
-    ).toHaveCount(10);
+      page.locator('.thread-user-message').filter({ hasText: 'Earlier travel evidence 10' }),
+    ).toBeVisible();
     await expect.poll(() => transcript.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
 
     const recording = page.evaluate(async () => {
@@ -6691,9 +6818,10 @@ test.describe('canonical agent Thread surface', () => {
       }
     });
     const transcript = page.locator('.thread-transcript');
+    await expect(page.locator('.thread-transcript-turns')).toHaveAttribute('data-virtualized', 'true');
     await expect(
-      page.locator('.thread-user-message').filter({ hasText: 'Earlier echo evidence' }),
-    ).toHaveCount(10);
+      page.locator('.thread-user-message').filter({ hasText: 'Earlier echo evidence 10' }),
+    ).toBeVisible();
     await expect.poll(() => transcript.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
 
     await page.evaluate(() => {
@@ -7230,6 +7358,216 @@ test.describe('canonical agent Thread surface', () => {
     await expect.poll(() => transcript.evaluate((element) => element.scrollTop)).toBeLessThanOrEqual(1);
   });
 
+  test('keeps the exact flow threshold painted through a distant jump', async ({ page }) => {
+    await createNewThread(page);
+    await seedPaintContinuityTranscript(page, TRANSCRIPT_VIRTUAL_MIN_TURNS);
+    await expect(page.locator('[data-thread-turn-row]')).toHaveCount(TRANSCRIPT_VIRTUAL_MIN_TURNS);
+
+    expectTranscriptCoverage(await sampleTranscriptJumpCoverage(page, 'bottom'));
+  });
+
+  test('repairs the first virtual Turn count before a distant jump returns', async ({ page }) => {
+    await createNewThread(page);
+    const turnCount = TRANSCRIPT_VIRTUAL_MIN_TURNS + 1;
+    await seedPaintContinuityTranscript(page, turnCount);
+    await expect.poll(() => page.locator('[data-thread-turn-row]').count()).toBeLessThan(turnCount);
+
+    const samples = await sampleTranscriptJumpCoverage(page, 'bottom');
+    expectTranscriptCoverage(samples);
+    expect(samples[0]?.mountedRows).toBeLessThan(turnCount);
+  });
+
+  test('uses the Turn-local origin after a Goal taller than the viewport', async ({ page }) => {
+    await createNewThread(page);
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      await target.lin?.agentCoreRequest('goal/create', {
+        threadId,
+        objective: Array.from(
+          { length: 140 },
+          (_, index) => `Goal evidence ${index + 1} must remain ahead of the Turn coordinate origin.`,
+        ).join(' '),
+      });
+    });
+    await seedPaintContinuityTranscript(page, 80);
+    const leadingExtent = await page.locator('.thread-transcript').evaluate((element) => {
+      element.scrollTop = 0;
+      const turns = element.querySelector<HTMLElement>('.thread-transcript-turns');
+      if (!turns) throw new Error('Missing Turn container');
+      return {
+        height: element.clientHeight,
+        turnOrigin: turns.getBoundingClientRect().top
+          - (element.getBoundingClientRect().top + element.clientTop),
+      };
+    });
+    expect(leadingExtent.turnOrigin).toBeGreaterThan(leadingExtent.height);
+    expect(leadingExtent.turnOrigin).toBeGreaterThan(TRANSCRIPT_VIRTUAL_OVERSCAN_PX);
+
+    expectTranscriptCoverage(await sampleTranscriptJumpCoverage(page, 'turnStart'));
+    expectTranscriptCoverage(await sampleTranscriptJumpCoverage(page, 'turnMiddle'));
+  });
+
+  test('keeps the latest rapidly alternating virtual jump covered', async ({ page }) => {
+    await createNewThread(page);
+    await seedPaintContinuityTranscript(page, 80);
+    const result = await page.locator('.thread-transcript').evaluate(async (element) => {
+      const readCoverage = () => {
+        const turns = element.querySelector<HTMLElement>('.thread-transcript-turns');
+        if (!turns) throw new Error('Missing Turn container');
+        const viewportTop = element.getBoundingClientRect().top + element.clientTop;
+        const viewportBottom = viewportTop + element.clientHeight;
+        const turnsBounds = turns.getBoundingClientRect();
+        const contentTop = Math.max(viewportTop, turnsBounds.top);
+        const contentBottom = Math.min(viewportBottom, turnsBounds.bottom);
+        if (contentBottom <= contentTop) return true;
+        return Array.from(turns.querySelectorAll<HTMLElement>('[data-thread-turn-row]')).some((row) => {
+          const bounds = row.getBoundingClientRect();
+          return bounds.bottom > contentTop
+            && bounds.top < contentBottom
+            && row.checkVisibility({ contentVisibilityAuto: true });
+        });
+      };
+      element.scrollTop = 0;
+      element.dispatchEvent(new Event('scroll'));
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      const maximum = Math.max(0, element.scrollHeight - element.clientHeight);
+      const targets = [maximum, 0, maximum * 0.55, maximum * 0.9, maximum * 0.1, maximum];
+      const covered = targets.map((top) => {
+        element.scrollTop = top;
+        element.dispatchEvent(new Event('scroll'));
+        return readCoverage();
+      });
+      for (let frame = 0; frame < 2; frame += 1) {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        covered.push(readCoverage());
+      }
+      return {
+        covered,
+        maximum: Math.max(0, element.scrollHeight - element.clientHeight),
+        target: targets.at(-1) ?? 0,
+        top: element.scrollTop,
+      };
+    });
+
+    expect(result.covered.every(Boolean)).toBe(true);
+    expect(Math.abs(result.top - Math.min(result.maximum, result.target))).toBeLessThanOrEqual(1);
+  });
+
+  test('coalesces covered incremental virtual scrolling without urgent range changes', async ({ page }) => {
+    await createNewThread(page);
+    await seedPaintContinuityTranscript(page, 80);
+    const result = await page.locator('.thread-transcript').evaluate(async (element) => {
+      element.scrollTop = 0;
+      element.dispatchEvent(new Event('scroll'));
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      const rowIds = () => Array.from(
+        element.querySelectorAll<HTMLElement>('[data-thread-turn-row]'),
+        (row) => row.dataset.threadTurnRow,
+      );
+      const initial = rowIds();
+      const synchronousWindows: Array<Array<string | undefined>> = [];
+      for (let step = 0; step < 4; step += 1) {
+        element.scrollTop += 24;
+        element.dispatchEvent(new Event('scroll'));
+        synchronousWindows.push(rowIds());
+      }
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      return { initial, synchronousWindows };
+    });
+
+    expect(result.synchronousWindows.every((ids) => (
+      JSON.stringify(ids) === JSON.stringify(result.initial)
+    ))).toBe(true);
+  });
+
+  test('prepares virtual restore coverage before the lifecycle scroll write', async ({ page }) => {
+    const lifecycleWarnings: string[] = [];
+    page.on('console', (message) => {
+      if (message.type() === 'error' && message.text().includes('flushSync')) {
+        lifecycleWarnings.push(message.text());
+      }
+    });
+    await createNewThread(page);
+    await renameSelectedThread(page, 'Restore coverage');
+    await seedPaintContinuityTranscript(page, 80);
+    const anchor = await captureReadingAnchor(page, 0.72);
+    await createNewThread(page);
+
+    await page.evaluate(() => {
+      interface ScrollWriteSample {
+        readonly beforeCovered: boolean;
+        readonly distance: number;
+        readonly mountedRows: number;
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop');
+      if (!descriptor?.get || !descriptor.set || descriptor.configurable === false) {
+        throw new Error('Cannot instrument scrollTop');
+      }
+      const samples: ScrollWriteSample[] = [];
+      (window as Window & { __transcriptRestoreWrites?: ScrollWriteSample[] })
+        .__transcriptRestoreWrites = samples;
+      Object.defineProperty(Element.prototype, 'scrollTop', {
+        ...descriptor,
+        get: descriptor.get,
+        set(value: number) {
+          if (this instanceof HTMLElement && this.matches('.thread-transcript')) {
+            const currentTop = descriptor.get!.call(this) as number;
+            const targetTop = Math.max(
+              0,
+              Math.min(Math.max(0, this.scrollHeight - this.clientHeight), Number(value)),
+            );
+            const turns = this.querySelector<HTMLElement>('.thread-transcript-turns');
+            if (turns && Math.abs(targetTop - currentTop) >= 1) {
+              const delta = targetTop - currentTop;
+              const viewportTop = this.getBoundingClientRect().top + this.clientTop;
+              const viewportBottom = viewportTop + this.clientHeight;
+              const turnsBounds = turns.getBoundingClientRect();
+              const contentTop = Math.max(viewportTop, turnsBounds.top - delta);
+              const contentBottom = Math.min(viewportBottom, turnsBounds.bottom - delta);
+              const rows = Array.from(turns.querySelectorAll<HTMLElement>('[data-thread-turn-row]'));
+              const beforeCovered = contentBottom <= contentTop || rows.some((row) => {
+                const bounds = row.getBoundingClientRect();
+                return bounds.bottom - delta > contentTop
+                  && bounds.top - delta < contentBottom
+                  && row.checkVisibility({ contentVisibilityAuto: true });
+              });
+              samples.push({
+                beforeCovered,
+                distance: Math.abs(targetTop - currentTop),
+                mountedRows: rows.length,
+              });
+            }
+          }
+          descriptor.set!.call(this, value);
+        },
+      });
+    });
+
+    await page.getByRole('button', { name: 'Show Threads' }).click();
+    await page.getByRole('dialog', { name: 'Threads' })
+      .locator('.thread-list-select')
+      .filter({ hasText: 'Restore coverage' })
+      .click();
+    await expectReadingAnchorRestored(page, anchor);
+    const writes = await page.evaluate(() => (
+      (window as Window & {
+        __transcriptRestoreWrites?: Array<{
+          beforeCovered: boolean;
+          distance: number;
+          mountedRows: number;
+        }>;
+      }).__transcriptRestoreWrites ?? []
+    ));
+    expect(writes.some((write) => write.distance > 400)).toBe(true);
+    expect(writes.every((write) => write.beforeCovered && write.mountedRows > 0)).toBe(true);
+    expect(lifecycleWarnings).toEqual([]);
+  });
+
   test('virtualizes long Threads and restores their scroll position after switching', async ({ page }) => {
     await createNewThread(page);
     await openSelectedThreadActions(page);
@@ -7274,22 +7612,41 @@ test.describe('canonical agent Thread surface', () => {
         const bounds = row.getBoundingClientRect();
         return bounds.top <= viewportTop && bounds.bottom > viewportTop;
       });
-      const growthRow = rows.filter((row) => row.getBoundingClientRect().bottom <= viewportTop - 200).at(-1);
+      const growthRow = rows.filter((row) => row.getBoundingClientRect().bottom <= viewportTop - 121).at(-1);
       const anchorTurnId = anchor?.dataset.threadTurnRow;
       const growthTurnId = growthRow?.dataset.threadTurnRow;
       if (!anchor || !anchorTurnId || !growthRow || !growthTurnId) {
         throw new Error('Missing virtual compensation rows');
       }
-      growthRow.querySelector<HTMLElement>('.thread-turn')?.style.setProperty('content-visibility', 'visible');
       const result = {
         anchorTurnId,
         growthTurnId,
         offset: anchor.getBoundingClientRect().top - viewportTop,
         scrollTop: element.scrollTop,
       };
+      const coverageSamples: boolean[] = [];
+      (window as Window & { __virtualCompensationCoverage?: boolean[] })
+        .__virtualCompensationCoverage = coverageSamples;
+      element.addEventListener('scroll', () => {
+        const turns = element.querySelector<HTMLElement>('.thread-transcript-turns');
+        if (!turns) return;
+        const currentViewportTop = element.getBoundingClientRect().top + element.clientTop;
+        const currentViewportBottom = currentViewportTop + element.clientHeight;
+        const turnsBounds = turns.getBoundingClientRect();
+        const contentTop = Math.max(currentViewportTop, turnsBounds.top);
+        const contentBottom = Math.min(currentViewportBottom, turnsBounds.bottom);
+        coverageSamples.push(contentBottom <= contentTop || Array.from(
+          turns.querySelectorAll<HTMLElement>('[data-thread-turn-row]'),
+        ).some((candidate) => {
+          const bounds = candidate.getBoundingClientRect();
+          return bounds.bottom > contentTop
+            && bounds.top < contentBottom
+            && candidate.checkVisibility({ contentVisibilityAuto: true });
+        }));
+      }, { passive: true });
       const growthProbe = document.createElement('div');
       growthProbe.dataset.virtualGrowthProbe = 'true';
-      growthProbe.style.height = '180px';
+      growthProbe.style.height = '120px';
       growthRow.append(growthProbe);
       return result;
     });
@@ -7304,16 +7661,24 @@ test.describe('canonical agent Thread surface', () => {
       );
     }, compensationAnchor.offset)).toBeLessThanOrEqual(2);
     await expect.poll(() => transcript.evaluate((element) => element.scrollTop))
-      .toBeGreaterThan(compensationAnchor.scrollTop + 160);
+      .toBeGreaterThan(compensationAnchor.scrollTop + 100);
+    const growthCoverage = await page.evaluate(async () => {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      return (window as Window & { __virtualCompensationCoverage?: boolean[] })
+        .__virtualCompensationCoverage ?? [];
+    });
+    expect(growthCoverage.length).toBeGreaterThan(0);
+    expect(growthCoverage.every(Boolean)).toBe(true);
+    await page.evaluate(() => {
+      const samples = (window as Window & { __virtualCompensationCoverage?: boolean[] })
+        .__virtualCompensationCoverage;
+      if (samples) samples.length = 0;
+    });
     await page.locator(
       `[data-thread-turn-row="${compensationAnchor.growthTurnId}"]`,
     ).evaluate((element) => {
       element.querySelector('[data-virtual-growth-probe]')?.remove();
     });
-    await expect.poll(() => transcript.evaluate((element) => element.scrollTop))
-      .toBeGreaterThan(compensationAnchor.scrollTop - 2);
-    await expect.poll(() => transcript.evaluate((element) => element.scrollTop))
-      .toBeLessThan(compensationAnchor.scrollTop + 2);
     await expect.poll(() => compensationRow.evaluate((element, expectedOffset) => {
       const scroller = element.closest('.thread-transcript');
       if (!(scroller instanceof HTMLElement)) throw new Error('Missing transcript');
@@ -7321,6 +7686,13 @@ test.describe('canonical agent Thread surface', () => {
         element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - expectedOffset,
       );
     }, compensationAnchor.offset)).toBeLessThanOrEqual(2);
+    const shrinkCoverage = await page.evaluate(async () => {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      return (window as Window & { __virtualCompensationCoverage?: boolean[] })
+        .__virtualCompensationCoverage ?? [];
+    });
+    expect(shrinkCoverage.length).toBeGreaterThan(0);
+    expect(shrinkCoverage.every(Boolean)).toBe(true);
     await transcript.evaluate((element) => {
       const maximum = Math.max(0, element.scrollHeight - element.clientHeight);
       const top = Math.max(1, Math.min(480, Math.floor(maximum / 2)));
@@ -7459,7 +7831,7 @@ test.describe('canonical agent Thread surface', () => {
   test('returns a flow-layout Thread to the Turn it was left on', async ({ page }) => {
     await createNewThread(page);
     await renameSelectedThread(page, 'Tall history');
-    await seedTallFlowTranscript(page, 12);
+    await seedTallFlowTranscript(page, TRANSCRIPT_VIRTUAL_MIN_TURNS);
     const anchor = await captureReadingAnchor(page, 0.6);
 
     await createNewThread(page);
@@ -7476,7 +7848,7 @@ test.describe('canonical agent Thread surface', () => {
   test('lets a send after a restore reach the end instead of being pulled back', async ({ page }) => {
     await createNewThread(page);
     await renameSelectedThread(page, 'Tall history');
-    await seedTallFlowTranscript(page, 12);
+    await seedTallFlowTranscript(page, TRANSCRIPT_VIRTUAL_MIN_TURNS);
     const anchor = await captureReadingAnchor(page, 0.6);
 
     await createNewThread(page);
@@ -7492,6 +7864,7 @@ test.describe('canonical agent Thread surface', () => {
     // outlived its arrival gets to pull the transcript back up behind it.
     await page.getByRole('textbox', { name: 'Message this Thread' }).fill('Anchor this send.');
     await page.getByRole('button', { name: 'Send' }).click();
+    await expect(page.locator('.thread-transcript-turns')).toHaveAttribute('data-virtualized', 'true');
     const sent = page.locator('.thread-user-message').filter({ hasText: 'Anchor this send.' });
     await expect(sent).toBeVisible();
     await expect.poll(() => sent.evaluate((element) => {
@@ -7506,7 +7879,7 @@ test.describe('canonical agent Thread surface', () => {
   test('reads a Subagent without moving the parent conversation at all', async ({ page }) => {
     await createNewThread(page);
     await renameSelectedThread(page, 'Parent history');
-    await seedTallFlowTranscript(page, 12);
+    await seedTallFlowTranscript(page, TRANSCRIPT_VIRTUAL_MIN_TURNS);
     await page.evaluate(async () => {
       const target = window as Window & {
         lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
@@ -7623,39 +7996,51 @@ test('opens a long message downward while a send spacer owns the rendered bottom
   // Following this bottom means following the send anchor's temporary range,
   // not riding real transcript content. The sent message remains the surface
   // the reader is looking at, so it must still open from its own top edge.
-  await setTranscriptFollowingBottom(page);
-  const before = await transcript.evaluate((element) => {
-    const messageShell = document.querySelector<HTMLElement>(
-      '.thread-user-message .thread-user-content-shell',
-    );
-    const toggle = document.querySelector<HTMLElement>('.thread-user-expand-button');
-    const sendSpacer = document.querySelector<HTMLElement>('.thread-send-anchor-spacer');
-    if (!messageShell || !toggle || !sendSpacer) throw new Error('Missing disclosure geometry');
+  await transcript.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect.poll(() => transcript.evaluate((element) => (
+    element.scrollHeight - element.scrollTop - element.clientHeight
+  ))).toBeLessThanOrEqual(1);
+  const before = await message.evaluate((element) => {
+    const transcriptElement = element.closest<HTMLElement>('.thread-transcript');
+    const messageShell = element.querySelector<HTMLElement>('.thread-user-content-shell');
+    const toggle = element.querySelector<HTMLElement>('.thread-user-expand-button');
+    const sendSpacer = transcriptElement?.querySelector<HTMLElement>('.thread-send-anchor-spacer');
+    if (!transcriptElement || !messageShell || !toggle || !sendSpacer) {
+      throw new Error('Missing disclosure geometry');
+    }
     return {
-      bottomDistance: element.scrollHeight - element.scrollTop - element.clientHeight,
+      bottomDistance: transcriptElement.scrollHeight
+        - transcriptElement.scrollTop
+        - transcriptElement.clientHeight,
       buttonTop: toggle.getBoundingClientRect().top,
       shellTop: messageShell.getBoundingClientRect().top,
       spacerHeight: sendSpacer.getBoundingClientRect().height,
-      scrollTop: element.scrollTop,
+      scrollTop: transcriptElement.scrollTop,
     };
   });
   expect(before.bottomDistance).toBeLessThanOrEqual(1);
   expect(before.spacerHeight).toBeGreaterThan(0);
 
-  await toggleDisclosureWithStableAnchor(disclosure, shell);
+  await disclosure.evaluate((element) => {
+    if (!(element instanceof HTMLButtonElement)) throw new Error('Disclosure is not a button');
+    element.click();
+  });
   await expect(disclosure).toHaveAccessibleName('Show less');
-  const after = await transcript.evaluate((element) => {
-    const messageShell = document.querySelector<HTMLElement>(
-      '.thread-user-message .thread-user-content-shell',
-    );
-    const toggle = document.querySelector<HTMLElement>('.thread-user-expand-button');
-    const content = document.querySelector<HTMLElement>('.thread-transcript-content');
-    if (!messageShell || !toggle || !content) throw new Error('Missing disclosure geometry');
+  const after = await message.evaluate((element) => {
+    const transcriptElement = element.closest<HTMLElement>('.thread-transcript');
+    const messageShell = element.querySelector<HTMLElement>('.thread-user-content-shell');
+    const toggle = element.querySelector<HTMLElement>('.thread-user-expand-button');
+    const content = element.closest<HTMLElement>('.thread-transcript-content');
+    if (!transcriptElement || !messageShell || !toggle || !content) {
+      throw new Error('Missing disclosure geometry');
+    }
     return {
       buttonTop: toggle.getBoundingClientRect().top,
       paddingBottom: content.style.paddingBottom,
       shellTop: messageShell.getBoundingClientRect().top,
-      scrollTop: element.scrollTop,
+      scrollTop: transcriptElement.scrollTop,
     };
   });
   expect(after.shellTop).toBeCloseTo(before.shellTop, 0);
