@@ -16,7 +16,8 @@ output directories have:
 
 - a canonical `ThreadResourceReference` owned by the tool Item that produced
   them;
-- a rematerializable readable path that `file_read` can inspect;
+- a rematerializable readable path for the current execution that `file_read`
+  can inspect;
 - lifecycle participation in Thread deletion, fork/inherited-context copying,
   rollback reconciliation, and unreferenced-resource pruning; and
 - model-visible wording that treats paths as access handles, not durable
@@ -60,9 +61,10 @@ by that execution. `itemResourceReferences` then includes those tool-owned
 resources in the same dependency graph already used for context payloads, image
 artifacts, fork copying, rollback reconciliation, and pruning.
 
-`outputRef` remains the complete textual/JSON result payload. It is not reused
-for binary or file artifacts. A tool Item may have both: `outputRef` for the
-retained result text and `resourceRefs` for produced files.
+`outputRef` remains the complete stable textual/JSON result payload. It is not
+reused for binary or file artifacts, and it does not retain an execution-scoped
+readable path. A tool Item may have both: `outputRef` for the retained result
+text and `resourceRefs` for produced files.
 
 ### Runtime artifact sink
 
@@ -99,8 +101,9 @@ The production sink is built from the active `TurnExecutionContext`:
    Turn, when canonical bytes were successfully stored.
 
 The sink never hands out canonical payload-store paths. The readable path is a
-scratch materialization and can expire under the existing scratch TTL. The
-resource reference is the durable identity.
+Turn-scoped scratch materialization that is removed when the execution's
+resource observation is disposed; it must not be treated as replayable history.
+The resource reference is the durable identity.
 
 Direct test helpers that construct tools without a runtime must supply an
 explicit fake or scratch-backed sink. Production tool creation must not silently
@@ -129,7 +132,7 @@ First-party tools append every successfully persisted resource reference to this
 manifest. `PiTurnExecutor` copies the manifest onto the completed tool Item's
 `resourceRefs`.
 
-The model-visible JSON keeps actionable fields close to the existing tool
+The live model-visible JSON keeps actionable fields close to the existing tool
 contracts:
 
 - `web_fetch.data.binaryFile` includes `filePath`, `resourceRef`, `mimeType`,
@@ -139,9 +142,19 @@ contracts:
 - managed-Skill shell output uses the same `persistedOutput` vocabulary when a
   Skill command's capped output is saved.
 
+Persisted slim details and model-facing result text retain each `resourceRef`
+and its stable metadata, but not `filePath`. Historical tool-result projection
+resolves every tool Item `resourceRefs` entry through the current Thread's
+`resolveResourceObservationPath` authority and appends a deterministic bounded
+artifact block with the current readable path. The projection does not rewrite
+the canonical Item or `outputRef`, and it does not read artifact bytes into the
+provider context. A fork therefore resolves against the copied target-Thread
+resource rather than replaying the source Thread's path.
+
 When `readablePath` is unavailable but the resource was stored, the tool returns
 the `resourceRef`, omits `filePath`, and adds a warning that the artifact is
-stored but not currently materialized for `file_read`.
+stored but not currently materialized for `file_read`. Historical projection
+uses the same unavailable warning when rematerialization fails.
 
 ### Producers converted in this PR
 
@@ -235,10 +248,13 @@ Thread exactly as other generic managed resources are copied today. Missing
 bytes degrade through the existing payload-unavailable path instead of aborting
 the surrounding Turn.
 
-Context projection may mention tool-owned resources through result text or
-bounded tool-output projections, but it does not read full binary bytes into the
-provider context. The provider sees paths and metadata; `file_read` remains the
-explicit inspection step.
+Context projection never treats the path captured by the producing execution as
+history. It projects stable result text, rematerializes each declared tool-owned
+resource for the current execution, and adds the current path plus metadata as a
+bounded artifact observation. The provider sees paths and metadata but not full
+binary bytes; `file_read` remains the explicit inspection step. This replay-time
+rematerialization is required after the producing Turn ends, on restart, and in
+a fork.
 
 Renderer inspection uses the same item-output and resource-read/export authority
 as other Thread resources. It never receives canonical payload paths.
@@ -267,6 +283,8 @@ Expected implementation files:
 - `src/main/agent/thread/ThreadResourceOps`,
   `src/main/agent/persistence/ToolPayloadStore`, and
   `src/main/agent/context/contextDependencies` for lifecycle coverage;
+- `src/main/agent/context/ContextProjector` for replay-time artifact
+  rematerialization;
 - `src/main/agent/capabilities/agentTools`, `agentWebTools`,
   `agentLocalTools`, and `agentSkillShell` for producer conversion;
 - `src/main/managedSkillShellEnvironment.ts` and `src/main/browserPilotHost.ts`
@@ -297,6 +315,12 @@ Required test coverage:
   and reports skipped files without failing the invocation.
 - completed tool Item `resourceRefs` survive codec round trip, restart, fork,
   inherited context, and renderer item projection.
+- persisted tool output omits the producing Turn's live path; after that Turn's
+  resource observation is disposed, next-Turn, restart, and fork projection each
+  rematerialize a readable path in the current Thread and `file_read` can inspect
+  it.
+- failed historical rematerialization emits the stable resource identity plus a
+  bounded unavailable warning without failing projection or the Turn.
 - resource pruning keeps tool-owned resources and removes unreferenced produced
   files.
 - quota, unsafe filename, symlink, missing materialization, and digest mismatch
