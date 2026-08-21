@@ -15,7 +15,7 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react';
-import { createPortal } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import {
   ATTACHMENT_UPLOAD_CHUNK_BYTES,
   MAX_MANAGED_ATTACHMENT_BYTES,
@@ -123,6 +123,22 @@ import {
   TRANSCRIPT_BOTTOM_FOLLOW_THRESHOLD_PX,
 } from '../threadScrollFollow';
 import {
+  buildTranscriptVirtualLayout,
+  clampTranscriptScrollTop,
+  decideTranscriptCoverage,
+  mergeTranscriptTurnViewports,
+  nextTranscriptScrollTransaction,
+  sameTranscriptTurnViewport,
+  transcriptScrollTransactionIsCurrent,
+  transcriptTurnItemViewport,
+  transcriptTurnViewport,
+  transcriptUsesVirtualWindow,
+  visibleTranscriptTurnRange,
+  TRANSCRIPT_ROW_ESTIMATE_PX,
+  type TranscriptScrollTransaction,
+  type TranscriptTurnViewport,
+} from '../transcriptVirtualWindow';
+import {
   collaborationResultSnapshot,
   emptyTurnAnchors,
   subagentSpeakerName,
@@ -217,10 +233,6 @@ interface ThreadViewProps {
 
 const MAX_ATTACHMENTS = 6;
 const ATTACHMENT_ERROR_TIMEOUT_MS = 5_000;
-const TRANSCRIPT_ROW_GAP_PX = 12;
-const TRANSCRIPT_ROW_ESTIMATE_PX = 104;
-const TRANSCRIPT_VIRTUAL_MIN_TURNS = 40;
-const TRANSCRIPT_VIRTUAL_OVERSCAN_PX = 720;
 const MAX_CACHED_THREAD_UI_STATES = 32;
 const SENT_TURN_SEARCH_DEPTH = 16;
 /** Past this, the anchor's travel reads as a blur and the cut is more honest. */
@@ -242,6 +254,28 @@ const TRANSCRIPT_SCROLL_INTENT_KEYS = new Set([
   'PageUp',
   ' ',
 ]);
+function isInteractiveTranscriptPointerTarget(
+  target: EventTarget | null,
+  transcript: HTMLElement,
+): boolean {
+  if (!(target instanceof Element)) return false;
+  const interactive = target.closest([
+    'a[href]',
+    'button',
+    'input',
+    'select',
+    'summary',
+    'textarea',
+    '[contenteditable]:not([contenteditable="false"])',
+    '[role="button"]',
+    '[role="checkbox"]',
+    '[role="menuitem"]',
+    '[role="menuitemcheckbox"]',
+    '[role="menuitemradio"]',
+    '[role="textbox"]',
+  ].join(','));
+  return interactive !== null && transcript.contains(interactive);
+}
 const EMPTY_COMPOSER_DRAFT: ThreadComposerDraft = {
   content: [],
   empty: true,
@@ -253,10 +287,8 @@ type NewThreadValidation = 'providerRequired' | 'structuredContent' | null;
 
 /**
  * The Turn the reader is looking at, and where it sits in the viewport. A raw
- * `scrollTop` does not survive a remount: `content-visibility: auto` gives every
- * Turn above the viewport its intrinsic placeholder height until it renders, so
- * the same offset lands further along the conversation by the accumulated
- * difference. The Turn is what the reader remembers, so the Turn is what we
+ * `scrollTop` does not survive a remount whose measured row geometry is still
+ * settling. The Turn is what the reader remembers, so the Turn is what we
  * restore.
  */
 interface TranscriptAnchor {
@@ -275,10 +307,14 @@ interface PendingScrollRestore {
   readonly attempts: number;
   /** Transcript height at the previous attempt; growth means it is still settling. */
   readonly scrollHeight: number;
+  readonly stableFrames: number;
   readonly top: number;
+  readonly verified: boolean;
 }
 
 interface PendingSendAnchor {
+  /** A cut has reached the target and now owns it while virtual geometry settles. */
+  anchored: boolean;
   /**
    * The id this send carries into the host, and the only exact way back to the
    * row it becomes. The Turn arrives on the `turn/started` notification a whole
@@ -309,6 +345,21 @@ interface PendingSendAnchor {
    * anchor on a row that will never exist.
    */
   acceptedTurnId: string | null;
+  /**
+   * Identifying a target schedules one explicit row measurement. The request is
+   * monotonic so an optimistic-to-canonical replacement cannot satisfy the new
+   * row with the old row's layout pass.
+   */
+  targetMeasureCompleted: number;
+  targetMeasureRequest: number;
+  /** The first ThreadView render whose layout may consume the target measurement. */
+  targetReadyAtVersion: number | null;
+  settleScrollHeight: number;
+  settleStableFrames: number;
+  settleTargetTop: number;
+  settleTurnMeasureGeneration: number;
+  /** Whether a viewport-tall first layout has yielded to inline disclosure setup. */
+  targetSettlementStaged: boolean;
   targetTurnId: string | null;
 }
 
@@ -328,17 +379,8 @@ interface SendAnchorSpacer {
 
 interface PendingVirtualScrollAdjustment {
   applyAtMeasureVersion: number;
+  readonly anchor: TranscriptAnchor | null;
   top: number;
-}
-
-interface VirtualTurnItem {
-  readonly height: number;
-  readonly top: number;
-}
-
-interface VirtualTurnLayout {
-  readonly items: readonly VirtualTurnItem[];
-  readonly totalHeight: number;
 }
 
 const threadScrollSnapshots = new Map<string, ThreadScrollSnapshot>();
@@ -562,57 +604,6 @@ function estimateTurnHeight(turn: Turn): number {
   );
 }
 
-function buildVirtualTurnLayout(
-  turns: readonly Turn[],
-  measuredHeights: ReadonlyMap<string, number>,
-): VirtualTurnLayout {
-  const items: VirtualTurnItem[] = [];
-  let top = 0;
-  for (const turn of turns) {
-    const height = measuredHeights.get(turn.id) ?? estimateTurnHeight(turn);
-    items.push({ height, top });
-    top += height + TRANSCRIPT_ROW_GAP_PX;
-  }
-  return {
-    items,
-    totalHeight: turns.length > 0 ? top - TRANSCRIPT_ROW_GAP_PX : 0,
-  };
-}
-
-function firstTurnEndingAfter(items: readonly VirtualTurnItem[], y: number): number {
-  let low = 0;
-  let high = items.length;
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2);
-    const item = items[middle]!;
-    if (item.top + item.height < y) low = middle + 1;
-    else high = middle;
-  }
-  return low;
-}
-
-function firstTurnStartingAfter(items: readonly VirtualTurnItem[], y: number): number {
-  let low = 0;
-  let high = items.length;
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2);
-    if (items[middle]!.top <= y) low = middle + 1;
-    else high = middle;
-  }
-  return low;
-}
-
-function visibleTurnRange(
-  layout: VirtualTurnLayout,
-  scrollTop: number,
-  viewportHeight: number,
-): { readonly end: number; readonly start: number } {
-  const minimumY = Math.max(0, scrollTop - TRANSCRIPT_VIRTUAL_OVERSCAN_PX);
-  const maximumY = scrollTop + viewportHeight + TRANSCRIPT_VIRTUAL_OVERSCAN_PX;
-  const start = Math.max(0, firstTurnEndingAfter(layout.items, minimumY) - 1);
-  const end = Math.min(layout.items.length, firstTurnStartingAfter(layout.items, maximumY) + 1);
-  return { end: Math.max(end, start + 1), start };
-}
 interface PreparedComposerAttachment {
   readonly content: ThreadAttachmentContent;
   readonly previewUrl?: string;
@@ -679,15 +670,18 @@ export function ThreadView({
   const [sendAnchorSpacer, setSendAnchorSpacer] = useState<SendAnchorSpacer | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const transcriptContentRef = useRef<HTMLDivElement>(null);
+  const transcriptTurnsRef = useRef<HTMLDivElement>(null);
   const composerRegionRef = useRef<HTMLDivElement>(null);
   const disclosureAnchorRunwayRef = useRef(0);
   const composerRef = useRef<ThreadComposerEditorHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragDepthRef = useRef(0);
   const bottomScrollFrameRef = useRef<number | null>(null);
+  const scrollRestoreVerificationFrameRef = useRef<number | null>(null);
   const bottomScrollFrameReplayRef = useRef(false);
   const bottomPinDeferredRef = useRef(false);
   const sendAnchorLayoutDeferredRef = useRef(false);
+  const sendAnchorSettlementFrameRef = useRef<number | null>(null);
   const anchorTravelFrameRef = useRef<number | null>(null);
   const anchorTravelRef = useRef<{ wrote: number } | null>(null);
   const scheduleBottomPinRef = useRef<(replayAfterAnchor?: boolean) => void>(() => undefined);
@@ -697,7 +691,11 @@ export function ThreadView({
   const followRef = useRef(follow);
   const synchronizedScrollTopRef = useRef(initialScrollSnapshot?.top ?? 0);
   const expectedProgrammaticScrollTopRef = useRef<number | null>(null);
+  const pointerScrollIntentRef = useRef(false);
+  const transientScrollIntentRef = useRef(false);
   const pendingVirtualScrollAdjustmentRef = useRef<PendingVirtualScrollAdjustment | null>(null);
+  const pendingLayoutScrollRef = useRef<TranscriptScrollTransaction | null>(null);
+  const layoutScrollGenerationRef = useRef(0);
   const pendingSendScrollRef = useRef<PendingSendAnchor | null>(null);
   const sendAnchorSpacerRef = useRef<SendAnchorSpacer | null>(null);
   const scrollRestoreRef = useRef<PendingScrollRestore | null>(
@@ -706,7 +704,9 @@ export function ThreadView({
         anchor: initialScrollSnapshot.anchor,
         attempts: 0,
         scrollHeight: 0,
+        stableFrames: 0,
         top: initialScrollSnapshot.top,
+        verified: false,
       }
       : null,
   );
@@ -722,9 +722,16 @@ export function ThreadView({
   const measuredTurnHeights = useMemo(() => cachedTurnHeights(threadId), [threadId]);
   const [measureVersion, setMeasureVersion] = useState(0);
   const [pendingSendVersion, setPendingSendVersion] = useState(0);
+  const pendingSendVersionRef = useRef(pendingSendVersion);
+  const turnMeasureGenerationRef = useRef(0);
+  const [scrollRestoreVersion, setScrollRestoreVersion] = useState(0);
   const [scrollMetrics, setScrollMetrics] = useState({
     hasContentBelow: false,
     height: 0,
+    top: 0,
+  });
+  const [virtualViewport, setVirtualViewport] = useState<TranscriptTurnViewport>({
+    bottom: 0,
     top: 0,
   });
   const subscribeToDisclosures = useCallback(
@@ -818,20 +825,35 @@ export function ThreadView({
       ? t.agent.thread.providerRequired
       : null;
   const virtualLayout = useMemo(
-    () => buildVirtualTurnLayout(renderedTurns, measuredTurnHeights),
+    () => buildTranscriptVirtualLayout(renderedTurns, measuredTurnHeights, estimateTurnHeight),
     [measureVersion, measuredTurnHeights, renderedTurns],
   );
-  const virtualized = renderedTurns.length > TRANSCRIPT_VIRTUAL_MIN_TURNS;
+  const virtualized = transcriptUsesVirtualWindow(renderedTurns.length);
   const virtualRange = virtualized
-    ? visibleTurnRange(virtualLayout, scrollMetrics.top, scrollMetrics.height)
+    ? visibleTranscriptTurnRange(virtualLayout, virtualViewport)
     : { end: renderedTurns.length, start: 0 };
   const visibleTurns = renderedTurns.slice(virtualRange.start, virtualRange.end);
-  const virtualStateRef = useRef({ layout: virtualLayout, turns: renderedTurns, virtualized });
-  virtualStateRef.current = { layout: virtualLayout, turns: renderedTurns, virtualized };
+  const virtualStateRef = useRef({
+    layout: virtualLayout,
+    range: virtualRange,
+    turns: renderedTurns,
+    virtualized,
+  });
+  virtualStateRef.current = {
+    layout: virtualLayout,
+    range: virtualRange,
+    turns: renderedTurns,
+    virtualized,
+  };
 
   const setFollowValue = useCallback((nextFollow: boolean) => {
     followRef.current = nextFollow;
     setFollow((current) => current === nextFollow ? current : nextFollow);
+  }, []);
+
+  const cancelPendingLayoutScroll = useCallback(() => {
+    layoutScrollGenerationRef.current += 1;
+    pendingLayoutScrollRef.current = null;
   }, []);
 
   const cancelPendingVirtualScrollAdjustment = useCallback(() => {
@@ -840,6 +862,12 @@ export function ThreadView({
       virtualScrollAdjustmentFrameRef.current = null;
     }
     pendingVirtualScrollAdjustmentRef.current = null;
+  }, []);
+
+  const cancelSendAnchorSettlement = useCallback(() => {
+    if (sendAnchorSettlementFrameRef.current === null) return;
+    window.cancelAnimationFrame(sendAnchorSettlementFrameRef.current);
+    sendAnchorSettlementFrameRef.current = null;
   }, []);
 
   const updateSendAnchorSpacer = useCallback((next: SendAnchorSpacer | null) => {
@@ -859,6 +887,143 @@ export function ThreadView({
     updateSendAnchorSpacer(null);
   }, [updateSendAnchorSpacer]);
 
+  const cancelReaderOverriddenScrollWork = useCallback(() => {
+    cancelPendingLayoutScroll();
+    cancelPendingVirtualScrollAdjustment();
+    cancelSendAnchorSettlement();
+    pendingSendScrollRef.current = null;
+    clearSendAnchorSpacer();
+  }, [
+    cancelPendingLayoutScroll,
+    cancelPendingVirtualScrollAdjustment,
+    cancelSendAnchorSettlement,
+    clearSendAnchorSpacer,
+  ]);
+
+  const markTransientScrollIntent = useCallback(() => {
+    transientScrollIntentRef.current = true;
+    cancelReaderOverriddenScrollWork();
+  }, [cancelReaderOverriddenScrollWork]);
+
+  const beginPointerScrollIntent = useCallback(() => {
+    pointerScrollIntentRef.current = true;
+    cancelReaderOverriddenScrollWork();
+  }, [cancelReaderOverriddenScrollWork]);
+
+  const endPointerScrollIntent = useCallback(() => {
+    pointerScrollIntentRef.current = false;
+  }, []);
+
+  const readTurnViewport = useCallback((
+    element: HTMLDivElement,
+    targetTop = element.scrollTop,
+  ): TranscriptTurnViewport => {
+    const turnsElement = transcriptTurnsRef.current;
+    const state = virtualStateRef.current;
+    if (!turnsElement || state.layout.totalHeight <= 0) return { bottom: 0, top: 0 };
+    const scrollBounds = element.getBoundingClientRect();
+    return transcriptTurnViewport({
+      currentScrollTop: element.scrollTop,
+      scrollerTop: scrollBounds.top + element.clientTop,
+      targetScrollTop: targetTop,
+      totalHeight: state.layout.totalHeight,
+      turnsTop: turnsElement.getBoundingClientRect().top,
+      viewportHeight: element.clientHeight,
+    });
+  }, []);
+
+  const updateVirtualViewport = useCallback((next: TranscriptTurnViewport) => {
+    setVirtualViewport((current) => (
+      sameTranscriptTurnViewport(current, next) ? current : next
+    ));
+  }, []);
+
+  const advancePendingSendLayout = useCallback((
+    pending: PendingSendAnchor,
+    targetMeasured: boolean,
+  ) => {
+    if (pendingSendScrollRef.current !== pending) return;
+    const nextVersion = pendingSendVersionRef.current + 1;
+    pendingSendVersionRef.current = nextVersion;
+    if (targetMeasured) pending.targetReadyAtVersion = nextVersion;
+    setPendingSendVersion(nextVersion);
+  }, []);
+
+  const scheduleSendAnchorSettlement = useCallback((pending: PendingSendAnchor) => {
+    if (sendAnchorSettlementFrameRef.current !== null) return;
+    const observe = () => {
+      sendAnchorSettlementFrameRef.current = null;
+      if (pendingSendScrollRef.current !== pending || !pending.anchored) return;
+      const scroll = scrollRef.current;
+      const targetTurnId = pending.targetTurnId;
+      const row = targetTurnId
+        ? scroll?.querySelector<HTMLDivElement>(
+          `[data-thread-turn-row="${CSS.escape(targetTurnId)}"]`,
+        ) ?? null
+        : null;
+      const target = row?.querySelector<HTMLElement>('.thread-user-message') ?? row;
+      if (!scroll || !target) {
+        pending.settleStableFrames = 0;
+        advancePendingSendLayout(pending, false);
+        return;
+      }
+      const scrollRect = scroll.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const topInset = Number.parseFloat(window.getComputedStyle(scroll).paddingTop) || 0;
+      const targetTop = Math.max(
+        0,
+        scroll.scrollTop + targetRect.top - scrollRect.top - topInset,
+      );
+      const stable = Math.abs(targetRect.top - scrollRect.top - topInset) <= 1
+        && Math.abs(scroll.scrollHeight - pending.settleScrollHeight) < 1
+        && Math.abs(targetTop - pending.settleTargetTop) < 1
+        && turnMeasureGenerationRef.current === pending.settleTurnMeasureGeneration;
+      pending.settleScrollHeight = scroll.scrollHeight;
+      pending.settleTargetTop = targetTop;
+      pending.settleTurnMeasureGeneration = turnMeasureGenerationRef.current;
+      pending.settleStableFrames = stable ? pending.settleStableFrames + 1 : 0;
+      if (pending.settleStableFrames >= 2) {
+        pendingSendScrollRef.current = null;
+        if (pending.releaseFollowOnAnchor) setFollowValue(false);
+        scheduleBottomPinRef.current();
+        return;
+      }
+      if (stable) {
+        sendAnchorSettlementFrameRef.current = window.requestAnimationFrame(observe);
+      } else {
+        advancePendingSendLayout(pending, false);
+      }
+    };
+    sendAnchorSettlementFrameRef.current = window.requestAnimationFrame(observe);
+  }, [advancePendingSendLayout, setFollowValue]);
+
+  const stagePendingSendMeasurement = useCallback((pending: PendingSendAnchor) => {
+    if (
+      pendingSendScrollRef.current !== pending
+      || pending.targetMeasureCompleted < pending.targetMeasureRequest
+    ) return;
+    pending.targetMeasureRequest += 1;
+    pending.targetReadyAtVersion = null;
+    advancePendingSendLayout(pending, false);
+  }, [advancePendingSendLayout]);
+
+  const prepareSendTargetCoverage = useCallback((turnId: string) => {
+    const state = virtualStateRef.current;
+    if (!state.virtualized) return true;
+    const turnIndex = state.turns.findIndex((turn) => turn.id === turnId);
+    const viewport = transcriptTurnItemViewport(state.layout, turnIndex);
+    if (!viewport) return false;
+    if (decideTranscriptCoverage(
+      true,
+      state.layout,
+      state.range,
+      viewport,
+      'layout',
+    ) === 'covered') return true;
+    updateVirtualViewport(viewport);
+    return false;
+  }, [updateVirtualViewport]);
+
   const updateScrollMetrics = useCallback((element: HTMLDivElement) => {
     const spacer = element.querySelector<HTMLElement>('.thread-send-anchor-spacer');
     const transcriptScrollHeight = Math.max(
@@ -876,6 +1041,17 @@ export function ThreadView({
       height: element.clientHeight,
       top: element.scrollTop,
     };
+    // A prepared lifecycle scroll or send target owns the next rendered range.
+    // Re-reading the old DOM position while that range is staging would replace
+    // it before its writer can move the viewport, so neither operation could
+    // ever reach a covered commit.
+    if (
+      virtualStateRef.current.virtualized
+      && pendingLayoutScrollRef.current === null
+      && !pendingSendScrollRef.current?.targetTurnId
+    ) {
+      updateVirtualViewport(readTurnViewport(element));
+    }
     setScrollMetrics((current) => (
       current.hasContentBelow === next.hasContentBelow
         && Math.abs(current.height - next.height) < 1
@@ -883,7 +1059,7 @@ export function ThreadView({
         ? current
         : next
     ));
-  }, []);
+  }, [readTurnViewport, updateVirtualViewport]);
 
   const synchronizeScrollPosition = useCallback((element: HTMLDivElement) => {
     synchronizedScrollTopRef.current = element.scrollTop;
@@ -897,7 +1073,12 @@ export function ThreadView({
       updateScrollMetrics(element);
       return;
     }
-    const nextFollow = isTranscriptFollowing(element);
+    const nextFollow = (
+      pendingSendScrollRef.current?.releaseFollowOnAnchor
+      || sendAnchorSpacerRef.current?.releaseFollowOnAnchor
+    )
+      ? false
+      : isTranscriptFollowing(element);
     setFollowValue(nextFollow);
     cacheThreadScrollSnapshot(threadId, {
       // A followed Thread resumes at the bottom, so it needs no anchor and does
@@ -922,11 +1103,113 @@ export function ThreadView({
     return true;
   }, [synchronizeScrollPosition]);
 
-  const setProgrammaticScrollTop = useCallback((element: HTMLDivElement, top: number) => {
+  const writeProgrammaticScrollTop = useCallback((element: HTMLDivElement, top: number) => {
     element.scrollTop = top;
     expectedProgrammaticScrollTopRef.current = element.scrollTop;
+  }, []);
+
+  const requestedTurnViewport = useCallback((
+    element: HTMLDivElement,
+    targetTop: number,
+    includeCurrent: boolean,
+  ) => {
+    const targetViewport = readTurnViewport(element, targetTop);
+    return includeCurrent
+      ? mergeTranscriptTurnViewports(readTurnViewport(element), targetViewport)
+      : targetViewport;
+  }, [readTurnViewport]);
+
+  const prepareLayoutScrollCoverage = useCallback((
+    element: HTMLDivElement,
+    targetTop: number,
+    includeCurrent = false,
+  ) => {
+    const state = virtualStateRef.current;
+    const viewport = requestedTurnViewport(element, targetTop, includeCurrent);
+    if (decideTranscriptCoverage(
+      state.virtualized,
+      state.layout,
+      state.range,
+      viewport,
+      'layout',
+    ) === 'covered') return true;
+    updateVirtualViewport(viewport);
+    return false;
+  }, [requestedTurnViewport, updateVirtualViewport]);
+
+  const ensureImperativeScrollCoverage = useCallback((element: HTMLDivElement) => {
+    const state = virtualStateRef.current;
+    const viewport = readTurnViewport(element);
+    if (decideTranscriptCoverage(
+      state.virtualized,
+      state.layout,
+      state.range,
+      viewport,
+      'imperative',
+    ) === 'covered') return false;
+    flushSync(() => updateVirtualViewport(viewport));
+    return true;
+  }, [readTurnViewport, updateVirtualViewport]);
+
+  const setImperativeScrollTop = useCallback((element: HTMLDivElement, top: number) => {
+    cancelPendingLayoutScroll();
+    writeProgrammaticScrollTop(element, top);
+    ensureImperativeScrollCoverage(element);
     synchronizeScrollPosition(element);
-  }, [synchronizeScrollPosition]);
+  }, [
+    cancelPendingLayoutScroll,
+    ensureImperativeScrollCoverage,
+    synchronizeScrollPosition,
+    writeProgrammaticScrollTop,
+  ]);
+
+  const commitPendingLayoutScroll = useCallback(() => {
+    const transaction = pendingLayoutScrollRef.current;
+    const element = scrollRef.current;
+    if (
+      !transaction
+      || !element
+      || !transcriptScrollTransactionIsCurrent(transaction, layoutScrollGenerationRef.current)
+    ) return false;
+    const targetTop = clampTranscriptScrollTop(
+      transaction.targetTop,
+      element.scrollHeight,
+      element.clientHeight,
+    );
+    if (!prepareLayoutScrollCoverage(element, targetTop)) return false;
+    writeProgrammaticScrollTop(element, targetTop);
+    const actualViewport = readTurnViewport(element);
+    const state = virtualStateRef.current;
+    if (decideTranscriptCoverage(
+      state.virtualized,
+      state.layout,
+      state.range,
+      actualViewport,
+      'layout',
+    ) !== 'covered') {
+      updateVirtualViewport(actualViewport);
+      return false;
+    }
+    pendingLayoutScrollRef.current = null;
+    synchronizeScrollPosition(element);
+    return true;
+  }, [
+    prepareLayoutScrollCoverage,
+    readTurnViewport,
+    synchronizeScrollPosition,
+    updateVirtualViewport,
+    writeProgrammaticScrollTop,
+  ]);
+
+  const requestLayoutScrollTop = useCallback((element: HTMLDivElement, top: number) => {
+    const transaction = nextTranscriptScrollTransaction(
+      layoutScrollGenerationRef.current,
+      top,
+    );
+    layoutScrollGenerationRef.current = transaction.generation;
+    pendingLayoutScrollRef.current = transaction;
+    return commitPendingLayoutScroll();
+  }, [commitPendingLayoutScroll]);
 
   const cancelAnchorTravel = useCallback(() => {
     if (anchorTravelFrameRef.current !== null) {
@@ -947,13 +1230,18 @@ export function ThreadView({
    * the scroll clamped back up — the anchor undid itself over about a dozen
    * frames. Tweening the scroll keeps every measurement true at every instant,
    * at the cost of the machinery seeing intermediate positions, which is why
-   * each frame goes through `setProgrammaticScrollTop` and why the reader's own
+   * each frame goes through `setImperativeScrollTop` and why the reader's own
    * scroll cancels the rest.
    *
    * Reduced motion, a distance too short to read, and a distance too long to
    * follow all take the cut instead.
    */
-  const playAnchorTravel = useCallback((scroll: HTMLDivElement, from: number, to: number) => {
+  const playAnchorTravel = useCallback((
+    scroll: HTMLDivElement,
+    from: number,
+    to: number,
+    releaseFollowOnArrival: boolean,
+  ) => {
     cancelAnchorTravel();
     const distance = to - from;
     const duration = readMotionDuration();
@@ -963,10 +1251,11 @@ export function ThreadView({
       || Math.abs(distance) > scroll.clientHeight * ANCHOR_TRAVEL_MAX_VIEWPORTS
       || prefersReducedMotion()
     ) {
-      setProgrammaticScrollTop(scroll, to);
+      setImperativeScrollTop(scroll, to);
+      if (releaseFollowOnArrival) setFollowValue(false);
       return;
     }
-    setProgrammaticScrollTop(scroll, from);
+    setImperativeScrollTop(scroll, from);
     const startedAt = performance.now();
     anchorTravelRef.current = { wrote: scroll.scrollTop };
     const step = () => {
@@ -982,8 +1271,9 @@ export function ThreadView({
       const progress = Math.min(1, (performance.now() - startedAt) / duration);
       // Ease-out: the movement is an arrival, and arrivals decelerate.
       const eased = 1 - (1 - progress) ** 3;
-      setProgrammaticScrollTop(scroll, from + distance * eased);
+      setImperativeScrollTop(scroll, from + distance * eased);
       if (progress >= 1) {
+        if (releaseFollowOnArrival) setFollowValue(false);
         cancelAnchorTravel();
         return;
       }
@@ -991,7 +1281,7 @@ export function ThreadView({
       anchorTravelFrameRef.current = window.requestAnimationFrame(step);
     };
     anchorTravelFrameRef.current = window.requestAnimationFrame(step);
-  }, [cancelAnchorTravel, setProgrammaticScrollTop]);
+  }, [cancelAnchorTravel, setFollowValue, setImperativeScrollTop]);
 
   const scheduleScrollMetrics = useCallback((element: HTMLDivElement) => {
     if (scrollMetricsFrameRef.current !== null) return;
@@ -1000,6 +1290,17 @@ export function ThreadView({
       synchronizeScrollPosition(element);
     });
   }, [synchronizeScrollPosition]);
+
+  useLayoutEffect(() => {
+    commitPendingLayoutScroll();
+  }, [
+    commitPendingLayoutScroll,
+    measureVersion,
+    virtualRange.end,
+    virtualRange.start,
+    virtualViewport.bottom,
+    virtualViewport.top,
+  ]);
 
   // Supply only the tail space needed when the natural scroll range cannot preserve the activated control.
   const setDisclosureAnchorRunway = useCallback((height: number) => {
@@ -1028,12 +1329,17 @@ export function ThreadView({
     if (!scroll) return;
     if (result.remainingDelta > 0) {
       setDisclosureAnchorRunway(disclosureAnchorRunwayRef.current + result.remainingDelta);
-      scroll.scrollTop += result.remainingDelta;
+      if (!requestLayoutScrollTop(scroll, scroll.scrollTop + result.remainingDelta)) return;
     }
     shrinkDisclosureAnchorRunwayToRequired(scroll);
     expectedProgrammaticScrollTopRef.current = scroll.scrollTop;
     synchronizeScrollPosition(scroll);
-  }, [setDisclosureAnchorRunway, shrinkDisclosureAnchorRunwayToRequired, synchronizeScrollPosition]);
+  }, [
+    requestLayoutScrollTop,
+    setDisclosureAnchorRunway,
+    shrinkDisclosureAnchorRunwayToRequired,
+    synchronizeScrollPosition,
+  ]);
 
   const resumeDeferredDisclosureScrollWork = useCallback(() => {
     if (sendAnchorLayoutDeferredRef.current) {
@@ -1063,11 +1369,23 @@ export function ThreadView({
     shrinkDisclosureAnchorRunwayToRequired(scroll);
   }, [hasPendingAnchor, shrinkDisclosureAnchorRunwayToRequired]);
 
-  const captureLocalDisclosureAnchor = useCallback((anchorElement: HTMLElement | null) => {
+  const cancelDisclosureOverriddenScrollWork = useCallback(() => {
+    cancelPendingLayoutScroll();
     cancelPendingVirtualScrollAdjustment();
+    cancelSendAnchorSettlement();
+    cancelAnchorTravel();
+  }, [
+    cancelAnchorTravel,
+    cancelPendingLayoutScroll,
+    cancelPendingVirtualScrollAdjustment,
+    cancelSendAnchorSettlement,
+  ]);
+
+  const captureLocalDisclosureAnchor = useCallback((anchorElement: HTMLElement | null) => {
+    cancelDisclosureOverriddenScrollWork();
     const scroller = nearestScrollContainer(anchorElement, scrollRef.current);
     capturePendingAnchor(captureDisclosureScrollAnchor(anchorElement, scroller));
-  }, [cancelPendingVirtualScrollAdjustment, capturePendingAnchor]);
+  }, [cancelDisclosureOverriddenScrollWork, capturePendingAnchor]);
 
   /**
    * Riding a tail the reader could actually scroll away from.
@@ -1105,7 +1423,7 @@ export function ThreadView({
     isFollowingBottom,
     restoreAnchor: restorePendingAnchor,
     toggle: (id, currentlyExpanded, anchorElement) => {
-      cancelPendingVirtualScrollAdjustment();
+      cancelDisclosureOverriddenScrollWork();
       const scroller = nearestScrollContainer(anchorElement ?? null, scrollRef.current);
       const resolveElement = scroller
         ? () => scroller.querySelector<HTMLElement>(
@@ -1120,7 +1438,7 @@ export function ThreadView({
       setThreadDisclosureOverride(threadId, id, !currentlyExpanded);
     },
   }), [
-    cancelPendingVirtualScrollAdjustment,
+    cancelDisclosureOverriddenScrollWork,
     captureLocalDisclosureAnchor,
     capturePendingAnchor,
     disclosureOverrides,
@@ -1152,21 +1470,41 @@ export function ThreadView({
         - anchor.offset
       : request.top;
     const nextTop = Math.max(0, Math.min(maximumTop, requestedTop));
-    const attempts = request.attempts + 1;
+    const attempts = request.attempts + (request.verified ? 1 : 0);
     // Holding the anchor until the transcript stops growing covers the Turns
     // above that have no measured height to place them by: they arrive at their
     // real height only once rendering reaches them, and releasing on the first
     // agreement would leave the reader wherever that growth pushed them.
+    const stableGeometry = anchorRow !== null
+      && Math.abs(nextTop - scroll.scrollTop) < 1
+      && scroll.scrollHeight === request.scrollHeight;
+    const stableFrames = request.verified
+      ? stableGeometry ? request.stableFrames + 1 : 0
+      : request.stableFrames;
     const settled = !anchor
-      || (anchorRow !== null
-        && Math.abs(nextTop - scroll.scrollTop) < 1
-        && scroll.scrollHeight === request.scrollHeight)
+      || stableFrames >= 2
       || attempts >= TRANSCRIPT_SCROLL_RESTORE_ATTEMPTS;
-    scrollRestoreRef.current = settled
+    const pendingRequest: PendingScrollRestore | null = settled
       ? null
-      : { ...request, attempts, scrollHeight: scroll.scrollHeight };
-    setProgrammaticScrollTop(scroll, nextTop);
-  }, [hasPendingAnchor, setProgrammaticScrollTop]);
+      : {
+        ...request,
+        attempts,
+        scrollHeight: scroll.scrollHeight,
+        stableFrames,
+        verified: false,
+      };
+    scrollRestoreRef.current = pendingRequest;
+    requestLayoutScrollTop(scroll, nextTop);
+    if (pendingRequest && scrollRestoreVerificationFrameRef.current === null) {
+      scrollRestoreVerificationFrameRef.current = window.requestAnimationFrame(() => {
+        scrollRestoreVerificationFrameRef.current = null;
+        const current = scrollRestoreRef.current;
+        if (!current) return;
+        scrollRestoreRef.current = { ...current, verified: true };
+        setScrollRestoreVersion((version) => version + 1);
+      });
+    }
+  }, [hasPendingAnchor, requestLayoutScrollTop]);
 
   const scheduleBottomPin = useCallback((replayAfterAnchor = false) => {
     if (!followRef.current) {
@@ -1208,9 +1546,9 @@ export function ThreadView({
       }
       if (pendingSendScrollRef.current || anchorTravelRef.current) return;
       if (releaseUnsynchronizedUpwardScroll(scroll)) return;
-      setProgrammaticScrollTop(scroll, scroll.scrollHeight);
+      setImperativeScrollTop(scroll, scroll.scrollHeight);
     });
-  }, [hasPendingAnchor, releaseUnsynchronizedUpwardScroll, setProgrammaticScrollTop]);
+  }, [hasPendingAnchor, releaseUnsynchronizedUpwardScroll, setImperativeScrollTop]);
 
   const pinStructuralBottomBeforePaint = useCallback(() => {
     const scroll = scrollRef.current;
@@ -1223,19 +1561,76 @@ export function ThreadView({
       || sendAnchorSpacerRef.current
       || releaseUnsynchronizedUpwardScroll(scroll)
     ) return;
-    setProgrammaticScrollTop(scroll, scroll.scrollHeight);
-  }, [hasPendingAnchor, releaseUnsynchronizedUpwardScroll, setProgrammaticScrollTop]);
+    requestLayoutScrollTop(scroll, scroll.scrollHeight);
+  }, [hasPendingAnchor, releaseUnsynchronizedUpwardScroll, requestLayoutScrollTop]);
+
+  const measureTurn = useCallback((
+    turnId: string,
+    height: number,
+    element: HTMLDivElement,
+    targetMeasureRequest: number | null,
+  ) => {
+    const current = measuredTurnHeights.get(turnId);
+    const heightChanged = current === undefined || Math.abs(current - height) >= 1;
+    const pending = pendingSendScrollRef.current;
+    const completesTargetMeasurement = pending !== null
+      && pending.targetTurnId === turnId
+      && targetMeasureRequest !== null
+      && pending.targetMeasureRequest === targetMeasureRequest
+      && pending.targetMeasureCompleted < targetMeasureRequest;
+    if (!heightChanged && !completesTargetMeasurement) return;
+
+    if (heightChanged) {
+      turnMeasureGenerationRef.current += 1;
+      const state = virtualStateRef.current;
+      const turnIndex = state.turns.findIndex((turn) => turn.id === turnId);
+      const turn = state.turns[turnIndex];
+      const previousHeight = current ?? (turn ? estimateTurnHeight(turn) : height);
+      const delta = height - previousHeight;
+      const scroll = scrollRef.current;
+      if (
+        state.virtualized
+        && scroll
+        && !followRef.current
+        && !hasPendingAnchor()
+        && !pendingSendScrollRef.current
+        && !sendAnchorSpacerRef.current
+        && Math.abs(delta) >= 1
+      ) {
+        const rowTop = element.getBoundingClientRect().top;
+        const viewportTop = scroll.getBoundingClientRect().top;
+        if (rowTop + height <= viewportTop + 1) {
+          const pendingAdjustment = pendingVirtualScrollAdjustmentRef.current;
+          pendingVirtualScrollAdjustmentRef.current = {
+            applyAtMeasureVersion: pendingAdjustment?.applyAtMeasureVersion ?? 0,
+            anchor: pendingAdjustment?.anchor ?? readTranscriptAnchor(scroll),
+            top: (pendingAdjustment?.top ?? scroll.scrollTop) + delta,
+          };
+        }
+      }
+      measuredTurnHeights.set(turnId, height);
+      if (state.virtualized) {
+        setMeasureVersion((version) => {
+          const pendingAdjustment = pendingVirtualScrollAdjustmentRef.current;
+          if (pendingAdjustment) pendingAdjustment.applyAtMeasureVersion = version + 1;
+          return version + 1;
+        });
+      }
+    }
+
+    if (completesTargetMeasurement) pending.targetMeasureCompleted = targetMeasureRequest;
+    if (pending?.targetTurnId === turnId) advancePendingSendLayout(pending, true);
+  }, [advancePendingSendLayout, hasPendingAnchor, measuredTurnHeights]);
 
   /**
    * Put the message this reader just sent at the top of the viewport.
    *
-   * Synchronous, and called from layout effects, so the spacer it needs and the
-   * scroll that uses it land in the same pre-paint pass: React flushes a layout
-   * effect's state update before painting, so the re-entrant second pass still
-   * belongs to the frame the first one started. Run a frame apart instead — as
-   * a `requestAnimationFrame` chain — and each pass measures a DOM the previous
-   * one has already moved, which is how the anchor came to paint one frame
-   * ~40px past the top before settling back onto it.
+   * Synchronous layout passes stage the target row, its settled measurement,
+   * the runway spacer, and finally the scroll. React flushes layout-effect state
+   * updates before painting, so those commits still belong to one frame. Run
+   * them a frame apart instead — as a `requestAnimationFrame` chain — and each
+   * pass measures a DOM the previous one has already moved, which is how the
+   * anchor came to paint one frame ~40px past the top before settling back.
    *
    * The pass writes the scroll only on its OWN numbers: when the spacer it
    * computes is already the rendered one, `naturalTargetTop` is reachable by
@@ -1274,22 +1669,63 @@ export function ThreadView({
       if (sent !== null && sent === pending.previousTailTurnId) {
         // A steer. It has no anchor of its own, and the reply it joined goes on
         // streaming under a reader who asked to stay with it.
+        cancelSendAnchorSettlement();
         pendingSendScrollRef.current = null;
+        clearSendAnchorSpacer();
         scheduleBottomPin();
         return;
       }
-      if (sent !== null) pending.targetTurnId = sent;
+      if (sent !== null && sent !== pending.targetTurnId) {
+        cancelSendAnchorSettlement();
+        pending.anchored = false;
+        pending.settleScrollHeight = 0;
+        pending.settleStableFrames = 0;
+        pending.settleTargetTop = 0;
+        pending.settleTurnMeasureGeneration = turnMeasureGenerationRef.current;
+        pending.targetTurnId = sent;
+        pending.targetReadyAtVersion = pendingSendVersion;
+        pending.targetSettlementStaged = false;
+      }
     }
     const targetTurnId = pending?.targetTurnId ?? currentSpacer?.turnId;
     if (!targetTurnId || !scroll) return;
-    if (
-      pending
-      && virtualStateRef.current.virtualized
-      && !measuredTurnHeights.has(targetTurnId)
-    ) return;
-    const row = scroll.querySelector<HTMLElement>(
+    if (pending && !prepareSendTargetCoverage(targetTurnId)) {
+      stagePendingSendMeasurement(pending);
+      return;
+    }
+    const row = scroll.querySelector<HTMLDivElement>(
       `[data-thread-turn-row="${CSS.escape(targetTurnId)}"]`,
     );
+    if (pending && !row) {
+      stagePendingSendMeasurement(pending);
+      return;
+    }
+    if (pending && pending.targetMeasureCompleted < pending.targetMeasureRequest) {
+      return;
+    }
+    if (pending && row) {
+      const rowHeight = row.getBoundingClientRect().height;
+      if (
+        !pending.targetSettlementStaged
+        && rowHeight > scroll.clientHeight
+        && !row.querySelector('.thread-user-expand-button')
+      ) {
+        pending.targetSettlementStaged = true;
+        stagePendingSendMeasurement(pending);
+        return;
+      }
+      const measuredHeight = measuredTurnHeights.get(targetTurnId);
+      if (measuredHeight === undefined || Math.abs(measuredHeight - rowHeight) >= 1) {
+        measureTurn(targetTurnId, rowHeight, row, null);
+        return;
+      }
+      if (
+        pending.targetReadyAtVersion === null
+        || pendingSendVersion < pending.targetReadyAtVersion
+      ) {
+        return;
+      }
+    }
     const target = row?.querySelector<HTMLElement>('.thread-user-message') ?? row;
     let naturalTargetTop = currentSpacer?.turnId === targetTurnId
       ? currentSpacer.targetTop
@@ -1341,11 +1777,9 @@ export function ThreadView({
         || currentSpacer.turnId !== nextSpacer.turnId
       ) {
         updateSendAnchorSpacer(nextSpacer);
-        return;
       }
     } else if (currentSpacer?.turnId === targetTurnId) {
       updateSendAnchorSpacer(null);
-      if (pending) return;
     }
     if (!pending) return;
     const maximumTop = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
@@ -1354,14 +1788,46 @@ export function ThreadView({
     // top would paint the message past the top of the viewport and then walk it
     // back; the next pass has the settled numbers.
     if (naturalTargetTop > maximumTop + 1) return;
-    pendingSendScrollRef.current = null;
-    playAnchorTravel(scroll, scroll.scrollTop, Math.max(0, Math.min(maximumTop, naturalTargetTop)));
+    const targetTop = Math.max(0, Math.min(maximumTop, naturalTargetTop));
+    const distance = targetTop - scroll.scrollTop;
+    const includeCurrent = !pending.anchored
+      && readMotionDuration() > 0
+      && Math.abs(distance) >= 1
+      && Math.abs(distance) <= scroll.clientHeight * ANCHOR_TRAVEL_MAX_VIEWPORTS
+      && !prefersReducedMotion();
+    if (!prepareLayoutScrollCoverage(scroll, targetTop, includeCurrent)) return;
+    if (includeCurrent) {
+      pendingSendScrollRef.current = null;
+      playAnchorTravel(scroll, scroll.scrollTop, targetTop, releaseFollowOnAnchor);
+      return;
+    }
+    if (pending.anchored) {
+      if (Math.abs(scroll.scrollTop - targetTop) >= 1) {
+        requestLayoutScrollTop(scroll, targetTop);
+      }
+    } else {
+      pending.anchored = true;
+      pending.settleScrollHeight = 0;
+      pending.settleStableFrames = 0;
+      pending.settleTargetTop = targetTop;
+      pending.settleTurnMeasureGeneration = turnMeasureGenerationRef.current;
+      playAnchorTravel(scroll, scroll.scrollTop, targetTop, false);
+    }
+    scheduleSendAnchorSettlement(pending);
   }, [
+    cancelSendAnchorSettlement,
+    clearSendAnchorSpacer,
     hasPendingAnchor,
+    measureTurn,
     measuredTurnHeights,
+    pendingSendVersion,
     playAnchorTravel,
+    prepareLayoutScrollCoverage,
+    prepareSendTargetCoverage,
+    requestLayoutScrollTop,
     scheduleBottomPin,
-    setProgrammaticScrollTop,
+    scheduleSendAnchorSettlement,
+    stagePendingSendMeasurement,
     updateSendAnchorSpacer,
   ]);
 
@@ -1369,43 +1835,6 @@ export function ThreadView({
     scheduleBottomPinRef.current = scheduleBottomPin;
     applySendAnchorLayoutRef.current = applySendAnchorLayout;
   }, [scheduleBottomPin, applySendAnchorLayout]);
-
-  const measureTurn = useCallback((turnId: string, height: number, element: HTMLDivElement) => {
-    const current = measuredTurnHeights.get(turnId);
-    if (current !== undefined && Math.abs(current - height) < 1) return;
-    const state = virtualStateRef.current;
-    const turnIndex = state.turns.findIndex((turn) => turn.id === turnId);
-    const turn = state.turns[turnIndex];
-    const previousHeight = current ?? (turn ? estimateTurnHeight(turn) : height);
-    const delta = height - previousHeight;
-    const scroll = scrollRef.current;
-    if (
-      state.virtualized
-      && scroll
-      && !followRef.current
-      && !hasPendingAnchor()
-      && Math.abs(delta) >= 1
-    ) {
-      const rowTop = element.getBoundingClientRect().top;
-      const viewportTop = scroll.getBoundingClientRect().top;
-      if (rowTop + height <= viewportTop + 1) {
-        const pendingAdjustment = pendingVirtualScrollAdjustmentRef.current;
-        pendingVirtualScrollAdjustmentRef.current = {
-          applyAtMeasureVersion: pendingAdjustment?.applyAtMeasureVersion ?? 0,
-          top: (pendingAdjustment?.top ?? scroll.scrollTop) + delta,
-        };
-      }
-    }
-    measuredTurnHeights.set(turnId, height);
-    setMeasureVersion((version) => {
-      const pendingAdjustment = pendingVirtualScrollAdjustmentRef.current;
-      if (pendingAdjustment) pendingAdjustment.applyAtMeasureVersion = version + 1;
-      return version + 1;
-    });
-    // Any measurement can be the one that settles the anchor's geometry, and
-    // the Turn it is waiting for may not be identified yet.
-    if (pendingSendScrollRef.current) applySendAnchorLayout();
-  }, [hasPendingAnchor, measuredTurnHeights, applySendAnchorLayout]);
 
   useLayoutEffect(() => {
     const pendingAdjustment = pendingVirtualScrollAdjustmentRef.current;
@@ -1422,15 +1851,31 @@ export function ThreadView({
       pendingVirtualScrollAdjustmentRef.current = null;
       const scroll = scrollRef.current;
       if (!latestAdjustment || !scroll || followRef.current || hasPendingAnchor()) return;
-      setProgrammaticScrollTop(scroll, latestAdjustment.top);
+      const anchorRow = latestAdjustment.anchor
+        ? ownTranscriptRows(scroll).find(
+          (row) => row.dataset.threadTurnRow === latestAdjustment.anchor?.turnId,
+        ) ?? null
+        : null;
+      const targetTop = latestAdjustment.anchor && anchorRow
+        ? scroll.scrollTop
+          + (anchorRow.getBoundingClientRect().top - scroll.getBoundingClientRect().top)
+          - latestAdjustment.anchor.offset
+        : latestAdjustment.top;
+      setImperativeScrollTop(scroll, targetTop);
     });
-  }, [hasPendingAnchor, measureVersion, setProgrammaticScrollTop]);
+  }, [hasPendingAnchor, measureVersion, setImperativeScrollTop]);
 
   useLayoutEffect(() => {
     const scroll = scrollRef.current;
     if (!scroll) return undefined;
-    const synchronizeLayout = () => {
+    const synchronizeLayout = (imperative = false) => {
       reconcileDisclosureAnchorRunway(scroll);
+      const preparedScrollOwnsCoverage = pendingLayoutScrollRef.current !== null
+        || Boolean(pendingSendScrollRef.current?.targetTurnId);
+      if (!preparedScrollOwnsCoverage) {
+        if (imperative) ensureImperativeScrollCoverage(scroll);
+        else prepareLayoutScrollCoverage(scroll, scroll.scrollTop);
+      }
       updateScrollMetrics(scroll);
       attemptScrollRestore();
       applySendAnchorLayout();
@@ -1438,15 +1883,19 @@ export function ThreadView({
     };
     synchronizeLayout();
     if (typeof ResizeObserver === 'undefined') return undefined;
-    const observer = new ResizeObserver(synchronizeLayout);
+    const observer = new ResizeObserver(() => synchronizeLayout(true));
     observer.observe(scroll);
     const content = transcriptContentRef.current;
+    const turnsElement = transcriptTurnsRef.current;
     const composer = composerRegionRef.current;
     if (content) observer.observe(content);
+    if (turnsElement) observer.observe(turnsElement);
     if (composer) observer.observe(composer);
     return () => observer.disconnect();
   }, [
     attemptScrollRestore,
+    ensureImperativeScrollCoverage,
+    prepareLayoutScrollCoverage,
     reconcileDisclosureAnchorRunway,
     scheduleBottomPin,
     applySendAnchorLayout,
@@ -1475,6 +1924,7 @@ export function ThreadView({
     scheduleBottomPin,
     applySendAnchorLayout,
     sendAnchorSpacer,
+    scrollRestoreVersion,
     turns,
     virtualLayout.totalHeight,
     virtualRange.end,
@@ -1497,10 +1947,24 @@ export function ThreadView({
       window.cancelAnimationFrame(scrollMetricsFrameRef.current);
       scrollMetricsFrameRef.current = null;
     }
+    if (scrollRestoreVerificationFrameRef.current !== null) {
+      window.cancelAnimationFrame(scrollRestoreVerificationFrameRef.current);
+      scrollRestoreVerificationFrameRef.current = null;
+    }
     cancelAnchorTravel();
+    cancelPendingLayoutScroll();
     cancelPendingVirtualScrollAdjustment();
+    cancelSendAnchorSettlement();
+    pendingSendScrollRef.current = null;
+    sendAnchorSpacerRef.current = null;
     setDisclosureAnchorRunway(0);
-  }, [cancelAnchorTravel, cancelPendingVirtualScrollAdjustment, setDisclosureAnchorRunway]);
+  }, [
+    cancelAnchorTravel,
+    cancelPendingLayoutScroll,
+    cancelPendingVirtualScrollAdjustment,
+    cancelSendAnchorSettlement,
+    setDisclosureAnchorRunway,
+  ]);
 
   /**
    * The reader's last position, taken while the transcript is still mounted.
@@ -1646,19 +2110,28 @@ export function ThreadView({
     } : null;
     const pendingSend: PendingSendAnchor = {
       acceptedTurnId: null,
+      anchored: false,
       clientMessageId: crypto.randomUUID(),
       previousTailTurnId: turns.at(-1)?.id ?? null,
       releaseFollowOnAnchor: Boolean(
         scroll
         && scroll.scrollHeight - scroll.clientHeight > TRANSCRIPT_BOTTOM_FOLLOW_THRESHOLD_PX,
       ),
+      targetMeasureCompleted: 0,
+      targetMeasureRequest: 0,
+      targetReadyAtVersion: null,
+      settleScrollHeight: 0,
+      settleStableFrames: 0,
+      settleTargetTop: 0,
+      settleTurnMeasureGeneration: turnMeasureGenerationRef.current,
+      targetSettlementStaged: false,
       threadId,
       targetTurnId: null,
     };
     bottomPinDeferredRef.current = false;
     sendAnchorLayoutDeferredRef.current = false;
     cancelAnchorTravel();
-    cancelPendingVirtualScrollAdjustment();
+    cancelReaderOverriddenScrollWork();
     cancelPendingAnchor();
     clearSendAnchorSpacer();
     setDisclosureAnchorRunway(0);
@@ -1669,6 +2142,16 @@ export function ThreadView({
     // follow on the way so the reply streams away below the fold.
     scrollRestoreRef.current = null;
     pendingSendScrollRef.current = pendingSend;
+    if (scroll) {
+      updateSendAnchorSpacer({
+        height: scroll.clientHeight + (pendingSend.releaseFollowOnAnchor
+          ? TRANSCRIPT_BOTTOM_FOLLOW_THRESHOLD_PX + 2
+          : 0),
+        releaseFollowOnAnchor: pendingSend.releaseFollowOnAnchor,
+        targetTop: scroll.scrollHeight,
+        turnId: optimisticTurnId(pendingSend.clientMessageId),
+      });
+    }
     // Only a send that opens a Turn draws itself. A steer joins the Turn already
     // running, where this row does not belong — it would read as a Turn of its
     // own and then vanish into somebody else's when the Item landed.
@@ -1706,7 +2189,7 @@ export function ThreadView({
         // recognized, and its stand-in row has no other way to be retired.
         pendingSend.acceptedTurnId = acceptedTurn.id;
         recordAcceptedTurn(pendingSend.clientMessageId, acceptedTurn.id);
-        setPendingSendVersion((version) => version + 1);
+        advancePendingSendLayout(pendingSend, false);
       } else {
         // Nothing to anchor: a deduplicated resend, a steer, a Thread the
         // reader has since left. The row goes with it — there is no Turn coming
@@ -1714,7 +2197,9 @@ export function ThreadView({
         // meaning, that the reader asked to be at the end of the conversation.
         clearPendingEcho(pendingSend.clientMessageId);
         if (pendingSendScrollRef.current === pendingSend) {
+          cancelSendAnchorSettlement();
           pendingSendScrollRef.current = null;
+          clearSendAnchorSpacer();
           scheduleBottomPin();
         }
       }
@@ -1724,7 +2209,10 @@ export function ThreadView({
         attachmentSourceKeysRef.current,
       );
     } catch (sendError) {
-      if (pendingSendScrollRef.current === pendingSend) pendingSendScrollRef.current = null;
+      if (pendingSendScrollRef.current === pendingSend) {
+        cancelSendAnchorSettlement();
+        pendingSendScrollRef.current = null;
+      }
       // The message is going back into the composer, so it must leave the
       // transcript: a refused send that kept its row would read as sent.
       clearPendingEcho(pendingSend.clientMessageId);
@@ -1738,11 +2226,13 @@ export function ThreadView({
             anchor: previousViewport.anchor,
             attempts: 0,
             scrollHeight: 0,
+            stableFrames: 0,
             top: previousViewport.top,
+            verified: false,
           };
         } else {
           scrollRestoreRef.current = null;
-          setProgrammaticScrollTop(currentScroll, previousViewport.top);
+          setImperativeScrollTop(currentScroll, previousViewport.top);
         }
         // Last, so it wins: the write above re-reads the anchor from a transcript
         // that has not finished shedding the failed send, and what the reader had
@@ -2053,22 +2543,43 @@ export function ThreadView({
         <div
           className="thread-transcript"
           onKeyDownCapture={(event) => {
-            if (TRANSCRIPT_SCROLL_INTENT_KEYS.has(event.key)) cancelPendingVirtualScrollAdjustment();
+            if (TRANSCRIPT_SCROLL_INTENT_KEYS.has(event.key)) markTransientScrollIntent();
           }}
-          onPointerDown={cancelPendingVirtualScrollAdjustment}
+          onPointerCancel={endPointerScrollIntent}
+          onPointerDown={(event) => {
+            if (isInteractiveTranscriptPointerTarget(event.target, event.currentTarget)) return;
+            beginPointerScrollIntent();
+          }}
+          onPointerUp={endPointerScrollIntent}
           onScroll={(event) => {
             const scroll = event.currentTarget;
             const expectedTop = expectedProgrammaticScrollTopRef.current;
             const programmatic = expectedTop !== null && Math.abs(scroll.scrollTop - expectedTop) < 1;
+            const readerDriven = !programmatic && (
+              pointerScrollIntentRef.current
+              || transientScrollIntentRef.current
+              || !event.nativeEvent.isTrusted
+            );
+            transientScrollIntentRef.current = false;
             expectedProgrammaticScrollTopRef.current = null;
-            if (!programmatic && pendingVirtualScrollAdjustmentRef.current) return;
+            if (readerDriven) {
+              cancelReaderOverriddenScrollWork();
+            }
+            ensureImperativeScrollCoverage(scroll);
+            if (readerDriven) cancelPendingVirtualScrollAdjustment();
+            else if (!programmatic && pendingVirtualScrollAdjustmentRef.current) return;
             if (!programmatic) {
               scrollRestoreRef.current = null;
             }
             reconcileDisclosureAnchorRunway(scroll);
             synchronizedScrollTopRef.current = scroll.scrollTop;
             if (!scrollRestoreRef.current) {
-              const nextFollow = isTranscriptFollowing(scroll);
+              const nextFollow = (
+                pendingSendScrollRef.current?.releaseFollowOnAnchor
+                || sendAnchorSpacerRef.current?.releaseFollowOnAnchor
+              )
+                ? false
+                : isTranscriptFollowing(scroll);
               setFollowValue(nextFollow);
               cacheThreadScrollSnapshot(threadId, {
                 // Per scroll event this path stays within the layout reads the
@@ -2081,8 +2592,8 @@ export function ThreadView({
             }
             scheduleScrollMetrics(scroll);
           }}
-          onTouchMove={cancelPendingVirtualScrollAdjustment}
-          onWheel={cancelPendingVirtualScrollAdjustment}
+          onTouchMove={markTransientScrollIntent}
+          onWheel={markTransientScrollIntent}
           ref={scrollRef}
         >
           <div className="thread-transcript-content" ref={transcriptContentRef}>
@@ -2091,6 +2602,7 @@ export function ThreadView({
               <div
                 className={`thread-transcript-turns${virtualized ? ' is-virtual' : ''}`}
                 data-virtualized={virtualized ? 'true' : 'false'}
+                ref={transcriptTurnsRef}
                 style={virtualized ? { height: virtualLayout.totalHeight } : undefined}
               >
                 {visibleTurns.map((turn, offset) => {
@@ -2099,9 +2611,13 @@ export function ThreadView({
                   return (
                     <ThreadTranscriptTurnShell
                       key={turn.id}
-                      measuredHeight={measuredTurnHeights.get(turn.id)}
                       onMeasure={measureTurn}
                       style={virtualized && layoutItem ? { transform: `translateY(${layoutItem.top}px)` } : undefined}
+                      targetMeasureRequest={
+                        pendingSendScrollRef.current?.targetTurnId === turn.id
+                          ? pendingSendScrollRef.current.targetMeasureRequest
+                          : null
+                      }
                       turnId={turn.id}
                       virtualized={virtualized}
                     >
@@ -2162,13 +2678,13 @@ export function ThreadView({
               scrollRestoreRef.current = null;
               bottomPinDeferredRef.current = false;
               sendAnchorLayoutDeferredRef.current = false;
-              cancelPendingVirtualScrollAdjustment();
+              cancelReaderOverriddenScrollWork();
               cancelPendingAnchor();
               clearSendAnchorSpacer();
               setDisclosureAnchorRunway(0);
               setFollowValue(true);
               const scroll = scrollRef.current;
-              if (scroll) setProgrammaticScrollTop(scroll, scroll.scrollHeight);
+              if (scroll) setImperativeScrollTop(scroll, scroll.scrollHeight);
               window.requestAnimationFrame(() => composerRef.current?.focus());
             }}
           >
@@ -2328,16 +2844,21 @@ export function ThreadView({
 
 function ThreadTranscriptTurnShell({
   children,
-  measuredHeight,
   onMeasure,
   style,
+  targetMeasureRequest,
   turnId,
   virtualized,
 }: {
   readonly children: ReactNode;
-  readonly measuredHeight: number | undefined;
-  readonly onMeasure: (turnId: string, height: number, element: HTMLDivElement) => void;
+  readonly onMeasure: (
+    turnId: string,
+    height: number,
+    element: HTMLDivElement,
+    targetMeasureRequest: number | null,
+  ) => void;
   readonly style?: CSSProperties;
+  readonly targetMeasureRequest: number | null;
   readonly turnId: string;
   readonly virtualized: boolean;
 }) {
@@ -2345,35 +2866,21 @@ function ThreadTranscriptTurnShell({
   useLayoutEffect(() => {
     const element = rowRef.current;
     if (!element) return undefined;
-    const measure = () => {
-      const turn = element.querySelector<HTMLElement>('.thread-turn');
-      const turnContent = turn?.firstElementChild;
-      if (
-        turnContent instanceof HTMLElement
-        && !turnContent.checkVisibility({ contentVisibilityAuto: true })
-      ) return;
-      onMeasure(turnId, element.getBoundingClientRect().height, element);
+    const measure = (request: number | null) => {
+      onMeasure(turnId, element.getBoundingClientRect().height, element, request);
     };
-    measure();
+    measure(targetMeasureRequest);
     if (typeof ResizeObserver === 'undefined') return undefined;
-    const observer = new ResizeObserver(measure);
+    const observer = new ResizeObserver(() => measure(null));
     observer.observe(element);
     return () => observer.disconnect();
-  }, [onMeasure, turnId]);
+  }, [onMeasure, targetMeasureRequest, turnId]);
   return (
     <div
       className={virtualized ? 'thread-transcript-virtual-turn' : 'thread-transcript-flow-turn'}
       data-thread-turn-row={turnId}
       ref={rowRef}
-      style={{
-        ...style,
-        // The placeholder a skipped Turn occupies. Feeding the measured height
-        // back keeps a remounted transcript the same height it was, so a
-        // restored position still points at the content it was taken from.
-        ...(measuredHeight === undefined
-          ? {}
-          : { '--thread-turn-intrinsic-size': `${measuredHeight}px` }),
-      } as CSSProperties}
+      style={style}
     >
       {children}
     </div>

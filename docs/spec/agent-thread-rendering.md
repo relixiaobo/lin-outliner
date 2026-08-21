@@ -1426,10 +1426,15 @@ from being mistaken for this send. The bottom pin is suspended from the click un
 lands, so the message is never parked at the bottom edge on the way. A long
 conversation therefore streams below the anchored message without moving it;
 short conversations that are still within the bottom threshold continue
-following. The anchor's runway spacer and the scroll that uses it are written in
-one pre-paint pass, and a pass whose own measurements do not yet place the
-message at the top defers to the next one rather than scrolling to a position it
-will have to correct. The `turn/submit` response returns the exact newly
+following. The anchor identifies and mounts its target before measuring it, and
+an optimistic-to-canonical replacement repeats that staging for the new row.
+The target's inline disclosures must commit their initial collapsed layout and
+the Turn-height cache must match the live row before the runway is calculated.
+Each new target measurement advances the anchor to a later pre-paint layout
+pass; only then are its runway spacer and target coverage committed before the
+scroll that uses them. An uncovered target or a pass whose own measurements do
+not yet place the message at the top defers the write rather than exposing a
+position it will have to correct. The `turn/submit` response returns the exact newly
 accepted Turn when main started one and `null` when main steered or deduplicated
 the submission, so a concurrently loaded history page cannot be mistaken for the
 new send; it remains the anchor's fallback for a send whose Item never arrives
@@ -1454,19 +1459,25 @@ A temporary renderer-only tail spacer gives the new message enough scroll runway
 to reach the top before response content exists. It carries no document state,
 shrinks as real response content replaces that runway, and is removed when no
 runway remains or the reader jumps to the latest content. Spacer-only runway does
-not count as unread content for the Jump to latest control.
+not count as unread content for the Jump to latest control. The first optimistic
+row and its initial runway are staged in the same send commit, before the host
+has accepted or steered the submission. If the optimistic row is replaced by the
+canonical Turn, the anchor repeats target coverage and measurement staging for
+the canonical row; measurements taken for the optimistic row cannot satisfy the
+replacement.
 
 Each Thread keeps an ephemeral scroll snapshot across Thread switches, recording
 the Turn at the top of the viewport and its offset there rather than a scroll
 offset alone. Returning to a Thread waits for non-empty loaded history, then puts
-that Turn back at that offset, correcting after each layout pass until the
-anchored row agrees and the transcript has stopped growing. An anchored Turn that
-is not rendered yet — a virtual transcript whose window has not reached it — is
-placed by the saved offset first, which brings the row into range. A bounded
-attempt count releases a Thread whose geometry cannot satisfy the anchor at all,
-at the nearest reachable offset, so viewport or history changes settle rather
-than rewrite the offset on every layout pass. Empty history never replaces the
-saved snapshot with a top clamp.
+that Turn back at that offset, correcting after layout until the anchored row
+agrees and the transcript has remained stable across two animation frames.
+Repeated layout effects in one React commit do not count as independent stability
+observations. An anchored Turn that is not rendered yet is placed by the saved
+offset first, which prepares its virtual range before applying the position. A
+bounded attempt count releases exact anchor correction when geometry cannot
+satisfy it, at the nearest browser-clamped offset; it never releases the coverage
+requirement for that actual offset. Empty history never replaces the saved
+snapshot with a top clamp.
 
 A restore outlives its first application, so it yields where every other writer
 of the scroll position yields. User scrolling takes ownership and cancels it; an
@@ -1482,24 +1493,67 @@ position, anchor, and follow state. A followed Thread resumes at the bottom and
 records no anchor. A Thread left without a final scroll event — its position
 moved by content growth alone — still records that position as it unmounts.
 
-The Turn is what the restore aims at because a scroll offset does not survive a
-remount on its own: `content-visibility: auto` gives every Turn the reader has
-not rendered its placeholder height, so a flow-layout transcript rebuilds shorter
-than it was and the same offset lands further along the conversation. A Turn that
-has been measured therefore carries its own measured height as that placeholder,
-which reproduces the geometry the reader left; Turns never rendered in this
-session keep the nominal fallback, and the anchor covers them. Threads above
-forty Turns reuse the established
-measured-row virtual transcript with viewport overscan; terminal offscreen Turns
-do not remain mounted. When a row fully above the viewport replaces an estimate
-with a measurement, its height delta is applied after the virtual container
-commits the corresponding total-height change, so browser clamping cannot discard
-the compensation and the visible reading position remains stable. Measurements
-ignore subtrees currently skipped by `content-visibility: auto`, preventing its
-intrinsic fallback size from entering the measured-height cache. The same
-content-visibility containment applies from a Turn's first render through its
-terminal state, so completion never swaps a measured live height for an intrinsic
-fallback.
+The transcript has one paint owner at every size. Eight or fewer Turns use normal
+DOM layout and paint; a Turn never delegates its paint timing to
+`content-visibility`. Nine or more Turns use the measured-row renderer window,
+with 240 pixels of overscan as a performance cushion. Terminal offscreen Turns do
+not remain mounted. Flow rows still populate the measured-height cache without
+forcing a render for each measurement, so crossing the threshold consumes real
+heights immediately. Virtual rows update the layout when their measurements
+change; unmeasured rows use the bounded content-derived estimate.
+
+The virtual coordinate origin is `.thread-transcript-turns`, not the transcript
+scroller. The renderer derives that origin from the live scroller and Turns
+container rectangles, then intersects the Turn-local viewport with the virtual
+layout. Goal height, content padding, and the Goal-to-Turn gap therefore affect
+only the origin; they never masquerade as progress through the Turn list. The
+same pure range calculation selects overscan rows and determines whether the
+currently committed range contains every Turn intersecting the real viewport. A
+viewport wholly inside the Goal or beyond the Turn extent requires no Turn row.
+
+Coverage is a pre-paint invariant, not an overscan assumption. A covered native
+scroll retains the one-update-per-animation-frame metrics path. When a native
+event or an event/rAF scroll writer leaves the committed virtual range, the
+imperative adapter reads the browser-clamped position and live Turns origin, then
+uses `flushSync` only for that uncovered range before the callback returns. Rapid
+reader scrolls cancel stale height compensation; trusted scroll events caused by
+layout settling retain it. Pointer drag, wheel, touch, keyboard, and untrusted
+test scrolls are all classified as reader intent. Pointerdown that begins on an
+interactive control inside the transcript is not scroll intent by itself; if the
+control click or browser action actually moves the scroller, the later scroll
+event is what arbitrates ownership.
+
+A layout-effect writer never calls `flushSync`. It creates a generation-tagged
+transaction and predicts the clamped target viewport. If that viewport is not
+covered, the first pass commits its range without changing `scrollTop`; a later
+layout pass verifies that the transaction is still current, writes the position,
+and rechecks the actual browser-clamped viewport. Changed geometry repeats the
+prepare pass before paint. New reader intent or a higher-priority imperative
+writer invalidates the transaction. Send anchoring prepares the whole short
+travel interval before its first tween frame, while long travel prepares only
+the cut target.
+
+A send cut keeps owning its anchor after it first writes the target position. It
+does not release to bottom-follow, ordinary virtual coverage sync, or virtual
+height compensation until the target is still at the top, the scroll height is
+unchanged, the target top is unchanged, and the Turn measurement generation is
+unchanged across two independent animation frames. Layout effects inside one
+React commit are not stability observations. A reader scroll, a new send, a
+steer, send failure, a resultless submission, unmount, or Jump to latest cancels
+that ownership and removes any remaining send-only spacer.
+
+When a row fully above the viewport replaces an estimate with a measurement,
+virtual height compensation records the visible Turn and its viewport offset
+before committing the new total height. Its rAF writer restores that real anchor
+after all measurements in the batch; the accumulated height delta is only the
+fallback when the anchor row is unexpectedly unavailable. Browser clamping and
+concurrent newly mounted measurements therefore cannot move the reader's Turn.
+
+Measured long user messages start clamped on their first layout until measurement
+proves that the content is short. The measurement update still commits before
+paint, so short messages do not expose the temporary mask, but virtual parents
+never cache a one-frame full-height version of a long message before its own
+disclosure effect collapses it.
 
 Provider request and stream retries are transient execution state, not Items.
 The selected Thread shows `Retrying` for request recovery and `Reconnecting` for
@@ -1589,8 +1643,11 @@ the expanded content lands, with a three-second safety bound so a lost reply can
 latch scrolling. Wheel, pointer, touch, keyboard, or independent scroll intent still
 cancels the pending correction immediately. Sending or choosing Jump to latest
 explicitly supersedes the anchor; pending send-anchor layout otherwise resumes on
-release. Virtual row compensation yields while the explicit anchor is active,
-because that anchor is authoritative for concurrent geometry changes.
+release. Capturing a disclosure anchor pauses scroll writers that could move the
+viewport, but it does not erase a mounted send spacer; the spacer is the current
+rendered range that lets the explicit anchor preserve its surface. Virtual row
+compensation yields while the explicit anchor is active, because that anchor is
+authoritative for concurrent geometry changes.
 
 Which point of the activated surface stays fixed follows from where its control
 sits and which way the surface is moving. A control above the content it opens —

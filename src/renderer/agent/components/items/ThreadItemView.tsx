@@ -580,9 +580,15 @@ function UserMessageCollapsibleContent({
   const contentRef = useRef<HTMLDivElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState(false);
-  const [canCollapse, setCanCollapse] = useState(false);
+  const [collapseMeasurement, setCollapseMeasurement] = useState<{
+    readonly canCollapse: boolean;
+    readonly measureKey: string;
+  } | null>(null);
   const captureDisclosureAnchor = useLocalDisclosureAnchor(expanded, expandState);
   const isFollowingBottom = expandState.isFollowingBottom;
+  const canCollapse = collapseMeasurement?.measureKey === measureKey
+    ? collapseMeasurement.canCollapse
+    : null;
 
   useLayoutEffect(() => {
     setExpanded(false);
@@ -595,8 +601,12 @@ function UserMessageCollapsibleContent({
     const lineHeight = Number.parseFloat(style.lineHeight) || 26;
     const collapsedHeight = lineHeight * USER_MESSAGE_COLLAPSED_LINES + USER_MESSAGE_COLLAPSED_EXTRA_PX;
     const nextCanCollapse = element.scrollHeight > collapsedHeight + 1;
-    setCanCollapse((current) => current === nextCanCollapse ? current : nextCanCollapse);
-  }, []);
+    setCollapseMeasurement((current) => (
+      current?.measureKey === measureKey && current.canCollapse === nextCanCollapse
+        ? current
+        : { canCollapse: nextCanCollapse, measureKey }
+    ));
+  }, [measureKey]);
 
   useLayoutEffect(() => {
     measure();
@@ -607,7 +617,12 @@ function UserMessageCollapsibleContent({
     return () => observer.disconnect();
   }, [measure, measureKey]);
 
-  const collapsed = canCollapse && !expanded;
+  // The first layout is clamped until measurement proves the content is short.
+  // That lets a parent virtual row measure its final geometry immediately,
+  // instead of caching one full-height pass before this layout effect collapses
+  // it. The state update still commits before paint, so short messages never
+  // expose the temporary clamp or its mask.
+  const collapsed = !expanded && canCollapse !== false;
   return (
     <div className="thread-user-content-shell" ref={shellRef}>
       <div
@@ -616,7 +631,7 @@ function UserMessageCollapsibleContent({
       >
         {children}
       </div>
-      {canCollapse ? (
+      {canCollapse === true ? (
         <ButtonControl
           aria-expanded={expanded}
           className="thread-user-expand-button"
