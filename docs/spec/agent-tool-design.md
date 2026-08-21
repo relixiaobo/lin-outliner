@@ -72,6 +72,11 @@ contribute tools through this seam rather than adding domain logic to runtime.
 Node writes always use document commands. Tool helpers never mutate Loro or a
 projection directly. Read and write scopes are explicit; an empty scope denies
 all access. Definition resolution is deterministic and rejects ambiguous names.
+When an Agent write materializes the first stored value for an existing field
+definition, it writes the complete parsed `RichText` through the slot boundary;
+later reconciliation uses that same rich-text identity, including marks, link
+destinations, and inline-reference targets. Reconciliation consumes stored
+values by occurrence, so intentional duplicate values retain their multiplicity.
 All Node catalog tools except `outline_undo_stack` execute inside one document
 transaction; if they return an `ok:false` `ToolEnvelope`, document writes from
 that transaction roll back while the original model-visible error is preserved.

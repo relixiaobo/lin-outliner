@@ -156,10 +156,12 @@ writes.
 `update_field_slot(ownerId, fieldDefId, mutation)` is the slot-aware value write
 boundary used by renderer, Table, and agent paths; paste enforces the same
 invariant inside its surrounding tree transaction. `appendText`,
-`appendReference`, and `selectOption` create a backing entry together with the
-first accepted value when needed; failed or empty writes leave a virtual slot
-unmaterialized. `acceptDefault` materializes the current inherited static
-default and is a no-op once the slot has a stored entry. `commit` removes an
+`appendReference`, `appendNodes`, and `selectOption` create a backing entry
+together with the first accepted value when needed; `appendNodes` preserves the
+complete rich-text and `CreateNodeTree` structure supplied by its callers.
+Failed or empty writes leave a virtual slot unmaterialized. `acceptDefault`
+materializes the current inherited static default and is a no-op once the slot
+has a stored entry. `commit` removes an
 empty tag-backed entry and returns the
 field to its virtual form. Empty own entries survive because their entry is the
 only record that the field exists. `clear_field_value` and removal of the final

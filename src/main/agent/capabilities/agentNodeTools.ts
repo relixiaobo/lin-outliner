@@ -11,6 +11,7 @@ import {
   plainText,
   referenceTargetSortKey,
   replaceAllRichTextPatch,
+  type CreateNodeTree,
   type DocumentProjection,
   type FieldConfigPatch,
   type FieldType,
@@ -4516,11 +4517,19 @@ async function materializeFieldValuesForDefinition(
       targetId: first.targetId,
     });
   } else {
+    const content = richTextFromOutlineText(outlineValueSource(first));
+    if (!content.text.trim() && content.inlineRefs.length === 0) {
+      return fieldSlotId(parentId, fieldDefId);
+    }
+    const firstValueNode: CreateNodeTree = {
+      content,
+      children: [],
+    };
     await handleMutation(host, collector, 'update_field_slot', {
       ownerId: parentId,
       fieldDefId,
-      kind: 'appendText',
-      text: outlineValueSource(first),
+      kind: 'appendNodes',
+      nodes: [firstValueNode],
     });
   }
 

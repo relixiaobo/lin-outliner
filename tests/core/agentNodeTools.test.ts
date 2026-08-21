@@ -16,6 +16,7 @@ import {
   SCHEMA_ID,
   TRASH_ID,
   WORKSPACE_ID,
+  type CreateNodeTree,
   type SortRuleNode,
   type ViewDefNode,
 } from '../../src/core/types';
@@ -163,6 +164,15 @@ function fieldSlotMutationArg(args: Record<string, unknown>): FieldSlotMutation 
   }
   if (args.kind === 'appendReference') {
     return { kind: 'appendReference', targetId: String(args.targetId), ...(entryId ? { entryId } : {}), ...(id ? { id } : {}) };
+  }
+  if (args.kind === 'appendNodes') {
+    return {
+      kind: 'appendNodes',
+      nodes: args.nodes as CreateNodeTree[],
+      ...(Array.isArray(args.firstTagIds) ? { firstTagIds: arrayArg(args.firstTagIds) } : {}),
+      ...(entryId ? { entryId } : {}),
+      ...(id ? { id } : {}),
+    };
   }
   if (args.kind === 'selectOption') {
     return { kind: 'selectOption', optionNodeId: String(args.optionNodeId), ...(entryId ? { entryId } : {}), ...(id ? { id } : {}) };
@@ -567,6 +577,60 @@ describe('agent node tools', () => {
     const entryId = fieldEntryByName(core, root, 'xmlUrl');
     expect(core.state().nodes[entryId]!.fieldDefId).toBe(fieldDefId);
     expect(fieldTypeOf(core, entryId)).toBe('url');
+  });
+
+  test('node_create materializes one canonical rich-text value when reusing a plain field definition', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const seed = mustFocus(core.createNode(today, null, 'Seed'));
+    const seedEntry = mustFocus(core.createInlineField(seed, null, 'Notes', 'plain'));
+    const fieldDefId = core.state().nodes[seedEntry]!.fieldDefId!;
+    const target = mustFocus(core.createNode(today, null, 'Target'));
+
+    const envelope = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      outline: `- Record\n  - Notes:: Use \`code\`, [docs](https://example.com), and ${nodeRef(core, target)}`,
+    });
+
+    expect(envelope.ok).toBe(true);
+    const root = envelope.data!.createdRootIds[0]!;
+    const entryId = fieldEntryByName(core, root, 'Notes');
+    const valueIds = core.state().nodes[entryId]!.children;
+    expect(core.state().nodes[entryId]!.fieldDefId).toBe(fieldDefId);
+    expect(valueIds).toHaveLength(1);
+    expect(core.state().nodes[valueIds[0]!]!.content).toEqual({
+      text: 'Use code, docs, and ',
+      marks: [
+        { start: 4, end: 8, type: 'code' },
+        { start: 10, end: 14, type: 'link', attrs: { href: 'https://example.com' } },
+      ],
+      inlineRefs: [{
+        offset: 20,
+        displayName: 'Target',
+        target: { kind: 'node', nodeId: target },
+      }],
+    });
+  });
+
+  test('node_create preserves multiplicity for identical values when reusing a field definition', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const seed = mustFocus(core.createNode(today, null, 'Seed'));
+    mustFocus(core.createInlineField(seed, null, 'Notes', 'plain'));
+
+    const envelope = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      outline: '- Record\n  - Notes::\n    - Same value\n    - Same value',
+    });
+
+    expect(envelope.ok).toBe(true);
+    const root = envelope.data!.createdRootIds[0]!;
+    const entryId = fieldEntryByName(core, root, 'Notes');
+    const values = core.state().nodes[entryId]!.children.map((valueId) => core.state().nodes[valueId]!.content);
+    expect(values).toEqual([
+      plainText('Same value'),
+      plainText('Same value'),
+    ]);
   });
 
   test('node_create rolls back outline writes when a later field value fails validation', async () => {
