@@ -1129,6 +1129,14 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **tenon-import-root-bash-integration** (codex-2, PR #580, merged 2026-08-21 —
+  fast-track, no plan file) — a production-shared shell-environment provider now
+  guards the complete root-Agent Bash path through the built-in import wrapper:
+  preview receives no mutation token, commit is classified as `outline.edit`,
+  causation is bound to the exact Bash Item, and one staging root/history
+  operation is created. Gate review found no reportable findings; focused and
+  full Core tests, typecheck, `docs:check`, `import-cli:build`, and whitespace
+  checks passed.
 - **[agent-rich-field-value-materialization](plans/archive/agent-rich-field-value-materialization.md)**
   (cc, PR #579, merged 2026-08-21) — Agent writes to a reused field definition now
   preserve the first value's marks, links, inline references, and intentional

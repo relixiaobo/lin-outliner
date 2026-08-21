@@ -13,6 +13,21 @@ UI-refactor round), **A11** (batch work resumable by construction), **A12**
 append-into-the-existing-category changelog rule (the 21-duplicate-section
 untangle of 2026-08-03).
 
+## Composition-bound behavior needs a shared production seam
+
+PR #580 found that individually green import API, CLI, shell-parser, capability,
+and causation tests still did not prove the host had composed them into the root
+Agent's real Bash path. A wiring omission at that layer could leave every lower
+test green while preview or commit failed in the application.
+
+**When behavior exists only because a host composes several subsystems, extract
+the smallest production composition mechanism and drive it through the real
+entry point.** Inject its external authorities, but share the mechanism itself
+between production and the integration test. The judge should cross the actual
+tool and wrapper boundaries and assert both negative and positive authority:
+preview receives no mutation credential; commit receives the exact capability
+and Item-bound causation it needs; the final durable effect occurs once.
+
 ## One authority decision needs one parser
 
 PR #578 granted import commit causation tokens from one shell parser while

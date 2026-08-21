@@ -382,6 +382,18 @@ Entries reference the pull request that introduced them.
 
 ### Internal
 
+- **The root-Agent import path is now guarded end to end (PR #580, codex-2)** —
+  a focused Core integration test starts the local import API and runs preview
+  plus commit through an admitted root-Agent Bash tool and the built-in
+  `tenon-import` wrapper. It proves preview receives no write token, commit
+  contributes `outline.edit`, the one-time causation token binds to the exact
+  Bash Item, and the import creates exactly one staging root and Agent history
+  operation. The app and test now share
+  `createTenonImportShellEnvironmentProvider`, so the test exercises the
+  production token-composition mechanism instead of reconstructing it. Gate
+  review found no reportable findings. Verified with 11 focused import tests,
+  the full Core suite (2587 passed, 6 skipped, 0 failed), typecheck,
+  `docs:check`, `import-cli:build`, and whitespace checks.
 - **Agent tool artifact resources plan (PR #576, codex-3, plan-only)** — ratifies
   one existing Thread-resource graph for completed non-image tool artifacts:
   `web_fetch` binaries, bounded foreground and finalized background shell logs,
