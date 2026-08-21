@@ -99,6 +99,27 @@ Entries reference the pull request that introduced them.
 
 ### Fixed
 
+- **CLI-only imports now recover without a write-bypass gap (PR #578,
+  codex-2)** — `data_import` is gone from the default model-visible tool
+  catalog; `/tenon-import` is the single Agent import workflow. Commit writes now
+  cross the local CLI/API boundary with a short-lived, single-use Bash Item
+  causation token, while preview rejects normalized duplicate tags and fields
+  before staging. Materialization failures roll back every document write and
+  history entry, and verification mismatches preserve exactly one staging subtree
+  with `staged_with_errors`, `stagingRootId`, `operationId`, `mismatches`, and
+  `retryAllowed: false` so the Skill stops instead of retrying or deleting by
+  hand. Worktree Agents cannot use Bash or embedded Skill shell to commit into
+  the live outline: token issuance and capability classification now consume the
+  same parsed shell segments, recognized commit segments always contribute
+  `outline.edit`, and the CLI rejects unexpected commit arguments before reading
+  the pack or contacting the API. Gate: `/code-review` found one High — import
+  token issuance and capability classification used different parsing decisions,
+  so a command such as `tenon-import commit ... npm install` could receive the
+  write token while being classified only as `shell.dependency_install`;
+  `f870c5b7` aligned the parser, added `outline.edit` coverage, and rejected
+  extra commit args. Re-review found no reportable issues. Verified with
+  typecheck, `docs:check`, `import-cli:build`, focused import/capability/policy
+  tests, and five green CI samples plus baseline subtraction.
 - **Failed Agent Node tools no longer leave partial outline writes behind (PR
   #577, codex-2)** — the Node catalog now treats an `ok:false` `ToolEnvelope` as
   a transaction rollback signal for every Node tool except `outline_undo_stack`.

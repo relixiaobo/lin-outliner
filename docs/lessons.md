@@ -13,6 +13,18 @@ UI-refactor round), **A11** (batch work resumable by construction), **A12**
 append-into-the-existing-category changelog rule (the 21-duplicate-section
 untangle of 2026-08-03).
 
+## One authority decision needs one parser
+
+PR #578 granted import commit causation tokens from one shell parser while
+capability policy used another. The mismatch let `tenon-import commit ... npm
+install` receive the write token but classify only as `shell.dependency_install`,
+so worktree and `Action(outline.edit)` blocks never saw the live-outline write.
+Any command-shaped security boundary needs a single parsed result consumed by
+every authority decision, or a shared lower-level helper that returns every
+decision fact at once. Duplicating "recognition" and "classification" almost
+guarantees the first future wrapper, separator, or extra argument will split the
+boundary.
+
 ## When an upgrade removes an input, ask what it was discriminating
 
 `pi-ai 0.80.6 → 0.83.0` (#487) traded per-request inputs for registration-time

@@ -1129,6 +1129,16 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **cli-only-data-import-recovery** (codex-2, PR #578, merged 2026-08-21 —
+  fast-track, no plan file) — `/tenon-import` is now the sole Agent bulk-import
+  workflow, with Item-bound CLI/API causation tokens, duplicate tag/field
+  rejection, rollback on materialization failure, retained verification-mismatch
+  staging, guarded undo identity, and worktree/embedded-Skill shell blocks for
+  live-outline commits. Gate: `/code-review` found one High — token issuance and
+  capability classification disagreed on import-command parsing; `f870c5b7`
+  aligned them and made the CLI reject extra commit args. Re-review found no
+  reportable findings, and focused tests, typecheck, `docs:check`,
+  `import-cli:build`, and all CI samples plus baseline subtraction passed.
 - **failed-node-tool-rollback** (codex-2, PR #577, merged 2026-08-21 —
   fast-track, no plan file) — failed Agent Node tool envelopes now roll back the
   document transaction that produced them while preserving the original
