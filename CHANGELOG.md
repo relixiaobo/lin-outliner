@@ -99,6 +99,20 @@ Entries reference the pull request that introduced them.
 
 ### Fixed
 
+- **Failed Agent Node tools no longer leave partial outline writes behind (PR
+  #577, codex-2)** — the Node catalog now treats an `ok:false` `ToolEnvelope` as
+  a transaction rollback signal for every Node tool except `outline_undo_stack`.
+  The model still receives the original structured error and recovery guidance,
+  but earlier document commands from the same tool call are reverted instead of
+  becoming a hidden committed mutation. Regression coverage pins the two
+  failure shapes that exposed the bug: `node_create` creating part of an outline
+  before a later typed-field validation failure, and `node_edit` applying an
+  earlier text patch before a later host command fails. `outline_undo_stack`
+  remains outside the wrapper because it owns explicit undo/redo semantics.
+  Gate: `/code-review` found one Low — the rollback contract was missing from
+  `agent-tool-design`; `d6d2237b` added it, and re-review found no reportable
+  issues. Verified on the merge state with focused Node tool tests, typecheck,
+  `docs:check`, and whitespace checks.
 - **Subagent outcomes now state execution facts instead of task completion (PR
   #573, codex-3)** — a delegated Agent generation no longer reports `completed`
   as though the task itself had been judged done. The terminal vocabulary is now

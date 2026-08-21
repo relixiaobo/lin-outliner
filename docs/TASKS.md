@@ -1130,6 +1130,15 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **failed-node-tool-rollback** (codex-2, PR #577, merged 2026-08-21 —
+  fast-track, no plan file) — failed Agent Node tool envelopes now roll back the
+  document transaction that produced them while preserving the original
+  model-visible error. This closes the partial-write class where `node_create` or
+  `node_edit` could return `mutation_failed` after committing earlier outline
+  mutations. Gate: `/code-review` found one Low — the new behavior was missing
+  from the spec; `d6d2237b` added it. Re-review found no reportable findings,
+  and merge-state `agentNodeTools` tests, typecheck, `docs:check`, and
+  whitespace checks passed.
 - **subagent-task-outcome-contract** (codex-3, PR #573, merged 2026-08-21 —
   [plan](plans/archive/subagent-task-outcome-contract.md)) — delegated Agent
   outcomes now state factual generation status, local budget exhaustion, terminal

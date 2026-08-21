@@ -1674,3 +1674,24 @@ or retry, the process-seam DTO needs a list keyed by the historical identity, an
 renderer memo equality must compare that list. A test that advances the stable
 record without asserting the earlier row is still visible is testing the
 replacement, not the preservation contract.
+
+## Structured failure results can be commit decisions
+
+PR #577 fixed Agent Node tools that caught a late mutation exception, returned a
+recoverable `ToolEnvelope`, and accidentally let the surrounding document
+transaction commit the earlier commands. The host saw a successful JavaScript
+return, while the model saw `ok:false`; both facts were true, and the document
+kept the partial write.
+
+**When a tool owns a structured success/failure envelope inside a transaction,
+the envelope is part of the commit protocol.** Throwing is not the only rollback
+signal. If `ok:false` means "this tool call did not apply", translate that result
+into a rollback at the transaction boundary, then return the original envelope
+after the rollback completes. Keep explicit world-state tools, such as undo/redo,
+outside that wrapper when their failure semantics intentionally describe the
+state operation itself.
+
+Regression tests for this class need an in-transaction partial write followed by
+a model-visible failure result, plus an assertion that revision, node set, and
+operation history stayed unchanged. A preflight-only invalid argument case does
+not prove the rollback boundary.
