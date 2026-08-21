@@ -82,6 +82,47 @@ describe('agent capabilities', () => {
       args: { command: 'echo "tenon-import commit pack.json"' },
       policy: { workspaceRoot: workspace },
     }).descriptors.some((descriptor) => descriptor.actionKind === 'outline.edit')).toBe(false);
+
+    for (const command of [
+      'tenon-import commit pack.json --preview-id preview:1 npm install',
+      'tenon-import commit pack.json --preview-id preview:1 & npm install',
+      'tenon-import commit pack.json --preview-id preview:1 "$(npm install)"',
+    ]) {
+      const decision = evaluateAgentToolCapability({
+        toolName: 'bash',
+        args: { command },
+        policy: { workspaceRoot: workspace },
+      });
+      expect(isTenonImportCommitCommand(command), command).toBe(true);
+      expect(decision.descriptors.map((descriptor) => descriptor.actionKind), command).toEqual([
+        'outline.edit',
+        'shell.dependency_install',
+      ]);
+      expect(evaluateAgentToolCapability({
+        toolName: 'bash',
+        args: { command },
+        policy: {
+          workspaceRoot: workspace,
+          capabilityConfig: { blocks: ['Action(outline.edit)'] },
+        },
+      }), command).toMatchObject({
+        behavior: 'unavailable',
+        code: 'user_blocked',
+        descriptor: { actionKind: 'outline.edit' },
+      });
+      expect(evaluateAgentToolCapability({
+        toolName: 'bash',
+        args: { command },
+        policy: {
+          workspaceRoot: workspace,
+          capabilityConfig: { blocks: ['Action(shell.dependency_install)'] },
+        },
+      }), command).toMatchObject({
+        behavior: 'unavailable',
+        code: 'user_blocked',
+        descriptor: { actionKind: 'shell.dependency_install' },
+      });
+    }
   });
 
   test('makes explicit Command blocks unavailable with normalized whitespace', async () => {

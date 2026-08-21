@@ -76,4 +76,34 @@ describe('built-in skill helper scripts', () => {
       error: { code: 'app_unavailable' },
     });
   });
+
+  test('tenon-import commit rejects unexpected arguments before API access', async () => {
+    for (const extraArgs of [
+      ['npm', 'install'],
+      ['--force'],
+      ['--preview-id', 'preview:2'],
+      ['--parent-id'],
+      ['--json', '--json'],
+    ]) {
+      const failed = await execFile('bun', [
+        tenonImportTool,
+        'commit',
+        'pack.json',
+        '--preview-id',
+        'preview:1',
+        ...extraArgs,
+      ]).then(
+        () => null,
+        (error: { stdout?: string }) => JSON.parse(error.stdout ?? '{}') as {
+          ok?: boolean;
+          error?: { code?: string; message?: string };
+        },
+      );
+
+      expect(failed).toMatchObject({
+        ok: false,
+        error: { code: 'invalid_args' },
+      });
+    }
+  });
 });

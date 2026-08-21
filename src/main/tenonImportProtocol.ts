@@ -1,23 +1,37 @@
 export const TENON_IMPORT_CAUSATION_TOKEN_ENV = 'TENON_IMPORT_CAUSATION_TOKEN';
 export const TENON_IMPORT_CAUSATION_TOKEN_HEADER = 'x-tenon-import-causation-token';
 
+export interface ParsedTenonImportShellSegment {
+  readonly text: string;
+  readonly isCommit: boolean;
+}
+
+export function parseTenonImportShellSegments(command: string): ParsedTenonImportShellSegment[] {
+  return shellCommandSegments(command).map((segment) => ({
+    text: segment,
+    isCommit: isTenonImportCommitSegment(segment),
+  }));
+}
+
 export function isTenonImportCommitCommand(command: string): boolean {
-  return shellCommandSegments(command).some((segment) => {
-    const words = parseShellWords(segment);
-    let commandIndex = 0;
-    while (isEnvironmentAssignment(words[commandIndex])) commandIndex += 1;
-    if (commandName(words[commandIndex]) === 'env') {
+  return parseTenonImportShellSegments(command).some((segment) => segment.isCommit);
+}
+
+function isTenonImportCommitSegment(segment: string): boolean {
+  const words = parseShellWords(segment);
+  let commandIndex = 0;
+  while (isEnvironmentAssignment(words[commandIndex])) commandIndex += 1;
+  if (commandName(words[commandIndex]) === 'env') {
+    commandIndex += 1;
+    while (words[commandIndex]?.startsWith('-') || isEnvironmentAssignment(words[commandIndex])) {
       commandIndex += 1;
-      while (words[commandIndex]?.startsWith('-') || isEnvironmentAssignment(words[commandIndex])) {
-        commandIndex += 1;
-      }
     }
-    if (commandName(words[commandIndex]) === 'command' || commandName(words[commandIndex]) === 'exec') {
-      commandIndex += 1;
-    }
-    return commandName(words[commandIndex]) === 'tenon-import'
-      && words[commandIndex + 1]?.toLowerCase() === 'commit';
-  });
+  }
+  if (commandName(words[commandIndex]) === 'command' || commandName(words[commandIndex]) === 'exec') {
+    commandIndex += 1;
+  }
+  return commandName(words[commandIndex]) === 'tenon-import'
+    && words[commandIndex + 1]?.toLowerCase() === 'commit';
 }
 
 function shellCommandSegments(command: string): string[] {

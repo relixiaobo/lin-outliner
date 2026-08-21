@@ -103,7 +103,10 @@ content. Import-commit recognition ignores quoted examples, comments, and
 heredoc bodies. Unknown shell behavior is classified conservatively. Blocks do
 not silently rewrite a command into a safer variant. An inherited worktree
 policy rejects any Bash command classified as an outline mutation before the
-process starts.
+process starts. Import token issuance consumes the same parsed segment result as
+capability classification, and a recognized commit segment contributes
+`outline.edit` before generic shell action matching without suppressing other
+recognized actions in that segment.
 
 Capability configuration is local host state. It is not Thread history and does
 not travel through document synchronization.

@@ -182,18 +182,23 @@ describe('canonical provider tool catalog', () => {
     const bash = (await runtime.createTools(childContext)).find((tool) => tool.name === 'bash');
     if (!bash) throw new Error('Expected Bash in the worktree Agent catalog.');
 
-    const result = await bash.execute('commit-import', {
-      command: 'tenon-import commit pack.json --preview-id preview:1',
-    });
+    for (const command of [
+      'tenon-import commit pack.json --preview-id preview:1',
+      'tenon-import commit pack.json --preview-id preview:1 npm install',
+      'tenon-import commit pack.json --preview-id preview:1 & npm install',
+      'tenon-import commit pack.json --preview-id preview:1 "$(npm install)"',
+    ]) {
+      const result = await bash.execute(`commit-import-${command.length}`, { command });
 
-    expect(executed).toBe(false);
-    expect(result.details).toMatchObject({
-      error: {
-        code: 'operation_unavailable',
-        message: 'Worktree Agents cannot mutate the live outline through Bash.',
-        details: { reason: 'subagent_repository_mutation_restricted' },
-      },
-    });
+      expect(executed, command).toBe(false);
+      expect(result.details, command).toMatchObject({
+        error: {
+          code: 'operation_unavailable',
+          message: 'Worktree Agents cannot mutate the live outline through Bash.',
+          details: { reason: 'subagent_repository_mutation_restricted' },
+        },
+      });
+    }
   });
 });
 

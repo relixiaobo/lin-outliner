@@ -13,7 +13,7 @@ import {
   type ToolActionDescriptor,
 } from './agentCapabilityRules';
 import { canonicalPathPreservingSuffix } from './agentAttachmentMaterialization';
-import { isTenonImportCommitCommand } from '../../tenonImportProtocol';
+import { parseTenonImportShellSegments } from '../../tenonImportProtocol';
 
 export type {
   AgentToolActionKind,
@@ -218,7 +218,23 @@ function deriveBashActionDescriptors(
   args: unknown,
 ): ToolActionDescriptor[] {
   if (!command) return [unknownShellDescriptor('', 'Missing shell command.')];
-  const descriptors = splitShellSegments(command).map((segment) => classifyShellSegment(segment, command));
+  const descriptors = parseTenonImportShellSegments(command)
+    .flatMap((segment) => {
+      const genericDescriptor = classifyShellSegment(segment.text, command);
+      if (!segment.isCommit) return [genericDescriptor];
+      const importDescriptor = descriptor('bash', 'outline.edit', {
+        accessScope: 'local_system',
+        // electron-vite 5's ESM shim scanner misreads this title as a static
+        // import when the words are one literal, corrupting the packaged chunk.
+        title: ['outline', 'import'].join(' '),
+        summary: segment.text,
+        consequence: segment.text,
+        command,
+      });
+      return genericDescriptor.actionKind === 'shell.unknown'
+        ? [importDescriptor]
+        : [importDescriptor, genericDescriptor];
+    });
   if (getBooleanArg(args, 'run_in_background')) {
     descriptors.push(descriptor('bash', 'shell.background_process', {
       accessScope: 'local_system',
@@ -267,11 +283,6 @@ function classifyShellSegment(segmentInput: string, fullCommand: string): ToolAc
   }
   if (/\b(?:npm|pnpm|yarn|bun)\s+(?:run|test|build|dev|lint|check)\b/i.test(segment)) {
     return values('shell.project_script', 'project script', segment);
-  }
-  if (isTenonImportCommitCommand(fullCommand) && isTenonImportCommitCommand(segment)) {
-    // electron-vite 5's ESM shim scanner misreads this title as a static import
-    // when the words are one literal, corrupting the packaged main-process chunk.
-    return values('outline.edit', ['outline', 'import'].join(' '), segment);
   }
   if (/\b(?:python(?:3)?|node|deno|bun|ruby|perl|php|osascript|bash|sh|zsh)\b(?:\s|$)/i.test(segment)) {
     return values('shell.local_code_execution', 'local code execution', segment);
@@ -410,22 +421,6 @@ function classifyFindAction(words: readonly string[]): 'destructive' | 'execute'
     }
   }
   return null;
-}
-
-function splitShellSegments(command: string): string[] {
-  const lines = command.split(/\r?\n/);
-  const segments: string[] = [];
-  let heredocEnd: string | null = null;
-  for (const line of lines) {
-    if (heredocEnd) {
-      if (line.trim() === heredocEnd) heredocEnd = null;
-      continue;
-    }
-    const heredoc = /<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?/.exec(line);
-    if (heredoc?.[1]) heredocEnd = heredoc[1];
-    segments.push(...line.split(/\s*(?:&&|\|\||;|\|)\s*/).filter(Boolean));
-  }
-  return segments;
 }
 
 function isSensitivePath(filePath: string): boolean {

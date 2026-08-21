@@ -178,6 +178,7 @@ async function runPreview(args: string[]): Promise<unknown> {
 }
 
 async function runCommit(args: string[]): Promise<unknown> {
+  assertCommitArgs(args);
   const packFile = requiredArg(args, 0, USAGE);
   const previewId = optionValue(args, '--preview-id');
   if (!previewId) throw new CliFailure('invalid_args', '--preview-id is required for commit.', USAGE);
@@ -192,6 +193,39 @@ async function runCommit(args: string[]): Promise<unknown> {
     ...(parentId ? { parentId } : {}),
   });
   return api.data;
+}
+
+function assertCommitArgs(args: string[]): void {
+  const packFile = args[0];
+  if (!packFile || packFile.startsWith('-')) {
+    throw new CliFailure('invalid_args', 'commit requires one Import Pack path before its options.', USAGE);
+  }
+  const valueOptions = new Set(['--preview-id', '--parent-id']);
+  const flagOptions = new Set(['--json']);
+  const seenOptions = new Set<string>();
+  for (let index = 1; index < args.length; index += 1) {
+    const argument = args[index]!;
+    if (valueOptions.has(argument)) {
+      if (seenOptions.has(argument)) {
+        throw new CliFailure('invalid_args', `Duplicate commit option: ${argument}`, USAGE);
+      }
+      const value = args[index + 1];
+      if (!value || value.startsWith('--')) {
+        throw new CliFailure('invalid_args', `${argument} requires a value.`, USAGE);
+      }
+      seenOptions.add(argument);
+      index += 1;
+      continue;
+    }
+    if (flagOptions.has(argument)) {
+      if (seenOptions.has(argument)) {
+        throw new CliFailure('invalid_args', `Duplicate commit option: ${argument}`, USAGE);
+      }
+      seenOptions.add(argument);
+      continue;
+    }
+    throw new CliFailure('invalid_args', `Unexpected commit argument: ${argument}`, USAGE);
+  }
 }
 
 async function writePreviewFile(out: string, pack: ImportPack, previewId?: string): Promise<void> {

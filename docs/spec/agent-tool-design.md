@@ -376,6 +376,12 @@ injects it only into that process environment. The CLI forwards it in a private
 header. The API consumes an authenticated commit token before decoding or
 validating the body, rejects missing, expired, evicted, or reused tokens, and
 rejects request-body causation fields. Preview does not need a causation token.
+Capability classification and token issuance consume the same parsed shell
+segments. A recognized commit segment always contributes `outline.edit` before
+generic shell classification without suppressing other recognized actions in
+that segment, and the CLI rejects unexpected positional arguments plus unknown,
+missing-value, or duplicate commit options before reading the pack or calling
+the API.
 
 Import Pack preview validation rejects tags duplicated after trimmed,
 case-insensitive normalization and fields duplicated after canonical field-name
