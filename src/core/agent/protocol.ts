@@ -1564,7 +1564,6 @@ export type ThreadTrajectoryEvidenceRef =
       readonly callIndex: number;
       readonly messageIndex: number;
       readonly partIndex: number;
-      readonly entryIndex: number;
     }
   | {
       readonly type: 'subagent';

@@ -86,8 +86,7 @@ describe('ThreadTrajectoryProjection', () => {
     const contexts = response.records.filter((record) => record.kind === 'context');
 
     expect(input?.preview).toBe('nihao');
-    expect(contexts.map((record) => record.title)).toEqual(['Turn Environment', 'User View']);
-    expect(new Set(contexts.map((record) => record.id)).size).toBe(contexts.length);
+    expect(contexts.map((record) => record.title)).toEqual(['System Reminder']);
     expect(input?.primaryEvidence).toEqual({
       type: 'threadItem',
       threadId: THREAD_ID,
@@ -109,9 +108,9 @@ describe('ThreadTrajectoryProjection', () => {
         callIndex: 0,
       },
     ]));
-    expect(contexts.map((record) => record.preview)).toContain(
-      '<context-evidence kind="turnEnvironment" authority="application" purpose="observation"> working_directory=/workspace </context-evidence>',
-    );
+    expect(contexts[0]?.preview).toContain('<system-reminder>');
+    expect(contexts[0]?.preview).toContain('<context-evidence kind="turnEnvironment"');
+    expect(contexts[0]?.preview).toContain('<context-evidence kind="userView"');
     expect(contexts.map((record) => record.title)).not.toContain('Additional Context');
     expect(contexts.map((record) => record.title)).not.toContain('Tool Output Projection');
 
@@ -127,7 +126,7 @@ describe('ThreadTrajectoryProjection', () => {
     expect(JSON.stringify(detail.detail)).not.toContain('Turn environment');
     expect(decodeAgentCoreResponse('thread/trajectory/detail/read', detail)).toEqual(detail);
 
-    const context = contexts.find((record) => record.title === 'Turn Environment');
+    const context = contexts.find((record) => record.title === 'System Reminder');
     if (!context) throw new Error('Expected context record');
     const contextDetail = await projection.readDetail({ threadId: THREAD_ID, recordId: context.id });
     expect(contextDetail.detail?.kind).toBe('context');
@@ -141,12 +140,13 @@ describe('ThreadTrajectoryProjection', () => {
       callIndex: 0,
       messageIndex: 0,
       partIndex: 1,
-      entryIndex: 0,
     });
     expect(context.relatedEvidence).toEqual([{ type: 'providerCall', threadId: THREAD_ID, turnId: TURN_ID, callIndex: 0 }]);
-    expect(contextDetail.detail.modelContextText).not.toContain('<system-reminder>');
+    expect(contextDetail.detail.modelContextText).toContain('<system-reminder>');
     expect(contextDetail.detail.modelContextText).toContain('<context-evidence kind="turnEnvironment"');
     expect(contextDetail.detail.modelContextText).toContain('working_directory=/workspace');
+    expect(contextDetail.detail.modelContextText).toContain('<context-evidence kind="userView"');
+    expect(contextDetail.detail.modelContextText).toContain('active_panel_id=panel-1');
     expect(decodeAgentCoreResponse('thread/trajectory/detail/read', contextDetail)).toEqual(contextDetail);
   });
 });

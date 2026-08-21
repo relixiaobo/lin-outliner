@@ -2289,7 +2289,6 @@ function decodeThreadTrajectoryEvidenceRef(value: unknown, path: string): Thread
       'callIndex',
       'messageIndex',
       'partIndex',
-      'entryIndex',
     ], path);
     return {
       type,
@@ -2298,7 +2297,6 @@ function decodeThreadTrajectoryEvidenceRef(value: unknown, path: string): Thread
       callIndex: nonNegativeInteger(record.callIndex, `${path}.callIndex`),
       messageIndex: nonNegativeInteger(record.messageIndex, `${path}.messageIndex`),
       partIndex: nonNegativeInteger(record.partIndex, `${path}.partIndex`),
-      entryIndex: nonNegativeInteger(record.entryIndex, `${path}.entryIndex`),
     };
   }
   exactKeys(record, ['type', 'threadId', 'turnId', 'agentThreadId', 'itemId'], path);

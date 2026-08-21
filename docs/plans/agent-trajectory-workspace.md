@@ -270,7 +270,10 @@ canonical provider context whenever diagnostics retained it. That is the
 provider-context boundary, after projection, budgeting, compaction, and
 renderer-facing sanitization. Non-stable context rows are keyed by a
 diagnostics-backed prepared-context-part evidence reference, not by the retained
-`contextEvidence` Item. If a retained `contextEvidence` Item emitted no
+`contextEvidence` Item. A prepared provider content part is the ledger unit: if
+one `<system-reminder>` part contains multiple `<context-evidence>` blocks, it
+appears as one CONTEXT row and the inspector shows the whole part text. If a
+retained `contextEvidence` Item emitted no
 model-visible text, it is not a Trajectory message row. Frozen tool-output
 projection Items are storage evidence for replaying tool results; they do not
 appear as CONTEXT rows unless their text is explicitly emitted inside prepared

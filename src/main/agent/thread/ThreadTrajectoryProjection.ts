@@ -456,8 +456,7 @@ interface PreparedContextPartRecord {
   readonly callIndex: number;
   readonly messageIndex: number;
   readonly partIndex: number;
-  readonly entryIndex: number;
-  readonly entry: TurnDiagnosticsSystemContextEntry;
+  readonly entries: readonly TurnDiagnosticsSystemContextEntry[];
   readonly text: string;
   readonly requestedAt: number;
 }
@@ -480,19 +479,14 @@ function preparedContextPartRecord(
   if (!messageId) return null;
   const provenance = call.preparedContext.messagePartProvenance[ref.messageIndex]?.[ref.partIndex] ?? null;
   if (provenance?.source !== 'systemContext') return null;
-  const entry = provenance.entries[ref.entryIndex] ?? null;
-  if (!entry) return null;
   const partText = textForMessagePart(messagesById.get(messageId) ?? null, ref.partIndex);
   if (!partText) return null;
-  const text = systemContextEntryText(partText, ref.entryIndex);
-  if (!text) return null;
   return {
     callIndex: ref.callIndex,
     messageIndex: ref.messageIndex,
     partIndex: ref.partIndex,
-    entryIndex: ref.entryIndex,
-    entry,
-    text: sanitizeTextEvidence(text),
+    entries: provenance.entries,
+    text: sanitizeTextEvidence(partText),
     requestedAt: call.requestedAt,
   };
 }
@@ -513,35 +507,15 @@ function preparedContextPartRecords(
     if (provenance.source !== 'systemContext') return [];
     const partText = textForMessagePart(message, partIndex);
     if (!partText) return [];
-    return provenance.entries.flatMap((entry, entryIndex): PreparedContextPartRecord[] => {
-      const text = systemContextEntryText(partText, entryIndex);
-      return text
-        ? [{
-          callIndex: call.index,
-          messageIndex,
-          partIndex,
-          entryIndex,
-          entry,
-          text: sanitizeTextEvidence(text),
-          requestedAt: call.requestedAt,
-        }]
-        : [];
-    });
+    return [{
+      callIndex: call.index,
+      messageIndex,
+      partIndex,
+      entries: provenance.entries,
+      text: sanitizeTextEvidence(partText),
+      requestedAt: call.requestedAt,
+    }];
   });
-}
-
-function systemContextEntryText(partText: string, entryIndex: number): string | null {
-  const blocks = contextEvidenceBlocks(partText);
-  if (blocks.length > 0) return blocks[entryIndex] ?? null;
-  return entryIndex === 0 ? partText : null;
-}
-
-function contextEvidenceBlocks(text: string): readonly string[] {
-  const blocks: string[] = [];
-  const pattern = /<context-evidence\b[^>]*>[\s\S]*?<\/context-evidence>/gu;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(text)) !== null) blocks.push(match[0]);
-  return blocks;
 }
 
 function textForMessagePart(message: JsonValue | null, partIndex: number): string | null {
@@ -850,8 +824,8 @@ function appendPreparedContextRecords(
       threadId: loaded.threadId,
       turn: loaded.turn,
       records,
-      title: contextEntryTitle(context.entry),
-      subtitle: `${context.entry.authority} · ${context.entry.purpose}`,
+      title: contextPartTitle(context.entries),
+      subtitle: contextPartSubtitle(context.entries),
       preview: compact(context.text),
       state: 'completed',
       timing: timing(context.requestedAt, null, context.requestedAt),
@@ -1052,7 +1026,6 @@ function trajectoryRecordId(
       evidence.callIndex,
       evidence.messageIndex,
       evidence.partIndex,
-      evidence.entryIndex,
     ].join(':');
   }
   if (evidence.type === 'threadItem') return `turn:${turnId}:${kind}:item:${evidence.itemId}`;
@@ -1075,7 +1048,7 @@ function stablePromptEvidenceRef(threadId: ThreadId, turn: Turn): ThreadTrajecto
 function preparedContextPartEvidence(
   threadId: ThreadId,
   turn: Turn,
-  context: Pick<PreparedContextPartRecord, 'callIndex' | 'messageIndex' | 'partIndex' | 'entryIndex'>,
+  context: Pick<PreparedContextPartRecord, 'callIndex' | 'messageIndex' | 'partIndex'>,
 ): ThreadTrajectoryEvidenceRef {
   return {
     type: 'preparedContextPart',
@@ -1084,7 +1057,6 @@ function preparedContextPartEvidence(
     callIndex: context.callIndex,
     messageIndex: context.messageIndex,
     partIndex: context.partIndex,
-    entryIndex: context.entryIndex,
   };
 }
 
@@ -1387,8 +1359,16 @@ function contextEvidenceTitle(item: ContextEvidenceThreadItem): string {
   return contextKindTitle(item.kind);
 }
 
-function contextEntryTitle(entry: TurnDiagnosticsSystemContextEntry): string {
-  return contextKindTitle(entry.kind);
+function contextPartTitle(entries: readonly TurnDiagnosticsSystemContextEntry[]): string {
+  return entries.length === 1 ? contextKindTitle(entries[0]!.kind) : 'System Reminder';
+}
+
+function contextPartSubtitle(entries: readonly TurnDiagnosticsSystemContextEntry[]): string | null {
+  if (entries.length === 1) {
+    const entry = entries[0]!;
+    return `${entry.authority} · ${entry.purpose}`;
+  }
+  return `${entries.length} context blocks`;
 }
 
 function contextKindTitle(kind: string): string {

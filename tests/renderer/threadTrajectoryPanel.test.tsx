@@ -25,7 +25,7 @@ const THREAD_ID = '01910000-0000-7000-8000-000000000001';
 const TURN_ID = '01910000-0000-7000-8000-000000000002';
 const CHILD_THREAD_ID = '01910000-0000-7000-8000-000000000003';
 const INPUT_ID = `turn:${TURN_ID}:input:0`;
-const CONTEXT_ID = `turn:${TURN_ID}:context:prepared:0:0:1:0`;
+const CONTEXT_ID = `turn:${TURN_ID}:context:prepared:0:0:1`;
 const ASSISTANT_ID = `turn:${TURN_ID}:assistant:0`;
 const TOOL_ID = `turn:${TURN_ID}:tool:2:call%3Aread`;
 const DELEGATION_ID = `turn:${TURN_ID}:delegation:2:call%3Aagent`;
@@ -193,7 +193,6 @@ describe('ThreadTrajectoryPanel', () => {
         callIndex: 0,
         messageIndex: 0,
         partIndex: 1,
-        entryIndex: 0,
       },
     });
     const rendered = renderPanel(async (method, request) => {
@@ -240,7 +239,6 @@ describe('ThreadTrajectoryPanel', () => {
         callIndex: 0,
         messageIndex: 0,
         partIndex: 1,
-        entryIndex: 0,
       },
     });
     const modelContextText = [
