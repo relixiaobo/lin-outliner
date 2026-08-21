@@ -521,6 +521,31 @@ describe('agent node tools', () => {
     expect(fieldTypeOf(core, entryId)).toBe('url');
   });
 
+  test('node_create rolls back outline writes when a later field value fails validation', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const seed = mustFocus(core.createNode(today, null, 'Seed'));
+    mustFocus(core.createInlineField(seed, null, 'Cached input', 'url'));
+    const beforeRevision = core.revision();
+    const beforeNodeIds = Object.keys(core.state().nodes).sort();
+
+    const envelope = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      outline: [
+        '- Pricing table',
+        '  - Already created child',
+        '  - Cached input:: 0.5 / 1',
+      ].join('\n'),
+    });
+
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error?.code).toBe('mutation_failed');
+    expect(core.revision()).toBe(beforeRevision);
+    expect(Object.keys(core.state().nodes).sort()).toEqual(beforeNodeIds);
+    expect(Object.values(core.state().nodes).some((node) => node.content.text === 'Pricing table')).toBe(false);
+    expect(core.operationHistory({ origin: 'agent', limit: 10 }).total).toBe(0);
+  });
+
   test('node_read exposes definition config for editable field definitions', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
@@ -2085,6 +2110,41 @@ describe('agent node tools', () => {
     expect(core.state().nodes[root]!.content.text).toBe('Renamed');
     expect(core.state().nodes[statusValue]!.content.text).toBe('Closed');
     expect(core.state().nodes[root]!.completedAt).toBeGreaterThan(0);
+  });
+
+  test('node_edit rolls back earlier mutations when a later host command fails', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const root = mustFocus(core.createNode(today, null, 'Task'));
+    const statusField = mustFocus(core.createInlineField(root, null, 'Status', 'plain'));
+    const statusValue = mustFocus(core.createNode(statusField, null, 'Open'));
+    const beforeRevision = core.revision();
+    const beforeNodeIds = Object.keys(core.state().nodes).sort();
+    const baseHost = hostFor(core);
+    let rootPatchApplied = false;
+
+    const envelope = await executeTool(core, 'node_edit', {
+      node_id: root,
+      old_string: `- %%node:${root}%% Task\n  - %%node:${statusField}%% Status::\n    - %%node:${statusValue}%% Open`,
+      new_string: `- %%node:${root}%% Renamed\n  - %%node:${statusField}%% Status::\n    - %%node:${statusValue}%% Closed`,
+    }, undefined, {
+      handle: async (command, args = {}, meta = {}) => {
+        if (command === 'apply_node_text_patch' && args.nodeId === statusValue && rootPatchApplied) {
+          throw new Error('simulated host failure after first mutation');
+        }
+        const outcome = await baseHost.handle(command, args, meta);
+        if (command === 'apply_node_text_patch' && args.nodeId === root) rootPatchApplied = true;
+        return outcome;
+      },
+    });
+
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error?.code).toBe('mutation_failed');
+    expect(core.revision()).toBe(beforeRevision);
+    expect(Object.keys(core.state().nodes).sort()).toEqual(beforeNodeIds);
+    expect(core.state().nodes[root]!.content.text).toBe('Task');
+    expect(core.state().nodes[statusValue]!.content.text).toBe('Open');
+    expect(core.operationHistory({ origin: 'agent', limit: 10 }).total).toBe(0);
   });
 
   test('node_edit replace_outline uses sparse mutation facts with a read-model host', async () => {
