@@ -1518,7 +1518,10 @@ imperative adapter reads the browser-clamped position and live Turns origin, the
 uses `flushSync` only for that uncovered range before the callback returns. Rapid
 reader scrolls cancel stale height compensation; trusted scroll events caused by
 layout settling retain it. Pointer drag, wheel, touch, keyboard, and untrusted
-test scrolls are all classified as reader intent.
+test scrolls are all classified as reader intent. Pointerdown that begins on an
+interactive control inside the transcript is not scroll intent by itself; if the
+control click or browser action actually moves the scroller, the later scroll
+event is what arbitrates ownership.
 
 A layout-effect writer never calls `flushSync`. It creates a generation-tagged
 transaction and predicts the clamped target viewport. If that viewport is not

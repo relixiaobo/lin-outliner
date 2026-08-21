@@ -8023,10 +8023,7 @@ test('opens a long message downward while a send spacer owns the rendered bottom
   expect(before.bottomDistance).toBeLessThanOrEqual(1);
   expect(before.spacerHeight).toBeGreaterThan(0);
 
-  await disclosure.evaluate((element) => {
-    if (!(element instanceof HTMLButtonElement)) throw new Error('Disclosure is not a button');
-    element.click();
-  });
+  await disclosure.click();
   await expect(disclosure).toHaveAccessibleName('Show less');
   const after = await message.evaluate((element) => {
     const transcriptElement = element.closest<HTMLElement>('.thread-transcript');

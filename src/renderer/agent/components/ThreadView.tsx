@@ -254,6 +254,28 @@ const TRANSCRIPT_SCROLL_INTENT_KEYS = new Set([
   'PageUp',
   ' ',
 ]);
+function isInteractiveTranscriptPointerTarget(
+  target: EventTarget | null,
+  transcript: HTMLElement,
+): boolean {
+  if (!(target instanceof Element)) return false;
+  const interactive = target.closest([
+    'a[href]',
+    'button',
+    'input',
+    'select',
+    'summary',
+    'textarea',
+    '[contenteditable]:not([contenteditable="false"])',
+    '[role="button"]',
+    '[role="checkbox"]',
+    '[role="menuitem"]',
+    '[role="menuitemcheckbox"]',
+    '[role="menuitemradio"]',
+    '[role="textbox"]',
+  ].join(','));
+  return interactive !== null && transcript.contains(interactive);
+}
 const EMPTY_COMPOSER_DRAFT: ThreadComposerDraft = {
   content: [],
   empty: true,
@@ -2524,7 +2546,10 @@ export function ThreadView({
             if (TRANSCRIPT_SCROLL_INTENT_KEYS.has(event.key)) markTransientScrollIntent();
           }}
           onPointerCancel={endPointerScrollIntent}
-          onPointerDown={beginPointerScrollIntent}
+          onPointerDown={(event) => {
+            if (isInteractiveTranscriptPointerTarget(event.target, event.currentTarget)) return;
+            beginPointerScrollIntent();
+          }}
           onPointerUp={endPointerScrollIntent}
           onScroll={(event) => {
             const scroll = event.currentTarget;
