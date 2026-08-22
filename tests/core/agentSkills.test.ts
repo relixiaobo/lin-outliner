@@ -592,7 +592,10 @@ describe('agent skills', () => {
       includeUserSkills: false,
       executeSkillShell: async ({ skill, command, shell }) => {
         calls.push({ skill: skill.name, command, shell });
-        return command.includes('block') ? 'BLOCK_OUTPUT' : 'INLINE_OUTPUT';
+        return {
+          output: command.includes('block') ? 'BLOCK_OUTPUT' : 'INLINE_OUTPUT',
+          resourceRefs: [],
+        };
       },
       executeIsolatedSkill: async () => ({
         threadId: 'isolated-thread-test',
@@ -615,6 +618,112 @@ describe('agent skills', () => {
     ]);
   });
 
+  test('keeps embedded shell paths live while persisting only stable Skill evidence', async () => {
+    const root = await createSkillFixture('artifact-skill', {
+      frontmatter: [
+        'description: Artifact-producing skill',
+        'execution: isolated',
+        'shell: bash',
+      ],
+      body: 'Inspect this output:\n```!\nproduce-report\n```',
+    });
+    const resourceRef = {
+      id: 'a'.repeat(64),
+      mimeType: 'application/pdf',
+      byteLength: 120,
+      fileName: 'report.pdf',
+    };
+    const readablePath = '/tmp/turn-artifacts/report.pdf';
+    let isolatedInstructions = '';
+    const runtime = new AgentSkillRuntime({
+      localRoot: root,
+      includeUserSkills: false,
+      executeSkillShell: async () => ({
+        output: `resource=${resourceRef.id}\nCurrent readable path: ${readablePath}`,
+        persistedOutput: `resource=${resourceRef.id}`,
+        resourceRefs: [resourceRef],
+        artifacts: [{ ref: resourceRef, readablePath, label: 'Generated report' }],
+      }),
+      executeIsolatedSkill: async ({ renderedContent }) => {
+        isolatedInstructions = renderedContent;
+        return {
+          threadId: 'artifact-skill-child',
+          agentRole: 'worker',
+          status: 'completed',
+          result: 'Report inspected',
+        };
+      },
+    });
+
+    const invocation = await runtime.invokeSkill({ skill: 'artifact-skill', trigger: 'agent' });
+    expect(invocation.ok).toBe(true);
+    if (!invocation.ok) return;
+    expect(isolatedInstructions).toContain(readablePath);
+    expect(invocation.renderedContent).toContain(readablePath);
+    expect(invocation.evidence.instructions).not.toContain(readablePath);
+    expect(invocation.evidence.instructions).toContain(resourceRef.id);
+    expect(invocation.resourceRefs).toEqual([resourceRef]);
+
+    const result = await createSkillTool(runtime).execute('artifact-skill-call', {
+      skill: 'artifact-skill',
+    });
+    const visible = JSON.parse(result.content[0]!.text);
+    expect(visible.data.artifacts).toEqual([{
+      label: 'Generated report',
+      resourceRef,
+      filePath: readablePath,
+    }]);
+    expect(result.resourceRefs).toEqual([resourceRef]);
+    expect(JSON.stringify(result.details)).not.toContain(readablePath);
+  });
+
+  test('preserves artifact ownership when embedded shell expansion fails', async () => {
+    const root = await createSkillFixture('failing-artifact-skill', {
+      frontmatter: [
+        'description: Failing artifact skill',
+        'execution: isolated',
+        'shell: bash',
+      ],
+      body: '```!\nproduce-partial\n```',
+    });
+    const resourceRef = {
+      id: 'b'.repeat(64),
+      mimeType: 'text/plain',
+      byteLength: 7,
+      fileName: 'partial.txt',
+    };
+    const readablePath = '/tmp/turn-artifacts/partial.txt';
+    const runtime = new AgentSkillRuntime({
+      localRoot: root,
+      includeUserSkills: false,
+      executeSkillShell: async () => {
+        throw Object.assign(new Error(`Command failed; readable path: ${readablePath}`), {
+          persistedMessage: `Command failed; resource=${resourceRef.id}`,
+          resourceRefs: [resourceRef],
+          artifacts: [{ ref: resourceRef, readablePath, label: 'Partial output' }],
+        });
+      },
+    });
+
+    const invocation = await runtime.invokeSkill({ skill: 'failing-artifact-skill', trigger: 'agent' });
+    expect(invocation).toMatchObject({
+      ok: false,
+      code: 'skill_shell_failed',
+      persistedMessage: `Command failed; resource=${resourceRef.id}`,
+      resourceRefs: [resourceRef],
+    });
+    const result = await createSkillTool(runtime).execute('failing-artifact-skill-call', {
+      skill: 'failing-artifact-skill',
+    });
+    expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+      ok: false,
+      data: { artifacts: [{ filePath: readablePath, resourceRef }] },
+      error: { code: 'skill_shell_failed', message: `Command failed; resource=${resourceRef.id}` },
+    });
+    expect(JSON.stringify(result.details)).not.toContain(readablePath);
+    expect(result.resourceRefs).toEqual([resourceRef]);
+  });
+
   test('rejects unsupported skill shell frontmatter at load time', async () => {
     const root = await createSkillFixture('demo', {
       frontmatter: [
@@ -627,7 +736,7 @@ describe('agent skills', () => {
     const runtime = new AgentSkillRuntime({
       localRoot: root,
       includeUserSkills: false,
-      executeSkillShell: async () => 'NOPE',
+      executeSkillShell: async () => ({ output: 'NOPE', resourceRefs: [] }),
     });
     expect(await runtime.getSkill('demo')).toBeNull();
 
@@ -652,7 +761,7 @@ describe('agent skills', () => {
       includeUserSkills: false,
       executeSkillShell: async () => {
         shellCalls += 1;
-        return 'NOPE';
+        return { output: 'NOPE', resourceRefs: [] };
       },
     });
 

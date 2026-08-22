@@ -1,5 +1,9 @@
 import type { ToolCall } from '../runtime/kernel/types';
 import { randomUUID } from 'node:crypto';
+import type { ThreadResourceReference } from '../../../core/agent/protocol';
+import type { SkillDefinition } from '../../../core/types';
+import type { SkillShellArtifactObservation } from './agentSkills';
+import type { ToolArtifactSink } from '../runtime/ToolArtifactSink';
 import {
   evaluateAgentToolCapability,
   type AgentCapabilityConfig,
@@ -10,6 +14,8 @@ import {
 } from './subagentToolPolicy';
 import {
   runLocalBashCommand,
+  type AgentShellOutputRoot,
+  type AgentShellProcessEnvironment,
   type AgentShellProcessEnvironmentProvider,
   type AgentWorkspaceWriteBoundary,
   type LocalBashRunResult,
@@ -30,19 +36,33 @@ export interface AgentSkillShellCommandInput {
   processEnvironment?: AgentShellProcessEnvironmentProvider;
   writeBoundary?: AgentWorkspaceWriteBoundary;
   subagentPolicy?: SubagentToolPolicy;
+  skill?: Pick<SkillDefinition, 'name' | 'source'>;
+  artifactSink?: ToolArtifactSink;
+}
+
+export interface AgentSkillShellCommandResult {
+  readonly output: string;
+  readonly persistedOutput: string;
+  readonly resourceRefs: readonly ThreadResourceReference[];
+  readonly artifacts: readonly SkillShellArtifactObservation[];
 }
 
 export class AgentSkillShellError extends Error {
   constructor(
     readonly code: 'operation_unavailable' | 'command_failed',
     message: string,
+    readonly persistedMessage: string = message,
+    readonly resourceRefs: readonly ThreadResourceReference[] = [],
+    readonly artifacts: readonly SkillShellArtifactObservation[] = [],
   ) {
     super(message);
     this.name = 'AgentSkillShellError';
   }
 }
 
-export async function executeAgentSkillShellCommand(input: AgentSkillShellCommandInput): Promise<string> {
+export async function executeAgentSkillShellCommand(
+  input: AgentSkillShellCommandInput,
+): Promise<AgentSkillShellCommandResult> {
   const toolCall: ToolCall = {
     type: 'toolCall',
     id: input.toolCallId ?? `skill-shell-${randomUUID()}`,
@@ -89,6 +109,17 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
 
   await append();
 
+  const shellEnvironment = await resolveSkillShellEnvironment(input.processEnvironment, {
+    toolCallId: toolCall.id,
+    command: input.command,
+  });
+  const declaredRoots = input.skill?.source === 'managed'
+    ? (shellEnvironment?.declaredOutputRoots ?? []).filter((root) => root.skillId === input.skill!.name)
+    : [];
+  const scopedShellEnvironment = shellEnvironment
+    ? { ...shellEnvironment, declaredOutputRoots: declaredRoots }
+    : undefined;
+
   let result: LocalBashRunResult;
   try {
     result = await runLocalBashCommand({
@@ -97,17 +128,41 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
       command: input.command,
       signal: input.signal,
       toolCallId: toolCall.id,
-      processEnvironment: input.processEnvironment,
+      processEnvironment: scopedShellEnvironment ? async () => scopedShellEnvironment : undefined,
       writeBoundary: input.writeBoundary,
+      artifactSink: input.artifactSink,
     });
   } catch (error) {
     throw new AgentSkillShellError('command_failed', errorMessage(error));
   }
+  const artifacts = uniqueSkillArtifacts([
+    ...(result.persistedOutput ? [{
+      ref: result.persistedOutput.resourceRef,
+      readablePath: result.persistedOutput.filePath ?? null,
+      label: 'Shell saved output',
+    }] : []),
+    ...(result.artifacts ?? []),
+  ]);
+  const resourceRefs = uniqueResourceRefs([
+    ...artifacts.map((artifact) => artifact.ref),
+  ]);
+  const output = formatSkillShellOutput(result, true, declaredRoots);
+  const persistedOutput = formatSkillShellOutput(result, false, declaredRoots);
   if (result.isError) {
-    const output = formatSkillShellOutput(result);
-    throw new AgentSkillShellError('command_failed', output || result.errorMessage || result.returnCodeInterpretation || 'Command failed.');
+    throw new AgentSkillShellError(
+      'command_failed',
+      output || result.errorMessage || result.returnCodeInterpretation || 'Command failed.',
+      persistedOutput || result.errorMessage || result.returnCodeInterpretation || 'Command failed.',
+      resourceRefs,
+      artifacts,
+    );
   }
-  return formatSkillShellOutput(result);
+  return {
+    output,
+    persistedOutput,
+    resourceRefs,
+    artifacts,
+  };
 }
 
 async function loadAgentCapabilityConfig(): Promise<AgentCapabilityConfig> {
@@ -115,14 +170,76 @@ async function loadAgentCapabilityConfig(): Promise<AgentCapabilityConfig> {
   return readAgentCapabilityConfig();
 }
 
-function formatSkillShellOutput(result: Pick<LocalBashRunResult, 'stdout' | 'stderr' | 'persistedOutputPath'>): string {
+function formatSkillShellOutput(
+  result: Pick<LocalBashRunResult, 'stdout' | 'stderr' | 'persistedOutput' | 'artifacts' | 'artifactWarnings'>,
+  includeReadablePaths = true,
+  declaredRoots: readonly AgentShellOutputRoot[] = [],
+): string {
   const parts: string[] = [];
-  if (result.stdout.trim()) parts.push(result.stdout.trim());
-  if (result.stderr.trim()) parts.push(`[stderr]\n${result.stderr.trim()}`);
-  if (result.persistedOutputPath) {
-    parts.push(`[output saved]\nFull output was saved to ${result.persistedOutputPath}. Use file_read if more detail is needed.`);
+  const stdout = stableSkillShellText(result.stdout, includeReadablePaths, declaredRoots).trim();
+  const stderr = stableSkillShellText(result.stderr, includeReadablePaths, declaredRoots).trim();
+  if (stdout) parts.push(stdout);
+  if (stderr) parts.push(`[stderr]\n${stderr}`);
+  if (result.persistedOutput) {
+    parts.push([
+      '[output saved]',
+      `resource=${result.persistedOutput.resourceRef.id}, bytes=${result.persistedOutput.byteLength}`,
+      ...(includeReadablePaths && result.persistedOutput.filePath
+        ? [`Current readable path: ${result.persistedOutput.filePath}. Use file_read if more detail is needed.`]
+        : includeReadablePaths ? ['No readable path is currently available.'] : []),
+    ].join('\n'));
   }
+  if (result.artifacts?.length) parts.push([
+    '[produced artifacts]',
+    ...result.artifacts.flatMap((artifact) => [
+      `- ${artifact.label}: resource=${artifact.ref.id}, bytes=${artifact.ref.byteLength}`,
+      includeReadablePaths && artifact.readablePath
+        ? `  Current readable path: ${artifact.readablePath}`
+        : includeReadablePaths ? '  No readable path is currently available.' : '',
+    ]),
+  ].filter(Boolean).join('\n'));
+  const warnings = (result.artifactWarnings ?? []).map((warning) => (
+    stableSkillShellText(warning, includeReadablePaths, declaredRoots)
+  ));
+  if (warnings.length > 0) parts.push(`[artifact warnings]\n${warnings.map((warning) => `- ${warning}`).join('\n')}`);
   return parts.join('\n');
+}
+
+async function resolveSkillShellEnvironment(
+  provider: AgentShellProcessEnvironmentProvider | undefined,
+  context: { readonly toolCallId: string; readonly command: string },
+): Promise<AgentShellProcessEnvironment | undefined> {
+  if (!provider) return undefined;
+  try {
+    return await provider(context);
+  } catch (error) {
+    console.warn('[agent] managed Skill shell environment failed; continuing without it', error);
+    return undefined;
+  }
+}
+
+function stableSkillShellText(
+  text: string,
+  includeReadablePaths: boolean,
+  declaredRoots: readonly AgentShellOutputRoot[],
+): string {
+  if (includeReadablePaths) return text;
+  return declaredRoots.reduce((result, root) => (
+    result.replaceAll(root.path, `[managed-output:${root.id}]`)
+  ), text);
+}
+
+function uniqueResourceRefs(refs: readonly ThreadResourceReference[]): ThreadResourceReference[] {
+  return [...new Map(refs.map((ref) => [`${ref.id}\0${ref.fileName}`, ref])).values()];
+}
+
+function uniqueSkillArtifacts(
+  artifacts: readonly SkillShellArtifactObservation[],
+): SkillShellArtifactObservation[] {
+  return [...new Map(artifacts.map((artifact) => [
+    `${artifact.ref.id}\0${artifact.ref.fileName}\0${artifact.label}`,
+    artifact,
+  ])).values()];
 }
 
 function errorMessage(error: unknown): string {

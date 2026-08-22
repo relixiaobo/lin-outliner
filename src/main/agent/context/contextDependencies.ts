@@ -28,26 +28,28 @@ interface ScannedThreadItemResourceUsage extends ThreadItemResourceUsage {
 }
 
 export function itemResourceReferences(item: ThreadItem): ThreadResourceReference[] {
-  let references: ThreadResourceReference[];
+  let references: ThreadResourceReference[] = itemToolResourceReferences(item);
   if (item.type === 'userMessage') {
-    references = item.content.flatMap((content) => content.type === 'attachment'
+    references.push(...item.content.flatMap((content) => content.type === 'attachment'
       ? [
           ...(content.source.kind === 'threadPayload' ? [content.source.ref] : []),
           ...(content.artifactRef ? imageArtifactResourceReferences(content.artifactRef) : []),
         ]
-      : []);
+      : []));
   } else if (item.type === 'dynamicToolCall') {
-    references = (item.contentItems ?? []).flatMap((content) => (
+    references.push(...(item.contentItems ?? []).flatMap((content) => (
       content.type !== 'image'
         ? []
         : imageArtifactResourceReferences(content.artifactRef)
-    ));
-  } else {
-    references = item.type === 'contextEvidence' || item.type === 'contextCompaction'
-      ? [...item.resourceRefs]
-      : [];
+    )));
+  } else if (item.type === 'contextEvidence' || item.type === 'contextCompaction') {
+    references.push(...item.resourceRefs);
   }
   return [...new Map(references.map((ref) => [resourceReferenceKey(ref), ref])).values()];
+}
+
+export function itemToolResourceReferences(item: ThreadItem): ThreadResourceReference[] {
+  return 'modelCall' in item ? [...(item.resourceRefs ?? [])] : [];
 }
 
 export function itemImageArtifactReferences(item: ThreadItem): ThreadImageArtifactReference[] {
@@ -115,13 +117,15 @@ export async function scanThreadItemResourceUsage(
   const scanItem = async (item: ThreadItem): Promise<ScannedThreadItemResourceUsage> => {
     const directArtifacts = itemImageArtifactReferences(item);
     if (item.type !== 'contextEvidence' && item.type !== 'contextCompaction') {
+      const toolResources = new Set(itemToolResourceReferences(item).map(resourceStorageIdentity));
       const artifactResources = new Set(directArtifacts
         .flatMap(imageArtifactResourceReferences)
         .map(resourceStorageIdentity));
       return normalizeResourceUsage({
         artifacts: directArtifacts,
         genericResources: itemResourceReferences(item).filter((ref) => (
-          !artifactResources.has(resourceStorageIdentity(ref))
+          toolResources.has(resourceStorageIdentity(ref))
+          || !artifactResources.has(resourceStorageIdentity(ref))
         )),
         complete: true,
       });

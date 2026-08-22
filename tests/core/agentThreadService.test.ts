@@ -353,6 +353,48 @@ class ForkPayloadExecutor extends ControlledExecutor {
   }
 }
 
+class ToolResourceExecutor extends ControlledExecutor {
+  readonly resourceRefs: ThreadResourceReference[] = [];
+
+  override async execute(context: TurnExecutionContext): Promise<TurnExecutionResult> {
+    const artifactIndex = this.resourceRefs.length + 1;
+    const bytes = Buffer.from(`durable tool artifact ${artifactIndex}`);
+    const resourceRef = await context.persistOutputResource(
+      bytes,
+      'text/plain',
+      `tool-artifact-${artifactIndex}.txt`,
+    );
+    this.resourceRefs.push(resourceRef);
+    const itemId = context.recorder.createItemId();
+    const started: ThreadItem = {
+      type: 'dynamicToolCall',
+      id: itemId,
+      provenance: context.recorder.localProvenance(itemId),
+      status: 'inProgress',
+      outputRef: null,
+      resourceRefs: [],
+      namespace: null,
+      tool: 'web_fetch',
+      arguments: { url: `https://example.test/artifact-${artifactIndex}` },
+      contentItems: null,
+      success: null,
+      durationMs: null,
+      modelCall: replayableModelCall('web_fetch', {
+        url: `https://example.test/artifact-${artifactIndex}`,
+      }),
+    };
+    await context.recorder.started(started);
+    await context.recorder.completed({
+      ...started,
+      status: 'completed',
+      resourceRefs: [resourceRef],
+      success: true,
+      durationMs: 1,
+    });
+    return super.execute(context);
+  }
+}
+
 class GeneratedImageHistoryExecutor implements TurnExecutor {
   readonly contexts: TurnExecutionContext[] = [];
   sourcePath: string | null = null;
@@ -625,6 +667,12 @@ class ContextPayloadExecutor extends ControlledExecutor {
       'image/png',
     );
     const inheritedImageArtifact = outputImageArtifact(inheritedImage);
+    const inheritedToolResource = await this.payloads.writeResource(
+      context.thread.id,
+      Buffer.from('nested tool resource'),
+      'text/plain',
+      'nested-tool.txt',
+    );
     const inheritedTurnId = uuidV7();
     const inheritedItemId = uuidV7();
     const inheritedTurn: Turn = {
@@ -642,6 +690,7 @@ class ContextPayloadExecutor extends ControlledExecutor {
         arguments: {},
         status: 'completed',
         outputRef: null,
+        resourceRefs: [inheritedToolResource],
         contentItems: [{
           type: 'image',
           artifactRef: inheritedImageArtifact,
@@ -680,7 +729,7 @@ class ContextPayloadExecutor extends ControlledExecutor {
       payloadRef: inheritedPayloadRef,
       summary: 'Inherited context with a managed image',
       contextRefs: [],
-      resourceRefs: [inheritedImageArtifact.observation],
+      resourceRefs: [inheritedImageArtifact.observation, inheritedToolResource],
       outputRefs: [],
     });
     const resetId = context.recorder.createItemId();
@@ -3715,12 +3764,18 @@ describe('ThreadService', () => {
     const nestedImage = inheritedPayload.turns[0]?.items
       .find((item) => item.type === 'dynamicToolCall')
       ?.contentItems?.find((content) => content.type === 'image');
+    const nestedToolResource = inheritedPayload.turns[0]?.items
+      .find((item) => item.type === 'dynamicToolCall')
+      ?.resourceRefs[0];
     if (!nestedImage) {
       throw new Error('Fork inherited context image reference missing');
     }
     expect(nestedImage.artifactRef.observation).toEqual(forkInherited.resourceRefs[0]);
     expect(await stores.payloads.readResource(fork.id, nestedImage.artifactRef.observation))
       .toEqual(ONE_PIXEL_PNG_BYTES);
+    expect(nestedToolResource).toEqual(forkInherited.resourceRefs[1]);
+    expect(await stores.payloads.readResource(fork.id, nestedToolResource!))
+      .toEqual(Buffer.from('nested tool resource'));
     const previewFile = await service.resolveThreadResourceFile(fork.id, nestedImage.artifactRef.observation);
     if (!previewFile) throw new Error('Fork inherited context image preview missing');
     expect(previewFile.path).not.toContain(join('payloads', fork.id));
@@ -4653,6 +4708,68 @@ describe('ThreadService', () => {
     expect(await reopened.service.readThreadResource(thread.id, retained)).toEqual(Buffer.from('retained'));
     expect(await reopened.service.readThreadResource(thread.id, crashLeftover)).toBeNull();
     await reopened.service.close();
+  });
+
+  test('owns tool artifacts across restart and fork, then prunes them with their Item owner', async () => {
+    const executor = new ToolResourceExecutor();
+    const fixture = await createFixture(undefined, {}, executor);
+    const source = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: source.id,
+      input: [{ type: 'text', text: 'Produce a durable tool artifact' }],
+    });
+    await executor.waitUntilWaiting();
+    executor.finish();
+    await fixture.service.waitForIdle(source.id);
+    const resourceRef = executor.resourceRefs[0]!;
+    const expectedBytes = Buffer.from('durable tool artifact 1');
+    const sourceItem = fixture.service.readThread({ threadId: source.id, includeTurns: true })
+      .thread.turns?.[0]?.items.find((item) => item.type === 'dynamicToolCall');
+    expect(sourceItem).toMatchObject({ resourceRefs: [resourceRef] });
+    expect(await fixture.service.readReferencedThreadResource(source.id, resourceRef)).toEqual(expectedBytes);
+
+    await fixture.service.close();
+    const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await reopened.service.initialize();
+    expect(reopened.service.readThread({ threadId: source.id, includeTurns: true })
+      .thread.turns?.[0]?.items.find((item) => item.type === 'dynamicToolCall'))
+      .toMatchObject({ resourceRefs: [resourceRef] });
+    expect(await reopened.service.readReferencedThreadResource(source.id, resourceRef)).toEqual(expectedBytes);
+
+    const fork = (await reopened.service.forkThread({
+      threadId: source.id,
+      boundary: { kind: 'afterTurn', turnId: accepted.turn.id },
+    })).thread;
+    const forkItem = reopened.service.readThread({ threadId: fork.id, includeTurns: true })
+      .thread.turns?.[0]?.items.find((item) => item.type === 'dynamicToolCall');
+    expect(forkItem).toMatchObject({ resourceRefs: [resourceRef] });
+    expect(await reopened.service.readReferencedThreadResource(fork.id, resourceRef)).toEqual(expectedBytes);
+    const orphan = await reopened.service.writeThreadResource(
+      fork.id,
+      Buffer.from('unreferenced produced file'),
+      'text/plain',
+      'orphan.txt',
+    );
+
+    await reopened.service.rollbackThread({ threadId: source.id, numTurns: 1 });
+    expect(await reopened.service.readThreadResource(source.id, resourceRef)).toBeNull();
+    expect(await reopened.service.readReferencedThreadResource(fork.id, resourceRef)).toEqual(expectedBytes);
+    await reopened.service.deleteThread(source.id);
+    expect(await reopened.service.readReferencedThreadResource(fork.id, resourceRef)).toEqual(expectedBytes);
+    await reopened.service.close();
+
+    const restarted = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await restarted.service.initialize();
+    expect(await restarted.service.readReferencedThreadResource(fork.id, resourceRef)).toEqual(expectedBytes);
+    expect(await restarted.service.readThreadResource(fork.id, orphan)).toBeNull();
+    await restarted.service.deleteThread(fork.id);
+    expect(await restarted.stores.payloads.readResource(fork.id, resourceRef)).toBeNull();
+    await restarted.service.close();
   });
 
   test('keeps an attachment a rollback is about to re-send, and drops true garbage', async () => {

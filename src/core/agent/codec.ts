@@ -265,7 +265,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
     case 'commandExecution':
       exactKeys(record, [
         'type', 'id', 'provenance', 'command', 'description', 'cwd', 'processId', 'status', 'commandActions',
-        'aggregatedOutput', 'exitCode', 'durationMs', 'outputRef', 'modelCall',
+        'aggregatedOutput', 'exitCode', 'durationMs', 'outputRef', 'resourceRefs', 'modelCall',
       ], 'item');
       result = {
         ...base,
@@ -279,6 +279,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         processId: nullableString(record.processId, 'item.processId'),
         status: itemExecutionStatus(record.status, 'item.status'),
         outputRef: decodeThreadItemOutputReference(record.outputRef),
+        resourceRefs: decodeToolItemResourceReferences(record.resourceRefs),
         modelCall: decodeModelToolCallHistory(record.modelCall),
         // `?? null` so Threads persisted before the field existed still decode.
         description: nullableString(record.description ?? null, 'item.description', true),
@@ -289,20 +290,21 @@ export function decodeThreadItem(value: unknown): ThreadItem {
       };
       break;
     case 'fileChange':
-      exactKeys(record, ['type', 'id', 'provenance', 'changes', 'status', 'outputRef', 'modelCall'], 'item');
+      exactKeys(record, ['type', 'id', 'provenance', 'changes', 'status', 'outputRef', 'resourceRefs', 'modelCall'], 'item');
       result = {
         ...base,
         type,
         changes: arrayValue(record.changes, 'item.changes').map(decodeFileChange),
         status: itemExecutionStatus(record.status, 'item.status'),
         outputRef: decodeThreadItemOutputReference(record.outputRef),
+        resourceRefs: decodeToolItemResourceReferences(record.resourceRefs),
         modelCall: decodeModelToolCallHistory(record.modelCall),
       };
       break;
     case 'mcpToolCall':
       exactKeys(record, [
         'type', 'id', 'provenance', 'server', 'tool', 'status', 'arguments', 'pluginId', 'result',
-        'error', 'durationMs', 'outputRef',
+        'error', 'durationMs', 'outputRef', 'resourceRefs',
         'modelCall',
       ], 'item');
       result = {
@@ -312,6 +314,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         tool: stringValue(record.tool, 'item.tool'),
         status: itemExecutionStatus(record.status, 'item.status'),
         outputRef: decodeThreadItemOutputReference(record.outputRef),
+        resourceRefs: decodeToolItemResourceReferences(record.resourceRefs),
         modelCall: decodeModelToolCallHistory(record.modelCall),
         arguments: jsonValue(record.arguments, 'item.arguments'),
         pluginId: nullableString(record.pluginId, 'item.pluginId'),
@@ -323,7 +326,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
     case 'dynamicToolCall':
       exactKeys(record, [
         'type', 'id', 'provenance', 'namespace', 'tool', 'arguments', 'status', 'contentItems',
-        'success', 'durationMs', 'outputRef',
+        'success', 'durationMs', 'outputRef', 'resourceRefs',
         'modelCall',
       ], 'item');
       result = {
@@ -334,6 +337,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         arguments: jsonValue(record.arguments, 'item.arguments'),
         status: itemExecutionStatus(record.status, 'item.status'),
         outputRef: decodeThreadItemOutputReference(record.outputRef),
+        resourceRefs: decodeToolItemResourceReferences(record.resourceRefs),
         modelCall: decodeModelToolCallHistory(record.modelCall),
         contentItems: record.contentItems === null
           ? null
@@ -345,7 +349,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
     case 'collabAgentToolCall': {
       exactKeys(record, [
         'type', 'id', 'provenance', 'tool', 'status', 'senderThreadId', 'receiverThreadIds', 'prompt',
-        'summary', 'model', 'reasoningEffort', 'agentsStates', 'outputRef',
+        'summary', 'model', 'reasoningEffort', 'agentsStates', 'outputRef', 'resourceRefs',
         'modelCall',
       ], 'item');
       const states = recordValue(record.agentsStates, 'item.agentsStates');
@@ -375,6 +379,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         ),
         status: itemExecutionStatus(record.status, 'item.status'),
         outputRef: decodeThreadItemOutputReference(record.outputRef),
+        resourceRefs: decodeToolItemResourceReferences(record.resourceRefs),
         modelCall: decodeModelToolCallHistory(record.modelCall),
         senderThreadId: uuidV7(record.senderThreadId, 'item.senderThreadId'),
         receiverThreadIds: arrayValue(record.receiverThreadIds, 'item.receiverThreadIds')
@@ -423,7 +428,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
       break;
     case 'webSearch':
       exactKeys(record, [
-        'type', 'id', 'provenance', 'query', 'status', 'results', 'error', 'outputRef', 'modelCall',
+        'type', 'id', 'provenance', 'query', 'status', 'results', 'error', 'outputRef', 'resourceRefs', 'modelCall',
       ], 'item');
       result = {
         ...base,
@@ -435,6 +440,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         query: stringValue(record.query, 'item.query', true),
         status: itemExecutionStatus(record.status, 'item.status'),
         outputRef: decodeThreadItemOutputReference(record.outputRef),
+        resourceRefs: decodeToolItemResourceReferences(record.resourceRefs),
         modelCall: decodeModelToolCallHistory(record.modelCall),
         results: arrayValue(record.results, 'item.results').map((entry, index) => {
           const item = recordValue(entry, `item.results[${index}]`);
@@ -4696,6 +4702,13 @@ function decodeThreadItemOutputReference(
     byteLength: nonNegativeInteger(record.byteLength, `${field}.byteLength`),
     summary: stringValue(record.summary, `${field}.summary`),
   });
+}
+
+function decodeToolItemResourceReferences(value: unknown): ThreadResourceReference[] {
+  // Threads written before tool artifact ownership shipped have no field.
+  if (value === undefined) return [];
+  return arrayValue(value, 'item.resourceRefs')
+    .map((ref, index) => decodeThreadResourceReference(ref, `item.resourceRefs[${index}]`));
 }
 
 function decodeModelToolCallHistory(value: unknown): ModelToolCallHistory {

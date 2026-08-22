@@ -215,22 +215,31 @@ interface AgentShellProcessEnvironment {
 ```
 
 `ManagedSkillShellEnvironmentRegistry` merges only roots declared by active
-contributors, validates each root as an app-owned physical directory under that
-contributor's Turn-scoped scratch area, and passes the typed declarations to the
-managed-Skill invocation collector. Existing env vars such as Browser Pilot's
-output directory may continue to point the external CLI at the same directory,
-but the env var is not parsed back as authority.
+contributors, validates each root as a canonical physical child of the app-owned
+Agent scratch boundary, and passes the typed declarations to shell execution.
+Each contributor remains responsible for creating its narrower per-Thread,
+per-Turn directory without symlink escapes. Existing env vars such as Browser
+Pilot's output directory may continue to point the external CLI at the same
+directory, but the env var is not parsed back as authority.
 
-The implementation adds a bounded collector around each isolated managed-Skill
-invocation:
+The implementation adds a bounded collector at the real shell boundaries used
+by managed Skills. Ordinary foreground `bash` snapshots all roots declared by
+active managed contributors; embedded Skill shell expansion narrows that set to
+the Skill being invoked. A background shell stores its launch-time snapshot and
+`task_stop` performs collection only after the process reaches a terminal state:
 
-1. snapshot each typed declared output root before invocation;
-2. after the invocation finishes, enumerate new or changed regular files under
-   those declared roots only;
+1. snapshot the applicable typed declared output roots before process launch;
+2. after foreground exit or terminal `task_stop`, enumerate new or changed
+   regular files under those declared roots only;
 3. reject symlinks, directories, hidden control files, oversized files, and
    excess file counts;
 4. persist accepted files through the sink; and
 5. report a resource manifest plus bounded warnings for skipped files.
+
+This placement matters for Browser Pilot: the `skill` tool loads its inline
+instructions, while the actual `bp` invocation happens later through ordinary
+`bash`. Stable shell history replaces occurrences of a declared root in captured
+text with its typed root identity; only the live result keeps that Turn path.
 
 This is intentionally an output-root collector, not a workspace sweep. It gives
 future computer-control Skills a durable screenshot/download story without

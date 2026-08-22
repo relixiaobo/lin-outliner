@@ -96,7 +96,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         },
         "run_in_background": {
           "type": "boolean",
-          "description": "Set to true to run this command in the background. You do not need to append \\"&\\"; use file_read on the returned output path later if needed."
+          "description": "Set to true to run this command in the background. You do not need to append \\"&\\"; use task_stop to finalize its durable output."
         }
       }
     }

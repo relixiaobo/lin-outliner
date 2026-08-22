@@ -176,6 +176,7 @@ const allItems: readonly ThreadItem[] = [
     exitCode: 0,
     durationMs: 10,
     outputRef: { id: OUTPUT_ID, mimeType: 'text/plain', byteLength: 2, summary: 'Command output' },
+    resourceRefs: [],
     modelCall: replayableModelCall('bash', {
       command: 'bun run typecheck',
       description: 'Typecheck the project',
@@ -188,6 +189,7 @@ const allItems: readonly ThreadItem[] = [
     changes: [{ path: 'src/a.ts', kind: 'update', diff: '+export {}' }],
     status: 'completed',
     outputRef: null,
+    resourceRefs: [],
     modelCall: replayableModelCall('file_write', {
       file_path: 'src/a.ts',
       content: 'export {}',
@@ -206,6 +208,7 @@ const allItems: readonly ThreadItem[] = [
     error: null,
     durationMs: 20,
     outputRef: null,
+    resourceRefs: [],
     modelCall: replayableModelCall('github__read_pr', { number: 1 }),
   },
   {
@@ -223,6 +226,7 @@ const allItems: readonly ThreadItem[] = [
     success: true,
     durationMs: 3,
     outputRef: null,
+    resourceRefs: [],
     modelCall: replayableModelCall('node_read', { node_id: 'node-1' }),
   },
   {
@@ -246,6 +250,7 @@ const allItems: readonly ThreadItem[] = [
       },
     },
     outputRef: null,
+    resourceRefs: [],
     modelCall: replayableModelCall('agent', {
       description: 'Inspect tests',
       prompt: 'Inspect tests',
@@ -273,6 +278,7 @@ const allItems: readonly ThreadItem[] = [
     results: [{ title: 'Result', url: 'https://example.com', snippet: 'Summary' }],
     error: null,
     outputRef: null,
+    resourceRefs: [],
     modelCall: replayableModelCall('web_search', { query: 'Codex protocol' }),
   },
   {
@@ -508,6 +514,27 @@ describe('Codex Agent Core protocol codec', () => {
       expect(Object.isFrozen(decoded)).toBe(true);
       expect(Object.isFrozen(decoded.provenance)).toBe(true);
     }
+  });
+
+  test('defaults historical tool Items to an empty artifact manifest and round-trips new resources', () => {
+    const command = allItems.find((item) => item.type === 'commandExecution')!;
+    const historical = { ...command } as Record<string, unknown>;
+    delete historical.resourceRefs;
+    expect(decodeThreadItem(historical)).toMatchObject({ resourceRefs: [] });
+
+    const resourceRef = {
+      id: 'd'.repeat(64),
+      mimeType: 'application/pdf',
+      byteLength: 321,
+      fileName: 'report.pdf',
+    };
+    expect(decodeThreadItem({ ...command, resourceRefs: [resourceRef] })).toMatchObject({
+      resourceRefs: [resourceRef],
+    });
+    expect(() => decodeThreadItem({
+      ...command,
+      resourceRefs: [{ ...resourceRef, fileName: '../report.pdf' }],
+    })).toThrow('expected a safe base name');
   });
 
   test('rejects pre-status-truth Subagent Item shapes without a legacy reader', () => {

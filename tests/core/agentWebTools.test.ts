@@ -275,7 +275,13 @@ describe('agent web tools', () => {
       finalUrl: 'https://example.com/docs/file.pdf',
       byteLength: 1234,
       binaryFile: {
-        filePath: '/tmp/agent-web-fetch/webfetch-test.pdf',
+        filePath: '/tmp/thread-observations/webfetch-test.pdf',
+        resourceRef: {
+          id: 'a'.repeat(64),
+          mimeType: 'application/pdf',
+          byteLength: 1234,
+          fileName: 'webfetch-test.pdf',
+        },
         mimeType: 'application/pdf',
         byteLength: 1234,
         sha256: 'a'.repeat(64),
@@ -288,9 +294,15 @@ describe('agent web tools', () => {
     expect(envelope.data).toMatchObject({
       mode: 'read',
       format: 'markdown',
-      content: 'Binary content saved to /tmp/agent-web-fetch/webfetch-test.pdf. Use file_read on this path when you need to inspect supported files such as PDFs or images.',
+      content: `Binary content stored as resource ${'a'.repeat(64)}. The current readable path is /tmp/thread-observations/webfetch-test.pdf. Use file_read on this path when you need to inspect supported files such as PDFs or images.`,
       binaryFile: {
-        filePath: '/tmp/agent-web-fetch/webfetch-test.pdf',
+        filePath: '/tmp/thread-observations/webfetch-test.pdf',
+        resourceRef: {
+          id: 'a'.repeat(64),
+          mimeType: 'application/pdf',
+          byteLength: 1234,
+          fileName: 'webfetch-test.pdf',
+        },
         mimeType: 'application/pdf',
         byteLength: 1234,
       },
@@ -450,7 +462,13 @@ describe('web tool model-visible projections', () => {
     });
   });
 
-  test('web_fetch binary keeps filePath and mimeType only', () => {
+  test('web_fetch binary exposes durable identity, metadata, and the current readable handle', () => {
+    const resourceRef = {
+      id: 'b'.repeat(64),
+      mimeType: 'application/pdf',
+      byteLength: 1234,
+      fileName: 'x.pdf',
+    };
     const data: WebFetchData = {
       url: 'https://example.com/file.pdf',
       finalUrl: 'https://example.com/file.pdf',
@@ -458,12 +476,24 @@ describe('web tool model-visible projections', () => {
       mode: 'read',
       format: 'markdown',
       content: 'Binary content saved to /tmp/x.pdf. Use file_read on this path.',
-      binaryFile: { filePath: '/tmp/x.pdf', mimeType: 'application/pdf', byteLength: 1234, sha256: 'abc' },
+      binaryFile: {
+        filePath: '/tmp/x.pdf',
+        resourceRef,
+        mimeType: 'application/pdf',
+        byteLength: 1234,
+        sha256: 'abc',
+      },
       truncated: false,
     };
 
     expect(webFetchModelData(data)).toEqual({
-      binaryFile: { filePath: '/tmp/x.pdf', mimeType: 'application/pdf' },
+      binaryFile: {
+        filePath: '/tmp/x.pdf',
+        resourceRef,
+        mimeType: 'application/pdf',
+        byteLength: 1234,
+        sha256: 'abc',
+      },
     });
   });
 });

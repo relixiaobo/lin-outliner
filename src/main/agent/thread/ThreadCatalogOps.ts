@@ -596,22 +596,21 @@ export class ThreadCatalogOps {
         // The rollback marker is already durable. Orphan cleanup is retried at startup
         // and must not turn a committed rollback into a reported operation failure.
         //
-        // RESOURCES are reclaimed against the surviving history PLUS the Turns
-        // just removed. A rollback exists to be followed by a re-send of the
-        // very content it removed — Edit does exactly that — so a payload the
-        // omitted Turns referenced is one the next call is about to reference
-        // again, and deleting it leaves the resent message pointing at nothing.
-        // What neither set references is true garbage no re-send can reach, and
-        // reclaiming it here keeps those bytes out of the resource quota, which
-        // counts every byte on disk but can only ever offer surviving history as
-        // reclaim candidates.
+        // RESOURCES are reclaimed against surviving history plus removed user
+        // messages. Edit/Retry re-sends that exact user content, so its managed
+        // attachments must remain readable between rollback and admission.
+        // Tool outputs and generated context are not re-sent; once their Item
+        // owner is removed they are ordinary garbage and must stop consuming the
+        // Thread resource quota immediately.
         //
         // The other three belong to the Turn that went away and nothing re-sends
         // them. Startup sweeps all four for every known Thread.
         const references = this.resourceOps.threadStorageReferences(thread.id);
         const resurrectable = [
           ...references.resources,
-          ...omitted.flatMap((turn) => turn.items.flatMap(itemResourceReferences)),
+          ...omitted.flatMap((turn) => turn.items.flatMap((item) => (
+            item.type === 'userMessage' ? itemResourceReferences(item) : []
+          ))),
         ];
         await Promise.all([
           this.core.payloads.pruneUnreferencedResources(thread.id, resurrectable),

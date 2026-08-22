@@ -144,6 +144,13 @@ after its complete tool Item. Every provider boundary therefore receives Skill g
 only through canonical projection; no direct-prompt overlay, generic prompt builder,
 private steering message, or reminder parser is a second history authority.
 
+For isolated Skills with embedded shell expansion, the child receives a live rendered
+copy that may contain current readable handles. The persisted `skillInvocation`
+instructions contain only stable resource identities. The parent `skill` result exposes
+current handles in JSON for that execution, its persisted copy strips `filePath`, and
+successfully admitted files remain in the tool manifest even when a later embedded
+command fails.
+
 For every ordinary input, main records `turnEnvironment` evidence containing the
 accepted UTC instant, local date/time, IANA timezone and offset, locale, working
 directory, execution/conversation mode, reply identity, and Today Node identity/title.
@@ -441,6 +448,20 @@ bounded inline projection that states the complete byte length and digest. The d
 is immutable and content-addressed. Later replay, restart, compaction, fork, and child
 inheritance use the same bytes while the complete `outputRef` remains available for UI
 inspection and checkpoint dependencies.
+
+Ordinary binary/file outputs use a separate host-only resource manifest. The live tool
+result may expose a current `filePath` handle plus stable `resourceRef` metadata, while
+persisted result text removes that path and the completed tool Item owns the reference in
+`resourceRefs`. On every later provider projection, the host resolves those references
+against the current Thread, appends a deterministic `[Tool artifacts]` block for at most
+16 entries, and reports a stable unavailable warning when a readable path cannot be
+materialized. It never reads artifact bytes into provider context. Restart and fork
+therefore produce current target-Thread handles instead of replaying the producing
+Turn's scratch path.
+For shell producers, durable text also substitutes every typed managed-output root in
+stdout, stderr, and warnings with its stable root identity. This covers the ordinary
+`bash` call that follows an inline Browser Pilot Skill load, not only embedded Skill shell
+expansion.
 
 Binary image output never enters rollout JSON, SQLite projection, or IPC as a
 data URL. Every accepted dynamic-tool image stores one immutable `artifactRef`; the
