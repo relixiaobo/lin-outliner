@@ -13,7 +13,9 @@ import { useI18n, useT } from '../../../i18n/I18nProvider';
 import { formatNumber } from '../../../ui/formatting';
 import {
   orderedRange,
+  trajectoryRecordLabel,
   trajectoryRecordKindClass,
+  type TrajectoryLabels,
   type TrajectoryTimelineMode,
   type TrajectoryTimelineModel,
   type TrajectoryTimelineSpan,
@@ -340,7 +342,7 @@ export const TrajectoryTimeline = memo(function TrajectoryTimeline({
               : null;
             return (
               <button
-                aria-label={`${trajectoryTimelineTitle(span.record, mode, locale)}. ${t.agent.trajectory.selectRecord}`}
+                aria-label={`${trajectoryTimelineTitle(span.record, mode, locale, t.agent.trajectory)}. ${t.agent.trajectory.selectRecord}`}
                 aria-pressed={selectedRecordId === span.record.id}
                 className={`thread-trajectory-timeline-span ${trajectoryRecordKindClass(span.record)}${span.marker ? ' is-marker' : ''}`}
                 data-assistant-timing={firstTokenRatio !== null || undefined}
@@ -365,7 +367,7 @@ export const TrajectoryTimeline = memo(function TrajectoryTimeline({
                     ? {}
                     : { '--trajectory-span-ttft': `${firstTokenRatio * 100}%` }),
                 } as TimelineCssProperties}
-                title={trajectoryTimelineTitle(span.record, mode, locale)}
+                title={trajectoryTimelineTitle(span.record, mode, locale, t.agent.trajectory)}
                 type="button"
               />
             );
@@ -480,9 +482,10 @@ function trajectoryTimelineTitle(
   record: ThreadTrajectoryRecordSummary,
   mode: TrajectoryTimelineMode,
   locale: string,
+  labels: TrajectoryLabels,
 ): string {
   const started = record.timing.startedAt === null
-    ? 'Not recorded'
+    ? labels.state.notRecorded
     : new Intl.DateTimeFormat(locale, {
       hour: '2-digit',
       minute: '2-digit',
@@ -492,5 +495,5 @@ function trajectoryTimelineTitle(
   const duration = mode === 'duration' && record.timing.durationMs !== null
     ? ` · ${formatNumber(Math.round(record.timing.durationMs))} ms`
     : '';
-  return `${record.title} · ${started}${duration}`;
+  return `${trajectoryRecordLabel(record, labels)} · ${started}${duration}`;
 }

@@ -1054,12 +1054,12 @@ uses a marker and never fabricates duration. Live record updates may extend the
 full domain but do not erase an explicit viewport or range.
 
 The ledger is message-first: every record occupies one fixed 30-pixel table row,
-with a compact role tag followed immediately by its content preview. Internal
-titles, IDs, evidence references, lifecycle metadata, timing, and usage remain
+with a compact localized role tag followed immediately by its content preview.
+Typed labels, IDs, evidence references, lifecycle metadata, timing, and usage remain
 secondary scanning aids and cannot displace the content column. Records preserve
 recorded activity order and group by Turn. Turn folds and Assistant-call folds
 leave one stable content row plus a stable summary row rather than removing all
-context. System-like rows (`SYSTEM` and provider-visible `TOOLS`) are outside
+context. System-like rows (`System` and provider-visible `Tools`) are outside
 Turn folding, so collapsing a Turn never hides the request header evidence. The selected row
 stays reachable through folding, filtering, paging, and virtualization. More
 than 100 visible candidates use a fixed-row virtual window with bounded
@@ -1089,8 +1089,17 @@ Preview / Raw, and Delegation can open the child Thread's own Trajectory. Raw
 means Tenon's typed, bounded, redacted evidence, not an unfiltered transport
 body. The Request tab is the consumed provider call's materialized post-adapter
 payload after renderer-facing sanitization; it is never folded into the USER
-preview. Context Preview uses captured model-visible context text from the
-prepared canonical provider context whenever diagnostics retained it. That text
+preview. Input Preview uses the provider-neutral prepared-message text captured
+before that adapter for the exact canonical `userMessage` Item. Diagnostics tag
+every `userInput` content part with its Item ID, so initial input and later
+steering can share a provider call without repeating or borrowing one another's
+text. The Preview therefore includes the real serialized attachment reference
+and inspection instructions, Node reference marker, and image metadata while
+excluding image bytes and system-context parts. Canonical `ThreadUserContent` is
+the Raw accepted-input evidence and is only the display fallback before a request
+consumes the Item or when diagnostics are unavailable. Context Preview uses
+captured model-visible context text from the prepared canonical provider context
+whenever diagnostics retained it. That text
 is the `<system-reminder>` / `<context-evidence ...>` projection supplied at the
 provider-context boundary after projection, budgeting, compaction, and
 renderer-facing sanitization. Non-stable CONTEXT rows are keyed by
@@ -1129,11 +1138,12 @@ recover call identity.
 
 Input records are grounded on one canonical `userMessage` Item. The related
 accepted-input activity records the admission envelope, and the related provider
-call records the first request that consumed it, but neither is the USER content
-source. Context Items admitted alongside the user message, including turn
-environment, user view, skills, roles, additional context, inherited context, and
-tool-output projection evidence, remain separate Context rows. USER preview and
-detail render the original user message content only.
+call records the first request that consumed it. The Item remains the stable
+identity and accepted-input authority; provider-call diagnostics are the
+model-visible Preview authority. Context Items admitted alongside the user
+message become Context rows only when retained prepared-context provenance proves
+their model-visible text was emitted. Referenced Node snapshots therefore remain
+CONTEXT while the corresponding Node marker remains USER.
 
 The renderer first performs `thread/trajectory/read`. Main returns `threadId`,
 Thread-level summary facts, an ordered record window, `olderCursor` /
@@ -1152,13 +1162,20 @@ ledger/inspector state and must not reopen a closed inspector from the original
 focus. Search and range filtering are scoped to the loaded window, but the
 selected record and its ancestor rows remain visible even when they do not match
 the current search, range, or fold state. The user can load older and newer
-record windows from stable identity cursors. Every record's numeric sequence is
-a stable whole-Thread sort coordinate: projection reserves the same per-Turn
-header positions before applying cross-Turn stable-prompt and tool-catalog
-deduplication, so reading a different window cannot renumber an existing record.
-A live refresh without a cursor uses `replacementRange` plus same-Turn fallback
+record windows from stable identity cursors. Every record carries an opaque
+`orderKey`, a canonical zero-based `turnIndex`, and a zero-based `stepIndex`
+within that Turn. The order key encodes stable Turn/activity/call/item
+coordinates and never depends on how many other records currently project, so a
+changed tool catalog or another live insertion cannot renumber an existing
+record. For a bounded window, main materializes at most one predecessor Turn
+solely to restore stable-prompt and tool-catalog fingerprints; that predecessor
+contributes no returned records. If its diagnostics are unavailable, the
+boundary state is unknown and the first visible structural snapshot is not
+mislabeled as initial. A live refresh without a cursor uses the inclusive
+`startOrderKey` / `endOrderKey` in `replacementRange` plus same-Turn fallback
 cleanup to remove stale running fallback rows without deleting already loaded
-completed records from the same Turn.
+completed records from the same Turn. Record labels are a typed semantic union
+and are localized only in renderer; main never emits interface prose.
 
 Record details are lazy. `thread/trajectory/detail/read` returns the selected
 record plus sanitized detail evidence only. Main locates the owning Turn first

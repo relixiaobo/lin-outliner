@@ -108,16 +108,20 @@ request, response, timing, and state.
 
 An `input` record is one canonical `userMessage` Item. Its primary evidence is
 the Thread Item itself; the accepted-input diagnostic activity and the first
-provider call that consumed it are related evidence. Context Items admitted in
-the same envelope do not automatically become `context` records. A CONTEXT row
-exists only for stable prompt text, a provider-call tool catalog snapshot that
-changed the model-visible tool schemas, or a prepared provider-context part whose
-diagnostics prove that model-visible context text was emitted. A USER
-preview/detail must therefore render the original user content only and must not
-concatenate `contextEvidence`, stable prompt, user view, skills, roles,
-tool-output projection, or additional-context summaries into the USER row.
-Provider request payloads are shown as request evidence on the consumed provider
-call, not as USER content.
+provider call that consumed it are related evidence. Its Preview uses the
+captured provider-neutral prepared-message text parts whose diagnostics
+provenance names that exact Item. This preserves the real attachment markers,
+readable-path instructions, Node reference markers, image metadata, and other
+serialization performed by `ContextProjector`; canonical `ThreadUserContent` is
+accepted-input evidence and only a fallback when no consumed diagnostics exist.
+Image bytes never cross the renderer seam. Context Items admitted in the same
+envelope do not automatically become `context` records. A CONTEXT row exists
+only for stable prompt text, a provider-call tool catalog snapshot that changed
+the model-visible tool schemas, or a prepared provider-context part whose
+diagnostics prove that model-visible context text was emitted. System-context
+parts, including referenced Node snapshots, remain separate from USER even when
+they share one prepared message. The Request tab shows the sanitized
+post-adapter provider payload and is not folded into USER content.
 
 Every Trajectory record has one primary evidence reference and may have related
 evidence references. Detail reads resolve from the primary evidence and then
@@ -171,6 +175,12 @@ adjacency.
 Stable record identities survive paging, restoration, live replacement, and
 history prepends.
 
+Each record carries an opaque fixed-width `orderKey` built from stable canonical
+Turn/activity/call/item coordinates plus explicit zero-based `turnIndex` and
+`stepIndex` display coordinates. Adding or removing a projected structural row
+must not change an existing record's order key. Main emits a typed semantic
+record label; renderer localizes its title, role, state, and metadata.
+
 The projection includes only bounded summaries required to locate a record:
 record identity and kind, Thread and Turn ownership, parent call identity where
 applicable, lifecycle state, recorded timestamps, bounded preview, usage summary,
@@ -196,7 +206,8 @@ The Agent protocol exposes:
 
 - a bounded trajectory query addressed by Thread with stable `olderCursor` /
   `newerCursor` keyset paging, a lightweight whole-Thread summary, and an
-  authoritative replacement sequence range for the loaded record window;
+  authoritative inclusive `startOrderKey` / `endOrderKey` replacement range for
+  the loaded record window;
 - a bounded live-change notification that invalidates the affected Thread so the
   renderer can refresh the affected window and remove stale running fallback
   rows without forcing a full diagnostics rebuild;
@@ -263,7 +274,7 @@ compressing both surfaces below their readable minimum.
 
 Tabs are record-specific and follow the DeepSeek Harness content-first model:
 
-- Input: Summary, Preview, Raw.
+- Input: Summary, Preview, Request, Raw.
 - Context: Summary, Preview, Raw; stable prompt records expose System Prompt,
   and provider-visible tool catalog records expose Tools.
 - Assistant: Summary, Preview, Raw. Summary integrates source request, state,
@@ -296,6 +307,22 @@ appear as CONTEXT rows unless their text is explicitly emitted inside prepared
 provider context. The retained context payload remains Raw storage evidence
 when it is selected through another authority; it is not the Preview and not the
 exact post-adapter provider request.
+
+Input Preview follows the same evidence rule at Item granularity. Each prepared
+message part records either `userInput` plus its canonical Item ID,
+`systemContext`, assistant history, a tool result, or unknown provenance. The
+projector selects only text parts tagged with the selected input Item ID from
+the provider call that consumed it, preserves part order, applies
+renderer-facing sanitization, and excludes image bytes. Multiple input Items in
+one steering call therefore cannot repeat or borrow one another's content.
+Canonical accepted content remains visible in Raw evidence but is not treated as
+proof of the provider-visible serialization.
+
+Bounded reads may materialize one predecessor Turn to restore the stable-prompt
+and tool-catalog fingerprints at the requested boundary. Its evidence never
+appears in the response. When predecessor diagnostics are unavailable, the
+boundary state is unknown and the first visible snapshot is not presented as an
+initial prompt or catalog.
 
 The Assistant inspector may title the backing evidence as a Model Call because
 the details are provider-call diagnostics. That title is evidence vocabulary,

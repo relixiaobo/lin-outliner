@@ -62,7 +62,7 @@ describe('Turn diagnostics', () => {
           purpose: 'observation' as const,
         }],
       },
-      { source: 'userInput' as const },
+      { source: 'userInput' as const, itemId: 'user-item-1' },
     ];
     const collector = new TurnDiagnosticsCollector({
       contextEpochId: 'initial',
@@ -162,7 +162,7 @@ describe('Turn diagnostics', () => {
 
     prepare(collector, [firstMessage, secondMessage], 1, 160, [
       firstProvenance,
-      [{ source: 'userInput' }],
+      [{ source: 'userInput', itemId: 'user-item-2' }],
     ]);
     await collector.captureProviderRequest({
       model: model.id,
@@ -371,6 +371,19 @@ describe('Turn diagnostics', () => {
         },
       }, payload.providerCalls[1]!],
     })).toThrow('expected at least one context entry');
+    expect(() => decodeTurnDiagnosticsPayload({
+      ...payload,
+      providerCalls: [{
+        ...payload.providerCalls[0]!,
+        preparedContext: {
+          ...payload.providerCalls[0]!.preparedContext,
+          messagePartProvenance: [[
+            firstProvenance[0]!,
+            { source: 'userInput' },
+          ]],
+        },
+      }, payload.providerCalls[1]!],
+    })).toThrow('itemId');
   });
 
   test('redacts structured secrets from canonical messages and post-adapter requests', async () => {

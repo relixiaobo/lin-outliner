@@ -577,8 +577,11 @@ function nestedSha256(value: JsonValue): string | null {
 function clonePartProvenance(
   provenance: TurnDiagnosticsMessagePartProvenance,
 ): TurnDiagnosticsMessagePartProvenance {
-  return provenance.source === 'systemContext'
-    ? { source: provenance.source, entries: provenance.entries.map((entry) => ({ ...entry })) }
+  if (provenance.source === 'systemContext') {
+    return { source: provenance.source, entries: provenance.entries.map((entry) => ({ ...entry })) };
+  }
+  return provenance.source === 'userInput'
+    ? { source: provenance.source, itemId: provenance.itemId }
     : { source: provenance.source };
 }
 

@@ -14,6 +14,7 @@ import type {
   ThreadTrajectoryRecordSummary,
   ThreadTrajectoryReplacementRange,
 } from '../../src/core/agent/protocol';
+import { en } from '../../src/core/i18n/messages/en';
 import { ThreadTrajectoryPanel } from '../../src/renderer/agent/components/ThreadTrajectoryPanel';
 import {
   buildTrajectoryLedgerRows,
@@ -32,6 +33,7 @@ const TOOL_CATALOG_ID = `turn:${TURN_ID}:context:tools:0`;
 const ASSISTANT_ID = `turn:${TURN_ID}:assistant:0`;
 const TOOL_ID = `turn:${TURN_ID}:tool:2:call%3Aread`;
 const DELEGATION_ID = `turn:${TURN_ID}:delegation:2:call%3Aagent`;
+const LABELS = en.agent.trajectory;
 const GLOBAL_KEYS = [
   'document',
   'window',
@@ -69,7 +71,7 @@ describe('ThreadTrajectoryPanel', () => {
     await flush();
 
     expect(rendered.document.querySelector('[aria-label="Trajectory inspector"]')).toBeNull();
-    expect(recordRow(rendered.document, ASSISTANT_ID).textContent).toContain('ASSISTANTMock response');
+    expect(recordRow(rendered.document, ASSISTANT_ID).textContent).toContain('AssistantMock response');
     expect(recordRow(rendered.document, ASSISTANT_ID).textContent).not.toContain('Assistant call 1');
     expect(calls.map((call) => call.method)).toEqual(['thread/trajectory/read']);
 
@@ -90,6 +92,49 @@ describe('ThreadTrajectoryPanel', () => {
     ]);
   });
 
+  test('uses canonical Turn and Step indices in the ledger and inspector', async () => {
+    const assistant = record({
+      ...trajectoryRecords()[1]!,
+      id: `${ASSISTANT_ID}:later`,
+      turnIndex: 1,
+      stepIndex: 2,
+    });
+    const rendered = renderPanel(async (method) => {
+      if (method === 'thread/trajectory/read') return trajectoryReadResponse([assistant]);
+      if (method === 'thread/trajectory/detail/read') return {
+        ...assistantDetailResponse(),
+        record: assistant,
+      };
+      throw new Error(`Unexpected Agent Core method: ${method}`);
+    });
+
+    rendered.render();
+    await flush();
+    expect(recordRow(rendered.document, assistant.id).textContent).toContain('Turn 2');
+
+    clickRecord(rendered.document, assistant.id);
+    await flush();
+    expect(rendered.document.body.textContent).toContain('Turn 2 · Step 3');
+  });
+
+  test('renders the complete Trajectory message tree in Simplified Chinese', async () => {
+    const rendered = renderPanel(async (method) => {
+      if (method === 'thread/trajectory/read') return trajectoryReadResponse();
+      if (method === 'thread/trajectory/detail/read') return assistantDetailResponse();
+      throw new Error(`Unexpected Agent Core method: ${method}`);
+    }, { language: 'zh-Hans' });
+
+    rendered.render();
+    await flush();
+    expect(rendered.document.body.textContent).toContain('轨迹');
+    expect(recordRow(rendered.document, INPUT_ID).textContent).toContain('第 1 轮用户Plan the release');
+
+    clickRecord(rendered.document, ASSISTANT_ID);
+    await flush();
+    expect(rendered.document.body.textContent).toContain('第 1 轮 · 第 2 步');
+    expect(buttonLabels(rendered.document)).toEqual(expect.arrayContaining(['摘要', '预览', '原始数据']));
+  });
+
   test('preserves Turn and Assistant-call hierarchy while folding', async () => {
     const rendered = renderPanel(async (method) => {
       if (method === 'thread/trajectory/read') return trajectoryReadResponse();
@@ -106,7 +151,7 @@ describe('ThreadTrajectoryPanel', () => {
 
     clickAriaButton(rendered.document, 'Collapse all Turns');
     expect(rendered.document.querySelectorAll('[data-trajectory-record-id]').length).toBe(1);
-    expect(recordRow(rendered.document, INPUT_ID).textContent).toContain('USERPlan the release');
+    expect(recordRow(rendered.document, INPUT_ID).textContent).toContain('UserPlan the release');
     expect(rendered.document.body.textContent).toContain('2 records');
   });
 
@@ -191,8 +236,8 @@ describe('ThreadTrajectoryPanel', () => {
       id: `turn:${TURN_ID}:tool:item:running-tool`,
       kind: 'tool',
       lane: 'tools',
-      sequence: 1,
-      title: 'mcpToolCall',
+      stepIndex: 1,
+      label: { type: 'tool', name: 'mcpToolCall' },
       preview: 'Running fallback',
       state: 'running',
       primaryEvidence: {
@@ -236,8 +281,8 @@ describe('ThreadTrajectoryPanel', () => {
       id: `turn:${TURN_ID}:tool:old`,
       kind: 'tool',
       lane: 'tools',
-      sequence: 4,
-      title: 'Older tool',
+      stepIndex: 4,
+      label: { type: 'tool', name: 'Older tool' },
       preview: 'Loaded older evidence',
       primaryEvidence: {
         type: 'threadItem',
@@ -250,8 +295,8 @@ describe('ThreadTrajectoryPanel', () => {
       id: `turn:${TURN_ID}:tool:stale-tail`,
       kind: 'tool',
       lane: 'tools',
-      sequence: 120,
-      title: 'Stale fallback',
+      stepIndex: 120,
+      label: { type: 'tool', name: 'Stale fallback' },
       preview: 'Running stale tail',
       state: 'running',
       primaryEvidence: {
@@ -265,8 +310,8 @@ describe('ThreadTrajectoryPanel', () => {
       id: `turn:${TURN_ID}:tool:refreshed-tail`,
       kind: 'tool',
       lane: 'tools',
-      sequence: 120,
-      title: 'Refreshed tool',
+      stepIndex: 120,
+      label: { type: 'tool', name: 'Refreshed tool' },
       preview: 'Canonical tail evidence',
       primaryEvidence: {
         type: 'threadItem',
@@ -281,10 +326,10 @@ describe('ThreadTrajectoryPanel', () => {
         readCount += 1;
         return readCount === 1
           ? trajectoryReadResponse([olderTool, staleTail], null, {
-            replacementRange: { startSequence: 4, endSequence: 121 },
+            replacementRange: { startOrderKey: testOrderKey(0, 4), endOrderKey: testOrderKey(0, 120) },
           })
           : trajectoryReadResponse([refreshedTail], null, {
-            replacementRange: { startSequence: 120, endSequence: 121 },
+            replacementRange: { startOrderKey: testOrderKey(0, 120), endOrderKey: testOrderKey(0, 120) },
           });
       }
       if (method === 'thread/trajectory/detail/read') return toolDetailResponse();
@@ -315,8 +360,8 @@ describe('ThreadTrajectoryPanel', () => {
       id: `turn:${TURN_ID}:tool:old`,
       kind: 'tool',
       lane: 'tools',
-      sequence: 4,
-      title: 'Older tool',
+      stepIndex: 4,
+      label: { type: 'tool', name: 'Older tool' },
       preview: 'Loaded older evidence',
       state: 'completed',
       primaryEvidence: {
@@ -330,8 +375,8 @@ describe('ThreadTrajectoryPanel', () => {
       id: `turn:${TURN_ID}:tool:stale-boundary`,
       kind: 'tool',
       lane: 'tools',
-      sequence: 10,
-      title: 'Running fallback',
+      stepIndex: 10,
+      label: { type: 'tool', name: 'Running fallback' },
       preview: 'Stale boundary tool',
       state: 'running',
       primaryEvidence: {
@@ -345,8 +390,8 @@ describe('ThreadTrajectoryPanel', () => {
       id: `turn:${TURN_ID}:context:prepared:0:0:1`,
       kind: 'context',
       lane: 'input',
-      sequence: 11,
-      title: 'Inserted context',
+      stepIndex: 11,
+      label: { type: 'context', kinds: ['additionalContext'] },
       preview: 'Prepared before tool',
       primaryEvidence: {
         type: 'preparedContextPart',
@@ -361,8 +406,8 @@ describe('ThreadTrajectoryPanel', () => {
       id: `turn:${TURN_ID}:tool:2:call%3Aread`,
       kind: 'tool',
       lane: 'tools',
-      sequence: 12,
-      title: 'Read file',
+      stepIndex: 12,
+      label: { type: 'tool', name: 'Read file' },
       preview: 'Canonical boundary tool',
       primaryEvidence: {
         type: 'toolExecution',
@@ -378,10 +423,10 @@ describe('ThreadTrajectoryPanel', () => {
         readCount += 1;
         return readCount === 1
           ? trajectoryReadResponse([olderTool, staleFallback], null, {
-            replacementRange: { startSequence: 4, endSequence: 11 },
+            replacementRange: { startOrderKey: testOrderKey(0, 4), endOrderKey: testOrderKey(0, 10) },
           })
           : trajectoryReadResponse([insertedContext, refreshedTool], null, {
-            replacementRange: { startSequence: 11, endSequence: 131 },
+            replacementRange: { startOrderKey: testOrderKey(0, 11), endOrderKey: testOrderKey(0, 130) },
           });
       }
       if (method === 'thread/trajectory/detail/read') return toolDetailResponse();
@@ -404,7 +449,7 @@ describe('ThreadTrajectoryPanel', () => {
 
     expect(recordRow(rendered.document, olderTool.id).textContent).toContain('Loaded older evidence');
     expect(recordRowOrNull(rendered.document, staleFallback.id)).toBeNull();
-    expect(recordRow(rendered.document, insertedContext.id).textContent).toContain('Inserted context');
+    expect(recordRow(rendered.document, insertedContext.id).textContent).toContain('Additional Context');
     expect(recordRow(rendered.document, refreshedTool.id).textContent).toContain('Canonical boundary tool');
   });
 
@@ -413,9 +458,8 @@ describe('ThreadTrajectoryPanel', () => {
       id: TOOL_CATALOG_ID,
       kind: 'context',
       lane: 'input',
-      sequence: 0,
-      title: 'Available Tools',
-      subtitle: '2 tools · Request #1',
+      stepIndex: 0,
+      label: { type: 'toolCatalog', change: 'initial', requestIndex: 0, toolCount: 2 },
       preview: 'first_tool, second_tool',
       primaryEvidence: {
         type: 'toolCatalog',
@@ -444,7 +488,7 @@ describe('ThreadTrajectoryPanel', () => {
 
     rendered.render();
     await flush();
-    expect(recordRow(rendered.document, TOOL_CATALOG_ID).textContent).toContain('TOOLSAvailable Tools');
+    expect(recordRow(rendered.document, TOOL_CATALOG_ID).textContent).toContain('ToolsAvailable Tools');
     expect(timelineSpan(rendered.document, TOOL_CATALOG_ID).classList.contains('is-tool-catalog')).toBe(true);
 
     clickRecord(rendered.document, TOOL_CATALOG_ID);
@@ -454,14 +498,14 @@ describe('ThreadTrajectoryPanel', () => {
     expect(rendered.document.body.textContent).toContain('First tool');
   });
 
-  test('renders USER preview from the canonical user message instead of the accepted context envelope', async () => {
+  test('renders USER Preview from captured model-visible text instead of canonical accepted input', async () => {
     const input = record({
       id: INPUT_ID,
       kind: 'input',
       lane: 'input',
-      sequence: 0,
-      title: 'Input',
-      preview: 'nihao',
+      stepIndex: 0,
+      label: { type: 'input', source: 'initial' },
+      preview: '[[file:brief.txt^‹path:redacted›]] Inspect the attachment.',
       primaryEvidence: {
         type: 'threadItem',
         threadId: THREAD_ID,
@@ -483,9 +527,9 @@ describe('ThreadTrajectoryPanel', () => {
       id: CONTEXT_ID,
       kind: 'context',
       lane: 'input',
-      sequence: 1,
-      title: 'Turn Environment',
-      subtitle: 'application · observation',
+      stepIndex: 1,
+      label: { type: 'context', kinds: ['turnEnvironment'] },
+      meta: 'application · observation',
       preview: '<context-evidence kind="turnEnvironment">working_directory=/workspace</context-evidence>',
       primaryEvidence: {
         type: 'preparedContextPart',
@@ -507,14 +551,16 @@ describe('ThreadTrajectoryPanel', () => {
 
     rendered.render();
     await flush();
-    expect(recordRow(rendered.document, INPUT_ID).textContent).toContain('USERnihao');
-    expect(recordRow(rendered.document, context.id).textContent).toContain('CONTEXTTurn Environment');
+    expect(recordRow(rendered.document, INPUT_ID).textContent)
+      .toContain('User[[file:brief.txt^‹path:redacted›]] Inspect the attachment.');
+    expect(recordRow(rendered.document, context.id).textContent).toContain('ContextTurn Environment');
 
     clickRecord(rendered.document, INPUT_ID);
     await flush();
     clickButton(rendered.document, 'Preview');
     const inspector = rendered.document.querySelector<HTMLElement>('[aria-label="Trajectory inspector"]');
-    expect(inspector?.textContent).toContain('nihao');
+    expect(inspector?.textContent).toContain('Use file_read with this path to inspect the attachment.');
+    expect(inspector?.textContent).not.toContain('brief.txtInspect the attachment');
     expect(inspector?.textContent).not.toContain('Turn environment');
 
     clickButton(rendered.document, 'Request');
@@ -528,9 +574,9 @@ describe('ThreadTrajectoryPanel', () => {
       id: CONTEXT_ID,
       kind: 'context',
       lane: 'input',
-      sequence: 0,
-      title: 'Skill Catalog',
-      subtitle: 'application · instruction',
+      stepIndex: 0,
+      label: { type: 'context', kinds: ['skillCatalog'] },
+      meta: 'application · instruction',
       preview: 'Available Skills (2)',
       primaryEvidence: {
         type: 'preparedContextPart',
@@ -560,7 +606,7 @@ describe('ThreadTrajectoryPanel', () => {
 
     rendered.render();
     await flush();
-    expect(recordRow(rendered.document, context.id).textContent).toContain('CONTEXTSkill Catalog · Available Skills (2)');
+    expect(recordRow(rendered.document, context.id).textContent).toContain('ContextSkill Catalog · Available Skills (2)');
 
     clickRecord(rendered.document, context.id);
     await flush();
@@ -575,6 +621,7 @@ describe('ThreadTrajectoryPanel', () => {
     expect(inspector?.textContent).toContain('Use code-review for local diffs and pull requests.');
 
     clickButton(rendered.document, 'Raw');
+    await flush();
     expect(inspector?.textContent).toContain('"item": null');
     expect(inspector?.textContent).toContain('"modelContextText"');
   });
@@ -585,8 +632,8 @@ describe('ThreadTrajectoryPanel', () => {
       id: DELEGATION_ID,
       kind: 'delegation',
       lane: 'tools',
-      sequence: 0,
-      title: 'Agent delegation',
+      stepIndex: 0,
+      label: { type: 'delegation', action: 'delegate', name: 'reviewer' },
       preview: 'Inspect the renderer',
       childThreadId: CHILD_THREAD_ID,
       primaryEvidence: {
@@ -618,8 +665,8 @@ describe('ThreadTrajectoryPanel', () => {
       id: `turn:${TURN_ID}:input:${index}`,
       kind: 'input',
       lane: 'input',
-      sequence: index,
-      title: 'Input',
+      stepIndex: index,
+      label: { type: 'input', source: 'initial' },
       preview: `Message ${index + 1}`,
       timing: { startedAt: 100 + index, firstTokenAt: null, completedAt: 100 + index, durationMs: 0 },
       primaryEvidence: {
@@ -716,8 +763,8 @@ describe('Trajectory projection model', () => {
       id: `turn:${TURN_ID}:context:untimed`,
       kind: 'context',
       lane: 'input',
-      sequence: records.length,
-      title: 'Context reset',
+      stepIndex: records.length,
+      label: { type: 'contextCompaction', trigger: 'manual' },
       preview: null,
       timing: { startedAt: null, firstTokenAt: null, completedAt: null, durationMs: null },
       primaryEvidence: { type: 'threadTurn', threadId: THREAD_ID, turnId: TURN_ID },
@@ -737,12 +784,13 @@ describe('Trajectory projection model', () => {
 
   test('keeps matching children attached to their Assistant row and applies folds after search', () => {
     const records = trajectoryRecords();
-    const matches = trajectorySearchMatches(records, 'package');
+    const matches = trajectorySearchMatches(records, 'package', LABELS);
     const rows = buildTrajectoryLedgerRows({
       collapsedCalls: new Set(),
       collapsedTurns: new Set(),
       records,
       searchMatches: matches,
+      labels: LABELS,
     });
     expect(rows.flatMap((row) => row.type === 'record' ? [row.record.id] : [])).toEqual([
       ASSISTANT_ID,
@@ -754,6 +802,7 @@ describe('Trajectory projection model', () => {
       collapsedTurns: new Set(),
       records,
       searchMatches: matches,
+      labels: LABELS,
     });
     expect(folded.flatMap((row) => row.type === 'record' ? [row.record.id] : [])).toEqual([
       ASSISTANT_ID,
@@ -766,8 +815,9 @@ describe('Trajectory projection model', () => {
       collapsedCalls: new Set([ASSISTANT_ID]),
       collapsedTurns: new Set([TURN_ID]),
       records,
-      searchMatches: trajectorySearchMatches(records, 'does-not-match'),
+      searchMatches: trajectorySearchMatches(records, 'does-not-match', LABELS),
       selectedRecordId: TOOL_ID,
+      labels: LABELS,
     });
 
     expect(rows.flatMap((row) => row.type === 'record' ? [row.record.id] : [])).toEqual([
@@ -781,25 +831,25 @@ describe('Trajectory projection model', () => {
       id: `turn:${TURN_ID}:context`,
       kind: 'context',
       lane: 'input',
-      sequence: 0,
-      title: 'Initial System Prompt',
+      stepIndex: 0,
+      label: { type: 'systemPrompt', change: 'initial' },
       primaryEvidence: { type: 'stablePrompt', threadId: THREAD_ID, turnId: TURN_ID },
     });
     const tools = record({
       id: TOOL_CATALOG_ID,
       kind: 'context',
       lane: 'input',
-      sequence: 1,
-      title: 'Available Tools',
+      stepIndex: 1,
+      label: { type: 'toolCatalog', change: 'initial', requestIndex: 0, toolCount: 2 },
       primaryEvidence: { type: 'toolCatalog', threadId: THREAD_ID, turnId: TURN_ID, callIndex: 0 },
     });
     const input = record({
       ...trajectoryRecords()[0]!,
-      sequence: 2,
+      stepIndex: 2,
     });
     const assistant = record({
       ...trajectoryRecords()[1]!,
-      sequence: 3,
+      stepIndex: 3,
     });
 
     const rows = buildTrajectoryLedgerRows({
@@ -807,6 +857,7 @@ describe('Trajectory projection model', () => {
       collapsedTurns: new Set([TURN_ID]),
       records: [system, tools, input, assistant],
       searchMatches: null,
+      labels: LABELS,
     });
 
     expect(rows.map((row) => row.type === 'record' ? row.record.id : row.type)).toEqual([
@@ -829,6 +880,7 @@ function renderPanel(
     input: AgentCoreRequestByMethod[Method],
   ) => Promise<AgentCoreResponseByMethod[Method]>,
   options: {
+    readonly language?: 'en' | 'zh-Hans';
     readonly onOpenThreadTrajectory?: (threadId: string) => void;
     readonly selectedRecordId?: string;
     readonly turnId?: string;
@@ -844,7 +896,7 @@ function renderPanel(
     },
     cancelAnimationFrame: () => undefined,
     lin: {
-      initialLanguage: 'en',
+      initialLanguage: options.language ?? 'en',
       agentCoreRequest,
       onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => {
         notificationListener = listener;
@@ -930,7 +982,7 @@ function replacementRangeForRecords(
 ): ThreadTrajectoryReplacementRange | null {
   const first = records[0] ?? null;
   const last = records.at(-1) ?? null;
-  return first && last ? { startSequence: first.sequence, endSequence: last.sequence + 1 } : null;
+  return first && last ? { startOrderKey: first.orderKey, endOrderKey: last.orderKey } : null;
 }
 
 function trajectoryRecords(): readonly ThreadTrajectoryRecordSummary[] {
@@ -939,8 +991,8 @@ function trajectoryRecords(): readonly ThreadTrajectoryRecordSummary[] {
       id: INPUT_ID,
       kind: 'input',
       lane: 'input',
-      sequence: 0,
-      title: 'Input',
+      stepIndex: 0,
+      label: { type: 'input', source: 'initial' },
       preview: 'Plan the release',
       timing: { startedAt: 100, firstTokenAt: null, completedAt: 100, durationMs: 0 },
       primaryEvidence: {
@@ -955,9 +1007,9 @@ function trajectoryRecords(): readonly ThreadTrajectoryRecordSummary[] {
       id: ASSISTANT_ID,
       kind: 'assistant',
       lane: 'assistant',
-      sequence: 1,
-      title: 'Assistant call 1',
-      subtitle: 'openai · gpt-5',
+      stepIndex: 1,
+      label: { type: 'assistantCall', callIndex: 0 },
+      meta: 'openai · gpt-5',
       preview: 'Mock response',
       timing: { startedAt: 110, firstTokenAt: null, completedAt: 180, durationMs: 70 },
       usage: {
@@ -975,10 +1027,10 @@ function trajectoryRecords(): readonly ThreadTrajectoryRecordSummary[] {
       id: TOOL_ID,
       kind: 'tool',
       lane: 'tools',
-      sequence: 2,
+      stepIndex: 2,
       parentRecordId: ASSISTANT_ID,
-      title: 'Read file',
-      subtitle: 'read_file',
+      label: { type: 'tool', name: 'Read file' },
+      meta: 'read_file',
       preview: 'package.json',
       timing: { startedAt: 200, firstTokenAt: null, completedAt: 220, durationMs: 20 },
       primaryEvidence: {
@@ -995,14 +1047,15 @@ function trajectoryRecords(): readonly ThreadTrajectoryRecordSummary[] {
 function record(
   overrides: Partial<ThreadTrajectoryRecordSummary> & Pick<
     ThreadTrajectoryRecordSummary,
-    'id' | 'kind' | 'lane' | 'sequence' | 'title' | 'primaryEvidence'
+    'id' | 'kind' | 'lane' | 'stepIndex' | 'label' | 'primaryEvidence'
   >,
 ): ThreadTrajectoryRecordSummary {
-  return {
+  const record = {
     threadId: THREAD_ID,
     turnId: TURN_ID,
+    turnIndex: 0,
     parentRecordId: null,
-    subtitle: null,
+    meta: null,
     preview: null,
     state: 'completed',
     timing: { startedAt: 100, firstTokenAt: null, completedAt: 100, durationMs: 0 },
@@ -1012,6 +1065,12 @@ function record(
     childThreadId: null,
     ...overrides,
   };
+  return { ...record, orderKey: testOrderKey(record.turnIndex, record.stepIndex) };
+}
+
+function testOrderKey(turnIndex: number, stepIndex: number): string {
+  const component = (value: number) => value.toString(36).padStart(13, '0');
+  return [turnIndex, 1, stepIndex, 0, 0, 0].map(component).join(':');
 }
 
 function assistantDetailResponse(): ThreadTrajectoryDetailReadResponse {
@@ -1038,10 +1097,24 @@ function inputDetailResponse(input: ThreadTrajectoryRecordSummary): ThreadTrajec
     detail: {
       kind: 'input',
       turn: turnEvidence(),
+      modelInputText: [
+        '[[file:brief.txt^‹path:redacted›]] Inspect the attachment.',
+        '[Attachment: brief.txt, text/plain, 64 bytes]\nReadable path: /workspace/brief.txt\nUse file_read with this path to inspect the attachment.',
+      ].join('\n\n'),
       message: {
         itemId: 'user-message-1',
         acceptedAt: 106,
-        content: [{ type: 'text', text: 'nihao' }],
+        content: [
+          {
+            type: 'attachment',
+            id: 'attachment-1',
+            name: 'brief.txt',
+            mimeType: 'text/plain',
+            sizeBytes: 64,
+            source: { kind: 'localFile', path: '/workspace/brief.txt' },
+          },
+          { type: 'text', text: 'Inspect the attachment.' },
+        ],
       },
       diagnostics: diagnosticsEvidence({
         request: { model: 'gpt-5', input: [{ role: 'user', content: [{ type: 'input_text', text: 'nihao' }] }] },
@@ -1067,7 +1140,7 @@ function contextDetailResponse(
         ? {
           itemId: context.primaryEvidence.itemId,
           type: 'contextEvidence',
-          title: context.title,
+          title: context.label.type,
           preview: context.preview,
           status: null,
         }

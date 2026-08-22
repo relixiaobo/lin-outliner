@@ -69,8 +69,13 @@ describe('ThreadTrajectoryProjection', () => {
     expect(toolCatalog).toMatchObject({
       kind: 'context',
       lane: 'input',
-      title: 'Available Tools',
-      subtitle: '2 tools · Request #1',
+      label: {
+        type: 'toolCatalog',
+        change: 'initial',
+        requestIndex: 0,
+        toolCount: 2,
+      },
+      meta: null,
       preview: 'first_tool, second_tool',
       primaryEvidence: {
         type: 'toolCatalog',
@@ -118,8 +123,13 @@ describe('ThreadTrajectoryProjection', () => {
     const systemContexts = contexts.filter((record) => record.primaryEvidence.type === 'preparedContextPart');
 
     expect(input?.preview).toBe('nihao');
-    expect(contexts.map((record) => record.title)).toEqual(['Available Tools', 'System Reminder']);
-    expect(systemContexts.map((record) => record.title)).toEqual(['System Reminder']);
+    expect(contexts.map((record) => record.label)).toEqual([
+      { type: 'toolCatalog', change: 'initial', requestIndex: 0, toolCount: 2 },
+      { type: 'context', kinds: ['turnEnvironment', 'userView'] },
+    ]);
+    expect(systemContexts.map((record) => record.label)).toEqual([
+      { type: 'context', kinds: ['turnEnvironment', 'userView'] },
+    ]);
     expect(input?.primaryEvidence).toEqual({
       type: 'threadItem',
       threadId: THREAD_ID,
@@ -144,13 +154,16 @@ describe('ThreadTrajectoryProjection', () => {
     expect(systemContexts[0]?.preview).toContain('<system-reminder>');
     expect(systemContexts[0]?.preview).toContain('<context-evidence kind="turnEnvironment"');
     expect(systemContexts[0]?.preview).toContain('<context-evidence kind="userView"');
-    expect(contexts.map((record) => record.title)).not.toContain('Additional Context');
-    expect(contexts.map((record) => record.title)).not.toContain('Tool Output Projection');
+    expect(contexts.flatMap((record) => record.label.type === 'context' ? record.label.kinds : []))
+      .not.toContain('additionalContext');
+    expect(contexts.flatMap((record) => record.label.type === 'context' ? record.label.kinds : []))
+      .not.toContain('toolOutputProjection');
 
     if (!input) throw new Error('Expected input record');
     const detail = await projection.readDetail({ threadId: THREAD_ID, recordId: input.id });
     expect(detail.detail?.kind).toBe('input');
     if (detail.detail?.kind !== 'input') throw new Error('Expected input detail');
+    expect(detail.detail.modelInputText).toBe('nihao');
     expect(detail.detail.message?.content).toEqual([{ type: 'text', text: 'nihao' }]);
     expect(detail.detail.diagnostics?.providerCall?.request).toEqual({
       model: 'gpt-5',
@@ -159,7 +172,7 @@ describe('ThreadTrajectoryProjection', () => {
     expect(JSON.stringify(detail.detail)).not.toContain('Turn environment');
     expect(decodeAgentCoreResponse('thread/trajectory/detail/read', detail)).toEqual(detail);
 
-    const context = contexts.find((record) => record.title === 'System Reminder');
+    const context = contexts.find((record) => record.primaryEvidence.type === 'preparedContextPart');
     if (!context) throw new Error('Expected context record');
     const contextDetail = await projection.readDetail({ threadId: THREAD_ID, recordId: context.id });
     expect(contextDetail.detail?.kind).toBe('context');
@@ -180,6 +193,187 @@ describe('ThreadTrajectoryProjection', () => {
     expect(contextDetail.detail.modelContextText).toContain('working_directory=/workspace');
     expect(contextDetail.detail.modelContextText).toContain('<context-evidence kind="userView"');
     expect(contextDetail.detail.modelContextText).toContain('active_panel_id=panel-1');
+    expect(decodeAgentCoreResponse('thread/trajectory/detail/read', contextDetail)).toEqual(contextDetail);
+  });
+
+  test('uses captured attachment, Node, and image input while keeping Node snapshots in Context', async () => {
+    const base = inputEnvelopeDiagnostics();
+    const call = base.providerCalls[0]!;
+    const messageId = '7'.repeat(64);
+    const imageDigest = '8'.repeat(64);
+    const narrative = [
+      '[[file:brief.txt^%2Fworkspace%2Fbrief.txt]]',
+      ' Extract the attachment, inspect ',
+      '[[node:Plan^node-1]]',
+      ', and compare ',
+      '[[file:diagram.png^%2Fworkspace%2Fdiagram.png]]',
+      '.',
+    ].join('');
+    const attachmentText = [
+      '[Attachment: brief.txt, text/plain, 64 bytes]',
+      'Readable path: /workspace/brief.txt',
+      'Use file_read with this path to inspect the attachment.',
+    ].join('\n');
+    const imageText = [
+      '[Attachment image: diagram.png, image/png, 128 bytes]',
+      `Artifact: ${'9'.repeat(64)}`,
+      'Readable path: /workspace/diagram.png',
+      'Image geometry: observation=1x1; source=1x1',
+      'Source pixels per observation pixel: x=1, y=1',
+      'Observation-to-source matrix: [1, 0, 0, 1, 0, 0]',
+      'The following image is the immutable model observation for this attachment.',
+    ].join('\n');
+    const nodeContext = [
+      '<system-reminder>',
+      '<context-evidence kind="referencedResources" authority="untrusted" purpose="observation">',
+      'node_id=node-1',
+      'snapshot_content:\nRelease plan body',
+      '</context-evidence>',
+      '</system-reminder>',
+    ].join('\n');
+    const diagnostics: TurnDiagnosticsPayload = {
+      ...base,
+      canonicalMessages: [{
+        id: messageId,
+        estimatedTokens: 100,
+        value: {
+          role: 'user',
+          content: [
+            { type: 'text', text: narrative },
+            { type: 'text', text: attachmentText },
+            { type: 'text', text: imageText },
+            {
+              type: 'image',
+              data: {
+                omitted: true,
+                encoding: 'base64',
+                encodedLength: 12,
+                byteLength: 8,
+                sha256: imageDigest,
+              },
+              mimeType: 'image/png',
+            },
+            { type: 'text', text: nodeContext },
+          ],
+        },
+      }],
+      providerCalls: [{
+        ...call,
+        preparedContext: {
+          ...call.preparedContext,
+          messageIds: [messageId],
+          messagePartProvenance: [[
+            { source: 'userInput', itemId: 'user-message-rich' },
+            { source: 'userInput', itemId: 'user-message-rich' },
+            { source: 'userInput', itemId: 'user-message-rich' },
+            { source: 'userInput', itemId: 'user-message-rich' },
+            {
+              source: 'systemContext',
+              entries: [{
+                kind: 'referencedResources',
+                authority: 'untrusted',
+                purpose: 'observation',
+              }],
+            },
+          ]],
+        },
+        request: {
+          kind: 'value',
+          value: {
+            input: [{
+              role: 'user',
+              content: [{
+                type: 'input_image',
+                image_url: { omitted: true, encoding: 'data-url', sha256: imageDigest },
+              }],
+            }],
+          },
+        },
+      }],
+      activities: [{
+        type: 'acceptedInput',
+        source: 'initial',
+        acceptedAt: 106,
+        itemIds: ['user-message-rich'],
+        consumedByCallIndex: 0,
+      }, { type: 'modelCall', callIndex: 0 }],
+    };
+    const turn: Turn = {
+      ...inputEnvelopeTurn(),
+      items: [{
+        type: 'userMessage',
+        id: 'user-message-rich',
+        provenance: itemProvenance('user-message-rich'),
+        clientId: null,
+        content: [
+          {
+            type: 'attachment',
+            id: 'attachment-text',
+            name: 'brief.txt',
+            mimeType: 'text/plain',
+            sizeBytes: 64,
+            source: { kind: 'localFile', path: '/workspace/brief.txt' },
+          },
+          { type: 'text', text: 'Extract the attachment and compare the references.' },
+          { type: 'nodeReference', nodeId: 'node-1', note: 'Plan' },
+          {
+            type: 'attachment',
+            id: 'attachment-image',
+            name: 'diagram.png',
+            mimeType: 'image/png',
+            sizeBytes: 128,
+            source: { kind: 'localFile', path: '/workspace/diagram.png' },
+            artifactRef: {
+              id: '9'.repeat(64),
+              createdAt: 100,
+              retention: 'external',
+              original: { kind: 'localFile', path: '/workspace/diagram.png' },
+              observation: {
+                id: imageDigest,
+                mimeType: 'image/png',
+                byteLength: 8,
+                fileName: 'diagram.png',
+              },
+              geometry: {
+                sourceWidth: 1,
+                sourceHeight: 1,
+                observationWidth: 1,
+                observationHeight: 1,
+                observationToSource: [1, 0, 0, 1, 0, 0],
+              },
+            },
+          },
+        ],
+        acceptedAt: 106,
+      }],
+    };
+    const projection = trajectoryProjection({ diagnostics, turn });
+    const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    const input = response.records.find((record) => record.kind === 'input');
+    const context = response.records.find((record) => record.primaryEvidence.type === 'preparedContextPart');
+
+    expect(input?.preview).toContain('[[file:brief.txt^‹path:redacted›]]');
+    expect(input?.preview).not.toContain('brief.txt Extract the attachment and compare the references. Plan diagram.png');
+    expect(context?.label).toEqual({ type: 'context', kinds: ['referencedResources'] });
+    if (!input || !context) throw new Error('Expected input and referenced-resource Context records');
+
+    const inputDetail = await projection.readDetail({ threadId: THREAD_ID, recordId: input.id });
+    if (inputDetail.detail?.kind !== 'input') throw new Error('Expected input detail');
+    expect(inputDetail.detail.modelInputText).toContain('[[file:brief.txt^‹path:redacted›]]');
+    expect(inputDetail.detail.modelInputText).toContain('[[node:Plan^node-1]]');
+    expect(inputDetail.detail.modelInputText).toContain('[[file:diagram.png^‹path:redacted›]]');
+    expect(inputDetail.detail.modelInputText).toContain('Use file_read with this path to inspect the attachment.');
+    expect(inputDetail.detail.modelInputText).toContain('[Attachment image: diagram.png, image/png, 128 bytes]');
+    expect(inputDetail.detail.modelInputText).not.toContain('snapshot_content');
+    expect(inputDetail.detail.modelInputText).not.toContain(imageDigest);
+    expect(JSON.stringify(inputDetail.detail.diagnostics?.providerCall?.request)).toContain(imageDigest);
+    expect(JSON.stringify(inputDetail)).not.toContain('iVBOR');
+
+    const contextDetail = await projection.readDetail({ threadId: THREAD_ID, recordId: context.id });
+    if (contextDetail.detail?.kind !== 'context') throw new Error('Expected Context detail');
+    expect(contextDetail.detail.modelContextText).toContain('snapshot_content:\nRelease plan body');
+    expect(inputDetail.detail.modelInputText).not.toContain(contextDetail.detail.modelContextText!);
+    expect(decodeAgentCoreResponse('thread/trajectory/detail/read', inputDetail)).toEqual(inputDetail);
     expect(decodeAgentCoreResponse('thread/trajectory/detail/read', contextDetail)).toEqual(contextDetail);
   });
 
@@ -382,7 +576,7 @@ describe('ThreadTrajectoryProjection', () => {
     expect(assistant).toMatchObject({
       kind: 'assistant',
       state: 'running',
-      title: 'Assistant call 1',
+      label: { type: 'assistantCall', callIndex: 0 },
     });
     expect(response.records.some((record) => record.kind === 'tool')).toBe(true);
   });
@@ -418,7 +612,7 @@ describe('ThreadTrajectoryProjection', () => {
             ...firstCall.preparedContext,
             messageIds: [secondMessageId],
             messagePartProvenance: [[
-              { source: 'userInput' },
+              { source: 'userInput', itemId: 'user-message-2' },
               {
                 source: 'systemContext',
                 entries: [{
@@ -461,12 +655,20 @@ describe('ThreadTrajectoryProjection', () => {
     };
     const projection = trajectoryProjection({ diagnostics, turn });
     const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    const inputs = response.records.filter((record) => record.kind === 'input');
     const contexts = response.records.filter((record) => record.primaryEvidence.type === 'preparedContextPart');
+    expect(inputs.map((record) => record.preview)).toEqual(['nihao', 'later']);
     expect(contexts).toHaveLength(2);
     expect(contexts.map((record) => record.primaryEvidence)).toEqual([
       { type: 'preparedContextPart', threadId: THREAD_ID, turnId: TURN_ID, callIndex: 0, messageIndex: 0, partIndex: 1 },
       { type: 'preparedContextPart', threadId: THREAD_ID, turnId: TURN_ID, callIndex: 1, messageIndex: 0, partIndex: 1 },
     ]);
+    const details = await Promise.all(inputs.map((input) => projection.readDetail({
+      threadId: THREAD_ID,
+      recordId: input.id,
+    })));
+    expect(details.map((detail) => detail.detail?.kind === 'input' ? detail.detail.modelInputText : null))
+      .toEqual(['nihao', 'later']);
   });
 
   test('uses stable bidirectional cursors for focused windows', async () => {
@@ -494,7 +696,7 @@ describe('ThreadTrajectoryProjection', () => {
     expect(newer.newerCursor).not.toBeNull();
   });
 
-  test('keeps record sequence stable between tail and overlapping cursor windows', async () => {
+  test('keeps record order stable between tail and overlapping cursor windows', async () => {
     const turns = Array.from({ length: 3 }, (_, index) => trajectoryTurnWithDiagnosticsRef(index));
     const diagnosticsByRef = new Map(turns.map((turn) => [
       turn.execution.diagnosticsRef!.id,
@@ -516,7 +718,72 @@ describe('ThreadTrajectoryProjection', () => {
 
     expect(tailAssistant).toBeDefined();
     expect(cursorAssistant).toBeDefined();
-    expect(cursorAssistant?.sequence).toBe(tailAssistant?.sequence);
+    expect(cursorAssistant?.orderKey).toBe(tailAssistant?.orderKey);
+  });
+
+  test('classifies structural records consistently in full and focused windows', async () => {
+    const turns = Array.from({ length: 3 }, (_, index) => trajectoryTurnWithDiagnosticsRef(index));
+    const diagnosticsByRef = new Map(turns.map((turn) => [
+      turn.execution.diagnosticsRef!.id,
+      trajectoryDiagnostics(),
+    ]));
+    const projection = trajectoryProjection({ turns, diagnosticsByRef });
+    const targetTurn = turns[1]!;
+
+    const full = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    const focused = await projection.read({
+      threadId: THREAD_ID,
+      limit: 1,
+      focus: { turnId: targetTurn.id },
+    });
+    const structuralLabels = (response: ThreadTrajectoryReadResponse) => response.records
+      .filter((record) => record.turnId === targetTurn.id)
+      .filter((record) => record.primaryEvidence.type === 'stablePrompt'
+        || record.primaryEvidence.type === 'toolCatalog')
+      .map((record) => record.label);
+
+    expect(structuralLabels(focused)).toEqual(structuralLabels(full));
+    expect(structuralLabels(focused)).toEqual([]);
+  });
+
+  test('keeps an existing Assistant order key when active diagnostics add a changed tool catalog', async () => {
+    const turn = {
+      ...trajectoryTurn(),
+      status: 'inProgress' as const,
+      completedAt: null,
+      durationMs: null,
+      execution: { ...trajectoryTurn().execution, diagnosticsRef: null },
+    };
+    let diagnostics = trajectoryDiagnostics();
+    const projection = trajectoryProjection({
+      turn,
+      activeDiagnostics: () => diagnostics,
+    });
+    const initial = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    const assistant = initial.records.find((record) => record.kind === 'assistant');
+    if (!assistant) throw new Error('Expected Assistant record');
+
+    const firstCall = diagnostics.providerCalls[0]!;
+    diagnostics = {
+      ...diagnostics,
+      providerCalls: [
+        firstCall,
+        {
+          ...firstCall,
+          index: 1,
+          requestedAt: 260,
+          preparedContext: { ...firstCall.preparedContext, toolNames: ['first_tool'] },
+          requestFingerprint: '8'.repeat(64),
+        },
+      ],
+      activities: [...diagnostics.activities, { type: 'modelCall', callIndex: 1 }],
+    };
+    const refreshed = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    const sameAssistant = refreshed.records.find((record) => record.id === assistant.id);
+
+    expect(sameAssistant?.orderKey).toBe(assistant.orderKey);
+    expect(refreshed.records.filter((record) => record.primaryEvidence.type === 'toolCatalog'))
+      .toHaveLength(2);
   });
 
   test('limits whole-Thread summary to facts available without diagnostics totals', async () => {
@@ -580,16 +847,16 @@ describe('ThreadTrajectoryProjection', () => {
     const response = await projection.read({ threadId: THREAD_ID, limit: 1 });
 
     expect(response.records.length).toBeGreaterThan(0);
-    expect(diagnosticsReads).toBeLessThanOrEqual(1);
+    expect(diagnosticsReads).toBeLessThanOrEqual(2);
   });
 });
 
 function replacementRangeForRecords(
-  records: readonly { readonly sequence: number }[],
+  records: readonly { readonly orderKey: string }[],
 ): ThreadTrajectoryReplacementRange | null {
   const first = records[0] ?? null;
   const last = records.at(-1) ?? null;
-  return first && last ? { startSequence: first.sequence, endSequence: last.sequence + 1 } : null;
+  return first && last ? { startOrderKey: first.orderKey, endOrderKey: last.orderKey } : null;
 }
 
 function trajectoryProjection(overrides: {
@@ -1003,7 +1270,7 @@ function inputEnvelopeDiagnostics(): TurnDiagnosticsPayload {
         toolNames: ['first_tool', 'second_tool'],
         messageIds: [messageId],
         messagePartProvenance: [[
-          { source: 'userInput' },
+          { source: 'userInput', itemId: 'user-message-1' },
           {
             source: 'systemContext',
             entries: [{

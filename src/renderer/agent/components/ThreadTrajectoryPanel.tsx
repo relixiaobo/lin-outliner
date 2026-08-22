@@ -184,10 +184,6 @@ export function ThreadTrajectoryPanel({
     () => turnGroups.filter((group) => group.records.some((record) => !isSystemLevelRecord(record))),
     [turnGroups],
   );
-  const turnIndexById = useMemo(
-    () => new Map(turnGroups.map((group) => [group.turnId, group.index])),
-    [turnGroups],
-  );
   const callIds = useMemo(() => {
     const result = new Set<string>();
     for (const record of records) {
@@ -195,7 +191,10 @@ export function ThreadTrajectoryPanel({
     }
     return result;
   }, [records]);
-  const searchMatches = useMemo(() => trajectorySearchMatches(records, query), [query, records]);
+  const searchMatches = useMemo(
+    () => trajectorySearchMatches(records, query, t.agent.trajectory),
+    [query, records, t.agent.trajectory],
+  );
   const timeline = useMemo(() => buildTrajectoryTimeline(records, mode), [mode, records]);
   const timelineFocusRecords = useMemo(() => (
     trajectoryTimelineFocusRecords(timeline, range)
@@ -206,7 +205,8 @@ export function ThreadTrajectoryPanel({
     records,
     searchMatches,
     selectedRecordId: selectedId,
-  }), [collapsedCalls, collapsedTurns, records, searchMatches, selectedId]);
+    labels: t.agent.trajectory,
+  }), [collapsedCalls, collapsedTurns, records, searchMatches, selectedId, t.agent.trajectory]);
   const selectedRecord = selectedId ? recordById.get(selectedId) ?? null : null;
   const allTurnsCollapsed = collapsibleTurnGroups.length > 0
     && collapsibleTurnGroups.every((group) => collapsedTurns.has(group.turnId));
@@ -350,7 +350,6 @@ export function ThreadTrajectoryPanel({
                   onOpenChildTrajectory={onOpenThreadTrajectory}
                   record={selectedRecord}
                   threadId={threadId}
-                  turnIndex={turnIndexById.get(selectedRecord.turnId) ?? 0}
                 />
               ) : null}
             </div>
@@ -394,7 +393,7 @@ function mergeRecords(
   const byId = new Map<string, ThreadTrajectoryRecordSummary>();
   for (const record of current) byId.set(record.id, record);
   for (const record of incoming) byId.set(record.id, record);
-  return [...byId.values()].sort((left, right) => left.sequence - right.sequence);
+  return [...byId.values()].sort((left, right) => left.orderKey.localeCompare(right.orderKey));
 }
 
 function replaceRecordsForIncomingWindow(
@@ -408,7 +407,7 @@ function replaceRecordsForIncomingWindow(
   return mergeRecords(
     current.filter((record) => (
       !incomingIds.has(record.id)
-      && !sequenceInRange(record.sequence, replacementRange)
+      && !orderKeyInRange(record.orderKey, replacementRange)
       && !staleFallbackRecord(record, incomingTurnIds)
     )),
     incoming,
@@ -424,8 +423,8 @@ function staleFallbackRecord(
     && record.primaryEvidence.type === 'threadItem';
 }
 
-function sequenceInRange(sequence: number, range: ThreadTrajectoryReplacementRange): boolean {
-  return sequence >= range.startSequence && sequence < range.endSequence;
+function orderKeyInRange(orderKey: string, range: ThreadTrajectoryReplacementRange): boolean {
+  return orderKey >= range.startOrderKey && orderKey <= range.endOrderKey;
 }
 
 function trajectoryRelevantNotification(notification: AgentCoreNotification, threadId: string): boolean {

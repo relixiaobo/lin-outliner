@@ -374,7 +374,10 @@ describe('canonical context projection', () => {
       .projectTurnsWithBoundaries([firstTurn, secondTurn]);
     expect(combined.slice(0, firstMessages.length)).toEqual(firstMessages);
     expect(diagnosed.messages).toEqual(combined);
-    expect(diagnosed.messagePartProvenance[0]?.at(-1)).toEqual({ source: 'userInput' });
+    expect(diagnosed.messagePartProvenance[0]?.at(-1)).toEqual({
+      source: 'userInput',
+      itemId: 'user-1',
+    });
     const systemContext = diagnosed.messagePartProvenance[0]?.find((part) => part.source === 'systemContext');
     expect(systemContext).toMatchObject({ source: 'systemContext' });
     expect(systemContext?.source === 'systemContext' ? systemContext.entries : [])
@@ -637,7 +640,7 @@ describe('canonical context projection', () => {
         source: 'systemContext',
         entries: [{ kind: 'skillCatalog', authority: 'application', purpose: 'instruction' }],
       },
-      { source: 'userInput' },
+      { source: 'userInput', itemId: 'user-1' },
     ]);
   });
 

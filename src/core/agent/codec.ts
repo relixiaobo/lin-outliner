@@ -71,6 +71,7 @@ import {
   type ThreadTrajectoryItemEvidence,
   type ThreadTrajectoryProviderCallEvidence,
   type ThreadTrajectoryRecordDetail,
+  type ThreadTrajectoryRecordLabel,
   type ThreadTrajectoryRecordSummary,
   type ThreadTrajectoryRuntimeEvidence,
   type ThreadTrajectorySummary,
@@ -2014,8 +2015,8 @@ function decodeThreadTrajectoryReadResponse(
       fail(`thread/trajectory/read response.records[${index}].threadId`, 'must match the response Thread ID');
     }
     const previous = records[index - 1];
-    if (previous && previous.sequence >= entry.sequence) {
-      fail(`thread/trajectory/read response.records[${index}].sequence`, 'must be ascending');
+    if (previous && previous.orderKey >= entry.orderKey) {
+      fail(`thread/trajectory/read response.records[${index}].orderKey`, 'must be ascending');
     }
   });
   const selectedRecordId = nullableString(
@@ -2048,11 +2049,11 @@ function decodeThreadTrajectoryReplacementRange(
   path: string,
 ): AgentCoreResponseByMethod['thread/trajectory/read']['replacementRange'] {
   const record = recordValue(value, path);
-  exactKeys(record, ['startSequence', 'endSequence'], path);
-  const startSequence = nonNegativeInteger(record.startSequence, `${path}.startSequence`);
-  const endSequence = nonNegativeInteger(record.endSequence, `${path}.endSequence`);
-  if (endSequence <= startSequence) fail(`${path}.endSequence`, 'must be greater than startSequence');
-  return deepFreeze({ startSequence, endSequence });
+  exactKeys(record, ['startOrderKey', 'endOrderKey'], path);
+  const startOrderKey = trajectoryOrderKey(record.startOrderKey, `${path}.startOrderKey`);
+  const endOrderKey = trajectoryOrderKey(record.endOrderKey, `${path}.endOrderKey`);
+  if (endOrderKey < startOrderKey) fail(`${path}.endOrderKey`, 'must not precede startOrderKey');
+  return deepFreeze({ startOrderKey, endOrderKey });
 }
 
 function decodeThreadTrajectoryDetailReadResponse(
@@ -2137,10 +2138,12 @@ function decodeThreadTrajectoryRecordSummary(value: unknown, path: string): Thre
     'lane',
     'threadId',
     'turnId',
-    'sequence',
+    'orderKey',
+    'turnIndex',
+    'stepIndex',
     'parentRecordId',
-    'title',
-    'subtitle',
+    'label',
+    'meta',
     'preview',
     'state',
     'timing',
@@ -2169,10 +2172,12 @@ function decodeThreadTrajectoryRecordSummary(value: unknown, path: string): Thre
     lane: enumValue(record.lane, THREAD_TRAJECTORY_LANES, `${path}.lane`),
     threadId,
     turnId,
-    sequence: nonNegativeInteger(record.sequence, `${path}.sequence`),
+    orderKey: trajectoryOrderKey(record.orderKey, `${path}.orderKey`),
+    turnIndex: nonNegativeInteger(record.turnIndex, `${path}.turnIndex`),
+    stepIndex: nonNegativeInteger(record.stepIndex, `${path}.stepIndex`),
     parentRecordId: nullableString(record.parentRecordId, `${path}.parentRecordId`),
-    title: stringValue(record.title, `${path}.title`),
-    subtitle: nullableString(record.subtitle, `${path}.subtitle`, true),
+    label: decodeThreadTrajectoryRecordLabel(record.label, `${path}.label`),
+    meta: nullableString(record.meta, `${path}.meta`, true),
     preview: nullableString(record.preview, `${path}.preview`, true),
     state: enumValue(record.state, THREAD_TRAJECTORY_RECORD_STATES, `${path}.state`),
     timing: decodeThreadTrajectoryTimingSummary(record.timing, `${path}.timing`),
@@ -2184,6 +2189,80 @@ function decodeThreadTrajectoryRecordSummary(value: unknown, path: string): Thre
     availability: decodeThreadTrajectoryAvailabilityList(record.availability, `${path}.availability`),
     childThreadId: nullableUuidV7(record.childThreadId, `${path}.childThreadId`),
   };
+}
+
+function decodeThreadTrajectoryRecordLabel(value: unknown, path: string): ThreadTrajectoryRecordLabel {
+  const record = recordValue(value, path);
+  const type = enumValue(record.type, [
+    'systemPrompt',
+    'toolCatalog',
+    'input',
+    'context',
+    'assistantCall',
+    'tool',
+    'providerRetry',
+    'contextCompaction',
+    'delegation',
+  ], `${path}.type`);
+  if (type === 'systemPrompt') {
+    exactKeys(record, ['type', 'change'], path);
+    return { type, change: enumValue(record.change, ['initial', 'updated'], `${path}.change`) };
+  }
+  if (type === 'toolCatalog') {
+    exactKeys(record, ['type', 'change', 'requestIndex', 'toolCount'], path);
+    return {
+      type,
+      change: enumValue(record.change, ['initial', 'updated'], `${path}.change`),
+      requestIndex: nonNegativeInteger(record.requestIndex, `${path}.requestIndex`),
+      toolCount: nonNegativeInteger(record.toolCount, `${path}.toolCount`),
+    };
+  }
+  if (type === 'input') {
+    exactKeys(record, ['type', 'source'], path);
+    return { type, source: enumValue(record.source, ['initial', 'steering'], `${path}.source`) };
+  }
+  if (type === 'context') {
+    exactKeys(record, ['type', 'kinds'], path);
+    return {
+      type,
+      kinds: arrayValue(record.kinds, `${path}.kinds`)
+        .map((entry, index) => enumValue(entry, CONTEXT_PAYLOAD_KINDS, `${path}.kinds[${index}]`)),
+    };
+  }
+  if (type === 'assistantCall') {
+    exactKeys(record, ['type', 'callIndex'], path);
+    return { type, callIndex: nonNegativeInteger(record.callIndex, `${path}.callIndex`) };
+  }
+  if (type === 'tool') {
+    exactKeys(record, ['type', 'name'], path);
+    return { type, name: nonEmptyTrimmedString(record.name, `${path}.name`) };
+  }
+  if (type === 'providerRetry') {
+    exactKeys(record, ['type', 'retryKind', 'attempt', 'maxRetries', 'sourceCallIndex'], path);
+    return {
+      type,
+      retryKind: enumValue(record.retryKind, ['request', 'stream'], `${path}.retryKind`),
+      attempt: positiveInteger(record.attempt, `${path}.attempt`),
+      maxRetries: positiveInteger(record.maxRetries, `${path}.maxRetries`),
+      sourceCallIndex: nonNegativeInteger(record.sourceCallIndex, `${path}.sourceCallIndex`),
+    };
+  }
+  if (type === 'contextCompaction') {
+    exactKeys(record, ['type', 'trigger'], path);
+    return { type, trigger: nonEmptyTrimmedString(record.trigger, `${path}.trigger`) };
+  }
+  exactKeys(record, ['type', 'action', 'name'], path);
+  return {
+    type,
+    action: enumValue(record.action, ['delegate', 'message', 'stop', 'activity', 'tool'], `${path}.action`),
+    name: nonEmptyTrimmedString(record.name, `${path}.name`),
+  };
+}
+
+function trajectoryOrderKey(value: unknown, path: string): string {
+  const key = nonEmptyTrimmedString(value, path);
+  if (!/^[0-9a-z]{13}(?::[0-9a-z]{13}){5}$/u.test(key)) fail(path, 'must be an opaque Trajectory order key');
+  return key;
 }
 
 function decodeThreadTrajectoryTimingSummary(value: unknown, path: string): ThreadTrajectoryTimingSummary {
@@ -2228,10 +2307,9 @@ function decodeThreadTrajectoryAvailabilityList(value: unknown, path: string): r
   return arrayValue(value, path).map((entry, index) => {
     const entryPath = `${path}[${index}]`;
     const record = recordValue(entry, entryPath);
-    exactKeys(record, ['reason', 'message'], entryPath);
+    exactKeys(record, ['reason'], entryPath);
     return {
       reason: enumValue(record.reason, THREAD_TRAJECTORY_AVAILABILITY_REASONS, `${entryPath}.reason`),
-      message: stringValue(record.message, `${entryPath}.message`),
     };
   });
 }
@@ -2343,7 +2421,7 @@ function decodeThreadTrajectoryRecordDetail(
   const kind = enumValue(record.kind, THREAD_TRAJECTORY_RECORD_KINDS, `${path}.kind`);
   if (kind !== summary.kind) fail(`${path}.kind`, 'must match the record summary');
   if (kind === 'input') {
-    exactKeys(record, ['kind', 'turn', 'message', 'diagnostics', 'activityIndex'], path);
+    exactKeys(record, ['kind', 'turn', 'modelInputText', 'message', 'diagnostics', 'activityIndex'], path);
     const turn = decodeTrajectoryDetailTurn(record.turn, summary, path);
     const diagnostics = decodeThreadTrajectoryDiagnostics(record.diagnostics, `${path}.diagnostics`);
     const activityIndex = nullableNonNegativeInteger(record.activityIndex, `${path}.activityIndex`);
@@ -2351,6 +2429,7 @@ function decodeThreadTrajectoryRecordDetail(
     return {
       kind,
       turn,
+      modelInputText: nullableString(record.modelInputText, `${path}.modelInputText`, true),
       message: record.message === null
         ? null
         : decodeThreadTrajectoryUserMessageEvidence(record.message, `${path}.message`),
@@ -4404,6 +4483,10 @@ function decodeTurnDiagnosticsPartProvenance(
         };
       }),
     };
+  }
+  if (source === 'userInput') {
+    exactKeys(provenance, ['source', 'itemId'], path);
+    return { source, itemId: stringValue(provenance.itemId, `${path}.itemId`) };
   }
   exactKeys(provenance, ['source'], path);
   return { source };

@@ -344,7 +344,11 @@ export type TurnDiagnosticsMessagePartProvenance =
       readonly entries: readonly TurnDiagnosticsSystemContextEntry[];
     }
   | {
-      readonly source: 'userInput' | 'assistantHistory' | 'toolResult' | 'unknown';
+      readonly source: 'userInput';
+      readonly itemId: ThreadItemId;
+    }
+  | {
+      readonly source: 'assistantHistory' | 'toolResult' | 'unknown';
     };
 
 export interface TurnDiagnosticsSystemContextEntry {
@@ -1517,7 +1521,6 @@ export type ThreadTrajectoryAvailabilityReason = typeof THREAD_TRAJECTORY_AVAILA
 
 export interface ThreadTrajectoryAvailability {
   readonly reason: ThreadTrajectoryAvailabilityReason;
-  readonly message: string;
 }
 
 export type ThreadTrajectoryEvidenceRef =
@@ -1596,17 +1599,66 @@ export interface ThreadTrajectoryTimingSummary {
   readonly durationMs: number | null;
 }
 
+export type ThreadTrajectoryRecordLabel =
+  | {
+      readonly type: 'systemPrompt';
+      readonly change: 'initial' | 'updated';
+    }
+  | {
+      readonly type: 'toolCatalog';
+      readonly change: 'initial' | 'updated';
+      readonly requestIndex: number;
+      readonly toolCount: number;
+    }
+  | {
+      readonly type: 'input';
+      readonly source: 'initial' | 'steering';
+    }
+  | {
+      readonly type: 'context';
+      readonly kinds: readonly ContextPayloadKind[];
+    }
+  | {
+      readonly type: 'assistantCall';
+      readonly callIndex: number;
+    }
+  | {
+      readonly type: 'tool';
+      readonly name: string;
+    }
+  | {
+      readonly type: 'providerRetry';
+      readonly retryKind: 'request' | 'stream';
+      readonly attempt: number;
+      readonly maxRetries: number;
+      readonly sourceCallIndex: number;
+    }
+  | {
+      readonly type: 'contextCompaction';
+      readonly trigger: string;
+    }
+  | {
+      readonly type: 'delegation';
+      readonly action: 'delegate' | 'message' | 'stop' | 'activity' | 'tool';
+      readonly name: string;
+    };
+
 export interface ThreadTrajectoryRecordSummary {
   readonly id: string;
   readonly kind: ThreadTrajectoryRecordKind;
   readonly lane: ThreadTrajectoryLane;
   readonly threadId: ThreadId;
   readonly turnId: TurnId;
-  /** Stable whole-Thread sort coordinate. Reading a different window must not change it. */
-  readonly sequence: number;
+  /** Stable opaque whole-Thread sort coordinate. Reading a different window or revision must not change it. */
+  readonly orderKey: string;
+  /** Stable zero-based ordinal in the canonical Thread. */
+  readonly turnIndex: number;
+  /** Zero-based display ordinal in this Turn's current canonical projection. */
+  readonly stepIndex: number;
   readonly parentRecordId: string | null;
-  readonly title: string;
-  readonly subtitle: string | null;
+  readonly label: ThreadTrajectoryRecordLabel;
+  /** Raw provider, tool, authority, or other technical metadata; never localized prose. */
+  readonly meta: string | null;
   readonly preview: string | null;
   readonly state: ThreadTrajectoryRecordState;
   readonly timing: ThreadTrajectoryTimingSummary;
@@ -1618,8 +1670,8 @@ export interface ThreadTrajectoryRecordSummary {
 }
 
 export interface ThreadTrajectoryReplacementRange {
-  readonly startSequence: number;
-  readonly endSequence: number;
+  readonly startOrderKey: string;
+  readonly endOrderKey: string;
 }
 
 export interface ThreadTrajectorySummary {
@@ -1649,7 +1701,7 @@ export interface ThreadTrajectoryReadResponse {
   /** Records are returned in recorded order within the loaded window. */
   readonly records: readonly ThreadTrajectoryRecordSummary[];
   /**
-   * The authoritative canonical sequence range covered by this response before
+   * The inclusive canonical order range covered by this response before
    * structural ancestor expansion. Live refresh uses it to replace stale records
    * without deleting older loaded records from the same Turn.
    */
@@ -1734,6 +1786,9 @@ export type ThreadTrajectoryRecordDetail =
   | {
       readonly kind: 'input';
       readonly turn: ThreadTrajectoryTurnEvidence;
+      /** Captured provider-neutral text supplied to the adapter for this exact user Item. */
+      readonly modelInputText: string | null;
+      /** Canonical accepted input evidence; this is not a provider request preview. */
       readonly message: ThreadTrajectoryUserMessageEvidence | null;
       readonly diagnostics: ThreadTrajectoryDiagnosticsEvidence | null;
       readonly activityIndex: number | null;

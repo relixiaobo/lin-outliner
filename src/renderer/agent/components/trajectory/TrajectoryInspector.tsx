@@ -30,10 +30,13 @@ import { ReadOnlyCodeBlock } from '../../../ui/editor/CodeBlockSurface';
 import { Button } from '../../../ui/primitives/Button';
 import { EmptyState, ErrorState } from '../../../ui/primitives/FeedbackState';
 import {
+  trajectoryRecordLabel,
   trajectoryRecordKindClass,
+  trajectoryRecordMeta,
   trajectoryRecordRole,
   isStablePromptRecord,
   isToolCatalogRecord,
+  type TrajectoryLabels,
 } from './trajectoryModel';
 
 type InspectorTab =
@@ -52,7 +55,6 @@ interface TrajectoryInspectorProps {
   readonly onOpenChildTrajectory: (threadId: string) => void;
   readonly record: ThreadTrajectoryRecordSummary;
   readonly threadId: string;
-  readonly turnIndex: number;
 }
 
 interface ResizeDrag {
@@ -72,7 +74,6 @@ export const TrajectoryInspector = memo(function TrajectoryInspector({
   onOpenChildTrajectory,
   record,
   threadId,
-  turnIndex,
 }: TrajectoryInspectorProps) {
   const t = useT();
   const rootRef = useRef<HTMLElement | null>(null);
@@ -188,9 +189,12 @@ export const TrajectoryInspector = memo(function TrajectoryInspector({
         </button>
         <div className="thread-trajectory-inspector-title">
           <span className={`thread-trajectory-kind ${trajectoryRecordKindClass(record)}`}>
-            {trajectoryRecordRole(record)}
+            {trajectoryRecordRole(record, t.agent.trajectory)}
           </span>
-          <span>{t.agent.trajectory.turnStep({ turn: turnIndex + 1, step: record.sequence + 1 })}</span>
+          <span>{t.agent.trajectory.turnStep({
+            turn: record.turnIndex + 1,
+            step: record.stepIndex + 1,
+          })}</span>
         </div>
         <button
           aria-label={t.agent.trajectory.closeInspector}
@@ -290,15 +294,15 @@ function SummaryEvidence({
   const source = detail.kind === 'assistant'
     ? t.agent.trajectory.requestNumber({ index: detail.providerCallIndex + 1 })
     : detail.kind === 'context'
-      ? contextEvidenceSource(detail, record)
-    : record.subtitle ?? evidenceSource(record);
+      ? contextEvidenceSource(detail, record, t.agent.trajectory)
+    : trajectoryRecordMeta(record, t.agent.trajectory) ?? evidenceSource(record, t.agent.trajectory);
   return (
     <div className="thread-trajectory-inspector-body is-summary">
       <FactList entries={[
         [t.agent.trajectory.source, source],
-        [t.agent.trajectory.status, stateLabel(record.state)],
+        [t.agent.trajectory.status, stateLabel(record.state, t.agent.trajectory)],
         [t.agent.trajectory.model, `${detail.turn.modelProvider} · ${detail.turn.model}`],
-        [t.agent.trajectory.duration, durationLabel(record.timing)],
+        [t.agent.trajectory.duration, durationLabel(record.timing, t.agent.trajectory)],
       ]} />
       {record.usage ? (
         <InspectorSection title={t.agent.trajectory.usage}>
@@ -407,13 +411,13 @@ function TimingFacts({
 }
 
 function AvailabilityList({ record }: { readonly record: ThreadTrajectoryRecordSummary }) {
+  const t = useT();
   if (record.availability.length === 0) return null;
   return (
     <div className="thread-trajectory-availability">
       {record.availability.map((entry) => (
-        <p key={`${entry.reason}:${entry.message}`}>
-          <strong>{entry.reason}</strong>
-          <span>{entry.message}</span>
+        <p key={entry.reason}>
+          <span>{t.agent.trajectory.availability[entry.reason]}</span>
         </p>
       ))}
     </div>
@@ -497,14 +501,14 @@ function previewText(
     return semanticText(detail.diagnostics?.providerCall?.response ?? null) ?? record.preview;
   }
   if (detail.kind === 'input') {
-    return userMessageText(detail.message?.content ?? null) ?? record.preview;
+    return detail.modelInputText ?? userMessageText(detail.message?.content ?? null) ?? record.preview;
   }
   if (detail.kind === 'context') {
     return detail.modelContextText ?? contextPayloadText(detail.payload) ?? record.preview;
   }
   if (detail.kind === 'tool') return detail.outputText ?? record.preview;
   if (detail.kind === 'delegation') return detail.outputText ?? record.preview;
-  return record.preview ?? record.title;
+  return record.preview;
 }
 
 function providerRequest(detail: ThreadTrajectoryRecordDetail): JsonValue | null {
@@ -526,9 +530,10 @@ function userContentText(content: ThreadUserContent): string {
 function contextEvidenceSource(
   detail: Extract<ThreadTrajectoryRecordDetail, { readonly kind: 'context' }>,
   record: ThreadTrajectoryRecordSummary,
+  labels: TrajectoryLabels,
 ): string {
   if (isJsonObject(detail.payload) && typeof detail.payload.kind === 'string') return detail.payload.kind;
-  return record.subtitle ?? evidenceSource(record);
+  return trajectoryRecordMeta(record, labels) ?? evidenceSource(record, labels);
 }
 
 function contextPayloadText(value: JsonValue | null): string | null {
@@ -903,21 +908,21 @@ function toolSchema(detail: ThreadTrajectoryRecordDetail): JsonValue | null {
   return detail.kind === 'tool' ? detail.schema : null;
 }
 
-function evidenceSource(record: ThreadTrajectoryRecordSummary): string {
+function evidenceSource(record: ThreadTrajectoryRecordSummary, labels: TrajectoryLabels): string {
   const evidence = record.primaryEvidence;
-  if (evidence.type === 'providerCall') return `Request #${evidence.callIndex + 1}`;
+  if (evidence.type === 'providerCall') return labels.requestNumber({ index: evidence.callIndex + 1 });
   if (evidence.type === 'diagnosticActivity') return evidence.activityType;
   if (evidence.type === 'toolExecution') return evidence.callId;
-  if (evidence.type === 'threadItem') return record.title;
-  if (evidence.type === 'stablePrompt') return 'Stable prompt';
-  if (evidence.type === 'toolCatalog') return `Request #${evidence.callIndex + 1}`;
-  if (evidence.type === 'subagent') return 'Child Thread';
-  return 'Turn';
+  if (evidence.type === 'threadItem') return trajectoryRecordLabel(record, labels);
+  if (evidence.type === 'stablePrompt') return labels.record.stablePrompt;
+  if (evidence.type === 'toolCatalog') return labels.requestNumber({ index: evidence.callIndex + 1 });
+  if (evidence.type === 'subagent') return labels.record.childThread;
+  return labels.turnLabel({ index: record.turnIndex + 1 });
 }
 
-function durationLabel(timing: ThreadTrajectoryTimingSummary): string {
+function durationLabel(timing: ThreadTrajectoryTimingSummary, labels: TrajectoryLabels): string {
   if (timing.durationMs !== null) return formatDuration(timing.durationMs);
-  return timing.startedAt === null ? 'Not recorded' : 'Running';
+  return timing.startedAt === null ? labels.state.notRecorded : labels.state.running;
 }
 
 function formatDuration(milliseconds: number): string {
@@ -938,13 +943,16 @@ function formatTimestamp(timestamp: number, locale: string): string {
   }).format(date)}.${milliseconds}`;
 }
 
-function stateLabel(state: ThreadTrajectoryRecordSummary['state']): string {
-  if (state === 'completed') return 'Completed';
-  if (state === 'running') return 'Running';
-  if (state === 'failed') return 'Failed';
-  if (state === 'interrupted') return 'Interrupted';
-  if (state === 'partial') return 'Partial';
-  return 'Pending';
+function stateLabel(
+  state: ThreadTrajectoryRecordSummary['state'],
+  labels: TrajectoryLabels,
+): string {
+  if (state === 'completed') return labels.state.completed;
+  if (state === 'running') return labels.state.running;
+  if (state === 'failed') return labels.state.failed;
+  if (state === 'interrupted') return labels.state.interrupted;
+  if (state === 'partial') return labels.state.partial;
+  return labels.state.pending;
 }
 
 function clampDetailsWidth(width: number, splitWidth: number): number {

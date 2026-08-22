@@ -554,7 +554,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.locator('.outline-panel-surface')).toHaveCount(paneCountBeforeDetails);
     await expect(trajectory).toContainText('Trajectory');
     const assistantTrajectoryRow = trajectory.locator('[data-kind="assistant"]');
-    await expect(assistantTrajectoryRow).toContainText('ASSISTANT');
+    await expect(assistantTrajectoryRow).toContainText('Assistant');
     await expect(assistantTrajectoryRow).toContainText('Mock response');
     await expect(trajectory.getByRole('tab', { name: 'Summary' })).toBeVisible();
     await expect(trajectory.getByRole('tab', { name: 'Preview' })).toBeVisible();
@@ -2012,8 +2012,8 @@ test.describe('canonical agent Thread surface', () => {
       await compactionTurn.getByRole('button', { name: 'Open Trajectory' }).click();
       const trajectory = page.locator('.outline-panel-surface.is-thread-trajectory');
       await expect(trajectory).toContainText('Trajectory');
-      await expect(trajectory.locator('[data-kind="compaction"]')).toContainText('COMPACTED');
-      await expect(trajectory).toContainText('Mock diagnostics are unavailable for this record.');
+      await expect(trajectory.locator('[data-kind="compaction"]')).toContainText('Compacted');
+      await expect(trajectory).toContainText('Diagnostics were not retained for this record.');
       await expect.poll(() => trajectory.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0);
     });
   }

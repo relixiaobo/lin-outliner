@@ -332,6 +332,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       }
       return candidates[0] ?? null;
     };
+    const trajectoryOrderKey = (turnIndex: number, stepIndex: number): string => {
+      const component = (value: number) => value.toString(36).padStart(13, '0');
+      return [turnIndex, 1, stepIndex, 0, 0, 0].map(component).join(':');
+    };
     type MockNode = {
       id: string;
       type?: string;
@@ -2890,7 +2894,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                     purpose: 'observation' as const,
                   }],
                 }
-              : { source: 'userInput' as const }
+              : { source: 'userInput' as const, itemId: userItem.id }
           ));
           const providerTool = {
             type: 'function',
@@ -3062,10 +3066,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const turns = mockTurns.get(thread.id) ?? [];
           const records = turns.flatMap((turn, turnIndex) => {
             const userItem = turn.items.find((item) => item.type === 'userMessage');
-            const contextItems = turn.items.filter((item) => item.type === 'contextEvidence' || item.type === 'contextReset');
             const compactionItems = turn.items.filter((item) => item.type === 'contextCompaction');
             const agentItem = turn.items.find((item) => item.type === 'agentMessage');
-            const baseSequence = turnIndex * 10;
             const entries: Array<Record<string, unknown>> = [];
             if (userItem) {
               entries.push({
@@ -3074,10 +3076,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 lane: 'input',
                 threadId: thread.id,
                 turnId: turn.id,
-                sequence: baseSequence,
+                orderKey: trajectoryOrderKey(turnIndex, 0),
+                turnIndex,
+                stepIndex: 0,
                 parentRecordId: null,
-                title: 'Input',
-                subtitle: null,
+                label: { type: 'input', source: 'initial' },
+                meta: null,
                 preview: 'Mock request',
                 state: 'completed',
                 timing: { startedAt: turn.startedAt, firstTokenAt: null, completedAt: turn.startedAt, durationMs: 0 },
@@ -3088,27 +3092,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 childThreadId: null,
               });
             }
-            contextItems.forEach((item, index) => {
-              entries.push({
-                id: `turn:${turn.id}:context:item:${item.id}`,
-                kind: 'context',
-                lane: 'input',
-                threadId: thread.id,
-                turnId: turn.id,
-                sequence: baseSequence + 1 + index,
-                parentRecordId: null,
-                title: item.type === 'contextReset' ? 'Context reset' : 'Context evidence',
-                subtitle: item.type,
-                preview: item.type === 'contextEvidence' ? item.summary : 'Context cleared',
-                state: 'completed',
-                timing: { startedAt: turn.startedAt, firstTokenAt: null, completedAt: turn.startedAt, durationMs: 0 },
-                usage: null,
-                primaryEvidence: { type: 'threadItem', threadId: thread.id, turnId: turn.id, itemId: item.id },
-                relatedEvidence: [],
-                availability: [],
-                childThreadId: null,
-              });
-            });
             if (agentItem) {
               entries.push({
                 id: `turn:${turn.id}:assistant:0`,
@@ -3116,10 +3099,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 lane: 'assistant',
                 threadId: thread.id,
                 turnId: turn.id,
-                sequence: baseSequence + 5,
+                orderKey: trajectoryOrderKey(turnIndex, 5),
+                turnIndex,
+                stepIndex: 0,
                 parentRecordId: null,
-                title: 'Assistant call 1',
-                subtitle: `${turn.execution.modelProvider} · ${turn.execution.model}`,
+                label: { type: 'assistantCall', callIndex: 0 },
+                meta: `${turn.execution.modelProvider} · ${turn.execution.model}`,
                 preview: 'Mock response',
                 state: turn.status === 'inProgress' ? 'running' : 'completed',
                 timing: {
@@ -3150,23 +3135,31 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 lane: 'input',
                 threadId: thread.id,
                 turnId: turn.id,
-                sequence: baseSequence + 7 + index,
+                orderKey: trajectoryOrderKey(turnIndex, 7 + index),
+                turnIndex,
+                stepIndex: 0,
                 parentRecordId: null,
-                title: 'Context compaction',
-                subtitle: item.trigger,
+                label: { type: 'contextCompaction', trigger: item.trigger },
+                meta: item.trigger,
                 preview: `${item.trigger} compaction`,
                 state: 'completed',
                 timing: { startedAt: turn.startedAt, firstTokenAt: null, completedAt: turn.completedAt ?? turn.startedAt, durationMs: null },
                 usage: null,
                 primaryEvidence: { type: 'threadItem', threadId: thread.id, turnId: turn.id, itemId: item.id },
                 relatedEvidence: [],
-                availability: [{ reason: 'diagnosticsUnavailable', message: 'Mock diagnostics are unavailable for this record.' }],
+                availability: [{ reason: 'diagnosticsUnavailable' }],
                 childThreadId: null,
               });
             });
             return entries;
-          }).sort((left, right) => Number(left.sequence) - Number(right.sequence));
-          records.forEach((record, index) => { record.sequence = index; });
+          }).sort((left, right) => String(left.orderKey).localeCompare(String(right.orderKey)));
+          const stepsByTurn = new Map<string, number>();
+          records.forEach((record) => {
+            const turnId = String(record.turnId);
+            const stepIndex = stepsByTurn.get(turnId) ?? 0;
+            stepsByTurn.set(turnId, stepIndex + 1);
+            record.stepIndex = stepIndex;
+          });
           const focus = input.focus as { recordId?: string | null; turnId?: string | null } | null | undefined;
           const selectedRecordId = focus?.recordId && records.some((record) => record.id === focus.recordId)
             ? focus.recordId
@@ -3198,8 +3191,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             records,
             replacementRange: records.length > 0
               ? {
-                startSequence: Number(records[0]!.sequence),
-                endSequence: Number(records.at(-1)!.sequence) + 1,
+                startOrderKey: String(records[0]!.orderKey),
+                endOrderKey: String(records.at(-1)!.orderKey),
               }
               : null,
             olderCursor: null,
@@ -3216,6 +3209,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const turn = turns.find((candidate) => recordId.includes(candidate.id));
           if (!turn) return clone({ threadId: thread.id, record: null, detail: null }) as T;
           const item = turn.items.find((candidate) => recordId.includes(candidate.id)) ?? null;
+          const turnIndex = turns.findIndex((candidate) => candidate.id === turn.id);
           const kind = recordId.includes(':assistant:') ? 'assistant'
             : recordId.includes(':compaction:') ? 'compaction'
               : recordId.includes(':context:') ? 'context'
@@ -3226,10 +3220,18 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             lane: kind === 'assistant' ? 'assistant' : 'input',
             threadId: thread.id,
             turnId: turn.id,
-            sequence: 0,
+            orderKey: trajectoryOrderKey(turnIndex, 0),
+            turnIndex,
+            stepIndex: 0,
             parentRecordId: null,
-            title: kind === 'assistant' ? 'Assistant call 1' : kind === 'compaction' ? 'Context compaction' : kind === 'context' ? 'Context evidence' : 'Input',
-            subtitle: null,
+            label: kind === 'assistant'
+              ? { type: 'assistantCall', callIndex: 0 }
+              : kind === 'compaction'
+                ? { type: 'contextCompaction', trigger: 'manual' }
+                : kind === 'context'
+                  ? { type: 'context', kinds: ['additionalContext'] }
+                  : { type: 'input', source: 'initial' },
+            meta: null,
             preview: item && 'text' in item ? String(item.text) : null,
             state: 'completed',
             timing: { startedAt: turn.startedAt, firstTokenAt: null, completedAt: turn.completedAt, durationMs: turn.durationMs },
@@ -3326,6 +3328,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                   : {
                     kind,
                     turn: turnEvidence,
+                    modelInputText: item?.type === 'userMessage' ? 'Mock request' : null,
                     message: item?.type === 'userMessage'
                       ? { itemId: item.id, acceptedAt: item.acceptedAt, content: item.content }
                       : null,

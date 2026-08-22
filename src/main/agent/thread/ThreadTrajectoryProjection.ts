@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { posix, win32 } from 'node:path';
 import {
   MAX_TURN_DIAGNOSTICS_PAYLOAD_BYTES,
   type CollabAgentToolCallThreadItem,
@@ -20,6 +21,7 @@ import {
   type ThreadTrajectoryProviderCallEvidence,
   type ThreadTrajectoryReadRequest,
   type ThreadTrajectoryReadResponse,
+  type ThreadTrajectoryRecordLabel,
   type ThreadTrajectoryRecordKind,
   type ThreadTrajectoryRecordSummary,
   type ThreadTrajectoryReplacementRange,
@@ -37,6 +39,7 @@ import {
   type ThreadUserContent,
   type UserMessageThreadItem,
 } from '../../../core/agent/protocol';
+import { parseReferenceMarkers } from '../../../core/referenceMarkup';
 import {
   DIAGNOSTIC_SECRET_REDACTION_OMISSION,
   redactSecretLikeContent,
@@ -53,7 +56,7 @@ const MAX_JSON_DEPTH = 16;
 const MAX_JSON_ARRAY_LENGTH = 500;
 const MAX_JSON_OBJECT_KEYS = 500;
 const DIAGNOSTICS_READ_CONCURRENCY = 4;
-const TRAJECTORY_SEQUENCE_STRIDE = 100_000;
+const TRAJECTORY_ORDER_COMPONENT_WIDTH = 13;
 
 type DiagnosticsBundle = {
   readonly ref: TurnDiagnosticsPayloadReference;
@@ -104,6 +107,11 @@ interface BuiltTrajectoryWindow {
 interface TurnWindow {
   readonly end: number;
   readonly start: number;
+}
+
+interface TrajectoryProjectionState {
+  stablePromptFingerprint: string | null | undefined;
+  toolCatalogFingerprint: string | null | undefined;
 }
 
 interface ThreadTrajectoryThreadEvidence {
@@ -195,19 +203,22 @@ export class ThreadTrajectoryProjection {
     this.core.requireThread(request.threadId);
     const allTurns = this.core.allTurns(request.threadId);
     const window = turnWindowForTrajectoryRead(allTurns, request);
-    const turns = await this.loadTurns(
+    const materializedStart = Math.max(0, window.start - 1);
+    const loaded = await this.loadTurns(
       request.threadId,
-      allTurns.slice(window.start, window.end).map((turn, offset) => ({
+      allTurns.slice(materializedStart, window.end).map((turn, offset) => ({
         turn,
-        turnIndex: window.start + offset,
+        turnIndex: materializedStart + offset,
       })),
     );
-    const records = this.projectRecords(turns);
+    const predecessor = window.start > 0 ? loaded[0] ?? null : null;
+    const turns = predecessor ? loaded.slice(1) : loaded;
+    const records = this.projectRecords(turns, projectionStateAfter(predecessor));
     const page = pageTrajectoryRecords(records, request, window, allTurns.length);
     return {
       turns,
       records: page.data,
-      summary: summarizeTrajectory(request.threadId, allTurns, turns),
+      summary: summarizeTrajectory(request.threadId, allTurns, loaded),
       replacementRange: page.replacementRange,
       olderCursor: page.olderCursor,
       newerCursor: page.newerCursor,
@@ -222,13 +233,18 @@ export class ThreadTrajectoryProjection {
     const turnIndex = allTurns.findIndex((candidate) => candidate.id === turnId);
     const turn = turnIndex < 0 ? null : allTurns[turnIndex] ?? null;
     if (!turn) return null;
-    const turns = await this.loadTurns(threadId, [{ turn, turnIndex }]);
-    const records = this.projectRecords(turns);
+    const materialized = await this.loadTurns(threadId, [
+      ...(turnIndex > 0 ? [{ turn: allTurns[turnIndex - 1]!, turnIndex: turnIndex - 1 }] : []),
+      { turn, turnIndex },
+    ]);
+    const predecessor = turnIndex > 0 ? materialized[0] ?? null : null;
+    const turns = predecessor ? materialized.slice(1) : materialized;
+    const records = this.projectRecords(turns, projectionStateAfter(predecessor));
     return {
       thread,
       turns,
       records,
-      summary: summarizeTrajectory(threadId, allTurns, turns),
+      summary: summarizeTrajectory(threadId, allTurns, materialized),
     };
   }
 
@@ -236,7 +252,7 @@ export class ThreadTrajectoryProjection {
     const thread = this.core.requireThread(threadId).thread;
     const allTurns = this.core.allTurns(threadId);
     const turns = await this.loadTurns(threadId, allTurns.map((turn, turnIndex) => ({ turn, turnIndex })));
-    const records = this.projectRecords(turns);
+    const records = this.projectRecords(turns, initialProjectionState());
     return {
       thread,
       turns,
@@ -261,24 +277,29 @@ export class ThreadTrajectoryProjection {
     });
   }
 
-  private projectRecords(turns: readonly LoadedTurn[]): readonly ThreadTrajectoryRecordSummary[] {
+  private projectRecords(
+    turns: readonly LoadedTurn[],
+    initialState: TrajectoryProjectionState,
+  ): readonly ThreadTrajectoryRecordSummary[] {
     const records: ThreadTrajectoryRecordSummary[] = [];
-    let stablePromptFingerprint: string | null = null;
-    const toolCatalogState: ToolCatalogProjectionState = { fingerprint: null };
+    let stablePromptFingerprint = initialState.stablePromptFingerprint;
+    let toolCatalogFingerprint = initialState.toolCatalogFingerprint;
     for (const loaded of turns) {
-      // Reserve every Turn-local header position before cross-Turn deduplication.
       const turnRecords: ThreadTrajectoryRecordSummary[] = [];
-      appendStablePromptRecord(turnRecords, loaded, false);
-      appendToolCatalogRecords(turnRecords, loaded, { fingerprint: null });
+      appendStablePromptRecord(turnRecords, loaded);
+      appendToolCatalogRecords(turnRecords, loaded);
       appendTurnRecords(turnRecords, loaded);
 
       const nextFingerprint = loaded.diagnostics?.payload.stablePrompt?.fingerprints.complete ?? null;
       if (nextFingerprint !== null && nextFingerprint !== stablePromptFingerprint) {
         const stablePromptRecord = turnRecords.find((record) => record.primaryEvidence.type === 'stablePrompt');
-        if (stablePromptRecord) {
+        if (stablePromptRecord && stablePromptFingerprint !== undefined) {
           records.push({
             ...stablePromptRecord,
-            title: stablePromptFingerprint === null ? 'Initial System Prompt' : 'System Prompt Update',
+            label: {
+              type: 'systemPrompt',
+              change: stablePromptFingerprint === null ? 'initial' : 'updated',
+            },
           });
         }
         stablePromptFingerprint = nextFingerprint;
@@ -292,17 +313,20 @@ export class ThreadTrajectoryProjection {
         const payload = loaded.diagnostics?.payload;
         if (!payload) continue;
         const catalog = toolCatalogRecord(payload, record.primaryEvidence.callIndex);
-        if (!catalog || catalog.fingerprint === toolCatalogState.fingerprint) continue;
-        const initial = toolCatalogState.fingerprint === null;
+        if (!catalog || catalog.fingerprint === toolCatalogFingerprint) continue;
+        const stateKnown = toolCatalogFingerprint !== undefined;
+        const initial = toolCatalogFingerprint === null;
+        toolCatalogFingerprint = catalog.fingerprint;
         if (initial && catalog.toolNames.length === 0) continue;
-        toolCatalogState.fingerprint = catalog.fingerprint;
-        records.push({
-          ...record,
-          title: toolCatalogTitle(!initial),
-        });
+        if (stateKnown) {
+          records.push({
+            ...record,
+            label: toolCatalogLabel(catalog, !initial),
+          });
+        }
       }
     }
-    return records;
+    return assignTrajectoryStepIndices(records);
   }
 
   private async readDiagnostics(
@@ -322,14 +346,14 @@ export class ThreadTrajectoryProjection {
         if (activeBundle) return { bundle: activeBundle, availability: [] };
         return {
           bundle: null,
-          availability: [availability('partialCoverage', 'Active Turn diagnostics exceeded the inspection budget.')],
+          availability: [availability('partialCoverage')],
         };
       }
       return {
         bundle: null,
         availability: turn.status === 'inProgress'
           ? []
-          : [availability('diagnosticsUnavailable', 'Turn diagnostics were not retained for this Turn.')],
+          : [availability('diagnosticsUnavailable')],
       };
     }
     try {
@@ -337,14 +361,14 @@ export class ThreadTrajectoryProjection {
       if (!payload) {
         return {
           bundle: null,
-          availability: [availability('diagnosticsUnavailable', 'Turn diagnostics are no longer available.')],
+          availability: [availability('diagnosticsUnavailable')],
         };
       }
       return { bundle: { ref, payload }, availability: [] };
     } catch {
       return {
         bundle: null,
-        availability: [availability('diagnosticsCorrupt', 'Turn diagnostics could not be decoded.')],
+        availability: [availability('diagnosticsCorrupt')],
       };
     }
   }
@@ -362,6 +386,9 @@ export class ThreadTrajectoryProjection {
       return {
         kind: 'input',
         turn,
+        modelInputText: message
+          ? modelInputTextForItem(diagnostics?.payload ?? null, message.id, providerCallIndex)
+          : null,
         message: message ? userMessageEvidence(message) : null,
         diagnostics: diagnosticsEvidence(diagnostics, activityIndex, providerCallIndex),
         activityIndex,
@@ -469,6 +496,77 @@ export class ThreadTrajectoryProjection {
       return null;
     }
   }
+}
+
+function initialProjectionState(): TrajectoryProjectionState {
+  return {
+    stablePromptFingerprint: null,
+    toolCatalogFingerprint: null,
+  };
+}
+
+function projectionStateAfter(predecessor: LoadedTurn | null): TrajectoryProjectionState {
+  if (!predecessor) return initialProjectionState();
+  const payload = predecessor.diagnostics?.payload;
+  if (!payload) {
+    return {
+      stablePromptFingerprint: undefined,
+      toolCatalogFingerprint: undefined,
+    };
+  }
+  const finalCall = payload.providerCalls.at(-1) ?? null;
+  const finalCatalog = finalCall ? toolCatalogRecord(payload, finalCall.index) : null;
+  return {
+    stablePromptFingerprint: payload.stablePrompt?.fingerprints.complete ?? null,
+    toolCatalogFingerprint: finalCatalog?.fingerprint,
+  };
+}
+
+function assignTrajectoryStepIndices(
+  records: readonly ThreadTrajectoryRecordSummary[],
+): readonly ThreadTrajectoryRecordSummary[] {
+  const stepsByTurn = new Map<TurnId, number>();
+  return [...records]
+    .sort(compareTrajectoryRecords)
+    .map((record) => {
+      const stepIndex = stepsByTurn.get(record.turnId) ?? 0;
+      stepsByTurn.set(record.turnId, stepIndex + 1);
+      return { ...record, stepIndex };
+    });
+}
+
+function compareTrajectoryRecords(
+  left: ThreadTrajectoryRecordSummary,
+  right: ThreadTrajectoryRecordSummary,
+): number {
+  if (left.orderKey < right.orderKey) return -1;
+  if (left.orderKey > right.orderKey) return 1;
+  return left.id.localeCompare(right.id);
+}
+
+function trajectoryOrderKey(order: readonly [number, number, number, number, number, number]): string {
+  return order.map((component) => {
+    const normalized = Number.isSafeInteger(component) && component >= 0
+      ? component
+      : Number.MAX_SAFE_INTEGER;
+    return normalized.toString(36).padStart(TRAJECTORY_ORDER_COMPONENT_WIDTH, '0');
+  }).join(':');
+}
+
+function sanitizeTrajectoryLabel(label: ThreadTrajectoryRecordLabel): ThreadTrajectoryRecordLabel {
+  if (label.type === 'context') {
+    return { type: label.type, kinds: [...label.kinds] };
+  }
+  if (label.type === 'tool') {
+    return { type: label.type, name: sanitizeStringEvidence(label.name) };
+  }
+  if (label.type === 'contextCompaction') {
+    return { type: label.type, trigger: sanitizeStringEvidence(label.trigger) };
+  }
+  if (label.type === 'delegation') {
+    return { ...label, name: sanitizeStringEvidence(label.name) };
+  }
+  return label;
 }
 
 function threadEvidence(thread: Thread): ThreadTrajectoryThreadEvidence {
@@ -634,10 +732,6 @@ interface ToolCatalogRecord {
   readonly requestedAt: number;
 }
 
-interface ToolCatalogProjectionState {
-  fingerprint: string | null;
-}
-
 function modelContextTextForPreparedContextPart(
   payload: TurnDiagnosticsPayload,
   ref: PreparedContextPartEvidenceRef,
@@ -737,17 +831,17 @@ function toolCatalogEvidence(
   });
 }
 
-function toolCatalogTitle(update: boolean): string {
-  return update ? 'Tools Updated' : 'Available Tools';
+function toolCatalogLabel(catalog: ToolCatalogRecord, update: boolean): ThreadTrajectoryRecordLabel {
+  return {
+    type: 'toolCatalog',
+    change: update ? 'updated' : 'initial',
+    requestIndex: catalog.callIndex,
+    toolCount: catalog.toolNames.length,
+  };
 }
 
-function toolCatalogSubtitle(catalog: ToolCatalogRecord): string {
-  const count = catalog.toolNames.length;
-  return `${count} ${count === 1 ? 'tool' : 'tools'} · Request #${catalog.callIndex + 1}`;
-}
-
-function toolCatalogPreview(catalog: ToolCatalogRecord): string {
-  return catalog.toolNames.length > 0 ? catalog.toolNames.join(', ') : 'No tools in this request';
+function toolCatalogPreview(catalog: ToolCatalogRecord): string | null {
+  return catalog.toolNames.length > 0 ? catalog.toolNames.join(', ') : null;
 }
 
 function textForMessagePart(message: JsonValue | null, partIndex: number): string | null {
@@ -758,6 +852,31 @@ function textForMessagePart(message: JsonValue | null, partIndex: number): strin
   const content = record.content ?? record.parts;
   if (Array.isArray(content)) return semanticText(content[partIndex] ?? null);
   return partIndex === 0 ? semanticText(content ?? message) : null;
+}
+
+function modelInputTextForItem(
+  payload: TurnDiagnosticsPayload | null,
+  itemId: ThreadItemId,
+  callIndex: number | null,
+): string | null {
+  if (!payload) return null;
+  const calls = callIndex === null
+    ? payload.providerCalls
+    : payload.providerCalls[callIndex] ? [payload.providerCalls[callIndex]!] : [];
+  const messagesById = new Map(payload.canonicalMessages.map((message) => [message.id, message.value]));
+  for (const call of calls) {
+    const textParts: string[] = [];
+    call.preparedContext.messageIds.forEach((messageId, messageIndex) => {
+      const message = messagesById.get(messageId) ?? null;
+      call.preparedContext.messagePartProvenance[messageIndex]?.forEach((provenance, partIndex) => {
+        if (provenance.source !== 'userInput' || provenance.itemId !== itemId) return;
+        const text = textForMessagePart(message, partIndex);
+        if (text) textParts.push(text);
+      });
+    });
+    if (textParts.length > 0) return sanitizeTextEvidence(textParts.join('\n\n'));
+  }
+  return null;
 }
 
 function sanitizeJsonEvidence(value: unknown, depth = 0): JsonValue {
@@ -830,7 +949,7 @@ function sanitizeStringEvidence(value: string): string {
   if (/^data:image\//iu.test(value) || /^data:application\/octet-stream/iu.test(value)) {
     return '‹binary:redacted›';
   }
-  const pathRedacted = value
+  const pathRedacted = redactFileReferencePaths(value)
     .replace(/(^|[\s([{"'=])\/(?:Users|private|var|tmp|Volumes|Applications|workspace)(?:\/[^\s'",)\]}<>]+)+/gu, '$1‹path:redacted›')
     .replace(/(^|[\s([{"'=])[A-Za-z]:\\(?:[^\\/:*?"<>|\r\n]+\\?)+/gu, '$1‹path:redacted›');
   const structuredRedacted = redactJsonEncodedStringEvidence(pathRedacted);
@@ -839,6 +958,22 @@ function sanitizeStringEvidence(value: string): string {
   } catch {
     return '‹redacted›';
   }
+}
+
+function redactFileReferencePaths(value: string): string {
+  const markers = parseReferenceMarkers(value);
+  let redacted = value;
+  for (let index = markers.length - 1; index >= 0; index -= 1) {
+    const marker = markers[index]!;
+    if (
+      marker.target.kind !== 'local-file'
+      || (!posix.isAbsolute(marker.target.path) && !win32.isAbsolute(marker.target.path))
+    ) continue;
+    const kindSuffix = marker.target.entryKind === 'directory' ? '^directory' : '';
+    const safeMarker = `[[file:${marker.label}^‹path:redacted›${kindSuffix}]]`;
+    redacted = `${redacted.slice(0, marker.start)}${safeMarker}${redacted.slice(marker.end)}`;
+  }
+  return redacted;
 }
 
 function redactJsonEncodedStringEvidence(value: string): string {
@@ -861,7 +996,6 @@ function redactJsonEncodedStringEvidence(value: string): string {
 function appendStablePromptRecord(
   records: ThreadTrajectoryRecordSummary[],
   loaded: LoadedTurn,
-  update: boolean,
 ): void {
   const diagnostics = loaded.diagnostics;
   const stablePrompt = diagnostics?.payload.stablePrompt;
@@ -871,10 +1005,9 @@ function appendStablePromptRecord(
     lane: 'input',
     threadId: loaded.threadId,
     turn: loaded.turn,
-    records,
-    sequenceBase: loaded.turnIndex * TRAJECTORY_SEQUENCE_STRIDE,
-    title: update ? 'System Prompt Update' : 'Initial System Prompt',
-    subtitle: 'stablePrompt',
+    order: [loaded.turnIndex, 0, 0, 0, 0, 0],
+    label: { type: 'systemPrompt', change: 'initial' },
+    meta: null,
     preview: compact(stablePrompt.blocks.map((block) => block.text).join(' ')),
     state: 'completed',
     timing: timing(loaded.turn.startedAt, null, loaded.turn.startedAt),
@@ -906,19 +1039,21 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
         const providerCallRef = activity.consumedByCallIndex === null
           ? null
           : providerCallEvidence(loaded.threadId, turn, activity.consumedByCallIndex);
-        for (const itemId of activity.itemIds) {
+        activity.itemIds.forEach((itemId, itemIndex) => {
           const item = itemsById.get(itemId);
-          if (item?.type !== 'userMessage') continue;
+          if (item?.type !== 'userMessage') return;
           records.push(record({
             kind: 'input',
             lane: 'input',
             threadId: loaded.threadId,
             turn,
-            records,
-            sequenceBase: loaded.turnIndex * TRAJECTORY_SEQUENCE_STRIDE,
-            title: activity.source === 'initial' ? 'Input' : 'Steering',
-            subtitle: null,
-            preview: compact(itemSummary(item)),
+            order: [loaded.turnIndex, 1, activityIndex, 0, itemIndex, 0],
+            label: { type: 'input', source: activity.source },
+            meta: null,
+            preview: compact(
+              modelInputTextForItem(diagnostics.payload, item.id, activity.consumedByCallIndex)
+                ?? itemSummary(item),
+            ),
             state: 'completed',
             timing: timing(item.acceptedAt, null, item.acceptedAt),
             primaryEvidence: itemEvidenceRef(loaded.threadId, turn, item.id),
@@ -930,25 +1065,31 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
             childThreadId: null,
             usage: null,
           }));
-        }
+        });
         if (activity.consumedByCallIndex !== null) {
-          appendPreparedContextRecords(records, loaded, activity.consumedByCallIndex, insertedPreparedContexts);
+          appendPreparedContextRecords(
+            records,
+            loaded,
+            activity.consumedByCallIndex,
+            insertedPreparedContexts,
+            activityIndex,
+            1,
+          );
         }
         return;
       }
       if (activity.type === 'modelCall') {
         const call = diagnostics.payload.providerCalls[activity.callIndex];
         if (!call) return;
-        appendPreparedContextRecords(records, loaded, call.index, insertedPreparedContexts);
+        appendPreparedContextRecords(records, loaded, call.index, insertedPreparedContexts, activityIndex, 0);
         records.push(record({
           kind: 'assistant',
           lane: 'assistant',
           threadId: loaded.threadId,
           turn,
-          records,
-          sequenceBase: loaded.turnIndex * TRAJECTORY_SEQUENCE_STRIDE,
-          title: `Assistant call ${call.index + 1}`,
-          subtitle: `${diagnostics.payload.runtime.provider} · ${diagnostics.payload.runtime.model}`,
+          order: [loaded.turnIndex, 1, activityIndex, 1, 0, 0],
+          label: { type: 'assistantCall', callIndex: call.index },
+          meta: `${diagnostics.payload.runtime.provider} · ${diagnostics.payload.runtime.model}`,
           preview: compact(providerResponsePreview(call.response?.value ?? null)),
           state: providerCallState(call, turn),
           timing: timing(call.requestedAt, null, call.response?.receivedAt ?? null),
@@ -962,7 +1103,7 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
         return;
       }
       if (activity.type === 'toolExecutionBatch') {
-        for (const execution of activity.executions) {
+        activity.executions.forEach((execution, executionIndex) => {
           const item = execution.itemId ? itemsById.get(execution.itemId) ?? null : null;
           const delegation = isDelegationExecution(execution.toolName, item);
           records.push(record({
@@ -970,10 +1111,11 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
             lane: 'tools',
             threadId: loaded.threadId,
             turn,
-            records,
-            sequenceBase: loaded.turnIndex * TRAJECTORY_SEQUENCE_STRIDE,
-            title: delegation ? delegationTitle(item, execution.toolName) : toolTitle(item, execution.toolName),
-            subtitle: execution.canonicalIdentity
+            order: [loaded.turnIndex, 1, activityIndex, 0, executionIndex, 0],
+            label: delegation
+              ? delegationLabel(item, execution.toolName)
+              : { type: 'tool', name: toolName(item, execution.toolName) },
+            meta: execution.canonicalIdentity
               ? [execution.canonicalIdentity.namespace, execution.canonicalIdentity.name].filter(Boolean).join('.')
               : execution.toolName,
             preview: compact(itemSummary(item) ?? execution.callId),
@@ -991,7 +1133,7 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
             usage: null,
             parentRecordId: assistantRecordId(turn.id, activity.sourceCallIndex),
           }));
-        }
+        });
         return;
       }
       if (activity.type === 'providerRetry') {
@@ -1000,10 +1142,15 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
           lane: 'assistant',
           threadId: loaded.threadId,
           turn,
-          records,
-          sequenceBase: loaded.turnIndex * TRAJECTORY_SEQUENCE_STRIDE,
-          title: `${activity.retryKind === 'request' ? 'Request' : 'Stream'} retry ${activity.attempt}/${activity.maxRetries}`,
-          subtitle: `After assistant call ${activity.sourceCallIndex + 1}`,
+          order: [loaded.turnIndex, 1, activityIndex, 0, 0, 0],
+          label: {
+            type: 'providerRetry',
+            retryKind: activity.retryKind,
+            attempt: activity.attempt,
+            maxRetries: activity.maxRetries,
+            sourceCallIndex: activity.sourceCallIndex,
+          },
+          meta: null,
           preview: null,
           state: activity.nextCallIndex === null && turn.status === 'failed' ? 'failed' : 'completed',
           timing: timing(activity.occurredAt, null, activity.occurredAt),
@@ -1027,10 +1174,9 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
         lane: 'input',
         threadId: loaded.threadId,
         turn,
-        records,
-        sequenceBase: loaded.turnIndex * TRAJECTORY_SEQUENCE_STRIDE,
-        title: 'Context compaction',
-        subtitle: activity.trigger,
+        order: [loaded.turnIndex, 1, activityIndex, 0, 0, 0],
+        label: { type: 'contextCompaction', trigger: activity.trigger },
+        meta: activity.trigger,
         preview: compact(itemSummary(itemsById.get(activity.itemId)) ?? activity.trigger),
         state: 'completed',
         timing: timing(activity.completedAt, null, activity.completedAt),
@@ -1042,7 +1188,17 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
       }));
     });
     for (const call of diagnostics.payload.providerCalls) {
-      appendPreparedContextRecords(records, loaded, call.index, insertedPreparedContexts);
+      const activityIndex = diagnostics.payload.activities.findIndex((activity) => (
+        activity.type === 'modelCall' && activity.callIndex === call.index
+      ));
+      appendPreparedContextRecords(
+        records,
+        loaded,
+        call.index,
+        insertedPreparedContexts,
+        activityIndex >= 0 ? activityIndex : diagnostics.payload.activities.length + call.index,
+        0,
+      );
     }
     appendManualCompactionRecords(records, loaded, coveredCompactionItemIds);
     return;
@@ -1052,17 +1208,16 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
 }
 
 function appendFallbackTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: LoadedTurn): void {
-  const userItems = loaded.turn.items.filter((item) => item.type === 'userMessage');
-  for (const item of userItems) {
+  loaded.turn.items.forEach((item, itemIndex) => {
+    if (item.type !== 'userMessage') return;
     records.push(record({
       kind: 'input',
       lane: 'input',
       threadId: loaded.threadId,
       turn: loaded.turn,
-      records,
-      sequenceBase: loaded.turnIndex * TRAJECTORY_SEQUENCE_STRIDE,
-      title: 'Input',
-      subtitle: null,
+      order: [loaded.turnIndex, 1, itemIndex, 0, 0, 0],
+      label: { type: 'input', source: 'initial' },
+      meta: null,
       preview: compact(itemSummary(item)),
       state: loaded.turn.status === 'inProgress' ? 'running' : 'partial',
       timing: timing(item.acceptedAt, null, null),
@@ -1072,20 +1227,21 @@ function appendFallbackTurnRecords(records: ThreadTrajectoryRecordSummary[], loa
       childThreadId: null,
       usage: null,
     }));
-  }
+  });
   appendManualCompactionRecords(records, loaded, new Set());
-  for (const item of loaded.turn.items) {
-    if (!isToolItem(item)) continue;
+  loaded.turn.items.forEach((item, itemIndex) => {
+    if (!isToolItem(item)) return;
     const delegation = isDelegationItem(item);
     records.push(record({
       kind: delegation ? 'delegation' : 'tool',
       lane: 'tools',
       threadId: loaded.threadId,
       turn: loaded.turn,
-      records,
-      sequenceBase: loaded.turnIndex * TRAJECTORY_SEQUENCE_STRIDE,
-      title: delegation ? delegationTitle(item, item.type) : toolTitle(item, item.type),
-      subtitle: item.type,
+      order: [loaded.turnIndex, 1, itemIndex, 1, 0, 0],
+      label: delegation
+        ? delegationLabel(item, item.type)
+        : { type: 'tool', name: toolName(item, item.type) },
+      meta: item.type,
       preview: compact(itemSummary(item)),
       state: item.status === 'inProgress' ? 'running' : item.status,
       timing: timing(loaded.turn.startedAt, null, itemCompletedAt(item, loaded.turn)),
@@ -1095,7 +1251,7 @@ function appendFallbackTurnRecords(records: ThreadTrajectoryRecordSummary[], loa
       childThreadId: childThreadIdForItem(item),
       usage: null,
     }));
-  }
+  });
 }
 
 function appendPreparedContextRecords(
@@ -1103,22 +1259,23 @@ function appendPreparedContextRecords(
   loaded: LoadedTurn,
   callIndex: number | null,
   inserted: Set<string>,
+  activityIndex: number,
+  slot: number,
 ): void {
   const payload = loaded.diagnostics?.payload ?? null;
   if (!payload) return;
-  for (const context of preparedContextPartRecords(payload, callIndex)) {
+  preparedContextPartRecords(payload, callIndex).forEach((context) => {
     const fingerprint = preparedContextFingerprint(context);
-    if (inserted.has(fingerprint)) continue;
+    if (inserted.has(fingerprint)) return;
     inserted.add(fingerprint);
     records.push(record({
       kind: 'context',
       lane: 'input',
       threadId: loaded.threadId,
       turn: loaded.turn,
-      records,
-      sequenceBase: loaded.turnIndex * TRAJECTORY_SEQUENCE_STRIDE,
-      title: contextPartTitle(context.entries),
-      subtitle: contextPartSubtitle(context.entries),
+      order: [loaded.turnIndex, 1, activityIndex, slot, context.messageIndex, context.partIndex],
+      label: { type: 'context', kinds: context.entries.map((entry) => entry.kind) },
+      meta: contextPartMeta(context.entries),
       preview: compact(context.text),
       state: 'completed',
       timing: timing(context.requestedAt, null, context.requestedAt),
@@ -1128,14 +1285,14 @@ function appendPreparedContextRecords(
       childThreadId: null,
       usage: null,
     }));
-  }
+  });
 }
 
 function appendToolCatalogRecords(
   records: ThreadTrajectoryRecordSummary[],
   loaded: LoadedTurn,
-  state: ToolCatalogProjectionState,
 ): void {
+  const state = { fingerprint: null as string | null };
   const calls = loaded.diagnostics?.payload.providerCalls ?? [];
   for (const call of calls) {
     appendToolCatalogRecordIfChanged(records, loaded, call.index, state);
@@ -1146,7 +1303,7 @@ function appendToolCatalogRecordIfChanged(
   records: ThreadTrajectoryRecordSummary[],
   loaded: LoadedTurn,
   callIndex: number,
-  state: ToolCatalogProjectionState,
+  state: { fingerprint: string | null },
 ): void {
   const payload = loaded.diagnostics?.payload ?? null;
   if (!payload) return;
@@ -1154,17 +1311,16 @@ function appendToolCatalogRecordIfChanged(
   if (!catalog) return;
   if (catalog.fingerprint === state.fingerprint) return;
   const initial = state.fingerprint === null;
-  if (initial && catalog.toolNames.length === 0) return;
   state.fingerprint = catalog.fingerprint;
+  if (initial && catalog.toolNames.length === 0) return;
   records.push(record({
     kind: 'context',
     lane: 'input',
     threadId: loaded.threadId,
     turn: loaded.turn,
-    records,
-    sequenceBase: loaded.turnIndex * TRAJECTORY_SEQUENCE_STRIDE,
-    title: toolCatalogTitle(!initial),
-    subtitle: toolCatalogSubtitle(catalog),
+    order: [loaded.turnIndex, 0, 1, callIndex, 0, 0],
+    label: toolCatalogLabel(catalog, !initial),
+    meta: null,
     preview: compact(toolCatalogPreview(catalog)),
     state: 'completed',
     timing: timing(catalog.requestedAt, null, catalog.requestedAt),
@@ -1181,17 +1337,16 @@ function appendManualCompactionRecords(
   loaded: LoadedTurn,
   coveredItemIds: ReadonlySet<string>,
 ): void {
-  for (const item of loaded.turn.items) {
-    if (item.type !== 'contextCompaction' || coveredItemIds.has(item.id)) continue;
+  loaded.turn.items.forEach((item, itemIndex) => {
+    if (item.type !== 'contextCompaction' || coveredItemIds.has(item.id)) return;
     records.push(record({
       kind: 'compaction',
       lane: 'input',
       threadId: loaded.threadId,
       turn: loaded.turn,
-      records,
-      sequenceBase: loaded.turnIndex * TRAJECTORY_SEQUENCE_STRIDE,
-      title: 'Context compaction',
-      subtitle: item.trigger,
+      order: [loaded.turnIndex, 2, itemIndex, 0, 0, 0],
+      label: { type: 'contextCompaction', trigger: item.trigger },
+      meta: item.trigger,
       preview: compact(itemSummary(item)),
       state: 'completed',
       timing: timing(loaded.turn.startedAt, null, loaded.turn.startedAt),
@@ -1201,7 +1356,7 @@ function appendManualCompactionRecords(
       childThreadId: null,
       usage: null,
     }));
-  }
+  });
 }
 
 function record(input: {
@@ -1209,10 +1364,9 @@ function record(input: {
   readonly lane: ThreadTrajectoryRecordSummary['lane'];
   readonly threadId: ThreadId;
   readonly turn: Turn;
-  readonly records: readonly ThreadTrajectoryRecordSummary[];
-  readonly sequenceBase: number;
-  readonly title: string;
-  readonly subtitle: string | null;
+  readonly order: readonly [number, number, number, number, number, number];
+  readonly label: ThreadTrajectoryRecordLabel;
+  readonly meta: string | null;
   readonly preview: string | null;
   readonly state: ThreadTrajectoryRecordSummary['state'];
   readonly timing: ThreadTrajectoryTimingSummary;
@@ -1223,17 +1377,18 @@ function record(input: {
   readonly usage: ThreadTrajectoryUsageSummary | null;
   readonly parentRecordId?: string | null;
 }): ThreadTrajectoryRecordSummary {
-  const sequence = input.sequenceBase + input.records.filter((entry) => entry.turnId === input.turn.id).length;
   return {
     id: trajectoryRecordId(input.turn.id, input.kind, input.primaryEvidence),
     kind: input.kind,
     lane: input.lane,
     threadId: input.threadId,
     turnId: input.turn.id,
-    sequence,
+    orderKey: trajectoryOrderKey(input.order),
+    turnIndex: input.order[0],
+    stepIndex: 0,
     parentRecordId: input.parentRecordId ?? null,
-    title: sanitizeStringEvidence(input.title),
-    subtitle: input.subtitle === null ? null : sanitizeStringEvidence(input.subtitle),
+    label: sanitizeTrajectoryLabel(input.label),
+    meta: input.meta === null ? null : sanitizeStringEvidence(input.meta),
     preview: input.preview === null ? null : sanitizeTextEvidence(input.preview),
     state: input.availability.length > 0 && input.state === 'completed' ? 'partial' : input.state,
     timing: input.timing,
@@ -1273,14 +1428,14 @@ function canonicalTrajectoryAvailability(
   const entries: ThreadTrajectoryAvailability[] = [];
   const seen = new Set<string>();
   const push = (entry: ThreadTrajectoryAvailability) => {
-    const key = `${entry.reason}\n${entry.message}`;
+    const key = entry.reason;
     if (seen.has(key)) return;
     seen.add(key);
     entries.push(entry);
   };
   for (const turn of allTurns) {
     if (turn.status !== 'inProgress' && !turn.execution.diagnosticsRef) {
-      push(availability('diagnosticsUnavailable', 'One or more Turns did not retain diagnostics.'));
+      push(availability('diagnosticsUnavailable'));
     }
   }
   for (const loaded of loadedTurns) {
@@ -1418,7 +1573,7 @@ function trajectoryReplacementRange(
   const first = records[0] ?? null;
   const last = records.at(-1) ?? null;
   return first && last
-    ? { startSequence: first.sequence, endSequence: last.sequence + 1 }
+    ? { startOrderKey: first.orderKey, endOrderKey: last.orderKey }
     : null;
 }
 
@@ -1675,8 +1830,8 @@ function turnIdFromTrajectoryRecordId(recordId: string): TurnId | null {
   return match?.[1] ?? null;
 }
 
-function availability(reason: ThreadTrajectoryAvailability['reason'], message: string): ThreadTrajectoryAvailability {
-  return { reason, message };
+function availability(reason: ThreadTrajectoryAvailability['reason']): ThreadTrajectoryAvailability {
+  return { reason };
 }
 
 function turnEvidence(turn: Turn): ThreadTrajectoryTurnEvidence {
@@ -1926,39 +2081,37 @@ function contextEvidenceTitle(item: ContextEvidenceThreadItem): string {
   return contextKindTitle(item.kind);
 }
 
-function contextPartTitle(entries: readonly TurnDiagnosticsSystemContextEntry[]): string {
-  return entries.length === 1 ? contextKindTitle(entries[0]!.kind) : 'System Reminder';
-}
-
-function contextPartSubtitle(entries: readonly TurnDiagnosticsSystemContextEntry[]): string | null {
+function contextPartMeta(entries: readonly TurnDiagnosticsSystemContextEntry[]): string | null {
   if (entries.length === 1) {
     const entry = entries[0]!;
     return `${entry.authority} · ${entry.purpose}`;
   }
-  return `${entries.length} context blocks`;
+  return null;
 }
 
 function contextKindTitle(kind: string): string {
   return kind.replace(/([A-Z])/g, ' $1').replace(/^./, (value) => value.toUpperCase());
 }
 
-function toolTitle(item: ThreadItem | null, fallback: string): string {
+function toolName(item: ThreadItem | null, fallback: string): string {
   if (!item) return fallback;
-  if (item.type === 'commandExecution') return item.description ?? 'Shell command';
+  if (item.type === 'commandExecution') return item.description ?? fallback;
   if (item.type === 'mcpToolCall') return `${item.server}.${item.tool}`;
   if (item.type === 'dynamicToolCall') return [item.namespace, item.tool].filter(Boolean).join('.') || item.tool;
-  if (item.type === 'webSearch') return 'Web search';
-  if (item.type === 'fileChange') return 'File changes';
-  return itemTitle(item);
+  if (item.type === 'collabAgentToolCall') return item.tool;
+  return fallback;
 }
 
-function delegationTitle(item: ThreadItem | null, fallback: string): string {
+function delegationLabel(item: ThreadItem | null, fallback: string): ThreadTrajectoryRecordLabel {
   if (item?.type === 'collabAgentToolCall') {
-    if (item.tool === 'agent') return 'Agent delegation';
-    if (item.tool === 'agent_message') return 'Agent message';
-    if (item.tool === 'task_stop') return 'Agent stop';
+    if (item.tool === 'agent') return { type: 'delegation', action: 'delegate', name: item.tool };
+    if (item.tool === 'agent_message') return { type: 'delegation', action: 'message', name: item.tool };
+    if (item.tool === 'task_stop') return { type: 'delegation', action: 'stop', name: item.tool };
   }
-  return fallback;
+  if (item?.type === 'subAgentActivity') {
+    return { type: 'delegation', action: 'activity', name: item.agentPath };
+  }
+  return { type: 'delegation', action: 'tool', name: fallback };
 }
 
 function itemTitle(item: ThreadItem): string {
@@ -1970,7 +2123,7 @@ function itemTitle(item: ThreadItem): string {
     case 'fileChange': return 'File changes';
     case 'mcpToolCall': return `${item.server}.${item.tool}`;
     case 'dynamicToolCall': return [item.namespace, item.tool].filter(Boolean).join('.') || item.tool;
-    case 'collabAgentToolCall': return delegationTitle(item, item.tool);
+    case 'collabAgentToolCall': return item.tool;
     case 'subAgentActivity': return 'Agent activity';
     case 'webSearch': return 'Web search';
     case 'imageView': return 'Image view';

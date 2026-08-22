@@ -1,4 +1,10 @@
-import type { ThreadTrajectoryRecordSummary } from '../../../../core/agent/protocol';
+import type {
+  ContextPayloadKind,
+  ThreadTrajectoryRecordSummary,
+} from '../../../../core/agent/protocol';
+import type { Messages } from '../../../../core/i18n';
+
+export type TrajectoryLabels = Messages['agent']['trajectory'];
 
 export type TrajectoryTimelineMode = 'sequence' | 'duration';
 
@@ -65,20 +71,21 @@ export function groupTrajectoryRecords(
     if (existing) existing.push(record);
     else byTurn.set(record.turnId, [record]);
   }
-  let index = 0;
   for (const [turnId, turnRecords] of byTurn) {
-    groups.push({ index, records: turnRecords, turnId });
-    index += 1;
+    groups.push({ index: turnRecords[0]!.turnIndex, records: turnRecords, turnId });
   }
   return groups;
 }
 
-export function trajectoryRecordSearchText(record: ThreadTrajectoryRecordSummary): string {
+export function trajectoryRecordSearchText(
+  record: ThreadTrajectoryRecordSummary,
+  labels: TrajectoryLabels,
+): string {
   return [
     record.kind,
-    trajectoryRecordRole(record),
-    record.title,
-    record.subtitle ?? '',
+    trajectoryRecordRole(record, labels),
+    trajectoryRecordLabel(record, labels),
+    trajectoryRecordMeta(record, labels) ?? '',
     record.preview ?? '',
     record.state,
     record.turnId,
@@ -88,11 +95,12 @@ export function trajectoryRecordSearchText(record: ThreadTrajectoryRecordSummary
 export function trajectorySearchMatches(
   records: readonly ThreadTrajectoryRecordSummary[],
   query: string,
+  labels: TrajectoryLabels,
 ): ReadonlySet<string> | null {
   const normalized = query.trim().toLocaleLowerCase();
   if (!normalized) return null;
   return new Set(records
-    .filter((record) => trajectoryRecordSearchText(record).includes(normalized))
+    .filter((record) => trajectoryRecordSearchText(record, labels).includes(normalized))
     .map((record) => record.id));
 }
 
@@ -158,12 +166,14 @@ export function buildTrajectoryLedgerRows({
   records,
   searchMatches,
   selectedRecordId = null,
+  labels,
 }: {
   readonly collapsedCalls: ReadonlySet<string>;
   readonly collapsedTurns: ReadonlySet<string>;
   readonly records: readonly ThreadTrajectoryRecordSummary[];
   readonly searchMatches: ReadonlySet<string> | null;
   readonly selectedRecordId?: string | null;
+  readonly labels: TrajectoryLabels;
 }): readonly TrajectoryLedgerRow[] {
   const rows: TrajectoryLedgerRow[] = [];
   const pinnedIds = pinnedRecordIds(records, selectedRecordId);
@@ -206,7 +216,7 @@ export function buildTrajectoryLedgerRows({
             turnId: group.turnId,
             turnIndex: group.index,
             count: folded.length,
-            preview: summarizeFoldedRecords(folded),
+            preview: summarizeFoldedRecords(folded, labels),
           });
         }
       }
@@ -265,42 +275,113 @@ function recordRow(
   };
 }
 
-function summarizeFoldedRecords(records: readonly ThreadTrajectoryRecordSummary[]): string {
+function summarizeFoldedRecords(
+  records: readonly ThreadTrajectoryRecordSummary[],
+  labels: TrajectoryLabels,
+): string {
   const counts = new Map<string, number>();
   for (const record of records) {
-    const role = trajectoryRecordRole(record);
+    const role = trajectoryRecordRole(record, labels);
     counts.set(role, (counts.get(role) ?? 0) + 1);
   }
   return [...counts.entries()].map(([role, count]) => `${role.toLowerCase()}×${count}`).join(' · ');
 }
 
-export function trajectoryRecordRole(record: ThreadTrajectoryRecordSummary): string {
-  if (isStablePromptRecord(record)) return 'SYSTEM';
-  if (isToolCatalogRecord(record)) return 'TOOLS';
+export function trajectoryRecordRole(record: ThreadTrajectoryRecordSummary, labels: TrajectoryLabels): string {
+  if (isStablePromptRecord(record)) return labels.role.system;
+  if (isToolCatalogRecord(record)) return labels.role.toolCatalog;
   switch (record.kind) {
-    case 'input': return 'USER';
-    case 'context': return 'CONTEXT';
-    case 'assistant': return 'ASSISTANT';
-    case 'tool': return 'TOOL';
-    case 'retry': return 'RETRY';
-    case 'compaction': return 'COMPACTED';
-    case 'delegation': return 'AGENT';
+    case 'input': return labels.role.user;
+    case 'context': return labels.role.context;
+    case 'assistant': return labels.role.assistant;
+    case 'tool': return labels.role.tool;
+    case 'retry': return labels.role.retry;
+    case 'compaction': return labels.role.compacted;
+    case 'delegation': return labels.role.agent;
   }
 }
 
-export function trajectoryRecordContent(record: ThreadTrajectoryRecordSummary): string {
-  if (isStablePromptRecord(record)) return record.title;
+export function trajectoryRecordLabel(record: ThreadTrajectoryRecordSummary, labels: TrajectoryLabels): string {
+  const label = record.label;
+  if (label.type === 'systemPrompt') {
+    return label.change === 'initial' ? labels.record.initialSystemPrompt : labels.record.systemPromptUpdate;
+  }
+  if (label.type === 'toolCatalog') {
+    return label.change === 'initial' ? labels.record.availableTools : labels.record.toolsUpdated;
+  }
+  if (label.type === 'input') return label.source === 'initial' ? labels.record.input : labels.record.steering;
+  if (label.type === 'context') {
+    if (label.kinds.length !== 1) return labels.record.systemReminder;
+    return contextKindLabel(label.kinds[0]!, labels);
+  }
+  if (label.type === 'assistantCall') return labels.record.assistantCall({ index: label.callIndex + 1 });
+  if (label.type === 'tool') return label.name;
+  if (label.type === 'providerRetry') {
+    return labels.record.providerRetry({
+      kind: label.retryKind === 'request' ? labels.record.request : labels.record.stream,
+      attempt: label.attempt,
+      maxRetries: label.maxRetries,
+    });
+  }
+  if (label.type === 'contextCompaction') return labels.record.contextCompaction;
+  if (label.action === 'delegate') return labels.record.agentDelegation;
+  if (label.action === 'message') return labels.record.agentMessage;
+  if (label.action === 'stop') return labels.record.agentStop;
+  if (label.action === 'activity') return labels.record.agentActivity;
+  return label.name;
+}
+
+export function trajectoryRecordMeta(
+  record: ThreadTrajectoryRecordSummary,
+  labels: TrajectoryLabels,
+): string | null {
+  if (record.label.type === 'toolCatalog') {
+    return labels.record.toolCatalogMeta({
+      count: record.label.toolCount,
+      request: record.label.requestIndex + 1,
+    });
+  }
+  if (record.label.type === 'providerRetry') {
+    return labels.record.afterAssistantCall({ index: record.label.sourceCallIndex + 1 });
+  }
+  return record.meta;
+}
+
+export function trajectoryRecordContent(
+  record: ThreadTrajectoryRecordSummary,
+  labels: TrajectoryLabels,
+): string {
+  const label = trajectoryRecordLabel(record, labels);
+  if (isStablePromptRecord(record)) return label;
   if (record.kind === 'input' || record.kind === 'assistant') {
-    return record.preview ?? record.title;
+    return record.preview ?? label;
   }
   if (record.kind === 'context') {
-    return record.preview ? `${record.title} · ${record.preview}` : record.title;
+    return record.preview ? `${label} · ${record.preview}` : label;
   }
   if (record.kind === 'tool' || record.kind === 'delegation') {
-    if (!record.preview || record.preview === record.title) return record.title;
-    return `${record.title} · ${record.preview}`;
+    if (!record.preview || record.preview === label) return label;
+    return `${label} · ${record.preview}`;
   }
-  return record.preview ?? record.title;
+  return record.preview ?? label;
+}
+
+function contextKindLabel(kind: ContextPayloadKind, labels: TrajectoryLabels): string {
+  switch (kind) {
+    case 'turnEnvironment': return labels.record.context.turnEnvironment;
+    case 'userView': return labels.record.context.userView;
+    case 'additionalContext': return labels.record.context.additionalContext;
+    case 'inheritedContext': return labels.record.context.inheritedContext;
+    case 'referencedResources': return labels.record.context.referencedResources;
+    case 'skillCatalog': return labels.record.context.skillCatalog;
+    case 'skillInvocation': return labels.record.context.skillInvocation;
+    case 'roleCatalog': return labels.record.context.roleCatalog;
+    case 'toolOutputProjection': return labels.record.context.toolOutputProjection;
+    case 'compactionSummary': return labels.record.context.compactionSummary;
+    case 'compactionRestoredState': return labels.record.context.compactionRestoredState;
+    case 'compactionInstructions': return labels.record.context.compactionInstructions;
+    case 'toolCallArguments': return labels.record.context.toolCallArguments;
+  }
 }
 
 export function trajectoryRecordKindClass(record: ThreadTrajectoryRecordSummary): string {

@@ -731,7 +731,10 @@ canonical Turns plus retained evidence. It returns only `threadId`, a summary, a
 ordered record window, `olderCursor` / `newerCursor` plus `hasOlder` /
 `hasNewer`, and the selected record. Cursors are stable keyset cursors over
 record identity, not mutable array offsets. Reads locate the bounded Turn window
-before diagnostics payload reads and cap diagnostics read concurrency. The
+before diagnostics payload reads and cap diagnostics read concurrency. They may
+materialize one predecessor Turn to recover the stable-prompt and tool-catalog
+fingerprints at the window boundary; predecessor evidence never enters the
+returned window. The
 summary uses lightweight whole-Thread Turn/Item/timing/usage facts and must not
 force diagnostics materialization outside the requested window. Record kinds are
 `input`, `context`, `assistant`, `tool`, `retry`, `compaction`, and
@@ -743,6 +746,13 @@ in-memory diagnostics snapshot; inspection failure cannot affect execution. With
 no explicit focus, the read returns `selectedRecordId: null`; opening the
 Thread-wide workspace must not manufacture a selection merely because records
 exist.
+
+Record order is represented by an opaque fixed-width `orderKey` derived from
+stable canonical Turn/activity/call/item coordinates, not by the number of
+records currently projected. `turnIndex` and `stepIndex` are explicit display
+coordinates. A response's `replacementRange` is an inclusive pair of order keys.
+Typed record labels carry semantic values only; renderer owns localization and
+main does not encode UI titles into the protocol.
 
 Every record carries exactly one typed `primaryEvidence` reference. A Provider
 Call is addressed by `(threadId, turnId, callIndex)`. One execution inside a
@@ -817,8 +827,13 @@ main-owned sanitized projection over the same canonical Turns, retained diagnost
 context payloads, and output references used by execution. It does not recreate the
 retired conversation/run/round debug projection, derive history from renderer
 pagination, or introduce an alternative execution ledger. USER rows are grounded
-on canonical `userMessage` Items, CONTEXT rows are grounded on context evidence,
-and REQUEST detail is the materialized provider payload captured in diagnostics.
+on canonical `userMessage` Items, while their model-visible Preview comes from
+captured prepared-message parts whose `userInput` provenance carries that exact
+Item ID. CONTEXT rows come from captured system-context parts, stable prompt, or
+provider-visible tool catalogs. Canonical user content remains accepted-input
+evidence rather than a reconstruction of the provider request. REQUEST detail is
+the sanitized materialized post-adapter provider payload captured in diagnostics;
+image bytes and host paths do not cross to renderer.
 The exact page contract lives in
 [`agent-thread-rendering.md`](agent-thread-rendering.md).
 

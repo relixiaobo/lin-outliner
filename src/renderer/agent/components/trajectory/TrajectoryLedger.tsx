@@ -18,6 +18,7 @@ import {
   trajectoryRecordKindClass,
   trajectoryRecordRole,
   type TrajectoryLedgerRow,
+  type TrajectoryLabels,
 } from './trajectoryModel';
 
 interface TrajectoryLedgerProps {
@@ -258,6 +259,7 @@ export const TrajectoryLedger = memo(function TrajectoryLedger({
             ) : (
               <RecordRow
                 key={row.key}
+                labels={t.agent.trajectory}
                 locale={locale}
                 onRecordSelect={onRecordSelect}
                 onToggleCall={onToggleCall}
@@ -292,6 +294,7 @@ export const TrajectoryLedger = memo(function TrajectoryLedger({
 });
 
 function RecordRow({
+  labels,
   locale,
   onRecordSelect,
   onToggleCall,
@@ -300,6 +303,7 @@ function RecordRow({
   selected,
   timelineFocus,
 }: {
+  readonly labels: TrajectoryLabels;
   readonly locale: string;
   readonly onRecordSelect: (recordId: string) => void;
   readonly onToggleCall: (recordId: string) => void;
@@ -314,7 +318,7 @@ function RecordRow({
   const select = () => onRecordSelect(record.id);
   return (
     <tr
-      aria-label={`${trajectoryRecordRole(record)}, ${trajectoryRecordContent(record)}`}
+      aria-label={`${trajectoryRecordRole(record, labels)}, ${trajectoryRecordContent(record, labels)}`}
       aria-selected={selected}
       data-depth={row.depth || undefined}
       data-kind={record.kind}
@@ -342,20 +346,20 @@ function RecordRow({
         {selected ? <span className="thread-trajectory-selection-rail" aria-hidden="true" /> : null}
         {row.turnStart ? (
           <button
-            aria-label={t.agent.trajectory.collapseTurn({ index: row.turnIndex + 1 })}
+            aria-label={t.agent.trajectory.collapseTurn({ index: record.turnIndex + 1 })}
             className="thread-trajectory-turn-label"
             onClick={(event) => {
               event.stopPropagation();
               onToggleTurn(record.turnId);
             }}
-            title={t.agent.trajectory.collapseTurn({ index: row.turnIndex + 1 })}
+            title={t.agent.trajectory.collapseTurn({ index: record.turnIndex + 1 })}
             type="button"
           >
-            {t.agent.trajectory.turnLabel({ index: row.turnIndex + 1 })}
+            {t.agent.trajectory.turnLabel({ index: record.turnIndex + 1 })}
           </button>
         ) : null}
         <span className={`thread-trajectory-kind ${trajectoryRecordKindClass(record)}`}>
-          {trajectoryRecordRole(record)}
+          {trajectoryRecordRole(record, labels)}
         </span>
       </td>
       <td className="thread-trajectory-content-cell">
@@ -374,8 +378,8 @@ function RecordRow({
               <FoldIcon size={ICON_SIZE.tiny} />
             </button>
           ) : null}
-          <span className="thread-trajectory-row-text" title={trajectoryRecordContent(record)}>
-            {trajectoryRecordContent(record)}
+          <span className="thread-trajectory-row-text" title={trajectoryRecordContent(record, labels)}>
+            {trajectoryRecordContent(record, labels)}
           </span>
           {row.callCollapsed && row.callChildCount > 0 ? (
             <span className="thread-trajectory-fold-count">
@@ -387,7 +391,7 @@ function RecordRow({
           {record.usage ? <span>{formatNumber(record.usage.totalTokens)} tok</span> : null}
           {record.timing.durationMs !== null
             ? <span>{formatDuration(record.timing.durationMs)}</span>
-            : <span>{stateLabel(record.state)}</span>}
+            : <span>{stateLabel(record.state, labels)}</span>}
           {record.timing.startedAt !== null ? (
             <time dateTime={new Date(record.timing.startedAt).toISOString()}>
               {formatClock(record.timing.startedAt, locale)}
@@ -456,13 +460,13 @@ function formatDuration(milliseconds: number): string {
   return `${(milliseconds / 1_000).toFixed(milliseconds < 10_000 ? 2 : 1)} s`;
 }
 
-function stateLabel(state: string): string {
-  if (state === 'completed') return 'Completed';
-  if (state === 'running') return 'Running';
-  if (state === 'failed') return 'Failed';
-  if (state === 'interrupted') return 'Interrupted';
-  if (state === 'partial') return 'Partial';
-  return 'Pending';
+function stateLabel(state: string, labels: TrajectoryLabels): string {
+  if (state === 'completed') return labels.state.completed;
+  if (state === 'running') return labels.state.running;
+  if (state === 'failed') return labels.state.failed;
+  if (state === 'interrupted') return labels.state.interrupted;
+  if (state === 'partial') return labels.state.partial;
+  return labels.state.pending;
 }
 
 function finiteLayoutMetric(value: number): number {
