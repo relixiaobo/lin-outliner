@@ -69,6 +69,8 @@ import {
   type ThreadTrajectoryDiagnosticsEvidence,
   type ThreadTrajectoryEvidenceRef,
   type ThreadTrajectoryItemEvidence,
+  type ThreadTrajectoryModelInputPart,
+  type ThreadTrajectoryModelOutputPart,
   type ThreadTrajectoryProviderCallEvidence,
   type ThreadTrajectoryRecordDetail,
   type ThreadTrajectoryRecordLabel,
@@ -2421,7 +2423,7 @@ function decodeThreadTrajectoryRecordDetail(
   const kind = enumValue(record.kind, THREAD_TRAJECTORY_RECORD_KINDS, `${path}.kind`);
   if (kind !== summary.kind) fail(`${path}.kind`, 'must match the record summary');
   if (kind === 'input') {
-    exactKeys(record, ['kind', 'turn', 'modelInputText', 'message', 'diagnostics', 'activityIndex'], path);
+    exactKeys(record, ['kind', 'turn', 'modelInputParts', 'message', 'diagnostics', 'activityIndex'], path);
     const turn = decodeTrajectoryDetailTurn(record.turn, summary, path);
     const diagnostics = decodeThreadTrajectoryDiagnostics(record.diagnostics, `${path}.diagnostics`);
     const activityIndex = nullableNonNegativeInteger(record.activityIndex, `${path}.activityIndex`);
@@ -2429,7 +2431,13 @@ function decodeThreadTrajectoryRecordDetail(
     return {
       kind,
       turn,
-      modelInputText: nullableString(record.modelInputText, `${path}.modelInputText`, true),
+      modelInputParts: record.modelInputParts === null
+        ? null
+        : arrayValue(record.modelInputParts, `${path}.modelInputParts`)
+          .map((entry, index) => decodeThreadTrajectoryModelInputPart(
+            entry,
+            `${path}.modelInputParts[${index}]`,
+          )),
       message: record.message === null
         ? null
         : decodeThreadTrajectoryUserMessageEvidence(record.message, `${path}.message`),
@@ -2448,7 +2456,9 @@ function decodeThreadTrajectoryRecordDetail(
     };
   }
   if (kind === 'assistant') {
-    exactKeys(record, ['kind', 'turn', 'diagnostics', 'providerCallIndex', 'relatedItems'], path);
+    exactKeys(record, [
+      'kind', 'turn', 'modelOutputParts', 'diagnostics', 'providerCallIndex', 'relatedItems',
+    ], path);
     const turn = decodeTrajectoryDetailTurn(record.turn, summary, path);
     const diagnostics = decodeThreadTrajectoryDiagnostics(record.diagnostics, `${path}.diagnostics`);
     const providerCallIndex = nonNegativeInteger(record.providerCallIndex, `${path}.providerCallIndex`);
@@ -2458,6 +2468,13 @@ function decodeThreadTrajectoryRecordDetail(
     return {
       kind,
       turn,
+      modelOutputParts: record.modelOutputParts === null
+        ? null
+        : arrayValue(record.modelOutputParts, `${path}.modelOutputParts`)
+          .map((entry, index) => decodeThreadTrajectoryModelOutputPart(
+            entry,
+            `${path}.modelOutputParts[${index}]`,
+          )),
       diagnostics,
       providerCallIndex,
       relatedItems: arrayValue(record.relatedItems, `${path}.relatedItems`)
@@ -2493,7 +2510,7 @@ function decodeThreadTrajectoryRecordDetail(
     return { kind, turn, diagnostics, activityIndex };
   }
   if (kind === 'compaction') {
-    exactKeys(record, ['kind', 'turn', 'item', 'diagnostics', 'activityIndex'], path);
+    exactKeys(record, ['kind', 'turn', 'item', 'diagnostics', 'activityIndex', 'summaryText'], path);
     const turn = decodeTrajectoryDetailTurn(record.turn, summary, path);
     const diagnostics = decodeThreadTrajectoryDiagnostics(record.diagnostics, `${path}.diagnostics`);
     const activityIndex = nullableNonNegativeInteger(record.activityIndex, `${path}.activityIndex`);
@@ -2504,6 +2521,7 @@ function decodeThreadTrajectoryRecordDetail(
       item: record.item === null ? null : decodeThreadTrajectoryItemEvidence(record.item, `${path}.item`),
       diagnostics,
       activityIndex,
+      summaryText: nullableString(record.summaryText, `${path}.summaryText`, true),
     };
   }
   exactKeys(record, [
@@ -2526,6 +2544,65 @@ function decodeThreadTrajectoryRecordDetail(
     schema: record.schema === null ? null : jsonValue(record.schema, `${path}.schema`),
     childThreadId: nullableUuidV7(record.childThreadId, `${path}.childThreadId`),
   };
+}
+
+function decodeThreadTrajectoryModelInputPart(
+  value: unknown,
+  path: string,
+): ThreadTrajectoryModelInputPart {
+  const record = recordValue(value, path);
+  const type = enumValue(record.type, ['text', 'image', 'other'] as const, `${path}.type`);
+  if (type === 'text') {
+    exactKeys(record, ['type', 'text'], path);
+    return { type, text: stringValue(record.text, `${path}.text`, true) };
+  }
+  if (type === 'image') {
+    exactKeys(record, ['type', 'mimeType', 'byteLength', 'sha256'], path);
+    return {
+      type,
+      mimeType: nullableString(record.mimeType, `${path}.mimeType`),
+      byteLength: nullableNonNegativeInteger(record.byteLength, `${path}.byteLength`),
+      sha256: record.sha256 === null ? null : sha256(record.sha256, `${path}.sha256`),
+    };
+  }
+  exactKeys(record, ['type', 'value'], path);
+  return { type, value: jsonValue(record.value, `${path}.value`) };
+}
+
+function decodeThreadTrajectoryModelOutputPart(
+  value: unknown,
+  path: string,
+): ThreadTrajectoryModelOutputPart {
+  const record = recordValue(value, path);
+  const type = enumValue(
+    record.type,
+    ['text', 'thinking', 'toolCall', 'image', 'other'] as const,
+    `${path}.type`,
+  );
+  if (type === 'text' || type === 'thinking') {
+    exactKeys(record, ['type', 'text'], path);
+    return { type, text: stringValue(record.text, `${path}.text`, true) };
+  }
+  if (type === 'toolCall') {
+    exactKeys(record, ['type', 'callId', 'name', 'arguments'], path);
+    return {
+      type,
+      callId: nullableString(record.callId, `${path}.callId`),
+      name: nullableString(record.name, `${path}.name`),
+      arguments: record.arguments === null ? null : jsonValue(record.arguments, `${path}.arguments`),
+    };
+  }
+  if (type === 'image') {
+    exactKeys(record, ['type', 'mimeType', 'byteLength', 'sha256'], path);
+    return {
+      type,
+      mimeType: nullableString(record.mimeType, `${path}.mimeType`),
+      byteLength: nullableNonNegativeInteger(record.byteLength, `${path}.byteLength`),
+      sha256: record.sha256 === null ? null : sha256(record.sha256, `${path}.sha256`),
+    };
+  }
+  exactKeys(record, ['type', 'value'], path);
+  return { type, value: jsonValue(record.value, `${path}.value`) };
 }
 
 function decodeTrajectoryDetailTurn(

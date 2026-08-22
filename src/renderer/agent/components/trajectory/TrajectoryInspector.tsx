@@ -10,25 +10,30 @@ import {
 import type {
   JsonValue,
   ThreadTrajectoryDetailReadResponse,
+  ThreadTrajectoryModelInputPart,
+  ThreadTrajectoryModelOutputPart,
   ThreadTrajectoryRecordDetail,
   ThreadTrajectoryRecordSummary,
   ThreadTrajectoryTimingSummary,
   ThreadTrajectoryUsageSummary,
-  ThreadUserContent,
 } from '../../../../core/agent/protocol';
 import { api } from '../../../api/client';
 import { useI18n, useT } from '../../../i18n/I18nProvider';
 import { formatNumber } from '../../../ui/formatting';
 import {
   BackIcon,
+  ChevronRightIcon,
   CloseIcon,
+  GenericToolIcon,
   ICON_SIZE,
+  ImageIcon,
   LoaderIcon,
   OpenIcon,
 } from '../../../ui/icons';
 import { ReadOnlyCodeBlock } from '../../../ui/editor/CodeBlockSurface';
 import { Button } from '../../../ui/primitives/Button';
 import { EmptyState, ErrorState } from '../../../ui/primitives/FeedbackState';
+import { ThreadMarkdown } from '../ThreadMarkdown';
 import {
   trajectoryRecordLabel,
   trajectoryRecordKindClass,
@@ -53,8 +58,10 @@ type InspectorTab =
 interface TrajectoryInspectorProps {
   readonly onClose: () => void;
   readonly onOpenChildTrajectory: (threadId: string) => void;
+  readonly onOpenRecord: (recordId: string) => void;
   readonly record: ThreadTrajectoryRecordSummary;
   readonly threadId: string;
+  readonly toolCallRecordIds: ReadonlyMap<string, string>;
 }
 
 interface ResizeDrag {
@@ -72,8 +79,10 @@ const DETAILS_RESIZE_STEP = 16;
 export const TrajectoryInspector = memo(function TrajectoryInspector({
   onClose,
   onOpenChildTrajectory,
+  onOpenRecord,
   record,
   threadId,
+  toolCallRecordIds,
 }: TrajectoryInspectorProps) {
   const t = useT();
   const rootRef = useRef<HTMLElement | null>(null);
@@ -107,9 +116,10 @@ export const TrajectoryInspector = memo(function TrajectoryInspector({
       });
   }, [record.id, record.state, record.timing.completedAt, threadId]);
 
-  const tabs = tabsForRecord(record, t.agent.trajectory);
-  const activeTab = tabs.some((entry) => entry.id === tab) ? tab : tabs[0]!.id;
   const detailBody = detail?.detail ?? null;
+  const resolvedRecord = detail?.record?.id === record.id ? detail.record : record;
+  const tabs = tabsForRecord(resolvedRecord, t.agent.trajectory);
+  const activeTab = tabs.some((entry) => entry.id === tab) ? tab : tabs[0]!.id;
 
   const resizeStart = (event: ReactPointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0) return;
@@ -188,12 +198,12 @@ export const TrajectoryInspector = memo(function TrajectoryInspector({
           <BackIcon size={ICON_SIZE.menu} />
         </button>
         <div className="thread-trajectory-inspector-title">
-          <span className={`thread-trajectory-kind ${trajectoryRecordKindClass(record)}`}>
-            {trajectoryRecordRole(record, t.agent.trajectory)}
+          <span className={`thread-trajectory-kind ${trajectoryRecordKindClass(resolvedRecord)}`}>
+            {trajectoryRecordRole(resolvedRecord, t.agent.trajectory)}
           </span>
           <span>{t.agent.trajectory.turnStep({
-            turn: record.turnIndex + 1,
-            step: record.stepIndex + 1,
+            turn: resolvedRecord.turnIndex + 1,
+            step: resolvedRecord.stepIndex + 1,
           })}</span>
         </div>
         <button
@@ -226,12 +236,17 @@ export const TrajectoryInspector = memo(function TrajectoryInspector({
         ) : null}
         {detailError ? <ErrorState message={detailError} /> : null}
         {detailBody ? (
-          <InspectorBody
-            detail={detailBody}
-            onOpenChildTrajectory={onOpenChildTrajectory}
-            record={record}
-            tab={activeTab}
-          />
+          <>
+            <InspectorBody
+              detail={detailBody}
+              onOpenChildTrajectory={onOpenChildTrajectory}
+              onOpenRecord={onOpenRecord}
+              record={resolvedRecord}
+              tab={activeTab}
+              toolCallRecordIds={toolCallRecordIds}
+            />
+            <AvailabilityList record={resolvedRecord} />
+          </>
         ) : null}
       </div>
     </aside>
@@ -241,16 +256,25 @@ export const TrajectoryInspector = memo(function TrajectoryInspector({
 function InspectorBody({
   detail,
   onOpenChildTrajectory,
+  onOpenRecord,
   record,
   tab,
+  toolCallRecordIds,
 }: {
   readonly detail: ThreadTrajectoryRecordDetail;
   readonly onOpenChildTrajectory: (threadId: string) => void;
+  readonly onOpenRecord: (recordId: string) => void;
   readonly record: ThreadTrajectoryRecordSummary;
   readonly tab: InspectorTab;
+  readonly toolCallRecordIds: ReadonlyMap<string, string>;
 }) {
   const t = useT();
-  if (tab === 'raw') return <JsonEvidence title={t.agent.trajectory.rawEvidence} value={detail} />;
+  if (tab === 'raw') {
+    const parts = modelParts(detail);
+    return parts
+      ? <RawPartsEvidence parts={parts} toolCallRecordIds={toolCallRecordIds} onOpenRecord={onOpenRecord} />
+      : <JsonEvidence title={t.agent.trajectory.rawEvidence} value={detail} />;
+  }
   if (tab === 'systemPrompt') {
     return <TextEvidence title={t.agent.trajectory.systemPrompt} text={stablePromptText(detail)} />;
   }
@@ -258,7 +282,13 @@ function InspectorBody({
     return <JsonEvidence title={t.agent.trajectory.tools} value={stablePromptTools(detail)} />;
   }
   if (tab === 'preview') {
-    return <PreviewEvidence detail={detail} record={record} />;
+    return (
+      <PreviewEvidence
+        detail={detail}
+        onOpenRecord={onOpenRecord}
+        toolCallRecordIds={toolCallRecordIds}
+      />
+    );
   }
   if (tab === 'request') {
     return <JsonEvidence title={t.agent.trajectory.request} value={providerRequest(detail)} />;
@@ -276,7 +306,9 @@ function InspectorBody({
     <SummaryEvidence
       detail={detail}
       onOpenChildTrajectory={onOpenChildTrajectory}
+      onOpenRecord={onOpenRecord}
       record={record}
+      toolCallRecordIds={toolCallRecordIds}
     />
   );
 }
@@ -284,11 +316,15 @@ function InspectorBody({
 function SummaryEvidence({
   detail,
   onOpenChildTrajectory,
+  onOpenRecord,
   record,
+  toolCallRecordIds,
 }: {
   readonly detail: ThreadTrajectoryRecordDetail;
   readonly onOpenChildTrajectory: (threadId: string) => void;
+  readonly onOpenRecord: (recordId: string) => void;
   readonly record: ThreadTrajectoryRecordSummary;
+  readonly toolCallRecordIds: ReadonlyMap<string, string>;
 }) {
   const t = useT();
   const source = detail.kind === 'assistant'
@@ -310,12 +346,16 @@ function SummaryEvidence({
         </InspectorSection>
       ) : null}
       <InspectorSection title={t.agent.trajectory.preview}>
-        <PreviewEvidence detail={detail} record={record} compact />
+        <PreviewEvidence
+          detail={detail}
+          compact
+          onOpenRecord={onOpenRecord}
+          toolCallRecordIds={toolCallRecordIds}
+        />
       </InspectorSection>
       <InspectorSection title={t.agent.trajectory.requestTiming}>
         <TimingFacts timing={record.timing} usage={record.usage} />
       </InspectorSection>
-      <AvailabilityList record={record} />
       {detail.kind === 'delegation' && detail.childThreadId ? (
         <Button
           onClick={() => onOpenChildTrajectory(detail.childThreadId!)}
@@ -333,17 +373,31 @@ function SummaryEvidence({
 function PreviewEvidence({
   compact = false,
   detail,
-  record,
+  onOpenRecord,
+  toolCallRecordIds,
 }: {
   readonly compact?: boolean;
   readonly detail: ThreadTrajectoryRecordDetail;
-  readonly record: ThreadTrajectoryRecordSummary;
+  readonly onOpenRecord: (recordId: string) => void;
+  readonly toolCallRecordIds: ReadonlyMap<string, string>;
 }) {
   const t = useT();
-  const text = previewText(detail, record);
+  const parts = modelParts(detail);
   const className = compact
     ? 'thread-trajectory-preview is-compact'
     : 'thread-trajectory-inspector-body thread-trajectory-preview';
+  if (parts) {
+    return (
+      <ModelPartsPreview
+        className={className}
+        onOpenRecord={onOpenRecord}
+        parts={parts}
+        plainText={detail.kind === 'input'}
+        toolCallRecordIds={toolCallRecordIds}
+      />
+    );
+  }
+  const text = previewText(detail);
   return text ? (
     <div className={className}>
       {text}
@@ -351,6 +405,198 @@ function PreviewEvidence({
   ) : (
     <p className="thread-trajectory-note">{t.agent.trajectory.noRetainedEvidence}</p>
   );
+}
+
+type TrajectoryModelPart = ThreadTrajectoryModelInputPart | ThreadTrajectoryModelOutputPart;
+
+function modelParts(detail: ThreadTrajectoryRecordDetail): readonly TrajectoryModelPart[] | null {
+  if (detail.kind === 'input') return detail.modelInputParts;
+  if (detail.kind === 'assistant') return detail.modelOutputParts;
+  return null;
+}
+
+function ModelPartsPreview({
+  className,
+  onOpenRecord,
+  parts,
+  plainText,
+  toolCallRecordIds,
+}: {
+  readonly className: string;
+  readonly onOpenRecord: (recordId: string) => void;
+  readonly parts: readonly TrajectoryModelPart[];
+  readonly plainText: boolean;
+  readonly toolCallRecordIds: ReadonlyMap<string, string>;
+}) {
+  return (
+    <div className={`${className} thread-trajectory-parts-preview${plainText ? ' is-input' : ''}`}>
+      {parts.map((part, index) => (
+        <ModelPartPreview
+          key={`${part.type}:${index}`}
+          onOpenRecord={onOpenRecord}
+          part={part}
+          plainText={plainText}
+          toolCallRecordIds={toolCallRecordIds}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ModelPartPreview({
+  onOpenRecord,
+  part,
+  plainText,
+  toolCallRecordIds,
+}: {
+  readonly onOpenRecord: (recordId: string) => void;
+  readonly part: TrajectoryModelPart;
+  readonly plainText: boolean;
+  readonly toolCallRecordIds: ReadonlyMap<string, string>;
+}) {
+  const t = useT();
+  if (part.type === 'text') {
+    if (plainText) {
+      return <pre className="thread-trajectory-part-text is-plain">{part.text}</pre>;
+    }
+    return (
+      <div className="thread-trajectory-part-text">
+        <ThreadMarkdown text={part.text} />
+      </div>
+    );
+  }
+  if (part.type === 'thinking') {
+    return (
+      <details className="thread-trajectory-part-thinking">
+        <summary>
+          <ChevronRightIcon aria-hidden="true" size={ICON_SIZE.rowGlyph} />
+          {t.agent.trajectory.contentPart.thinking}
+        </summary>
+        <div className="thread-trajectory-part-thinking-body">
+          <ThreadMarkdown text={part.text} />
+        </div>
+      </details>
+    );
+  }
+  if (part.type === 'toolCall') {
+    const recordId = part.callId === null ? null : toolCallRecordIds.get(part.callId) ?? null;
+    const content = (
+      <>
+        <GenericToolIcon aria-hidden="true" size={ICON_SIZE.rowGlyph} />
+        <span className="thread-trajectory-part-tool-name">
+          {part.name ?? t.agent.trajectory.contentPart.toolCall}
+        </span>
+        {part.arguments === null ? null : (
+          <span className="thread-trajectory-part-tool-arguments">
+            {JSON.stringify(part.arguments)}
+          </span>
+        )}
+        {recordId ? <ChevronRightIcon aria-hidden="true" size={ICON_SIZE.rowGlyph} /> : null}
+      </>
+    );
+    return recordId ? (
+      <button
+        aria-label={t.agent.trajectory.openToolCall}
+        className="thread-trajectory-part-tool"
+        onClick={() => onOpenRecord(recordId)}
+        title={t.agent.trajectory.openToolCall}
+        type="button"
+      >
+        {content}
+      </button>
+    ) : (
+      <div className="thread-trajectory-part-tool">{content}</div>
+    );
+  }
+  if (part.type === 'image') return <ImagePartEvidence part={part} />;
+  return (
+    <section className="thread-trajectory-part-other">
+      <span>{t.agent.trajectory.contentPart.other}</span>
+      <pre>{JSON.stringify(part.value, null, 2)}</pre>
+    </section>
+  );
+}
+
+function ImagePartEvidence({ part }: { readonly part: ThreadTrajectoryModelInputPart & { readonly type: 'image' } }) {
+  const t = useT();
+  const metadata = [
+    part.mimeType,
+    part.byteLength === null ? null : `${formatNumber(part.byteLength)} B`,
+  ].filter((value): value is string => value !== null).join(' · ');
+  return (
+    <section className="thread-trajectory-part-image">
+      <ImageIcon aria-hidden="true" size={ICON_SIZE.menu} />
+      <div>
+        <strong>{t.agent.trajectory.contentPart.image}</strong>
+        {metadata ? <span>{metadata}</span> : null}
+        {part.sha256 ? <code>sha256 {part.sha256}</code> : null}
+      </div>
+    </section>
+  );
+}
+
+function RawPartsEvidence({
+  onOpenRecord,
+  parts,
+  toolCallRecordIds,
+}: {
+  readonly onOpenRecord: (recordId: string) => void;
+  readonly parts: readonly TrajectoryModelPart[];
+  readonly toolCallRecordIds: ReadonlyMap<string, string>;
+}) {
+  const t = useT();
+  return (
+    <div className="thread-trajectory-inspector-body thread-trajectory-raw-parts">
+      {parts.map((part, index) => {
+        const label = contentPartLabel(part, t.agent.trajectory);
+        if (part.type === 'toolCall') {
+          const recordId = part.callId === null ? null : toolCallRecordIds.get(part.callId) ?? null;
+          return (
+            <section className="thread-trajectory-raw-part" key={`${part.type}:${index}`}>
+              {recordId ? (
+                <button
+                  aria-label={t.agent.trajectory.openToolCall}
+                  className="thread-trajectory-raw-part-heading is-link"
+                  onClick={() => onOpenRecord(recordId)}
+                  title={t.agent.trajectory.openToolCall}
+                  type="button"
+                >
+                  {t.agent.trajectory.partNumber({ index: index + 1 })} · {label}
+                  <ChevronRightIcon aria-hidden="true" size={ICON_SIZE.rowGlyph} />
+                </button>
+              ) : (
+                <div className="thread-trajectory-raw-part-heading">
+                  {t.agent.trajectory.partNumber({ index: index + 1 })} · {label}
+                </div>
+              )}
+              <pre>{JSON.stringify({ callId: part.callId, name: part.name, arguments: part.arguments }, null, 2)}</pre>
+            </section>
+          );
+        }
+        return (
+          <section className="thread-trajectory-raw-part" key={`${part.type}:${index}`}>
+            <div className="thread-trajectory-raw-part-heading">
+              {t.agent.trajectory.partNumber({ index: index + 1 })} · {label}
+            </div>
+            {part.type === 'image'
+              ? <ImagePartEvidence part={part} />
+              : <pre>{part.type === 'other' ? JSON.stringify(part.value, null, 2) : part.text}</pre>}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function contentPartLabel(
+  part: TrajectoryModelPart,
+  labels: ReturnType<typeof useT>['agent']['trajectory'],
+): string {
+  if (part.type === 'text') return labels.contentPart.text;
+  if (part.type === 'thinking') return labels.contentPart.thinking;
+  if (part.type === 'toolCall') return labels.contentPart.toolCall;
+  if (part.type === 'image') return labels.contentPart.image;
+  return labels.contentPart.other;
 }
 
 function InspectorSection({ children, title }: { readonly children: ReactNode; readonly title: string }) {
@@ -493,38 +739,15 @@ function tabsForRecord(
   ];
 }
 
-function previewText(
-  detail: ThreadTrajectoryRecordDetail,
-  record: ThreadTrajectoryRecordSummary,
-): string | null {
-  if (detail.kind === 'assistant') {
-    return semanticText(detail.diagnostics?.providerCall?.response ?? null) ?? record.preview;
-  }
-  if (detail.kind === 'input') {
-    return detail.modelInputText ?? userMessageText(detail.message?.content ?? null) ?? record.preview;
-  }
-  if (detail.kind === 'context') {
-    return detail.modelContextText ?? contextPayloadText(detail.payload) ?? record.preview;
-  }
-  if (detail.kind === 'tool') return detail.outputText ?? record.preview;
-  if (detail.kind === 'delegation') return detail.outputText ?? record.preview;
-  return record.preview;
+function previewText(detail: ThreadTrajectoryRecordDetail): string | null {
+  if (detail.kind === 'context') return detail.modelContextText;
+  if (detail.kind === 'tool' || detail.kind === 'delegation') return detail.outputText;
+  if (detail.kind === 'compaction') return detail.summaryText;
+  return null;
 }
 
 function providerRequest(detail: ThreadTrajectoryRecordDetail): JsonValue | null {
   return 'diagnostics' in detail ? detail.diagnostics?.providerCall?.request ?? null : null;
-}
-
-function userMessageText(content: readonly ThreadUserContent[] | null): string | null {
-  if (!content) return null;
-  const text = content.map(userContentText).filter(Boolean).join('\n');
-  return text || null;
-}
-
-function userContentText(content: ThreadUserContent): string {
-  if (content.type === 'text') return content.text;
-  if (content.type === 'attachment') return content.name;
-  return content.note ?? content.nodeId;
 }
 
 function contextEvidenceSource(
@@ -536,354 +759,8 @@ function contextEvidenceSource(
   return trajectoryRecordMeta(record, labels) ?? evidenceSource(record, labels);
 }
 
-function contextPayloadText(value: JsonValue | null): string | null {
-  if (!isJsonObject(value) || typeof value.kind !== 'string') return null;
-  switch (value.kind) {
-    case 'turnEnvironment':
-      return turnEnvironmentText(value);
-    case 'userView':
-      return userViewText(value);
-    case 'additionalContext':
-      return additionalContextText(value);
-    case 'referencedResources':
-      return referencedResourcesText(value);
-    case 'skillCatalog':
-      return catalogText(value, 'skill');
-    case 'roleCatalog':
-      return catalogText(value, 'role');
-    case 'toolCatalog':
-      return toolCatalogText(value);
-    case 'skillInvocation':
-      return skillInvocationText(value);
-    case 'toolOutputProjection':
-      return toolOutputProjectionText(value);
-    case 'inheritedContext':
-      return inheritedContextText(value);
-    case 'compactionSummary':
-      return stringField(value, 'text');
-    case 'compactionInstructions':
-      return contextEntriesText(arrayField(value, 'entries'));
-    case 'toolCallArguments':
-      return jsonValueText(value.value);
-    case 'compactionRestoredState':
-      return restoredStateText(value);
-    default:
-      return null;
-  }
-}
-
-function turnEnvironmentText(payload: JsonObject): string | null {
-  const lines = [
-    ['accepted_at', stringField(payload, 'utcInstant')],
-    ['local_date', stringField(payload, 'localDate')],
-    ['local_time', stringField(payload, 'localTime')],
-    ['timezone', stringField(payload, 'timeZone')],
-    ['utc_offset_minutes', jsonValueText(payload.utcOffsetMinutes)],
-    ['locale', stringField(payload, 'locale')],
-    ['working_directory', stringField(payload, 'workingDirectory')],
-    ['conversation_mode', stringField(payload, 'conversationMode')],
-    ['execution_mode', stringField(payload, 'executionMode')],
-    ['reply_identity', stringField(payload, 'replyIdentity') ?? 'none'],
-    ['today_node_id', stringField(payload, 'todayNodeId') ?? 'none'],
-    ['today_node_title', stringField(payload, 'todayNodeTitle') ?? 'none'],
-  ].map(([label, text]) => text ? `${label}=${text}` : null)
-    .filter((line): line is string => line !== null);
-  return lines.join('\n') || null;
-}
-
-function userViewText(payload: JsonObject): string | null {
-  const lines = [
-    `mode=${stringField(payload, 'mode') ?? 'unknown'}`,
-    `active_panel=${stringField(payload, 'activePanelId') ?? 'none'}`,
-    `focused_panel=${stringField(payload, 'focusedPanelId') ?? 'none'}`,
-    `focus_surface=${stringField(payload, 'focusSurface') ?? 'none'}`,
-  ];
-  const focused = nodeSnapshotText(objectField(payload, 'focusedNode'));
-  if (focused) lines.push(`focused_node=${focused}`);
-  const selected = nodeListText(arrayField(payload, 'selectedNodes'));
-  if (selected) lines.push(`selected_nodes=${selected}`);
-  const referenced = nodeListText(arrayField(payload, 'referencedNodes'));
-  if (referenced) lines.push(`referenced_nodes=${referenced}`);
-  const panels = arrayField(payload, 'panels');
-  if (panels.length > 0) {
-    lines.push(`panels=${panels.length}`);
-    for (const panel of panels) {
-      if (!isJsonObject(panel)) continue;
-      lines.push(panelText(panel));
-    }
-  }
-  if (payload.truncated === true) lines.push('truncated=true');
-  return lines.join('\n') || null;
-}
-
-function panelText(panel: JsonObject): string {
-  const title = stringField(panel, 'rootTitle') ?? stringField(panel, 'rootNodeId') ?? 'unknown';
-  const flags = [
-    panel.active === true ? 'active' : null,
-    panel.focused === true ? 'focused' : null,
-    panel.visibleOutlineTruncated === true ? 'visible_outline_truncated' : null,
-  ].filter(Boolean).join(' ');
-  const lines = [
-    `- panel=${stringField(panel, 'panelId') ?? 'unknown'} root=${title}${flags ? ` ${flags}` : ''}`,
-  ];
-  const breadcrumb = nodeListText(arrayField(panel, 'breadcrumb'));
-  if (breadcrumb) lines.push(`  breadcrumb=${breadcrumb}`);
-  const outline = arrayField(panel, 'visibleOutline');
-  if (outline.length > 0) {
-    lines.push('  visible_outline:');
-    for (const node of outline) {
-      if (!isJsonObject(node)) continue;
-      const depth = typeof node.depth === 'number' ? node.depth : 0;
-      const prefix = '  '.repeat(Math.max(0, depth + 2));
-      const state = [
-        node.focused === true ? 'focused' : null,
-        node.collapsed === true ? 'collapsed' : null,
-        typeof node.childCount === 'number' ? `children=${node.childCount}` : null,
-      ].filter(Boolean).join(' ');
-      lines.push(`${prefix}- ${stringField(node, 'title') ?? stringField(node, 'nodeId') ?? 'unknown'}${state ? ` ${state}` : ''}`);
-    }
-  }
-  return lines.join('\n');
-}
-
-function additionalContextText(payload: JsonObject): string | null {
-  const sections: string[] = [];
-  const turnEntries = contextEntriesText(arrayField(payload, 'turnEntries'));
-  if (turnEntries) sections.push(`turn_entries:\n${turnEntries}`);
-  const threadState = Array.isArray(payload.threadState)
-    ? contextEntriesText(payload.threadState)
-    : null;
-  if (threadState) sections.push(`thread_state:\n${threadState}`);
-  return sections.join('\n\n') || null;
-}
-
-function referencedResourcesText(payload: JsonObject): string | null {
-  const resources = arrayField(payload, 'resources');
-  if (resources.length === 0) return null;
-  const lines = [`resources=${resources.length}`];
-  for (const resource of resources) {
-    if (!isJsonObject(resource)) continue;
-    const title = stringField(resource, 'title') ?? stringField(resource, 'nodeId') ?? 'unknown';
-    const state = [
-      `type=${stringField(resource, 'nodeType') ?? 'unknown'}`,
-      resource.inlineImage === true ? 'inline_image=true' : null,
-      resource.unavailableReason ? `unavailable=${jsonValueText(resource.unavailableReason)}` : null,
-      resource.contentTruncated === true ? 'content_truncated=true' : null,
-    ].filter(Boolean).join(' ');
-    lines.push(`- ${title} ${state}`.trim());
-    const breadcrumb = nodeListText(arrayField(resource, 'breadcrumb'));
-    if (breadcrumb) lines.push(`  breadcrumb=${breadcrumb}`);
-    const content = stringField(resource, 'content');
-    if (content) lines.push(`  content:\n${indent(content, '    ')}`);
-  }
-  return lines.join('\n') || null;
-}
-
-function catalogText(payload: JsonObject, label: 'skill' | 'role'): string | null {
-  const entries = arrayField(payload, 'entries');
-  const lines = [
-    `mode=${stringField(payload, 'mode') ?? 'unknown'}`,
-    `${label}s=${entries.length}`,
-  ];
-  const previous = stringField(payload, 'previousCatalogHash');
-  if (previous) lines.push(`previous_catalog_hash=${previous}`);
-  const current = stringField(payload, 'catalogHash');
-  if (current) lines.push(`catalog_hash=${current}`);
-  for (const entry of entries) {
-    if (!isJsonObject(entry)) continue;
-    const name = stringField(entry, 'name') ?? 'unknown';
-    const displayName = stringField(entry, 'displayName');
-    const fields = [
-      `name=${name}`,
-      `change=${stringField(entry, 'change') ?? 'unknown'}`,
-      `source=${stringField(entry, 'source') ?? 'unknown'}`,
-      displayName && displayName !== name ? `display_name=${displayName}` : null,
-    ].filter(Boolean).join(' ');
-    lines.push(`- ${fields}`);
-    const description = stringField(entry, 'description');
-    if (description) lines.push(`  description=${description}`);
-  }
-  return lines.join('\n') || null;
-}
-
-function toolCatalogText(payload: JsonObject): string | null {
-  const toolNames = arrayField(payload, 'toolNames')
-    .filter((entry): entry is string => typeof entry === 'string');
-  const tools = arrayField(payload, 'tools');
-  const lines = [
-    `request=${jsonValueText(payload.requestIndex) ?? 'unknown'}`,
-    `tools=${toolNames.length}`,
-  ];
-  for (const [index, value] of tools.entries()) {
-    if (!isJsonObject(value)) continue;
-    const name = stringField(value, 'name') ?? toolNames[index] ?? 'unknown';
-    const description = stringField(value, 'description');
-    const unavailable = value.schemaUnavailable === true ? ' schema_unavailable=true' : '';
-    lines.push(`- ${name}${unavailable}`);
-    if (description) lines.push(`  description=${description}`);
-  }
-  return lines.join('\n') || null;
-}
-
-function skillInvocationText(payload: JsonObject): string | null {
-  const lines = [
-    `name=${stringField(payload, 'name') ?? 'unknown'}`,
-    `source=${stringField(payload, 'source') ?? 'unknown'}`,
-    `execution=${stringField(payload, 'execution') ?? 'unknown'}`,
-    `invocation_source=${stringField(payload, 'invocationSource') ?? 'unknown'}`,
-  ];
-  const argumentsText = stringField(payload, 'arguments');
-  if (argumentsText) lines.push(`arguments:\n${indent(argumentsText, '  ')}`);
-  const instructions = stringField(payload, 'instructions');
-  if (instructions) lines.push(`instructions:\n${indent(instructions, '  ')}`);
-  const constraints = objectField(payload, 'constraints');
-  if (constraints) lines.push(`constraints=${JSON.stringify(constraints)}`);
-  return lines.join('\n') || null;
-}
-
-function toolOutputProjectionText(payload: JsonObject): string | null {
-  const ref = objectField(payload, 'outputRef');
-  const projection = objectField(payload, 'projection');
-  const lines = [];
-  if (ref) {
-    lines.push(`output=${stringField(ref, 'summary') ?? stringField(ref, 'id') ?? 'unknown'}`);
-    const mimeType = stringField(ref, 'mimeType');
-    if (mimeType) lines.push(`mime_type=${mimeType}`);
-  }
-  if (projection) {
-    const type = stringField(projection, 'type') ?? 'unknown';
-    lines.push(`projection=${type}`);
-    const text = stringField(projection, 'text');
-    if (text) lines.push(`text:\n${indent(text, '  ')}`);
-  }
-  return lines.join('\n') || null;
-}
-
-function inheritedContextText(payload: JsonObject): string | null {
-  const lines = [
-    `source_thread=${stringField(payload, 'sourceThreadId') ?? 'unknown'}`,
-    `requested_turns=${jsonValueText(payload.requestedTurns) ?? 'unknown'}`,
-  ];
-  const covered = objectField(payload, 'coveredThrough');
-  if (covered) {
-    lines.push(`covered_through=${stringField(covered, 'turnId') ?? 'unknown'}/${stringField(covered, 'itemId') ?? 'unknown'}`);
-  }
-  const turns = arrayField(payload, 'turns');
-  lines.push(`turns=${turns.length}`);
-  for (const turn of turns) {
-    if (!isJsonObject(turn)) continue;
-    lines.push(`- turn=${stringField(turn, 'id') ?? 'unknown'} status=${stringField(turn, 'status') ?? 'unknown'}`);
-    for (const item of arrayField(turn, 'items')) {
-      const text = semanticText(item);
-      if (text) lines.push(`  - ${text}`);
-    }
-  }
-  return lines.join('\n') || null;
-}
-
-function restoredStateText(payload: JsonObject): string | null {
-  return [
-    `skill_catalog_hash=${stringField(payload, 'skillCatalogHash') ?? 'none'}`,
-    `announced_skills=${arrayField(payload, 'announcedSkills').length}`,
-    `active_skills=${arrayField(payload, 'activeSkills').length}`,
-    `role_catalog_hash=${stringField(payload, 'roleCatalogHash') ?? 'none'}`,
-    `announced_roles=${arrayField(payload, 'announcedRoles').length}`,
-    `active_observations=${arrayField(payload, 'activeObservations').length}`,
-    `degradations=${arrayField(payload, 'degradations').length}`,
-  ].join('\n');
-}
-
-function contextEntriesText(entries: readonly JsonValue[]): string | null {
-  const lines = entries.flatMap((entry) => {
-    if (!isJsonObject(entry)) return [];
-    const key = stringField(entry, 'key') ?? 'unknown';
-    const source = stringField(entry, 'source') ?? 'unknown';
-    const authority = stringField(entry, 'authority') ?? 'unknown';
-    const purpose = stringField(entry, 'purpose') ?? 'unknown';
-    const text = stringField(entry, 'text');
-    return text
-      ? [`- key=${key} source=${source} authority=${authority} purpose=${purpose}\n${indent(text, '  ')}`]
-      : [`- key=${key} source=${source} authority=${authority} purpose=${purpose}`];
-  });
-  return lines.join('\n') || null;
-}
-
-function nodeListText(nodes: readonly JsonValue[]): string | null {
-  const text = nodes.flatMap((node) => {
-    const value = isJsonObject(node) ? nodeSnapshotText(node) : null;
-    return value ? [value] : [];
-  }).join(' > ');
-  return text || null;
-}
-
-function nodeSnapshotText(node: JsonObject | null): string | null {
-  if (!node) return null;
-  const title = stringField(node, 'title') ?? stringField(node, 'rootTitle') ?? stringField(node, 'nodeId');
-  if (!title) return null;
-  const nodeId = stringField(node, 'nodeId') ?? stringField(node, 'rootNodeId');
-  return nodeId && nodeId !== title ? `${title} (${nodeId})` : title;
-}
-
-type JsonObject = { readonly [key: string]: JsonValue };
-
-function objectField(value: JsonObject, key: string): JsonObject | null {
-  const field = value[key];
-  return isJsonObject(field) ? field : null;
-}
-
-function arrayField(value: JsonObject, key: string): readonly JsonValue[] {
-  const field = value[key];
-  return Array.isArray(field) ? field : [];
-}
-
-function stringField(value: JsonObject, key: string): string | null {
-  const field = value[key];
-  return typeof field === 'string' && field.length > 0 ? field : null;
-}
-
-function jsonValueText(value: JsonValue | undefined): string | null {
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  if (value === null) return 'null';
-  if (value === undefined) return null;
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return null;
-  }
-}
-
-function indent(text: string, prefix: string): string {
-  return text.split('\n').map((line) => `${prefix}${line}`).join('\n');
-}
-
-function semanticText(value: JsonValue | null): string | null {
-  if (typeof value === 'string') return value;
-  if (value === null || typeof value !== 'object') return null;
-  if (Array.isArray(value)) {
-    const joined = (value as readonly JsonValue[]).map(semanticText).filter(Boolean).join('\n');
-    return joined || null;
-  }
-  if (!isJsonObject(value)) return null;
-  for (const key of ['outputText', 'output_text', 'text', 'content', 'summary', 'value']) {
-    const candidate = value[key];
-    const text = semanticText(candidate ?? null);
-    if (text) return text;
-  }
-  return null;
-}
-
 function stablePromptText(detail: ThreadTrajectoryRecordDetail): string | null {
-  if (detail.kind !== 'context' || !isJsonObject(detail.payload)) return null;
-  const stablePrompt = detail.payload.stablePrompt;
-  if (!isJsonObject(stablePrompt)) return null;
-  const blocks = stablePrompt.blocks;
-  if (!Array.isArray(blocks)) return null;
-  const text = (blocks as readonly JsonValue[]).flatMap((block) => {
-    if (!isJsonObject(block)) return [];
-    return typeof block.text === 'string' ? [block.text] : [];
-  }).join('\n\n');
-  return text || null;
+  return detail.kind === 'context' ? detail.modelContextText : null;
 }
 
 function stablePromptTools(detail: ThreadTrajectoryRecordDetail): JsonValue | null {

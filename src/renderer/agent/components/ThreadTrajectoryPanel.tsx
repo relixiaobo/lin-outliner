@@ -208,6 +208,17 @@ export function ThreadTrajectoryPanel({
     labels: t.agent.trajectory,
   }), [collapsedCalls, collapsedTurns, records, searchMatches, selectedId, t.agent.trajectory]);
   const selectedRecord = selectedId ? recordById.get(selectedId) ?? null : null;
+  const toolCallRecordIds = useMemo(() => {
+    const result = new Map<string, string>();
+    if (!selectedRecord) return result;
+    for (const candidate of records) {
+      if (candidate.parentRecordId !== selectedRecord.id) continue;
+      for (const evidence of [candidate.primaryEvidence, ...candidate.relatedEvidence]) {
+        if (evidence.type === 'toolExecution') result.set(evidence.callId, candidate.id);
+      }
+    }
+    return result;
+  }, [records, selectedRecord]);
   const allTurnsCollapsed = collapsibleTurnGroups.length > 0
     && collapsibleTurnGroups.every((group) => collapsedTurns.has(group.turnId));
   const allCallsCollapsed = callIds.size > 0
@@ -348,8 +359,10 @@ export function ThreadTrajectoryPanel({
                 <TrajectoryInspector
                   onClose={closeInspector}
                   onOpenChildTrajectory={onOpenThreadTrajectory}
+                  onOpenRecord={selectRecord}
                   record={selectedRecord}
                   threadId={threadId}
+                  toolCallRecordIds={toolCallRecordIds}
                 />
               ) : null}
             </div>

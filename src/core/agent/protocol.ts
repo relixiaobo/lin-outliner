@@ -1744,6 +1744,43 @@ export interface ThreadTrajectoryUserMessageEvidence {
   readonly content: readonly ThreadUserContent[];
 }
 
+export interface ThreadTrajectoryModelTextPart {
+  readonly type: 'text';
+  readonly text: string;
+}
+
+export interface ThreadTrajectoryModelImagePart {
+  readonly type: 'image';
+  readonly mimeType: string | null;
+  readonly byteLength: number | null;
+  readonly sha256: string | null;
+}
+
+export interface ThreadTrajectoryModelOtherPart {
+  readonly type: 'other';
+  readonly value: JsonValue;
+}
+
+export type ThreadTrajectoryModelInputPart =
+  | ThreadTrajectoryModelTextPart
+  | ThreadTrajectoryModelImagePart
+  | ThreadTrajectoryModelOtherPart;
+
+export type ThreadTrajectoryModelOutputPart =
+  | ThreadTrajectoryModelTextPart
+  | ThreadTrajectoryModelImagePart
+  | ThreadTrajectoryModelOtherPart
+  | {
+      readonly type: 'thinking';
+      readonly text: string;
+    }
+  | {
+      readonly type: 'toolCall';
+      readonly callId: string | null;
+      readonly name: string | null;
+      readonly arguments: JsonValue | null;
+    };
+
 export interface ThreadTrajectoryRuntimeEvidence {
   readonly provider: string;
   readonly model: string;
@@ -1786,8 +1823,8 @@ export type ThreadTrajectoryRecordDetail =
   | {
       readonly kind: 'input';
       readonly turn: ThreadTrajectoryTurnEvidence;
-      /** Captured provider-neutral text supplied to the adapter for this exact user Item. */
-      readonly modelInputText: string | null;
+      /** Ordered provider-neutral parts supplied to the adapter for this exact user Item. */
+      readonly modelInputParts: readonly ThreadTrajectoryModelInputPart[] | null;
       /** Canonical accepted input evidence; this is not a provider request preview. */
       readonly message: ThreadTrajectoryUserMessageEvidence | null;
       readonly diagnostics: ThreadTrajectoryDiagnosticsEvidence | null;
@@ -1804,6 +1841,8 @@ export type ThreadTrajectoryRecordDetail =
   | {
       readonly kind: 'assistant';
       readonly turn: ThreadTrajectoryTurnEvidence;
+      /** Ordered provider-neutral content parts returned by this exact model call. */
+      readonly modelOutputParts: readonly ThreadTrajectoryModelOutputPart[] | null;
       readonly diagnostics: ThreadTrajectoryDiagnosticsEvidence | null;
       readonly providerCallIndex: number;
       readonly relatedItems: readonly ThreadTrajectoryItemEvidence[];
@@ -1831,6 +1870,7 @@ export type ThreadTrajectoryRecordDetail =
       readonly item: ThreadTrajectoryItemEvidence | null;
       readonly diagnostics: ThreadTrajectoryDiagnosticsEvidence | null;
       readonly activityIndex: number | null;
+      readonly summaryText: string | null;
     }
   | {
       readonly kind: 'delegation';

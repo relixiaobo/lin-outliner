@@ -3317,6 +3317,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               ? {
                 kind,
                 turn: turnEvidence,
+                modelOutputParts: [{ type: 'text', text: 'Mock response' }],
                 diagnostics: diagnosticsEvidence,
                 providerCallIndex: 0,
                 relatedItems: itemEvidence ? [itemEvidence] : [],
@@ -3324,11 +3325,20 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               : kind === 'context'
                 ? { kind, turn: turnEvidence, item: itemEvidence, modelContextText: null, payload: null }
                 : kind === 'compaction'
-                  ? { kind, turn: turnEvidence, item: itemEvidence, diagnostics: null, activityIndex: null }
+                  ? {
+                    kind,
+                    turn: turnEvidence,
+                    item: itemEvidence,
+                    diagnostics: null,
+                    activityIndex: null,
+                    summaryText: null,
+                  }
                   : {
                     kind,
                     turn: turnEvidence,
-                    modelInputText: item?.type === 'userMessage' ? 'Mock request' : null,
+                    modelInputParts: item?.type === 'userMessage'
+                      ? [{ type: 'text', text: 'Mock request' }]
+                      : null,
                     message: item?.type === 'userMessage'
                       ? { itemId: item.id, acceptedAt: item.acceptedAt, content: item.content }
                       : null,

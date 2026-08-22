@@ -104,18 +104,25 @@ and reasoning are related evidence or preview content for that Assistant record
 when available; they never replace the provider-call identity. If a provider
 call did not produce visible transcript text because it requested tools, failed,
 or was interrupted, it still remains one Assistant record with its recorded
-request, response, timing, and state.
+request, response, timing, and state. Preview preserves the terminal
+provider-neutral response as ordered typed parts: text, thinking, tool calls,
+image metadata, and bounded unknown blocks. Tool calls retain the model-issued
+call ID, tool name, and sanitized arguments, so a tool-only response cannot look
+empty merely because it emitted no text.
 
 An `input` record is one canonical `userMessage` Item. Its primary evidence is
 the Thread Item itself; the accepted-input diagnostic activity and the first
 provider call that consumed it are related evidence. Its Preview uses the
-captured provider-neutral prepared-message text parts whose diagnostics
-provenance names that exact Item. This preserves the real attachment markers,
-readable-path instructions, Node reference markers, image metadata, and other
-serialization performed by `ContextProjector`; canonical `ThreadUserContent` is
-accepted-input evidence and only a fallback when no consumed diagnostics exist.
-Image bytes never cross the renderer seam. Context Items admitted in the same
-envelope do not automatically become `context` records. A CONTEXT row exists
+captured, ordered provider-neutral prepared-message parts whose diagnostics
+provenance names that exact Item. Text remains exact sanitized text; image parts
+remain explicit typed markers carrying MIME type, byte length, and digest. This
+preserves the real attachment markers, readable-path instructions, Node
+reference markers, image metadata, image-part position, and other serialization
+performed by `ContextProjector`; canonical `ThreadUserContent` is accepted-input
+evidence available only in Raw; it never substitutes for missing prepared
+provider evidence. Image bytes never cross the renderer seam. Context Items
+admitted in the same envelope do not automatically become `context` records. A
+CONTEXT row exists
 only for stable prompt text, a provider-call tool catalog snapshot that changed
 the model-visible tool schemas, or a prepared provider-context part whose
 diagnostics prove that model-visible context text was emitted. System-context
@@ -215,9 +222,11 @@ The Agent protocol exposes:
 - a Thread trajectory export command that returns a user-selected file result.
 
 All request and response values use explicit codecs. Main validates ownership
-before resolving any detail. The renderer never receives filesystem paths,
-digest-only authority, arbitrary response headers, raw recognized secrets,
-host credentials, or unbounded binary content.
+before resolving any detail. Captured filesystem paths remain visible when they
+are part of accepted input, prepared model context, provider requests or
+responses, or model-issued tool arguments. The renderer never receives a
+diagnostics payload storage path, digest-only authority, arbitrary response
+headers, raw recognized secrets, host credentials, or unbounded binary content.
 
 Existing audited readers such as Turn details, Item output, and context payload
 reads remain the detail authority where their ownership already matches. The
@@ -277,7 +286,7 @@ Tabs are record-specific and follow the DeepSeek Harness content-first model:
 - Input: Summary, Preview, Request, Raw.
 - Context: Summary, Preview, Raw; stable prompt records expose System Prompt,
   and provider-visible tool catalog records expose Tools.
-- Assistant: Summary, Preview, Raw. Summary integrates source request, state,
+- Assistant: Summary, Preview, Request, Raw. Summary integrates source request, state,
   usage, rendered response, and timing; Raw contains the typed redacted request
   and response evidence.
 - Tool: Summary, Input, Output, Schema, Raw.
@@ -311,12 +320,29 @@ exact post-adapter provider request.
 Input Preview follows the same evidence rule at Item granularity. Each prepared
 message part records either `userInput` plus its canonical Item ID,
 `systemContext`, assistant history, a tool result, or unknown provenance. The
-projector selects only text parts tagged with the selected input Item ID from
-the provider call that consumed it, preserves part order, applies
-renderer-facing sanitization, and excludes image bytes. Multiple input Items in
-one steering call therefore cannot repeat or borrow one another's content.
+projector selects every part tagged with the selected input Item ID from the
+provider call that consumed it, preserves part order and type, applies bounded
+credential redaction, and replaces image bytes with MIME / byte-length / digest
+evidence. Filesystem paths remain exact evidence. Multiple input Items in one
+steering call therefore cannot
+repeat or borrow one another's content.
+Preview presents those ordered parts as separate blocks. Input text uses the
+captured string verbatim in a plain preformatted block, so Tenon file and Node
+reference markers remain evidence rather than becoming interactive renderer
+references. Image and unknown parts keep independent blocks in the same order.
 Canonical accepted content remains visible in Raw evidence but is not treated as
-proof of the provider-visible serialization.
+proof of the provider-visible serialization and never fills an empty Preview.
+
+Ledger preview text is a bounded locating aid only. No Inspector Preview, Tool
+Input, Tool Output, or Context view may fall back to that row text. Assistant
+Preview reads only typed terminal-response parts; Context Preview reads only
+captured model-visible context text; Tool and Delegation Preview read only the
+retained output; Compaction Preview reads the retained compaction summary; Retry
+has no Preview payload when its diagnostics record only lifecycle facts.
+The System Prompt tab and its ledger preview read the captured provider-context
+prompt fragment, not the earlier stable-prompt source blocks. Tool and
+Delegation row previews use only retained canonical model-call arguments; host
+execution and presentation fields never stand in for model input.
 
 Bounded reads may materialize one predecessor Turn to restore the stable-prompt
 and tool-catalog fingerprints at the requested boundary. Its evidence never
@@ -327,7 +353,8 @@ initial prompt or catalog.
 The Assistant inspector may title the backing evidence as a Model Call because
 the details are provider-call diagnostics. That title is evidence vocabulary,
 not a top-level ledger kind. Large content and syntax presentation mount lazily.
-Raw means Tenon's typed, secret-redacted diagnostic representation. It never
+Raw means Tenon's typed, bounded, credential-redacted diagnostic representation,
+with captured filesystem paths preserved. It never
 means an unrecorded HTTP body, arbitrary headers, image bytes, or credentials.
 Missing, corrupt, redacted, or unavailable evidence leaves the selected record
 and its siblings intact and explains the limitation in the affected tab.

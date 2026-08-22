@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { posix, win32 } from 'node:path';
 import {
   MAX_TURN_DIAGNOSTICS_PAYLOAD_BYTES,
   type CollabAgentToolCallThreadItem,
@@ -18,6 +17,9 @@ import {
   type ThreadTrajectoryDiagnosticsEvidence,
   type ThreadTrajectoryEvidenceRef,
   type ThreadTrajectoryItemEvidence,
+  type ThreadTrajectoryModelImagePart,
+  type ThreadTrajectoryModelInputPart,
+  type ThreadTrajectoryModelOutputPart,
   type ThreadTrajectoryProviderCallEvidence,
   type ThreadTrajectoryReadRequest,
   type ThreadTrajectoryReadResponse,
@@ -39,7 +41,7 @@ import {
   type ThreadUserContent,
   type UserMessageThreadItem,
 } from '../../../core/agent/protocol';
-import { parseReferenceMarkers } from '../../../core/referenceMarkup';
+import { modelCallArgumentSource } from '../../../core/agent/modelCallHistory';
 import {
   DIAGNOSTIC_SECRET_REDACTION_OMISSION,
   redactSecretLikeContent,
@@ -114,6 +116,16 @@ interface TrajectoryProjectionState {
   toolCatalogFingerprint: string | null | undefined;
 }
 
+interface DetailReadResult {
+  readonly detail: NonNullable<ThreadTrajectoryDetailReadResponse['detail']>;
+  readonly availability: readonly ThreadTrajectoryAvailability[];
+}
+
+interface EvidenceReadResult<T> {
+  readonly value: T;
+  readonly availability: readonly ThreadTrajectoryAvailability[];
+}
+
 interface ThreadTrajectoryThreadEvidence {
   readonly id: ThreadId;
   readonly parentThreadId: ThreadId | null;
@@ -177,8 +189,12 @@ export class ThreadTrajectoryProjection {
     if (!record) return { threadId: request.threadId, record: null, detail: null };
     const loaded = built.turns.find((candidate) => candidate.turn.id === record.turnId) ?? null;
     if (!loaded) return { threadId: request.threadId, record, detail: null };
-    const detail = await this.detailForRecord(record, loaded);
-    return { threadId: request.threadId, record, detail };
+    const result = await this.detailForRecord(record, loaded);
+    return {
+      threadId: request.threadId,
+      record: withAvailability(record, result.availability),
+      detail: result.detail,
+    };
   }
 
   async exportBundle(threadId: ThreadId): Promise<ThreadTrajectoryExportBundle> {
@@ -376,23 +392,23 @@ export class ThreadTrajectoryProjection {
   private async detailForRecord(
     record: ThreadTrajectoryRecordSummary,
     loaded: LoadedTurn,
-  ): Promise<ThreadTrajectoryDetailReadResponse['detail']> {
+  ): Promise<DetailReadResult> {
     const turn = turnEvidence(loaded.turn);
     const diagnostics = loaded.diagnostics;
     if (record.kind === 'input') {
       const message = userMessageForEvidence(loaded.turn, record.primaryEvidence);
       const activityIndex = relatedDiagnosticActivityIndex(record, 'acceptedInput');
       const providerCallIndex = relatedProviderCallIndex(record);
-      return {
+      return detailRead({
         kind: 'input',
         turn,
-        modelInputText: message
-          ? modelInputTextForItem(diagnostics?.payload ?? null, message.id, providerCallIndex)
+        modelInputParts: message
+          ? modelInputPartsForItem(diagnostics?.payload ?? null, message.id, providerCallIndex)
           : null,
         message: message ? userMessageEvidence(message) : null,
         diagnostics: diagnosticsEvidence(diagnostics, activityIndex, providerCallIndex),
         activityIndex,
-      };
+      });
     }
     if (record.kind === 'context') {
       const item = itemForEvidence(loaded.turn, record.primaryEvidence);
@@ -400,102 +416,176 @@ export class ThreadTrajectoryProjection {
         ? stablePromptEvidence(loaded.diagnostics)
         : record.primaryEvidence.type === 'toolCatalog'
           ? toolCatalogEvidence(loaded.diagnostics?.payload ?? null, record.primaryEvidence.callIndex)
-        : await this.readContextPayload(record.threadId, item);
-      return {
+          : null;
+      return detailRead({
         kind: 'context',
         turn,
         item: item ? itemEvidence(item) : null,
         modelContextText: modelContextTextForContextRecord(loaded.diagnostics?.payload ?? null, record),
         payload,
-      };
+      });
     }
     if (record.kind === 'assistant') {
       const providerCallIndex = providerCallIndexForEvidence(record.primaryEvidence);
-      return {
+      const call = providerCallIndex === null
+        ? null
+        : diagnostics?.payload.providerCalls[providerCallIndex] ?? null;
+      return detailRead({
         kind: 'assistant',
         turn,
+        modelOutputParts: modelOutputPartsForResponse(call?.response?.value ?? null),
         diagnostics: diagnosticsEvidence(diagnostics, null, providerCallIndex ?? 0),
         providerCallIndex: providerCallIndex ?? 0,
         relatedItems: evidenceForItems(loaded.turn, relatedItemIds(record)),
-      };
+      });
     }
     if (record.kind === 'tool') {
       const item = itemForToolRecord(loaded.turn, record);
       const execution = toolExecutionForRecord(loaded.diagnostics?.payload ?? null, record);
-      return {
+      const [input, output] = await Promise.all([
+        this.readToolInput(record.threadId, item),
+        this.readToolOutput(record.threadId, item),
+      ]);
+      return detailRead({
         kind: 'tool',
         turn,
         item: item ? itemEvidence(item) : null,
         diagnostics: diagnosticsEvidence(diagnostics, diagnosticActivityIndex(record.primaryEvidence), null),
         activityIndex: diagnosticActivityIndex(record.primaryEvidence),
         executionCallId: toolExecutionCallId(record),
-        input: toolInputEvidence(item),
-        outputText: await this.readToolOutput(record.threadId, item),
+        input: input.value,
+        outputText: output.value,
         schema: toolSchemaEvidence(loaded.diagnostics?.payload ?? null, execution?.toolName ?? null),
-      };
+      }, [...input.availability, ...output.availability]);
     }
     if (record.kind === 'retry') {
-      return {
+      return detailRead({
         kind: 'retry',
         turn,
         diagnostics: diagnosticsEvidence(diagnostics, diagnosticActivityIndex(record.primaryEvidence), null),
         activityIndex: diagnosticActivityIndex(record.primaryEvidence),
-      };
+      });
     }
     if (record.kind === 'compaction') {
       const item = itemForEvidence(loaded.turn, record.primaryEvidence)
         ?? itemForRelatedEvidence(loaded.turn, record);
-      return {
+      const summary = await this.readCompactionSummary(record.threadId, item);
+      return detailRead({
         kind: 'compaction',
         turn,
         item: item ? itemEvidence(item) : null,
         diagnostics: diagnosticsEvidence(diagnostics, diagnosticActivityIndex(record.primaryEvidence), null),
         activityIndex: diagnosticActivityIndex(record.primaryEvidence),
-      };
+        summaryText: summary.value,
+      }, summary.availability);
     }
     const item = itemForToolRecord(loaded.turn, record);
     const execution = toolExecutionForRecord(loaded.diagnostics?.payload ?? null, record);
-    return {
+    const [input, output] = await Promise.all([
+      this.readToolInput(record.threadId, item),
+      this.readToolOutput(record.threadId, item),
+    ]);
+    return detailRead({
       kind: 'delegation',
       turn,
       item: item ? itemEvidence(item) : null,
       diagnostics: diagnosticsEvidence(diagnostics, diagnosticActivityIndex(record.primaryEvidence), null),
       activityIndex: diagnosticActivityIndex(record.primaryEvidence),
       executionCallId: toolExecutionCallId(record),
-      input: toolInputEvidence(item),
-      outputText: await this.readToolOutput(record.threadId, item),
+      input: input.value,
+      outputText: output.value,
       schema: toolSchemaEvidence(loaded.diagnostics?.payload ?? null, execution?.toolName ?? null),
       childThreadId: record.childThreadId,
-    };
+    }, [...input.availability, ...output.availability]);
   }
 
-  private async readContextPayload(
+  private async readToolInput(
     threadId: ThreadId,
     item: ThreadItem | null,
-  ): Promise<JsonValue | null> {
-    if (!item) return null;
-    try {
-      if (item.type === 'contextEvidence') {
-        return await sanitizeJsonEvidenceAsync(await this.core.payloads.readContext(threadId, item.payloadRef));
-      }
-      if (item.type === 'contextCompaction') {
-        return await sanitizeJsonEvidenceAsync(await this.core.payloads.readContext(threadId, item.summaryRef));
-      }
-    } catch {
-      return null;
+  ): Promise<EvidenceReadResult<JsonValue | null>> {
+    if (!item || !('modelCall' in item)) return retainedEvidence(null);
+    if (item.modelCall.disposition === 'evidenceOnly') {
+      return retainedEvidence(await sanitizeJsonEvidenceAsync(item.modelCall.redactedArgumentsSummary));
     }
-    return null;
+    const source = modelCallArgumentSource(item.modelCall);
+    if (source.storage === 'inline') {
+      return retainedEvidence(await sanitizeJsonEvidenceAsync(source.value));
+    }
+    try {
+      const payload = await this.core.payloads.readContext(threadId, source.ref);
+      return payload?.kind === 'toolCallArguments'
+        ? retainedEvidence(await sanitizeJsonEvidenceAsync(payload.value))
+        : unavailableEvidence('payloadUnavailable');
+    } catch {
+      return unavailableEvidence('payloadUnavailable');
+    }
   }
 
-  private async readToolOutput(threadId: ThreadId, item: ThreadItem | null): Promise<string | null> {
-    if (!item || !('outputRef' in item) || !item.outputRef) return null;
+  private async readToolOutput(
+    threadId: ThreadId,
+    item: ThreadItem | null,
+  ): Promise<EvidenceReadResult<string | null>> {
+    if (!item || !('outputRef' in item) || !item.outputRef) return retainedEvidence(null);
     try {
       const text = await this.core.payloads.readTextReference(threadId, item.outputRef);
-      return text === null ? null : await sanitizeTextEvidenceAsync(text);
+      return text === null
+        ? unavailableEvidence('evidenceUnavailable')
+        : retainedEvidence(await sanitizeTextEvidenceAsync(text));
     } catch {
-      return null;
+      return unavailableEvidence('evidenceUnavailable');
     }
   }
+
+  private async readCompactionSummary(
+    threadId: ThreadId,
+    item: ThreadItem | null,
+  ): Promise<EvidenceReadResult<string | null>> {
+    if (item?.type !== 'contextCompaction') return retainedEvidence(null);
+    try {
+      const payload = await this.core.payloads.readContext(threadId, item.summaryRef);
+      return payload?.kind === 'compactionSummary'
+        ? retainedEvidence(await sanitizeTextEvidenceAsync(payload.text))
+        : unavailableEvidence('payloadUnavailable');
+    } catch {
+      return unavailableEvidence('payloadUnavailable');
+    }
+  }
+}
+
+function detailRead(
+  detail: NonNullable<ThreadTrajectoryDetailReadResponse['detail']>,
+  availability: readonly ThreadTrajectoryAvailability[] = [],
+): DetailReadResult {
+  return { detail, availability };
+}
+
+function retainedEvidence<T>(value: T): EvidenceReadResult<T> {
+  return { value, availability: [] };
+}
+
+function unavailableEvidence(
+  reason: ThreadTrajectoryAvailability['reason'],
+): EvidenceReadResult<null> {
+  return { value: null, availability: [availability(reason)] };
+}
+
+function withAvailability(
+  record: ThreadTrajectoryRecordSummary,
+  additional: readonly ThreadTrajectoryAvailability[],
+): ThreadTrajectoryRecordSummary {
+  if (additional.length === 0) return record;
+  const reasons = new Set(record.availability.map((entry) => entry.reason));
+  return {
+    ...record,
+    availability: [
+      ...record.availability,
+      ...additional.filter((entry) => {
+        if (reasons.has(entry.reason)) return false;
+        reasons.add(entry.reason);
+        return true;
+      }),
+    ],
+  };
 }
 
 function initialProjectionState(): TrajectoryProjectionState {
@@ -710,8 +800,7 @@ function stablePromptModelText(payload: TurnDiagnosticsPayload): string | null {
     const text = semanticText(fragment?.value ?? null);
     if (text) return sanitizeTextEvidence(text);
   }
-  const text = payload.stablePrompt?.blocks.map((block) => block.text).filter(Boolean).join('\n\n') ?? '';
-  return text ? sanitizeTextEvidence(text) : null;
+  return null;
 }
 
 type PreparedContextPartEvidenceRef = Extract<ThreadTrajectoryEvidenceRef, { readonly type: 'preparedContextPart' }>;
@@ -769,24 +858,31 @@ function preparedContextPartRecords(
   const call = callIndex === null ? payload.providerCalls[0] ?? null : payload.providerCalls[callIndex] ?? null;
   if (!call) return [];
   const messagesById = new Map(payload.canonicalMessages.map((message) => [message.id, message.value]));
-  const messageIndex = call.protectedFromMessageIndex;
-  const messageId = call.preparedContext.messageIds[messageIndex];
-  if (!messageId) return [];
-  const message = messagesById.get(messageId) ?? null;
-  const parts = call.preparedContext.messagePartProvenance[messageIndex] ?? [];
-  return parts.flatMap((provenance, partIndex): PreparedContextPartRecord[] => {
-    if (provenance.source !== 'systemContext') return [];
-    const partText = textForMessagePart(message, partIndex);
-    if (!partText) return [];
-    return [{
-      callIndex: call.index,
-      messageIndex,
-      partIndex,
-      entries: provenance.entries,
-      text: sanitizeTextEvidence(partText),
-      requestedAt: call.requestedAt,
-    }];
-  });
+  const records: PreparedContextPartRecord[] = [];
+  for (
+    let messageIndex = call.protectedFromMessageIndex;
+    messageIndex < call.preparedContext.messageIds.length;
+    messageIndex += 1
+  ) {
+    const messageId = call.preparedContext.messageIds[messageIndex];
+    if (!messageId) continue;
+    const message = messagesById.get(messageId) ?? null;
+    const parts = call.preparedContext.messagePartProvenance[messageIndex] ?? [];
+    parts.forEach((provenance, partIndex) => {
+      if (provenance.source !== 'systemContext') return;
+      const partText = textForMessagePart(message, partIndex);
+      if (!partText) return;
+      records.push({
+        callIndex: call.index,
+        messageIndex,
+        partIndex,
+        entries: provenance.entries,
+        text: sanitizeTextEvidence(partText),
+        requestedAt: call.requestedAt,
+      });
+    });
+  }
+  return records;
 }
 
 function preparedContextFingerprint(context: PreparedContextPartRecord): string {
@@ -845,38 +941,179 @@ function toolCatalogPreview(catalog: ToolCatalogRecord): string | null {
 }
 
 function textForMessagePart(message: JsonValue | null, partIndex: number): string | null {
+  return semanticText(messagePart(message, partIndex));
+}
+
+function messagePart(message: JsonValue | null, partIndex: number): JsonValue | null {
   if (message === null) return null;
   if (typeof message === 'string') return partIndex === 0 ? message : null;
   if (typeof message !== 'object' || Array.isArray(message)) return null;
   const record = message as Readonly<Record<string, JsonValue>>;
   const content = record.content ?? record.parts;
-  if (Array.isArray(content)) return semanticText(content[partIndex] ?? null);
-  return partIndex === 0 ? semanticText(content ?? message) : null;
+  if (Array.isArray(content)) return content[partIndex] ?? null;
+  return partIndex === 0 ? content ?? message : null;
 }
 
-function modelInputTextForItem(
+function modelInputPartsForItem(
   payload: TurnDiagnosticsPayload | null,
   itemId: ThreadItemId,
   callIndex: number | null,
-): string | null {
+): readonly ThreadTrajectoryModelInputPart[] | null {
   if (!payload) return null;
   const calls = callIndex === null
     ? payload.providerCalls
     : payload.providerCalls[callIndex] ? [payload.providerCalls[callIndex]!] : [];
   const messagesById = new Map(payload.canonicalMessages.map((message) => [message.id, message.value]));
   for (const call of calls) {
-    const textParts: string[] = [];
+    const modelInputParts: ThreadTrajectoryModelInputPart[] = [];
     call.preparedContext.messageIds.forEach((messageId, messageIndex) => {
       const message = messagesById.get(messageId) ?? null;
       call.preparedContext.messagePartProvenance[messageIndex]?.forEach((provenance, partIndex) => {
         if (provenance.source !== 'userInput' || provenance.itemId !== itemId) return;
-        const text = textForMessagePart(message, partIndex);
-        if (text) textParts.push(text);
+        const part = messagePart(message, partIndex);
+        if (part !== null) modelInputParts.push(modelInputPartEvidence(part));
       });
     });
-    if (textParts.length > 0) return sanitizeTextEvidence(textParts.join('\n\n'));
+    if (modelInputParts.length > 0) return modelInputParts;
   }
   return null;
+}
+
+function modelInputPartEvidence(part: JsonValue): ThreadTrajectoryModelInputPart {
+  const text = semanticText(part);
+  if (text !== null) return { type: 'text', text: sanitizeTextEvidence(text) };
+  const image = modelImagePartEvidence(part);
+  if (image) return image;
+  return { type: 'other', value: sanitizeJsonEvidence(part) };
+}
+
+function modelInputPartsPreview(parts: readonly ThreadTrajectoryModelInputPart[] | null): string | null {
+  if (!parts) return null;
+  const preview = parts.map((part) => {
+    if (part.type === 'text') return part.text;
+    if (part.type === 'other') return jsonPreview(part.value) ?? '';
+    return [
+      'IMAGE',
+      part.mimeType,
+      part.byteLength === null ? null : `${part.byteLength} B`,
+      part.sha256 === null ? null : `sha256 ${part.sha256}`,
+    ].filter((value): value is string => value !== null).join(' · ');
+  }).filter(Boolean).join('\n\n');
+  return preview || null;
+}
+
+function modelOutputPartsForResponse(
+  value: JsonValue | null,
+): readonly ThreadTrajectoryModelOutputPart[] | null {
+  const content = modelResponseContent(value);
+  if (content === null) return null;
+  const parts = content.map(modelOutputPartEvidence);
+  return parts.length > 0 ? parts : null;
+}
+
+function modelResponseContent(value: JsonValue | null): readonly JsonValue[] | null {
+  if (value === null) return null;
+  if (Array.isArray(value)) return value;
+  if (typeof value !== 'object') return [value];
+  const record = value as Readonly<Record<string, JsonValue>>;
+  const content = record.content ?? record.parts;
+  if (Array.isArray(content)) return content;
+  if (content !== undefined && content !== null) return [content];
+  return [value];
+}
+
+function modelOutputPartEvidence(part: JsonValue): ThreadTrajectoryModelOutputPart {
+  if (typeof part === 'string') return { type: 'text', text: sanitizeTextEvidence(part) };
+  if (typeof part !== 'object' || part === null || Array.isArray(part)) {
+    return { type: 'other', value: sanitizeJsonEvidence(part) };
+  }
+  const record = part as Readonly<Record<string, JsonValue>>;
+  const type = typeof record.type === 'string' ? record.type.toLowerCase().replace(/[_-]/g, '') : '';
+  if (type === 'text' || type === 'outputtext') {
+    const text = typeof record.text === 'string'
+      ? record.text
+      : typeof record.output_text === 'string' ? record.output_text : null;
+    if (text !== null) return { type: 'text', text: sanitizeTextEvidence(text) };
+  }
+  if (type === 'thinking' || type === 'reasoning') {
+    const text = typeof record.thinking === 'string'
+      ? record.thinking
+      : typeof record.text === 'string' ? record.text : null;
+    if (text !== null) return { type: 'thinking', text: sanitizeTextEvidence(text) };
+  }
+  if (type === 'toolcall' || type === 'functioncall') {
+    const argumentsValue = record.arguments ?? record.args ?? record.input ?? null;
+    return {
+      type: 'toolCall',
+      callId: stringEvidence(record.id ?? record.callId ?? null),
+      name: stringEvidence(record.name ?? record.toolName ?? null),
+      arguments: argumentsValue === null ? null : sanitizeJsonEvidence(argumentsValue),
+    };
+  }
+  const image = modelImagePartEvidence(part);
+  if (image) return image;
+  return { type: 'other', value: sanitizeJsonEvidence(part) };
+}
+
+function modelImagePartEvidence(part: JsonValue): ThreadTrajectoryModelImagePart | null {
+  if (typeof part !== 'object' || part === null || Array.isArray(part)) return null;
+  const record = part as Readonly<Record<string, JsonValue>>;
+  const partType = typeof record.type === 'string' ? record.type.toLowerCase() : '';
+  const mimeType = firstString(record.mimeType, record.media_type, nestedImageValue(record, 'mimeType'));
+  if (!partType.includes('image') && !mimeType?.toLowerCase().startsWith('image/')) return null;
+  const byteLength = firstNonNegativeInteger(
+    record.byteLength,
+    nestedImageValue(record, 'byteLength'),
+  );
+  const digest = firstString(record.sha256, nestedImageValue(record, 'sha256'));
+  return {
+    type: 'image',
+    mimeType: mimeType === null ? null : sanitizeStringEvidence(mimeType),
+    byteLength,
+    sha256: digest !== null && /^[a-f0-9]{64}$/.test(digest) ? digest : null,
+  };
+}
+
+function nestedImageValue(record: Readonly<Record<string, JsonValue>>, key: string): JsonValue | null {
+  for (const containerKey of ['data', 'image', 'inlineData', 'inline_data']) {
+    const container = record[containerKey];
+    if (typeof container !== 'object' || container === null || Array.isArray(container)) continue;
+    const value = (container as Readonly<Record<string, JsonValue>>)[key];
+    if (value !== undefined) return value;
+  }
+  return null;
+}
+
+function firstString(...values: readonly (JsonValue | undefined)[]): string | null {
+  return values.find((value): value is string => typeof value === 'string') ?? null;
+}
+
+function firstNonNegativeInteger(...values: readonly (JsonValue | undefined)[]): number | null {
+  return values.find((value): value is number => (
+    typeof value === 'number' && Number.isInteger(value) && value >= 0
+  )) ?? null;
+}
+
+function stringEvidence(value: JsonValue | null): string | null {
+  return typeof value === 'string' ? sanitizeStringEvidence(value) : null;
+}
+
+function modelOutputPartsPreview(parts: readonly ThreadTrajectoryModelOutputPart[] | null): string | null {
+  if (!parts) return null;
+  const preview = parts.map((part) => {
+    if (part.type === 'text' || part.type === 'thinking') return part.text;
+    if (part.type === 'toolCall') {
+      return [part.name, jsonPreview(part.arguments)].filter(Boolean).join(' ');
+    }
+    if (part.type === 'other') return jsonPreview(part.value) ?? '';
+    return [
+      'IMAGE',
+      part.mimeType,
+      part.byteLength === null ? null : `${part.byteLength} B`,
+      part.sha256 === null ? null : `sha256 ${part.sha256}`,
+    ].filter((value): value is string => value !== null).join(' · ');
+  }).filter(Boolean).join('\n\n');
+  return preview || null;
 }
 
 function sanitizeJsonEvidence(value: unknown, depth = 0): JsonValue {
@@ -941,7 +1178,7 @@ async function sanitizeTextEvidenceAsync(value: string): Promise<string> {
 function sensitiveEvidenceKey(key: string): boolean {
   if (secretStringFieldConfidence(key) !== null) return true;
   const normalized = key.replace(/[^A-Za-z0-9]/gu, '').toLowerCase();
-  return /^(?:authorization|cookie|cookies|setcookie|header|headers|configuredbaseurl|workingdirectory|cwd|path|resourceroot)$/u
+  return /^(?:authorization|cookie|cookies|setcookie|header|headers|configuredbaseurl)$/u
     .test(normalized);
 }
 
@@ -949,31 +1186,12 @@ function sanitizeStringEvidence(value: string): string {
   if (/^data:image\//iu.test(value) || /^data:application\/octet-stream/iu.test(value)) {
     return '‹binary:redacted›';
   }
-  const pathRedacted = redactFileReferencePaths(value)
-    .replace(/(^|[\s([{"'=])\/(?:Users|private|var|tmp|Volumes|Applications|workspace)(?:\/[^\s'",)\]}<>]+)+/gu, '$1‹path:redacted›')
-    .replace(/(^|[\s([{"'=])[A-Za-z]:\\(?:[^\\/:*?"<>|\r\n]+\\?)+/gu, '$1‹path:redacted›');
-  const structuredRedacted = redactJsonEncodedStringEvidence(pathRedacted);
+  const structuredRedacted = redactJsonEncodedStringEvidence(value);
   try {
     return redactSecretLikeContent(structuredRedacted);
   } catch {
     return '‹redacted›';
   }
-}
-
-function redactFileReferencePaths(value: string): string {
-  const markers = parseReferenceMarkers(value);
-  let redacted = value;
-  for (let index = markers.length - 1; index >= 0; index -= 1) {
-    const marker = markers[index]!;
-    if (
-      marker.target.kind !== 'local-file'
-      || (!posix.isAbsolute(marker.target.path) && !win32.isAbsolute(marker.target.path))
-    ) continue;
-    const kindSuffix = marker.target.entryKind === 'directory' ? '^directory' : '';
-    const safeMarker = `[[file:${marker.label}^‹path:redacted›${kindSuffix}]]`;
-    redacted = `${redacted.slice(0, marker.start)}${safeMarker}${redacted.slice(marker.end)}`;
-  }
-  return redacted;
 }
 
 function redactJsonEncodedStringEvidence(value: string): string {
@@ -1008,7 +1226,7 @@ function appendStablePromptRecord(
     order: [loaded.turnIndex, 0, 0, 0, 0, 0],
     label: { type: 'systemPrompt', change: 'initial' },
     meta: null,
-    preview: compact(stablePrompt.blocks.map((block) => block.text).join(' ')),
+    preview: compact(stablePromptModelText(diagnostics.payload)),
     state: 'completed',
     timing: timing(loaded.turn.startedAt, null, loaded.turn.startedAt),
     primaryEvidence: stablePromptEvidenceRef(loaded.threadId, loaded.turn),
@@ -1051,8 +1269,11 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
             label: { type: 'input', source: activity.source },
             meta: null,
             preview: compact(
-              modelInputTextForItem(diagnostics.payload, item.id, activity.consumedByCallIndex)
-                ?? itemSummary(item),
+              modelInputPartsPreview(modelInputPartsForItem(
+                diagnostics.payload,
+                item.id,
+                activity.consumedByCallIndex,
+              )),
             ),
             state: 'completed',
             timing: timing(item.acceptedAt, null, item.acceptedAt),
@@ -1090,7 +1311,9 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
           order: [loaded.turnIndex, 1, activityIndex, 1, 0, 0],
           label: { type: 'assistantCall', callIndex: call.index },
           meta: `${diagnostics.payload.runtime.provider} · ${diagnostics.payload.runtime.model}`,
-          preview: compact(providerResponsePreview(call.response?.value ?? null)),
+          preview: compact(modelOutputPartsPreview(
+            modelOutputPartsForResponse(call.response?.value ?? null),
+          )),
           state: providerCallState(call, turn),
           timing: timing(call.requestedAt, null, call.response?.receivedAt ?? null),
           primaryEvidence: providerCallEvidence(loaded.threadId, turn, call.index),
@@ -1118,7 +1341,7 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
             meta: execution.canonicalIdentity
               ? [execution.canonicalIdentity.namespace, execution.canonicalIdentity.name].filter(Boolean).join('.')
               : execution.toolName,
-            preview: compact(itemSummary(item) ?? execution.callId),
+            preview: compact(toolInputPreview(item)),
             state: execution.status === 'inProgress' ? 'running' : execution.status,
             timing: timing(execution.startedAt, null, execution.completedAt),
             primaryEvidence: toolExecutionEvidence(
@@ -1177,7 +1400,7 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
         order: [loaded.turnIndex, 1, activityIndex, 0, 0, 0],
         label: { type: 'contextCompaction', trigger: activity.trigger },
         meta: activity.trigger,
-        preview: compact(itemSummary(itemsById.get(activity.itemId)) ?? activity.trigger),
+        preview: null,
         state: 'completed',
         timing: timing(activity.completedAt, null, activity.completedAt),
         primaryEvidence: diagnosticEvidence(loaded.threadId, turn, activityIndex, activity.type),
@@ -1218,7 +1441,7 @@ function appendFallbackTurnRecords(records: ThreadTrajectoryRecordSummary[], loa
       order: [loaded.turnIndex, 1, itemIndex, 0, 0, 0],
       label: { type: 'input', source: 'initial' },
       meta: null,
-      preview: compact(itemSummary(item)),
+      preview: null,
       state: loaded.turn.status === 'inProgress' ? 'running' : 'partial',
       timing: timing(item.acceptedAt, null, null),
       primaryEvidence: itemEvidenceRef(loaded.threadId, loaded.turn, item.id),
@@ -1242,7 +1465,7 @@ function appendFallbackTurnRecords(records: ThreadTrajectoryRecordSummary[], loa
         ? delegationLabel(item, item.type)
         : { type: 'tool', name: toolName(item, item.type) },
       meta: item.type,
-      preview: compact(itemSummary(item)),
+      preview: compact(toolInputPreview(item)),
       state: item.status === 'inProgress' ? 'running' : item.status,
       timing: timing(loaded.turn.startedAt, null, itemCompletedAt(item, loaded.turn)),
       primaryEvidence: itemEvidenceRef(loaded.threadId, loaded.turn, item.id),
@@ -1347,7 +1570,7 @@ function appendManualCompactionRecords(
       order: [loaded.turnIndex, 2, itemIndex, 0, 0, 0],
       label: { type: 'contextCompaction', trigger: item.trigger },
       meta: item.trigger,
-      preview: compact(itemSummary(item)),
+      preview: null,
       state: 'completed',
       timing: timing(loaded.turn.startedAt, null, loaded.turn.startedAt),
       primaryEvidence: itemEvidenceRef(loaded.threadId, loaded.turn, item.id),
@@ -1997,35 +2220,6 @@ function toolExecutionForRecord(
   return activity.executions.find((execution) => execution.callId === callId) ?? null;
 }
 
-function toolInputEvidence(item: ThreadItem | null): JsonValue | null {
-  if (!item) return null;
-  switch (item.type) {
-    case 'commandExecution':
-      return sanitizeJsonEvidence({
-        command: item.command,
-        description: item.description,
-        cwd: item.cwd,
-      });
-    case 'fileChange':
-      return sanitizeJsonEvidence({ changes: item.changes });
-    case 'mcpToolCall':
-    case 'dynamicToolCall':
-      return sanitizeJsonEvidence(item.arguments);
-    case 'collabAgentToolCall':
-      return sanitizeJsonEvidence({
-        tool: item.tool,
-        prompt: item.prompt,
-        model: item.model,
-        reasoningEffort: item.reasoningEffort,
-        receiverThreadIds: item.receiverThreadIds,
-      });
-    case 'webSearch':
-      return sanitizeJsonEvidence({ query: item.query });
-    default:
-      return null;
-  }
-}
-
 function toolSchemaEvidence(
   payload: TurnDiagnosticsPayload | null,
   toolName: string | null,
@@ -2162,9 +2356,15 @@ function itemSummary(item: ThreadItem | null | undefined): string | null {
   }
 }
 
-function providerResponsePreview(value: JsonValue | null): string | null {
-  if (value === null) return null;
-  return semanticText(value) ?? jsonPreview(value);
+function toolInputPreview(item: ThreadItem | null): string | null {
+  if (!item || !isToolItem(item)) return null;
+  if (item.modelCall.disposition === 'evidenceOnly') {
+    return jsonPreview(sanitizeJsonEvidence(item.modelCall.redactedArgumentsSummary));
+  }
+  const source = modelCallArgumentSource(item.modelCall);
+  return source.storage === 'inline'
+    ? jsonPreview(sanitizeJsonEvidence(source.value))
+    : null;
 }
 
 function semanticText(value: JsonValue | null): string | null {

@@ -58,7 +58,7 @@ afterEach(() => {
 });
 
 describe('ThreadTrajectoryPanel', () => {
-  test('keeps the ledger message-first and opens sanitized Assistant evidence lazily', async () => {
+  test('keeps the ledger message-first and opens bounded Assistant evidence lazily', async () => {
     const calls: Array<{ readonly method: string; readonly input: unknown }> = [];
     const rendered = renderPanel(async (method, input) => {
       calls.push({ method, input });
@@ -82,9 +82,12 @@ describe('ThreadTrajectoryPanel', () => {
     expect(rendered.document.body.textContent).toContain('Request #1');
     expect(rendered.document.body.textContent).toContain('Mock response');
 
+    clickButton(rendered.document, 'Request');
+    expect(rendered.document.body.textContent).toContain('Read /Users/example/project');
+
     clickButton(rendered.document, 'Raw');
-    expect(rendered.document.body.textContent).toContain('Read ‹path:redacted›');
-    expect(rendered.document.body.textContent).not.toContain('/Users/example/project');
+    expect(rendered.document.body.textContent).toContain('Part 1 · TextMock response');
+    expect(rendered.document.body.textContent).not.toContain('Read /Users/example/project');
 
     expect(calls.map((call) => call.method)).toEqual([
       'thread/trajectory/read',
@@ -498,6 +501,38 @@ describe('ThreadTrajectoryPanel', () => {
     expect(rendered.document.body.textContent).toContain('First tool');
   });
 
+  test('renders System Prompt from the captured provider-context fragment', async () => {
+    const system = record({
+      id: `turn:${TURN_ID}:context:system`,
+      kind: 'context',
+      lane: 'input',
+      stepIndex: 0,
+      label: { type: 'systemPrompt', change: 'initial' },
+      preview: 'Captured provider-context prompt',
+      primaryEvidence: { type: 'stablePrompt', threadId: THREAD_ID, turnId: TURN_ID },
+    });
+    const rendered = renderPanel(async (method) => {
+      if (method === 'thread/trajectory/read') return trajectoryReadResponse([system]);
+      if (method === 'thread/trajectory/detail/read') {
+        return contextDetailResponse(system, {
+          stablePrompt: {
+            blocks: [{ text: 'Stable prompt source block' }],
+          },
+        }, 'Captured provider-context prompt');
+      }
+      throw new Error(`Unexpected Agent Core method: ${method}`);
+    });
+
+    rendered.render();
+    await flush();
+    clickRecord(rendered.document, system.id);
+    await flush();
+
+    const inspector = rendered.document.querySelector<HTMLElement>('[aria-label="Trajectory inspector"]');
+    expect(inspector?.textContent).toContain('Captured provider-context prompt');
+    expect(inspector?.textContent).not.toContain('Stable prompt source block');
+  });
+
   test('renders USER Preview from captured model-visible text instead of canonical accepted input', async () => {
     const input = record({
       id: INPUT_ID,
@@ -505,7 +540,7 @@ describe('ThreadTrajectoryPanel', () => {
       lane: 'input',
       stepIndex: 0,
       label: { type: 'input', source: 'initial' },
-      preview: '[[file:brief.txt^‹path:redacted›]] Inspect the attachment.',
+      preview: '[[file:brief.txt^%2Fworkspace%2Fbrief.txt]] Inspect the attachment.',
       primaryEvidence: {
         type: 'threadItem',
         threadId: THREAD_ID,
@@ -552,14 +587,30 @@ describe('ThreadTrajectoryPanel', () => {
     rendered.render();
     await flush();
     expect(recordRow(rendered.document, INPUT_ID).textContent)
-      .toContain('User[[file:brief.txt^‹path:redacted›]] Inspect the attachment.');
+      .toContain('User[[file:brief.txt^%2Fworkspace%2Fbrief.txt]] Inspect the attachment.');
     expect(recordRow(rendered.document, context.id).textContent).toContain('ContextTurn Environment');
 
     clickRecord(rendered.document, INPUT_ID);
     await flush();
     clickButton(rendered.document, 'Preview');
     const inspector = rendered.document.querySelector<HTMLElement>('[aria-label="Trajectory inspector"]');
+    const inputParts = [...(inspector?.querySelectorAll<HTMLElement>(
+      '.thread-trajectory-parts-preview.is-input > *',
+    ) ?? [])];
+    expect(inputParts.map((part) => part.className)).toEqual([
+      'thread-trajectory-part-text is-plain',
+      'thread-trajectory-part-text is-plain',
+      'thread-trajectory-part-image',
+    ]);
+    expect(inputParts[0]?.textContent)
+      .toBe('[[file:brief.txt^%2Fworkspace%2Fbrief.txt]] Inspect the attachment.');
+    expect(inputParts[0]?.querySelector('a')).toBeNull();
+    expect(inputParts[1]?.textContent).toContain('Readable path: /workspace/brief.txt');
     expect(inspector?.textContent).toContain('Use file_read with this path to inspect the attachment.');
+    expect(inspector?.querySelector('.thread-trajectory-part-image strong')?.textContent).toBe('Image');
+    expect(inspector?.querySelector('.thread-trajectory-part-image span')?.textContent).toBe('image/png · 1,024 B');
+    expect(inspector?.querySelector('.thread-trajectory-part-image code')?.textContent)
+      .toBe(`sha256 ${'a'.repeat(64)}`);
     expect(inspector?.textContent).not.toContain('brief.txtInspect the attachment');
     expect(inspector?.textContent).not.toContain('Turn environment');
 
@@ -567,6 +618,63 @@ describe('ThreadTrajectoryPanel', () => {
     await flush();
     expect(inspector?.textContent).toContain('"model": "gpt-5"');
     expect(inspector?.textContent).toContain('"text": "nihao"');
+  });
+
+  test('renders availability discovered by the lazy detail read', async () => {
+    const input = trajectoryRecords()[0]!;
+    const rendered = renderPanel(async (method) => {
+      if (method === 'thread/trajectory/read') return trajectoryReadResponse([input]);
+      if (method === 'thread/trajectory/detail/read') {
+        const response = inputDetailResponse(input);
+        return {
+          ...response,
+          record: { ...input, availability: [{ reason: 'payloadUnavailable' }] },
+        };
+      }
+      throw new Error(`Unexpected Agent Core method: ${method}`);
+    });
+
+    rendered.render();
+    await flush();
+    clickRecord(rendered.document, input.id);
+    await flush();
+
+    expect(rendered.document.body.textContent).toContain('The referenced payload is no longer available.');
+  });
+
+  test('does not present canonical accepted input as model-visible Preview evidence', async () => {
+    const input = record({ ...trajectoryRecords()[0]!, preview: 'Canonical accepted input' });
+    const rendered = renderPanel(async (method) => {
+      if (method === 'thread/trajectory/read') return trajectoryReadResponse([input]);
+      if (method === 'thread/trajectory/detail/read') {
+        const response = inputDetailResponse(input);
+        return {
+          ...response,
+          detail: response.detail?.kind === 'input'
+            ? {
+              ...response.detail,
+              modelInputParts: null,
+              message: {
+                itemId: 'user-message-1',
+                acceptedAt: 106,
+                content: [{ type: 'text', text: 'Canonical accepted input' }],
+              },
+            }
+            : response.detail,
+        };
+      }
+      throw new Error(`Unexpected Agent Core method: ${method}`);
+    });
+
+    rendered.render();
+    await flush();
+    clickRecord(rendered.document, input.id);
+    await flush();
+    clickButton(rendered.document, 'Preview');
+
+    const inspector = rendered.document.querySelector<HTMLElement>('[aria-label="Trajectory inspector"]');
+    expect(inspector?.textContent).toContain('No retained evidence.');
+    expect(inspector?.textContent).not.toContain('Canonical accepted input');
   });
 
   test('renders CONTEXT preview from captured model context text instead of the item summary', async () => {
@@ -624,6 +732,207 @@ describe('ThreadTrajectoryPanel', () => {
     await flush();
     expect(inspector?.textContent).toContain('"item": null');
     expect(inspector?.textContent).toContain('"modelContextText"');
+  });
+
+  test('keeps every Inspector preview on its record-kind evidence authority', async () => {
+    const assistant = record({
+      ...trajectoryRecords()[1]!,
+      preview: 'Assistant row summary',
+    });
+    const context = record({
+      id: CONTEXT_ID,
+      kind: 'context',
+      lane: 'input',
+      stepIndex: 2,
+      label: { type: 'context', kinds: ['additionalContext'] },
+      preview: 'Context storage summary',
+      primaryEvidence: {
+        type: 'preparedContextPart',
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        callIndex: 0,
+        messageIndex: 0,
+        partIndex: 1,
+      },
+    });
+    const tool = record({
+      ...trajectoryRecords()[2]!,
+      stepIndex: 3,
+      preview: 'Tool row summary',
+    });
+    const compaction = record({
+      id: `turn:${TURN_ID}:compaction:manual`,
+      kind: 'compaction',
+      lane: 'input',
+      stepIndex: 4,
+      label: { type: 'contextCompaction', trigger: 'manual' },
+      preview: 'Compaction row summary',
+      primaryEvidence: {
+        type: 'threadItem',
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        itemId: 'manual-compaction',
+      },
+    });
+    const retry = record({
+      id: `turn:${TURN_ID}:retry:1`,
+      kind: 'retry',
+      lane: 'assistant',
+      stepIndex: 5,
+      label: { type: 'providerRetry', retryKind: 'stream', attempt: 1, maxRetries: 2, sourceCallIndex: 0 },
+      preview: 'Retry row summary',
+      primaryEvidence: {
+        type: 'diagnosticActivity',
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        activityIndex: 3,
+        activityType: 'providerRetry',
+      },
+    });
+    const records = [assistant, context, tool, compaction, retry];
+    const rendered = renderPanel(async (method, request) => {
+      if (method === 'thread/trajectory/read') return trajectoryReadResponse(records);
+      if (method !== 'thread/trajectory/detail/read') {
+        throw new Error(`Unexpected Agent Core method: ${method}`);
+      }
+      if (request.recordId === assistant.id) {
+        const response = assistantDetailResponse();
+        return {
+          ...response,
+          record: assistant,
+          detail: response.detail?.kind === 'assistant'
+            ? { ...response.detail, modelOutputParts: null }
+            : response.detail,
+        };
+      }
+      if (request.recordId === context.id) {
+        return contextDetailResponse(context, {
+          kind: 'additionalContext',
+          turnEntries: [],
+          threadState: [],
+        });
+      }
+      if (request.recordId === tool.id) {
+        const response = toolDetailResponse();
+        return {
+          ...response,
+          record: tool,
+          detail: response.detail?.kind === 'tool'
+            ? { ...response.detail, outputText: null }
+            : response.detail,
+        };
+      }
+      if (request.recordId === compaction.id) {
+        return {
+          threadId: THREAD_ID,
+          record: compaction,
+          detail: {
+            kind: 'compaction',
+            turn: turnEvidence(),
+            item: null,
+            diagnostics: null,
+            activityIndex: null,
+            summaryText: 'Actual retained compaction summary',
+          },
+        };
+      }
+      return {
+        threadId: THREAD_ID,
+        record: retry,
+        detail: {
+          kind: 'retry',
+          turn: turnEvidence(),
+          diagnostics: null,
+          activityIndex: null,
+        },
+      };
+    });
+
+    rendered.render();
+    await flush();
+    for (const [recordId, forbidden, expected] of [
+      [assistant.id, 'Assistant row summary', 'No retained evidence.'],
+      [context.id, 'Context storage summary', 'No retained evidence.'],
+      [tool.id, 'Tool row summary', 'No retained evidence.'],
+      [compaction.id, 'Compaction row summary', 'Actual retained compaction summary'],
+      [retry.id, 'Retry row summary', 'No retained evidence.'],
+    ] as const) {
+      clickRecord(rendered.document, recordId);
+      await flush();
+      const inspector = rendered.document.querySelector<HTMLElement>('[aria-label="Trajectory inspector"]');
+      expect(inspector?.textContent).toContain(expected);
+      expect(inspector?.textContent).not.toContain(forbidden);
+    }
+  });
+
+  test('renders every retained Assistant output part instead of reducing the response to text', async () => {
+    const assistant = trajectoryRecords()[1]!;
+    const tool = trajectoryRecords()[2]!;
+    const rendered = renderPanel(async (method, request) => {
+      if (method === 'thread/trajectory/read') return trajectoryReadResponse([assistant, tool]);
+      if (method === 'thread/trajectory/detail/read') {
+        if (request.recordId === tool.id) return toolDetailResponse();
+        const response = assistantDetailResponse();
+        return {
+          ...response,
+          detail: response.detail?.kind === 'assistant'
+            ? {
+              ...response.detail,
+              modelOutputParts: [
+                { type: 'thinking', text: 'Inspect the repository first.' },
+                { type: 'text', text: 'Checking the relevant file.' },
+                {
+                  type: 'toolCall',
+                  callId: 'call:read',
+                  name: 'file_read',
+                  arguments: { path: '/workspace/src/app.ts', line_start: 1, line_end: 80 },
+                },
+                { type: 'image', mimeType: 'image/png', byteLength: 128, sha256: '4'.repeat(64) },
+                { type: 'other', value: { type: 'citation', source: 'provider' } },
+              ],
+            }
+            : response.detail,
+        };
+      }
+      throw new Error(`Unexpected Agent Core method: ${method}`);
+    });
+
+    rendered.render();
+    await flush();
+    clickRecord(rendered.document, assistant.id);
+    await flush();
+    clickButton(rendered.document, 'Preview');
+
+    const inspector = rendered.document.querySelector<HTMLElement>('[aria-label="Trajectory inspector"]');
+    const thinking = inspector?.querySelector<HTMLDetailsElement>('.thread-trajectory-part-thinking');
+    expect(thinking?.hasAttribute('open')).toBe(false);
+    expect(thinking?.querySelector('summary')?.textContent).toContain('Thinking');
+    expect(thinking?.querySelector('.thread-trajectory-part-thinking-body')?.textContent)
+      .toContain('Inspect the repository first.');
+    expect(inspector?.querySelector('.thread-trajectory-part-text')?.textContent)
+      .toContain('Checking the relevant file.');
+    expect(inspector?.querySelector('.thread-trajectory-part-tool-name')?.textContent).toBe('file_read');
+    expect(inspector?.querySelector('.thread-trajectory-part-tool-arguments')?.textContent)
+      .toBe('{"path":"/workspace/src/app.ts","line_start":1,"line_end":80}');
+    expect(inspector?.querySelector('.thread-trajectory-part-image span')?.textContent).toBe('image/png · 128 B');
+    expect(inspector?.querySelector('.thread-trajectory-part-image code')?.textContent)
+      .toBe(`sha256 ${'4'.repeat(64)}`);
+    expect(inspector?.querySelector('.thread-trajectory-part-other pre')?.textContent)
+      .toContain('"source": "provider"');
+    expect(inspector?.textContent).not.toContain('No retained evidence.');
+
+    clickButton(rendered.document, 'Raw');
+    expect(inspector?.textContent).toContain('Part 1 · Thinking');
+    expect(inspector?.textContent).toContain('Part 3 · Tool Call');
+    expect(inspector?.textContent).toContain('"callId": "call:read"');
+    expect(inspector?.textContent).toContain('Part 4 · Image');
+    expect(inspector?.textContent).toContain('Part 5 · Other');
+
+    clickAriaButton(rendered.document, 'Open tool call record');
+    await flush();
+    expect(inspector?.textContent).toContain('Tool');
+    expect(inspector?.textContent).toContain('read_file');
+    expect(inspector?.textContent).toContain('Read 42 lines');
   });
 
   test('opens a delegation target as the child Thread own Trajectory', async () => {
@@ -1080,8 +1389,9 @@ function assistantDetailResponse(): ThreadTrajectoryDetailReadResponse {
     detail: {
       kind: 'assistant',
       turn: turnEvidence(),
+      modelOutputParts: [{ type: 'text', text: 'Mock response' }],
       diagnostics: diagnosticsEvidence({
-        request: { input: 'Read ‹path:redacted›' },
+        request: { input: 'Read /Users/example/project' },
         response: { outputText: 'Mock response' },
       }),
       providerCallIndex: 0,
@@ -1097,10 +1407,19 @@ function inputDetailResponse(input: ThreadTrajectoryRecordSummary): ThreadTrajec
     detail: {
       kind: 'input',
       turn: turnEvidence(),
-      modelInputText: [
-        '[[file:brief.txt^‹path:redacted›]] Inspect the attachment.',
-        '[Attachment: brief.txt, text/plain, 64 bytes]\nReadable path: /workspace/brief.txt\nUse file_read with this path to inspect the attachment.',
-      ].join('\n\n'),
+      modelInputParts: [
+        { type: 'text', text: '[[file:brief.txt^%2Fworkspace%2Fbrief.txt]] Inspect the attachment.' },
+        {
+          type: 'text',
+          text: '[Attachment: brief.txt, text/plain, 64 bytes]\nReadable path: /workspace/brief.txt\nUse file_read with this path to inspect the attachment.',
+        },
+        {
+          type: 'image',
+          mimeType: 'image/png',
+          byteLength: 1024,
+          sha256: 'a'.repeat(64),
+        },
+      ],
       message: {
         itemId: 'user-message-1',
         acceptedAt: 106,

@@ -60,6 +60,93 @@ describe('ThreadTrajectoryProjection', () => {
     });
   });
 
+  test('reads Tool Input from canonical model-call arguments and reports missing retained references', async () => {
+    const base = trajectoryDiagnostics();
+    const argumentsRef: ThreadContextPayloadReference = {
+      id: '6'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json',
+      byteLength: 128,
+      schemaVersion: 1,
+      kind: 'toolCallArguments',
+    };
+    const outputRef = {
+      id: '7'.repeat(64),
+      mimeType: 'text/plain' as const,
+      byteLength: 64,
+      summary: 'Missing output',
+    };
+    const diagnostics: TurnDiagnosticsPayload = {
+      ...base,
+      activities: [
+        base.activities[0]!,
+        {
+          ...base.activities[1] as Extract<TurnDiagnosticsPayload['activities'][number], { type: 'toolExecutionBatch' }>,
+          executions: [
+            {
+              ...(base.activities[1] as Extract<TurnDiagnosticsPayload['activities'][number], { type: 'toolExecutionBatch' }>).executions[0]!,
+              itemId: 'tool-inline',
+            },
+            {
+              ...(base.activities[1] as Extract<TurnDiagnosticsPayload['activities'][number], { type: 'toolExecutionBatch' }>).executions[1]!,
+              itemId: 'tool-payload',
+            },
+          ],
+        },
+      ],
+    };
+    const turn: Turn = {
+      ...trajectoryTurn(),
+      items: [
+        commandItem('tool-inline', {
+          disposition: 'replayable',
+          identity: { namespace: null, name: 'first_tool' },
+          providerName: 'first_tool',
+          arguments: {
+            storage: 'inline',
+            value: { command: 'printf model', timeout: 5_000, run_in_background: true },
+          },
+          schemaDigest: '8'.repeat(64),
+        }, null),
+        commandItem('tool-payload', {
+          disposition: 'replayable',
+          identity: { namespace: null, name: 'second_tool' },
+          providerName: 'second_tool',
+          arguments: { storage: 'payload', ref: argumentsRef },
+          schemaDigest: '9'.repeat(64),
+        }, outputRef),
+      ],
+    };
+    const projection = trajectoryProjection({ diagnostics, turn });
+    const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    const tools = response.records.filter((record) => record.kind === 'tool');
+
+    expect(tools[0]?.preview).toContain('printf model');
+    expect(tools[0]?.preview).not.toContain('Host-derived display value');
+    expect(tools[0]?.preview).not.toContain('/host/injected');
+    expect(tools[1]?.preview).toBeNull();
+
+    const inlineDetail = await projection.readDetail({ threadId: THREAD_ID, recordId: tools[0]!.id });
+    if (inlineDetail.detail?.kind !== 'tool') throw new Error('Expected inline Tool detail');
+    expect(inlineDetail.detail.input).toEqual({
+      command: 'printf model',
+      timeout: 5_000,
+      run_in_background: true,
+    });
+    expect(JSON.stringify(inlineDetail.detail.input)).not.toContain('/host/injected');
+
+    const missingDetail = await projection.readDetail({ threadId: THREAD_ID, recordId: tools[1]!.id });
+    if (missingDetail.detail?.kind !== 'tool' || !missingDetail.record) {
+      throw new Error('Expected payload-backed Tool detail');
+    }
+    expect(missingDetail.detail.input).toBeNull();
+    expect(missingDetail.detail.outputText).toBeNull();
+    expect(missingDetail.record.availability).toEqual([
+      { reason: 'payloadUnavailable' },
+      { reason: 'evidenceUnavailable' },
+    ]);
+    expect(decodeAgentCoreResponse('thread/trajectory/detail/read', missingDetail)).toEqual(missingDetail);
+  });
+
   test('emits stable-prompt and tool-catalog records and round-trips exact tool evidence through the codec', async () => {
     const projection = trajectoryProjection();
     const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
@@ -109,6 +196,164 @@ describe('ThreadTrajectoryProjection', () => {
     };
     delete wire.records[toolIndex]!.primaryEvidence.callId;
     expect(() => decodeAgentCoreResponse('thread/trajectory/read', wire)).toThrow(/callId/);
+  });
+
+  test('uses the captured provider-context prompt instead of stable-prompt source blocks', async () => {
+    const base = trajectoryDiagnostics();
+    const diagnostics: TurnDiagnosticsPayload = {
+      ...base,
+      stablePrompt: {
+        ...base.stablePrompt!,
+        blocks: [{
+          ...base.stablePrompt!.blocks[0]!,
+          text: 'Stable prompt source block',
+        }],
+      },
+      requestFragments: [{ id: 'system', value: 'Captured provider-context prompt' }],
+    };
+    const projection = trajectoryProjection({ diagnostics });
+    const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    const system = response.records.find((record) => record.primaryEvidence.type === 'stablePrompt');
+
+    expect(system?.preview).toBe('Captured provider-context prompt');
+    if (!system) throw new Error('Expected System Prompt record');
+    const detail = await projection.readDetail({ threadId: THREAD_ID, recordId: system.id });
+    if (detail.detail?.kind !== 'context') throw new Error('Expected System Prompt detail');
+    expect(detail.detail.modelContextText).toBe('Captured provider-context prompt');
+    expect(JSON.stringify(detail.detail.payload)).toContain('Stable prompt source block');
+  });
+
+  test('preserves ordered Assistant text, thinking, tool calls, images, and unknown output parts', async () => {
+    const base = trajectoryDiagnostics();
+    const imageDigest = '4'.repeat(64);
+    const diagnostics: TurnDiagnosticsPayload = {
+      ...base,
+      providerCalls: [{
+        ...base.providerCalls[0]!,
+        response: {
+          ...base.providerCalls[0]!.response!,
+          value: {
+            role: 'assistant',
+            content: [
+              { type: 'thinking', thinking: 'Inspect the repository first.', thinkingSignature: 'opaque-signature' },
+              { type: 'text', text: 'Checking the relevant file.' },
+              {
+                type: 'toolCall',
+                id: 'call:file-read',
+                name: 'file_read',
+                arguments: {
+                  path: '/workspace/src/app.ts',
+                  line_start: 1,
+                  line_end: 80,
+                  authorization: 'Bearer test-credential-value',
+                },
+              },
+              {
+                type: 'image',
+                mimeType: 'image/png',
+                data: {
+                  omitted: true,
+                  encoding: 'base64',
+                  byteLength: 128,
+                  sha256: imageDigest,
+                },
+              },
+              { type: 'citation', source: 'provider', index: 1 },
+            ],
+          },
+        },
+      }],
+    };
+    const projection = trajectoryProjection({ diagnostics });
+    const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    const assistant = response.records.find((record) => record.kind === 'assistant');
+
+    expect(assistant?.preview).toContain('Inspect the repository first.');
+    expect(assistant?.preview).toContain('file_read');
+    if (!assistant) throw new Error('Expected Assistant record');
+    const detail = await projection.readDetail({ threadId: THREAD_ID, recordId: assistant.id });
+    if (detail.detail?.kind !== 'assistant') throw new Error('Expected Assistant detail');
+    expect(detail.detail.modelOutputParts).toEqual([
+      { type: 'thinking', text: 'Inspect the repository first.' },
+      { type: 'text', text: 'Checking the relevant file.' },
+      {
+        type: 'toolCall',
+        callId: 'call:file-read',
+        name: 'file_read',
+        arguments: {
+          path: '/workspace/src/app.ts',
+          line_start: 1,
+          line_end: 80,
+          authorization: '‹redacted›',
+        },
+      },
+      { type: 'image', mimeType: 'image/png', byteLength: 128, sha256: imageDigest },
+      { type: 'other', value: { type: 'citation', source: 'provider', index: 1 } },
+    ]);
+    expect(JSON.stringify(detail.detail.modelOutputParts)).not.toContain('opaque-signature');
+    expect(decodeAgentCoreResponse('thread/trajectory/detail/read', detail)).toEqual(detail);
+  });
+
+  test('reads the retained compaction summary instead of presenting an Item label as Preview evidence', async () => {
+    const summaryRef: ThreadContextPayloadReference = {
+      id: CONTEXT_REF.id,
+      mimeType: 'application/vnd.tenon.agent-context+json',
+      byteLength: 128,
+      schemaVersion: 1,
+      kind: 'compactionSummary',
+    };
+    const restoredStateRef: ThreadContextPayloadReference = {
+      ...summaryRef,
+      id: '5'.repeat(64),
+      kind: 'compactionRestoredState',
+    };
+    const compaction: ThreadItem = {
+      type: 'contextCompaction',
+      id: 'manual-compaction',
+      provenance: itemProvenance('manual-compaction'),
+      trigger: 'manual',
+      coveredFrom: { turnId: TURN_ID, itemId: 'manual-compaction' },
+      coveredThrough: { turnId: TURN_ID, itemId: 'manual-compaction' },
+      preservedFrom: null,
+      summaryRef,
+      restoredStateRef,
+      instructionsRef: null,
+      contextRefs: [summaryRef, restoredStateRef],
+      resourceRefs: [],
+      outputRefs: [],
+    };
+    const projection = trajectoryProjection({
+      contextPayload: {
+        schemaVersion: 1,
+        kind: 'compactionSummary',
+        source: 'deterministic',
+        text: 'The retained conversation summary.',
+      },
+      turn: { ...trajectoryTurn(), items: [compaction] },
+    });
+    const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    const record = response.records.find((candidate) => candidate.kind === 'compaction');
+    if (!record) throw new Error('Expected Compaction record');
+    const detail = await projection.readDetail({ threadId: THREAD_ID, recordId: record.id });
+
+    if (detail.detail?.kind !== 'compaction') throw new Error('Expected Compaction detail');
+    expect(detail.detail.summaryText).toBe('The retained conversation summary.');
+    expect(decodeAgentCoreResponse('thread/trajectory/detail/read', detail)).toEqual(detail);
+
+    const missingProjection = trajectoryProjection({
+      contextPayload: null,
+      turn: { ...trajectoryTurn(), items: [compaction] },
+    });
+    const missingRecords = await missingProjection.read({ threadId: THREAD_ID, limit: 100 });
+    const missingRecord = missingRecords.records.find((candidate) => candidate.kind === 'compaction');
+    if (!missingRecord) throw new Error('Expected missing-payload Compaction record');
+    const missingDetail = await missingProjection.readDetail({
+      threadId: THREAD_ID,
+      recordId: missingRecord.id,
+    });
+    if (missingDetail.detail?.kind !== 'compaction') throw new Error('Expected missing Compaction detail');
+    expect(missingDetail.detail.summaryText).toBeNull();
+    expect(missingDetail.record?.availability).toContainEqual({ reason: 'payloadUnavailable' });
   });
 
   test('separates accepted user message from context envelope and materializes the consumed request', async () => {
@@ -163,7 +408,7 @@ describe('ThreadTrajectoryProjection', () => {
     const detail = await projection.readDetail({ threadId: THREAD_ID, recordId: input.id });
     expect(detail.detail?.kind).toBe('input');
     if (detail.detail?.kind !== 'input') throw new Error('Expected input detail');
-    expect(detail.detail.modelInputText).toBe('nihao');
+    expect(detail.detail.modelInputParts).toEqual([{ type: 'text', text: 'nihao' }]);
     expect(detail.detail.message?.content).toEqual([{ type: 'text', text: 'nihao' }]);
     expect(detail.detail.diagnostics?.providerCall?.request).toEqual({
       model: 'gpt-5',
@@ -352,29 +597,61 @@ describe('ThreadTrajectoryProjection', () => {
     const input = response.records.find((record) => record.kind === 'input');
     const context = response.records.find((record) => record.primaryEvidence.type === 'preparedContextPart');
 
-    expect(input?.preview).toContain('[[file:brief.txt^‹path:redacted›]]');
+    expect(input?.preview).toContain('[[file:brief.txt^%2Fworkspace%2Fbrief.txt]]');
     expect(input?.preview).not.toContain('brief.txt Extract the attachment and compare the references. Plan diagram.png');
     expect(context?.label).toEqual({ type: 'context', kinds: ['referencedResources'] });
     if (!input || !context) throw new Error('Expected input and referenced-resource Context records');
 
     const inputDetail = await projection.readDetail({ threadId: THREAD_ID, recordId: input.id });
     if (inputDetail.detail?.kind !== 'input') throw new Error('Expected input detail');
-    expect(inputDetail.detail.modelInputText).toContain('[[file:brief.txt^‹path:redacted›]]');
-    expect(inputDetail.detail.modelInputText).toContain('[[node:Plan^node-1]]');
-    expect(inputDetail.detail.modelInputText).toContain('[[file:diagram.png^‹path:redacted›]]');
-    expect(inputDetail.detail.modelInputText).toContain('Use file_read with this path to inspect the attachment.');
-    expect(inputDetail.detail.modelInputText).toContain('[Attachment image: diagram.png, image/png, 128 bytes]');
-    expect(inputDetail.detail.modelInputText).not.toContain('snapshot_content');
-    expect(inputDetail.detail.modelInputText).not.toContain(imageDigest);
+    const inputText = inputDetail.detail.modelInputParts
+      ?.flatMap((part) => part.type === 'text' ? [part.text] : [])
+      .join('\n\n') ?? '';
+    expect(inputDetail.detail.modelInputParts?.map((part) => part.type)).toEqual([
+      'text',
+      'text',
+      'text',
+      'image',
+    ]);
+    expect(inputText).toContain('[[file:brief.txt^%2Fworkspace%2Fbrief.txt]]');
+    expect(inputText).toContain('[[node:Plan^node-1]]');
+    expect(inputText).toContain('[[file:diagram.png^%2Fworkspace%2Fdiagram.png]]');
+    expect(inputText).toContain('Readable path: /workspace/brief.txt');
+    expect(inputText).toContain('Readable path: /workspace/diagram.png');
+    expect(inputText).toContain('Use file_read with this path to inspect the attachment.');
+    expect(inputText).toContain('[Attachment image: diagram.png, image/png, 128 bytes]');
+    expect(inputText).not.toContain('snapshot_content');
+    expect(inputDetail.detail.modelInputParts?.at(-1)).toEqual({
+      type: 'image',
+      mimeType: 'image/png',
+      byteLength: 8,
+      sha256: imageDigest,
+    });
     expect(JSON.stringify(inputDetail.detail.diagnostics?.providerCall?.request)).toContain(imageDigest);
     expect(JSON.stringify(inputDetail)).not.toContain('iVBOR');
 
     const contextDetail = await projection.readDetail({ threadId: THREAD_ID, recordId: context.id });
     if (contextDetail.detail?.kind !== 'context') throw new Error('Expected Context detail');
     expect(contextDetail.detail.modelContextText).toContain('snapshot_content:\nRelease plan body');
-    expect(inputDetail.detail.modelInputText).not.toContain(contextDetail.detail.modelContextText!);
+    expect(inputText).not.toContain(contextDetail.detail.modelContextText!);
     expect(decodeAgentCoreResponse('thread/trajectory/detail/read', inputDetail)).toEqual(inputDetail);
     expect(decodeAgentCoreResponse('thread/trajectory/detail/read', contextDetail)).toEqual(contextDetail);
+  });
+
+  test('never substitutes canonical accepted input for missing prepared provider evidence', async () => {
+    const turn = trajectoryTurnWithInput(0);
+    const projection = trajectoryProjection({ turns: [turn], diagnosticsByRef: new Map() });
+    const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    const input = response.records.find((record) => record.kind === 'input');
+
+    expect(input?.preview).toBeNull();
+    expect(input?.availability).toEqual([{ reason: 'diagnosticsUnavailable' }]);
+    if (!input) throw new Error('Expected fallback Input record');
+
+    const detail = await projection.readDetail({ threadId: THREAD_ID, recordId: input.id });
+    if (detail.detail?.kind !== 'input') throw new Error('Expected fallback Input detail');
+    expect(detail.detail.modelInputParts).toBeNull();
+    expect(detail.detail.message?.content).toEqual([{ type: 'text', text: 'message 0' }]);
   });
 
   test('redacts credential-looking strings from previews, details, tool output, and export bundles', async () => {
@@ -491,6 +768,20 @@ describe('ThreadTrajectoryProjection', () => {
           arguments: jsonArguments,
         },
         status: 'completed',
+        modelCall: {
+          disposition: 'replayable',
+          identity: { namespace: 'server', name: 'secret_tool' },
+          providerName: 'secret_tool',
+          arguments: {
+            storage: 'inline',
+            value: {
+              clientSecret: secret,
+              arguments: jsonArguments,
+            },
+          },
+          schemaDigest: '9'.repeat(64),
+        },
+        pluginId: null,
         result: JSON.stringify({ clientSecret: secret, body: jsonArguments }),
         error: null,
         outputRef: {
@@ -610,18 +901,21 @@ describe('ThreadTrajectoryProjection', () => {
           requestedAt: 160,
           preparedContext: {
             ...firstCall.preparedContext,
-            messageIds: [secondMessageId],
-            messagePartProvenance: [[
-              { source: 'userInput', itemId: 'user-message-2' },
-              {
-                source: 'systemContext',
-                entries: [{
-                  kind: 'turnEnvironment',
-                  authority: 'application',
-                  purpose: 'observation',
-                }],
-              },
-            ]],
+            messageIds: [firstCall.preparedContext.messageIds[0]!, secondMessageId],
+            messagePartProvenance: [
+              firstCall.preparedContext.messagePartProvenance[0]!,
+              [
+                { source: 'userInput', itemId: 'user-message-2' },
+                {
+                  source: 'systemContext',
+                  entries: [{
+                    kind: 'turnEnvironment',
+                    authority: 'application',
+                    purpose: 'observation',
+                  }],
+                },
+              ],
+            ],
           },
           requestFingerprint: '6'.repeat(64),
         },
@@ -661,14 +955,17 @@ describe('ThreadTrajectoryProjection', () => {
     expect(contexts).toHaveLength(2);
     expect(contexts.map((record) => record.primaryEvidence)).toEqual([
       { type: 'preparedContextPart', threadId: THREAD_ID, turnId: TURN_ID, callIndex: 0, messageIndex: 0, partIndex: 1 },
-      { type: 'preparedContextPart', threadId: THREAD_ID, turnId: TURN_ID, callIndex: 1, messageIndex: 0, partIndex: 1 },
+      { type: 'preparedContextPart', threadId: THREAD_ID, turnId: TURN_ID, callIndex: 1, messageIndex: 1, partIndex: 1 },
     ]);
     const details = await Promise.all(inputs.map((input) => projection.readDetail({
       threadId: THREAD_ID,
       recordId: input.id,
     })));
-    expect(details.map((detail) => detail.detail?.kind === 'input' ? detail.detail.modelInputText : null))
-      .toEqual(['nihao', 'later']);
+    expect(details.map((detail) => detail.detail?.kind === 'input' ? detail.detail.modelInputParts : null))
+      .toEqual([
+        [{ type: 'text', text: 'nihao' }],
+        [{ type: 'text', text: 'later' }],
+      ]);
   });
 
   test('uses stable bidirectional cursors for focused windows', async () => {
@@ -966,6 +1263,29 @@ function trajectoryTurn(): Turn {
   };
 }
 
+function commandItem(
+  id: string,
+  modelCall: Extract<ThreadItem, { type: 'commandExecution' }>['modelCall'],
+  outputRef: Extract<ThreadItem, { type: 'commandExecution' }>['outputRef'],
+): Extract<ThreadItem, { type: 'commandExecution' }> {
+  return {
+    type: 'commandExecution',
+    id,
+    provenance: itemProvenance(id),
+    status: 'completed',
+    outputRef,
+    command: 'printf host',
+    description: 'Host-derived display value',
+    cwd: '/host/injected',
+    processId: null,
+    commandActions: [],
+    aggregatedOutput: null,
+    exitCode: 0,
+    durationMs: 10,
+    modelCall,
+  };
+}
+
 function inputEnvelopeTurn(): Turn {
   return {
     ...trajectoryTurn(),
@@ -1158,7 +1478,7 @@ function trajectoryDiagnostics(): TurnDiagnosticsPayload {
       steeringMode: 'all',
     },
     canonicalMessages: [],
-    requestFragments: [],
+    requestFragments: [{ id: 'system', value: 'System instructions' }],
     providerCalls: [{
       index: 0,
       requestedAt: 120,
@@ -1174,7 +1494,7 @@ function trajectoryDiagnostics(): TurnDiagnosticsPayload {
       reservedOutputTokens: 8192,
       commonPrefixMessageCount: 0,
       request: { kind: 'value', value: { input: 'test' } },
-      requestFingerprint: 'request-fingerprint',
+      requestFingerprint: 'b'.repeat(64),
       cacheBreakpoints: [],
       transportResponse: { headersReceivedAt: 130, httpStatus: 200, requestId: 'request-1' },
       response: {

@@ -558,10 +558,15 @@ test.describe('canonical agent Thread surface', () => {
     await expect(assistantTrajectoryRow).toContainText('Mock response');
     await expect(trajectory.getByRole('tab', { name: 'Summary' })).toBeVisible();
     await expect(trajectory.getByRole('tab', { name: 'Preview' })).toBeVisible();
+    await expect(trajectory.getByRole('tab', { name: 'Request' })).toBeVisible();
     await expect(trajectory.getByRole('tab', { name: 'Raw' })).toBeVisible();
     await trajectory.getByRole('tab', { name: 'Raw' }).click();
-    await expect(trajectory).toContainText('Typed redacted evidence');
-    await expect(trajectory).toContainText('Mock request');
+    const trajectoryInspector = trajectory.locator('.thread-trajectory-inspector');
+    await expect(trajectoryInspector).toContainText('Part 1 · Text');
+    await expect(trajectoryInspector).toContainText('Mock response');
+    await expect(trajectoryInspector).not.toContainText('Mock request');
+    await trajectory.getByRole('tab', { name: 'Request' }).click();
+    await expect(trajectoryInspector).toContainText('Mock request');
 
     const closeInspector = trajectory.getByRole('button', { name: 'Close Trajectory inspector' });
     const backToLedger = trajectory.getByRole('button', { name: 'Back to Trajectory ledger' });
@@ -2013,7 +2018,7 @@ test.describe('canonical agent Thread surface', () => {
       const trajectory = page.locator('.outline-panel-surface.is-thread-trajectory');
       await expect(trajectory).toContainText('Trajectory');
       await expect(trajectory.locator('[data-kind="compaction"]')).toContainText('Compacted');
-      await expect(trajectory).toContainText('Diagnostics were not retained for this record.');
+      await expect(trajectory.locator('.thread-trajectory-inspector')).toContainText('No retained evidence.');
       await expect.poll(() => trajectory.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0);
     });
   }

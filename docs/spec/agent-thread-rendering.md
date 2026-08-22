@@ -1086,23 +1086,31 @@ for provider-visible tool catalog evidence; Assistant uses Summary / Preview /
 Request / Raw; Tool uses Summary / Input / Output / Schema / Raw; Retry,
 Compaction, and Delegation use Summary /
 Preview / Raw, and Delegation can open the child Thread's own Trajectory. Raw
-means Tenon's typed, bounded, redacted evidence, not an unfiltered transport
-body. The Request tab is the consumed provider call's materialized post-adapter
-payload after renderer-facing sanitization; it is never folded into the USER
-preview. Input Preview uses the provider-neutral prepared-message text captured
-before that adapter for the exact canonical `userMessage` Item. Diagnostics tag
-every `userInput` content part with its Item ID, so initial input and later
-steering can share a provider call without repeating or borrowing one another's
-text. The Preview therefore includes the real serialized attachment reference
-and inspection instructions, Node reference marker, and image metadata while
+means Tenon's typed, bounded, credential-redacted evidence with captured
+filesystem paths preserved, not an unfiltered transport body. The Request tab
+is the consumed provider call's materialized post-adapter payload after
+credential redaction and binary omission; it is never folded into the USER
+preview. Input Preview uses the ordered provider-neutral prepared-message parts
+captured before that adapter for the exact canonical `userMessage` Item.
+Diagnostics tag every `userInput` content part with its Item ID, so initial input
+and later steering can share a provider call without repeating or borrowing one
+another's parts. Text parts retain their credential-redacted text, including
+exact filesystem paths; image parts retain
+their position plus MIME type, byte length, and digest. The Preview therefore
+includes the real serialized attachment reference and inspection instructions,
+Node reference marker, image metadata, and explicit image-part marker while
 excluding image bytes and system-context parts. Canonical `ThreadUserContent` is
-the Raw accepted-input evidence and is only the display fallback before a request
-consumes the Item or when diagnostics are unavailable. Context Preview uses
+Input Preview renders each ordered part as an independent block. Text parts use
+plain preformatted text and do not run Markdown or reference-marker rendering;
+image and unknown parts keep their own blocks at their captured positions.
+Canonical `ThreadUserContent` is
+the Raw accepted-input evidence and never substitutes for missing prepared
+provider evidence in either the ledger or inspector Preview. Context Preview uses
 captured model-visible context text from the prepared canonical provider context
 whenever diagnostics retained it. That text
 is the `<system-reminder>` / `<context-evidence ...>` projection supplied at the
 provider-context boundary after projection, budgeting, compaction, and
-renderer-facing sanitization. Non-stable CONTEXT rows are keyed by
+diagnostic credential redaction. Non-stable CONTEXT rows are keyed by
 prepared-context-part diagnostics evidence, not by retained `contextEvidence`
 Items. A prepared provider content part is the ledger unit: if one
 `<system-reminder>` part contains multiple `<context-evidence>` blocks, it
@@ -1185,16 +1193,37 @@ facts, sanitized activity/provider-call request and response values, sanitized
 context payloads, and sanitized/truncated tool output. It never returns raw
 `Thread`, raw `Turn`, raw `ThreadItem`, a diagnostics payload path, digest-only
 payload authority, raw secrets, credentials, arbitrary response headers, image
-bytes, or host filesystem paths. Missing or corrupt diagnostics, payloads, and
+bytes, or unbounded content. Captured filesystem paths remain exact when they are
+part of accepted input, prepared context, provider request/response evidence, or
+model-issued tool arguments. Missing or corrupt diagnostics, payloads, and
 output remain explicit local availability facts rather than killing the whole
-workspace.
+workspace. Availability discovered during the lazy read is appended to the
+record returned by that detail response, and the inspector uses that returned
+record rather than the earlier list summary. Tool Input resolves only the
+canonical Item `modelCall` envelope: exact inline arguments, redacted replay
+arguments, payload-backed arguments read on demand, or bounded evidence-only
+arguments. It never reconstructs model arguments from host execution or display
+fields. Assistant Preview uses ordered typed parts extracted from that exact
+provider call's retained terminal provider-neutral response. Text, thinking,
+tool calls, image metadata, and bounded unknown blocks retain their original
+order; a tool call retains its call ID, name, and bounded credential-redacted
+model-issued arguments, including exact filesystem paths. Compaction Preview reads the retained compaction-summary payload on
+demand. A ledger row's bounded preview remains a locating aid and never fills an
+empty Inspector Preview, Tool Input, Tool Output, or Context field.
+The System Prompt tab and row preview use the captured provider-context prompt
+fragment; stable-prompt source blocks remain Raw provenance only. Tool and
+Delegation row previews use retained canonical model-call arguments when those
+arguments are inline, and remain empty when their payload-backed arguments are
+not part of the lightweight read. Host-only command, path, result, and
+presentation fields never substitute for model-input evidence.
 
 The lower-level `thread/trajectory/export` operation remains a main-owned
 diagnostic operation, but it is not a Trajectory toolbar surface. If a caller uses
 it, the renderer receives only status, file name, and byte length; it never
-receives the absolute save path. The saved bundle uses sanitized Thread metadata
-and sanitized retained diagnostics alongside the same record projection, so it is
-a portable evidence bundle rather than a renderer-visible host-state dump. If the
+receives the absolute save path. The saved bundle uses bounded,
+credential-redacted Thread metadata and retained diagnostics alongside the same
+record projection, including captured filesystem-path evidence, so it is a
+portable evidence bundle rather than a renderer-visible host-state dump. If the
 write fails, main records the complete error in diagnostics and returns only a
 fixed path-free failure message to the renderer.
 

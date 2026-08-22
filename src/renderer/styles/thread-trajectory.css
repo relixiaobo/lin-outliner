@@ -801,6 +801,233 @@
   overflow: auto;
 }
 
+.thread-trajectory-parts-preview {
+  display: grid;
+  align-content: start;
+  gap: var(--space-4);
+  white-space: normal;
+}
+
+.thread-trajectory-parts-preview.is-input {
+  gap: 0;
+}
+
+.thread-trajectory-parts-preview.is-input > * {
+  padding-block: var(--space-3);
+  border-block-start: 1px solid var(--separator);
+}
+
+.thread-trajectory-parts-preview.is-input > :first-child {
+  padding-block-start: 0;
+  border-block-start: 0;
+}
+
+.thread-trajectory-parts-preview.is-input > :last-child {
+  padding-block-end: 0;
+}
+
+.thread-trajectory-part-text,
+.thread-trajectory-part-thinking,
+.thread-trajectory-part-other {
+  min-width: 0;
+}
+
+.thread-trajectory-part-text.is-plain {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: inherit;
+  font: inherit;
+  white-space: pre-wrap;
+}
+
+.thread-trajectory-part-text .thread-markdown,
+.thread-trajectory-part-thinking .thread-markdown {
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.thread-trajectory-part-thinking {
+  padding-inline-start: var(--space-3);
+  border-inline-start: 2px solid var(--separator);
+  color: var(--text-secondary);
+}
+
+.thread-trajectory-part-thinking > summary {
+  display: inline-flex;
+  height: 20px;
+  align-items: center;
+  color: var(--text-tertiary);
+  font-size: var(--font-ui-sm);
+  font-weight: 600;
+  line-height: 20px;
+  list-style: none;
+  user-select: none;
+}
+
+.thread-trajectory-part-thinking > summary::-webkit-details-marker {
+  display: none;
+}
+
+.thread-trajectory-part-thinking > summary > svg {
+  flex: none;
+  margin-inline-end: var(--space-1);
+  transition: transform var(--motion-fast);
+}
+
+.thread-trajectory-part-thinking[open] > summary > svg {
+  transform: rotate(90deg);
+}
+
+.thread-trajectory-part-thinking > summary:hover {
+  color: var(--text-secondary);
+}
+
+.thread-trajectory-part-thinking > summary:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.thread-trajectory-part-thinking-body {
+  padding: var(--space-1) 0 var(--space-2);
+}
+
+.thread-trajectory-part-tool {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  align-items: center;
+  box-sizing: border-box;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-xs);
+  color: var(--text-secondary);
+  background: transparent;
+  font: var(--font-ui-xs)/var(--line-ui-xs) var(--font-family-mono);
+  text-align: start;
+}
+
+button.thread-trajectory-part-tool:hover,
+button.thread-trajectory-part-tool:focus-visible {
+  background: var(--fill-1);
+}
+
+button.thread-trajectory-part-tool:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: -1px;
+}
+
+.thread-trajectory-part-tool > svg {
+  flex: none;
+  color: var(--text-tertiary);
+}
+
+.thread-trajectory-part-tool-name {
+  flex: none;
+  font-weight: 600;
+}
+
+.thread-trajectory-part-tool-arguments {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-trajectory-part-tool > svg:last-child {
+  margin-inline-start: auto;
+}
+
+.thread-trajectory-part-image {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: var(--space-3);
+  color: var(--text-secondary);
+}
+
+.thread-trajectory-part-image > svg {
+  flex: none;
+  margin-top: var(--space-1);
+  color: var(--text-tertiary);
+}
+
+.thread-trajectory-part-image > div {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.thread-trajectory-part-image strong {
+  color: var(--text-primary);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+}
+
+.thread-trajectory-part-image span,
+.thread-trajectory-part-image code {
+  overflow-wrap: anywhere;
+  color: var(--text-tertiary);
+  font: var(--font-ui-xs)/var(--line-ui-xs) var(--font-family-mono);
+}
+
+.thread-trajectory-part-other > span,
+.thread-trajectory-raw-part-heading {
+  color: var(--text-tertiary);
+  font: var(--font-ui-xs)/var(--line-ui-xs) var(--font-family-mono);
+}
+
+.thread-trajectory-part-other > pre,
+.thread-trajectory-raw-part > pre {
+  margin: var(--space-1) 0 0;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  font: var(--font-ui-xs)/var(--line-code-block) var(--font-family-mono);
+  white-space: pre-wrap;
+}
+
+.thread-trajectory-raw-parts {
+  gap: var(--space-6);
+  padding: var(--space-5) var(--space-6) var(--space-8);
+  user-select: text;
+}
+
+.thread-trajectory-raw-part {
+  min-width: 0;
+}
+
+.thread-trajectory-raw-part-heading {
+  display: flex;
+  width: max-content;
+  max-width: 100%;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+button.thread-trajectory-raw-part-heading {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: start;
+}
+
+button.thread-trajectory-raw-part-heading:hover,
+button.thread-trajectory-raw-part-heading:focus-visible {
+  color: var(--text-secondary);
+}
+
+button.thread-trajectory-raw-part-heading:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.thread-trajectory-raw-part > .thread-trajectory-part-image {
+  margin-top: var(--space-2);
+}
+
 .thread-trajectory-inspector-section > .thread-trajectory-facts {
   padding-top: 0;
 }
