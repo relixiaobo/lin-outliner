@@ -13,7 +13,6 @@ import type {
 } from '../../../core/agent/protocol';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
-import { formatNumber } from '../../ui/formatting';
 import { LoaderIcon } from '../../ui/icons';
 import { PanelStickyBreadcrumb, type PanelDragHandle } from '../../ui/PanelShared';
 import { EmptyState, ErrorState } from '../../ui/primitives/FeedbackState';
@@ -26,8 +25,8 @@ import {
   buildTrajectoryTimeline,
   groupTrajectoryRecords,
   isSystemLevelRecord,
-  trajectoryRecordsInRange,
   trajectorySearchMatches,
+  trajectoryTimelineFocusRecords,
   type TrajectoryTimelineMode,
   type TrajectoryTimeRange,
 } from './trajectory/trajectoryModel';
@@ -43,11 +42,6 @@ interface ThreadTrajectoryPanelProps {
   readonly threadId: string;
   readonly turnId?: string;
 }
-
-type TrajectoryExportResult =
-  | { readonly status: 'written'; readonly fileName: string; readonly byteLength: number }
-  | { readonly status: 'canceled' }
-  | { readonly status: 'failed'; readonly error: string };
 
 const PAGE_LIMIT = 120;
 const EMPTY_RECORDS: readonly ThreadTrajectoryRecordSummary[] = Object.freeze([]);
@@ -77,14 +71,13 @@ export function ThreadTrajectoryPanel({
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState<TrajectoryTimelineMode>('duration');
   const [range, setRange] = useState<TrajectoryTimeRange | null>(null);
+  const [timelineRecordFocus, setTimelineRecordFocus] = useState<{ readonly recordId: string } | null>(null);
   const [collapsedTurns, setCollapsedTurns] = useState<ReadonlySet<string>>(() => new Set());
   const [collapsedCalls, setCollapsedCalls] = useState<ReadonlySet<string>>(() => new Set());
   const [followingTail, setFollowingTail] = useState(true);
   const [loading, setLoading] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [loadingNewer, setLoadingNewer] = useState(false);
-  const [exportBusy, setExportBusy] = useState(false);
-  const [exportStatus, setExportStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => { recordsRef.current = records; }, [records]);
@@ -92,7 +85,6 @@ export function ThreadTrajectoryPanel({
 
   const loadTrajectory = useCallback(async (options: {
     readonly cursor?: string | null;
-    readonly forceTail?: boolean;
     readonly silent?: boolean;
   } = {}) => {
     const seq = loadSeqRef.current + 1;
@@ -101,14 +93,12 @@ export function ThreadTrajectoryPanel({
     const loadingOlderPage = options.cursor !== undefined
       && options.cursor !== null
       && !loadingNewerPage;
-    const focus = options.forceTail
-      ? null
-      : trajectoryReadFocus({
-        cursor: options.cursor ?? null,
-        focusConsumed: focusConsumedRef.current,
-        selectedRecordId: selectedIdRef.current ?? selectedRecordId ?? null,
-        turnId,
-      });
+    const focus = trajectoryReadFocus({
+      cursor: options.cursor ?? null,
+      focusConsumed: focusConsumedRef.current,
+      selectedRecordId: selectedIdRef.current ?? selectedRecordId ?? null,
+      turnId,
+    });
     const applyingFocus = focus !== null;
     if (loadingNewerPage) setLoadingNewer(true);
     else if (loadingOlderPage) setLoadingOlder(true);
@@ -124,7 +114,7 @@ export function ThreadTrajectoryPanel({
       if (loadSeqRef.current !== seq) return;
       if (applyingFocus) focusConsumedRef.current = true;
       const current = recordsRef.current;
-      const nextRecords = current.length === 0 || options.forceTail
+      const nextRecords = current.length === 0
         ? response.records
         : loadingOlderPage || loadingNewerPage
           ? mergeRecords(current, response.records)
@@ -132,8 +122,8 @@ export function ThreadTrajectoryPanel({
       recordsRef.current = nextRecords;
       setPage(response);
       setRecords(nextRecords);
-      if (current.length === 0 || loadingOlderPage || options.forceTail) setOlderCursor(response.olderCursor);
-      if (current.length === 0 || loadingNewerPage || options.forceTail) setNewerCursor(response.newerCursor);
+      if (current.length === 0 || loadingOlderPage) setOlderCursor(response.olderCursor);
+      if (current.length === 0 || loadingNewerPage) setNewerCursor(response.newerCursor);
       const focusSelection = applyingFocus ? response.selectedRecordId : null;
       setSelectedId((currentSelection) => {
         const nextSelection = currentSelection ?? focusSelection;
@@ -162,6 +152,7 @@ export function ThreadTrajectoryPanel({
     setSelectedId(selectedRecordId ?? null);
     setQuery('');
     setRange(null);
+    setTimelineRecordFocus(null);
     setCollapsedTurns(new Set());
     setCollapsedCalls(new Set());
     setFollowingTail(true);
@@ -206,15 +197,16 @@ export function ThreadTrajectoryPanel({
   }, [records]);
   const searchMatches = useMemo(() => trajectorySearchMatches(records, query), [query, records]);
   const timeline = useMemo(() => buildTrajectoryTimeline(records, mode), [mode, records]);
-  const rangeMatches = useMemo(() => trajectoryRecordsInRange(timeline, range), [range, timeline]);
+  const timelineFocusRecords = useMemo(() => (
+    trajectoryTimelineFocusRecords(timeline, range)
+  ), [range, timeline]);
   const ledgerRows = useMemo(() => buildTrajectoryLedgerRows({
     collapsedCalls,
     collapsedTurns,
-    rangeMatches,
     records,
     searchMatches,
     selectedRecordId: selectedId,
-  }), [collapsedCalls, collapsedTurns, rangeMatches, records, searchMatches, selectedId]);
+  }), [collapsedCalls, collapsedTurns, records, searchMatches, selectedId]);
   const selectedRecord = selectedId ? recordById.get(selectedId) ?? null : null;
   const allTurnsCollapsed = collapsibleTurnGroups.length > 0
     && collapsibleTurnGroups.every((group) => collapsedTurns.has(group.turnId));
@@ -225,6 +217,11 @@ export function ThreadTrajectoryPanel({
     selectedIdRef.current = recordId;
     focusConsumedRef.current = true;
     setSelectedId(recordId);
+    setFollowingTail(false);
+  }, []);
+
+  const focusRecord = useCallback((recordId: string) => {
+    setTimelineRecordFocus({ recordId });
     setFollowingTail(false);
   }, []);
 
@@ -239,6 +236,22 @@ export function ThreadTrajectoryPanel({
     if (nextRange) setFollowingTail(false);
   }, []);
 
+  const changeMode = useCallback((nextMode: TrajectoryTimelineMode) => {
+    setMode(nextMode);
+    setRange(null);
+    setTimelineRecordFocus(null);
+  }, []);
+
+  const toggleAllTurns = useCallback(() => {
+    setCollapsedTurns(allTurnsCollapsed
+      ? new Set()
+      : new Set(collapsibleTurnGroups.map((group) => group.turnId)));
+  }, [allTurnsCollapsed, collapsibleTurnGroups]);
+
+  const toggleAllCalls = useCallback(() => {
+    setCollapsedCalls(allCallsCollapsed ? new Set() : new Set(callIds));
+  }, [allCallsCollapsed, callIds]);
+
   const loadOlder = useCallback(async () => {
     if (!olderCursor || loadingOlder) return;
     await loadTrajectory({ cursor: olderCursor });
@@ -248,25 +261,6 @@ export function ThreadTrajectoryPanel({
     if (!newerCursor || loadingNewer) return;
     await loadTrajectory({ cursor: newerCursor });
   }, [loadTrajectory, loadingNewer, newerCursor]);
-
-  const followTail = useCallback(async () => {
-    setFollowingTail(true);
-    if (newerCursor) await loadTrajectory({ forceTail: true });
-  }, [loadTrajectory, newerCursor]);
-
-  const exportTrajectory = useCallback(async () => {
-    if (exportBusy) return;
-    setExportBusy(true);
-    setExportStatus(null);
-    try {
-      const result = await api.agentCoreRequest('thread/trajectory/export', { threadId });
-      setExportStatus(exportResultText(result, t));
-    } catch (exportError) {
-      setExportStatus(errorMessage(exportError));
-    } finally {
-      setExportBusy(false);
-    }
-  }, [exportBusy, t, threadId]);
 
   return (
     <main className="main-panel thread-trajectory-panel">
@@ -306,29 +300,15 @@ export function ThreadTrajectoryPanel({
             <TrajectoryToolbar
               allCallsCollapsed={allCallsCollapsed}
               allTurnsCollapsed={allTurnsCollapsed}
-              exportBusy={exportBusy}
-              followingTail={followingTail}
+              callCount={callIds.size}
               mode={mode}
-              onExport={() => void exportTrajectory()}
-              onFollowTail={() => void followTail()}
-              onModeChange={(nextMode) => {
-                setMode(nextMode);
-                setRange(null);
-              }}
+              onModeChange={changeMode}
               onQueryChange={setQuery}
-              onRefresh={() => void loadTrajectory()}
-              onToggleAllCalls={() => setCollapsedCalls(
-                allCallsCollapsed ? new Set() : new Set(callIds),
-              )}
-              onToggleAllTurns={() => setCollapsedTurns(
-                allTurnsCollapsed ? new Set() : new Set(collapsibleTurnGroups.map((group) => group.turnId)),
-              )}
+              onToggleAllCalls={toggleAllCalls}
+              onToggleAllTurns={toggleAllTurns}
               query={query}
-              summary={page.summary}
+              turnCount={collapsibleTurnGroups.length}
             />
-            {exportStatus ? (
-              <div className="thread-trajectory-export-status" role="status">{exportStatus}</div>
-            ) : null}
             <TrajectoryTimeline
               key={threadId}
               hasEarlierRecords={olderCursor !== null}
@@ -336,6 +316,7 @@ export function ThreadTrajectoryPanel({
               mode={mode}
               model={timeline}
               onLoadEarlier={() => void loadOlder()}
+              onRecordFocus={focusRecord}
               onRangeChange={changeRange}
               onRecordSelect={selectRecord}
               range={range}
@@ -356,7 +337,9 @@ export function ThreadTrajectoryPanel({
                 onRecordSelect={selectRecord}
                 onToggleCall={(recordId) => setCollapsedCalls((current) => toggledSet(current, recordId))}
                 onToggleTurn={(turnIdValue) => setCollapsedTurns((current) => toggledSet(current, turnIdValue))}
-                rangeActive={range !== null}
+                timelineFocusActive={range !== null}
+                timelineFocusRecords={timelineFocusRecords}
+                recordFocus={timelineRecordFocus}
                 rows={ledgerRows}
                 searchActive={query.trim().length > 0}
                 selectedRecordId={selectedRecord?.id ?? null}
@@ -421,10 +404,24 @@ function replaceRecordsForIncomingWindow(
 ): readonly ThreadTrajectoryRecordSummary[] {
   if (!replacementRange) return incoming;
   const incomingIds = new Set(incoming.map((record) => record.id));
+  const incomingTurnIds = new Set(incoming.map((record) => record.turnId));
   return mergeRecords(
-    current.filter((record) => !incomingIds.has(record.id) && !sequenceInRange(record.sequence, replacementRange)),
+    current.filter((record) => (
+      !incomingIds.has(record.id)
+      && !sequenceInRange(record.sequence, replacementRange)
+      && !staleFallbackRecord(record, incomingTurnIds)
+    )),
     incoming,
   );
+}
+
+function staleFallbackRecord(
+  record: ThreadTrajectoryRecordSummary,
+  incomingTurnIds: ReadonlySet<string>,
+): boolean {
+  return incomingTurnIds.has(record.turnId)
+    && record.state !== 'completed'
+    && record.primaryEvidence.type === 'threadItem';
 }
 
 function sequenceInRange(sequence: number, range: ThreadTrajectoryReplacementRange): boolean {
@@ -442,17 +439,6 @@ function trajectoryRelevantNotification(notification: AgentCoreNotification, thr
     || notification.type === 'turn/providerRetry/changed'
     || notification.type === 'turn/plan/updated'
     || notification.type === 'subagent/execution/changed';
-}
-
-function exportResultText(result: TrajectoryExportResult, t: ReturnType<typeof useT>): string {
-  if (result.status === 'written') {
-    return t.agent.trajectory.exportWritten({
-      fileName: result.fileName,
-      byteLength: formatNumber(result.byteLength),
-    });
-  }
-  if (result.status === 'canceled') return t.agent.trajectory.exportCanceled;
-  return result.error;
 }
 
 function errorMessage(error: unknown): string {

@@ -32,10 +32,12 @@ interface TrajectoryLedgerProps {
   readonly onRecordSelect: (recordId: string) => void;
   readonly onToggleCall: (recordId: string) => void;
   readonly onToggleTurn: (turnId: string) => void;
-  readonly rangeActive: boolean;
+  readonly recordFocus: { readonly recordId: string } | null;
   readonly rows: readonly TrajectoryLedgerRow[];
   readonly searchActive: boolean;
   readonly selectedRecordId: string | null;
+  readonly timelineFocusActive: boolean;
+  readonly timelineFocusRecords: ReadonlySet<string> | null;
 }
 
 interface VirtualWindow {
@@ -65,15 +67,18 @@ export const TrajectoryLedger = memo(function TrajectoryLedger({
   onRecordSelect,
   onToggleCall,
   onToggleTurn,
-  rangeActive,
+  recordFocus,
   rows,
   searchActive,
   selectedRecordId,
+  timelineFocusActive,
+  timelineFocusRecords,
 }: TrajectoryLedgerProps) {
   const t = useT();
   const { locale } = useI18n();
   const paneRef = useRef<HTMLDivElement | null>(null);
   const olderAnchorRef = useRef<OlderAnchor | null>(null);
+  const appliedRecordFocusRef = useRef<TrajectoryLedgerProps['recordFocus']>(null);
   const [virtualWindow, setVirtualWindow] = useState<VirtualWindow>({
     start: 0,
     end: INITIAL_VIRTUAL_ROWS,
@@ -139,6 +144,61 @@ export const TrajectoryLedger = memo(function TrajectoryLedger({
     selected?.scrollIntoView?.({ block: 'nearest' });
   }, [hasEarlierRecords, rows, selectedRecordId, updateVirtualWindow, virtualized]);
 
+  useLayoutEffect(() => {
+    if (timelineFocusRecords === null || timelineFocusRecords.size === 0) return;
+    const pane = paneRef.current;
+    if (!pane) return;
+    const focusedIndexes = rows.flatMap((row, index) => (
+      row.type === 'record' && timelineFocusRecords.has(row.record.id) ? [index] : []
+    ));
+    const first = focusedIndexes[0];
+    const last = focusedIndexes.at(-1);
+    if (first === undefined || last === undefined) return;
+    if (virtualized) {
+      const historyHeight = hasEarlierRecords ? TRAJECTORY_ROW_HEIGHT : 0;
+      const focusTop = historyHeight + first * TRAJECTORY_ROW_HEIGHT;
+      const focusBottom = historyHeight + (last + 1) * TRAJECTORY_ROW_HEIGHT;
+      const clientHeight = finiteLayoutMetric(pane.clientHeight);
+      const focusHeight = focusBottom - focusTop;
+      pane.scrollTop = focusHeight > clientHeight
+        ? focusTop
+        : Math.max(0, focusTop - Math.max(0, clientHeight - focusHeight) / 2);
+      updateVirtualWindow(pane);
+      return;
+    }
+    const focusedRows = [...pane.querySelectorAll<HTMLElement>('tr[data-timeline-focus="inside"]')];
+    const firstRow = focusedRows[0];
+    const lastRow = focusedRows.at(-1);
+    if (!firstRow || !lastRow) return;
+    const focusHeight = lastRow.getBoundingClientRect().bottom - firstRow.getBoundingClientRect().top;
+    const target = focusHeight > finiteLayoutMetric(pane.clientHeight)
+      ? firstRow
+      : focusedRows[Math.floor((focusedRows.length - 1) / 2)];
+    target?.scrollIntoView?.({ block: focusHeight > finiteLayoutMetric(pane.clientHeight) ? 'start' : 'center' });
+  }, [hasEarlierRecords, rows, timelineFocusRecords, updateVirtualWindow, virtualized]);
+
+  useLayoutEffect(() => {
+    if (recordFocus === null || appliedRecordFocusRef.current === recordFocus) return;
+    appliedRecordFocusRef.current = recordFocus;
+    const pane = paneRef.current;
+    if (!pane) return;
+    const rowIndex = rows.findIndex((row) => (
+      row.type === 'record' && row.record.id === recordFocus.recordId
+    ));
+    if (rowIndex < 0) return;
+    if (virtualized) {
+      const historyHeight = hasEarlierRecords ? TRAJECTORY_ROW_HEIGHT : 0;
+      const rowTop = historyHeight + rowIndex * TRAJECTORY_ROW_HEIGHT;
+      const clientHeight = finiteLayoutMetric(pane.clientHeight);
+      pane.scrollTop = Math.max(0, rowTop - Math.max(0, clientHeight - TRAJECTORY_ROW_HEIGHT) / 2);
+      updateVirtualWindow(pane);
+      return;
+    }
+    const focused = [...pane.querySelectorAll<HTMLElement>('[data-trajectory-record-id]')]
+      .find((candidate) => candidate.dataset.trajectoryRecordId === recordFocus.recordId);
+    focused?.scrollIntoView?.({ block: 'center' });
+  }, [hasEarlierRecords, recordFocus, rows, updateVirtualWindow, virtualized]);
+
   const handleScroll = (event: UIEvent<HTMLDivElement>) => {
     const pane = event.currentTarget;
     const distanceToTail = finiteLayoutMetric(pane.scrollHeight)
@@ -163,7 +223,7 @@ export const TrajectoryLedger = memo(function TrajectoryLedger({
 
   return (
     <section className="thread-trajectory-ledger" aria-label={t.agent.trajectory.ledger}>
-      {searchActive || rangeActive ? (
+      {searchActive || timelineFocusActive ? (
         <div className="thread-trajectory-ledger-scope" role="status">
           {searchActive ? t.agent.trajectory.searchScope : t.agent.trajectory.rangeScope}
         </div>
@@ -204,6 +264,9 @@ export const TrajectoryLedger = memo(function TrajectoryLedger({
                 onToggleTurn={onToggleTurn}
                 row={row}
                 selected={row.record.id === selectedRecordId}
+                timelineFocus={timelineFocusRecords === null
+                  ? null
+                  : timelineFocusRecords.has(row.record.id) ? 'inside' : 'outside'}
               />
             ))}
             {end < rows.length ? <VirtualSpacer count={rows.length - end} /> : null}
@@ -235,6 +298,7 @@ function RecordRow({
   onToggleTurn,
   row,
   selected,
+  timelineFocus,
 }: {
   readonly locale: string;
   readonly onRecordSelect: (recordId: string) => void;
@@ -242,6 +306,7 @@ function RecordRow({
   readonly onToggleTurn: (turnId: string) => void;
   readonly row: Extract<TrajectoryLedgerRow, { readonly type: 'record' }>;
   readonly selected: boolean;
+  readonly timelineFocus: 'inside' | 'outside' | null;
 }) {
   const t = useT();
   const record = row.record;
@@ -254,6 +319,7 @@ function RecordRow({
       data-depth={row.depth || undefined}
       data-kind={record.kind}
       data-state={record.state}
+      data-timeline-focus={timelineFocus ?? undefined}
       data-trajectory-record-id={record.id}
       data-turn-start={row.turnStart || undefined}
       onClick={select}

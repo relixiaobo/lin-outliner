@@ -49,7 +49,6 @@
 }
 
 .thread-trajectory-toolbar-button,
-.thread-trajectory-toolbar-icon,
 .thread-trajectory-inspector-back,
 .thread-trajectory-inspector-close,
 .thread-trajectory-call-fold,
@@ -63,6 +62,7 @@
 }
 
 .thread-trajectory-toolbar-button {
+  flex: none;
   height: 22px;
   gap: var(--space-2);
   padding: 0 var(--space-3);
@@ -83,26 +83,14 @@
   font-variant-numeric: tabular-nums;
 }
 
-.thread-trajectory-toolbar-summary {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--space-4);
-  margin-left: auto;
-  overflow: hidden;
-  color: var(--text-tertiary);
-  font-size: var(--font-ui-2xs);
-  line-height: var(--line-ui-2xs);
-  white-space: nowrap;
-}
-
 .thread-trajectory-search {
   display: flex;
-  flex: 0 1 190px;
+  flex: 0 1 250px;
   align-items: center;
   box-sizing: border-box;
-  min-width: 92px;
+  min-width: 140px;
   height: 24px;
+  margin-left: auto;
   gap: var(--space-2);
   padding: 0 var(--space-3);
   border: 1px solid var(--separator);
@@ -133,7 +121,6 @@
   color: var(--text-tertiary);
 }
 
-.thread-trajectory-toolbar-icon,
 .thread-trajectory-inspector-back,
 .thread-trajectory-inspector-close {
   flex: none;
@@ -142,8 +129,6 @@
   padding: 0;
 }
 
-.thread-trajectory-toolbar-icon:hover,
-.thread-trajectory-toolbar-icon:focus-visible,
 .thread-trajectory-inspector-back:hover,
 .thread-trajectory-inspector-back:focus-visible,
 .thread-trajectory-inspector-close:hover,
@@ -151,35 +136,14 @@
   color: var(--text-primary);
 }
 
-.thread-trajectory-toolbar-icon:disabled {
-  color: var(--text-quaternary);
-}
-
-.thread-trajectory-toolbar-button:focus-visible,
-.thread-trajectory-toolbar-icon:focus-visible,
 .thread-trajectory-search:focus-within,
+.thread-trajectory-toolbar-button:focus-visible,
 .thread-trajectory-inspector-back:focus-visible,
 .thread-trajectory-inspector-close:focus-visible,
 .thread-trajectory-call-fold:focus-visible,
 .thread-trajectory-turn-label:focus-visible {
   outline: 1px solid var(--focus-ring);
   outline-offset: -1px;
-}
-
-.thread-trajectory-export-status {
-  position: absolute;
-  z-index: var(--z-popover);
-  top: 38px;
-  right: var(--space-4);
-  max-width: min(360px, calc(100% - var(--space-8)));
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--separator);
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  background: var(--bg-elevated);
-  box-shadow: var(--overlay-shadow-level-1);
-  font-size: var(--font-ui-xs);
-  line-height: var(--line-ui-xs);
 }
 
 .thread-trajectory-timeline {
@@ -280,7 +244,10 @@
 }
 
 .thread-trajectory-timeline-span {
+  --trajectory-type-accent: var(--text-tertiary);
+
   position: absolute;
+  z-index: 2;
   top: calc(7px + var(--trajectory-span-lane) * 14px);
   left: calc(var(--trajectory-span-left) + 1px);
   width: max(2px, calc(var(--trajectory-span-width) - 2px));
@@ -289,25 +256,28 @@
   padding: 0;
   border: 0;
   border-radius: var(--radius-2xs);
-  background: var(--text-tertiary);
+  background: var(--trajectory-type-accent);
   opacity: 0.76;
 }
 
-.thread-trajectory-timeline-span.is-input { background: var(--text-secondary); }
-.thread-trajectory-timeline-span.is-context { background: var(--fill-4); }
-.thread-trajectory-timeline-span.is-assistant { background: var(--text-primary); }
+.thread-trajectory-timeline-span.is-system { --trajectory-type-accent: var(--identity-tint-6); }
+.thread-trajectory-timeline-span.is-input { --trajectory-type-accent: var(--identity-tint-5); }
+.thread-trajectory-timeline-span.is-context { --trajectory-type-accent: var(--identity-tint-4); }
+.thread-trajectory-timeline-span.is-tool-catalog { --trajectory-type-accent: var(--identity-tint-2); }
+.thread-trajectory-timeline-span.is-assistant { --trajectory-type-accent: var(--identity-tint-7); }
+.thread-trajectory-timeline-span.is-tool,
+.thread-trajectory-timeline-span.is-delegation { --trajectory-type-accent: var(--identity-tint-1); }
+.thread-trajectory-timeline-span.is-retry,
+.thread-trajectory-timeline-span.is-compaction { --trajectory-type-accent: var(--status-warning); }
 .thread-trajectory-timeline-span.is-assistant[data-assistant-timing="true"] {
   background: linear-gradient(
     to right,
-    var(--fill-4) 0,
-    var(--fill-4) var(--trajectory-span-ttft),
-    var(--text-primary) var(--trajectory-span-ttft),
-    var(--text-primary) 100%
+    color-mix(in srgb, var(--trajectory-type-accent) 38%, transparent) 0,
+    color-mix(in srgb, var(--trajectory-type-accent) 38%, transparent) var(--trajectory-span-ttft),
+    var(--trajectory-type-accent) var(--trajectory-span-ttft),
+    var(--trajectory-type-accent) 100%
   );
 }
-.thread-trajectory-timeline-span.is-tool,
-.thread-trajectory-timeline-span.is-delegation { background: var(--text-secondary); }
-.thread-trajectory-timeline-span.is-retry { background: var(--status-warning); }
 .thread-trajectory-timeline-span[data-state="failed"] { background: var(--status-danger); }
 
 .thread-trajectory-timeline-span.is-marker {
@@ -347,6 +317,23 @@
 
 .thread-trajectory-timeline-selection[data-visible="true"] {
   display: block;
+}
+
+.thread-trajectory-timeline-selection::before,
+.thread-trajectory-timeline-selection::after {
+  position: absolute;
+  inset-block: 0;
+  width: 2px;
+  background: var(--focus-ring);
+  content: '';
+}
+
+.thread-trajectory-timeline-selection::before {
+  inset-inline-start: 0;
+}
+
+.thread-trajectory-timeline-selection::after {
+  inset-inline-end: 0;
 }
 
 .thread-trajectory-workspace {
@@ -427,6 +414,10 @@
 
 .thread-trajectory-table tbody tr[aria-selected="true"] {
   background: var(--row-selected);
+}
+
+.thread-trajectory-table tbody tr[data-timeline-focus="outside"]:not(:hover):not(:focus-visible):not([aria-selected="true"]) {
+  opacity: 0.48;
 }
 
 .thread-trajectory-table tbody tr:focus-visible {
@@ -861,10 +852,6 @@
 }
 
 @container (max-width: 860px) {
-  .thread-trajectory-toolbar-summary {
-    display: none;
-  }
-
   .thread-trajectory-row-content {
     width: calc(100% - 150px);
   }
@@ -913,7 +900,8 @@
   }
 
   .thread-trajectory-search {
-    flex-basis: 120px;
+    flex-basis: 160px;
+    min-width: 120px;
   }
 
   .thread-trajectory-event-column {

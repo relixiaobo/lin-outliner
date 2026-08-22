@@ -195,9 +195,11 @@ invariants degrade by recording, healing, or skipping at the affected record.
 The Agent protocol exposes:
 
 - a bounded trajectory query addressed by Thread with stable `olderCursor` /
-  `newerCursor` keyset paging and an authoritative replacement sequence range;
+  `newerCursor` keyset paging, a lightweight whole-Thread summary, and an
+  authoritative replacement sequence range for the loaded record window;
 - a bounded live-change notification that invalidates the affected Thread so the
-  renderer can refresh and replace only the server-declared range;
+  renderer can refresh the affected window and remove stale running fallback
+  rows without forcing a full diagnostics rebuild;
 - a record-detail query addressed by exact Thread, Turn, and record identity;
 - a Thread trajectory export command that returns a user-selected file result.
 
@@ -313,11 +315,11 @@ into the parent projection merely to support navigation.
 
 ### Summary and export
 
-The workspace summary reports whole-Thread counts and totals that can be derived
-truthfully from retained evidence: Turns, Assistant/provider calls, tools,
-recorded duration, tokens, cache use, and cost when available. Missing
-contributors produce typed partial coverage rather than an apparently complete
-zero.
+The workspace summary reports whole-Thread facts that can be derived truthfully
+from lightweight canonical Turn/Item/timing/usage metadata without reading every
+diagnostics payload: Turns, loaded-record coverage, recorded duration, tokens,
+cache use, and cost when available. Missing contributors produce typed partial
+coverage rather than an apparently complete zero.
 
 Export creates a user-selected Thread trajectory bundle from the same typed
 projection and retained diagnostics used by the inspector. It states omissions
@@ -360,8 +362,9 @@ the feature. Current behavior is folded into `agent-core.md`,
 
 - A derived trace can drift from execution history. The projector consumes
   canonical artifacts and recorded activity order and is rebuildable.
-- Eager diagnostics reads can make long Threads expensive. Reads are tail-first
-  and paged, detail is lazy, and caching requires measured evidence.
+- Eager diagnostics reads can make long Threads expensive. Reads locate a
+  bounded Turn window before diagnostics materialization, detail is lazy, and
+  caching requires measured evidence.
 - Live inspection can become a user-path invariant. Every contribution is best
   effort and cannot affect execution or settlement.
 - A dense split can become unreadable. The inspector has stable width limits and

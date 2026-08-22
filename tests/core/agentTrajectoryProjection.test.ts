@@ -337,6 +337,26 @@ describe('ThreadTrajectoryProjection', () => {
     expect(exportJson).not.toContain(jsonArguments);
   });
 
+  test('keeps typed diagnostics structure when a large stable prompt exceeds redaction budget', async () => {
+    const diagnostics: TurnDiagnosticsPayload = {
+      ...trajectoryDiagnostics(),
+      stablePrompt: {
+        ...trajectoryDiagnostics().stablePrompt!,
+        blocks: [{
+          ...trajectoryDiagnostics().stablePrompt!.blocks[0]!,
+          text: 'System '.padEnd(70_000, 'x'),
+        }],
+      },
+    };
+    const projection = trajectoryProjection({ diagnostics });
+
+    const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
+
+    expect(response.records.some((record) => record.kind === 'assistant')).toBe(true);
+    expect(response.records.some((record) => record.primaryEvidence.type === 'toolCatalog')).toBe(true);
+    expect(decodeAgentCoreResponse('thread/trajectory/read', response)).toEqual(response);
+  });
+
   test('projects active in-memory diagnostics before the Turn has a final diagnostics reference', async () => {
     const activeTurn = {
       ...trajectoryTurn(),
@@ -470,10 +490,29 @@ describe('ThreadTrajectoryProjection', () => {
       limit: 3,
       cursor: focused.newerCursor,
     });
-    expect(newer.records[0]?.turnId).toBe(turns[5]!.id);
-    expect(newer.records.at(-1)?.turnId).toBe(turns[7]!.id);
+    expect(newer.records[0]?.turnId).toBe(turns[4]!.id);
+    expect(newer.records.at(-1)?.turnId).toBe(turns[6]!.id);
     expect(newer.olderCursor).not.toBeNull();
-    expect(newer.newerCursor).toBeNull();
+    expect(newer.newerCursor).not.toBeNull();
+  });
+
+  test('bounds trajectory read diagnostics materialization to the requested window', async () => {
+    let diagnosticsReads = 0;
+    const turns = Array.from({ length: 500 }, (_, index) => trajectoryTurnWithDiagnosticsRef(index));
+    const diagnosticsByRef = new Map(turns.map((turn) => [
+      turn.execution.diagnosticsRef!.id,
+      trajectoryDiagnostics(),
+    ]));
+    const projection = trajectoryProjection({
+      turns,
+      diagnosticsByRef,
+      onReadDiagnostics: () => { diagnosticsReads += 1; },
+    });
+
+    const response = await projection.read({ threadId: THREAD_ID, limit: 1 });
+
+    expect(response.records.length).toBeGreaterThan(0);
+    expect(diagnosticsReads).toBeLessThanOrEqual(1);
   });
 });
 
@@ -493,6 +532,7 @@ function trajectoryProjection(overrides: {
   readonly toolOutput?: string | null;
   readonly turn?: Turn;
   readonly turns?: readonly Turn[];
+  readonly onReadDiagnostics?: (ref: TurnDiagnosticsPayloadReference) => void;
 } = {}): ThreadTrajectoryProjection {
   const thread = trajectoryThread();
   const turns = overrides.turns ?? [overrides.turn ?? trajectoryTurn()];
@@ -509,9 +549,10 @@ function trajectoryProjection(overrides: {
       return turns;
     },
     payloads: {
-      readTurnDiagnostics: async (threadId: string, ref: TurnDiagnosticsPayloadReference) => (
-        threadId === THREAD_ID ? diagnosticsByRef.get(ref.id) ?? null : null
-      ),
+      readTurnDiagnostics: async (threadId: string, ref: TurnDiagnosticsPayloadReference) => {
+        overrides.onReadDiagnostics?.(ref);
+        return threadId === THREAD_ID ? diagnosticsByRef.get(ref.id) ?? null : null;
+      },
       readTextReference: async () => overrides.toolOutput ?? null,
       readContext: async (_threadId: string, ref: ThreadContextPayloadReference) => (
         contextPayload && ref.id === CONTEXT_REF.id ? contextPayload : null
@@ -636,6 +677,17 @@ function trajectoryTurnWithInput(index: number): Turn {
     startedAt: 100 + index,
     completedAt: 101 + index,
     durationMs: 1,
+  };
+}
+
+function trajectoryTurnWithDiagnosticsRef(index: number): Turn {
+  const ref: TurnDiagnosticsPayloadReference = {
+    ...DIAGNOSTICS_REF,
+    id: String(index).padStart(64, 'a').slice(-64),
+  };
+  return {
+    ...trajectoryTurnWithInput(index),
+    execution: { ...trajectoryTurn().execution, diagnosticsRef: ref },
   };
 }
 

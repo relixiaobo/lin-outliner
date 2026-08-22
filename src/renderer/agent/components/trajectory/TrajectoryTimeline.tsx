@@ -13,8 +13,10 @@ import { useI18n, useT } from '../../../i18n/I18nProvider';
 import { formatNumber } from '../../../ui/formatting';
 import {
   orderedRange,
+  trajectoryRecordKindClass,
   type TrajectoryTimelineMode,
   type TrajectoryTimelineModel,
+  type TrajectoryTimelineSpan,
   type TrajectoryTimeRange,
 } from './trajectoryModel';
 
@@ -24,6 +26,7 @@ interface TrajectoryTimelineProps {
   readonly mode: TrajectoryTimelineMode;
   readonly model: TrajectoryTimelineModel | null;
   readonly onLoadEarlier: () => void;
+  readonly onRecordFocus: (recordId: string) => void;
   readonly onRangeChange: (range: TrajectoryTimeRange | null) => void;
   readonly onRecordSelect: (recordId: string) => void;
   readonly range: TrajectoryTimeRange | null;
@@ -35,6 +38,7 @@ interface TimelinePointerDrag {
   readonly anchorClientX: number;
   readonly anchorValue: number;
   readonly pointerId: number;
+  readonly recordId: string | null;
   moved: boolean;
 }
 
@@ -42,12 +46,14 @@ interface TimelinePanDrag {
   readonly anchorClientX: number;
   readonly pointerId: number;
   readonly viewport: TrajectoryTimeRange;
+  moved: boolean;
 }
 
 type TimelineCssProperties = CSSProperties & Record<`--trajectory-${string}`, string>;
 
 const MINIMUM_SEQUENCE_WINDOW = 4;
 const MINIMUM_DURATION_WINDOW_MS = 20;
+const MINIMUM_DRAG_PX = 3;
 
 export const TrajectoryTimeline = memo(function TrajectoryTimeline({
   hasEarlierRecords,
@@ -55,6 +61,7 @@ export const TrajectoryTimeline = memo(function TrajectoryTimeline({
   mode,
   model,
   onLoadEarlier,
+  onRecordFocus,
   onRangeChange,
   onRecordSelect,
   range,
@@ -93,6 +100,11 @@ export const TrajectoryTimeline = memo(function TrajectoryTimeline({
       model.end,
     ));
   }, [domain, model, selectedRecordId, viewport]);
+
+  useEffect(() => {
+    if (!model || !range) return;
+    if (range.end < model.start || range.start > model.end) onRangeChange(null);
+  }, [model, onRangeChange, range]);
 
   const zoom = useCallback((factor: number, anchorFraction = 0.5) => {
     if (!model || !domain) return;
@@ -149,6 +161,13 @@ export const TrajectoryTimeline = memo(function TrajectoryTimeline({
     return domain.start + fraction * (domain.end - domain.start);
   }, [domain]);
 
+  const recordIdAtTarget = (target: EventTarget | null): string | null => {
+    const element = target instanceof HTMLElement ? target : null;
+    return element
+      ?.closest<HTMLElement>('[data-timeline-record-id]')
+      ?.dataset.timelineRecordId ?? null;
+  };
+
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!model || !domain) return;
     if (event.button === 2) {
@@ -156,8 +175,9 @@ export const TrajectoryTimeline = memo(function TrajectoryTimeline({
         pointerId: event.pointerId,
         anchorClientX: event.clientX,
         viewport: domain,
+        moved: false,
       };
-      event.currentTarget.setPointerCapture(event.pointerId);
+      event.currentTarget.setPointerCapture?.(event.pointerId);
       event.preventDefault();
       return;
     }
@@ -168,9 +188,10 @@ export const TrajectoryTimeline = memo(function TrajectoryTimeline({
       pointerId: event.pointerId,
       anchorClientX: event.clientX,
       anchorValue: value,
+      recordId: recordIdAtTarget(event.target),
       moved: false,
     };
-    event.currentTarget.setPointerCapture(event.pointerId);
+    event.currentTarget.setPointerCapture?.(event.pointerId);
   };
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -178,7 +199,7 @@ export const TrajectoryTimeline = memo(function TrajectoryTimeline({
     if (drag?.pointerId === event.pointerId) {
       const value = valueAtClientX(event.clientX);
       if (value === null) return;
-      drag.moved = drag.moved || Math.abs(event.clientX - drag.anchorClientX) >= 4;
+      drag.moved = drag.moved || Math.abs(event.clientX - drag.anchorClientX) >= MINIMUM_DRAG_PX;
       if (drag.moved) updateDraftSelection(drag.anchorValue, value);
       return;
     }
@@ -189,6 +210,7 @@ export const TrajectoryTimeline = memo(function TrajectoryTimeline({
     const rect = track.getBoundingClientRect();
     const duration = pan.viewport.end - pan.viewport.start;
     const delta = (event.clientX - pan.anchorClientX) / Math.max(1, rect.width) * duration;
+    pan.moved = pan.moved || Math.abs(event.clientX - pan.anchorClientX) >= MINIMUM_DRAG_PX;
     setViewport(clampRange({
       start: pan.viewport.start - delta,
       end: pan.viewport.end - delta,
@@ -196,18 +218,47 @@ export const TrajectoryTimeline = memo(function TrajectoryTimeline({
   };
 
   const finishPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!model || !domain) return;
     const drag = dragRef.current;
     if (drag?.pointerId === event.pointerId) {
       const value = valueAtClientX(event.clientX);
+      const clicked = !drag.moved && Math.abs(event.clientX - drag.anchorClientX) < MINIMUM_DRAG_PX;
       dragRef.current = null;
       clearDraftSelection();
-      if (drag.moved && value !== null) {
+      if (clicked && drag.recordId !== null) {
         suppressClickRef.current = true;
-        onRangeChange(orderedRange(drag.anchorValue, value));
+        onRangeChange(null);
+        onRecordSelect(drag.recordId);
+      } else if (value !== null) {
+        suppressClickRef.current = true;
+        const selected = orderedRange(drag.anchorValue, value);
+        const nextRange = minimumFocusRange(selected, minimumSelectionDuration(model, domain));
+        onRangeChange(clampRange(nextRange, model.start, model.end));
+        if (clicked) {
+          const nearest = nearestSpan(model.spans, selected.start);
+          if (nearest) onRecordFocus(nearest.record.id);
+        }
       }
     }
+    const pan = panRef.current;
+    if (pan?.pointerId === event.pointerId) {
+      if (!pan.moved && Math.abs(event.clientX - pan.anchorClientX) < MINIMUM_DRAG_PX) {
+        onRangeChange(null);
+      }
+      panRef.current = null;
+    }
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const cancelPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (dragRef.current?.pointerId === event.pointerId) {
+      dragRef.current = null;
+      clearDraftSelection();
+    }
     if (panRef.current?.pointerId === event.pointerId) panRef.current = null;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
   };
@@ -240,7 +291,6 @@ export const TrajectoryTimeline = memo(function TrajectoryTimeline({
         onKeyDown={(event) => {
           if (event.key === 'Escape') {
             onRangeChange(null);
-            setViewport(null);
           } else if (event.key === '+' || event.key === '=') {
             zoom(0.67);
             event.preventDefault();
@@ -249,7 +299,7 @@ export const TrajectoryTimeline = memo(function TrajectoryTimeline({
             event.preventDefault();
           }
         }}
-        onPointerCancel={finishPointer}
+        onPointerCancel={cancelPointer}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={finishPointer}
@@ -292,17 +342,19 @@ export const TrajectoryTimeline = memo(function TrajectoryTimeline({
               <button
                 aria-label={`${trajectoryTimelineTitle(span.record, mode, locale)}. ${t.agent.trajectory.selectRecord}`}
                 aria-pressed={selectedRecordId === span.record.id}
-                className={`thread-trajectory-timeline-span is-${span.record.kind}${span.marker ? ' is-marker' : ''}`}
+                className={`thread-trajectory-timeline-span ${trajectoryRecordKindClass(span.record)}${span.marker ? ' is-marker' : ''}`}
                 data-assistant-timing={firstTokenRatio !== null || undefined}
                 data-search-match={searchMatches === null || searchMatches.has(span.record.id) || undefined}
                 data-selected={selectedRecordId === span.record.id || undefined}
                 data-state={span.record.state}
+                data-timeline-record-id={span.record.id}
                 key={span.record.id}
                 onClick={() => {
                   if (suppressClickRef.current) {
                     suppressClickRef.current = false;
                     return;
                   }
+                  onRangeChange(null);
                   onRecordSelect(span.record.id);
                 }}
                 style={{
@@ -379,6 +431,45 @@ function clampRange(
   const duration = Math.min(fullDuration, Math.max(1, range.end - range.start));
   const start = Math.min(Math.max(range.start, minimum), maximum - duration);
   return { start, end: start + duration };
+}
+
+function minimumSelectionDuration(
+  model: TrajectoryTimelineModel,
+  domain: TrajectoryTimeRange,
+): number {
+  const domainDuration = Math.max(1, domain.end - domain.start);
+  if (model.spans.length === 0) return domainDuration;
+  return Math.min(domainDuration, Math.max(1, (model.end - model.start) / model.spans.length));
+}
+
+function minimumFocusRange(
+  range: TrajectoryTimeRange,
+  minimumDuration: number,
+): TrajectoryTimeRange {
+  const ordered = orderedRange(range.start, range.end);
+  if (ordered.end - ordered.start >= minimumDuration) return ordered;
+  const center = (ordered.start + ordered.end) / 2;
+  return {
+    start: center - minimumDuration / 2,
+    end: center + minimumDuration / 2,
+  };
+}
+
+function nearestSpan(
+  spans: readonly TrajectoryTimelineSpan[],
+  value: number,
+): TrajectoryTimelineSpan | null {
+  let nearest: TrajectoryTimelineSpan | null = null;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  for (const span of spans) {
+    const distance = value < span.start
+      ? span.start - value
+      : value > span.end ? value - span.end : 0;
+    if (distance >= nearestDistance) continue;
+    nearest = span;
+    nearestDistance = distance;
+  }
+  return nearest;
 }
 
 function clamp01(value: number): number {

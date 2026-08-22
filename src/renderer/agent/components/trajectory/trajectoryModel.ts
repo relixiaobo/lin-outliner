@@ -139,7 +139,7 @@ export function buildTrajectoryTimeline(
   };
 }
 
-export function trajectoryRecordsInRange(
+export function trajectoryTimelineFocusRecords(
   model: TrajectoryTimelineModel | null,
   range: TrajectoryTimeRange | null,
 ): ReadonlySet<string> | null {
@@ -155,14 +155,12 @@ export function trajectoryRecordsInRange(
 export function buildTrajectoryLedgerRows({
   collapsedCalls,
   collapsedTurns,
-  rangeMatches,
   records,
   searchMatches,
   selectedRecordId = null,
 }: {
   readonly collapsedCalls: ReadonlySet<string>;
   readonly collapsedTurns: ReadonlySet<string>;
-  readonly rangeMatches: ReadonlySet<string> | null;
   readonly records: readonly ThreadTrajectoryRecordSummary[];
   readonly searchMatches: ReadonlySet<string> | null;
   readonly selectedRecordId?: string | null;
@@ -179,10 +177,8 @@ export function buildTrajectoryLedgerRows({
     }
     const directMatches = group.records.filter((record) => (
       pinnedIds.has(record.id)
-      || (
-        (searchMatches === null || searchMatches.has(record.id))
-        && (rangeMatches === null || rangeMatches.has(record.id))
-      )
+      || searchMatches === null
+      || searchMatches.has(record.id)
     ));
     const matchingIds = new Set(directMatches.map((record) => record.id));
     for (const record of directMatches) {

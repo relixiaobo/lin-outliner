@@ -1029,23 +1029,29 @@ result is a compact sequence of full-width bands: the Tenon breadcrumb, one
 ledger with a conditional inspector. It is not a generic reading page, a stack
 of summary cards, or a copy of the DeepSeek Harness application shell.
 
-The toolbar owns the Duration / Sequence mode, whole-Turn and
-whole-Assistant-call fold controls, compact truthful totals, loaded-window
-search, tail-follow restore, refresh, and export. Search filters the loaded
-ledger and dims unmatched overview spans; it does not claim to search unloaded
-history. Loading an earlier page prepends records while anchoring the reader's
-visible content.
+The toolbar owns the Duration / Sequence mode, whole-Turn fold, whole-Assistant
+call fold, and loaded-window search. Search filters the loaded ledger and dims
+unmatched overview spans; it does not claim to search unloaded history. The
+toolbar does not expose summary totals, refresh, tail-follow, or export actions;
+those controls add visual weight without improving the primary debugging scan.
+Loading an earlier page prepends records while anchoring the reader's visible
+content.
 
 The overview uses recorded geometry rather than decorative equal-width blocks.
 Duration mode places spans against wall-clock time, preserving gaps and overlap;
 Sequence mode allocates ordered reading space without claiming elapsed time.
-Input, Assistant, and Tools occupy fixed lanes. A span selects the same record in
-the ledger. Primary-button range drag filters the ledger to intersecting records,
-wheel input zooms around the pointer, and secondary-button drag pans the visible
-domain. Assistant spans distinguish time-to-first-token when that fact exists;
-running or untimed work uses a marker and never fabricates duration. Live record
-updates may extend the full domain but do not erase an explicit viewport or
-range.
+Input, Assistant, and Tools occupy fixed lanes. A span clears the timeline focus
+and selects the same record in the ledger. Clicking overview whitespace creates
+a minimum-width focus window and scrolls the nearest ledger record into view
+without opening the inspector. Primary-button range drag creates a timeline
+focus: the ledger stays complete, rows inside the focus stay normal, rows outside
+the focus are visually de-emphasized, and the ledger scrolls to the focused
+region. `Escape` on the overview clears the focus without resetting the zoomed
+viewport. Wheel input zooms around the pointer, secondary-button drag pans the
+visible domain, and a secondary click clears the focus. Assistant spans
+distinguish time-to-first-token when that fact exists; running or untimed work
+uses a marker and never fabricates duration. Live record updates may extend the
+full domain but do not erase an explicit viewport or range.
 
 The ledger is message-first: every record occupies one fixed 30-pixel table row,
 with a compact role tag followed immediately by its content preview. Internal
@@ -1066,8 +1072,8 @@ The initial Thread-header entry has no selected record and therefore shows the
 ledger at full width with no empty inspector. A Details deep link selects its
 exact record and opens detail immediately. Selecting any row suspends tail
 follow; scrolling away from the tail, choosing a range, or inspecting old
-evidence also prevents live updates from pulling the reader back. Follow resumes
-only through the explicit toolbar action.
+evidence also prevents live updates from pulling the reader back. Loading newer
+history is an explicit ledger action, not an automatic side effect of selection.
 
 Selection lazily mounts the record-specific inspector. Above the narrow-layout
 breakpoint it is a resizable companion beside the ledger; at or below that
@@ -1132,20 +1138,22 @@ detail render the original user message content only.
 The renderer first performs `thread/trajectory/read`. Main returns `threadId`,
 Thread-level summary facts, an ordered record window, `olderCursor` /
 `newerCursor`, `hasOlder` / `hasNewer`, an authoritative `replacementRange`, and
-the selected record. Summary facts are whole-Thread totals; records are the
-loaded window. The response deliberately does not return a full `Thread` because
-that object contains host details such as `cwd` that are not part of the
-Trajectory UI contract. A read without `recordId` or `turnId` focus returns no
-selection; focus is a deep link, not an implicit tail-row choice. Renderer entry
-consumes `recordId` / `turnId` focus once when opening the panel; live refreshes
-preserve the user's current ledger/inspector state and must not reopen a closed
-inspector from the original focus. Search and range filtering are scoped to the
-loaded window, but the selected record and its ancestor rows remain visible even
-when they do not match the current search, range, or fold state. The user can
-load older and newer record windows from stable identity cursors; a live refresh
-without a cursor uses `replacementRange` to replace only the canonical sequence
-window the server declares, so stale fallback rows are removed without deleting
-older records already loaded from the same Turn.
+the selected record. Summary facts are whole-Thread facts derived from canonical
+Turn/Item/timing/usage metadata; they do not force diagnostics payload reads
+outside the requested window. Records are the loaded window. The response
+deliberately does not return a full `Thread` because that object contains host
+details such as `cwd` that are not part of the Trajectory UI contract. A read
+without `recordId` or `turnId` focus returns no selection; focus is a deep link,
+not an implicit tail-row choice. Renderer entry consumes `recordId` / `turnId`
+focus once when opening the panel; live refreshes preserve the user's current
+ledger/inspector state and must not reopen a closed inspector from the original
+focus. Search and range filtering are scoped to the loaded window, but the
+selected record and its ancestor rows remain visible even when they do not match
+the current search, range, or fold state. The user can load older and newer
+record windows from stable identity cursors; a live refresh without a cursor uses
+`replacementRange` plus same-Turn fallback cleanup to remove stale running
+fallback rows without deleting already loaded completed records from the same
+Turn.
 
 Record details are lazy. `thread/trajectory/detail/read` returns the selected
 record plus sanitized detail evidence only. Main locates the owning Turn first
@@ -1159,13 +1167,14 @@ bytes, or host filesystem paths. Missing or corrupt diagnostics, payloads, and
 output remain explicit local availability facts rather than killing the whole
 workspace.
 
-Export uses `thread/trajectory/export` and writes from main. The renderer receives
-only status, file name, and byte length; it never receives the absolute save path.
-The saved bundle uses sanitized Thread metadata and sanitized retained diagnostics
-alongside the same record projection, so it is a portable evidence bundle rather
-than a renderer-visible host-state dump. If the write fails, main records the
-complete error in diagnostics and returns only a fixed path-free failure message
-to the renderer.
+The lower-level `thread/trajectory/export` operation remains a main-owned
+diagnostic operation, but it is not a Trajectory toolbar surface. If a caller uses
+it, the renderer receives only status, file name, and byte length; it never
+receives the absolute save path. The saved bundle uses sanitized Thread metadata
+and sanitized retained diagnostics alongside the same record projection, so it is
+a portable evidence bundle rather than a renderer-visible host-state dump. If the
+write fails, main records the complete error in diagnostics and returns only a
+fixed path-free failure message to the renderer.
 
 The lower-level `thread/turn/details/read` audited reader remains available for
 internal evidence validation. It still resolves one reachable full Turn and its

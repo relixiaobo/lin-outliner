@@ -563,7 +563,13 @@ test.describe('canonical agent Thread surface', () => {
     await expect(trajectory).toContainText('Typed redacted evidence');
     await expect(trajectory).toContainText('Mock request');
 
-    await trajectory.getByRole('button', { name: 'Close Trajectory inspector' }).click();
+    const closeInspector = trajectory.getByRole('button', { name: 'Close Trajectory inspector' });
+    const backToLedger = trajectory.getByRole('button', { name: 'Back to Trajectory ledger' });
+    if (await closeInspector.isVisible()) {
+      await closeInspector.click();
+    } else {
+      await backToLedger.click();
+    }
     const trajectorySearch = trajectory.getByRole('searchbox', { name: 'Search loaded records' });
     await trajectorySearch.fill('Mock request');
     await expect(trajectory.locator('[data-kind="input"]')).toBeVisible();
@@ -577,8 +583,6 @@ test.describe('canonical agent Thread surface', () => {
     await durationToggle.click();
     await expect(durationToggle).toHaveAttribute('aria-pressed', 'false');
 
-    await trajectory.getByRole('button', { name: 'Export Thread Trajectory' }).click();
-    await expect(trajectory).toContainText('Exported tenon-trajectory-mock.json (128 bytes).');
     await trajectory.getByRole('button', { name: 'Previous page' }).click();
     await expect(page.locator('.outline-panel-surface.active-panel.is-outliner')).toBeVisible();
 

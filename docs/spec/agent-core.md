@@ -731,8 +731,10 @@ canonical Turns plus retained evidence. It returns only `threadId`, a summary, a
 ordered record window, `olderCursor` / `newerCursor` plus `hasOlder` /
 `hasNewer`, and the selected record. Cursors are stable keyset cursors over
 record identity, not mutable array offsets. Reads locate the bounded Turn window
-before diagnostics payload reads and cap diagnostics read concurrency. Record
-kinds are `input`, `context`, `assistant`, `tool`, `retry`, `compaction`, and
+before diagnostics payload reads and cap diagnostics read concurrency. The
+summary uses lightweight whole-Thread Turn/Item/timing/usage facts and must not
+force diagnostics materialization outside the requested window. Record kinds are
+`input`, `context`, `assistant`, `tool`, `retry`, `compaction`, and
 `delegation`. Assistant records use provider-call evidence as their primary
 identity; tool and runtime records use diagnostic activities when retained and
 degrade to canonical Item evidence when not. While a Turn is active and has no
@@ -755,7 +757,10 @@ diagnostics before materializing detail evidence. It does not return full
 `Thread`, `Turn`, `ThreadItem`, or raw diagnostics payloads. It may return
 bounded Turn/Item evidence, sanitized runtime facts, sanitized provider-call
 request/response values, sanitized activity evidence, sanitized context payloads,
-and sanitized/truncated tool output. It must not expose host filesystem paths,
+and sanitized/truncated tool output. Redaction is applied at renderer-facing
+opaque evidence leaves; typed diagnostics control fields such as discriminators,
+indexes, and enum fields are preserved so a large legal evidence string cannot
+corrupt the diagnostics structure. It must not expose host filesystem paths,
 payload storage paths, digest-only read authority, raw secrets, credentials,
 arbitrary response headers, or image bytes. Main resolves the record's typed
 primary reference against its owning Thread and Turn, then uses only explicitly

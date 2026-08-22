@@ -101,6 +101,11 @@ interface BuiltTrajectoryWindow {
   readonly newerCursor: string | null;
 }
 
+interface TurnWindow {
+  readonly end: number;
+  readonly start: number;
+}
+
 interface ThreadTrajectoryThreadEvidence {
   readonly id: ThreadId;
   readonly parentThreadId: ThreadId | null;
@@ -189,16 +194,20 @@ export class ThreadTrajectoryProjection {
   private async buildWindow(request: ThreadTrajectoryReadRequest): Promise<BuiltTrajectoryWindow> {
     this.core.requireThread(request.threadId);
     const allTurns = this.core.allTurns(request.threadId);
+    const window = turnWindowForTrajectoryRead(allTurns, request);
     const turns = await this.loadTurns(
       request.threadId,
-      allTurns.map((turn, turnIndex) => ({ turn, turnIndex })),
+      allTurns.slice(window.start, window.end).map((turn, offset) => ({
+        turn,
+        turnIndex: window.start + offset,
+      })),
     );
     const records = this.projectRecords(turns);
-    const page = pageTrajectoryRecords(records, request);
+    const page = pageTrajectoryRecords(records, request, window, allTurns.length);
     return {
       turns,
       records: page.data,
-      summary: summarizeProjectedTrajectory(request.threadId, allTurns, records, turns),
+      summary: summarizeLightweightTrajectory(request.threadId, allTurns, turns),
       replacementRange: page.replacementRange,
       olderCursor: page.olderCursor,
       newerCursor: page.newerCursor,
@@ -281,14 +290,7 @@ export class ThreadTrajectoryProjection {
         ? this.readActiveDiagnostics?.(threadId, turn.id) ?? null
         : null;
       if (activePayload) {
-        const projectedPayload = await redactDiagnosticsPayloadForProjection(activePayload);
-        if (!projectedPayload) {
-          return {
-            bundle: null,
-            availability: [availability('partialCoverage', 'Active Turn diagnostics were omitted after secret redaction failed.')],
-          };
-        }
-        const activeBundle = activeDiagnosticsBundle(projectedPayload);
+        const activeBundle = activeDiagnosticsBundle(activePayload);
         if (activeBundle) return { bundle: activeBundle, availability: [] };
         return {
           bundle: null,
@@ -310,14 +312,7 @@ export class ThreadTrajectoryProjection {
           availability: [availability('diagnosticsUnavailable', 'Turn diagnostics are no longer available.')],
         };
       }
-      const projectedPayload = await redactDiagnosticsPayloadForProjection(payload);
-      if (!projectedPayload) {
-        return {
-          bundle: null,
-          availability: [availability('partialCoverage', 'Turn diagnostics were omitted after secret redaction failed.')],
-        };
-      }
-      return { bundle: { ref, payload: projectedPayload }, availability: [] };
+      return { bundle: { ref, payload }, availability: [] };
     } catch {
       return {
         bundle: null,
@@ -481,18 +476,6 @@ function activeDiagnosticsBundle(payload: TurnDiagnosticsPayload): DiagnosticsBu
     },
     payload,
   };
-}
-
-async function redactDiagnosticsPayloadForProjection(
-  payload: TurnDiagnosticsPayload,
-): Promise<TurnDiagnosticsPayload | null> {
-  try {
-    const redacted = await redactSecretLikeJsonForDiagnostics(payload);
-    if (redacted.value === DIAGNOSTIC_SECRET_REDACTION_OMISSION) return null;
-    return redacted.value as TurnDiagnosticsPayload;
-  } catch {
-    return null;
-  }
 }
 
 function diagnosticsEvidence(
@@ -1266,6 +1249,72 @@ function summarizeProjectedTrajectory(
   };
 }
 
+function summarizeLightweightTrajectory(
+  threadId: ThreadId,
+  allTurns: readonly Turn[],
+  loadedTurns: readonly LoadedTurn[],
+): ThreadTrajectorySummary {
+  const counts = lightweightTrajectoryCounts(allTurns);
+  const usage = usageSummaryFromTurns(allTurns);
+  const startedAt = minNullable(allTurns.map((turn) => turn.startedAt));
+  const completedAt = allTurns.some((turn) => turn.completedAt === null)
+    ? null
+    : maxNullable(allTurns.map((turn) => turn.completedAt));
+  return {
+    threadId,
+    turnCount: allTurns.length,
+    recordCount: counts.recordCount,
+    inputCount: counts.inputCount,
+    contextCount: counts.contextCount,
+    assistantCount: counts.assistantCount,
+    toolCount: counts.toolCount,
+    retryCount: 0,
+    compactionCount: counts.compactionCount,
+    delegationCount: counts.delegationCount,
+    startedAt,
+    completedAt,
+    durationMs: startedAt === null || completedAt === null ? null : Math.max(0, completedAt - startedAt),
+    usage,
+    availability: canonicalTrajectoryAvailability(allTurns, loadedTurns),
+  };
+}
+
+function lightweightTrajectoryCounts(turns: readonly Turn[]): {
+  readonly assistantCount: number;
+  readonly compactionCount: number;
+  readonly contextCount: number;
+  readonly delegationCount: number;
+  readonly inputCount: number;
+  readonly recordCount: number;
+  readonly toolCount: number;
+} {
+  let assistantCount = 0;
+  let compactionCount = 0;
+  let contextCount = 0;
+  let delegationCount = 0;
+  let inputCount = 0;
+  let toolCount = 0;
+  for (const turn of turns) {
+    for (const item of turn.items) {
+      if (item.type === 'userMessage') inputCount += 1;
+      else if (item.type === 'contextEvidence') contextCount += 1;
+      else if (item.type === 'contextCompaction') compactionCount += 1;
+      else if (item.type === 'agentMessage') assistantCount += 1;
+      else if (item.type === 'collabAgentToolCall') delegationCount += 1;
+      else if (isToolItem(item)) toolCount += 1;
+    }
+  }
+  return {
+    assistantCount,
+    compactionCount,
+    contextCount,
+    delegationCount,
+    inputCount,
+    recordCount: inputCount + contextCount + assistantCount + toolCount + compactionCount + delegationCount,
+    toolCount,
+  };
+}
+
 function canonicalTrajectoryAvailability(
   allTurns: readonly Turn[],
   loadedTurns: readonly LoadedTurn[],
@@ -1308,26 +1357,86 @@ function usageSummaryFromTurns(turns: readonly Turn[]): ThreadTrajectoryUsageSum
 function pageTrajectoryRecords(
   records: readonly ThreadTrajectoryRecordSummary[],
   request: ThreadTrajectoryReadRequest,
+  turnWindow: TurnWindow | null = null,
+  turnCount: number | null = null,
 ): TrajectoryPage {
   const limit = trajectoryLimit(request.limit);
   const cursor = decodeTrajectoryCursor(request.cursor ?? null);
-  if (cursor?.direction === 'before') {
-    const boundary = records.findIndex((entry) => entry.id === cursor.recordId);
-    const end = boundary < 0 ? records.length : boundary;
-    return trajectoryPage(records, Math.max(0, end - limit), end);
+  const page = (() => {
+    if (cursor?.direction === 'before') {
+      const boundary = records.findIndex((entry) => entry.id === cursor.recordId);
+      const end = boundary < 0 ? records.length : boundary;
+      return trajectoryPage(records, Math.max(0, end - limit), end);
+    }
+    if (cursor?.direction === 'after') {
+      const boundary = records.findIndex((entry) => entry.id === cursor.recordId);
+      const start = boundary < 0 ? 0 : boundary + 1;
+      return trajectoryPage(records, start, Math.min(records.length, start + limit));
+    }
+    const focusIndex = focusIndexForRecords(records, request);
+    if (focusIndex >= 0) {
+      const end = Math.min(records.length, focusIndex + Math.ceil(limit / 3) + 1);
+      const start = Math.max(0, end - limit);
+      return trajectoryPage(records, start, end);
+    }
+    return trajectoryPage(records, Math.max(0, records.length - limit), records.length);
+  })();
+  if (!turnWindow || turnCount === null) return page;
+  const first = page.data[0] ?? null;
+  const last = page.data.at(-1) ?? null;
+  return {
+    ...page,
+    olderCursor: page.olderCursor ?? (first && turnWindow.start > 0
+      ? encodeTrajectoryCursor('before', first.id)
+      : null),
+    newerCursor: page.newerCursor ?? (last && turnWindow.end < turnCount
+      ? encodeTrajectoryCursor('after', last.id)
+      : null),
+  };
+}
+
+function turnWindowForTrajectoryRead(
+  turns: readonly Turn[],
+  request: ThreadTrajectoryReadRequest,
+): TurnWindow {
+  const count = turns.length;
+  if (count === 0) return { start: 0, end: 0 };
+  const limit = trajectoryLimit(request.limit);
+  const cursor = decodeTrajectoryCursor(request.cursor ?? null);
+  const cursorTurnIndex = cursor
+    ? turnIndexFromRecordId(turns, cursor.recordId)
+    : -1;
+  if (cursor?.direction === 'before' && cursorTurnIndex >= 0) {
+    const end = Math.min(count, cursorTurnIndex + 1);
+    return { start: Math.max(0, end - limit - 1), end };
   }
-  if (cursor?.direction === 'after') {
-    const boundary = records.findIndex((entry) => entry.id === cursor.recordId);
-    const start = boundary < 0 ? 0 : boundary + 1;
-    return trajectoryPage(records, start, Math.min(records.length, start + limit));
+  if (cursor?.direction === 'after' && cursorTurnIndex >= 0) {
+    const start = Math.max(0, cursorTurnIndex);
+    return { start, end: Math.min(count, start + limit + 1) };
   }
-  const focusIndex = focusIndexForRecords(records, request);
-  if (focusIndex >= 0) {
-    const end = Math.min(records.length, focusIndex + Math.ceil(limit / 3) + 1);
-    const start = Math.max(0, end - limit);
-    return trajectoryPage(records, start, end);
+  const focusTurnIndex = focusTurnIndexForRead(turns, request);
+  if (focusTurnIndex >= 0) {
+    const before = Math.floor(limit * 2 / 3);
+    const start = Math.max(0, focusTurnIndex - before);
+    return { start, end: Math.min(count, start + limit) };
   }
-  return trajectoryPage(records, Math.max(0, records.length - limit), records.length);
+  return { start: Math.max(0, count - limit), end: count };
+}
+
+function focusTurnIndexForRead(
+  turns: readonly Turn[],
+  request: ThreadTrajectoryReadRequest,
+): number {
+  const focus = request.focus ?? null;
+  if (!focus) return -1;
+  if (focus.turnId) return turns.findIndex((turn) => turn.id === focus.turnId);
+  if (focus.recordId) return turnIndexFromRecordId(turns, focus.recordId);
+  return -1;
+}
+
+function turnIndexFromRecordId(turns: readonly Turn[], recordId: string): number {
+  const turnId = turnIdFromTrajectoryRecordId(recordId);
+  return turnId ? turns.findIndex((turn) => turn.id === turnId) : -1;
 }
 
 function trajectoryPage(

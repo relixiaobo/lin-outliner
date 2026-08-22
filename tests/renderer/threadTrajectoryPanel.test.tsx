@@ -18,8 +18,8 @@ import { ThreadTrajectoryPanel } from '../../src/renderer/agent/components/Threa
 import {
   buildTrajectoryLedgerRows,
   buildTrajectoryTimeline,
-  trajectoryRecordsInRange,
   trajectorySearchMatches,
+  trajectoryTimelineFocusRecords,
 } from '../../src/renderer/agent/components/trajectory/trajectoryModel';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 
@@ -62,9 +62,6 @@ describe('ThreadTrajectoryPanel', () => {
       calls.push({ method, input });
       if (method === 'thread/trajectory/read') return trajectoryReadResponse();
       if (method === 'thread/trajectory/detail/read') return assistantDetailResponse();
-      if (method === 'thread/trajectory/export') {
-        return { status: 'written', fileName: 'trajectory.json', byteLength: 2048 };
-      }
       throw new Error(`Unexpected Agent Core method: ${method}`);
     });
 
@@ -87,13 +84,9 @@ describe('ThreadTrajectoryPanel', () => {
     expect(rendered.document.body.textContent).toContain('Read ‹path:redacted›');
     expect(rendered.document.body.textContent).not.toContain('/Users/example/project');
 
-    clickAriaButton(rendered.document, 'Export Thread Trajectory');
-    await flush();
-    expect(rendered.document.body.textContent).toContain('Exported trajectory.json (2,048 bytes).');
     expect(calls.map((call) => call.method)).toEqual([
       'thread/trajectory/read',
       'thread/trajectory/detail/read',
-      'thread/trajectory/export',
     ]);
   });
 
@@ -101,18 +94,17 @@ describe('ThreadTrajectoryPanel', () => {
     const rendered = renderPanel(async (method) => {
       if (method === 'thread/trajectory/read') return trajectoryReadResponse();
       if (method === 'thread/trajectory/detail/read') return assistantDetailResponse();
-      if (method === 'thread/trajectory/export') return { status: 'canceled' };
       throw new Error(`Unexpected Agent Core method: ${method}`);
     });
 
     rendered.render();
     await flush();
 
-    clickTitleButton(rendered.document, 'Collapse all Assistant calls');
+    clickAriaButton(rendered.document, 'Collapse all Assistant calls');
     expect(recordRowOrNull(rendered.document, TOOL_ID)).toBeNull();
     expect(recordRow(rendered.document, ASSISTANT_ID).textContent).toContain('1 record');
 
-    clickTitleButton(rendered.document, 'Collapse all Turns');
+    clickAriaButton(rendered.document, 'Collapse all Turns');
     expect(rendered.document.querySelectorAll('[data-trajectory-record-id]').length).toBe(1);
     expect(recordRow(rendered.document, INPUT_ID).textContent).toContain('USERPlan the release');
     expect(rendered.document.body.textContent).toContain('2 records');
@@ -125,7 +117,6 @@ describe('ThreadTrajectoryPanel', () => {
         expect(input).toEqual({ threadId: THREAD_ID, recordId: TOOL_ID });
         return toolDetailResponse();
       }
-      if (method === 'thread/trajectory/export') return { status: 'canceled' };
       throw new Error(`Unexpected Agent Core method: ${method}`);
     });
 
@@ -168,7 +159,6 @@ describe('ThreadTrajectoryPanel', () => {
         );
       }
       if (method === 'thread/trajectory/detail/read') return assistantDetailResponse();
-      if (method === 'thread/trajectory/export') return { status: 'canceled' };
       throw new Error(`Unexpected Agent Core method: ${method}`);
     }, { turnId: TURN_ID });
 
@@ -221,7 +211,6 @@ describe('ThreadTrajectoryPanel', () => {
           : trajectoryReadResponse(trajectoryRecords());
       }
       if (method === 'thread/trajectory/detail/read') return toolDetailResponse();
-      if (method === 'thread/trajectory/export') return { status: 'canceled' };
       throw new Error(`Unexpected Agent Core method: ${method}`);
     });
 
@@ -299,7 +288,6 @@ describe('ThreadTrajectoryPanel', () => {
           });
       }
       if (method === 'thread/trajectory/detail/read') return toolDetailResponse();
-      if (method === 'thread/trajectory/export') return { status: 'canceled' };
       throw new Error(`Unexpected Agent Core method: ${method}`);
     });
 
@@ -322,66 +310,102 @@ describe('ThreadTrajectoryPanel', () => {
     expect(recordRow(rendered.document, refreshedTail.id).textContent).toContain('Canonical tail evidence');
   });
 
-  test('loads the real tail when following live from an older window', async () => {
-    const readInputs: AgentCoreRequestByMethod['thread/trajectory/read'][] = [];
-    const olderRecord = record({
-      id: `turn:${TURN_ID}:input:older`,
-      kind: 'input',
-      lane: 'input',
-      sequence: 0,
-      title: 'Input',
-      preview: 'Older focused window',
+  test('removes stale running fallback records when completion inserts records before the refreshed window', async () => {
+    const olderTool = record({
+      id: `turn:${TURN_ID}:tool:old`,
+      kind: 'tool',
+      lane: 'tools',
+      sequence: 4,
+      title: 'Older tool',
+      preview: 'Loaded older evidence',
+      state: 'completed',
       primaryEvidence: {
         type: 'threadItem',
         threadId: THREAD_ID,
         turnId: TURN_ID,
-        itemId: 'older-input',
+        itemId: 'old-tool',
       },
     });
-    const tailRecord = record({
-      id: `turn:${TURN_ID}:assistant:tail`,
-      kind: 'assistant',
-      lane: 'assistant',
-      sequence: 20,
-      title: 'Assistant call 2',
-      preview: 'Latest tail response',
-      primaryEvidence: { type: 'providerCall', threadId: THREAD_ID, turnId: TURN_ID, callIndex: 1 },
+    const staleFallback = record({
+      id: `turn:${TURN_ID}:tool:stale-boundary`,
+      kind: 'tool',
+      lane: 'tools',
+      sequence: 10,
+      title: 'Running fallback',
+      preview: 'Stale boundary tool',
+      state: 'running',
+      primaryEvidence: {
+        type: 'threadItem',
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        itemId: 'stale-tool',
+      },
+    });
+    const insertedContext = record({
+      id: `turn:${TURN_ID}:context:prepared:0:0:1`,
+      kind: 'context',
+      lane: 'input',
+      sequence: 11,
+      title: 'Inserted context',
+      preview: 'Prepared before tool',
+      primaryEvidence: {
+        type: 'preparedContextPart',
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        callIndex: 0,
+        messageIndex: 0,
+        partIndex: 1,
+      },
+    });
+    const refreshedTool = record({
+      id: `turn:${TURN_ID}:tool:2:call%3Aread`,
+      kind: 'tool',
+      lane: 'tools',
+      sequence: 12,
+      title: 'Read file',
+      preview: 'Canonical boundary tool',
+      primaryEvidence: {
+        type: 'toolExecution',
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        activityIndex: 2,
+        callId: 'call:read',
+      },
     });
     let readCount = 0;
-    const rendered = renderPanel(async (method, input) => {
+    const rendered = renderPanel(async (method) => {
       if (method === 'thread/trajectory/read') {
-        readInputs.push(input);
         readCount += 1;
         return readCount === 1
-          ? trajectoryReadResponse([olderRecord], null, {
-            newerCursor: `after:${encodeURIComponent(olderRecord.id)}`,
-            replacementRange: { startSequence: 0, endSequence: 1 },
+          ? trajectoryReadResponse([olderTool, staleFallback], null, {
+            replacementRange: { startSequence: 4, endSequence: 11 },
           })
-          : trajectoryReadResponse([tailRecord], null, {
-            olderCursor: `before:${encodeURIComponent(tailRecord.id)}`,
-            replacementRange: { startSequence: 20, endSequence: 21 },
+          : trajectoryReadResponse([insertedContext, refreshedTool], null, {
+            replacementRange: { startSequence: 11, endSequence: 131 },
           });
       }
-      if (method === 'thread/trajectory/detail/read') return inputDetailResponse(olderRecord);
-      if (method === 'thread/trajectory/export') return { status: 'canceled' };
+      if (method === 'thread/trajectory/detail/read') return toolDetailResponse();
       throw new Error(`Unexpected Agent Core method: ${method}`);
     });
 
     rendered.render();
     await flush();
-    clickRecord(rendered.document, olderRecord.id);
-    await flush();
-    clickAriaButton(rendered.document, 'Follow live Trajectory');
+    expect(recordRow(rendered.document, olderTool.id).textContent).toContain('Loaded older evidence');
+    expect(recordRow(rendered.document, staleFallback.id).textContent).toContain('Stale boundary tool');
+
+    rendered.notify({
+      type: 'turn/completed',
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      turn: {} as never,
+    });
+    await wait(150);
     await flush();
 
-    expect(readInputs.at(-1)).toEqual({
-      threadId: THREAD_ID,
-      cursor: null,
-      limit: 120,
-      focus: null,
-    });
-    expect(recordRowOrNull(rendered.document, olderRecord.id)).toBeNull();
-    expect(recordRow(rendered.document, tailRecord.id).textContent).toContain('Latest tail response');
+    expect(recordRow(rendered.document, olderTool.id).textContent).toContain('Loaded older evidence');
+    expect(recordRowOrNull(rendered.document, staleFallback.id)).toBeNull();
+    expect(recordRow(rendered.document, insertedContext.id).textContent).toContain('Inserted context');
+    expect(recordRow(rendered.document, refreshedTool.id).textContent).toContain('Canonical boundary tool');
   });
 
   test('renders provider-visible tool catalog records as first-class Tools evidence', async () => {
@@ -415,13 +439,13 @@ describe('ThreadTrajectoryPanel', () => {
           ],
         });
       }
-      if (method === 'thread/trajectory/export') return { status: 'canceled' };
       throw new Error(`Unexpected Agent Core method: ${method}`);
     });
 
     rendered.render();
     await flush();
     expect(recordRow(rendered.document, TOOL_CATALOG_ID).textContent).toContain('TOOLSAvailable Tools');
+    expect(timelineSpan(rendered.document, TOOL_CATALOG_ID).classList.contains('is-tool-catalog')).toBe(true);
 
     clickRecord(rendered.document, TOOL_CATALOG_ID);
     await flush();
@@ -478,7 +502,6 @@ describe('ThreadTrajectoryPanel', () => {
         expect(request).toEqual({ threadId: THREAD_ID, recordId: INPUT_ID });
         return inputDetailResponse(input);
       }
-      if (method === 'thread/trajectory/export') return { status: 'canceled' };
       throw new Error(`Unexpected Agent Core method: ${method}`);
     });
 
@@ -532,7 +555,6 @@ describe('ThreadTrajectoryPanel', () => {
         expect(request).toEqual({ threadId: THREAD_ID, recordId: context.id });
         return contextDetailResponse(context, null, modelContextText);
       }
-      if (method === 'thread/trajectory/export') return { status: 'canceled' };
       throw new Error(`Unexpected Agent Core method: ${method}`);
     });
 
@@ -578,7 +600,6 @@ describe('ThreadTrajectoryPanel', () => {
     const rendered = renderPanel(async (method) => {
       if (method === 'thread/trajectory/read') return trajectoryReadResponse([delegation]);
       if (method === 'thread/trajectory/detail/read') return delegationDetailResponse(delegation);
-      if (method === 'thread/trajectory/export') return { status: 'canceled' };
       throw new Error(`Unexpected Agent Core method: ${method}`);
     }, {
       onOpenThreadTrajectory: (threadId) => opened.push(threadId),
@@ -612,7 +633,6 @@ describe('ThreadTrajectoryPanel', () => {
     const rendered = renderPanel(async (method) => {
       if (method === 'thread/trajectory/read') return trajectoryReadResponse(records);
       if (method === 'thread/trajectory/detail/read') return assistantDetailResponse();
-      if (method === 'thread/trajectory/export') return { status: 'canceled' };
       throw new Error(`Unexpected Agent Core method: ${method}`);
     });
 
@@ -625,6 +645,67 @@ describe('ThreadTrajectoryPanel', () => {
     expect(mountedRows).toBeGreaterThan(0);
     expect(mountedRows).toBeLessThan(100);
     expect(rendered.document.querySelector('.thread-trajectory-virtual-spacer')).not.toBeNull();
+  });
+
+  test('keeps the ledger complete while timeline range focuses matching records', async () => {
+    const rendered = renderPanel(async (method) => {
+      if (method === 'thread/trajectory/read') return trajectoryReadResponse();
+      if (method === 'thread/trajectory/detail/read') return assistantDetailResponse();
+      throw new Error(`Unexpected Agent Core method: ${method}`);
+    });
+
+    rendered.render();
+    await flush();
+    const track = prepareTimelineTrack(rendered.document);
+
+    act(() => {
+      dispatchPointer(rendered.window, track, 'pointerdown', { clientX: 250 });
+      dispatchPointer(rendered.window, track, 'pointermove', { clientX: 290 });
+      dispatchPointer(rendered.window, track, 'pointerup', { clientX: 290 });
+    });
+    await flush();
+
+    expect(trajectoryRowIds(rendered.document)).toEqual([INPUT_ID, ASSISTANT_ID, TOOL_ID]);
+    expect(recordRow(rendered.document, TOOL_ID).getAttribute('data-timeline-focus')).toBe('inside');
+    expect(recordRow(rendered.document, INPUT_ID).getAttribute('data-timeline-focus')).toBe('outside');
+    expect(rendered.document.body.textContent).toContain('Timeline focus is active');
+
+    act(() => {
+      const event = new rendered.window.Event('keydown', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'key', { value: 'Escape' });
+      track.dispatchEvent(event);
+    });
+    await flush();
+
+    expect(recordRow(rendered.document, TOOL_ID).getAttribute('data-timeline-focus')).toBeNull();
+    expect(rendered.document.body.textContent).not.toContain('Timeline focus is active');
+  });
+
+  test('clicking timeline whitespace focuses the nearest record without selecting it', async () => {
+    const rendered = renderPanel(async (method) => {
+      if (method === 'thread/trajectory/read') return trajectoryReadResponse();
+      if (method === 'thread/trajectory/detail/read') return assistantDetailResponse();
+      throw new Error(`Unexpected Agent Core method: ${method}`);
+    });
+
+    rendered.render();
+    await flush();
+    const track = prepareTimelineTrack(rendered.document);
+    const scrolls: string[] = [];
+    Object.defineProperty(recordRow(rendered.document, TOOL_ID), 'scrollIntoView', {
+      configurable: true,
+      value: () => { scrolls.push(TOOL_ID); },
+    });
+
+    act(() => {
+      dispatchPointer(rendered.window, track, 'pointerdown', { clientX: 250 });
+      dispatchPointer(rendered.window, track, 'pointerup', { clientX: 250 });
+    });
+    await flush();
+
+    expect(scrolls).toContain(TOOL_ID);
+    expect(rendered.document.querySelector('[aria-label="Trajectory inspector"]')).toBeNull();
+    expect(recordRow(rendered.document, TOOL_ID).getAttribute('data-timeline-focus')).toBe('inside');
   });
 });
 
@@ -646,7 +727,7 @@ describe('Trajectory projection model', () => {
     expect(duration?.end).toBe(220);
     expect(duration?.unpositionedCount).toBe(1);
     expect(duration?.spans.find((span) => span.record.id === INPUT_ID)?.marker).toBe(true);
-    expect(trajectoryRecordsInRange(duration, { start: 205, end: 215 })).toEqual(new Set([TOOL_ID]));
+    expect(trajectoryTimelineFocusRecords(duration, { start: 205, end: 215 })).toEqual(new Set([TOOL_ID]));
 
     const sequence = buildTrajectoryTimeline([...records, untimed], 'sequence');
     expect(sequence?.spans.map((span) => [span.start, span.end])).toEqual([
@@ -660,7 +741,6 @@ describe('Trajectory projection model', () => {
     const rows = buildTrajectoryLedgerRows({
       collapsedCalls: new Set(),
       collapsedTurns: new Set(),
-      rangeMatches: null,
       records,
       searchMatches: matches,
     });
@@ -672,7 +752,6 @@ describe('Trajectory projection model', () => {
     const folded = buildTrajectoryLedgerRows({
       collapsedCalls: new Set([ASSISTANT_ID]),
       collapsedTurns: new Set(),
-      rangeMatches: null,
       records,
       searchMatches: matches,
     });
@@ -686,7 +765,6 @@ describe('Trajectory projection model', () => {
     const rows = buildTrajectoryLedgerRows({
       collapsedCalls: new Set([ASSISTANT_ID]),
       collapsedTurns: new Set([TURN_ID]),
-      rangeMatches: null,
       records,
       searchMatches: trajectorySearchMatches(records, 'does-not-match'),
       selectedRecordId: TOOL_ID,
@@ -727,7 +805,6 @@ describe('Trajectory projection model', () => {
     const rows = buildTrajectoryLedgerRows({
       collapsedCalls: new Set(),
       collapsedTurns: new Set([TURN_ID]),
-      rangeMatches: null,
       records: [system, tools, input, assistant],
       searchMatches: null,
     });
@@ -1120,9 +1197,63 @@ function recordRow(document: Document, recordId: string): HTMLElement {
   return row;
 }
 
+function trajectoryRowIds(document: Document): readonly string[] {
+  return [...document.querySelectorAll<HTMLElement>('[data-trajectory-record-id]')]
+    .map((row) => row.dataset.trajectoryRecordId ?? '');
+}
+
+function timelineSpan(document: Document, recordId: string): HTMLElement {
+  const span = [...document.querySelectorAll<HTMLElement>('[data-timeline-record-id]')]
+    .find((candidate) => candidate.getAttribute('data-timeline-record-id') === recordId);
+  if (!span) throw new Error(`Missing Trajectory timeline span: ${recordId}`);
+  return span;
+}
+
 function recordRowOrNull(document: Document, recordId: string): HTMLElement | null {
   return [...document.querySelectorAll<HTMLElement>('[data-trajectory-record-id]')]
     .find((candidate) => candidate.dataset.trajectoryRecordId === recordId) ?? null;
+}
+
+function prepareTimelineTrack(document: Document): HTMLElement {
+  const track = document.querySelector<HTMLElement>('.thread-trajectory-timeline-track');
+  if (!track) throw new Error('Missing trajectory timeline track');
+  track.getBoundingClientRect = () => ({
+    x: 0,
+    y: 0,
+    top: 0,
+    right: 300,
+    bottom: 52,
+    left: 0,
+    width: 300,
+    height: 52,
+    toJSON: () => ({}),
+  } as DOMRect);
+  Object.assign(track, {
+    hasPointerCapture: () => true,
+    releasePointerCapture: () => undefined,
+    setPointerCapture: () => undefined,
+  });
+  return track;
+}
+
+function dispatchPointer(
+  window: Window,
+  target: HTMLElement,
+  type: string,
+  init: {
+    readonly button?: number;
+    readonly clientX: number;
+    readonly pointerId?: number;
+  },
+): void {
+  const event = new window.Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperties(event, {
+    button: { value: init.button ?? 0 },
+    buttons: { value: init.button === 2 ? 2 : 1 },
+    clientX: { value: init.clientX },
+    pointerId: { value: init.pointerId ?? 1 },
+  });
+  target.dispatchEvent(event);
 }
 
 function clickRecord(document: Document, recordId: string): void {
@@ -1150,12 +1281,6 @@ function ariaButton(document: Document, name: string): HTMLButtonElement {
 
 function clickAriaButton(document: Document, name: string): void {
   act(() => ariaButton(document, name).click());
-}
-
-function clickTitleButton(document: Document, title: string): void {
-  const button = document.querySelector<HTMLButtonElement>(`button[title="${title}"]`);
-  if (!button) throw new Error(`Missing button with title: ${title}`);
-  act(() => button.click());
 }
 
 async function flush(): Promise<void> {
