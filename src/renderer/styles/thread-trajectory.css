@@ -812,6 +812,10 @@
   gap: 0;
 }
 
+.thread-trajectory-parts-preview.is-input:not(.is-compact) {
+  gap: var(--space-4);
+}
+
 .thread-trajectory-parts-preview.is-input > * {
   padding-block: var(--space-3);
   border-block-start: 1px solid var(--separator);
@@ -824,6 +828,18 @@
 
 .thread-trajectory-parts-preview.is-input > :last-child {
   padding-block-end: 0;
+}
+
+.thread-trajectory-parts-preview.is-input:not(.is-compact) > * {
+  padding-block: 0;
+  border-block-start: 0;
+}
+
+.thread-trajectory-parts-preview.is-input:not(.is-compact) > .thread-trajectory-part-image {
+  padding: var(--space-4);
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-sm);
+  background: var(--fill-1);
 }
 
 .thread-trajectory-part-text,
@@ -949,15 +965,40 @@ button.thread-trajectory-part-tool:focus-visible {
   color: var(--text-secondary);
 }
 
+.thread-trajectory-part-image-media {
+  display: grid;
+  width: calc(2 * var(--control-size-xl));
+  height: calc(2 * var(--control-size-xl));
+  flex: none;
+  overflow: hidden;
+  place-items: center;
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-sm);
+  background: var(--fill-1);
+  color: var(--text-tertiary);
+}
+
+.thread-trajectory-part-image-media > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.thread-trajectory-part-image-media > svg {
+  flex: none;
+}
+
 .thread-trajectory-part-image > svg {
   flex: none;
   margin-top: var(--space-1);
   color: var(--text-tertiary);
 }
 
-.thread-trajectory-part-image > div {
+.thread-trajectory-part-image-details {
   display: grid;
   min-width: 0;
+  align-content: start;
   gap: var(--space-1);
 }
 
@@ -980,8 +1021,7 @@ button.thread-trajectory-part-tool:focus-visible {
   font: var(--font-ui-xs)/var(--line-ui-xs) var(--font-family-mono);
 }
 
-.thread-trajectory-part-other > pre,
-.thread-trajectory-raw-part > pre {
+.thread-trajectory-part-other > pre {
   margin: var(--space-1) 0 0;
   overflow-wrap: anywhere;
   color: var(--text-primary);
@@ -1028,6 +1068,15 @@ button.thread-trajectory-raw-part-heading:focus-visible {
   margin-top: var(--space-2);
 }
 
+.thread-trajectory-parts-preview > .thread-trajectory-code,
+.thread-trajectory-raw-part > .thread-trajectory-code {
+  margin-top: var(--space-2);
+}
+
+.thread-trajectory-parts-preview:not(.is-compact) > .thread-trajectory-code {
+  margin-top: 0;
+}
+
 .thread-trajectory-inspector-section > .thread-trajectory-facts {
   padding-top: 0;
 }
@@ -1068,9 +1117,18 @@ button.thread-trajectory-raw-part-heading:focus-visible {
   padding: 0 0 var(--space-4);
 }
 
-.agent-code-block.thread-trajectory-code {
+.thread-trajectory-inspector-body.is-evidence-page > .thread-trajectory-code {
   min-height: 0;
   margin: 0 var(--space-6) var(--space-6);
+}
+
+.thread-trajectory-preview > .thread-trajectory-code {
+  margin: 0;
+}
+
+.agent-code-block.thread-trajectory-code pre {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .thread-trajectory-inspector-body > .button {

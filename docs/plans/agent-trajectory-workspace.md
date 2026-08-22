@@ -115,12 +115,18 @@ the Thread Item itself; the accepted-input diagnostic activity and the first
 provider call that consumed it are related evidence. Its Preview uses the
 captured, ordered provider-neutral prepared-message parts whose diagnostics
 provenance names that exact Item. Text remains exact sanitized text; image parts
-remain explicit typed markers carrying MIME type, byte length, and digest. This
+remain explicit typed markers carrying MIME type, byte length, and digest. When
+that digest exactly matches a retained canonical attachment artifact, the typed
+block replaces its placeholder icon with that artifact's thumbnail and shows
+the attachment name; a missing or unreadable artifact leaves the metadata-only
+fallback intact. This
 preserves the real attachment markers, readable-path instructions, Node
 reference markers, image metadata, image-part position, and other serialization
 performed by `ContextProjector`; canonical `ThreadUserContent` is accepted-input
 evidence available only in Raw; it never substitutes for missing prepared
-provider evidence. Image bytes never cross the renderer seam. Context Items
+provider evidence. Image bytes never enter the Trajectory detail response;
+matched retained artifacts load only through the existing bounded preview seam.
+Context Items
 admitted in the same envelope do not automatically become `context` records. A
 CONTEXT row exists
 only for stable prompt text, a provider-call tool catalog snapshot that changed
@@ -356,6 +362,18 @@ not a top-level ledger kind. Large content and syntax presentation mount lazily.
 Raw means Tenon's typed, bounded, credential-redacted diagnostic representation,
 with captured filesystem paths preserved. It never
 means an unrecorded HTTP body, arbitrary headers, image bytes, or credentials.
+System Prompt, full model-context Preview, structured Request, Tool Input, Tool
+Output, Schema, and textual Raw parts share one bounded read-only evidence
+container with an explicit copy action. The container preserves the displayed
+retained string exactly for raw text; typed structured values are pretty-printed
+once and copy returns that exact visible serialization. Valid JSON raw text may
+be highlighted but is not reparsed and reserialized for presentation or copy.
+Long lines wrap without changing copied content. A full Input Preview uses one
+container per text part, while compact Summary text stays inline and image
+evidence keeps its typed metadata presentation plus an exact-artifact thumbnail
+when available. Final Assistant prose, compaction summaries,
+and delegation results remain reading surfaces whose exact typed parts are
+available in Raw.
 Missing, corrupt, redacted, or unavailable evidence leaves the selected record
 and its siblings intact and explains the limitation in the affected tab.
 

@@ -8,6 +8,7 @@ import type {
   AgentCoreRequestByMethod,
   AgentCoreResponseByMethod,
   JsonValue,
+  ThreadImageArtifactReference,
   ThreadTrajectoryDetailReadResponse,
   ThreadTrajectoryDiagnosticsEvidence,
   ThreadTrajectoryReadResponse,
@@ -88,6 +89,8 @@ describe('ThreadTrajectoryPanel', () => {
     clickButton(rendered.document, 'Raw');
     expect(rendered.document.body.textContent).toContain('Part 1 · TextMock response');
     expect(rendered.document.body.textContent).not.toContain('Read /Users/example/project');
+    expect(rendered.document.querySelector('.thread-trajectory-raw-part > .thread-trajectory-code'))
+      .not.toBeNull();
 
     expect(calls.map((call) => call.method)).toEqual([
       'thread/trajectory/read',
@@ -159,13 +162,25 @@ describe('ThreadTrajectoryPanel', () => {
   });
 
   test('shows Tool payload, result, and schema tabs and supports keyboard inspector resizing', async () => {
+    const outputText = '{"ok":true,"data":{"filePath":"/workspace/package.json"}}';
+    const copied: string[] = [];
     const rendered = renderPanel(async (method, input) => {
       if (method === 'thread/trajectory/read') return trajectoryReadResponse();
       if (method === 'thread/trajectory/detail/read') {
         expect(input).toEqual({ threadId: THREAD_ID, recordId: TOOL_ID });
-        return toolDetailResponse();
+        const response = toolDetailResponse();
+        return {
+          ...response,
+          detail: response.detail?.kind === 'tool'
+            ? { ...response.detail, outputText }
+            : response.detail,
+        };
       }
       throw new Error(`Unexpected Agent Core method: ${method}`);
+    });
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async (text: string) => { copied.push(text); } },
     });
 
     rendered.render();
@@ -179,7 +194,12 @@ describe('ThreadTrajectoryPanel', () => {
     clickButton(rendered.document, 'Input');
     expect(rendered.document.body.textContent).toContain('package.json');
     clickButton(rendered.document, 'Output');
-    expect(rendered.document.body.textContent).toContain('Read 42 lines');
+    expect(rendered.document.querySelector('.thread-trajectory-code pre')?.textContent).toBe(outputText);
+    expect(rendered.document.querySelector('.thread-trajectory-inspector-body > .thread-trajectory-code'))
+      .not.toBeNull();
+    clickAriaButton(rendered.document, 'Copy raw content');
+    await flush();
+    expect(copied).toEqual([outputText]);
     clickButton(rendered.document, 'Schema');
     expect(rendered.document.body.textContent).toContain('Read a UTF-8 file');
 
@@ -531,6 +551,8 @@ describe('ThreadTrajectoryPanel', () => {
     const inspector = rendered.document.querySelector<HTMLElement>('[aria-label="Trajectory inspector"]');
     expect(inspector?.textContent).toContain('Captured provider-context prompt');
     expect(inspector?.textContent).not.toContain('Stable prompt source block');
+    expect(inspector?.querySelector('.is-evidence-page > .thread-trajectory-code')).not.toBeNull();
+    expect(ariaButton(rendered.document, 'Copy raw content')).not.toBeNull();
   });
 
   test('renders USER Preview from captured model-visible text instead of canonical accepted input', async () => {
@@ -598,8 +620,8 @@ describe('ThreadTrajectoryPanel', () => {
       '.thread-trajectory-parts-preview.is-input > *',
     ) ?? [])];
     expect(inputParts.map((part) => part.className)).toEqual([
-      'thread-trajectory-part-text is-plain',
-      'thread-trajectory-part-text is-plain',
+      'agent-code-block thread-trajectory-code',
+      'agent-code-block thread-trajectory-code',
       'thread-trajectory-part-image',
     ]);
     expect(inputParts[0]?.textContent)
@@ -611,6 +633,7 @@ describe('ThreadTrajectoryPanel', () => {
     expect(inspector?.querySelector('.thread-trajectory-part-image span')?.textContent).toBe('image/png · 1,024 B');
     expect(inspector?.querySelector('.thread-trajectory-part-image code')?.textContent)
       .toBe(`sha256 ${'a'.repeat(64)}`);
+    expect(inspector?.querySelectorAll('button[aria-label="Copy raw content"]')).toHaveLength(2);
     expect(inspector?.textContent).not.toContain('brief.txtInspect the attachment');
     expect(inspector?.textContent).not.toContain('Turn environment');
 
@@ -618,6 +641,111 @@ describe('ThreadTrajectoryPanel', () => {
     await flush();
     expect(inspector?.textContent).toContain('"model": "gpt-5"');
     expect(inspector?.textContent).toContain('"text": "nihao"');
+  });
+
+  test('matches multiple input image parts to distinct retained thumbnails by digest', async () => {
+    const input = trajectoryRecords()[0]!;
+    const firstDigest = '1'.repeat(64);
+    const secondDigest = '2'.repeat(64);
+    const firstArtifact = trajectoryImageArtifact('3'.repeat(64), firstDigest, 'first.png');
+    const secondArtifact = trajectoryImageArtifact('4'.repeat(64), secondDigest, 'second.png');
+    const previewTargets: unknown[] = [];
+    const rendered = renderPanel(async (method) => {
+      if (method === 'thread/trajectory/read') return trajectoryReadResponse([input]);
+      if (method === 'thread/trajectory/detail/read') {
+        const response = inputDetailResponse(input);
+        return {
+          ...response,
+          detail: response.detail?.kind === 'input'
+            ? {
+              ...response.detail,
+              modelInputParts: [
+                { type: 'image', mimeType: 'image/png', byteLength: 11, sha256: firstDigest },
+                { type: 'image', mimeType: 'image/png', byteLength: 22, sha256: secondDigest },
+              ],
+              message: {
+                itemId: 'user-message-images',
+                acceptedAt: 106,
+                content: [
+                  {
+                    type: 'attachment',
+                    id: 'attachment-second',
+                    name: 'second.png',
+                    mimeType: 'image/png',
+                    sizeBytes: 22,
+                    source: { kind: 'localFile', path: '/workspace/second.png' },
+                    artifactRef: secondArtifact,
+                  },
+                  {
+                    type: 'attachment',
+                    id: 'attachment-first',
+                    name: 'first.png',
+                    mimeType: 'image/png',
+                    sizeBytes: 11,
+                    source: { kind: 'localFile', path: '/workspace/first.png' },
+                    artifactRef: firstArtifact,
+                  },
+                ],
+              },
+            }
+            : response.detail,
+        };
+      }
+      throw new Error(`Unexpected Agent Core method: ${method}`);
+    }, {
+      invoke: async (command, args) => {
+        expect(command).toBe('preview_read_bytes');
+        previewTargets.push(args?.target);
+        const path = (args?.target as { readonly path?: string } | undefined)?.path;
+        return {
+          bytes: Uint8Array.from(path === firstArtifact.id ? [1] : [2]),
+          mimeType: 'image/png',
+        };
+      },
+    });
+
+    rendered.render();
+    await flush();
+    clickRecord(rendered.document, input.id);
+    await flush();
+    clickButton(rendered.document, 'Preview');
+    await flush();
+
+    const inspector = rendered.document.querySelector<HTMLElement>('[aria-label="Trajectory inspector"]');
+    const images = [...(inspector?.querySelectorAll<HTMLImageElement>(
+      '.thread-trajectory-parts-preview.is-input .thread-trajectory-part-image-media > img',
+    ) ?? [])];
+    const imageBlocks = [...(inspector?.querySelectorAll<HTMLElement>(
+      '.thread-trajectory-parts-preview.is-input > .thread-trajectory-part-image',
+    ) ?? [])];
+    expect(imageBlocks.map((block) => block.querySelector('strong')?.textContent)).toEqual([
+      'first.png',
+      'second.png',
+    ]);
+    expect(images).toHaveLength(2);
+    expect(new Set(images.map((image) => image.getAttribute('src'))).size).toBe(2);
+    expect(previewTargets).toEqual([
+      expect.objectContaining({
+        path: firstArtifact.id,
+        threadId: THREAD_ID,
+        imageArtifactRef: firstArtifact,
+      }),
+      expect.objectContaining({
+        path: secondArtifact.id,
+        threadId: THREAD_ID,
+        imageArtifactRef: secondArtifact,
+      }),
+      expect.objectContaining({
+        path: firstArtifact.id,
+        threadId: THREAD_ID,
+        imageArtifactRef: firstArtifact,
+      }),
+      expect.objectContaining({
+        path: secondArtifact.id,
+        threadId: THREAD_ID,
+        imageArtifactRef: secondArtifact,
+      }),
+    ]);
   });
 
   test('renders availability discovered by the lazy detail read', async () => {
@@ -727,6 +855,8 @@ describe('ThreadTrajectoryPanel', () => {
 
     clickButton(rendered.document, 'Preview');
     expect(inspector?.textContent).toContain('Use code-review for local diffs and pull requests.');
+    expect(inspector?.querySelector('.thread-trajectory-preview > .thread-trajectory-code'))
+      .not.toBeNull();
 
     clickButton(rendered.document, 'Raw');
     await flush();
@@ -917,7 +1047,7 @@ describe('ThreadTrajectoryPanel', () => {
     expect(inspector?.querySelector('.thread-trajectory-part-image span')?.textContent).toBe('image/png · 128 B');
     expect(inspector?.querySelector('.thread-trajectory-part-image code')?.textContent)
       .toBe(`sha256 ${'4'.repeat(64)}`);
-    expect(inspector?.querySelector('.thread-trajectory-part-other pre')?.textContent)
+    expect(inspector?.querySelector('.thread-trajectory-parts-preview > .thread-trajectory-code')?.textContent)
       .toContain('"source": "provider"');
     expect(inspector?.textContent).not.toContain('No retained evidence.');
 
@@ -1189,6 +1319,7 @@ function renderPanel(
     input: AgentCoreRequestByMethod[Method],
   ) => Promise<AgentCoreResponseByMethod[Method]>,
   options: {
+    readonly invoke?: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
     readonly language?: 'en' | 'zh-Hans';
     readonly onOpenThreadTrajectory?: (threadId: string) => void;
     readonly selectedRecordId?: string;
@@ -1207,6 +1338,7 @@ function renderPanel(
     lin: {
       initialLanguage: options.language ?? 'en',
       agentCoreRequest,
+      invoke: options.invoke ?? (async () => ({ bytes: null, error: 'unavailable' })),
       onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => {
         notificationListener = listener;
         return () => {
@@ -1440,6 +1572,32 @@ function inputDetailResponse(input: ThreadTrajectoryRecordSummary): ThreadTrajec
         response: null,
       }),
       activityIndex: 0,
+    },
+  };
+}
+
+function trajectoryImageArtifact(
+  id: string,
+  observationId: string,
+  fileName: string,
+): ThreadImageArtifactReference {
+  return {
+    id,
+    createdAt: 100,
+    retention: 'external',
+    original: { kind: 'localFile', path: `/workspace/${fileName}` },
+    observation: {
+      id: observationId,
+      mimeType: 'image/png',
+      byteLength: 1,
+      fileName,
+    },
+    geometry: {
+      sourceWidth: 1,
+      sourceHeight: 1,
+      observationWidth: 1,
+      observationHeight: 1,
+      observationToSource: [1, 0, 0, 1, 0, 0],
     },
   };
 }

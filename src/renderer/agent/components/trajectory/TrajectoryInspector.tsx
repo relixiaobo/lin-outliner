@@ -1,6 +1,7 @@
 import {
   memo,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -9,6 +10,7 @@ import {
 } from 'react';
 import type {
   JsonValue,
+  ThreadImageArtifactReference,
   ThreadTrajectoryDetailReadResponse,
   ThreadTrajectoryModelInputPart,
   ThreadTrajectoryModelOutputPart,
@@ -17,9 +19,11 @@ import type {
   ThreadTrajectoryTimingSummary,
   ThreadTrajectoryUsageSummary,
 } from '../../../../core/agent/protocol';
+import type { PreviewTarget } from '../../../../core/preview';
 import { api } from '../../../api/client';
 import { useI18n, useT } from '../../../i18n/I18nProvider';
 import { formatNumber } from '../../../ui/formatting';
+import { usePreviewObjectUrl } from '../../../ui/preview/usePreviewObjectUrl';
 import {
   BackIcon,
   ChevronRightIcon,
@@ -243,6 +247,7 @@ export const TrajectoryInspector = memo(function TrajectoryInspector({
               onOpenRecord={onOpenRecord}
               record={resolvedRecord}
               tab={activeTab}
+              threadId={threadId}
               toolCallRecordIds={toolCallRecordIds}
             />
             <AvailabilityList record={resolvedRecord} />
@@ -259,6 +264,7 @@ function InspectorBody({
   onOpenRecord,
   record,
   tab,
+  threadId,
   toolCallRecordIds,
 }: {
   readonly detail: ThreadTrajectoryRecordDetail;
@@ -266,17 +272,27 @@ function InspectorBody({
   readonly onOpenRecord: (recordId: string) => void;
   readonly record: ThreadTrajectoryRecordSummary;
   readonly tab: InspectorTab;
+  readonly threadId: string;
   readonly toolCallRecordIds: ReadonlyMap<string, string>;
 }) {
   const t = useT();
+  const imageAttachments = modelImageAttachments(detail);
   if (tab === 'raw') {
     const parts = modelParts(detail);
     return parts
-      ? <RawPartsEvidence parts={parts} toolCallRecordIds={toolCallRecordIds} onOpenRecord={onOpenRecord} />
+      ? (
+        <RawPartsEvidence
+          imageAttachments={imageAttachments}
+          onOpenRecord={onOpenRecord}
+          parts={parts}
+          threadId={threadId}
+          toolCallRecordIds={toolCallRecordIds}
+        />
+      )
       : <JsonEvidence title={t.agent.trajectory.rawEvidence} value={detail} />;
   }
   if (tab === 'systemPrompt') {
-    return <TextEvidence title={t.agent.trajectory.systemPrompt} text={stablePromptText(detail)} />;
+    return <RawTextEvidence title={t.agent.trajectory.systemPrompt} text={stablePromptText(detail)} />;
   }
   if (tab === 'tools') {
     return <JsonEvidence title={t.agent.trajectory.tools} value={stablePromptTools(detail)} />;
@@ -285,7 +301,9 @@ function InspectorBody({
     return (
       <PreviewEvidence
         detail={detail}
+        imageAttachments={imageAttachments}
         onOpenRecord={onOpenRecord}
+        threadId={threadId}
         toolCallRecordIds={toolCallRecordIds}
       />
     );
@@ -297,7 +315,7 @@ function InspectorBody({
     return <JsonEvidence title={t.agent.trajectory.input} value={toolInput(detail)} />;
   }
   if (tab === 'output') {
-    return <TextEvidence title={t.agent.trajectory.output} text={toolOutput(detail)} />;
+    return <RawTextEvidence title={t.agent.trajectory.output} text={toolOutput(detail)} />;
   }
   if (tab === 'schema') {
     return <JsonEvidence title={t.agent.trajectory.schema} value={toolSchema(detail)} />;
@@ -305,9 +323,11 @@ function InspectorBody({
   return (
     <SummaryEvidence
       detail={detail}
+      imageAttachments={imageAttachments}
       onOpenChildTrajectory={onOpenChildTrajectory}
       onOpenRecord={onOpenRecord}
       record={record}
+      threadId={threadId}
       toolCallRecordIds={toolCallRecordIds}
     />
   );
@@ -315,15 +335,19 @@ function InspectorBody({
 
 function SummaryEvidence({
   detail,
+  imageAttachments,
   onOpenChildTrajectory,
   onOpenRecord,
   record,
+  threadId,
   toolCallRecordIds,
 }: {
   readonly detail: ThreadTrajectoryRecordDetail;
+  readonly imageAttachments: ReadonlyMap<string, TrajectoryImageAttachment>;
   readonly onOpenChildTrajectory: (threadId: string) => void;
   readonly onOpenRecord: (recordId: string) => void;
   readonly record: ThreadTrajectoryRecordSummary;
+  readonly threadId: string;
   readonly toolCallRecordIds: ReadonlyMap<string, string>;
 }) {
   const t = useT();
@@ -348,8 +372,10 @@ function SummaryEvidence({
       <InspectorSection title={t.agent.trajectory.preview}>
         <PreviewEvidence
           detail={detail}
+          imageAttachments={imageAttachments}
           compact
           onOpenRecord={onOpenRecord}
+          threadId={threadId}
           toolCallRecordIds={toolCallRecordIds}
         />
       </InspectorSection>
@@ -373,12 +399,16 @@ function SummaryEvidence({
 function PreviewEvidence({
   compact = false,
   detail,
+  imageAttachments,
   onOpenRecord,
+  threadId,
   toolCallRecordIds,
 }: {
   readonly compact?: boolean;
   readonly detail: ThreadTrajectoryRecordDetail;
+  readonly imageAttachments: ReadonlyMap<string, TrajectoryImageAttachment>;
   readonly onOpenRecord: (recordId: string) => void;
+  readonly threadId: string;
   readonly toolCallRecordIds: ReadonlyMap<string, string>;
 }) {
   const t = useT();
@@ -390,14 +420,24 @@ function PreviewEvidence({
     return (
       <ModelPartsPreview
         className={className}
+        compact={compact}
+        imageAttachments={imageAttachments}
         onOpenRecord={onOpenRecord}
         parts={parts}
         plainText={detail.kind === 'input'}
+        threadId={threadId}
         toolCallRecordIds={toolCallRecordIds}
       />
     );
   }
   const text = previewText(detail);
+  if (text && !compact && detail.kind === 'context') {
+    return (
+      <div className={className}>
+        <RawEvidenceBlock code={text} language="text" />
+      </div>
+    );
+  }
   return text ? (
     <div className={className}>
       {text}
@@ -409,33 +449,62 @@ function PreviewEvidence({
 
 type TrajectoryModelPart = ThreadTrajectoryModelInputPart | ThreadTrajectoryModelOutputPart;
 
+interface TrajectoryImageAttachment {
+  readonly artifactRef: ThreadImageArtifactReference;
+  readonly name: string;
+}
+
 function modelParts(detail: ThreadTrajectoryRecordDetail): readonly TrajectoryModelPart[] | null {
   if (detail.kind === 'input') return detail.modelInputParts;
   if (detail.kind === 'assistant') return detail.modelOutputParts;
   return null;
 }
 
+function modelImageAttachments(
+  detail: ThreadTrajectoryRecordDetail,
+): ReadonlyMap<string, TrajectoryImageAttachment> {
+  const attachments = new Map<string, TrajectoryImageAttachment>();
+  if (detail.kind !== 'input' || !detail.message) return attachments;
+  for (const content of detail.message.content) {
+    if (content.type !== 'attachment' || !content.artifactRef) continue;
+    attachments.set(content.artifactRef.observation.id, {
+      artifactRef: content.artifactRef,
+      name: content.name,
+    });
+  }
+  return attachments;
+}
+
 function ModelPartsPreview({
   className,
+  compact,
+  imageAttachments,
   onOpenRecord,
   parts,
   plainText,
+  threadId,
   toolCallRecordIds,
 }: {
   readonly className: string;
+  readonly compact: boolean;
+  readonly imageAttachments: ReadonlyMap<string, TrajectoryImageAttachment>;
   readonly onOpenRecord: (recordId: string) => void;
   readonly parts: readonly TrajectoryModelPart[];
   readonly plainText: boolean;
+  readonly threadId: string;
   readonly toolCallRecordIds: ReadonlyMap<string, string>;
 }) {
   return (
     <div className={`${className} thread-trajectory-parts-preview${plainText ? ' is-input' : ''}`}>
       {parts.map((part, index) => (
         <ModelPartPreview
+          compact={compact}
+          imageAttachment={part.type === 'image' && part.sha256 ? imageAttachments.get(part.sha256) : undefined}
           key={`${part.type}:${index}`}
           onOpenRecord={onOpenRecord}
           part={part}
           plainText={plainText}
+          threadId={threadId}
           toolCallRecordIds={toolCallRecordIds}
         />
       ))}
@@ -444,19 +513,26 @@ function ModelPartsPreview({
 }
 
 function ModelPartPreview({
+  compact,
+  imageAttachment,
   onOpenRecord,
   part,
   plainText,
+  threadId,
   toolCallRecordIds,
 }: {
+  readonly compact: boolean;
+  readonly imageAttachment?: TrajectoryImageAttachment;
   readonly onOpenRecord: (recordId: string) => void;
   readonly part: TrajectoryModelPart;
   readonly plainText: boolean;
+  readonly threadId: string;
   readonly toolCallRecordIds: ReadonlyMap<string, string>;
 }) {
   const t = useT();
   if (part.type === 'text') {
     if (plainText) {
+      if (!compact) return <RawEvidenceBlock code={part.text} language="text" />;
       return <pre className="thread-trajectory-part-text is-plain">{part.text}</pre>;
     }
     return (
@@ -508,7 +584,12 @@ function ModelPartPreview({
       <div className="thread-trajectory-part-tool">{content}</div>
     );
   }
-  if (part.type === 'image') return <ImagePartEvidence part={part} />;
+  if (part.type === 'image') {
+    return <ImagePartEvidence attachment={imageAttachment} part={part} threadId={threadId} />;
+  }
+  if (!compact) {
+    return <RawEvidenceBlock code={JSON.stringify(part.value, null, 2)} language="json" />;
+  }
   return (
     <section className="thread-trajectory-part-other">
       <span>{t.agent.trajectory.contentPart.other}</span>
@@ -517,17 +598,44 @@ function ModelPartPreview({
   );
 }
 
-function ImagePartEvidence({ part }: { readonly part: ThreadTrajectoryModelInputPart & { readonly type: 'image' } }) {
+function ImagePartEvidence({
+  attachment,
+  part,
+  threadId,
+}: {
+  readonly attachment?: TrajectoryImageAttachment;
+  readonly part: ThreadTrajectoryModelInputPart & { readonly type: 'image' };
+  readonly threadId: string;
+}) {
   const t = useT();
+  const artifactRef = attachment?.artifactRef ?? null;
+  const attachmentName = attachment?.name ?? null;
+  const target = useMemo<PreviewTarget | null>(() => artifactRef ? {
+    kind: 'local-file',
+    path: artifactRef.id,
+    entryKind: 'file',
+    label: attachmentName ?? undefined,
+    threadId,
+    imageArtifactRef: artifactRef,
+  } : null, [artifactRef, attachmentName, threadId]);
+  const preview = usePreviewObjectUrl(target, {
+    mimeType: part.mimeType ?? artifactRef?.observation.mimeType,
+  });
   const metadata = [
     part.mimeType,
     part.byteLength === null ? null : `${formatNumber(part.byteLength)} B`,
   ].filter((value): value is string => value !== null).join(' · ');
   return (
     <section className="thread-trajectory-part-image">
-      <ImageIcon aria-hidden="true" size={ICON_SIZE.menu} />
-      <div>
-        <strong>{t.agent.trajectory.contentPart.image}</strong>
+      {artifactRef ? (
+        <div className="thread-trajectory-part-image-media">
+          {preview.src
+            ? <img alt="" loading="lazy" src={preview.src} />
+            : <ImageIcon aria-hidden="true" size={ICON_SIZE.menu} />}
+        </div>
+      ) : <ImageIcon aria-hidden="true" size={ICON_SIZE.menu} />}
+      <div className="thread-trajectory-part-image-details">
+        <strong>{attachmentName ?? t.agent.trajectory.contentPart.image}</strong>
         {metadata ? <span>{metadata}</span> : null}
         {part.sha256 ? <code>sha256 {part.sha256}</code> : null}
       </div>
@@ -536,12 +644,16 @@ function ImagePartEvidence({ part }: { readonly part: ThreadTrajectoryModelInput
 }
 
 function RawPartsEvidence({
+  imageAttachments,
   onOpenRecord,
   parts,
+  threadId,
   toolCallRecordIds,
 }: {
+  readonly imageAttachments: ReadonlyMap<string, TrajectoryImageAttachment>;
   readonly onOpenRecord: (recordId: string) => void;
   readonly parts: readonly TrajectoryModelPart[];
+  readonly threadId: string;
   readonly toolCallRecordIds: ReadonlyMap<string, string>;
 }) {
   const t = useT();
@@ -569,7 +681,10 @@ function RawPartsEvidence({
                   {t.agent.trajectory.partNumber({ index: index + 1 })} · {label}
                 </div>
               )}
-              <pre>{JSON.stringify({ callId: part.callId, name: part.name, arguments: part.arguments }, null, 2)}</pre>
+              <RawEvidenceBlock
+                code={JSON.stringify({ callId: part.callId, name: part.name, arguments: part.arguments }, null, 2)}
+                language="json"
+              />
             </section>
           );
         }
@@ -579,8 +694,19 @@ function RawPartsEvidence({
               {t.agent.trajectory.partNumber({ index: index + 1 })} · {label}
             </div>
             {part.type === 'image'
-              ? <ImagePartEvidence part={part} />
-              : <pre>{part.type === 'other' ? JSON.stringify(part.value, null, 2) : part.text}</pre>}
+              ? (
+                <ImagePartEvidence
+                  attachment={part.sha256 ? imageAttachments.get(part.sha256) : undefined}
+                  part={part}
+                  threadId={threadId}
+                />
+              )
+              : (
+                <RawEvidenceBlock
+                  code={part.type === 'other' ? JSON.stringify(part.value, null, 2) : part.text}
+                  language={part.type === 'other' ? 'json' : 'text'}
+                />
+              )}
           </section>
         );
       })}
@@ -672,33 +798,44 @@ function AvailabilityList({ record }: { readonly record: ThreadTrajectoryRecordS
 
 function JsonEvidence({ title, value }: { readonly title: string; readonly value: unknown }) {
   const t = useT();
+  const code = value === null || value === undefined ? null : JSON.stringify(value, null, 2);
   return (
-    <div className="thread-trajectory-inspector-body">
+    <div className="thread-trajectory-inspector-body is-evidence-page">
       <h4>{title}</h4>
-      {value === null || value === undefined ? (
+      {code === null ? (
         <p className="thread-trajectory-note">{t.agent.trajectory.noRetainedEvidence}</p>
       ) : (
-        <ReadOnlyCodeBlock
-          className="thread-trajectory-code"
-          code={JSON.stringify(value, null, 2)}
-          language="json"
-        />
+        <RawEvidenceBlock code={code} language="json" />
       )}
     </div>
   );
 }
 
-function TextEvidence({ title, text }: { readonly title: string; readonly text: string | null }) {
+function RawTextEvidence({ title, text }: { readonly title: string; readonly text: string | null }) {
   const t = useT();
   return (
-    <div className="thread-trajectory-inspector-body">
+    <div className="thread-trajectory-inspector-body is-evidence-page">
       <h4>{title}</h4>
       {text ? (
-        <div className="thread-trajectory-preview">{text}</div>
+        <RawEvidenceBlock code={text} language={rawTextLanguage(text)} />
       ) : (
         <p className="thread-trajectory-note">{t.agent.trajectory.noRetainedEvidence}</p>
       )}
     </div>
+  );
+}
+
+function RawEvidenceBlock({ code, language }: { readonly code: string; readonly language: string }) {
+  const t = useT();
+  return (
+    <ReadOnlyCodeBlock
+      className="thread-trajectory-code"
+      code={code}
+      copyLabel={t.agent.trajectory.copyEvidence}
+      key={code}
+      language={language}
+      showLanguageLabel={false}
+    />
   );
 }
 
@@ -783,6 +920,17 @@ function toolOutput(detail: ThreadTrajectoryRecordDetail): string | null {
 
 function toolSchema(detail: ThreadTrajectoryRecordDetail): JsonValue | null {
   return detail.kind === 'tool' ? detail.schema : null;
+}
+
+function rawTextLanguage(text: string): 'json' | 'text' {
+  const candidate = text.trim();
+  if (!candidate || (candidate[0] !== '{' && candidate[0] !== '[')) return 'text';
+  try {
+    JSON.parse(candidate);
+    return 'json';
+  } catch {
+    return 'text';
+  }
 }
 
 function evidenceSource(record: ThreadTrajectoryRecordSummary, labels: TrajectoryLabels): string {

@@ -1090,7 +1090,24 @@ means Tenon's typed, bounded, credential-redacted evidence with captured
 filesystem paths preserved, not an unfiltered transport body. The Request tab
 is the consumed provider call's materialized post-adapter payload after
 credential redaction and binary omission; it is never folded into the USER
-preview. Input Preview uses the ordered provider-neutral prepared-message parts
+preview. System Prompt, full model-context Preview, structured Request, Tool
+Input, Tool Output, Schema, and textual Raw parts use the same bounded read-only
+evidence container with an explicit copy action. Copy returns the exact retained
+string shown for raw text; typed structured values are pretty-printed once and
+copy returns that exact visible serialization. Valid JSON raw text may receive
+syntax highlighting but is never reparsed and reserialized for display. Long
+lines wrap inside the container without changing copied content. A full Input
+Preview uses the same container independently for each text part, while its
+compact Summary keeps plain inline evidence and image evidence remains a typed
+metadata block. An Input image block replaces its placeholder icon with a real
+thumbnail only when the captured image digest exactly matches a retained
+canonical attachment's observation digest. The attachment name labels that
+block; a missing match or failed artifact read keeps the icon and captured MIME
+type, byte length, and digest metadata. Trajectory detail remains binary-free;
+matched thumbnails load separately through the bounded preview IPC.
+Final Assistant prose, compaction summaries, and delegation results remain
+reading surfaces; their exact typed parts stay available in Raw. Input Preview
+uses the ordered provider-neutral prepared-message parts
 captured before that adapter for the exact canonical `userMessage` Item.
 Diagnostics tag every `userInput` content part with its Item ID, so initial input
 and later steering can share a provider call without repeating or borrowing one
@@ -1102,7 +1119,10 @@ Node reference marker, image metadata, and explicit image-part marker while
 excluding image bytes and system-context parts. Canonical `ThreadUserContent` is
 Input Preview renders each ordered part as an independent block. Text parts use
 plain preformatted text and do not run Markdown or reference-marker rendering;
-image and unknown parts keep their own blocks at their captured positions.
+image and unknown parts keep their own blocks at their captured positions. Each
+matched image part reads its own retained artifact, so multiple images remain
+visually distinct without changing their captured order or treating thumbnail
+bytes as model-input evidence.
 Canonical `ThreadUserContent` is
 the Raw accepted-input evidence and never substitutes for missing prepared
 provider evidence in either the ledger or inspector Preview. Context Preview uses

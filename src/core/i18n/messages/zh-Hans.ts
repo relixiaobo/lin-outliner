@@ -1536,7 +1536,7 @@ export const zhHans: PartialMessages = {
       preview: '预览',
       request: '请求',
       raw: '原始数据',
-      rawEvidence: '已脱敏的类型化证据',
+      rawEvidence: '类型化证据',
       systemPrompt: '系统提示词',
       input: '输入',
       output: '输出',
@@ -1549,6 +1549,7 @@ export const zhHans: PartialMessages = {
       backToLedger: '返回轨迹记录',
       openChildTrajectory: '打开子线程轨迹',
       openToolCall: '打开工具调用记录',
+      copyEvidence: '复制原始内容',
       noRetainedEvidence: '没有保留的证据。',
       partNumber: ({ index }) => `Part ${index}`,
       contentPart: {

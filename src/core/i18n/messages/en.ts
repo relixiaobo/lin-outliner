@@ -1644,7 +1644,7 @@ export const en = {
       preview: 'Preview',
       request: 'Request',
       raw: 'Raw',
-      rawEvidence: 'Typed redacted evidence',
+      rawEvidence: 'Typed evidence',
       systemPrompt: 'System Prompt',
       input: 'Input',
       output: 'Output',
@@ -1657,6 +1657,7 @@ export const en = {
       backToLedger: 'Back to Trajectory ledger',
       openChildTrajectory: 'Open child Trajectory',
       openToolCall: 'Open tool call record',
+      copyEvidence: 'Copy raw content',
       noRetainedEvidence: 'No retained evidence.',
       partNumber: ({ index }: { index: number }) => `Part ${index}`,
       contentPart: {
