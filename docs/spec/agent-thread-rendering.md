@@ -1209,7 +1209,9 @@ so full, focus-by-Turn, focus-by-record, and detail reads cannot disagree about 
 stable-prompt or tool-catalog record. Structural page expansion walks only from
 covered records to their required ancestors; it never adds a parent's other
 children, and `replacementRange` continues to describe covered records before
-ancestor expansion. A live refresh without a cursor uses the inclusive
+ancestor expansion. Older/newer cursors use those same covered-record boundaries;
+an inserted ancestor never consumes pagination coverage or makes a sibling
+unreachable. A live refresh without a cursor uses the inclusive
 `startOrderKey` / `endOrderKey` in `replacementRange`. A running fallback outside
 that range is removed only when incoming primary or related evidence identifies
 the same canonical Thread Item; another record from the same Turn is insufficient.
@@ -1228,7 +1230,11 @@ collections are capped, and the complete serialized detail has a 64,000-byte
 hard ceiling. Typed discriminators and required envelope fields are never
 rewritten to satisfy the budget. Truncation adds `partialCoverage` to the detail
 response's record; if the hard ceiling is reached, the response keeps the valid
-typed envelope and omits its variable evidence. It never returns raw
+typed envelope and omits its variable evidence. A typed diagnostics activity is
+either retained with its original `type` discriminator or omitted as a whole;
+budget exhaustion never produces a partial activity that the response codec
+rejects. The complete detail-read response is checked against the hard ceiling
+after fallback construction. It never returns raw
 `Thread`, raw `Turn`, raw `ThreadItem`, a diagnostics payload path, digest-only
 payload authority, raw secrets, credentials, arbitrary response headers, image
 bytes, or unbounded content. Captured filesystem paths remain exact when they are
@@ -1245,7 +1251,11 @@ fields. Assistant Preview uses ordered typed parts extracted from that exact
 provider call's retained terminal provider-neutral response. Text, thinking,
 tool calls, image metadata, and bounded unknown blocks retain their original
 order; a tool call retains its call ID, name, and bounded credential-redacted
-model-issued arguments, including exact filesystem paths. Compaction Preview reads the retained compaction-summary payload on
+model-issued arguments, including exact filesystem paths. Normal provider
+tool-call IDs remain exact; an anomalous ID above the renderer identity ceiling
+uses one full SHA-256 identity in the Tool record, record ID, Assistant part, and
+detail lookup. This keeps the identity stable without allowing one provider
+string to bypass response bounds. Compaction Preview reads the retained compaction-summary payload on
 demand. A ledger row's bounded preview remains a locating aid and never fills an
 empty Inspector Preview, Tool Input, Tool Output, or Context field.
 The System Prompt tab and row preview use the captured provider-context prompt

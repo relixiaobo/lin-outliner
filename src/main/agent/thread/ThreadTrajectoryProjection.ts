@@ -58,6 +58,8 @@ const MAX_DETAIL_TEXT_LENGTH = 20_000;
 const MAX_DETAIL_EVIDENCE_BYTES = 40_000;
 const MAX_DETAIL_RESPONSE_BYTES = 64_000;
 const MAX_DETAIL_COLLECTION_LENGTH = 100;
+const MAX_TRAJECTORY_TOOL_CALL_ID_BYTES = 512;
+const TRAJECTORY_TOOL_CALL_DIGEST_PREFIX = 'tenon:tool-call:sha256:';
 const DETAIL_TRUNCATION_SUFFIX = '\n… [truncated]';
 const MAX_JSON_DEPTH = 16;
 const MAX_JSON_ARRAY_LENGTH = 500;
@@ -200,11 +202,7 @@ export class ThreadTrajectoryProjection {
     const loaded = built.turns.find((candidate) => candidate.turn.id === record.turnId) ?? null;
     if (!loaded) return { threadId: request.threadId, record, detail: null };
     const result = await this.detailForRecord(record, loaded);
-    return {
-      threadId: request.threadId,
-      record: withAvailability(record, result.availability),
-      detail: result.detail,
-    };
+    return boundedDetailReadResponse(request.threadId, record, result);
   }
 
   async exportBundle(threadId: ThreadId): Promise<ThreadTrajectoryExportBundle> {
@@ -622,6 +620,33 @@ function detailRead(
   };
 }
 
+function boundedDetailReadResponse(
+  threadId: ThreadId,
+  record: ThreadTrajectoryRecordSummary,
+  result: DetailReadResult,
+): ThreadTrajectoryDetailReadResponse {
+  const response: ThreadTrajectoryDetailReadResponse = {
+    threadId,
+    record: withAvailability(record, result.availability),
+    detail: result.detail,
+  };
+  if (serializedBytes(response) <= MAX_DETAIL_RESPONSE_BYTES) return response;
+
+  const availability = appendAvailability(result.availability, 'partialCoverage');
+  const fallback: ThreadTrajectoryDetailReadResponse = {
+    threadId,
+    record: withAvailability(record, availability),
+    detail: minimalTrajectoryDetailEvidence(result.detail),
+  };
+  return serializedBytes(fallback) <= MAX_DETAIL_RESPONSE_BYTES
+    ? fallback
+    : { threadId, record: null, detail: null };
+}
+
+function serializedBytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), 'utf8');
+}
+
 function createDetailEvidenceBudget(): DetailEvidenceBudget {
   return { remainingBytes: MAX_DETAIL_EVIDENCE_BYTES, truncated: false };
 }
@@ -802,12 +827,11 @@ function diagnosticsEvidence(
   budget?: DetailEvidenceBudget,
 ): ThreadTrajectoryDiagnosticsEvidence | null {
   if (!bundle) return null;
+  const activity = activityIndex === null ? null : bundle.payload.activities[activityIndex] ?? null;
   return {
     ref: bundle.ref,
     runtime: runtimeEvidence(bundle.payload.runtime),
-    activity: activityIndex === null
-      ? null
-      : sanitizeJsonEvidence(bundle.payload.activities[activityIndex] ?? null, budget),
+    activity: activity === null ? null : sanitizeTrajectoryActivityEvidence(activity, budget),
     providerCall: providerCallIndex === null
       ? null
       : providerCallDiagnosticsEvidence(
@@ -816,6 +840,23 @@ function diagnosticsEvidence(
         budget,
       ),
   };
+}
+
+function sanitizeTrajectoryActivityEvidence(
+  activity: TurnDiagnosticsPayload['activities'][number],
+  budget?: DetailEvidenceBudget,
+): JsonValue | null {
+  const evidence = sanitizeJsonEvidence(activity, budget);
+  if (
+    typeof evidence === 'object'
+    && evidence !== null
+    && !Array.isArray(evidence)
+    && (evidence as Readonly<Record<string, JsonValue>>).type === activity.type
+  ) {
+    return evidence;
+  }
+  if (budget) budget.truncated = true;
+  return null;
 }
 
 function runtimeEvidence(runtime: TurnDiagnosticsPayload['runtime']): ThreadTrajectoryRuntimeEvidence {
@@ -1170,8 +1211,8 @@ function modelOutputPartEvidence(
     const argumentsValue = record.arguments ?? record.args ?? record.input ?? null;
     return {
       type: 'toolCall',
-      callId: stringEvidence(record.id ?? record.callId ?? null),
-      name: stringEvidence(record.name ?? record.toolName ?? null),
+      callId: toolCallIdentityEvidence(record.id ?? record.callId ?? null),
+      name: stringEvidence(record.name ?? record.toolName ?? null, budget),
       arguments: argumentsValue === null ? null : sanitizeJsonEvidence(argumentsValue, budget),
     };
   }
@@ -1222,8 +1263,23 @@ function firstNonNegativeInteger(...values: readonly (JsonValue | undefined)[]):
   )) ?? null;
 }
 
-function stringEvidence(value: JsonValue | null): string | null {
-  return typeof value === 'string' ? sanitizeStringEvidence(value) : null;
+function stringEvidence(value: JsonValue | null, budget?: DetailEvidenceBudget): string | null {
+  return typeof value === 'string' ? sanitizeTextEvidence(value, budget) : null;
+}
+
+function toolCallIdentityEvidence(value: JsonValue | null): string | null {
+  return typeof value === 'string' ? trajectoryToolCallIdentity(value) : null;
+}
+
+function trajectoryToolCallIdentity(value: string): string {
+  if (
+    Buffer.byteLength(value, 'utf8') <= MAX_TRAJECTORY_TOOL_CALL_ID_BYTES
+    && !value.startsWith(TRAJECTORY_TOOL_CALL_DIGEST_PREFIX)
+  ) {
+    return value;
+  }
+  const digest = createHash('sha256').update(value, 'utf8').digest('hex');
+  return `${TRAJECTORY_TOOL_CALL_DIGEST_PREFIX}${digest}`;
 }
 
 function modelOutputPartsPreview(parts: readonly ThreadTrajectoryModelOutputPart[] | null): string | null {
@@ -1993,8 +2049,8 @@ function trajectoryPage(
 ): TrajectoryPage {
   const coveredRecords = records.slice(start, end);
   const data = expandStructuralRecords(records, start, end);
-  const first = data[0] ?? null;
-  const last = data.at(-1) ?? null;
+  const first = coveredRecords[0] ?? null;
+  const last = coveredRecords.at(-1) ?? null;
   const firstIndex = first ? records.findIndex((record) => record.id === first.id) : -1;
   const lastIndex = last ? records.findIndex((record) => record.id === last.id) : -1;
   const replacementRange = trajectoryReplacementRange(coveredRecords);
@@ -2184,7 +2240,7 @@ function toolExecutionEvidence(
     threadId,
     turnId: turn.id,
     activityIndex,
-    callId,
+    callId: trajectoryToolCallIdentity(callId),
   };
 }
 
@@ -2459,7 +2515,7 @@ function toolExecutionForRecord(
   if (activity?.type !== 'toolExecutionBatch') return null;
   const callId = toolExecutionCallId(record);
   if (!callId) return activity.executions.length === 1 ? activity.executions[0] ?? null : null;
-  return activity.executions.find((execution) => execution.callId === callId) ?? null;
+  return activity.executions.find((execution) => trajectoryToolCallIdentity(execution.callId) === callId) ?? null;
 }
 
 function toolSchemaEvidence(

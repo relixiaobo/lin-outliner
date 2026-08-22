@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, test } from 'bun:test';
 import { decodeAgentCoreResponse } from '../../src/core/agent/codec';
 import type {
@@ -891,6 +892,131 @@ describe('ThreadTrajectoryProjection', () => {
     expect(decodeAgentCoreResponse('thread/trajectory/detail/read', detail)).toEqual(detail);
   });
 
+  test('omits typed activities that cannot fit after earlier detail evidence', async () => {
+    const large = 'Evidence '.padEnd(19_000, 'x');
+    const inputText = 'Input '.padEnd(30_000, 'x');
+    const inputDiagnostics = inputEnvelopeDiagnostics();
+    const canonicalMessage = inputDiagnostics.canonicalMessages[0]!;
+    const inputProjection = trajectoryProjection({
+      diagnostics: {
+        ...inputDiagnostics,
+        canonicalMessages: [{
+          ...canonicalMessage,
+          value: {
+            role: 'user',
+            content: [{ type: 'input_text', text: inputText }],
+          },
+        }],
+      },
+      turn: {
+        ...inputEnvelopeTurn(),
+        items: inputEnvelopeTurn().items.map((item) => item.type === 'userMessage'
+          ? { ...item, content: [{ type: 'text' as const, text: inputText }] }
+          : item),
+      },
+    });
+    const inputRead = await inputProjection.read({ threadId: THREAD_ID, limit: 100 });
+    const inputRecord = inputRead.records.find((record) => record.kind === 'input');
+    if (!inputRecord) throw new Error('Expected Input record');
+
+    const inputDetail = await inputProjection.readDetail({
+      threadId: THREAD_ID,
+      recordId: inputRecord.id,
+    });
+    if (inputDetail.detail?.kind !== 'input') throw new Error('Expected Input detail');
+    expect(inputDetail.detail.diagnostics?.activity).toBeNull();
+    expect(inputDetail.record?.availability).toContainEqual({ reason: 'partialCoverage' });
+    expect(decodeAgentCoreResponse('thread/trajectory/detail/read', inputDetail)).toEqual(inputDetail);
+
+    const toolDiagnostics = trajectoryDiagnostics();
+    const batch = toolDiagnostics.activities.find((activity) => activity.type === 'toolExecutionBatch');
+    if (!batch || batch.type !== 'toolExecutionBatch') throw new Error('Expected tool batch');
+    const toolProjection = trajectoryProjection({
+      diagnostics: {
+        ...toolDiagnostics,
+        activities: [
+          toolDiagnostics.activities[0]!,
+          {
+            ...batch,
+            executions: [{ ...batch.executions[0]!, itemId: 'tool-large' }],
+          },
+        ],
+      },
+      turn: {
+        ...trajectoryTurn(),
+        items: [commandItem('tool-large', {
+          disposition: 'replayable',
+          identity: { namespace: null, name: 'first_tool' },
+          providerName: 'first_tool',
+          arguments: { storage: 'inline', value: { first: large, second: large, third: large } },
+          schemaDigest: '8'.repeat(64),
+        }, null)],
+      },
+    });
+    const toolRead = await toolProjection.read({ threadId: THREAD_ID, limit: 100 });
+    const toolRecord = toolRead.records.find((record) => record.kind === 'tool');
+    if (!toolRecord) throw new Error('Expected Tool record');
+
+    const toolDetail = await toolProjection.readDetail({ threadId: THREAD_ID, recordId: toolRecord.id });
+    if (toolDetail.detail?.kind !== 'tool') throw new Error('Expected Tool detail');
+    expect(toolDetail.detail.diagnostics?.activity).toBeNull();
+    expect(toolDetail.record?.availability).toContainEqual({ reason: 'partialCoverage' });
+    expect(decodeAgentCoreResponse('thread/trajectory/detail/read', toolDetail)).toEqual(toolDetail);
+  });
+
+  test('bounds oversized provider tool-call identities across list and detail evidence', async () => {
+    const callId = `call:${'x'.repeat(70_000)}`;
+    const expectedIdentity = `tenon:tool-call:sha256:${createHash('sha256').update(callId, 'utf8').digest('hex')}`;
+    const base = trajectoryDiagnostics();
+    const batch = base.activities.find((activity) => activity.type === 'toolExecutionBatch');
+    if (!batch || batch.type !== 'toolExecutionBatch') throw new Error('Expected tool batch');
+    const diagnostics: TurnDiagnosticsPayload = {
+      ...base,
+      providerCalls: [{
+        ...base.providerCalls[0]!,
+        response: {
+          ...base.providerCalls[0]!.response!,
+          value: {
+            role: 'assistant',
+            content: [{ type: 'toolCall', id: callId, name: 'first_tool', arguments: {} }],
+          },
+        },
+      }],
+      activities: [
+        base.activities[0]!,
+        { ...batch, executions: [{ ...batch.executions[0]!, callId, itemId: null }] },
+      ],
+    };
+    const projection = trajectoryProjection({ diagnostics });
+
+    const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    const tool = response.records.find((record) => record.kind === 'tool');
+    if (!tool || tool.primaryEvidence.type !== 'toolExecution') throw new Error('Expected Tool record');
+    expect(tool.primaryEvidence.callId).toBe(expectedIdentity);
+    expect(tool.id).toContain(encodeURIComponent(expectedIdentity));
+    expect(Buffer.byteLength(JSON.stringify(response), 'utf8')).toBeLessThanOrEqual(64_000);
+    expect(decodeAgentCoreResponse('thread/trajectory/read', response)).toEqual(response);
+
+    const toolDetail = await projection.readDetail({ threadId: THREAD_ID, recordId: tool.id });
+    if (toolDetail.detail?.kind !== 'tool') throw new Error('Expected Tool detail');
+    expect(toolDetail.detail.executionCallId).toBe(expectedIdentity);
+    expect(Buffer.byteLength(JSON.stringify(toolDetail), 'utf8')).toBeLessThanOrEqual(64_000);
+    expect(decodeAgentCoreResponse('thread/trajectory/detail/read', toolDetail)).toEqual(toolDetail);
+
+    const assistant = response.records.find((record) => record.kind === 'assistant');
+    if (!assistant) throw new Error('Expected Assistant record');
+    const assistantDetail = await projection.readDetail({ threadId: THREAD_ID, recordId: assistant.id });
+    if (assistantDetail.detail?.kind !== 'assistant') throw new Error('Expected Assistant detail');
+    expect(assistantDetail.detail.modelOutputParts).toContainEqual({
+      type: 'toolCall',
+      callId: expectedIdentity,
+      name: 'first_tool',
+      arguments: {},
+    });
+    expect(Buffer.byteLength(JSON.stringify(assistantDetail), 'utf8')).toBeLessThanOrEqual(64_000);
+    expect(decodeAgentCoreResponse('thread/trajectory/detail/read', assistantDetail)).toEqual(assistantDetail);
+  });
+
   test('projects active in-memory diagnostics before the Turn has a final diagnostics reference', async () => {
     const activeTurn = {
       ...trajectoryTurn(),
@@ -1185,6 +1311,37 @@ describe('ThreadTrajectoryProjection', () => {
     expect(childPage.replacementRange).toEqual(replacementRangeForRecords([
       childPage.records.find((record) => record.id === firstToolId)!,
     ]));
+
+    const expandedBatch = diagnostics.activities[1];
+    if (expandedBatch?.type !== 'toolExecutionBatch') throw new Error('Expected expanded tool batch');
+    const traversalDiagnostics: TurnDiagnosticsPayload = {
+      ...diagnostics,
+      activities: [
+        diagnostics.activities[0]!,
+        {
+          ...expandedBatch,
+          executions: expandedBatch.executions.slice(0, 3),
+        },
+      ],
+    };
+    const traversalProjection = trajectoryProjection({ diagnostics: traversalDiagnostics });
+    const visitedToolIds: string[] = [];
+    let cursor: string | null = null;
+    for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
+      const page = await traversalProjection.read({
+        threadId: THREAD_ID,
+        limit: 1,
+        ...(cursor === null ? {} : { cursor }),
+      });
+      visitedToolIds.push(...page.records.filter((record) => record.kind === 'tool').map((record) => record.id));
+      cursor = page.olderCursor;
+      if (cursor === null) break;
+    }
+    expect(visitedToolIds).toEqual([
+      `turn:${TURN_ID}:tool:1:${encodeURIComponent('call:2')}`,
+      `turn:${TURN_ID}:tool:1:${encodeURIComponent('call:1')}`,
+      `turn:${TURN_ID}:tool:1:${encodeURIComponent('call:0')}`,
+    ]);
   });
 
   test('keeps an existing Assistant order key when active diagnostics add a changed tool catalog', async () => {

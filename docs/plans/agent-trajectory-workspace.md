@@ -369,7 +369,11 @@ typed detail envelope; parts never replace the message, diagnostics, request,
 response, runtime, or related-item evidence around them. All variable evidence
 inside one detail read shares one response budget, required typed envelope fields
 remain valid, and a hard serialized response ceiling degrades excess evidence to
-typed partial coverage.
+typed partial coverage. Budget exhaustion omits a typed diagnostics activity
+instead of returning it without its required discriminator, and the complete
+detail response is checked again after fallback. Normal tool-call IDs remain
+exact; anomalously oversized IDs use one stable SHA-256 identity consistently
+across the ledger, model parts, and detail lookup.
 System Prompt, full model-context Preview, structured Request, Tool Input, Tool
 Output, Schema, and textual Raw parts share one bounded read-only evidence
 container with an explicit copy action. The container preserves the displayed
@@ -471,7 +475,8 @@ the feature. Current behavior is folded into `agent-core.md`,
   selection and measured scroll position through stable record identities. Page
   expansion adds only ancestors required by covered records, and live refresh
   removes an out-of-range fallback only when incoming canonical evidence names
-  the same Thread Item.
+  the same Thread Item. Pagination cursors remain anchored to the covered records,
+  never to ancestors inserted only for structural rendering.
 - The timeline preserves recorded order, shows no fabricated duration, and keeps
   selection and search matches synchronized with the ledger.
 - The renderer and export never receive credentials, raw recognized secrets,
