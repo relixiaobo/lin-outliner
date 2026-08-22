@@ -118,7 +118,12 @@ export function ThreadTrajectoryPanel({
         ? response.records
         : loadingOlderPage || loadingNewerPage
           ? mergeRecords(current, response.records)
-          : replaceRecordsForIncomingWindow(current, response.records, response.replacementRange);
+          : replaceRecordsForIncomingWindow(
+            current,
+            response.records,
+            response.replacementRange,
+            response.summary.turnCount,
+          );
       recordsRef.current = nextRecords;
       setPage(response);
       setRecords(nextRecords);
@@ -413,6 +418,7 @@ function replaceRecordsForIncomingWindow(
   current: readonly ThreadTrajectoryRecordSummary[],
   incoming: readonly ThreadTrajectoryRecordSummary[],
   replacementRange: ThreadTrajectoryReplacementRange | null,
+  canonicalTurnCount: number,
 ): readonly ThreadTrajectoryRecordSummary[] {
   if (!replacementRange) return incoming;
   const incomingIds = new Set(incoming.map((record) => record.id));
@@ -425,6 +431,7 @@ function replaceRecordsForIncomingWindow(
   return mergeRecords(
     current.filter((record) => (
       !incomingIds.has(record.id)
+      && record.turnIndex < canonicalTurnCount
       && !orderKeyInRange(record.orderKey, replacementRange)
       && !staleTurnPositionRecord(record, canonicalTurnIds)
       && !staleFallbackRecord(record, replacedThreadItems)

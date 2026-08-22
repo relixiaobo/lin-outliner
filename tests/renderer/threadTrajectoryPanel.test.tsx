@@ -582,6 +582,82 @@ describe('ThreadTrajectoryPanel', () => {
     expect(rendered.document.querySelectorAll('.thread-trajectory-turn-label')).toHaveLength(1);
   });
 
+  test('removes loaded suffix records after a multi-Turn rollback', async () => {
+    const replacementTurnSevenId = '01910000-0000-7000-8000-000000000018';
+    const retiredTurn = (turnIdValue: string, turnIndex: number) => record({
+      id: `turn:${turnIdValue}:assistant:1`,
+      kind: 'assistant',
+      lane: 'assistant',
+      turnId: turnIdValue,
+      turnIndex,
+      stepIndex: 1,
+      label: { type: 'assistantCall', callIndex: 1 },
+      primaryEvidence: {
+        type: 'providerCall',
+        threadId: THREAD_ID,
+        turnId: turnIdValue,
+        callIndex: 1,
+      },
+    });
+    const retiredTurns = [
+      retiredTurn('01910000-0000-7000-8000-000000000015', 6),
+      retiredTurn('01910000-0000-7000-8000-000000000016', 7),
+      retiredTurn('01910000-0000-7000-8000-000000000017', 8),
+    ];
+    const replacementTurnSeven = record({
+      id: `turn:${replacementTurnSevenId}:input:item:user-message`,
+      kind: 'input',
+      lane: 'input',
+      turnId: replacementTurnSevenId,
+      turnIndex: 6,
+      stepIndex: 1,
+      label: { type: 'input', source: 'initial' },
+      preview: 'Replacement after rolling back three Turns',
+      primaryEvidence: {
+        type: 'threadItem',
+        threadId: THREAD_ID,
+        turnId: replacementTurnSevenId,
+        itemId: 'user-message',
+      },
+    });
+    let readCount = 0;
+    const rendered = renderPanel(async (method) => {
+      if (method === 'thread/trajectory/read') {
+        readCount += 1;
+        return readCount === 1
+          ? trajectoryReadResponse(retiredTurns)
+          : trajectoryReadResponse([replacementTurnSeven], null, {
+            replacementRange: {
+              startOrderKey: replacementTurnSeven.orderKey,
+              endOrderKey: replacementTurnSeven.orderKey,
+            },
+          });
+      }
+      if (method === 'thread/trajectory/detail/read') return assistantDetailResponse();
+      throw new Error(`Unexpected Agent Core method: ${method}`);
+    });
+
+    rendered.render();
+    await flush();
+    expect(rendered.document.querySelectorAll('.thread-trajectory-turn-label')).toHaveLength(3);
+
+    rendered.notify({
+      type: 'turn/completed',
+      threadId: THREAD_ID,
+      turnId: replacementTurnSevenId,
+      turn: {} as never,
+    });
+    await wait(150);
+    await flush();
+
+    for (const retired of retiredTurns) {
+      expect(recordRowOrNull(rendered.document, retired.id)).toBeNull();
+    }
+    expect(recordRow(rendered.document, replacementTurnSeven.id).textContent)
+      .toContain('Replacement after rolling back three Turns');
+    expect(rendered.document.querySelectorAll('.thread-trajectory-turn-label')).toHaveLength(1);
+  });
+
   test('renders provider-visible tool catalog records as first-class Tools evidence', async () => {
     const toolCatalog = record({
       id: TOOL_CATALOG_ID,
@@ -1499,7 +1575,10 @@ function trajectoryReadResponse(
     threadId: THREAD_ID,
     summary: {
       threadId: THREAD_ID,
-      turnCount: records.length === 0 ? 0 : 1,
+      turnCount: records.reduce(
+        (count, record) => Math.max(count, record.turnIndex + 1),
+        0,
+      ),
       startedAt: records.length === 0 ? null : 100,
       completedAt: records.length === 0 ? null : 220,
       durationMs: records.length === 0 ? null : 120,

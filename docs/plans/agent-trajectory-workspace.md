@@ -478,7 +478,9 @@ the feature. Current behavior is folded into `agent-core.md`,
   the same Thread Item. Pagination cursors remain anchored to the covered records,
   never to ancestors inserted only for structural rendering. A live canonical
   Turn replacement retires every loaded record carrying the prior Turn ID at that
-  zero-based Turn position, including retry records outside the refresh range.
+  zero-based Turn position, including retry records outside the refresh range;
+  a cursorless refresh also removes every loaded record at or beyond the
+  authoritative whole-Thread `summary.turnCount` after a multi-Turn rollback.
 - The timeline preserves recorded order, shows no fabricated duration, and keeps
   selection and search matches synchronized with the ledger.
 - The renderer and export never receive credentials, raw recognized secrets,

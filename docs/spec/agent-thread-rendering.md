@@ -1219,6 +1219,9 @@ Each canonical zero-based Turn position has exactly one Turn ID. When retry or
 rollback replaces the Turn at a position, a live refresh removes every loaded
 record from the retired Turn ID, including retry activities beyond the incoming
 order-key range, so two different Turns can never render with the same Turn label.
+The same cursorless refresh treats whole-Thread `summary.turnCount` as the
+canonical suffix boundary and removes loaded records whose `turnIndex` is no
+longer within that boundary after a multi-Turn rollback.
 Record labels are a typed semantic union and are localized only in renderer; main
 never emits interface prose.
 
