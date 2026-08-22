@@ -1087,7 +1087,11 @@ Request / Raw; Tool uses Summary / Input / Output / Schema / Raw; Retry,
 Compaction, and Delegation use Summary /
 Preview / Raw, and Delegation can open the child Thread's own Trajectory. Raw
 means Tenon's typed, bounded, credential-redacted evidence with captured
-filesystem paths preserved, not an unfiltered transport body. The Request tab
+filesystem paths preserved, not an unfiltered transport body. For Input and
+Assistant details, Raw renders ordered typed model parts first and then the
+complete typed detail envelope; the part view never replaces canonical message,
+diagnostics, provider request/response, runtime, call-index, or related-item
+evidence. The Request tab
 is the consumed provider call's materialized post-adapter payload after
 credential redaction and binary omission; it is never folded into the USER
 preview. System Prompt, full model-context Preview, structured Request, Tool
@@ -1199,18 +1203,32 @@ record. For a bounded window, main materializes at most one predecessor Turn
 solely to restore stable-prompt and tool-catalog fingerprints; that predecessor
 contributes no returned records. If its diagnostics are unavailable, the
 boundary state is unknown and the first visible structural snapshot is not
-mislabeled as initial. A live refresh without a cursor uses the inclusive
-`startOrderKey` / `endOrderKey` in `replacementRange` plus same-Turn fallback
-cleanup to remove stale running fallback rows without deleting already loaded
-completed records from the same Turn. Record labels are a typed semantic union
-and are localized only in renderer; main never emits interface prose.
+mislabeled as initial. A missing diagnostics payload anywhere in a materialized
+window also resets both structural fingerprints to unknown before the next Turn,
+so full, focus-by-Turn, focus-by-record, and detail reads cannot disagree about a
+stable-prompt or tool-catalog record. Structural page expansion walks only from
+covered records to their required ancestors; it never adds a parent's other
+children, and `replacementRange` continues to describe covered records before
+ancestor expansion. A live refresh without a cursor uses the inclusive
+`startOrderKey` / `endOrderKey` in `replacementRange`. A running fallback outside
+that range is removed only when incoming primary or related evidence identifies
+the same canonical Thread Item; another record from the same Turn is insufficient.
+Record labels are a typed semantic union and are localized only in renderer; main
+never emits interface prose.
 
 Record details are lazy. `thread/trajectory/detail/read` returns the selected
 record plus sanitized detail evidence only. Main locates the owning Turn first
 and reads only that Turn's diagnostics for detail materialization. Returned
 evidence is bounded Turn evidence, bounded Item evidence, sanitized runtime
 facts, sanitized activity/provider-call request and response values, sanitized
-context payloads, and sanitized/truncated tool output. It never returns raw
+context payloads, and sanitized/truncated tool output. Every variable evidence
+field in that typed detail shares one 40,000-byte budget, including JSON keys,
+nodes, and string leaves; individual strings retain a 20,000-character ceiling,
+collections are capped, and the complete serialized detail has a 64,000-byte
+hard ceiling. Typed discriminators and required envelope fields are never
+rewritten to satisfy the budget. Truncation adds `partialCoverage` to the detail
+response's record; if the hard ceiling is reached, the response keeps the valid
+typed envelope and omits its variable evidence. It never returns raw
 `Thread`, raw `Turn`, raw `ThreadItem`, a diagnostics payload path, digest-only
 payload authority, raw secrets, credentials, arbitrary response headers, image
 bytes, or unbounded content. Captured filesystem paths remain exact when they are

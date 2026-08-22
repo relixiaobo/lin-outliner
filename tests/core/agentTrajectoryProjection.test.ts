@@ -840,6 +840,55 @@ describe('ThreadTrajectoryProjection', () => {
     expect(response.records.some((record) => record.kind === 'assistant')).toBe(true);
     expect(response.records.some((record) => record.primaryEvidence.type === 'toolCatalog')).toBe(true);
     expect(decodeAgentCoreResponse('thread/trajectory/read', response)).toEqual(response);
+
+    const system = response.records.find((record) => record.primaryEvidence.type === 'stablePrompt');
+    if (!system) throw new Error('Expected System Prompt record');
+    const detail = await projection.readDetail({ threadId: THREAD_ID, recordId: system.id });
+    const serialized = JSON.stringify(detail);
+
+    expect(serialized).toContain('… [truncated]');
+    expect(Buffer.byteLength(serialized, 'utf8')).toBeLessThanOrEqual(64_000);
+    expect(detail.record?.availability).toContainEqual({ reason: 'partialCoverage' });
+    expect(decodeAgentCoreResponse('thread/trajectory/detail/read', detail)).toEqual(detail);
+  });
+
+  test('shares one response budget across multiple large detail evidence leaves', async () => {
+    const base = trajectoryDiagnostics();
+    const large = 'Evidence '.padEnd(19_000, 'x');
+    const diagnostics: TurnDiagnosticsPayload = {
+      ...base,
+      providerCalls: [{
+        ...base.providerCalls[0]!,
+        request: {
+          kind: 'value',
+          value: { first: large, second: large, third: large },
+        },
+        response: {
+          ...base.providerCalls[0]!.response!,
+          value: {
+            role: 'assistant',
+            content: [
+              { type: 'text', text: large },
+              { type: 'text', text: large },
+              { type: 'text', text: large },
+            ],
+          },
+        },
+      }],
+    };
+    const projection = trajectoryProjection({ diagnostics });
+    const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    const assistant = response.records.find((record) => record.kind === 'assistant');
+    if (!assistant) throw new Error('Expected Assistant record');
+
+    const detail = await projection.readDetail({ threadId: THREAD_ID, recordId: assistant.id });
+    const serialized = JSON.stringify(detail);
+
+    expect(detail.detail?.kind).toBe('assistant');
+    expect(serialized).toContain('… [truncated]');
+    expect(Buffer.byteLength(serialized, 'utf8')).toBeLessThanOrEqual(64_000);
+    expect(detail.record?.availability).toContainEqual({ reason: 'partialCoverage' });
+    expect(decodeAgentCoreResponse('thread/trajectory/detail/read', detail)).toEqual(detail);
   });
 
   test('projects active in-memory diagnostics before the Turn has a final diagnostics reference', async () => {
@@ -1041,6 +1090,101 @@ describe('ThreadTrajectoryProjection', () => {
 
     expect(structuralLabels(focused)).toEqual(structuralLabels(full));
     expect(structuralLabels(focused)).toEqual([]);
+  });
+
+  test('treats structural state after a diagnostics gap consistently in every read mode', async () => {
+    const turns = Array.from({ length: 4 }, (_, index) => trajectoryTurnWithDiagnosticsRef(index));
+    const diagnosticsByRef = new Map([
+      [turns[0]!.execution.diagnosticsRef!.id, structuralDiagnostics('a')],
+      [turns[2]!.execution.diagnosticsRef!.id, structuralDiagnostics('b')],
+      [turns[3]!.execution.diagnosticsRef!.id, structuralDiagnostics('c')],
+    ]);
+    const projection = trajectoryProjection({ turns, diagnosticsByRef });
+    const afterGap = turns[2]!;
+    const afterKnownBaseline = turns[3]!;
+    const structuralRecords = (response: ThreadTrajectoryReadResponse, turnId: string) => response.records
+      .filter((record) => record.turnId === turnId)
+      .filter((record) => record.primaryEvidence.type === 'stablePrompt'
+        || record.primaryEvidence.type === 'toolCatalog');
+
+    const full = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    const focusedByTurn = await projection.read({
+      threadId: THREAD_ID,
+      limit: 1,
+      focus: { turnId: afterGap.id },
+    });
+    const missingStructuralId = `turn:${afterGap.id}:context:tools:0`;
+    const focusedByRecord = await projection.read({
+      threadId: THREAD_ID,
+      limit: 1,
+      focus: { recordId: missingStructuralId },
+    });
+    const missingDetail = await projection.readDetail({
+      threadId: THREAD_ID,
+      recordId: missingStructuralId,
+    });
+
+    expect(structuralRecords(full, afterGap.id)).toEqual([]);
+    expect(structuralRecords(focusedByTurn, afterGap.id)).toEqual([]);
+    expect(structuralRecords(focusedByRecord, afterGap.id)).toEqual([]);
+    expect(missingDetail).toEqual({ threadId: THREAD_ID, record: null, detail: null });
+
+    const visibleStructural = structuralRecords(full, afterKnownBaseline.id);
+    expect(visibleStructural.map((record) => record.label.type).sort()).toEqual(['systemPrompt', 'toolCatalog']);
+    for (const record of visibleStructural) {
+      const focused = await projection.read({
+        threadId: THREAD_ID,
+        limit: 1,
+        focus: { recordId: record.id },
+      });
+      const detail = await projection.readDetail({ threadId: THREAD_ID, recordId: record.id });
+      expect(focused.records.some((candidate) => candidate.id === record.id)).toBe(true);
+      expect(detail.record?.id).toBe(record.id);
+      expect(detail.detail).not.toBeNull();
+    }
+  });
+
+  test('expands only required ancestors without returning structural siblings beyond the limit', async () => {
+    const base = trajectoryDiagnostics();
+    const batch = base.activities.find((activity) => activity.type === 'toolExecutionBatch');
+    if (!batch || batch.type !== 'toolExecutionBatch') throw new Error('Expected tool batch');
+    const diagnostics: TurnDiagnosticsPayload = {
+      ...base,
+      activities: [
+        { type: 'modelCall', callIndex: 0 },
+        {
+          ...batch,
+          executions: Array.from({ length: 300 }, (_, index) => ({
+            ...batch.executions[0]!,
+            callId: `call:${index}`,
+            toolName: 'first_tool',
+            itemId: null,
+          })),
+        },
+      ],
+    };
+    const projection = trajectoryProjection({ diagnostics });
+    const assistantId = `turn:${TURN_ID}:assistant:0`;
+    const firstToolId = `turn:${TURN_ID}:tool:1:${encodeURIComponent('call:0')}`;
+    const secondToolId = `turn:${TURN_ID}:tool:1:${encodeURIComponent('call:1')}`;
+
+    const parentPage = await projection.read({
+      threadId: THREAD_ID,
+      limit: 1,
+      cursor: `before:${encodeURIComponent(firstToolId)}`,
+    });
+    expect(parentPage.records.map((record) => record.id)).toEqual([assistantId]);
+    expect(parentPage.replacementRange).toEqual(replacementRangeForRecords(parentPage.records));
+
+    const childPage = await projection.read({
+      threadId: THREAD_ID,
+      limit: 1,
+      cursor: `before:${encodeURIComponent(secondToolId)}`,
+    });
+    expect(childPage.records.map((record) => record.id)).toEqual([assistantId, firstToolId]);
+    expect(childPage.replacementRange).toEqual(replacementRangeForRecords([
+      childPage.records.find((record) => record.id === firstToolId)!,
+    ]));
   });
 
   test('keeps an existing Assistant order key when active diagnostics add a changed tool catalog', async () => {
@@ -1546,6 +1690,46 @@ function trajectoryDiagnostics(): TurnDiagnosticsPayload {
         ],
       },
     ],
+  };
+}
+
+function structuralDiagnostics(version: string): TurnDiagnosticsPayload {
+  const base = trajectoryDiagnostics();
+  const toolName = `tool_${version}`;
+  return {
+    ...base,
+    configuration: {
+      ...base.configuration,
+      tools: [toolName],
+    },
+    stablePrompt: {
+      blocks: [{
+        id: 'system',
+        layer: 'L0',
+        text: `System instructions ${version}`,
+        fingerprint: `block-${version}`,
+      }],
+      fingerprints: {
+        l0: `l0-${version}`,
+        l1: `l1-${version}`,
+        l2: `l2-${version}`,
+        complete: `complete-${version}`,
+      },
+    },
+    toolSchemas: [{
+      name: toolName,
+      description: `Tool ${version}`,
+      parameters: { type: 'object' },
+    }],
+    requestFragments: [{ id: 'system', value: `System instructions ${version}` }],
+    providerCalls: [{
+      ...base.providerCalls[0]!,
+      preparedContext: {
+        ...base.providerCalls[0]!.preparedContext,
+        toolNames: [toolName],
+      },
+      requestFingerprint: version.repeat(64).slice(0, 64),
+    }],
   };
 }
 

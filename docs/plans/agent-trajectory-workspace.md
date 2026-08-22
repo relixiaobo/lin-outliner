@@ -354,7 +354,9 @@ Bounded reads may materialize one predecessor Turn to restore the stable-prompt
 and tool-catalog fingerprints at the requested boundary. Its evidence never
 appears in the response. When predecessor diagnostics are unavailable, the
 boundary state is unknown and the first visible snapshot is not presented as an
-initial prompt or catalog.
+initial prompt or catalog. A diagnostics gap inside a larger window also resets
+both fingerprints to unknown, so full, focused, and detail reads classify the
+following structural snapshots identically.
 
 The Assistant inspector may title the backing evidence as a Model Call because
 the details are provider-call diagnostics. That title is evidence vocabulary,
@@ -362,6 +364,12 @@ not a top-level ledger kind. Large content and syntax presentation mount lazily.
 Raw means Tenon's typed, bounded, credential-redacted diagnostic representation,
 with captured filesystem paths preserved. It never
 means an unrecorded HTTP body, arbitrary headers, image bytes, or credentials.
+When typed model parts exist, Raw presents those parts first and then the complete
+typed detail envelope; parts never replace the message, diagnostics, request,
+response, runtime, or related-item evidence around them. All variable evidence
+inside one detail read shares one response budget, required typed envelope fields
+remain valid, and a hard serialized response ceiling degrades excess evidence to
+typed partial coverage.
 System Prompt, full model-context Preview, structured Request, Tool Input, Tool
 Output, Schema, and textual Raw parts share one bounded read-only evidence
 container with an explicit copy action. The container preserves the displayed
@@ -460,7 +468,10 @@ the feature. Current behavior is folded into `agent-core.md`,
 - Selecting a record exposes only applicable tabs and lazily reads large detail.
   Missing inspection evidence degrades locally and never removes the record.
 - Older-page prepend, streaming replacement, search clearing, and folds preserve
-  selection and measured scroll position through stable record identities.
+  selection and measured scroll position through stable record identities. Page
+  expansion adds only ancestors required by covered records, and live refresh
+  removes an out-of-range fallback only when incoming canonical evidence names
+  the same Thread Item.
 - The timeline preserves recorded order, shows no fabricated duration, and keeps
   selection and search matches synchronized with the ledger.
 - The renderer and export never receive credentials, raw recognized secrets,

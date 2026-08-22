@@ -88,7 +88,12 @@ describe('ThreadTrajectoryPanel', () => {
 
     clickButton(rendered.document, 'Raw');
     expect(rendered.document.body.textContent).toContain('Part 1 · TextMock response');
-    expect(rendered.document.body.textContent).not.toContain('Read /Users/example/project');
+    expect(rendered.document.body.textContent).toContain('Typed evidence');
+    expect(rendered.document.body.textContent).toContain('Read /Users/example/project');
+    expect(rendered.document.body.textContent).toContain('Mock response');
+    expect(rendered.document.querySelectorAll(
+      '.thread-trajectory-inspector .thread-trajectory-inspector-body',
+    )).toHaveLength(1);
     expect(rendered.document.querySelector('.thread-trajectory-raw-part > .thread-trajectory-code'))
       .not.toBeNull();
 
@@ -307,6 +312,7 @@ describe('ThreadTrajectoryPanel', () => {
       stepIndex: 4,
       label: { type: 'tool', name: 'Older tool' },
       preview: 'Loaded older evidence',
+      state: 'running',
       primaryEvidence: {
         type: 'threadItem',
         threadId: THREAD_ID,
@@ -439,6 +445,12 @@ describe('ThreadTrajectoryPanel', () => {
         activityIndex: 2,
         callId: 'call:read',
       },
+      relatedEvidence: [{
+        type: 'threadItem',
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        itemId: 'stale-tool',
+      }],
     });
     let readCount = 0;
     const rendered = renderPanel(async (method) => {
@@ -1481,6 +1493,12 @@ function trajectoryRecords(): readonly ThreadTrajectoryRecordSummary[] {
         activityIndex: 2,
         callId: 'call:read',
       },
+      relatedEvidence: [{
+        type: 'threadItem',
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        itemId: 'running-tool',
+      }],
     }),
   ];
 }

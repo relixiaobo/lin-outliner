@@ -564,7 +564,8 @@ test.describe('canonical agent Thread surface', () => {
     const trajectoryInspector = trajectory.locator('.thread-trajectory-inspector');
     await expect(trajectoryInspector).toContainText('Part 1 · Text');
     await expect(trajectoryInspector).toContainText('Mock response');
-    await expect(trajectoryInspector).not.toContainText('Mock request');
+    await expect(trajectoryInspector).toContainText('Typed evidence');
+    await expect(trajectoryInspector).toContainText('Mock request');
     await trajectory.getByRole('tab', { name: 'Request' }).click();
     await expect(trajectoryInspector).toContainText('Mock request');
 

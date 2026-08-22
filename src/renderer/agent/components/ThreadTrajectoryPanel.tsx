@@ -416,12 +416,16 @@ function replaceRecordsForIncomingWindow(
 ): readonly ThreadTrajectoryRecordSummary[] {
   if (!replacementRange) return incoming;
   const incomingIds = new Set(incoming.map((record) => record.id));
-  const incomingTurnIds = new Set(incoming.map((record) => record.turnId));
+  const replacedThreadItems = new Set(incoming.flatMap((record) => (
+    [record.primaryEvidence, ...record.relatedEvidence]
+      .filter((evidence) => evidence.type === 'threadItem')
+      .map((evidence) => `${evidence.turnId}:${evidence.itemId}`)
+  )));
   return mergeRecords(
     current.filter((record) => (
       !incomingIds.has(record.id)
       && !orderKeyInRange(record.orderKey, replacementRange)
-      && !staleFallbackRecord(record, incomingTurnIds)
+      && !staleFallbackRecord(record, replacedThreadItems)
     )),
     incoming,
   );
@@ -429,11 +433,12 @@ function replaceRecordsForIncomingWindow(
 
 function staleFallbackRecord(
   record: ThreadTrajectoryRecordSummary,
-  incomingTurnIds: ReadonlySet<string>,
+  replacedThreadItems: ReadonlySet<string>,
 ): boolean {
-  return incomingTurnIds.has(record.turnId)
+  const evidence = record.primaryEvidence;
+  return evidence.type === 'threadItem'
     && record.state !== 'completed'
-    && record.primaryEvidence.type === 'threadItem';
+    && replacedThreadItems.has(`${evidence.turnId}:${evidence.itemId}`);
 }
 
 function orderKeyInRange(orderKey: string, range: ThreadTrajectoryReplacementRange): boolean {

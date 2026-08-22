@@ -279,17 +279,20 @@ function InspectorBody({
   const imageAttachments = modelImageAttachments(detail);
   if (tab === 'raw') {
     const parts = modelParts(detail);
-    return parts
-      ? (
-        <RawPartsEvidence
-          imageAttachments={imageAttachments}
-          onOpenRecord={onOpenRecord}
-          parts={parts}
-          threadId={threadId}
-          toolCallRecordIds={toolCallRecordIds}
-        />
-      )
-      : <JsonEvidence title={t.agent.trajectory.rawEvidence} value={detail} />;
+    return (
+      <div className="thread-trajectory-inspector-body is-evidence-page">
+        {parts ? (
+          <RawPartsEvidence
+            imageAttachments={imageAttachments}
+            onOpenRecord={onOpenRecord}
+            parts={parts}
+            threadId={threadId}
+            toolCallRecordIds={toolCallRecordIds}
+          />
+        ) : null}
+        <JsonEvidenceContent title={t.agent.trajectory.rawEvidence} value={detail} />
+      </div>
+    );
   }
   if (tab === 'systemPrompt') {
     return <RawTextEvidence title={t.agent.trajectory.systemPrompt} text={stablePromptText(detail)} />;
@@ -658,7 +661,7 @@ function RawPartsEvidence({
 }) {
   const t = useT();
   return (
-    <div className="thread-trajectory-inspector-body thread-trajectory-raw-parts">
+    <div className="thread-trajectory-raw-parts">
       {parts.map((part, index) => {
         const label = contentPartLabel(part, t.agent.trajectory);
         if (part.type === 'toolCall') {
@@ -797,17 +800,25 @@ function AvailabilityList({ record }: { readonly record: ThreadTrajectoryRecordS
 }
 
 function JsonEvidence({ title, value }: { readonly title: string; readonly value: unknown }) {
+  return (
+    <div className="thread-trajectory-inspector-body is-evidence-page">
+      <JsonEvidenceContent title={title} value={value} />
+    </div>
+  );
+}
+
+function JsonEvidenceContent({ title, value }: { readonly title: string; readonly value: unknown }) {
   const t = useT();
   const code = value === null || value === undefined ? null : JSON.stringify(value, null, 2);
   return (
-    <div className="thread-trajectory-inspector-body is-evidence-page">
+    <>
       <h4>{title}</h4>
       {code === null ? (
         <p className="thread-trajectory-note">{t.agent.trajectory.noRetainedEvidence}</p>
       ) : (
         <RawEvidenceBlock code={code} language="json" />
       )}
-    </div>
+    </>
   );
 }
 

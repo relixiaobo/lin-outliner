@@ -23,6 +23,7 @@ import {
   type ThreadTrajectoryProviderCallEvidence,
   type ThreadTrajectoryReadRequest,
   type ThreadTrajectoryReadResponse,
+  type ThreadTrajectoryRecordDetail,
   type ThreadTrajectoryRecordLabel,
   type ThreadTrajectoryRecordKind,
   type ThreadTrajectoryRecordSummary,
@@ -54,6 +55,10 @@ const DEFAULT_TRAJECTORY_LIMIT = 100;
 const MAX_TRAJECTORY_LIMIT = 250;
 const PREVIEW_LIMIT = 240;
 const MAX_DETAIL_TEXT_LENGTH = 20_000;
+const MAX_DETAIL_EVIDENCE_BYTES = 40_000;
+const MAX_DETAIL_RESPONSE_BYTES = 64_000;
+const MAX_DETAIL_COLLECTION_LENGTH = 100;
+const DETAIL_TRUNCATION_SUFFIX = '\n… [truncated]';
 const MAX_JSON_DEPTH = 16;
 const MAX_JSON_ARRAY_LENGTH = 500;
 const MAX_JSON_OBJECT_KEYS = 500;
@@ -124,6 +129,11 @@ interface DetailReadResult {
 interface EvidenceReadResult<T> {
   readonly value: T;
   readonly availability: readonly ThreadTrajectoryAvailability[];
+}
+
+interface DetailEvidenceBudget {
+  remainingBytes: number;
+  truncated: boolean;
 }
 
 interface ThreadTrajectoryThreadEvidence {
@@ -341,6 +351,10 @@ export class ThreadTrajectoryProjection {
           });
         }
       }
+      if (!loaded.diagnostics) {
+        stablePromptFingerprint = undefined;
+        toolCatalogFingerprint = undefined;
+      }
     }
     return assignTrajectoryStepIndices(records);
   }
@@ -393,51 +407,62 @@ export class ThreadTrajectoryProjection {
     record: ThreadTrajectoryRecordSummary,
     loaded: LoadedTurn,
   ): Promise<DetailReadResult> {
-    const turn = turnEvidence(loaded.turn);
+    const budget = createDetailEvidenceBudget();
     const diagnostics = loaded.diagnostics;
     if (record.kind === 'input') {
       const message = userMessageForEvidence(loaded.turn, record.primaryEvidence);
       const activityIndex = relatedDiagnosticActivityIndex(record, 'acceptedInput');
       const providerCallIndex = relatedProviderCallIndex(record);
+      const modelInputParts = message
+        ? modelInputPartsForItem(diagnostics?.payload ?? null, message.id, providerCallIndex, budget)
+        : null;
+      const messageEvidence = message ? userMessageEvidence(message, budget) : null;
+      const diagnosticEvidence = diagnosticsEvidence(diagnostics, activityIndex, providerCallIndex, budget);
       return detailRead({
         kind: 'input',
-        turn,
-        modelInputParts: message
-          ? modelInputPartsForItem(diagnostics?.payload ?? null, message.id, providerCallIndex)
-          : null,
-        message: message ? userMessageEvidence(message) : null,
-        diagnostics: diagnosticsEvidence(diagnostics, activityIndex, providerCallIndex),
+        turn: turnEvidence(loaded.turn, budget),
+        modelInputParts,
+        message: messageEvidence,
+        diagnostics: diagnosticEvidence,
         activityIndex,
-      });
+      }, [], budget);
     }
     if (record.kind === 'context') {
       const item = itemForEvidence(loaded.turn, record.primaryEvidence);
+      const modelContextText = modelContextTextForContextRecord(
+        loaded.diagnostics?.payload ?? null,
+        record,
+        budget,
+      );
       const payload = record.primaryEvidence.type === 'stablePrompt'
-        ? stablePromptEvidence(loaded.diagnostics)
+        ? stablePromptEvidence(loaded.diagnostics, budget)
         : record.primaryEvidence.type === 'toolCatalog'
-          ? toolCatalogEvidence(loaded.diagnostics?.payload ?? null, record.primaryEvidence.callIndex)
+          ? toolCatalogEvidence(loaded.diagnostics?.payload ?? null, record.primaryEvidence.callIndex, budget)
           : null;
       return detailRead({
         kind: 'context',
-        turn,
-        item: item ? itemEvidence(item) : null,
-        modelContextText: modelContextTextForContextRecord(loaded.diagnostics?.payload ?? null, record),
+        turn: turnEvidence(loaded.turn, budget),
+        item: item ? itemEvidence(item, budget) : null,
+        modelContextText,
         payload,
-      });
+      }, [], budget);
     }
     if (record.kind === 'assistant') {
       const providerCallIndex = providerCallIndexForEvidence(record.primaryEvidence);
       const call = providerCallIndex === null
         ? null
         : diagnostics?.payload.providerCalls[providerCallIndex] ?? null;
+      const modelOutputParts = modelOutputPartsForResponse(call?.response?.value ?? null, budget);
+      const diagnosticEvidence = diagnosticsEvidence(diagnostics, null, providerCallIndex ?? 0, budget);
+      const relatedItems = evidenceForItems(loaded.turn, relatedItemIds(record), budget);
       return detailRead({
         kind: 'assistant',
-        turn,
-        modelOutputParts: modelOutputPartsForResponse(call?.response?.value ?? null),
-        diagnostics: diagnosticsEvidence(diagnostics, null, providerCallIndex ?? 0),
+        turn: turnEvidence(loaded.turn, budget),
+        modelOutputParts,
+        diagnostics: diagnosticEvidence,
         providerCallIndex: providerCallIndex ?? 0,
-        relatedItems: evidenceForItems(loaded.turn, relatedItemIds(record)),
-      });
+        relatedItems,
+      }, [], budget);
     }
     if (record.kind === 'tool') {
       const item = itemForToolRecord(loaded.turn, record);
@@ -446,38 +471,57 @@ export class ThreadTrajectoryProjection {
         this.readToolInput(record.threadId, item),
         this.readToolOutput(record.threadId, item),
       ]);
+      const inputEvidence = input.value === null ? null : sanitizeJsonEvidence(input.value, budget);
+      const outputEvidence = output.value === null ? null : sanitizeTextEvidence(output.value, budget);
+      const schema = toolSchemaEvidence(loaded.diagnostics?.payload ?? null, execution?.toolName ?? null, budget);
       return detailRead({
         kind: 'tool',
-        turn,
-        item: item ? itemEvidence(item) : null,
-        diagnostics: diagnosticsEvidence(diagnostics, diagnosticActivityIndex(record.primaryEvidence), null),
+        turn: turnEvidence(loaded.turn, budget),
+        item: item ? itemEvidence(item, budget) : null,
+        diagnostics: diagnosticsEvidence(
+          diagnostics,
+          diagnosticActivityIndex(record.primaryEvidence),
+          null,
+          budget,
+        ),
         activityIndex: diagnosticActivityIndex(record.primaryEvidence),
         executionCallId: toolExecutionCallId(record),
-        input: input.value,
-        outputText: output.value,
-        schema: toolSchemaEvidence(loaded.diagnostics?.payload ?? null, execution?.toolName ?? null),
-      }, [...input.availability, ...output.availability]);
+        input: inputEvidence,
+        outputText: outputEvidence,
+        schema,
+      }, [...input.availability, ...output.availability], budget);
     }
     if (record.kind === 'retry') {
       return detailRead({
         kind: 'retry',
-        turn,
-        diagnostics: diagnosticsEvidence(diagnostics, diagnosticActivityIndex(record.primaryEvidence), null),
+        turn: turnEvidence(loaded.turn, budget),
+        diagnostics: diagnosticsEvidence(
+          diagnostics,
+          diagnosticActivityIndex(record.primaryEvidence),
+          null,
+          budget,
+        ),
         activityIndex: diagnosticActivityIndex(record.primaryEvidence),
-      });
+      }, [], budget);
     }
     if (record.kind === 'compaction') {
       const item = itemForEvidence(loaded.turn, record.primaryEvidence)
         ?? itemForRelatedEvidence(loaded.turn, record);
       const summary = await this.readCompactionSummary(record.threadId, item);
+      const summaryText = summary.value === null ? null : sanitizeTextEvidence(summary.value, budget);
       return detailRead({
         kind: 'compaction',
-        turn,
-        item: item ? itemEvidence(item) : null,
-        diagnostics: diagnosticsEvidence(diagnostics, diagnosticActivityIndex(record.primaryEvidence), null),
+        turn: turnEvidence(loaded.turn, budget),
+        item: item ? itemEvidence(item, budget) : null,
+        diagnostics: diagnosticsEvidence(
+          diagnostics,
+          diagnosticActivityIndex(record.primaryEvidence),
+          null,
+          budget,
+        ),
         activityIndex: diagnosticActivityIndex(record.primaryEvidence),
-        summaryText: summary.value,
-      }, summary.availability);
+        summaryText,
+      }, summary.availability, budget);
     }
     const item = itemForToolRecord(loaded.turn, record);
     const execution = toolExecutionForRecord(loaded.diagnostics?.payload ?? null, record);
@@ -485,18 +529,26 @@ export class ThreadTrajectoryProjection {
       this.readToolInput(record.threadId, item),
       this.readToolOutput(record.threadId, item),
     ]);
+    const inputEvidence = input.value === null ? null : sanitizeJsonEvidence(input.value, budget);
+    const outputEvidence = output.value === null ? null : sanitizeTextEvidence(output.value, budget);
+    const schema = toolSchemaEvidence(loaded.diagnostics?.payload ?? null, execution?.toolName ?? null, budget);
     return detailRead({
       kind: 'delegation',
-      turn,
-      item: item ? itemEvidence(item) : null,
-      diagnostics: diagnosticsEvidence(diagnostics, diagnosticActivityIndex(record.primaryEvidence), null),
+      turn: turnEvidence(loaded.turn, budget),
+      item: item ? itemEvidence(item, budget) : null,
+      diagnostics: diagnosticsEvidence(
+        diagnostics,
+        diagnosticActivityIndex(record.primaryEvidence),
+        null,
+        budget,
+      ),
       activityIndex: diagnosticActivityIndex(record.primaryEvidence),
       executionCallId: toolExecutionCallId(record),
-      input: input.value,
-      outputText: output.value,
-      schema: toolSchemaEvidence(loaded.diagnostics?.payload ?? null, execution?.toolName ?? null),
+      input: inputEvidence,
+      outputText: outputEvidence,
+      schema,
       childThreadId: record.childThreadId,
-    }, [...input.availability, ...output.availability]);
+    }, [...input.availability, ...output.availability], budget);
   }
 
   private async readToolInput(
@@ -555,8 +607,57 @@ export class ThreadTrajectoryProjection {
 function detailRead(
   detail: NonNullable<ThreadTrajectoryDetailReadResponse['detail']>,
   availability: readonly ThreadTrajectoryAvailability[] = [],
+  budget: DetailEvidenceBudget = createDetailEvidenceBudget(),
 ): DetailReadResult {
-  return { detail, availability };
+  let boundedDetail = detail;
+  if (Buffer.byteLength(JSON.stringify(detail), 'utf8') > MAX_DETAIL_RESPONSE_BYTES) {
+    budget.truncated = true;
+    boundedDetail = minimalTrajectoryDetailEvidence(detail);
+  }
+  return {
+    detail: boundedDetail,
+    availability: budget.truncated
+      ? appendAvailability(availability, 'partialCoverage')
+      : availability,
+  };
+}
+
+function createDetailEvidenceBudget(): DetailEvidenceBudget {
+  return { remainingBytes: MAX_DETAIL_EVIDENCE_BYTES, truncated: false };
+}
+
+function minimalTrajectoryDetailEvidence(detail: ThreadTrajectoryRecordDetail): ThreadTrajectoryRecordDetail {
+  const turn: ThreadTrajectoryTurnEvidence = {
+    ...detail.turn,
+    error: null,
+    modelProvider: detail.turn.modelProvider.slice(0, 256),
+    model: detail.turn.model.slice(0, 256),
+  };
+  if (detail.kind === 'input') {
+    return { ...detail, turn, modelInputParts: null, message: null, diagnostics: null };
+  }
+  if (detail.kind === 'context') {
+    return { ...detail, turn, item: null, modelContextText: null, payload: null };
+  }
+  if (detail.kind === 'assistant') {
+    return { ...detail, turn, modelOutputParts: null, diagnostics: null, relatedItems: [] };
+  }
+  if (detail.kind === 'tool' || detail.kind === 'delegation') {
+    return { ...detail, turn, item: null, diagnostics: null, input: null, outputText: null, schema: null };
+  }
+  if (detail.kind === 'compaction') {
+    return { ...detail, turn, item: null, diagnostics: null, summaryText: null };
+  }
+  return { ...detail, turn, diagnostics: null };
+}
+
+function appendAvailability(
+  entries: readonly ThreadTrajectoryAvailability[],
+  reason: ThreadTrajectoryAvailability['reason'],
+): readonly ThreadTrajectoryAvailability[] {
+  return entries.some((entry) => entry.reason === reason)
+    ? entries
+    : [...entries, availability(reason)];
 }
 
 function retainedEvidence<T>(value: T): EvidenceReadResult<T> {
@@ -698,6 +799,7 @@ function diagnosticsEvidence(
   bundle: DiagnosticsBundle | null,
   activityIndex: number | null,
   providerCallIndex: number | null,
+  budget?: DetailEvidenceBudget,
 ): ThreadTrajectoryDiagnosticsEvidence | null {
   if (!bundle) return null;
   return {
@@ -705,10 +807,14 @@ function diagnosticsEvidence(
     runtime: runtimeEvidence(bundle.payload.runtime),
     activity: activityIndex === null
       ? null
-      : sanitizeJsonEvidence(bundle.payload.activities[activityIndex] ?? null),
+      : sanitizeJsonEvidence(bundle.payload.activities[activityIndex] ?? null, budget),
     providerCall: providerCallIndex === null
       ? null
-      : providerCallDiagnosticsEvidence(bundle.payload, bundle.payload.providerCalls[providerCallIndex] ?? null),
+      : providerCallDiagnosticsEvidence(
+        bundle.payload,
+        bundle.payload.providerCalls[providerCallIndex] ?? null,
+        budget,
+      ),
   };
 }
 
@@ -733,6 +839,7 @@ function runtimeEvidence(runtime: TurnDiagnosticsPayload['runtime']): ThreadTraj
 function providerCallDiagnosticsEvidence(
   payload: TurnDiagnosticsPayload,
   call: TurnDiagnosticsPayload['providerCalls'][number] | null,
+  budget?: DetailEvidenceBudget,
 ): ThreadTrajectoryProviderCallEvidence | null {
   if (!call) return null;
   return {
@@ -744,8 +851,8 @@ function providerCallDiagnosticsEvidence(
     commonPrefixMessageCount: call.commonPrefixMessageCount,
     requestFingerprint: call.requestFingerprint,
     cacheBreakpoints: call.cacheBreakpoints,
-    request: sanitizeJsonEvidence(materializeProviderRequest(payload, call)),
-    response: call.response ? sanitizeJsonEvidence(call.response) : null,
+    request: sanitizeJsonEvidence(materializeProviderRequest(payload, call), budget),
+    response: call.response ? sanitizeJsonEvidence(call.response, budget) : null,
     transportResponse: call.transportResponse,
   };
 }
@@ -783,22 +890,23 @@ function materializeProviderRequest(
 function modelContextTextForContextRecord(
   payload: TurnDiagnosticsPayload | null,
   record: ThreadTrajectoryRecordSummary,
+  budget?: DetailEvidenceBudget,
 ): string | null {
   if (!payload) return null;
-  if (record.primaryEvidence.type === 'stablePrompt') return stablePromptModelText(payload);
+  if (record.primaryEvidence.type === 'stablePrompt') return stablePromptModelText(payload, budget);
   if (record.primaryEvidence.type === 'preparedContextPart') {
-    return modelContextTextForPreparedContextPart(payload, record.primaryEvidence);
+    return modelContextTextForPreparedContextPart(payload, record.primaryEvidence, budget);
   }
   return null;
 }
 
-function stablePromptModelText(payload: TurnDiagnosticsPayload): string | null {
+function stablePromptModelText(payload: TurnDiagnosticsPayload, budget?: DetailEvidenceBudget): string | null {
   for (const call of payload.providerCalls) {
     const fragment = payload.requestFragments.find((candidate) => (
       candidate.id === call.preparedContext.systemPromptFragmentId
     ));
     const text = semanticText(fragment?.value ?? null);
-    if (text) return sanitizeTextEvidence(text);
+    if (text) return sanitizeTextEvidence(text, budget);
   }
   return null;
 }
@@ -824,8 +932,10 @@ interface ToolCatalogRecord {
 function modelContextTextForPreparedContextPart(
   payload: TurnDiagnosticsPayload,
   ref: PreparedContextPartEvidenceRef,
+  budget?: DetailEvidenceBudget,
 ): string | null {
-  return preparedContextPartRecord(payload, ref)?.text ?? null;
+  const text = preparedContextPartRecord(payload, ref)?.text ?? null;
+  return text === null ? null : sanitizeTextEvidence(text, budget);
 }
 
 function preparedContextPartRecord(
@@ -915,6 +1025,7 @@ function toolCatalogRecord(
 function toolCatalogEvidence(
   payload: TurnDiagnosticsPayload | null,
   callIndex: number,
+  budget?: DetailEvidenceBudget,
 ): JsonValue | null {
   if (!payload) return null;
   const catalog = toolCatalogRecord(payload, callIndex);
@@ -924,7 +1035,7 @@ function toolCatalogEvidence(
     requestIndex: catalog.callIndex,
     toolNames: catalog.toolNames,
     tools: catalog.tools,
-  });
+  }, budget);
 }
 
 function toolCatalogLabel(catalog: ToolCatalogRecord, update: boolean): ThreadTrajectoryRecordLabel {
@@ -958,6 +1069,7 @@ function modelInputPartsForItem(
   payload: TurnDiagnosticsPayload | null,
   itemId: ThreadItemId,
   callIndex: number | null,
+  budget?: DetailEvidenceBudget,
 ): readonly ThreadTrajectoryModelInputPart[] | null {
   if (!payload) return null;
   const calls = callIndex === null
@@ -970,8 +1082,12 @@ function modelInputPartsForItem(
       const message = messagesById.get(messageId) ?? null;
       call.preparedContext.messagePartProvenance[messageIndex]?.forEach((provenance, partIndex) => {
         if (provenance.source !== 'userInput' || provenance.itemId !== itemId) return;
+        if (budget && modelInputParts.length >= MAX_DETAIL_COLLECTION_LENGTH) {
+          budget.truncated = true;
+          return;
+        }
         const part = messagePart(message, partIndex);
-        if (part !== null) modelInputParts.push(modelInputPartEvidence(part));
+        if (part !== null) modelInputParts.push(modelInputPartEvidence(part, budget));
       });
     });
     if (modelInputParts.length > 0) return modelInputParts;
@@ -979,12 +1095,15 @@ function modelInputPartsForItem(
   return null;
 }
 
-function modelInputPartEvidence(part: JsonValue): ThreadTrajectoryModelInputPart {
+function modelInputPartEvidence(
+  part: JsonValue,
+  budget?: DetailEvidenceBudget,
+): ThreadTrajectoryModelInputPart {
   const text = semanticText(part);
-  if (text !== null) return { type: 'text', text: sanitizeTextEvidence(text) };
-  const image = modelImagePartEvidence(part);
+  if (text !== null) return { type: 'text', text: sanitizeTextEvidence(text, budget) };
+  const image = modelImagePartEvidence(part, budget);
   if (image) return image;
-  return { type: 'other', value: sanitizeJsonEvidence(part) };
+  return { type: 'other', value: sanitizeJsonEvidence(part, budget) };
 }
 
 function modelInputPartsPreview(parts: readonly ThreadTrajectoryModelInputPart[] | null): string | null {
@@ -1004,10 +1123,13 @@ function modelInputPartsPreview(parts: readonly ThreadTrajectoryModelInputPart[]
 
 function modelOutputPartsForResponse(
   value: JsonValue | null,
+  budget?: DetailEvidenceBudget,
 ): readonly ThreadTrajectoryModelOutputPart[] | null {
   const content = modelResponseContent(value);
   if (content === null) return null;
-  const parts = content.map(modelOutputPartEvidence);
+  if (budget && content.length > MAX_DETAIL_COLLECTION_LENGTH) budget.truncated = true;
+  const boundedContent = budget ? content.slice(0, MAX_DETAIL_COLLECTION_LENGTH) : content;
+  const parts = boundedContent.map((part) => modelOutputPartEvidence(part, budget));
   return parts.length > 0 ? parts : null;
 }
 
@@ -1022,10 +1144,13 @@ function modelResponseContent(value: JsonValue | null): readonly JsonValue[] | n
   return [value];
 }
 
-function modelOutputPartEvidence(part: JsonValue): ThreadTrajectoryModelOutputPart {
-  if (typeof part === 'string') return { type: 'text', text: sanitizeTextEvidence(part) };
+function modelOutputPartEvidence(
+  part: JsonValue,
+  budget?: DetailEvidenceBudget,
+): ThreadTrajectoryModelOutputPart {
+  if (typeof part === 'string') return { type: 'text', text: sanitizeTextEvidence(part, budget) };
   if (typeof part !== 'object' || part === null || Array.isArray(part)) {
-    return { type: 'other', value: sanitizeJsonEvidence(part) };
+    return { type: 'other', value: sanitizeJsonEvidence(part, budget) };
   }
   const record = part as Readonly<Record<string, JsonValue>>;
   const type = typeof record.type === 'string' ? record.type.toLowerCase().replace(/[_-]/g, '') : '';
@@ -1033,13 +1158,13 @@ function modelOutputPartEvidence(part: JsonValue): ThreadTrajectoryModelOutputPa
     const text = typeof record.text === 'string'
       ? record.text
       : typeof record.output_text === 'string' ? record.output_text : null;
-    if (text !== null) return { type: 'text', text: sanitizeTextEvidence(text) };
+    if (text !== null) return { type: 'text', text: sanitizeTextEvidence(text, budget) };
   }
   if (type === 'thinking' || type === 'reasoning') {
     const text = typeof record.thinking === 'string'
       ? record.thinking
       : typeof record.text === 'string' ? record.text : null;
-    if (text !== null) return { type: 'thinking', text: sanitizeTextEvidence(text) };
+    if (text !== null) return { type: 'thinking', text: sanitizeTextEvidence(text, budget) };
   }
   if (type === 'toolcall' || type === 'functioncall') {
     const argumentsValue = record.arguments ?? record.args ?? record.input ?? null;
@@ -1047,15 +1172,18 @@ function modelOutputPartEvidence(part: JsonValue): ThreadTrajectoryModelOutputPa
       type: 'toolCall',
       callId: stringEvidence(record.id ?? record.callId ?? null),
       name: stringEvidence(record.name ?? record.toolName ?? null),
-      arguments: argumentsValue === null ? null : sanitizeJsonEvidence(argumentsValue),
+      arguments: argumentsValue === null ? null : sanitizeJsonEvidence(argumentsValue, budget),
     };
   }
-  const image = modelImagePartEvidence(part);
+  const image = modelImagePartEvidence(part, budget);
   if (image) return image;
-  return { type: 'other', value: sanitizeJsonEvidence(part) };
+  return { type: 'other', value: sanitizeJsonEvidence(part, budget) };
 }
 
-function modelImagePartEvidence(part: JsonValue): ThreadTrajectoryModelImagePart | null {
+function modelImagePartEvidence(
+  part: JsonValue,
+  budget?: DetailEvidenceBudget,
+): ThreadTrajectoryModelImagePart | null {
   if (typeof part !== 'object' || part === null || Array.isArray(part)) return null;
   const record = part as Readonly<Record<string, JsonValue>>;
   const partType = typeof record.type === 'string' ? record.type.toLowerCase() : '';
@@ -1068,7 +1196,7 @@ function modelImagePartEvidence(part: JsonValue): ThreadTrajectoryModelImagePart
   const digest = firstString(record.sha256, nestedImageValue(record, 'sha256'));
   return {
     type: 'image',
-    mimeType: mimeType === null ? null : sanitizeStringEvidence(mimeType),
+    mimeType: mimeType === null ? null : sanitizeTextEvidence(mimeType, budget),
     byteLength,
     sha256: digest !== null && /^[a-f0-9]{64}$/.test(digest) ? digest : null,
   };
@@ -1116,28 +1244,66 @@ function modelOutputPartsPreview(parts: readonly ThreadTrajectoryModelOutputPart
   return preview || null;
 }
 
-function sanitizeJsonEvidence(value: unknown, depth = 0): JsonValue {
-  if (value === null) return null;
-  if (typeof value === 'string') return sanitizeStringEvidence(value);
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+function sanitizeJsonEvidence(
+  value: unknown,
+  budget?: DetailEvidenceBudget,
+  depth = 0,
+): JsonValue {
+  if (value === null) {
+    spendEvidenceBudget(budget, 'null');
+    return null;
+  }
+  if (typeof value === 'string') return sanitizeTextEvidence(value, budget);
+  if (typeof value === 'boolean') {
+    spendEvidenceBudget(budget, String(value));
+    return value;
+  }
+  if (typeof value === 'number') {
+    const normalized = Number.isFinite(value) ? value : null;
+    spendEvidenceBudget(budget, JSON.stringify(normalized));
+    return normalized;
+  }
   if (Array.isArray(value)) {
-    if (depth >= MAX_JSON_DEPTH) return '[truncated:depth]';
-    const items = value
-      .slice(0, MAX_JSON_ARRAY_LENGTH)
-      .map((entry) => sanitizeJsonEvidence(entry, depth + 1));
-    return value.length > MAX_JSON_ARRAY_LENGTH ? [...items, '[truncated:array]'] : items;
+    if (depth >= MAX_JSON_DEPTH) {
+      if (budget) budget.truncated = true;
+      return '[truncated:depth]';
+    }
+    if (!spendEvidenceBudget(budget, '[]')) return ['[truncated:budget]'];
+    const items: JsonValue[] = [];
+    for (const entry of value.slice(0, MAX_JSON_ARRAY_LENGTH)) {
+      if (budget?.remainingBytes === 0) {
+        budget.truncated = true;
+        items.push('[truncated:budget]');
+        break;
+      }
+      items.push(sanitizeJsonEvidence(entry, budget, depth + 1));
+    }
+    if (value.length > MAX_JSON_ARRAY_LENGTH) {
+      if (budget) budget.truncated = true;
+      return [...items, '[truncated:array]'];
+    }
+    return items;
   }
   if (typeof value !== 'object' || value === undefined) return null;
-  if (depth >= MAX_JSON_DEPTH) return { truncated: 'depth' };
+  if (depth >= MAX_JSON_DEPTH) {
+    if (budget) budget.truncated = true;
+    return { truncated: 'depth' };
+  }
+  if (!spendEvidenceBudget(budget, '{}')) return { truncated: 'budget' };
   const result: Record<string, JsonValue> = {};
   let count = 0;
   for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
     if (count >= MAX_JSON_OBJECT_KEYS) {
       result.truncated = 'object';
+      if (budget) budget.truncated = true;
       break;
     }
-    result[key] = sensitiveEvidenceKey(key) ? '‹redacted›' : sanitizeJsonEvidence(entry, depth + 1);
+    if (!spendEvidenceBudget(budget, JSON.stringify(key))) {
+      result.truncated = 'budget';
+      break;
+    }
+    if (key === 'truncated' && budget) budget.truncated = true;
+    result[key] = sensitiveEvidenceKey(key) ? '‹redacted›' : sanitizeJsonEvidence(entry, budget, depth + 1);
     count += 1;
   }
   return result;
@@ -1153,10 +1319,61 @@ async function sanitizeJsonEvidenceAsync(value: unknown): Promise<JsonValue> {
   }
 }
 
-function sanitizeTextEvidence(value: string): string {
+function sanitizeTextEvidence(value: string, budget?: DetailEvidenceBudget): string {
   const sanitized = sanitizeStringEvidence(value);
-  if (sanitized.length <= MAX_DETAIL_TEXT_LENGTH) return sanitized;
-  return `${sanitized.slice(0, MAX_DETAIL_TEXT_LENGTH)}\n… [truncated]`;
+  const bounded = sanitized.length <= MAX_DETAIL_TEXT_LENGTH
+    ? sanitized
+    : `${sanitized.slice(0, MAX_DETAIL_TEXT_LENGTH)}${DETAIL_TRUNCATION_SUFFIX}`;
+  if (budget && (
+    sanitized.length > MAX_DETAIL_TEXT_LENGTH
+    || sanitized.endsWith(DETAIL_TRUNCATION_SUFFIX)
+    || /^\[truncated:/u.test(sanitized)
+  )) {
+    budget.truncated = true;
+  }
+  return budget ? fitTextToEvidenceBudget(bounded, budget) : bounded;
+}
+
+function spendEvidenceBudget(budget: DetailEvidenceBudget | undefined, value: string): boolean {
+  if (!budget) return true;
+  const byteLength = Buffer.byteLength(value, 'utf8');
+  if (byteLength <= budget.remainingBytes) {
+    budget.remainingBytes -= byteLength;
+    return true;
+  }
+  budget.remainingBytes = 0;
+  budget.truncated = true;
+  return false;
+}
+
+function fitTextToEvidenceBudget(value: string, budget: DetailEvidenceBudget): string {
+  const encoded = JSON.stringify(value);
+  const encodedBytes = Buffer.byteLength(encoded, 'utf8');
+  if (encodedBytes <= budget.remainingBytes) {
+    budget.remainingBytes -= encodedBytes;
+    return value;
+  }
+  budget.truncated = true;
+  const suffix = DETAIL_TRUNCATION_SUFFIX;
+  let low = 0;
+  let high = value.length;
+  let result = '[truncated]';
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const prefixEnd = middle > 0 && /[\uD800-\uDBFF]/u.test(value[middle - 1] ?? '')
+      ? middle - 1
+      : middle;
+    const candidate = `${value.slice(0, prefixEnd)}${suffix}`;
+    if (Buffer.byteLength(JSON.stringify(candidate), 'utf8') <= budget.remainingBytes) {
+      result = candidate;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  const resultBytes = Buffer.byteLength(JSON.stringify(result), 'utf8');
+  budget.remainingBytes = Math.max(0, budget.remainingBytes - resultBytes);
+  return result;
 }
 
 async function sanitizeTextEvidenceAsync(value: string): Promise<string> {
@@ -1237,11 +1454,11 @@ function appendStablePromptRecord(
   }));
 }
 
-function stablePromptEvidence(bundle: DiagnosticsBundle | null): JsonValue | null {
+function stablePromptEvidence(bundle: DiagnosticsBundle | null, budget?: DetailEvidenceBudget): JsonValue | null {
   if (!bundle) return null;
   return sanitizeJsonEvidence({
     stablePrompt: bundle.payload.stablePrompt,
-  });
+  }, budget);
 }
 
 function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: LoadedTurn): void {
@@ -1704,7 +1921,8 @@ function pageTrajectoryRecords(
     }
     const focusIndex = focusIndexForRecords(records, request);
     if (focusIndex >= 0) {
-      const end = Math.min(records.length, focusIndex + Math.ceil(limit / 3) + 1);
+      const recordsAfterFocus = Math.floor((limit - 1) / 3);
+      const end = Math.min(records.length, focusIndex + recordsAfterFocus + 1);
       const start = Math.max(0, end - limit);
       return trajectoryPage(records, start, end);
     }
@@ -1805,25 +2023,18 @@ function expandStructuralRecords(
   start: number,
   end: number,
 ): readonly ThreadTrajectoryRecordSummary[] {
-  const included = new Set(records.slice(start, end).map((record) => record.id));
+  const coveredRecords = records.slice(start, end);
+  const included = new Set(coveredRecords.map((record) => record.id));
   const byId = new Map(records.map((record) => [record.id, record]));
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const record of records) {
-      const parentIncluded = record.parentRecordId !== null && included.has(record.parentRecordId);
-      const selfIncluded = included.has(record.id);
-      if (selfIncluded && record.parentRecordId && !included.has(record.parentRecordId)) {
-        const parent = byId.get(record.parentRecordId);
-        if (parent) {
-          included.add(parent.id);
-          changed = true;
-        }
-      }
-      if (parentIncluded && !selfIncluded) {
-        included.add(record.id);
-        changed = true;
-      }
+  for (const record of coveredRecords) {
+    const visited = new Set<string>();
+    let parentId = record.parentRecordId;
+    while (parentId !== null && !visited.has(parentId)) {
+      visited.add(parentId);
+      const parent = byId.get(parentId);
+      if (!parent) break;
+      included.add(parent.id);
+      parentId = parent.parentRecordId;
     }
   }
   return records.filter((record) => included.has(record.id));
@@ -2057,14 +2268,14 @@ function availability(reason: ThreadTrajectoryAvailability['reason']): ThreadTra
   return { reason };
 }
 
-function turnEvidence(turn: Turn): ThreadTrajectoryTurnEvidence {
+function turnEvidence(turn: Turn, budget?: DetailEvidenceBudget): ThreadTrajectoryTurnEvidence {
   return {
     id: turn.id,
     status: turn.status,
     error: turn.error ? {
       ...turn.error,
-      message: sanitizeTextEvidence(turn.error.message),
-      ...(turn.error.detail === undefined ? {} : { detail: sanitizeTextEvidence(turn.error.detail) }),
+      message: sanitizeTextEvidence(turn.error.message, budget),
+      ...(turn.error.detail === undefined ? {} : { detail: sanitizeTextEvidence(turn.error.detail, budget) }),
     } : null,
     startedAt: turn.startedAt,
     completedAt: turn.completedAt,
@@ -2075,68 +2286,99 @@ function turnEvidence(turn: Turn): ThreadTrajectoryTurnEvidence {
   };
 }
 
-function itemEvidence(item: ThreadItem): ThreadTrajectoryItemEvidence {
+function itemEvidence(item: ThreadItem, budget?: DetailEvidenceBudget): ThreadTrajectoryItemEvidence {
   return {
     itemId: item.id,
     type: item.type,
-    title: sanitizeStringEvidence(itemTitle(item)),
-    preview: compact(itemSummary(item)),
+    title: sanitizeTextEvidence(itemTitle(item), budget),
+    preview: sanitizeOptionalTextEvidence(compact(itemSummary(item)), budget),
     status: isToolItem(item) ? item.status : null,
   };
 }
 
-function userMessageEvidence(item: UserMessageThreadItem): ThreadTrajectoryUserMessageEvidence {
+function userMessageEvidence(
+  item: UserMessageThreadItem,
+  budget?: DetailEvidenceBudget,
+): ThreadTrajectoryUserMessageEvidence {
+  if (budget && item.content.length > MAX_DETAIL_COLLECTION_LENGTH) budget.truncated = true;
+  const content = budget ? item.content.slice(0, MAX_DETAIL_COLLECTION_LENGTH) : item.content;
   return {
     itemId: item.id,
     acceptedAt: item.acceptedAt,
-    content: item.content.map(userContentEvidence),
+    content: content.map((entry) => userContentEvidence(entry, budget)),
   };
 }
 
-function userContentEvidence(content: ThreadUserContent): ThreadUserContent {
+function sanitizeOptionalTextEvidence(
+  value: string | null,
+  budget?: DetailEvidenceBudget,
+): string | null {
+  return value === null ? null : sanitizeTextEvidence(value, budget);
+}
+
+function userContentEvidence(content: ThreadUserContent, budget?: DetailEvidenceBudget): ThreadUserContent {
   if (content.type === 'text') {
-    return { ...content, text: sanitizeTextEvidence(content.text) };
+    return { ...content, text: sanitizeTextEvidence(content.text, budget) };
   }
   if (content.type === 'nodeReference') {
     return {
       ...content,
-      ...(content.note === undefined ? {} : { note: sanitizeTextEvidence(content.note) }),
+      ...(content.note === undefined ? {} : { note: sanitizeTextEvidence(content.note, budget) }),
     };
   }
   return {
     ...content,
-    name: sanitizeStringEvidence(content.name),
-    source: fileSourceEvidence(content.source),
-    ...(content.extractedText === undefined ? {} : { extractedText: sanitizeTextEvidence(content.extractedText) }),
+    name: sanitizeTextEvidence(content.name, budget),
+    mimeType: sanitizeTextEvidence(content.mimeType, budget),
+    source: fileSourceEvidence(content.source, budget),
+    ...(content.extractedText === undefined
+      ? {}
+      : { extractedText: sanitizeTextEvidence(content.extractedText, budget) }),
     ...(content.artifactRef === undefined ? {} : {
-      artifactRef: imageArtifactEvidence(content.artifactRef),
+      artifactRef: imageArtifactEvidence(content.artifactRef, budget),
     }),
   };
 }
 
-function fileSourceEvidence(source: ThreadFileSource): ThreadFileSource {
+function fileSourceEvidence(source: ThreadFileSource, budget?: DetailEvidenceBudget): ThreadFileSource {
   return source.kind === 'localFile'
-    ? { ...source, path: sanitizeStringEvidence(source.path) }
-    : { ...source, ref: resourceEvidence(source.ref) };
+    ? { ...source, path: sanitizeTextEvidence(source.path, budget) }
+    : { ...source, ref: resourceEvidence(source.ref, budget) };
 }
 
-function resourceEvidence(ref: ThreadResourceReference): ThreadResourceReference {
-  return { ...ref, fileName: sanitizeStringEvidence(ref.fileName) };
-}
-
-function imageArtifactEvidence(ref: ThreadImageArtifactReference): ThreadImageArtifactReference {
+function resourceEvidence(
+  ref: ThreadResourceReference,
+  budget?: DetailEvidenceBudget,
+): ThreadResourceReference {
   return {
     ...ref,
-    original: ref.original ? fileSourceEvidence(ref.original) : null,
-    observation: resourceEvidence(ref.observation),
+    mimeType: sanitizeTextEvidence(ref.mimeType, budget),
+    fileName: sanitizeTextEvidence(ref.fileName, budget),
   };
 }
 
-function evidenceForItems(turn: Turn, itemIds: readonly string[]): readonly ThreadTrajectoryItemEvidence[] {
+function imageArtifactEvidence(
+  ref: ThreadImageArtifactReference,
+  budget?: DetailEvidenceBudget,
+): ThreadImageArtifactReference {
+  return {
+    ...ref,
+    original: ref.original ? fileSourceEvidence(ref.original, budget) : null,
+    observation: resourceEvidence(ref.observation, budget),
+  };
+}
+
+function evidenceForItems(
+  turn: Turn,
+  itemIds: readonly string[],
+  budget?: DetailEvidenceBudget,
+): readonly ThreadTrajectoryItemEvidence[] {
   const byId = new Map(turn.items.map((item) => [item.id, item]));
-  return itemIds.flatMap((itemId) => {
+  if (budget && itemIds.length > MAX_DETAIL_COLLECTION_LENGTH) budget.truncated = true;
+  const boundedItemIds = budget ? itemIds.slice(0, MAX_DETAIL_COLLECTION_LENGTH) : itemIds;
+  return boundedItemIds.flatMap((itemId) => {
     const item = byId.get(itemId);
-    return item ? [itemEvidence(item)] : [];
+    return item ? [itemEvidence(item, budget)] : [];
   });
 }
 
@@ -2223,10 +2465,11 @@ function toolExecutionForRecord(
 function toolSchemaEvidence(
   payload: TurnDiagnosticsPayload | null,
   toolName: string | null,
+  budget?: DetailEvidenceBudget,
 ): JsonValue | null {
   if (!payload || !toolName) return null;
   const schema = payload.toolSchemas.find((candidate) => candidate.name === toolName) ?? null;
-  return schema ? sanitizeJsonEvidence(schema) : null;
+  return schema ? sanitizeJsonEvidence(schema, budget) : null;
 }
 
 function providerCallState(
