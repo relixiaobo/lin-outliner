@@ -5,6 +5,7 @@ import {
   createTurnContentGrouper,
   groupTurnContent,
   threadProcessSummary,
+  trajectoryHoverFacts,
   turnMotionOwner,
 } from '../../src/renderer/agent/components/ThreadView';
 import {
@@ -196,6 +197,42 @@ describe('Turn motion ownership', () => {
   });
 });
 
+describe('Trajectory hover facts', () => {
+  test('shows only total tokens and cost', () => {
+    const tool = collaboration('tool', 'list_agents');
+    const base = turn([tool]);
+    const completed: Turn = {
+      ...base,
+      status: 'completed',
+      completedAt: 25_000,
+      durationMs: 24_000,
+      execution: {
+        ...base.execution,
+        usage: {
+          ...base.execution.usage,
+          totalTokens: 1234,
+          cost: {
+            input: 0.001,
+            output: 0.002,
+            cacheRead: 0,
+            cacheWrite: 0,
+            total: 0.003,
+            currency: 'USD',
+          },
+        },
+      },
+    };
+
+    expect(trajectoryHoverFacts(completed, en)).toEqual(['1,234 tok', '$0.003']);
+  });
+
+  test('omits absent token and cost placeholders', () => {
+    const base = turn([]);
+
+    expect(trajectoryHoverFacts(base, en)).toEqual([]);
+  });
+});
+
 function turn(items: readonly ThreadItem[]): Turn {
   return {
     id: 'turn-parent',
@@ -204,6 +241,20 @@ function turn(items: readonly ThreadItem[]): Turn {
     provenance: { originThreadId: 'thread-parent', originTurnId: 'turn-parent', trigger: { kind: 'user' } },
     status: 'inProgress',
     error: null,
+    execution: {
+      modelProvider: 'openai',
+      model: 'inherit',
+      reasoningEffort: null,
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: null,
+      },
+      diagnosticsRef: null,
+    },
     startedAt: 1,
     completedAt: null,
     durationMs: null,

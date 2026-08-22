@@ -42,7 +42,7 @@ const colorSchemeDeclarationFiles = new Map([
 const reducedMotionRuleFiles = new Map([
   ['src/renderer/styles/a11y.css', 'Central reduced-motion baseline.'],
   ['src/renderer/styles/canvas.css', 'Pane-drag arrangement preview commits without sliding.'],
-  ['src/renderer/styles/thread-turn-details.css', 'Turn Diagnostics disclosures and usage overlay become immediate.'],
+  ['src/renderer/styles/thread-trajectory.css', 'Trajectory row/span state changes become immediate.'],
   ['src/renderer/styles/feedback-state.css', 'Loading spinner becomes a static loading state.'],
   ['src/renderer/styles/outliner.css', 'Command run spinner becomes a static processing state.'],
   ['src/renderer/styles/file-preview.css', 'URL translation header spinner becomes a static loading state.'],
@@ -51,7 +51,6 @@ const reducedMotionRuleFiles = new Map([
 ]);
 const reducedTransparencyRuleFiles = new Map([
   ['src/renderer/styles/a11y.css', 'Central material fallback token layer.'],
-  ['src/renderer/styles/thread-turn-details.css', 'Turn Diagnostics usage material becomes opaque.'],
   ['src/renderer/styles/launcher.css', 'System launcher transparent glass collapses to an opaque elevated surface.'],
 ]);
 const contrastRuleFiles = new Map([
@@ -94,8 +93,7 @@ const materialSurfaceSelectors = new Map([
   // opens full-width under the header — still an overlay above the transcript
   // viewport, and still level-1 chrome rather than transcript content.
   ['src/renderer/styles/thread.css|.thread-work-strip-list', 'Background Agent work-strip overlay.'],
-  ['src/renderer/styles/thread.css|.thread-response-usage-card', 'Thread response usage overlay.'],
-  ['src/renderer/styles/thread-turn-details.css|.thread-turn-details-usage-popover', 'Turn Diagnostics usage overlay.'],
+  ['src/renderer/styles/thread.css|.thread-response-trajectory-card', 'Thread response Trajectory overlay.'],
   ['src/renderer/styles/code.css|.agent-code-header > span', 'Floating code-block language label chrome.'],
   ['src/renderer/styles/code.css|.agent-code-copy, .code-block-copy', 'Floating code-block copy chrome.'],
   ['src/renderer/styles/code.css|.code-block-language', 'Floating code-block language trigger.'],
@@ -123,8 +121,7 @@ const borderlessOverlaySurfaceSelectors = new Map([
   ['src/renderer/styles/thread.css|.thread-composer-file-preview-popover', 'Thread composer file preview popover.'],
   ['src/renderer/styles/thread.css|.thread-composer-model-popover', 'Thread composer model menu.'],
   ['src/renderer/styles/thread.css|.thread-list', 'Thread history popover.'],
-  ['src/renderer/styles/thread.css|.thread-response-usage-card', 'Thread response usage overlay.'],
-  ['src/renderer/styles/thread-turn-details.css|.thread-turn-details-usage-popover', 'Turn Diagnostics usage overlay.'],
+  ['src/renderer/styles/thread.css|.thread-response-trajectory-card', 'Thread response Trajectory overlay.'],
   ['src/renderer/styles/code.css|.code-block-language-menu', 'Code-block language menu.'],
   ['src/renderer/styles/confirm-dialog.css|.confirm-dialog', 'Confirm dialog level-2 surface.'],
   ['src/renderer/styles/file-preview.css|.document-outline-popover', 'Document outline popover.'],
@@ -156,7 +153,14 @@ const runtimeTokenInputs = new Map([
   ['src/renderer/styles/outliner.css|--flat-indent-guide-height', 'Flat indent guides receive measured geometry from the outliner runtime.'],
   ['src/renderer/styles/outliner.css|--table-columns', 'Table owners provide one live column template to aligned header and body rows.'],
   ['src/renderer/styles/outliner.css|--table-min-width', 'Table owners provide the live horizontal extent derived from configured column widths.'],
-  ['src/renderer/styles/thread.css|--segment-size', 'Thread usage segments receive their live proportional width from response usage.'],
+  ['src/renderer/styles/thread-trajectory.css|--trajectory-turn-left', 'Trajectory Turn boundaries receive their live timeline position.'],
+  ['src/renderer/styles/thread-trajectory.css|--trajectory-span-lane', 'Trajectory records receive their derived Input, Assistant, or Tools lane.'],
+  ['src/renderer/styles/thread-trajectory.css|--trajectory-span-left', 'Trajectory records receive their live timeline start position.'],
+  ['src/renderer/styles/thread-trajectory.css|--trajectory-span-width', 'Trajectory records receive their live timeline extent.'],
+  ['src/renderer/styles/thread-trajectory.css|--trajectory-span-ttft', 'Assistant spans receive the recorded first-token fraction.'],
+  ['src/renderer/styles/thread-trajectory.css|--trajectory-range-left', 'Trajectory range selection receives its live start position.'],
+  ['src/renderer/styles/thread-trajectory.css|--trajectory-range-width', 'Trajectory range selection receives its live extent.'],
+  ['src/renderer/styles/thread-trajectory.css|--trajectory-ledger-spacer-height', 'Trajectory virtualization receives the omitted fixed-row height.'],
 ]);
 const layoutTransitionProperties = new Set([
   'all',

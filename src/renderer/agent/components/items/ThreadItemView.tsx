@@ -264,7 +264,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
           {props.onOpenTurnDetails ? (
             <IconButton
               icon={InfoIcon}
-              label={t.agent.message.details}
+              label={t.agent.message.openTrajectory}
               onClick={props.onOpenTurnDetails}
               variant="message"
             />
@@ -278,7 +278,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
           {props.onOpenTurnDetails ? (
             <IconButton
               icon={InfoIcon}
-              label={t.agent.message.details}
+              label={t.agent.message.openTrajectory}
               onClick={props.onOpenTurnDetails}
               variant="message"
             />

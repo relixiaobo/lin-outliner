@@ -9,7 +9,7 @@ import type { CommandRunner, NavigateRootOptions, TriggerState } from './shared'
 import type { FilePreviewNavigationOptions, WorkspacePanelState } from './workspaceLayoutTypes';
 import type { PreviewTarget } from '../../core/preview';
 import { useT } from '../i18n/I18nProvider';
-import { ThreadTurnDetailsPanel } from '../agent/components/ThreadTurnDetailsPanel';
+import { ThreadTrajectoryPanel } from '../agent/components/ThreadTrajectoryPanel';
 import { listWithItemMovedToIndex, WORKSPACE_PANEL_REORDER_MIME } from './interactions/dragDrop';
 import type { PanelDragHandle } from './PanelShared';
 
@@ -32,6 +32,7 @@ interface WorkspaceCanvasProps {
   onNavigatePanelBack: (panelId: string) => void;
   onNavigatePanelPreview: (panelId: string, target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
   onNavigatePanelRoot: (panelId: string, nodeId: NodeId, options?: NavigateRootOptions) => void;
+  onOpenThreadTrajectory: (threadId: string) => void;
   onPanelScrollPositionChange: (panelId: string, scrollTop: number) => void;
   onPanelResizeReset: (leftPanelId: string, rightPanelId: string) => void;
   onPanelResizeStart: (
@@ -306,8 +307,8 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                 trigger={props.trigger}
                 ui={props.ui}
               />
-            ) : panel.view.kind === 'thread-turn-details' ? (
-              <ThreadTurnDetailsPanel
+            ) : panel.view.kind === 'thread-trajectory' ? (
+              <ThreadTrajectoryPanel
                 canGoBack={Boolean(panel.backStack.length)}
                 onBack={() => props.onNavigatePanelBack(panel.id)}
                 onClose={() => (
@@ -315,7 +316,9 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                     ? props.onNavigatePanelBack(panel.id)
                     : props.onClosePanel(panel.id)
                 )}
+                onOpenThreadTrajectory={props.onOpenThreadTrajectory}
                 panelDragHandle={panelDragHandleFor(panel)}
+                selectedRecordId={panel.view.selectedRecordId}
                 showClose={activePanels.length > 1}
                 threadId={panel.view.threadId}
                 turnId={panel.view.turnId}

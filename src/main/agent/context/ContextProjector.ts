@@ -358,7 +358,10 @@ export class CanonicalContextProjector {
         flushContextBlocks();
         const userContent = await serializeUserContent(item.content, this.resources);
         pendingUserContent.push(...userContent);
-        pendingUserProvenance.push(...userContent.map(() => ({ source: 'userInput' as const })));
+        pendingUserProvenance.push(...userContent.map(() => ({
+          source: 'userInput' as const,
+          itemId: item.id,
+        })));
         userBoundaries.push({
           turnId: turn.id,
           itemId: item.id,

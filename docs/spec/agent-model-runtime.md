@@ -842,7 +842,7 @@ breakpoint. The adapter sanitizes both the payload block and the text reconstruc
 the same breakpoints. It never parses textual markers and adds no Anthropic metadata to
 other providers.
 
-## Turn Diagnostics
+## Diagnostics And Trajectory Evidence
 
 `PiTurnExecutor` creates one `TurnDiagnosticsCollector` from the effective configuration
 and resolved runtime at Turn start. Every Provider Call records two different facts. At
@@ -872,6 +872,21 @@ provider/model/API/configured-base-URL/transport selection, model limits, and re
 settings. Configured-base-URL diagnostics remove URL userinfo, query, and fragment data
 before persistence. These audit facts explain how the call was prepared; they are not a
 renderer-reconstructed request or another context authority.
+
+Trajectory consumes these diagnostics through a main-owned sanitized projection.
+The retained diagnostics payload remains the audited provider-boundary evidence;
+the renderer-facing Trajectory detail does not receive the raw payload, configured
+base URL, host paths, arbitrary headers, credentials, image bytes, or payload
+storage paths. The projection emits a stable-prompt context record on the first
+retained prompt and whenever its complete fingerprint changes; it does not repeat
+an unchanged prompt for every Provider Call.
+Provider requests are captured after adapter transformation. Diagnostics may
+store large provider request fields as content-addressed `requestFragments`, but
+Trajectory detail materializes those fragments back into the original
+post-adapter payload shape before applying renderer-facing sanitization. That
+materialized request is request evidence for a provider call. It is distinct from
+canonical user input and from context evidence, and must not be presented as a
+USER message.
 
 Each tool execution diagnostic records its admission disposition, canonical identity,
 and schema digest when one exists. Assistant responses and tool observations pass the
@@ -956,6 +971,11 @@ without inventing an Item. Call identity is unique within its provider-call exec
 because compatible providers may reuse values such as `call_0` on later requests;
 non-transient Item ownership remains unique across the activity stream. Open executions
 inherit the terminal Turn outcome, including `completed` for a successful Turn.
+Trajectory therefore identifies one execution with the typed
+`(threadId, turnId, activityIndex, callId)` tuple. `activityIndex` locates the
+recorded batch and `callId` locates the exact member; neither value alone is
+globally unique, and a presentation record ID is never parsed to recover either
+one.
 Each batch names the immediately preceding source Call and, once observed, the immediately
 following Call that consumes its results. Retry and compaction activities use the same
 adjacent-Call links; preflight compaction before the first Call has a null source. Renderer code

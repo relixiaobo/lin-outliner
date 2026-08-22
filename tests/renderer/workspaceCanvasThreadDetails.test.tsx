@@ -20,7 +20,7 @@ afterEach(() => {
   savedGlobals = [];
 });
 
-test('Turn Diagnostics closes its pane when no Back destination remains', () => {
+test('Trajectory closes its pane when no Back destination remains', () => {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
   Object.assign(window, {
@@ -32,6 +32,7 @@ test('Turn Diagnostics closes its pane when no Back destination remains', () => 
     lin: {
       initialLanguage: 'en',
       onLanguageChanged: () => () => undefined,
+      onAgentCoreNotification: () => () => undefined,
       agentCoreRequest: () => new Promise(() => undefined),
     },
   });
@@ -40,7 +41,7 @@ test('Turn Diagnostics closes its pane when no Back destination remains', () => 
       id: 'panel-no-back',
       type: 'workspace',
       size: 1,
-      view: { kind: 'thread-turn-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+      view: { kind: 'thread-trajectory', threadId: 'thread-alpha', turnId: 'turn-one' },
       backStack: [],
       forwardStack: [],
     },
@@ -48,7 +49,7 @@ test('Turn Diagnostics closes its pane when no Back destination remains', () => 
       id: 'panel-with-back',
       type: 'workspace',
       size: 1,
-      view: { kind: 'thread-turn-details', threadId: 'thread-beta', turnId: 'turn-two' },
+      view: { kind: 'thread-trajectory', threadId: 'thread-beta', turnId: 'turn-two' },
       backStack: [{ kind: 'outliner', rootId: 'today' }],
       forwardStack: [],
     },
@@ -76,6 +77,7 @@ test('Turn Diagnostics closes its pane when no Back destination remains', () => 
           onNavigatePanelBack={(panelId) => backCalls.push(panelId)}
           onNavigatePanelPreview={() => undefined}
           onNavigatePanelRoot={() => undefined}
+          onOpenThreadTrajectory={() => undefined}
           onPanelResizeKeyDown={() => undefined}
           onPanelResizeReset={() => undefined}
           onPanelResizeStart={() => undefined}

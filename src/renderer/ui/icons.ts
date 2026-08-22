@@ -50,6 +50,7 @@ export {
   Command as CommandIcon,
   Copy as CopyIcon,
   CopyPlus as DuplicateIcon,
+  Download as DownloadIcon,
   CornerDownRight as ReferenceIcon,
   ExternalLink as OpenIcon,
   MousePointerClick as ClickIcon,

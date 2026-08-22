@@ -7,6 +7,7 @@ import { parseIsoLocalDate, todayIsoLocalDate, type AssetMetadata, type FocusHin
 import { flattenVisibleRows, useProjectionStore, useUiState } from '../state/document';
 import { selectableRowForId } from '../state/selectableRows';
 import { ThreadDock, type ThreadRailState } from '../agent/components/ThreadDock';
+import { threadStore } from '../agent/store/threadStore';
 import { buildRendererUserViewHints } from './agent/userViewContext';
 import { Sidebar } from './Sidebar';
 import { WindowChrome } from './WindowChrome';
@@ -186,7 +187,7 @@ export function App() {
     navigateRoot: setActivePanelRoot,
     openPanel,
     openPreview,
-    openThreadTurnDetailsPanel,
+    openThreadTrajectoryPanel,
     panels,
     repairInvalidPanelViews,
     resizePanelPair,
@@ -199,7 +200,7 @@ export function App() {
     preparePanelCount,
   });
   // Global Back/Forward (Cmd+[ / Cmd+]) act on the active workspace pane's view
-  // history, including Turn Diagnostics and file previews.
+  // history, including Trajectory and file previews.
   const pageHistoryPanel = activeWorkspacePanel;
 
   const {
@@ -733,6 +734,12 @@ export function App() {
           onNavigatePanelBack={navigatePanelBack}
           onNavigatePanelPreview={navigatePanelPreview}
           onNavigatePanelRoot={navigatePanelRoot}
+          onOpenThreadTrajectory={(threadId) => {
+            openThreadTrajectoryPanel(threadId);
+            void threadStore.selectThread(threadId).catch((selectionError) => {
+              setError(selectionError instanceof Error ? selectionError.message : String(selectionError));
+            });
+          }}
           onPanelScrollPositionChange={updatePanelScroll}
           onPanelResizeKeyDown={resizePanelPairWithKeyboard}
           onPanelResizeReset={resetPanelPair}
@@ -752,7 +759,7 @@ export function App() {
           indexStore={indexStore}
           railState={agentRailState}
           onOpenNodeReference={openNodeReferenceFromAgent}
-          onOpenTurnDetails={openThreadTurnDetailsPanel}
+          onOpenTurnDetails={(threadId, turnId) => openThreadTrajectoryPanel(threadId, { turnId })}
           onResizeKeyDown={resizeAgentWithKeyboard}
           onResizeReset={resetAgentWidth}
           onResizeStart={beginAgentResize}

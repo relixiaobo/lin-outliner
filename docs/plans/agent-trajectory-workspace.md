@@ -34,8 +34,11 @@ and inspect the exact retained evidence without leaving that Thread's context.
   parent record that opens the child Thread's own Trajectory.
 - Do not replace application-wide error diagnostics or Settings diagnostics
   export.
-- Do not copy DeepSeek Harness styling, plugin architecture, equal-duration
-  claims, floating composer, or source code wholesale.
+- Do not copy DeepSeek Harness brand tokens, fonts, application shell, plugin
+  architecture, floating composer, or source code wholesale. Its Trajectory
+  composition, density, information hierarchy, and interaction model are the
+  product-interface authority; Tenon expresses them through its own tokens and
+  process boundary.
 - Do not retain a compatibility reader or route for the retired pre-release
   Model Interactions workspace.
 
@@ -44,6 +47,13 @@ and inspect the exact retained evidence without leaving that Thread's context.
 ### Product model
 
 Trajectory is a Thread-wide investigation workspace, not a Turn details modal.
+Its central surface follows the DeepSeek Harness Trajectory interface rather
+than a generic Tenon reading page: full-width horizontal bands, a compact
+three-lane overview, a dense event ledger, and an inspector that appears beside
+the ledger only while a record is selected. Summary metadata is integrated into
+the toolbar and inspector; the workspace must not become a vertical stack of
+framed cards.
+
 It combines three synchronized surfaces:
 
 1. An Input / Assistant / Tools overview establishes ordering, timing, and scale.
@@ -56,11 +66,13 @@ The active workspace pane shows Trajectory while the Thread dock remains visible
 as the conversation surface. Tenon does not reproduce the DeepSeek Harness
 floating composer because Thread input already has one owner.
 
-DeepSeek Harness `TrajectoryTimeline` and `TrajectoryTable` are behavioral
-references for synchronized selection, range navigation, folding, and adaptive
-inspection. Tenon's implementation is decomposed around its own process seam,
-protocol codecs, renderer store, and design tokens rather than transplanting the
-reference components.
+DeepSeek Harness `TrajectoryTimeline`, `TrajectoryToolbar`, and
+`TrajectoryTable` are the layout and behavioral references for density,
+message-first rows, synchronized selection, range navigation, folding, and
+adaptive inspection. Deviations require a Tenon-specific product constraint,
+not a preference for an existing generic panel primitive. Tenon's implementation
+is decomposed around its own process seam, protocol codecs, renderer store, and
+design tokens rather than transplanting the reference components.
 
 ### Concept alignment and record taxonomy
 
@@ -77,8 +89,8 @@ The top-level Trajectory record kind set is:
 
 | Kind | Meaning | Lane |
 |---|---|---|
-| `input` | Initial user input and steering admission. | Input |
-| `context` | Stable prompt, tool catalog, context evidence, and context reset evidence. | Input |
+| `input` | One canonical `userMessage` Item admitted as initial input or steering. | Input |
+| `context` | Stable prompt changes, provider-visible tool catalog changes, and prepared provider-context parts that emitted model-visible context text. | Input |
 | `assistant` | One provider/model call presented as Assistant work, with request, response, reasoning, usage, and timing facts. | Assistant |
 | `tool` | Shell, file, MCP, dynamic tool, search, and other non-delegating tool work. | Tools |
 | `retry` | Request or stream retry linked to its source and next Assistant/provider calls. | Assistant |
@@ -92,7 +104,37 @@ and reasoning are related evidence or preview content for that Assistant record
 when available; they never replace the provider-call identity. If a provider
 call did not produce visible transcript text because it requested tools, failed,
 or was interrupted, it still remains one Assistant record with its recorded
-request, response, timing, and state.
+request, response, timing, and state. Preview preserves the terminal
+provider-neutral response as ordered typed parts: text, thinking, tool calls,
+image metadata, and bounded unknown blocks. Tool calls retain the model-issued
+call ID, tool name, and sanitized arguments, so a tool-only response cannot look
+empty merely because it emitted no text.
+
+An `input` record is one canonical `userMessage` Item. Its primary evidence is
+the Thread Item itself; the accepted-input diagnostic activity and the first
+provider call that consumed it are related evidence. Its Preview uses the
+captured, ordered provider-neutral prepared-message parts whose diagnostics
+provenance names that exact Item. Text remains exact sanitized text; image parts
+remain explicit typed markers carrying MIME type, byte length, and digest. When
+that digest exactly matches a retained canonical attachment artifact, the typed
+block replaces its placeholder icon with that artifact's thumbnail and shows
+the attachment name; a missing or unreadable artifact leaves the metadata-only
+fallback intact. This
+preserves the real attachment markers, readable-path instructions, Node
+reference markers, image metadata, image-part position, and other serialization
+performed by `ContextProjector`; canonical `ThreadUserContent` is accepted-input
+evidence available only in Raw; it never substitutes for missing prepared
+provider evidence. Image bytes never enter the Trajectory detail response;
+matched retained artifacts load only through the existing bounded preview seam.
+Context Items
+admitted in the same envelope do not automatically become `context` records. A
+CONTEXT row exists
+only for stable prompt text, a provider-call tool catalog snapshot that changed
+the model-visible tool schemas, or a prepared provider-context part whose
+diagnostics prove that model-visible context text was emitted. System-context
+parts, including referenced Node snapshots, remain separate from USER even when
+they share one prepared message. The Request tab shows the sanitized
+post-adapter provider payload and is not folded into USER content.
 
 Every Trajectory record has one primary evidence reference and may have related
 evidence references. Detail reads resolve from the primary evidence and then
@@ -113,11 +155,13 @@ record kinds.
 
 ### Entry and navigation
 
-The active Thread header opens Trajectory for the complete Thread. A Details
-action on a Turn, message, Assistant/provider call, or tool record opens the
-same workspace with the exact owning record selected. The entry contract is
-Thread-addressed; selection is an optional deep link, not a separate
-Turn-addressed page.
+The active Thread header opens Trajectory for the complete Thread. An Open
+Trajectory action on a Turn, message, Assistant/provider call, or tool record
+opens the same workspace with the exact owning record selected. The entry
+contract is Thread-addressed; selection is an optional deep link, not a separate
+Turn-addressed page. Renderer focus from that deep link is consumed once on
+entry; live refresh preserves the user's current inspector state and never
+reopens a closed inspector from the original Turn focus.
 
 On entry:
 
@@ -144,6 +188,12 @@ adjacency.
 Stable record identities survive paging, restoration, live replacement, and
 history prepends.
 
+Each record carries an opaque fixed-width `orderKey` built from stable canonical
+Turn/activity/call/item coordinates plus explicit zero-based `turnIndex` and
+`stepIndex` display coordinates. Adding or removing a projected structural row
+must not change an existing record's order key. Main emits a typed semantic
+record label; renderer localizes its title, role, state, and metadata.
+
 The projection includes only bounded summaries required to locate a record:
 record identity and kind, Thread and Turn ownership, parent call identity where
 applicable, lifecycle state, recorded timestamps, bounded preview, usage summary,
@@ -167,15 +217,22 @@ invariants degrade by recording, healing, or skipping at the affected record.
 
 The Agent protocol exposes:
 
-- a tail-first paged trajectory query addressed by Thread;
-- a bounded live-change notification carrying invalidation or replacement facts;
+- a bounded trajectory query addressed by Thread with stable `olderCursor` /
+  `newerCursor` keyset paging, a lightweight whole-Thread summary, and an
+  authoritative inclusive `startOrderKey` / `endOrderKey` replacement range for
+  the loaded record window;
+- a bounded live-change notification that invalidates the affected Thread so the
+  renderer can refresh the affected window and remove stale running fallback
+  rows without forcing a full diagnostics rebuild;
 - a record-detail query addressed by exact Thread, Turn, and record identity;
 - a Thread trajectory export command that returns a user-selected file result.
 
 All request and response values use explicit codecs. Main validates ownership
-before resolving any detail. The renderer never receives filesystem paths,
-digest-only authority, arbitrary response headers, raw recognized secrets,
-host credentials, or unbounded binary content.
+before resolving any detail. Captured filesystem paths remain visible when they
+are part of accepted input, prepared model context, provider requests or
+responses, or model-issued tool arguments. The renderer never receives a
+diagnostics payload storage path, digest-only authority, arbitrary response
+headers, raw recognized secrets, host credentials, or unbounded binary content.
 
 Existing audited readers such as Turn details, Item output, and context payload
 reads remain the detail authority where their ownership already matches. The
@@ -202,11 +259,17 @@ paging, range, and fold state.
 
 ### Ledger interaction contract
 
-The ledger is ordered by recorded activity and grouped by Turn. Turn and
-Assistant/provider-call folds preserve one summary row and stable selection
-semantics. Search filters the currently loaded window; it does not imply that
-unloaded history was searched. The UI states that scope and offers earlier-page
-loading from an explicit ledger row and overview ellipsis.
+The ledger is ordered by recorded activity and grouped by Turn. Each record is
+one compact, table-like row whose leading tag names the message/event role and
+whose main column starts with the actual content preview. Internal titles,
+identifiers, evidence references, and lifecycle metadata must not displace the
+message content as the primary scan target. Turn folds preserve the first
+ordinary content row plus one summary row; System and provider-visible Tools
+request-header rows stay outside the fold. Assistant/provider-call folds
+preserve one summary row and stable selection semantics. Search filters
+the currently loaded window; it does not imply that unloaded history was
+searched. The UI states that scope and offers earlier-page loading from an
+explicit ledger row and overview ellipsis.
 
 The initial view follows the tail. User scrolling, time-range selection, or
 detail inspection suspends following until the user explicitly restores it.
@@ -224,19 +287,105 @@ On wide desktop layouts, selection opens a resizable companion pane. At narrow
 widths the inspector replaces the ledger and provides Back rather than
 compressing both surfaces below their readable minimum.
 
-Tabs are record-specific:
+Tabs are record-specific and follow the DeepSeek Harness content-first model:
 
-- Input and Context: Summary, Preview, Source, Timing.
-- Assistant: Summary, Request, Response, Timing, Export.
-- Tool: Summary, Arguments, Result, Schema, Audit, Timing.
-- Retry and Compaction: Summary, Details, Timing.
-- Delegation: Summary, Outcome, Timing, Open child Trajectory.
+- Input: Summary, Preview, Request, Raw.
+- Context: Summary, Preview, Raw; stable prompt records expose System Prompt,
+  and provider-visible tool catalog records expose Tools.
+- Assistant: Summary, Preview, Request, Raw. Summary integrates source request, state,
+  usage, rendered response, and timing; Raw contains the typed redacted request
+  and response evidence.
+- Tool: Summary, Input, Output, Schema, Raw.
+- Retry and Compaction: Summary, Preview, Raw.
+- Delegation: Summary, Preview, Raw, Open child Trajectory.
+
+Context Preview uses captured model-visible context text from the prepared
+canonical provider context whenever diagnostics retained it. That is the
+`<system-reminder>` / `<context-evidence ...>` text the model saw at the
+provider-context boundary, after projection, budgeting, compaction, and
+renderer-facing sanitization. Non-stable context rows are keyed by a
+diagnostics-backed prepared-context-part evidence reference, not by the retained
+`contextEvidence` Item. A prepared provider content part is the ledger unit: if
+one `<system-reminder>` part contains multiple `<context-evidence>` blocks, it
+appears as one CONTEXT row and the inspector shows the whole part text. If a
+retained `contextEvidence` Item emitted no
+model-visible text, it is not a Trajectory message row. Tool catalog Preview is
+not message text; its row is grounded on the provider call's prepared
+`toolNames` and retained canonical schemas. It appears once when the first
+non-empty catalog is sent and again only when a later provider call changes the
+prepared catalog; repeated calls with the same tool schemas do not add duplicate
+rows. Tool catalog rows are system-like request-header rows: they sit with
+stable prompt changes before the Turn's ordinary USER / CONTEXT / ASSISTANT
+body rows, and Turn folding never hides them. Frozen tool-output
+projection Items are storage evidence for replaying tool results; they do not
+appear as CONTEXT rows unless their text is explicitly emitted inside prepared
+provider context. The retained context payload remains Raw storage evidence
+when it is selected through another authority; it is not the Preview and not the
+exact post-adapter provider request.
+
+Input Preview follows the same evidence rule at Item granularity. Each prepared
+message part records either `userInput` plus its canonical Item ID,
+`systemContext`, assistant history, a tool result, or unknown provenance. The
+projector selects every part tagged with the selected input Item ID from the
+provider call that consumed it, preserves part order and type, applies bounded
+credential redaction, and replaces image bytes with MIME / byte-length / digest
+evidence. Filesystem paths remain exact evidence. Multiple input Items in one
+steering call therefore cannot
+repeat or borrow one another's content.
+Preview presents those ordered parts as separate blocks. Input text uses the
+captured string verbatim in a plain preformatted block, so Tenon file and Node
+reference markers remain evidence rather than becoming interactive renderer
+references. Image and unknown parts keep independent blocks in the same order.
+Canonical accepted content remains visible in Raw evidence but is not treated as
+proof of the provider-visible serialization and never fills an empty Preview.
+
+Ledger preview text is a bounded locating aid only. No Inspector Preview, Tool
+Input, Tool Output, or Context view may fall back to that row text. Assistant
+Preview reads only typed terminal-response parts; Context Preview reads only
+captured model-visible context text; Tool and Delegation Preview read only the
+retained output; Compaction Preview reads the retained compaction summary; Retry
+has no Preview payload when its diagnostics record only lifecycle facts.
+The System Prompt tab and its ledger preview read the captured provider-context
+prompt fragment, not the earlier stable-prompt source blocks. Tool and
+Delegation row previews use only retained canonical model-call arguments; host
+execution and presentation fields never stand in for model input.
+
+Bounded reads may materialize one predecessor Turn to restore the stable-prompt
+and tool-catalog fingerprints at the requested boundary. Its evidence never
+appears in the response. When predecessor diagnostics are unavailable, the
+boundary state is unknown and the first visible snapshot is not presented as an
+initial prompt or catalog. A diagnostics gap inside a larger window also resets
+both fingerprints to unknown, so full, focused, and detail reads classify the
+following structural snapshots identically.
 
 The Assistant inspector may title the backing evidence as a Model Call because
 the details are provider-call diagnostics. That title is evidence vocabulary,
 not a top-level ledger kind. Large content and syntax presentation mount lazily.
-Raw means Tenon's typed, secret-redacted diagnostic representation. It never
+Raw means Tenon's typed, bounded, credential-redacted diagnostic representation,
+with captured filesystem paths preserved. It never
 means an unrecorded HTTP body, arbitrary headers, image bytes, or credentials.
+When typed model parts exist, Raw presents those parts first and then the complete
+typed detail envelope; parts never replace the message, diagnostics, request,
+response, runtime, or related-item evidence around them. All variable evidence
+inside one detail read shares one response budget, required typed envelope fields
+remain valid, and a hard serialized response ceiling degrades excess evidence to
+typed partial coverage. Budget exhaustion omits a typed diagnostics activity
+instead of returning it without its required discriminator, and the complete
+detail response is checked again after fallback. Normal tool-call IDs remain
+exact; anomalously oversized IDs use one stable SHA-256 identity consistently
+across the ledger, model parts, and detail lookup.
+System Prompt, full model-context Preview, structured Request, Tool Input, Tool
+Output, Schema, and textual Raw parts share one bounded read-only evidence
+container with an explicit copy action. The container preserves the displayed
+retained string exactly for raw text; typed structured values are pretty-printed
+once and copy returns that exact visible serialization. Valid JSON raw text may
+be highlighted but is not reparsed and reserialized for presentation or copy.
+Long lines wrap without changing copied content. A full Input Preview uses one
+container per text part, while compact Summary text stays inline and image
+evidence keeps its typed metadata presentation plus an exact-artifact thumbnail
+when available. Final Assistant prose, compaction summaries,
+and delegation results remain reading surfaces whose exact typed parts are
+available in Raw.
 Missing, corrupt, redacted, or unavailable evidence leaves the selected record
 and its siblings intact and explains the limitation in the affected tab.
 
@@ -250,17 +399,21 @@ into the parent projection merely to support navigation.
 
 ### Summary and export
 
-The workspace summary reports whole-Thread counts and totals that can be derived
-truthfully from retained evidence: Turns, Assistant/provider calls, tools,
-recorded duration, tokens, cache use, and cost when available. Missing
-contributors produce typed partial coverage rather than an apparently complete
-zero.
+The workspace summary reports only whole-Thread facts that can be derived
+truthfully from lightweight canonical Turn/timing/usage metadata without reading
+every diagnostics payload: Turns, recorded duration, tokens, cache use, and cost
+when available. Record-kind totals are deliberately absent because provider
+calls, retries, prepared context, and tool executions are diagnostics-backed;
+the response's `records` describe the loaded window without pretending to be a
+whole-Thread count. Missing contributors produce typed partial coverage rather
+than an apparently complete zero.
 
 Export creates a user-selected Thread trajectory bundle from the same typed
 projection and retained diagnostics used by the inspector. It states omissions
 and limitations, excludes secrets and unrecorded transport data, and makes no
-byte-for-byte HTTP fidelity claim. Export failure leaves the workspace unchanged
-and provides a retryable local error.
+byte-for-byte HTTP fidelity claim. Export failure leaves the workspace unchanged;
+main logs the complete write error and returns only a fixed path-free failure
+message to the renderer.
 
 ### Visual and accessibility contract
 
@@ -268,7 +421,9 @@ Trajectory uses the existing opaque workspace base, tokenized content surfaces,
 and material only where existing chrome permits it. Selection, hover, focus, and
 active state remain neutral; status colors convey status only. Icon controls use
 the existing icon library, native tooltip and focus conventions, and do not add
-rounded-square hover fills.
+rounded-square hover fills. Type chips may use identity/status tokens for
+message/event scanning, but those colors never paint selection, hover, active,
+or focus state.
 
 Keyboard users can reach the toolbar, timeline records, ledger rows, fold
 controls, tabs, resize control, and Back/close actions with visible focus.
@@ -294,8 +449,9 @@ the feature. Current behavior is folded into `agent-core.md`,
 
 - A derived trace can drift from execution history. The projector consumes
   canonical artifacts and recorded activity order and is rebuildable.
-- Eager diagnostics reads can make long Threads expensive. Reads are tail-first
-  and paged, detail is lazy, and caching requires measured evidence.
+- Eager diagnostics reads can make long Threads expensive. Reads locate a
+  bounded Turn window before diagnostics materialization, detail is lazy, and
+  caching requires measured evidence.
 - Live inspection can become a user-path invariant. Every contribution is best
   effort and cannot affect execution or settlement.
 - A dense split can become unreadable. The inspector has stable width limits and
@@ -308,7 +464,7 @@ the feature. Current behavior is folded into `agent-core.md`,
 ## Acceptance Criteria
 
 - Opening Trajectory from a Thread header shows that complete Thread; opening
-  Details from an existing record selects the exact matching Thread, Turn,
+  Trajectory from an existing record selects the exact matching Thread, Turn,
   Item, and Assistant/provider-call identities in the same workspace.
 - While a Turn runs, lifecycle rows and bounded previews update without manual
   refresh. After restart, completed history reconstructs in the same recorded
@@ -316,7 +472,15 @@ the feature. Current behavior is folded into `agent-core.md`,
 - Selecting a record exposes only applicable tabs and lazily reads large detail.
   Missing inspection evidence degrades locally and never removes the record.
 - Older-page prepend, streaming replacement, search clearing, and folds preserve
-  selection and measured scroll position through stable record identities.
+  selection and measured scroll position through stable record identities. Page
+  expansion adds only ancestors required by covered records, and live refresh
+  removes an out-of-range fallback only when incoming canonical evidence names
+  the same Thread Item. Pagination cursors remain anchored to the covered records,
+  never to ancestors inserted only for structural rendering. A live canonical
+  Turn replacement retires every loaded record carrying the prior Turn ID at that
+  zero-based Turn position, including retry records outside the refresh range;
+  a cursorless refresh also removes every loaded record at or beyond the
+  authoritative whole-Thread `summary.turnCount` after a multi-Turn rollback.
 - The timeline preserves recorded order, shows no fabricated duration, and keeps
   selection and search matches synchronized with the ledger.
 - The renderer and export never receive credentials, raw recognized secrets,

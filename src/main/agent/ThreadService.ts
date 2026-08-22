@@ -61,6 +61,12 @@ ThreadResourceReference,
 ThreadRollbackRequest,
 ThreadStartRequest,
 ThreadStartResponse,
+ThreadTrajectoryDetailReadRequest,
+ThreadTrajectoryDetailReadResponse,
+ThreadTrajectoryExportRequest,
+ThreadTrajectoryExportResponse,
+ThreadTrajectoryReadRequest,
+ThreadTrajectoryReadResponse,
 ThreadTurnDetailsReadRequest,
 ThreadTurnDetailsReadResponse,
 ThreadTurnsListRequest,
@@ -135,6 +141,7 @@ import { SubagentCollaboration,type StagedContextEvidence } from './thread/Subag
 import { ThreadCatalogOps } from './thread/ThreadCatalogOps';
 import { ThreadCore,type NotificationListener } from './thread/ThreadCore';
 import { ThreadResourceOps } from './thread/ThreadResourceOps';
+import { ThreadTrajectoryProjection,type ThreadTrajectoryExportBundle } from './thread/ThreadTrajectoryProjection';
 import { threadTranscriptRoot } from './thread/ThreadTranscriptArtifact';
 import { documentDriftNotice,driftAttribution,DRIFT_ATTRIBUTION_SCAN,DRIFT_NOTICE_NODE_LIMIT,type DocumentDriftAttribution } from './context/documentDriftNotice';
 import { beliefsFromToolResult,isBeliefBearingTool,type DocumentBelief } from './context/DocumentBeliefs';
@@ -347,6 +354,10 @@ export interface ThreadServiceOptions {
     input: AgentWorktreeRecoveryInput,
   ) => Promise<AgentWorktreeRecoveryResult>;
   readonly reportError?: (report: ErrorReport) => void | Promise<void>;
+  readonly writeTrajectoryExport?: (input: {
+    readonly defaultFileName: string;
+    readonly bundle: ThreadTrajectoryExportBundle;
+  }) => Promise<ThreadTrajectoryExportResponse>;
   readonly normalizeOutputImage?: OutputImageObservationNormalizer;
   readonly beforeInitialTurnAdmission?: () => void | Promise<void>;
   readonly now?: () => number;
@@ -511,6 +522,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly cleanupResidualAgentWorktree: ThreadServiceOptions['cleanupResidualAgentWorktree'];
   private readonly settleAgentWorktree: ThreadServiceOptions['settleAgentWorktree'];
   private readonly reportError: (report: ErrorReport) => Promise<void>;
+  private readonly writeTrajectoryExport: ThreadServiceOptions['writeTrajectoryExport'];
   private readonly startupQuarantinedThreadIds = new Set<ThreadId>();
   private readonly retryDeliveryAliases = new Map<ThreadId, RetryDeliveryAliasIndex>();
   /**
@@ -522,6 +534,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly unreadableThreadIds = new Set<ThreadId>();
   private readonly resourceOps: ThreadResourceOps;
   private readonly catalogOps: ThreadCatalogOps;
+  private readonly trajectory: ThreadTrajectoryProjection;
   private readonly collaboration: SubagentCollaboration;
   private readonly transcripts: ThreadTranscriptWriter;
   private readonly transcriptIndex: ThreadTranscriptIndex;
@@ -621,6 +634,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.recoverAgentWorktree = options.recoverAgentWorktree;
     this.cleanupResidualAgentWorktree = options.cleanupResidualAgentWorktree;
     this.settleAgentWorktree = options.settleAgentWorktree;
+    this.writeTrajectoryExport = options.writeTrajectoryExport;
     this.resourceOps = new ThreadResourceOps(
       this.core,
       options.attachmentScratchRoot,
@@ -703,6 +717,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.now,
       (message, rendererSubmissionRetryable) => new ThreadBusyError(message, rendererSubmissionRetryable),
       (error) => error instanceof ThreadBusyError,
+    );
+    this.trajectory = new ThreadTrajectoryProjection(
+      this.core,
+      this.now,
+      (threadId, turnId) => this.turnLifecycle.activeTurnDiagnosticsForInspection(threadId, turnId),
     );
     this.collaboration = new SubagentCollaboration(
       this.core,
@@ -1605,6 +1624,18 @@ export class ThreadService implements ThreadServiceExtensionHost {
         return await this.readTurnDetails(
           decoded as AgentCoreRequestByMethod['thread/turn/details/read'],
         ) as AgentCoreResponseByMethod[Method];
+      case 'thread/trajectory/read':
+        return await this.readTrajectory(
+          decoded as AgentCoreRequestByMethod['thread/trajectory/read'],
+        ) as AgentCoreResponseByMethod[Method];
+      case 'thread/trajectory/detail/read':
+        return await this.readTrajectoryDetail(
+          decoded as AgentCoreRequestByMethod['thread/trajectory/detail/read'],
+        ) as AgentCoreResponseByMethod[Method];
+      case 'thread/trajectory/export':
+        return await this.exportTrajectory(
+          decoded as AgentCoreRequestByMethod['thread/trajectory/export'],
+        ) as AgentCoreResponseByMethod[Method];
       case 'turn/submit':
         return await this.submitRendererInput(
           decoded as AgentCoreRequestByMethod['turn/submit'],
@@ -1640,6 +1671,29 @@ export class ThreadService implements ThreadServiceExtensionHost {
   async readItemOutput(request: ThreadItemOutputReadRequest): Promise<ThreadItemOutputReadResponse> { return this.resourceOps.readItemOutput(request); }
   async readContextPayload(request: ThreadContextReadRequest): Promise<ThreadContextReadResponse> { return this.resourceOps.readContextPayload(request); }
   async readTurnDetails(request: ThreadTurnDetailsReadRequest): Promise<ThreadTurnDetailsReadResponse> { return this.resourceOps.readTurnDetails(request); }
+  async readTrajectory(request: ThreadTrajectoryReadRequest): Promise<ThreadTrajectoryReadResponse> {
+    this.assertThreadHistoryReadable(request.threadId);
+    return await this.trajectory.read(request);
+  }
+  async readTrajectoryDetail(
+    request: ThreadTrajectoryDetailReadRequest,
+  ): Promise<ThreadTrajectoryDetailReadResponse> {
+    this.assertThreadHistoryReadable(request.threadId);
+    return await this.trajectory.readDetail(request);
+  }
+  async exportTrajectory(request: ThreadTrajectoryExportRequest): Promise<ThreadTrajectoryExportResponse> {
+    try {
+      this.assertThreadHistoryReadable(request.threadId);
+      const bundle = await this.trajectory.exportBundle(request.threadId);
+      if (!this.writeTrajectoryExport) return { status: 'failed', error: 'Trajectory export is not available.' };
+      return await this.writeTrajectoryExport({
+        defaultFileName: trajectoryExportFileName(bundle.thread),
+        bundle,
+      });
+    } catch (error) {
+      return { status: 'failed', error: errorMessage(error) };
+    }
+  }
   async beginAttachmentUpload(input: {
     readonly threadId: ThreadId;
     readonly attachmentId: string;
@@ -2480,6 +2534,23 @@ function nonEmptyAgentStartupContext(
 
 function emptyResponse(): EmptyAgentCoreResponse {
   return Object.freeze({});
+}
+
+function trajectoryExportFileName(thread: {
+  readonly id: ThreadId;
+  readonly name: string | null;
+  readonly preview: string;
+}): string {
+  const label = (thread.name ?? thread.preview ?? thread.id).trim() || thread.id;
+  const safeLabel = label
+    .replace(/[^a-z0-9._-]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80) || 'thread';
+  return `tenon-trajectory-${safeLabel}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function worktreeRecoveryIntent(

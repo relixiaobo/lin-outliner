@@ -49,7 +49,7 @@ import {
   useDocumentIndexSnapshot,
   type DocumentIndexStore,
 } from '../../state/documentIndexStore';
-import { useI18n, useT } from '../../i18n/I18nProvider';
+import { useT } from '../../i18n/I18nProvider';
 import {
   acknowledgeThreadComposerContext,
   acknowledgeThreadComposerNodeReferenceRequest,
@@ -115,8 +115,7 @@ import {
   type DisclosureScrollAnchorRestoreResult,
 } from '../../ui/interactions/disclosureScrollAnchor';
 import { useAnchoredOverlay } from '../../ui/primitives/useAnchoredOverlay';
-import { formatDateTime } from '../../ui/formatting';
-import { ThreadUsageBreakdown } from './ThreadUsageBreakdown';
+import { formatNumber } from '../../ui/formatting';
 import {
   hasTranscriptContentBelow,
   isTranscriptFollowing,
@@ -3404,10 +3403,10 @@ function ThreadResponseTail({
   readonly workingTextOwnsMotion: boolean;
 }) {
   const t = useT();
-  const [usageHoverOpen, setUsageHoverOpen] = useState(false);
+  const [trajectoryHoverOpen, setTrajectoryHoverOpen] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
-  const detailsButtonRef = useRef<HTMLButtonElement | null>(null);
+  const trajectoryButtonRef = useRef<HTMLButtonElement | null>(null);
   const streaming = turn.status === 'inProgress';
   const interrupted = turn.status === 'interrupted' && !statusOwnedElsewhere;
   const errorText = turn.error
@@ -3486,22 +3485,22 @@ function ThreadResponseTail({
               <IconButton
                 icon={InfoIcon}
                 iconSize={ICON_SIZE.menu}
-                label={t.agent.message.details}
-                onBlur={() => setUsageHoverOpen(false)}
+                label={t.agent.message.openTrajectory}
+                onBlur={() => setTrajectoryHoverOpen(false)}
                 onClick={(event) => {
-                  setUsageHoverOpen(false);
+                  setTrajectoryHoverOpen(false);
                   event.currentTarget.blur();
                   onOpenDetails();
                 }}
-                onFocus={() => setUsageHoverOpen(true)}
-                onMouseEnter={() => setUsageHoverOpen(true)}
-                onMouseLeave={() => setUsageHoverOpen(false)}
-                ref={detailsButtonRef}
+                onFocus={() => setTrajectoryHoverOpen(true)}
+                onMouseEnter={() => setTrajectoryHoverOpen(true)}
+                onMouseLeave={() => setTrajectoryHoverOpen(false)}
+                ref={trajectoryButtonRef}
                 title=""
                 variant="message"
               />
-              {usageHoverOpen ? (
-                <ThreadUsageHoverCard anchorRef={detailsButtonRef} turn={turn} />
+              {trajectoryHoverOpen ? (
+                <ThreadTrajectoryHoverCard anchorRef={trajectoryButtonRef} turn={turn} />
               ) : null}
             </span>
           </div>
@@ -3511,7 +3510,7 @@ function ThreadResponseTail({
   );
 }
 
-function ThreadUsageHoverCard({
+function ThreadTrajectoryHoverCard({
   anchorRef,
   turn,
 }: {
@@ -3519,35 +3518,53 @@ function ThreadUsageHoverCard({
   readonly turn: Turn;
 }) {
   const t = useT();
-  const { locale } = useI18n();
   const cardRef = useRef<HTMLDivElement | null>(null);
-  const usage = turn.execution.usage;
+  const facts = trajectoryHoverFacts(turn, t);
   const style = useAnchoredOverlay(cardRef, {
     anchorRef,
     gap: 8,
-    layoutKey: `${turn.completedAt ?? turn.startedAt}:${turn.execution.modelProvider}:${turn.execution.model}:${turn.execution.reasoningEffort}:${usage.input}:${usage.output}:${usage.cacheRead}:${usage.cacheWrite}:${usage.totalTokens}:${usage.cost?.total ?? 0}`,
-    maxHeight: 420,
+    layoutKey: `${turn.completedAt ?? turn.startedAt}:${turn.id}`,
+    maxHeight: 160,
     placement: 'top-end',
-    width: 320,
+    width: 'content',
   });
   return createPortal(
-    <div className="thread-response-usage-card" ref={cardRef} role="tooltip" style={style}>
-      <dl className="thread-response-usage-context">
-        <div>
-          <dt>{t.agent.message.timestamp}</dt>
-          <dd>{formatDateTime(turn.completedAt ?? turn.startedAt, locale, {
-            dateStyle: 'medium',
-            timeStyle: 'medium',
-          })}</dd>
+    <div className="thread-response-trajectory-card" ref={cardRef} role="tooltip" style={style}>
+      <div className="thread-response-trajectory-title">{t.agent.message.openTrajectory}</div>
+      {facts.length > 0 ? (
+        <div className="thread-response-trajectory-facts">
+          {facts.map((fact) => <span className="thread-response-trajectory-fact" key={fact}>{fact}</span>)}
         </div>
-        <div><dt>{t.agent.message.provider}</dt><dd>{turn.execution.modelProvider}</dd></div>
-        <div><dt>{t.agent.message.model}</dt><dd>{turn.execution.model}</dd></div>
-        <div><dt>{t.agent.message.reasoningEffort}</dt><dd>{turn.execution.reasoningEffort}</dd></div>
-      </dl>
-      <ThreadUsageBreakdown usage={usage} />
+      ) : null}
     </div>,
     document.body,
   );
+}
+
+export function trajectoryHoverFacts(turn: Turn, t: Messages): readonly string[] {
+  const facts: string[] = [];
+  const totalTokens = turn.execution.usage.totalTokens;
+  if (totalTokens > 0) {
+    facts.push(t.agent.message.openTrajectoryTokenCount({ tokens: formatHoverInteger(totalTokens) }));
+  }
+  const cost = turn.execution.usage.cost;
+  if (cost && cost.total > 0) {
+    facts.push(t.agent.message.openTrajectoryCost({ cost: formatHoverUsd(cost.total) }));
+  }
+  return facts;
+}
+
+function formatHoverInteger(value: number): string {
+  return formatNumber(Math.max(0, Math.round(value)), 'en-US');
+}
+
+function formatHoverUsd(value: number): string {
+  const bounded = Math.max(0, value);
+  if (bounded > 0 && bounded < 0.000001) return '<$0.000001';
+  if (bounded >= 1) return `$${bounded.toFixed(2)}`;
+  const [, fraction = ''] = bounded.toFixed(6).split('.');
+  const trimmed = fraction.replace(/0+$/u, '').padEnd(2, '0');
+  return `$0.${trimmed}`;
 }
 
 function ThreadProviderRetryStatus({ status }: { readonly status: ProviderRetryStatus }) {

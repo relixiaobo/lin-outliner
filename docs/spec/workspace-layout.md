@@ -115,7 +115,7 @@ Pane (outline panel):
 
 A document or outline view inside the canvas — the single canvas primitive.
 Panes are tiled in a single row. They may be resizable, but they do not overlap.
-A pane hosts an outliner, file-preview, or Turn Diagnostics view. All tile
+A pane hosts an outliner, file-preview, or Trajectory view. All tile
 identically and share the same per-pane navigation history.
 
 Agent dock:
@@ -260,28 +260,37 @@ File preview uses the same workspace panel host and the same history stack:
 }
 ```
 
-Turn Diagnostics is a workspace panel view that stores only the canonical
-location needed to read the current data:
+Trajectory is a workspace panel view that stores only the canonical Thread and
+optional focus needed to read the current projection:
 
 ```ts
 {
   type: 'workspace',
   view: {
-    kind: 'thread-turn-details',
+    kind: 'thread-trajectory',
     threadId: ThreadId,
-    turnId: TurnId,
+    selectedRecordId?: string,
+    turnId?: TurnId,
   },
   backStack: [{ kind: 'outliner', rootId: NodeId }],
   forwardStack: [],
 }
 ```
 
-Opening Turn Diagnostics replaces the active pane's current view and pushes that view
-onto its Back stack; it never adds a pane. A different Turn replaces the current
-Turn Diagnostics target without adding another history entry. Back and the Diagnostics
-close action return to the originating view. If sanitization leaves no Back
-destination and another pane remains, Close removes the Diagnostics pane instead
-of presenting a no-op control.
+Opening Trajectory replaces the active pane's current view and pushes that view
+onto its Back stack; it never adds a pane. Opening another record or Turn while
+Trajectory is current replaces only the focus target, without adding another
+history entry. Back and the Trajectory close action return to the originating
+view. If sanitization leaves no Back destination and another pane remains, Close
+removes the Trajectory pane instead of presenting a no-op control.
+
+The optional focus is a deep link, not required view state. Thread-header entry
+stores no focus and Trajectory initially gives the full pane to its ledger.
+Selecting a record opens a renderer-local inspector beside the ledger when the
+pane is wide enough; in a pane at or below the Trajectory narrow-layout
+breakpoint the inspector replaces the ledger and provides its own Back control.
+Inspector width, timeline viewport/range, folds, search, and tail-follow are
+ephemeral workspace interaction state and do not enter the persisted panel view.
 
 The tile ratio (`size`) lives **on the panel**, not in a separate parallel map —
 one array is the whole layout truth, so adding/closing a pane cannot desync a
@@ -295,7 +304,7 @@ independently. A valid current view stays current. An invalid current view can
 automatically land only on an outliner: restore chooses the latest valid Back
 outliner, then the latest valid Forward outliner. Valid entries skipped while
 reaching that outliner move to the opposite stack in navigation order, so a URL
-or Turn Diagnostics view remains user-reachable without mounting automatically
+or Trajectory view remains user-reachable without mounting automatically
 at startup.
 
 A fresh split preview records the source pane's live outliner as
@@ -321,8 +330,9 @@ The layout does **not** include:
   and not part of the event-sourced document.
 - Outliner row expansion state. Each root node page has renderer-local outline
   view state, stored separately from the pane layout.
-- Agent Thread transcript, scroll, or input. A Turn Diagnostics view persists only
-  its canonical Thread and Turn IDs, never a second transcript projection.
+- Agent Thread transcript, scroll, or input. A Trajectory view persists only its
+  canonical Thread ID and optional record/Turn focus, never a second transcript
+  projection.
 - Document operation undo/redo state. Per-pane view history is navigation
   history only and must not change document history.
 
@@ -918,14 +928,14 @@ The active pane is the pane that receives outline keyboard commands when focus i
 in the workspace canvas.
 
 Page-history Back/Forward (`Cmd+[` / `Cmd+]`) follows the active workspace pane's
-view history, including Turn Diagnostics and file previews. "Open the active root in
+view history, including Trajectory and file previews. "Open the active root in
 a pane" (`Cmd+M`) requires the active view to be an outliner; while another view
 is active it no-ops rather than reaching across to another pane. Untargeted navigation
 (`navigateRoot` — sidebar plain click, command surface, "go to root") targets the
 active outliner pane if there is one, else an existing outliner pane, else opens
 one; it never replaces the whole canvas. Ambient UI that merely needs "the
 outliner the user is looking at" (sidebar root highlight, drag-selection scope)
-falls back to the first outliner pane when Turn Diagnostics holds the active slot.
+falls back to the first outliner pane when Trajectory holds the active slot.
 
 ## Tiled Layout
 

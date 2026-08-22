@@ -526,7 +526,7 @@ test.describe('canonical agent Thread surface', () => {
     ))).toEqual([
       'Copy message',
       'Continue in new chat',
-      'Details',
+      'Open Trajectory',
     ]);
     const [responseBodyBox, responseActionsBox] = await Promise.all([
       response.locator('.thread-agent-message-body').boundingBox(),
@@ -536,111 +536,60 @@ test.describe('canonical agent Thread surface', () => {
     expect(responseActionsBox).toBeTruthy();
     expect(responseActionsBox!.y).toBeGreaterThanOrEqual(responseBodyBox!.y + responseBodyBox!.height - 1);
 
-    const messageDetailsButton = responseActions.getByRole('button', { name: 'Details' });
+    const messageDetailsButton = responseActions.getByRole('button', { name: 'Open Trajectory' });
     await messageDetailsButton.hover();
-    const usage = page.getByRole('tooltip');
-    await expect(usage).toHaveCount(1);
-    await expect(usage.locator('.thread-response-usage-context')).toContainText('Timestamp');
-    await expect(usage.locator('.thread-response-usage-context')).toContainText('Provideropenai');
-    await expect(usage.locator('.thread-response-usage-context')).toContainText('Modelopenai/gpt-5.4');
-    await expect(usage.locator('.thread-response-usage-context')).toContainText('Reasoningmedium');
-    await expect(usage).toContainText('Usage details');
-    await expect(usage).toContainText('Cached: 21%');
-    await expect(usage).toContainText('Input120');
+    const trajectoryHint = page.getByRole('tooltip');
+    await expect(trajectoryHint).toHaveCount(1);
+    await expect(trajectoryHint).toContainText('Open Trajectory');
+    await expect(trajectoryHint).toContainText('200 tok');
+    await expect(trajectoryHint).toContainText('$0.00061');
+    await expect(trajectoryHint).not.toContainText('Inspect this turn’s context, tools, events, and evidence.');
     const paneCountBeforeDetails = await page.locator('.outline-panel-surface').count();
     await messageDetailsButton.click();
     await expect(page.getByRole('dialog', { name: 'Details' })).toHaveCount(0);
-    await expect(usage).toHaveCount(0);
-    const turnDetails = page.locator('.outline-panel-surface.is-thread-turn-details');
-    await expect(turnDetails).toBeVisible();
-    await expect(turnDetails).toHaveClass(/active-panel/);
+    await expect(trajectoryHint).toHaveCount(0);
+    const trajectory = page.locator('.outline-panel-surface.is-thread-trajectory');
+    await expect(trajectory).toBeVisible();
+    await expect(trajectory).toHaveClass(/active-panel/);
     await expect(page.locator('.outline-panel-surface')).toHaveCount(paneCountBeforeDetails);
-    await expect(turnDetails).toContainText('Model Interactions');
-    await expect(turnDetails).toContainText('Summary');
-    await expect(turnDetails).toContainText('Interaction Timeline (1)');
-    await expect(turnDetails).toContainText('Internal diagnostics');
-    await expect(turnDetails).toContainText('Model calls');
-    await expect(turnDetails).toContainText('Tool executions: 0');
-    await expect(turnDetails).not.toContainText('Canonical Items (2)');
-    await expect(turnDetails).toContainText('Request');
-    await expect(turnDetails).toContainText('Response');
-    const request = turnDetails.getByRole('heading', { name: 'Request', exact: true }).locator('..');
-    await expect(request).toContainText('Provider Request Content');
-    await expect(request).not.toContainText('Provider request JSON');
-    await expect(request).not.toContainText('Pre-adapter context');
-    await expect(request).not.toContainText('Request metadata');
-    await request.getByText('input', { exact: true }).click();
-    await expect(request).toContainText('System Context');
-    await request.locator('.thread-turn-details-part-list > .thread-turn-details-disclosure')
-      .filter({ hasText: 'System Context' })
-      .first()
-      .locator(':scope > summary')
-      .click();
-    await expect(request).toContainText('Environment · Application · Observation');
-    await expect(request).toContainText('Raw system context part');
-    const firstCall = turnDetails.locator('.thread-turn-details-timeline-activity').filter({ hasText: 'Model Call 1' });
-    const callInformation = firstCall.getByRole('button', { name: 'Model call information' });
-    await callInformation.hover();
-    const requestFacts = page.locator('.thread-turn-details-request-facts-card');
-    await expect(requestFacts).toBeVisible();
-    await expect(requestFacts).toContainText('Modelopenai/gpt-5.4');
-    await expect(requestFacts).toContainText('Provideropenai');
-    await expect(requestFacts).toContainText('Provider parameters');
-    await expect(requestFacts).toContainText('modelopenai/gpt-5.4');
-    await expect(requestFacts).toContainText('Estimated input tokens');
-    await expect(requestFacts).toContainText('HTTP status200');
-    await expect(requestFacts).toContainText('Stop reasonstop');
-    await expect(requestFacts).toContainText('Usage details');
-    const copyModelCall = firstCall.locator('button.thread-turn-details-call-action').last();
-    await expect(copyModelCall).toHaveAttribute('aria-label', 'Copy model call');
-    await copyModelCall.click();
-    await expect(copyModelCall).toHaveAttribute('aria-label', 'Model call copied');
-    await expect(firstCall).toHaveAttribute('open', '');
-    const copiedCall = JSON.parse(await clipboardText(page)) as Record<string, unknown>;
-    expect(Object.keys(copiedCall)).toEqual([
-      'format', 'runtime', 'request', 'response', 'limitations',
-    ]);
-    expect(copiedCall.runtime).toMatchObject({ provider: 'openai', model: 'openai/gpt-5.4' });
-    expect(copiedCall.request).toMatchObject({
-      modelContext: {
-        systemInstructions: 'Canonical mock system prompt.',
-        messages: [expect.objectContaining({
-          partProvenance: expect.arrayContaining([
-            expect.objectContaining({ source: 'systemContext' }),
-          ]),
-        })],
-        toolDefinitions: expect.any(Array),
-      },
-      providerPayload: {
-        model: 'openai/gpt-5.4',
-        instructions: 'Canonical mock system prompt.',
-        input: expect.any(Array),
-        tools: expect.any(Array),
-      },
-      facts: expect.objectContaining({ callIndex: 0 }),
-    });
-    expect(copiedCall.response).toMatchObject({
-      transport: expect.any(Object),
-      model: expect.objectContaining({ stopReason: 'stop', value: expect.any(Object) }),
-    });
-    expect(copiedCall.limitations).toEqual({
-      imageBytes: 'omitted-with-byte-length-and-sha256',
-      secretHeaders: 'not-recorded',
-      rawProviderResponseBody: 'not-recorded',
-    });
-    const providerRequestContent = request.locator('.thread-turn-details-flow-group').first();
-    await expect(providerRequestContent).not.toContainText('modelopenai/gpt-5.4');
-    const requestText = await request.textContent() ?? '';
-    expect(requestText).not.toContain('0. model');
-    await turnDetails.getByText('Internal diagnostics', { exact: true }).click();
-    await expect(turnDetails).toContainText('Canonical Items (2)');
-    await expect(turnDetails).toContainText('Stable prompt source blocks');
-    await expect(turnDetails).toContainText('Canonical tool schemas (1)');
-    await turnDetails.getByText('Canonical Items (2)', { exact: true }).click();
-    const userItemDetails = turnDetails.locator('.thread-turn-details-item').filter({ hasText: 'userMessage' });
-    await userItemDetails.locator('.thread-turn-details-row-head').click();
-    await expect(userItemDetails).toContainText('"type": "userMessage"');
-    await turnDetails.getByRole('button', { name: 'Previous page' }).click();
+    await expect(trajectory).toContainText('Trajectory');
+    const assistantTrajectoryRow = trajectory.locator('[data-kind="assistant"]');
+    await expect(assistantTrajectoryRow).toContainText('Assistant');
+    await expect(assistantTrajectoryRow).toContainText('Mock response');
+    await expect(trajectory.getByRole('tab', { name: 'Summary' })).toBeVisible();
+    await expect(trajectory.getByRole('tab', { name: 'Preview' })).toBeVisible();
+    await expect(trajectory.getByRole('tab', { name: 'Request' })).toBeVisible();
+    await expect(trajectory.getByRole('tab', { name: 'Raw' })).toBeVisible();
+    await trajectory.getByRole('tab', { name: 'Raw' }).click();
+    const trajectoryInspector = trajectory.locator('.thread-trajectory-inspector');
+    await expect(trajectoryInspector).toContainText('Part 1 · Text');
+    await expect(trajectoryInspector).toContainText('Mock response');
+    await expect(trajectoryInspector).toContainText('Typed evidence');
+    await expect(trajectoryInspector).toContainText('Mock request');
+    await trajectory.getByRole('tab', { name: 'Request' }).click();
+    await expect(trajectoryInspector).toContainText('Mock request');
+
+    const closeInspector = trajectory.getByRole('button', { name: 'Close Trajectory inspector' });
+    const backToLedger = trajectory.getByRole('button', { name: 'Back to Trajectory ledger' });
+    if (await closeInspector.isVisible()) {
+      await closeInspector.click();
+    } else {
+      await backToLedger.click();
+    }
+    const trajectorySearch = trajectory.getByRole('searchbox', { name: 'Search loaded records' });
+    await trajectorySearch.fill('Mock request');
+    await expect(trajectory.locator('[data-kind="input"]')).toBeVisible();
+    await expect(trajectory.locator('[data-kind="assistant"]')).toHaveCount(0);
+    await expect(trajectory).toContainText('Search is scoped to the currently loaded Trajectory window.');
+    await trajectorySearch.fill('');
+    await expect(trajectory.locator('[data-kind="assistant"]')).toBeVisible();
+
+    const durationToggle = trajectory.getByRole('button', { name: 'Duration' });
+    await expect(durationToggle).toHaveAttribute('aria-pressed', 'true');
+    await durationToggle.click();
+    await expect(durationToggle).toHaveAttribute('aria-pressed', 'false');
+
+    await trajectory.getByRole('button', { name: 'Previous page' }).click();
     await expect(page.locator('.outline-panel-surface.active-panel.is-outliner')).toBeVisible();
 
     await userMessage.hover();
@@ -666,7 +615,8 @@ test.describe('canonical agent Thread surface', () => {
     expect(calls.map((call) => call.cmd)).toEqual(expect.arrayContaining([
       'thread/list',
       'thread/start',
-      'thread/turn/details/read',
+      'thread/trajectory/read',
+      'thread/trajectory/detail/read',
       'thread/turns/list',
       'turn/submit',
       'goal/get',
@@ -2065,14 +2015,12 @@ test.describe('canonical agent Thread surface', () => {
       await expect(compactionTurn.getByRole('button', { name: 'Copy message' })).toHaveCount(0);
       await expect(compactionTurn.getByRole('button', { name: 'Continue in new chat' })).toHaveCount(0);
       await compactionTurn.hover();
-      await compactionTurn.getByRole('button', { name: 'Details' }).click();
-      const turnDetails = page.locator('.outline-panel-surface.is-thread-turn-details');
-      await expect(turnDetails).toContainText('Model Interactions');
-      await expect(turnDetails).toContainText('Request diagnostics have not been recorded for this Turn.');
-      await turnDetails.getByText('Internal diagnostics', { exact: true }).click();
-      await turnDetails.getByText('Canonical Items (1)', { exact: true }).click();
-      await expect(turnDetails).toContainText('contextCompaction');
-      await expect.poll(() => turnDetails.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0);
+      await compactionTurn.getByRole('button', { name: 'Open Trajectory' }).click();
+      const trajectory = page.locator('.outline-panel-surface.is-thread-trajectory');
+      await expect(trajectory).toContainText('Trajectory');
+      await expect(trajectory.locator('[data-kind="compaction"]')).toContainText('Compacted');
+      await expect(trajectory.locator('.thread-trajectory-inspector')).toContainText('No retained evidence.');
+      await expect.poll(() => trajectory.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0);
     });
   }
 
@@ -3241,7 +3189,7 @@ test.describe('canonical agent Thread surface', () => {
     }, { ...fixture.children[1]!, parentThreadId: fixture.parentThreadId });
 
     await expect(rows).toHaveCount(2);
-    await expect(parentTurn.locator('.thread-agent-chip-block.thread-subagent-completed')).toHaveCount(1);
+    await expect(parentTurn.locator('.thread-agent-chip-block.thread-subagent-finished')).toHaveCount(1);
     await expect(parentTurn.getByRole('button', { name: /^Stop / })).toHaveCount(0);
   });
 
@@ -3480,7 +3428,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(parentTurn.locator('.thread-process-toggle')).toHaveCount(1);
     await expect(row).toHaveCount(0);
     await parentTurn.locator('.thread-process-toggle').click();
-    await expect(row.locator('.thread-agent-chip-meta')).toHaveText('Completed · 3m 12s');
+    await expect(row.locator('.thread-agent-chip-meta')).toHaveText('Finished · 3m 12s');
   });
 
   test('delivers a result as the Agent\'s own folded message, never the host notification', async ({ page }) => {
@@ -3709,6 +3657,13 @@ test.describe('canonical agent Thread surface', () => {
         threadId: parentThreadId,
         turnId: deliveryTurnId,
         turn: deliveryTurn,
+      });
+      target.__LIN_E2E__?.setMockSubagentExecution(childId, {
+        terminalStatus: 'finished',
+        notificationState: 'delivered',
+        deliveryTurnId,
+        deliveryClass: 'ordinary',
+        coverageDisposition: 'full',
       });
       return { childId, deliveryTurnId, parentThreadId };
     });
@@ -4207,9 +4162,9 @@ test.describe('canonical agent Thread surface', () => {
 
       await expect(parentTurn.locator('.thread-process-title'))
         .toContainText(/Working for \d+[smhd]/u);
-      const completedRow = parentTurn.locator('.thread-agent-chip-block.thread-subagent-completed');
-      await expect(completedRow).toHaveCount(1);
-      await expect(completedRow.locator('.thread-agent-chip-meta.working-text')).toHaveCount(0);
+      const finishedRow = parentTurn.locator('.thread-agent-chip-block.thread-subagent-finished');
+      await expect(finishedRow).toHaveCount(1);
+      await expect(finishedRow.locator('.thread-agent-chip-meta.working-text')).toHaveCount(0);
 
       await page.evaluate(({ child, parentThreadId, startedAt }) => {
         const target = window as Window & {
@@ -8348,7 +8303,7 @@ test.describe('terminal Thread history actions', () => {
       'Retry',
       'Copy message',
       'Continue in new chat',
-      'Details',
+      'Open Trajectory',
     ]);
     const [errorBox, actionsBox] = await Promise.all([error.boundingBox(), actions.boundingBox()]);
     expect(errorBox).toBeTruthy();

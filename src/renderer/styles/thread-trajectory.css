@@ -1,0 +1,1229 @@
+.outline-panel-surface .thread-trajectory-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  padding-bottom: 0;
+}
+
+.thread-trajectory-panel > .panel-sticky-breadcrumb {
+  flex: none;
+}
+
+.thread-trajectory-content {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-content);
+  container-type: inline-size;
+}
+
+.thread-trajectory-content > .feedback-state {
+  flex: 1;
+}
+
+.thread-trajectory-toolbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border-block: 1px solid var(--separator);
+  background: var(--bg-content);
+  user-select: none;
+}
+
+.thread-trajectory-toolbar-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.thread-trajectory-toolbar-button,
+.thread-trajectory-inspector-back,
+.thread-trajectory-inspector-close,
+.thread-trajectory-call-fold,
+.thread-trajectory-turn-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  color: var(--text-tertiary);
+  background: transparent;
+}
+
+.thread-trajectory-toolbar-button {
+  flex: none;
+  height: 22px;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-xs);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+}
+
+.thread-trajectory-toolbar-button:hover,
+.thread-trajectory-toolbar-button:focus-visible,
+.thread-trajectory-toolbar-button[aria-pressed="true"] {
+  color: var(--text-primary);
+  background: var(--fill-2);
+}
+
+.thread-trajectory-toolbar-count {
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.thread-trajectory-search {
+  display: flex;
+  flex: 0 1 250px;
+  align-items: center;
+  box-sizing: border-box;
+  min-width: 140px;
+  height: 24px;
+  margin-left: auto;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-xs);
+  color: var(--text-tertiary);
+  background: var(--fill-1);
+}
+
+.thread-trajectory-search:focus-within {
+  border-color: var(--focus-ring);
+  background: var(--bg-content);
+}
+
+.thread-trajectory-search input {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  color: var(--text-primary);
+  background: transparent;
+  font: inherit;
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+}
+
+.thread-trajectory-search input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.thread-trajectory-inspector-back,
+.thread-trajectory-inspector-close {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+}
+
+.thread-trajectory-inspector-back:hover,
+.thread-trajectory-inspector-back:focus-visible,
+.thread-trajectory-inspector-close:hover,
+.thread-trajectory-inspector-close:focus-visible {
+  color: var(--text-primary);
+}
+
+.thread-trajectory-search:focus-within,
+.thread-trajectory-toolbar-button:focus-visible,
+.thread-trajectory-inspector-back:focus-visible,
+.thread-trajectory-inspector-close:focus-visible,
+.thread-trajectory-call-fold:focus-visible,
+.thread-trajectory-turn-label:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: -1px;
+}
+
+.thread-trajectory-timeline {
+  display: grid;
+  flex: none;
+  grid-template-columns: 52px minmax(0, 1fr);
+  height: 52px;
+  overflow: hidden;
+  border-block-end: 1px solid var(--separator);
+  background: var(--fill-1);
+  user-select: none;
+}
+
+.thread-trajectory-timeline-labels {
+  position: relative;
+  border-inline-end: 1px solid var(--separator);
+  color: var(--text-tertiary);
+  font-size: var(--font-ui-2xs);
+  line-height: 1;
+}
+
+.thread-trajectory-timeline-labels span {
+  position: absolute;
+  right: var(--space-2);
+  display: flex;
+  height: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.thread-trajectory-timeline-labels span:nth-child(1) { top: 7px; }
+.thread-trajectory-timeline-labels span:nth-child(2) { top: 21px; }
+.thread-trajectory-timeline-labels span:nth-child(3) { top: 35px; }
+
+.thread-trajectory-timeline-track {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  outline: none;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.thread-trajectory-timeline-track:focus-visible {
+  box-shadow: var(--focus-ring-shadow-inset);
+}
+
+.thread-trajectory-timeline-track.is-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  font-size: var(--font-ui-xs);
+}
+
+.thread-trajectory-earlier {
+  position: absolute;
+  z-index: var(--z-raised);
+  inset: 0 auto 0 0;
+  width: 26px;
+  padding: 0 0 0 var(--space-2);
+  border: 0;
+  color: var(--text-secondary);
+  background: var(--bg-content);
+  text-align: start;
+}
+
+.thread-trajectory-earlier:hover,
+.thread-trajectory-earlier:focus-visible {
+  color: var(--text-primary);
+}
+
+.thread-trajectory-earlier:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: -1px;
+}
+
+.thread-trajectory-earlier:disabled {
+  color: var(--text-quaternary);
+}
+
+.thread-trajectory-timeline-turns,
+.thread-trajectory-timeline-spans {
+  position: absolute;
+  inset: 0;
+}
+
+.thread-trajectory-timeline-turns {
+  pointer-events: none;
+}
+
+.thread-trajectory-timeline-turn {
+  position: absolute;
+  inset-block: 0;
+  left: var(--trajectory-turn-left);
+  width: 1px;
+  background: var(--separator);
+}
+
+.thread-trajectory-timeline-span {
+  --trajectory-type-accent: var(--text-tertiary);
+
+  position: absolute;
+  z-index: 2;
+  top: calc(7px + var(--trajectory-span-lane) * 14px);
+  left: calc(var(--trajectory-span-left) + 1px);
+  width: max(2px, calc(var(--trajectory-span-width) - 2px));
+  height: 8px;
+  min-width: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-2xs);
+  background: var(--trajectory-type-accent);
+  opacity: 0.76;
+}
+
+.thread-trajectory-timeline-span.is-system { --trajectory-type-accent: var(--identity-tint-6); }
+.thread-trajectory-timeline-span.is-input { --trajectory-type-accent: var(--identity-tint-5); }
+.thread-trajectory-timeline-span.is-context { --trajectory-type-accent: var(--identity-tint-4); }
+.thread-trajectory-timeline-span.is-tool-catalog { --trajectory-type-accent: var(--identity-tint-2); }
+.thread-trajectory-timeline-span.is-assistant { --trajectory-type-accent: var(--identity-tint-7); }
+.thread-trajectory-timeline-span.is-tool,
+.thread-trajectory-timeline-span.is-delegation { --trajectory-type-accent: var(--identity-tint-1); }
+.thread-trajectory-timeline-span.is-retry,
+.thread-trajectory-timeline-span.is-compaction { --trajectory-type-accent: var(--status-warning); }
+.thread-trajectory-timeline-span.is-assistant[data-assistant-timing="true"] {
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--trajectory-type-accent) 38%, transparent) 0,
+    color-mix(in srgb, var(--trajectory-type-accent) 38%, transparent) var(--trajectory-span-ttft),
+    var(--trajectory-type-accent) var(--trajectory-span-ttft),
+    var(--trajectory-type-accent) 100%
+  );
+}
+.thread-trajectory-timeline-span[data-state="failed"] { background: var(--status-danger); }
+
+.thread-trajectory-timeline-span.is-marker {
+  width: 2px;
+}
+
+.thread-trajectory-timeline-span[data-selected="true"] {
+  z-index: 2;
+  opacity: 1;
+  box-shadow: var(--focus-ring-shadow);
+}
+
+.thread-trajectory-timeline-span[data-search-match="false"] {
+  opacity: 0.14;
+}
+
+.thread-trajectory-timeline-span:hover,
+.thread-trajectory-timeline-span:focus-visible {
+  z-index: 2;
+  opacity: 1;
+  outline: 1px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.thread-trajectory-timeline-selection {
+  position: absolute;
+  z-index: 1;
+  inset-block: 0;
+  left: var(--trajectory-range-left);
+  display: none;
+  width: var(--trajectory-range-width);
+  min-width: 1px;
+  background: var(--fill-2);
+  box-shadow: var(--outline-focus);
+  pointer-events: none;
+}
+
+.thread-trajectory-timeline-selection[data-visible="true"] {
+  display: block;
+}
+
+.thread-trajectory-timeline-selection::before,
+.thread-trajectory-timeline-selection::after {
+  position: absolute;
+  inset-block: 0;
+  width: 2px;
+  background: var(--focus-ring);
+  content: '';
+}
+
+.thread-trajectory-timeline-selection::before {
+  inset-inline-start: 0;
+}
+
+.thread-trajectory-timeline-selection::after {
+  inset-inline-end: 0;
+}
+
+.thread-trajectory-workspace {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-content);
+}
+
+.thread-trajectory-ledger {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 280px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.thread-trajectory-ledger-scope {
+  display: flex;
+  flex: none;
+  min-height: 24px;
+  align-items: center;
+  padding: 0 var(--space-4);
+  border-block-end: 1px solid var(--separator);
+  color: var(--text-tertiary);
+  background: var(--fill-1);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
+}
+
+.thread-trajectory-ledger-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.thread-trajectory-table {
+  width: 100%;
+  min-width: 0;
+  border-spacing: 0;
+  table-layout: fixed;
+  color: var(--text-primary);
+  background: var(--bg-content);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+}
+
+.thread-trajectory-event-column {
+  width: 132px;
+}
+
+.thread-trajectory-table td {
+  box-sizing: border-box;
+  height: 30px;
+  padding: 0 var(--space-4);
+  overflow: hidden;
+  border-block-end: 1px solid var(--separator);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-trajectory-table tbody tr:not(.thread-trajectory-virtual-spacer) {
+  height: 30px;
+  outline: none;
+  content-visibility: auto;
+  contain-intrinsic-size: 0 30px;
+}
+
+.thread-trajectory-table tbody tr:not(.thread-trajectory-virtual-spacer):hover,
+.thread-trajectory-table tbody tr:not(.thread-trajectory-virtual-spacer):focus-visible,
+.thread-trajectory-table tbody tr[aria-selected="true"] {
+  background: var(--row-hover);
+}
+
+.thread-trajectory-table tbody tr[aria-selected="true"] {
+  background: var(--row-selected);
+}
+
+.thread-trajectory-table tbody tr[data-timeline-focus="outside"]:not(:hover):not(:focus-visible):not([aria-selected="true"]) {
+  opacity: 0.48;
+}
+
+.thread-trajectory-table tbody tr:focus-visible {
+  box-shadow: var(--focus-ring-shadow-inset);
+}
+
+.thread-trajectory-table tbody tr[data-state="failed"] .thread-trajectory-row-trailing,
+.thread-trajectory-table tbody tr[data-state="failed"] .thread-trajectory-kind {
+  color: var(--status-danger);
+}
+
+.thread-trajectory-event-cell {
+  position: relative;
+  padding-left: 50px !important;
+}
+
+.thread-trajectory-selection-rail {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--focus-ring);
+}
+
+.thread-trajectory-turn-label {
+  position: absolute;
+  inset: 0 auto 0 2px;
+  width: 45px;
+  overflow: hidden;
+  padding: 0 var(--space-1);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-trajectory-turn-label:hover,
+.thread-trajectory-turn-label:focus-visible {
+  color: var(--text-primary);
+}
+
+.thread-trajectory-kind {
+  --trajectory-kind-accent: var(--text-secondary);
+
+  display: inline-flex;
+  max-width: 76px;
+  height: 19px;
+  align-items: center;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-xs);
+  color: color-mix(in srgb, var(--trajectory-kind-accent) 82%, var(--text-primary) 18%);
+  background: color-mix(in srgb, var(--trajectory-kind-accent) 12%, transparent);
+  font-size: var(--font-ui-2xs);
+  font-weight: 600;
+  line-height: var(--line-ui-2xs-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-trajectory-kind.is-system {
+  --trajectory-kind-accent: var(--identity-tint-6);
+}
+
+.thread-trajectory-kind.is-input {
+  --trajectory-kind-accent: var(--identity-tint-5);
+}
+
+.thread-trajectory-kind.is-context {
+  --trajectory-kind-accent: var(--identity-tint-4);
+}
+
+.thread-trajectory-kind.is-tool-catalog {
+  --trajectory-kind-accent: var(--identity-tint-2);
+}
+
+.thread-trajectory-kind.is-assistant {
+  --trajectory-kind-accent: var(--identity-tint-7);
+}
+
+.thread-trajectory-kind.is-tool,
+.thread-trajectory-kind.is-delegation {
+  --trajectory-kind-accent: var(--identity-tint-1);
+}
+
+.thread-trajectory-kind.is-retry,
+.thread-trajectory-kind.is-compaction {
+  --trajectory-kind-accent: var(--status-warning);
+}
+
+.thread-trajectory-content-cell {
+  position: relative;
+}
+
+.thread-trajectory-row-content {
+  display: flex;
+  width: calc(100% - 238px);
+  min-width: 0;
+  height: 29px;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.thread-trajectory-table tr[data-depth="1"] .thread-trajectory-row-content {
+  padding-inline-start: var(--space-5);
+}
+
+.thread-trajectory-call-fold {
+  flex: none;
+  width: 16px;
+  height: 20px;
+  padding: 0;
+}
+
+.thread-trajectory-call-fold:hover,
+.thread-trajectory-call-fold:focus-visible {
+  color: var(--text-primary);
+}
+
+.thread-trajectory-row-text {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-trajectory-fold-count {
+  flex: none;
+  color: var(--text-tertiary);
+  font-size: var(--font-ui-2xs);
+}
+
+.thread-trajectory-row-trailing {
+  position: absolute;
+  inset: 0 var(--space-4) 0 auto;
+  display: flex;
+  width: 224px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-5);
+  color: var(--text-tertiary);
+  font-size: var(--font-ui-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.thread-trajectory-row-trailing > span,
+.thread-trajectory-row-trailing > time {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-trajectory-turn-summary {
+  color: var(--text-secondary);
+}
+
+.thread-trajectory-history-row td {
+  padding: 0;
+}
+
+.thread-trajectory-history-row button {
+  width: 100%;
+  height: 29px;
+  border: 0;
+  color: var(--text-secondary);
+  background: transparent;
+  font-size: var(--font-ui-xs);
+}
+
+.thread-trajectory-history-row button:hover,
+.thread-trajectory-history-row button:focus-visible {
+  color: var(--text-primary);
+  background: var(--fill-2);
+}
+
+.thread-trajectory-history-row button:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: -1px;
+}
+
+.thread-trajectory-virtual-spacer td {
+  height: var(--trajectory-ledger-spacer-height);
+  padding: 0;
+  border: 0;
+}
+
+.thread-trajectory-inspector {
+  position: relative;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  width: clamp(320px, 38%, 440px);
+  max-width: calc(100% - 280px);
+  min-width: 0;
+  min-height: 0;
+  border-inline-start: 1px solid var(--separator);
+  background: var(--bg-content);
+}
+
+.thread-trajectory-inspector-resize {
+  position: absolute;
+  z-index: var(--z-resize);
+  inset: 0 auto 0 -4px;
+  width: 8px;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  touch-action: none;
+  cursor: var(--resize-cursor);
+}
+
+.thread-trajectory-inspector-resize::after {
+  position: absolute;
+  inset: 0 auto 0 3px;
+  width: 1px;
+  background: transparent;
+  content: '';
+}
+
+.thread-trajectory-inspector-resize:focus-visible::after {
+  background: var(--focus-ring);
+}
+
+.thread-trajectory-inspector-header {
+  display: flex;
+  flex: none;
+  height: 42px;
+  align-items: center;
+  box-sizing: border-box;
+  gap: var(--space-3);
+  padding: 0 var(--space-3) 0 var(--space-5);
+  border-block-end: 1px solid var(--separator);
+}
+
+.thread-trajectory-inspector-title {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--text-tertiary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+}
+
+.thread-trajectory-inspector-title > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-trajectory-inspector-back {
+  display: none;
+}
+
+.thread-trajectory-tabs {
+  display: flex;
+  flex: none;
+  width: 100%;
+  height: 34px;
+  box-sizing: border-box;
+  gap: var(--space-1);
+  padding: 0 var(--space-3);
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-block-end: 1px solid var(--separator);
+}
+
+.thread-trajectory-tabs button {
+  position: relative;
+  flex: none;
+  padding: 0 var(--space-4);
+  border: 0;
+  color: var(--text-tertiary);
+  background: transparent;
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+}
+
+.thread-trajectory-tabs button:hover,
+.thread-trajectory-tabs button:focus-visible,
+.thread-trajectory-tabs button.is-selected {
+  color: var(--text-primary);
+}
+
+.thread-trajectory-tabs button::after {
+  position: absolute;
+  inset: auto var(--space-4) 0;
+  height: 2px;
+  border-radius: var(--radius-2xs) var(--radius-2xs) 0 0;
+  background: transparent;
+  content: '';
+}
+
+.thread-trajectory-tabs button.is-selected::after {
+  background: var(--text-primary);
+}
+
+.thread-trajectory-tabs button:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: -1px;
+}
+
+.thread-trajectory-inspector-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.thread-trajectory-inspector-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.thread-trajectory-inspector-body > h4,
+.thread-trajectory-inspector-section > h4 {
+  margin: 0;
+  padding: var(--space-5) var(--space-6) var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--font-ui-sm);
+  font-weight: 600;
+  line-height: var(--line-ui-sm);
+}
+
+.thread-trajectory-inspector-body.is-summary > .thread-trajectory-facts:first-child {
+  border-block-end: 1px solid var(--separator);
+}
+
+.thread-trajectory-inspector-section {
+  border-block-end: 1px solid var(--separator);
+}
+
+.thread-trajectory-facts {
+  display: grid;
+  margin: 0;
+  padding: var(--space-3) 0;
+}
+
+.thread-trajectory-facts > div {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  min-height: 24px;
+  align-items: baseline;
+  padding: 0 var(--space-6);
+  gap: var(--space-4);
+}
+
+.thread-trajectory-facts dt {
+  color: var(--text-tertiary);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+}
+
+.thread-trajectory-facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+}
+
+.thread-trajectory-preview {
+  padding: var(--space-5) var(--space-6) var(--space-8);
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  font-size: var(--font-ui-md);
+  line-height: var(--line-ui-md);
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+.thread-trajectory-preview.is-compact {
+  max-height: 220px;
+  padding-top: 0;
+  overflow: auto;
+}
+
+.thread-trajectory-parts-preview {
+  display: grid;
+  align-content: start;
+  gap: var(--space-4);
+  white-space: normal;
+}
+
+.thread-trajectory-parts-preview.is-input {
+  gap: 0;
+}
+
+.thread-trajectory-parts-preview.is-input:not(.is-compact) {
+  gap: var(--space-4);
+}
+
+.thread-trajectory-parts-preview.is-input > * {
+  padding-block: var(--space-3);
+  border-block-start: 1px solid var(--separator);
+}
+
+.thread-trajectory-parts-preview.is-input > :first-child {
+  padding-block-start: 0;
+  border-block-start: 0;
+}
+
+.thread-trajectory-parts-preview.is-input > :last-child {
+  padding-block-end: 0;
+}
+
+.thread-trajectory-parts-preview.is-input:not(.is-compact) > * {
+  padding-block: 0;
+  border-block-start: 0;
+}
+
+.thread-trajectory-parts-preview.is-input:not(.is-compact) > .thread-trajectory-part-image {
+  padding: var(--space-4);
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-sm);
+  background: var(--fill-1);
+}
+
+.thread-trajectory-part-text,
+.thread-trajectory-part-thinking,
+.thread-trajectory-part-other {
+  min-width: 0;
+}
+
+.thread-trajectory-part-text.is-plain {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: inherit;
+  font: inherit;
+  white-space: pre-wrap;
+}
+
+.thread-trajectory-part-text .thread-markdown,
+.thread-trajectory-part-thinking .thread-markdown {
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.thread-trajectory-part-thinking {
+  padding-inline-start: var(--space-3);
+  border-inline-start: 2px solid var(--separator);
+  color: var(--text-secondary);
+}
+
+.thread-trajectory-part-thinking > summary {
+  display: inline-flex;
+  height: 20px;
+  align-items: center;
+  color: var(--text-tertiary);
+  font-size: var(--font-ui-sm);
+  font-weight: 600;
+  line-height: var(--line-ui-sm);
+  list-style: none;
+  user-select: none;
+}
+
+.thread-trajectory-part-thinking > summary::-webkit-details-marker {
+  display: none;
+}
+
+.thread-trajectory-part-thinking > summary > svg {
+  flex: none;
+  margin-inline-end: var(--space-1);
+  transition: transform var(--motion-fast);
+}
+
+.thread-trajectory-part-thinking[open] > summary > svg {
+  transform: rotate(90deg);
+}
+
+.thread-trajectory-part-thinking > summary:hover {
+  color: var(--text-secondary);
+}
+
+.thread-trajectory-part-thinking > summary:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.thread-trajectory-part-thinking-body {
+  padding: var(--space-1) 0 var(--space-2);
+}
+
+.thread-trajectory-part-tool {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  align-items: center;
+  box-sizing: border-box;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-xs);
+  color: var(--text-secondary);
+  background: transparent;
+  font: var(--font-ui-xs)/var(--line-ui-xs) var(--font-family-mono);
+  text-align: start;
+}
+
+button.thread-trajectory-part-tool:hover,
+button.thread-trajectory-part-tool:focus-visible {
+  background: var(--fill-1);
+}
+
+button.thread-trajectory-part-tool:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: -1px;
+}
+
+.thread-trajectory-part-tool > svg {
+  flex: none;
+  color: var(--text-tertiary);
+}
+
+.thread-trajectory-part-tool-name {
+  flex: none;
+  font-weight: 600;
+}
+
+.thread-trajectory-part-tool-arguments {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-trajectory-part-tool > svg:last-child {
+  margin-inline-start: auto;
+}
+
+.thread-trajectory-part-image {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: var(--space-3);
+  color: var(--text-secondary);
+}
+
+.thread-trajectory-part-image-media {
+  display: grid;
+  width: calc(2 * var(--control-size-xl));
+  height: calc(2 * var(--control-size-xl));
+  flex: none;
+  overflow: hidden;
+  place-items: center;
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-sm);
+  background: var(--fill-1);
+  color: var(--text-tertiary);
+}
+
+.thread-trajectory-part-image-media > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.thread-trajectory-part-image-media > svg {
+  flex: none;
+}
+
+.thread-trajectory-part-image > svg {
+  flex: none;
+  margin-top: var(--space-1);
+  color: var(--text-tertiary);
+}
+
+.thread-trajectory-part-image-details {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: var(--space-1);
+}
+
+.thread-trajectory-part-image strong {
+  color: var(--text-primary);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+}
+
+.thread-trajectory-part-image span,
+.thread-trajectory-part-image code {
+  overflow-wrap: anywhere;
+  color: var(--text-tertiary);
+  font: var(--font-ui-xs)/var(--line-ui-xs) var(--font-family-mono);
+}
+
+.thread-trajectory-part-other > span,
+.thread-trajectory-raw-part-heading {
+  color: var(--text-tertiary);
+  font: var(--font-ui-xs)/var(--line-ui-xs) var(--font-family-mono);
+}
+
+.thread-trajectory-part-other > pre {
+  margin: var(--space-1) 0 0;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  font: var(--font-ui-xs)/var(--line-code-block) var(--font-family-mono);
+  white-space: pre-wrap;
+}
+
+.thread-trajectory-raw-parts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-5) var(--space-6) var(--space-8);
+  border-block-end: 1px solid var(--separator);
+  user-select: text;
+}
+
+.thread-trajectory-raw-part {
+  min-width: 0;
+}
+
+.thread-trajectory-raw-part-heading {
+  display: flex;
+  width: max-content;
+  max-width: 100%;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+button.thread-trajectory-raw-part-heading {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: start;
+}
+
+button.thread-trajectory-raw-part-heading:hover,
+button.thread-trajectory-raw-part-heading:focus-visible {
+  color: var(--text-secondary);
+}
+
+button.thread-trajectory-raw-part-heading:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.thread-trajectory-raw-part > .thread-trajectory-part-image {
+  margin-top: var(--space-2);
+}
+
+.thread-trajectory-parts-preview > .thread-trajectory-code,
+.thread-trajectory-raw-part > .thread-trajectory-code {
+  margin-top: var(--space-2);
+}
+
+.thread-trajectory-parts-preview:not(.is-compact) > .thread-trajectory-code {
+  margin-top: 0;
+}
+
+.thread-trajectory-inspector-section > .thread-trajectory-facts {
+  padding-top: 0;
+}
+
+.thread-trajectory-availability {
+  display: grid;
+  gap: var(--space-3);
+  margin: var(--space-5) var(--space-6);
+  padding: var(--space-4);
+  background: var(--fill-1);
+}
+
+.thread-trajectory-availability p {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+}
+
+.thread-trajectory-availability strong {
+  color: var(--text-primary);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+}
+
+.thread-trajectory-availability span,
+.thread-trajectory-note {
+  color: var(--text-secondary);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+}
+
+.thread-trajectory-note {
+  margin: 0;
+  padding: var(--space-5) var(--space-6);
+}
+
+.thread-trajectory-note.is-inline {
+  padding: 0 0 var(--space-4);
+}
+
+.thread-trajectory-inspector-body.is-evidence-page > .thread-trajectory-code {
+  min-height: 0;
+  margin: 0 var(--space-6) var(--space-6);
+}
+
+.thread-trajectory-preview > .thread-trajectory-code {
+  margin: 0;
+}
+
+.agent-code-block.thread-trajectory-code pre {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.thread-trajectory-inspector-body > .button {
+  align-self: flex-start;
+  margin: var(--space-5) var(--space-6);
+}
+
+@container (max-width: 860px) {
+  .thread-trajectory-row-content {
+    width: calc(100% - 150px);
+  }
+
+  .thread-trajectory-row-trailing {
+    width: 136px;
+  }
+
+  .thread-trajectory-row-trailing > span:first-child {
+    display: none;
+  }
+}
+
+@container (max-width: 700px) {
+  .thread-trajectory-workspace.has-selection .thread-trajectory-ledger {
+    display: none;
+  }
+
+  .thread-trajectory-inspector {
+    width: 100% !important;
+    max-width: none;
+    border-inline-start: 0;
+  }
+
+  .thread-trajectory-inspector-resize,
+  .thread-trajectory-inspector-close {
+    display: none;
+  }
+
+  .thread-trajectory-inspector-back {
+    display: inline-flex;
+  }
+}
+
+@container (max-width: 520px) {
+  .thread-trajectory-toolbar {
+    padding-inline: var(--space-2);
+  }
+
+  .thread-trajectory-toolbar-button {
+    padding-inline: var(--space-2);
+  }
+
+  .thread-trajectory-toolbar-count {
+    display: none;
+  }
+
+  .thread-trajectory-search {
+    flex-basis: 160px;
+    min-width: 120px;
+  }
+
+  .thread-trajectory-event-column {
+    width: 116px;
+  }
+
+  .thread-trajectory-event-cell {
+    padding-left: 42px !important;
+  }
+
+  .thread-trajectory-turn-label {
+    width: 38px;
+  }
+
+  .thread-trajectory-kind {
+    max-width: 68px;
+  }
+
+  .thread-trajectory-row-content {
+    width: calc(100% - 66px);
+  }
+
+  .thread-trajectory-row-trailing {
+    width: 58px;
+  }
+
+  .thread-trajectory-row-trailing > span {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thread-trajectory-timeline-span,
+  .thread-trajectory-table tbody tr {
+    transition: none;
+  }
+}

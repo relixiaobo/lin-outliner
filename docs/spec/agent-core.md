@@ -461,7 +461,7 @@ staged fork. The copied Thread therefore remains
 readable after its source is deleted. Content-addressed resource references do not
 contain a Thread path and remain unchanged in the copied Items and payloads. Every
 terminal Turn's diagnostics payload is copied under the fork's ownership with the same
-content-addressed reference before publication, so Turn Diagnostics also remains readable
+content-addressed reference before publication, so Trajectory and audited diagnostics remain readable
 after source deletion.
 
 ## Persistence
@@ -703,8 +703,8 @@ The renderer uses one request channel and one notification channel. Methods are
 grouped by the concept they own:
 
 - `thread/*`: list, read, start, resume, fork, rollback, name, archive, delete, paged
-  Turn/Item reads, exact full-output and context-evidence reads, and authoritative
-  Turn Diagnostics reads
+  Turn/Item reads, exact full-output and context-evidence reads, authoritative
+  audited diagnostics reads, and Trajectory projection/detail/export reads
 - `turn/*`: start, steer, and interrupt
 - `goal/*`: get, create, and update
 - `userInput/respond`: resolve an active structured input request
@@ -724,7 +724,76 @@ diagnostics reference. A Turn without a reference returns `diagnostics: null`; a
 with a reference must return the exact matching payload or fail. Missing bytes,
 digest/length corruption, a mismatched reference, unknown diagnostics fields, and an
 invalid payload version fail closed. Renderer code cannot read diagnostics by digest
-alone.
+alone. This is an audited raw evidence reader, not the product workspace route.
+
+`thread/trajectory/read` builds a Thread-wide, inspection-only projection from
+canonical Turns plus retained evidence. It returns only `threadId`, a summary, an
+ordered record window, `olderCursor` / `newerCursor` plus `hasOlder` /
+`hasNewer`, and the selected record. Cursors are stable keyset cursors over
+record identity, not mutable array offsets. Reads locate the bounded Turn window
+before diagnostics payload reads and cap diagnostics read concurrency. They may
+materialize one predecessor Turn to recover the stable-prompt and tool-catalog
+fingerprints at the window boundary; predecessor evidence never enters the
+returned window. The
+summary uses lightweight whole-Thread Turn/Item/timing/usage facts and must not
+force diagnostics materialization outside the requested window. Record kinds are
+`input`, `context`, `assistant`, `tool`, `retry`, `compaction`, and
+`delegation`. Assistant records use provider-call evidence as their primary
+identity; tool and runtime records use diagnostic activities when retained and
+degrade to canonical Item evidence when not. While a Turn is active and has no
+final diagnostics reference, the projection may consume a bounded, best-effort
+in-memory diagnostics snapshot; inspection failure cannot affect execution. With
+no explicit focus, the read returns `selectedRecordId: null`; opening the
+Thread-wide workspace must not manufacture a selection merely because records
+exist.
+
+Record order is represented by an opaque fixed-width `orderKey` derived from
+stable canonical Turn/activity/call/item coordinates, not by the number of
+records currently projected. `turnIndex` and `stepIndex` are explicit display
+coordinates. A response's `replacementRange` is an inclusive pair of order keys.
+Typed record labels carry semantic values only; renderer owns localization and
+main does not encode UI titles into the protocol.
+
+Every record carries exactly one typed `primaryEvidence` reference. A Provider
+Call is addressed by `(threadId, turnId, callIndex)`. One execution inside a
+tool batch is addressed by `(threadId, turnId, activityIndex, callId)`; the batch
+activity alone is not unique evidence for any one of its calls. The record ID is
+stable projection identity for paging and selection, not evidence authority.
+Detail resolution never parses an evidence coordinate from that string.
+
+`thread/trajectory/detail/read` returns bounded, credential-redacted evidence for one record. It
+locates the owning Turn from stable record identity and reads only that Turn's
+diagnostics before materializing detail evidence. It does not return full
+`Thread`, `Turn`, `ThreadItem`, or raw diagnostics payloads. It may return
+bounded Turn/Item evidence, sanitized runtime facts, sanitized provider-call
+request/response values, sanitized activity evidence, sanitized context payloads,
+and sanitized/truncated tool output. Credential redaction is applied at renderer-facing
+opaque evidence leaves; typed diagnostics control fields such as discriminators,
+indexes, and enum fields are preserved so a large legal evidence string cannot
+corrupt the diagnostics structure. Filesystem paths are preserved when they are
+part of accepted input, prepared context, a captured provider request or
+response, or model-issued tool arguments. It must not expose diagnostics payload
+storage paths, digest-only read authority, raw secrets, credentials, arbitrary
+response headers, or image bytes. Main resolves the record's typed
+primary reference against its owning Thread and Turn, then uses only explicitly
+related references for supporting evidence. Missing inspection evidence degrades
+that record or detail field and cannot change canonical history or fail a
+running Turn. Input detail preserves the ordered prepared-message part types;
+image bytes become MIME / byte-length / digest evidence. Tool Input resolves the
+canonical Item `modelCall` argument source rather than reconstructing arguments
+from presentation or host execution fields. A lazy read that discovers a
+missing argument payload or tool output appends the corresponding availability
+fact to the detail response's record. Canonical accepted input remains Raw
+evidence and never substitutes for missing prepared provider evidence in a
+Trajectory preview. Assistant detail preserves the terminal provider-neutral
+response as ordered text, thinking, tool-call, image-metadata, and bounded other
+parts. Compaction detail reads its retained summary payload on demand. Inspector
+evidence fields never fall back to the lightweight record preview.
+
+`thread/trajectory/export` writes the same sanitized projection from main and
+returns only status, file name, and byte length. The renderer never receives the
+absolute export path; write failures are logged in main and return a fixed
+path-free failure message.
 
 Recorded lifecycle notifications are the only notifications accepted by
 rollout and history projection stores. `thread/name/updated`, provider-retry
@@ -765,11 +834,20 @@ enter Core stores. See [`agent-automations.md`](agent-automations.md).
 ## Renderer Detail Surfaces
 
 Thread Details describes the durable Thread container and its Thread-level controls.
-Turn Diagnostics is the complete diagnostic surface for one canonical Turn. It receives one
-main-owned snapshot containing the same Thread, full Turn, Items, and immutable
-provider-boundary diagnostics used by execution. It does not recreate the retired
-conversation/run/round debug projection, derive history from renderer pagination, or
-introduce an alternative execution ledger. The exact page contract lives in
+Trajectory is the complete technical surface for a canonical Thread. It receives a
+main-owned sanitized projection over the same canonical Turns, retained diagnostics,
+context payloads, and output references used by execution. It does not recreate the
+retired conversation/run/round debug projection, derive history from renderer
+pagination, or introduce an alternative execution ledger. USER rows are grounded
+on canonical `userMessage` Items, while their model-visible Preview comes from
+captured prepared-message parts whose `userInput` provenance carries that exact
+Item ID. CONTEXT rows come from captured system-context parts, stable prompt, or
+provider-visible tool catalogs. Canonical user content remains accepted-input
+evidence rather than a reconstruction of the provider request. REQUEST detail is
+the bounded materialized post-adapter provider payload captured in diagnostics;
+image bytes do not cross to renderer, while captured filesystem paths remain
+exact evidence.
+The exact page contract lives in
 [`agent-thread-rendering.md`](agent-thread-rendering.md).
 
 ## Document Drift Notice

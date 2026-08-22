@@ -22,10 +22,11 @@ export interface FilePreviewPanelView {
   target: PreviewTarget;
 }
 
-export interface ThreadTurnDetailsPanelView {
-  kind: 'thread-turn-details';
+export interface ThreadTrajectoryPanelView {
+  kind: 'thread-trajectory';
   threadId: string;
-  turnId: string;
+  selectedRecordId?: string;
+  turnId?: string;
 }
 
 export type FilePreviewPresentation = 'reader';
@@ -36,7 +37,7 @@ export interface FilePreviewNavigationOptions {
   presentation?: FilePreviewPresentation;
 }
 
-export type PanelView = OutlinerPanelView | FilePreviewPanelView | ThreadTurnDetailsPanelView;
+export type PanelView = OutlinerPanelView | FilePreviewPanelView | ThreadTrajectoryPanelView;
 
 export interface WorkspaceContentPanelState extends WorkspacePanelBase {
   type: 'workspace';

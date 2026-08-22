@@ -321,6 +321,21 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       target: { kind: 'node', nodeId },
       ...(displayName ? { displayName } : {}),
     });
+    const focusedTrajectoryRecord = (
+      records: Array<Record<string, unknown>>,
+      turnId: string,
+    ): Record<string, unknown> | null => {
+      const candidates = records.filter((record) => record.turnId === turnId);
+      for (const kind of ['assistant', 'tool', 'delegation', 'compaction', 'context', 'input']) {
+        const match = candidates.find((record) => record.kind === kind);
+        if (match) return match;
+      }
+      return candidates[0] ?? null;
+    };
+    const trajectoryOrderKey = (turnIndex: number, stepIndex: number): string => {
+      const component = (value: number) => value.toString(36).padStart(13, '0');
+      return [turnIndex, 1, stepIndex, 0, 0, 0].map(component).join(':');
+    };
     type MockNode = {
       id: string;
       type?: string;
@@ -981,6 +996,21 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       if (!thread || thread.parentThreadId === null) return null;
       const isolatedSkill = thread.source === 'agent.skill';
       const turns = mockTurns.get(agentId) ?? [];
+      const latestTurn = turns.at(-1) ?? null;
+      const terminalStatus = latestTurn?.status === 'completed'
+        ? 'finished'
+        : latestTurn?.status === 'failed'
+          ? 'failed'
+          : latestTurn?.status === 'interrupted'
+            ? 'interrupted'
+            : null;
+      const terminalError = latestTurn?.status === 'failed' && latestTurn.error
+        ? {
+          code: latestTurn.error.code ?? 'subagent_failed',
+          messagePreview: latestTurn.error.message,
+          omittedBytes: 0,
+        }
+        : null;
       return {
         agentId: thread.id,
         parentThreadId: thread.parentThreadId,
@@ -989,14 +1019,25 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         runMode: isolatedSkill ? 'foreground' : 'background',
         generation: 1,
         currentTurnId: mockCurrentTurnByThread.get(agentId)
-          ?? turns.at(-1)?.id
+          ?? latestTurn?.id
           ?? `${thread.id}-generation-1`,
         stopProvenance: 'none',
-        terminalStatus: null,
+        terminalStatus,
         notificationState: 'none',
+        terminalError,
+        deliveryTurnId: null,
+        deliveryClass: null,
+        eligibleAfterGeneration: null,
+        coverageDisposition: null,
+        omittedOutputBytes: 0,
+        omittedOutputTokens: 0,
+        deliveredNotifications: [],
+        notificationCutoff: 'open',
+        executionMode: 'ordinary',
+        settlementCoverage: null,
         worktree: null,
         createdAt: thread.createdAt,
-        updatedAt: thread.updatedAt,
+        updatedAt: latestTurn?.completedAt ?? thread.updatedAt,
         ...mockSubagentExecutionPatches.get(agentId) ?? {},
       };
     };
@@ -2853,7 +2894,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                     purpose: 'observation' as const,
                   }],
                 }
-              : { source: 'userInput' as const }
+              : { source: 'userInput' as const, itemId: userItem.id }
           ));
           const providerTool = {
             type: 'function',
@@ -3019,6 +3060,295 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             turn: { ...turn, execution: { ...turn.execution, diagnosticsRef: ref } },
             diagnostics: { ref, payload: diagnostics },
           }) as T;
+        }
+        if (method === 'thread/trajectory/read') {
+          const thread = threadById(String(input.threadId));
+          const turns = mockTurns.get(thread.id) ?? [];
+          const records = turns.flatMap((turn, turnIndex) => {
+            const userItem = turn.items.find((item) => item.type === 'userMessage');
+            const compactionItems = turn.items.filter((item) => item.type === 'contextCompaction');
+            const agentItem = turn.items.find((item) => item.type === 'agentMessage');
+            const entries: Array<Record<string, unknown>> = [];
+            if (userItem) {
+              entries.push({
+                id: `turn:${turn.id}:input:item:${userItem.id}`,
+                kind: 'input',
+                lane: 'input',
+                threadId: thread.id,
+                turnId: turn.id,
+                orderKey: trajectoryOrderKey(turnIndex, 0),
+                turnIndex,
+                stepIndex: 0,
+                parentRecordId: null,
+                label: { type: 'input', source: 'initial' },
+                meta: null,
+                preview: 'Mock request',
+                state: 'completed',
+                timing: { startedAt: turn.startedAt, firstTokenAt: null, completedAt: turn.startedAt, durationMs: 0 },
+                usage: null,
+                primaryEvidence: { type: 'threadItem', threadId: thread.id, turnId: turn.id, itemId: userItem.id },
+                relatedEvidence: [],
+                availability: [],
+                childThreadId: null,
+              });
+            }
+            if (agentItem) {
+              entries.push({
+                id: `turn:${turn.id}:assistant:0`,
+                kind: 'assistant',
+                lane: 'assistant',
+                threadId: thread.id,
+                turnId: turn.id,
+                orderKey: trajectoryOrderKey(turnIndex, 5),
+                turnIndex,
+                stepIndex: 0,
+                parentRecordId: null,
+                label: { type: 'assistantCall', callIndex: 0 },
+                meta: `${turn.execution.modelProvider} · ${turn.execution.model}`,
+                preview: 'Mock response',
+                state: turn.status === 'inProgress' ? 'running' : 'completed',
+                timing: {
+                  startedAt: turn.startedAt,
+                  firstTokenAt: null,
+                  completedAt: turn.completedAt,
+                  durationMs: turn.completedAt === null ? null : Math.max(0, turn.completedAt - turn.startedAt),
+                },
+                usage: {
+                  input: turn.execution.usage.input,
+                  output: turn.execution.usage.output,
+                  cacheRead: turn.execution.usage.cacheRead,
+                  cacheWrite: turn.execution.usage.cacheWrite,
+                  reasoning: null,
+                  totalTokens: turn.execution.usage.totalTokens,
+                  costUsd: turn.execution.usage.cost?.total ?? null,
+                },
+                primaryEvidence: { type: 'providerCall', threadId: thread.id, turnId: turn.id, callIndex: 0 },
+                relatedEvidence: [{ type: 'threadItem', threadId: thread.id, turnId: turn.id, itemId: agentItem.id }],
+                availability: [],
+                childThreadId: null,
+              });
+            }
+            compactionItems.forEach((item, index) => {
+              entries.push({
+                id: `turn:${turn.id}:compaction:item:${item.id}`,
+                kind: 'compaction',
+                lane: 'input',
+                threadId: thread.id,
+                turnId: turn.id,
+                orderKey: trajectoryOrderKey(turnIndex, 7 + index),
+                turnIndex,
+                stepIndex: 0,
+                parentRecordId: null,
+                label: { type: 'contextCompaction', trigger: item.trigger },
+                meta: item.trigger,
+                preview: `${item.trigger} compaction`,
+                state: 'completed',
+                timing: { startedAt: turn.startedAt, firstTokenAt: null, completedAt: turn.completedAt ?? turn.startedAt, durationMs: null },
+                usage: null,
+                primaryEvidence: { type: 'threadItem', threadId: thread.id, turnId: turn.id, itemId: item.id },
+                relatedEvidence: [],
+                availability: [{ reason: 'diagnosticsUnavailable' }],
+                childThreadId: null,
+              });
+            });
+            return entries;
+          }).sort((left, right) => String(left.orderKey).localeCompare(String(right.orderKey)));
+          const stepsByTurn = new Map<string, number>();
+          records.forEach((record) => {
+            const turnId = String(record.turnId);
+            const stepIndex = stepsByTurn.get(turnId) ?? 0;
+            stepsByTurn.set(turnId, stepIndex + 1);
+            record.stepIndex = stepIndex;
+          });
+          const focus = input.focus as { recordId?: string | null; turnId?: string | null } | null | undefined;
+          const selectedRecordId = focus?.recordId && records.some((record) => record.id === focus.recordId)
+            ? focus.recordId
+            : focus?.turnId
+              ? String(focusedTrajectoryRecord(records, focus.turnId)?.id ?? records.at(-1)?.id ?? '')
+              : null;
+          const usage = turns.reduce((accumulator, turn) => ({
+            input: accumulator.input + turn.execution.usage.input,
+            output: accumulator.output + turn.execution.usage.output,
+            cacheRead: accumulator.cacheRead + turn.execution.usage.cacheRead,
+            cacheWrite: accumulator.cacheWrite + turn.execution.usage.cacheWrite,
+            reasoning: null,
+            totalTokens: accumulator.totalTokens + turn.execution.usage.totalTokens,
+            costUsd: accumulator.costUsd === null || turn.execution.usage.cost === null
+              ? null
+              : accumulator.costUsd + turn.execution.usage.cost.total,
+          }), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: null, totalTokens: 0, costUsd: 0 as number | null });
+          return clone({
+            threadId: thread.id,
+            summary: {
+              threadId: thread.id,
+              turnCount: turns.length,
+              startedAt: turns[0]?.startedAt ?? null,
+              completedAt: turns.some((turn) => turn.completedAt === null) ? null : turns.at(-1)?.completedAt ?? null,
+              durationMs: null,
+              usage: turns.length > 0 ? usage : null,
+              availability: [],
+            },
+            records,
+            replacementRange: records.length > 0
+              ? {
+                startOrderKey: String(records[0]!.orderKey),
+                endOrderKey: String(records.at(-1)!.orderKey),
+              }
+              : null,
+            olderCursor: null,
+            newerCursor: null,
+            hasOlder: false,
+            hasNewer: false,
+            selectedRecordId: selectedRecordId || null,
+          }) as T;
+        }
+        if (method === 'thread/trajectory/detail/read') {
+          const thread = threadById(String(input.threadId));
+          const turns = mockTurns.get(thread.id) ?? [];
+          const recordId = String(input.recordId);
+          const turn = turns.find((candidate) => recordId.includes(candidate.id));
+          if (!turn) return clone({ threadId: thread.id, record: null, detail: null }) as T;
+          const item = turn.items.find((candidate) => recordId.includes(candidate.id)) ?? null;
+          const turnIndex = turns.findIndex((candidate) => candidate.id === turn.id);
+          const kind = recordId.includes(':assistant:') ? 'assistant'
+            : recordId.includes(':compaction:') ? 'compaction'
+              : recordId.includes(':context:') ? 'context'
+                : 'input';
+          const summary = {
+            id: recordId,
+            kind,
+            lane: kind === 'assistant' ? 'assistant' : 'input',
+            threadId: thread.id,
+            turnId: turn.id,
+            orderKey: trajectoryOrderKey(turnIndex, 0),
+            turnIndex,
+            stepIndex: 0,
+            parentRecordId: null,
+            label: kind === 'assistant'
+              ? { type: 'assistantCall', callIndex: 0 }
+              : kind === 'compaction'
+                ? { type: 'contextCompaction', trigger: 'manual' }
+                : kind === 'context'
+                  ? { type: 'context', kinds: ['additionalContext'] }
+                  : { type: 'input', source: 'initial' },
+            meta: null,
+            preview: item && 'text' in item ? String(item.text) : null,
+            state: 'completed',
+            timing: { startedAt: turn.startedAt, firstTokenAt: null, completedAt: turn.completedAt, durationMs: turn.durationMs },
+            usage: kind === 'assistant' ? {
+              input: turn.execution.usage.input,
+              output: turn.execution.usage.output,
+              cacheRead: turn.execution.usage.cacheRead,
+              cacheWrite: turn.execution.usage.cacheWrite,
+              reasoning: null,
+              totalTokens: turn.execution.usage.totalTokens,
+              costUsd: turn.execution.usage.cost?.total ?? null,
+            } : null,
+            primaryEvidence: kind === 'assistant'
+              ? { type: 'providerCall', threadId: thread.id, turnId: turn.id, callIndex: 0 }
+              : { type: 'threadItem', threadId: thread.id, turnId: turn.id, itemId: item?.id ?? turn.items[0]?.id ?? 'missing' },
+            relatedEvidence: [],
+            availability: [],
+            childThreadId: null,
+          };
+          const turnEvidence = {
+            id: turn.id,
+            status: turn.status,
+            error: turn.error,
+            startedAt: turn.startedAt,
+            completedAt: turn.completedAt,
+            durationMs: turn.durationMs,
+            modelProvider: turn.execution.modelProvider,
+            model: turn.execution.model,
+            reasoningEffort: turn.execution.reasoningEffort,
+          };
+          const itemEvidence = item ? {
+            itemId: item.id,
+            type: item.type,
+            title: item.type,
+            preview: item.type === 'agentMessage' ? item.text : null,
+            status: 'status' in item ? item.status : null,
+          } : null;
+          const diagnosticsEvidence = kind === 'assistant' ? {
+            ref: {
+              id: 'd'.repeat(64),
+              mimeType: 'application/vnd.tenon.agent-turn-diagnostics+json',
+              byteLength: 1024,
+              schemaVersion: 1,
+            },
+            runtime: {
+              provider: turn.execution.modelProvider,
+              model: turn.execution.model,
+              api: 'responses',
+              transportSelection: 'sse',
+              contextWindow: 128000,
+              maxOutputTokens: 8192,
+              thinkingLevel: turn.execution.reasoningEffort,
+              timeoutMs: null,
+              maxRetries: 2,
+              maxRetryDelayMs: 1000,
+              cacheRetention: 'short',
+              toolExecution: 'parallel',
+              steeringMode: 'all',
+            },
+            activity: null,
+            providerCall: {
+              index: 0,
+              requestedAt: turn.startedAt,
+              estimatedInputTokens: turn.execution.usage.input,
+              inputTokenLimit: 128000,
+              reservedOutputTokens: 8192,
+              commonPrefixMessageCount: 0,
+              requestFingerprint: 'e'.repeat(64),
+              cacheBreakpoints: [],
+              request: { input: 'Mock request' },
+              response: { outputText: 'Mock response' },
+              transportResponse: {
+                headersReceivedAt: turn.startedAt,
+                httpStatus: 200,
+                requestId: 'mock-request',
+              },
+            },
+          } : null;
+          return clone({
+            threadId: thread.id,
+            record: summary,
+            detail: kind === 'assistant'
+              ? {
+                kind,
+                turn: turnEvidence,
+                modelOutputParts: [{ type: 'text', text: 'Mock response' }],
+                diagnostics: diagnosticsEvidence,
+                providerCallIndex: 0,
+                relatedItems: itemEvidence ? [itemEvidence] : [],
+              }
+              : kind === 'context'
+                ? { kind, turn: turnEvidence, item: itemEvidence, modelContextText: null, payload: null }
+                : kind === 'compaction'
+                  ? {
+                    kind,
+                    turn: turnEvidence,
+                    item: itemEvidence,
+                    diagnostics: null,
+                    activityIndex: null,
+                    summaryText: null,
+                  }
+                  : {
+                    kind,
+                    turn: turnEvidence,
+                    modelInputParts: item?.type === 'userMessage'
+                      ? [{ type: 'text', text: 'Mock request' }]
+                      : null,
+                    message: item?.type === 'userMessage'
+                      ? { itemId: item.id, acceptedAt: item.acceptedAt, content: item.content }
+                      : null,
+                    diagnostics: null,
+                    activityIndex: null,
+                  },
+          }) as T;
+        }
+        if (method === 'thread/trajectory/export') {
+          return clone({ status: 'written', fileName: 'tenon-trajectory-mock.json', byteLength: 128 }) as T;
         }
         if (method === 'thread/items/list') {
           const turns = mockTurns.get(String(input.threadId)) ?? [];

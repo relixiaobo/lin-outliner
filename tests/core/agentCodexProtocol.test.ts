@@ -1612,6 +1612,9 @@ describe('Codex Agent Core protocol codec', () => {
         contextId: contextRef.id,
       },
       'thread/turn/details/read': { threadId: THREAD_ID, turnId: TURN_ID },
+      'thread/trajectory/read': { threadId: THREAD_ID, limit: 120, focus: null },
+      'thread/trajectory/detail/read': { threadId: THREAD_ID, recordId: 'record-1' },
+      'thread/trajectory/export': { threadId: THREAD_ID },
       'turn/submit': {
         threadId: THREAD_ID,
         input: [{ type: 'text', text: 'Submit' }],
@@ -1680,6 +1683,27 @@ describe('Codex Agent Core protocol codec', () => {
         context: { ref: rpcContextRef, payload: rpcContextPayload },
       },
       'thread/turn/details/read': { thread, turn: completedTurn, diagnostics: null },
+      'thread/trajectory/read': {
+        threadId: THREAD_ID,
+        summary: {
+          threadId: THREAD_ID,
+          turnCount: 0,
+          startedAt: null,
+          completedAt: null,
+          durationMs: null,
+          usage: null,
+          availability: [],
+        },
+        records: [],
+        replacementRange: null,
+        olderCursor: null,
+        newerCursor: null,
+        hasOlder: false,
+        hasNewer: false,
+        selectedRecordId: null,
+      },
+      'thread/trajectory/detail/read': { threadId: THREAD_ID, record: null, detail: null },
+      'thread/trajectory/export': { status: 'canceled' },
       'turn/submit': {
         turn: completedTurn,
         turnId: TURN_ID,
@@ -1727,7 +1751,7 @@ describe('Codex Agent Core protocol codec', () => {
     })).toThrow('unknown fields: turnId');
   });
 
-  test('fails closed when Turn Diagnostics are absent, mismatched, or malformed', () => {
+  test('fails closed when raw Turn diagnostics are absent, mismatched, or malformed', () => {
     const byteLength = new TextEncoder().encode(encodeTurnDiagnosticsPayload(turnDiagnosticsPayload)).byteLength;
     const ref = {
       id: '3'.repeat(64),

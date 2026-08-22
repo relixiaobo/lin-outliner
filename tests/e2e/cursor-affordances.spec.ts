@@ -42,14 +42,11 @@ const textCursorSelectors = new Map([
 ]);
 const tooltipSurfaceSelectors = new Map([
   ['.inline-file-preview-popover', 'Pointer-delayed inline file preview tooltip.'],
-  ['.thread-response-usage-card', 'Pointer-delayed Thread response usage tooltip.'],
-  ['.thread-turn-details-usage-popover', 'Turn Diagnostics usage tooltip.'],
+  ['.thread-response-trajectory-card', 'Pointer-delayed Thread response Trajectory tooltip.'],
   ['.view-toolbar-tooltip', 'View toolbar tooltip.'],
 ]);
 const readOnlyTooltipComponents = new Map([
   ['FilePreviewIcon', 'Read-only inline file identity glyph.'],
-  ['ProviderParameterList', 'Read-only provider parameter name/value list.'],
-  ['ThreadUsageBreakdown', 'Read-only token and cost breakdown.'],
 ]);
 const chromeIconControlSelectors = [
   '.outline-panel-close',
