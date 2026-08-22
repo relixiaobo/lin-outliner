@@ -131,7 +131,7 @@ function safeWorkspaceKey(value: string): string {
 }
 
 // Bound the whole scratch root by age. Scratch is app-owned ephemeral data (attachment
-// observations, image-artifact materializations, web-fetch binaries, bash overflow logs,
+// observations, image-artifact materializations, legacy web-fetch files, live bash logs,
 // and PDF page images); none of it is durable, so anything untouched past the TTL is
 // removed. Pruning entries within each scratch subdirectory keeps actively-written areas
 // intact while still reclaiming stale files. Best-effort; called once at startup.

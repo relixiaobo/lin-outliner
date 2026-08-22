@@ -261,6 +261,19 @@ local-tool envelope, so status, error code, recovery guidance, and metrics remai
 available to canonical history. Native command exit and filesystem errors remain
 visible to the model.
 
+Final shell logs use the Thread artifact sink. A foreground saved log and the final log
+returned by `task_stop` expose `persistedOutput` with a stable `resourceRef`, byte length,
+and current readable `filePath` when available. A running background task exposes only
+`temporaryOutputPath`; it becomes durable when it completes and `task_stop` observes it,
+or when it is stopped. Capture is bounded by the same maximum 64 MiB artifact ceiling.
+Crossing it kills the command and returns `output_limit_exceeded` without claiming a
+durable output. Calling `task_stop` on an already terminal shell returns its real terminal
+status and final artifact rather than claiming the task was stopped again.
+The exit-time size check is authoritative even when a fast command finishes before the
+watchdog's next poll. Stable command history strips structured artifact handles and
+replaces typed managed-output roots in stdout, stderr, and warnings with their root ids;
+the live result alone contains the current paths.
+
 Browser Pilot remains a managed Skill workflow over this same shell surface:
 
 ```text
@@ -293,6 +306,21 @@ different for root, forked, child, isolated-Skill, and concurrent Threads.
 scoped by Thread ID and Turn ID. The host rejects unsafe IDs and symlink escapes
 before launching the process; the existing scratch TTL owns cleanup.
 
+The same directory is contributed independently as a typed `declaredOutputRoots`
+entry owned by the `browser-pilot` Skill. Environment variables direct the external
+process but never authorize collection. Ordinary foreground `bash` snapshots the roots
+declared by active contributors before launch and collects them after exit; embedded
+Skill shell narrows the roots to that managed Skill. A background command retains its
+launch snapshot, and terminal `task_stop` performs its collection after output closes.
+The collector admits only new or changed regular files. It skips hidden control files,
+symlinks, non-files, files above 64 MiB, entries beyond the 512-entry scan ceiling, and
+artifacts beyond the 16-file result ceiling with bounded warnings. If the pre-command
+baseline cannot be scanned completely, that root is not collected for the execution.
+Contributor/root identity, canonical physical paths, and containment below Agent scratch
+are validated; one invalid contribution is omitted without disabling ordinary shell
+execution. Browser Pilot separately creates its root as a private per-Thread, per-Turn
+directory and rejects symlink escapes.
+
 These values, `BROWSER_PILOT_INSTALL_ROOT`, and `BROWSER_PILOT_BIN_DIR` are host
 execution context. They never enter model parameters, tool arguments, canonical
 Items, transcripts, or diagnostics. Tenon does not set `BROWSER_PILOT_HOME`, so
@@ -322,6 +350,13 @@ set, and retains public reachability checks. Tool-owned BrowserWindows do not ow
 the probe process lifecycle: later probes continue after those windows close,
 and the run fails unless every expected probe name is recorded exactly once
 before the flushed summary and explicit exit.
+
+A successful binary response is written directly through the Thread artifact sink; no
+flat `agent-web-fetch` file is authoritative. `binaryFile` contains `resourceRef`, MIME,
+byte length, SHA-256, and a current `filePath` only when materialization succeeds.
+Persisted result text retains the stable metadata and removes the path. Artifact
+admission failure reports partial success and a warning without reclassifying the
+completed HTTP request as a network failure.
 
 `generate_image` separates the provider's original artifact from the bounded image shown
 to the model. It validates provider MIME/base64 against the 256 MiB source-image safety
@@ -651,6 +686,14 @@ ceiling, while Agent kind, worktree restriction, and nesting permission inherit
 from the parent. The child source is `agent.skill`; its result returns only
 through the owning `skill` call, and neither `agent_message` nor `task_stop` can
 use its Thread ID as a collaboration address.
+
+Embedded shell output has separate live and persisted renderings. The isolated child
+may use current readable paths, while durable Skill invocation evidence contains only
+stable resource references; occurrences of a typed output-root path in captured stdout
+or stderr and artifact warnings are replaced by its stable root id. Typed managed output
+roots are collected after the command even on a non-zero exit; every successfully
+admitted file remains owned by the `skill` tool Item, and skipped or unavailable
+artifacts are reported without inventing a ref.
 
 For `explore` and `plan`, keeping a provider-visible tool is not permission to
 execute it. `bash` may run only when every classified action is a proven

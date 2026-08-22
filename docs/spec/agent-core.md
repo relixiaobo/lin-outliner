@@ -55,6 +55,14 @@ The envelope is required at the codec boundary. Pre-envelope tool Items are not
 decoded, migrated, reconstructed, or routed through an alternate reader; pre-release
 userData is reset when this storage format lands.
 
+Every tool Item also owns a `resourceRefs` manifest for ordinary files produced by
+that exact execution. New Items write the field explicitly, including `[]` at start;
+the codec defaults the field to `[]` only for otherwise-valid history written before
+tool artifact ownership existed. A completed Item receives only the validated,
+deduplicated host-only manifest returned by its tool. The manifest is never copied into
+the provider `ToolResultMessage` and is independent of `outputRef`, which remains the
+complete textual/JSON result.
+
 Every `userMessage` stores its admission-time `acceptedAt`. The initial Item uses
 the Turn start instant; steering records one instant for both Item persistence and
 recorder completion. Replay and forks preserve that timestamp instead of substituting
@@ -116,6 +124,10 @@ dependency graph instead of parsing payload-private JSON. A tool Item whose cano
 arguments exceed the 32 KiB inline bound owns its `toolCallArguments` reference directly;
 that reference participates in the same reachability, fork-copy, rollback, and startup
 reconciliation graph.
+Tool Item `resourceRefs` enter that same generic managed-resource graph directly,
+including when nested inside inherited-context payloads. Tool-owned `image/*` files are
+ordinary resources rather than image-artifact renditions, so pressure retention cannot
+reclaim them while their Item remains reachable.
 Every admitted image has one immutable `ThreadImageArtifactReference`. The reference
 contains a stable artifact id, creation time, retention class, optional original source,
 mandatory Thread-owned observation, and geometry mapping observation pixels to the
@@ -628,16 +640,13 @@ once and prunes contexts and diagnostics in parallel, so canonical appends durin
 resource cleanup are visible to both payload pruners. Startup reconciliation handles
 crash leftovers.
 
-A history rollback reclaims contexts, Turn diagnostics, and tool text outputs
-against the surviving history, and resources against the surviving history PLUS
-the Turns it removed. A rollback exists to be followed by a re-send of the
-content it removed — that is what Edit and Retry do — so a payload the omitted
-Turns referenced is one the next call is about to reference again, and deleting
-it leaves the resent message pointing at nothing. What neither set references is
-garbage no re-send can reach, and it is reclaimed here: the resource quota counts
-every byte on disk while offering only surviving history as reclaim candidates,
-so bytes left behind would push a Thread toward its limits with no way to free
-them. Every
+A history rollback reclaims contexts, Turn diagnostics, tool text outputs, and tool
+artifacts against surviving history. Managed resources referenced by removed
+`userMessage` Items are the exception: Edit and Retry re-send that exact user content,
+so its attachments remain temporarily reachable through the admission that follows.
+Tool output and generated context are not re-sent; once their Item owner is removed,
+their resources are reclaimed immediately. What neither surviving history nor removed
+user content references is garbage no re-send can reach. Every
 resource operation requires each managed path component to be a physical directory;
 symbolic-link substitution
 fails closed, including during quota scans, startup cleanup, and garbage
@@ -655,6 +664,16 @@ observation does not change the access handle or misstate the bytes. Preview and
 follow the seven-day scratch TTL; canonical originals and observations do not. A
 materialization error during provider projection is recorded and degrades only the
 readable-path hint; available observation bytes and the surrounding Turn still project.
+
+First-party tools persist ordinary artifacts through one `ToolArtifactSink`. It admits
+canonical MIME/file-name metadata and at most 64 MiB per file, rejects symlinks and a
+source whose opened identity or metadata changes during the read, verifies the resource
+store's returned digest and metadata, and then requests a Turn-scoped readable
+materialization. A successful canonical write with failed materialization returns the
+stable reference and a null path; admission or storage failure omits the artifact from
+the owning manifest without killing an otherwise useful tool operation. Storage errors
+are logged with their live cause but cross the tool boundary as stable quota-or-storage
+messages, so canonical payload-store paths cannot enter model-visible or retained text.
 
 Per Thread, canonical image retention has a 5 GiB target, 6 GiB soft watermark, and
 8 GiB hard resource budget. Crossing the soft watermark reclaims least-recently-used,

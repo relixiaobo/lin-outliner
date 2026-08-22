@@ -51,6 +51,12 @@ export class BrowserPilotHost {
         [BROWSER_PILOT_OUTPUT_DIR_ENV]: outputDirectory,
       },
       leadingToolPathSegments: [this.binDirectory],
+      declaredOutputRoots: [{
+        id: 'browser-pilot-output',
+        skillId: BROWSER_PILOT_MANAGED_SKILL_ID,
+        path: outputDirectory,
+        label: 'Browser Pilot output',
+      }],
     };
   }
 

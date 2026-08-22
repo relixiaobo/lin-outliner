@@ -1,4 +1,9 @@
-import type { AgentShellProcessEnvironment } from './agent/capabilities/agentLocalTools';
+import type {
+  AgentShellOutputRoot,
+  AgentShellProcessEnvironment,
+} from './agent/capabilities/agentLocalTools';
+import { lstat, realpath } from 'node:fs/promises';
+import path from 'node:path';
 
 export interface ManagedSkillShellEnvironmentContributor {
   skillId: string;
@@ -8,6 +13,7 @@ export interface ManagedSkillShellEnvironmentContributor {
 export interface ManagedSkillShellEnvironmentRegistryOptions {
   activeSkillIds: () => Promise<ReadonlySet<string>>;
   contributors: readonly ManagedSkillShellEnvironmentContributor[];
+  outputRootBoundary: string;
   onError?: (message: string, error: unknown) => void;
 }
 
@@ -23,12 +29,14 @@ interface CachedTurnEnvironment {
 export class ManagedSkillShellEnvironmentRegistry {
   private readonly activeSkillIds: () => Promise<ReadonlySet<string>>;
   private readonly contributors: readonly ManagedSkillShellEnvironmentContributor[];
+  private readonly outputRootBoundary: string;
   private readonly onError: (message: string, error: unknown) => void;
   private readonly turnEnvironments = new Map<string, CachedTurnEnvironment>();
 
   constructor(options: ManagedSkillShellEnvironmentRegistryOptions) {
     this.activeSkillIds = options.activeSkillIds;
     this.contributors = options.contributors;
+    this.outputRootBoundary = path.resolve(options.outputRootBoundary);
     this.onError = options.onError ?? ((message, error) => console.warn(message, error));
   }
 
@@ -81,6 +89,9 @@ export class ManagedSkillShellEnvironmentRegistry {
 
     const env: NodeJS.ProcessEnv = {};
     const leadingToolPathSegments: string[] = [];
+    const declaredOutputRoots: AgentShellOutputRoot[] = [];
+    const outputRootIds = new Set<string>();
+    const outputRootPaths = new Set<string>();
     for (const contribution of contributions) {
       if (!contribution) continue;
       const entries = Object.entries(contribution.environment.env ?? {});
@@ -92,13 +103,83 @@ export class ManagedSkillShellEnvironmentRegistry {
         );
         continue;
       }
+      let roots: AgentShellOutputRoot[];
+      try {
+        roots = await validateDeclaredOutputRoots(
+          contribution.contributor.skillId,
+          contribution.environment.declaredOutputRoots ?? [],
+          this.outputRootBoundary,
+        );
+        if (roots.some((root) => outputRootIds.has(root.id) || outputRootPaths.has(root.path))) {
+          throw new Error('Managed Skill output-root identity conflicts with another active contribution.');
+        }
+      } catch (error) {
+        this.onError(
+          `[managed-skills] ${contribution.contributor.skillId} declared an invalid output root; contribution omitted`,
+          error,
+        );
+        continue;
+      }
       Object.assign(env, contribution.environment.env);
       leadingToolPathSegments.push(...(contribution.environment.leadingToolPathSegments ?? []));
+      declaredOutputRoots.push(...roots);
+      for (const root of roots) {
+        outputRootIds.add(root.id);
+        outputRootPaths.add(root.path);
+      }
     }
 
     return {
       ...(Object.keys(env).length > 0 ? { env } : {}),
       ...(leadingToolPathSegments.length > 0 ? { leadingToolPathSegments } : {}),
+      ...(declaredOutputRoots.length > 0 ? { declaredOutputRoots } : {}),
     };
   }
+}
+
+async function validateDeclaredOutputRoots(
+  skillId: string,
+  roots: readonly AgentShellOutputRoot[],
+  outputRootBoundary: string,
+): Promise<AgentShellOutputRoot[]> {
+  if (roots.length === 0) return [];
+  const [boundaryEntry, canonicalBoundary] = await Promise.all([
+    lstat(outputRootBoundary),
+    realpath(outputRootBoundary),
+  ]);
+  if (!boundaryEntry.isDirectory() || boundaryEntry.isSymbolicLink()) {
+    throw new Error('Managed Skill output-root boundary is not a physical directory.');
+  }
+  const result: AgentShellOutputRoot[] = [];
+  const localIds = new Set<string>();
+  const localPaths = new Set<string>();
+  for (const root of roots) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(root.id)) {
+      throw new Error(`Invalid managed Skill output-root id: ${root.id}`);
+    }
+    if (root.skillId !== skillId || !root.label.trim() || !path.isAbsolute(root.path)) {
+      throw new Error(`Invalid managed Skill output-root declaration: ${root.id}`);
+    }
+    const declaredPath = path.resolve(root.path);
+    const [entry, canonicalPath] = await Promise.all([lstat(declaredPath), realpath(declaredPath)]);
+    if (!entry.isDirectory() || entry.isSymbolicLink() || canonicalPath !== declaredPath) {
+      throw new Error(`Managed Skill output root is not a canonical physical directory: ${declaredPath}`);
+    }
+    const relativeToBoundary = path.relative(canonicalBoundary, canonicalPath);
+    if (
+      relativeToBoundary === ''
+      || relativeToBoundary === '..'
+      || relativeToBoundary.startsWith(`..${path.sep}`)
+      || path.isAbsolute(relativeToBoundary)
+    ) {
+      throw new Error(`Managed Skill output root escapes Agent scratch: ${declaredPath}`);
+    }
+    if (localIds.has(root.id) || localPaths.has(canonicalPath)) {
+      throw new Error(`Duplicate managed Skill output root: ${root.id}`);
+    }
+    localIds.add(root.id);
+    localPaths.add(canonicalPath);
+    result.push({ ...root, path: canonicalPath, label: root.label.trim() });
+  }
+  return result;
 }

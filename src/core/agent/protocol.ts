@@ -955,6 +955,8 @@ void CONTEXT_PAYLOAD_KINDS_ARE_EXHAUSTIVE;
 interface ThreadToolItemBase extends ThreadItemBase {
   readonly status: ItemExecutionStatus;
   readonly outputRef: ThreadItemOutputReference | null;
+  /** Durable non-image files produced by this exact tool execution. */
+  readonly resourceRefs: readonly ThreadResourceReference[];
   readonly modelCall: ModelToolCallHistory;
 }
 

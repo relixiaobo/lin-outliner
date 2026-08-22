@@ -8,13 +8,12 @@ import {
   type WebContentsWillRedirectEventParams,
 } from 'electron';
 import type { AgentTool } from '../runtime/kernel/types';
-import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
+import type { ToolArtifactSink } from '../runtime/ToolArtifactSink';
 import { createNodeTools, type NodeToolScope, type OutlinerToolHost } from './agentNodeTools';
 import {
   createLocalTools,
-  scratchRootForWorkdir,
   type AgentFileReadImageNormalizer,
   type AgentLocalWorkspaceContext,
 } from './agentLocalTools';
@@ -220,6 +219,7 @@ export interface AgentToolsOptions {
   allowedTools?: readonly string[];
   disallowedTools?: readonly string[];
   nodeScope?: NodeToolScope;
+  artifactSink?: ToolArtifactSink;
 }
 
 interface AgentToolCatalogEntry {
@@ -228,12 +228,7 @@ interface AgentToolCatalogEntry {
 }
 
 export function createAgentTools(outliner?: OutlinerToolHost, options: AgentToolsOptions = {}): AgentTool<any>[] {
-  // Web-fetch binaries are scratch, not workspace output: prefer the workspace's resolved
-  // scratch root, otherwise derive it through the single-source default (never re-deriving a
-  // cwd fallback locally — that is the one polluting path F2 removes).
-  const scratchRoot = options.localWorkspace?.scratchRoot
-    ?? scratchRootForWorkdir(options.localFileRoot, undefined);
-  const tools = buildAgentToolCatalog(outliner, options, scratchRoot)
+  const tools = buildAgentToolCatalog(outliner, options)
     .flatMap((entry) => entry.precondition ? entry.create() : []);
   return filterAgentTools(tools, options.allowedTools, options.disallowedTools);
 }
@@ -241,7 +236,6 @@ export function createAgentTools(outliner?: OutlinerToolHost, options: AgentTool
 function buildAgentToolCatalog(
   outliner: OutlinerToolHost | undefined,
   options: AgentToolsOptions,
-  scratchRoot: string,
 ): AgentToolCatalogEntry[] {
   return [{
     precondition: !!outliner,
@@ -256,13 +250,14 @@ function buildAgentToolCatalog(
       workspace: options.localWorkspace,
       skillRuntime: options.skillRuntime,
       imageNormalizer: options.imageNormalizer,
+      artifactSink: options.artifactSink,
     }),
   }, {
     precondition: true,
     create: () => [createWebSearchTool()],
   }, {
     precondition: true,
-    create: () => [createWebFetchTool(scratchRoot)],
+    create: () => [createWebFetchTool(options.artifactSink)],
   }, {
     precondition: !!options.imageGeneration,
     create: () => options.imageGeneration ? [createGenerateImageTool(options.imageGeneration)] : [],
@@ -287,7 +282,7 @@ function filterAgentTools(
   });
 }
 
-function createWebFetchTool(scratchRoot: string): AgentTool<any, ToolEnvelope<WebFetchData>> {
+function createWebFetchTool(artifactSink?: ToolArtifactSink): AgentTool<any, ToolEnvelope<WebFetchData>> {
   return {
     name: 'web_fetch',
     label: 'Web Fetch',
@@ -306,7 +301,7 @@ function createWebFetchTool(scratchRoot: string): AgentTool<any, ToolEnvelope<We
 
       const params = normalized.params;
       try {
-        return webFetchToolResult(await fetchWebFetchEnvelope(params, started, scratchRoot, signal));
+        return webFetchToolResult(await fetchWebFetchEnvelope(params, started, artifactSink, signal));
       } catch (error) {
         if (error instanceof WebToolFailure && error.hint) {
           return webFetchToolResult(webFetchHintEnvelope(params, error, started));
@@ -321,17 +316,19 @@ function createWebFetchTool(scratchRoot: string): AgentTool<any, ToolEnvelope<We
 }
 
 function webFetchToolResult(envelope: ToolEnvelope<WebFetchData>) {
-  return agentToolResult(envelope, envelope.data ? webFetchModelData(envelope.data) : undefined);
+  const result = agentToolResult(envelope, envelope.data ? webFetchModelData(envelope.data) : undefined);
+  const resourceRef = envelope.data?.binaryFile?.resourceRef;
+  return resourceRef ? { ...result, resourceRefs: [resourceRef] } : result;
 }
 
 async function fetchWebFetchEnvelope(
   params: NormalizedWebFetchParams,
   started: number,
-  scratchRoot: string,
+  artifactSink: ToolArtifactSink | undefined,
   signal?: AbortSignal,
 ): Promise<ToolEnvelope<WebFetchData>> {
   try {
-    const fetched = await fetchText(params.url, scratchRoot, signal);
+    const fetched = await fetchText(params.url, artifactSink, signal);
     const page = await extractFetchedPageContent(fetched, params);
     const decision = assessWebFetchFallback(fetched, params, page);
     if (decision.shouldFallback) {
@@ -353,6 +350,26 @@ async function fetchWebFetchEnvelope(
     }
     return buildWebFetchSuccessEnvelopeFromPage(fetched, params, elapsed(started), page);
   } catch (error) {
+    if (error instanceof WebFetchArtifactFailure) {
+      return successEnvelope('web_fetch', {
+        url: params.url,
+        finalUrl: error.finalUrl,
+        statusCode: error.statusCode,
+        statusText: error.statusText,
+        contentType: error.contentType,
+        byteLength: error.byteLength,
+        durationMs: elapsed(started),
+        mode: params.mode,
+        format: params.format,
+        content: 'The binary response was fetched, but its file was not admitted as a durable Thread artifact.',
+        truncated: false,
+      }, {
+        status: 'partial',
+        warnings: [error.message],
+        instructions: 'Retry the download once. If artifact admission still fails, use another source or report the storage failure.',
+        metrics: { durationMs: elapsed(started), outputBytes: error.byteLength },
+      });
+    }
     if (
       error instanceof WebToolFailure
       && shouldTryBrowserFallbackForHttpFailure(error.statusCode, error.hint, params.format)
@@ -645,14 +662,18 @@ function searchInstructions(kind: WebSearchKind, hasResults: boolean): string | 
     : 'Try a broader query or remove site/recency constraints.';
 }
 
-async function fetchText(url: string, scratchRoot: string, signal?: AbortSignal): Promise<FetchTextResult> {
+async function fetchText(
+  url: string,
+  artifactSink: ToolArtifactSink | undefined,
+  signal?: AbortSignal,
+): Promise<FetchTextResult> {
   const clientSession = electronSession.fromPartition(WEB_FETCH_HTTP_PARTITION);
   try {
-    return await fetchTextOnce(url, scratchRoot, clientSession, signal);
+    return await fetchTextOnce(url, artifactSink, clientSession, signal);
   } catch (error) {
     if (signal?.aborted || !isRetriableFetchFailure(error)) throw error;
     await delay(WEB_FETCH_RETRY_DELAY_MS, signal);
-    return await fetchTextOnce(url, scratchRoot, clientSession, signal);
+    return await fetchTextOnce(url, artifactSink, clientSession, signal);
   }
 }
 
@@ -670,7 +691,7 @@ function isRetriableFetchFailure(error: unknown): boolean {
 
 async function fetchTextOnce(
   url: string,
-  scratchRoot: string,
+  artifactSink: ToolArtifactSink | undefined,
   clientSession: Session,
   signal?: AbortSignal,
 ): Promise<FetchTextResult> {
@@ -681,7 +702,7 @@ async function fetchTextOnce(
   signal?.addEventListener('abort', onAbort, { once: true });
 
   try {
-    return await fetchTextFollowingRedirects(startedUrl, controller.signal, scratchRoot, clientSession);
+    return await fetchTextFollowingRedirects(startedUrl, controller.signal, artifactSink, clientSession);
   } catch (error) {
     if (error instanceof WebToolFailure) throw error;
     if (controller.signal.aborted) {
@@ -700,7 +721,7 @@ async function fetchTextOnce(
 async function fetchTextFollowingRedirects(
   startedUrl: string,
   signal: AbortSignal,
-  scratchRoot: string,
+  artifactSink: ToolArtifactSink | undefined,
   clientSession: Session,
 ): Promise<FetchTextResult> {
   const redirectTrace = beginWebFetchRedirectTrace(clientSession, startedUrl);
@@ -761,7 +782,19 @@ async function fetchTextFollowingRedirects(
 
   const bytesResult = await readBoundedBytes(response, MAX_FETCH_BYTES);
   if (isBinaryContentType(contentType)) {
-    const binaryFile = await persistWebFetchBinary(bytesResult.bytes, contentType, finalUrl, scratchRoot);
+    let binaryFile: WebFetchBinaryFile;
+    try {
+      binaryFile = await persistWebFetchBinary(bytesResult.bytes, contentType, finalUrl, artifactSink);
+    } catch (error) {
+      throw new WebFetchArtifactFailure({
+        finalUrl,
+        statusCode: response.status,
+        statusText: response.statusText,
+        contentType,
+        byteLength: bytesResult.byteLength,
+        cause: error,
+      });
+    }
     return {
       requestedUrl: startedUrl,
       finalUrl,
@@ -847,24 +880,49 @@ async function persistWebFetchBinary(
   bytes: Uint8Array,
   contentType: string,
   finalUrl: string,
-  scratchRoot: string,
+  artifactSink: ToolArtifactSink | undefined,
 ): Promise<WebFetchBinaryFile> {
+  if (!artifactSink) throw new Error('Tool artifact storage is unavailable.');
   const mimeType = normalizeMimeType(contentType);
   const sha256 = createHash('sha256').update(bytes).digest('hex');
   const extension = binaryExtension(mimeType, finalUrl);
-  const filePath = path.join(webFetchOutputDir(scratchRoot), `webfetch-${Date.now()}-${randomUUID()}${extension}`);
-  await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(filePath, bytes);
+  const persisted = await artifactSink.persistBytes({
+    bytes,
+    mimeType,
+    fileName: `webfetch-${sha256.slice(0, 16)}${extension}`,
+  });
   return {
-    filePath,
+    ...(persisted.readablePath ? { filePath: persisted.readablePath } : {}),
+    resourceRef: persisted.ref,
     mimeType,
     byteLength: bytes.byteLength,
     sha256,
   };
 }
 
-function webFetchOutputDir(scratchRoot: string): string {
-  return path.join(path.resolve(scratchRoot), 'agent-web-fetch');
+class WebFetchArtifactFailure extends Error {
+  readonly finalUrl: string;
+  readonly statusCode: number;
+  readonly statusText: string;
+  readonly contentType: string;
+  readonly byteLength: number;
+
+  constructor(input: {
+    finalUrl: string;
+    statusCode: number;
+    statusText: string;
+    contentType: string;
+    byteLength: number;
+    cause: unknown;
+  }) {
+    super(`Binary artifact admission failed: ${errorMessage(input.cause)}`);
+    this.name = 'WebFetchArtifactFailure';
+    this.finalUrl = input.finalUrl;
+    this.statusCode = input.statusCode;
+    this.statusText = input.statusText;
+    this.contentType = input.contentType;
+    this.byteLength = input.byteLength;
+  }
 }
 
 function normalizeMimeType(contentType: string): string {

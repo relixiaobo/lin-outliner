@@ -47,9 +47,13 @@ export function persistedToolResultText(input: {
   readonly toolName: string;
   readonly text: string;
 }): string {
-  if (input.toolNamespace !== null || input.toolName !== GENERATE_IMAGE_TOOL_NAME) return input.text;
+  if (input.toolNamespace !== null) return input.text;
   try {
     const visible = JSON.parse(input.text) as unknown;
+    if (['web_fetch', 'bash', 'task_stop', 'skill'].includes(input.toolName)) {
+      return JSON.stringify(withoutToolArtifactPaths(visible), null, 2);
+    }
+    if (input.toolName !== GENERATE_IMAGE_TOOL_NAME) return input.text;
     if (
       !isRecord(visible)
       || visible.ok !== true
@@ -71,6 +75,16 @@ export function persistedToolResultText(input: {
   } catch {
     return input.text;
   }
+}
+
+function withoutToolArtifactPaths(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutToolArtifactPaths);
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(Object.entries(value).flatMap(([key, entry]) => (
+    (key === 'filePath' || key === 'temporaryOutputPath') && typeof entry === 'string'
+      ? []
+      : [[key, withoutToolArtifactPaths(entry)]]
+  )));
 }
 
 function persistedGenerateImageDetails(details: ToolEnvelope): ToolEnvelope<PersistedGeneratedImageDetailsData> | undefined {

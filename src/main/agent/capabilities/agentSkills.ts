@@ -9,6 +9,7 @@ import { parse as parseYaml } from 'yaml';
 import type {
   SkillCatalogContextPayload,
   SkillInvocationContextPayload,
+  ThreadResourceReference,
   TurnStatus,
 } from '../../../core/agent/protocol';
 import type { SkillDefinition } from '../../../core/types';
@@ -25,7 +26,9 @@ import {
   BUILT_IN_SKILL_SOURCE_DIR,
 } from '../../builtInSkillConfig';
 import {
+  agentToolResult,
   errorEnvelope,
+  modelVisibleEnvelope,
   successEnvelope,
   type ToolEnvelope,
 } from './agentToolEnvelope';
@@ -203,7 +206,22 @@ export interface SkillShellExecutionInput {
   signal?: AbortSignal;
 }
 
-export type SkillShellExecutor = (input: SkillShellExecutionInput) => Promise<string>;
+export interface SkillShellExecutionResult {
+  /** Output for the current invocation; it may contain Turn-scoped readable paths. */
+  readonly output: string;
+  /** Stable output stored in Skill invocation evidence. Defaults to `output`. */
+  readonly persistedOutput?: string;
+  readonly resourceRefs: readonly ThreadResourceReference[];
+  readonly artifacts?: readonly SkillShellArtifactObservation[];
+}
+
+export type SkillShellExecutor = (input: SkillShellExecutionInput) => Promise<SkillShellExecutionResult>;
+
+export interface SkillShellArtifactObservation {
+  readonly ref: ThreadResourceReference;
+  readonly readablePath: string | null;
+  readonly label: string;
+}
 
 interface InvokeSkillInput {
   skill: string;
@@ -240,6 +258,8 @@ export type SkillInvocationResult =
     execution: 'inline' | 'isolated';
     skill: SkillDefinition;
     renderedContent: string;
+    resourceRefs: readonly ThreadResourceReference[];
+    artifactObservations: readonly SkillShellArtifactObservation[];
     evidence: SkillInvocationContextPayload;
     isolated?: SkillIsolatedExecutionResult;
   }
@@ -247,6 +267,9 @@ export type SkillInvocationResult =
     ok: false;
     code: string;
     message: string;
+    persistedMessage?: string;
+    resourceRefs?: readonly ThreadResourceReference[];
+    artifactObservations?: readonly SkillShellArtifactObservation[];
     skill?: SkillDefinition;
   };
 
@@ -468,13 +491,30 @@ export class AgentSkillRuntime {
       }
     }
     let renderedContent: string;
+    let persistedContent: string;
+    let resourceRefs: readonly ThreadResourceReference[];
+    let artifactObservations: readonly SkillShellArtifactObservation[];
     try {
-      renderedContent = await renderSkillContent(skill, input.args ?? '', this.threadId, this.executeSkillShell, input.signal);
+      const rendered = await renderSkillContent(
+        skill,
+        input.args ?? '',
+        this.threadId,
+        this.executeSkillShell,
+        input.signal,
+      );
+      renderedContent = rendered.content;
+      persistedContent = rendered.persistedContent;
+      resourceRefs = rendered.resourceRefs;
+      artifactObservations = rendered.artifacts;
     } catch (error) {
+      const shellFailure = skillShellFailure(error);
       return {
         ok: false,
         code: 'skill_shell_failed',
         message: error instanceof Error ? error.message : String(error),
+        ...(shellFailure.persistedMessage ? { persistedMessage: shellFailure.persistedMessage } : {}),
+        ...(shellFailure.resourceRefs.length > 0 ? { resourceRefs: shellFailure.resourceRefs } : {}),
+        ...(shellFailure.artifacts.length > 0 ? { artifactObservations: shellFailure.artifacts } : {}),
         skill,
       };
     }
@@ -501,7 +541,9 @@ export class AgentSkillRuntime {
           execution: 'isolated',
           skill,
           renderedContent,
-          evidence: skillInvocationEvidence(skill, renderedContent, input),
+          resourceRefs,
+          artifactObservations,
+          evidence: skillInvocationEvidence(skill, persistedContent, input),
           isolated,
         };
       } catch (error) {
@@ -520,7 +562,9 @@ export class AgentSkillRuntime {
       execution: 'inline',
       skill,
       renderedContent,
-      evidence: skillInvocationEvidence(skill, renderedContent, input),
+      resourceRefs,
+      artifactObservations,
+      evidence: skillInvocationEvidence(skill, persistedContent, input),
     };
   }
 
@@ -696,12 +740,18 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
       });
 
       if (!invocation.ok) {
+        const stableMessage = invocation.persistedMessage ?? invocation.message;
+        const data = { success: false, skill: normalizeSkillName(params.skill) || params.skill };
+        const envelope = errorEnvelope<SkillToolData>(SKILL_TOOL_NAME, invocation.code, stableMessage, {
+          data,
+          instructions: 'Use only Skills listed in the current Skill catalog context, or continue without a Skill.',
+        });
+        const modelData = skillToolModelData(data, invocation.artifactObservations ?? []);
+        const visible = modelVisibleEnvelope(envelope, modelData);
         return {
-          content: [{ type: 'text', text: invocation.message }],
-          details: errorEnvelope<SkillToolData>(SKILL_TOOL_NAME, invocation.code, invocation.message, {
-            data: { success: false, skill: normalizeSkillName(params.skill) || params.skill },
-            instructions: 'Use only Skills listed in the current Skill catalog context, or continue without a Skill.',
-          }),
+          content: [{ type: 'text', text: JSON.stringify(visible, null, 2) }],
+          details: envelope,
+          ...(invocation.resourceRefs?.length ? { resourceRefs: invocation.resourceRefs } : {}),
         };
       }
 
@@ -720,19 +770,35 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
         transcriptPath: invocation.isolated?.transcriptPath,
         error: invocation.isolated?.error,
       };
-      if (invocation.execution === 'isolated') {
-        const text = formatIsolatedSkillToolResult(invocation.skill, invocation.isolated);
-        return {
-          content: [{ type: 'text', text }],
-          details: successEnvelope(SKILL_TOOL_NAME, data),
-        };
-      }
-
+      const modelData = skillToolModelData({
+        success: true,
+        skill: invocation.skill.name,
+        status: invocation.execution === 'isolated' ? 'isolated' : 'loaded',
+        ...(invocation.execution === 'isolated'
+          ? { result: formatIsolatedSkillToolResult(invocation.skill, invocation.isolated) }
+          : { result: `Loaded Skill: ${invocation.skill.name}` }),
+      }, invocation.artifactObservations);
       return {
-        content: [{ type: 'text', text: `Loaded Skill: ${invocation.skill.name}` }],
-        details: successEnvelope(SKILL_TOOL_NAME, data),
+        ...agentToolResult(successEnvelope(SKILL_TOOL_NAME, data), modelData),
+        ...(invocation.resourceRefs.length > 0 ? { resourceRefs: invocation.resourceRefs } : {}),
       };
     },
+  };
+}
+
+function skillToolModelData<T extends Record<string, unknown>>(
+  data: T,
+  artifacts: readonly SkillShellArtifactObservation[],
+): T & { artifacts?: unknown[] } {
+  return {
+    ...data,
+    ...(artifacts.length > 0 ? {
+      artifacts: artifacts.map((artifact) => ({
+        label: artifact.label,
+        resourceRef: artifact.ref,
+        ...(artifact.readablePath ? { filePath: artifact.readablePath } : {}),
+      })),
+    } : {}),
   };
 }
 
@@ -1802,7 +1868,12 @@ async function renderSkillContent(
   threadId: string,
   executeSkillShell?: SkillShellExecutor,
   signal?: AbortSignal,
-): Promise<string> {
+): Promise<{
+  readonly content: string;
+  readonly persistedContent: string;
+  readonly resourceRefs: readonly ThreadResourceReference[];
+  readonly artifacts: readonly SkillShellArtifactObservation[];
+}> {
   const skillDir = skillDirectoryForPrompt(skill);
   let content = skillDir
     ? `Base directory for this skill: ${skillDir}\n\n${skill.body}`
@@ -1839,9 +1910,16 @@ async function executeShellCommandsInSkillContent(
   skill: SkillDefinition,
   executeSkillShell?: SkillShellExecutor,
   signal?: AbortSignal,
-): Promise<string> {
+): Promise<{
+  readonly content: string;
+  readonly persistedContent: string;
+  readonly resourceRefs: readonly ThreadResourceReference[];
+  readonly artifacts: readonly SkillShellArtifactObservation[];
+}> {
   const matches = collectSkillShellMatches(content);
-  if (matches.length === 0) return content;
+  if (matches.length === 0) {
+    return { content, persistedContent: content, resourceRefs: [], artifacts: [] };
+  }
 
   const shell = (skill.shell ?? 'bash').trim().toLowerCase();
   if (shell !== 'bash') {
@@ -1852,14 +1930,99 @@ async function executeShellCommandsInSkillContent(
   }
 
   let rendered = '';
+  let persisted = '';
   let cursor = 0;
+  const resourceRefs = new Map<string, ThreadResourceReference>();
+  const artifacts = new Map<string, SkillShellArtifactObservation>();
   for (const match of matches) {
     rendered += content.slice(cursor, match.index);
-    const output = await executeSkillShell({ skill, command: match.command, shell, signal });
-    rendered += output;
+    persisted += content.slice(cursor, match.index);
+    let result: SkillShellExecutionResult;
+    try {
+      result = await executeSkillShell({ skill, command: match.command, shell, signal });
+    } catch (error) {
+      const failure = skillShellFailure(error);
+      for (const ref of failure.resourceRefs) resourceRefs.set(skillResourceKey(ref), ref);
+      for (const artifact of failure.artifacts) artifacts.set(skillArtifactKey(artifact), artifact);
+      throw new SkillShellExpansionError(
+        error instanceof Error ? error.message : String(error),
+        failure.persistedMessage,
+        [...resourceRefs.values()],
+        [...artifacts.values()],
+      );
+    }
+    rendered += result.output;
+    persisted += result.persistedOutput ?? result.output;
+    for (const ref of result.resourceRefs) resourceRefs.set(skillResourceKey(ref), ref);
+    for (const artifact of result.artifacts ?? []) artifacts.set(skillArtifactKey(artifact), artifact);
     cursor = match.index + match.raw.length;
   }
-  return rendered + content.slice(cursor);
+  return {
+    content: rendered + content.slice(cursor),
+    persistedContent: persisted + content.slice(cursor),
+    resourceRefs: [...resourceRefs.values()],
+    artifacts: [...artifacts.values()],
+  };
+}
+
+class SkillShellExpansionError extends Error {
+  constructor(
+    message: string,
+    readonly persistedMessage: string | undefined,
+    readonly resourceRefs: readonly ThreadResourceReference[],
+    readonly artifacts: readonly SkillShellArtifactObservation[],
+  ) {
+    super(message);
+    this.name = 'SkillShellExpansionError';
+  }
+}
+
+function skillShellFailure(error: unknown): {
+  readonly persistedMessage: string | undefined;
+  readonly resourceRefs: readonly ThreadResourceReference[];
+  readonly artifacts: readonly SkillShellArtifactObservation[];
+} {
+  if (!error || typeof error !== 'object') {
+    return { persistedMessage: undefined, resourceRefs: [], artifacts: [] };
+  }
+  const candidate = error as {
+    persistedMessage?: unknown;
+    resourceRefs?: unknown;
+    artifacts?: unknown;
+  };
+  return {
+    persistedMessage: typeof candidate.persistedMessage === 'string' ? candidate.persistedMessage : undefined,
+    resourceRefs: Array.isArray(candidate.resourceRefs)
+      ? candidate.resourceRefs.filter(isThreadResourceReference)
+      : [],
+    artifacts: Array.isArray(candidate.artifacts)
+      ? candidate.artifacts.filter(isSkillShellArtifactObservation)
+      : [],
+  };
+}
+
+function isThreadResourceReference(value: unknown): value is ThreadResourceReference {
+  return !!value
+    && typeof value === 'object'
+    && typeof (value as { id?: unknown }).id === 'string'
+    && typeof (value as { fileName?: unknown }).fileName === 'string';
+}
+
+function isSkillShellArtifactObservation(value: unknown): value is SkillShellArtifactObservation {
+  return !!value
+    && typeof value === 'object'
+    && isThreadResourceReference((value as { ref?: unknown }).ref)
+    && (typeof (value as { readablePath?: unknown }).readablePath === 'string'
+      || (value as { readablePath?: unknown }).readablePath === null)
+    && typeof (value as { label?: unknown }).label === 'string';
+}
+
+function skillResourceKey(ref: ThreadResourceReference): string {
+  return `${ref.id}\0${ref.fileName}`;
+}
+
+function skillArtifactKey(artifact: SkillShellArtifactObservation): string {
+  return `${skillResourceKey(artifact.ref)}\0${artifact.label}`;
 }
 
 function collectSkillShellMatches(content: string): Array<{ raw: string; command: string; index: number }> {

@@ -50,6 +50,12 @@ describe('Browser Pilot host environment', () => {
     });
     expect(first.env?.BROWSER_PILOT_HOME).toBeUndefined();
     expect(first.leadingToolPathSegments).toEqual([path.join(userDataRoot, 'browser-pilot', 'bin')]);
+    expect(first.declaredOutputRoots).toEqual([{
+      id: 'browser-pilot-output',
+      skillId: 'browser-pilot',
+      path: first.env![BROWSER_PILOT_OUTPUT_DIR_ENV]!,
+      label: 'Browser Pilot output',
+    }]);
     expect(await realpath(first.env![BROWSER_PILOT_OUTPUT_DIR_ENV]!)).toBe(first.env![BROWSER_PILOT_OUTPUT_DIR_ENV]);
     if (process.platform !== 'win32') {
       expect((await lstat(first.env![BROWSER_PILOT_OUTPUT_DIR_ENV]!)).mode & 0o077).toBe(0);

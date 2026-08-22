@@ -1252,7 +1252,7 @@ async function historyTool(
   timestamp: number,
   resources: Pick<
     ProjectionResources,
-    'readContext' | 'readOutput' | 'readResource' | 'resolveImageArtifactPath'
+    'readContext' | 'readOutput' | 'readResource' | 'resolveResourceObservationPath' | 'resolveImageArtifactPath'
   >,
   projection: ToolOutputProjectionContextPayload | null,
   projectionUnavailable: boolean,
@@ -1360,13 +1360,19 @@ async function historicalToolEvidence(
 
 async function historyToolResultContent(
   item: HistoryToolItem,
-  resources: Pick<ProjectionResources, 'readOutput' | 'readResource' | 'resolveImageArtifactPath'>,
+  resources: Pick<
+    ProjectionResources,
+    'readOutput' | 'readResource' | 'resolveResourceObservationPath' | 'resolveImageArtifactPath'
+  >,
   projection: ToolOutputProjectionContextPayload | null,
 ): Promise<Array<TextContent | ImageContent>> {
   const projectedText = await projectedToolOutputText(projection, resources);
+  const artifactText = await projectedToolArtifactText(item.resourceRefs ?? [], resources);
   if (item.type === 'dynamicToolCall') {
     const content: Array<TextContent | ImageContent> = [];
-    if (projectedText !== null) content.push({ type: 'text', text: projectedText });
+    if (projectedText !== null) {
+      content.push({ type: 'text', text: appendToolArtifactText(projectedText, artifactText) });
+    }
     for (const part of item.contentItems ?? []) {
       if (part.type === 'text') {
         if (projectedText === null) content.push({ type: 'text', text: part.text });
@@ -1392,9 +1398,40 @@ async function historyToolResultContent(
         });
       }
     }
+    if (projectedText === null && artifactText) content.push({ type: 'text', text: artifactText });
     if (content.length > 0) return content;
   }
-  return [{ type: 'text', text: projectedText ?? toolItemVisibleOutputText(item) }];
+  return [{
+    type: 'text',
+    text: appendToolArtifactText(projectedText ?? toolItemVisibleOutputText(item), artifactText),
+  }];
+}
+
+const MAX_PROJECTED_TOOL_ARTIFACTS = 16;
+const MAX_PROJECTED_TOOL_ARTIFACT_PATH_CHARS = 4_096;
+
+async function projectedToolArtifactText(
+  refs: readonly ThreadResourceReference[],
+  resources: Pick<ProjectionResources, 'resolveResourceObservationPath'>,
+): Promise<string> {
+  if (refs.length === 0) return '';
+  const lines = ['[Tool artifacts]'];
+  for (const ref of refs.slice(0, MAX_PROJECTED_TOOL_ARTIFACTS)) {
+    const readablePath = await resources.resolveResourceObservationPath(ref).catch(() => null);
+    lines.push(`- resource=${ref.id}, file=${ref.fileName}, mime=${ref.mimeType}, bytes=${ref.byteLength}`);
+    lines.push(readablePath
+      ? `  Readable path: ${readablePath.slice(0, MAX_PROJECTED_TOOL_ARTIFACT_PATH_CHARS)}`
+      : '  Stored, but no readable path is currently available for file_read.');
+  }
+  if (refs.length > MAX_PROJECTED_TOOL_ARTIFACTS) {
+    lines.push(`- ${refs.length - MAX_PROJECTED_TOOL_ARTIFACTS} additional artifacts omitted.`);
+  }
+  return lines.join('\n');
+}
+
+function appendToolArtifactText(text: string, artifactText: string): string {
+  if (!artifactText) return text;
+  return text ? `${text}\n\n${artifactText}` : artifactText;
 }
 
 async function projectedToolOutputText(

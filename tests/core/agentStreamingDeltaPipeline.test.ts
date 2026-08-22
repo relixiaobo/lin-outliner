@@ -176,6 +176,7 @@ describe('Agent streaming delta pipeline', () => {
     expect(fixture.history.readTurn(fixture.threadId, fixture.turnId, 'full')?.items)
       .toContainEqual({
         ...fixture.dynamicTool,
+        resourceRefs: [],
         contentItems: [
           { type: 'text', text: 'first' },
           { type: 'text', text: 'second' },

@@ -38,6 +38,7 @@ import type { AgentCapabilityConfig } from '../capabilities/agentCapabilityRules
 import type { ThreadService } from '../ThreadService';
 import type { TurnExecutionContext } from './types';
 import { compileToolParameters } from './kernel/exactToolArguments';
+import { createToolArtifactSink, type ToolArtifactSink } from './ToolArtifactSink';
 
 export interface ToolRuntimeOptions {
   readonly outliner?: OutlinerToolHost;
@@ -77,6 +78,7 @@ export class ToolRuntime {
   }
 
   async createTools(context: TurnExecutionContext): Promise<readonly AgentTool[]> {
+    const artifactSink = createToolArtifactSink(context);
     const subagentPolicy = this.subagentPolicy(context);
     const skillRuntime = await this.skillRuntime(context);
     const workspace = typeof this.options.localWorkspace === 'function'
@@ -93,6 +95,7 @@ export class ToolRuntime {
           ...(this.options.imageNormalizer === undefined ? {} : { imageNormalizer: this.options.imageNormalizer }),
           ...(skillRuntime === undefined ? {} : { skillRuntime }),
           ...(imageGeneration === undefined ? {} : { imageGeneration }),
+          artifactSink,
         });
     const dynamicTools = await this.options.dynamicTools?.(context) ?? [];
     const collaborationTools = await this.service.collaborationToolContributions({
@@ -102,7 +105,7 @@ export class ToolRuntime {
     const dynamicToolSet = new Set(dynamicTools);
     const tools = [
       ...capabilityTools,
-      ...this.createControlTools(context),
+      ...this.createControlTools(context, artifactSink),
       ...collaborationTools,
       ...dynamicTools,
     ];
@@ -328,7 +331,7 @@ export class ToolRuntime {
     console.warn(`[agent] ${message}.`);
   }
 
-  private createControlTools(context: TurnExecutionContext): AgentTool[] {
+  private createControlTools(context: TurnExecutionContext, artifactSink: ToolArtifactSink): AgentTool[] {
     const threadId = context.thread.id;
     const turnId = context.turn.id;
     return [
@@ -366,7 +369,7 @@ export class ToolRuntime {
         }
         const agent = await this.service.stopAgentTask(threadId, turnId, taskId);
         if (agent !== null) return toolResult(agent);
-        const shell = await stopBackgroundShellTaskResult(taskId, threadId);
+        const shell = await stopBackgroundShellTaskResult(taskId, threadId, artifactSink);
         if (shell !== null) return shell;
         throw new Error(`No task found with ID: ${taskId}`);
       }, normalizeTaskStopToolInput),

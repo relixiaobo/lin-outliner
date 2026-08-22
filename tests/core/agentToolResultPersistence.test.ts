@@ -121,6 +121,36 @@ describe('agent tool result persistence', () => {
     });
   });
 
+  test('removes current artifact handles from built-in tool history text', () => {
+    const filePath = '/scratch/current-turn/report.pdf';
+    const temporaryOutputPath = '/scratch/current-turn/task.log';
+    const resourceRef = {
+      id: 'c'.repeat(64),
+      mimeType: 'application/pdf',
+      byteLength: 123,
+      fileName: 'report.pdf',
+    };
+    for (const toolName of ['web_fetch', 'bash', 'task_stop', 'skill']) {
+      const persisted = persistedToolResultText({
+        toolNamespace: null,
+        toolName,
+        text: JSON.stringify({
+          ok: true,
+          data: {
+            artifact: { filePath, resourceRef },
+            temporaryOutputPath,
+          },
+        }),
+      });
+      expect(persisted).not.toContain(filePath);
+      expect(persisted).not.toContain(temporaryOutputPath);
+      expect(JSON.parse(persisted)).toEqual({
+        ok: true,
+        data: { artifact: { resourceRef } },
+      });
+    }
+  });
+
   test('preserves built-in generated-image results when no image was saved', () => {
     const text = JSON.stringify({
       ok: true,

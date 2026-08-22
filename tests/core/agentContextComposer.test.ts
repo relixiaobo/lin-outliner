@@ -56,6 +56,7 @@ const configuration: EffectiveThreadConfiguration = {
 const projectionTools = [
   projectionTool('skill'),
   projectionTool('file_read'),
+  projectionTool('web_fetch'),
   projectionTool('bash', {
     type: 'object',
     additionalProperties: false,
@@ -582,6 +583,31 @@ describe('canonical context projection', () => {
     const text = messageText(messages[0]!);
     expect(text).toContain('file_reference=[[file:Quarterly report^%2Fscratch%2Fprovider-thread%2Freport.pdf]]');
     expect(text).toContain('readable_path=/scratch/provider-thread/report.pdf');
+  });
+
+  test('rematerializes tool artifacts for replay and degrades an unavailable current path', async () => {
+    const resourceRef: ThreadResourceReference = {
+      id: '7'.repeat(64),
+      mimeType: 'application/pdf',
+      byteLength: 42,
+      fileName: 'analysis.pdf',
+    };
+    const tool = { ...dynamicToolItem('artifact-tool', 'web_fetch', 'Fetched binary.'), resourceRefs: [resourceRef] };
+    const readableMessages = await new CanonicalContextProjector(model, {
+      ...projectionResources(new Map()),
+      resolveResourceObservationPath: async () => '/scratch/current-thread/analysis.pdf',
+    }).projectTurns([turn(1, [userItem('artifact-user', 1, 'Fetch it.'), tool], true)]);
+    const readableResult = readableMessages.find((message) => message.role === 'toolResult');
+    expect(messageText(readableResult!)).toContain(`resource=${resourceRef.id}`);
+    expect(messageText(readableResult!)).toContain('Readable path: /scratch/current-thread/analysis.pdf');
+    expect(JSON.stringify(tool)).not.toContain('/scratch/current-thread/analysis.pdf');
+
+    const unavailableMessages = await new CanonicalContextProjector(model, {
+      ...projectionResources(new Map()),
+      resolveResourceObservationPath: async () => null,
+    }).projectTurns([turn(1, [userItem('artifact-user', 1, 'Fetch it.'), tool], true)]);
+    const unavailableResult = unavailableMessages.find((message) => message.role === 'toolResult');
+    expect(messageText(unavailableResult!)).toContain('Stored, but no readable path is currently available');
   });
 
   test('bundles contiguous context while preserving referenced image order', async () => {

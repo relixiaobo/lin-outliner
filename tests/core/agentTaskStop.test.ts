@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import type { EffectiveThreadConfiguration } from '../../src/core/agent/configuration';
 import type { JsonValue } from '../../src/core/agent/protocol';
 import type { ThreadService } from '../../src/main/agent/ThreadService';
@@ -107,7 +108,7 @@ describe('unified task_stop dispatcher', () => {
     });
   });
 
-  test('preserves exact validation, missing-task, and terminal-state errors', async () => {
+  test('preserves validation and missing-task errors while returning final output for terminal shells', async () => {
     const tools = await runtimeTools(async () => null);
     await expect(executeTaskStop(tools, {})).rejects.toThrow('Missing required parameter: task_id');
     await expect(executeTaskStop(tools, { task_id: 'missing-task' }))
@@ -117,15 +118,19 @@ describe('unified task_stop dispatcher', () => {
     await stopBackgroundShellTask(shellId, CONTEXT.thread.id);
     const terminal = await executeTaskStop(tools, { task_id: shellId });
     expect(terminal.details).toMatchObject({
-      ok: false,
-      error: {
-        code: 'task_not_running',
-        recoverable: true,
+      ok: true,
+      data: {
+        task_id: shellId,
+        status: 'stopped',
+        persistedOutput: {
+          resourceRef: { id: expect.any(String) },
+          filePath: expect.any(String),
+        },
       },
     });
     expect(terminal.content).toEqual([expect.objectContaining({
       type: 'text',
-      text: expect.stringContaining('task_not_running'),
+      text: expect.stringContaining('persistedOutput'),
     })]);
   });
 
@@ -176,6 +181,13 @@ const CONTEXT = {
   },
   turn: { id: '00000000-0000-7000-8000-000000000002' },
   configuration: CONFIGURATION,
+  persistOutputResource: async (bytes: Uint8Array, mimeType: string, fileName: string) => ({
+    id: createHash('sha256').update(bytes).digest('hex'),
+    mimeType,
+    byteLength: bytes.byteLength,
+    fileName,
+  }),
+  resolveResourceObservationPath: async (ref: { fileName: string }) => `/tmp/task-stop-artifacts/${ref.fileName}`,
 } as unknown as TurnExecutionContext;
 
 async function runtimeTools(

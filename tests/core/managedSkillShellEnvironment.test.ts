@@ -1,5 +1,14 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { ManagedSkillShellEnvironmentRegistry } from '../../src/main/managedSkillShellEnvironment';
+
+const roots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
 
 describe('managed Skill shell environment registry', () => {
   test('contributes only active Skills and memoizes one environment per Turn', async () => {
@@ -8,6 +17,7 @@ describe('managed Skill shell environment registry', () => {
     let inactiveCalls = 0;
     const registry = new ManagedSkillShellEnvironmentRegistry({
       activeSkillIds: async () => active,
+      outputRootBoundary: tmpdir(),
       contributors: [{
         skillId: 'browser-pilot',
         processEnvironment: async () => {
@@ -50,6 +60,7 @@ describe('managed Skill shell environment registry', () => {
     const errors: string[] = [];
     const registry = new ManagedSkillShellEnvironmentRegistry({
       activeSkillIds: async () => new Set(['broken', 'healthy']),
+      outputRootBoundary: tmpdir(),
       contributors: [{
         skillId: 'broken',
         processEnvironment: async () => { throw new Error('broken host'); },
@@ -68,10 +79,91 @@ describe('managed Skill shell environment registry', () => {
 
     const lookupFailure = new ManagedSkillShellEnvironmentRegistry({
       activeSkillIds: async () => { throw new Error('store unavailable'); },
+      outputRootBoundary: tmpdir(),
       contributors: [],
       onError: (message) => errors.push(message),
     });
     expect(await lookupFailure.processEnvironment('thread-1', 'turn-2')).toEqual({});
     expect(errors.at(-1)).toContain('active Skill lookup failed');
+  });
+
+  test('validates typed output-root ownership and omits conflicting contributions', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-managed-shell-roots-'));
+    const outsideBoundary = await mkdtemp(path.join(tmpdir(), 'tenon-managed-shell-outside-'));
+    roots.push(root, outsideBoundary);
+    const browserPath = path.join(root, 'browser');
+    const duplicatePath = path.join(root, 'duplicate');
+    const wrongOwnerPath = path.join(root, 'wrong-owner');
+    const outsidePath = path.join(outsideBoundary, 'outside');
+    await Promise.all([browserPath, duplicatePath, wrongOwnerPath, outsidePath].map((directory) => mkdir(directory)));
+    const [browserRoot, duplicateRoot, wrongOwnerRoot, outsideRoot] = await Promise.all([
+      realpath(browserPath),
+      realpath(duplicatePath),
+      realpath(wrongOwnerPath),
+      realpath(outsidePath),
+    ]);
+    const errors: string[] = [];
+    const registry = new ManagedSkillShellEnvironmentRegistry({
+      activeSkillIds: async () => new Set(['browser-pilot', 'duplicate-id', 'wrong-owner', 'outside-boundary']),
+      outputRootBoundary: root,
+      contributors: [{
+        skillId: 'browser-pilot',
+        processEnvironment: async () => ({
+          env: { BROWSER_ACTIVE: 'true' },
+          declaredOutputRoots: [{
+            id: 'browser-output',
+            skillId: 'browser-pilot',
+            path: browserRoot,
+            label: ' Browser output ',
+          }],
+        }),
+      }, {
+        skillId: 'duplicate-id',
+        processEnvironment: async () => ({
+          env: { DUPLICATE_ACTIVE: 'true' },
+          declaredOutputRoots: [{
+            id: 'browser-output',
+            skillId: 'duplicate-id',
+            path: duplicateRoot,
+            label: 'Duplicate output',
+          }],
+        }),
+      }, {
+        skillId: 'wrong-owner',
+        processEnvironment: async () => ({
+          env: { WRONG_OWNER_ACTIVE: 'true' },
+          declaredOutputRoots: [{
+            id: 'wrong-owner-output',
+            skillId: 'different-skill',
+            path: wrongOwnerRoot,
+            label: 'Wrong owner output',
+          }],
+        }),
+      }, {
+        skillId: 'outside-boundary',
+        processEnvironment: async () => ({
+          env: { OUTSIDE_ACTIVE: 'true' },
+          declaredOutputRoots: [{
+            id: 'outside-output',
+            skillId: 'outside-boundary',
+            path: outsideRoot,
+            label: 'Outside output',
+          }],
+        }),
+      }],
+      onError: (message) => errors.push(message),
+    });
+
+    expect(await registry.processEnvironment('thread-1', 'turn-1')).toEqual({
+      env: { BROWSER_ACTIVE: 'true' },
+      declaredOutputRoots: [{
+        id: 'browser-output',
+        skillId: 'browser-pilot',
+        path: browserRoot,
+        label: 'Browser output',
+      }],
+    });
+    expect(errors).toHaveLength(3);
+    expect(errors.every((message) => message.includes('declared an invalid output root'))).toBe(true);
   });
 });

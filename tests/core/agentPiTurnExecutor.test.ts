@@ -82,6 +82,12 @@ describe('PiTurnExecutor event normalization', () => {
     const fixture = createContext();
     const normalizer = new PiEventNormalizer(fixture.context);
     const assistant = assistantMessage([{ type: 'text', text: 'Done' }]);
+    const artifactRef: ThreadResourceReference = {
+      id: 'd'.repeat(64),
+      mimeType: 'text/plain',
+      byteLength: 10,
+      fileName: 'command.log',
+    };
 
     normalizer.handle({ type: 'message_start', message: assistant });
     normalizer.handle({
@@ -98,6 +104,7 @@ describe('PiTurnExecutor event normalization', () => {
       result: {
         content: [{ type: 'text', text: '/workspace' }],
         details: { data: { exitCode: 0 } },
+        resourceRefs: [artifactRef, artifactRef],
       },
       isError: false,
     });
@@ -118,6 +125,7 @@ describe('PiTurnExecutor event normalization', () => {
         id: 'call-bash-1',
         command: 'pwd',
         status: 'completed',
+        resourceRefs: [artifactRef],
         aggregatedOutput: '/workspace',
         exitCode: 0,
       },
@@ -3184,6 +3192,111 @@ describe('PiTurnExecutor event normalization', () => {
       throw new Error('Expected namespaced image output reference');
     }
     expect(await fixture.context.readOutput(item.outputRef)).toContain(pluginText);
+  });
+
+  test('persists tool artifact identity without retaining the producing Turn path', async () => {
+    const fixture = createContext();
+    const resourceRef: ThreadResourceReference = {
+      id: 'e'.repeat(64),
+      mimeType: 'application/pdf',
+      byteLength: 456,
+      fileName: 'report.pdf',
+    };
+    const producingPath = '/tmp/turn-observation/report.pdf';
+    const resultText = JSON.stringify({
+      ok: true,
+      data: {
+        binaryFile: {
+          filePath: producingPath,
+          resourceRef,
+          mimeType: resourceRef.mimeType,
+          byteLength: resourceRef.byteLength,
+          sha256: resourceRef.id,
+        },
+      },
+    });
+    const normalizer = new PiEventNormalizer(fixture.context);
+    normalizer.handle(toolAdmissionEvent('call-web-artifact', 'web_fetch', {
+      url: 'https://example.com/report.pdf',
+    }));
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'call-web-artifact',
+      toolName: 'web_fetch',
+      result: {
+        content: [{ type: 'text', text: resultText }],
+        details: { ok: true },
+        resourceRefs: [resourceRef],
+      },
+      isError: false,
+    });
+    await normalizer.flush();
+
+    const item = fixture.recorder.orderedItems()[0];
+    expect(item).toMatchObject({ resourceRefs: [resourceRef] });
+    expect(JSON.stringify(item)).not.toContain(producingPath);
+    if (item?.type !== 'dynamicToolCall' || !item.outputRef) {
+      throw new Error('Expected web_fetch output reference');
+    }
+    const persistedOutput = await fixture.context.readOutput(item.outputRef);
+    expect(persistedOutput).not.toContain(producingPath);
+    expect(persistedOutput).toContain(resourceRef.id);
+  });
+
+  test('keeps bash artifact handles out of the canonical command Item', async () => {
+    const fixture = createContext();
+    const resourceRef: ThreadResourceReference = {
+      id: 'f'.repeat(64),
+      mimeType: 'text/plain',
+      byteLength: 32,
+      fileName: 'command.log',
+    };
+    const producingPath = '/tmp/turn-observation/command.log';
+    const temporaryOutputPath = '/tmp/turn-observation/running.log';
+    const managedOutputRoot = '/tmp/turn-observation/browser-pilot';
+    const resultText = JSON.stringify({
+      ok: true,
+      data: {
+        stdout: `saved ${managedOutputRoot}/capture.png`,
+        stderr: '',
+        persistedOutput: { filePath: producingPath, resourceRef, byteLength: resourceRef.byteLength },
+        temporaryOutputPath,
+      },
+    });
+    const normalizer = new PiEventNormalizer(fixture.context);
+    normalizer.handle(toolAdmissionEvent('call-bash-artifact', 'bash', { command: 'produce-report' }));
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'call-bash-artifact',
+      toolName: 'bash',
+      result: {
+        content: [{ type: 'text', text: resultText }],
+        details: { data: { exitCode: 0 } },
+        resourceRefs: [resourceRef],
+        persistedTextReplacements: [{
+          value: managedOutputRoot,
+          replacement: '[managed-output:browser-pilot-output]',
+        }],
+      },
+      isError: false,
+    });
+    await normalizer.flush();
+
+    const item = fixture.recorder.orderedItems()[0];
+    expect(item).toMatchObject({ type: 'commandExecution', resourceRefs: [resourceRef] });
+    expect(JSON.stringify(item)).not.toContain(producingPath);
+    expect(JSON.stringify(item)).not.toContain(temporaryOutputPath);
+    expect(JSON.stringify(item)).not.toContain(managedOutputRoot);
+    expect(JSON.stringify(item)).toContain('[managed-output:browser-pilot-output]/capture.png');
+    if (item?.type !== 'commandExecution' || !item.outputRef) {
+      throw new Error('Expected bash output reference');
+    }
+    const persistedOutput = await fixture.context.readOutput(item.outputRef);
+    expect(persistedOutput).not.toContain(producingPath);
+    expect(persistedOutput).not.toContain(temporaryOutputPath);
+    expect(persistedOutput).not.toContain(managedOutputRoot);
+    expect(persistedOutput).toContain('[managed-output:browser-pilot-output]/capture.png');
+    expect(persistedOutput).toContain(resourceRef.id);
   });
 
   test('runs internal Memory Turns with only their exact prompt and model runtime', async () => {

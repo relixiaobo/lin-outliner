@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, truncate, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, truncate, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -20,6 +21,7 @@ import {
   visibleFileGrep,
   type BashData,
   type BackgroundShellStopData,
+  type BackgroundShellStopToolData,
   type FileGlobData,
   type FileGrepData,
 } from '../../src/main/agent/capabilities/agentLocalTools';
@@ -35,6 +37,7 @@ import {
   getBundledRipgrepExecutablePath,
 } from '../../src/main/agent/capabilities/agentRipgrep';
 import { buildStoredZip, pptxFixtureEntries } from '../helpers/pptxFixture';
+import type { ToolArtifactSink } from '../../src/main/agent/runtime/ToolArtifactSink';
 
 const localToolSets = new Map<string, ReturnType<typeof createLocalTools>>();
 
@@ -64,13 +67,37 @@ async function withWorkspace<T>(fn: (workspaceRoot: string) => Promise<T>): Prom
 async function executeTool<TData>(workspaceRoot: string, name: string, params: unknown): Promise<ToolEnvelope<TData>> {
   let tools = localToolSets.get(workspaceRoot);
   if (!tools) {
-    tools = createLocalTools({ localRoot: workspaceRoot });
+    tools = createLocalTools({
+      localRoot: workspaceRoot,
+      artifactSink: testArtifactSink(workspaceRoot),
+    });
     localToolSets.set(workspaceRoot, tools);
   }
   const tool = tools.find((candidate) => candidate.name === name);
   expect(tool).toBeDefined();
   const result = await (tool!.execute as any)('test-call', params);
   return result.details as ToolEnvelope<TData>;
+}
+
+function testArtifactSink(workspaceRoot: string): ToolArtifactSink {
+  const persistBytes: ToolArtifactSink['persistBytes'] = async ({ bytes, mimeType, fileName }) => {
+    const id = createHash('sha256').update(bytes).digest('hex');
+    const readablePath = path.join(workspaceRoot, '.tool-artifact-observations', id, fileName);
+    await mkdir(path.dirname(readablePath), { recursive: true });
+    await writeFile(readablePath, bytes);
+    return {
+      ref: { id, mimeType, byteLength: bytes.byteLength, fileName },
+      readablePath,
+    };
+  };
+  return {
+    persistBytes,
+    persistFile: async ({ path: sourcePath, mimeType, fileName }) => persistBytes({
+      bytes: await readFile(sourcePath),
+      mimeType,
+      fileName,
+    }),
+  };
 }
 
 const hasPdfTools = commandExists('pdfinfo') && commandExists('pdftoppm');
@@ -162,7 +189,8 @@ posixBashProcessTest('a host environment failure does not block an unrelated bas
       undefined,
       async () => { throw new Error('optional host failed'); },
     );
-    const bash = createLocalTools({ workspace }).find((tool) => tool.name === 'bash')!;
+    const bash = createLocalTools({ workspace, artifactSink: testArtifactSink(workspaceRoot) })
+      .find((tool) => tool.name === 'bash')!;
     const originalWarn = console.warn;
     console.warn = () => undefined;
     try {
@@ -216,10 +244,10 @@ posixBashProcessTest('foreground and background bash receive the same host proce
     });
     const background = backgroundResult.details as ToolEnvelope<BashData>;
     expect(background.ok).toBe(true);
-    const persistedOutputPath = background.data?.persistedOutputPath;
-    expect(persistedOutputPath).toBeDefined();
+    const temporaryOutputPath = background.data?.temporaryOutputPath;
+    expect(temporaryOutputPath).toBeDefined();
     const output = await waitForFileContent(
-      persistedOutputPath!,
+      temporaryOutputPath!,
       (content) => content.includes('status: completed')
         && content.includes(`tenon.thread-key|${outputDirectory}|${bpPath}`),
     );
@@ -231,6 +259,76 @@ posixBashProcessTest('foreground and background bash receive the same host proce
       toolCallId: 'background-env',
       command: 'printf "%s|%s|%s" "$BROWSER_PILOT_CLIENT_KEY" "$BROWSER_PILOT_OUTPUT_DIR" "$(command -v bp)"',
     }]);
+  });
+});
+
+posixBashProcessTest('foreground bash and task_stop admit files from typed managed output roots', async () => {
+  await withWorkspace(async (workspaceRoot) => {
+    const declaredPath = path.join(workspaceRoot, 'managed-output');
+    await mkdir(declaredPath);
+    const outputRoot = await realpath(declaredPath);
+    const ownerThreadId = 'managed-output-thread';
+    const artifactSink = testArtifactSink(workspaceRoot);
+    const processEnvironment = async () => ({
+      env: { BROWSER_PILOT_OUTPUT_DIR: outputRoot },
+      declaredOutputRoots: [{
+        id: 'browser-pilot-output',
+        skillId: 'browser-pilot',
+        path: outputRoot,
+        label: 'Browser Pilot output',
+      }],
+    });
+    const workspace = createAgentLocalWorkspaceContext(
+      workspaceRoot,
+      undefined,
+      undefined,
+      processEnvironment,
+      undefined,
+      ownerThreadId,
+    );
+    const bash = createLocalTools({ workspace, artifactSink }).find((tool) => tool.name === 'bash')!;
+
+    const foreground = await bash.execute('managed-foreground', {
+      command: 'printf "%s\n" "$BROWSER_PILOT_OUTPUT_DIR"; printf foreground > "$BROWSER_PILOT_OUTPUT_DIR/foreground.txt"',
+    });
+    expect(foreground.resourceRefs).toEqual([
+      expect.objectContaining({ fileName: 'foreground.txt', mimeType: 'text/plain' }),
+    ]);
+    expect((foreground.details as ToolEnvelope<BashData>).data?.artifacts).toEqual([
+      expect.objectContaining({
+        label: 'Browser Pilot output/foreground.txt',
+        ref: expect.objectContaining({ fileName: 'foreground.txt' }),
+      }),
+    ]);
+    expect(foreground.content[0]?.text).toContain(outputRoot);
+    expect(foreground.persistedTextReplacements).toEqual([{
+      value: outputRoot,
+      replacement: '[managed-output:browser-pilot-output]',
+    }]);
+
+    const background = await bash.execute('managed-background', {
+      command: 'printf background > "$BROWSER_PILOT_OUTPUT_DIR/background.txt"',
+      run_in_background: true,
+    });
+    const backgroundData = (background.details as ToolEnvelope<BashData>).data;
+    await waitForFileContent(
+      backgroundData!.temporaryOutputPath!,
+      (content) => content.includes('status: completed'),
+    );
+    const stopped = await stopBackgroundShellTaskResult(
+      backgroundData!.backgroundTaskId!,
+      ownerThreadId,
+      artifactSink,
+    );
+    expect(stopped?.resourceRefs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ fileName: 'background.txt', mimeType: 'text/plain' }),
+    ]));
+    expect((stopped?.details as ToolEnvelope<BackgroundShellStopToolData>).data?.artifacts).toEqual([
+      expect.objectContaining({
+        label: 'Browser Pilot output/background.txt',
+        ref: expect.objectContaining({ fileName: 'background.txt' }),
+      }),
+    ]);
   });
 });
 
@@ -2619,21 +2717,21 @@ describe('agent local tools', () => {
       const result = await executeTool<{
         stdout: string;
         stderr: string;
-        persistedOutputPath?: string;
-        persistedOutputSize?: number;
+        persistedOutput?: { filePath?: string; resourceRef: { id: string }; byteLength: number };
       }>(workspaceRoot, 'bash', {
         command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
       });
 
       expect(result.ok).toBe(true);
-      expect(typeof result.data!.persistedOutputPath).toBe('string');
-      expect(result.data!.persistedOutputSize).toBe(52000);
+      expect(typeof result.data!.persistedOutput?.filePath).toBe('string');
+      expect(result.data!.persistedOutput?.byteLength).toBe(52000);
+      expect(result.data!.persistedOutput?.resourceRef.id).toHaveLength(64);
       expect(result.data!.stdout.length).toBeLessThanOrEqual(21000);
       expect(result.data!.stderr.length).toBeLessThanOrEqual(9000);
       expect(result.data!.stdout).toContain('full output saved to file');
       expect(result.data!.stderr).toContain('full output saved to file');
 
-      const outputPath = result.data!.persistedOutputPath!;
+      const outputPath = result.data!.persistedOutput!.filePath!;
       expect((await stat(outputPath)).size).toBe(52000);
       const persisted = await readFile(outputPath, 'utf8');
       expect(persisted).toBe(`${'x'.repeat(40000)}${'e'.repeat(12000)}`);
@@ -2692,15 +2790,33 @@ describe('agent local tools', () => {
         });
 
         expect(result.ok).toBe(false);
-        expect(result.error?.code).toBe('command_interrupted');
+        expect(result.error?.code).toBe('output_limit_exceeded');
         expect(result.error?.message).toContain('output exceeded');
+      });
+    });
+  });
+
+  test('bash rejects fast output that crosses the cap before the watchdog polls', async () => {
+    await withEnv({
+      LIN_AGENT_BASH_MAX_OUTPUT_BYTES: '4096',
+      LIN_AGENT_BASH_OUTPUT_WATCHDOG_INTERVAL_MS: '60000',
+    }, async () => {
+      await withWorkspace(async (workspaceRoot) => {
+        const script = "process.stdout.write('x'.repeat(8192));";
+        const result = await executeTool(workspaceRoot, 'bash', {
+          command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+        });
+
+        expect(result.ok).toBe(false);
+        expect(result.error?.code).toBe('output_limit_exceeded');
+        expect(result.data).toMatchObject({ outputLimitExceeded: true });
       });
     });
   });
 
   test('background shell task owner stops tasks launched by bash', async () => {
     await withWorkspace(async (workspaceRoot) => {
-      const started = await executeTool<{ backgroundTaskId: string; persistedOutputPath: string; taskStatus: string }>(workspaceRoot, 'bash', {
+      const started = await executeTool<{ backgroundTaskId: string; temporaryOutputPath: string; taskStatus: string }>(workspaceRoot, 'bash', {
         command: 'sleep 5',
         run_in_background: true,
       });
@@ -2710,7 +2826,7 @@ describe('agent local tools', () => {
 
       const stopped = await stopBackgroundShellTask(started.data!.backgroundTaskId);
       expect(stopped).toMatchObject({ task_id: started.data!.backgroundTaskId, task_type: 'bash', status: 'stopped' });
-      expect(stopped!.outputPath).toBe(started.data!.persistedOutputPath);
+      expect(stopped!.outputPath).toBe(started.data!.temporaryOutputPath);
       expect(await readFile(stopped!.outputPath, 'utf8')).toContain('status: stopped');
     });
   });
@@ -2739,7 +2855,7 @@ describe('agent local tools', () => {
     });
   });
 
-  test('task_stop shell failures preserve the structured local-tool envelope', async () => {
+  test('task_stop materializes durable output for an already terminal shell task', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const ownerThreadId = 'thread-envelope-owner';
       const bash = createLocalTools({ localRoot: workspaceRoot, threadId: ownerThreadId })
@@ -2752,24 +2868,30 @@ describe('agent local tools', () => {
       const taskId = started.data!.backgroundTaskId;
       await stopBackgroundShellTask(taskId, ownerThreadId);
 
-      const result = await stopBackgroundShellTaskResult(taskId, ownerThreadId);
+      const result = await stopBackgroundShellTaskResult(
+        taskId,
+        ownerThreadId,
+        testArtifactSink(workspaceRoot),
+      );
       expect(result).not.toBeNull();
-      const details = result!.details as ToolEnvelope<BackgroundShellStopData>;
+      const details = result!.details as ToolEnvelope<BackgroundShellStopToolData>;
       expect(details).toMatchObject({
-        ok: false,
+        ok: true,
         tool: 'task_stop',
-        status: 'error',
-        error: {
-          code: 'task_not_running',
-          message: `Task ${taskId} is not running (status: stopped)`,
-          recoverable: true,
+        data: {
+          task_id: taskId,
+          status: 'stopped',
+          persistedOutput: {
+            filePath: expect.any(String),
+            resourceRef: { id: expect.any(String) },
+            byteLength: expect.any(Number),
+          },
         },
-        instructions: 'No stop is needed for completed, failed, or already stopped tasks.',
         metrics: { durationMs: expect.any(Number) },
       });
       expect(JSON.parse(result!.content[0]!.text)).toMatchObject({
-        ok: false,
-        error: { code: 'task_not_running' },
+        ok: true,
+        data: { persistedOutput: { resourceRef: { id: expect.any(String) } } },
       });
     });
   });
@@ -2779,7 +2901,7 @@ describe('agent local tools', () => {
       const pidFile = path.join(workspaceRoot, 'child.pid');
       let childPid: number | undefined;
       try {
-        const started = await executeTool<{ backgroundTaskId: string; persistedOutputPath: string }>(workspaceRoot, 'bash', {
+        const started = await executeTool<{ backgroundTaskId: string; temporaryOutputPath: string }>(workspaceRoot, 'bash', {
           command: `sleep 60 & printf %s $! > ${JSON.stringify(pidFile)}; wait`,
           run_in_background: true,
         });
@@ -2807,7 +2929,7 @@ describe('agent local tools', () => {
       const pidFile = path.join(workspaceRoot, 'child.pid');
       let childPid: number | undefined;
       try {
-        const started = await executeTool<{ backgroundTaskId: string; persistedOutputPath: string }>(workspaceRoot, 'bash', {
+        const started = await executeTool<{ backgroundTaskId: string; temporaryOutputPath: string }>(workspaceRoot, 'bash', {
           command: `sleep 60 & printf %s $! > ${JSON.stringify(pidFile)}`,
           run_in_background: true,
         });
@@ -2823,7 +2945,7 @@ describe('agent local tools', () => {
         expect(isProcessAlive(childPid!)).toBe(true);
 
         await new Promise((resolve) => setTimeout(resolve, 100));
-        const runningOutput = await readFile(started.data!.persistedOutputPath, 'utf8');
+        const runningOutput = await readFile(started.data!.temporaryOutputPath, 'utf8');
         expect(runningOutput).toContain('status: running');
         expect(runningOutput).not.toContain('status: completed');
 
@@ -2838,14 +2960,14 @@ describe('agent local tools', () => {
 
   test('bash background tasks write status and output to the returned file', async () => {
     await withWorkspace(async (workspaceRoot) => {
-      const started = await executeTool<{ backgroundTaskId: string; persistedOutputPath: string }>(workspaceRoot, 'bash', {
+      const started = await executeTool<{ backgroundTaskId: string; temporaryOutputPath: string }>(workspaceRoot, 'bash', {
         command: 'printf "done"',
         run_in_background: true,
       });
       expect(started.ok).toBe(true);
 
       const output = await waitForFileContent(
-        started.data!.persistedOutputPath,
+        started.data!.temporaryOutputPath,
         (content) => content.includes('status: completed') && content.includes('[stdout]\ndone'),
       );
       expect(output).toContain(`task_id: ${started.data!.backgroundTaskId}`);
@@ -2861,14 +2983,38 @@ describe('agent local tools', () => {
     }, async () => {
       await withWorkspace(async (workspaceRoot) => {
         const script = "setInterval(() => process.stdout.write('x'.repeat(1024)), 1);";
-        const started = await executeTool<{ backgroundTaskId: string; persistedOutputPath: string }>(workspaceRoot, 'bash', {
+        const started = await executeTool<{ backgroundTaskId: string; temporaryOutputPath: string }>(workspaceRoot, 'bash', {
           command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
           run_in_background: true,
         });
         expect(started.ok).toBe(true);
 
         const output = await waitForFileContent(
-          started.data!.persistedOutputPath,
+          started.data!.temporaryOutputPath,
+          (content) => content.includes('status: failed') && content.includes('output exceeded'),
+          3000,
+        );
+        expect(output).toContain('status: failed');
+        expect(output).toContain('Background command killed: output exceeded');
+      });
+    });
+  });
+
+  test('bash rejects fast background output that crosses the cap before the watchdog polls', async () => {
+    await withEnv({
+      LIN_AGENT_BASH_MAX_OUTPUT_BYTES: '4096',
+      LIN_AGENT_BASH_OUTPUT_WATCHDOG_INTERVAL_MS: '60000',
+    }, async () => {
+      await withWorkspace(async (workspaceRoot) => {
+        const script = "process.stdout.write('x'.repeat(8192));";
+        const started = await executeTool<{ backgroundTaskId: string; temporaryOutputPath: string }>(workspaceRoot, 'bash', {
+          command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+          run_in_background: true,
+        });
+        expect(started.ok).toBe(true);
+
+        const output = await waitForFileContent(
+          started.data!.temporaryOutputPath,
           (content) => content.includes('status: failed') && content.includes('output exceeded'),
           3000,
         );
@@ -2882,14 +3028,14 @@ describe('agent local tools', () => {
     await withWorkspace(async (workspaceRoot) => {
       const taskIds: string[] = [];
       for (let index = 0; index < 22; index += 1) {
-        const started = await executeTool<{ backgroundTaskId: string; persistedOutputPath: string }>(workspaceRoot, 'bash', {
+        const started = await executeTool<{ backgroundTaskId: string; temporaryOutputPath: string }>(workspaceRoot, 'bash', {
           command: `printf "task-${index}"`,
           run_in_background: true,
         });
         expect(started.ok).toBe(true);
         taskIds.push(started.data!.backgroundTaskId);
         const output = await waitForFileContent(
-          started.data!.persistedOutputPath,
+          started.data!.temporaryOutputPath,
           (content) => content.includes('status: completed') && content.includes(`task-${index}`),
           3000,
         );
@@ -2897,8 +3043,9 @@ describe('agent local tools', () => {
       }
 
       expect(await stopBackgroundShellTask(taskIds[0]!)).toBeNull();
-      await expect(stopBackgroundShellTask(taskIds.at(-1)!)).rejects.toMatchObject({
-        code: 'task_not_running',
+      expect(await stopBackgroundShellTask(taskIds.at(-1)!)).toMatchObject({
+        task_id: taskIds.at(-1),
+        status: 'completed',
       });
     });
   });
@@ -2935,7 +3082,7 @@ describe('local tool model-visible projections', () => {
       backgroundTaskId: 'task_1',
       taskStatus: 'running',
       command: 'sleep 100',
-      persistedOutputPath: '/tmp/task_1.log',
+      temporaryOutputPath: '/tmp/task_1.log',
       startedAt: '2026-05-26T00:00:00.000Z',
     };
     expect(visibleBash(background)).toEqual({
@@ -2943,7 +3090,7 @@ describe('local tool model-visible projections', () => {
       stderr: '',
       backgroundTaskId: 'task_1',
       taskStatus: 'running',
-      persistedOutputPath: '/tmp/task_1.log',
+      temporaryOutputPath: '/tmp/task_1.log',
     });
   });
 
@@ -2970,17 +3117,26 @@ describe('local tool model-visible projections', () => {
     expect(countVisible).not.toHaveProperty('mode');
   });
 
-  test('background shell stop projection keeps only outputPath', () => {
-    const data: BackgroundShellStopData = {
+  test('background shell stop projection exposes only durable output identity and its current handle', () => {
+    const data: BackgroundShellStopToolData = {
       message: 'Successfully stopped task: task_1 (sleep 100)',
       task_id: 'task_1',
       task_type: 'bash',
       command: 'sleep 100',
       status: 'stopped',
-      outputPath: '/tmp/task_1.log',
+      persistedOutput: {
+        filePath: '/tmp/materialized/task_1.log',
+        resourceRef: {
+          id: 'a'.repeat(64),
+          mimeType: 'text/plain',
+          byteLength: 123,
+          fileName: 'task_1.log',
+        },
+        byteLength: 123,
+      },
     };
     const visible = visibleBackgroundShellStop(data);
-    expect(visible).toEqual({ outputPath: '/tmp/task_1.log' });
+    expect(visible).toEqual({ persistedOutput: data.persistedOutput });
     expect(visible).not.toHaveProperty('task_id');
     expect(visible).not.toHaveProperty('status');
     expect(visible).not.toHaveProperty('message');

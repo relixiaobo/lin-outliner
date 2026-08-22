@@ -14,7 +14,7 @@ import type {
   Usage,
 } from '@earendil-works/pi-ai';
 import type { Static, TSchema } from 'typebox';
-import type { ModelToolIdentity, TurnError } from '../../../../core/agent/protocol';
+import type { ModelToolIdentity, ThreadResourceReference, TurnError } from '../../../../core/agent/protocol';
 import type { ModelGateway } from './ModelGateway';
 import type {
   ToolCallAdmissionDecision,
@@ -66,6 +66,15 @@ export interface AgentToolResult<T> {
   content: (TextContent | ImageContent)[];
   details: T;
   terminate?: boolean;
+  /** Host-only durable artifact manifest; never copied into the provider ToolResultMessage. */
+  resourceRefs?: readonly ThreadResourceReference[];
+  /** Host-only substitutions applied only when the tool result enters durable history. */
+  persistedTextReplacements?: readonly AgentToolTextReplacement[];
+}
+
+export interface AgentToolTextReplacement {
+  readonly value: string;
+  readonly replacement: string;
 }
 
 export type AgentToolUpdateCallback<T = any> = (partialResult: AgentToolResult<T>) => void;
