@@ -476,7 +476,9 @@ the feature. Current behavior is folded into `agent-core.md`,
   expansion adds only ancestors required by covered records, and live refresh
   removes an out-of-range fallback only when incoming canonical evidence names
   the same Thread Item. Pagination cursors remain anchored to the covered records,
-  never to ancestors inserted only for structural rendering.
+  never to ancestors inserted only for structural rendering. A live canonical
+  Turn replacement retires every loaded record carrying the prior Turn ID at that
+  zero-based Turn position, including retry records outside the refresh range.
 - The timeline preserves recorded order, shows no fabricated duration, and keeps
   selection and search matches synchronized with the ledger.
 - The renderer and export never receive credentials, raw recognized secrets,

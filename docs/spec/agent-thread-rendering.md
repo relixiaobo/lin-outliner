@@ -1215,6 +1215,10 @@ unreachable. A live refresh without a cursor uses the inclusive
 `startOrderKey` / `endOrderKey` in `replacementRange`. A running fallback outside
 that range is removed only when incoming primary or related evidence identifies
 the same canonical Thread Item; another record from the same Turn is insufficient.
+Each canonical zero-based Turn position has exactly one Turn ID. When retry or
+rollback replaces the Turn at a position, a live refresh removes every loaded
+record from the retired Turn ID, including retry activities beyond the incoming
+order-key range, so two different Turns can never render with the same Turn label.
 Record labels are a typed semantic union and are localized only in renderer; main
 never emits interface prose.
 

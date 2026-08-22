@@ -488,6 +488,100 @@ describe('ThreadTrajectoryPanel', () => {
     expect(recordRow(rendered.document, refreshedTool.id).textContent).toContain('Canonical boundary tool');
   });
 
+  test('removes records from a retired Turn when its canonical position is replaced', async () => {
+    const retiredTurnId = '01910000-0000-7000-8000-000000000013';
+    const replacementTurnId = '01910000-0000-7000-8000-000000000014';
+    const retiredAssistant = record({
+      id: `turn:${retiredTurnId}:assistant:1`,
+      kind: 'assistant',
+      lane: 'assistant',
+      turnId: retiredTurnId,
+      turnIndex: 2,
+      stepIndex: 1,
+      label: { type: 'assistantCall', callIndex: 1 },
+      state: 'partial',
+      primaryEvidence: {
+        type: 'providerCall',
+        threadId: THREAD_ID,
+        turnId: retiredTurnId,
+        callIndex: 1,
+      },
+    });
+    const retiredRetry = record({
+      id: `turn:${retiredTurnId}:retry:8`,
+      kind: 'retry',
+      lane: 'assistant',
+      turnId: retiredTurnId,
+      turnIndex: 2,
+      stepIndex: 8,
+      label: {
+        type: 'providerRetry',
+        retryKind: 'request',
+        attempt: 5,
+        maxRetries: 5,
+        sourceCallIndex: 4,
+      },
+      state: 'failed',
+      primaryEvidence: {
+        type: 'diagnosticActivity',
+        threadId: THREAD_ID,
+        turnId: retiredTurnId,
+        activityIndex: 8,
+        activityType: 'providerRetry',
+      },
+    });
+    const replacementInput = record({
+      id: `turn:${replacementTurnId}:input:item:user-message`,
+      kind: 'input',
+      lane: 'input',
+      turnId: replacementTurnId,
+      turnIndex: 2,
+      stepIndex: 1,
+      label: { type: 'input', source: 'initial' },
+      preview: 'Canonical replacement Turn',
+      primaryEvidence: {
+        type: 'threadItem',
+        threadId: THREAD_ID,
+        turnId: replacementTurnId,
+        itemId: 'user-message',
+      },
+    });
+    let readCount = 0;
+    const rendered = renderPanel(async (method) => {
+      if (method === 'thread/trajectory/read') {
+        readCount += 1;
+        return readCount === 1
+          ? trajectoryReadResponse([retiredAssistant, retiredRetry])
+          : trajectoryReadResponse([replacementInput], null, {
+            replacementRange: {
+              startOrderKey: replacementInput.orderKey,
+              endOrderKey: replacementInput.orderKey,
+            },
+          });
+      }
+      if (method === 'thread/trajectory/detail/read') return assistantDetailResponse();
+      throw new Error(`Unexpected Agent Core method: ${method}`);
+    });
+
+    rendered.render();
+    await flush();
+    expect(recordRow(rendered.document, retiredRetry.id).textContent).toContain('Request retry 5/5');
+
+    rendered.notify({
+      type: 'turn/completed',
+      threadId: THREAD_ID,
+      turnId: replacementTurnId,
+      turn: {} as never,
+    });
+    await wait(150);
+    await flush();
+
+    expect(recordRowOrNull(rendered.document, retiredAssistant.id)).toBeNull();
+    expect(recordRowOrNull(rendered.document, retiredRetry.id)).toBeNull();
+    expect(recordRow(rendered.document, replacementInput.id).textContent).toContain('Canonical replacement Turn');
+    expect(rendered.document.querySelectorAll('.thread-trajectory-turn-label')).toHaveLength(1);
+  });
+
   test('renders provider-visible tool catalog records as first-class Tools evidence', async () => {
     const toolCatalog = record({
       id: TOOL_CATALOG_ID,

@@ -416,6 +416,7 @@ function replaceRecordsForIncomingWindow(
 ): readonly ThreadTrajectoryRecordSummary[] {
   if (!replacementRange) return incoming;
   const incomingIds = new Set(incoming.map((record) => record.id));
+  const canonicalTurnIds = canonicalTurnIdsByIndex(incoming);
   const replacedThreadItems = new Set(incoming.flatMap((record) => (
     [record.primaryEvidence, ...record.relatedEvidence]
       .filter((evidence) => evidence.type === 'threadItem')
@@ -425,10 +426,33 @@ function replaceRecordsForIncomingWindow(
     current.filter((record) => (
       !incomingIds.has(record.id)
       && !orderKeyInRange(record.orderKey, replacementRange)
+      && !staleTurnPositionRecord(record, canonicalTurnIds)
       && !staleFallbackRecord(record, replacedThreadItems)
     )),
     incoming,
   );
+}
+
+function canonicalTurnIdsByIndex(
+  records: readonly ThreadTrajectoryRecordSummary[],
+): ReadonlyMap<number, string | null> {
+  const turnIds = new Map<number, string | null>();
+  for (const record of records) {
+    const existing = turnIds.get(record.turnIndex);
+    if (existing === undefined) turnIds.set(record.turnIndex, record.turnId);
+    else if (existing !== record.turnId) turnIds.set(record.turnIndex, null);
+  }
+  return turnIds;
+}
+
+function staleTurnPositionRecord(
+  record: ThreadTrajectoryRecordSummary,
+  canonicalTurnIds: ReadonlyMap<number, string | null>,
+): boolean {
+  const canonicalTurnId = canonicalTurnIds.get(record.turnIndex);
+  return canonicalTurnId !== undefined
+    && canonicalTurnId !== null
+    && canonicalTurnId !== record.turnId;
 }
 
 function staleFallbackRecord(
