@@ -47,12 +47,11 @@ theme-section entry below; this list is the ordering, not a second record):
   remains an uncapped background lane (trail + remaining items under **Performance**).
 - **Lane B — agent reliability**: `foreground-agent-settlement-wait` shipped
   #562 + #563, clearing the root-Turn deadlock that led the lane;
-  `responses-tool-contract-hardening` shipped #527, and the PM selected
-  `agent-trajectory-workspace` (#574 plan) as the next major agent bet:
-  replace Model Interactions with a Thread-wide Trajectory workspace. It leads
-  the lane as one implementation PR; protocol and projection foundations land
-  before renderer consumers inside that PR. `agent-tool-artifact-resources`
-  (#576 plan) and `computer-pilot-managed-skill` follow.
+  `responses-tool-contract-hardening` shipped #527 and
+  `agent-trajectory-workspace` shipped #575, replacing Model Interactions with
+  the Thread-wide Trajectory workspace. `agent-tool-artifact-resources` (#576
+  plan) is now unblocked and follows on the shipped Trajectory/resource
+  contracts; `computer-pilot-managed-skill` follows it.
 - **Lane C — product surface**: `update-check-and-prompt` shipped #514; next is the
   `file-preview` Office tail (apply its refresh note first), then the
   `agent-skills-authoring` security tail. `signed-builds-and-auto-update` stays
@@ -186,20 +185,12 @@ before any directional/security-sensitive build.
   outcome is explicitly `settled` / `abandoned` / `failed`, and the invoking
   Turn's `AbortSignal` races that wait. Design folded into
   `docs/spec/agent-tool-design.md`.
-- **[agent-trajectory-workspace](plans/agent-trajectory-workspace.md)**
-  (P1, `draft` 2026-08-21; plan PR #574, codex) — PM-selected DeepSeek Harness
-  Trajectory target for replacing the single-Turn Model Interactions inspector
-  with a Thread-wide investigation workspace: Input / Assistant / Tools
-  overview, Turn-grouped tail ledger, synchronized search/selection, paging,
-  virtualization, record-specific lazy inspector, Thread summary, and typed
-  export. Tenon keeps canonical Thread/Turn/Item authority, diagnostics
-  redaction, audited payload reads, child-Thread navigation, the Electron
-  process boundary, and design-system constraints. The PM explicitly selected
-  one complete implementation PR even though the work touches protocol/codec;
-  that PR must establish the protocol and main-owned projection before renderer
-  consumers and gate as a protocol/shared large diff. Prior overlap PRs #572 and
-  #573 are merged; the implementation branch still reruns the open-PR collision
-  check before claiming product files.
+- **[agent-trajectory-workspace](plans/archive/agent-trajectory-workspace.md)**
+  (P1, `done` 2026-08-22; plan PR #574, implementation PR #575, codex) — the
+  Thread-wide Trajectory workspace, typed main projection, lazy evidence
+  inspector, paging, live replacement, and redacted export shipped; the
+  single-Turn Model Interactions product route retired and design is folded into
+  the current Agent and workspace specs.
 - **agent-view-surface** (P2, `done` 2026-08-18) — both PRs shipped: mode
   awareness (#556) and view sort/filter/group/column configuration (#559), both
   codex-3. The Agent reads and writes a node's view mode and its persisted
@@ -553,9 +544,9 @@ Standalone agent items (not part of the program):
   dependency graph. One complete implementation PR adds `ToolArtifactSink`,
   typed output-root ownership, lifecycle coverage, and replay-time path
   rematerialization; persisted history keeps stable identity rather than a
-  disposed Turn path. The implementation overlaps #575 on protocol, runtime,
-  resource inspection, and specs, so it starts only after #575 merges or is
-  explicitly re-scoped. It also carries the artifact mechanism required by
+  disposed Turn path. It now builds on #575's shipped protocol, runtime,
+  resource-inspection, and Trajectory contracts and must rebase before claiming
+  those shared files. It also carries the artifact mechanism required by
   **computer-pilot-managed-skill** above.
 - **agent-dream-followups** — **REMOVED 2026-08-03.** Seven polish items for a subsystem
   that no longer exists: `dream-channel-and-memory-retire` retired Dream in full (#324, #328,
@@ -1129,6 +1120,11 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **[agent-trajectory-workspace](plans/archive/agent-trajectory-workspace.md)**
+  (codex, PR #575, merged 2026-08-22) — Open Trajectory now provides the complete
+  Thread timeline, ledger, lazy typed evidence, paging, live replacement, and
+  redacted export; the Model Interactions product route retired. Ultra review
+  closed every finding, and final typecheck, docs, renderer, and merge checks passed.
 - **tenon-import-root-bash-integration** (codex-2, PR #580, merged 2026-08-21 —
   fast-track, no plan file) — a production-shared shell-environment provider now
   guards the complete root-Agent Bash path through the built-in import wrapper:

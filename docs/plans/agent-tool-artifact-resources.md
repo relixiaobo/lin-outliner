@@ -330,24 +330,14 @@ Run `bun run typecheck`, `bun run test:core`, relevant renderer tests if the
 Trajectory/resource inspector surface changes, and `bun run docs:check` before
 marking the implementation PR ready.
 
-## Collision result
+## Trajectory integration boundary
 
-Open PR self-check found Draft PR `#575` (`codex/agent-trajectory-workspace-impl`)
-claiming agent protocol/codec trajectory contracts, Thread resource reads and
-exports, runtime lifecycle contribution, renderer Trajectory workspace, and
-agent specs. This plan's implementation overlaps the same protocol/runtime/spec
-area through `ThreadItem` shape, `ThreadResourceOps`, `ToolRuntime`,
-`PiTurnExecutor`, and agent specs.
-
-Recommended sequencing: review this design now if useful, but do not start the
-implementation branch until `#575` merges or is explicitly re-scoped. If the PM
-wants both in flight, land a deliberately coordinated interface decision first;
-otherwise this implementation should rebase on `#575` and adjust to the final
-Trajectory resource inspection shape.
-
-Board self-check: `agent-tool-artifact-resources` is listed as a P3 draft with
-no plan file; `docs/TASKS.md` and `CHANGELOG.md` are main-owned and are not part
-of this dev-agent plan change.
+The implementation extends the shipped trajectory protocol, Thread resource
+reads, runtime lifecycle, and renderer resource-inspection shape. It must use
+the canonical `ThreadTrajectoryRecordDetail` and audited resource readers rather
+than introducing a parallel artifact DTO or restoring disposed Turn paths.
+Changes to `ThreadItem`, `ThreadResourceOps`, `ToolRuntime`, `PiTurnExecutor`, or
+the shared protocol remain one coordinated interface decision.
 
 ## Open questions
 

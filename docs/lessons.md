@@ -13,6 +13,30 @@ UI-refactor round), **A11** (batch work resumable by construction), **A12**
 append-into-the-existing-category changelog rule (the 21-duplicate-section
 untangle of 2026-08-03).
 
+## Inspection projections need separate structure, coverage, and payload bounds
+
+PR #575 exposed the same category error at several layers of a large inspection
+projection. Redacting a complete typed diagnostics object under a text budget
+could destroy its discriminator; structural ancestor expansion could move a
+pagination cursor; a live page could not prove which older records had retired;
+and an unbounded identity could bypass a bounded detail payload. Each local
+operation was reasonable, but each was allowed to redefine a different kind of
+authority.
+
+**Keep structural validity, canonical coverage, and evidence payloads as
+independent contracts.** Preserve typed envelopes and discriminators while
+redacting or truncating only evidence leaves. Derive cursors and replacement
+ranges from canonical covered records before adding presentation-only ancestors.
+Include identity fields in hard response ceilings, and make live refresh state
+which window, revision, or canonical suffix it replaces. A bounded projection
+is not correct until its smallest degraded response still passes its own codec.
+
+Regression tests should cross the boundaries, not just populate one page: force
+oversized evidence through codec round-trip, split one parent across pagination,
+replace a live fallback with retained older records loaded, and roll back
+multiple Turns before adding one replacement. These cases distinguish content
+loss from structural invalidity and stale projection state.
+
 ## Composition-bound behavior needs a shared production seam
 
 PR #580 found that individually green import API, CLI, shell-parser, capability,

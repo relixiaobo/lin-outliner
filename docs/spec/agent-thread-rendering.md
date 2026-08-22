@@ -277,7 +277,7 @@ main` divider).
 
 Every embedded child drops Edit and Continue in new chat because neither
 rewrites or forks child history; they are hidden rather than disabled, because a
-control that never works is not a control. Copy and Turn Details stay, because
+control that never works is not a control. Copy and Open Trajectory stay, because
 both work.
 
 The composer is the physical form of user authority. A message sent here is the
@@ -988,11 +988,9 @@ Agent request limits are system internals. Stable admission- and mid-Turn-budget
 errors carry `subagent_budget_exhausted`; renderer surfaces classify that code rather
 than model-facing copy. They translate it before transcript display or copy into
 localized resource-limit copy that says produced results were preserved. The same
-translation applies in Turn Details and structured Automation run errors. Token counts
-never render on these user surfaces. For a budget error, Turn Details omits the
-canonical error `detail`, replaces an Agent activity's raw error record with
-the localized record, and does not resolve Agent-task raw output; this holds
-inside the lazy Canonical Items disclosure as well as the default Summary.
+translation applies in structured Automation run errors. Token counts never
+render on these user-facing error surfaces; Trajectory is the separate technical
+surface for retained usage and evidence.
 
 Copy on a response copies the complete assistant side of that Turn in order:
 commentary, tool arguments, full tool results when available, and

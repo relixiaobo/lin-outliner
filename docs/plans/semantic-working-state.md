@@ -242,7 +242,7 @@ The following stay outside `WorkingText` in both PRs:
   blocked on a browser/person. The current `flow.progress` contract does not
   distinguish active token exchange from external waiting, so the entire row
   stays on the existing treatment rather than guessing.
-- `ThreadTurnDetailsPanel`, managed-Skill catalog/library initial reads,
+- `ThreadTrajectoryPanel`, managed-Skill catalog/library initial reads,
   `OutlinerEmptyState` search loading, and preview renderers: resource loading.
 - `ToolFileResult`, search refresh, API-key copy, and file-translation start:
   icon-only commands with no stable visible text target.

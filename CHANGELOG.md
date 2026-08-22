@@ -12,6 +12,28 @@ Entries reference the pull request that introduced them.
 
 ### Added
 
+- **A Thread now has one investigation workspace for its complete Agent
+  trajectory (PR #575, codex)** — **Open Trajectory** replaces the single-Turn
+  Model Interactions product route with a Thread-wide timeline, virtualized
+  Turn-grouped ledger, synchronized search and selection, foldable Assistant
+  calls, bidirectional paging, record-specific lazy inspector, whole-Thread
+  usage summary, and child-Trajectory navigation. Main owns the typed projection
+  over canonical Turns, Items, retained diagnostics, context payloads, and tool
+  outputs; renderer receives bounded, credential-redacted evidence instead of
+  raw host paths or diagnostics payloads. Active diagnostics degrade
+  best-effort, stable identity cursors remain anchored to canonical coverage,
+  live refreshes replace only authoritative windows and retire rolled-back Turn
+  IDs and suffixes, and detail responses preserve codec-valid typed envelopes
+  under one hard evidence budget. The lower-level audited Turn reader remains
+  available for internal validation, but it is no longer a renderer route.
+  Gate: `/code-review ultra` repeatedly exercised security, pagination,
+  projection coverage, active-Turn refresh, response budgets, rollback, export,
+  selection, and spec alignment; every reported finding was fixed before the
+  final no-issues review at `ed30abad`. Verified with typecheck, `docs:check`,
+  28 focused renderer tests, the complete renderer suite (1366 passed), the
+  complete Core suite (2612 passed, 6 skipped), focused Agent E2E coverage,
+  typography guards, clean merge-tree/diff checks, and the branch's five-sample
+  E2E signal was still queued at merge time.
 - **Every participant in a Thread now has a name and a face (PR #560, cc-2)** —
   a reader used to meet `explore`; they now meet **Rena**. Agent Roles carry
   `presentation { persona, color }`, and a `presentationOverrides` map in either
