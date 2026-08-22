@@ -1602,6 +1602,7 @@ export interface ThreadTrajectoryRecordSummary {
   readonly lane: ThreadTrajectoryLane;
   readonly threadId: ThreadId;
   readonly turnId: TurnId;
+  /** Stable whole-Thread sort coordinate. Reading a different window must not change it. */
   readonly sequence: number;
   readonly parentRecordId: string | null;
   readonly title: string;
@@ -1624,14 +1625,6 @@ export interface ThreadTrajectoryReplacementRange {
 export interface ThreadTrajectorySummary {
   readonly threadId: ThreadId;
   readonly turnCount: number;
-  readonly recordCount: number;
-  readonly inputCount: number;
-  readonly contextCount: number;
-  readonly assistantCount: number;
-  readonly toolCount: number;
-  readonly retryCount: number;
-  readonly compactionCount: number;
-  readonly delegationCount: number;
   readonly startedAt: number | null;
   readonly completedAt: number | null;
   readonly durationMs: number | null;

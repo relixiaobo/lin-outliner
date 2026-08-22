@@ -478,8 +478,6 @@ describe('ThreadTrajectoryProjection', () => {
       focus: { turnId: turns[3]!.id },
     });
     expect(focused.summary.turnCount).toBe(8);
-    expect(focused.summary.recordCount).toBe(8);
-    expect(focused.summary.inputCount).toBe(8);
     expect(focused.olderCursor).not.toBeNull();
     expect(focused.newerCursor).not.toBeNull();
     expect(focused.records.map((record) => record.turnId)).toContain(turns[3]!.id);
@@ -494,6 +492,76 @@ describe('ThreadTrajectoryProjection', () => {
     expect(newer.records.at(-1)?.turnId).toBe(turns[6]!.id);
     expect(newer.olderCursor).not.toBeNull();
     expect(newer.newerCursor).not.toBeNull();
+  });
+
+  test('keeps record sequence stable between tail and overlapping cursor windows', async () => {
+    const turns = Array.from({ length: 3 }, (_, index) => trajectoryTurnWithDiagnosticsRef(index));
+    const diagnosticsByRef = new Map(turns.map((turn) => [
+      turn.execution.diagnosticsRef!.id,
+      trajectoryDiagnostics(),
+    ]));
+    const projection = trajectoryProjection({ turns, diagnosticsByRef });
+    const targetTurn = turns[2]!;
+    const assistantId = `turn:${targetTurn.id}:assistant:0`;
+    const finalToolId = `turn:${targetTurn.id}:tool:1:${encodeURIComponent('call:two:with:colon')}`;
+
+    const tail = await projection.read({ threadId: THREAD_ID, limit: 1 });
+    const cursorWindow = await projection.read({
+      threadId: THREAD_ID,
+      limit: 1,
+      cursor: `before:${encodeURIComponent(finalToolId)}`,
+    });
+    const tailAssistant = tail.records.find((record) => record.id === assistantId);
+    const cursorAssistant = cursorWindow.records.find((record) => record.id === assistantId);
+
+    expect(tailAssistant).toBeDefined();
+    expect(cursorAssistant).toBeDefined();
+    expect(cursorAssistant?.sequence).toBe(tailAssistant?.sequence);
+  });
+
+  test('limits whole-Thread summary to facts available without diagnostics totals', async () => {
+    const diagnostics: TurnDiagnosticsPayload = {
+      ...trajectoryDiagnostics(),
+      activities: [
+        ...trajectoryDiagnostics().activities,
+        {
+          type: 'providerRetry',
+          retryKind: 'request',
+          attempt: 1,
+          maxRetries: 2,
+          occurredAt: 225,
+          sourceCallIndex: 0,
+          nextCallIndex: null,
+        },
+      ],
+    };
+    const response = await trajectoryProjection({ diagnostics }).read({ threadId: THREAD_ID, limit: 100 });
+
+    expect(response.records.map((record) => record.kind)).toEqual([
+      'context',
+      'context',
+      'assistant',
+      'tool',
+      'tool',
+      'retry',
+    ]);
+    expect(response.summary).toEqual({
+      threadId: THREAD_ID,
+      turnCount: 1,
+      startedAt: 100,
+      completedAt: 300,
+      durationMs: 200,
+      usage: {
+        input: 10,
+        output: 4,
+        cacheRead: 0,
+        cacheWrite: 0,
+        reasoning: null,
+        totalTokens: 14,
+        costUsd: 0.00003,
+      },
+      availability: [],
+    });
   });
 
   test('bounds trajectory read diagnostics materialization to the requested window', async () => {

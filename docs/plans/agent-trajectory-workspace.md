@@ -315,11 +315,14 @@ into the parent projection merely to support navigation.
 
 ### Summary and export
 
-The workspace summary reports whole-Thread facts that can be derived truthfully
-from lightweight canonical Turn/Item/timing/usage metadata without reading every
-diagnostics payload: Turns, loaded-record coverage, recorded duration, tokens,
-cache use, and cost when available. Missing contributors produce typed partial
-coverage rather than an apparently complete zero.
+The workspace summary reports only whole-Thread facts that can be derived
+truthfully from lightweight canonical Turn/timing/usage metadata without reading
+every diagnostics payload: Turns, recorded duration, tokens, cache use, and cost
+when available. Record-kind totals are deliberately absent because provider
+calls, retries, prepared context, and tool executions are diagnostics-backed;
+the response's `records` describe the loaded window without pretending to be a
+whole-Thread count. Missing contributors produce typed partial coverage rather
+than an apparently complete zero.
 
 Export creates a user-selected Thread trajectory bundle from the same typed
 projection and retained diagnostics used by the inspector. It states omissions

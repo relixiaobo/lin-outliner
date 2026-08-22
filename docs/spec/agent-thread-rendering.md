@@ -1139,8 +1139,10 @@ The renderer first performs `thread/trajectory/read`. Main returns `threadId`,
 Thread-level summary facts, an ordered record window, `olderCursor` /
 `newerCursor`, `hasOlder` / `hasNewer`, an authoritative `replacementRange`, and
 the selected record. Summary facts are whole-Thread facts derived from canonical
-Turn/Item/timing/usage metadata; they do not force diagnostics payload reads
-outside the requested window. Records are the loaded window. The response
+Turn/timing/usage metadata; they do not force diagnostics payload reads outside
+the requested window and deliberately omit record-kind totals that require
+diagnostics. Records describe the loaded window rather than a whole-Thread
+count. The response
 deliberately does not return a full `Thread` because that object contains host
 details such as `cwd` that are not part of the Trajectory UI contract. A read
 without `recordId` or `turnId` focus returns no selection; focus is a deep link,
@@ -1150,10 +1152,13 @@ ledger/inspector state and must not reopen a closed inspector from the original
 focus. Search and range filtering are scoped to the loaded window, but the
 selected record and its ancestor rows remain visible even when they do not match
 the current search, range, or fold state. The user can load older and newer
-record windows from stable identity cursors; a live refresh without a cursor uses
-`replacementRange` plus same-Turn fallback cleanup to remove stale running
-fallback rows without deleting already loaded completed records from the same
-Turn.
+record windows from stable identity cursors. Every record's numeric sequence is
+a stable whole-Thread sort coordinate: projection reserves the same per-Turn
+header positions before applying cross-Turn stable-prompt and tool-catalog
+deduplication, so reading a different window cannot renumber an existing record.
+A live refresh without a cursor uses `replacementRange` plus same-Turn fallback
+cleanup to remove stale running fallback rows without deleting already loaded
+completed records from the same Turn.
 
 Record details are lazy. `thread/trajectory/detail/read` returns the selected
 record plus sanitized detail evidence only. Main locates the owning Turn first

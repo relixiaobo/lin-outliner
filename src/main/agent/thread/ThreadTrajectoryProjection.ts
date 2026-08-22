@@ -207,7 +207,7 @@ export class ThreadTrajectoryProjection {
     return {
       turns,
       records: page.data,
-      summary: summarizeLightweightTrajectory(request.threadId, allTurns, turns),
+      summary: summarizeTrajectory(request.threadId, allTurns, turns),
       replacementRange: page.replacementRange,
       olderCursor: page.olderCursor,
       newerCursor: page.newerCursor,
@@ -228,7 +228,7 @@ export class ThreadTrajectoryProjection {
       thread,
       turns,
       records,
-      summary: summarizeProjectedTrajectory(threadId, allTurns, records, turns),
+      summary: summarizeTrajectory(threadId, allTurns, turns),
     };
   }
 
@@ -241,7 +241,7 @@ export class ThreadTrajectoryProjection {
       thread,
       turns,
       records,
-      summary: summarizeProjectedTrajectory(threadId, allTurns, records, turns),
+      summary: summarizeTrajectory(threadId, allTurns, turns),
     };
   }
 
@@ -266,13 +266,41 @@ export class ThreadTrajectoryProjection {
     let stablePromptFingerprint: string | null = null;
     const toolCatalogState: ToolCatalogProjectionState = { fingerprint: null };
     for (const loaded of turns) {
+      // Reserve every Turn-local header position before cross-Turn deduplication.
+      const turnRecords: ThreadTrajectoryRecordSummary[] = [];
+      appendStablePromptRecord(turnRecords, loaded, false);
+      appendToolCatalogRecords(turnRecords, loaded, { fingerprint: null });
+      appendTurnRecords(turnRecords, loaded);
+
       const nextFingerprint = loaded.diagnostics?.payload.stablePrompt?.fingerprints.complete ?? null;
       if (nextFingerprint !== null && nextFingerprint !== stablePromptFingerprint) {
-        appendStablePromptRecord(records, loaded, stablePromptFingerprint !== null);
+        const stablePromptRecord = turnRecords.find((record) => record.primaryEvidence.type === 'stablePrompt');
+        if (stablePromptRecord) {
+          records.push({
+            ...stablePromptRecord,
+            title: stablePromptFingerprint === null ? 'Initial System Prompt' : 'System Prompt Update',
+          });
+        }
         stablePromptFingerprint = nextFingerprint;
       }
-      appendToolCatalogRecords(records, loaded, toolCatalogState);
-      appendTurnRecords(records, loaded);
+      for (const record of turnRecords) {
+        if (record.primaryEvidence.type === 'stablePrompt') continue;
+        if (record.primaryEvidence.type !== 'toolCatalog') {
+          records.push(record);
+          continue;
+        }
+        const payload = loaded.diagnostics?.payload;
+        if (!payload) continue;
+        const catalog = toolCatalogRecord(payload, record.primaryEvidence.callIndex);
+        if (!catalog || catalog.fingerprint === toolCatalogState.fingerprint) continue;
+        const initial = toolCatalogState.fingerprint === null;
+        if (initial && catalog.toolNames.length === 0) continue;
+        toolCatalogState.fingerprint = catalog.fingerprint;
+        records.push({
+          ...record,
+          title: toolCatalogTitle(!initial),
+        });
+      }
     }
     return records;
   }
@@ -1217,44 +1245,11 @@ function record(input: {
   };
 }
 
-function summarizeProjectedTrajectory(
-  threadId: ThreadId,
-  allTurns: readonly Turn[],
-  records: readonly ThreadTrajectoryRecordSummary[],
-  loadedTurns: readonly LoadedTurn[],
-): ThreadTrajectorySummary {
-  const usage = usageSummaryFromTurns(allTurns) ?? records.reduce<ThreadTrajectoryUsageSummary | null>((accumulator, entry) => (
-    entry.usage ? addUsage(accumulator, entry.usage) : accumulator
-  ), null);
-  const startedAt = minNullable(allTurns.map((turn) => turn.startedAt));
-  const completedAt = allTurns.some((turn) => turn.completedAt === null)
-    ? null
-    : maxNullable(allTurns.map((turn) => turn.completedAt));
-  return {
-    threadId,
-    turnCount: allTurns.length,
-    recordCount: records.length,
-    inputCount: countKind(records, 'input'),
-    contextCount: countKind(records, 'context'),
-    assistantCount: countKind(records, 'assistant'),
-    toolCount: countKind(records, 'tool'),
-    retryCount: countKind(records, 'retry'),
-    compactionCount: countKind(records, 'compaction'),
-    delegationCount: countKind(records, 'delegation'),
-    startedAt,
-    completedAt,
-    durationMs: startedAt === null || completedAt === null ? null : Math.max(0, completedAt - startedAt),
-    usage,
-    availability: canonicalTrajectoryAvailability(allTurns, loadedTurns),
-  };
-}
-
-function summarizeLightweightTrajectory(
+function summarizeTrajectory(
   threadId: ThreadId,
   allTurns: readonly Turn[],
   loadedTurns: readonly LoadedTurn[],
 ): ThreadTrajectorySummary {
-  const counts = lightweightTrajectoryCounts(allTurns);
   const usage = usageSummaryFromTurns(allTurns);
   const startedAt = minNullable(allTurns.map((turn) => turn.startedAt));
   const completedAt = allTurns.some((turn) => turn.completedAt === null)
@@ -1263,55 +1258,11 @@ function summarizeLightweightTrajectory(
   return {
     threadId,
     turnCount: allTurns.length,
-    recordCount: counts.recordCount,
-    inputCount: counts.inputCount,
-    contextCount: counts.contextCount,
-    assistantCount: counts.assistantCount,
-    toolCount: counts.toolCount,
-    retryCount: 0,
-    compactionCount: counts.compactionCount,
-    delegationCount: counts.delegationCount,
     startedAt,
     completedAt,
     durationMs: startedAt === null || completedAt === null ? null : Math.max(0, completedAt - startedAt),
     usage,
     availability: canonicalTrajectoryAvailability(allTurns, loadedTurns),
-  };
-}
-
-function lightweightTrajectoryCounts(turns: readonly Turn[]): {
-  readonly assistantCount: number;
-  readonly compactionCount: number;
-  readonly contextCount: number;
-  readonly delegationCount: number;
-  readonly inputCount: number;
-  readonly recordCount: number;
-  readonly toolCount: number;
-} {
-  let assistantCount = 0;
-  let compactionCount = 0;
-  let contextCount = 0;
-  let delegationCount = 0;
-  let inputCount = 0;
-  let toolCount = 0;
-  for (const turn of turns) {
-    for (const item of turn.items) {
-      if (item.type === 'userMessage') inputCount += 1;
-      else if (item.type === 'contextEvidence') contextCount += 1;
-      else if (item.type === 'contextCompaction') compactionCount += 1;
-      else if (item.type === 'agentMessage') assistantCount += 1;
-      else if (item.type === 'collabAgentToolCall') delegationCount += 1;
-      else if (isToolItem(item)) toolCount += 1;
-    }
-  }
-  return {
-    assistantCount,
-    compactionCount,
-    contextCount,
-    delegationCount,
-    inputCount,
-    recordCount: inputCount + contextCount + assistantCount + toolCount + compactionCount + delegationCount,
-    toolCount,
   };
 }
 
@@ -1689,10 +1640,6 @@ function addUsage(
     totalTokens: left.totalTokens + right.totalTokens,
     costUsd: left.costUsd === null || right.costUsd === null ? null : left.costUsd + right.costUsd,
   };
-}
-
-function countKind(records: readonly ThreadTrajectoryRecordSummary[], kind: ThreadTrajectoryRecordKind): number {
-  return records.filter((entry) => entry.kind === kind).length;
 }
 
 function minNullable(values: readonly (number | null)[]): number | null {
