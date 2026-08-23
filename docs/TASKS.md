@@ -1123,6 +1123,11 @@ CHANGELOG entry and any merged PR, distilled rules in [`lessons.md`](lessons.md)
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **[native-daily-import](plans/archive/native-daily-import.md)** (codex, PR
+  #583, merged 2026-08-23) — exact Tana journal dates now import directly into
+  canonical Daily Notes while non-date content retains one staging root; preview,
+  bounded transactional writes, rollback, verification, and exact Undo cover the
+  complete append-only workflow. Gate review closed two Medium findings before GO.
 - **documentation-lifecycle-cleanup** (main, fast-track, 2026-08-23) — removed
   legacy plan frontmatter, repaired maintained-document navigation, normalized
   active-plan structure and durable references, refreshed reader entry points,

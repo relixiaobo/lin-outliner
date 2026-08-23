@@ -1803,3 +1803,21 @@ Regression coverage must interleave a delayed background write with an unrelated
 foreground execution, and must persist one artifact before forcing a later phase
 to fail. In both cases, assert that exactly the producing tool Item owns the
 resource.
+
+## Cooperative batching starts before the visible loop
+
+PR #583 initially chunked imported node creation but synchronously resolved every
+Daily Note target first. Each resolution materialized document state again, so
+2,000 dates beside 12,000 existing nodes blocked the main process for about 5.27
+seconds before the first advertised yield.
+
+**Measure entry-to-first-yield latency, including target resolution, indexing,
+and preflight work.** A yielded inner loop does not make the operation cooperative
+when its setup is unbounded. Build one shared lookup for the batch, yield while
+resolving targets as well as while creating content, and keep setup chunk commits
+inside the same rollback frontier and Undo group as the consumer work.
+
+Regression coverage needs both halves: a large pre-existing document that bounds
+the first and subsequent slices, and an injected failure after a setup chunk has
+committed that proves projection and operation history return to their original
+state.

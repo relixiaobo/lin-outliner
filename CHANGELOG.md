@@ -10,6 +10,29 @@ Entries reference the pull request that introduced them when one exists.
 
 `main` is the `0.8.0` train; entries here move under the next tag.
 
+### Added
+
+- **Tana journal dates can now import directly into canonical Daily Notes (PR
+  #583, codex)** — the deterministic Tana adapter recognizes only exact
+  `journalPart` records with canonical `YYYY-MM-DD` local dates, defaults eligible
+  packs to `native_daily`, and previews the date range plus existing/new day
+  counts before writing. Date-section roots append to their canonical day nodes;
+  mixed non-date sections remain together under one `Import: <source>` staging
+  root, and explicit staging mode remains available. Re-import is deliberately
+  append-only: it neither overwrites nor deduplicates prior content. The complete
+  pack is validated before one main/Core transaction whose bounded date and node
+  chunks retain one rollback frontier, one Undo group, and one operation-history
+  entry; verification traverses only the exact roots created by that operation.
+  Gate review found two Medium defects: padded or title-mismatched dates could make
+  preview disagree with commit, and resolving 2,000 date targets beside 12,000
+  existing nodes blocked about 5.27 seconds before the first cooperative yield.
+  `438221df` closed both with strict raw-value admission and a single indexed,
+  yielding Core date resolver. Re-review found no new reportable issues. Verified
+  with typecheck, `docs:check`, 172 focused tests, the complete Core suite (2648
+  passed, 6 skipped, 0 failed), whitespace checks, and all five GitHub E2E samples;
+  the comparison retained one unrelated 1/5 workspace-layout signal on this
+  renderer-free diff under the repository's non-gating E2E policy.
+
 ## [0.7.0] - 2026-08-23
 
 **Agents you can recognize, inspect, and trust.** Every conversation participant
