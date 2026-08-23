@@ -11,6 +11,8 @@ import {
   type NodeProjection,
   type SearchNodeConfig,
   type SortDirection,
+  type FieldConfigPatch,
+  type TagConfigPatch,
   type ViewFieldRef,
   type ViewMode,
 } from '../../core/types';
@@ -38,6 +40,7 @@ import { semanticAffectedDigest, semanticNodeDigest } from './semanticDigest';
 import { createSelectionIndex, resolveTargetSpec } from './selector';
 import type { OutlineRuntimeRequestContext } from './server/runtimeRouter';
 import type { OutlineRuntimeWorkspace } from './runtimeWorkspace';
+import type { CaptureNodeMetadata } from '../../core/launcher/sources';
 
 interface ExecuteResult {
   readonly bindings: Readonly<Record<string, readonly string[]>>;
@@ -261,7 +264,14 @@ async function executeChange(
     case 'merge': {
       const sourceIds = resolveTargetRef(baseIndex, change.sources, bindings);
       const targetId = exactlyOne(resolveTargetRef(baseIndex, change.target, bindings), 'merge target');
-      for (const sourceId of sourceIds) core.mergeNodeInto(sourceId, targetId);
+      const state = core.state();
+      const targetType = state.nodes[targetId]?.type;
+      if ((targetType === 'tagDef' || targetType === 'fieldDef')
+        && sourceIds.every((sourceId) => state.nodes[sourceId]?.type === targetType)) {
+        core.mergeDefinitions(targetId, [...sourceIds]);
+      } else {
+        for (const sourceId of sourceIds) core.mergeNodeInto(sourceId, targetId);
+      }
       return [targetId];
     }
     case 'template': {
@@ -322,7 +332,17 @@ function createDraft(
 ): string {
   const id = preserveId ? draft.id! : deterministicPublicNodeId(draft.id!, copyPath);
   const metadata = isRecord(draft.metadata) ? draft.metadata : {};
-  if (draft.type === 'reference') {
+  if (isRecord(metadata.capture)) {
+    assertCaptureMetadata(metadata.capture);
+    core.createCapture({
+      destinationParentId: parentId,
+      index,
+      title: draft.content,
+      ...(draft.description !== undefined ? { description: draft.description } : {}),
+      metadata: metadata.capture,
+      children: [],
+    }, id);
+  } else if (draft.type === 'reference') {
     if (!draft.referenceTargetId) throw new Error('Reference draft requires referenceTargetId');
     core.addReference(parentId, draft.referenceTargetId, index, id);
   } else if (draft.type === 'image') {
@@ -356,7 +376,7 @@ function createDraft(
     }
     if (draft.type === 'codeBlock') core.setCodeBlock(id, draft.codeLanguage);
   }
-  if (draft.description !== undefined) core.updateNodeDescription(id, draft.description);
+  if (draft.description !== undefined && !isRecord(metadata.capture)) core.updateNodeDescription(id, draft.description);
   if (draft.checkbox) core.setNodeCheckboxVisible(id, true);
   if (draft.done) core.toggleDone(id);
   for (const tagId of draft.tags ?? []) core.applyTag(id, tagId);
@@ -400,6 +420,10 @@ function executeUpdate(
     else core.removeTag(targetId, tagId);
   } else if (instruction.kind === 'field') {
     executeFieldUpdate(core, baseIndex, bindings, targetId, instruction);
+  } else if (instruction.kind === 'definition') {
+    if (!isRecord(instruction.patch)) throw new Error('definition configure requires an object patch');
+    if (instruction.definitionType === 'tag') core.setTagConfig(targetId, instruction.patch as TagConfigPatch);
+    else core.setFieldConfig(targetId, instruction.patch as FieldConfigPatch);
   } else if (instruction.kind === 'reference') {
     const referenceTargetId = exactlyOne(resolveTargetRef(baseIndex, instruction.target, bindings), 'reference target');
     if (instruction.action === 'add') core.addReference(targetId, referenceTargetId);
@@ -440,7 +464,13 @@ function executeFieldUpdate(
     : undefined;
   if (instruction.action === 'define') {
     if (!instruction.name) throw new Error('field define requires name');
-    fieldDefId = core.createFieldDefinition(instruction.name, (instruction.fieldType ?? 'plain') as FieldType).focus?.nodeId;
+    const owner = core.state().nodes[ownerId];
+    const outcome = owner?.type === 'tagDef'
+      ? core.createFieldDef(ownerId, instruction.name, (instruction.fieldType ?? 'plain') as FieldType)
+      : core.createInlineField(ownerId, null, instruction.name, (instruction.fieldType ?? 'plain') as FieldType);
+    const entryId = outcome.focus?.nodeId;
+    if (!entryId || instruction.value === undefined) return;
+    fieldDefId = (core.state().nodes[entryId] as Extract<Node, { type: 'fieldEntry' }> | undefined)?.fieldDefId;
   }
   if (!fieldDefId) throw new Error(`field ${instruction.action} requires a field definition`);
   const entry = fieldEntry(core, ownerId, fieldDefId);
@@ -449,8 +479,12 @@ function executeFieldUpdate(
   } else if (instruction.action === 'remove') {
     if (entry) core.deleteNode(entry.id);
   } else if (instruction.action === 'reuse') {
-    if (!entry) throw new Error('field reuse requires an existing field entry');
-    core.reuseFieldDefinition(entry.id, fieldDefId);
+    const sourceFieldDefId = instruction.sourceField
+      ? exactlyOne(resolveTargetRef(baseIndex, instruction.sourceField, bindings), 'source field definition')
+      : undefined;
+    const sourceEntry = sourceFieldDefId ? fieldEntry(core, ownerId, sourceFieldDefId) : entry;
+    if (!sourceEntry) throw new Error('field reuse requires an existing source field entry');
+    core.reuseFieldDefinition(sourceEntry.id, fieldDefId);
   } else if (instruction.action === 'select') {
     if (!entry || typeof instruction.value !== 'string') throw new Error('field select requires an entry and option Node ID');
     core.selectFieldOption(entry.id, instruction.value);
@@ -583,7 +617,7 @@ function changeTargetRefs(change: Change): readonly TargetRef[] {
       ...change.changes.flatMap((instruction): TargetRef[] => {
         if (instruction.kind === 'tag') return [instruction.tag];
         if (instruction.kind === 'reference') return [instruction.target];
-        if (instruction.kind === 'field' && instruction.field) return [instruction.field];
+        if (instruction.kind === 'field') return [instruction.field, instruction.sourceField].filter((value): value is TargetRef => Boolean(value));
         return [];
       }),
     ];
@@ -641,6 +675,19 @@ function parseLocalDate(value: string): { year: number; month: number; day: numb
     throw new Error(`Invalid local date: ${value}`);
   }
   return { year, month, day };
+}
+
+function assertCaptureMetadata(value: Record<string, unknown>): asserts value is Record<string, unknown> & CaptureNodeMetadata {
+  if (value.schemaVersion !== 1
+    || typeof value.captureId !== 'string'
+    || !['launcher', 'agent', 'import'].includes(String(value.createdBy))
+    || typeof value.capturedAt !== 'string'
+    || typeof value.providerId !== 'string'
+    || !isRecord(value.app)
+    || !isRecord(value.source)
+    || !Array.isArray(value.warnings)) {
+    throw new Error('NodeDraft metadata.capture is not valid capture provenance');
+  }
 }
 
 function exactlyOne(ids: readonly string[], label: string): string {

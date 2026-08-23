@@ -13,6 +13,7 @@ import {
   type WorkspaceTransactionLogOptions,
 } from './storage';
 import { semanticPatchDigest } from './semanticDigest';
+import { encodeEventCursor } from './eventCursor';
 
 const MAX_AFFECTED_NODE_ID_SAMPLE = 1_000;
 
@@ -52,6 +53,7 @@ export class OutlineRuntimeWorkspace {
     private core: Core,
     readonly store: WorkspaceTransactionLog,
     readonly instanceId: string,
+    readonly eventBaselineSequence: number,
     now?: () => Date,
   ) {
     this.now = now ?? (() => new Date());
@@ -82,6 +84,7 @@ export class OutlineRuntimeWorkspace {
       core,
       store,
       options.instanceId ?? `runtime:${crypto.randomUUID()}`,
+      loaded.latestEventSequence,
       options.now,
     );
   }
@@ -307,7 +310,11 @@ export class OutlineRuntimeWorkspace {
       instanceId: this.instanceId,
       sequence: eventSequence,
       revision: operation.revisionAfter,
-      cursor: `event:${eventSequence}`,
+      cursor: encodeEventCursor({
+        instanceId: this.instanceId,
+        sequence: eventSequence,
+        revision: operation.revisionAfter,
+      }),
       operation,
     };
     let appended: WorkspaceTransactionAppendResult;

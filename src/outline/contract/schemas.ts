@@ -216,9 +216,15 @@ export const UpdateInstructionSchema = Type.Union([
       Type.Literal('remove'), Type.Literal('reuse'), Type.Literal('select'),
     ]),
     field: Type.Optional(TargetRefSchema),
+    sourceField: Type.Optional(TargetRefSchema),
     name: Type.Optional(Type.String({ maxLength: 1_024 })),
     fieldType: Type.Optional(Type.String({ maxLength: 128 })),
     value: Type.Optional(JsonValue),
+  }, closed),
+  Type.Object({
+    kind: Type.Literal('definition'),
+    definitionType: Type.Union([Type.Literal('tag'), Type.Literal('field')]),
+    patch: JsonValue,
   }, closed),
   Type.Object({
     kind: Type.Literal('reference'),
@@ -409,6 +415,17 @@ export const EventSchema = Type.Object({
   projection: Type.Optional(ProjectionResultSchema),
 }, { ...closed, $id: 'Event' });
 
+export const EventFilterSchema = Type.Object({
+  types: Type.Optional(Type.Array(EventSchema.properties.type, { uniqueItems: true, maxItems: 5 })),
+  origin: Type.Optional(OperationSchema.properties.origin),
+}, { ...closed, $id: 'EventFilter' });
+
+export const WatchRequestSchema = Type.Object({
+  cursor: Type.Optional(Type.String({ minLength: 1, maxLength: 4_096 })),
+  filter: Type.Optional(EventFilterSchema),
+  projection: Type.Optional(ProjectionSchema),
+}, { ...closed, $id: 'WatchRequest' });
+
 export const OutlineErrorSchema = Type.Object({
   code: Type.Union(OUTLINE_ERROR_CODES.map((value) => Type.Literal(value))),
   category: Type.Union([
@@ -507,6 +524,7 @@ export const OUTLINE_PUBLIC_SCHEMAS = Object.freeze({
   Diff: DiffSchema,
   Operation: OperationSchema,
   Event: EventSchema,
+  EventFilter: EventFilterSchema,
   OutlineError: OutlineErrorSchema,
   OutlineRequest: OutlineRequestSchema,
   OutlineResponse: OutlineResponseSchema,
@@ -523,11 +541,14 @@ export type TargetRef = Static<typeof TargetRefSchema>;
 export type Projection = Static<typeof ProjectionSchema>;
 export type ProjectionResult = Static<typeof ProjectionResultSchema>;
 export type NodeDraft = Static<typeof NodeDraftSchema>;
+export type UpdateInstruction = Static<typeof UpdateInstructionSchema>;
 export type Change = Static<typeof ChangeSchema>;
 export type ChangeSet = Static<typeof ChangeSetSchema>;
 export type Diff = Static<typeof DiffSchema>;
 export type Operation = Static<typeof OperationSchema>;
 export type OutlineEvent = Static<typeof EventSchema>;
+export type EventFilter = Static<typeof EventFilterSchema>;
+export type WatchRequest = Static<typeof WatchRequestSchema>;
 export type OutlineRequest = Static<typeof OutlineRequestSchema>;
 export type OutlineResponse = Static<typeof OutlineResponseSchema>;
 export type OutlineStreamRecord = Static<typeof OutlineStreamRecordSchema>;

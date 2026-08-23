@@ -1,0 +1,237 @@
+import type {
+  Change,
+  ChangeSet,
+  EventFilter,
+  Projection,
+  Selector,
+  TargetRef,
+  TargetSpec,
+  WatchRequest,
+} from '../contract/schemas';
+import { canonicalSha256 } from '../contract/canonical';
+import { OutlineContractError, outlineError } from '../contract/errors';
+import { OUTLINE_PROTOCOL_VERSION } from '../contract/version';
+
+export type StructuredReader = (source: string) => Promise<string>;
+
+export interface ParsedReadCommand {
+  readonly input: unknown;
+  readonly output?: string;
+}
+
+export async function parseReadCommand(
+  command: 'find' | 'show' | 'export',
+  args: readonly string[],
+  read: StructuredReader,
+): Promise<ParsedReadCommand> {
+  let selector: Selector | undefined;
+  let query: unknown;
+  let within: Selector | undefined;
+  let includeTrash = false;
+  let order: 'document' | 'created' | 'updated' | 'text' | undefined;
+  let limit = 100;
+  let cursor: string | undefined;
+  let kind: Projection['kind'] | undefined;
+  let depth: number | undefined;
+  let include: Projection['include'];
+  let format: Projection['format'];
+  let projection: Projection | undefined;
+  let output: string | undefined;
+  const positional: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === '--selector') selector = parseSelector(await read(requiredValue(args[++index], '--selector')));
+    else if (arg === '--query') query = parseJson(await read(requiredValue(args[++index], '--query')), '--query');
+    else if (arg === '--within') within = parseSelector(await read(requiredValue(args[++index], '--within')));
+    else if (arg === '--include-trash') includeTrash = true;
+    else if (arg === '--order') order = oneOf(requiredValue(args[++index], '--order'), ['document', 'created', 'updated', 'text'], '--order');
+    else if (arg === '--limit') limit = boundedInteger(args[++index], '--limit', 1, 10_000);
+    else if (arg === '--cursor') cursor = requiredValue(args[++index], '--cursor');
+    else if (arg === '--kind') kind = oneOf(requiredValue(args[++index], '--kind'), ['summary', 'node', 'outline', 'backlinks', 'view', 'export'], '--kind');
+    else if (arg === '--depth') depth = boundedInteger(args[++index], '--depth', 0, 1_024);
+    else if (arg === '--include') include = parseInclude(requiredValue(args[++index], '--include'));
+    else if (arg === '--format') format = oneOf(requiredValue(args[++index], '--format'), ['json', 'jsonl', 'markdown', 'opml'], '--format');
+    else if (arg === '--projection') projection = parseJson(await read(requiredValue(args[++index], '--projection')), '--projection') as Projection;
+    else if (arg === '--output') output = requiredValue(args[++index], '--output');
+    else if (arg?.startsWith('-')) throw usageError(`Unknown ${command} option: ${arg}`);
+    else positional.push(arg ?? '');
+  }
+  if (selector && positional.length > 0) throw usageError(`${command} cannot combine a positional target with --selector.`);
+  if (command === 'find') {
+    if (selector && query !== undefined) throw usageError('find cannot combine --selector and --query.');
+    if (!selector) {
+      const expression = query ?? { kind: 'rule', op: 'STRING_MATCH', text: positional.join(' ') };
+      selector = {
+        by: 'query',
+        query: expression as Selector & never,
+        ...(within ? { within } : {}),
+        ...(includeTrash ? { includeTrash: true } : {}),
+        ...(order ? { order } : {}),
+        limit,
+      };
+    } else if (positional.length > 0) {
+      throw usageError('find accepts at most one text query.');
+    }
+  } else {
+    if (query !== undefined || within || includeTrash || order) {
+      throw usageError(`${command} does not accept find query options.`);
+    }
+    if (!selector) {
+      if (positional.length !== 1) throw usageError(`${command} requires exactly one Selector.`);
+      selector = parseSelectorToken(positional[0]!);
+    }
+  }
+  const cardinality: TargetSpec['cardinality'] = command === 'find' || selector.by === 'query' ? 'many' : 'one';
+  const target = targetRef(selector, cardinality, cardinality === 'many' ? limit : undefined);
+  const requestedProjection: Projection = projection ?? {
+    kind: kind ?? (command === 'find' ? 'summary' : command === 'show' ? 'node' : 'export'),
+    targets: target,
+    ...(depth !== undefined ? { depth } : command === 'export' ? { depth: 1_024 } : {}),
+    ...(include ? { include } : command === 'export'
+      ? { include: ['description', 'children', 'tags', 'fields', 'references', 'media', 'view', 'trash'] }
+      : {}),
+    page: { limit, ...(cursor ? { cursor } : {}) },
+    ...(format ? { format } : command === 'export' ? { format: 'json' } : {}),
+  };
+  if (projection && (kind || depth !== undefined || include || cursor || format)) {
+    throw usageError('--projection cannot be combined with individual Projection options.');
+  }
+  if (command !== 'export' && output) throw usageError('--output is only valid for export.');
+  return {
+    input: command === 'find'
+      ? { target: target.target, projection: requestedProjection }
+      : { selector, projection: requestedProjection },
+    ...(output ? { output } : {}),
+  };
+}
+
+export async function parseWatchCommand(
+  args: readonly string[],
+  read: StructuredReader,
+): Promise<WatchRequest> {
+  let cursor: string | undefined;
+  let filter: EventFilter | undefined;
+  let projection: Projection | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === '--cursor') cursor = requiredValue(args[++index], '--cursor');
+    else if (arg === '--filter') filter = parseJson(await read(requiredValue(args[++index], '--filter')), '--filter') as EventFilter;
+    else if (arg === '--projection') projection = parseJson(await read(requiredValue(args[++index], '--projection')), '--projection') as Projection;
+    else throw usageError(`Unknown watch option: ${arg}`);
+  }
+  return {
+    ...(cursor ? { cursor } : {}),
+    ...(filter ? { filter } : {}),
+    ...(projection ? { projection } : {}),
+  };
+}
+
+export function parseSelectorToken(value: string): Selector {
+  if (value.startsWith('@date:')) return { by: 'date', date: value.slice('@date:'.length) };
+  if (value.startsWith('@')) {
+    const alias = value.slice(1);
+    if (isAlias(alias)) return { by: 'alias', alias };
+    throw usageError(`Unknown outline alias: ${value}`);
+  }
+  if (value.startsWith('node:')) return { by: 'id', id: value };
+  throw usageError(`Selector must be an exact Node ID or semantic @alias: ${value}`);
+}
+
+export async function parseChangeSetInput(raw: string, format: 'json' | 'jsonl'): Promise<ChangeSet> {
+  if (format === 'json') return parseJson(raw, 'ChangeSet input') as ChangeSet;
+  const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  if (lines.length < 3) throw usageError('JSONL ChangeSet requires a header, operations, and trailer.');
+  const header = parseJson(lines[0]!, 'JSONL ChangeSet header');
+  const trailer = parseJson(lines.at(-1)!, 'JSONL ChangeSet trailer');
+  if (!isRecord(header) || !isRecord(trailer) || Object.hasOwn(header, 'operations')) {
+    throw usageError('JSONL ChangeSet header or trailer is invalid.');
+  }
+  const operations: Change[] = lines.slice(1, -1).map((line, index) => {
+    const value = parseJson(line, `JSONL ChangeSet operation ${index}`);
+    return (isRecord(value) && Object.hasOwn(value, 'operation') ? value.operation : value) as Change;
+  });
+  if (trailer.operationCount !== operations.length || typeof trailer.sha256 !== 'string') {
+    throw usageError('JSONL ChangeSet trailer count or SHA-256 is invalid.');
+  }
+  const changeSet = { ...header, operations } as unknown as ChangeSet;
+  if (canonicalSha256(changeSet) !== trailer.sha256) {
+    throw usageError('JSONL ChangeSet SHA-256 does not match its records.');
+  }
+  return changeSet;
+}
+
+export function createChangeSet(operations: readonly Change[], idempotencyKey?: string): ChangeSet {
+  return {
+    protocolVersion: OUTLINE_PROTOCOL_VERSION,
+    kind: 'outline.changeset',
+    ...(idempotencyKey ? { idempotencyKey } : {}),
+    source: { kind: 'cli' },
+    operations: [...operations],
+  };
+}
+
+function parseSelector(raw: string): Selector {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith('{')) return parseSelectorToken(trimmed);
+  const value = parseJson(trimmed, 'Selector');
+  if (isRecord(value) && isRecord(value.selector)) return value.selector as Selector;
+  return value as Selector;
+}
+
+function targetRef(selector: Selector, cardinality: TargetSpec['cardinality'], max?: number): TargetRef & { target: TargetSpec } {
+  return {
+    target: {
+      selector,
+      cardinality,
+      ...(max !== undefined ? { max } : {}),
+    },
+  };
+}
+
+function parseInclude(value: string): Projection['include'] {
+  const allowed = ['description', 'children', 'tags', 'fields', 'references', 'media', 'view', 'trash'] as const;
+  const result = value.split(',').map((entry) => entry.trim()).filter(Boolean);
+  for (const entry of result) {
+    if (!(allowed as readonly string[]).includes(entry)) throw usageError(`Unknown Projection include: ${entry}`);
+  }
+  return result as Projection['include'];
+}
+
+function isAlias(value: string): value is Extract<Selector, { by: 'alias' }>['alias'] {
+  return ['home', 'inbox', 'schema', 'trash', 'daily-notes', 'today'].includes(value);
+}
+
+function oneOf<const T extends readonly string[]>(value: string, allowed: T, option: string): T[number] {
+  if (!(allowed as readonly string[]).includes(value)) throw usageError(`${option} must be one of: ${allowed.join(', ')}.`);
+  return value as T[number];
+}
+
+function boundedInteger(value: string | undefined, option: string, minimum: number, maximum: number): number {
+  if (!value || !/^\d+$/.test(value)) throw usageError(`${option} requires an integer.`);
+  const number = Number(value);
+  if (!Number.isSafeInteger(number) || number < minimum || number > maximum) {
+    throw usageError(`${option} must be between ${minimum} and ${maximum}.`);
+  }
+  return number;
+}
+
+function requiredValue(value: string | undefined, option: string): string {
+  if (!value || value.startsWith('--')) throw usageError(`${option} requires a value.`);
+  return value;
+}
+
+function parseJson(raw: string, label: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch (error) {
+    throw usageError(`${label} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function usageError(message: string): OutlineContractError {
+  return new OutlineContractError(outlineError('invalid_input', 'usage', message));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}

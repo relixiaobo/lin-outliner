@@ -150,6 +150,26 @@ describe('Outline Runtime process boundary', () => {
       expect((shown.data as ProjectionResult).nodes).toEqual([
         expect.objectContaining({ id: nodeId, content: expect.objectContaining({ text: 'Created over Runtime socket' }) }),
       ]);
+
+      const exported = [];
+      for await (const record of client.stream('export', {
+        selector: { by: 'alias', alias: 'today' },
+        projection: {
+          kind: 'export',
+          targets: {
+            target: { selector: { by: 'alias', alias: 'today' }, cardinality: 'one' },
+          },
+          depth: 1,
+          include: ['children'],
+          page: { limit: 100 },
+          format: 'jsonl',
+        },
+      })) exported.push(record);
+      expect(exported[0]?.type).toBe('hello');
+      expect(exported.at(-1)?.type).toBe('end');
+      expect(exported.filter((record) => record.type === 'data').map((record) => (
+        record.type === 'data' ? record.data : undefined
+      ))).toContainEqual(expect.objectContaining({ id: nodeId }));
     } finally {
       client.close();
       await runtime.stop();
@@ -189,6 +209,59 @@ describe('Outline Runtime process boundary', () => {
       client.close();
     } finally {
       await runtime.stop();
+    }
+  });
+
+  test('binds watch cursors to Runtime instance, filter, and Projection', async () => {
+    const root = await makeRoot();
+    const first = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(first).not.toBeNull();
+    if (!first) return;
+    const filter = { origin: 'local-user' as const };
+    const projection = {
+      kind: 'outline' as const,
+      targets: {
+        target: { selector: { by: 'alias' as const, alias: 'today' as const }, cardinality: 'one' as const },
+      },
+      depth: 1,
+      page: { limit: 100 },
+    };
+    const firstClient = new OutlineClient(first.descriptor);
+    const firstIterator = firstClient.watch({ filter, projection })[Symbol.asyncIterator]();
+    const hello = (await firstIterator.next()).value;
+    expect(hello?.type).toBe('hello');
+    await first.workspace.mutate(createRequest('Projected event'));
+    const live = (await firstIterator.next()).value;
+    expect(live?.type).toBe('event');
+    expect(live?.type === 'event' ? live.event.projection?.nodes : []).toContainEqual(
+      expect.objectContaining({ content: expect.objectContaining({ text: 'Projected event' }) }),
+    );
+    const cursor = live?.cursor;
+    await firstIterator.return?.();
+    firstClient.close();
+
+    const mismatchClient = new OutlineClient(first.descriptor);
+    const mismatch = mismatchClient.watch({ cursor, filter: { origin: 'desktop' }, projection })[Symbol.asyncIterator]();
+    expect((await mismatch.next()).value?.type).toBe('hello');
+    const filterResync = (await mismatch.next()).value;
+    expect(filterResync?.type === 'event' ? filterResync.event.type : undefined).toBe('resync.required');
+    expect((await mismatch.next()).value?.type).toBe('end');
+    mismatchClient.close();
+    await first.stop();
+
+    const restarted = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(restarted).not.toBeNull();
+    if (!restarted) return;
+    const restartedClient = new OutlineClient(restarted.descriptor);
+    try {
+      const iterator = restartedClient.watch({ cursor, filter, projection })[Symbol.asyncIterator]();
+      expect((await iterator.next()).value?.type).toBe('hello');
+      const instanceResync = (await iterator.next()).value;
+      expect(instanceResync?.type === 'event' ? instanceResync.event.type : undefined).toBe('resync.required');
+      expect((await iterator.next()).value?.type).toBe('end');
+    } finally {
+      restartedClient.close();
+      await restarted.stop();
     }
   });
 

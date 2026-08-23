@@ -1,4 +1,5 @@
-import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { open, readFile, rename, rm } from 'node:fs/promises';
 import { Value } from 'typebox/value';
 import {
   OUTLINE_APP_VERSION,
@@ -17,7 +18,16 @@ import {
   type OutlineResponse,
 } from '../contract';
 import { canonicalSha256 } from '../contract/canonical';
+import { canonicalJson } from '../contract/canonical';
 import { OutlineClientSupervisor, resolveOutlineRuntimeRoot } from '../client';
+import {
+  parseChangeSetInput,
+  parseReadCommand,
+  parseWatchCommand,
+} from './arguments';
+import { buildPorcelainRequest } from './porcelain';
+
+const MAX_INLINE_DIFF_BYTES = 8 * 1024 * 1024;
 
 export interface OutlineCliIo {
   readonly stdout: (value: string) => void;
@@ -29,6 +39,12 @@ export interface OutlineCliRunOptions {
   readonly io?: Partial<OutlineCliIo>;
   readonly runtimeRoot?: string;
   readonly env?: Readonly<Record<string, string | undefined>>;
+  readonly signal?: AbortSignal;
+}
+
+interface HandledExecution {
+  readonly handled: true;
+  readonly exitCode: number;
 }
 
 interface ParsedInvocation {
@@ -60,6 +76,7 @@ export async function runOutlineCli(argv: readonly string[], options: OutlineCli
     }
     invocation = parseInvocation(argv);
     const data = await executeInvocation(invocation, options, io);
+    if (isHandledExecution(data)) return data.exitCode;
     writeSuccess(io, invocation, data);
     return OUTLINE_EXIT_CODES.success;
   } catch (error) {
@@ -83,7 +100,7 @@ async function executeInvocation(
   invocation: ParsedInvocation,
   options: OutlineCliRunOptions,
   io: OutlineCliIo,
-): Promise<unknown> {
+): Promise<unknown | HandledExecution> {
   if (invocation.command === 'version') {
     assertNoArgs(invocation);
     return {
@@ -131,16 +148,16 @@ async function executeInvocation(
   const capability = outlineCapability(invocation.command);
   if (!capability) throw usageError(`Unknown outline command: ${invocation.command}`);
   if (!capability.runtimeRequired) throw usageError(`Unsupported local outline command: ${invocation.command}`);
-  if (capability.streaming) {
-    throw usageError(`Streaming command is not available through the non-stream runner yet: ${invocation.command}`);
-  }
-  const input = await runtimeInput(invocation, io);
+  if (capability.streaming) return executeStreamingInvocation(invocation, supervisor, io, options.signal);
+  const input = await runtimeInput(invocation, io, supervisor);
   if (!Value.Check(capability.requestSchema, input)) {
     throw usageError(`Input does not match the public schema for command: ${invocation.command}`);
   }
   const client = await supervisor.connect();
   try {
-    return (await client.request(invocation.command, input)).data;
+    const data = (await client.request(invocation.command, input)).data;
+    if (invocation.command === 'diff') return writeDiffArtifact(invocation, data, io);
+    return data;
   } finally {
     client.close();
   }
@@ -181,7 +198,14 @@ function parseInvocation(argv: readonly string[]): ParsedInvocation {
   };
 }
 
-async function runtimeInput(invocation: ParsedInvocation, io: OutlineCliIo): Promise<unknown> {
+async function runtimeInput(
+  invocation: ParsedInvocation,
+  io: OutlineCliIo,
+  supervisor: OutlineClientSupervisor,
+): Promise<unknown> {
+  if (invocation.command === 'find' || invocation.command === 'show') {
+    return (await parseReadCommand(invocation.command, invocation.args, (source) => readStructuredSource(source, io))).input;
+  }
   if (invocation.command === 'log') return parseLogInput(invocation.args);
   if (invocation.command === 'revert') {
     const preview = takeFlag(invocation.args, '--preview');
@@ -193,12 +217,42 @@ async function runtimeInput(invocation: ParsedInvocation, io: OutlineCliIo): Pro
     if (preview.rest.length > 0) throw usageError(`${invocation.command} does not accept positional arguments.`);
     return preview.present ? { preview: true } : {};
   }
+  if (!['diff', 'apply'].includes(invocation.command)) {
+    return buildPorcelainRequest(invocation.command, invocation.args, {
+      read: (source) => readStructuredSource(source, io),
+      lookup: async (selector) => {
+        const client = await supervisor.connect();
+        try {
+          const response = await client.request('show', { selector });
+          const data = response.data as { nodes?: unknown[] };
+          const node = data.nodes?.[0];
+          if (!isRecord(node)) throw usageError('Porcelain target did not resolve to one Node.');
+          return node;
+        } finally {
+          client.close();
+        }
+      },
+    });
+  }
   const parsed = parseInputOptions(invocation.args);
   if (!parsed.input) throw usageError(`${invocation.command} requires --input FILE|-.`);
   if (parsed.rest.length > 0) throw usageError(`Unexpected ${invocation.command} argument: ${parsed.rest[0]}`);
-  const value = parseJsonInput(parsed.input === '-' ? await io.readStdin() : await readFile(parsed.input, 'utf8'));
-  if (invocation.command === 'diff') return { changeSet: value };
+  const raw = parsed.input === '-' ? await io.readStdin() : await readFile(parsed.input, 'utf8');
+  if (invocation.command === 'diff') {
+    const changeSet = await parseChangeSetInput(raw, parsed.inputFormat);
+    if (parsed.idempotencyKey) {
+      if (changeSet.idempotencyKey && changeSet.idempotencyKey !== parsed.idempotencyKey) {
+        throw usageError('--idempotency-key does not match the ChangeSet input.');
+      }
+      changeSet.idempotencyKey = parsed.idempotencyKey;
+    }
+    return { changeSet };
+  }
+  const value = parseJsonInput(raw);
   if (invocation.command === 'apply') {
+    if (parsed.inputFormat !== 'json') throw usageError('apply accepts only --input-format json.');
+    if (parsed.output) throw usageError('--output is only valid for diff.');
+    if (parsed.idempotencyKey) throw usageError('apply cannot change the idempotency key bound into its Diff.');
     return { diff: value, ...(parsed.yes ? { acknowledgeDestructive: true } : {}) };
   }
   return value;
@@ -218,8 +272,18 @@ function parseLogInput(args: readonly string[]): Record<string, unknown> {
   return result;
 }
 
-function parseInputOptions(args: readonly string[]): { input?: string; yes: boolean; rest: readonly string[] } {
+function parseInputOptions(args: readonly string[]): {
+  input?: string;
+  inputFormat: 'json' | 'jsonl';
+  output?: string;
+  idempotencyKey?: string;
+  yes: boolean;
+  rest: readonly string[];
+} {
   let input: string | undefined;
+  let inputFormat: 'json' | 'jsonl' = 'json';
+  let output: string | undefined;
+  let idempotencyKey: string | undefined;
   let yes = false;
   const rest: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
@@ -227,11 +291,151 @@ function parseInputOptions(args: readonly string[]): { input?: string; yes: bool
     if (arg === '--input') input = requiredValue(args[++index], '--input');
     else if (arg === '--input-format') {
       const format = requiredValue(args[++index], '--input-format');
-      if (format !== 'json') throw usageError('Only --input-format json is available for this command.');
-    } else if (arg === '--yes') yes = true;
+      if (format !== 'json' && format !== 'jsonl') throw usageError('--input-format must be json or jsonl.');
+      inputFormat = format;
+    } else if (arg === '--output') output = requiredValue(args[++index], '--output');
+    else if (arg === '--idempotency-key') idempotencyKey = requiredValue(args[++index], '--idempotency-key');
+    else if (arg === '--yes') yes = true;
     else rest.push(arg ?? '');
   }
-  return { input, yes, rest };
+  return { input, inputFormat, output, idempotencyKey, yes, rest };
+}
+
+async function executeStreamingInvocation(
+  invocation: ParsedInvocation,
+  supervisor: OutlineClientSupervisor,
+  io: OutlineCliIo,
+  signal?: AbortSignal,
+): Promise<unknown | HandledExecution> {
+  const parsed = invocation.command === 'watch'
+    ? { input: await parseWatchCommand(invocation.args, (source) => readStructuredSource(source, io)) }
+    : await parseReadCommand('export', invocation.args, (source) => readStructuredSource(source, io));
+  const capability = outlineCapability(invocation.command)!;
+  if (!Value.Check(capability.requestSchema, parsed.input)) {
+    throw usageError(`Input does not match the public schema for command: ${invocation.command}`);
+  }
+  const client = await supervisor.connect();
+  const output = 'output' in parsed ? parsed.output : undefined;
+  let file: Awaited<ReturnType<typeof open>> | undefined;
+  let temporaryPath: string | undefined;
+  let bytes = 0;
+  const digest = createHash('sha256');
+  try {
+    if (output && output !== '-') {
+      temporaryPath = `${output}.outline-${crypto.randomUUID()}.tmp`;
+      file = await open(temporaryPath, 'wx', 0o600);
+    }
+    let streamError: OutlineError | undefined;
+    for await (const record of client.stream(invocation.command, parsed.input, signal)) {
+      if (record.type === 'error') streamError = record.error;
+      if (file) {
+        if (record.type !== 'data') continue;
+        const chunk = exportDataChunk(record.data, parsed.input);
+        await file.write(chunk);
+        digest.update(chunk);
+        bytes += Buffer.byteLength(chunk);
+      } else if (output === '-') {
+        if (record.type === 'data') io.stdout(exportDataChunk(record.data, parsed.input));
+      } else if (invocation.json) {
+        io.stdout(`${JSON.stringify(record)}\n`);
+      } else {
+        writeHumanStreamRecord(io, record);
+      }
+    }
+    if (streamError) {
+      if (file) {
+        await file.close();
+        file = undefined;
+        await rm(temporaryPath!, { force: true });
+      }
+      if (!invocation.json && output !== '-') io.stderr(`outline: ${streamError.message}\n`);
+      return { handled: true, exitCode: outlineExitCodeForError(streamError) };
+    }
+    if (file && temporaryPath && output) {
+      await file.sync();
+      await file.close();
+      file = undefined;
+      await rename(temporaryPath, output);
+      return { path: output, byteCount: bytes, sha256: digest.digest('hex') };
+    }
+    return { handled: true, exitCode: OUTLINE_EXIT_CODES.success };
+  } catch (error) {
+    if (signal?.aborted) return { handled: true, exitCode: OUTLINE_EXIT_CODES.interrupted };
+    throw error;
+  } finally {
+    client.close();
+    if (file) await file.close().catch(() => undefined);
+    if (temporaryPath) await rm(temporaryPath, { force: true }).catch(() => undefined);
+  }
+}
+
+async function writeDiffArtifact(
+  invocation: ParsedInvocation,
+  data: unknown,
+  io: OutlineCliIo,
+): Promise<unknown | HandledExecution> {
+  const parsed = parseInputOptions(invocation.args);
+  const encoded = canonicalJson(data);
+  const bytes = Buffer.byteLength(encoded);
+  if (!parsed.output && bytes > MAX_INLINE_DIFF_BYTES) {
+    throw usageError('Diff exceeds 8 MiB; specify --output DIFF_FILE or --output -.');
+  }
+  if (!parsed.output) return data;
+  if (parsed.output === '-') {
+    io.stdout(`${encoded}\n`);
+    return { handled: true, exitCode: OUTLINE_EXIT_CODES.success };
+  }
+  await writeAtomicFile(parsed.output, `${encoded}\n`);
+  return { path: parsed.output, byteCount: bytes, sha256: canonicalSha256(data) };
+}
+
+async function writeAtomicFile(target: string, contents: string): Promise<void> {
+  const temporary = `${target}.outline-${crypto.randomUUID()}.tmp`;
+  const handle = await open(temporary, 'wx', 0o600);
+  try {
+    await handle.writeFile(contents, 'utf8');
+    await handle.sync();
+    await handle.close();
+    await rename(temporary, target);
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    await rm(temporary, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function readStructuredSource(source: string, io: OutlineCliIo): Promise<string> {
+  if (source === '-') return io.readStdin();
+  const trimmed = source.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed.startsWith('@') || trimmed.startsWith('node:')) {
+    return source;
+  }
+  return readFile(source, 'utf8');
+}
+
+function exportDataChunk(data: unknown, input: unknown): string {
+  const format = isRecord(input) && isRecord(input.projection) && typeof input.projection.format === 'string'
+    ? input.projection.format
+    : 'json';
+  if ((format === 'markdown' || format === 'opml') && typeof data === 'string') return data;
+  return `${JSON.stringify(data)}\n`;
+}
+
+function writeHumanStreamRecord(
+  io: OutlineCliIo,
+  record: import('../contract').OutlineStreamRecord,
+): void {
+  if (record.type === 'data') {
+    io.stdout(typeof record.data === 'string' ? record.data : `${JSON.stringify(record.data)}\n`);
+  } else if (record.type === 'event') {
+    io.stdout(`${JSON.stringify(record.event)}\n`);
+  } else if (record.type === 'error') {
+    io.stderr(`outline: ${record.error.message}\n`);
+  }
+}
+
+function isHandledExecution(value: unknown): value is HandledExecution {
+  return isRecord(value) && value.handled === true && typeof value.exitCode === 'number';
 }
 
 function schemaResult(args: readonly string[]): unknown {

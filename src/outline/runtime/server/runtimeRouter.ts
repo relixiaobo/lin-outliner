@@ -99,6 +99,25 @@ export class OutlineRuntimeRouter {
         include: ['description', 'children', 'tags', 'fields', 'references', 'media', 'view', 'trash'],
       });
     }
+    if (command === 'export') {
+      const value = input as { selector: Selector; projection?: Projection };
+      const many = value.selector.by === 'query';
+      const max = value.selector.by === 'query' ? value.selector.limit : undefined;
+      return projectOutline(this.workspace.forkCore(), value.projection ?? {
+        kind: 'export',
+        targets: {
+          target: {
+            selector: value.selector,
+            cardinality: many ? 'many' : 'one',
+            ...(max !== undefined ? { max } : {}),
+          },
+        },
+        depth: 1_024,
+        include: ['description', 'children', 'tags', 'fields', 'references', 'media', 'view', 'trash'],
+        page: { limit: 10_000 },
+        format: 'json',
+      });
+    }
     if (command === 'diff') {
       return diffOutlineChangeSet(this.workspace, (input as { changeSet: ChangeSet }).changeSet);
     }

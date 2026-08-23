@@ -4,12 +4,19 @@ import http from 'node:http';
 import type { Socket } from 'node:net';
 import path from 'node:path';
 import { Value } from 'typebox/value';
+import { outlineCapability } from '../../contract/capabilities';
 import { outlineError } from '../../contract/errors';
 import {
+  OutlineRequestSchema,
   RuntimeDescriptorSchema,
+  WatchRequestSchema,
+  type EventFilter,
   type OutlineEvent,
+  type OutlineRequest,
   type OutlineStreamRecord,
+  type Projection,
   type RuntimeDescriptor,
+  type WatchRequest,
 } from '../../contract/schemas';
 import {
   OUTLINE_CLI_VERSION,
@@ -19,6 +26,9 @@ import {
   OUTLINE_STORAGE_VERSION,
 } from '../../contract/version';
 import { OutlineRuntimeWorkspace, type OutlineRuntimeWorkspaceOptions } from '../runtimeWorkspace';
+import { decodeEventCursor, encodeEventCursor } from '../eventCursor';
+import { formatOutlineExport } from '../export';
+import { projectOutline } from '../projection';
 import { OutlineRuntimeRouter } from './runtimeRouter';
 import {
   OutlineRuntimeLock,
@@ -155,10 +165,18 @@ export class OutlineRuntimeServer {
         writeJson(response, 200, result);
         return;
       }
-      if (request.method === 'GET' && url.pathname === '/v1/events') {
-        const after = parseEventSequence(url.searchParams.get('after'));
-        const requestId = parseRequestId(url.searchParams.get('requestId'));
-        await this.streamEvents(response, after, requestId);
+      if (request.method === 'POST' && url.pathname === '/v1/stream') {
+        const body = await readJsonBody(request);
+        if (!Value.Check(OutlineRequestSchema, body)) throw new Error('Invalid outline stream request envelope');
+        const capability = outlineCapability(body.command);
+        if (!capability?.streaming || !Value.Check(capability.requestSchema, body.input)) {
+          throw new Error('Invalid outline streaming command or input');
+        }
+        if (body.command === 'watch' && Value.Check(WatchRequestSchema, body.input)) {
+          await this.streamEvents(response, body.requestId, body.input);
+        } else {
+          await this.streamCommand(response, body);
+        }
         return;
       }
       writeJson(response, 404, {
@@ -179,50 +197,166 @@ export class OutlineRuntimeServer {
     }
   }
 
-  private async streamEvents(response: http.ServerResponse, after: number, requestId: string): Promise<void> {
+  private async streamCommand(response: http.ServerResponse, request: OutlineRequest): Promise<void> {
+    response.writeHead(200, {
+      'content-type': 'application/x-ndjson; charset=utf-8',
+      'cache-control': 'no-store',
+      connection: 'close',
+    });
+    let sequence = 0;
+    const write = (record: OutlineStreamRecord) => response.write(`${JSON.stringify(record)}\n`);
+    write({
+      protocolVersion: OUTLINE_PROTOCOL_VERSION,
+      requestId: request.requestId,
+      sequence: sequence++,
+      type: 'hello',
+    });
+    const result = await this.router.handle(request, { origin: 'external-client' });
+    if (!result.ok) {
+      write({
+        protocolVersion: OUTLINE_PROTOCOL_VERSION,
+        requestId: request.requestId,
+        sequence: sequence++,
+        type: 'error',
+        error: result.error,
+      });
+      write({
+        protocolVersion: OUTLINE_PROTOCOL_VERSION,
+        requestId: request.requestId,
+        sequence: sequence++,
+        type: 'end',
+      });
+      response.end();
+      return;
+    }
+    const records = request.command === 'export'
+      ? formatOutlineExport(result.data as import('../../contract/schemas').ProjectionResult)
+      : [result.data];
+    for (const data of records) {
+      write({
+        protocolVersion: OUTLINE_PROTOCOL_VERSION,
+        requestId: request.requestId,
+        sequence: sequence++,
+        type: 'data',
+        data,
+      });
+    }
+    const cursor = isRecord(result.data) && typeof result.data.cursor === 'string'
+      ? result.data.cursor
+      : undefined;
+    write({
+      protocolVersion: OUTLINE_PROTOCOL_VERSION,
+      requestId: request.requestId,
+      sequence: sequence++,
+      type: 'end',
+      ...(cursor ? { cursor } : {}),
+    });
+    response.end();
+  }
+
+  private async streamEvents(
+    response: http.ServerResponse,
+    requestId: string,
+    input: WatchRequest,
+  ): Promise<void> {
     response.writeHead(200, {
       'content-type': 'application/x-ndjson; charset=utf-8',
       'cache-control': 'no-store',
       connection: 'keep-alive',
     });
     let streamSequence = 0;
-    let latestEventSequence = after;
-    let replaying = true;
+    const decoded = input.cursor
+      ? decodeEventCursor(input.cursor, {
+          instanceId: this.workspace.instanceId,
+          filter: input.filter,
+          projection: input.projection,
+        })
+      : undefined;
+    let latestEventSequence = decoded?.sequence ?? this.workspace.eventBaselineSequence;
     const pendingEvents: OutlineEvent[] = [];
     const closed = new Promise<void>((resolve) => response.once('close', resolve));
     const write = (record: OutlineStreamRecord) => response.write(`${JSON.stringify(record)}\n`);
     const writeEvent = (event: OutlineEvent) => {
       if (event.sequence <= latestEventSequence) return;
       latestEventSequence = event.sequence;
+      if (!matchesEventFilter(event, input.filter)) return;
+      const projectedEvent = eventForWatch(event, input.filter, input.projection, this.workspace);
       write({
         protocolVersion: OUTLINE_PROTOCOL_VERSION,
         requestId,
         sequence: streamSequence++,
         type: 'event',
-        event,
-        cursor: event.cursor,
+        event: projectedEvent,
+        cursor: projectedEvent.cursor,
       });
     };
-    const unsubscribe = this.workspace.subscribe((event) => {
-      if (replaying) {
-        pendingEvents.push(event);
-        return;
-      }
-      writeEvent(event);
-    });
+    let acceptEvent: (event: OutlineEvent) => void = (event) => { pendingEvents.push(event); };
+    const unsubscribe = this.workspace.subscribe((event) => acceptEvent(event));
     response.once('close', unsubscribe);
     write({
       protocolVersion: OUTLINE_PROTOCOL_VERSION,
       requestId,
       sequence: streamSequence++,
       type: 'hello',
-      cursor: `event:${Math.max(0, after)}`,
+      cursor: encodeEventCursor({
+        instanceId: this.workspace.instanceId,
+        sequence: latestEventSequence,
+        revision: decoded?.revision ?? this.workspace.revision(),
+        filter: input.filter,
+        projection: input.projection,
+      }),
     });
-    for (const event of await this.workspace.store.eventsAfter(Math.max(0, after))) {
+    const replay = (await this.workspace.store.eventsAfter(this.workspace.eventBaselineSequence))
+      .filter((event) => event.instanceId === this.workspace.instanceId);
+    const retainedFirstSequence = replay[0]?.sequence;
+    const retainedLatestSequence = replay.at(-1)?.sequence ?? this.workspace.eventBaselineSequence;
+    const cursorInvalid = input.cursor !== undefined && (
+      !decoded
+      || decoded.sequence < this.workspace.eventBaselineSequence
+      || decoded.sequence > retainedLatestSequence
+      || (retainedFirstSequence !== undefined && decoded.sequence < retainedFirstSequence - 1)
+    );
+    if (cursorInvalid) {
+      const cursor = encodeEventCursor({
+        instanceId: this.workspace.instanceId,
+        sequence: retainedLatestSequence,
+        revision: this.workspace.revision(),
+        filter: input.filter,
+        projection: input.projection,
+      });
+      const event: OutlineEvent = {
+        protocolVersion: OUTLINE_PROTOCOL_VERSION,
+        kind: 'outline.event',
+        type: 'resync.required',
+        instanceId: this.workspace.instanceId,
+        sequence: retainedLatestSequence,
+        revision: this.workspace.revision(),
+        cursor,
+      };
+      write({
+        protocolVersion: OUTLINE_PROTOCOL_VERSION,
+        requestId,
+        sequence: streamSequence++,
+        type: 'event',
+        event,
+        cursor,
+      });
+      write({
+        protocolVersion: OUTLINE_PROTOCOL_VERSION,
+        requestId,
+        sequence: streamSequence++,
+        type: 'end',
+        cursor,
+      });
+      unsubscribe();
+      response.end();
+      return;
+    }
+    for (const event of replay) {
       writeEvent(event);
     }
     for (const event of pendingEvents.sort((left, right) => left.sequence - right.sequence)) writeEvent(event);
-    replaying = false;
+    acceptEvent = writeEvent;
     await closed;
   }
 
@@ -260,18 +394,30 @@ function authorized(header: string | undefined, expectedToken: string): boolean 
   return supplied.length === expected.length && timingSafeEqual(supplied, expected);
 }
 
-function parseEventSequence(value: string | null): number {
-  if (value === null) return 0;
-  if (!/^\d+$/.test(value)) throw new Error('Outline Runtime event sequence is invalid');
-  const sequence = Number(value);
-  if (!Number.isSafeInteger(sequence)) throw new Error('Outline Runtime event sequence is invalid');
-  return sequence;
+function eventForWatch(
+  event: OutlineEvent,
+  filter: EventFilter | undefined,
+  projection: Projection | undefined,
+  workspace: OutlineRuntimeWorkspace,
+): OutlineEvent {
+  const cursor = encodeEventCursor({
+    instanceId: workspace.instanceId,
+    sequence: event.sequence,
+    revision: event.revision,
+    filter,
+    projection,
+  });
+  return {
+    ...event,
+    cursor,
+    ...(projection ? { projection: projectOutline(workspace.forkCore(), projection) } : {}),
+  };
 }
 
-function parseRequestId(value: string | null): string {
-  if (value === null) return 'watch';
-  if (value.length < 1 || value.length > 256) throw new Error('Outline Runtime stream request ID is invalid');
-  return value;
+function matchesEventFilter(event: OutlineEvent, filter: EventFilter | undefined): boolean {
+  if (filter?.types && !filter.types.includes(event.type)) return false;
+  if (filter?.origin && event.operation?.origin !== filter.origin) return false;
+  return true;
 }
 
 async function readJsonBody(request: http.IncomingMessage): Promise<unknown> {

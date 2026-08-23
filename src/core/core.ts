@@ -1465,11 +1465,11 @@ export class Core {
    * main process; this method only persists it. The sidecar is provenance-only
    * (source identity, origin, status, warnings) — capture stores no page body.
    */
-  createCapture(input: CreateCaptureInput): CommandOutcome {
+  createCapture(input: CreateCaptureInput, proposedId?: string): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureParentMutable(state, input.destinationParentId);
-      const id = this.freshId('node');
+      const id = this.resolveRuntimeNodeId(state, proposedId, 'node');
       this.loro.createNodeWithId(id, input.destinationParentId, input.index ?? null, undefined, (node) => {
         node.content = clone(input.title);
         if (input.description !== undefined) node.description = input.description;

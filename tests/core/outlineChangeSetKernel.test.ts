@@ -208,6 +208,26 @@ describe('outline ChangeSet kernel', () => {
     expect(await workspace.store.operations()).toHaveLength(1);
     expect(workspace.projection().nodes.filter((node) => node.content.text.startsWith('Imported 2028-')).length).toBe(100);
   });
+
+  test('rolls back every earlier change when a late operation fails', async () => {
+    const workspace = await makeWorkspace();
+    const before = workspace.documentState();
+    const operationsBefore = await workspace.store.operations();
+    const changeSet: ChangeSet = {
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      operations: [
+        { op: 'create', parents: oneAlias('today'), nodes: [draft('Must roll back')], bind: 'created' },
+        { op: 'move', targets: { binding: 'created' }, destination: { binding: 'created' } },
+      ],
+    };
+
+    await expect(diffOutlineChangeSet(workspace, changeSet)).rejects.toMatchObject({
+      outlineError: { code: 'precondition_failed', message: expect.stringContaining('operation 1') },
+    });
+    expect(workspace.documentState()).toEqual(before);
+    expect(await workspace.store.operations()).toEqual(operationsBefore);
+  });
 });
 
 function draft(text: string, patch: Partial<NodeDraft> = {}): NodeDraft {

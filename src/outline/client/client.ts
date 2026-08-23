@@ -9,6 +9,7 @@ import {
   type OutlineResponse,
   type OutlineStreamRecord,
   type RuntimeDescriptor,
+  type WatchRequest,
 } from '../contract/schemas';
 import { OUTLINE_PROTOCOL_VERSION } from '../contract/version';
 
@@ -38,15 +39,31 @@ export class OutlineClient {
     return value;
   }
 
-  async *watch(after = 0, signal?: AbortSignal): AsyncGenerator<OutlineStreamRecord> {
-    const requestId = `watch:${crypto.randomUUID()}`;
+  watch(input: WatchRequest = {}, signal?: AbortSignal): AsyncGenerator<OutlineStreamRecord> {
+    return this.stream('watch', input, signal);
+  }
+
+  async *stream(command: string, input: unknown, signal?: AbortSignal): AsyncGenerator<OutlineStreamRecord> {
+    const requestId = `stream:${crypto.randomUUID()}`;
+    const request: OutlineRequest = {
+      protocolVersion: OUTLINE_PROTOCOL_VERSION,
+      requestId,
+      command,
+      input,
+    };
+    const body = JSON.stringify(request);
     const response = await this.openRequest({
-      method: 'GET',
-      path: `/v1/events?after=${Math.max(0, Math.trunc(after))}&requestId=${encodeURIComponent(requestId)}`,
+      method: 'POST',
+      path: '/v1/stream',
+      headers: {
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(body),
+      },
+      body,
       signal,
     });
     if (response.statusCode !== 200) {
-      await throwHttpError(response, 'watch');
+      await throwHttpError(response, command);
     }
     let buffered = '';
     let expectedSequence = 0;
@@ -63,7 +80,12 @@ export class OutlineClient {
         const line = buffered.slice(0, newline);
         buffered = buffered.slice(newline + 1);
         if (line) {
-          const record = JSON.parse(line) as unknown;
+          let record: unknown;
+          try {
+            record = JSON.parse(line) as unknown;
+          } catch {
+            throw protocolError('Outline Runtime returned an invalid JSONL record.');
+          }
           if (!Value.Check(OutlineStreamRecordSchema, record)) {
             throw protocolError('Outline Runtime returned an invalid stream record.');
           }
@@ -87,6 +109,7 @@ export class OutlineClient {
     }
     if (buffered.trim()) throw protocolError('Outline Runtime watch ended with a truncated record.');
     if (!sawHello) throw protocolError('Outline Runtime stream ended before its hello record.');
+    if (command !== 'watch' && !sawEnd) throw protocolError('Outline Runtime stream ended before its end record.');
   }
 
   close(): void {

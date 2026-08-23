@@ -10,6 +10,10 @@ import {
   OUTLINE_CAPABILITIES,
   OUTLINE_PROTOCOL_VERSION,
   OutlineResponseSchema,
+  OutlineStreamRecordSchema,
+  canonicalSha256,
+  type ChangeSet,
+  type Diff,
 } from '../../src/outline/contract';
 import { OutlineRuntimeServer } from '../../src/outline/runtime/server';
 
@@ -150,6 +154,104 @@ describe('outline CLI', () => {
     expect(missing.stdinReads).toBe(0);
   });
 
+  test('runs read, Diff, apply, and streaming export through the public CLI grammar', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const changeSet = createTodayChangeSet('CLI searchable result');
+      const preview = captureIo(JSON.stringify(changeSet));
+      expect(await runOutlineCli(['--json', '--no-start', 'diff', '--input', '-'], {
+        runtimeRoot: root,
+        io: preview.io,
+      })).toBe(0);
+      const diff = JSON.parse(preview.stdout).data as Diff;
+      expect(diff.kind).toBe('outline.diff');
+
+      const applied = captureIo(JSON.stringify(diff));
+      expect(await runOutlineCli(['--json', '--no-start', 'apply', '--input', '-'], {
+        runtimeRoot: root,
+        io: applied.io,
+      })).toBe(0);
+      const operation = JSON.parse(applied.stdout).data;
+      expect(operation).toMatchObject({ kind: 'outline.operation', origin: 'external-client' });
+
+      const jsonFind = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'find', 'CLI searchable result'], {
+        runtimeRoot: root,
+        io: jsonFind.io,
+      })).toBe(0);
+      const foundNodes = JSON.parse(jsonFind.stdout).data.nodes;
+      expect(foundNodes).toContainEqual(expect.objectContaining({ text: 'CLI searchable result' }));
+
+      const humanFind = captureIo();
+      expect(await runOutlineCli(['--no-start', 'find', 'CLI searchable result'], {
+        runtimeRoot: root,
+        io: humanFind.io,
+      })).toBe(0);
+      expect(JSON.parse(humanFind.stdout).nodes).toEqual(foundNodes);
+
+      const nodeId = diff.bindings.created?.[0];
+      const shown = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'show', nodeId!], {
+        runtimeRoot: root,
+        io: shown.io,
+      })).toBe(0);
+      expect(JSON.parse(shown.stdout).data.nodes[0]).toMatchObject({ id: nodeId });
+
+      const streamed = captureIo();
+      expect(await runOutlineCli([
+        '--json', '--no-start', 'export', '@today', '--format', 'jsonl', '--depth', '1', '--limit', '100',
+      ], { runtimeRoot: root, io: streamed.io })).toBe(0);
+      const records = streamed.stdout.trim().split('\n').map((line) => JSON.parse(line) as unknown);
+      expect(records.every((record) => Value.Check(OutlineStreamRecordSchema, record))).toBe(true);
+      expect(records).toContainEqual(expect.objectContaining({ type: 'data', data: expect.objectContaining({ id: nodeId }) }));
+
+      const markdownPath = path.join(root, 'today.md');
+      const exported = captureIo();
+      expect(await runOutlineCli([
+        '--json', '--no-start', 'export', '@today', '--format', 'markdown', '--depth', '1', '--output', markdownPath,
+      ], { runtimeRoot: root, io: exported.io })).toBe(0);
+      expect(JSON.parse(exported.stdout).data.path).toBe(markdownPath);
+      expect(await readFile(markdownPath, 'utf8')).toContain('CLI searchable result');
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('validates JSONL ChangeSet framing and writes a reviewed Diff atomically', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const changeSet = createTodayChangeSet('JSONL framed input');
+      const { operations, ...header } = changeSet;
+      const input = [
+        JSON.stringify(header),
+        ...operations.map((operation) => JSON.stringify({ operation })),
+        JSON.stringify({ operationCount: operations.length, sha256: canonicalSha256(changeSet) }),
+        '',
+      ].join('\n');
+      const outputPath = path.join(root, 'reviewed.diff.json');
+      const output = captureIo(input);
+      expect(await runOutlineCli([
+        '--json', '--no-start', 'diff', '--input', '-', '--input-format', 'jsonl', '--output', outputPath,
+      ], { runtimeRoot: root, io: output.io })).toBe(0);
+      expect(JSON.parse(output.stdout).data).toMatchObject({ path: outputPath, sha256: expect.any(String) });
+      expect((JSON.parse(await readFile(outputPath, 'utf8')) as Diff).kind).toBe('outline.diff');
+
+      const corrupted = captureIo(input.replace(canonicalSha256(changeSet), '0'.repeat(64)));
+      expect(await runOutlineCli([
+        '--json', '--no-start', 'diff', '--input', '-', '--input-format', 'jsonl',
+      ], { runtimeRoot: root, io: corrupted.io })).toBe(2);
+      expect(JSON.parse(corrupted.stdout).error.message).toContain('SHA-256');
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   test('runs the real entry as a thin local process with clean stdout', async () => {
     const root = await makeRoot();
     const child = Bun.spawn([process.execPath, cliEntry, '--json', 'version'], {
@@ -201,4 +303,19 @@ async function makeRoot(): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), 'tenon-outline-cli-'));
   roots.push(root);
   return root;
+}
+
+function createTodayChangeSet(text: string): ChangeSet {
+  return {
+    protocolVersion: 1,
+    kind: 'outline.changeset',
+    operations: [{
+      op: 'create',
+      parents: {
+        target: { selector: { by: 'alias', alias: 'today' }, cardinality: 'one' },
+      },
+      nodes: [{ content: { text, marks: [], inlineRefs: [] }, children: [] }],
+      bind: 'created',
+    }],
+  };
 }
