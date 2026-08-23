@@ -410,6 +410,57 @@ posixBashProcessTest('execution-scoped output roots prevent concurrent Bash arti
   });
 });
 
+posixBashProcessTest('task_stop marks removed managed-root warnings for durable path stabilization', async () => {
+  await withWorkspace(async (workspaceRoot) => {
+    const outputDirectory = path.join(workspaceRoot, 'removed-managed-output');
+    await mkdir(outputDirectory);
+    const outputRoot = await realpath(outputDirectory);
+    const ownerThreadId = 'removed-output-root-thread';
+    const artifactSink = testArtifactSink(workspaceRoot);
+    const workspace = createAgentLocalWorkspaceContext(
+      workspaceRoot,
+      undefined,
+      undefined,
+      async () => ({
+        env: { BROWSER_PILOT_OUTPUT_DIR: outputRoot },
+        declaredOutputRoots: [{
+          id: 'browser-pilot-output',
+          skillId: 'browser-pilot',
+          path: outputRoot,
+          label: 'Browser Pilot output',
+        }],
+      }),
+      undefined,
+      ownerThreadId,
+    );
+    const bash = createLocalTools({ workspace, artifactSink }).find((tool) => tool.name === 'bash')!;
+    const started = await bash.execute('remove-managed-output-root', {
+      command: 'rmdir "$BROWSER_PILOT_OUTPUT_DIR"',
+      run_in_background: true,
+    });
+    const startedData = (started.details as ToolEnvelope<BashData>).data!;
+    await waitForFileContent(
+      startedData.temporaryOutputPath!,
+      (content) => content.includes('status: completed'),
+    );
+
+    const stopped = await stopBackgroundShellTaskResult(
+      startedData.backgroundTaskId!,
+      ownerThreadId,
+      artifactSink,
+    );
+    const stoppedData = (stopped?.details as ToolEnvelope<BackgroundShellStopToolData>).data;
+    expect(JSON.stringify(stoppedData?.artifactWarnings)).toContain(outputRoot);
+    expect(stopped?.persistedTextReplacements).toEqual(expect.arrayContaining([{
+      value: outputRoot,
+      replacement: '[managed-output:browser-pilot-output]',
+    }, {
+      value: startedData.temporaryOutputPath,
+      replacement: `[temporary-shell-output:${startedData.backgroundTaskId}]`,
+    }]));
+  });
+});
+
 test('agent local tool process env exposes bundled rg after user and system paths', () => {
   const originalPath = process.env.PATH;
   const originalExtraPath = process.env.LIN_AGENT_EXTRA_TOOL_PATH;

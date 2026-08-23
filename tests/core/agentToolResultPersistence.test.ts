@@ -140,6 +140,7 @@ describe('agent tool result persistence', () => {
             artifact: { filePath, resourceRef },
             temporaryOutputPath,
           },
+          instructions: `Read ${filePath} now; ${temporaryOutputPath} is temporary.`,
         }),
       });
       expect(persisted).not.toContain(filePath);
@@ -147,6 +148,7 @@ describe('agent tool result persistence', () => {
       expect(JSON.parse(persisted)).toEqual({
         ok: true,
         data: { artifact: { resourceRef } },
+        instructions: 'Read [current-artifact-path] now; [temporary-shell-output] is temporary.',
       });
     }
   });

@@ -1679,6 +1679,8 @@ export async function stopBackgroundShellTaskResult(
 ) {
   const started = Date.now();
   try {
+    const task = backgroundTasks.get(taskId);
+    const ownedTask = task && backgroundTaskOwnedBy(task, ownerThreadId) ? task : undefined;
     const data = await stopBackgroundShellTask(taskId, ownerThreadId);
     if (data === null) return null;
     const outputSize = await fileSizeOrZero(data.outputPath);
@@ -1686,11 +1688,10 @@ export async function stopBackgroundShellTaskResult(
     const artifact: Pick<BashData, 'persistedOutput' | 'artifactWarnings'> = outputLimitExceeded
       ? {}
       : await persistShellSavedOutput(data.outputPath, outputSize, artifactSink, false);
-    const task = backgroundTasks.get(taskId);
-    const collected = task && backgroundTaskOwnedBy(task, ownerThreadId)
+    const collected = ownedTask
       ? await collectDeclaredOutputArtifacts(
-          task.declaredOutputRoots,
-          task.declaredOutputSnapshot,
+          ownedTask.declaredOutputRoots,
+          ownedTask.declaredOutputSnapshot,
           artifactSink,
         )
       : { artifacts: [], warnings: [] };
@@ -1725,9 +1726,18 @@ export async function stopBackgroundShellTaskResult(
         });
     const result = agentToolResult(envelope, visibleBackgroundShellStop(toolData));
     const resourceRefs = shellArtifactResourceRefs(toolData);
-    return resourceRefs.length > 0
-      ? { ...result, resourceRefs }
-      : result;
+    const persistedTextReplacements = [
+      ...(ownedTask ? outputRootTextReplacements(ownedTask.declaredOutputRoots) : []),
+      {
+        value: data.outputPath,
+        replacement: `[temporary-shell-output:${data.task_id}]`,
+      },
+    ];
+    return {
+      ...result,
+      ...(resourceRefs.length > 0 ? { resourceRefs } : {}),
+      persistedTextReplacements,
+    };
   } catch (error) {
     return localErrorResult<BackgroundShellStopToolData>('task_stop', error, started);
   }

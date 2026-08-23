@@ -125,12 +125,20 @@ interface AgentToolResult<T> {
   details: T;
   terminate?: boolean;
   resourceRefs?: readonly ThreadResourceReference[];
+  persistedTextReplacements?: readonly AgentToolTextReplacement[];
+}
+
+interface AgentToolTextReplacement {
+  readonly value: string;
+  readonly replacement: string;
 }
 ```
 
 First-party tools append every successfully persisted resource reference to this
 manifest. `PiTurnExecutor` copies the manifest onto the completed tool Item's
-`resourceRefs`.
+`resourceRefs`. The optional replacement manifest is host-only and applies known
+execution-scoped path substitutions consistently to `outputRef`, command output,
+and dynamic tool content when the live result enters durable history.
 
 The live model-visible JSON keeps actionable fields close to the existing tool
 contracts:
@@ -143,13 +151,15 @@ contracts:
   Skill command's capped output is saved.
 
 Persisted slim details and model-facing result text retain each `resourceRef`
-and its stable metadata, but not `filePath`. Historical tool-result projection
-resolves every tool Item `resourceRefs` entry through the current Thread's
-`resolveResourceObservationPath` authority and appends a deterministic bounded
-artifact block with the current readable path. The projection does not rewrite
-the canonical Item or `outputRef`, and it does not read artifact bytes into the
-provider context. A fork therefore resolves against the copied target-Thread
-resource rather than replaying the source Thread's path.
+and its stable metadata, but not `filePath`. The durable text boundary also
+replaces repeated occurrences of a removed `filePath` or `temporaryOutputPath`
+inside instructions and warnings with stable markers. Historical tool-result
+projection resolves every tool Item `resourceRefs` entry through the current
+Thread's `resolveResourceObservationPath` authority and appends a deterministic
+bounded artifact block with the current readable path. The projection does not
+rewrite the canonical Item or `outputRef`, and it does not read artifact bytes
+into the provider context. A fork therefore resolves against the copied
+target-Thread resource rather than replaying the source Thread's path.
 
 When `readablePath` is unavailable but the resource was stored, the tool returns
 the `resourceRef`, omits `filePath`, and adds a warning that the artifact is
@@ -188,9 +198,10 @@ neither `resourceRef` nor an explicit oversized warning.
 
 Background shell startup remains a live-process contract. While the command is
 running, the returned output path is explicitly temporary and is not recorded as
-a resource. When `task_stop` returns final output for a stopped or already
-completed task, it registers the final log and returns the same
-`persistedOutput` shape as foreground shell. The same artifact cap and
+a resource. Its exact value may appear only in the live result; durable strings
+use a stable temporary-output marker. When `task_stop` returns final output for a
+stopped or already completed task, it registers the final log and returns the
+same `persistedOutput` shape as foreground shell. The same artifact cap and
 oversized-output result rule apply at stop/finalization time.
 
 #### Managed-Skill output roots
@@ -244,7 +255,8 @@ and caches the composed environment separately for each tool-call execution. A
 foreground command and a concurrently running background command therefore never
 share a collector root: the foreground result cannot claim a file authored by the
 background process, and `task_stop` retains the background task's launch-time root
-and snapshot.
+and snapshot. Those launch-time roots also remain the persistence replacement
+authority when terminal collection reports a scan warning after a root disappears.
 
 This placement matters for Browser Pilot: the `skill` tool loads its inline
 instructions, while the actual `bp` invocation happens later through ordinary

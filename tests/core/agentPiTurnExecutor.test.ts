@@ -3243,7 +3243,7 @@ describe('PiTurnExecutor event normalization', () => {
     expect(persistedOutput).toContain(resourceRef.id);
   });
 
-  test('keeps bash artifact handles out of the canonical command Item', async () => {
+  test('keeps bash artifact handles and repeated instruction paths out of the canonical command Item', async () => {
     const fixture = createContext();
     const resourceRef: ThreadResourceReference = {
       id: 'f'.repeat(64),
@@ -3262,6 +3262,7 @@ describe('PiTurnExecutor event normalization', () => {
         persistedOutput: { filePath: producingPath, resourceRef, byteLength: resourceRef.byteLength },
         temporaryOutputPath,
       },
+      instructions: `The temporary output path is ${temporaryOutputPath}.`,
     });
     const normalizer = new PiEventNormalizer(fixture.context);
     normalizer.handle(toolAdmissionEvent('call-bash-artifact', 'bash', { command: 'produce-report' }));
@@ -3287,6 +3288,7 @@ describe('PiTurnExecutor event normalization', () => {
     expect(JSON.stringify(item)).not.toContain(producingPath);
     expect(JSON.stringify(item)).not.toContain(temporaryOutputPath);
     expect(JSON.stringify(item)).not.toContain(managedOutputRoot);
+    expect(JSON.stringify(item)).toContain('[temporary-shell-output]');
     expect(JSON.stringify(item)).toContain('[managed-output:browser-pilot-output]/capture.png');
     if (item?.type !== 'commandExecution' || !item.outputRef) {
       throw new Error('Expected bash output reference');
@@ -3295,8 +3297,81 @@ describe('PiTurnExecutor event normalization', () => {
     expect(persistedOutput).not.toContain(producingPath);
     expect(persistedOutput).not.toContain(temporaryOutputPath);
     expect(persistedOutput).not.toContain(managedOutputRoot);
+    expect(persistedOutput).toContain('[temporary-shell-output]');
     expect(persistedOutput).toContain('[managed-output:browser-pilot-output]/capture.png');
     expect(persistedOutput).toContain(resourceRef.id);
+  });
+
+  test('stabilizes task_stop managed-root scan warnings in outputRef', async () => {
+    const fixture = createContext();
+    const managedOutputRoot = '/tmp/turn-observation/browser-pilot/call-task-stop';
+    const warning = `Browser Pilot output could not be scanned: ENOENT: lstat '${managedOutputRoot}'`;
+    const resultText = JSON.stringify({
+      ok: true,
+      tool: 'task_stop',
+      data: { artifactWarnings: [warning] },
+      warnings: [warning],
+    });
+    const normalizer = new PiEventNormalizer(fixture.context);
+    normalizer.handle(toolAdmissionEvent('call-task-stop-stable', 'task_stop', { task_id: 'task-1' }));
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'call-task-stop-stable',
+      toolName: 'task_stop',
+      result: {
+        content: [{ type: 'text', text: resultText }],
+        details: { ok: true },
+        persistedTextReplacements: [{
+          value: managedOutputRoot,
+          replacement: '[managed-output:browser-pilot-output]',
+        }],
+      },
+      isError: false,
+    });
+    await normalizer.flush();
+
+    const item = fixture.recorder.orderedItems()[0];
+    expect(item?.type).toBe('collabAgentToolCall');
+    if (item?.type !== 'collabAgentToolCall' || !item.outputRef) {
+      throw new Error('Expected task_stop output reference');
+    }
+    const persistedOutput = await fixture.context.readOutput(item.outputRef);
+    expect(persistedOutput).not.toContain(managedOutputRoot);
+    expect(persistedOutput).toContain('[managed-output:browser-pilot-output]');
+  });
+
+  test('applies host path replacements to dynamic outputRef and canonical content', async () => {
+    const fixture = createContext();
+    const executionPath = '/tmp/turn-observation/managed-skill/call-dynamic';
+    const resultText = JSON.stringify({ warning: `Could not inspect ${executionPath}` });
+    const normalizer = new PiEventNormalizer(fixture.context);
+    normalizer.handle(toolAdmissionEvent('call-dynamic-stable', 'inspect_output', {}));
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'call-dynamic-stable',
+      toolName: 'inspect_output',
+      result: {
+        content: [{ type: 'text', text: resultText }],
+        details: { ok: true },
+        persistedTextReplacements: [{
+          value: executionPath,
+          replacement: '[managed-output:managed-skill-output]',
+        }],
+      },
+      isError: false,
+    });
+    await normalizer.flush();
+
+    const item = fixture.recorder.orderedItems()[0];
+    expect(item?.type).toBe('dynamicToolCall');
+    expect(JSON.stringify(item)).not.toContain(executionPath);
+    expect(JSON.stringify(item)).toContain('[managed-output:managed-skill-output]');
+    if (item?.type !== 'dynamicToolCall' || !item.outputRef) {
+      throw new Error('Expected dynamic tool output reference');
+    }
+    const persistedOutput = await fixture.context.readOutput(item.outputRef);
+    expect(persistedOutput).not.toContain(executionPath);
+    expect(persistedOutput).toContain('[managed-output:managed-skill-output]');
   });
 
   test('runs internal Memory Turns with only their exact prompt and model runtime', async () => {

@@ -459,10 +459,14 @@ materialized. It never reads artifact bytes into provider context. Restart and f
 therefore produce current target-Thread handles instead of replaying the producing
 Turn's scratch path.
 For shell producers, durable text also substitutes every typed managed-output root in
-stdout, stderr, and warnings with its stable root identity. This covers the ordinary
+stdout, stderr, instructions, and warnings with its stable root identity. Structured
+`filePath` and `temporaryOutputPath` handles are removed, and repeated occurrences of
+those values in strings become stable markers. The same replacement pipeline governs
+`outputRef`, Bash aggregated output, and dynamic tool content. This covers the ordinary
 `bash` call that follows an inline Browser Pilot Skill load, not only embedded Skill shell
-expansion. Managed roots are scoped to one command execution, so concurrent foreground
-and background collectors cannot claim each other's files.
+expansion, and lets `task_stop` stabilize a terminal scan warning with the background
+task's launch-time roots. Managed roots are scoped to one command execution, so concurrent
+foreground and background collectors cannot claim each other's files.
 
 Binary image output never enters rollout JSON, SQLite projection, or IPC as a
 data URL. Every accepted dynamic-tool image stores one immutable `artifactRef`; the

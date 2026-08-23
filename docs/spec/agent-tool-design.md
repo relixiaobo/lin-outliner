@@ -271,8 +271,12 @@ durable output. Calling `task_stop` on an already terminal shell returns its rea
 status and final artifact rather than claiming the task was stopped again.
 The exit-time size check is authoritative even when a fast command finishes before the
 watchdog's next poll. Stable command history strips structured artifact handles and
-replaces typed managed-output roots in stdout, stderr, and warnings with their root ids;
-the live result alone contains the current paths.
+replaces any repeated `filePath` or `temporaryOutputPath` inside instructions and warnings
+with stable markers. Typed managed-output roots are replaced with their root ids in
+stdout, stderr, instructions, and warnings. `task_stop` uses the background task's
+launch-time roots for this replacement even when terminal collection reports that a root
+has disappeared. The same stabilization applies to `outputRef`, command aggregation, and
+dynamic tool content; the live result alone contains the current paths.
 
 Browser Pilot remains a managed Skill workflow over this same shell surface:
 

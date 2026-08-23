@@ -1727,11 +1727,7 @@ async function dynamicOutput(
   for (const part of result.content) {
     if (!isRecord(part) || typeof part.type !== 'string') continue;
     if (part.type === 'text' && typeof part.text === 'string' && remainingText > 0) {
-      const persisted = persistedToolResultText({
-        toolNamespace: item.namespace,
-        toolName: item.tool,
-        text: part.text,
-      });
+      const persisted = persistedToolItemResultText(item, part.text, result);
       const text = boundedText(persisted, remainingText);
       content.push({ type: 'text', text });
       remainingText -= text.length;
