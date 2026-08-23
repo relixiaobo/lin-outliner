@@ -295,8 +295,29 @@ interface CoreTransaction {
   chunkedCommits: number;
   affectedNodeIds: Set<NodeId>;
   originalNodes: Map<NodeId, Node | undefined>;
+  initialNodes: Map<NodeId, Node | undefined>;
   changed: boolean;
   chunkUndoValue?: OperationHistoryEntry;
+}
+
+export interface CoreTransactionNodePatch {
+  readonly id: NodeId;
+  readonly before: Readonly<Node> | null;
+  readonly after: Readonly<Node> | null;
+}
+
+export interface CoreTransactionPatch {
+  readonly revisionBefore: number;
+  readonly revisionAfter: number;
+  readonly persistenceRevisionBefore: number;
+  readonly persistenceRevisionAfter: number;
+  readonly systemChanged: boolean;
+  readonly nodes: readonly CoreTransactionNodePatch[];
+}
+
+export interface CoreTransactionResult<T> {
+  readonly result: T;
+  readonly patch: CoreTransactionPatch;
 }
 
 interface TouchedMutationPatch {
@@ -1067,7 +1088,17 @@ export class Core {
   }
 
   async transaction<T>(origin: CommitOrigin, fn: () => T | Promise<T>, metadata: CoreTransactionMetadata = {}): Promise<T> {
-    return this.transactionWithResolvedOrigin(commitOriginFor(origin), fn, metadata);
+    if (this.activeTransaction) return fn();
+    return (await this.transactionWithPatch(origin, fn, metadata)).result;
+  }
+
+  async transactionWithPatch<T>(
+    origin: CommitOrigin,
+    fn: () => T | Promise<T>,
+    metadata: CoreTransactionMetadata = {},
+  ): Promise<CoreTransactionResult<T>> {
+    if (this.activeTransaction) throw CoreError.invalidOperation('nested patch transactions are not supported');
+    return this.transactionWithResolvedOriginAndPatch(commitOriginFor(origin), fn, metadata);
   }
 
   private async transactionWithResolvedOrigin<T>(
@@ -1075,25 +1106,46 @@ export class Core {
     fn: () => T | Promise<T>,
     metadata: CoreTransactionMetadata = {},
   ): Promise<T> {
-    if (this.activeTransaction) return fn();
+    return (await this.transactionWithResolvedOriginAndPatch(origin, fn, metadata)).result;
+  }
+
+  private async transactionWithResolvedOriginAndPatch<T>(
+    resolvedOrigin: string,
+    fn: () => T | Promise<T>,
+    metadata: CoreTransactionMetadata,
+  ): Promise<CoreTransactionResult<T>> {
     const rollbackFrontiers = this.loro.frontiers();
+    const revisionBefore = this.revisionValue;
+    const persistenceRevisionBefore = this.persistenceRevisionValue;
     this.loro.clearTouchedNodeIds();
     this.loro.clearSystemDataChanged();
     this.activeTransaction = {
-      origin,
+      origin: resolvedOrigin,
       metadata,
       chunkedCommits: 0,
       affectedNodeIds: new Set(),
       originalNodes: new Map(),
+      initialNodes: new Map(),
       changed: false,
     };
     try {
       const result = await fn();
       const transaction = this.activeTransaction;
-      if (transaction) this.finalizeActiveTransaction(transaction);
+      if (!transaction) throw CoreError.invalidOperation('transaction state was lost before finalization');
+      const finalized = this.finalizeActiveTransaction(transaction);
       this.activeTransaction = undefined;
       this.verifyCaches();
-      return result;
+      return {
+        result,
+        patch: freezeCoreTransactionPatch({
+          revisionBefore,
+          revisionAfter: this.revisionValue,
+          persistenceRevisionBefore,
+          persistenceRevisionAfter: this.persistenceRevisionValue,
+          systemChanged: finalized.systemChanged,
+          nodes: finalized.nodes,
+        }),
+      };
     } catch (error) {
       this.loro.revertTo(rollbackFrontiers, SYSTEM_COMMIT_ORIGIN);
       this.loro.clearTouchedNodeIds();
@@ -3679,20 +3731,29 @@ export class Core {
     return patch.changed;
   }
 
-  private finalizeActiveTransaction(transaction: CoreTransaction): boolean {
+  private finalizeActiveTransaction(transaction: CoreTransaction): {
+    systemChanged: boolean;
+    nodes: CoreTransactionNodePatch[];
+  } {
     this.patchActiveTransactionTouchedNodes(transaction);
     this.captureActiveTransactionNetChanges(transaction);
     const systemChanged = this.loro.drainSystemDataChanged();
-    if (!transaction.changed && !systemChanged) return false;
-    const affectedNodeIds = [...transaction.affectedNodeIds].sort();
+    const nodes = coreTransactionNodePatch(transaction.initialNodes, this.stateValue.nodes);
+    transaction.affectedNodeIds = new Set(nodes.map((entry) => entry.id));
+    transaction.changed = nodes.length > 0;
+    if (!transaction.changed && !systemChanged) return { systemChanged: false, nodes: [] };
+    const affectedNodeIds = nodes.map((entry) => entry.id);
     this.commitCurrentTransaction(transaction.origin, transaction.metadata, affectedNodeIds);
     if (transaction.changed) this.bumpRevision(affectedNodeIds, false);
-    return true;
+    return { systemChanged, nodes };
   }
 
   private patchActiveTransactionTouchedNodes(transaction: CoreTransaction): TouchedMutationPatch {
     return this.drainTouchedMutationPatch((affectedNodeIds) => {
       for (const nodeId of affectedNodeIds) {
+        if (!transaction.initialNodes.has(nodeId)) {
+          transaction.initialNodes.set(nodeId, cloneOptionalNode(this.stateValue.nodes[nodeId]));
+        }
         if (!transaction.originalNodes.has(nodeId)) {
           transaction.originalNodes.set(nodeId, this.stateValue.nodes[nodeId]);
         }
@@ -3706,6 +3767,24 @@ export class Core {
     if (changedNodeIds.length === 0) return;
     transaction.changed = true;
     for (const nodeId of changedNodeIds) transaction.affectedNodeIds.add(nodeId);
+  }
+
+  applyRecoveryPatch(patch: CoreTransactionPatch): CommandOutcome {
+    this.requireHostDocumentTransaction();
+    return this.mutate(() => {
+      const state = this.snapshot();
+      for (const entry of patch.nodes) {
+        const current = state.nodes[entry.id];
+        if (!sameOptionalNode(current, entry.after)) {
+          throw CoreError.invalidOperation(`recovery patch conflict at node: ${entry.id}`);
+        }
+      }
+      this.loro.applyNodePatch(patch.nodes.map((entry) => ({
+        id: entry.id,
+        node: entry.before ? clone(entry.before as Node) : undefined,
+      })));
+      return undefined;
+    });
   }
 
   private drainTouchedMutationPatch(
@@ -5354,6 +5433,42 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function cloneOptionalNode(node: Node | undefined): Node | undefined {
+  return node ? clone(node) : undefined;
+}
+
+function sameOptionalNode(left: Node | undefined, right: Readonly<Node> | null): boolean {
+  return sameJson(left ?? null, right);
+}
+
+function coreTransactionNodePatch(
+  initialNodes: ReadonlyMap<NodeId, Node | undefined>,
+  currentNodes: Readonly<Record<NodeId, Node>>,
+): CoreTransactionNodePatch[] {
+  const patch: CoreTransactionNodePatch[] = [];
+  for (const id of [...initialNodes.keys()].sort()) {
+    const before = initialNodes.get(id);
+    const after = currentNodes[id];
+    if (sameJson(before, after)) continue;
+    patch.push({
+      id,
+      before: before ? clone(before) : null,
+      after: after ? clone(after) : null,
+    });
+  }
+  return patch;
+}
+
+function freezeCoreTransactionPatch(patch: CoreTransactionPatch): CoreTransactionPatch {
+  return deepFreezeJson(clone(patch));
+}
+
+function deepFreezeJson<T>(value: T): T {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value as Record<string, unknown>)) deepFreezeJson(child);
+  return Object.freeze(value);
 }
 
 function cloneState(state: DocumentState): DocumentState {

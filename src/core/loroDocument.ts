@@ -603,6 +603,63 @@ export class LoroOutlinerDocument {
     for (const id of removed) this.nodeIdToTreeId.delete(id);
   }
 
+  applyNodePatch(entries: readonly { id: string; node: Node | undefined }[]) {
+    const desired = new Map(entries.map((entry) => [entry.id, entry.node]));
+    const state = this.materializeState();
+    const deletedIds = new Set(entries.filter((entry) => !entry.node).map((entry) => entry.id));
+    const deletionRoots = [...deletedIds]
+      .filter((id) => {
+        const parentId = state.nodes[id]?.parentId;
+        return !parentId || !deletedIds.has(parentId);
+      })
+      .sort((left, right) => left.localeCompare(right));
+    for (const id of deletionRoots) {
+      if (this.hasNode(id)) this.deleteNode(id);
+    }
+
+    const pending = new Map(
+      entries
+        .filter((entry): entry is { id: string; node: Node } => Boolean(entry.node) && !this.hasNode(entry.id))
+        .map((entry) => [entry.id, entry.node]),
+    );
+    while (pending.size > 0) {
+      let created = 0;
+      for (const [id, node] of pending) {
+        if (node.parentId && !this.hasNode(node.parentId)) continue;
+        const parentTreeId = node.parentId ? this.requiredTreeNode(node.parentId).id : undefined;
+        const treeNode = this.tree.createNode(parentTreeId);
+        writeNodeData(treeNode.data, normalizeNode(node));
+        this.nodeIdToTreeId.set(id, treeNode.id);
+        this.touchNodeWithSnapshot(id, normalizeNode(node));
+        if (node.parentId) this.touchNode(node.parentId);
+        pending.delete(id);
+        created += 1;
+      }
+      if (created === 0) {
+        throw CoreError.invalidOperation(`recovery patch has unresolved parents: ${[...pending.keys()].sort().join(', ')}`);
+      }
+    }
+
+    for (const [id, node] of desired) {
+      if (!node || !this.hasNode(id)) continue;
+      this.writeNode(node);
+    }
+    const desiredParents = [...desired.values()]
+      .filter((node): node is Node => Boolean(node))
+      .sort((left, right) => left.id.localeCompare(right.id));
+    for (const parent of desiredParents) {
+      for (let index = 0; index < parent.children.length; index += 1) {
+        const childId = parent.children[index]!;
+        if (!this.hasNode(childId)) continue;
+        const child = this.requiredTreeNode(childId);
+        const parentTreeId = this.requiredTreeNode(parent.id).id;
+        this.tree.move(child.id, parentTreeId, index);
+        this.touchNode(childId);
+        this.touchNode(parent.id);
+      }
+    }
+  }
+
   materializeState(): DocumentState {
     this.reconcileStateCache();
     // Return a fresh container over the cached node objects: callers may add or

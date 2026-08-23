@@ -100,6 +100,10 @@ export const HOST_DOCUMENT_COMMANDS = [
   'ensure_document_system_tag_definition',
 ] as const;
 
+export const RUNTIME_DOCUMENT_COMMANDS = [
+  'apply_recovery_patch',
+] as const;
+
 export const AGENT_COMMANDS = [
   'agent_get_provider_settings',
   'agent_refresh_provider_models',
@@ -171,6 +175,7 @@ export const PREVIEW_COMMANDS = [
 
 export type DocumentCommand = typeof DOCUMENT_COMMANDS[number];
 export type HostDocumentCommand = typeof HOST_DOCUMENT_COMMANDS[number];
+export type RuntimeDocumentCommand = typeof RUNTIME_DOCUMENT_COMMANDS[number];
 export type AgentCommand = typeof AGENT_COMMANDS[number];
 export type AssetCommand = typeof ASSET_COMMANDS[number];
 export type PreviewCommand = typeof PREVIEW_COMMANDS[number];
