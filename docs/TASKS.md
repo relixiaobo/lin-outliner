@@ -548,6 +548,13 @@ Standalone agent items (not part of the program):
   resource-inspection, and Trajectory contracts and must rebase before claiming
   those shared files. It also carries the artifact mechanism required by
   **computer-pilot-managed-skill** above.
+- **[composer-large-paste-attachment](plans/composer-large-paste-attachment.md)**
+  (P2, `draft` 2026-08-23; plan PR #581, codex-2) — the Agent composer
+  classifies individual plain-text pastes and the projected complete draft
+  before ProseMirror construction. Large eligible pastes become managed
+  `pasted-content*.txt` attachments; small pastes stay inline until the
+  aggregate editor budget is reached. The implementation waits for #582 to
+  land before syncing its overlapping `agent-model-runtime.md` wording.
 - **agent-dream-followups** — **REMOVED 2026-08-03.** Seven polish items for a subsystem
   that no longer exists: `dream-channel-and-memory-retire` retired Dream in full (#324, #328,
   #329) and `rg -i dream src/` is empty. It survived the retirement because nothing links a

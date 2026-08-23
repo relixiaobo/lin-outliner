@@ -1766,3 +1766,20 @@ Tests for durable artifacts must tear down the producing observation before they
 assert readability. Cover the next Turn, restart, and fork; an immediate
 same-Turn `file_read` proves only that the original scratch directory was still
 alive.
+
+## Display identity and storage identity are separate contracts
+
+PR #581's plan gives every large paste a distinct, user-visible filename while
+allowing identical pasted bytes. The existing attachment store includes that
+filename in its resource key, so a matching content digest does not imply shared
+managed storage.
+
+**Specify presentation identity and byte identity independently.** When the user
+needs separate logical attachments but storage should deduplicate their bytes,
+the contract needs distinct logical names over a content-addressed storage key.
+If the current key combines name and digest, state that identical content may
+consume storage more than once instead of implying that hashing provides
+deduplication.
+
+Tests for this boundary need two equal payloads with different display names and
+must assert both the logical attachment count and the physical storage outcome.

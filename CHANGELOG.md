@@ -404,6 +404,16 @@ Entries reference the pull request that introduced them.
 
 ### Internal
 
+- **Oversized composer paste attachments plan (PR #581, codex-2, plan-only)** —
+  ratifies Claude-style large-paste admission for the Agent composer: calibrated
+  per-paste thresholds convert one large plain-text paste into one managed
+  `pasted-content*.txt` attachment, while aggregate character and node budgets
+  keep repeated small pastes from growing ProseMirror without bound. An 8 Mi
+  UTF-16 ceiling rejects before encoding; pending atoms preserve position and
+  block Send; synchronous and asynchronous failures use distinct recovery
+  contracts. Thread switching retains the current draft-discard behavior, and
+  identical paste actions remain separate attachments even when that duplicates
+  managed bytes. Product behavior is unchanged until the implementation ships.
 - **The root-Agent import path is now guarded end to end (PR #580, codex-2)** —
   a focused Core integration test starts the local import API and runs preview
   plus commit through an admitted root-Agent Bash tool and the built-in
