@@ -437,8 +437,9 @@ one question lives in one document; every document has a lifecycle.
   A shipped plan moves to
   `docs/plans/archive/` for tidiness once its board item is `done`; we never delete
   a plan. (Provenance — author, dates — is in git history.) The `bun run docs:check`
-  guard keeps the board and the plan files structurally consistent (every plan link
-  resolves; no active plan is missing from the board).
+  guard keeps maintained Markdown links, the board/plan lifecycle, active-plan
+  structure, stable symbol references, changelog categories, instruction aliases,
+  and spec indexes structurally consistent.
 
 **Status vocabulary** (lives in `docs/TASKS.md`, never in the plan file):
 

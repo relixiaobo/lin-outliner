@@ -62,16 +62,16 @@ against the current file. The recommended choices are spelled out under
 
 | # | Collision | Current | Proposed glyph | file:line |
 |---|---|---|---|---|
-| G1 | `Hash` aliases BOTH `HashIcon` (number field-type) AND `SupertagIcon` (schema/supertag) — a `#` means "number" in a field list but "supertag" in nav/tag surfaces | `HashIcon = Hash`, `SupertagIcon = Hash` | keep `#` (`Hash`) for **supertag** (tag convention); give **number field** a distinct glyph → `SupertagIcon` stays `Hash`, `HashIcon` (number) → `Binary` (recommend) | `icons.ts:47-48`; consumers: number via `fieldTypePresentation.tsx:28`; supertag via `NodeContextMenu.tsx:309`, `DefinitionConfigPanel.tsx:142`, Sidebar/CommandPalette schema nav |
+| G1 | `Hash` aliases BOTH `HashIcon` (number field-type) AND `SupertagIcon` (schema/supertag) — a `#` means "number" in a field list but "supertag" in nav/tag surfaces | `HashIcon = Hash`, `SupertagIcon = Hash` | keep `#` (`Hash`) for **supertag** (tag convention); give **number field** a distinct glyph → `SupertagIcon` stays `Hash`, `HashIcon` (number) → `Binary` (recommend) | `icons.ts`; consumers: number via `fieldTypePresentation.tsx`; supertag via `NodeContextMenu.tsx`, `DefinitionConfigPanel.tsx`, Sidebar/CommandPalette schema nav |
 | G2 | A generic successful `dynamicToolCall` needs a neutral glyph distinct from failed status | `GenericToolIcon = Wrench`; failed status uses `WarningIcon` | preserve this split and add a guard so the generic fallback cannot regress to a status icon | `ThreadItemView.tsx` `ToolDisclosure` / `JsonToolDisclosure` |
 | G3 | `ThreadItemView` currently renders every user attachment with `FileImageIcon`, so a `.zip`/`.xlsx`/`.mp4` attachment disagrees with the same file's inline mention | fixed `FileImageIcon` | route `ThreadAttachmentContent` through `inlineFileIconKind` and map its 10 kinds to matching semantic aliases | `ThreadItemView.tsx` `UserMessageItem` |
-| G4 | `OpenIcon` (ExternalLink) is overloaded: "open in **split pane**" (in-app) shares the arrow-out-of-box glyph with genuinely-external links (OAuth/config browser opens, open image, open link) | `<OpenIcon>` for split-pane | use a panel/split glyph for in-app split-open → `Columns2` (recommend; app already uses `PanelRight`/`PanelLeft` for rails); keep `OpenIcon`=ExternalLink strictly for actions that leave the app | split-pane: `NodeContextMenu.tsx:263`; external (unchanged): `ProviderOAuthForm.tsx`, `ProviderConfigForm.tsx`, `ImageRow.tsx:109`, `OutlinerItem.tsx:1673` |
+| G4 | `OpenIcon` (ExternalLink) is overloaded: "open in **split pane**" (in-app) shares the arrow-out-of-box glyph with genuinely-external links (OAuth/config browser opens, open image, open link) | `<OpenIcon>` for split-pane | use a panel/split glyph for in-app split-open → `Columns2` (recommend; app already uses `PanelRight`/`PanelLeft` for rails); keep `OpenIcon`=ExternalLink strictly for actions that leave the app | split-pane: `NodeContextMenu.tsx`; external (unchanged): `ProviderOAuthForm.tsx`, `ProviderConfigForm.tsx`, `ImageRow.tsx`, `OutlinerItem.tsx` |
 
 #### Tier 2 — adjacent-surface inconsistency (same noun, different glyph)
 
 | # | Collision | Current | Proposed glyph | file:line |
 |---|---|---|---|---|
-| G5 | "Remove tag" drawn as `CloseIcon` (X) in the TagBar context menu, but tag-delete drawn as `TrashIcon` in AppliedTag — adjacent surfaces, same noun ("tag"), different glyph | TagBar `Remove` → `CloseIcon`; AppliedTag trashed badge → `TrashIcon` | codify the rule **X = detach/dismiss a transient chip or close UI; Trash = destroy persisted data**, then re-audit. "Remove tag" detaches the tag from a node (not destroying the tag entity) → X is correct; **no glyph change**, document the rule in `icons.ts` and leave AppliedTag's trashed-state Trash as-is | TagBar `removeTitle`: `tags/TagBar.tsx:121`; AppliedTag trashed: `tags/AppliedTag.tsx:31`; AppliedTag detach X: `tags/AppliedTag.tsx:63` |
+| G5 | "Remove tag" drawn as `CloseIcon` (X) in the TagBar context menu, but tag-delete drawn as `TrashIcon` in AppliedTag — adjacent surfaces, same noun ("tag"), different glyph | TagBar `Remove` → `CloseIcon`; AppliedTag trashed badge → `TrashIcon` | codify the rule **X = detach/dismiss a transient chip or close UI; Trash = destroy persisted data**, then re-audit. "Remove tag" detaches the tag from a node (not destroying the tag entity) → X is correct; **no glyph change**, document the rule in `icons.ts` and leave AppliedTag's trashed-state Trash as-is | TagBar `removeTitle`: `tags/TagBar.tsx`; AppliedTag trashed: `tags/AppliedTag.tsx`; AppliedTag detach X: `tags/AppliedTag.tsx` |
 
 #### Tier 0 — agent tool-row glyphs (**already shipped elsewhere — do not redo**)
 
@@ -98,7 +98,7 @@ the file-read glyph.
 |---|---|---|---|---|
 | G6a | `Square` aliases BOTH `CheckboxIcon` (unchecked checkbox) AND `StopIcon` (interrupt active Turn) | both `= Square` | low risk because Stop is a composer action while Checkbox lives in a field row; keep both and document the deliberate share | `icons.ts`; Stop: `ThreadView.tsx`; checkbox: `NodeContextMenu.tsx` and field-type presentation |
 | G6b | Free-text edit and structured Node edit intentionally use different glyphs | `PencilIcon=Pencil`; `DescriptionIcon=FilePenLine`; `NodeEditToolIcon=SquarePen` | keep the distinction: Pencil edits Thread/message text, the file/square pen glyphs edit structured Node description/content | `ThreadItemView.tsx`, `ThreadList.tsx`, `ThreadDock.tsx`, `NodeContextMenu.tsx` |
-| G6c | `SettingsIcon` (gear) doubles as the **generic config-row fallback** in DefinitionConfigPanel — a gear on a config row reads as "settings for this row" rather than "misc property" | `autoInitialize` + catch-all `return <SettingsIcon>` | give the catch-all a neutral glyph distinct from the app-settings gear → `SlidersHorizontal` (recommend) for the catch-all; keep `SettingsIcon` for actual Settings entry points. (#118 further loaded `SettingsIcon` as the **settings category** glyph — gear now carries three distinct meanings, reinforcing the catch-all collision.) | `DefinitionConfigPanel.tsx:148` (`autoInitialize`), `:153` (catch-all) |
+| G6c | `SettingsIcon` (gear) doubles as the **generic config-row fallback** in DefinitionConfigPanel — a gear on a config row reads as "settings for this row" rather than "misc property" | `autoInitialize` + catch-all `return <SettingsIcon>` | give the catch-all a neutral glyph distinct from the app-settings gear → `SlidersHorizontal` (recommend) for the catch-all; keep `SettingsIcon` for actual Settings entry points. (#118 further loaded `SettingsIcon` as the **settings category** glyph — gear now carries three distinct meanings, reinforcing the catch-all collision.) | the `autoInitialize` and catch-all branches in `DefinitionConfigPanel.tsx` |
 
 ### Implementation shape
 
@@ -111,7 +111,7 @@ the file-read glyph.
   `ThreadItemView` (G2), route `ThreadAttachmentContent` through
   `inlineFileIconKind` (G3), and update `ConfigIcon` catch-all +
   `autoInitialize` (G6c).
-- **Call-site edit (1 line):** `NodeContextMenu.tsx:263` swaps `OpenIcon` →
+- **Call-site edit (1 line):** `NodeContextMenu.tsx` swaps `OpenIcon` →
   the new split-pane alias (G4).
 - **Comments only:** G5 (rule comment in `icons.ts` near `CloseIcon`/`TrashIcon`),
   G6a / G6b (deliberate-share comments near the aliases). These change no
@@ -129,7 +129,7 @@ Done in the same change. (#118 is merged into main; its `design-system.md`
 paragraph is no longer a forward gate, so this spec paragraph lands with the code
 change.)
 
-## Decisions deferred
+## Open questions
 
 Each row below recommends a default but flags it as a **taste call** the PM can
 overturn at plan-ratify time. Picking these is a one-minute decision; the build
@@ -201,9 +201,9 @@ follows whatever is chosen.
   `GenericToolIcon`; failed status alone uses `WarningIcon`.
 - [ ] **G3** route `ThreadAttachmentContent` in `ThreadItemView` through
   `inlineFileIconKind` plus an exhaustive kind-to-`File*Icon` map.
-- [ ] **G4** add split-pane alias to `icons.ts`; swap `NodeContextMenu.tsx:263`.
+- [ ] **G4** add split-pane alias to `icons.ts`; swap `NodeContextMenu.tsx`.
 - [ ] **G6c** `ConfigIcon` catch-all + `autoInitialize`
-  (`DefinitionConfigPanel.tsx:148,153`) → neutral config glyph; add alias.
+  (`DefinitionConfigPanel.tsx`) → neutral config glyph; add alias.
 - [ ] **G5 / G6a / G6b** add documenting comments in `icons.ts` (detach-vs-destroy
   rule; Square share; Pencil-vs-FilePenLine deliberate split) — no glyph change
   unless PM overrides.

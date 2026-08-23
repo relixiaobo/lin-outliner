@@ -1,16 +1,7 @@
----
-status: done
-priority: P0
-owner: cc-2
-created: 2026-06-02
-updated: 2026-06-04
-related: unified-command-surface.md, launcher-provider-expansion.md, browser-extension-integration.md
----
-
 # Lazy-Like Global Launcher
 
 > **Done / re-homed (2026-06-04).** First slice shipped in **#103**; the as-built
-> behavior is the authority in [`../spec/launcher.md`](../spec/launcher.md). Every
+> behavior is the authority in [`launcher.md`](../../spec/launcher.md). Every
 > *remaining* ambition has been re-homed: command-surface evolution →
 > `unified-command-surface.md` (cmd+k + launcher convergence); capture-content
 > breadth → `launcher-provider-expansion.md`; rich extraction backend →

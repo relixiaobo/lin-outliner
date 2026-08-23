@@ -1,11 +1,3 @@
----
-status: done
-priority: P0
-owner: relixiaobo
-created: 2026-05-29
-updated: 2026-06-02
----
-
 # Agent Tool Permissions
 
 This plan replaces the earlier `approval_request` timeout proposal with a

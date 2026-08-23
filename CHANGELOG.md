@@ -1,10 +1,10 @@
 # Changelog
 
-All notable changes to Lin Outliner are documented in this file.
+All notable changes to Tenon are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-Entries reference the pull request that introduced them.
+Entries reference the pull request that introduced them when one exists.
 
 ## [Unreleased]
 
@@ -421,6 +421,15 @@ Entries reference the pull request that introduced them.
 
 ### Internal
 
+- **Documentation lifecycle and navigation cleanup (main fast-track)** — removed
+  obsolete lifecycle frontmatter from 75 archived plans, repaired current and
+  historical Markdown links, replaced numeric code-line anchors in active
+  planning authorities with stable symbols, restored the required active-plan
+  heading contract, and aligned root/module documentation with Tenon naming,
+  isolated development commands, and archived-plan locations. `docs:check` now
+  guards maintained Markdown links, plan shape, durable references, unique
+  `[Unreleased]` categories, instruction aliases, complete spec indexes, and
+  stale current-authority paths so the cleanup remains mechanical.
 - **Oversized composer paste attachments plan (PR #581, codex-2, plan-only)** —
   ratifies Claude-style large-paste admission for the Agent composer: calibrated
   per-paste thresholds convert one large plain-text paste into one managed

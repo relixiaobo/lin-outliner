@@ -1,11 +1,3 @@
----
-status: done
-priority: P1
-owner: cc-2
-created: 2026-06-10
-updated: 2026-06-12
----
-
 # Memory-theory realignment program
 
 **Shape: (b) a SET of independent complete features** — Step 0 + PR-1…PR-5,

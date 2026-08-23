@@ -1,19 +1,13 @@
----
-status: done
-owner: cc
-topic: provider-config-cleanup
----
+# Provider config cleanup + settings-UI polish
 
 > **Shipped.** Part A in PR #100 (core fix — deliberate rows, startup reconcile
 > guarded against keychain-lock / key-rotation / ambient-env data loss), Parts
 > B/C/D in PR #101 (provider-list tile + dividers, strong-neutral auth-sheet
 > primary, OAuth clarity + coverage guard, 32 display names + Xiaomi icon).
-> Design folded into `docs/spec/agent-pi-mono-implementation.md` (Part A) and
+> Design folded into `docs/spec/agent-model-runtime.md` (Part A) and
 > `docs/spec/design-system.md` (B/C/D). Follow-up surfaced post-merge: the OAuth
 > sheet keeps the strong primary on *Re-authenticate* in the connected state
 > instead of flipping it to *Done* — tracked separately as a fast-track fix.
-
-# Provider config cleanup + settings-UI polish
 
 ## Goal
 

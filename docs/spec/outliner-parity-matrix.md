@@ -1,6 +1,6 @@
 # Outliner parity matrix
 
-This matrix tracks the nodex outliner behavior that lin-outliner must preserve.
+This matrix tracks the nodex outliner behavior that Tenon must preserve.
 Every implemented row should pass through shared interaction resolvers before
 component-specific code handles the effect.
 
@@ -36,7 +36,7 @@ field row but still appear in the selectable-row order.
 
 ## Pointer And Focus
 
-| Event | nodex behavior | lin-outliner rule | Test coverage |
+| Event | nodex behavior | Tenon rule | Test coverage |
 | --- | --- | --- | --- |
 | Plain click row editor | Enter editing for that row and leave block selection. | Plain click does not create block selection. | `rowInteractions.test.ts` |
 | Cmd/Ctrl click row | Toggle row in block selection. | `resolveRowPointerSelectAction -> toggle`. | `rowInteractions.test.ts` |
@@ -52,7 +52,7 @@ field row but still appear in the selectable-row order.
 
 ## Selection Keyboard
 
-| Key | nodex behavior | lin-outliner effect | Test coverage |
+| Key | nodex behavior | Tenon effect | Test coverage |
 | --- | --- | --- | --- |
 | Escape | Clear selection and re-enter edit. | `clear_selection`. | `outlinerParity.test.ts` |
 | Enter | Edit first selected row. | `enter_edit`. | `outlinerParity.test.ts` |
@@ -72,7 +72,7 @@ field row but still appear in the selectable-row order.
 
 ## Global Keyboard
 
-| Key | nodex behavior | lin-outliner effect | Test coverage |
+| Key | nodex behavior | Tenon effect | Test coverage |
 | --- | --- | --- | --- |
 | Cmd/Ctrl+Shift+D with no row selection | Go to today's daily note. | `global.go_to_today` ensures today's date node and navigates the active panel. With a selection, `selection.duplicate` keeps owning the same chord. | `rowInteractions.test.ts`, `outliner-navigation-title.spec.ts`, `outliner-selection-keyboard.spec.ts` |
 | Cmd/Ctrl+Z / Cmd/Ctrl+Shift+Z / Cmd/Ctrl+Y | nodex overloads no-editor Cmd/Ctrl+Z for page history. | Lin keeps these as document undo/redo globally and in editors. | `rowInteractions.test.ts`, `outliner-navigation-title.spec.ts` |
@@ -85,7 +85,7 @@ Table uses the same nodes, typed field editors, commands, and trailing-draft
 materialization as Outline, but owns a two-dimensional focus surface. It does not
 replace or reinterpret the panel-level block-selection model.
 
-| Event | lin-outliner rule | Test coverage |
+| Event | Tenon rule | Test coverage |
 | --- | --- | --- |
 | Visible mode selector / View as > Table / Outline | Persist `table` / `list` on the owner's view definition; never copy or reparent children. Search and ordinary toolbars reuse one two-option mode component; the context submenu is a secondary text entry point. On any real non-Table-to-Table transition, refresh Search results with the live text index, then append missing columns for current-record custom fields in Schema order while preserving hidden configuration and existing finite order and never defaulting system fields. An unevaluable Search keeps its last results but still changes mode. A saved group rule is ignored in Table and restored in Outline. | `search-query-builder.spec.ts`, `table-view.spec.ts`, `core.test.ts`, `documentServiceTextSearchIndex.test.ts`, `rowInteractions.test.ts` |
 | Arrow keys on inactive cell | Move within the logical row/column matrix and clamp at edges. | `tableNavigation.test.ts`, `table-view.spec.ts` |
@@ -103,7 +103,7 @@ replace or reinterpret the panel-level block-selection model.
 
 ## Row Editing
 
-| Event | nodex behavior | lin-outliner rule | Test coverage |
+| Event | nodex behavior | Tenon rule | Test coverage |
 | --- | --- | --- | --- |
 | Enter at row end | Create an empty sibling after current row and focus it. | `handleEnter` + `create_node`. | `outliner-row-editing.spec.ts` |
 | Backspace at start of empty row | Trash/delete row and keep focus on the previous visible row, next visible row, or trailing draft if it was the only body row. | `resolveContentRowBackspaceAtStartIntent`. | `outliner-row-editing.spec.ts` |
@@ -121,7 +121,7 @@ replace or reinterpret the panel-level block-selection model.
 
 ## Context And Batch Operations
 
-| Operation | nodex behavior | lin-outliner rule | Test coverage |
+| Operation | nodex behavior | Tenon rule | Test coverage |
 | --- | --- | --- | --- |
 | Duplicate | Operate on top-level selected rows only. Plain field values may clone; reference/option-style values are filtered out instead of creating duplicate targets. | `selectedRootIds`, `selectionBatchActions`. | `outlinerParity.test.ts` |
 | Trash | Operate on top-level selected rows only. Field value rows route to `remove_field_value`, not generic trash, so option-pool cleanup still runs. A single ref-clicked ordinary reference may hard-delete the reference row even if locked; a ref-clicked reference-valued field child still uses `remove_field_value`. | `selectedRootIds`, `selectionBatchActions`. | `outlinerParity.test.ts`, `outliner-selection.spec.ts` |
@@ -136,7 +136,7 @@ replace or reinterpret the panel-level block-selection model.
 
 ## Trigger Inputs
 
-| Input | nodex behavior | lin-outliner rule | Test coverage |
+| Input | nodex behavior | Tenon rule | Test coverage |
 | --- | --- | --- | --- |
 | `>` in trailing input | Create inline field row. | `create_field`. | `rowInteractions.test.ts`, `outliner-triggers.spec.ts` |
 | `#` in trailing/editor | Open tag trigger selector. | `create_trigger_node` / editor trigger. | `rowInteractions.test.ts`, `outliner-triggers.spec.ts` |
@@ -153,7 +153,7 @@ preserved; they are now handled inline in the draft branches of `OutlinerItem`'s
 keymap, not the removed `resolveTrailingRow*` / `*EffectiveParent` /
 `shouldShowTrailingInput` helpers.
 
-| Event | nodex behavior | lin-outliner rule | Test coverage |
+| Event | nodex behavior | Tenon rule | Test coverage |
 | --- | --- | --- | --- |
 | Plain character in empty trailing draft | Eager-create a real node and focus it. | `OutlinerItem.applyTextPatch` (draft eager-materialize). | `outliner-trailing-expand.spec.ts` |
 | Empty Enter in trailing draft | Create an empty node in the current scope. | `OutlinerItem.handleEnter` draft branch (`materializeDraftAndAdvance`). | `outliner-trailing-expand.spec.ts` |

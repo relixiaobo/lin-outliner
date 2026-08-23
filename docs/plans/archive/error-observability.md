@@ -1,11 +1,3 @@
----
-status: done
-priority: P2
-owner: codex-3
-created: 2026-06-11
-updated: 2026-06-11
----
-
 # Error observability — collect, aggregate, and surface runtime failures
 
 **Shape: (a) ONE complete feature in one PR** (the PM's call: land the whole

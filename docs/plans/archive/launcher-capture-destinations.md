@@ -1,11 +1,4 @@
----
-status: superseded
-priority: P2
-owner: unassigned
-created: 2026-06-04
-updated: 2026-06-04
-related: lazy-like-global-launcher.md, launcher-ai-actions.md, unified-command-surface.md
----
+# Launcher Capture Destinations, Secondary Actions & Navigation
 
 > **Superseded by `unified-command-surface.md` (2026-06-04).** In the ratified
 > design Capture is a verb, the destination is a chip-rail target (D4), Go-to is a
@@ -15,8 +8,6 @@ related: lazy-like-global-launcher.md, launcher-ai-actions.md, unified-command-s
 > IPC param, recent-destinations persistence, navigation via
 > `LAUNCHER_NAVIGATE_TO_NODE_CHANNEL`) are folded into
 > `unified-command-surface.md` → "Preserved contracts". Kept as history.
-
-# Launcher Capture Destinations, Secondary Actions & Navigation
 
 ## Why this plan exists
 

@@ -1,13 +1,7 @@
----
-status: done
-owner: cc
-topic: settings-design-consistency
----
+# Settings UI design-consistency pass
 
 > **Shipped** in PRs #105 (WI-1 conformance) + #106 (WI-2 pane migration). Design
 > folded into `docs/spec/design-system.md`; this plan is kept as history.
-
-# Settings UI design-consistency pass
 
 ## Goal
 

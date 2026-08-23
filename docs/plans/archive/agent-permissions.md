@@ -1,11 +1,3 @@
----
-status: shelved
-priority: P0
-owner: relixiaobo
-created: 2026-05-27
-updated: 2026-05-30
----
-
 # Agent Permissions
 
 This plan is shelved. The current authority for agent permission implementation

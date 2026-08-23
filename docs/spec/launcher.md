@@ -178,7 +178,8 @@ this path at all**: `captureExternalContext` runs on every hotkey press, so a fe
 here would be one silent outbound request for whatever page the user is looking at.
 Reading page content is **not built**; when it is, it will be a separate explicit
 API invoked only after the user picks an action, never on this path
-(`docs/plans/unified-command-surface.md`). No browser extension is involved.
+([`unified-command-surface.md`](../plans/archive/unified-command-surface.md)). No
+browser extension is involved.
 Orchestrated by `captureExternalContext`
 (`src/main/context/contextCapture.ts`): frontmost app via JXA NSWorkspace, the
 active tab via the Accessibility addon (authoritative, by PID) with an AppleScript
@@ -264,7 +265,7 @@ The catalog, the admission path and the candidate policies live in
 ## Footer
 
 A slim hint bar, divider-free, with two zones (the anatomy ratified in
-`unified-command-surface.md` D6a):
+[`unified-command-surface.md`](../plans/archive/unified-command-surface.md) D6a):
 
 The launcher entry loads `button.css` / `input.css` alongside its own sheet: it
 renders the shared `Button` and `Input` primitives, and without their styles the

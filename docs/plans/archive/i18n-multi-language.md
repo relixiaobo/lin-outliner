@@ -1,11 +1,3 @@
----
-status: done
-priority: P1
-owner: relixiaobo
-created: 2026-06-04
-updated: 2026-06-04
----
-
 # Multi-Language (i18n) Support
 
 > **Shipped** in PR #110 (merge `702c80e`, 2026-06-04): typed message layer +

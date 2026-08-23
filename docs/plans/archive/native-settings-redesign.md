@@ -1,10 +1,4 @@
----
-status: done
-priority: P2
-owner: relixiaobo
-created: 2026-06-01
-updated: 2026-06-02
----
+# Native-Feel Settings Redesign
 
 > **Shipped in PR #69 (2026-06-02).** Providers-first (D-SCOPE) landed: inset
 > grouped-list primitive, native master-detail Providers, and the per-provider
@@ -15,8 +9,6 @@ updated: 2026-06-02
 > packaged-build visual QA of the config window's native presentation (24pt corner
 > per D7, sheet-attach / parent-dim); Permissions / Skills adopting the inset
 > primitive (D-SCOPE phase 3).
-
-# Native-Feel Settings Redesign
 
 Evolve the agent **Settings** surface (`src/renderer/ui/agent/AgentSettingsView.tsx`)
 toward the macOS System Settings *interaction* idiom — inset grouped lists,

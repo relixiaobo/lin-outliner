@@ -1,11 +1,3 @@
----
-status: done
-priority: P2
-owner: relixiaobo
-created: 2026-05-25
-updated: 2026-05-25
----
-
 # Paste Format Support
 
 Bring clipboard paste closer to nodex's structure-aware handling, but mapped

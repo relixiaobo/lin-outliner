@@ -1,12 +1,3 @@
----
-status: done
-priority: P1
-owner: codex
-phase: M3-B
-created: 2026-06-10
-updated: 2026-06-11
----
-
 # M3-B: cross-agent memory sharing + the cross-principal isolation gate
 
 **Shape: (a) ONE complete feature in one PR.** The sharing read-path and the

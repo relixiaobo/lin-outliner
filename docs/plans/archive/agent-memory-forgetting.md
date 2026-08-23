@@ -1,12 +1,3 @@
----
-status: done
-priority: P2
-owner: codex
-phase: memory-realignment PR-3 (after PR-2 / episodic layer)
-created: 2026-06-10
-updated: 2026-06-11
----
-
 # Memory D1: forgetting — the two-strength model
 
 **Shape: (a) ONE complete feature in one PR.** Part of the canonical memory

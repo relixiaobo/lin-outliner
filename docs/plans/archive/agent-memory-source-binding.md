@@ -1,11 +1,3 @@
----
-status: done
-owner: cc
-priority: P1
-phase: M3-Phase-1
-supersedes: []
----
-
 # Agent memory: source binding survives compaction
 
 **Shape: (a) ONE complete feature in one PR.** A correctness hardening + its

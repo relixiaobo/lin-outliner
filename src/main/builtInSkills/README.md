@@ -1,3 +1,5 @@
+# Built-in Skills
+
 This directory is the source root for Tenon-owned resource-backed built-in skills.
 
 Each Tenon-owned resource-backed skill lives in a child directory:

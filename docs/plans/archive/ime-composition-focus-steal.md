@@ -1,7 +1,3 @@
----
-status: done
----
-
 # IME composition hold + pendingInput handoff (issue #176)
 
 Shape: **ONE complete feature in one PR.** Fixes the P1 bug where an in-flight

@@ -1,11 +1,3 @@
----
-status: done
-priority: P1
-owner: relixiaobo
-created: 2026-05-28
-updated: 2026-06-03
----
-
 # Design System Rollout (two-theme · materials · shell redesign)
 
 ## Why this plan exists

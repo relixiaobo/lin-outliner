@@ -124,7 +124,7 @@ selectors at run time.
 - `bun run typecheck` + the guard tests green (the token/hex guard must still pass
   — fixes are token redefinitions, so it will).
 
-## Decisions deferred (defaults if the PM doesn't weigh in)
+## Open questions (defaults if the PM doesn't weigh in)
 
 These are taste calls best made with both themes on screen; recorded here with a
 default so the pass isn't blocked.
@@ -194,9 +194,9 @@ default so the pass isn't blocked.
   literals; status-color hex there is fine. Confirm the renderer guard's exception
   set still covers any new line (it should — same file, same shape as existing
   lifts).
-- **Line-number drift.** Layer 1/2 will move some cited `file:line`s. The table is
+- **Reference drift.** Layer 1/2 will move some cited implementation details. The table is
   a checklist of *tokens × surfaces*, not a patch — re-grep each token's consumers
-  at run time rather than trusting the recorded line.
+  at run time rather than trusting an old location.
 
 ## Checklist — the light + dark visual walk (per surface)
 

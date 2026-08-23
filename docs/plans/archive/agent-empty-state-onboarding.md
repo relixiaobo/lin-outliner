@@ -1,10 +1,4 @@
----
-status: done
-priority: P1
-owner: relixiaobo
-created: 2026-06-03
-updated: 2026-06-04
----
+# Agent Panel: Empty State + No-Provider Onboarding
 
 > **Shipped in PR #109.** E1 (removed the `SUGGESTED_PROMPTS` chips → one muted
 > greeting) + E2 (no-provider onboarding card + CTA to Settings › Providers +
@@ -12,8 +6,6 @@ updated: 2026-06-04
 > provider predicate was consolidated to a single `isProviderUsable` /
 > `resolveUsableActiveProvider` in `providerCatalog.tsx`. Empty-state design folded
 > into `docs/spec/design-system.md` (Content & States → Empty states, A6).
-
-# Agent Panel: Empty State + No-Provider Onboarding
 
 ## Goal
 

@@ -1,9 +1,3 @@
----
-status: done
-owner: cc
-branch: cc/unify-mention-language
----
-
 # Unify the inline mention language (node = text, file = monochrome icon + text)
 
 ## Goal

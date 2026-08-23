@@ -1,11 +1,3 @@
----
-status: done
-priority: P2
-owner: relixiaobo
-created: 2026-05-25
-updated: 2026-05-25
----
-
 # Code Block Editor
 
 Dedicated editor for `codeBlock` nodes. The type and `codeLanguage` field

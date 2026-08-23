@@ -1,11 +1,4 @@
----
-status: superseded
-priority: P2
-owner: unassigned
-created: 2026-06-04
-updated: 2026-06-04
-related: lazy-like-global-launcher.md, launcher-capture-destinations.md, unified-command-surface.md
----
+# Launcher AI Actions
 
 > **Superseded by `unified-command-surface.md` (2026-06-04).** "Ask AI" is now one
 > verb of the unified surface (decision **D5**: routes into the existing
@@ -14,8 +7,6 @@ related: lazy-like-global-launcher.md, launcher-capture-destinations.md, unified
 > one contract preserved into the unified build one-pager: the
 > `launcher.askAi({ prompt?, sourceNodeId? })` IPC shape + a focus-agent-surface
 > channel. Kept as history (path-not-taken: a launcher-local AI command/menu).
-
-# Launcher AI Actions
 
 ## Why this plan exists
 

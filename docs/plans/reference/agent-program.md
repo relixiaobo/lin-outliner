@@ -36,8 +36,9 @@ Already real; the rebuild sits **on top**, it does not re-implement these:
   `conversations/<id>`, `runs/<id>`, `agents/<id>`, and derived `indexes/`;
   payloads are scoped to conversation or run storage, `runs.json` indexes the
   runs anchored to each conversation, checkpoints replay from per-target offsets
-  plus `seq`, and `AgentEventStore.readEvents()` is the minimal join seam back to
-  the current reducer/runtime (`docs/spec/agent-event-log-rendering.md`).
+  plus `seq`, and `AgentEventStore.readEvents()` was the minimal join seam back to
+  that runtime. Current Thread persistence and projection are owned by
+  `docs/spec/agent-core.md` and `docs/spec/agent-thread-rendering.md`.
 - **Stable runtime identity** — the built-in assistant has a persisted
   `AgentIdentityRecord`, run meta carries `agentId`/trigger/fingerprint/retention,
   and message records carry a principal actor instead of the old implicit
@@ -61,9 +62,9 @@ Already real; the rebuild sits **on top**, it does not re-implement these:
   blocks + direct process execution + paired capability audit events; no folder
   acquisition, agent process sandbox, or unattended permission recovery
   (`docs/spec/agent-tool-permissions.md`).
-- **Subagents** — fresh / fork / background runs + sidechain transcripts + background
-  notifications + `Agent` / `AgentStatus` / `AgentSend` / `AgentStop`
-  (`docs/spec/agent-delegation-runtime.md`).
+- **Subagents** — delegated child Threads, fresh/fork/background execution,
+  sidechain transcripts, terminal delivery, and the `agent` / `agent_message` /
+  `task_stop` contract (`docs/spec/agent-subagent-threads.md`).
 - **Memory v1 + retrieval authority** — event-sourced per-agent durable memory
   (`memory.entry_*`), global-default retrieval with opt-in isolation tiers, and the single
   read-only `recall` tool (#152/#158). Write authority is exactly Settings/Profile UI +
@@ -250,9 +251,9 @@ single-host case (#164) but is a known design surface when multi-host/registry l
 > as open work. Only **automatic associative retrieval** stays deferred (data gate).
 
 A read-only code audit (storage / membership / multi-agent readiness) settled what M3
-actually builds on and re-sequenced it **debt-first** (PM-ratified 2026-06-10). The map
-of the whole subsystem now lives in `docs/spec/agent-architecture.md` (the 7 primitives +
-this status table).
+actually built on and re-sequenced it **debt-first** (PM-ratified 2026-06-10).
+Current subsystem ownership now lives in `docs/spec/README.md`; this section is
+the historical seven-primitive audit and milestone record.
 
 **Audit outcome — the foundation is clean; load-bearing debt is small and contained.**
 - ✅ **built:** three-ledger storage + write-time split (legacy flat `sessions/` deleted
@@ -281,8 +282,9 @@ reinvent.
 
 **Debt-first order (each phase pays its load-bearing debt before the next builds on it — A7 at roadmap level):**
 
-- **Phase 0 — settle the map.** `docs/spec/agent-architecture.md` (done) + this
-  reconciliation + ratify the peer model. ~no code.
+- **Phase 0 — settle the map.** The architecture map, now maintained through
+  `docs/spec/README.md`, plus this reconciliation and the ratified peer model.
+  ~no code.
 - **Phase 1 — fix the one load-bearing debt.** Harden #164 memory-source binding —
   ratified plan: `agent-memory-source-binding`. **Merged #178.**
 - **Phase 1.5 — storage clean-cut (PM-ratified 2026-06-10, full scope; merged #180,
@@ -398,6 +400,6 @@ the M-series is free to design it.
   later milestones should prefer feature-sized PRs now that the shared seams exist.
 - **Who configures whom** (cross-agent configuration scope: main-agent-first vs every
   specialist) — directional, owned by [[agent-conversation-model]] / [[agent-self-modification]].
-- **Event taxonomy ownership after M0.** M0 event/type facts are folded into
-  `docs/spec/agent-event-log-rendering.md`; this meta plan remains the milestone
-  map rather than the runtime contract.
+- **Event taxonomy ownership after M0.** Current event/type facts live in
+  `docs/spec/agent-core.md` and `docs/spec/agent-model-runtime.md`; this meta plan
+  remains the milestone map rather than the runtime contract.

@@ -1,12 +1,3 @@
----
-status: done
-priority: P1
-owner: cc
-phase: M3-A
-created: 2026-06-10
-updated: 2026-06-10
----
-
 # M3-A: working multi-agent Channel (membership + routing + peer reply)
 
 **Shape: (a) ONE complete feature in one PR (#179).** First implementation

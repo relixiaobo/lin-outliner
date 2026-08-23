@@ -1,11 +1,3 @@
----
-status: done
-priority: P2
-owner: relixiaobo
-created: 2026-06-03
-updated: 2026-06-04
----
-
 # Field Value Rows Join the Node Selection Model
 
 ## Goal

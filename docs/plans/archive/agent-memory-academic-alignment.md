@@ -1,12 +1,3 @@
----
-status: done
-priority: P2
-owner: cc-2
-created: 2026-06-10
-updated: 2026-06-10
-pr: 181
----
-
 # Memory: align docs, prompts, and tools with the academic model
 
 **Shape: (a) ONE complete feature in one PR.** Language surfaces only — zero

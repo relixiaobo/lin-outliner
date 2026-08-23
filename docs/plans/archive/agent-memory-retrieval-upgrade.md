@@ -1,12 +1,3 @@
----
-status: done
-priority: P3
-owner: codex
-phase: memory-realignment PR-4 (last; read side of the 3-level zoom)
-created: 2026-06-10
-updated: 2026-06-12
----
-
 # Memory D4: retrieval upgrade — lexical → hybrid
 
 **Shape: (a) ONE complete feature in one PR.** The acknowledged largest memory

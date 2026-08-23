@@ -1,11 +1,3 @@
----
-status: done
-priority: P1
-owner: cc-2
-created: 2026-06-10
-updated: 2026-06-11
----
-
 # Run unification: dissolve the subagent entity
 
 **Shape: (a) ONE complete feature in one PR** (internal build order below).

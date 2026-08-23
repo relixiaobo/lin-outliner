@@ -1,3 +1,5 @@
+# Definition child content: should Default Content / Pre-determined Options be a typed node?
+
 > **Resolution (2026-06-05).** No model change. Prior art (Tana / nodex) and lin
 > already converge on "options / template items are plain nodes referenced by id;
 > no dedicated type" — option B is rejected as *more* machinery. The PM's actual
@@ -8,8 +10,6 @@
 > `Add an option…`) — see `outliner-parity-matrix.md` + `definition-config.spec.ts`.
 > Shelved; reopen only if a concrete model pain (lost values on rename, per-option
 > colour/order) actually appears.
-
-# Definition child content: should Default Content / Pre-determined Options be a typed node?
 
 Raised by the PM while reviewing the tag/field definition config pages: the
 **"Default content"** block under a `tagDef`, and the **"Pre-determined

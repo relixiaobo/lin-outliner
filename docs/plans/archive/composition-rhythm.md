@@ -12,8 +12,8 @@ shared rhythm tokens and aligns one stray menu, so the Layer-2 primitives
 instead of re-inventing geometry (A7 — foundation before consumers).
 
 Source reports: `tmp/ui-review/F-content-surface-composition.md` (composition) and
-`tmp/ui-review/H-cross-surface-coherence.md` (coherence). Roadmap +
-boundary contract: `docs/plans/ui-quality-roadmap.md`.
+`tmp/ui-review/H-cross-surface-coherence.md` (coherence). The roadmap and
+boundary contract are archived at `docs/plans/archive/ui-quality-roadmap.md`.
 
 This plan is **CSS-only** (token declarations + re-pointing existing call sites at
 those tokens). It introduces no new mechanism, no TSX, no protocol change. It is

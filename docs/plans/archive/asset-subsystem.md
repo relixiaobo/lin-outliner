@@ -1,11 +1,4 @@
----
-status: done
-priority: P0
-owner: relixiaobo
-created: 2026-05-25
-updated: 2026-06-03
-shipped: PR #8
----
+# Asset Subsystem
 
 > **Status close-out (2026-06-03).** Shipped in PR #8: `AssetService`, the
 > `asset://` privileged protocol, and the `ingest_asset` / `lookup_asset` /
@@ -15,8 +8,6 @@ shipped: PR #8
 > plans (`file-attachments`, `embed-strategy`, `file-preview`) still link this by
 > path and its design is not yet folded into `docs/spec/` (an open A6 debt — a
 > dedicated asset/image spec should be written when the dependent plans land).
-
-# Asset Subsystem
 
 > **Progress (branch `cc/asset-subsystem-images`).** `AssetService`
 > (`src/main/assetService.ts`) ingests buffers/paths, sniffs MIME from magic

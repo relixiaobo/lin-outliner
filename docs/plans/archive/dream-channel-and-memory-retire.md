@@ -11,7 +11,7 @@ the now-vestigial Settings Memory surfaces left over from the #302 teardown.
   user never saw what it read, how it reasoned, or what it wrote. Make every run
   land in a **persistent Dream channel** whose recent process renders **inline**
   as the existing agent transcript (the #312 renderer,
-  `docs/spec/agent-event-log-rendering.md`): the run's `past_chats` reads →
+  `docs/spec/agent-thread-rendering.md`): the run's `past_chats` reads →
   reasoning → `node_*` writes → result are the channel's content. (This requires
   Dream to run as a **top-level run** in the channel, not a child run — see
   *Run-as-transcript* below.)

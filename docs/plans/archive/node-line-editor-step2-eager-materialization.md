@@ -1,11 +1,4 @@
----
-status: done
-priority: P1
-owner: relixiaobo
-created: 2026-05-26
-updated: 2026-05-26
-builds-on: node-line-editor-step1-extraction.md
----
+# Eager Materialization — the Tana-model trailing row (step 2)
 
 > **Codex review incorporated (2026-05-26).** Option A (client-*proposed* id,
 > core validates and owns; single id factory; `key === nodeId`) is confirmed as
@@ -82,8 +75,6 @@ builds-on: node-line-editor-step1-extraction.md
 > `TrailingInput.tsx` is no longer used by the main outliner but is retained for
 > the field-value surface. IME continuity + the materialize lifecycle require
 > running the app.
-
-# Eager Materialization — the Tana-model trailing row (step 2)
 
 > **Goal.** Typing any character into the empty trailing line — including the
 > first letter of a CJK IME composition — instantly turns that line into a real

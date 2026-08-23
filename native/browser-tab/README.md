@@ -3,7 +3,7 @@
 A minimal Node-API native addon that reads the **URL + title of the browser
 window the user is actually focused on**, targeting a specific process by **PID**
 through the Accessibility (AX) API. Used by the global capture launcher
-(`docs/plans/lazy-like-global-launcher.md`).
+([`lazy-like-global-launcher.md`](../../docs/plans/archive/lazy-like-global-launcher.md)).
 
 ## Why this exists
 

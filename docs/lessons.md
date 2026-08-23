@@ -1483,7 +1483,6 @@ substring match**: the residue guard written to outlaw `codex_app` used
 word character — i.e. it could not match the exact string the provider's 400 had
 named.
 
-
 ## A second source for an existing setting needs an invalidation rule, not just a fallback
 
 Remembering the last composer model selection (PR #566) gave "which provider

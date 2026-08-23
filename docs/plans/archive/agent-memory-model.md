@@ -1,12 +1,3 @@
----
-status: done
-priority: P1
-owner: relixiaobo
-executor: cc-2
-created: 2026-06-08
-updated: 2026-06-10
----
-
 # Agent Memory Model — Render, Dream & User-as-Agent (atop agent-data-model)
 
 This plan sits **on top of** [[agent-data-model]], which **owns** the memory persistence

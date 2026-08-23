@@ -1,7 +1,7 @@
 # Keyboard Accessibility & Interaction Semantics
 
 Layer-3 behavioral a11y, from UI review report E (`tmp/ui-review/E-keyboard-a11y.md`).
-The boundary contract is `docs/plans/ui-quality-roadmap.md` — this plan is purely
+The boundary contract is `docs/plans/archive/ui-quality-roadmap.md` — this plan is purely
 **behavioral** (focus management, ARIA roles/state, arrow-key navigation). It does
 **not** touch focus-ring CSS tokens, control shape, glass/radius, or any cosmetic
 layer; those belong to `design-system-consistency` / `composition-rhythm` / the

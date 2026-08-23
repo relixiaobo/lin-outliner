@@ -25,7 +25,7 @@ other source readers are deferred until a source-specific plan owns them.
 This plan is about URL/app **classification + the right source `kind` + capture
 framing**; rich fields fill in when their source-specific readers land.
 
-## Status: what's done
+## Current baseline
 
 | Provider | kind | Status |
 |---|---|---|

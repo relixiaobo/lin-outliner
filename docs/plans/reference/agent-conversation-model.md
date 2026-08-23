@@ -54,8 +54,8 @@ isolation gate (M3-B), per-agent POV (M3-C), and parallel execution (see `agent-
   simplification, not the product model — co-addressees are semantically
   independent (the independence cut), so concurrent execution +
   completion-order delivery changes no agent's words, only timing. It is now
-  planned as a pure execution-layer upgrade:
-  `docs/plans/agent-channel-parallel-runtime.md`.
+  recorded in the shipped execution-layer plan:
+  `docs/plans/archive/agent-channel-parallel-runtime.md`.
 - **Proactive / initiative agents** (Cumora-style). Rejected — wrong for a
   focused outliner (AGENTS.md B10). Agents act only when addressed. **Carve-out:**
   the deferred completion notice of a *user-initiated* background task is **not**
@@ -208,8 +208,8 @@ The facts the rest of *this* plan leans on:
 - **Per-turn assembly** orders context by volatility (stable prefix → one volatile tail,
   never mutated), **mixed-resolution** (recent turns join the run log into a valid
   pi-agent-core transcript; old segments render as summaries — PM-ratified), driven
-  through two seams: READ `deriveRuntimePiMessages` (`agentRuntime.ts:2414`), WRITE
-  `handlePiAgentEvent` (`:2178`).
+  through two seams: READ `deriveRuntimePiMessages` (`agentRuntime.ts`), WRITE
+  `handlePiAgentEvent` in the same historical runtime.
 
 ### The durable stores (summary)
 
@@ -235,25 +235,25 @@ memory (accumulated)   the memory line — visible, editable, deletable
   joins; a conversation adds a task overlay (room name / focus) but **never
   overrides who the agent is** — exactly symmetric with the memory line. Model selection therefore
   moves from a global setting onto the **agent profile**. Sequencing: real
-  `AgentDefinition` agents already carry these fields (`types.ts:702`), so per-agent
+  `AgentDefinition` agents already carry these fields (`types.ts`), so per-agent
   model/config is **near-free at the type level** for specialist agents (the fields
   exist) — but verify the runtime actually threads `model`/`effort` into the
   conversation-turn assembly, not just at subagent spawn. The **main agent**'s model
-  today resolves via `resolveProviderModel`/`resolveModel` (`agentRuntime.ts:1741`,
-  `:3663`), wired in `createConfiguredAgent` (`:3276`), so its true per-identity
+  today resolves via `resolveProviderModel`/`resolveModel` (`agentRuntime.ts`,
+  historically wired through `createConfiguredAgent`), so its true per-identity
   binding rides the **same P3 registry unification** as §3 (until then it uses the
   default/global model).
 - **v1 does NOT route the main agent through `AgentDefinitionRegistry`.** The main
   agent's construction spans 7 session-scoped layers an `AgentDefinition` cannot
-  express (multi-section prompt `agentSystemPrompt.ts:15`; per-turn reminders
-  `agentRuntime.ts:640`; permission classifier + approval handler ~`:3310,3345`;
-  context manager 8-callback `:302`; provider/model/OAuth (`createConfiguredAgent :3276`); compaction + `/compact`
-  `:388,625`). What v1 needs is far smaller: **a stable identity record** (the `agentId`
+  express (multi-section prompt `agentSystemPrompt.ts`; per-turn reminders
+  `agentRuntime.ts`; permission classifier + approval handler; context manager
+  callbacks; provider/model/OAuth through `createConfiguredAgent`; compaction +
+  `/compact`). What v1 needs is far smaller: **a stable identity record** (the `agentId`
   tuple `sourceKind:sourceInstanceId:name`, not a bare display name — [[agent-data-model]]
   §3) that the memory line attaches to. Promoting the main agent to a real on-disk
   definition is deferred to P3 (when there is genuinely more than one agent).
 - **Memory is not in `.agents/`.** Agent definitions there are read-only, loaded
-  once at startup and cached (`agentSubagents.ts:1141,1255`), and may be
+  once at startup and cached (`agentSubagents.ts`), and may be
   git-tracked / dual-scoped (user `~/.agents` vs project `<ws>/.agents`). Mutable
   runtime memory must live in `userData/agent/agents/<agentId>/memory/`, keyed by a
   **stable identity tuple** (`agentId` = `sourceKind:sourceInstanceId:name`, where a project's
@@ -296,7 +296,7 @@ Thin: no memory, no traveling identity, no node binding. Don't give a conversati
 a memory: a channel summary remains a conversation-owned distillation node until a
 runtime memory writer reads the raw evidence and records an agent-owned
 `MemoryEntry` with provenance. The branch structure (`childrenByParentId`, `selectedLeafMessageId`,
-`agentEventLog.ts:515,516`) is a **single-agent retry affordance** — keep it for
+`agentEventLog.ts`) is a **single-agent retry affordance** — keep it for
 DMs; rooms are linear (§Adversarial review §2).
 
 **Addressing (`@`) is scoped to members.** The `@` candidate set is exactly the
@@ -406,9 +406,9 @@ It composes with the reference projects rather than copying any one:
 ### Outline (ambient artifact)
 
 Unchanged. Agents read/write any node via the command surface with `origin:'agent'`
-(`agentNodeTools.ts:129`). Every agent perceives live outline state + the user's
+(`agentNodeTools.ts`). Every agent perceives live outline state + the user's
 current focus, supplied per-turn (already via `AgentUserViewContext`,
-`agentTypes.ts:79`). No conversation owns or binds a node; "where work happens" is
+`agentTypes.ts`). No conversation owns or binds a node; "where work happens" is
 the live moving focus.
 
 ### Result routing — reply, node, or file
@@ -420,9 +420,9 @@ in the ChatGPT "reply = result" model — §Background):
   command surface (`origin:'agent'`); **ambient**.
 - **File** — anything whose natural form is a file (PPT, PDF, spreadsheet, image,
   export, code). Written via the existing file tools
-  (`file_read/glob/grep/edit/write`, `agentToolPermissionRules.ts:212-245`) into the
-  local workspace (`localFileRoot`, `agentTools.ts:178`); binary outputs already
-  save-to-disk-and-reference (`agentWebTools.ts:358`). **Non-ambient** — read on
+  (`file_read/glob/grep/edit/write`, `agentToolPermissionRules.ts`) into the
+  local workspace (`localFileRoot`, `agentTools.ts`); binary outputs already
+  save-to-disk-and-reference (`agentWebTools.ts`). **Non-ambient** — read on
   demand. We do **not** force file-shaped work into nodes.
 - **Reply** — conversational / ephemeral output (answers, explanations, clarifying
   questions, brainstorming). Here the reply *is* the value.
@@ -446,11 +446,11 @@ answer / explanation / brainstorm?* → reply. The agent decides; the user overr
 - **Per-agent, unified, private, relevance-retrieved** (Generative Agents
   memory-stream + reflection; Letta). Not partitioned per conversation — failing
   to recall is "not retrieved," not "locked."
-- **Injected ADDITIVELY, via the per-turn reminder stack** (`agentRuntime.ts:640`),
+- **Injected ADDITIVELY, via the per-turn reminder stack** (`agentRuntime.ts`),
   alongside environment/outliner/user-view reminders — **not** by rewriting the
   transcript in `deriveRuntimePiMessages` / `transformContext`. The transcript
   derivation and the compaction / tool-result-budget machinery
-  (`agentRuntimeContext.ts:153-372`) assume the full active-path transcript is
+  (`agentRuntimeContext.ts`) assume the full active-path transcript is
   present; replacing the transcript with memory desyncs them (§Adversarial review
   §1). Within-conversation shrinking stays the job of compaction; cross-conversation
   durability is the job of the memory line. They are complementary layers.
@@ -477,7 +477,7 @@ answer / explanation / brainstorm?* → reply. The agent decides; the user overr
 - **Dream / extraction writer (M2).** A dedicated runtime-owned worker may use a
   restricted model call, but it is **not** the main agent's inline tool and **not**
   the implicit `fork` (which is `tools:['*']`, inherits the parent prompt,
-  persists a transcript, and notifies the parent; `agentSubagents.ts:1219`). It
+  persists a transcript, and notifies the parent; `agentSubagents.ts`). It
   reads bounded raw conversation/run spans, proposes add/update/forget memory
   events, dedupes/conflict-checks against the current memory line, and appends
   through the same runtime memory API with provenance.
@@ -554,7 +554,7 @@ in [[agent-skills-authoring]]; two facts this plan relies on:
 
 - **One unified library, many bindings.** Skills live in shared stores
   (`built-in` / `user` / `project` / `dynamic`), not per-agent folders; an agent
-  *binds* the ones it carries by name (`AgentDefinition.skills`, `agentSubagents.ts:640`).
+  *binds* the ones it carries by name (`AgentDefinition.skills`, `agentSubagents.ts`).
   A Channel that needs skill X staffs a member who binds X — never a room-owned skill
   bag (that would reintroduce per-session config). So the coordinator's "who can do X?"
   is answerable per-member from binding lists (§Channel routing).
@@ -577,18 +577,18 @@ specialist self-configuring from the start** (Open questions).
 > absorbed and deleted in #445 (`native-turn-kernel`); the per-turn loop is now
 > in-repo (`src/main/agent/runtime/kernel/`, driven by
 > `runtime/PiTurnExecutor.ts`), and only the `@earendil-works/pi-ai` transport
-> remains a dependency. The file references below (`agentRuntime.ts:NNN`) are
-> dead — that file no longer exists. **The design this section argues is
+> remains a dependency. The historical `agentRuntime.ts` references below are
+> dead because that file no longer exists. **The design this section argues is
 > unaffected and in fact now stronger**: the split is still stateless per-turn
 > loop below, everything stateful in Tenon above; we simply own both sides of
 > it. Current behavior is `docs/spec/agent-model-runtime.md`. Re-anchor any
-> line reference against real code before relying on it.
+> implementation reference by symbol against real code before relying on it.
 
 The redesign lives **above** the engine. The engine runs one
 turn (assembled messages + tools + model → loop) and exposes `transformContext`.
 **Tenon already owns history and context**: `session.agent.state.messages` is
-assigned from Tenon's `deriveRuntimePiMessages` (`agentRuntime.ts:690,716,741,765`);
-`transformContext` delegates to Tenon's context manager (`:1092`). So the engine
+assigned from Tenon's `deriveRuntimePiMessages` (`agentRuntime.ts`);
+`transformContext` delegates to Tenon's historical context manager. So the engine
 owns no sessions, no history, no memory — the clean split holds: **engine =
 stateless per-turn loop; Tenon = everything stateful above it.**
 
@@ -636,9 +636,9 @@ why a long task never blocks chat.
 not a freebie** (the §4 "reuse the fork" caution applies; the additions below + the
 `AgentSessionState`-singleton split of §2 are substantial): background /
 detached subagent runs with an `agent_id` addressable via `AgentStatus / AgentSend /
-AgentStop` (`agentSubagents.ts:86-117,206`); a terminal-state callback
-`notifyTerminalRun` (`:473,718`); a completion queue `pendingSubagentNotifications`
-drained **only when the session is idle** (`agentRuntime.ts:1356,1364-1382`); a
+AgentStop` (`agentSubagents.ts`); a terminal-state callback
+`notifyTerminalRun`; a completion queue `pendingSubagentNotifications`
+drained **only when the session is idle** (`agentRuntime.ts`); a
 background-task registry with `running/completed/failed/stopped` plus unified
 `task_stop` dispatch for shell handles and Agent IDs; `AbortController` cancellation
 (`agentStreamAbort.ts`).
@@ -701,7 +701,7 @@ folds / invalidates notifications; we only batch today).
 `notification.created` anchored to its origin conversation (`kind` =
 `task_completed|failed`, `source = {subagent}`; a user-initiated **stop** raises no
 notification — it is the user's own action), idempotent and restart-safe
-(`docs/spec/agent-event-log-rendering.md` §Notification + attention projection). The
+(`docs/spec/agent-thread-rendering.md` §Pagination And Notifications). The
 notification id keys on the completion instant (`notification-<runId>-<completedAt>`)
 so a **resumed** detached run that finishes again is delivered, not dropped as a stale
 duplicate. A subagent left **running when the app dies** is marked failed AND raises
@@ -778,7 +778,7 @@ memory work (hermes whitelists memory+skill tools; cc-2.1 Dream) — exactly §4
 "runtime-owned restricted worker, not a full `tools:['*']` fork."
 
 **Hooks (forward-pointer, out of scope).** Model the task/notification *trigger* as
-a **typed domain event on the existing `AgentRuntime` emitter** (`agentRuntime.ts:1707`).
+a **typed domain event on the existing `AgentRuntime` emitter** (`agentRuntime.ts`).
 A future **hooks** subsystem (user-registered, pluggable handlers) is a *separate
 consumer of that same bus* — **shared bus, separate dispatch + trust**. Two
 differences a shared queue cannot paper over: hooks include **interceptors**
@@ -808,7 +808,7 @@ axes that must never be conflated:
 - *Capability* — what a given agent may **do** (its tools/permissions) —
   legitimately **differs per agent**, and is where safety lives. A consulted
   agent runs under **its own** identity, tools, permissions, memory and judgment
-  (`agentDelegation.ts:615-620`); the caller borrows nothing. A read-only agent
+  (`agentDelegation.ts`); the caller borrows nothing. A read-only agent
   consulting a powerful one gains no power — it gets the powerful agent's
   considered result, and that agent stays accountable for using its own
   authority. The consultee's risky actions still gate through **its own**
@@ -819,7 +819,7 @@ axes that must never be conflated:
 
 **2. Trust is set at the team level.** The user's configured agents are the team;
 within the team any agent may consult any agent. `disabledAgents` is the
-team-roster switch (an agent is on/off — `agentDelegation.ts:603-605`), **not** a
+team-roster switch (an agent is on/off — `agentDelegation.ts`), **not** a
 per-pair gate. No allow-list machinery.
 
 **3. A consultation is a sidechain, not a membership change.** It is a fresh
@@ -833,11 +833,11 @@ list-surface) and is **deferred**; v1 consultation is one-shot runs — **no sto
 relationship and no new conversation `kind`**.
 
 **Already true (no build).** Fresh-child identity/permissions/memory-owner
-(`agentDelegation.ts:615-620`), per-principal Dream isolation, sidechain
+(`agentDelegation.ts`), per-principal Dream isolation, sidechain
 rendering + the Task Panel's observability, and the runaway guards — depth
 (`DEFAULT_MAX_DELEGATION_DEPTH = 3`), cycle detection (ancestry path), concurrency
 cap (`MAX_CONCURRENT_CHILD_RUNS = 4`) — are all in place
-(`agentDelegation.ts:1197-1228`). These guards are exactly what makes ungated
+(`agentDelegation.ts`). These guards are exactly what makes ungated
 contact safe.
 
 **Build note (shipped — `ungate-contact`).** `agent.delegate.spawn` now defaults to
@@ -876,12 +876,12 @@ cache-specific proof.
 Verified against the engine. pi-ai uses Anthropic incremental caching —
 `cache_control` is placed on the system prompt, the last tool definition, and the
 **last user message's last block** (verified in the compiled provider,
-`@earendil-works/pi-ai/dist/providers/anthropic.js:892-900,933`; upstream
-`pi-mono/packages/ai/src/types.ts:410`), i.e. the breakpoint sits at the **tail**. The per-turn reminders (and the new MEMORY RECALL)
+`@earendil-works/pi-ai/dist/providers/anthropic.js`; upstream
+`pi-mono/packages/ai/src/types.ts`), i.e. the breakpoint sits at the **tail**. The per-turn reminders (and the new MEMORY RECALL)
 are pushed into the **current user turn's content** (`buildUserPromptMessage`,
-`agentRuntime.ts:2673`) — the tail — and are **frozen into the persisted event**
-(`appendUserPromptEvent`, `:662`); history replays verbatim (`deriveRuntimePiMessages`,
-`:2414`), never re-rendered. Consequences:
+`agentRuntime.ts`) — the tail — and are **frozen into the persisted event**
+(`appendUserPromptEvent`); history replays verbatim through
+`deriveRuntimePiMessages`, never re-rendered. Consequences:
 
 - **P1 (memory via reminder stack) — cache-neutral-to-safe.** Memory recall lands
   *after* the cacheable prefix; frozen history keeps that prefix byte-stable turn
@@ -891,9 +891,9 @@ are pushed into the **current user turn's content** (`buildUserPromptMessage`,
   recompute the whole suffix. hermes makes the same call for the same stated reason —
   it injects memory into the user message *to preserve prompt cache*. **Caveat (must
   hold):** the provider only marks `cache_control` when the *last content block* of
-  the user turn is `text`/`image`/`tool_result` (`anthropic.ts:1160-1164`), and
+  the user turn is `text`/`image`/`tool_result` (`anthropic.ts`), and
   `buildUserPromptMessage` appends attachments after the prompt
-  (`agentRuntime.ts:2681-2695`) — so MEMORY RECALL must be a text block and nothing
+  (`agentRuntime.ts`) — so MEMORY RECALL must be a text block and nothing
   non-cacheable may end the turn, or the marker silently drops and the turn misses
   cache.
 - **`session`→`conversation` rename — zero impact.** It changes storage keys, not
@@ -905,7 +905,7 @@ are pushed into the **current user turn's content** (`buildUserPromptMessage`,
   system prompt *and* the per-agent POV-derived array (`forAgentId`, §2), so the
   prefix changes → **cache miss on each hand-off**; an agent's prefix goes cold while
   others hold the floor. Mitigate with **long cache TTL** (`cache_control.ttl: "1h"` /
-  24h retention, `ai/src/types.ts:414,436`) and **deterministic POV derivation** (a
+  24h retention, `ai/src/types.ts`) and **deterministic POV derivation** (a
   returning agent's prefix must reproduce byte-for-byte). Inherent to interleaving N
   prompts — a cost to bound, not a bug to fix.
 
@@ -928,17 +928,17 @@ design response:
 
 ### §1 — "Memory replaces transcript replay via the transformContext seam" — REJECTED
 
-The context manager (`agentRuntimeContext.ts:153-372`) is not a thin seam; it does
+The context manager (`agentRuntimeContext.ts`) is not a thin seam; it does
 work that **assumes the full active-path transcript is materialized**:
 
 - **Reactive compaction** preserves `session.lastSubmittedUserPrompt` and needs the
-  live message array (`:202-224`).
+  live message array.
 - **Tool-result budgeting** initializes `toolResultBudgetState.seenIds` by scanning
-  the full active path (`agentRuntime.ts:1084`) and re-scans each turn
-  (`agentRuntimeContext.ts:303-356`) — replacing the transcript middle with memory
+  the full active path (`agentRuntime.ts`) and re-scans each turn
+  (`agentRuntimeContext.ts`) — replacing the transcript middle with memory
   makes IDs mismatch → missed slimming / undefined behavior.
 - **Time-based microcompaction** depends on all assistant messages being in the
-  active path (`:358-372`).
+  active path.
 - **Compaction** preserves recent messages verbatim and records a `source`
   down-pointer range (`fromMessageId` → `throughMessageId`) from the active path;
   skipping events diverges the branch pointer from the materialized messages.
@@ -946,7 +946,7 @@ work that **assumes the full active-path transcript is materialized**:
   is a hidden downstream constraint a per-turn-varying transcript would thrash
   (quantified in §Prompt cache impact).
 
-**Response:** memory is **additive via the reminder stack** (`agentRuntime.ts:640`),
+**Response:** memory is **additive via the reminder stack** (`agentRuntime.ts`),
 which is the existing, safe, per-turn injection path that does not desync any of
 the above. The transcript and compaction stay exactly as they are. This is the
 single most important correction in this revision — the earlier "memory replaces
@@ -960,14 +960,14 @@ history.)
   `AgentEventMessageRecord` carries `actor`, and runtime-authored messages use the
   stable built-in assistant principal instead of implicit `'pi-mono'`. P3 POV work
   should build directly on that fact, not add a compatibility mapping layer.
-- **POV derivation doesn't exist.** `deriveRuntimePiMessages` is a 1:1 role map
-  (`:2414`); pi-agent-core expects `user→assistant→toolResult→user` alternation.
+- **POV derivation doesn't exist.** `deriveRuntimePiMessages` is a 1:1 role map;
+  pi-agent-core expects `user→assistant→toolResult→user` alternation.
   An N-party room needs other members' turns mapped to `user`-role inputs from each
   agent's POV — a new `forAgentId` parameter on derivation.
 - **Concurrency collides on shared session state.** `activeRunId`,
   `toolCallMessageIds`, `toolOutputPayloads`, `lastSubmittedUserPrompt`,
   `skillRuntime`, and the single `selectedLeafMessageId` are all per-session
-  singletons (`agentRuntime.ts:240-270`). Concurrent multi-agent runs would clobber
+  singletons (`agentRuntime.ts`). Concurrent multi-agent runs would clobber
   each other.
 
 **Response:** P3 does **sequential turn-taking** (one member runs at a time, à la
@@ -975,25 +975,24 @@ Rebecca @mention chains), which dodges *all* the concurrency collisions — they
 concurrency bugs, not multi-agent bugs. **(2026-06-11: dodging was the M3-A
 stage; the collisions are now scheduled to be repaid — per-run active state,
 scoped stop, shared-state audit — in
-`docs/plans/agent-channel-parallel-runtime.md`.)** Who actually replies is resolved by a
+`docs/plans/archive/agent-channel-parallel-runtime.md`.)** Who actually replies is resolved by a
 **coordinator Member** (§Channel routing): explicit `@` addresses directly,
 un-addressed messages fall to the coordinator, hand-offs are sequential relays. The
 genuinely required changes shrink to: **per-agent POV derivation** (on top of the P1
-`actor` field) + threading per-member `agentId`, and **keep branching DM-only (rooms
-are linear)** so no per-agent branch pointers are needed. The foundation is extensible (`childrenByParentId` is already
-arrays `:515`; the event log is immutable), so this is "extend + parameterize," not
+  `actor` field) + threading per-member `agentId`, and **keep branching DM-only (rooms
+are linear)** so no per-agent branch pointers are needed. The foundation is extensible
+(`childrenByParentId` is already arrays; the event log is immutable), so this is "extend + parameterize," not
 "rewrite." Still a real subsystem — hence P3.
 
 ### §3 — "Promote the main agent to AgentDefinition is small" — OVERSTATED ~10×
 
 The main agent is constructed across 7 session-scoped layers that
-`AgentDefinition` (`types.ts:702`) cannot express: multi-section system prompt
-(vs single `body`, `agentSystemPrompt.ts:15`); 5 dynamic per-turn reminders
-(`agentRuntime.ts:640`); session-bound skill/subagent runtimes (`:929`); permission
-classifier + approval handler + session allow-rules (`:3310,3345`); the 8-callback
-context manager (`:302`); provider/model/OAuth resolution (`resolveModel :3663` /
-`createConfiguredAgent :3276`); `/compact` +
-reactive retry + main-loop steering (`:388,625,3496`). Estimated ~1–2k LoC,
+`AgentDefinition` (`types.ts`) cannot express: multi-section system prompt
+(vs single `body`, `agentSystemPrompt.ts`); 5 dynamic per-turn reminders
+(`agentRuntime.ts`); session-bound skill/subagent runtimes; permission classifier,
+approval handler, and session allow-rules; the context manager; provider/model/OAuth
+resolution through `resolveModel` and `createConfiguredAgent`; `/compact`, reactive
+retry, and main-loop steering. Estimated ~1–2k LoC,
 <30% reusable.
 
 **Response:** v1 does **not** do this. The actual need is "the main agent has a
@@ -1005,7 +1004,7 @@ factory are already shared/parameterized.
 
 ### §4 — "A cheap forked subagent extracts memory" — NOT what fork is
 
-The implicit `fork` (`agentSubagents.ts:1219`) is `tools:['*']`, inherits the
+The implicit `fork` (`agentSubagents.ts`) is `tools:['*']`, inherits the
 parent system prompt, clones the parent messages, persists a transcript, can run in
 background, and notifies the parent on completion. It is **not** restricted,
 **not** prompt-cache-sharing (separate API calls / context windows), **not**
@@ -1074,7 +1073,7 @@ are removed as terminology/redundancy cleanup (M1/M2) — **not** the §3 main-a
 registry refactor, which stays P3:
 
 - **Retire `general`.** Post-#167 `createGeneralAgentDefinition` is an empty-body
-  built-in (`agentSubagents.ts:1295`) — identical to "the primary identity run
+  built-in (`agentSubagents.ts`) — identical to "the primary identity run
   fresh." A `fresh` task with no explicit runner, the skill default, and the
   unknown-type fallback all resolve to the primary identity; `general` and the
   `general-purpose` alias are deleted (no back-compat).
@@ -1083,7 +1082,7 @@ registry refactor, which stays P3:
   roster); a `fork` task is the caller's identity + prepared context + a fork
   directive (memory → caller, per `resolveSubagentMemoryOwner`).
 - **Capability is profile-only.** Drop the `Agent` tool's per-call `model`/`effort`
-  overrides (`agentSubagents.ts:635-636`); a runner's model/effort/tools/permission/
+  overrides (`agentSubagents.ts`); a runner's model/effort/tools/permission/
   `maxTurns` come from its profile — consistent with model moving onto the agent
   profile (§Agent).
 
@@ -1201,7 +1200,7 @@ decision (Open questions); the single-agent `config` tool is [[agent-self-modifi
   append surface, not a privileged file path, and not a model-visible foreground-agent
   tool.** The earlier "permission-exempt `file_write`/`edit` into the memory store" is
   dropped — the file tools are realpath-jailed to `workspace.root`
-  (`agentLocalTools.ts:2207`) and cannot reach `userData/agent/`, and whole-file
+  (`agentLocalTools.ts`) and cannot reach `userData/agent/`, and whole-file
   rewrite + `fileWriteChains` serializes I/O but not logical *lost-update*. The
   2026-06-07 revision pins the final writer set to Settings/Profile UI and
   Dream/extraction only: no model-visible memory write tool and no direct
@@ -1274,7 +1273,7 @@ P1 — conversations + memory foundation
 - [x] Inline memory write instructions in the agent prompt shipped during the
   M1 foundation, but are no longer the target write architecture and should be
   removed cleanly before further memory consumers.
-- [x] Memory recall added to the per-turn reminder stack (`agentRuntime.ts:640`); index budget bounded; `sources` down-pointer recorded (for the visible guard, not retrieval scoping).
+- [x] Memory recall added to the per-turn reminder stack (`agentRuntime.ts`); index budget bounded; `sources` down-pointer recorded (for the visible guard, not retrieval scoping).
 - [x] Profile UI: view / edit / forget memory.
 - [x] M0.5 clean cut: rename/remove remaining agent `session*` protocol/index/API
   bridge debt, then wipe dev userData (format change, no migration).

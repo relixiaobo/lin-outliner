@@ -1,11 +1,3 @@
----
-status: superseded
-priority: P2
-owner: relixiaobo
-created: 2026-06-08
-updated: 2026-06-08
----
-
 # Agent / Task Model — SUPERSEDED (redirected into the agent program)
 
 **Status: superseded (2026-06-08).** This began as a follow-on from

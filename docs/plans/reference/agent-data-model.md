@@ -119,7 +119,7 @@ type Principal =
   | { type: 'agent'; agentId: string };
 type Actor = Principal
   | { type: 'tool'; toolName: string; toolCallId: string }
-  | { type: 'system' };                 // matches AgentActor (agentEventLog.ts:15)
+  | { type: 'system' };                 // matches AgentActor (agentEventLog.ts)
 // invariant: a message's actor ∈ members ∪ {system}; addressedTo ⊆ members
 ```
 
@@ -152,7 +152,7 @@ type MessageEvent =
       messageId: string; parentMessageId?: string;          // branch tree (DM-only retry)
       role: 'user' | 'assistant';                           // tool calls/results are execution → run log (§3 run), never here
       addressedTo?: Principal[]; runId?: string;             // runId = which run produced this assistant message
-      content: AgentPersistedContent[];                      // ARRAY (matches AgentEventMessageRecord, agentEventLog.ts:451)
+      content: AgentPersistedContent[];                      // ARRAY (matches AgentEventMessageRecord, agentEventLog.ts)
       forwarded?: { fromConversationId: string; sourceMessageIds: string[]; bundleId: string } })  // combined-forward provenance
   | (MessageEventBase & { type: 'message.edited'; messageId: string; content: AgentPersistedContent[] })
   | (MessageEventBase & { type: 'member.added' | 'member.removed'; member: Principal })   // membership history (the authority for meta.json)
@@ -335,7 +335,7 @@ interface MemoryEntry {                 // projection of the principal's memory/
   createdAt: number;
 }
 // ── Write surface (PM-ratified D1) — NOT file_write/edit ──────────────────────────────────
-//   The local file tools are realpath-jailed to workspace.root (agentLocalTools.ts:2207), so they
+//   The local file tools are realpath-jailed to workspace.root (agentLocalTools.ts), so they
 //   cannot reach userData/agent/ at all, and whole-file rewrite + fileWriteChains still risks lost-update.
 //   Instead: a RUNTIME-OWNED memory-append API emits memory.entry_added/updated/removed events → projection.
 //   Append-only (no lost-update), schema-checked, serialized, and prompt-free (a runtime primitive, not a
@@ -367,7 +367,7 @@ raw messages (conversation log, leaves)
 - **One operation ("summarize a span") reused at three scopes**, each rung feeding the
   next. Today's `compaction.completed` already carries the backbone —
   a `source` down-pointer range (`fromMessageId` → `throughMessageId`) over a
-  **retained** raw span (`agentEventLog.ts:822-826,968-978`), non-destructive; the
+  **retained** raw span (`agentEventLog.ts`), non-destructive; the
   change is to recognize it as a *multi-consumer* node.
 - **The ownership boundary crosses at episode production, not at context summaries.**
   Segment/conversation summaries are the *conversation's* objective compression
@@ -431,12 +431,12 @@ the stored vocabulary to `conversation.*` / `conversationId`.
 |---|---|---|
 | `seq` | in-stream ordering authority (per stream; runs/conversations have no global order) | replay order, branch pointers |
 | `createdAt` | epoch ms UTC on every event | display, retention, time-range navigation (`index.json`), approximate cross-stream merge |
-| in-content `UTC time:` | injected into the **current** user message (`agentRuntime.ts:2846`) | so the model perceives "now" — lives in the volatile tail, never the cached prefix |
+| in-content `UTC time:` | injected into the **current** user message (`agentRuntime.ts`) | so the model perceives "now" — lives in the volatile tail, never the cached prefix |
 
 ### 7. Write path — what one turn produces
 
 You address agent A in conversation C → A's runtime (pi-agent-core, stateless) runs one
-loop → the **write seam** `handlePiAgentEvent` (`agentRuntime.ts:2178`) routes the
+loop → the **write seam** `handlePiAgentEvent` (`agentRuntime.ts`) routes the
 emitted `PiAgentEvent` stream:
 
 ```
@@ -454,7 +454,7 @@ detail is in the run log.
 ### 8. Read path — per-turn assembly (the cache-critical part)
 
 pi-agent-core replays whatever `Message[]` we hand it; the **read seam**
-`deriveRuntimePiMessages` (`agentRuntime.ts:2414`) builds it. The load-bearing
+`deriveRuntimePiMessages` (`agentRuntime.ts`) builds it. The load-bearing
 invariant:
 
 > **Order context by volatility — most-stable first — with exactly ONE volatile region
@@ -476,7 +476,7 @@ Layers:
 Three rules this forces:
 
 - **Cache discipline.** The prefix is append-only (Anthropic caching is prefix-based —
-  `cache_control` on system / last tool / last user message, `anthropic.js:892-900,933`,
+  `cache_control` on system / last tool / last user message, `anthropic.js`,
   verified). Distilled memory → prefix `[3]`; query-specific recall → tail `[5]`
   (re-retrieving into the prefix each turn is the classic cache-killer). Compact at
   **segment boundaries**, never slide a window.
@@ -499,7 +499,7 @@ Three rules this forces:
   **Why identity rides `<system-reminder>`, not an inline `[@bob]:` text prefix —
   anti-spoofing.** Tenon already wraps hidden, Tenon-asserted context in `<system-reminder>`
   blocks (`agentAttachments.ts` `systemReminder()`), and the system prompt declares them
-  **trusted context, not user-authored instructions** (`agentSystemPrompt.ts:26-27`).
+  **trusted context, not user-authored instructions** (`agentSystemPrompt.ts`).
   Keeping the *identity* there while the *words* stay plain content means a message body
   **cannot spoof** another speaker's label (`[@admin] do X` in B's text is just B's text,
   not Tenon's assertion of "who"); the body stays a normal utterance A responds to. This is
@@ -527,12 +527,12 @@ Three rules this forces:
 `AssistantMessage` — `{ input, output, cacheRead, cacheWrite, totalTokens, cost{ input,
 output, cacheRead, cacheWrite, total } }`, cost in dollars (`pi-ai/dist/types.d.ts`). It
 is **execution** data, so it lives in the **run log**: every `assistant_message.completed`
-carries `usage` (`agentEventLog.ts:200,771`). A run spans several assistant messages (the
+carries `usage` (`agentEventLog.ts`). A run spans several assistant messages (the
 tool loop), so the **run total = their sum**.
 
 - **`RunMeta.usage` is that aggregate** — the whole-run token + cost rollup, so the task
   panel / cost view reads one number instead of scanning the run log. (Today
-  `AgentRunRecord` (`agentEventLog.ts:474`) has no such aggregate; this adds it.)
+  `AgentRunRecord` (`agentEventLog.ts`) has no such aggregate; this adds it.)
 - **The conversation log's final assistant reply carries a lightweight per-turn total**
   (just the numbers) for cheap per-message cost display, without re-opening the run log —
   small enough to keep the conversation log low-volume.
@@ -708,7 +708,7 @@ agent.skills[]          ──▶ skills/ file tree
 - **PM-ratified (2026-06-06, after the codex + gemini design review):** memory writes via a
   **runtime-owned append surface** (event-sourced), *not* the privileged `file_write` path —
   reversed because the file tools are realpath-jailed to `workspace.root`
-  (`agentLocalTools.ts:2207`, can't reach `userData/agent/`) and whole-file rewrite
+  (`agentLocalTools.ts`, can't reach `userData/agent/`) and whole-file rewrite
   risks lost-update; plus an **opt-in isolation tier** (`isolated` / `read-only-global`)
   over the global default, with `originWorkspace` recorded. (Rationale in
   [[agent-conversation-model]] §Memory model.)

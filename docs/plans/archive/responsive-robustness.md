@@ -1,6 +1,6 @@
 # Responsive Robustness
 
-Layer 3 of the UI-quality roadmap (see `docs/plans/ui-quality-roadmap.md` — this
+Layer 3 of the UI-quality roadmap (see `docs/plans/archive/ui-quality-roadmap.md` — this
 plan OWNS report D's findings). Unlike the cosmetic layers, **this is a
 behavioral bug-fix plan, not a polish pass.** The headline is a real, reproducible
 defect: at small window widths the two floating rails (sidebar + agent) reserve

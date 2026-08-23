@@ -254,7 +254,7 @@ The following stay outside `WorkingText` in both PRs:
 
 ### Implementation boundaries
 
-#### PR1: Thread working states
+#### Thread feature scope
 
 Expected product files:
 
@@ -281,7 +281,7 @@ Current-intended spec updates:
 No dependency, i18n, preload, main-process, IPC, command, core protocol,
 persistence, or userData file changes are expected.
 
-#### PR2: Settings working states
+#### Settings feature scope
 
 Expected product files:
 

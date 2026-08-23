@@ -1,13 +1,3 @@
----
-status: superseded
-priority: P3
-owner: unassigned
-phase: memory-D2 (fast-track-insertable)
-created: 2026-06-10
-updated: 2026-06-10
-supersededBy: agent-memory-academic-alignment
----
-
 # Memory D2: encoding signal — prediction-error-weighted encoding
 
 **Shape: (a) ONE complete feature in one PR — small.** Nearly prompt-only;

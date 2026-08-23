@@ -1,11 +1,3 @@
----
-status: done
-priority: P2
-owner: relixiaobo
-created: 2026-06-01
-updated: 2026-06-02
----
-
 # Reference field values: one reference-node model, two container modes
 
 ## Motivation

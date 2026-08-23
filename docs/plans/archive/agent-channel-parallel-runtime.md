@@ -1,11 +1,3 @@
----
-status: done
-priority: P2
-owner: main
-created: 2026-06-11
-updated: 2026-06-11
----
-
 # Channel Parallel Runtime: Execute the Committed Semantics
 
 **Shape: (a) ONE complete feature in one PR.** Internal stages below are build

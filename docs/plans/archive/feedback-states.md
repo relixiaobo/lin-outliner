@@ -1,7 +1,7 @@
 # Feedback states — `<EmptyState>` / `<ErrorState>` primitives + outliner empty states
 
 Layer 2 (primitives + feature gaps) of the UI-quality roadmap
-(`docs/plans/ui-quality-roadmap.md`). Source report:
+(`docs/plans/archive/ui-quality-roadmap.md`). Source report:
 `tmp/ui-review/B-states-empty-loading-error.md`.
 
 The app has **three to four parallel, unreconciled idioms** for empty / loading /

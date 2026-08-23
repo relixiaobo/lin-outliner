@@ -1,12 +1,3 @@
----
-status: done
-priority: P1
-owner: relixiaobo
-created: 2026-05-25
-updated: 2026-06-12
-shipped: PR #204 (protocol slice) + PR #206 (feature)
----
-
 # File Attachments
 
 Add a generic `attachment` node type for any local file: PDFs, audio, video,
@@ -15,10 +6,10 @@ choke on multi-MB IndexedDB storage and can't reveal in Finder. Lin can,
 because it is Electron.
 
 This is a deliberate **superset** of nodex, not a parity feature. It is
-listed in [`nodex-parity-decisions.md`](nodex-parity-decisions.md) as a
+listed in [`nodex-parity-decisions.md`](../reference/nodex-parity-decisions.md) as a
 local-app-specific extension.
 
-Depends on [`asset-subsystem.md`](archive/asset-subsystem.md) **(shipped, PR #8)**
+Depends on [`asset-subsystem.md`](asset-subsystem.md) **(shipped, PR #8)**
 and `image-rendering` **(shipped, PR #8)** — both blockers have landed, so this
 plan is **unblocked**. Coordinate with the `media-types` backlog item to avoid
 double-building the audio/video player + PDF thumbnail.

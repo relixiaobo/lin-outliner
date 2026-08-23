@@ -7,7 +7,7 @@ every known performance finding by priority so the items can be sequenced into
 separate PRs (the keystone, P1, is large enough to grow its own detailed plan).
 
 Findings were produced by a three-way audit — a four-area read-only sweep, a
-second independent review (Codex), and direct `file:line` verification of every
+second independent review (Codex), and direct symbol-level verification of every
 contested or high-stakes claim — plus the existing probes
 (`renderProbe.ts`/`measureRenderIndex`, `probe-text-search-index`). Where the
 three sources converged independently, the item is marked **(3×)**.
@@ -40,7 +40,9 @@ Concretely, in priority order:
   search measured fine (10k corpus: single upsert 0.56 ms, edit+search 4.6 ms).
   Search is **not** the bottleneck; projection diff + virtualization are.
 
-## Priority tiers
+## Design
+
+### Priority tiers
 
 | Tier | Meaning | Lane | Gate |
 |------|---------|------|------|
@@ -63,26 +65,26 @@ item still ships whole.
 
 ---
 
-## The cross-cutting insight (why P1 is the keystone)
+### The cross-cutting insight (why P1 is the keystone)
 
 The renderer is full of `useMemo` / `React.memo` keyed off `index.byId` (or
 `projection`). But `byId` is **reborn as a fresh `Map` on every keystroke**
-(`document.ts:37` `new Map(projection.nodes.map(...))`), because the projection
+(`document.ts` `new Map(projection.nodes.map(...))`), because the projection
 is structure-cloned across IPC and every node object is a fresh reference. So
 those memos only de-dupe *within one projection version* (across UI-state
 re-renders) — they **cannot de-dupe across keystrokes**.
 
 This single fact explains a cluster of "full O(N) per keystroke" findings that
-look independent but share one root: `dateNoteCounts` (`NodePanel.tsx:292`),
-`resolveBacklinks` behind the memoized References display (`systemFields.ts:102`
-via `OutlinerFieldRow.tsx:197`), `referenceCandidates` (`referenceCandidates.ts:139`),
+look independent but share one root: `dateNoteCounts` (`NodePanel.tsx`),
+`resolveBacklinks` behind the memoized References display (`systemFields.ts`
+via `OutlinerFieldRow.tsx`), `referenceCandidates` (`referenceCandidates.ts`),
 and the `renderRev` signature/reverse-edge passes themselves. Give the renderer a
 **delta** with stable identity for unchanged nodes (P1) and this entire cluster
 collapses at once, instead of being optimized one memo at a time.
 
 ---
 
-## P0 — Quick wins (do now, fast-track)
+### P0 — Quick wins (do now, fast-track)
 
 | ID | Finding | Location | Trigger | Fix |
 |----|---------|----------|---------|-----|
@@ -93,24 +95,24 @@ probe confirms the writer still exists.
 
 ---
 
-## P1 — Incremental projection protocol (the keystone)
+### P1 — Incremental projection protocol (the keystone)
 
 **Problem.** Every committed mutation rebuilds and ships the **entire**
 projection over IPC, and the renderer re-derives the change set from scratch:
 
-- `assembleProjection` rebuilds the full `nodes` array — `projection.ts:46`,
-  via `core.projection()` `core.ts:242`, emitted on every mutation at
-  `documentService.ts:723` → `webContents.send` `main.ts:133`. The whole array
+- `assembleProjection` rebuilds the full `nodes` array — `projection.ts`,
+  via `core.projection()` `core.ts`, emitted on every mutation at
+  `documentService.ts` → `webContents.send` `main.ts`. The whole array
   is structure-cloned across the process boundary. **O(N) CPU + O(N) clone per
   edit.** **(3×)**
-- Renderer rebuilds the whole `byId` Map (`document.ts:37`), then
-  `JSON.stringify`s **every node** to diff signatures (`renderRev.ts:22`), then
-  rebuilds three full reverse-edge maps (`renderRev.ts:50-68`). **Three O(N)
+- Renderer rebuilds the whole `byId` Map (`document.ts`), then
+  `JSON.stringify`s **every node** to diff signatures (`renderRev.ts`), then
+  rebuilds three full reverse-edge maps (`renderRev.ts`). **Three O(N)
   full-document passes per keystroke.** **(3×)**
 
 The irony: core already computes exactly the change set the renderer is paying
-O(N) to rediscover — `revisionDelta().changedNodeIds` (`core.ts:269-275`),
-backed by the per-node projection cache (`core.ts:292-316`,
+O(N) to rediscover — `revisionDelta().changedNodeIds` (`core.ts`),
+backed by the per-node projection cache (`core.ts`,
 `projectionNodesFor`).
 
 **Design direction.**
@@ -121,11 +123,11 @@ backed by the per-node projection cache (`core.ts:292-316`,
    The full projection remains for init / restore / full rebuild only.
 2. `documentService.emitProjectionChanged` sends the delta built from
    `changedNodeIds` (+ removed) instead of `core.projection()`.
-3. Renderer `useRenderIndex` (`document.ts:53`) applies the delta in place:
+3. Renderer `useRenderIndex` (`document.ts`) applies the delta in place:
    patch `byId` for changed/removed ids, **preserve references for unchanged
    nodes**, and bump `renderRev` directly from the delta's changed set + the
    reverse-edge closure — deleting the whole-document `JSON.stringify` signature
-   pass (`renderRev.ts:20-24`) and incrementalizing `buildReverseEdges`
+   pass (`renderRev.ts`) and incrementalizing `buildReverseEdges`
    (maintain the edge maps across renders, patch only changed nodes).
 
 **Why first among the big items.** It is the only fix that (a) attacks the
@@ -153,9 +155,9 @@ below.
 
 ---
 
-## P2 — Structural (render & streaming paths)
+### P2 — Structural (render & streaming paths)
 
-### P2-1 — Default the windowed/flat outliner renderer **(3×)**
+#### P2-1 — Default the windowed/flat outliner renderer **(3×)**
 
 Before this slice, the default path was the recursive `OutlinerView → OutlinerItem → nested
 OutlinerView`, which **mounts every expanded node** (full `RichTextEditor` +
@@ -170,17 +172,17 @@ viewport — the main scaling cliff for large docs (load/expand/scroll).
   path as a debug fallback flag.
 - Bonus: with flat-view, rows are built once in a single `useMemo`, which
   retires P3-1 (`OutlinerView`/`OutlinerFieldRow` not memoized →
-  `buildOutlinerRows` re-runs per subtree per keystroke, `OutlinerView.tsx:49`).
+  `buildOutlinerRows` re-runs per subtree per keystroke, `OutlinerView.tsx`).
 - Watch when enabling: `FlatRowShell` measures each windowed row via
   `getBoundingClientRect().height` + a `ResizeObserver`, and a height correction
-  adjusts `scrollTop` synchronously in a `useLayoutEffect` (`OutlinerFlatView.tsx:165-174,320-340`)
+  adjusts `scrollTop` synchronously in a `useLayoutEffect` (`OutlinerFlatView.tsx`)
   — a potential layout-thrash source under fast scroll once this is the live
   path. Mitigate by batching measurements / using `ResizeObserver` `borderBoxSize`
   instead of a sync rect read.
 - Severity: high · Effort: medium (mostly parity verification) · Risk: medium
   (behavioral — needs light/dark visual verify + keyboard-nav/scroll parity).
 
-### P2-2 — Thread Item streaming: selective subscriptions and bounded Markdown work
+#### P2-2 — Thread Item streaming: selective subscriptions and bounded Markdown work
 
 Agent Core already sends canonical `item/delta` notifications and the renderer
 applies each delta to one Item. The previous whole-history render-projection cost
@@ -211,14 +213,14 @@ revision.
 
 - Severity: high (streaming UX) · Effort: medium-large · Risk: low-medium.
 
-### P2-3 — Debounce/coalesce structural-mutation saves
+#### P2-3 — Debounce/coalesce structural-mutation saves
 
 Text edits are already debounced into a 700 ms undo group before save
-(`documentService.ts:67,262-284`), but **structural** mutations
+(`documentService.ts`), but **structural** mutations
 (create/move/indent/toggle/tag/field) each call `saveCore` immediately
-(`documentService.ts:212`), and `serializeState` exports the **whole Loro
-snapshot incl. history** → base64 → stringify each time (`core.ts:227-232`,
-`loroDocument.ts:153`). A burst of structural edits writes once per edit.
+(`documentService.ts`), and `serializeState` exports the **whole Loro
+snapshot incl. history** → base64 → stringify each time (`core.ts`,
+`loroDocument.ts`). A burst of structural edits writes once per edit.
 
 - Implementation: coalesce/debounce `saveCore` for structural mutations with the
   existing 700 ms text-save window, and flush it before text materialization,
@@ -232,57 +234,57 @@ snapshot incl. history** → base64 → stringify each time (`core.ts:227-232`,
 
 ---
 
-## P3 — Localized O(N) cleanups
+### P3 — Localized O(N) cleanups
 
 Grouped by what they touch. Items marked **↑P1** become no-ops or trivial once
 the incremental projection lands (stable `byId` identity makes their memo hold
 across keystrokes); they are listed so nothing is lost, but should be revisited
 *after* P1 rather than fixed pre-emptively.
 
-### Renderer input / display hot paths
+#### Renderer input / display hot paths
 
 | ID | Finding | Location | Note |
 |----|---------|----------|------|
-| P3-1 | `OutlinerView`/`OutlinerFieldRow` not memoized → `buildOutlinerRows` (filter/sort/group, recursive `childText`) re-runs per subtree per keystroke | `OutlinerView.tsx:49`, `OutlinerFieldRow.tsx:107`, `outlinerRows.ts:153,327,412` | retired by **P2-1**; else add memo + cache field-value primitives per build (Codex #4/#5) |
-| P3-2 | References display re-runs an O(N) backlink scan every keystroke (memo keyed on per-frame `byId`) | `systemFields.ts:102` via `OutlinerFieldRow.tsx:197` | designed in `typing-hot-path` PR-C (incremental referenceSummary over the #121 `ReverseEdges` index) |
+| P3-1 | `OutlinerView`/`OutlinerFieldRow` not memoized → `buildOutlinerRows` (filter/sort/group, recursive `childText`) re-runs per subtree per keystroke | `OutlinerView.tsx`, `OutlinerFieldRow.tsx`, `outlinerRows.ts` | retired by **P2-1**; else add memo + cache field-value primitives per build (Codex #4/#5) |
+| P3-2 | References display re-runs an O(N) backlink scan every keystroke (memo keyed on per-frame `byId`) | `systemFields.ts` via `OutlinerFieldRow.tsx` | designed in `typing-hot-path` PR-C (incremental referenceSummary over the #121 `ReverseEdges` index) |
 | P3-23 | Delta reducer copies the **whole** `byId` (`new Map(prev.byId)`) and rebuilds the **whole** `nextRevisions` map every keystroke — both O(N), immutability-driven (the residual #119/#121 left) | `renderer/state/document.ts` (`reduceProjection`), `renderRev.ts` (`nextRevisions`) | persistent/HAMT-style structural sharing, or mutate-with-version-stamp; measure with `tmp/bench-reverse-edges.ts` before trading immutability for throughput (perception-first, `AGENTS.md` A9) |
-| P3-3 | `@`/reference & field picker filter+map+rank+sort the **whole** projection per keystroke, with per-candidate ancestor walks | `referenceCandidates.ts:139`, `useFieldNameReuse.ts:57` | the field-picker half landed with #426's field-name reuse index; the `@` picker half is designed in `typing-hot-path` PR-C (queryable label shortlist) |
-| P3-4 | Day-page note counts scan all of `byId`, memo dep `byId` reborn each keystroke | `NodePanel.tsx:292` | **↑P1**; or move counts into projection metadata / incremental date index (Codex #7) |
+| P3-3 | `@`/reference & field picker filter+map+rank+sort the **whole** projection per keystroke, with per-candidate ancestor walks | `referenceCandidates.ts`, `useFieldNameReuse.ts` | the field-picker half landed with #426's field-name reuse index; the `@` picker half is designed in `typing-hot-path` PR-C (queryable label shortlist) |
+| P3-4 | Day-page note counts scan all of `byId`, memo dep `byId` reborn each keystroke | `NodePanel.tsx` | **↑P1**; or move counts into projection metadata / incremental date index (Codex #7) |
 | P3-5 | `index` object identity changes every keystroke → unmemoized siblings (`Sidebar`, `ThreadDock`, `CommandPalette`) re-render | current `App.tsx` consumers | designed in `typing-hot-path` PR-C (Sidebar memo, dock decoupling/suspension) |
 | P3-21 | A code block being edited re-highlights the whole block through Shiki on every keystroke | current `CodeBlockRow` path | designed in `typing-hot-path` PR-C (debounced re-highlight) |
 
-### Core scans (reverse-index candidates)
+#### Core scans (reverse-index candidates)
 
 | ID | Finding | Location | Note |
 |----|---------|----------|------|
-| P3-7 | `removeSubtreeDirect` clones + double-`JSON.stringify`s every node per delete; `collectSubtreeAndDependentReferences` `while(changed)` re-scans all nodes → O(removed × N) | `core.ts:2749-2763`, `:3145-3168` | reverse-reference index so cleanup touches only real referrers |
-| P3-8 | `backlinks` / `hasExternalReferencesToTarget` full-node scans with per-node ancestor walks | `core.ts:1911-1924`, `:3186-3197` | same reverse-reference index |
-| P3-9 | O(N) tag/field-def lookups by name on create/apply | `core.ts:3771-3801` (`findTagByName`, `findFieldDefByName`, `findNodesWithTag`, `nextTagColor`) | name→id index for the small schema set |
-| P3-10 | `materializeState()` shallow-spreads all N nodes; 122 `snapshot()` call sites, ≥2 per command | `loroDocument.ts:346-352`, `core.ts` (122×) | stable cached container ref invalidated on patch; hoist repeated `snapshot()` per command |
+| P3-7 | `removeSubtreeDirect` clones + double-`JSON.stringify`s every node per delete; `collectSubtreeAndDependentReferences` `while(changed)` re-scans all nodes → O(removed × N) | both symbols in `core.ts` | reverse-reference index so cleanup touches only real referrers |
+| P3-8 | `backlinks` / `hasExternalReferencesToTarget` full-node scans with per-node ancestor walks | both symbols in `core.ts` | same reverse-reference index |
+| P3-9 | O(N) tag/field-def lookups by name on create/apply | `core.ts` (`findTagByName`, `findFieldDefByName`, `findNodesWithTag`, `nextTagColor`) | name→id index for the small schema set |
+| P3-10 | `materializeState()` shallow-spreads all N nodes; 122 `snapshot()` call sites, ≥2 per command | `loroDocument.ts`, `core.ts` (122×) | stable cached container ref invalidated on patch; hoist repeated `snapshot()` per command |
 
-### Search (scale with corpus, not per-keystroke)
-
-| ID | Finding | Location | Note |
-|----|---------|----------|------|
-| P3-11 | Structured search rebuilds a full-doc node `Map` per call **and** clones it again | `searchEngine.ts:399-409`, `:222` | designed in `interaction-jank-cleanups` PR-4 (revision-keyed cache, base + virtual-node overlay) |
-| P3-12 | Search candidate filtering does two ancestor walks + fresh `Set` per candidate | `searchEngine.ts:1640-1689` | designed in `interaction-jank-cleanups` PR-4 |
-| P3-13 | Incremental text-search refresh clones the whole node `Map` | `documentService.ts:592` | designed in `typing-hot-path` PR-B (immutable structural sharing, O(changed) per patch) |
-| P3-22 | `materializeSearchNodeResultsDirect` inner `.find` over a node's children when reordering result refs | `core.ts:2254-2257` | bounded to one search node's children on explicit refresh; index children by id if it shows up. Low |
-
-### Main-process IO / bundle
+#### Search (scale with corpus, not per-keystroke)
 
 | ID | Finding | Location | Note |
 |----|---------|----------|------|
-| P3-17 | Local file-search fallback spawns `rg --files --hidden` over the **entire home dir** | `main.ts:1336-1350` (`rgFileNameMatches`) | fires only when Spotlight misses; debounce + limit roots + cache (Codex #11) |
-| P3-18 | Asset lookup `readdir`s the dir to find a file; serve `readFile`s the whole file | `assetService.ts:99,121` | `assetId→filename` metadata map; stream/range for large media (Codex #10) |
-| P3-19 | Shiki statically imports the full `bundledLanguages` registry (~235 **lazy** import thunks — grammars are already code-split, loaded on demand) | `shikiHighlighter.ts:1-8` | cost is registry wiring/parse + bundle size, **not** eager grammar load; `shiki/core` + explicit ~23-language set trims that. Benefit is bundle/init, modest. Highlighter is already a cached singleton — good |
-| P3-20 | Tokenizer double-normalizes (`normalizeSearchText` re-run after analyze) | `textSearchAnalyzer.ts:97` | accept a pre-normalized flag (low) |
+| P3-11 | Structured search rebuilds a full-doc node `Map` per call **and** clones it again | structured base/overlay construction in `searchEngine.ts` | designed in `interaction-jank-cleanups` PR-4 (revision-keyed cache, base + virtual-node overlay) |
+| P3-12 | Search candidate filtering does two ancestor walks + fresh `Set` per candidate | `searchEngine.ts` | designed in `interaction-jank-cleanups` PR-4 |
+| P3-13 | Incremental text-search refresh clones the whole node `Map` | `documentService.ts` | designed in `typing-hot-path` PR-B (immutable structural sharing, O(changed) per patch) |
+| P3-22 | `materializeSearchNodeResultsDirect` inner `.find` over a node's children when reordering result refs | `core.ts` | bounded to one search node's children on explicit refresh; index children by id if it shows up. Low |
+
+#### Main-process IO / bundle
+
+| ID | Finding | Location | Note |
+|----|---------|----------|------|
+| P3-17 | Local file-search fallback spawns `rg --files --hidden` over the **entire home dir** | `main.ts` (`rgFileNameMatches`) | fires only when Spotlight misses; debounce + limit roots + cache (Codex #11) |
+| P3-18 | Asset lookup `readdir`s the dir to find a file; serve `readFile`s the whole file | `assetService.ts` | `assetId→filename` metadata map; stream/range for large media (Codex #10) |
+| P3-19 | Shiki statically imports the full `bundledLanguages` registry (~235 **lazy** import thunks — grammars are already code-split, loaded on demand) | `shikiHighlighter.ts` | cost is registry wiring/parse + bundle size, **not** eager grammar load; `shiki/core` + explicit ~23-language set trims that. Benefit is bundle/init, modest. Highlighter is already a cached singleton — good |
+| P3-20 | Tokenizer double-normalizes (`normalizeSearchText` re-run after analyze) | `textSearchAnalyzer.ts` | accept a pre-normalized flag (low) |
 
 ---
 
-## Verified-good (do not touch — confirmed not problems)
+### Verified-good (do not touch — confirmed not problems)
 
-- Per-row `OutlinerItem` memo comparator is precise (`OutlinerItem.tsx:2009-2039`,
+- Per-row `OutlinerItem` memo comparator is precise (`OutlinerItem.tsx`,
   `renderRev` + `rowUiState`); untouched rows correctly skip re-render.
 - Core apply path is incremental: Loro state cache, projection cache, and the
   bounded operation journal with affected Node IDs.
@@ -292,7 +294,7 @@ across keystrokes); they are listed so nothing is lost, but should be revisited
   cached singleton with lazy per-language loading.
 - No `ipcRenderer.sendSync` on the renderer hot path; only
   timer is a dev-only `unref`'d watchdog. (One deliberate seed `sendSync` exists
-  in `src/preload/index.ts:109`, added by #110 for the language bootstrap —
+  in `src/preload/index.ts`, added by #110 for the language bootstrap —
   one-time, not hot.)
 - ~~Startup does not block on the large workspace file (window paints first)~~ —
   **no longer true** (2026-08-11 audit): `createWindow()` now runs only after
@@ -304,16 +306,16 @@ across keystrokes); they are listed so nothing is lost, but should be revisited
 now — recorded so they are not "lost"):
 
 - Synchronous `readFileSync` of tiny state files before first paint —
-  `windowState.ts:25`, `appPreferences.ts:25` (geometry + theme). One-time, a
+  `windowState.ts`, `appPreferences.ts` (geometry + theme). One-time, a
   few bytes, and the document load itself is async, so the window is not blocked.
   Acceptable as-is; revisit only if pre-paint cost ever matters.
 - `RichTextEditor` rebuilds a `DecorationSet` per transaction
-  (`RichTextEditor.tsx:357-370`); outliner rows are single-paragraph so the walk
+  (`RichTextEditor.tsx`); outliner rows are single-paragraph so the walk
   is O(1)-ish. Not a problem at current row shapes; noted for completeness.
 
 ---
 
-## Suggested sequencing
+### Suggested sequencing
 
 1. **P0-1** — refresh the writer probe and land the compact serialization change
    only if the current path still pretty-prints machine state.

@@ -1,19 +1,11 @@
----
-status: done
-priority: P2
-owner: relixiaobo
-created: 2026-06-08
-updated: 2026-06-09
----
+# Agent Authoring & Management
 
 > **Shipped as PR #167** (2026-06-08). Design folded into
-> `docs/spec/agent-subagent-runtime-plan.md` (Authoring & hot-reload / Disabling by
+> `docs/spec/agent-subagent-threads.md` (Authoring & hot-reload / Disabling by
 > identity / Fresh-subagent system prompt). The four review-gate follow-ups
 > (parser consolidation, read-only render of `additionalAgentDirectories` agents,
 > out-of-catalog `effort` → `off`, `TOOL_CATALOG` guard test) live as small
 > fast-track items in `docs/TASKS.md`, not as open scope here. Kept for history.
-
-# Agent Authoring & Management
 
 **Part of the [[agent-program]] (M2 extension surface).** This plan owns the
 **user-facing** path to create, edit, and manage **agent definitions** (the

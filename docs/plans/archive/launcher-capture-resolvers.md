@@ -1,11 +1,3 @@
----
-status: superseded
-owner: cc-2
-branch: cc-2/lazy-like-global-launcher
-superseded-by: browser-extension-integration.md
-supersedes-section: lazy-like-global-launcher.md (Phase 6 Resolvers, Provider matrix)
----
-
 # Launcher Capture — Resolver Runtime, YouTube Transcript, and Remaining Providers (SUPERSEDED)
 
 > **Outcome (2026-06-04).** The resolver runtime and the YouTube transcript
@@ -14,7 +6,8 @@ supersedes-section: lazy-like-global-launcher.md (Phase 6 Resolvers, Provider ma
 > wholesale to the future **unified browser extension / CDP backend** — a single
 > clean path is simpler than maintaining an offscreen-scrape resolver plus an
 > AppleScript page-script layer that the extension would replace anyway. The
-> successor plan is `docs/plans/browser-extension-integration.md`.
+> successor authority is
+> `docs/plans/reference/browser-extension-integration.md`.
 >
 > **What landed and survives:** the per-site **provider classification** (URL →
 > `ExternalContext` shape) for X/Twitter, GitHub, and Substack. These run from the
@@ -38,7 +31,7 @@ The remainder of this file is kept verbatim as the record of the path not taken.
 
 Execution plan for the next wave of the launcher capture feature. Design detail for
 the data contracts and the provider matrix lives in
-`docs/plans/lazy-like-global-launcher.md` (Save Model, Provider Implementation
+`docs/plans/archive/lazy-like-global-launcher.md` (Save Model, Provider Implementation
 Details, Phase 6); this file is the build order + the decisions taken this session,
 and it records the deferred follow-ups the PM asked to log but NOT execute yet.
 

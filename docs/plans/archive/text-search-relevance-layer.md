@@ -1,16 +1,8 @@
----
-status: done
-priority: P1
-owner: relixiaobo
-created: 2026-06-04
-updated: 2026-06-04
----
+# Text Search Relevance Layer
 
 > **Shipped** in PR #102 (kernel implemented in #102; plan ratified as #99).
 > Design folded into `docs/spec/search-query-grammar.md`; this plan is kept as
 > history.
-
-# Text Search Relevance Layer
 
 ## Goal
 

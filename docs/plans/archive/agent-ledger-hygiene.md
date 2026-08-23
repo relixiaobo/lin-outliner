@@ -1,12 +1,3 @@
----
-status: done
-priority: P2
-owner: main
-created: 2026-06-12
-updated: 2026-06-12
-shipped: PR #205
----
-
 # Agent Ledger Hygiene: Dead Events, Compat Fields, Spec Sync, Spine Oracle
 
 **Shape: (a) ONE complete feature in one PR.** The four items below are build
@@ -19,10 +10,11 @@ Findings from the 2026-06-12 post-parallel data-structure audit (PM-reviewed in
 conversation). Verdict there: the core model (7 primitives, 3 ledgers, derived
 kind, bipartite parentage) is clean and needs NO restructuring — this plan
 clears the residue the audit surfaced, all of it pre-Channel debt or
-documented-compat leftovers. Read first: `docs/plans/agent-data-model.md`
-(write/read path + invariants), `docs/spec/agent-architecture.md` (ledger
-section), `src/main/agentEventStore.ts` (`appendSplitEvents` /
-`isRunLogEvent`).
+documented-compat leftovers. Read first:
+`docs/plans/reference/agent-data-model.md` (historical write/read invariants) and
+`docs/spec/agent-core.md` (current persistence and lifecycle contracts).
+Historical implementation symbols were `appendSplitEvents` and
+`isRunLogEvent` in `src/main/agentEventStore.ts`.
 
 ## Goal
 

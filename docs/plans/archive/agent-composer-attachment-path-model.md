@@ -1,11 +1,3 @@
----
-status: done
-priority: P1
-owner: relixiaobo
-created: 2026-06-02
-updated: 2026-06-03
----
-
 # Agent Composer References and Attachments - Path-First Model
 
 Scope: the **agent composer** reference and attachment pipeline

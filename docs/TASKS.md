@@ -21,7 +21,6 @@ See `AGENTS.md` for the full workflow.
 
 Open PRs and claims — the PR queue, not this snapshot, is authoritative.
 
-
 ## Backlog
 
 Active plans grouped by theme; within each group, ordered by priority +
@@ -366,7 +365,7 @@ see *Recently completed*.
   `docs/plans/archive/toolruntime-handler-contribution.md`.
 - **agent-conversation-model** (P1, the spine, M0–M3 all shipped — **moved off
   `in-progress` 2026-08-09**: the one tail it was held open for, mid-run `needs-input`,
-  is audit-verified **already shipped for its ratified scope** (`TurnLifecycle.ts:465` —
+  is audit-verified **already shipped for its ratified scope** (`TurnLifecycle.ts` —
   foreground root-Thread pause with timeout auto-resolution, abort unwind, renderer +
   i18n; the plan itself scoped it to "a conversation's own foreground agent, never a
   subagent", and the subagent half was closed by the 2026-06-08 respawn-not-resume
@@ -434,10 +433,10 @@ see *Recently completed*.
   curation dry-run.
   See `docs/plans/agent-skills-authoring.md`. **Refresh before build (2026-08-09
   audit):** the tail is precisely located and genuinely unbuilt —
-  `agentSkillAuthoring.ts:170` names it in its own error message, and
+  `agentSkillAuthoring.ts` names it in its own error message, and
   `EXECUTABLE_SUPPORT_EXTENSIONS` already lists exactly the extensions to allowlist —
   but the plan's three-source table predates #406: `SkillSourceKind` now has four
-  sources (`types.ts:750`, adds `managed`), and Feature B's exclusion list should name
+  sources (`types.ts`, adds `managed`), and Feature B's exclusion list should name
   `managed` instead of the untrusted-repo heuristic.
 - **agent-self-modification** (P1, M1–M3, **slimmed by the reorg**) — controlled
   self-maintenance: self-observation (`runtime_status` / doctor), the cc-2.1-style
@@ -457,7 +456,7 @@ see *Recently completed*.
   (`src/core/agent/extensions.ts`) declares 18 optional hooks, and the two the
   plan says are missing have present equivalents (`contributeTurnAdmission`,
   `onTurnError`) — the sentence was wrong when written, strike it rather than
-  refresh it. §Configuration ownership (`AgentConfigurationLoader.ts:137,141`)
+  refresh it. §Configuration ownership (`AgentConfigurationLoader.ts`)
   and §Recovery semantics are intact; rewrite the rest around the `file_edit` +
   validated-pipeline alternative this entry already names.
 - **agent-generative-ui** (P3, M1/M2, directional CSP/A3 gate) — Claude-style custom
@@ -506,7 +505,7 @@ see *Recently completed*.
   generic (`managedSkillShellEnvironment.ts` — a `computer-pilot` contributor is ~5
   lines against the plan's 13 tools + 6 services), and the plan's own critical product
   requirement — the model must see the pixels — is already met by `file_read` returning
-  image content (`agentLocalTools.ts:929`). Three of the plan's five referenced specs no
+  image content (`agentLocalTools.ts`). Three of the plan's five referenced specs no
   longer exist and its payload shape predates #490 artifact refs. Residue re-filed as
   **computer-pilot-managed-skill** below.
 - **computer-pilot-managed-skill** (P3, `draft`, *no plan file*) — ship macOS
@@ -564,9 +563,9 @@ Standalone agent items (not part of the program):
   dual-auth rows** — renamed from `anthropic-auth-clarity`; the original "Anthropic is
   the only dual provider" premise died in the audit) — dual OAuth+API-key providers
   are `OAUTH_API_KEY_FALLBACK = {anthropic, kimi-coding, openrouter, radius, xai}`
-  (`src/renderer/ui/agent/providerOAuthCapabilities.ts:4`; gate at
-  `ProviderConfigWindow.tsx:169`, buried "Use an API key instead" link at
-  `ProviderOAuthForm.tsx:333`). Build the ratified **option B** generically, driven by
+  (`src/renderer/ui/agent/providerOAuthCapabilities.ts`; gate at
+  `ProviderConfigWindow.tsx`, buried "Use an API key instead" link at
+  `ProviderOAuthForm.tsx`). Build the ratified **option B** generically, driven by
   that set: an explicit segmented "API key | OAuth" control up front on every
   dual-auth row, defaulting to the stored credential; single mutually-exclusive
   credential slot stays — presentation only. Dev drafts the build one-pager; then it
@@ -588,7 +587,7 @@ archived `done` (see Recently completed). Remaining active work:
   pages beyond the hardened webview preview. See `docs/plans/file-preview.md`.
   **Refresh before build (2026-08-09 audit):** the plan's printed registry interface
   drifted (`PreviewRendererEntry` has no `priority`/`toolbar` slot — array order is
-  priority, chrome is `mediaActions`; `previewRenderers.tsx:198`); the Office section
+  priority, chrome is `mediaActions`; `previewRenderers.tsx`); the Office section
   must first decide reuse-vs-rebuild against main's shipped routes (`agentPptxIngestion.ts`
   hardened OOXML + the MarkItDown subprocess for docx/xlsx) or it creates a **third**
   Office path; and the static URL reader is essentially built
@@ -596,8 +595,8 @@ archived `done` (see Recently completed). Remaining active work:
   the existing extractor as a preview presentation.
 - **asset-gc** (P2, *no plan file*, **rescoped 2026-08-09**: the `index.json` half is
   obsolete — no index exists, authoritative `<id>.meta.json` sidecars carry metadata
-  (`assetService.ts:33`) — and drag-from-Finder ingest shipped
-  (`OutlinerItem.tsx:909`)) — remaining: an **orphan-asset sweep** that must walk both
+  (`assetService.ts`) — and drag-from-Finder ingest shipped
+  (`OutlinerItem.tsx`)) — remaining: an **orphan-asset sweep** that must walk both
   node→asset fields (`bannerAssetId`, image/attachment `assetId`, `thumbnailAssetId`)
   **and** asset→asset edges (PDF thumbnail derivation) — distinct from #490's
   Thread-payload retention, which is a different store with no shared sweeper — plus
@@ -655,7 +654,7 @@ archived `done` (see Recently completed). Remaining active work:
   site is `// TODO plural via Intl`-marked; the `n===1` ternary only breaks when a
   multi-form European locale lands); (2) finish the date/number second sweep —
   outliner group-by labels (`state/outlinerRows.ts`: `(Empty)`/`Done`/`Yes`/`No`)
-  + `AutomationRunsView.tsx:95,103` raw `Intl` formatters still OS-locale (the 2026-08-09
+  + `AutomationRunsView.tsx` raw `Intl` formatters still OS-locale (the 2026-08-09
   audit re-pointed this from "agent debug timestamps"; route them through the #418
   locale-threaded cached helpers in `ui/formatting.ts`), need a labels bundle threaded
   through the row pipeline; (3) add 繁體中文 / 日本語 / a European locale once more surfaces
@@ -664,7 +663,7 @@ archived `done` (see Recently completed). Remaining active work:
   selection extract in the floating editor toolbar. Destination policy
   **PM-ratified 2026-08-06: option A** (per-tag `defaultExtractParentId`). See
   `docs/plans/floating-toolbar-polish.md`. **2026-08-09 audit: VALID** (registry does
-  not claim at-caret surfaces, `action-registry.md:296`); two refs re-verified 2026-08-17 (symbol-anchored;
+  not claim at-caret surfaces, `action-registry.md`); two refs re-verified 2026-08-17 (symbol-anchored;
   the old line numbers had drifted again — the authoring rule exists for a reason):
   `TextMarkKind` in `src/core/types.ts` already includes `'headingMark'`, and the icon
   is `HeadingIcon` (`Heading1`) in `src/renderer/ui/icons.ts`; `headingMark` is fully
@@ -726,7 +725,7 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   (`launcher/launcherIcons.tsx` `ICONS`), and `NodeValuePicker.tsx` declares a
   third, shadowing local `actionIcon` — G4 must touch both maps (or unify them
   first), not one; the `ConfigIcon` refs are in `DefinitionConfigPanel.tsx`. The interrupted-hue question is confirmed live
-  (`thread.css:1481-1495`, identical `--text-faint` to completed, deliberately per its
+  (`thread.css`, identical `--text-faint` to completed, deliberately per its
   comment) — ratify or close it at this lane's gate.
 - **dark-mode-contrast-pass** (P3, cross-cutting) — runs **last**, after L1/L2, as a
   real light+dark run to confirm static contrast risks + apply one-token
@@ -737,7 +736,6 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   precedent selector no longer exists (cite #377 itself instead); and the "command
   popover" walk item now means `launcher.css` (#505 retired `CommandPalette`). The
   remaining token targets verified intact.
-
 
 ### Performance
 
@@ -979,11 +977,11 @@ anything.
   2026-08-09 audit** — there is no `get_backlinks`; the surfaces are
   `agentNodeToolProjection.backlinks` via `node_read include_backlinks`, and
   `core.backlinks()`) — **F7** the field-hosted-ref shape is already pinned at the
-  summary layer (`references.test.ts:38`); still unpinned: the `field` kind through
+  summary layer (`references.test.ts`); still unpinned: the `field` kind through
   `core.backlinks()` (core tests cover only tree+inline) and the agent
   `include_backlinks` output shape. **F8** the confirm half is done in code (`LINKS_TO`
   / `WITH_REFS` route through the `BACKLINK_REF_ROLES` allowlist —
-  `searchEngine.ts:1407`, `references.ts:91`); the test half remains: no test sets
+  `searchEngine.ts`, `references.ts`); the test half remains: no test sets
   `refRole` on those ops. **F2** case-fold length edge (İ/ß; CJK unaffected, low).
   **F11** `backlinks()` rebuilds the full reference summary per call (main-process, not
   hot — cache only if it shows up). **Dedup — STRUCK 2026-08-17**: the audit found the
@@ -1022,20 +1020,20 @@ anything.
   `e2e-signal-on-main` exists and was worth the build: four samples is not enough to call a
   test "always", and the person who got it wrong here was the gate.
   **It is not a geometry failure.** The assertion is inside
-  `expectConcentricPreviewCorners` (declared at `file-attachments.spec.ts:122` per the
-  2026-08-09 audit; the `:322` call site is still exact) and
+  `expectConcentricPreviewCorners` (declared at `file-attachments.spec.ts` per the
+  2026-08-09 audit; the helper call site was reverified) and
   it reports `Received: null` — the helper's own `if (!content) return null` guard, meaning
   `.file-preview-pdf--summary` is never found inside the visible preview frame within the
   5s poll. So the frame mounts and passes `toBeVisible()`, and the PDF summary subtree
-  never appears at all. That class is emitted by `previewRenderers.tsx:1334`
+  never appears at all. That class is emitted by `previewRenderers.tsx`
   (`file-preview-pdf--${displayMode}`), so the question is why the PDF renderer never
   reaches `summary` display in this fixture — a readiness/mount path, not CSS. (An earlier
   version of this entry read the stack as failing *after* the corner check and sent the
   reader to the geometry below it; that was backwards.)
   **The instability is wider than this one test**, which is the finding that matters. Across
   four full runs (two at the #475 gate, two by that PR's author) the failing set differed
-  every time: `outliner-selection-keyboard.spec.ts:234` (Cmd+A escalation),
-  `date-field-picker.spec.ts:20`, and `design-system-runtime.spec.ts:807` (dark date-picker
+  every time: `outliner-selection-keyboard.spec.ts` (Cmd+A escalation),
+  `date-field-picker.spec.ts`, and `design-system-runtime.spec.ts` (dark date-picker
   overlay) each failed in some runs and passed in others, including on plain `origin/main`.
   This one merely failed the most. None of them are reachable from #475's diff.
   **Don't start from this entry's numbers — start from the signal.** Every number written
@@ -1117,14 +1115,17 @@ anything.
   protection does not exist today and the test had to re-assert the key set at runtime.
   Whatever shape the fix takes, cover both.
 
-
 ## Recently completed
 
-One line per merge, newest first; the retrospective lives in the CHANGELOG entry
-and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
+One line per shipped integration, newest first; the retrospective lives in the
+CHANGELOG entry and any merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **documentation-lifecycle-cleanup** (main, fast-track, 2026-08-23) — removed
+  legacy plan frontmatter, repaired maintained-document navigation, normalized
+  active-plan structure and durable references, refreshed reader entry points,
+  and expanded `docs:check` so the same drift now fails mechanically.
 - **[agent-tool-artifact-resources](plans/archive/agent-tool-artifact-resources.md)**
   (codex-3, PR #582, merged 2026-08-23) — completed tool files now survive as
   tool-Item-owned Thread resources with execution-scoped attribution and
@@ -1391,7 +1392,7 @@ older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
   still hardcodes `TRASH_ID` instead of `isNodeInTrash` — a fourth in-trash spelling in
   the renderer, filed below. typecheck + `docs:check` + `test:core` (2205) +
   `test:renderer` (1194) green; e2e's 3 failures reproduce as the run-dependent set
-  (`origin/main` fails 5, only `agent-thread:5739` shared, branch-only failures pass in
+  (`origin/main` fails 5, only one `agent-thread` case shared, branch-only failures pass in
   isolation). Merged without visual verification at the PM's call.
 
 - **thread-records-copy** (cc, PR #536, merged 2026-08-13 — fast-track, no plan file) —

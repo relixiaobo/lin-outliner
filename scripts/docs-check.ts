@@ -1,13 +1,11 @@
 #!/usr/bin/env bun
 /**
- * docs:check — guards that docs/TASKS.md stays structurally consistent with the
- * plan files it points to.
+ * docs:check — guards the repository's documentation lifecycle and link graph.
  *
  * Doc model: docs/TASKS.md is the SINGLE source of truth for plan todo + status +
  * priority and links out to plan files; plan files are pure design and carry no
  * frontmatter/status. Single-sourcing makes status *divergence* impossible by
- * construction, so this guard only enforces the two structural invariants it
- * cannot cover on its own:
+ * construction; this guard enforces the remaining structural invariants:
  *
  *   C1 link integrity — every plan mention in TASKS.md resolves: prose mentions of
  *      `docs/plans/<...>.md` must name a file that exists, and Markdown links must
@@ -24,18 +22,32 @@
  *      documents or stale sections.
  *   C4 root doc links — every local Markdown link and heading anchor in README.md and
  *      AGENTS.md resolves; these are the first files outside readers and every agent load.
+ *   C5 maintained doc links — the same for plans, lessons, module READMEs, and
+ *      built-in Skill documentation (historical CHANGELOG prose and fixtures are exempt).
+ *   C6 plan shape — plan files carry no frontmatter; active plans expose the
+ *      Goal / Non-goals / Design / Open questions contract with unique headings.
+ *   C7 durable references — active/reference plans and TASKS use symbols or test
+ *      titles instead of line-number anchors that rot after ordinary edits.
+ *   C8 changelog shape — the current Unreleased block has at most one section per
+ *      category.
+ *   C9 aliases and indexes — AGENT.md / CLAUDE.md remain AGENTS.md symlinks and
+ *      every current spec is routed by its owning index.
+ *   C10 current authority paths — root, board, specs, active/reference plans, and
+ *      module docs do not name moved or deleted docs/plans or docs/spec Markdown files.
  *
  * Offline + deterministic (no network / gh; git is used only against local refs).
  * Exits 1 on any violation.
  */
 import { execFileSync } from 'node:child_process';
-import { readdirSync, readFileSync, existsSync } from 'node:fs';
+import { readdirSync, readFileSync, existsSync, lstatSync, readlinkSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
+const DOCS_DIR = join(ROOT, 'docs');
 const PLANS_DIR = join(ROOT, 'docs', 'plans');
 const SPEC_DIR = join(ROOT, 'docs', 'spec');
 const TASKS_PATH = join(ROOT, 'docs', 'TASKS.md');
+const CHANGELOG_PATH = join(ROOT, 'CHANGELOG.md');
 
 const tasks = readFileSync(TASKS_PATH, 'utf8');
 const errors: string[] = [];
@@ -174,10 +186,13 @@ function existsOnOriginMain(repoRelPath: string): boolean | null {
     return false;
   }
 }
-const activePlanSlugs = readdirSync(PLANS_DIR, { withFileTypes: true })
+const activePlanFiles = readdirSync(PLANS_DIR, { withFileTypes: true })
   .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
-  .map((entry) => entry.name.slice(0, -'.md'.length))
+  .map((entry) => join(PLANS_DIR, entry.name))
   .sort();
+const activePlanSlugs = activePlanFiles.map((file) =>
+  file.slice(PLANS_DIR.length + 1, -'.md'.length),
+);
 for (const slug of activePlanSlugs) {
   // A real reference is the file name (`<slug>.md`), not the slug as a substring of
   // other prose — `settings-redesign` was once "on the board" only because
@@ -231,6 +246,160 @@ const checkedRootLinks = checkLocalLinks(
   [join(ROOT, 'README.md'), join(ROOT, 'AGENTS.md')].filter((file) => existsSync(file)),
 );
 
+// C5 — every maintained Markdown link resolves. CHANGELOG is append-only history,
+// while vendor docs and test fixtures are not Tenon-owned documentation surfaces.
+const rootDocFiles = [join(ROOT, 'README.md'), join(ROOT, 'AGENTS.md')].filter((file) =>
+  existsSync(file),
+);
+const specFiles = markdownFiles(SPEC_DIR);
+const maintainedDocFiles = [
+  ...markdownFiles(DOCS_DIR),
+  ...(existsSync(join(ROOT, 'native')) ? markdownFiles(join(ROOT, 'native')) : []),
+  ...(existsSync(join(ROOT, 'src')) ? markdownFiles(join(ROOT, 'src')) : []),
+];
+const alreadyChecked = new Set([...rootDocFiles, ...specFiles]);
+const checkedMaintainedLinks = checkLocalLinks(
+  'C5',
+  'maintained doc',
+  maintainedDocFiles.filter((file) => !alreadyChecked.has(file)),
+);
+
+// C6 — plan files are design-only, and active plans expose the standard reader contract.
+const allPlanFiles = markdownFiles(PLANS_DIR);
+for (const file of allPlanFiles) {
+  const source = readFileSync(file, 'utf8');
+  if (/^---\r?\n/.test(source)) {
+    errors.push(`C6 plan frontmatter: ${relative(ROOT, file)} must keep lifecycle metadata in TASKS.md.`);
+  }
+  if (!/^#\s+\S/.test(source)) {
+    errors.push(`C6 plan title: ${relative(ROOT, file)} must begin with its H1 title.`);
+  }
+}
+
+const requiredActiveHeadings = ['Goal', 'Non-goals', 'Design', 'Open questions'];
+for (const file of activePlanFiles) {
+  const source = stripMarkdownCode(readFileSync(file, 'utf8'));
+  for (const heading of requiredActiveHeadings) {
+    const headingRe = new RegExp(`^## ${heading.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}(?:\\s|$)`, 'm');
+    if (!headingRe.test(source)) {
+      errors.push(`C6 active plan shape: ${relative(ROOT, file)} is missing "## ${heading}".`);
+    }
+  }
+
+  const headingCounts = new Map<string, number>();
+  for (const match of source.matchAll(/^#{1,6}\s+(.+)$/gm)) {
+    const slug = markdownHeadingSlug(match[0]!);
+    headingCounts.set(slug, (headingCounts.get(slug) ?? 0) + 1);
+  }
+  for (const [slug, count] of headingCounts) {
+    if (count > 1) {
+      errors.push(
+        `C6 duplicate active-plan heading: ${relative(ROOT, file)} repeats "${slug}" ${count} times.`,
+      );
+    }
+  }
+}
+
+// C7 — numeric line anchors become wrong silently; current planning references use symbols.
+const referencePlanFiles = markdownFiles(join(PLANS_DIR, 'reference'));
+const durableReferenceFiles = [TASKS_PATH, ...activePlanFiles, ...referencePlanFiles];
+const fileLineRefRe = /[A-Za-z0-9_./-]+\.(?:[cm]?[jt]sx?|css|md|json|sh):\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*\b/g;
+for (const file of durableReferenceFiles) {
+  const source = readFileSync(file, 'utf8');
+  for (const match of source.matchAll(fileLineRefRe)) {
+    const line = source.slice(0, match.index).split('\n').length;
+    errors.push(
+      `C7 unstable line reference: ${relative(ROOT, file)}:${line} contains ` +
+        `${match[0]}; use a symbol or test title.`,
+    );
+  }
+}
+
+// C8 — one current category section only; released historical blocks remain append-only.
+const changelog = readFileSync(CHANGELOG_PATH, 'utf8');
+const unreleasedMarker = '## [Unreleased]';
+const unreleasedStart = changelog.indexOf(unreleasedMarker);
+if (unreleasedStart < 0) {
+  errors.push('C8 missing Unreleased block: CHANGELOG.md must contain ## [Unreleased].');
+}
+const unreleasedTail =
+  unreleasedStart >= 0 ? changelog.slice(unreleasedStart + unreleasedMarker.length) : '';
+const nextReleaseOffset = unreleasedTail.search(/^## \[/m);
+const unreleased = nextReleaseOffset >= 0 ? unreleasedTail.slice(0, nextReleaseOffset) : unreleasedTail;
+const categoryCounts = new Map<string, number>();
+for (const match of unreleased.matchAll(/^###\s+(.+)$/gm)) {
+  const category = match[1]!.trim();
+  categoryCounts.set(category, (categoryCounts.get(category) ?? 0) + 1);
+}
+for (const [category, count] of categoryCounts) {
+  if (count > 1) {
+    errors.push(`C8 duplicate Unreleased category: CHANGELOG.md has ${count} "### ${category}" sections.`);
+  }
+}
+
+// C9 — keep the single instruction source and complete current-spec routing.
+for (const alias of ['AGENT.md', 'CLAUDE.md']) {
+  const path = join(ROOT, alias);
+  if (!existsSync(path) || !lstatSync(path).isSymbolicLink() || readlinkSync(path) !== 'AGENTS.md') {
+    errors.push(`C9 instruction alias: ${alias} must be a symlink to AGENTS.md.`);
+  }
+}
+
+const specIndex = readFileSync(join(SPEC_DIR, 'README.md'), 'utf8');
+for (const entry of readdirSync(SPEC_DIR, { withFileTypes: true })) {
+  if (!entry.isFile() || !entry.name.endsWith('.md') || entry.name === 'README.md') continue;
+  if (!specIndex.includes(`](${entry.name})`)) {
+    errors.push(`C9 unindexed spec: docs/spec/${entry.name} is missing from docs/spec/README.md.`);
+  }
+}
+const designSystemIndex = readFileSync(join(SPEC_DIR, 'design-system.md'), 'utf8');
+for (const entry of readdirSync(join(SPEC_DIR, 'design-system'), { withFileTypes: true })) {
+  if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+  if (!designSystemIndex.includes(`](./design-system/${entry.name})`)) {
+    errors.push(
+      `C9 unindexed design-system spec: docs/spec/design-system/${entry.name} is missing ` +
+        `from design-system.md.`,
+    );
+  }
+}
+
+// C10 — raw path mentions in current authorities must follow moved specs/plans.
+const currentAuthorityFiles = [
+  ...rootDocFiles,
+  TASKS_PATH,
+  join(DOCS_DIR, 'lessons.md'),
+  ...specFiles,
+  ...activePlanFiles,
+  ...referencePlanFiles,
+  ...maintainedDocFiles.filter(
+    (file) => file.startsWith(join(ROOT, 'native')) || file.startsWith(join(ROOT, 'src')),
+  ),
+];
+const currentDocPathRe = /docs\/(?:plans|spec)\/[A-Za-z0-9._/-]+\.md/g;
+for (const file of new Set(currentAuthorityFiles)) {
+  const source = readFileSync(file, 'utf8');
+  for (const match of source.matchAll(currentDocPathRe)) {
+    if (!existsSync(join(ROOT, match[0]))) {
+      const line = source.slice(0, match.index).split('\n').length;
+      errors.push(
+        `C10 stale authority path: ${relative(ROOT, file)}:${line} names missing ${match[0]}.`,
+      );
+    }
+  }
+}
+
+for (const file of markdownFiles(join(PLANS_DIR, 'archive'))) {
+  const source = readFileSync(file, 'utf8').split('\n').slice(0, 40).join('\n');
+  for (const match of source.matchAll(currentDocPathRe)) {
+    if (!existsSync(join(ROOT, match[0]))) {
+      const line = source.slice(0, match.index).split('\n').length;
+      errors.push(
+        `C10 stale archive entry path: ${relative(ROOT, file)}:${line} names missing ${match[0]}.`,
+      );
+    }
+  }
+}
+
 if (errors.length > 0) {
   console.error(`docs:check FAILED — ${errors.length} issue(s):\n`);
   for (const error of errors) console.error(`  • ${error}`);
@@ -243,5 +412,6 @@ if (errors.length > 0) {
 console.log(
   `docs:check OK — ${linkedRelPaths.size} plan mention(s) and ${checkedTasksLinks} board ` +
     `link(s) resolve, ${activePlanSlugs.length} active plan(s) on the board, ` +
-    `${checkedSpecLinks} spec link(s) and ${checkedRootLinks} root doc link(s) resolve.`,
+    `${checkedSpecLinks} spec, ${checkedRootLinks} root, and ${checkedMaintainedLinks} maintained-doc ` +
+    `link(s) resolve; plan shape, durable references, changelog categories, aliases, and spec indexes pass.`,
 );

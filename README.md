@@ -39,17 +39,18 @@ tests/
   e2e/       Playwright end-to-end tests.
 docs/
   spec/      Current intended behavior. Read these to understand the code.
-  plans/     Forward-looking plans. Read these to see where we're going.
+  plans/     Active designs; reference/ holds standing decisions and archive/
+             preserves terminal plans.
 ```
 
 ## Development
 
 ```sh
-# Install (bun is what the repo uses; npm/pnpm should also work).
+# Install with the repository's package manager.
 bun install
 
-# Run the desktop app in development.
-bun run dev
+# Run the main clone with isolated development data.
+bun run dev:main
 
 # Run the renderer only against a stub document (useful for UI work).
 bun run renderer:dev
@@ -61,6 +62,9 @@ bun run typecheck
 bun run test:core
 bun run test:renderer
 bun run test:e2e           # Playwright; needs the dev app to start
+
+# Validate documentation links and lifecycle structure.
+bun run docs:check
 
 # Build a packaged macOS DMG.
 bun run app:build

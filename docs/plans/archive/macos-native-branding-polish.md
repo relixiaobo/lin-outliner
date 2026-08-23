@@ -1,11 +1,3 @@
----
-status: done
-priority: P1
-owner: relixiaobo
-created: 2026-06-03
-updated: 2026-06-03
----
-
 # macOS Native Branding & Chrome Polish
 
 > **Shipped** on `cc/macos-native-branding-polish`. T1–T6 done. Q4 → copyright

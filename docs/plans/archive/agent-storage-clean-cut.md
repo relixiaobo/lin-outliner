@@ -1,11 +1,3 @@
----
-status: done
-priority: P1
-owner: cc-2
-created: 2026-06-10
-updated: 2026-06-10
----
-
 # Agent storage clean-cut: session → conversation, pools → principals/
 
 **Shape: (a) ONE complete feature in one PR.** A pure rename/relayout with a

@@ -1,11 +1,3 @@
----
-status: superseded
-priority: P1
-owner: relixiaobo
-created: 2026-05-26
-updated: 2026-06-01
----
-
 # Node-line Editor Core — Implementation Design (Phase 2b)
 
 > **Superseded (2026-06-01).** This contract routed trigger application through a

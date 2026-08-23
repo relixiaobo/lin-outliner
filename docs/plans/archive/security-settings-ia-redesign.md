@@ -1,11 +1,3 @@
----
-status: done
-priority: P1
-owner: codex-3
-created: 2026-06-12
-updated: 2026-06-12
----
-
 # Security Settings IA Redesign — one honest trust model
 
 **Shape: (a) ONE complete feature in one PR.** The core decision-model

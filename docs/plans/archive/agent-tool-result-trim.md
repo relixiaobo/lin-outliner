@@ -1,7 +1,3 @@
----
-status: done
----
-
 # Agent tool result trim — strip model-visible redundancy
 
 > **Shipped** in PR #128. Design folded into

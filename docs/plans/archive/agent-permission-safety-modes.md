@@ -1,9 +1,3 @@
----
-status: done
-owner: codex
-updated: 2026-06-11
----
-
 # Agent Permission Safety Modes
 
 ## Goal

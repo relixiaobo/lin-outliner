@@ -1,11 +1,3 @@
----
-status: done
-priority: P2
-owner: relixiaobo
-created: 2026-05-28
-updated: 2026-05-28
----
-
 # Keyboard Shortcut Parity
 
 Close the keyboard-shortcut gap between Lin and the nodex reference

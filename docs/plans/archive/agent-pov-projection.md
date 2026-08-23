@@ -1,12 +1,3 @@
----
-status: done
-priority: P2
-owner: codex-2
-phase: M3-C
-created: 2026-06-10
-updated: 2026-06-12
----
-
 # M3-C: per-agent POV inspector (derived view)
 
 **Shape: (a) ONE complete feature in one PR.** An independent transparency

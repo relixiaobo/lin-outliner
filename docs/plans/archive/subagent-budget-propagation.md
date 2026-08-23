@@ -355,7 +355,6 @@ any conflicting earlier wording):**
     `runtime_failure` is a category error, and editing the persistence test
     to match is a guard relaxed to pass (B11). Keep it in the set.
 
-
 One complete feature: close the mint. PR A/B bound the SLOPE of runaway spend
 (per-child breakers, mid-Turn stop); PR C bounds the TOTAL by construction and
 adds the two legibility gates, superseding the min(default, spawner-remaining)

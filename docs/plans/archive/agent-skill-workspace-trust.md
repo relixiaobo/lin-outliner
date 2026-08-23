@@ -1,11 +1,3 @@
----
-status: done
-priority: P2
-owner: codex
-created: 2026-06-10
-updated: 2026-06-11
----
-
 # Workspace trust for `project` skills (per-skill acceptance)
 
 **Shape: (a) ONE complete feature in one PR.** The named follow-up from PR #175.

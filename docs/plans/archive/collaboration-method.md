@@ -1,11 +1,3 @@
----
-status: done
-priority: P1
-owner: relixiaobo
-created: 2026-06-02
-updated: 2026-06-02
----
-
 # Collaboration Method
 
 The agreed way the PM and agents collaborate. This is a `draft` plan: once the

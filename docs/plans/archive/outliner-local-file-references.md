@@ -1,11 +1,3 @@
----
-status: done
-priority: P0
-owner: relixiaobo
-created: 2026-06-02
-updated: 2026-06-02
----
-
 # Outliner Local File References
 
 ## Outcome (shipped in PR #80)
@@ -14,7 +6,7 @@ Merged 2026-06-02 as commit `8990fde`. The foundation shipped as designed: one
 `ReferenceTarget` union (node | local-file), the unified `[[node:label^id]]` /
 `[[file:label^path]]` grammar in `referenceMarkup.ts`, and the pure
 `referenceTargetToResourceItem` serializer. The design now lives in
-`docs/spec/agent-tool-design.md` and `docs/spec/agent-progress.md`.
+`docs/spec/ui-behavior.md` and `docs/spec/agent-tool-design.md`.
 
 Deviations from the plan below, decided during implementation (pre-release, no
 production data — storage-format changes skip migration and dev userData is

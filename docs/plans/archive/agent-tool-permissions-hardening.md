@@ -1,11 +1,3 @@
----
-status: done
-priority: P2
-owner: relixiaobo
-created: 2026-05-30
-updated: 2026-06-07
----
-
 # Agent Tool Permissions — Hardening Follow-ups
 
 Follow-up work after the agent-tool-permissions implementation landed in

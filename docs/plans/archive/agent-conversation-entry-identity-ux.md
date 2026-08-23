@@ -1,11 +1,3 @@
----
-status: done
-priority: P2
-owner: main
-created: 2026-06-11
-updated: 2026-06-12
----
-
 # Agent Conversation UX: Roster, Channels, Identity, Presence
 
 **Shape: (b) a set of independent complete features**, each its own PR, ordered
@@ -18,13 +10,13 @@ direction. Implementation owners are unassigned.
 This plan is the UX layer over already-ratified conversation semantics. It
 introduces no new conversation primitives. Read first:
 
-- `docs/spec/agent-conversation-model.md` — canonical DM per agent
+- `docs/plans/reference/agent-conversation-model.md` — canonical DM per agent
   (find-or-create, continuous), Channels as named rooms, derived (not stored)
   kind, "a DM never converts in place", `@` scoped to roster, capability binds
   to the agent identity.
-- `docs/spec/agent-architecture.md` — Channel delivery model (typing presence
+- `docs/spec/agent-core.md` — current Thread/Turn/Item and delivery foundation
   while running, whole reply lands on completion, drill-in to run panel).
-- `docs/plans/agent-program.md` — M3 sequencing; M3-A (#179) shipped the
+- `docs/plans/reference/agent-program.md` — M3 sequencing; M3-A (#179) shipped the
   `actor` field and channel routing this plan renders.
 
 **Load-bearing semantic fact (ratified, already in the runtime):** same-round
@@ -32,9 +24,9 @@ co-addressees are independent — each turn's context cuts at the message that
 addressed it, and co-addressees never see each other
 (`agentRuntime.ts` round loop). Execution is currently serialized as an M3-A
 simplification, but that is an implementation stage, not a product position.
-**The UI in this plan is designed to the parallel semantics**, so that the
-execution-layer upgrade (`docs/plans/agent-channel-parallel-runtime.md`) ships
-later with zero UI change.
+**The UI in this plan is designed to the parallel semantics** later shipped by
+the execution-layer upgrade
+(`docs/plans/archive/agent-channel-parallel-runtime.md`).
 
 ## Goal
 

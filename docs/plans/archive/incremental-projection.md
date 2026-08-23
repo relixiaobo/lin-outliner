@@ -1,11 +1,3 @@
----
-status: done
-priority: P1
-owner: relixiaobo
-created: 2026-06-04
-updated: 2026-06-05
----
-
 # Incremental Projection Protocol (perf P1 keystone)
 
 Scope: the `core → IPC → renderer` projection data flow. This is the **P1

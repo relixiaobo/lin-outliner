@@ -1,12 +1,3 @@
----
-status: done
-priority: P1
-owner: relixiaobo
-created: 2026-05-26
-updated: 2026-05-26
-supersedes-framing: node-line-editor-unification.md#2b
----
-
 # NodeLineEditor Extraction — Step 1 Design & Risk Assessment
 
 > **Implemented (2026-05-26).** `TrailingInput` now renders the shared

@@ -1,11 +1,3 @@
----
-status: done
-priority: P1
-owner: codex-3
-created: 2026-06-12
-updated: 2026-06-12
----
-
 # Tana-Style References Experience
 
 > **DONE (2026-06-12) — shipped in PR #208.** One complete feature in one PR, as

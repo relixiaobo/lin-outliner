@@ -23,10 +23,10 @@ once through #463's extraction.
   `send_message`, `followup_task`, `list_agents`, `interrupt_agent`) or their
   model-facing semantics; this plan changes what the *user* sees and can do.
 - No lifting of the `request_user_input` root-Thread scope. The "a child
-  cannot ask the user" deferral (`docs/plans/agent-program.md:90-91`) stands;
+  cannot ask the user" deferral in `docs/plans/reference/agent-program.md` stands;
   this plan only makes the blocked state visible.
-- No child composer. Child Threads stay read-only per
-  `docs/spec/agent-thread-rendering.md:442-445`; user control is limited to
+- No child composer. Child Threads stay read-only per the child-Trajectory
+  contract in `docs/spec/agent-thread-rendering.md`; user control is limited to
   interrupt.
 - No token judgement asked of the user (Delegation Contract §3: receipts are
   internal; product surfaces speak time/status). The Turn Diagnostics Model

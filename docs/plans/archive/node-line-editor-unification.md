@@ -1,11 +1,3 @@
----
-status: done
-priority: P1
-owner: relixiaobo
-created: 2026-05-25
-updated: 2026-06-01
----
-
 # Node-line Editor Unification
 
 > **Done (2026-06-01, PR #64).** Phase 2b landed: `TrailingInput.tsx` (the second

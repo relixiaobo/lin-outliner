@@ -1,11 +1,3 @@
----
-status: done
-priority: P1
-owner: relixiaobo
-created: 2026-05-27
-updated: 2026-06-03
----
-
 # Native-Feel Remediation (Electron)
 
 > **Done (2026-06-03).** All six stages shipped. Stage 6 — macOS packaging +

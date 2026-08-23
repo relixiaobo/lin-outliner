@@ -1,6 +1,6 @@
 # Embed Schema Removal
 
-> **Absorbed 2026-08-10 into `docs/plans/media-search-alignment.md`.** The removal
+> **Absorbed 2026-08-10 into `docs/plans/archive/media-search-alignment.md`.** The removal
 > is that plan's PR 1, widened by the staleness audit's finding that search built
 > live media facets on the dead type while the real carrier (`AttachmentNode`) was
 > excluded from search entirely. The positioning ruling below — removal rather than

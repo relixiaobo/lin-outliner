@@ -9,12 +9,12 @@ Independent of asset work.
 
 1. **Heading-mark toggle** — sixth button in the toolbar that toggles the
    existing `headingMark` text mark over the current selection. The mark
-   type already exists in `TextMarkKind` (`src/core/types.ts:110`); the
+   type already exists in `TextMarkKind` (`src/core/types.ts`); the
    PM schema already knows it. Only the toolbar UI is missing.
 2. **`#` selection-extract** — small button that, given a non-empty text
    selection, creates a new tagged node in the user's chosen "extracts"
    destination with the selected text as content and a tag applied. nodex
-   wires this to a Library extraction; lin's destination policy needs
+   wires this to a Library extraction; Tenon's destination policy needs
    deciding (see open questions).
 
 ## Non-goals
@@ -67,7 +67,7 @@ Two options, decide before implementing:
   the deleted `STASH` system node from nodex) holds all extracts. Simpler;
   less flexible.
 
-Recommendation: **A** — fits lin's "no special buckets" stance better than
+Recommendation: **A** — fits Tenon's "no special buckets" stance better than
 B and matches the PARA-removal direction (commit `ab971d7`).
 
 **Decided: option A** (PM-ratified 2026-08-06). Build against per-tag

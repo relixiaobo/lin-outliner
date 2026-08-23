@@ -1,12 +1,3 @@
----
-status: superseded
-priority: P2
-owner: unassigned
-phase: memory-realignment PR-2 (after run-unification, BEFORE M3-B)
-created: 2026-06-10
-updated: 2026-06-11
----
-
 # Memory D3: the episodic index — episodes as a derived view + reverse lookup
 
 > **Resequenced + reframed 2026-06-10 (PM-ratified, post-#181):** this plan is

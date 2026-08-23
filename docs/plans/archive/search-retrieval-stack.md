@@ -1,21 +1,13 @@
----
-status: done
-priority: P1
-owner: codex
-created: 2026-06-04
-updated: 2026-06-04
----
+# Search Retrieval Stack
 
 > **Closed 2026-06-04 (PR #111).** Phases 1–4 shipped; their design lives in
 > `docs/spec/search-query-grammar.md`, `docs/spec/agent-tool-design.md`, and
-> `docs/spec/agent-event-log-rendering.md`. Phase 5 is closed by PM decision:
+> `docs/spec/agent-thread-rendering.md`. Phase 5 is closed by PM decision:
 > 5a (capture-payload search) is dropped because the `CapturePayloadRef.searchPolicy`
 > contract it depended on was removed in PR #103 (capture nodes are now plain
 > indexed nodes); 5b (persisted index / WAND-block-max / SQLite-FTS / embeddings)
 > is **shelved**, not done — re-open only when a probe against a real workspace
 > trips one of the documented triggers (see Phase 5 below).
-
-# Search Retrieval Stack
 
 ## Goal
 

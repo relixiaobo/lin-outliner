@@ -1,10 +1,3 @@
----
-status: done
-priority: P1
-owner: relixiaobo
-created: 2026-06-10
----
-
 # Agent Skill Acceptance — close the ratification loop
 
 Makes PR #174's ratification gate usable: the user can **accept** an agent-authored

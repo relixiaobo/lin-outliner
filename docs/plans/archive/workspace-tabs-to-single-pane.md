@@ -1,12 +1,3 @@
----
-status: done
-priority: P1
-owner: relixiaobo
-created: 2026-06-03
-updated: 2026-06-03
-shipped: PR #85
----
-
 # Workspace Shell: Remove Tabs, Keep Split Panes
 
 > Incorporates the cc-proposed D5/D6/D7 revision, PM-ratified 2026-06-03:

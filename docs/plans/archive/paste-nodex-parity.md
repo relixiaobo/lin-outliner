@@ -1,11 +1,3 @@
----
-status: done
-priority: medium
-owner: relixiaobo
-created: 2026-06-04
-updated: 2026-06-04
----
-
 # Paste: nodex parity
 
 > **Shipped.** Composer multi-line paste in #112; outliner format + `#tag` /
