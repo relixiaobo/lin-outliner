@@ -44,11 +44,15 @@ export class OutlineClientSupervisor {
     );
   }
 
-  async status(): Promise<{ running: boolean; instanceId?: string }> {
+  async status(): Promise<{ running: boolean; runtime?: unknown }> {
     const client = await this.tryConnect();
     if (!client) return { running: false };
     try {
-      return { running: true, instanceId: client.descriptor.instanceId };
+      const response = await client.request('status', {});
+      if (isRecord(response.data) && typeof response.data.running === 'boolean') {
+        return response.data as { running: boolean; runtime?: unknown };
+      }
+      return { running: true, runtime: response.data };
     } finally {
       client.close();
     }
@@ -115,4 +119,8 @@ function isUnavailableConnection(error: unknown): boolean {
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }

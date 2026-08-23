@@ -1,0 +1,204 @@
+import { afterAll, describe, expect, test } from 'bun:test';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { Value } from 'typebox/value';
+import { runOutlineCli } from '../../src/outline/cli';
+import {
+  OUTLINE_APP_VERSION,
+  OUTLINE_CAPABILITIES,
+  OUTLINE_PROTOCOL_VERSION,
+  OutlineResponseSchema,
+} from '../../src/outline/contract';
+import { OutlineRuntimeServer } from '../../src/outline/runtime/server';
+
+const roots: string[] = [];
+const cliEntry = fileURLToPath(new URL('../../src/outline/cli/entry.ts', import.meta.url));
+
+afterAll(async () => {
+  await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
+});
+
+describe('outline CLI', () => {
+  test('emits exactly one versioned JSON envelope for a local command without starting Runtime', async () => {
+    const root = await makeRoot();
+    const output = captureIo();
+
+    expect(await runOutlineCli(['--json', 'version'], { runtimeRoot: root, io: output.io })).toBe(0);
+    expect(output.stderr).toBe('');
+    expect(output.stdout.endsWith('\n')).toBe(true);
+    expect(output.stdout.trim().split('\n')).toHaveLength(1);
+    const response = JSON.parse(output.stdout) as unknown;
+    expect(Value.Check(OutlineResponseSchema, response)).toBe(true);
+    expect(response).toMatchObject({
+      protocolVersion: OUTLINE_PROTOCOL_VERSION,
+      ok: true,
+      command: 'version',
+      data: { appVersion: OUTLINE_APP_VERSION, protocolMajors: [OUTLINE_PROTOCOL_VERSION] },
+    });
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  test('reports absent status without starting Runtime', async () => {
+    const root = await makeRoot();
+    const output = captureIo();
+
+    expect(await runOutlineCli(['--json', 'status'], { runtimeRoot: root, io: output.io })).toBe(0);
+    expect(JSON.parse(output.stdout)).toMatchObject({ ok: true, command: 'status', data: { running: false } });
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  test('serves exact named public and command schemas locally', async () => {
+    const root = await makeRoot();
+    const selector = captureIo();
+    const porcelain = captureIo();
+
+    expect(await runOutlineCli(['--json', 'schema', 'Selector'], { runtimeRoot: root, io: selector.io })).toBe(0);
+    expect(JSON.parse(selector.stdout).data.$defs.Selector.$id).toBe('Selector');
+    expect(await runOutlineCli(['--json', 'schema', 'done', 'set'], { runtimeRoot: root, io: porcelain.io })).toBe(0);
+    expect(JSON.parse(porcelain.stdout).data).toHaveProperty('request');
+    expect(JSON.parse(porcelain.stdout).data).toHaveProperty('result');
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  test('maps argv and protocol failures to stable JSON error envelopes and exit codes', async () => {
+    const root = await makeRoot();
+    const protocol = captureIo();
+    const usage = captureIo();
+
+    expect(await runOutlineCli(['--json', '--protocol', '2', 'version'], {
+      runtimeRoot: root,
+      io: protocol.io,
+    })).toBe(6);
+    expect(JSON.parse(protocol.stdout)).toMatchObject({
+      ok: false,
+      error: { code: 'protocol_incompatible', category: 'protocol' },
+    });
+    expect(protocol.stderr).toBe('');
+
+    expect(await runOutlineCli(['--json', 'version', 'extra'], { runtimeRoot: root, io: usage.io })).toBe(2);
+    expect(JSON.parse(usage.stdout)).toMatchObject({
+      ok: false,
+      command: 'version',
+      error: { code: 'invalid_input', category: 'usage' },
+    });
+  });
+
+  test('compares bundled and live capability registries through one Runtime client', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const output = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'capabilities', '--runtime'], {
+        runtimeRoot: root,
+        io: output.io,
+      })).toBe(0);
+      expect(JSON.parse(output.stdout).data).toHaveLength(OUTLINE_CAPABILITIES.length);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('forwards history commands and preserves unavailable errors under no-start', async () => {
+    const runningRoot = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root: runningRoot, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const log = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'log', '--limit', '10'], {
+        runtimeRoot: runningRoot,
+        io: log.io,
+      })).toBe(0);
+      expect(JSON.parse(log.stdout)).toMatchObject({ ok: true, command: 'log', data: [] });
+    } finally {
+      await runtime.stop();
+    }
+
+    const absentRoot = await makeRoot();
+    const absent = captureIo();
+    expect(await runOutlineCli(['--json', '--no-start', 'log'], {
+      runtimeRoot: absentRoot,
+      io: absent.io,
+    })).toBe(5);
+    expect(JSON.parse(absent.stdout)).toMatchObject({
+      ok: false,
+      command: 'log',
+      error: { code: 'runtime_unavailable', category: 'unavailable' },
+    });
+  });
+
+  test('reads structured input from stdin only when explicitly requested', async () => {
+    const root = await makeRoot();
+    const explicit = captureIo('{not json');
+    const missing = captureIo('{not json');
+
+    expect(await runOutlineCli(['--json', '--no-start', 'diff', '--input', '-'], {
+      runtimeRoot: root,
+      io: explicit.io,
+    })).toBe(2);
+    expect(explicit.stdinReads).toBe(1);
+    expect(JSON.parse(explicit.stdout).error.code).toBe('invalid_input');
+
+    expect(await runOutlineCli(['--json', '--no-start', 'diff'], {
+      runtimeRoot: root,
+      io: missing.io,
+    })).toBe(2);
+    expect(missing.stdinReads).toBe(0);
+  });
+
+  test('runs the real entry as a thin local process with clean stdout', async () => {
+    const root = await makeRoot();
+    const child = Bun.spawn([process.execPath, cliEntry, '--json', 'version'], {
+      env: { ...process.env, TENON_OUTLINE_RUNTIME_ROOT: root },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const [exitCode, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe('');
+    expect(JSON.parse(stdout)).toMatchObject({ ok: true, command: 'version' });
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  test('keeps the app version constant aligned with package metadata', async () => {
+    const packageJson = JSON.parse(await readFile(
+      fileURLToPath(new URL('../../package.json', import.meta.url)),
+      'utf8',
+    )) as { version: string };
+    expect(OUTLINE_APP_VERSION).toBe(packageJson.version);
+  });
+});
+
+function captureIo(stdin = '') {
+  let stdout = '';
+  let stderr = '';
+  let stdinReads = 0;
+  return {
+    io: {
+      stdout: (value: string) => { stdout += value; },
+      stderr: (value: string) => { stderr += value; },
+      readStdin: async () => {
+        stdinReads += 1;
+        return stdin;
+      },
+    },
+    get stdout() { return stdout; },
+    get stderr() { return stderr; },
+    get stdinReads() { return stdinReads; },
+  };
+}
+
+async function makeRoot(): Promise<string> {
+  const root = await mkdtemp(path.join(tmpdir(), 'tenon-outline-cli-'));
+  roots.push(root);
+  return root;
+}

@@ -13,13 +13,14 @@ import {
 import { OUTLINE_PROTOCOL_VERSION } from '../contract/version';
 
 const MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
+type OutlineSuccessResponse = Extract<OutlineResponse, { ok: true }>;
 
 export class OutlineClient {
   private readonly agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
 
   constructor(readonly descriptor: RuntimeDescriptor) {}
 
-  async request(command: string, input: unknown): Promise<OutlineResponse> {
+  async request(command: string, input: unknown): Promise<OutlineSuccessResponse> {
     const request: OutlineRequest = {
       protocolVersion: OUTLINE_PROTOCOL_VERSION,
       requestId: `request:${crypto.randomUUID()}`,
@@ -33,7 +34,7 @@ export class OutlineClient {
     if (value.requestId !== request.requestId || value.command !== command) {
       throw protocolError('Outline Runtime response identity does not match the request.');
     }
-    if (!value.ok) throw new OutlineContractError(value.error);
+    if (value.ok === false) throw new OutlineContractError(value.error);
     return value;
   }
 
