@@ -265,6 +265,30 @@ interface TreeYieldContext {
   commit: () => void;
 }
 
+export interface CreateNodeTreeBatch {
+  parentId: string;
+  nodes: CreateNodeTree[];
+}
+
+export interface CreateNodeTreeBatchOptions {
+  yieldEveryNodes?: number;
+  commitEveryNodes?: number;
+  yield?: () => Promise<void>;
+  onRootCreated?: (batchIndex: number, nodeId: NodeId) => void;
+}
+
+export interface EnsureDateNodeInput {
+  year: number;
+  month: number;
+  day: number;
+}
+
+export interface EnsureDateNodesYieldingOptions {
+  yieldEveryDates?: number;
+  commitEveryDates?: number;
+  yield?: () => Promise<void>;
+}
+
 interface CoreTransaction {
   origin: string;
   metadata: CoreTransactionMetadata;
@@ -1310,12 +1334,19 @@ export class Core {
     nodes: CreateNodeTree[],
     options: { yieldEveryNodes?: number; commitEveryNodes?: number; yield?: () => Promise<void> } = {},
   ): Promise<FocusHint | undefined> {
+    return this.createNodeTreeBatchesYieldingFocus([{ parentId, nodes }], options);
+  }
+
+  async createNodeTreeBatchesYieldingFocus(
+    batches: readonly CreateNodeTreeBatch[],
+    options: CreateNodeTreeBatchOptions = {},
+  ): Promise<FocusHint | undefined> {
     if (!this.activeTransaction && options.commitEveryNodes) {
       const undoGroupStarted = this.beginUndoGroup();
       try {
         return await this.transactionWithResolvedOrigin(
           this.currentCommitOrigin(),
-          () => this.createNodesFromTreeYieldingFocus(parentId, nodes, options),
+          () => this.createNodeTreeBatchesYieldingFocus(batches, options),
           this.currentCommitMetadata(),
         );
       } finally {
@@ -1325,10 +1356,12 @@ export class Core {
 
     return this.mutateAsyncFocus(async () => {
       const state = this.snapshot();
-      ensureParentMutable(state, parentId);
-      assertCreateNodeTreeReferencesAvailable(state, nodes);
+      for (const batch of batches) {
+        ensureParentMutable(state, batch.parentId);
+        assertCreateNodeTreeReferencesAvailable(state, batch.nodes);
+      }
       const context = this.createTreeMaterializeContext(state);
-      const total = countCreateNodeTrees(nodes);
+      const total = batches.reduce((count, batch) => count + countCreateNodeTrees(batch.nodes), 0);
       const yieldContext: TreeYieldContext = {
         created: 0,
         total,
@@ -1338,11 +1371,18 @@ export class Core {
         commit: () => this.commitActiveTransactionChunk(),
       };
       let lastCreatedId: string | undefined;
-      for (const node of nodes) {
-        const createdId = await this.insertNodeTreeDirectYielding(parentId, node, undefined, context, yieldContext);
-        lastCreatedId = createdId;
+      let lastParentId: string | undefined;
+      for (const [batchIndex, batch] of batches.entries()) {
+        for (const node of batch.nodes) {
+          const createdId = await this.insertNodeTreeDirectYielding(batch.parentId, node, undefined, context, yieldContext);
+          options.onRootCreated?.(batchIndex, createdId);
+          lastCreatedId = createdId;
+          lastParentId = batch.parentId;
+        }
       }
-      return lastCreatedId ? focus(lastCreatedId, { parentId, placement: { kind: 'end' } }) : undefined;
+      return lastCreatedId && lastParentId
+        ? focus(lastCreatedId, { parentId: lastParentId, placement: { kind: 'end' } })
+        : undefined;
     });
   }
 
@@ -3266,6 +3306,64 @@ export class Core {
     return this.mutate(() => focus(this.ensureDateNodeDirect(year, month, day)));
   }
 
+  async ensureDateNodesYielding(
+    dates: readonly EnsureDateNodeInput[],
+    options: EnsureDateNodesYieldingOptions = {},
+  ): Promise<NodeId[]> {
+    if (!this.activeTransaction && options.commitEveryDates) {
+      const undoGroupStarted = this.beginUndoGroup();
+      try {
+        return await this.transactionWithResolvedOrigin(
+          this.currentCommitOrigin(),
+          () => this.ensureDateNodesYielding(dates, options),
+          this.currentCommitMetadata(),
+        );
+      } finally {
+        if (undoGroupStarted) this.endUndoGroup();
+      }
+    }
+
+    let nodeIds: NodeId[] = [];
+    await this.mutateAsyncFocus(async () => {
+      const descriptors = dates.map(({ year, month, day }) => {
+        const descriptor = canonicalDateNodeDescriptor(year, month, day);
+        if (!descriptor) throw CoreError.invalidOperation('invalid date');
+        return descriptor;
+      });
+      const state = this.snapshot();
+      ensureTagDefinition(state, TAG_YEAR_ID);
+      ensureTagDefinition(state, TAG_WEEK_ID);
+      ensureTagDefinition(state, TAG_DAY_ID);
+      const index = canonicalDateNodeIndex(state);
+      const yieldEveryDates = Math.max(1, options.yieldEveryDates ?? 50);
+      const commitEveryDates = options.commitEveryDates
+        ? Math.max(1, options.commitEveryDates)
+        : undefined;
+      const yieldOperation = options.yield ?? yieldToEventLoop;
+      let createdSinceCommit = false;
+      nodeIds = [];
+      for (const [indexInBatch, descriptor] of descriptors.entries()) {
+        const result = this.ensureCanonicalDateNodeIndexedDirect(descriptor, index);
+        nodeIds.push(result.nodeId);
+        createdSinceCommit ||= result.created;
+        const processed = indexInBatch + 1;
+        if (
+          commitEveryDates
+          && processed % commitEveryDates === 0
+          && processed < descriptors.length
+          && createdSinceCommit
+        ) {
+          this.commitActiveTransactionChunk();
+          createdSinceCommit = false;
+        }
+        if (processed % yieldEveryDates === 0) await yieldOperation();
+      }
+      const lastNodeId = nodeIds.at(-1);
+      return lastNodeId ? focus(lastNodeId) : undefined;
+    });
+    return nodeIds;
+  }
+
   createSearchNode(parentId: string, index: number | null | undefined, config: SearchNodeConfig, textIndex?: TextSearchIndex): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
@@ -5043,16 +5141,60 @@ export class Core {
   }
 
   private ensureDateNodeDirect(year: number, month: number, day: number) {
-    const date = new Date(year, month - 1, day);
-    if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
-      throw CoreError.invalidOperation('invalid date');
-    }
-    const yearName = String(year);
-    const weekName = `W${String(isoWeek(date)).padStart(2, '0')}`;
-    const dayName = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    const yearId = this.findOrCreateNamedChildDirect(DAILY_NOTES_ID, yearName, TAG_YEAR_ID);
-    const weekId = this.findOrCreateNamedChildDirect(yearId, weekName, TAG_WEEK_ID);
-    return this.findOrCreateNamedChildDirect(weekId, dayName, TAG_DAY_ID);
+    const descriptor = canonicalDateNodeDescriptor(year, month, day);
+    if (!descriptor) throw CoreError.invalidOperation('invalid date');
+    const yearId = this.findOrCreateNamedChildDirect(DAILY_NOTES_ID, descriptor.yearName, TAG_YEAR_ID);
+    const weekId = this.findOrCreateNamedChildDirect(yearId, descriptor.weekName, TAG_WEEK_ID);
+    return this.findOrCreateNamedChildDirect(weekId, descriptor.dayName, TAG_DAY_ID);
+  }
+
+  private ensureCanonicalDateNodeIndexedDirect(
+    descriptor: CanonicalDateNodeDescriptor,
+    index: CanonicalDateNodeIndex,
+  ): { nodeId: NodeId; created: boolean } {
+    const year = this.findOrCreateCanonicalDateChildIndexedDirect(
+      index,
+      DAILY_NOTES_ID,
+      descriptor.yearName,
+      TAG_YEAR_ID,
+    );
+    const week = this.findOrCreateCanonicalDateChildIndexedDirect(
+      index,
+      year.nodeId,
+      descriptor.weekName,
+      TAG_WEEK_ID,
+    );
+    const day = this.findOrCreateCanonicalDateChildIndexedDirect(
+      index,
+      week.nodeId,
+      descriptor.dayName,
+      TAG_DAY_ID,
+    );
+    return {
+      nodeId: day.nodeId,
+      created: year.created || week.created || day.created,
+    };
+  }
+
+  private findOrCreateCanonicalDateChildIndexedDirect(
+    index: CanonicalDateNodeIndex,
+    parentId: NodeId,
+    name: string,
+    tagId: NodeId,
+  ): { nodeId: NodeId; created: boolean } {
+    const key = canonicalDateNodeIndexKey(parentId, tagId, name);
+    const existing = index.get(key);
+    if (existing) return { nodeId: existing, created: false };
+    const nodeId = freshId('date');
+    this.loro.createNodeWithId(nodeId, parentId, 0, undefined, (node) => {
+      node.content = plainText(name);
+      node.locked = true;
+      // Canonical date tags are fixed system definitions without templates.
+      // Attach them at creation so bulk resolution never rematerializes state.
+      node.tags.push(tagId);
+    });
+    index.set(key, nodeId);
+    return { nodeId, created: true };
   }
 
   private findDateNodeId(year: number, month: number, day: number) {
@@ -5061,14 +5203,11 @@ export class Core {
   }
 
   private findDateNodeIdInState(state: DocumentState, year: number, month: number, day: number) {
-    const date = new Date(year, month - 1, day);
-    if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return undefined;
-    const yearName = String(year);
-    const weekName = `W${String(isoWeek(date)).padStart(2, '0')}`;
-    const dayName = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    const yearId = findNamedTaggedChild(state, DAILY_NOTES_ID, yearName, TAG_YEAR_ID);
-    const weekId = yearId ? findNamedTaggedChild(state, yearId, weekName, TAG_WEEK_ID) : undefined;
-    return weekId ? findNamedTaggedChild(state, weekId, dayName, TAG_DAY_ID) : undefined;
+    const descriptor = canonicalDateNodeDescriptor(year, month, day);
+    if (!descriptor) return undefined;
+    const yearId = findNamedTaggedChild(state, DAILY_NOTES_ID, descriptor.yearName, TAG_YEAR_ID);
+    const weekId = yearId ? findNamedTaggedChild(state, yearId, descriptor.weekName, TAG_WEEK_ID) : undefined;
+    return weekId ? findNamedTaggedChild(state, weekId, descriptor.dayName, TAG_DAY_ID) : undefined;
   }
 
   private findOrCreateNamedChildDirect(parentId: string, name: string, tagId?: string) {
@@ -6392,6 +6531,60 @@ function findNamedTaggedChild(
     const child = state.nodes[childId];
     return child?.content.text === name && child.tags.includes(tagId);
   });
+}
+
+interface CanonicalDateNodeDescriptor {
+  yearName: string;
+  weekName: string;
+  dayName: string;
+}
+
+type CanonicalDateNodeIndex = Map<string, NodeId>;
+
+function canonicalDateNodeDescriptor(
+  year: number,
+  month: number,
+  day: number,
+): CanonicalDateNodeDescriptor | null {
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+  return {
+    yearName: String(year),
+    weekName: `W${String(isoWeek(date)).padStart(2, '0')}`,
+    dayName: `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+  };
+}
+
+function canonicalDateNodeIndex(state: DocumentState): CanonicalDateNodeIndex {
+  const index: CanonicalDateNodeIndex = new Map();
+  const yearIds = indexCanonicalDateChildren(state, index, DAILY_NOTES_ID, TAG_YEAR_ID);
+  for (const yearId of yearIds) {
+    const weekIds = indexCanonicalDateChildren(state, index, yearId, TAG_WEEK_ID);
+    for (const weekId of weekIds) indexCanonicalDateChildren(state, index, weekId, TAG_DAY_ID);
+  }
+  return index;
+}
+
+function indexCanonicalDateChildren(
+  state: DocumentState,
+  index: CanonicalDateNodeIndex,
+  parentId: NodeId,
+  tagId: NodeId,
+): NodeId[] {
+  const selectedIds: NodeId[] = [];
+  for (const childId of state.nodes[parentId]?.children ?? []) {
+    const child = state.nodes[childId];
+    if (!child?.tags.includes(tagId)) continue;
+    const key = canonicalDateNodeIndexKey(parentId, tagId, child.content.text);
+    if (index.has(key)) continue;
+    index.set(key, childId);
+    selectedIds.push(childId);
+  }
+  return selectedIds;
+}
+
+function canonicalDateNodeIndexKey(parentId: NodeId, tagId: NodeId, name: string): string {
+  return `${parentId}\u0000${tagId}\u0000${name}`;
 }
 
 function nextTagColor(state: DocumentState) {

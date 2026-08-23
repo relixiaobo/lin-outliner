@@ -38,6 +38,23 @@ export interface OutlinerProjectionFilter {
   ): TextSearchIndex;
 }
 
+export type ImportTreeBatchTarget =
+  | { kind: 'node'; parentId: NodeId }
+  | { kind: 'date'; year: number; month: number; day: number };
+
+export interface ImportTreeBatch {
+  batchId: string;
+  target: ImportTreeBatchTarget;
+  nodes: CreateNodeTree[];
+}
+
+export interface ImportTreeBatchResult {
+  batchId: string;
+  parentId: NodeId;
+  parentCreated: boolean;
+  rootIds: NodeId[];
+}
+
 export interface OutlinerToolHost {
   getProjection(): DocumentProjection;
   getDocumentReadModel?(): { asProjectionIndex(): ProjectionIndex };
@@ -60,6 +77,11 @@ export interface OutlinerToolHost {
     meta: OutlinerToolMutationMeta,
     options?: { yieldEveryNodes?: number; commitEveryNodes?: number },
   ): Promise<{ focus?: FocusHint }>;
+  createImportTreeBatchesYielding?(
+    batches: readonly ImportTreeBatch[],
+    meta: OutlinerToolMutationMeta,
+    options?: { yieldEveryNodes?: number; commitEveryNodes?: number },
+  ): Promise<{ batches: ImportTreeBatchResult[] }>;
   operationHistory?(
     query: OperationHistoryParams,
     meta?: OutlinerToolMutationMeta,

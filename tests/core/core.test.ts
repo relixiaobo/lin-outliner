@@ -401,6 +401,63 @@ describe('Core', () => {
     expect(core.state().nodes[rootId].children).toHaveLength(5);
   });
 
+  test('bulk date resolution keeps 2,000-date yield slices bounded beside 12,000 existing nodes', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    await core.createNodesFromTreeYieldingFocus(today, Array.from({ length: 12_000 }, (_value, index) => ({
+      content: plainText(`Existing row ${index + 1}`),
+      children: [],
+    })), {
+      yieldEveryNodes: 250,
+    });
+    const dates = Array.from({ length: 2_000 }, (_value, index) => {
+      const date = new Date(2030, 0, index + 1);
+      return { year: date.getFullYear(), month: date.getMonth() + 1, day: date.getDate() };
+    });
+    let sliceStartedAt = performance.now();
+    let longestSliceMs = 0;
+    let yields = 0;
+
+    const dayNodeIds = await core.ensureDateNodesYielding(dates, {
+      yieldEveryDates: 50,
+      commitEveryDates: 50,
+      yield: async () => {
+        const now = performance.now();
+        longestSliceMs = Math.max(longestSliceMs, now - sliceStartedAt);
+        yields += 1;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        sliceStartedAt = performance.now();
+      },
+    });
+
+    expect(yields).toBe(40);
+    expect(dayNodeIds).toHaveLength(2_000);
+    expect(new Set(dayNodeIds)).toHaveLength(2_000);
+    expect(longestSliceMs).toBeLessThan(2_000);
+  }, 30_000);
+
+  test('bulk date resolution rolls back committed scaffold chunks when a yield fails', async () => {
+    const core = Core.new();
+    const projectionBefore = structuredClone(core.projection());
+    let yields = 0;
+
+    await expect(core.ensureDateNodesYielding([
+      { year: 2040, month: 1, day: 1 },
+      { year: 2040, month: 1, day: 2 },
+      { year: 2040, month: 1, day: 3 },
+    ], {
+      yieldEveryDates: 1,
+      commitEveryDates: 1,
+      yield: async () => {
+        yields += 1;
+        if (yields === 2) throw new Error('injected date scaffold failure');
+      },
+    })).rejects.toThrow('injected date scaffold failure');
+
+    expect(yields).toBe(2);
+    expect(core.projection()).toEqual(projectionBefore);
+  });
+
   test('yielding tree append does not materialize the growing parent per sibling', async () => {
     const core = Core.new();
     const parentId = mustFocus(core.createNode(core.projection().todayId, null, 'Bulk parent'));

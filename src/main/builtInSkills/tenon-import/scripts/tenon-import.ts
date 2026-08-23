@@ -49,13 +49,25 @@ interface ImportApiResponse {
   warnings?: readonly string[];
 }
 
+type ImportMode = 'stage' | 'native_daily';
+
+interface DailyPreviewSummary {
+  dateSectionCount: number;
+  dateCount: number;
+  nonDateSectionCount: number;
+  existingDateCount?: number;
+  newDateCount?: number;
+  firstDate?: string;
+  lastDate?: string;
+}
+
 const USAGE = [
   'Usage:',
   '  tenon-import inspect <source> --out <profile.json>',
   '  tenon-import tana <tana-export.json> --out <pack.json> --coverage-out <coverage.json> [--fidelity content|clean|full]',
   '  tenon-import validate <pack.json> [--out <report.json>]',
-  '  tenon-import preview <pack.json> --out <preview.md> [--parent-id <node-id>] [--json] [--offline-preview]',
-  '  tenon-import commit <pack.json> --preview-id <preview:id> [--parent-id <node-id>] [--json]',
+  '  tenon-import preview <pack.json> --out <preview.md> [--mode stage|native_daily] [--parent-id <node-id>] [--json] [--offline-preview]',
+  '  tenon-import commit <pack.json> --preview-id <preview:id> [--mode stage|native_daily] [--parent-id <node-id>] [--json]',
 ].join('\n');
 
 const API_DESCRIPTOR_ENV = 'TENON_IMPORT_API_DESCRIPTOR';
@@ -114,7 +126,7 @@ async function runTana(args: string[]): Promise<unknown> {
     includeTrash,
     options: {
       fidelity,
-      dateGrouping: 'stage_headings',
+      dateGrouping: 'native_daily',
       tags: fidelity !== 'content',
       fields: fidelity === 'full' ? 'field_rows' : fidelity === 'clean' ? 'text_children' : 'omit',
       doneState: fidelity !== 'content',
@@ -153,10 +165,12 @@ async function runPreview(args: string[]): Promise<unknown> {
   const out = optionValue(args, '--out');
   if (!out) throw new CliFailure('invalid_args', '--out is required for preview.', USAGE);
   const parentId = optionValue(args, '--parent-id');
+  const mode = importModeOption(args);
   const offline = optionFlag(args, '--offline-preview');
   const packContent = await readFile(packFile, 'utf8');
   const validation = validatePackContent(packContent);
   if (!validation.ok) throw new CliFailure(validation.code, validation.message);
+  validateSelectedMode(mode, validation.pack);
 
   const api = offline
     ? null
@@ -164,14 +178,18 @@ async function runPreview(args: string[]): Promise<unknown> {
       packContent,
       packLabel: path.resolve(packFile),
       ...(parentId ? { parentId } : {}),
+      ...(mode ? { mode } : {}),
     });
   const previewId = previewIdFromApi(api);
-  await writePreviewFile(out, validation.pack, previewId);
+  const selectedMode = importModeFromApi(api) ?? mode ?? defaultImportMode(validation.pack);
+  await writePreviewFile(out, validation.pack, previewId, selectedMode, api?.data);
   return {
     out,
     previewId,
+    mode: selectedMode,
     stats: validation.pack.stats,
-    warnings: validation.pack.warnings,
+    warnings: warningsFromApi(api) ?? validation.pack.warnings,
+    dailySummary: dailySummaryFromApi(api),
     api: api?.data,
     offline,
   };
@@ -183,14 +201,17 @@ async function runCommit(args: string[]): Promise<unknown> {
   const previewId = optionValue(args, '--preview-id');
   if (!previewId) throw new CliFailure('invalid_args', '--preview-id is required for commit.', USAGE);
   const parentId = optionValue(args, '--parent-id');
+  const mode = importModeOption(args);
   const packContent = await readFile(packFile, 'utf8');
   const validation = validatePackContent(packContent);
   if (!validation.ok) throw new CliFailure(validation.code, validation.message);
+  validateSelectedMode(mode, validation.pack);
   const api = await callImportApi('/commit', {
     packContent,
     packLabel: path.resolve(packFile),
     previewId,
     ...(parentId ? { parentId } : {}),
+    ...(mode ? { mode } : {}),
   });
   return api.data;
 }
@@ -200,7 +221,7 @@ function assertCommitArgs(args: string[]): void {
   if (!packFile || packFile.startsWith('-')) {
     throw new CliFailure('invalid_args', 'commit requires one Import Pack path before its options.', USAGE);
   }
-  const valueOptions = new Set(['--preview-id', '--parent-id']);
+  const valueOptions = new Set(['--preview-id', '--parent-id', '--mode']);
   const flagOptions = new Set(['--json']);
   const seenOptions = new Set<string>();
   for (let index = 1; index < args.length; index += 1) {
@@ -228,14 +249,107 @@ function assertCommitArgs(args: string[]): void {
   }
 }
 
-async function writePreviewFile(out: string, pack: ImportPack, previewId?: string): Promise<void> {
+async function writePreviewFile(
+  out: string,
+  pack: ImportPack,
+  previewId: string | undefined,
+  mode: ImportMode,
+  apiData?: unknown,
+): Promise<void> {
   const base = renderPreview(pack, 8);
   const lines = base.trimEnd().split('\n');
-  if (previewId) {
-    lines.splice(3, 0, `Preview id: ${previewId}`, '');
+  const report = [`Mode: ${mode}`];
+  if (previewId) report.push(`Preview id: ${previewId}`);
+  if (mode === 'native_daily') {
+    const summary = asDailySummary(apiData) ?? dailySummaryFromPack(pack);
+    report.push(`Daily targets: ${summary.dateSectionCount} section(s) across ${summary.dateCount} date(s)`);
+    if (summary.firstDate && summary.lastDate) report.push(`Date range: ${summary.firstDate} to ${summary.lastDate}`);
+    if (summary.existingDateCount !== undefined && summary.newDateCount !== undefined) {
+      report.push(`Canonical days: ${summary.existingDateCount} existing; ${summary.newDateCount} new`);
+    }
+    report.push(`Non-date sections staged: ${summary.nonDateSectionCount}`);
+    report.push('Re-import behavior: append-only; repeated imports create another copy.');
   }
+  lines.splice(3, 0, ...report, '');
   await mkdir(path.dirname(out), { recursive: true });
   await writeFile(out, `${lines.join('\n')}\n`, 'utf8');
+}
+
+function importModeOption(args: readonly string[]): ImportMode | undefined {
+  if (!args.includes('--mode')) return undefined;
+  const mode = optionValue([...args], '--mode');
+  if (mode !== 'stage' && mode !== 'native_daily') {
+    throw new CliFailure('invalid_args', '--mode must be stage or native_daily.', USAGE);
+  }
+  return mode;
+}
+
+function defaultImportMode(pack: ImportPack): ImportMode {
+  return pack.options.dateGrouping === 'native_daily' && pack.sections.some((section) => section.kind === 'date')
+    ? 'native_daily'
+    : 'stage';
+}
+
+function validateSelectedMode(mode: ImportMode | undefined, pack: ImportPack): void {
+  if (mode === 'native_daily' && !pack.sections.some((section) => section.kind === 'date')) {
+    throw new CliFailure(
+      'native_daily_requires_dates',
+      'native_daily mode requires at least one validated date section.',
+      'Use stage mode for packs without date sections.',
+    );
+  }
+}
+
+function importModeFromApi(response: ImportApiResponse | null): ImportMode | undefined {
+  const data = asRecord(response?.data);
+  return data.mode === 'stage' || data.mode === 'native_daily' ? data.mode : undefined;
+}
+
+function warningsFromApi(response: ImportApiResponse | null): ImportPack['warnings'] | undefined {
+  const warnings = asRecord(response?.data).warnings;
+  return Array.isArray(warnings) ? warnings as ImportPack['warnings'] : undefined;
+}
+
+function dailySummaryFromApi(response: ImportApiResponse | null): DailyPreviewSummary | undefined {
+  return asDailySummary(response?.data);
+}
+
+function asDailySummary(value: unknown): DailyPreviewSummary | undefined {
+  const summary = asRecord(asRecord(value).dailySummary);
+  if (
+    typeof summary.dateSectionCount !== 'number'
+    || typeof summary.dateCount !== 'number'
+    || typeof summary.nonDateSectionCount !== 'number'
+    || (summary.existingDateCount !== undefined && typeof summary.existingDateCount !== 'number')
+    || (summary.newDateCount !== undefined && typeof summary.newDateCount !== 'number')
+    || (summary.firstDate !== undefined && typeof summary.firstDate !== 'string')
+    || (summary.lastDate !== undefined && typeof summary.lastDate !== 'string')
+  ) return undefined;
+  return {
+    dateSectionCount: summary.dateSectionCount,
+    dateCount: summary.dateCount,
+    nonDateSectionCount: summary.nonDateSectionCount,
+    ...(typeof summary.existingDateCount === 'number' ? { existingDateCount: summary.existingDateCount } : {}),
+    ...(typeof summary.newDateCount === 'number' ? { newDateCount: summary.newDateCount } : {}),
+    ...(typeof summary.firstDate === 'string' ? { firstDate: summary.firstDate } : {}),
+    ...(typeof summary.lastDate === 'string' ? { lastDate: summary.lastDate } : {}),
+  };
+}
+
+function dailySummaryFromPack(pack: ImportPack): DailyPreviewSummary {
+  const dateSections = pack.sections.filter((section) => section.kind === 'date' && section.date);
+  const dates = [...new Set(dateSections.flatMap((section) => section.date ? [section.date] : []))].sort();
+  return {
+    dateSectionCount: dateSections.length,
+    dateCount: dates.length,
+    nonDateSectionCount: pack.sections.length - dateSections.length,
+    ...(dates[0] ? { firstDate: dates[0] } : {}),
+    ...(dates.at(-1) ? { lastDate: dates.at(-1) } : {}),
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
 function validatePackContent(packContent: string): (

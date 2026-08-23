@@ -13,6 +13,11 @@ Cleanup rules:
 - Preserve `_done` as checked state when the selected fidelity allows done
   state.
 - Preserve `codeblock` docs as code block rows.
+- Recognize a Daily Note only when `_docType` is exactly `journalPart` and its
+  decoded title is an actual local calendar date in exact `YYYY-MM-DD` form.
+  Merge that container into a date section and preserve its children in Tana's
+  explicit source order. Invalid journal dates stay visible in the Tana
+  Workspace library section and produce `invalid_journal_date`; do not guess.
 - Extract literal `#tag` tokens from titles when tag preservation is enabled.
 - Convert tuple children shaped as `[field, value...]` into Tenon fields at Full
   fidelity, merging same-node fields with the same name. Clean fidelity can

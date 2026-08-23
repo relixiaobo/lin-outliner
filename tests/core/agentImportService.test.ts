@@ -82,6 +82,48 @@ function hostFor(core: Core): OutlinerToolHost {
         }), meta);
       return focus ? { focus } : {};
     },
+    createImportTreeBatchesYielding: async (batches, meta, options) => {
+      const nodeIdsBefore = new Set(core.projection().nodes.map((node) => node.id));
+      const undoGroupStarted = core.beginUndoGroup();
+      try {
+        return await core.transaction(meta.origin ?? 'agent', async () => {
+          const dateTargets = batches.flatMap((batch) => batch.target.kind === 'date'
+            ? [{ year: batch.target.year, month: batch.target.month, day: batch.target.day }]
+            : []);
+          const dateParentIds = await core.ensureDateNodesYielding(dateTargets, {
+            yieldEveryDates: options?.yieldEveryNodes,
+            commitEveryDates: options?.commitEveryNodes,
+          });
+          let dateTargetIndex = 0;
+          const resolved = batches.map((batch) => {
+            const parentId = batch.target.kind === 'date'
+              ? dateParentIds[dateTargetIndex++]
+              : batch.target.parentId;
+            if (!parentId) throw new Error(`Test import host did not resolve ${batch.batchId}`);
+            return { batch, parentId };
+          });
+          const rootIds = resolved.map((): string[] => []);
+          await core.createNodeTreeBatchesYieldingFocus(
+            resolved.map(({ batch, parentId }) => ({ parentId, nodes: batch.nodes })),
+            {
+              yieldEveryNodes: options?.yieldEveryNodes,
+              commitEveryNodes: options?.commitEveryNodes,
+              onRootCreated: (batchIndex, nodeId) => rootIds[batchIndex]!.push(nodeId),
+            },
+          );
+          return {
+            batches: resolved.map(({ batch, parentId }, index) => ({
+              batchId: batch.batchId,
+              parentId,
+              parentCreated: batch.target.kind === 'date' && !nodeIdsBefore.has(parentId),
+              rootIds: rootIds[index]!,
+            })),
+          };
+        }, meta);
+      } finally {
+        if (undoGroupStarted) core.endUndoGroup();
+      }
+    },
     handle: async (command, args = {}, meta = {}) => {
       const run = () => {
         if (command === 'create_node') return core.createNode(String(args.parentId), nullableNumber(args.index), String(args.text ?? ''));
@@ -161,7 +203,7 @@ function createImportService(core: Core, root: string): AgentImportService {
   return new AgentImportService(hostFor(core), { workspace, toolName: 'tenon-import' });
 }
 
-function verificationMismatchHost(core: Core): OutlinerToolHost {
+function verificationMismatchHost(core: Core, targetTitle = 'Launch'): OutlinerToolHost {
   const base = hostFor(core);
   let materialized = false;
   return {
@@ -171,13 +213,18 @@ function verificationMismatchHost(core: Core): OutlinerToolHost {
       if (!materialized) return projection;
       return {
         ...projection,
-        nodes: projection.nodes.map((node) => node.content.text === 'Launch'
+        nodes: projection.nodes.map((node) => node.content.text === targetTitle
           ? { ...node, description: '' }
           : node),
       };
     },
     createNodesFromTreeYielding: async (...args) => {
       const result = await base.createNodesFromTreeYielding!(...args);
+      materialized = true;
+      return result;
+    },
+    createImportTreeBatchesYielding: async (...args) => {
+      const result = await base.createImportTreeBatchesYielding!(...args);
       materialized = true;
       return result;
     },
@@ -255,6 +302,116 @@ function samplePack(): ImportPack {
         sourceId: 'n3',
       }],
     }],
+  };
+}
+
+function nativeDailyPack(): ImportPack {
+  return {
+    version: 1,
+    source: {
+      kind: 'tana',
+      path: '/exports/daily.tana.json',
+      sourceId: 'daily-sample',
+    },
+    options: {
+      fidelity: 'clean',
+      dateGrouping: 'native_daily',
+      tags: false,
+      fields: 'omit',
+      doneState: false,
+    },
+    stats: {
+      sourceRecords: 4,
+      sections: 3,
+      nodes: 4,
+      descriptions: 0,
+      tags: 0,
+      fields: 0,
+      checked: 0,
+      dropped: 0,
+    },
+    coverage: {
+      imported: 4,
+      merged: 0,
+      dropped: 0,
+      unsupported: 0,
+      empty: 0,
+      unaccounted: 0,
+    },
+    warnings: [],
+    sections: [{
+      id: 'day-2026-08-20',
+      title: '2026-08-20',
+      kind: 'date',
+      date: '2026-08-20',
+      nodes: [{
+        title: 'Imported existing-day root',
+        children: [{ title: 'Imported child' }],
+      }],
+    }, {
+      id: 'day-2026-08-21',
+      title: '2026-08-21',
+      kind: 'date',
+      date: '2026-08-21',
+      nodes: [{ title: 'Imported new-day root' }],
+    }, {
+      id: 'library',
+      title: 'Tana Workspace',
+      kind: 'library',
+      nodes: [{ title: 'Library root' }],
+    }],
+  };
+}
+
+function largeNativeDailyPack(dateCount = 102, nodesPerDate = 120): ImportPack {
+  const sections = Array.from({ length: dateCount }, (_value, dateIndex) => {
+    const date = new Date(2025, 0, dateIndex + 1);
+    const dateText = [
+      String(date.getFullYear()).padStart(4, '0'),
+      String(date.getMonth() + 1).padStart(2, '0'),
+      String(date.getDate()).padStart(2, '0'),
+    ].join('-');
+    return {
+      id: `day-${dateText}`,
+      title: dateText,
+      kind: 'date' as const,
+      date: dateText,
+      nodes: Array.from({ length: nodesPerDate }, (_nodeValue, nodeIndex) => ({
+        title: `Imported ${dateText} row ${nodeIndex + 1}`,
+      })),
+    };
+  });
+  const nodes = dateCount * nodesPerDate;
+  return {
+    version: 1,
+    source: { kind: 'tana', path: '/exports/large-daily.tana.json' },
+    options: {
+      fidelity: 'content',
+      dateGrouping: 'native_daily',
+      tags: false,
+      fields: 'omit',
+      doneState: false,
+    },
+    stats: {
+      sourceRecords: nodes,
+      sections: dateCount,
+      nodes,
+      descriptions: 0,
+      tags: 0,
+      fields: 0,
+      checked: 0,
+      dropped: 0,
+    },
+    coverage: {
+      imported: nodes,
+      merged: 0,
+      dropped: 0,
+      unsupported: 0,
+      empty: 0,
+      unaccounted: 0,
+    },
+    warnings: [],
+    sections,
   };
 }
 
@@ -413,6 +570,255 @@ describe('Tenon import service', () => {
     }
   });
 
+  test('previews and atomically appends mixed packs to existing and new Daily Notes', async () => {
+    const core = Core.new();
+    const existingDayId = core.ensureDateNode(2026, 8, 20).focus!.nodeId;
+    const existingChildId = core.createNode(existingDayId, null, 'Existing Daily Note content').focus!.nodeId;
+    const service = new AgentImportService(hostFor(core), { toolName: 'tenon-import' });
+    const packContent = JSON.stringify(nativeDailyPack());
+
+    const preview = await service.previewFromContent({ packContent });
+    expect(preview).toMatchObject({
+      status: 'previewed',
+      mode: 'native_daily',
+      dailySummary: {
+        dateSectionCount: 2,
+        dateCount: 2,
+        existingDateCount: 1,
+        newDateCount: 1,
+        nonDateSectionCount: 1,
+        firstDate: '2026-08-20',
+        lastDate: '2026-08-21',
+      },
+      warnings: [expect.objectContaining({ code: 'native_daily_append_only' })],
+    });
+    expect(core.state().nodes[existingChildId]?.content.text).toBe('Existing Daily Note content');
+
+    const imported = await service.commitFromContent({
+      packContent,
+      previewId: preview.previewId,
+      causation: IMPORT_CAUSATION,
+    });
+    if (imported.status !== 'imported_daily') throw new Error('Expected a native Daily Notes import.');
+    const stagingRootId = imported.stagingRootId;
+    expect(typeof stagingRootId).toBe('string');
+    expect(imported).toMatchObject({
+      mode: 'native_daily',
+      verification: { ok: true },
+      dailyTargets: [{
+        date: '2026-08-20',
+        dayNodeId: existingDayId,
+        dayNodeCreated: false,
+      }, {
+        date: '2026-08-21',
+        dayNodeCreated: true,
+      }],
+    });
+    expect(imported.createdRootIds).toHaveLength(3);
+
+    const index = indexProjection(core.projection());
+    expect(normalChildIds(index, existingDayId, false).map((nodeId) => index.nodes.get(nodeId)?.content.text))
+      .toEqual(['Existing Daily Note content', 'Imported existing-day root']);
+    const newDay = imported.dailyTargets[1]!;
+    expect(normalChildIds(index, newDay.dayNodeId, false).map((nodeId) => index.nodes.get(nodeId)?.content.text))
+      .toEqual(['Imported new-day root']);
+    expect(index.nodes.get(stagingRootId!)?.content.text).toBe('Import: daily.tana');
+    const stagingSectionId = normalChildIds(index, stagingRootId!, false)[0]!;
+    expect(index.nodes.get(stagingSectionId)?.content.text).toBe('Tana Workspace');
+
+    expect(core.operationHistory({ action: 'list', origin: 'agent' }).items?.[0]).toMatchObject({
+      operationId: imported.operationId,
+      summary: 'Imported 4 cleaned nodes into native Daily Notes.',
+      canUndo: true,
+    });
+    expect(core.operationHistory({
+      action: 'undo',
+      origin: 'agent',
+      operationId: imported.operationId,
+    }).count).toBe(1);
+    expect(core.state().nodes[existingDayId]).toBeDefined();
+    expect(core.state().nodes[existingChildId]?.content.text).toBe('Existing Daily Note content');
+    expect(core.state().nodes[newDay.dayNodeId]).toBeUndefined();
+    expect(core.state().nodes[stagingRootId!]).toBeUndefined();
+    for (const rootId of imported.createdRootIds) expect(core.state().nodes[rootId]).toBeUndefined();
+  });
+
+  test('binds preview identity to native_daily mode and preserves explicit stage mode', async () => {
+    const core = Core.new();
+    const service = new AgentImportService(hostFor(core));
+    const packContent = JSON.stringify(nativeDailyPack());
+    const nativePreview = await service.previewFromContent({ packContent });
+
+    await expect(service.commitFromContent({
+      packContent,
+      mode: 'stage',
+      previewId: nativePreview.previewId,
+      causation: IMPORT_CAUSATION,
+    })).rejects.toMatchObject({ code: 'preview_mismatch' });
+    expect(stagingRoots(core)).toEqual([]);
+
+    const stagePreview = await service.previewFromContent({ packContent, mode: 'stage' });
+    expect(stagePreview.mode).toBe('stage');
+    expect(stagePreview.dailySummary).toBeUndefined();
+    const staged = await service.commitFromContent({
+      packContent,
+      mode: 'stage',
+      previewId: stagePreview.previewId,
+      causation: IMPORT_CAUSATION,
+    });
+    expect(staged).toMatchObject({ status: 'staged', mode: 'stage', verification: { ok: true } });
+    expect(stagingRoots(core)).toHaveLength(1);
+    expect(core.projection().nodes.some((node) => node.content.text === '2026-08-21' && node.tags.length > 0)).toBe(false);
+  });
+
+  test('rejects native_daily before mutation when dates or the atomic host seam are unavailable', async () => {
+    const core = Core.new();
+    const service = new AgentImportService(hostFor(core));
+    const projectionBefore = structuredClone(core.projection());
+
+    await expect(service.previewFromContent({
+      packContent: JSON.stringify(samplePack()),
+      mode: 'native_daily',
+    })).rejects.toMatchObject({ code: 'native_daily_requires_dates' });
+    expect(core.projection()).toEqual(projectionBefore);
+
+    const legacyHost: OutlinerToolHost = {
+      ...hostFor(core),
+      createImportTreeBatchesYielding: undefined,
+    };
+    const legacyService = new AgentImportService(legacyHost);
+    const packContent = JSON.stringify(nativeDailyPack());
+    const preview = await legacyService.previewFromContent({ packContent });
+    await expect(legacyService.commitFromContent({
+      packContent,
+      previewId: preview.previewId,
+      causation: IMPORT_CAUSATION,
+    })).rejects.toMatchObject({ code: 'native_daily_unavailable' });
+    expect(core.projection()).toEqual(projectionBefore);
+    expect(core.operationHistory({ action: 'list', origin: 'agent' }).items).toEqual([]);
+  });
+
+  test('re-imports native Daily Note packs by appending another copy', async () => {
+    const core = Core.new();
+    const service = new AgentImportService(hostFor(core));
+    const packContent = JSON.stringify(nativeDailyPack());
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const preview = await service.previewFromContent({ packContent });
+      if (attempt === 1) {
+        expect(preview.dailySummary).toMatchObject({ existingDateCount: 2, newDateCount: 0 });
+      }
+      const result = await service.commitFromContent({
+        packContent,
+        previewId: preview.previewId,
+        causation: IMPORT_CAUSATION,
+      });
+      expect(result.status).toBe('imported_daily');
+    }
+
+    expect(core.projection().nodes.filter((node) => node.content.text === 'Imported existing-day root')).toHaveLength(2);
+    expect(core.projection().nodes.filter((node) => node.content.text === 'Imported new-day root')).toHaveLength(2);
+    expect(stagingRoots(core)).toHaveLength(2);
+    expect(core.operationHistory({ action: 'list', origin: 'agent' }).items).toHaveLength(2);
+  });
+
+  test('rolls back native Daily Note scaffolding and every committed chunk on failure', async () => {
+    const core = Core.new();
+    const base = hostFor(core);
+    let yields = 0;
+    const failingHost: OutlinerToolHost = {
+      ...base,
+      createImportTreeBatchesYielding: async (batches, meta) => {
+        const nodeIdsBefore = new Set(core.projection().nodes.map((node) => node.id));
+        const undoGroupStarted = core.beginUndoGroup();
+        try {
+          return await core.transaction(meta.origin ?? 'agent', async () => {
+            const dateTargets = batches.flatMap((batch) => batch.target.kind === 'date'
+              ? [{ year: batch.target.year, month: batch.target.month, day: batch.target.day }]
+              : []);
+            const dateParentIds = await core.ensureDateNodesYielding(dateTargets, {
+              yieldEveryDates: 1,
+              commitEveryDates: 1,
+            });
+            let dateTargetIndex = 0;
+            const resolved = batches.map((batch) => {
+              const parentId = batch.target.kind === 'date'
+                ? dateParentIds[dateTargetIndex++]!
+                : batch.target.parentId;
+              return { batch, parentId };
+            });
+            const rootIds = resolved.map((): string[] => []);
+            await core.createNodeTreeBatchesYieldingFocus(
+              resolved.map(({ batch, parentId }) => ({ parentId, nodes: batch.nodes })),
+              {
+                yieldEveryNodes: 1,
+                commitEveryNodes: 1,
+                yield: async () => {
+                  yields += 1;
+                  if (yields === 2) throw new Error('injected native daily chunk failure');
+                },
+                onRootCreated: (batchIndex, nodeId) => rootIds[batchIndex]!.push(nodeId),
+              },
+            );
+            return {
+              batches: resolved.map(({ batch, parentId }, index) => ({
+                batchId: batch.batchId,
+                parentId,
+                parentCreated: batch.target.kind === 'date' && !nodeIdsBefore.has(parentId),
+                rootIds: rootIds[index]!,
+              })),
+            };
+          }, meta);
+        } finally {
+          if (undoGroupStarted) core.endUndoGroup();
+        }
+      },
+    };
+    const service = new AgentImportService(failingHost);
+    const packContent = JSON.stringify(nativeDailyPack());
+    const preview = await service.previewFromContent({ packContent });
+    const projectionBefore = structuredClone(core.projection());
+
+    await expect(service.commitFromContent({
+      packContent,
+      previewId: preview.previewId,
+      causation: IMPORT_CAUSATION,
+    })).rejects.toThrow('injected native daily chunk failure');
+
+    expect(yields).toBe(2);
+    expect(core.projection()).toEqual(projectionBefore);
+    expect(stagingRoots(core)).toEqual([]);
+    expect(core.operationHistory({ action: 'list', origin: 'agent' }).items).toEqual([]);
+  });
+
+  test('imports 102 Daily Notes and 12,240 nodes as one verified operation', async () => {
+    const core = Core.new();
+    const service = new AgentImportService(hostFor(core));
+    const pack = largeNativeDailyPack();
+    const packContent = JSON.stringify(pack);
+    const preview = await service.previewFromContent({ packContent });
+    expect(preview.dailySummary).toMatchObject({
+      dateSectionCount: 102,
+      dateCount: 102,
+      existingDateCount: 0,
+      newDateCount: 102,
+    });
+
+    const imported = await service.commitFromContent({
+      packContent,
+      previewId: preview.previewId,
+      causation: IMPORT_CAUSATION,
+    });
+    if (imported.status !== 'imported_daily') throw new Error('Expected a native Daily Notes import.');
+    expect(imported.verification).toMatchObject({
+      ok: true,
+      actual: { sections: 102, nodes: 12_240 },
+    });
+    expect(imported.dailyTargets).toHaveLength(102);
+    expect(imported.createdRootIds).toHaveLength(12_240);
+    expect(core.operationHistory({ action: 'list', origin: 'agent' }).items).toHaveLength(1);
+  }, 30_000);
+
   test('rejects malformed packs before previewing or mutating', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'tenon-data-import-invalid-'));
     try {
@@ -422,6 +828,21 @@ describe('Tenon import service', () => {
       const importService = createImportService(Core.new(), root);
       await expect(importService.previewFromFile({ packFile: 'pack.json' }))
         .rejects.toMatchObject({ code: 'stats_mismatch' });
+
+      const invalidDatePack = nativeDailyPack();
+      invalidDatePack.sections[0]!.date = '2026-02-30';
+      await expect(importService.previewFromContent({ packContent: JSON.stringify(invalidDatePack) }))
+        .rejects.toMatchObject({ code: 'invalid_section' });
+
+      const paddedDatePack = nativeDailyPack();
+      paddedDatePack.sections[0]!.date = ' 2026-08-20 ';
+      await expect(importService.previewFromContent({ packContent: JSON.stringify(paddedDatePack) }))
+        .rejects.toMatchObject({ code: 'invalid_section' });
+
+      const mismatchedTitlePack = nativeDailyPack();
+      mismatchedTitlePack.sections[0]!.title = 'August 20';
+      await expect(importService.previewFromContent({ packContent: JSON.stringify(mismatchedTitlePack) }))
+        .rejects.toMatchObject({ code: 'invalid_section' });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -507,6 +928,45 @@ describe('Tenon import service', () => {
     expect(stagingRoots(core)).toEqual([result.stagingRootId]);
     expect(core.operationHistory({ action: 'list', origin: 'agent' }).items?.[0])
       .toMatchObject({ operationId: result.operationId, causation: IMPORT_CAUSATION });
+  });
+
+  test('local API preserves native Daily Note verification failure data', async () => {
+    const userData = await mkdtemp(path.join(tmpdir(), 'tenon-native-daily-mismatch-'));
+    const core = Core.new();
+    const pack = nativeDailyPack();
+    pack.sections[0]!.nodes[0]!.description = 'Expected description';
+    pack.stats.descriptions = 1;
+    const packContent = JSON.stringify(pack);
+    const service = new AgentImportService(
+      verificationMismatchHost(core, 'Imported existing-day root'),
+      { toolName: 'tenon-import' },
+    );
+    const api = new AgentImportApiServer(service, { userDataDir: userData });
+    const descriptor = await api.start();
+    try {
+      const previewId = previewIdFromResponse(await callImportApi(descriptor, '/preview', { packContent }));
+      const response = await callImportApi(descriptor, '/commit', {
+        packContent,
+        previewId,
+      }, api.issueCausationToken(IMPORT_CAUSATION));
+
+      expect(response.ok).toBe(false);
+      expect(response.error?.code).toBe('verification_failed');
+      expect(response.data?.status).toBe('imported_daily_with_errors');
+      if (response.data?.status !== 'imported_daily_with_errors') {
+        throw new Error('Expected native Daily Note verification failure data.');
+      }
+      expect(response.data.retryAllowed).toBe(false);
+      expect(response.data.mismatches).toEqual(['descriptions: expected 1, actual 0']);
+      expect(response.data.dailyTargets).toHaveLength(2);
+      expect(response.data.createdRootIds).toHaveLength(3);
+      expect(stagingRoots(core)).toHaveLength(1);
+      expect(core.operationHistory({ action: 'list', origin: 'agent' }).items?.[0]?.operationId)
+        .toBe(response.data.operationId);
+    } finally {
+      await api.stop();
+      await rm(userData, { recursive: true, force: true });
+    }
   });
 
   test('local API requires one-time Item causation and never accepts raw causation', async () => {

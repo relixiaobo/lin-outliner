@@ -64,6 +64,7 @@ import type { AgentMutationCausation } from '../core/agent/protocol';
 import type { CreateCaptureInput } from '../core/launcher/sources';
 import { parseLinOutline } from './agent/capabilities/agentOutlineParser';
 import { indexProjection } from './agent/capabilities/agentNodeToolProjection';
+import type { ImportTreeBatch, ImportTreeBatchResult } from './agent/capabilities/agentNodeToolTypes';
 import { resolveSearchSpecFromOutlineNode } from './agent/capabilities/agentNodeToolSearch';
 import { DocumentReadModel } from './documentReadModel';
 import { loadOrCreateInstallationId } from './installationIdentity';
@@ -645,6 +646,78 @@ export class DocumentService implements DocumentSystemHost {
           });
         }
         return focus ? { focus } : {};
+      });
+      this.mutationQueue = task.then(() => undefined, () => undefined);
+      return task;
+    });
+  }
+
+  async createImportTreeBatchesYielding(
+    batches: readonly ImportTreeBatch[],
+    meta: DocumentMutationMeta,
+    options: { yieldEveryNodes?: number; commitEveryNodes?: number } = {},
+  ): Promise<{ batches: ImportTreeBatchResult[] }> {
+    return this.coordinateMutation(meta, async () => {
+      const task = this.mutationQueue.then(async () => {
+        await this.flushTextEditGroupNow();
+        const revisionBefore = this.core.revision();
+        const nodeIdsBefore = new Set(this.core.projection().nodes.map((node) => node.id));
+        const undoGroupStarted = this.core.beginUndoGroup();
+        let results: ImportTreeBatchResult[] = [];
+        let affectsMemory: boolean | undefined;
+        const coreMetadata = transactionMetadata({ ...meta, command: meta.command ?? 'create_nodes_from_tree' });
+        try {
+          results = await this.transactionContext.run(coreMetadata, async () =>
+            this.core.transaction(meta.origin ?? 'agent', async () => {
+              const dateTargets = batches.flatMap((batch) => batch.target.kind === 'date'
+                ? [{ year: batch.target.year, month: batch.target.month, day: batch.target.day }]
+                : []);
+              const dateParentIds = dateTargets.length > 0
+                ? await this.core.ensureDateNodesYielding(dateTargets, {
+                  yieldEveryDates: options.yieldEveryNodes,
+                  commitEveryDates: options.commitEveryNodes,
+                })
+                : [];
+              let dateTargetIndex = 0;
+              const resolved = batches.map((batch) => {
+                const parentId = batch.target.kind === 'date'
+                  ? dateParentIds[dateTargetIndex++]
+                  : batch.target.parentId;
+                if (!parentId) throw new Error(`Import batch did not resolve a parent: ${batch.batchId}`);
+                const guardResult = this.guardMutation('create_nodes_from_tree', {
+                  parentId,
+                  nodes: batch.nodes,
+                }, meta);
+                if (guardResult?.affectsMemory) affectsMemory = true;
+                return { batch, parentId };
+              });
+              const rootIds = resolved.map((): string[] => []);
+              await this.core.createNodeTreeBatchesYieldingFocus(
+                resolved.map(({ batch, parentId }) => ({ parentId, nodes: batch.nodes })),
+                {
+                  yieldEveryNodes: options.yieldEveryNodes,
+                  commitEveryNodes: options.commitEveryNodes,
+                  onRootCreated: (batchIndex, nodeId) => rootIds[batchIndex]!.push(nodeId),
+                },
+              );
+              return resolved.map(({ batch, parentId }, index) => ({
+                batchId: batch.batchId,
+                parentId,
+                parentCreated: batch.target.kind === 'date' && !nodeIdsBefore.has(parentId),
+                rootIds: rootIds[index]!,
+              }));
+            }, coreMetadata));
+        } finally {
+          if (undoGroupStarted) this.core.endUndoGroup();
+        }
+        if (this.core.revision() !== revisionBefore) {
+          this.scheduleCoreSave();
+          await this.refreshTextSearchIndexFromCoreDeltaYielding({ yieldEveryNodes: options.yieldEveryNodes });
+          this.emitProjectionChanged(meta.origin ?? 'agent', meta.sourceWebContentsId, meta.operationId, {
+            affectsMemory,
+          });
+        }
+        return { batches: results };
       });
       this.mutationQueue = task.then(() => undefined, () => undefined);
       return task;

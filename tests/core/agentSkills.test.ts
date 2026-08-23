@@ -1237,9 +1237,14 @@ describe('agent skills', () => {
     expect(skill?.body).toContain('# Tenon Data Cleanup and Import');
     expect(skill?.body).toContain('tenon-import preview');
     expect(skill?.body).toContain('tenon-import commit');
+    expect(skill?.body).toContain('Tana\n   `journalPart` dates default to `native_daily`');
+    expect(skill?.body).toContain('`status: "staged"` or `"imported_daily"`');
+    expect(skill?.body).toContain("Repeat the preview's explicit `--mode`\n   override on commit");
     expect(skill?.body).toContain('data.status: "staged_with_errors"');
-    expect(skill?.body).toContain('retry the commit or manually delete the staging subtree.');
-    expect(skill?.body).toContain('`stagingRootId`, `operationId`, and `mismatches`');
+    expect(skill?.body).toContain('`"imported_daily_with_errors"`');
+    expect(skill?.body).toContain('Native Daily Note imports are append-only.');
+    expect(skill?.body).toContain('retry the commit or manually\n   delete created content.');
+    expect(skill?.body).toContain('`dailyTargets`, `operationId`, and `mismatches`');
     expect(skill?.body).toContain('`operation_id: <operationId>`');
   });
 

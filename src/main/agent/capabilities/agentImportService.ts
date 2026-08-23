@@ -2,7 +2,15 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { AgentMutationCausation } from '../../../core/agent/protocol';
-import { plainText, type CreateNodeTree } from '../../../core/types';
+import { parseIsoLocalDateParts } from '../../../core/localDate';
+import {
+  DAILY_NOTES_ID,
+  TAG_DAY_ID,
+  TAG_WEEK_ID,
+  TAG_YEAR_ID,
+  plainText,
+  type CreateNodeTree,
+} from '../../../core/types';
 import {
   checkedState,
   fieldReads,
@@ -17,9 +25,12 @@ import {
   validateImportPack,
   type ImportNode,
   type ImportPack,
+  type ImportSection,
   type ImportStats,
   type ImportWarning,
 } from './agentDataImportPack';
+
+export type ImportMode = 'stage' | 'native_daily';
 
 export interface ImportServiceOptions {
   workspace?: AgentLocalWorkspaceContext;
@@ -32,14 +43,14 @@ export interface ImportServiceOptions {
 export interface ImportPackFileRequest {
   packFile: string;
   parentId?: string;
-  mode?: 'stage';
+  mode?: ImportMode;
 }
 
 export interface ImportPackContentRequest {
   packContent: string;
   packLabel?: string;
   parentId?: string;
-  mode?: 'stage';
+  mode?: ImportMode;
 }
 
 export interface ImportPackCommitFileRequest extends ImportPackFileRequest {
@@ -54,6 +65,7 @@ export interface ImportPackCommitContentRequest extends ImportPackContentRequest
 
 interface ImportServiceResultBase {
   importId: string;
+  mode: ImportMode;
   sectionCount: number;
   nodeCount: number;
   createdRootIds: string[];
@@ -64,6 +76,7 @@ interface ImportServiceResultBase {
 export interface ImportPreviewResult extends ImportServiceResultBase {
   status: 'previewed';
   previewId: string;
+  dailySummary?: ImportDailyPreviewSummary;
 }
 
 interface ImportStagedResultBase extends ImportServiceResultBase {
@@ -74,15 +87,57 @@ interface ImportStagedResultBase extends ImportServiceResultBase {
 
 export interface ImportStagedResult extends ImportStagedResultBase {
   status: 'staged';
+  mode: 'stage';
 }
 
 export interface ImportStagedWithErrorsResult extends ImportStagedResultBase {
   status: 'staged_with_errors';
+  mode: 'stage';
   mismatches: string[];
   retryAllowed: false;
 }
 
-export type ImportCommitResult = ImportStagedResult | ImportStagedWithErrorsResult;
+export interface ImportDailyTarget {
+  sectionId: string;
+  date: string;
+  dayNodeId: string;
+  dayNodeCreated: boolean;
+  createdRootIds: string[];
+}
+
+interface ImportNativeDailyResultBase extends ImportServiceResultBase {
+  mode: 'native_daily';
+  operationId: string;
+  verification: ImportVerification;
+  dailyTargets: ImportDailyTarget[];
+  stagingRootId?: string;
+}
+
+export interface ImportNativeDailyResult extends ImportNativeDailyResultBase {
+  status: 'imported_daily';
+}
+
+export interface ImportNativeDailyWithErrorsResult extends ImportNativeDailyResultBase {
+  status: 'imported_daily_with_errors';
+  mismatches: string[];
+  retryAllowed: false;
+}
+
+export interface ImportDailyPreviewSummary {
+  dateSectionCount: number;
+  dateCount: number;
+  existingDateCount: number;
+  newDateCount: number;
+  nonDateSectionCount: number;
+  firstDate?: string;
+  lastDate?: string;
+}
+
+export type ImportCommitResult =
+  | ImportStagedResult
+  | ImportStagedWithErrorsResult
+  | ImportNativeDailyResult
+  | ImportNativeDailyWithErrorsResult;
 export type ImportServiceResult = ImportPreviewResult | ImportCommitResult;
 
 export interface ImportVerification {
@@ -115,8 +170,14 @@ interface LoadedPack {
 interface PreviewRecord {
   packHash: string;
   parentId: string;
-  mode: 'stage';
+  mode: ImportMode;
   createdAt: number;
+}
+
+interface NativeDailyMaterialization {
+  createdRootIds: string[];
+  dailyTargets: ImportDailyTarget[];
+  stagingRootId?: string;
 }
 
 const MAX_PACK_BYTES = 50 * 1024 * 1024;
@@ -144,31 +205,35 @@ export class AgentImportService {
   async previewFromFile(input: ImportPackFileRequest): Promise<ImportPreviewResult> {
     const normalized = normalizeImportRequest(input);
     const loaded = await loadImportPackFromFile(normalized.packFile, this.options);
+    const mode = resolveImportMode(normalized.mode, loaded.pack);
+    validateModeForPack(mode, loaded.pack);
     const parentId = this.resolveParentId(normalized.parentId);
     const previewId = `preview:${this.idGenerator()}`;
     this.previewRecords.set(previewId, {
       packHash: loaded.packHash,
       parentId,
-      mode: normalized.mode,
+      mode,
       createdAt: this.now(),
     });
     this.cleanupPreviewRecords();
-    return resultForPreview(loaded, previewId);
+    return resultForPreview(this.host, loaded, previewId, mode);
   }
 
   async previewFromContent(input: ImportPackContentRequest): Promise<ImportPreviewResult> {
     const normalized = normalizeContentImportRequest(input);
     const loaded = loadImportPackFromContent(normalized.packContent, normalized.packLabel);
+    const mode = resolveImportMode(normalized.mode, loaded.pack);
+    validateModeForPack(mode, loaded.pack);
     const parentId = this.resolveParentId(normalized.parentId);
     const previewId = `preview:${this.idGenerator()}`;
     this.previewRecords.set(previewId, {
       packHash: loaded.packHash,
       parentId,
-      mode: normalized.mode,
+      mode,
       createdAt: this.now(),
     });
     this.cleanupPreviewRecords();
-    return resultForPreview(loaded, previewId);
+    return resultForPreview(this.host, loaded, previewId, mode);
   }
 
   async commitFromFile(input: ImportPackCommitFileRequest): Promise<ImportCommitResult> {
@@ -195,14 +260,16 @@ export class AgentImportService {
 
   private async commitLoadedPack(
     loaded: LoadedPack,
-    input: { parentId?: string; mode: 'stage'; previewId?: string; causation: AgentMutationCausation },
+    input: { parentId?: string; mode?: ImportMode; previewId?: string; causation: AgentMutationCausation },
   ): Promise<ImportCommitResult> {
     const causation = normalizeImportCausation(input.causation);
+    const mode = resolveImportMode(input.mode, loaded.pack);
+    validateModeForPack(mode, loaded.pack);
     const parentId = this.resolveParentId(input.parentId);
     const previewError = validatePreview(this.previewRecords, input.previewId, {
       packHash: loaded.packHash,
       parentId,
-      mode: input.mode,
+      mode,
     }, this.now());
     if (previewError) {
       throw new ImportServiceFailure(
@@ -213,6 +280,9 @@ export class AgentImportService {
     }
 
     const operationId = `op:${this.idGenerator()}`;
+    if (mode === 'native_daily') {
+      return this.commitNativeDailyPack(loaded, parentId, operationId, causation);
+    }
     const materialized = await materializeImportPack(
       this.host,
       loaded.pack,
@@ -226,6 +296,7 @@ export class AgentImportService {
     const verification = verifyImportedSubtree(this.host, stagingRootId, loaded.pack.stats);
     const base = {
       importId: `import:${this.idGenerator()}`,
+      mode: 'stage' as const,
       stagingRootId,
       operationId,
       sectionCount: loaded.pack.stats.sections,
@@ -244,6 +315,45 @@ export class AgentImportService {
       };
     }
     return { ...base, status: 'staged' };
+  }
+
+  private async commitNativeDailyPack(
+    loaded: LoadedPack,
+    parentId: string,
+    operationId: string,
+    causation: AgentMutationCausation,
+  ): Promise<ImportCommitResult> {
+    const materialized = await materializeNativeDailyImportPack(
+      this.host,
+      loaded.pack,
+      parentId,
+      this.toolName,
+      operationId,
+      causation,
+    );
+    const verification = verifyNativeDailyImport(this.host, materialized, loaded.pack.stats);
+    const base = {
+      importId: `import:${this.idGenerator()}`,
+      mode: 'native_daily' as const,
+      operationId,
+      sectionCount: loaded.pack.stats.sections,
+      nodeCount: loaded.pack.stats.nodes,
+      createdRootIds: materialized.createdRootIds,
+      warnings: warningsForMode(loaded.warnings, 'native_daily'),
+      stats: loaded.pack.stats,
+      verification,
+      dailyTargets: materialized.dailyTargets,
+      ...(materialized.stagingRootId ? { stagingRootId: materialized.stagingRootId } : {}),
+    };
+    if (!verification.ok) {
+      return {
+        ...base,
+        status: 'imported_daily_with_errors',
+        mismatches: verification.mismatches,
+        retryAllowed: false,
+      };
+    }
+    return { ...base, status: 'imported_daily' };
   }
 
   private resolveParentId(parentIdInput: string | undefined): string {
@@ -304,29 +414,51 @@ export function resolvePackFilePath(packFileInput: string, options: Pick<ImportS
   return path.resolve(path.isAbsolute(expanded) ? expanded : path.join(root, expanded));
 }
 
-function normalizeImportRequest<T extends ImportPackFileRequest>(input: T): Required<Pick<ImportPackFileRequest, 'packFile' | 'mode'>> & Pick<ImportPackFileRequest, 'parentId'> {
+function normalizeImportRequest<T extends ImportPackFileRequest>(input: T): Pick<ImportPackFileRequest, 'packFile' | 'parentId' | 'mode'> & { packFile: string } {
   const packFile = typeof input.packFile === 'string' ? input.packFile.trim() : '';
   if (!packFile) throw new ImportServiceFailure('invalid_args', 'pack_file is required.');
-  const mode = input.mode ?? 'stage';
-  if (mode !== 'stage') throw new ImportServiceFailure('invalid_args', 'mode must be "stage".');
+  const mode = normalizeImportMode(input.mode);
   const parentId = typeof input.parentId === 'string' && input.parentId.trim() ? input.parentId.trim() : undefined;
-  return { packFile, mode, ...(parentId ? { parentId } : {}) };
+  return { packFile, ...(mode ? { mode } : {}), ...(parentId ? { parentId } : {}) };
 }
 
-function normalizeContentImportRequest<T extends ImportPackContentRequest>(input: T): Required<Pick<ImportPackContentRequest, 'packContent' | 'mode'>> & Pick<ImportPackContentRequest, 'packLabel' | 'parentId'> {
+function normalizeContentImportRequest<T extends ImportPackContentRequest>(input: T): Pick<ImportPackContentRequest, 'packContent' | 'packLabel' | 'parentId' | 'mode'> & { packContent: string } {
   if (typeof input.packContent !== 'string' || input.packContent.trim().length === 0) {
     throw new ImportServiceFailure('invalid_args', 'packContent is required.');
   }
-  const mode = input.mode ?? 'stage';
-  if (mode !== 'stage') throw new ImportServiceFailure('invalid_args', 'mode must be "stage".');
+  const mode = normalizeImportMode(input.mode);
   const parentId = typeof input.parentId === 'string' && input.parentId.trim() ? input.parentId.trim() : undefined;
   const packLabel = typeof input.packLabel === 'string' && input.packLabel.trim() ? input.packLabel.trim() : undefined;
   return {
     packContent: input.packContent,
-    mode,
+    ...(mode ? { mode } : {}),
     ...(packLabel ? { packLabel } : {}),
     ...(parentId ? { parentId } : {}),
   };
+}
+
+function normalizeImportMode(value: unknown): ImportMode | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'stage' || value === 'native_daily') return value;
+  throw new ImportServiceFailure('invalid_args', 'mode must be "stage" or "native_daily".');
+}
+
+function resolveImportMode(mode: ImportMode | undefined, pack: ImportPack): ImportMode {
+  if (mode) return mode;
+  return pack.options.dateGrouping === 'native_daily'
+    && pack.sections.some((section) => section.kind === 'date')
+    ? 'native_daily'
+    : 'stage';
+}
+
+function validateModeForPack(mode: ImportMode, pack: ImportPack): void {
+  if (mode === 'native_daily' && !pack.sections.some((section) => section.kind === 'date')) {
+    throw new ImportServiceFailure(
+      'native_daily_requires_dates',
+      'native_daily mode requires at least one validated date section.',
+      'Use stage mode for packs without date sections.',
+    );
+  }
 }
 
 function normalizeImportCausation(value: unknown): AgentMutationCausation {
@@ -350,16 +482,23 @@ function normalizeImportCausation(value: unknown): AgentMutationCausation {
   };
 }
 
-function resultForPreview(loaded: LoadedPack, previewId: string): ImportPreviewResult {
+function resultForPreview(
+  host: OutlinerToolHost,
+  loaded: LoadedPack,
+  previewId: string,
+  mode: ImportMode,
+): ImportPreviewResult {
   return {
     status: 'previewed',
     importId: `import:${loaded.packHash.slice(0, 16)}`,
+    mode,
     previewId,
     sectionCount: loaded.pack.stats.sections,
     nodeCount: loaded.pack.stats.nodes,
     createdRootIds: [],
-    warnings: loaded.warnings,
+    warnings: warningsForMode(loaded.warnings, mode),
     stats: loaded.pack.stats,
+    ...(mode === 'native_daily' ? { dailySummary: nativeDailyPreviewSummary(host, loaded.pack) } : {}),
   };
 }
 
@@ -392,6 +531,57 @@ function cleanupPreviewRecords(previewRecords: Map<string, PreviewRecord>, now: 
   }
 }
 
+function warningsForMode(warnings: readonly ImportWarning[], mode: ImportMode): ImportWarning[] {
+  if (mode === 'stage') return [...warnings];
+  const appendOnlyWarning: ImportWarning = {
+    code: 'native_daily_append_only',
+    message: 'Daily Note content is appended. Re-importing the same pack creates another copy.',
+  };
+  return warnings.some((warning) => warning.code === appendOnlyWarning.code)
+    ? [...warnings]
+    : [...warnings, appendOnlyWarning];
+}
+
+function nativeDailyPreviewSummary(host: OutlinerToolHost, pack: ImportPack): ImportDailyPreviewSummary {
+  const index = indexProjection(host.getProjection());
+  const dateSections = pack.sections.filter((section): section is ImportSection & { kind: 'date'; date: string } =>
+    section.kind === 'date' && typeof section.date === 'string');
+  const dates = [...new Set(dateSections.map((section) => section.date))].sort();
+  const existingDateCount = dates.filter((date) => findDailyNoteId(index, date)).length;
+  return {
+    dateSectionCount: dateSections.length,
+    dateCount: dates.length,
+    existingDateCount,
+    newDateCount: dates.length - existingDateCount,
+    nonDateSectionCount: pack.sections.length - dateSections.length,
+    ...(dates[0] ? { firstDate: dates[0] } : {}),
+    ...(dates.at(-1) ? { lastDate: dates.at(-1) } : {}),
+  };
+}
+
+function findDailyNoteId(
+  index: ReturnType<typeof indexProjection>,
+  date: string,
+): string | null {
+  const parts = parseIsoLocalDateParts(date);
+  if (!parts) return null;
+  const yearId = normalChildIds(index, DAILY_NOTES_ID, false).find((nodeId) => {
+    const node = index.nodes.get(nodeId);
+    return node?.content.text === String(parts.year) && node.tags.includes(TAG_YEAR_ID);
+  });
+  if (!yearId) return null;
+  for (const weekId of normalChildIds(index, yearId, false)) {
+    const week = index.nodes.get(weekId);
+    if (!week?.tags.includes(TAG_WEEK_ID)) continue;
+    const dayId = normalChildIds(index, weekId, false).find((nodeId) => {
+      const node = index.nodes.get(nodeId);
+      return node?.content.text === date && node.tags.includes(TAG_DAY_ID);
+    });
+    if (dayId) return dayId;
+  }
+  return null;
+}
+
 async function materializeImportPack(
   host: OutlinerToolHost,
   pack: ImportPack,
@@ -420,6 +610,81 @@ async function materializeImportPack(
   const stagingRootId = focusNodeId(outcome);
   if (!stagingRootId) throw new Error('Import did not create a staging root.');
   return { createdRootIds: [stagingRootId] };
+}
+
+async function materializeNativeDailyImportPack(
+  host: OutlinerToolHost,
+  pack: ImportPack,
+  parentId: string,
+  toolName: string,
+  operationId: string,
+  causation: AgentMutationCausation,
+): Promise<NativeDailyMaterialization> {
+  if (!host.createImportTreeBatchesYielding) {
+    throw new ImportServiceFailure(
+      'native_daily_unavailable',
+      'This Tenon host cannot atomically import content into Daily Notes.',
+      'Update Tenon, then preview the pack again. Use stage mode only when a staging tree is acceptable.',
+    );
+  }
+  const dateSections = pack.sections.flatMap((section, index) => {
+    if (section.kind !== 'date' || !section.date) return [];
+    const parts = parseIsoLocalDateParts(section.date);
+    if (!parts) throw new Error(`Validated date section became invalid: ${section.date}`);
+    return [{ section, batchId: `date:${index}:${section.id}`, parts }];
+  });
+  const nonDateSections = pack.sections.filter((section) => section.kind !== 'date');
+  const stagingBatchId = 'staging:non-date-sections';
+  const rootTitle = `Import: ${path.basename(pack.source.path).replace(/\.[^.]+$/u, '')}`;
+  const batches = [
+    ...dateSections.map(({ section, batchId, parts }) => ({
+      batchId,
+      target: { kind: 'date' as const, ...parts },
+      nodes: section.nodes.map(importNodeToCreateNodeTree),
+    })),
+    ...(nonDateSections.length > 0 ? [{
+      batchId: stagingBatchId,
+      target: { kind: 'node' as const, parentId },
+      nodes: [treeNode(rootTitle, nonDateSections.map((section) =>
+        treeNode(section.title, section.nodes.map(importNodeToCreateNodeTree))))],
+    }] : []),
+  ];
+  const yieldEveryNodes = importYieldEveryNodesForStats(pack.stats);
+  const outcome = await host.createImportTreeBatchesYielding(batches, {
+    origin: 'agent',
+    operationId,
+    tool: toolName,
+    summary: `Imported ${pack.stats.nodes} cleaned nodes into native Daily Notes.`,
+    causation,
+  }, {
+    yieldEveryNodes,
+    commitEveryNodes: yieldEveryNodes,
+  });
+  const resultsByBatchId = new Map(outcome.batches.map((result) => [result.batchId, result]));
+  const dailyTargets = dateSections.map(({ section, batchId }): ImportDailyTarget => {
+    const result = resultsByBatchId.get(batchId);
+    if (!result) throw new Error(`Import host omitted batch result: ${batchId}`);
+    return {
+      sectionId: section.id,
+      date: section.date!,
+      dayNodeId: result.parentId,
+      dayNodeCreated: result.parentCreated,
+      createdRootIds: result.rootIds,
+    };
+  });
+  const stagingResult = resultsByBatchId.get(stagingBatchId);
+  const stagingRootId = stagingResult?.rootIds[0];
+  if (nonDateSections.length > 0 && !stagingRootId) {
+    throw new Error('Import did not create a staging root for non-date sections.');
+  }
+  return {
+    createdRootIds: [
+      ...dailyTargets.flatMap((target) => target.createdRootIds),
+      ...(stagingRootId ? [stagingRootId] : []),
+    ],
+    dailyTargets,
+    ...(stagingRootId ? { stagingRootId } : {}),
+  };
 }
 
 export function importYieldEveryNodesForStats(stats: Pick<ImportStats, 'nodes' | 'fields'>): number {
@@ -495,6 +760,44 @@ function verifyImportedSubtree(host: OutlinerToolHost, stagingRootId: string, ex
     checked: 0,
   };
   for (const sectionId of sectionIds) {
+    for (const nodeId of normalChildIds(index, sectionId, false)) collectImportedStats(index, nodeId, actual);
+  }
+  const expected = {
+    sections: expectedStats.sections,
+    nodes: expectedStats.nodes,
+    descriptions: expectedStats.descriptions,
+    tags: expectedStats.tags,
+    fields: expectedStats.fields,
+    checked: expectedStats.checked,
+  };
+  const mismatches: string[] = [];
+  for (const key of Object.keys(expected) as Array<keyof typeof expected>) {
+    if (actual[key] !== expected[key]) mismatches.push(`${key}: expected ${expected[key]}, actual ${actual[key]}`);
+  }
+  return { ok: mismatches.length === 0, expected, actual, mismatches };
+}
+
+function verifyNativeDailyImport(
+  host: OutlinerToolHost,
+  materialized: NativeDailyMaterialization,
+  expectedStats: ImportStats,
+): ImportVerification {
+  const index = indexProjection(host.getProjection());
+  const stagingSectionIds = materialized.stagingRootId
+    ? normalChildIds(index, materialized.stagingRootId, false)
+    : [];
+  const actual = {
+    sections: materialized.dailyTargets.length + stagingSectionIds.length,
+    nodes: 0,
+    descriptions: 0,
+    tags: 0,
+    fields: 0,
+    checked: 0,
+  };
+  for (const target of materialized.dailyTargets) {
+    for (const nodeId of target.createdRootIds) collectImportedStats(index, nodeId, actual);
+  }
+  for (const sectionId of stagingSectionIds) {
     for (const nodeId of normalChildIds(index, sectionId, false)) collectImportedStats(index, nodeId, actual);
   }
   const expected = {

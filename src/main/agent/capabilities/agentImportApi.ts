@@ -179,14 +179,14 @@ export class AgentImportApiServer {
           ...(previewId ? { previewId } : {}),
           causation: commitCausation!,
         });
-        if (data.status === 'staged_with_errors') {
+        if (data.status === 'staged_with_errors' || data.status === 'imported_daily_with_errors') {
           writeApiResponse(response, 200, {
             ok: false,
             data,
             error: {
               code: 'verification_failed',
-              message: 'Import wrote one staging subtree, but post-import verification found mismatched counts.',
-              instructions: 'Stop without retrying or manually deleting nodes. Report the staging root and operation id so the parent Agent can inspect or request an exact undo.',
+              message: 'Import completed, but post-import verification found mismatched counts.',
+              instructions: 'Stop without retrying or manually deleting nodes. Report the created roots and operation id so the parent Agent can inspect or request an exact undo.',
             },
           });
           return;
@@ -237,7 +237,7 @@ function normalizePackBody(body: unknown): {
   packContent: string;
   packLabel?: string;
   parentId?: string;
-  mode?: 'stage';
+  mode?: 'stage' | 'native_daily';
 } {
   const value = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {};
   const rawCausationKey = [
@@ -260,7 +260,9 @@ function normalizePackBody(body: unknown): {
   const packLabel = typeof value.packLabel === 'string' && value.packLabel.trim() ? value.packLabel.trim() : undefined;
   const parentId = typeof value.parentId === 'string' && value.parentId.trim() ? value.parentId.trim() : undefined;
   const mode = value.mode === undefined ? undefined : value.mode;
-  if (mode !== undefined && mode !== 'stage') throw new ImportServiceFailure('invalid_args', 'mode must be "stage".');
+  if (mode !== undefined && mode !== 'stage' && mode !== 'native_daily') {
+    throw new ImportServiceFailure('invalid_args', 'mode must be "stage" or "native_daily".');
+  }
   return {
     packContent,
     ...(packLabel ? { packLabel } : {}),

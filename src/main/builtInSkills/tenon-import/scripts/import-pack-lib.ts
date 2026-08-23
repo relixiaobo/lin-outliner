@@ -14,7 +14,7 @@ export interface ImportPack {
 
 export interface ImportOptions {
   fidelity: 'content' | 'clean' | 'full';
-  dateGrouping: 'stage_headings' | 'none';
+  dateGrouping: 'stage_headings' | 'native_daily' | 'none';
   tags: boolean;
   fields: 'omit' | 'text_children' | 'field_rows';
   doneState: boolean;
@@ -228,6 +228,15 @@ export function validateImportPackShape(value: unknown): { ok: true; pack: Impor
   });
   if (Array.isArray(pack.sections)) {
     for (const section of pack.sections as ImportSection[]) {
+      if (section.kind === 'date' && !isValidIsoLocalDate(section.date)) {
+        errors.push('date sections require a valid YYYY-MM-DD date');
+      }
+      if (section.kind === 'date' && section.title !== section.date) {
+        errors.push('date section title must exactly match section.date');
+      }
+      if (section.kind !== 'date' && section.date !== undefined) {
+        errors.push('only date sections may provide section.date');
+      }
       for (const node of section.nodes ?? []) validateNodeShape(node, errors);
     }
   }
@@ -271,4 +280,15 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+export function isValidIsoLocalDate(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day;
 }

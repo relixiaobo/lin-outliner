@@ -273,12 +273,22 @@ restores its executable mode and fails the build when the resource is absent.
 
 Import is CLI/API-only rather than a default model tool. The Skill creates and
 previews Import Pack v1 through `tenon-import`; `AgentImportService` remains an
-internal writer. A commit verification mismatch exits non-zero with preserved
-`staged_with_errors` data for exactly one staging subtree. The Skill stops
-without retrying or manually deleting that subtree and reports its
-`stagingRootId`, `operationId`, and `mismatches` to the parent Agent. Exact
-reversal uses that operation ID as the `outline_undo_stack` stack-top guard; a
-newer operation causes refusal rather than undoing unrelated work.
+internal writer. Tana adapters map only exact `journalPart` records with valid
+`YYYY-MM-DD` local dates to native date sections. Preview defaults those packs
+to `native_daily`, reports existing/new canonical days and the affected range,
+and binds its ID to the pack, destination, and mode. Commit appends date-section
+rows directly below canonical Daily Notes while retaining non-date sections
+under one staging root; `--mode stage` explicitly keeps every section in one
+staging tree. Native re-import is append-only and never deduplicates or
+synchronizes earlier content.
+
+A commit verification mismatch exits non-zero with preserved
+`staged_with_errors` or `imported_daily_with_errors` data for exactly one import
+operation. The Skill stops without retrying or manually deleting created
+content and reports its roots, Daily Note targets, `operationId`, and
+`mismatches` to the parent Agent. Exact reversal uses that operation ID as the
+`outline_undo_stack` stack-top guard; a newer operation causes refusal rather
+than undoing unrelated work.
 
 ## Settings
 
