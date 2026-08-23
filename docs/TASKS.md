@@ -81,11 +81,12 @@ theme-section entry below; this list is the ordering, not a second record):
   routed its intended owner elsewhere; give this lane the next free clone.
 
 **Design-gate queue** (PM bandwidth): _empty_ — `skill-path-ownership` shipped #513.
-**Release:** **v0.6.0 shipped 2026-08-18** (8 user-visible entries, #552–#559 —
-headlined by the agent view surface: "整理成表格" now produces a real table; no
-workspace format change). v0.4.0 + v0.5.0 shipped 2026-08-17; the #533
-persistence-format break rides v0.4.0 (v0.3.x workspaces set aside as
-`*.incompatible-*`, fresh start — #549). `main` is now the **0.7.0 train**.
+**Release:** **v0.7.0 shipped 2026-08-23** (18 user-visible entries across Agent
+identity, the Thread-wide Trajectory workspace, durable tool artifacts, and
+reliability work; no outline workspace migration). Existing Threads keep their
+old tool snapshot, so start a new Thread to receive the repaired Automation
+tool. v0.6.0 shipped 2026-08-18; v0.4.0 + v0.5.0 shipped 2026-08-17. `main` is
+now the **0.8.0 train**.
 
 `pi-ai-0.80-upgrade` shipped #348 (clean `Models` migration, not the interim `/compat` shim) — see *Recently completed*.
 `dream-channel-and-memory-retire` shipped in full (PR1 #324 + PR2 #328 + PR3 #329) — see *Recently completed*.

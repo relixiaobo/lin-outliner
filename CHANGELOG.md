@@ -8,7 +8,23 @@ Entries reference the pull request that introduced them when one exists.
 
 ## [Unreleased]
 
-`main` is the `0.7.0` train; entries here move under the next tag.
+`main` is the `0.8.0` train; entries here move under the next tag.
+
+## [0.7.0] - 2026-08-23
+
+**Agents you can recognize, inspect, and trust.** Every conversation participant
+now has a name and generated face, and the Agents settings page lets you rename,
+recolor, and configure your Roles. The new Thread-wide Trajectory workspace
+replaces one-Turn-at-a-time Model Interactions, your selected model carries into
+the next conversation, and completed tool files remain attached to their Thread
+across restarts and forks.
+
+Reliability got the same treatment: long transcripts stay painted, provider
+failures retry without losing the request, subagent outcomes and budgets settle
+from durable execution facts, and failed node or import writes roll back cleanly.
+Automations are reachable again, but Threads created before 0.7.0 retain their
+old tool snapshot; start a new Thread to use the repaired automation tool. No
+outline workspace migration is required.
 
 ### Added
 
