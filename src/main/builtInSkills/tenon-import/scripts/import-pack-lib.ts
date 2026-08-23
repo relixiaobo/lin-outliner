@@ -231,6 +231,9 @@ export function validateImportPackShape(value: unknown): { ok: true; pack: Impor
       if (section.kind === 'date' && !isValidIsoLocalDate(section.date)) {
         errors.push('date sections require a valid YYYY-MM-DD date');
       }
+      if (section.kind === 'date' && section.title !== section.date) {
+        errors.push('date section title must exactly match section.date');
+      }
       if (section.kind !== 'date' && section.date !== undefined) {
         errors.push('only date sections may provide section.date');
       }

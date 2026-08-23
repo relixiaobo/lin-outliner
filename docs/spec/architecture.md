@@ -320,13 +320,15 @@ materializes an entry plus a value/reference child.
 
 Native Daily Note import uses the same Core boundary across multiple parents.
 `DocumentService.createImportTreeBatchesYielding` resolves and ensures every
-canonical year/week/day target inside one Core transaction, preflights every
-tree, and materializes the date batches plus an optional non-date staging tree
-with one shared resolution cache. Chunk commits retain one rollback frontier,
-one undo group, and one operation-history entry. A failure removes all imported
-roots and any date scaffolding created by that operation; existing day nodes and
-their prior children are untouched. Post-import verification traverses only the
-returned roots, so pre-existing Daily Note content cannot contaminate counts.
+canonical year/week/day target inside one Core transaction. Core materializes
+state once, indexes only the three canonical date-hierarchy levels, and yields
+between bounded date chunks before preflighting and materializing every date
+batch plus the optional non-date staging tree. Chunk commits retain one rollback
+frontier, one undo group, and one operation-history entry. A failure removes all
+imported roots and any date scaffolding created by that operation; existing day
+nodes and their prior children are untouched. Post-import verification traverses
+only the returned roots, so pre-existing Daily Note content cannot contaminate
+counts.
 
 Shared-state export, version-vector reads, incremental export, and remote
 import are available only at a committed Core boundary. They reject both an

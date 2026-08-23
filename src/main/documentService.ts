@@ -669,9 +669,19 @@ export class DocumentService implements DocumentSystemHost {
         try {
           results = await this.transactionContext.run(coreMetadata, async () =>
             this.core.transaction(meta.origin ?? 'agent', async () => {
+              const dateTargets = batches.flatMap((batch) => batch.target.kind === 'date'
+                ? [{ year: batch.target.year, month: batch.target.month, day: batch.target.day }]
+                : []);
+              const dateParentIds = dateTargets.length > 0
+                ? await this.core.ensureDateNodesYielding(dateTargets, {
+                  yieldEveryDates: options.yieldEveryNodes,
+                  commitEveryDates: options.commitEveryNodes,
+                })
+                : [];
+              let dateTargetIndex = 0;
               const resolved = batches.map((batch) => {
                 const parentId = batch.target.kind === 'date'
-                  ? this.core.ensureDateNode(batch.target.year, batch.target.month, batch.target.day).focus?.nodeId
+                  ? dateParentIds[dateTargetIndex++]
                   : batch.target.parentId;
                 if (!parentId) throw new Error(`Import batch did not resolve a parent: ${batch.batchId}`);
                 const guardResult = this.guardMutation('create_nodes_from_tree', {

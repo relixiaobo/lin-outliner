@@ -1,5 +1,5 @@
 import { normalizeFieldNameKey } from '../../../core/fieldResolution';
-import { parseIsoLocalDateParts } from '../../../core/localDate';
+import { formatIsoLocalDateParts, parseIsoLocalDateParts } from '../../../core/localDate';
 
 export type ImportPackFidelity = 'content' | 'clean' | 'full';
 export type ImportPackDateGrouping = 'stage_headings' | 'native_daily' | 'none';
@@ -139,8 +139,12 @@ export function validateImportPack(value: unknown): ImportPackValidation {
     if (!nonEmptyString(section.id) || !nonEmptyString(section.title)) return invalid('invalid_section', 'Each section needs id and title.');
     if (!oneOf(section.kind, ['library', 'date', 'other'])) return invalid('invalid_section', 'Section kind must be library, date, or other.');
     if (section.kind === 'date') {
-      if (typeof section.date !== 'string' || !parseIsoLocalDateParts(section.date)) {
+      const dateParts = typeof section.date === 'string' ? parseIsoLocalDateParts(section.date) : null;
+      if (!dateParts || formatIsoLocalDateParts(dateParts) !== section.date) {
         return invalid('invalid_section', 'Date sections require a valid YYYY-MM-DD local calendar date.');
+      }
+      if (section.title !== section.date) {
+        return invalid('invalid_section', 'Date section title must exactly match section.date.');
       }
     } else if (section.date !== undefined) {
       return invalid('invalid_section', 'Only date sections may provide section.date.');

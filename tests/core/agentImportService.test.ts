@@ -87,9 +87,17 @@ function hostFor(core: Core): OutlinerToolHost {
       const undoGroupStarted = core.beginUndoGroup();
       try {
         return await core.transaction(meta.origin ?? 'agent', async () => {
+          const dateTargets = batches.flatMap((batch) => batch.target.kind === 'date'
+            ? [{ year: batch.target.year, month: batch.target.month, day: batch.target.day }]
+            : []);
+          const dateParentIds = await core.ensureDateNodesYielding(dateTargets, {
+            yieldEveryDates: options?.yieldEveryNodes,
+            commitEveryDates: options?.commitEveryNodes,
+          });
+          let dateTargetIndex = 0;
           const resolved = batches.map((batch) => {
             const parentId = batch.target.kind === 'date'
-              ? core.ensureDateNode(batch.target.year, batch.target.month, batch.target.day).focus?.nodeId
+              ? dateParentIds[dateTargetIndex++]
               : batch.target.parentId;
             if (!parentId) throw new Error(`Test import host did not resolve ${batch.batchId}`);
             return { batch, parentId };
@@ -725,9 +733,17 @@ describe('Tenon import service', () => {
         const undoGroupStarted = core.beginUndoGroup();
         try {
           return await core.transaction(meta.origin ?? 'agent', async () => {
+            const dateTargets = batches.flatMap((batch) => batch.target.kind === 'date'
+              ? [{ year: batch.target.year, month: batch.target.month, day: batch.target.day }]
+              : []);
+            const dateParentIds = await core.ensureDateNodesYielding(dateTargets, {
+              yieldEveryDates: 1,
+              commitEveryDates: 1,
+            });
+            let dateTargetIndex = 0;
             const resolved = batches.map((batch) => {
               const parentId = batch.target.kind === 'date'
-                ? core.ensureDateNode(batch.target.year, batch.target.month, batch.target.day).focus!.nodeId
+                ? dateParentIds[dateTargetIndex++]!
                 : batch.target.parentId;
               return { batch, parentId };
             });
@@ -816,6 +832,16 @@ describe('Tenon import service', () => {
       const invalidDatePack = nativeDailyPack();
       invalidDatePack.sections[0]!.date = '2026-02-30';
       await expect(importService.previewFromContent({ packContent: JSON.stringify(invalidDatePack) }))
+        .rejects.toMatchObject({ code: 'invalid_section' });
+
+      const paddedDatePack = nativeDailyPack();
+      paddedDatePack.sections[0]!.date = ' 2026-08-20 ';
+      await expect(importService.previewFromContent({ packContent: JSON.stringify(paddedDatePack) }))
+        .rejects.toMatchObject({ code: 'invalid_section' });
+
+      const mismatchedTitlePack = nativeDailyPack();
+      mismatchedTitlePack.sections[0]!.title = 'August 20';
+      await expect(importService.previewFromContent({ packContent: JSON.stringify(mismatchedTitlePack) }))
         .rejects.toMatchObject({ code: 'invalid_section' });
     } finally {
       await rm(root, { recursive: true, force: true });
