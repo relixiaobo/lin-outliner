@@ -58,6 +58,59 @@ describe('built-in skill helper scripts', () => {
     expect(preview).toContain('trash_node');
   });
 
+  test('tenon-import Tana adapter emits native Daily Note sections only for valid journalPart dates', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'tenon-import-tana-daily-'));
+    const fixture = path.join(tenonImportSkillRoot, 'fixtures', 'tana-daily-notes.json');
+    const packFile = path.join(dir, 'pack.json');
+    const coverageFile = path.join(dir, 'coverage.json');
+    const previewFile = path.join(dir, 'preview.md');
+    const stagedPreviewFile = path.join(dir, 'preview-stage.md');
+
+    await execFile('bun', [tenonImportTool, 'tana', fixture, '--out', packFile, '--coverage-out', coverageFile, '--fidelity', 'full']);
+    await execFile('bun', [tenonImportTool, 'preview', packFile, '--out', previewFile, '--offline-preview']);
+    await execFile('bun', [tenonImportTool, 'preview', packFile, '--out', stagedPreviewFile, '--mode', 'stage', '--offline-preview']);
+
+    const pack = JSON.parse(await readFile(packFile, 'utf8'));
+    const coverage = JSON.parse(await readFile(coverageFile, 'utf8'));
+    const preview = await readFile(previewFile, 'utf8');
+    const stagedPreview = await readFile(stagedPreviewFile, 'utf8');
+
+    expect(pack).toMatchObject({
+      options: { dateGrouping: 'native_daily' },
+      stats: { sourceRecords: 10, sections: 3, nodes: 8 },
+      coverage: { imported: 8, merged: 2, unaccounted: 0 },
+      warnings: [{ code: 'invalid_journal_date', count: 1 }],
+      sections: [{
+        title: '2026-08-21',
+        kind: 'date',
+        date: '2026-08-21',
+        nodes: [{ title: 'Morning note' }, { title: 'Evening note' }],
+      }, {
+        title: '2026-08-22',
+        kind: 'date',
+        date: '2026-08-22',
+      }, {
+        title: 'Tana Workspace',
+        kind: 'library',
+      }],
+    });
+    expect(pack.sections[2].nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: '2026-02-30',
+        children: [expect.objectContaining({ title: 'Keep this in the library' })],
+      }),
+    ]));
+    expect(coverage).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceId: 'daily-2026-08-21', status: 'merged', target: 'date:2026-08-21' }),
+      expect.objectContaining({ sourceId: 'daily-2026-08-22', status: 'merged', target: 'date:2026-08-22' }),
+      expect.objectContaining({ sourceId: 'daily-invalid', status: 'imported' }),
+    ]));
+    expect(preview).toContain('Mode: native_daily');
+    expect(preview).toContain('Date range: 2026-08-21 to 2026-08-22');
+    expect(preview).toContain('Re-import behavior: append-only');
+    expect(stagedPreview).toContain('Mode: stage');
+  });
+
   test('tenon-import preview requires the running app import API by default', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'tenon-import-api-required-'));
     const fixture = path.join(tenonImportSkillRoot, 'fixtures', 'tana-minimal.json');
@@ -84,6 +137,8 @@ describe('built-in skill helper scripts', () => {
       ['--preview-id', 'preview:2'],
       ['--parent-id'],
       ['--json', '--json'],
+      ['--mode', 'sync'],
+      ['--mode', 'stage', '--mode', 'native_daily'],
     ]) {
       const failed = await execFile('bun', [
         tenonImportTool,

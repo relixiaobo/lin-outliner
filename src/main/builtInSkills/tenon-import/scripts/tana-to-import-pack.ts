@@ -5,6 +5,7 @@ import {
   coverageFromEntries,
   extractInlineTags,
   htmlToText,
+  isValidIsoLocalDate,
   optionFlag,
   optionValue,
   readJson,
@@ -16,6 +17,7 @@ import {
   type ImportOptions,
   type ImportPack,
   type ImportSection,
+  type ImportWarning,
 } from './import-pack-lib';
 
 interface TanaDoc {
@@ -95,7 +97,7 @@ async function main() {
     includeTrash,
     options: {
       fidelity,
-      dateGrouping: 'stage_headings',
+      dateGrouping: 'native_daily',
       tags: fidelity !== 'content',
       fields: fidelity === 'full' ? 'field_rows' : fidelity === 'clean' ? 'text_children' : 'omit',
       doneState: fidelity !== 'content',
@@ -139,8 +141,16 @@ export async function convertTanaExport(
     list.push(doc);
     children.set(owner, list);
   }
-  for (const list of children.values()) {
-    list.sort((left, right) => createdAt(left) - createdAt(right) || left.id.localeCompare(right.id));
+  for (const [ownerId, list] of children) {
+    const sourceOrder = new Map((byId.get(ownerId)?.children ?? []).map((childId, index) => [childId, index]));
+    list.sort((left, right) => {
+      const leftIndex = sourceOrder.get(left.id);
+      const rightIndex = sourceOrder.get(right.id);
+      if (leftIndex !== undefined || rightIndex !== undefined) {
+        return (leftIndex ?? Number.MAX_SAFE_INTEGER) - (rightIndex ?? Number.MAX_SAFE_INTEGER);
+      }
+      return createdAt(left) - createdAt(right) || left.id.localeCompare(right.id);
+    });
   }
 
   const currentWorkspaceId = typeof data.currentWorkspaceId === 'string' && byId.has(data.currentWorkspaceId)
@@ -160,6 +170,56 @@ export async function convertTanaExport(
   const systemRoots = new Set(docs
     .filter((doc) => doc.id.startsWith('SYS') || nameOf(doc).toLowerCase() === 'system nodes')
     .map((doc) => doc.id));
+  const workspaceInternalRoots = new Set(docs
+    .filter((doc) => isExcludedWorkspaceRootName(nameOf(doc)))
+    .map((doc) => doc.id));
+
+  const context: TanaConvertContext = {
+    byId,
+    children,
+    entries,
+    visited,
+    trashRoots,
+    systemRoots,
+    includeTrash: config.includeTrash,
+    options: config.options,
+  };
+  const dateSections = new Map<string, ImportSection>();
+  const invalidJournalParts: TanaDoc[] = [];
+  for (const doc of docs) {
+    if (docTypeOf(doc) !== 'journalPart') continue;
+    if (isInOwnedSet(doc, byId, systemRoots)) continue;
+    if (isInOwnedSet(doc, byId, workspaceInternalRoots)) continue;
+    if (!config.includeTrash && isInOwnedSet(doc, byId, trashRoots)) continue;
+    const date = nameOf(doc);
+    if (!isValidIsoLocalDate(date)) {
+      invalidJournalParts.push(doc);
+      continue;
+    }
+    visited.add(doc.id);
+    entries.push({
+      sourceId: doc.id,
+      status: 'merged',
+      reason: 'journal_date_container',
+      target: `date:${date}`,
+    });
+    const nodes = (children.get(doc.id) ?? [])
+      .filter((child) => docTypeOf(child) !== 'journalPart')
+      .map((child) => convertDoc(child, context))
+      .filter((child): child is ImportNode => Boolean(child));
+    const existing = dateSections.get(date);
+    if (existing) {
+      existing.nodes.push(...nodes);
+    } else {
+      dateSections.set(date, {
+        id: `tana-journal:${doc.id}`,
+        title: date,
+        kind: 'date',
+        date,
+        nodes,
+      });
+    }
+  }
 
   const sectionNodes: ImportNode[] = [];
   for (const child of children.get(rootId) ?? []) {
@@ -167,7 +227,7 @@ export async function convertTanaExport(
       markSubtree(child, children, entries, visited, dropReason(child, trashRoots, systemRoots, config.includeTrash));
       continue;
     }
-    const converted = convertDoc(child, { byId, children, entries, visited, trashRoots, systemRoots, includeTrash: config.includeTrash, options: config.options });
+    const converted = convertDoc(child, context);
     if (converted) sectionNodes.push(converted);
   }
 
@@ -177,16 +237,19 @@ export async function convertTanaExport(
       markSubtree(doc, children, entries, visited, unsupportedReason(doc), unsupportedStatus(doc));
       continue;
     }
-    const converted = convertDoc(doc, { byId, children, entries, visited, trashRoots, systemRoots, includeTrash: config.includeTrash, options: config.options });
+    const converted = convertDoc(doc, context);
     if (converted) sectionNodes.push(converted);
   }
 
-  const sections: ImportSection[] = [{
-    id: 'tana-workspace',
-    title: 'Tana Workspace',
-    kind: 'library',
-    nodes: sectionNodes,
-  }];
+  const sections: ImportSection[] = [
+    ...dateSections.values(),
+    ...(sectionNodes.length > 0 || dateSections.size === 0 ? [{
+      id: 'tana-workspace',
+      title: 'Tana Workspace',
+      kind: 'library' as const,
+      nodes: sectionNodes,
+    }] : []),
+  ];
   const coverage = coverageFromEntries(entries, path.resolve(config.coverageOut));
   packCoverageEntries = entries;
   const pack: ImportPack = {
@@ -196,7 +259,10 @@ export async function convertTanaExport(
       path: path.resolve(config.source),
       sourceId: String(data.currentWorkspaceId ?? rootId),
     },
-    options: config.options,
+    options: {
+      ...config.options,
+      dateGrouping: dateSections.size > 0 ? 'native_daily' : 'stage_headings',
+    },
     stats: {
       sourceRecords: 0,
       sections: 0,
@@ -208,11 +274,23 @@ export async function convertTanaExport(
       dropped: 0,
     },
     coverage,
-    warnings: summarizeWarnings(entries),
+    warnings: [
+      ...summarizeWarnings(entries),
+      ...invalidJournalWarnings(invalidJournalParts),
+    ],
     sections,
   };
   pack.stats = computeStats(pack);
   return pack;
+}
+
+function invalidJournalWarnings(docs: readonly TanaDoc[]): ImportWarning[] {
+  if (docs.length === 0) return [];
+  return [{
+    code: 'invalid_journal_date',
+    message: `${docs.length} journalPart record(s) did not have a valid YYYY-MM-DD title and remained in the Tana Workspace section.`,
+    count: docs.length,
+  }];
 }
 
 function convertDoc(
@@ -368,7 +446,11 @@ function markSubtree(
 function shouldDropRoot(doc: TanaDoc, trashRoots: Set<string>, systemRoots: Set<string>, includeTrash: boolean): boolean {
   if (systemRoots.has(doc.id) || doc.id.startsWith('SYS')) return true;
   if (!includeTrash && trashRoots.has(doc.id)) return true;
-  const name = nameOf(doc).toLowerCase();
+  return isExcludedWorkspaceRootName(nameOf(doc));
+}
+
+function isExcludedWorkspaceRootName(rawName: string): boolean {
+  const name = rawName.toLowerCase();
   return [...EXCLUDED_ROOT_NAMES].some((prefix) => name === prefix || name.startsWith(prefix));
 }
 

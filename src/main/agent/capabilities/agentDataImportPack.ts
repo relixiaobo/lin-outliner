@@ -1,7 +1,8 @@
 import { normalizeFieldNameKey } from '../../../core/fieldResolution';
+import { parseIsoLocalDateParts } from '../../../core/localDate';
 
 export type ImportPackFidelity = 'content' | 'clean' | 'full';
-export type ImportPackDateGrouping = 'stage_headings' | 'none';
+export type ImportPackDateGrouping = 'stage_headings' | 'native_daily' | 'none';
 export type ImportPackFieldsMode = 'omit' | 'text_children' | 'field_rows';
 
 export interface ImportPack {
@@ -85,8 +86,6 @@ const MAX_SECTIONS = 2_000;
 const MAX_NODES = 75_000;
 const MAX_DEPTH = 80;
 const MAX_TEXT_CHARS = 100_000;
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/u;
-
 export function validateImportPack(value: unknown): ImportPackValidation {
   const pack = asRecord(value);
   if (pack.version !== 1) return invalid('invalid_version', 'Import Pack version must be 1.');
@@ -96,7 +95,9 @@ export function validateImportPack(value: unknown): ImportPackValidation {
 
   const options = asRecord(pack.options);
   if (!oneOf(options.fidelity, ['content', 'clean', 'full'])) return invalid('invalid_options', 'options.fidelity must be content, clean, or full.');
-  if (!oneOf(options.dateGrouping, ['stage_headings', 'none'])) return invalid('invalid_options', 'options.dateGrouping must be stage_headings or none.');
+  if (!oneOf(options.dateGrouping, ['stage_headings', 'native_daily', 'none'])) {
+    return invalid('invalid_options', 'options.dateGrouping must be stage_headings, native_daily, or none.');
+  }
   if (typeof options.tags !== 'boolean') return invalid('invalid_options', 'options.tags must be boolean.');
   if (!oneOf(options.fields, ['omit', 'text_children', 'field_rows'])) return invalid('invalid_options', 'options.fields must be omit, text_children, or field_rows.');
   if (typeof options.doneState !== 'boolean') return invalid('invalid_options', 'options.doneState must be boolean.');
@@ -137,8 +138,12 @@ export function validateImportPack(value: unknown): ImportPackValidation {
     const section = asRecord(sectionValue);
     if (!nonEmptyString(section.id) || !nonEmptyString(section.title)) return invalid('invalid_section', 'Each section needs id and title.');
     if (!oneOf(section.kind, ['library', 'date', 'other'])) return invalid('invalid_section', 'Section kind must be library, date, or other.');
-    if (section.date !== undefined && (typeof section.date !== 'string' || !DATE_RE.test(section.date))) {
-      return invalid('invalid_section', 'Section date must be YYYY-MM-DD.');
+    if (section.kind === 'date') {
+      if (typeof section.date !== 'string' || !parseIsoLocalDateParts(section.date)) {
+        return invalid('invalid_section', 'Date sections require a valid YYYY-MM-DD local calendar date.');
+      }
+    } else if (section.date !== undefined) {
+      return invalid('invalid_section', 'Only date sections may provide section.date.');
     }
     if (!Array.isArray(section.nodes)) return invalid('invalid_section', 'Section nodes must be an array.');
     const result = validateNodes(section.nodes, 1);

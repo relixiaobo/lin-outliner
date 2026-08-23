@@ -24,6 +24,7 @@ export function renderPreview(pack: ImportPack, sampleLimit: number): string {
     `# Import Preview: ${pack.source.kind}`,
     '',
     `Source: ${pack.source.path}`,
+    `Recommended mode: ${recommendedMode(pack)}`,
     '',
     '## Stats',
     '',
@@ -46,6 +47,19 @@ export function renderPreview(pack: ImportPack, sampleLimit: number): string {
     `- Unaccounted: ${pack.coverage.unaccounted}`,
   ];
   if (pack.coverage.entriesFile) lines.push(`- Entries file: ${pack.coverage.entriesFile}`);
+  const dates = [...new Set(pack.sections.flatMap((section) => section.kind === 'date' && section.date ? [section.date] : []))].sort();
+  if (dates.length > 0) {
+    lines.push(
+      '',
+      '## Daily Notes',
+      '',
+      `- Date sections: ${pack.sections.filter((section) => section.kind === 'date').length}`,
+      `- Distinct dates: ${dates.length}`,
+      `- Date range: ${dates[0]} to ${dates.at(-1)}`,
+      `- Non-date sections staged: ${pack.sections.filter((section) => section.kind !== 'date').length}`,
+      '- Re-import behavior: append-only; repeated imports create another copy.',
+    );
+  }
   lines.push('', '## Warnings', '');
   if (pack.warnings.length === 0) lines.push('- None');
   for (const warning of pack.warnings.slice(0, 20)) {
@@ -68,6 +82,12 @@ export function renderPreview(pack: ImportPack, sampleLimit: number): string {
     lines.push('');
   }
   return `${lines.join('\n')}\n`;
+}
+
+function recommendedMode(pack: ImportPack): 'stage' | 'native_daily' {
+  return pack.options.dateGrouping === 'native_daily' && pack.sections.some((section) => section.kind === 'date')
+    ? 'native_daily'
+    : 'stage';
 }
 
 function countNodes(nodes: readonly ImportNode[]): number {

@@ -22,11 +22,13 @@ Validation gates:
 3. Preview: `tenon-import preview` validates schema, bounds, destination, pack
    hash, and coverage through the app import API before returning a preview id.
 4. Post-import verification: `tenon-import commit` asks the app import service
-   to read back the created staging subtree and compare section/node/preserved
-   structure counts.
+   to read back only the exact roots created by the operation and compare
+   section/node/preserved structure counts. Existing content below a Daily Note
+   is outside those counts.
 
-A materialization exception rolls back the whole import. A post-import count
-mismatch instead retains the one staging subtree and returns
-`staged_with_errors` with its staging root, operation ID, and mismatches. Stop
-without retrying or manually deleting it; report those values for inspection or
-a guarded exact undo.
+A materialization exception rolls back the whole import, including newly
+created year/week/day scaffolding. A post-import count mismatch instead retains
+the one completed operation and returns `staged_with_errors` or
+`imported_daily_with_errors` with its created roots, operation ID, and
+mismatches. Stop without retrying or manually deleting content; report those
+values for inspection or a guarded exact undo.

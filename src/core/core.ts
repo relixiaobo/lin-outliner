@@ -265,6 +265,18 @@ interface TreeYieldContext {
   commit: () => void;
 }
 
+export interface CreateNodeTreeBatch {
+  parentId: string;
+  nodes: CreateNodeTree[];
+}
+
+export interface CreateNodeTreeBatchOptions {
+  yieldEveryNodes?: number;
+  commitEveryNodes?: number;
+  yield?: () => Promise<void>;
+  onRootCreated?: (batchIndex: number, nodeId: NodeId) => void;
+}
+
 interface CoreTransaction {
   origin: string;
   metadata: CoreTransactionMetadata;
@@ -1310,12 +1322,19 @@ export class Core {
     nodes: CreateNodeTree[],
     options: { yieldEveryNodes?: number; commitEveryNodes?: number; yield?: () => Promise<void> } = {},
   ): Promise<FocusHint | undefined> {
+    return this.createNodeTreeBatchesYieldingFocus([{ parentId, nodes }], options);
+  }
+
+  async createNodeTreeBatchesYieldingFocus(
+    batches: readonly CreateNodeTreeBatch[],
+    options: CreateNodeTreeBatchOptions = {},
+  ): Promise<FocusHint | undefined> {
     if (!this.activeTransaction && options.commitEveryNodes) {
       const undoGroupStarted = this.beginUndoGroup();
       try {
         return await this.transactionWithResolvedOrigin(
           this.currentCommitOrigin(),
-          () => this.createNodesFromTreeYieldingFocus(parentId, nodes, options),
+          () => this.createNodeTreeBatchesYieldingFocus(batches, options),
           this.currentCommitMetadata(),
         );
       } finally {
@@ -1325,10 +1344,12 @@ export class Core {
 
     return this.mutateAsyncFocus(async () => {
       const state = this.snapshot();
-      ensureParentMutable(state, parentId);
-      assertCreateNodeTreeReferencesAvailable(state, nodes);
+      for (const batch of batches) {
+        ensureParentMutable(state, batch.parentId);
+        assertCreateNodeTreeReferencesAvailable(state, batch.nodes);
+      }
       const context = this.createTreeMaterializeContext(state);
-      const total = countCreateNodeTrees(nodes);
+      const total = batches.reduce((count, batch) => count + countCreateNodeTrees(batch.nodes), 0);
       const yieldContext: TreeYieldContext = {
         created: 0,
         total,
@@ -1338,11 +1359,18 @@ export class Core {
         commit: () => this.commitActiveTransactionChunk(),
       };
       let lastCreatedId: string | undefined;
-      for (const node of nodes) {
-        const createdId = await this.insertNodeTreeDirectYielding(parentId, node, undefined, context, yieldContext);
-        lastCreatedId = createdId;
+      let lastParentId: string | undefined;
+      for (const [batchIndex, batch] of batches.entries()) {
+        for (const node of batch.nodes) {
+          const createdId = await this.insertNodeTreeDirectYielding(batch.parentId, node, undefined, context, yieldContext);
+          options.onRootCreated?.(batchIndex, createdId);
+          lastCreatedId = createdId;
+          lastParentId = batch.parentId;
+        }
       }
-      return lastCreatedId ? focus(lastCreatedId, { parentId, placement: { kind: 'end' } }) : undefined;
+      return lastCreatedId && lastParentId
+        ? focus(lastCreatedId, { parentId: lastParentId, placement: { kind: 'end' } })
+        : undefined;
     });
   }
 

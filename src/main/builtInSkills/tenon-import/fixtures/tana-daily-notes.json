@@ -1,0 +1,94 @@
+{
+  "currentWorkspaceId": "workspace-root",
+  "formatVersion": 1,
+  "docs": [
+    {
+      "id": "workspace-root",
+      "props": {
+        "created": 1,
+        "name": "Root node for file:daily-workspace"
+      },
+      "children": ["home", "daily-2026-08-21", "daily-2026-08-22", "daily-invalid"]
+    },
+    {
+      "id": "home",
+      "props": {
+        "created": 2,
+        "name": "Home",
+        "_docType": "home",
+        "_ownerId": "workspace-root"
+      },
+      "children": ["library-note"]
+    },
+    {
+      "id": "library-note",
+      "props": {
+        "created": 3,
+        "name": "Reference material",
+        "_ownerId": "home"
+      }
+    },
+    {
+      "id": "daily-2026-08-21",
+      "props": {
+        "created": 4,
+        "name": "2026-08-21",
+        "_docType": "journalPart",
+        "_ownerId": "workspace-root"
+      },
+      "children": ["morning-note", "evening-note"]
+    },
+    {
+      "id": "morning-note",
+      "props": {
+        "created": 30,
+        "name": "Morning note",
+        "_ownerId": "daily-2026-08-21"
+      }
+    },
+    {
+      "id": "evening-note",
+      "props": {
+        "created": 20,
+        "name": "Evening note",
+        "_ownerId": "daily-2026-08-21"
+      }
+    },
+    {
+      "id": "daily-2026-08-22",
+      "props": {
+        "created": 5,
+        "name": "2026-08-22",
+        "_docType": "journalPart",
+        "_ownerId": "workspace-root"
+      },
+      "children": ["next-day-note"]
+    },
+    {
+      "id": "next-day-note",
+      "props": {
+        "created": 6,
+        "name": "Next day note",
+        "_ownerId": "daily-2026-08-22"
+      }
+    },
+    {
+      "id": "daily-invalid",
+      "props": {
+        "created": 7,
+        "name": "2026-02-30",
+        "_docType": "journalPart",
+        "_ownerId": "workspace-root"
+      },
+      "children": ["invalid-day-note"]
+    },
+    {
+      "id": "invalid-day-note",
+      "props": {
+        "created": 8,
+        "name": "Keep this in the library",
+        "_ownerId": "daily-invalid"
+      }
+    }
+  ]
+}

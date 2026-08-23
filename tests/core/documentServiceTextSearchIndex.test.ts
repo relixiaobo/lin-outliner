@@ -625,6 +625,54 @@ describe('DocumentService text search index', () => {
     expect(await searchNodeIds(service, 'imported beta')).toEqual([]);
   });
 
+  test('imports trees across Daily Notes and staging as one searchable undo step', async () => {
+    const service = await createService();
+    const todayId = service.getProjection().todayId;
+    const operationId = 'op:document-service-native-daily';
+    const result = await service.createImportTreeBatchesYielding([{
+      batchId: 'date:2026-08-20',
+      target: { kind: 'date', year: 2026, month: 8, day: 20 },
+      nodes: [{ content: plainText('Native Daily searchable row'), children: [] }],
+    }, {
+      batchId: 'staging',
+      target: { kind: 'node', parentId: todayId },
+      nodes: [{ content: plainText('Import: mixed source'), children: [{
+        content: plainText('Staged searchable row'),
+        children: [],
+      }] }],
+    }], {
+      origin: 'agent',
+      operationId,
+      tool: 'tenon-import',
+      summary: 'Imported mixed native Daily Note test content.',
+    }, {
+      yieldEveryNodes: 1,
+      commitEveryNodes: 1,
+    });
+
+    expect(result.batches[0]?.batchId).toBe('date:2026-08-20');
+    expect(result.batches[0]?.parentCreated).toBe(true);
+    expect(result.batches[0]?.rootIds).toHaveLength(1);
+    expect(result.batches[1]?.batchId).toBe('staging');
+    expect(result.batches[1]?.parentId).toBe(todayId);
+    expect(result.batches[1]?.parentCreated).toBe(false);
+    expect(result.batches[1]?.rootIds).toHaveLength(1);
+    expect(await searchNodeIds(service, 'native daily searchable')).toHaveLength(1);
+    expect(await searchNodeIds(service, 'staged searchable')).toHaveLength(1);
+    expect((await service.operationHistory({ action: 'list', origin: 'agent' })).items).toHaveLength(1);
+
+    const undo = await service.operationHistory({ action: 'undo', origin: 'agent', operationId });
+    expect(undo.count).toBe(1);
+    expect(await searchNodeIds(service, 'native daily searchable')).toEqual([]);
+    expect(await searchNodeIds(service, 'staged searchable')).toEqual([]);
+    for (const batch of result.batches) {
+      for (const rootId of batch.rootIds) {
+        expect(service.getProjection().nodes.some((node) => node.id === rootId)).toBe(false);
+      }
+    }
+    expect(service.getProjection().nodes.some((node) => node.id === result.batches[0]!.parentId)).toBe(false);
+  });
+
   test('keeps the previous search generation readable during a yielding refresh', async () => {
     const service = await createService();
     const todayId = service.getProjection().todayId;
