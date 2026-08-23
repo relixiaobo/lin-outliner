@@ -8,6 +8,8 @@ import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pathToFileURL } from 'node:url';
 import { DocumentService } from './documentService';
+import { OutlineClientSupervisor, type OutlineRuntimeLaunch } from '../outline/client';
+import { DesktopOutlineClient, registerDesktopOutlineIpc } from './outlineClient';
 import { AppQuitCoordinator, type QuitDecision } from './appQuitCoordinator';
 import { AssetService, mimeTypeForFilename, sniffMimeType } from './assetService';
 import { ThreadService } from './agent/ThreadService';
@@ -443,6 +445,37 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const APP_ICON_PNG_PATH = app.isPackaged
   ? join(process.resourcesPath, 'icon.png')
   : join(__dirname, '../../build/icon.png');
+const outlineRuntimeRoot = join(resolvedUserDataDir, 'outline-runtime');
+const outlineClientSupervisor = new OutlineClientSupervisor({
+  root: outlineRuntimeRoot,
+  launch: desktopOutlineRuntimeLaunch(outlineRuntimeRoot),
+});
+const desktopOutlineClient = new DesktopOutlineClient({
+  connect: () => outlineClientSupervisor.connect(),
+});
+
+function desktopOutlineRuntimeLaunch(root: string): OutlineRuntimeLaunch {
+  const configuredEntry = process.env.TENON_OUTLINE_RUNTIME_ENTRY;
+  if (configuredEntry) {
+    return {
+      command: process.env.TENON_OUTLINE_RUNTIME_COMMAND ?? process.execPath,
+      args: [configuredEntry, '--root', root],
+    };
+  }
+  if (app.isPackaged) {
+    return {
+      command: process.execPath,
+      args: [join(process.resourcesPath, 'outline', 'outline-runtime.mjs'), '--root', root],
+    };
+  }
+  const npmExecutable = process.env.npm_execpath;
+  const bunExecutable = npmExecutable && basename(npmExecutable) === 'bun' ? npmExecutable : 'bun';
+  return {
+    command: bunExecutable,
+    args: [resolve(__dirname, '../../src/outline/runtime/server/entry.ts'), '--root', root],
+  };
+}
+
 const documentService = new DocumentService();
 const extensionRegistry = new ExtensionRegistry();
 const memoryControlStore = new MemoryControlStore(join(app.getPath('userData'), 'agent', 'memories.sqlite'));
@@ -1885,6 +1918,8 @@ function createWindow() {
   }
 
   registerRendererCapabilities(mainWindow.webContents, APP_RENDERER_CAPABILITIES);
+  const outlineOwnerId = mainWindow.webContents.id;
+  mainWindow.webContents.once('destroyed', () => desktopOutlineClient.releaseOwner(outlineOwnerId));
 
   mainWindow.on('closed', () => {
     pageTranslationService.dispose();
@@ -2621,6 +2656,16 @@ const actionInvocationService = new ActionInvocationService({
 });
 
 function registerIpc() {
+  registerDesktopOutlineIpc({
+    ipcMain,
+    client: desktopOutlineClient,
+    authorize: (event) => {
+      if (!mainWindow || event.sender !== mainWindow.webContents) {
+        throw new Error('Outline Runtime is available only to the main application window.');
+      }
+    },
+  });
+
   ipcMain.handle(LIN_APP_UPDATE_GET_CHANNEL, (event): Promise<AppUpdateView> => {
     assertSettingsRenderer(event, 'App update status');
     return appUpdateService.view();

@@ -29,6 +29,17 @@ export function projectOutline(
   return {
     projection,
     revision: core.revision(),
+    anchors: {
+      workspaceId: document.workspaceId,
+      rootId: document.rootId,
+      libraryId: document.libraryId,
+      dailyNotesId: document.dailyNotesId,
+      schemaId: document.schemaId,
+      searchesId: document.searchesId,
+      recentsId: document.recentsId,
+      trashId: document.trashId,
+      todayId: document.todayId,
+    },
     nodes,
     ...(nextOffset < selectedIds.length ? {
       cursor: encodePageCursor({ projectionHash, revision: core.revision(), offset: nextOffset }),

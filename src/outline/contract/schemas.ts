@@ -361,6 +361,17 @@ export const DiffSchema = Type.Object({
 export const ProjectionResultSchema = Type.Object({
   projection: ProjectionSchema,
   revision: Type.Integer({ minimum: 0 }),
+  anchors: Type.Object({
+    workspaceId: Identifier,
+    rootId: Identifier,
+    libraryId: Identifier,
+    dailyNotesId: Identifier,
+    schemaId: Identifier,
+    searchesId: Identifier,
+    recentsId: Identifier,
+    trashId: Identifier,
+    todayId: Identifier,
+  }, closed),
   nodes: Type.Array(JsonValue, { maxItems: 10_000 }),
   cursor: Type.Optional(Type.String({ minLength: 1, maxLength: 4_096 })),
   truncated: Type.Optional(Type.Boolean()),
@@ -412,6 +423,11 @@ export const EventSchema = Type.Object({
   revision: Type.Integer({ minimum: 0 }),
   cursor: Type.String({ minLength: 1, maxLength: 4_096 }),
   operation: Type.Optional(OperationSchema),
+  changes: Type.Optional(Type.Object({
+    todayId: Identifier,
+    changedNodes: Type.Array(JsonValue, { maxItems: 100_000 }),
+    removedIds: Type.Array(Identifier, { maxItems: 100_000 }),
+  }, closed)),
   projection: Type.Optional(ProjectionResultSchema),
 }, { ...closed, $id: 'Event' });
 

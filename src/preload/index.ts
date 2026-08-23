@@ -104,6 +104,19 @@ import {
   type AppUpdateOpenResult,
   type AppUpdateView,
 } from '../core/appUpdateProtocol';
+import { OUTLINE_PROTOCOL_VERSION } from '../outline/contract/version';
+import type { OutlineStreamRecord } from '../outline/contract/schemas';
+import {
+  OUTLINE_DESKTOP_CANCEL_CHANNEL,
+  OUTLINE_DESKTOP_REQUEST_CHANNEL,
+  OUTLINE_DESKTOP_STREAM_CHANNEL,
+  OUTLINE_DESKTOP_SUBSCRIBE_CHANNEL,
+  OUTLINE_DESKTOP_UNSUBSCRIBE_CHANNEL,
+  type OutlineDesktopRequest,
+  type OutlineDesktopResponse,
+  type OutlineDesktopStreamMessage,
+  type OutlineDesktopSubscription,
+} from '../main/outlineClient/protocol';
 
 export interface LinPickedLocalFile {
   entryKind?: 'file' | 'directory';
@@ -288,6 +301,45 @@ const api = {
   windowMaterial: windowMaterialKind(process.platform),
   invoke: <T>(command: string, args?: Record<string, unknown>) =>
     ipcRenderer.invoke('lin:invoke', command, args) as Promise<T>,
+  outline: {
+    request: (request: OutlineDesktopRequest) => (
+      ipcRenderer.invoke(OUTLINE_DESKTOP_REQUEST_CHANNEL, request) as Promise<OutlineDesktopResponse>
+    ),
+    cancel: (requestId: string) => {
+      ipcRenderer.send(OUTLINE_DESKTOP_CANCEL_CHANNEL, requestId);
+    },
+    subscribe: (
+      subscription: OutlineDesktopSubscription,
+      listener: (record: OutlineStreamRecord) => void,
+    ) => {
+      let active = true;
+      const handler = (_event: Electron.IpcRendererEvent, message: OutlineDesktopStreamMessage) => {
+        if (active && message.subscriptionId === subscription.subscriptionId) listener(message.record);
+      };
+      ipcRenderer.on(OUTLINE_DESKTOP_STREAM_CHANNEL, handler);
+      void ipcRenderer.invoke(OUTLINE_DESKTOP_SUBSCRIBE_CHANNEL, subscription).catch((error: unknown) => {
+        if (!active) return;
+        listener({
+          protocolVersion: OUTLINE_PROTOCOL_VERSION,
+          requestId: `desktop:${subscription.subscriptionId}`,
+          sequence: 0,
+          type: 'error',
+          error: {
+            code: 'runtime_unavailable',
+            category: 'unavailable',
+            message: error instanceof Error ? error.message : 'Outline Runtime subscription failed.',
+            retryable: true,
+          },
+        } as unknown as OutlineStreamRecord);
+      });
+      return () => {
+        if (!active) return;
+        active = false;
+        ipcRenderer.removeListener(OUTLINE_DESKTOP_STREAM_CHANNEL, handler);
+        ipcRenderer.send(OUTLINE_DESKTOP_UNSUBSCRIBE_CHANNEL, subscription.subscriptionId);
+      };
+    },
+  },
   agentCoreRequest: <Method extends AgentCoreMethod>(
     method: Method,
     input: AgentCoreRequestByMethod[Method],

@@ -21,25 +21,32 @@ const MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
 type OutlineSuccessResponse = Extract<OutlineResponse, { ok: true }>;
 
 export class OutlineClient {
-  private readonly agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+  // A watch owns one long-lived socket. Requests and asset transfers must still
+  // settle through this shared client while that stream remains open.
+  private readonly agent = new http.Agent({ keepAlive: true, maxSockets: 8 });
 
   constructor(readonly descriptor: RuntimeDescriptor) {}
 
-  async request(command: string, input: unknown): Promise<OutlineSuccessResponse> {
+  async request(command: string, input: unknown, signal?: AbortSignal): Promise<OutlineSuccessResponse> {
+    const value = await this.requestResponse(command, input, signal);
+    if (value.ok === false) throw new OutlineContractError(value.error);
+    return value;
+  }
+
+  async requestResponse(command: string, input: unknown, signal?: AbortSignal): Promise<OutlineResponse> {
     const request: OutlineRequest = {
       protocolVersion: OUTLINE_PROTOCOL_VERSION,
       requestId: `request:${crypto.randomUUID()}`,
       command,
       input,
     };
-    const value = await this.jsonRequest('/v1/request', request);
+    const value = await this.jsonRequest('/v1/request', request, signal);
     if (!Value.Check(OutlineResponseSchema, value)) {
       throw protocolError('Outline Runtime returned an invalid response envelope.');
     }
     if (value.requestId !== request.requestId || value.command !== command) {
       throw protocolError('Outline Runtime response identity does not match the request.');
     }
-    if (value.ok === false) throw new OutlineContractError(value.error);
     return value;
   }
 
@@ -177,7 +184,7 @@ export class OutlineClient {
     this.agent.destroy();
   }
 
-  private async jsonRequest(pathname: string, value: unknown): Promise<unknown> {
+  private async jsonRequest(pathname: string, value: unknown, signal?: AbortSignal): Promise<unknown> {
     const body = JSON.stringify(value);
     const response = await this.openRequest({
       method: 'POST',
@@ -187,6 +194,7 @@ export class OutlineClient {
         'content-length': Buffer.byteLength(body),
       },
       body,
+      signal,
     });
     const parsed = await readResponseJson(response);
     if (response.statusCode !== 200) {

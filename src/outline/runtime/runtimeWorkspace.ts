@@ -4,6 +4,7 @@ import { canonicalSha256 } from '../contract/canonical';
 import { OutlineContractError, outlineError } from '../contract/errors';
 import type { Operation, OutlineEvent } from '../contract/schemas';
 import type { Node } from '../../core/types';
+import { projectNode } from '../../core/projection';
 import { OUTLINE_PROTOCOL_VERSION } from '../contract/version';
 import {
   createOutlineRecoveryPatch,
@@ -373,6 +374,11 @@ export class OutlineRuntimeWorkspace {
         revision: operation.revisionAfter,
       }),
       operation,
+      changes: {
+        todayId: candidate.todayId(),
+        changedNodes: patch.nodes.flatMap((entry) => entry.after ? [projectNode(entry.after)] : []),
+        removedIds: patch.nodes.flatMap((entry) => entry.after ? [] : [entry.id]),
+      },
     };
     let appended: WorkspaceTransactionAppendResult;
     try {

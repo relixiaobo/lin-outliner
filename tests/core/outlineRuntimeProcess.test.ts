@@ -212,6 +212,28 @@ describe('Outline Runtime process boundary', () => {
     }
   });
 
+  test('serves requests while one shared client holds an open watch', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const client = new OutlineClient(runtime.descriptor);
+    const iterator = client.watch()[Symbol.asyncIterator]();
+    try {
+      expect((await iterator.next()).value?.type).toBe('hello');
+      const status = await withTimeout(
+        client.request('status', {}),
+        1_000,
+        'A watch blocked a request on the shared OutlineClient',
+      );
+      expect(status.ok).toBe(true);
+    } finally {
+      await iterator.return?.();
+      client.close();
+      await runtime.stop();
+    }
+  });
+
   test('binds watch cursors to Runtime instance, filter, and Projection', async () => {
     const root = await makeRoot();
     const first = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });

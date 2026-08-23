@@ -102,6 +102,45 @@ describe('outline public contract', () => {
     expect(stream.Check({ protocolVersion: 1, requestId: 'r1', type: 'end' })).toBe(false);
   });
 
+  test('publishes workspace anchors and exact event changes for stateful clients', () => {
+    const projectionResult = Compile(OUTLINE_PUBLIC_SCHEMAS.ProjectionResult);
+    expect(projectionResult.Check({
+      projection: {
+        kind: 'outline',
+        targets: { target: { selector: { by: 'alias', alias: 'home' }, cardinality: 'one' } },
+      },
+      revision: 3,
+      anchors: {
+        workspaceId: 'workspace-id',
+        rootId: 'workspace',
+        libraryId: 'library',
+        dailyNotesId: 'daily-notes',
+        schemaId: 'schema',
+        searchesId: 'searches',
+        recentsId: 'recents',
+        trashId: 'trash',
+        todayId: 'today-id',
+      },
+      nodes: [],
+    })).toBe(true);
+
+    const event = Compile(OUTLINE_PUBLIC_SCHEMAS.Event);
+    expect(event.Check({
+      protocolVersion: 1,
+      kind: 'outline.event',
+      type: 'operation.committed',
+      instanceId: 'runtime:1',
+      sequence: 4,
+      revision: 3,
+      cursor: 'cursor',
+      changes: {
+        todayId: 'today-id',
+        changedNodes: [{ id: 'node:1' }],
+        removedIds: ['node:2'],
+      },
+    })).toBe(true);
+  });
+
   test('registers every fixed command with request and result schemas', () => {
     const names = OUTLINE_CAPABILITIES.map((entry) => entry.name);
     expect(new Set(names).size).toBe(names.length);
