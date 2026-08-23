@@ -2,13 +2,20 @@ import { Value } from 'typebox/value';
 import { outlineCapability, outlineCapabilityManifest } from '../../contract/capabilities';
 import { OutlineContractError, outlineError } from '../../contract/errors';
 import {
+  type ChangeSet,
+  type Diff,
   OutlineRequestSchema,
+  type Projection,
+  type Selector,
+  type TargetSpec,
   type OutlineRequest,
   type OutlineResponse,
   type Operation,
 } from '../../contract/schemas';
 import { OUTLINE_PROTOCOL_VERSION } from '../../contract/version';
 import type { OutlineRuntimeWorkspace } from '../runtimeWorkspace';
+import { applyOutlineDiff, diffOutlineChangeSet } from '../changeSet';
+import { projectOutline } from '../projection';
 
 export interface OutlineRuntimeRequestContext {
   readonly origin: Operation['origin'];
@@ -76,6 +83,29 @@ export class OutlineRuntimeRouter {
       return { running: true, runtime: { instanceId: this.workspace.instanceId, revision: this.workspace.revision() } };
     }
     if (command === 'capabilities') return outlineCapabilityManifest();
+    if (command === 'find') {
+      const value = input as { target: TargetSpec; projection?: Projection };
+      return projectOutline(this.workspace.forkCore(), value.projection ?? {
+        kind: 'summary',
+        targets: { target: value.target },
+        page: { limit: value.target.max ?? 100 },
+      });
+    }
+    if (command === 'show') {
+      const value = input as { selector: Selector; projection?: Projection };
+      return projectOutline(this.workspace.forkCore(), value.projection ?? {
+        kind: 'node',
+        targets: { target: { selector: value.selector, cardinality: 'one' } },
+        include: ['description', 'children', 'tags', 'fields', 'references', 'media', 'view', 'trash'],
+      });
+    }
+    if (command === 'diff') {
+      return diffOutlineChangeSet(this.workspace, (input as { changeSet: ChangeSet }).changeSet);
+    }
+    if (command === 'apply') {
+      const value = input as { diff: Diff; acknowledgeDestructive?: boolean };
+      return applyOutlineDiff(this.workspace, value.diff, context, value.acknowledgeDestructive === true);
+    }
     if (command === 'log') return this.log(input as Record<string, unknown>);
     if (command === 'revert') {
       const operationId = String((input as Record<string, unknown>).operationId);
@@ -83,6 +113,26 @@ export class OutlineRuntimeRouter {
     }
     if (command === 'undo') return this.workspace.undo(context);
     if (command === 'redo') return this.workspace.redo(context);
+    const capability = outlineCapability(command);
+    if (capability?.kind === 'mutate') {
+      const value = input as {
+        changeSet: ChangeSet;
+        preview?: boolean;
+        expectDiff?: string;
+        acknowledgeDestructive?: boolean;
+      };
+      const diff = await diffOutlineChangeSet(this.workspace, value.changeSet);
+      if (value.preview) return diff;
+      if (value.expectDiff && value.expectDiff !== diff.diffHash) {
+        throw new OutlineContractError(outlineError(
+          'diff_mismatch',
+          'conflict',
+          'The current normalized Diff does not match --expect-diff.',
+          { details: { expected: value.expectDiff, actual: diff.diffHash } },
+        ));
+      }
+      return applyOutlineDiff(this.workspace, diff, context, value.acknowledgeDestructive === true);
+    }
     throw new OutlineContractError(outlineError(
       'protocol_incompatible',
       'protocol',

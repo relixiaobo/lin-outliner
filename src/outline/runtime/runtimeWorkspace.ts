@@ -12,6 +12,7 @@ import {
   type WorkspaceTransactionAppendResult,
   type WorkspaceTransactionLogOptions,
 } from './storage';
+import { semanticPatchDigest } from './semanticDigest';
 
 const MAX_AFFECTED_NODE_ID_SAMPLE = 1_000;
 
@@ -28,7 +29,9 @@ export interface OutlineRuntimeMutationRequest {
   readonly revertsOperationId?: string;
   readonly protectedAssetRecordIds?: readonly string[];
   readonly assetDelta?: OutlineAssetDelta;
+  readonly idFactory?: (prefix: string) => string;
   readonly execute: (candidate: Core) => void | Operation['result'] | Promise<void | Operation['result']>;
+  readonly result?: (candidate: Core) => Operation['result'];
 }
 
 export interface OutlineRuntimeWorkspaceOptions {
@@ -93,6 +96,10 @@ export class OutlineRuntimeWorkspace {
 
   documentState() {
     return this.core.state();
+  }
+
+  forkCore(options: { idFactory?: (prefix: string) => string } = {}): Core {
+    return this.core.forkForRuntime(options);
   }
 
   subscribe(listener: (event: OutlineEvent) => void): () => void {
@@ -214,7 +221,7 @@ export class OutlineRuntimeWorkspace {
     } : undefined);
     if (admission.existingOperation) return admission.existingOperation;
 
-    const candidate = this.core.forkForRuntime();
+    const candidate = this.core.forkForRuntime({ idFactory: request.idFactory });
     const fromVersion = candidate.replicationVersionVector();
     const afterMetadataSequence = candidate.persistenceMetadataSequence();
     const operationId = `operation:${crypto.randomUUID()}`;
@@ -224,7 +231,7 @@ export class OutlineRuntimeWorkspace {
       summary: request.summary,
       ...(request.causation ? { causation: request.causation } : {}),
     };
-    const { result, patch } = await candidate.transactionWithPatch(
+    const { result: transactionResult, patch } = await candidate.transactionWithPatch(
       request.revertsOperationId
         ? 'system'
         : request.origin === 'built-in-agent'
@@ -240,7 +247,7 @@ export class OutlineRuntimeWorkspace {
         'The mutation produced no document changes.',
       ));
     }
-    const patchHash = canonicalSha256(patch.nodes);
+    const patchHash = semanticPatchDigest(patch.nodes);
     if (request.expectedPatchHash && request.expectedPatchHash !== patchHash) {
       throw new OutlineContractError(outlineError(
         'diff_mismatch',
@@ -250,6 +257,7 @@ export class OutlineRuntimeWorkspace {
       ));
     }
     const persistence = candidate.capturePersistenceUpdate(fromVersion, afterMetadataSequence);
+    const result = request.result?.(candidate) ?? transactionResult;
     const createdAt = this.now().toISOString();
     const recoveryPatch = createOutlineRecoveryPatch({
       operationId,

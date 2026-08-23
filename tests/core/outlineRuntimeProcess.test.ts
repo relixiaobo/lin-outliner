@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { canonicalSha256 } from '../../src/outline/contract/canonical';
-import type { OutlineEvent, RuntimeDescriptor } from '../../src/outline/contract/schemas';
+import type { ChangeSet, Diff, Operation, OutlineEvent, ProjectionResult, RuntimeDescriptor } from '../../src/outline/contract/schemas';
 import { OutlineClient, OutlineClientSupervisor, readOutlineRuntimeDescriptor } from '../../src/outline/client';
 import { OutlineRuntimeServer, resolveOutlineRuntimePaths } from '../../src/outline/runtime/server';
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
@@ -103,6 +103,59 @@ describe('Outline Runtime process boundary', () => {
     }
   });
 
+  test('serves find, diff, apply, and show through the authenticated process boundary', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const client = new OutlineClient(runtime.descriptor);
+    try {
+      const beforeRevision = runtime.workspace.revision();
+      const found = await client.request('find', {
+        target: {
+          selector: { by: 'query', query: { kind: 'rule', op: 'STRING_MATCH', text: 'not present' }, limit: 10 },
+          cardinality: 'many',
+          max: 10,
+        },
+      });
+      expect((found.data as ProjectionResult).nodes).toEqual([]);
+
+      const changeSet: ChangeSet = {
+        protocolVersion: 1,
+        kind: 'outline.changeset',
+        operations: [{
+          op: 'create',
+          parents: {
+            target: { selector: { by: 'alias', alias: 'today' }, cardinality: 'one' },
+          },
+          nodes: [{ content: { text: 'Created over Runtime socket', marks: [], inlineRefs: [] }, children: [] }],
+          bind: 'created',
+        }],
+      };
+      const preview = await client.request('diff', { changeSet });
+      const diff = preview.data as Diff;
+      expect(diff.kind).toBe('outline.diff');
+      expect(runtime.workspace.revision()).toBe(beforeRevision);
+      expect(await runtime.workspace.store.operations()).toEqual([]);
+
+      const applied = await client.request('apply', { diff });
+      const operation = applied.data as Operation;
+      expect(operation.origin).toBe('external-client');
+      expect(operation.revisionBefore).toBe(beforeRevision);
+      expect(operation.revisionAfter).toBe(beforeRevision + 1);
+
+      const nodeId = diff.bindings.created?.[0];
+      expect(nodeId).toBeDefined();
+      const shown = await client.request('show', { selector: { by: 'id', id: nodeId } });
+      expect((shown.data as ProjectionResult).nodes).toEqual([
+        expect.objectContaining({ id: nodeId, content: expect.objectContaining({ text: 'Created over Runtime socket' }) }),
+      ]);
+    } finally {
+      client.close();
+      await runtime.stop();
+    }
+  });
+
   test('delivers replayed and live Events once across the replay subscription boundary', async () => {
     const root = await makeRoot();
     const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
@@ -199,7 +252,6 @@ describe('Outline Runtime process boundary', () => {
   test('uses a bounded per-user socket path for an unusually long workspace root', async () => {
     const base = await makeRoot();
     const root = path.join(base, 'segment with spaces'.repeat(8), 'nested'.repeat(12));
-    roots.push(root);
     const paths = resolveOutlineRuntimePaths(root);
     expect(Buffer.byteLength(paths.socketPath)).toBeLessThanOrEqual(90);
     expect(paths.socketPath).not.toStartWith(root);
