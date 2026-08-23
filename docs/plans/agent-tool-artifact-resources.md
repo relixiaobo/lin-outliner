@@ -125,12 +125,20 @@ interface AgentToolResult<T> {
   details: T;
   terminate?: boolean;
   resourceRefs?: readonly ThreadResourceReference[];
+  persistedTextReplacements?: readonly AgentToolTextReplacement[];
+}
+
+interface AgentToolTextReplacement {
+  readonly value: string;
+  readonly replacement: string;
 }
 ```
 
 First-party tools append every successfully persisted resource reference to this
 manifest. `PiTurnExecutor` copies the manifest onto the completed tool Item's
-`resourceRefs`.
+`resourceRefs`. The optional replacement manifest is host-only and applies known
+execution-scoped path substitutions consistently to `outputRef`, command output,
+and dynamic tool content when the live result enters durable history.
 
 The live model-visible JSON keeps actionable fields close to the existing tool
 contracts:
@@ -143,13 +151,15 @@ contracts:
   Skill command's capped output is saved.
 
 Persisted slim details and model-facing result text retain each `resourceRef`
-and its stable metadata, but not `filePath`. Historical tool-result projection
-resolves every tool Item `resourceRefs` entry through the current Thread's
-`resolveResourceObservationPath` authority and appends a deterministic bounded
-artifact block with the current readable path. The projection does not rewrite
-the canonical Item or `outputRef`, and it does not read artifact bytes into the
-provider context. A fork therefore resolves against the copied target-Thread
-resource rather than replaying the source Thread's path.
+and its stable metadata, but not `filePath`. The durable text boundary also
+replaces repeated occurrences of a removed `filePath` or `temporaryOutputPath`
+inside instructions and warnings with stable markers. Historical tool-result
+projection resolves every tool Item `resourceRefs` entry through the current
+Thread's `resolveResourceObservationPath` authority and appends a deterministic
+bounded artifact block with the current readable path. The projection does not
+rewrite the canonical Item or `outputRef`, and it does not read artifact bytes
+into the provider context. A fork therefore resolves against the copied
+target-Thread resource rather than replaying the source Thread's path.
 
 When `readablePath` is unavailable but the resource was stored, the tool returns
 the `resourceRef`, omits `filePath`, and adds a warning that the artifact is
@@ -188,16 +198,18 @@ neither `resourceRef` nor an explicit oversized warning.
 
 Background shell startup remains a live-process contract. While the command is
 running, the returned output path is explicitly temporary and is not recorded as
-a resource. When `task_stop` returns final output for a stopped or already
-completed task, it registers the final log and returns the same
-`persistedOutput` shape as foreground shell. The same artifact cap and
+a resource. Its exact value may appear only in the live result; durable strings
+use a stable temporary-output marker. When `task_stop` returns final output for a
+stopped or already completed task, it registers the final log and returns the
+same `persistedOutput` shape as foreground shell. The same artifact cap and
 oversized-output result rule apply at stop/finalization time.
 
 #### Managed-Skill output roots
 
-Managed Skills already receive per-Turn output directories through their host
-environment, but environment variables are not ownership. Add a typed output-root
-seam to the managed shell environment contribution:
+Managed Skills receive per-command execution output directories, nested under
+their Thread and Turn, through their host environment, but environment variables
+are not ownership. Add a typed output-root seam to the managed shell environment
+contribution:
 
 ```ts
 interface AgentShellOutputRoot {
@@ -215,22 +227,41 @@ interface AgentShellProcessEnvironment {
 ```
 
 `ManagedSkillShellEnvironmentRegistry` merges only roots declared by active
-contributors, validates each root as an app-owned physical directory under that
-contributor's Turn-scoped scratch area, and passes the typed declarations to the
-managed-Skill invocation collector. Existing env vars such as Browser Pilot's
-output directory may continue to point the external CLI at the same directory,
-but the env var is not parsed back as authority.
+contributors, validates each root as a canonical physical child of the app-owned
+Agent scratch boundary, and passes the typed declarations to shell execution.
+Each contributor remains responsible for creating its narrower per-Thread,
+per-Turn, per-command execution directory without symlink escapes. Raw tool-call
+identities do not enter filesystem paths; the Browser Pilot host derives an opaque
+execution key for the final path segment. Existing env vars such as Browser Pilot's
+output directory may continue to point the external CLI at the same directory, but
+the env var is not parsed back as authority.
 
-The implementation adds a bounded collector around each isolated managed-Skill
-invocation:
+The implementation adds a bounded collector at the real shell boundaries used
+by managed Skills. Ordinary foreground `bash` snapshots all roots declared by
+active managed contributors; embedded Skill shell expansion narrows that set to
+the Skill being invoked. A background shell stores its launch-time snapshot and
+`task_stop` performs collection only after the process reaches a terminal state:
 
-1. snapshot each typed declared output root before invocation;
-2. after the invocation finishes, enumerate new or changed regular files under
-   those declared roots only;
+1. snapshot the applicable typed declared output roots before process launch;
+2. after foreground exit or terminal `task_stop`, enumerate new or changed
+   regular files under those declared roots only;
 3. reject symlinks, directories, hidden control files, oversized files, and
    excess file counts;
 4. persist accepted files through the sink; and
 5. report a resource manifest plus bounded warnings for skipped files.
+
+The managed-Skill registry caches the active Skill set once per Turn, then builds
+and caches the composed environment separately for each tool-call execution. A
+foreground command and a concurrently running background command therefore never
+share a collector root: the foreground result cannot claim a file authored by the
+background process, and `task_stop` retains the background task's launch-time root
+and snapshot. Those launch-time roots also remain the persistence replacement
+authority when terminal collection reports a scan warning after a root disappears.
+
+This placement matters for Browser Pilot: the `skill` tool loads its inline
+instructions, while the actual `bp` invocation happens later through ordinary
+`bash`. Stable shell history replaces occurrences of a declared root in captured
+text with its typed root identity; only the live result keeps that Turn path.
 
 This is intentionally an output-root collector, not a workspace sweep. It gives
 future computer-control Skills a durable screenshot/download story without
@@ -313,6 +344,8 @@ Required test coverage:
   vars or scanning scratch.
 - managed-Skill output-root collection admits only bounded safe regular files
   and reports skipped files without failing the invocation.
+- a delayed background write cannot appear in a concurrent foreground Bash result;
+  terminal `task_stop` claims that file from the background execution's root only.
 - completed tool Item `resourceRefs` survive codec round trip, restart, fork,
   inherited context, and renderer item projection.
 - persisted tool output omits the producing Turn's live path; after that Turn's

@@ -1,4 +1,16 @@
-import type { AgentTool } from '../runtime/kernel/types';
+import type { AgentTool, AgentToolTextReplacement } from '../runtime/kernel/types';
+import type { ThreadResourceReference } from '../../../core/agent/protocol';
+import {
+  MAX_TOOL_ARTIFACT_BYTES,
+  type ToolArtifactSink,
+} from '../runtime/ToolArtifactSink';
+import {
+  collectDeclaredOutputArtifacts,
+  snapshotDeclaredOutputRoots,
+  type AgentShellOutputRoot,
+  type DeclaredOutputArtifactObservation,
+  type DeclaredOutputSnapshot,
+} from './agentDeclaredOutputArtifacts';
 import { randomUUID } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
 import { createReadStream, createWriteStream, lstatSync, realpathSync, statSync } from 'node:fs';
@@ -50,6 +62,8 @@ import { ingestPptxAsMarkdown, type PptxIngestionResult } from './agentPptxInges
 export { buildAgentLocalToolProcessEnv } from './agentToolProcess';
 
 export type AgentImageMediaType = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+export type { AgentShellOutputRoot } from './agentDeclaredOutputArtifacts';
+export type AgentShellArtifactObservation = DeclaredOutputArtifactObservation;
 
 export interface AgentFileReadImageObservation {
   readonly bytes: Uint8Array;
@@ -72,11 +86,13 @@ export interface LocalToolOptions {
   skillRuntime?: AgentSkillRuntime;
   imageNormalizer?: AgentFileReadImageNormalizer;
   processEnvironment?: AgentShellProcessEnvironmentProvider;
+  artifactSink?: ToolArtifactSink;
 }
 
 export interface AgentShellProcessEnvironment {
   env?: NodeJS.ProcessEnv;
   leadingToolPathSegments?: readonly string[];
+  declaredOutputRoots?: readonly AgentShellOutputRoot[];
 }
 
 export interface AgentShellProcessEnvironmentContext {
@@ -316,8 +332,11 @@ export interface BashData {
   returnCodeInterpretation?: string;
   noOutputExpected?: boolean;
   structuredContent?: unknown[];
-  persistedOutputPath?: string;
-  persistedOutputSize?: number;
+  persistedOutput?: PersistedToolOutput;
+  artifacts?: readonly AgentShellArtifactObservation[];
+  temporaryOutputPath?: string;
+  artifactWarnings?: string[];
+  outputLimitExceeded?: boolean;
   command?: string;
   taskStatus?: BackgroundTaskStatus;
   exitCode?: number | null;
@@ -339,13 +358,22 @@ export interface LocalBashRunResult {
   returnCodeInterpretation?: string;
   noOutputExpected?: boolean;
   structuredContent?: unknown[];
-  persistedOutputPath?: string;
-  persistedOutputSize?: number;
+  persistedOutput?: PersistedToolOutput;
+  artifacts?: readonly AgentShellArtifactObservation[];
+  temporaryOutputPath?: string;
+  artifactWarnings?: string[];
+  outputLimitExceeded?: boolean;
   command?: string;
   taskStatus?: BackgroundTaskStatus;
   exitCode?: number | null;
   startedAt?: string;
   completedAt?: string;
+}
+
+export interface PersistedToolOutput {
+  readonly filePath?: string;
+  readonly resourceRef: ThreadResourceReference;
+  readonly byteLength: number;
 }
 
 export interface BackgroundShellStopData {
@@ -355,6 +383,14 @@ export interface BackgroundShellStopData {
   command?: string;
   status: BackgroundTaskStatus;
   outputPath: string;
+  outputLimitExceeded?: boolean;
+  outputLimitBytes?: number;
+}
+
+export interface BackgroundShellStopToolData extends Omit<BackgroundShellStopData, 'outputPath'> {
+  persistedOutput?: PersistedToolOutput;
+  artifacts?: readonly AgentShellArtifactObservation[];
+  artifactWarnings?: string[];
 }
 
 export interface PostCompactRestoredFile {
@@ -407,6 +443,8 @@ interface BackgroundTask {
   outputWriteChain?: Promise<void>;
   outputClosed?: Promise<void>;
   outputWatchdog?: ReturnType<typeof setInterval>;
+  declaredOutputRoots: readonly AgentShellOutputRoot[];
+  declaredOutputSnapshot: DeclaredOutputSnapshot;
 }
 
 export type BackgroundTaskStatus = 'running' | 'completed' | 'failed' | 'stopped';
@@ -426,6 +464,10 @@ interface ForegroundOutputCapture {
 interface OutputWatchdogHandle {
   timer: ReturnType<typeof setInterval>;
   stopped: boolean;
+}
+
+interface ForegroundBashResult extends BashData {
+  readonly persistedTextReplacements?: readonly AgentToolTextReplacement[];
 }
 
 export interface ImageDimensions {
@@ -507,7 +549,7 @@ const BASH_DEFAULT_TIMEOUT_MS = 120_000;
 const BASH_MAX_TIMEOUT_MS = 600_000;
 const BASH_AUTO_BACKGROUND_MS = 15_000;
 const BASH_INLINE_OUTPUT_LIMIT = 30_000;
-const BASH_MAX_OUTPUT_BYTES = 5 * 1024 * 1024 * 1024;
+const BASH_MAX_OUTPUT_BYTES = MAX_TOOL_ARTIFACT_BYTES;
 const BASH_OUTPUT_WATCHDOG_INTERVAL_MS = 5_000;
 const BASH_MAX_OUTPUT_BYTES_ENV = 'LIN_AGENT_BASH_MAX_OUTPUT_BYTES';
 const BASH_OUTPUT_WATCHDOG_INTERVAL_ENV = 'LIN_AGENT_BASH_OUTPUT_WATCHDOG_INTERVAL_MS';
@@ -653,7 +695,7 @@ const BASH_PARAMETERS = {
       ].join('\n'),
     },
     timeout: { type: 'integer', minimum: 1, maximum: BASH_MAX_TIMEOUT_MS, description: `Optional timeout in milliseconds. Maximum ${BASH_MAX_TIMEOUT_MS}.` },
-    run_in_background: { type: 'boolean', description: 'Set to true to run this command in the background. You do not need to append "&"; use file_read on the returned output path later if needed.' },
+    run_in_background: { type: 'boolean', description: 'Set to true to run this command in the background. You do not need to append "&"; use task_stop to finalize its durable output.' },
   },
 };
 
@@ -672,7 +714,7 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
     createFileEditTool(workspace),
     createFileWriteTool(workspace),
     createFileDeleteTool(workspace),
-    createBashTool(workspace),
+    createBashTool(workspace, options.artifactSink),
   ];
 }
 
@@ -686,6 +728,7 @@ export async function runLocalBashCommand(
     toolCallId?: string;
     processEnvironment?: AgentShellProcessEnvironmentProvider;
     writeBoundary?: AgentWorkspaceWriteBoundary;
+    artifactSink?: ToolArtifactSink;
   },
 ): Promise<LocalBashRunResult> {
   const workspace = createAgentLocalWorkspaceContext(
@@ -700,10 +743,17 @@ export async function runLocalBashCommand(
     timeout: options.timeout,
     run_in_background: false,
   });
-  const result = await runForegroundCommand(workspace, params, options.signal, options.toolCallId);
+  const execution = await runForegroundCommand(
+    workspace,
+    params,
+    options.signal,
+    options.toolCallId,
+    options.artifactSink,
+  );
+  const { persistedTextReplacements: _persistedTextReplacements, ...result } = execution;
   const interpretation = interpretCommandResult(result.command ?? params.command, result.exitCode);
   const interrupted = result.interrupted;
-  const isError = interrupted || interpretation.isError;
+  const isError = result.outputLimitExceeded === true || interrupted || interpretation.isError;
   return {
     ...result,
     interrupted,
@@ -1512,7 +1562,10 @@ function createFileDeleteTool(workspace: WorkspaceContext): AgentTool<any, ToolE
   };
 }
 
-function createBashTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelope<BashData>> {
+function createBashTool(
+  workspace: WorkspaceContext,
+  artifactSink?: ToolArtifactSink,
+): AgentTool<any, ToolEnvelope<BashData>> {
   return {
     name: 'bash',
     label: 'Bash',
@@ -1536,22 +1589,37 @@ function createBashTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelop
             metrics: metrics(started, data),
           }), visibleBash(data));
         }
-        const result = await runForegroundCommand(workspace, params, signal, toolCallId);
+        const execution = await runForegroundCommand(workspace, params, signal, toolCallId, artifactSink);
+        const { persistedTextReplacements, ...result } = execution;
         const interpretation = interpretCommandResult(result.command ?? params.command, result.exitCode);
-        const ok = result.backgroundTaskId !== undefined || (!result.interrupted && !interpretation.isError);
+        const ok = result.backgroundTaskId !== undefined
+          || (!result.outputLimitExceeded && !result.interrupted && !interpretation.isError);
         const envelope = ok
           ? successEnvelope('bash', result, {
             instructions: result.backgroundTaskId
-              ? `Command is still running in the background as ${result.backgroundTaskId}. Read ${result.persistedOutputPath} with file_read to check output, or use task_stop with task_id if it needs to be stopped.`
+              ? `Command is still running in the background as ${result.backgroundTaskId}. Its temporary output path is ${result.temporaryOutputPath}; use task_stop to finalize durable output.`
               : undefined,
+            status: result.artifactWarnings?.length ? 'partial' : undefined,
+            warnings: result.artifactWarnings,
             metrics: metrics(started, result),
           })
-          : errorEnvelope<BashData>('bash', result.interrupted ? 'command_interrupted' : 'command_failed', result.returnCodeInterpretation ?? interpretation.message ?? 'Command was interrupted.', {
+          : errorEnvelope<BashData>('bash', result.outputLimitExceeded
+            ? 'output_limit_exceeded'
+            : result.interrupted ? 'command_interrupted' : 'command_failed', result.returnCodeInterpretation ?? interpretation.message ?? 'Command was interrupted.', {
             data: result,
-            instructions: 'Inspect stdout and stderr, then fix the command, inputs, native OS authorization, or service login before retrying.',
+            instructions: result.outputLimitExceeded
+              ? 'Reduce or redirect command output before retrying; output beyond the artifact cap is not retained.'
+              : 'Inspect stdout and stderr, then fix the command, inputs, native OS authorization, or service login before retrying.',
+            warnings: result.artifactWarnings,
             metrics: metrics(started, result),
           });
-        return agentToolResult(envelope, visibleBash(result));
+        const toolResult = agentToolResult(envelope, visibleBash(result));
+        const resourceRefs = shellArtifactResourceRefs(result);
+        return {
+          ...toolResult,
+          ...(resourceRefs.length > 0 ? { resourceRefs } : {}),
+          ...(persistedTextReplacements?.length ? { persistedTextReplacements } : {}),
+        };
       } catch (error) {
         return localErrorResult('bash', error, started);
       }
@@ -1566,27 +1634,29 @@ export async function stopBackgroundShellTask(
   pruneBackgroundTasks();
   const task = backgroundTasks.get(taskId);
   if (!task || !backgroundTaskOwnedBy(task, ownerThreadId)) return null;
-  if (task.status !== 'running') {
-    throw new LocalToolFailure(
-      'task_not_running',
-      `Task ${taskId} is not running (status: ${task.status})`,
-      'No stop is needed for completed, failed, or already stopped tasks.',
-    );
+  const wasRunning = task.status === 'running';
+  if (wasRunning) {
+    task.status = 'stopped';
+    task.completedAt = Date.now();
+    clearBackgroundOutputWatchdog(task);
+    killBashProcessTree(task.process, 'SIGKILL');
+    await waitForOutputClosed(task.outputClosed);
+    await finalizeBackgroundTaskOutput(task);
+  } else {
+    await task.outputWriteChain;
   }
-  task.status = 'stopped';
-  task.completedAt = Date.now();
-  clearBackgroundOutputWatchdog(task);
-  killBashProcessTree(task.process, 'SIGKILL');
-  await waitForOutputClosed(task.outputClosed);
-  await finalizeBackgroundTaskOutput(task);
   pruneBackgroundTasks();
   return {
-    message: `Successfully stopped task: ${task.taskId} (${task.command})`,
+    message: wasRunning
+      ? `Successfully stopped task: ${task.taskId} (${task.command})`
+      : `Task was already ${task.status}: ${task.taskId} (${task.command})`,
     task_id: task.taskId,
     task_type: 'bash',
     command: task.command,
     status: task.status,
     outputPath: task.outputPath,
+    ...(task.outputLimitExceeded ? { outputLimitExceeded: true } : {}),
+    ...(task.outputLimitBytes !== undefined ? { outputLimitBytes: task.outputLimitBytes } : {}),
   };
 }
 
@@ -1605,16 +1675,71 @@ export function hasBackgroundShellTask(taskId: string, ownerThreadId?: string): 
 export async function stopBackgroundShellTaskResult(
   taskId: string,
   ownerThreadId?: string,
+  artifactSink?: ToolArtifactSink,
 ) {
   const started = Date.now();
   try {
+    const task = backgroundTasks.get(taskId);
+    const ownedTask = task && backgroundTaskOwnedBy(task, ownerThreadId) ? task : undefined;
     const data = await stopBackgroundShellTask(taskId, ownerThreadId);
     if (data === null) return null;
-    return agentToolResult(successEnvelope('task_stop', data, {
-      metrics: metrics(started, data),
-    }), visibleBackgroundShellStop(data));
+    const outputSize = await fileSizeOrZero(data.outputPath);
+    const outputLimitExceeded = data.outputLimitExceeded || outputSize > bashMaxOutputBytes();
+    const artifact: Pick<BashData, 'persistedOutput' | 'artifactWarnings'> = outputLimitExceeded
+      ? {}
+      : await persistShellSavedOutput(data.outputPath, outputSize, artifactSink, false);
+    const collected = ownedTask
+      ? await collectDeclaredOutputArtifacts(
+          ownedTask.declaredOutputRoots,
+          ownedTask.declaredOutputSnapshot,
+          artifactSink,
+        )
+      : { artifacts: [], warnings: [] };
+    const artifactWarnings = mergeArtifactWarnings(artifact.artifactWarnings, collected.warnings);
+    const toolData: BackgroundShellStopToolData = {
+      message: data.message,
+      task_id: data.task_id,
+      task_type: data.task_type,
+      command: data.command,
+      status: data.status,
+      ...artifact,
+      ...(collected.artifacts.length > 0 ? { artifacts: collected.artifacts } : {}),
+      ...(artifactWarnings.length > 0 ? { artifactWarnings } : {}),
+      ...(outputLimitExceeded ? { outputLimitExceeded: true } : {}),
+      ...(data.outputLimitBytes !== undefined ? { outputLimitBytes: data.outputLimitBytes } : {}),
+    };
+    const envelope = outputLimitExceeded
+      ? errorEnvelope<BackgroundShellStopToolData>(
+          'task_stop',
+          'output_limit_exceeded',
+          `Background output exceeded ${formatBytes(data.outputLimitBytes ?? bashMaxOutputBytes())} and was not admitted as a durable artifact.`,
+          {
+            data: toolData,
+            instructions: 'Reduce or redirect command output before retrying.',
+            metrics: metrics(started, toolData),
+          },
+        )
+      : successEnvelope('task_stop', toolData, {
+          status: toolData.artifactWarnings?.length ? 'partial' : undefined,
+          warnings: toolData.artifactWarnings,
+          metrics: metrics(started, toolData),
+        });
+    const result = agentToolResult(envelope, visibleBackgroundShellStop(toolData));
+    const resourceRefs = shellArtifactResourceRefs(toolData);
+    const persistedTextReplacements = [
+      ...(ownedTask ? outputRootTextReplacements(ownedTask.declaredOutputRoots) : []),
+      {
+        value: data.outputPath,
+        replacement: `[temporary-shell-output:${data.task_id}]`,
+      },
+    ];
+    return {
+      ...result,
+      ...(resourceRefs.length > 0 ? { resourceRefs } : {}),
+      persistedTextReplacements,
+    };
   } catch (error) {
-    return localErrorResult<BackgroundShellStopData>('task_stop', error, started);
+    return localErrorResult<BackgroundShellStopToolData>('task_stop', error, started);
   }
 }
 
@@ -2001,15 +2126,19 @@ async function runForegroundCommand(
   params: BashParams,
   signal?: AbortSignal,
   toolCallId?: string,
-): Promise<BashData> {
+  artifactSink?: ToolArtifactSink,
+): Promise<ForegroundBashResult> {
   const timeoutMs = clampInteger(params.timeout, 1, BASH_MAX_TIMEOUT_MS, BASH_DEFAULT_TIMEOUT_MS);
   const capture = await createForegroundOutputCapture(workspace);
+  const shellEnvironment = await resolveWorkspaceShellProcessEnvironment(workspace, {
+    ...(toolCallId !== undefined ? { toolCallId } : {}),
+    command: params.command,
+  });
+  const declaredOutputRoots = shellEnvironment?.declaredOutputRoots ?? [];
+  const declaredOutputSnapshot = await snapshotDeclaredOutputRoots(declaredOutputRoots);
   let processHandle: BashProcessHandle;
   try {
-    const env = await buildWorkspaceShellProcessEnv(workspace, {
-      ...(toolCallId !== undefined ? { toolCallId } : {}),
-      command: params.command,
-    });
+    const env = buildWorkspaceShellProcessEnv(shellEnvironment);
     const child = await getAgentProcessExecutor().spawnShell({
       command: params.command,
       cwd: workspace.root,
@@ -2045,7 +2174,7 @@ async function runForegroundCommand(
     interrupted = true;
   });
 
-  return await new Promise<BashData>((resolve, reject) => {
+  return await new Promise<ForegroundBashResult>((resolve, reject) => {
     const autoBackgroundTimer = setTimeout(() => {
       if (resolved || interrupted || !shouldAutoBackground(params.command)) return;
       resolved = true;
@@ -2056,6 +2185,9 @@ async function runForegroundCommand(
         process: processHandle,
         foregroundCapture: capture,
         assistantAutoBackgrounded: true,
+        shellEnvironment,
+        declaredOutputRoots,
+        declaredOutputSnapshot,
       }).then((data) => resolve(data), reject);
     }, BASH_AUTO_BACKGROUND_MS);
 
@@ -2080,8 +2212,18 @@ async function runForegroundCommand(
       void (async () => {
         await waitForOutputClosed(capture.outputClosed);
         const output = await finalizeForegroundOutput(workspace, capture);
-        const interpretation = outputLimitExceededBytes !== undefined
-          ? { isError: true, message: `Command killed: output exceeded ${formatBytes(outputLimitExceededBytes)}.` }
+        const outputLimitExceeded = outputLimitExceededBytes !== undefined || output.outputLimitExceeded;
+        const artifact: Pick<BashData, 'persistedOutput' | 'artifactWarnings'> = output.savedOutputPath
+          ? await persistShellSavedOutput(output.savedOutputPath, output.savedOutputSize!, artifactSink, true)
+          : {};
+        const collected = await collectDeclaredOutputArtifacts(
+          declaredOutputRoots,
+          declaredOutputSnapshot,
+          artifactSink,
+        );
+        const artifactWarnings = mergeArtifactWarnings(artifact.artifactWarnings, collected.warnings);
+        const interpretation = outputLimitExceeded
+          ? { isError: true, message: `Command killed: output exceeded ${formatBytes(bashMaxOutputBytes())}.` }
           : timedOut
             ? { isError: true, message: `Command timed out after ${timeoutMs}ms.` }
             : interpretCommandResult(params.command, code);
@@ -2093,8 +2235,13 @@ async function runForegroundCommand(
           command: params.command,
           returnCodeInterpretation: interpretation.message,
           noOutputExpected: isSilentCommand(params.command),
-          persistedOutputPath: output.persistedOutputPath,
-          persistedOutputSize: output.persistedOutputSize,
+          ...artifact,
+          ...(collected.artifacts.length > 0 ? { artifacts: collected.artifacts } : {}),
+          ...(artifactWarnings.length > 0 ? { artifactWarnings } : {}),
+          ...(outputLimitExceeded ? { outputLimitExceeded: true } : {}),
+          ...(declaredOutputRoots.length > 0
+            ? { persistedTextReplacements: outputRootTextReplacements(declaredOutputRoots) }
+            : {}),
         });
       })().catch(reject);
     });
@@ -2117,6 +2264,9 @@ async function registerBackgroundTask(
     backgroundedByUser?: boolean;
     assistantAutoBackgrounded?: boolean;
     toolCallId?: string;
+    shellEnvironment?: AgentShellProcessEnvironment;
+    declaredOutputRoots?: readonly AgentShellOutputRoot[];
+    declaredOutputSnapshot?: DeclaredOutputSnapshot;
   } = {},
 ): Promise<BashData> {
   pruneBackgroundTasks();
@@ -2124,6 +2274,13 @@ async function registerBackgroundTask(
   const outputPath = taskOutputPath(workspace, taskId);
   const startedAt = Date.now();
   await mkdir(path.dirname(outputPath), { recursive: true });
+  const shellEnvironment = options.shellEnvironment ?? await resolveWorkspaceShellProcessEnvironment(workspace, {
+    ...(options.toolCallId !== undefined ? { toolCallId: options.toolCallId } : {}),
+    command: params.command,
+  });
+  const declaredOutputRoots = options.declaredOutputRoots ?? shellEnvironment?.declaredOutputRoots ?? [];
+  const declaredOutputSnapshot = options.declaredOutputSnapshot
+    ?? await snapshotDeclaredOutputRoots(declaredOutputRoots);
 
   let processHandle = options.process;
   let stdoutPath: string | undefined;
@@ -2143,10 +2300,7 @@ async function registerBackgroundTask(
     stdoutPath = capture.stdoutPath;
     stderrPath = capture.stderrPath;
     try {
-      const env = await buildWorkspaceShellProcessEnv(workspace, {
-        ...(options.toolCallId !== undefined ? { toolCallId: options.toolCallId } : {}),
-        command: params.command,
-      });
+      const env = buildWorkspaceShellProcessEnv(shellEnvironment);
       const child = await getAgentProcessExecutor().spawnShell({
         command: params.command,
         cwd: workspace.root,
@@ -2179,6 +2333,8 @@ async function registerBackgroundTask(
     startedAt,
     status: 'running',
     outputClosed,
+    declaredOutputRoots,
+    declaredOutputSnapshot,
   };
   backgroundTasks.set(taskId, task);
 
@@ -2201,21 +2357,24 @@ async function registerBackgroundTask(
     taskStatus: task.status,
     startedAt: new Date(task.startedAt).toISOString(),
     noOutputExpected: isSilentCommand(params.command),
-    persistedOutputPath: outputPath,
-    persistedOutputSize: task.outputBytes,
+    temporaryOutputPath: outputPath,
   };
 }
 
-async function buildWorkspaceShellProcessEnv(
+async function resolveWorkspaceShellProcessEnvironment(
   workspace: WorkspaceContext,
   context: AgentShellProcessEnvironmentContext,
-): Promise<NodeJS.ProcessEnv> {
+): Promise<AgentShellProcessEnvironment | undefined> {
   let host: AgentShellProcessEnvironment | undefined;
   try {
     host = await workspace.processEnvironment?.(context);
   } catch (error) {
     console.warn('[agent] shell environment provider failed; continuing with the ordinary tool environment', error);
   }
+  return host;
+}
+
+function buildWorkspaceShellProcessEnv(host: AgentShellProcessEnvironment | undefined): NodeJS.ProcessEnv {
   return buildAgentLocalToolProcessEnv({
     env: host?.env,
     leadingToolPathSegments: host?.leadingToolPathSegments,
@@ -3110,13 +3269,20 @@ async function foregroundCaptureOutputSize(capture: ForegroundOutputCapture): Pr
 async function finalizeForegroundOutput(
   workspace: WorkspaceContext,
   capture: ForegroundOutputCapture,
-): Promise<{ stdout: string; stderr: string; persistedOutputPath?: string; persistedOutputSize?: number }> {
+): Promise<{
+  stdout: string;
+  stderr: string;
+  savedOutputPath?: string;
+  savedOutputSize?: number;
+  outputLimitExceeded?: boolean;
+}> {
   const [stdoutSize, stderrSize] = await Promise.all([
     fileSizeOrZero(capture.stdoutPath),
     fileSizeOrZero(capture.stderrPath),
   ]);
   const totalSize = stdoutSize + stderrSize;
-  if (totalSize <= BASH_INLINE_OUTPUT_LIMIT) {
+  const outputLimitExceeded = totalSize > bashMaxOutputBytes();
+  if (!outputLimitExceeded && totalSize <= BASH_INLINE_OUTPUT_LIMIT) {
     const [stdout, stderr] = await Promise.all([
       readTextPreview(capture.stdoutPath, stdoutSize, stdoutSize),
       readTextPreview(capture.stderrPath, stderrSize, stderrSize),
@@ -3125,25 +3291,96 @@ async function finalizeForegroundOutput(
     return { stdout, stderr };
   }
 
-  const outputPath = taskOutputPath(workspace, capture.id);
-  await mkdir(path.dirname(outputPath), { recursive: true });
-  await writeFile(outputPath, '', 'utf8');
-  await appendFileFromPath(outputPath, capture.stdoutPath);
-  await appendFileFromPath(outputPath, capture.stderrPath);
-
   const stdoutBudget = Math.floor(BASH_INLINE_OUTPUT_LIMIT * 0.7);
   const stderrBudget = BASH_INLINE_OUTPUT_LIMIT - stdoutBudget;
   const [stdout, stderr] = await Promise.all([
     readTextPreview(capture.stdoutPath, stdoutSize, stdoutBudget),
     readTextPreview(capture.stderrPath, stderrSize, stderrBudget),
   ]);
+  if (outputLimitExceeded) {
+    await cleanupForegroundOutputCapture(capture);
+    return { stdout, stderr, outputLimitExceeded: true };
+  }
+
+  const outputPath = taskOutputPath(workspace, capture.id);
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  await writeFile(outputPath, '', 'utf8');
+  await appendFileFromPath(outputPath, capture.stdoutPath);
+  await appendFileFromPath(outputPath, capture.stderrPath);
   await cleanupForegroundOutputCapture(capture);
   return {
     stdout,
     stderr,
-    persistedOutputPath: outputPath,
-    persistedOutputSize: totalSize,
+    savedOutputPath: outputPath,
+    savedOutputSize: totalSize,
   };
+}
+
+async function persistShellSavedOutput(
+  outputPath: string,
+  byteLength: number,
+  artifactSink: ToolArtifactSink | undefined,
+  removeSource: boolean,
+): Promise<Pick<BashData, 'persistedOutput' | 'artifactWarnings'>> {
+  try {
+    if (!artifactSink) throw new Error('Tool artifact storage is unavailable.');
+    const persisted = await artifactSink.persistFile({
+      path: outputPath,
+      mimeType: 'text/plain',
+      fileName: `${path.basename(outputPath, path.extname(outputPath))}.log`,
+    });
+    if (persisted.ref.byteLength !== byteLength) {
+      throw new Error('Saved shell output changed before artifact admission completed.');
+    }
+    return {
+      persistedOutput: {
+        ...(persisted.readablePath ? { filePath: persisted.readablePath } : {}),
+        resourceRef: persisted.ref,
+        byteLength: persisted.ref.byteLength,
+      },
+      ...(persisted.readablePath
+        ? {}
+        : { artifactWarnings: ['Saved shell output is stored, but no readable path is currently available.'] }),
+    };
+  } catch (error) {
+    return {
+      artifactWarnings: [`Saved shell output was not admitted as a durable artifact: ${errorMessage(error)}`],
+    };
+  } finally {
+    if (removeSource) await rm(outputPath, { force: true }).catch(() => undefined);
+  }
+}
+
+function mergeArtifactWarnings(...groups: Array<readonly string[] | undefined>): string[] {
+  return [...new Set(groups.flatMap((group) => group ?? []))];
+}
+
+function outputRootTextReplacements(
+  roots: readonly AgentShellOutputRoot[],
+): AgentToolTextReplacement[] {
+  return [...new Map(roots.map((root) => [root.path, {
+    value: root.path,
+    replacement: `[managed-output:${root.id}]`,
+  }])).values()]
+    .sort((left, right) => right.value.length - left.value.length);
+}
+
+function shellArtifactResourceRefs(
+  data: Pick<BashData, 'persistedOutput' | 'artifacts'>,
+): ThreadResourceReference[] {
+  const refs = [
+    ...(data.persistedOutput ? [data.persistedOutput.resourceRef] : []),
+    ...(data.artifacts ?? []).map((artifact) => artifact.ref),
+  ];
+  return [...new Map(refs.map((ref) => [`${ref.id}\0${ref.fileName}`, ref])).values()];
+}
+
+function visibleShellArtifacts(artifacts: readonly AgentShellArtifactObservation[]) {
+  return artifacts.map((artifact) => ({
+    label: artifact.label,
+    resourceRef: artifact.ref,
+    ...(artifact.readablePath ? { filePath: artifact.readablePath } : {}),
+  }));
 }
 
 function attachBackgroundTaskHandlers(task: BackgroundTask, params: BashParams) {
@@ -3160,6 +3397,11 @@ async function completeBackgroundTask(task: BackgroundTask, params: BashParams, 
   await waitForOutputClosed(task.outputClosed);
   clearBackgroundOutputWatchdog(task);
   clearBashKillEscalation(task.process);
+  const maxOutputBytes = bashMaxOutputBytes();
+  if (await backgroundTaskOutputSize(task) > maxOutputBytes) {
+    task.outputLimitExceeded = true;
+    task.outputLimitBytes = maxOutputBytes;
+  }
   const interpretation = interpretCommandResult(params.command, code);
   if (task.outputLimitExceeded) {
     task.status = 'failed';
@@ -3314,7 +3556,10 @@ function killBashProcessTree(processHandle: BashProcessHandle, signal: NodeJS.Si
 }
 
 function bashMaxOutputBytes(): number {
-  return positiveIntegerEnv(BASH_MAX_OUTPUT_BYTES_ENV, BASH_MAX_OUTPUT_BYTES, 1);
+  return Math.min(
+    positiveIntegerEnv(BASH_MAX_OUTPUT_BYTES_ENV, BASH_MAX_OUTPUT_BYTES, 1),
+    MAX_TOOL_ARTIFACT_BYTES,
+  );
 }
 
 function bashOutputWatchdogIntervalMs(): number {
@@ -3517,7 +3762,10 @@ export function visibleBash(data: BashData): unknown {
   if (data.isImage) visible.isImage = true;
   if (data.backgroundTaskId) visible.backgroundTaskId = data.backgroundTaskId;
   if (data.taskStatus) visible.taskStatus = data.taskStatus;
-  if (data.persistedOutputPath) visible.persistedOutputPath = data.persistedOutputPath;
+  if (data.persistedOutput) visible.persistedOutput = data.persistedOutput;
+  if (data.artifacts?.length) visible.artifacts = visibleShellArtifacts(data.artifacts);
+  if (data.temporaryOutputPath) visible.temporaryOutputPath = data.temporaryOutputPath;
+  if (data.outputLimitExceeded) visible.outputLimitExceeded = true;
   return visible;
 }
 
@@ -3528,11 +3776,11 @@ export function visibleFileDelete(data: FileDeleteData): unknown {
   };
 }
 
-export function visibleBackgroundShellStop(data: BackgroundShellStopData) {
-  // `task_id` echoes the sole arg; `status` is a constant 'stopped' beside the
-  // envelope status. `outputPath` (where to read captured output) is the new bit.
+export function visibleBackgroundShellStop(data: BackgroundShellStopToolData) {
   return {
-    outputPath: data.outputPath,
+    ...(data.persistedOutput ? { persistedOutput: data.persistedOutput } : {}),
+    ...(data.artifacts?.length ? { artifacts: visibleShellArtifacts(data.artifacts) } : {}),
+    ...(data.outputLimitExceeded ? { outputLimitExceeded: true } : {}),
   };
 }
 

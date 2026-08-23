@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { lstat, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -19,7 +20,7 @@ afterEach(async () => {
 });
 
 describe('Browser Pilot host environment', () => {
-  test('keeps one client key per Thread and one output directory per Turn', async () => {
+  test('keeps one client key per Thread and one output directory per command execution', async () => {
     const root = await temporaryRoot();
     const userDataRoot = path.join(root, 'user-data');
     const scratchRoot = path.join(root, 'agent-scratch');
@@ -34,22 +35,39 @@ describe('Browser Pilot host environment', () => {
     });
 
     expect(installationIdLoads).toBe(0);
-    const first = await host.processEnvironment('thread-1', 'turn-1');
-    const nextTurn = await host.processEnvironment('thread-1', 'turn-2');
-    const secondThread = await host.processEnvironment('thread-2', 'turn-3');
+    const first = await host.processEnvironment('thread-1', 'turn-1', 'call-1');
+    const repeated = await host.processEnvironment('thread-1', 'turn-1', 'call-1');
+    const sameTurn = await host.processEnvironment('thread-1', 'turn-1', 'call-2');
+    const nextTurn = await host.processEnvironment('thread-1', 'turn-2', 'call-3');
+    const secondThread = await host.processEnvironment('thread-2', 'turn-3', 'call-4');
     const canonicalScratchRoot = await realpath(scratchRoot);
+    const firstExecutionKey = createHash('sha256').update('call-1').digest('base64url');
 
     expect(installationIdLoads).toBe(1);
     expect(first.env?.[BROWSER_PILOT_CLIENT_KEY_ENV]).toBe(nextTurn.env?.[BROWSER_PILOT_CLIENT_KEY_ENV]);
     expect(first.env?.[BROWSER_PILOT_CLIENT_KEY_ENV]).not.toBe(secondThread.env?.[BROWSER_PILOT_CLIENT_KEY_ENV]);
+    expect(first.env?.[BROWSER_PILOT_OUTPUT_DIR_ENV]).toBe(repeated.env?.[BROWSER_PILOT_OUTPUT_DIR_ENV]);
+    expect(first.env?.[BROWSER_PILOT_OUTPUT_DIR_ENV]).not.toBe(sameTurn.env?.[BROWSER_PILOT_OUTPUT_DIR_ENV]);
     expect(first.env?.[BROWSER_PILOT_OUTPUT_DIR_ENV]).not.toBe(nextTurn.env?.[BROWSER_PILOT_OUTPUT_DIR_ENV]);
     expect(first.env).toMatchObject({
       [BROWSER_PILOT_INSTALL_ROOT_ENV]: path.join(userDataRoot, 'browser-pilot'),
       [BROWSER_PILOT_BIN_DIR_ENV]: path.join(userDataRoot, 'browser-pilot', 'bin'),
-      [BROWSER_PILOT_OUTPUT_DIR_ENV]: path.join(canonicalScratchRoot, 'browser-pilot', 'thread-1', 'turn-1'),
+      [BROWSER_PILOT_OUTPUT_DIR_ENV]: path.join(
+        canonicalScratchRoot,
+        'browser-pilot',
+        'thread-1',
+        'turn-1',
+        firstExecutionKey,
+      ),
     });
     expect(first.env?.BROWSER_PILOT_HOME).toBeUndefined();
     expect(first.leadingToolPathSegments).toEqual([path.join(userDataRoot, 'browser-pilot', 'bin')]);
+    expect(first.declaredOutputRoots).toEqual([{
+      id: 'browser-pilot-output',
+      skillId: 'browser-pilot',
+      path: first.env![BROWSER_PILOT_OUTPUT_DIR_ENV]!,
+      label: 'Browser Pilot output',
+    }]);
     expect(await realpath(first.env![BROWSER_PILOT_OUTPUT_DIR_ENV]!)).toBe(first.env![BROWSER_PILOT_OUTPUT_DIR_ENV]);
     if (process.platform !== 'win32') {
       expect((await lstat(first.env![BROWSER_PILOT_OUTPUT_DIR_ENV]!)).mode & 0o077).toBe(0);
@@ -78,19 +96,31 @@ describe('Browser Pilot host environment', () => {
       },
     });
 
-    await expect(host.processEnvironment('thread-1', 'turn-1')).rejects.toThrow('temporary read failure');
-    const recovered = await host.processEnvironment('thread-1', 'turn-2');
-    await host.processEnvironment('thread-1', 'turn-3');
+    await expect(host.processEnvironment('thread-1', 'turn-1', 'call-1')).rejects.toThrow('temporary read failure');
+    const recovered = await host.processEnvironment('thread-1', 'turn-2', 'call-2');
+    await host.processEnvironment('thread-1', 'turn-3', 'call-3');
     expect(recovered.env?.[BROWSER_PILOT_CLIENT_KEY_ENV]).toBeDefined();
     expect(attempts).toBe(2);
   });
 
-  test('rejects unsafe execution identities before creating output paths', async () => {
+  test('rejects unsafe Thread and Turn identities while hashing raw tool-call identities', async () => {
     const root = await temporaryRoot();
-    await expect(prepareBrowserPilotOutputDirectory(root, '../thread', 'turn-1'))
+    await expect(prepareBrowserPilotOutputDirectory(root, '../thread', 'turn-1', 'call-1'))
       .rejects.toThrow('Thread identity is unsafe');
-    await expect(prepareBrowserPilotOutputDirectory(root, 'thread-1', '../turn'))
+    await expect(prepareBrowserPilotOutputDirectory(root, 'thread-1', '../turn', 'call-1'))
       .rejects.toThrow('Turn identity is unsafe');
+
+    const rawExecutionId = '../untrusted/tool-call?request=1';
+    const output = await prepareBrowserPilotOutputDirectory(root, 'thread-1', 'turn-1', rawExecutionId);
+    const executionKey = createHash('sha256').update(rawExecutionId).digest('base64url');
+    expect(output).toBe(path.join(
+      await realpath(root),
+      'browser-pilot',
+      'thread-1',
+      'turn-1',
+      executionKey,
+    ));
+    expect(output).not.toContain(rawExecutionId);
   });
 
   const symlinkTest = process.platform === 'win32' ? test.skip : test;
@@ -102,7 +132,7 @@ describe('Browser Pilot host environment', () => {
     await mkdir(outside, { recursive: true });
     await symlink(outside, path.join(scratchRoot, 'browser-pilot'), 'dir');
 
-    await expect(prepareBrowserPilotOutputDirectory(scratchRoot, 'thread-1', 'turn-1'))
+    await expect(prepareBrowserPilotOutputDirectory(scratchRoot, 'thread-1', 'turn-1', 'call-1'))
       .rejects.toThrow('not a normal directory');
     expect(await lstat(outside)).toBeDefined();
   });
@@ -119,7 +149,7 @@ describe('Browser Pilot host environment', () => {
       loadInstallationId: async () => 'installation-id',
     });
 
-    await expect(host.processEnvironment('thread-1', 'turn-1'))
+    await expect(host.processEnvironment('thread-1', 'turn-1', 'call-1'))
       .rejects.toThrow('contains an unmanaged entry');
   });
 
@@ -139,7 +169,7 @@ describe('Browser Pilot host environment', () => {
       loadInstallationId: async () => 'installation-id',
     });
 
-    const environment = await host.processEnvironment('thread-1', 'turn-1');
+    const environment = await host.processEnvironment('thread-1', 'turn-1', 'call-1');
     expect(environment.leadingToolPathSegments).toEqual([binDirectory]);
   });
 
@@ -161,7 +191,7 @@ describe('Browser Pilot host environment', () => {
       loadInstallationId: async () => 'installation-id',
     });
 
-    await expect(host.processEnvironment('thread-1', 'turn-1'))
+    await expect(host.processEnvironment('thread-1', 'turn-1', 'call-1'))
       .rejects.toThrow('versions path is not a normal directory');
   });
 });

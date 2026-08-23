@@ -1,11 +1,16 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { evaluateAgentToolCapability } from '../../src/main/agent/capabilities/agentCapabilities';
 import { unavailableToolResultMessage } from '../../src/main/agent/capabilities/agentCapabilityEvents';
 import { parseAgentCapabilitySettings } from '../../src/main/agent/capabilities/agentCapabilityRules';
 import { executeAgentSkillShellCommand } from '../../src/main/agent/capabilities/agentSkillShell';
+import {
+  MAX_TOOL_ARTIFACT_BYTES,
+  type ToolArtifactSink,
+} from '../../src/main/agent/runtime/ToolArtifactSink';
 import type { SubagentToolPolicy } from '../../src/main/agent/capabilities/subagentToolPolicy';
 import { isTenonImportCommitCommand } from '../../src/main/tenonImportProtocol';
 
@@ -23,6 +28,27 @@ async function workspaceFixture() {
   await mkdir(outside);
   roots.push(root);
   return { root, workspace, outside };
+}
+
+function recordingArtifactSink() {
+  const persistedPaths: string[] = [];
+  const resource = (bytes: Uint8Array, mimeType: string, fileName: string, readablePath: string | null) => ({
+    ref: {
+      id: createHash('sha256').update(bytes).digest('hex'),
+      mimeType,
+      byteLength: bytes.byteLength,
+      fileName,
+    },
+    readablePath,
+  });
+  const sink: ToolArtifactSink = {
+    persistBytes: async ({ bytes, mimeType, fileName }) => resource(bytes, mimeType, fileName, null),
+    persistFile: async ({ path: filePath, mimeType, fileName }) => {
+      persistedPaths.push(filePath);
+      return resource(await readFile(filePath), mimeType, fileName, filePath);
+    },
+  };
+  return { sink, persistedPaths };
 }
 
 describe('agent capabilities', () => {
@@ -199,7 +225,7 @@ describe('agent capabilities', () => {
       command: `cat ${JSON.stringify(source)}`,
       localRoot: workspace,
       capabilityConfig: parseAgentCapabilitySettings({ blocks: [] }),
-    })).resolves.toBe('outside');
+    })).resolves.toMatchObject({ output: 'outside', persistedOutput: 'outside', resourceRefs: [] });
 
     await expect(executeAgentSkillShellCommand({
       command: 'git push origin main',
@@ -240,7 +266,7 @@ describe('agent capabilities', () => {
         localRoot: workspace,
         capabilityConfig: parseAgentCapabilitySettings({ blocks: [] }),
         subagentPolicy: policy(kind),
-      })).resolves.toEqual(expect.any(String));
+      })).resolves.toMatchObject({ output: expect.any(String), resourceRefs: [] });
       await expect(executeAgentSkillShellCommand({
         command: 'printf changed > tracked.txt',
         localRoot: workspace,
@@ -264,6 +290,144 @@ describe('agent capabilities', () => {
           BROWSER_PILOT_OUTPUT_DIR: '/agent-scratch/browser-pilot/thread/turn',
         },
       }),
-    })).resolves.toBe('tenon.skill-thread|/agent-scratch/browser-pilot/thread/turn');
+    })).resolves.toMatchObject({
+      output: 'tenon.skill-thread|/agent-scratch/browser-pilot/thread/turn',
+      persistedOutput: 'tenon.skill-thread|/agent-scratch/browser-pilot/thread/turn',
+    });
+  });
+
+  test('does not infer managed Skill output roots from environment variables', async () => {
+    const { workspace } = await workspaceFixture();
+    const declaredPath = path.join(workspace, 'env-only-output');
+    await mkdir(declaredPath);
+    const outputRoot = await realpath(declaredPath);
+    const artifacts = recordingArtifactSink();
+
+    const result = await executeAgentSkillShellCommand({
+      command: 'printf env-only > "$SKILL_OUTPUT_ROOT/env-only.txt"',
+      localRoot: workspace,
+      capabilityConfig: parseAgentCapabilitySettings({ blocks: [] }),
+      processEnvironment: async () => ({ env: { SKILL_OUTPUT_ROOT: outputRoot } }),
+      skill: { name: 'managed-demo', source: 'managed' },
+      artifactSink: artifacts.sink,
+    });
+
+    expect(result.resourceRefs).toEqual([]);
+    expect(result.artifacts).toEqual([]);
+    expect(artifacts.persistedPaths).toEqual([]);
+  });
+
+  test('collects only bounded new or changed files from typed managed Skill roots', async () => {
+    if (process.platform === 'win32') return;
+    const { workspace } = await workspaceFixture();
+    const declaredPath = path.join(workspace, 'declared-output');
+    await mkdir(declaredPath);
+    const outputRoot = await realpath(declaredPath);
+    await Promise.all([
+      writeFile(path.join(outputRoot, '00-changed.txt'), 'before'),
+      writeFile(path.join(outputRoot, 'zz-unchanged.txt'), 'unchanged'),
+    ]);
+    const artifacts = recordingArtifactSink();
+    const commands = [
+      'printf "%s\\n" "$SKILL_OUTPUT_ROOT"',
+      'printf after > "$SKILL_OUTPUT_ROOT/00-changed.txt"',
+      'printf new > "$SKILL_OUTPUT_ROOT/01-new.txt"',
+      'printf hidden > "$SKILL_OUTPUT_ROOT/.control"',
+      'ln -s "$SKILL_OUTPUT_ROOT/01-new.txt" "$SKILL_OUTPUT_ROOT/02-link.txt"',
+      `truncate -s ${MAX_TOOL_ARTIFACT_BYTES + 1} "$SKILL_OUTPUT_ROOT/03-large.bin"`,
+      'for n in $(seq -w 1 18); do printf "$n" > "$SKILL_OUTPUT_ROOT/file-$n.txt"; done',
+    ];
+    const result = await executeAgentSkillShellCommand({
+      command: commands.join('; '),
+      localRoot: workspace,
+      capabilityConfig: parseAgentCapabilitySettings({ blocks: [] }),
+      processEnvironment: async () => ({
+        env: { SKILL_OUTPUT_ROOT: outputRoot },
+        declaredOutputRoots: [{
+          id: 'managed-demo-output',
+          skillId: 'managed-demo',
+          path: outputRoot,
+          label: 'Managed demo output',
+        }],
+      }),
+      skill: { name: 'managed-demo', source: 'managed' },
+      artifactSink: artifacts.sink,
+    });
+
+    expect(result.resourceRefs).toHaveLength(16);
+    expect(artifacts.persistedPaths).toContain(path.join(outputRoot, '00-changed.txt'));
+    expect(artifacts.persistedPaths).toContain(path.join(outputRoot, '01-new.txt'));
+    expect(artifacts.persistedPaths).not.toContain(path.join(outputRoot, 'zz-unchanged.txt'));
+    expect(result.output).toContain(`Current readable path: ${outputRoot}`);
+    expect(result.persistedOutput).not.toContain(outputRoot);
+    expect(result.persistedOutput).toContain('[managed-output:managed-demo-output]');
+    expect(result.output).toContain('hidden control files are not admitted');
+    expect(result.output).toContain('it is not a regular file');
+    expect(result.output).toContain('exceeds the artifact byte limit');
+    expect(result.output).toContain('were skipped after 16 artifacts');
+  });
+
+  test('keeps admitted managed Skill artifacts when the embedded command fails', async () => {
+    const { workspace } = await workspaceFixture();
+    const declaredPath = path.join(workspace, 'failed-output');
+    await mkdir(declaredPath);
+    const outputRoot = await realpath(declaredPath);
+    const artifacts = recordingArtifactSink();
+
+    try {
+      await executeAgentSkillShellCommand({
+        command: 'printf partial > "$SKILL_OUTPUT_ROOT/partial.txt"; exit 7',
+        localRoot: workspace,
+        capabilityConfig: parseAgentCapabilitySettings({ blocks: [] }),
+        processEnvironment: async () => ({
+          env: { SKILL_OUTPUT_ROOT: outputRoot },
+          declaredOutputRoots: [{
+            id: 'managed-demo-output',
+            skillId: 'managed-demo',
+            path: outputRoot,
+            label: 'Managed demo output',
+          }],
+        }),
+        skill: { name: 'managed-demo', source: 'managed' },
+        artifactSink: artifacts.sink,
+      });
+      throw new Error('Expected embedded shell failure');
+    } catch (error) {
+      expect(error).toMatchObject({
+        code: 'command_failed',
+        resourceRefs: [{ fileName: 'partial.txt' }],
+      });
+      expect((error as Error).message).toContain(outputRoot);
+      expect((error as { persistedMessage: string }).persistedMessage).not.toContain(outputRoot);
+    }
+  });
+
+  test('warns when a declared output-root scan reaches its entry ceiling', async () => {
+    const { workspace } = await workspaceFixture();
+    const declaredPath = path.join(workspace, 'large-output-root');
+    await mkdir(declaredPath);
+    const outputRoot = await realpath(declaredPath);
+    await Promise.all(Array.from({ length: 513 }, (_, index) => (
+      writeFile(path.join(outputRoot, `existing-${String(index).padStart(3, '0')}.txt`), 'stable')
+    )));
+
+    const result = await executeAgentSkillShellCommand({
+      command: 'true',
+      localRoot: workspace,
+      capabilityConfig: parseAgentCapabilitySettings({ blocks: [] }),
+      processEnvironment: async () => ({
+        declaredOutputRoots: [{
+          id: 'managed-demo-output',
+          skillId: 'managed-demo',
+          path: outputRoot,
+          label: 'Managed demo output',
+        }],
+      }),
+      skill: { name: 'managed-demo', source: 'managed' },
+      artifactSink: recordingArtifactSink().sink,
+    });
+
+    expect(result.output).toContain('baseline stopped after 512 filesystem entries');
+    expect(result.output).toContain('artifact collection was skipped');
   });
 });

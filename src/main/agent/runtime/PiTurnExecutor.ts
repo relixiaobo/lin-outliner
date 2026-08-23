@@ -31,11 +31,16 @@ import type {
   ThreadItem,
   ThreadImageArtifactReference,
   ThreadItemOutputReference,
+  ThreadResourceReference,
   Turn,
   TurnExecutionDetails,
 } from '../../../core/agent/protocol';
 import { INITIAL_CONTEXT_EPOCH_ID } from '../../../core/agent/cacheAffinity';
-import { decodeThreadContextPayload, decodeThreadImageArtifactReference } from '../../../core/agent/codec';
+import {
+  decodeThreadContextPayload,
+  decodeThreadImageArtifactReference,
+  decodeThreadResourceReference,
+} from '../../../core/agent/codec';
 import {
   CanonicalContextProjector,
   type CanonicalContextProjection,
@@ -1119,6 +1124,7 @@ function startedToolItem(
     id: itemId,
     provenance: context.recorder.localProvenance(itemId),
     outputRef: null,
+    resourceRefs: [],
     modelCall,
   };
   if (identity.namespace === null && isAgentTaskToolName(identity.name)) {
@@ -1231,16 +1237,19 @@ async function completedToolItem(
 ): Promise<ThreadItem> {
   const status = isError ? 'failed' : 'completed';
   const outputRef = await persistFullToolOutput(context, item, result, isError);
+  const resourceRefs = toolResultResourceReferences(result);
   switch (item.type) {
     case 'commandExecution': {
       const details = toolDetails(result);
       const data = isRecord(details) && isRecord(details.data) ? details.data : details;
+      const persistedResultText = persistedToolItemResultText(item, toolResultText(result), result);
       return {
         ...item,
         status,
         outputRef,
+        resourceRefs,
         processId: isRecord(data) && typeof data.processId === 'string' ? data.processId : item.processId,
-        aggregatedOutput: boundedText(toolResultText(result), MAX_PERSISTED_TOOL_OUTPUT_CHARS),
+        aggregatedOutput: boundedText(persistedResultText, MAX_PERSISTED_TOOL_OUTPUT_CHARS),
         // A timeout or a kill has no exit code; synthesizing 1 made the row
         // claim the shell reported a status it never did. `null` is the honest
         // value and the renderer has a wording for it.
@@ -1249,12 +1258,13 @@ async function completedToolItem(
       };
     }
     case 'fileChange':
-      return { ...item, status, outputRef };
+      return { ...item, status, outputRef, resourceRefs };
     case 'webSearch':
       return {
         ...item,
         status,
         outputRef,
+        resourceRefs,
         results: webResults(result),
         error: isError
           ? boundedText(toolResultText(result) || 'Web search failed', MAX_PERSISTED_TOOL_STRING_CHARS)
@@ -1265,6 +1275,7 @@ async function completedToolItem(
         ...item,
         status,
         outputRef,
+        resourceRefs,
         result: isError ? null : boundedJsonValue(toolDetails(result), MAX_PERSISTED_TOOL_OUTPUT_CHARS),
         error: isError
           ? boundedText(toolResultText(result) || 'MCP tool failed', MAX_PERSISTED_TOOL_STRING_CHARS)
@@ -1276,6 +1287,7 @@ async function completedToolItem(
         ...item,
         status,
         outputRef,
+        resourceRefs,
         contentItems: await dynamicOutput(context, item, result),
         success: !isError,
         durationMs,
@@ -1297,6 +1309,7 @@ async function completedToolItem(
         ...item,
         status,
         outputRef,
+        resourceRefs,
         receiverThreadIds: Object.keys(agentsStates),
         agentsStates,
       };
@@ -1304,6 +1317,20 @@ async function completedToolItem(
     default:
       throw new Error(`Unexpected executable Thread Item: ${item.type}`);
   }
+}
+
+function toolResultResourceReferences(result: unknown): ThreadResourceReference[] {
+  if (!isRecord(result) || !Array.isArray(result.resourceRefs)) return [];
+  const references = new Map<string, ThreadResourceReference>();
+  for (const candidate of result.resourceRefs) {
+    try {
+      const ref = decodeThreadResourceReference(candidate, 'toolResult.resourceRefs[]');
+      references.set(`${ref.id}\0${ref.fileName}`, ref);
+    } catch (error) {
+      console.warn('[agent] Ignoring invalid tool artifact reference', error);
+    }
+  }
+  return [...references.values()];
 }
 
 async function executionDetails(
@@ -1470,9 +1497,7 @@ async function persistFullToolOutput(
   isError: boolean,
 ): Promise<ThreadItemOutputReference | null> {
   const output = fullToolOutput(result);
-  const text = item.type === 'dynamicToolCall'
-    ? persistedToolResultText({ toolNamespace: item.namespace, toolName: item.tool, text: output.text })
-    : output.text;
+  const text = persistedToolItemResultText(item, output.text, result);
   if (!text) return null;
   const state = isError ? 'error' : 'output';
   const tool = toolItemLabel(item);
@@ -1484,6 +1509,53 @@ async function persistFullToolOutput(
     output.mimeType,
     preview ? `${tool} ${state}: ${preview}` : `${tool} ${state}`,
   );
+}
+
+function persistedToolItemResultText(item: ThreadItem, text: string, result?: unknown): string {
+  const identity = toolItemIdentity(item);
+  const persisted = persistedToolResultText({
+    toolNamespace: identity.namespace,
+    toolName: identity.name,
+    text,
+  });
+  return applyPersistedToolTextReplacements(persisted, result);
+}
+
+function applyPersistedToolTextReplacements(text: string, result: unknown): string {
+  if (!isRecord(result) || !Array.isArray(result.persistedTextReplacements)) return text;
+  let stable = text;
+  const replacements = result.persistedTextReplacements
+    .flatMap((candidate): Array<{ value: string; replacement: string }> => (
+      isRecord(candidate)
+      && typeof candidate.value === 'string'
+      && candidate.value.length > 0
+      && typeof candidate.replacement === 'string'
+        ? [{ value: candidate.value, replacement: candidate.replacement }]
+        : []
+    ))
+    .slice(0, 32)
+    .sort((left, right) => right.value.length - left.value.length);
+  for (const replacement of replacements) {
+    stable = stable.replaceAll(replacement.value, replacement.replacement);
+    const encodedValue = JSON.stringify(replacement.value).slice(1, -1);
+    const encodedReplacement = JSON.stringify(replacement.replacement).slice(1, -1);
+    if (encodedValue !== replacement.value) {
+      stable = stable.replaceAll(encodedValue, encodedReplacement);
+    }
+  }
+  return stable;
+}
+
+function toolItemIdentity(item: ThreadItem): { namespace: string | null; name: string } {
+  switch (item.type) {
+    case 'commandExecution': return { namespace: null, name: 'bash' };
+    case 'fileChange': return { namespace: null, name: 'file_change' };
+    case 'webSearch': return { namespace: null, name: 'web_search' };
+    case 'mcpToolCall': return { namespace: item.server, name: item.tool };
+    case 'dynamicToolCall': return { namespace: item.namespace, name: item.tool };
+    case 'collabAgentToolCall': return { namespace: null, name: item.tool };
+    default: return { namespace: null, name: 'tool' };
+  }
 }
 
 function fullToolOutput(result: unknown): {
@@ -1655,11 +1727,7 @@ async function dynamicOutput(
   for (const part of result.content) {
     if (!isRecord(part) || typeof part.type !== 'string') continue;
     if (part.type === 'text' && typeof part.text === 'string' && remainingText > 0) {
-      const persisted = persistedToolResultText({
-        toolNamespace: item.namespace,
-        toolName: item.tool,
-        text: part.text,
-      });
+      const persisted = persistedToolItemResultText(item, part.text, result);
       const text = boundedText(persisted, remainingText);
       content.push({ type: 'text', text });
       remainingText -= text.length;

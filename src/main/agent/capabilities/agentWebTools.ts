@@ -10,6 +10,7 @@ import {
   MAX_SEARCH_LIMIT,
 } from './agentWebConstants';
 import { extractPageContent, type ExtractedPageContent } from './agentWebFetchContent';
+import type { ThreadResourceReference } from '../../../core/agent/protocol';
 
 export {
   DEFAULT_FETCH_CHARS,
@@ -115,7 +116,8 @@ export interface WebFetchData {
 }
 
 export interface WebFetchBinaryFile {
-  filePath: string;
+  filePath?: string;
+  resourceRef: ThreadResourceReference;
   mimeType: string;
   byteLength: number;
   sha256: string;
@@ -346,9 +348,12 @@ export function buildWebFetchSuccessEnvelopeFromPage(
   const hint = fetched.hint ?? fetched.redirectedHostHint;
 
   if (fetched.binaryFile) {
+    const readablePath = fetched.binaryFile.filePath;
     const content = [
-      `Binary content saved to ${fetched.binaryFile.filePath}.`,
-      'Use file_read on this path when you need to inspect supported files such as PDFs or images.',
+      `Binary content stored as resource ${fetched.binaryFile.resourceRef.id}.`,
+      ...(readablePath
+        ? [`The current readable path is ${readablePath}. Use file_read on this path when you need to inspect supported files such as PDFs or images.`]
+        : ['No readable path is currently available for file_read.']),
     ].join(' ');
     return successEnvelope('web_fetch', baseFetchData(fetched, params, durationMs, {
       content: params.mode === 'metadata' ? undefined : content,
@@ -360,8 +365,13 @@ export function buildWebFetchSuccessEnvelopeFromPage(
       truncated: false,
       hint,
     }), {
-      instructions: 'Binary content was saved to disk. Use file_read with binaryFile.filePath for PDFs or images when details are needed.',
-      warnings,
+      instructions: readablePath
+        ? 'Use the current binaryFile.filePath handle with file_read for PDFs or images when details are needed.'
+        : 'The artifact is stored durably, but no current file_read path is available. Continue from metadata or retry materialization later.',
+      warnings: [
+        ...(warnings ?? []),
+        ...(readablePath ? [] : ['The binary artifact is stored but could not be materialized to a readable path.']),
+      ],
       metrics: webFetchMetrics(durationMs, fetched.byteLength),
     });
   }
@@ -501,7 +511,13 @@ export function webFetchModelData(data: WebFetchData): unknown {
   if (data.statusCode && data.statusCode !== 200) visible.statusCode = data.statusCode;
 
   if (data.binaryFile) {
-    visible.binaryFile = { filePath: data.binaryFile.filePath, mimeType: data.binaryFile.mimeType };
+    visible.binaryFile = {
+      ...(data.binaryFile.filePath ? { filePath: data.binaryFile.filePath } : {}),
+      resourceRef: data.binaryFile.resourceRef,
+      mimeType: data.binaryFile.mimeType,
+      byteLength: data.binaryFile.byteLength,
+      sha256: data.binaryFile.sha256,
+    };
     if (data.hint) visible.hint = data.hint;
     return visible;
   }

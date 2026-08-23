@@ -47,9 +47,13 @@ export function persistedToolResultText(input: {
   readonly toolName: string;
   readonly text: string;
 }): string {
-  if (input.toolNamespace !== null || input.toolName !== GENERATE_IMAGE_TOOL_NAME) return input.text;
+  if (input.toolNamespace !== null) return input.text;
   try {
     const visible = JSON.parse(input.text) as unknown;
+    if (['web_fetch', 'bash', 'task_stop', 'skill'].includes(input.toolName)) {
+      return JSON.stringify(withoutToolArtifactPaths(visible), null, 2);
+    }
+    if (input.toolName !== GENERATE_IMAGE_TOOL_NAME) return input.text;
     if (
       !isRecord(visible)
       || visible.ok !== true
@@ -71,6 +75,49 @@ export function persistedToolResultText(input: {
   } catch {
     return input.text;
   }
+}
+
+function withoutToolArtifactPaths(value: unknown): unknown {
+  return removeToolArtifactPaths(value, collectToolArtifactPathReplacements(value));
+}
+
+function collectToolArtifactPathReplacements(
+  value: unknown,
+  replacements = new Map<string, string>(),
+): ReadonlyMap<string, string> {
+  if (Array.isArray(value)) {
+    for (const entry of value) collectToolArtifactPathReplacements(entry, replacements);
+    return replacements;
+  }
+  if (!isRecord(value)) return replacements;
+  for (const [key, entry] of Object.entries(value)) {
+    if ((key === 'filePath' || key === 'temporaryOutputPath') && typeof entry === 'string' && entry) {
+      replacements.set(
+        entry,
+        key === 'temporaryOutputPath' ? '[temporary-shell-output]' : '[current-artifact-path]',
+      );
+    }
+    collectToolArtifactPathReplacements(entry, replacements);
+  }
+  return replacements;
+}
+
+function removeToolArtifactPaths(
+  value: unknown,
+  replacements: ReadonlyMap<string, string>,
+): unknown {
+  if (typeof value === 'string') {
+    return [...replacements.entries()]
+      .sort((left, right) => right[0].length - left[0].length)
+      .reduce((stable, [path, replacement]) => stable.replaceAll(path, replacement), value);
+  }
+  if (Array.isArray(value)) return value.map((entry) => removeToolArtifactPaths(entry, replacements));
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(Object.entries(value).flatMap(([key, entry]) => (
+    (key === 'filePath' || key === 'temporaryOutputPath') && typeof entry === 'string'
+      ? []
+      : [[key, removeToolArtifactPaths(entry, replacements)]]
+  )));
 }
 
 function persistedGenerateImageDetails(details: ToolEnvelope): ToolEnvelope<PersistedGeneratedImageDetailsData> | undefined {

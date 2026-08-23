@@ -32,6 +32,7 @@ import {
 } from './agent/AgentConfigurationWriter';
 import { PiTurnExecutor } from './agent/runtime/PiTurnExecutor';
 import { ToolRuntime } from './agent/runtime/ToolRuntime';
+import { createToolArtifactSink } from './agent/runtime/ToolArtifactSink';
 import { observedSkillFilePaths } from './agent/context/SkillContextReducer';
 import { AttachmentResolver } from './agent/tools/attachments';
 import { createImageArtifactReference, ImageObservationNormalizationError } from './agent/imageArtifacts';
@@ -584,9 +585,12 @@ managedSkillShellEnvironment = new ManagedSkillShellEnvironmentRegistry({
   activeSkillIds: async () => new Set(
     (await managedSkillService.activeRuntimeRoots()).map((root) => root.id),
   ),
+  outputRootBoundary: agentScratchRoot,
   contributors: [{
     skillId: BROWSER_PILOT_MANAGED_SKILL_ID,
-    processEnvironment: (threadId, turnId) => browserPilotHost.processEnvironment(threadId, turnId),
+    processEnvironment: ({ threadId, turnId, executionId }) => (
+      browserPilotHost.processEnvironment(threadId, turnId, executionId)
+    ),
   }],
 });
 // An available Skill update should be visible without going looking for it, but
@@ -619,9 +623,9 @@ function scheduleAppUpdateCheck(): void {
   timer.unref?.();
 }
 
-// Scratch holds only ephemeral, app-owned data (attachment observations, web-fetch binaries, bash
-// overflow logs, and PDF page images). Reclaim anything past the TTL once per launch; failures
-// are swallowed so cleanup never blocks startup.
+// Scratch holds only ephemeral, app-owned data (resource materializations, live shell captures,
+// legacy fetch files, and PDF page images). Reclaim anything past the TTL once per launch;
+// failures are swallowed so cleanup never blocks startup.
 void pruneAgentScratch(agentScratchRoot).catch((error) => {
   console.error('[agent] failed to prune scratch root at startup', error);
 });
@@ -633,7 +637,8 @@ skillRuntime = new AgentSkillRuntime({
   assertManagedSkillInvocable: (skillId, expectedContentHash) => (
     managedSkillService.assertInvocable(skillId, expectedContentHash)
   ),
-  executeSkillShell: ({ command, signal }) => executeAgentSkillShellCommand({
+  executeSkillShell: ({ skill, command, signal }) => executeAgentSkillShellCommand({
+    skill,
     command,
     localRoot: agentLocalFileRoot,
     scratchRoot: agentScratchRoot,
@@ -858,12 +863,15 @@ threadService = ThreadService.open(
         assertManagedSkillInvocable: (skillId, expectedContentHash) => (
           managedSkillService.assertInvocable(skillId, expectedContentHash)
         ),
-        executeSkillShell: ({ command, signal }) => executeAgentSkillShellCommand({
+        executeSkillShell: ({ skill, command, signal }) => executeAgentSkillShellCommand({
+          skill,
           command,
           localRoot: thread.cwd,
           scratchRoot: agentScratchRoot,
           signal,
-          processEnvironment: () => managedSkillShellEnvironment!.processEnvironment(thread.id, turnId),
+          processEnvironment: (shell) => (
+            managedSkillShellEnvironment!.processEnvironment(thread.id, turnId, shell)
+          ),
           writeBoundary: agentWriteBoundaryForThread(thread.id),
           subagentPolicy: threadService.subagentExecution(thread.id)?.toolPolicy,
         }),
@@ -930,14 +938,20 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
     assertManagedSkillInvocable: (skillId, expectedContentHash) => (
       managedSkillService.assertInvocable(skillId, expectedContentHash)
     ),
-    executeSkillShell: ({ command, signal }) => executeAgentSkillShellCommand({
+    executeSkillShell: ({ skill, command, signal }) => executeAgentSkillShellCommand({
+      skill,
       command,
       localRoot: context.thread.cwd,
       scratchRoot: agentScratchRoot,
       signal,
-      processEnvironment: () => managedSkillShellEnvironment!.processEnvironment(context.thread.id, context.turn.id),
+      processEnvironment: (shell) => managedSkillShellEnvironment!.processEnvironment(
+        context.thread.id,
+        context.turn.id,
+        shell,
+      ),
       writeBoundary: agentWriteBoundaryForThread(context.thread.id),
       subagentPolicy: threadService.subagentExecution(context.thread.id)?.toolPolicy,
+      artifactSink: createToolArtifactSink(context),
     }),
     executeIsolatedSkill: async ({
       skill,
@@ -1036,7 +1050,11 @@ function localWorkspaceForTurn(context: Parameters<ToolRuntime['createTools']>[0
   const processEnvironment = createTenonImportShellEnvironmentProvider({
     threadId: context.thread.id,
     turnId: context.turn.id,
-    baseEnvironment: () => managedSkillShellEnvironment!.processEnvironment(context.thread.id, context.turn.id),
+    baseEnvironment: (shell) => managedSkillShellEnvironment!.processEnvironment(
+      context.thread.id,
+      context.turn.id,
+      shell,
+    ),
     issueCausationToken: (causation) => importApiServer.issueCausationToken(causation),
   });
   return createAgentLocalWorkspaceContext(
