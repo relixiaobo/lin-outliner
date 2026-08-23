@@ -1,0 +1,1411 @@
+# Outliner Runtime, CLI, And Skills
+
+## Goal
+
+Replace every persisted Outliner access path with one formal contract served by
+a standalone local TypeScript Runtime. The Runtime, not Electron main or the
+CLI, is the sole owner of live document state, transaction settlement,
+persistence, Operation history, recovery, events, and asset reachability.
+
+The end state has one document implementation and three deliberate clients:
+
+- the desktop renderer reaches Runtime through the context-isolated
+  preload/Electron-main transport adapter;
+- the `outline` CLI is the stable public interface for terminal users, scripts,
+  external Agents, and harnesses; and
+- the built-in `outline` and `outline-import` Skills teach workflows over that
+  CLI without owning document logic.
+
+Every persisted mutation from desktop, CLI, built-in Agent, or external client
+is one atomic `ChangeSet`, produces one durable `Operation`, and has a guarded
+exact-revert path across Runtime restart. Agent causation changes attribution,
+not capability. All clients receive the same Selector, Projection, ChangeSet,
+Diff, Operation, Event, invariant, and recovery contracts.
+
+This plan has shape **(a): ONE complete feature in one PR**. Standalone Runtime,
+desktop cutover, CLI, complete document capability coverage, transactional
+recovery, asset retention, both Skills, import convergence, Agent cutover, and
+legacy deletion are build-order steps inside one Draft PR. No intermediate
+state is mergeable, releasable, or described as shipped.
+
+The requirement and acceptance identifiers defined below are the traceability
+contract for implementation and verification.
+
+## Non-goals
+
+- No renderer selection, focus, expansion, pane placement, sidebar pinning,
+  native menu, clipboard, or other UI-session control.
+- No Agent, Browser, launcher, Settings, workspace-management, publishing,
+  messaging, or whole-application CLI namespace.
+- No remote listener, LAN access, cloud service, multi-user principal model, or
+  direct workspace-file mutation.
+- No MCP server or second automation contract. A future adapter may invoke the
+  CLI but may not reimplement Runtime behavior.
+- No Node-root scopes, action grants, Agent-specific projections, or reduced
+  Agent schema. Causation is attribution, not authorization.
+- No public physical asset deletion. Document references are reversible and
+  unreferenced bytes are removed only by recovery-aware garbage collection.
+- No compatibility alias for `tenon`, `tenon-import`, the six native tool names,
+  Import Pack writes, or old Runtime endpoints after cutover.
+- No migration reader or dual-write period. Pre-release dev data may be wiped
+  when the persisted recovery or operation format changes.
+- No in-process document authority in Electron main after cutover and no
+  renderer-only mutation contract parallel to ChangeSet.
+- No second document engine in the CLI, Skill scripts, transport adapter, or
+  import adapter.
+
+## Design
+
+### Purpose, decisions, constraints, and evidence
+
+The selected target is the clean architecture independent of current code: a
+formal CLI over native model tools, complete Agent capability with trusted
+causation over scoped authority, general composition over scenario-specific
+APIs, durable exact recovery over prohibition, and a standalone Runtime over
+client-owned document authority.
+
+Existing code is migration evidence, not design authority. Core behavior and
+native-Daily import fixtures identify capabilities that must survive; the
+current import socket proves local transport is feasible; current persistence
+and operation history reveal failure cases to test. None justifies an Electron
+process dependency, a second desktop mutation protocol, or a two-store commit
+protocol in the target architecture.
+
+The hard target constraints are one serialized Runtime writer, Core-command
+mutation below the public domain model, context-isolated renderer security,
+atomic ChangeSets, one durable transaction commit point, user-private local
+transport, and actor-neutral recovery admission.
+
+The explicit traceability manifest is:
+
+- flows: `FLOW-1`, `FLOW-2`, `FLOW-3`, `FLOW-4`, `FLOW-5`;
+- functional requirements: `FR-1`, `FR-2`, `FR-3`, `FR-4`, `FR-5`, `FR-6`,
+  `FR-7`, `FR-8`, `FR-9`, `FR-10`, `FR-11`, `FR-12`;
+- non-functional requirements: `NFR-1`, `NFR-2`, `NFR-3`, `NFR-4`, `NFR-5`,
+  `NFR-6`; and
+- acceptance: `AC-1`, `AC-2`, `AC-3`, `AC-4`, `AC-5`, `AC-6`, `AC-7`, `AC-8`,
+  `AC-9`, `AC-10`, `AC-11`, `AC-12`, `AC-13`, `AC-14`, `AC-15`, `AC-16`,
+  `AC-17`, `AC-18`, `AC-19`, `AC-20`, `AC-21`, `AC-22`, `AC-23`, `AC-24`,
+  `AC-25`, `AC-26`, `AC-27`, `AC-28`, `AC-29`, `AC-30`, `AC-31`, `AC-32`,
+  `AC-33`, `AC-34`, `AC-35`, `AC-36`, `AC-37`.
+
+### Completion contract
+
+
+- **FR-1:** The CLI exposes deterministic Selector and Projection contracts.
+  - **AC-1:** When the same execution context issues the same read at one
+    revision, human and JSON output shall represent the same Node set.
+  - **AC-2:** If a mutation selector resolves ambiguously or violates its
+    declared cardinality, the Runtime shall reject before producing a writable
+    ChangeSet.
+- **FR-2:** Machine output is stable and composable.
+  - **AC-3:** With `--json`, a non-stream command shall write exactly one
+    versioned result envelope to stdout and diagnostics only to stderr.
+  - **AC-4:** Streaming commands shall emit independently parseable versioned
+    JSONL records and expose a resumable revision cursor.
+  - **AC-5:** Input artifacts shall be accepted from an explicit file or stdin,
+    without argument-length dependence.
+- **FR-3:** Every document mutation normalizes to one ChangeSet path.
+  - **AC-6:** Porcelain and direct ChangeSet forms that describe the same intent
+    shall produce the same normalized Diff and Operation semantics.
+- **FR-4:** Preview is non-mutating and binds exact apply input.
+  - **AC-7:** `diff` shall not advance document or persistence revision.
+  - **AC-8:** `apply` shall reject if the bound ChangeSet hash, base revision, or
+    targeted expected revisions no longer match.
+- **FR-5:** Apply is atomic, durable, auditable, and exactly reversible for every
+  accepted Runtime mutation regardless of client.
+  - **AC-9:** If any validation or mutation in a ChangeSet fails, no part of the
+    ChangeSet shall remain in document state, projection, or operation history.
+  - **AC-10:** A successful apply shall return one stable Operation ID and its
+    revert state only after the document update, Operation, recovery patch,
+    asset delta, idempotency result, and Event sequence share one fsynced
+    transaction-log commit.
+  - **AC-11:** A reversible Operation shall remain addressable for guarded exact
+    revert after Runtime restart and within the documented retention boundary.
+- **FR-6:** Destructive and concurrent behavior is explicit.
+  - **AC-12:** Permanent delete and empty Trash shall require an interactive
+    confirmation or explicit non-interactive acknowledgement after Diff.
+  - **AC-13:** Stale revisions shall fail with a structured conflict result and
+    no automatic write retry.
+- **FR-7:** Complex workflows compose general ChangeSet capabilities without a
+  scenario-specific Runtime write path.
+  - **AC-14:** The import Skill shall block while source coverage is unaccounted
+    or while its generated ChangeSet differs from the reviewed Diff binding.
+  - **AC-15:** A generic ChangeSet targeting ordinary Nodes and multiple local
+    dates shall settle as one normal Operation, including canonical structure
+    created by that Operation.
+  - **AC-23:** If source data already conforms to the Skill's normalized input,
+    import shall permit ChangeSet generation without a cleaning transform.
+  - **AC-24:** An unresolved Selector, invalid semantic key, or cardinality
+    conflict shall block before mutation and identify the exact operation.
+- **FR-8:** Agent execution receives complete reversible Outliner capability
+  with trusted attribution rather than fine-grained Runtime authority.
+  - **AC-16:** Where `outline` is present in an Agent execution, its public read,
+    write, batch, history, and observe schemas shall match local-user execution.
+  - **AC-17:** Every successful Agent mutation shall record immutable
+    Thread/Turn/Item causation and expose its Operation ID and revert state.
+  - **AC-30:** If a declared built-in Agent execution lacks valid causation
+    attestation, Runtime shall reject mutation rather than record it as an
+    unattributed local-user Operation.
+  - **AC-31:** Node-resource scopes, action-set grants, and Agent-specific Memory
+    filtering shall not change the Runtime's public document schema or results.
+- **FR-9:** Skill cutover preserves existing model workflows.
+  - **AC-18:** Fixture coverage for all six native tools shall pass through the
+    Skill and CLI before those tools are removed from the catalog.
+  - **AC-19:** After cutover, the built-in Skill shall contain workflow guidance
+    but no duplicated parser, selector, validation, or mutation implementation.
+- **FR-10:** Runtime lifecycle supports external automation.
+  - **AC-20:** The supported packaged standalone Runtime shall serve every
+    desktop and CLI document operation without importing Electron or renderer
+    code.
+  - **AC-21:** If Runtime start or discovery fails, the CLI shall return a stable
+    unavailable result and shall not read workspace persistence directly.
+  - **AC-37:** When Runtime is absent, an ordinary desktop or CLI document
+    command shall start the standalone process within the documented timeout;
+    `--no-start` shall instead return the stable unavailable result without
+    starting it.
+- **FR-11:** UI/session state is isolated from the document contract.
+  - **AC-22:** Document CLI contracts shall not encode selection, focus,
+    expansion, pane position, or sidebar pin state.
+- **FR-12:** ChangeSet composition minimizes process and model round trips.
+  - **AC-25:** A workflow that ensures 100 date targets and creates content
+    below each shall require one diff and one apply invocation, not target-ID
+    discovery or one mutation invocation per date.
+  - **AC-26:** A later operation shall be able to consume the binding of an
+    earlier resolved, ensured, or created result in the same ChangeSet.
+  - **AC-27:** Apply shall optionally return a bounded Projection of affected
+    results in the same versioned envelope as the Operation.
+  - **AC-28:** A non-destructive single-intent porcelain command shall complete
+    through one CLI invocation, while its preview mode shall return the same
+    normalized Diff without writing.
+  - **AC-29:** The CLI shall expose the exact versioned Selector, Projection,
+    ChangeSet, Diff, Operation, Event, and error schemas without requiring
+    source-code inspection.
+  - **AC-32:** Reverting an Operation whose affected state has since changed
+    shall make no write and return a conflict Diff identifying the changed
+    preconditions.
+  - **AC-33:** A successful revert shall itself be a recorded Operation and
+    shall never erase the original audit entry.
+  - **AC-34:** If Runtime cannot persist a durable recovery form, it shall reject
+    the mutation before document state changes for every caller.
+  - **AC-35:** Purge and Empty Trash recovery shall include deleted subtrees,
+    dependent references, and other document state changed by the Operation.
+  - **AC-36:** Asset bytes referenced by a reversible Operation shall not be
+    physically deleted until no live document reference or retained recovery
+    patch requires them.
+
+### End-state authority and invariants
+
+```text
+renderer -> preload -> Electron main adapter --+
+                                                |
+outline CLI ------------------------------------+-> authenticated protocol -> Outliner Runtime
+outline Skill -------- invokes CLI -------------+                              |
+outline-import Skill - invokes CLI -------------+                              +-> Core
+                                                                                +-> transaction log
+                                                                                +-> asset blob store
+```
+
+The standalone Runtime process owns Core and the only writable workspace store.
+Electron main owns native host behavior and a typed Runtime client; it holds no
+document Core, persistence queue, Operation journal, recovery store, or asset
+index. Preload exposes the same versioned read/mutation/event requests to the
+renderer without exposing the socket or bearer token. The renderer never shells
+out to the CLI. The CLI and desktop adapter never import Core or open workspace
+files.
+
+Renderer selection, focus, panes, expansion, menus, and optimistic editor drafts
+remain UI-session state. When a draft becomes persistent, the desktop client
+submits an ordinary ChangeSet. Desktop reads use Projection and desktop updates
+arrive as Event records. There is no second renderer document protocol after
+cutover.
+
+The following invariants are release blockers:
+
+1. Every persisted mutation, including desktop editing, maps to one Core
+   transaction, one transaction-log record, one Operation ID, and one recovery
+   patch.
+2. `diff` and `apply` run the same normalizer and executor. Apply either produces
+   the exact reviewed after-state or throws while Core's rollback frontier is
+   still live.
+3. Document update, Operation metadata, recovery-patch reference, idempotency
+   result, asset-reference delta, and Event sequence share one durable commit
+   record. Runtime publishes none of them before that record is fsynced.
+4. Selector ambiguity, stale revisions, failed preconditions, invalid bindings,
+   and destructive acknowledgement failures write nothing.
+5. Causation fields supplied in a request body are untrusted metadata. Only a
+   host-issued attestation can create trusted Thread/Turn/Item attribution.
+6. Execution context never changes the public capability registry, Selector
+   results, Projection fields, ChangeSet union, or destructive operations.
+7. Desktop actions and CLI porcelain are syntax sugar over the same
+   `diff`/`apply` kernel. Transport and argument parsing never call Core commands
+   directly.
+8. Scenario code may transform source data and verify results, but no scenario
+   receives a private selector, write endpoint, transaction, or permission path.
+9. Assets remain while referenced by live Nodes, unexpired staging leases, or
+   retained recovery patches. Only internal mark-and-sweep GC unlinks bytes.
+10. A parity guard derived from artifacts on disk must report no unclassified
+    persisted Outliner capability and no live legacy write surface.
+
+### Module and ownership boundaries
+
+The implementation uses five layers so process boundaries and domain ownership
+are obvious:
+
+| Layer | Proposed ownership | Responsibility | Forbidden dependencies |
+| --- | --- | --- | --- |
+| Public contract | `src/outline/contract/` | DTOs, TypeBox/JSON Schemas, canonical JSON/hash rules, errors, capability registry | Electron, filesystem, Core, renderer, Agent runtime |
+| Runtime domain | `src/outline/runtime/` | selection, projection, normalization, preview, execution, Operation ledger, recovery, events, asset reachability | Electron, renderer DOM, CLI argv, Skill/source formats |
+| Runtime storage/process | `src/outline/runtime/storage/` and `src/outline/runtime/server/` | transactional log, snapshots, blob store, user-private socket, descriptor, authentication, lifecycle | CLI presentation, renderer state, Agent policy |
+| Shared client | `src/outline/client/` | discovery/start, protocol negotiation, request/stream client | Core, workspace files, renderer, Agent services |
+| Client adapters | `src/outline/cli/` and `src/main/outlineClient/` | CLI argv/rendering/porcelain; Electron supervision and preload-safe forwarding | document business rules, direct persistence |
+
+The capability registry is executable authority. Each entry owns its public
+name, request and result schema, read/mutate/destructive classification, audit
+category, porcelain help, and mapping coverage. It generates:
+
+- `outline capabilities`;
+- `outline schema` output;
+- CLI help and completion metadata;
+- Runtime admission and response validation;
+- audit classification; and
+- the document-command and asset-capability parity report.
+
+Transport adapters parse a versioned request envelope, authenticate it, invoke
+one Runtime handler, map the typed result or error, and serialize the response.
+They contain no selector resolution, import routing, Core command switch, or
+recovery policy.
+
+Current `DocumentService` behavior, Core ownership, read model, persistence, and
+asset indexing move behind Runtime ownership. Agent parser/projection/import
+modules do not move with them; reusable document behavior is re-homed under the
+Runtime domain and every client becomes a consumer. Electron main's old document
+dispatcher and `agentNodeTool*` are deleted after desktop and Agent cutover.
+
+### Protocol version and envelopes
+
+Protocol major version `1` is explicit in every file, request, response, schema,
+and stream record. Minor additions are backward compatible only when existing
+required fields and semantics do not change. An unsupported major fails before
+document access with `protocol_incompatible`.
+
+A non-stream machine response writes exactly one JSON value to stdout:
+
+```ts
+type OutlineResponse =
+  | {
+      protocolVersion: 1;
+      requestId: string;
+      ok: true;
+      command: string;
+      revision?: number;
+      data: unknown;
+    }
+  | {
+      protocolVersion: 1;
+      requestId: string;
+      ok: false;
+      command: string;
+      error: OutlineError;
+    };
+
+interface OutlineError {
+  code: string;
+  category:
+    | 'usage'
+    | 'selection'
+    | 'conflict'
+    | 'confirmation'
+    | 'unavailable'
+    | 'protocol'
+    | 'durability'
+    | 'internal';
+  message: string;
+  retryable: boolean;
+  details?: unknown;
+  next?: readonly string[];
+}
+```
+
+Human output and `--json` output have identical behavior and target sets.
+`--json` changes presentation only. Machine stdout never contains progress,
+warnings, logs, ANSI control bytes, or diagnostic prose; those go to stderr.
+An empty `find` result is a successful empty result, not an error.
+
+Streaming commands use JSON Lines. Every line is independently parseable and
+has `protocolVersion`, `requestId`, monotonically increasing `sequence`, and a
+record `type`. A stream begins with `hello`, emits `data` or `event`, may emit a
+terminal `error`, and ends with `end`. `event` and `end` records carry the most
+recent opaque cursor.
+
+Stable process exit codes are:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Successful command, including an empty read result |
+| `2` | Invalid argv, input framing, or public schema |
+| `3` | Missing/ambiguous target, failed precondition, stale Diff, idempotency conflict, or revert conflict |
+| `4` | Destructive acknowledgement or reviewed Diff binding required |
+| `5` | Runtime unavailable or startup/discovery timeout |
+| `6` | Authentication or protocol incompatibility |
+| `7` | Recovery capacity, recovery decode, or durability failure |
+| `8` | Unexpected Runtime failure |
+| `130` | Client interrupted by `SIGINT`; mutation outcome must be resolved by idempotency key or `log` |
+
+The typed `error.code`, not the coarse exit code, is the automation decision
+surface. Errors include at least `invalid_input`, `not_found`,
+`ambiguous_selector`, `cardinality_mismatch`, `precondition_failed`,
+`stale_revision`, `diff_mismatch`, `idempotency_conflict`,
+`confirmation_required`, `revert_conflict`, `recovery_expired`,
+`recovery_capacity_exceeded`, `operation_settlement_unknown`,
+`runtime_unavailable`, `unauthorized`, and `protocol_incompatible`.
+
+### Selector, binding, and projection contracts
+
+`Selector` is deterministic and independent of renderer state:
+
+```ts
+type Selector =
+  | { by: 'id'; id: string }
+  | {
+      by: 'alias';
+      alias: 'home' | 'inbox' | 'schema' | 'trash' | 'daily-notes' | 'today';
+    }
+  | { by: 'date'; date: string }
+  | {
+      by: 'query';
+      query: QueryExpression;
+      within?: Selector;
+      includeTrash?: boolean;
+      order?: 'document' | 'created' | 'updated' | 'text';
+      limit: number;
+    };
+
+interface TargetSpec {
+  selector: Selector;
+  cardinality: 'one' | 'zero-or-one' | 'many';
+  max?: number;
+}
+
+type TargetRef =
+  | { target: TargetSpec }
+  | { binding: string };
+```
+
+Local dates are strict `YYYY-MM-DD` values interpreted in the workspace's local
+calendar rules. They are never JavaScript UTC dates. Query selectors use the
+existing structured search grammar, not a second text-query language.
+`includeTrash` defaults to false. A `many` mutation must provide a finite `max`;
+read projections receive bounded defaults from the registry.
+
+Resolution returns candidates in document order with Node ID as the stable tie
+breaker. Mutations never pick the first fuzzy match. CLI shorthand is limited
+to exact IDs and the semantic aliases `@home`, `@inbox`, `@schema`, `@trash`,
+`@daily-notes`, `@today`, and `@date:YYYY-MM-DD`. Structured queries arrive
+through `--query`, `--selector`, stdin, or a file.
+
+A ChangeSet may assign a result to a `Binding`. Binding names match
+`^[A-Za-z][A-Za-z0-9_-]{0,63}$`, are unique, cannot be forward-referenced, and
+resolve to an immutable ordered target set. `resolve`, `ensure`, `create`, and
+`duplicate` may bind results. Bindings exist only inside one ChangeSet and are
+never persisted as global names.
+
+`Projection` is a request, not an unrestricted document snapshot:
+
+```ts
+interface Projection {
+  kind: 'summary' | 'node' | 'outline' | 'backlinks' | 'view' | 'export';
+  targets: TargetRef;
+  depth?: number;
+  include?: readonly (
+    | 'description'
+    | 'children'
+    | 'tags'
+    | 'fields'
+    | 'references'
+    | 'media'
+    | 'view'
+    | 'trash'
+  )[];
+  page?: { limit: number; cursor?: string };
+  format?: 'json' | 'jsonl' | 'markdown' | 'opml';
+}
+```
+
+The schema sets finite maxima for depth, result count, text bytes, and expanded
+field/reference data. Pagination cursors bind the Projection hash and revision;
+changing either requires a fresh read. `export` streams large results and does
+not weaken target or Trash visibility rules.
+
+### ChangeSet and operation model
+
+The public ChangeSet is declarative Outliner intent, not a serialized list of
+Core command names:
+
+```ts
+interface ChangeSet {
+  protocolVersion: 1;
+  kind: 'outline.changeset';
+  base?: {
+    revision?: number;
+    nodes?: { readonly [nodeId: string]: string }; // Node ID -> expected digest
+  };
+  idempotencyKey?: string;
+  source?: {
+    kind: 'cli' | 'skill' | 'import' | 'automation' | 'external';
+    label?: string;
+    uri?: string;
+    fingerprint?: string;
+  };
+  operations: readonly Change[];
+  return?: readonly Projection[];
+}
+
+type Change =
+  | ResolveChange
+  | EnsureChange
+  | CreateChange
+  | UpdateChange
+  | MoveChange
+  | DuplicateChange
+  | MergeChange
+  | TemplateChange
+  | LifecycleChange;
+```
+
+The stable top-level change vocabulary is:
+
+| Change | Purpose |
+| --- | --- |
+| `resolve` | Resolve a TargetSpec and bind its exact result without changing state |
+| `ensure` | Resolve or create one canonical date, saved tag search, or reusable definition, then bind it |
+| `create` | Create typed Node trees, capture Nodes, media/attachment Nodes, saved searches, tags, or field definitions under one or many bound parents |
+| `update` | Apply an ordered list of typed content, description, code, checkbox, done, tag, field, reference, view, search, icon, banner, or image changes to bounded targets |
+| `move` | Reparent or reorder bounded targets with explicit destination and index semantics |
+| `duplicate` | Duplicate bounded targets under an explicit destination and optionally bind the copies |
+| `merge` | Merge Nodes or compatible definitions under the existing Core invariants |
+| `template` | Apply tag-template backfill to its computed affected set; ordinary Diff is the preview |
+| `lifecycle` | Trash, restore, or purge bounded targets; purging Trash contents is an explicit target mode |
+
+`NodeDraft` is a public, typed tree shape covering plain and rich content, code,
+references, field entries, saved searches, images, attachments, descriptions,
+children, tags, fields, done state, and capture provenance. Runtime maps it to
+existing Core types after validation. It does not expose renderer drafts or
+Core-only focus hints.
+
+`UpdateChange.changes` is an ordered discriminated union. It covers content and
+description replacement/patching; code language; checkbox and done state; tag
+add/remove; field define/set/clear/remove/reuse and option selection; reference
+add/retarget/inline/restore; view mode, toolbar, sort, filter, group, and display
+fields; saved-search query and refresh; and icon, banner, and image assignment.
+Every variant has one owner and validation path. No untyped property bag or
+generic JSON Patch is admitted.
+
+Normalization performs all of the following exactly once:
+
+- validates schema and limits;
+- resolves selectors and cardinality against one base revision;
+- validates binding order and dependency cardinality;
+- assigns every new Node ID, including canonical date scaffolding, before
+  preview execution;
+- lowers porcelain into the public Change union;
+- records expected Node digests for every resolved target and structural parent;
+- validates protected system objects and Core invariants through the preview
+  executor; and
+- emits canonical JSON with a SHA-256 ChangeSet hash.
+
+Large ChangeSets use `--input-format jsonl`. The first record is a ChangeSet
+header without `operations`, each following record is one `operation`, and the
+last record contains operation count and SHA-256. Runtime parses bounded records
+into a user-private spool file, validates the final digest, and cooperatively
+executes chunks while preserving one Core rollback and Operation frontier. An
+interrupted or malformed input before apply leaves no Operation.
+
+### Diff, apply, and result contracts
+
+`outline diff` accepts a ChangeSet and returns a self-contained `Diff` artifact:
+
+```ts
+interface Diff {
+  protocolVersion: 1;
+  kind: 'outline.diff';
+  diffHash: string;
+  changeSetHash: string;
+  baseRevision: number;
+  normalizedChangeSet: ChangeSet;
+  bindings: { readonly [binding: string]: readonly string[] };
+  affected: readonly {
+    id: string;
+    effect: 'create' | 'update' | 'move' | 'trash' | 'restore' | 'purge';
+    beforeDigest: string | null;
+    afterDigest: string | null;
+  }[];
+  destructive: readonly {
+    kind: 'purge' | 'empty-trash' | 'replace' | 'merge';
+    targetCount: number;
+  }[];
+  warnings: readonly OutlineWarning[];
+  resultEstimate: { nodeCount: number; encodedBytes: number };
+}
+```
+
+The `diffHash` covers the full canonical Diff except itself. Diff creates no
+document revision, Operation, durable recovery patch, or staged asset
+ownership. It may use a disposable Core copy and temporary spool files that are
+removed after the response.
+
+`outline apply` consumes a Diff artifact, not an unreviewed private mutation
+format. Runtime verifies protocol, hashes, base revision, targeted Node digests,
+staging leases, and destructive acknowledgement before executing the embedded
+normalized ChangeSet. Non-destructive porcelain may perform the same
+diff-and-apply sequence inside one Runtime request; `--preview` returns its Diff
+without writing, and `--expect-diff HASH` binds a later invocation to the
+reviewed result.
+
+Interactive destructive porcelain shows the Diff and asks for confirmation on
+a TTY. Non-interactive destructive calls require both `--yes` and either a Diff
+artifact or `--expect-diff HASH`. `--yes` alone is rejected. The confirmation
+is bound to the exact Diff, so a concurrent change requires review again.
+
+Apply returns one `Operation` and any requested bounded post-commit Projection:
+
+```ts
+interface Operation {
+  protocolVersion: 1;
+  kind: 'outline.operation';
+  operationId: string;
+  changeSetHash: string;
+  diffHash: string;
+  origin: 'desktop' | 'local-user' | 'built-in-agent' | 'external-client';
+  causation?: { threadId: string; turnId: string; itemId: string };
+  source?: ChangeSet['source'];
+  summary: string;
+  affectedNodeIds: readonly string[];
+  affectedNodeCount: number;
+  affectedNodeIdsHash: string;
+  affectedNodeIdsTruncated?: true;
+  affectedNodeIdsCursor?: string;
+  revisionBefore: number;
+  revisionAfter: number;
+  createdAt: string;
+  recovery: {
+    recoveryPatchId: string;
+    state: 'available' | 'conflicted' | 'reverted' | 'expired';
+    retainedUntilAtLeast: string;
+  };
+  revertsOperationId?: string;
+  result?: readonly ProjectionResult[];
+}
+```
+
+Affected IDs are a bounded sample in Operation output, with count, full-set hash,
+and a cursor when truncated. They are complete in the private recovery patch and
+available through paginated `log --operation`. A returned Projection is bounded
+by the same public limits and uses the committed revision, removing a mandatory
+follow-up read without allowing unbounded apply output.
+
+Small Diff results may be returned in the one-response JSON envelope. When the
+canonical Diff exceeds 8 MiB, `diff` requires `--output DIFF_FILE`, streams to an
+atomic file, and returns only path, byte count, and SHA-256 in its stdout
+envelope. `--output -` streams one canonical JSON value to stdout for clients
+that can consume it incrementally. Runtime and CLI never retain the whole
+encoded Diff merely to calculate a hash; canonical serialization and hashing
+advance together.
+
+Idempotency keys are scoped to the workspace and protocol major. Reusing a key
+with the same canonical payload returns the original Operation; reusing it with
+a different payload returns `idempotency_conflict`. A client disconnect never
+causes automatic mutation retry. The client resolves an unknown settlement via
+the key or `outline log --operation OPERATION_ID`.
+
+### One durable transaction and recovery patch
+
+Process-local undo cannot satisfy exact recovery after restart. Runtime records
+a Node-level recovery patch inside the same durable transaction that commits the
+document update, Operation, idempotency result, asset-reference delta, and Event
+sequence. Recovery is part of the storage model, not a sidecar workflow.
+
+Core exposes a transaction-patch hook around `Core.transaction`. The hook
+returns an immutable, sorted map of every touched Node's canonical `before` and
+`after` value, using `null` for absence, while the rollback frontier is still
+live. Structural parents, references healed by deletion/merge,
+definition/template links, and every other touched Node are included. Every
+persisted client mutation uses this patch-aware Runtime transaction.
+
+Preview execution runs the normalized ChangeSet against an ephemeral Core
+created from the current verified snapshot. Because all created IDs and binding
+results are fixed during normalization, preview produces the expected patch and
+digest without changing the live Core.
+
+`WorkspaceTransactionLog` is the commit authority. A checksummed transaction
+record contains or references:
+
+- the exact CRDT/document update and resulting revision;
+- complete Operation metadata and idempotency key/payload hash;
+- the content-addressed recovery-patch blob;
+- asset lease consumption and live-reference changes; and
+- the monotonic Event sequence and cursor material.
+
+Large recovery patches are immutable blobs. Runtime writes and fsyncs the blob
+first, then appends and fsyncs the transaction record that makes it reachable.
+An unreferenced blob is an inert orphan eligible for GC; it is never a prepared
+document commit. Small patches may be inlined in the record. Snapshots compact
+document updates but retain the bounded Operation index and live recovery-blob
+references required by policy.
+
+Apply settlement is ordered as follows:
+
+1. Enter Runtime's single workspace mutation queue and recheck the Diff revision
+   and expected Node digests.
+2. Reserve recovery/asset capacity, execute the normalized plan tentatively in
+   one Core transaction, and keep the rollback frontier live.
+3. Compare the actual affected set, per-Node after values, and aggregate digest
+   with preview. A mismatch throws and rolls back before durability.
+4. Serialize the document update, Operation, recovery patch, asset deltas,
+   idempotency result, and Event sequence. Fsync immutable blobs, append one
+   checksummed transaction record, and fsync the log.
+5. Only after the log commit point, finalize in-memory Core/index state, publish
+   the Event, acknowledge the desktop/CLI client, and admit the next mutation.
+
+If blob or log durability fails, Core rolls back and no Operation is visible. If
+the process exits after log fsync but before client acknowledgement, replay
+reconstructs the committed state and the idempotency key returns the original
+Operation. There is no state where document durability succeeded but recovery
+or Operation metadata did not.
+
+The private recovery patch contains storage and patch versions, Operation
+identity, origin and trusted causation, ChangeSet/Diff hashes, revisions,
+complete before/after Node maps, aggregate digests, protected asset-record IDs,
+and lifecycle timestamps. It contains no bearer token, descriptor secret,
+environment value, source file content, or credential.
+
+### Revert and crash behavior
+
+`outline revert OPERATION_ID` loads the retained recovery patch and compares
+every affected Node's current canonical value with the patch's `after` value. It
+does not write when any value differs. The conflict result is a Diff identifying
+the changed Node preconditions; unrelated Nodes never block revert and are never
+overwritten.
+
+When every guard matches, Runtime applies the recovery patch's `before` map
+through a trusted Core recovery command. The revert is itself a new public
+Operation with its own transaction-log record, recovery patch, audit entry, and
+`revertsOperationId`. The original Operation remains in `log`. Reverting the
+revert provides exact redo semantics; desktop Undo/Redo and `outline undo` /
+`outline redo` are convenience selection over these Operation-addressed rules,
+not wrappers around a process-local stack.
+
+Purge and Empty Trash recovery patches include every deleted subtree Node, every
+reference or template link changed by healing, structural parents, and asset
+references. They follow the same guard and revert path as ordinary edits. Agent
+calls are neither blocked nor treated specially.
+
+Startup loads the last verified snapshot and replays complete checksummed log
+records. An incomplete final append is discarded because it never crossed the
+commit boundary. A recovery blob with no committed log reference is collected
+as an orphan. A missing/corrupt referenced blob or checksum failure inside the
+committed prefix keeps verified reads/export available, blocks mutations with
+`recovery_inconsistent`, and preserves diagnostic evidence. Runtime never
+guesses a partial commit or overwrites state during repair.
+
+### Recovery retention and capacity
+
+Recovery blobs and their Operation metadata live in user-private Runtime
+storage and are never exposed by filesystem path. A recovery patch remains
+protected while either condition is true:
+
+- it is younger than 30 days; or
+- it belongs to the most recent 1,000 committed document Operations from any
+  client.
+
+Only patches older than 30 days and outside the newest 1,000 may expire. A log
+maintenance record marks expiry before blob deletion so `log` reports `expired`
+while Operation metadata remains retained. Snapshot compaction keeps at least
+the most recent 1,000 Operation summaries and all newer-than-30-day summaries.
+
+The recovery budget is 2 GiB per workspace. It counts recovery blobs and asset
+bytes retained solely by those patches; assets still referenced by live Nodes
+do not consume recovery budget. Before a mutation executes, Runtime evicts
+eligible expired patches and computes the additional protected bytes. If the
+new operation would exceed the budget while every remaining patch is
+protected, it returns `recovery_capacity_exceeded` before changing document
+state. The policy and error are identical for every caller, including purge and
+Empty Trash.
+
+Recovery pruning runs at startup, after successful settlement, after revert,
+and during Runtime idle maintenance. It is derived from committed log/index and
+blob reachability, not an in-memory checklist.
+
+### Asset staging, retention, and garbage collection
+
+Runtime owns a content-addressed asset blob store. A logical `AssetRecord`
+contains user-facing metadata and a SHA-256 blob reference; many records may
+deduplicate to one immutable byte blob. Nodes reference AssetRecord IDs rather
+than paths or mutable sidecars.
+
+`outline asset ingest PATH|-` streams bytes to Runtime, hashes and validates
+them, fsyncs the content-addressed blob, appends an asset-stage record to the
+same Runtime log, and returns an `AssetLease`:
+
+```ts
+interface AssetLease {
+  protocolVersion: 1;
+  leaseId: string;
+  assetId: string;
+  metadata: AssetMetadata;
+  expiresAt: string;
+}
+```
+
+The default lease is 24 hours. A media/attachment/icon/banner ChangeSet consumes
+the lease in its atomic transaction record; clients cannot smuggle an arbitrary
+path into a ChangeSet. Successful apply replaces lease protection with live-Node
+and recovery-patch protection. Failed or abandoned apply leaves the lease until
+expiry, so retries do not race eager deletion. A blob written before its
+asset-stage record is an unreferenced orphan and is safely collectible.
+
+`outline asset show` inspects metadata and `outline asset export` streams
+verified bytes. There is no `outline asset delete`. Remove renderer/public
+`delete_asset`; deleting or changing a document Node only changes references.
+
+An internal mark-and-sweep collector derives its protected set from:
+
+1. all asset and thumbnail IDs referenced by the live document;
+2. all AssetRecord/blob IDs named by retained recovery patches; and
+3. all unexpired staging leases.
+
+Only an AssetRecord and blob absent from all three sets may be collected. GC
+runs after lease/recovery expiry and during safe idle windows, never inside the
+document transaction. A failed unlink is retryable maintenance and cannot turn
+a successful document operation into failure. Integrity corruption is reported
+and quarantined rather than silently deleted. The old random-file/sidecar format
+is deleted with dev userData rather than carried into the new store.
+
+### Runtime transport and lifecycle
+
+Runtime is a standalone Node process with no Electron import. It uses a
+user-private Unix socket and replaces the import-only API. The descriptor is stored at
+`USER_DATA_DIR/outline-runtime/runtime.json`; the socket and descriptor have mode
+`0600`, and the containing directory is user-only. The descriptor contains:
+
+```ts
+interface RuntimeDescriptor {
+  descriptorVersion: 1;
+  transport: 'unix-http';
+  socketPath: string;
+  bearerToken: string;
+  pid: number;
+  instanceId: string;
+  protocolMajors: readonly [1];
+  runtimeVersion: string;
+  storageVersion: number;
+  createdAt: string;
+}
+```
+
+The bearer token proves same-user descriptor access; it is never logged,
+persisted in Operation metadata, or accepted from argv. The server validates
+authorization before reading a request body. HTTP-over-Unix-socket routes are
+small versioned adapters: health/discovery, one command call, and one streaming
+call. Request bodies have schema and byte limits; JSONL uploads are parsed with
+per-record limits and private spool files.
+
+The packaged product contains separate `outline.mjs` client and
+`outline-runtime.mjs` server entries. Development runs them with Bun; packaged
+launch uses the app's bundled executable in Node mode, but the Runtime bundle
+does not load Electron main, BrowserWindow, Agent/provider services, launcher,
+or renderer code.
+
+Runtime has its own single-writer lock, independent of Electron's application
+single-instance lock. Startup contenders atomically claim a lock directory
+under `USER_DATA_DIR/outline-runtime`, publish PID/instance metadata, then bind
+the socket and descriptor. A loser waits for the winning descriptor. Stale-lock
+recovery verifies both process liveness and descriptor/socket identity before
+removing anything; no client unlinks a merely slow owner's socket.
+
+Electron main and CLI both use the shared Runtime client/supervisor. Either may
+start Runtime when absent, and both attach to the winner during a race. Opening
+or quitting the desktop app neither promotes nor owns Runtime; it only adds or
+removes a client lease. Electron's single-instance lock continues to govern UI
+windows and is unrelated to document authority.
+
+Runtime exits after five minutes with no client leases, watch streams, active
+transaction, pending log/blob maintenance, or unflushed storage. It closes the
+socket, removes only its own descriptor/lock identity, and exits. A desktop
+connection or active watch holds a lease.
+
+CLI discovery rules are deterministic:
+
+1. Resolve userData exactly as the app does, honoring
+   `ELECTRON_USER_DATA_DIR` for isolated development and tests.
+2. Read and validate the descriptor, connect, authenticate, and compare protocol
+   majors.
+3. If the descriptor is absent or stale, start the standalone Runtime unless
+   `--no-start` is present.
+4. Wait up to the global `--startup-timeout` value, 10 seconds by default, then
+   return `runtime_unavailable` with no persistence fallback.
+
+`version`, `schema`, and the bundled portion of `capabilities` run locally and
+never start Runtime. `status` reports absence without starting it. Document,
+history, asset, and watch commands auto-start. `capabilities --runtime` compares
+the bundled CLI registry with the connected Runtime and fails on incompatibility.
+
+### CLI command grammar
+
+Global form is:
+
+```text
+outline [--json] [--protocol 1] [--no-start] [--startup-timeout MS] COMMAND [ARGS]
+```
+
+Every command accepts `--help`. Commands that accept structured input use
+`--input FILE|-` and `--input-format json|jsonl`; stdin is used only when
+explicitly named as `-` or when the command documents piped input. Output files
+use `--output`, never shell-like positional guessing. Mutation commands accept
+`--idempotency-key`; porcelain accepts `--preview` and
+`--expect-diff HASH`; destructive forms accept `--yes` under the binding rules
+above.
+
+The stable command surface is:
+
+| Command | Contract |
+| --- | --- |
+| `outline version` | CLI/app/protocol versions; no Runtime start |
+| `outline status` | Runtime presence, instance/runtime/storage versions, revision, transaction-log and recovery health; no start |
+| `outline capabilities [--runtime]` | Generated capability registry and optional live compatibility check |
+| `outline schema` / `outline schema SCHEMA_NAME` | Exact JSON Schema for Selector, Projection, ChangeSet, Diff, Operation, Event, envelopes, errors, or a named command |
+| `outline find [TEXT]` | Structured search with `--query`, `--within`, Trash, ordering, cursor, limit, and Projection controls |
+| `outline show SELECTOR` | One deterministic target by default; Projection, depth, include, and pagination controls |
+| `outline export SELECTOR` | Bounded/streaming JSON, JSONL, Markdown, or OPML to stdout or `--output` |
+| `outline watch` | Ordered JSONL projection/Operation events from `--cursor`, with explicit resync |
+| `outline diff --input FILE|-` | Normalize and preview one ChangeSet without mutation |
+| `outline apply --input DIFF_FILE|-` | Apply one exact Diff and return one Operation |
+| `outline log` | Paginated Operation history; filters for origin, causation, affected Node, or Operation ID |
+| `outline revert OPERATION_ID` | Guarded exact revert; conflict is a non-writing Diff |
+| `outline undo` / `outline redo` | Convenience over the latest applicable recoverable Operation/revert Operation |
+
+Porcelain is grouped by document noun but remains thin. The exact version-1
+verb names are:
+
+| Family | Stable forms and subcommands |
+| --- | --- |
+| Structure/content | `add`, `set`, `move`, `duplicate`, `merge`, `indent`, `outdent` |
+| Done and tags | `done set`, `done cycle`, `tag add`, `tag remove` |
+| Fields | `field define`, `field set`, `field clear`, `field remove`, `field reuse`, `field select` |
+| Definitions | `definition create`, `definition configure`, `definition merge` |
+| References | `reference add`, `reference set`, `reference inline`, `reference restore` |
+| View base | `view set`, `view group set` |
+| View sort | `view sort add`, `view sort set`, `view sort remove`, `view sort clear` |
+| View filter | `view filter add`, `view filter set`, `view filter remove`, `view filter clear` |
+| View display fields | `view display add`, `view display set`, `view display remove` |
+| Saved search | `search create`, `search ensure-tag`, `search set`, `search refresh` |
+| Templates | `template apply`; `--preview` is the backfill preview |
+| Semantic creation | `daily ensure`, `capture add` |
+| Media | `asset ingest`, `asset show`, `asset export`, `media add`, `media set` |
+| Lifecycle | `trash`, `restore`, `purge` |
+
+The option and input schemas for these fixed verbs are generated by the
+registry. `add --tree` is the bulk typed-tree path; `set` owns content,
+description, code, checkbox, icon, banner, and image properties. Every porcelain
+target accepts exact shorthand or a structured TargetSpec. Repeated targets and
+query targets use the same bounded cardinality semantics, so there is no
+separate `batch-*` namespace. Single-intent non-destructive work applies in one
+CLI invocation; multi-parent or dependent work uses one ChangeSet instead of a
+shell loop.
+
+`purge @trash --contents` is Empty Trash. `purge` and `revert` are available to
+all callers, including built-in Agents. Confirmation and recovery admission are
+actor-neutral operation rules, not capability restrictions.
+
+### Read and observe flows and event retention
+
+`find`, `show`, and `export` resolve through Runtime's maintained Projection
+index and structured query engine. The service handles selectors, visibility,
+bounds, pagination, and export for desktop and CLI clients. Current read-model
+code may be moved or replaced only after behavior fixtures pass; its present
+shape is not part of the contract. Agent-specific Memory filtering is not part
+of this path.
+
+`Event` records are one of `projection.changed`, `operation.committed`,
+`operation.reverted`, `operation.recovery-expired`, or `resync.required`. They
+include Runtime instance, revision, event sequence, Operation summary when
+applicable, and an optional bounded Projection requested by the watcher. Events
+are emitted only after the corresponding public settlement point.
+
+Runtime retains a bounded ring of 10,000 events for its current instance. A
+cursor binds instance ID, sequence, revision, filter, and Projection hash.
+Reconnect within the ring resumes exactly; an expired cursor, Runtime restart,
+or filter mismatch emits one `resync.required` record and closes cleanly. The
+client performs a bounded read and starts a new watch; Runtime never implies
+that an incomplete stream is complete.
+
+### Desktop client cutover
+
+Electron main creates one shared `OutlineClient`, starts Runtime when needed,
+and forwards versioned request/stream envelopes through preload. Preload exposes
+only typed `request`, `subscribe`, and cancellation methods; it never exposes
+socket paths, tokens, filesystem handles, or Node APIs. Renderer state consumes
+Projection results and revision-ordered Events exactly as an external client
+would.
+
+Every renderer action that changes persisted Outliner state constructs the same
+public ChangeSet used by CLI. Shared intent builders may provide typed desktop
+porcelain, but they return contract objects and contain no Core calls. Existing
+renderer command names are a migration inventory, not a preserved transport.
+Once parity passes, the old document-command IPC dispatcher is deleted. Native
+file pickers, external URL opening, window actions, and other OS/UI effects stay
+in Electron main because they are explicitly outside the Outliner Runtime.
+
+The editor remains perceptually local: keystrokes update an optimistic
+renderer-owned draft, and a bounded debounce/blur/explicit-command boundary
+submits a text ChangeSet with expected revision. The draft is not document
+authority. Runtime acknowledgement returns its Operation/revision; a conflict
+keeps the draft recoverable and presents the existing editing conflict/error
+surface rather than silently replacing remote state. Chunking and debounce are
+selected from the existing latency probe, not assumed.
+
+Runtime Events reconcile optimistic local state by Operation ID and revision,
+so self-originated acknowledgement and broadcast apply once. Desktop Undo/Redo
+select recoverable Operations and use guarded revert. Window close and app quit
+wait for submitted ChangeSets to settle but do not flush workspace files
+themselves; Runtime owns durability.
+
+Desktop parity is a hard gate before legacy deletion: every persisted command,
+batch action, launcher capture, date ensure, view/definition mutation,
+attachment/media path, Trash action, and history action must pass through
+Runtime in renderer tests and packaged E2E. A static dependency guard rejects
+Core, workspace persistence, Operation journal, recovery, or asset-store imports
+from Electron main and renderer code.
+
+### Full Agent authority and trusted causation
+
+The built-in Agent invokes `outline` through its admitted shell/process tool.
+The host places the packaged CLI on the ordinary Agent tool path and supplies a
+short-lived attestation in a private environment variable for each shell Item.
+The attestation is minted from host-known Thread ID, Turn ID, and Item/tool-call
+ID, expires after 60 seconds, is bound to the Runtime instance and workspace,
+and is never accepted from ChangeSet JSON or argv.
+
+The CLI forwards the opaque attestation separately from its public request body.
+Runtime verifies it and records immutable causation on successful Operations.
+A request declaring built-in Agent origin without a valid attestation may read
+but cannot mutate; it returns `agent_attestation_required` rather than silently
+recording local-user origin. Ordinary terminal and external clients do not need
+an attestation and receive the same mutation schema under user-level authority.
+
+One shell Item should compose dependent work into one ChangeSet and therefore
+one mutation. The attestation may authorize multiple read/diff calls but is
+consumed by its successful mutation; a later mutation obtains a new Item and
+attestation. This preserves exact Item causation without reducing available
+Outliner operations.
+
+Remove the current Outliner-specific action grants, Node-resource visibility,
+and Memory projection filters from Agent tool execution. Preserve Memory's
+mutation observation and causation-based indexing; only filtering that changes
+what the Agent can read through Outliner is retired. Local-file/shell controls,
+worktree isolation, explicit global capability blocks, and native OS failures
+remain owned by their existing systems and are not recreated in Runtime.
+
+CLI results flow through the normal shell Item artifact path. Concise output
+always keeps Operation ID, status, affected count, and recovery state visible;
+large Projection/export data is streamed or written to an explicit artifact so
+tool-result trimming cannot hide mutation settlement.
+
+### `outline` Skill
+
+Add an immutable built-in Skill named `outline`. Its frontmatter summary makes
+it discoverable for any request to inspect, edit, organize, import into, or
+recover the outline. The instructions teach:
+
+- use `find` before mutation when an exact selector is unavailable;
+- use porcelain for one single intent and a ChangeSet for dependent or
+  multi-target work;
+- use structured selectors and explicit cardinality rather than guessed text;
+- use `--json`, stdin/files, and schema discovery for machine workflows;
+- preview destructive, ambiguous, or high-volume changes and bind apply to the
+  Diff hash;
+- preserve and report Operation IDs;
+- use `log` and guarded `revert` for recovery; and
+- avoid UI/session state, direct workspace files, private APIs, and shell loops
+  that replace ChangeSet composition.
+
+The Skill contains small canonical examples, not copied JSON Schemas, parser
+code, selector code, or mutation code. It obtains current help and schemas from
+`outline --help`, `outline capabilities`, and `outline schema`. It does not invent
+a model-native wrapper tool.
+
+### `outline-import` Skill and import convergence
+
+Replace `tenon-import` with an immutable built-in Skill named
+`outline-import`. Import is a scenario proof of general composition, not a
+Runtime namespace. The Skill owns only source workflow knowledge:
+
+1. inspect the source and enumerate records;
+2. produce coverage showing every source record as mapped, intentionally
+   skipped, or blocked;
+3. apply optional cleanup and source-specific mapping when needed;
+4. generate a generic ChangeSet or JSONL ChangeSet stream;
+5. run `outline diff`, compare its ChangeSet/input fingerprints with reviewed
+   evidence, and stop on unresolved coverage or selectors;
+6. apply the exact Diff once; and
+7. verify through the returned bounded Projection and independent `show`/`find`
+   reads, reporting the Operation ID and using guarded revert on mismatch.
+
+Cleaning is optional. Already-normalized source records proceed directly to
+ChangeSet generation. Coverage and source fingerprints remain review evidence;
+Runtime recognizes only the generic ChangeSet, Diff, and Operation contracts.
+
+Cross-date import emits one `ensure` per unique local date, binds each date Node,
+and creates the corresponding trees below those bindings. One source containing
+100 dates uses one `diff` and one `apply`, with no per-date ID discovery and no
+shell mutation loop. Existing date scaffolding remains untouched; newly ensured
+year/week/day Nodes are inside the same patch, Operation, and revert frontier.
+
+Keep source-specific read-only adapters and fixtures inside the Skill. Rename
+the Tana path around normalized source records and generic ChangeSet generation,
+for example `inspect-source`, `tana-to-changeset`, `check-coverage`, and
+`verify-result`. Delete the main-owned Import Pack parser/writer, preview cache,
+commit service, `/preview` and `/commit` endpoints, causation exception,
+`tenon-import` binary/wrapper, and import-specific packaging resources. No old
+Import Pack reader or alias remains.
+
+### Capability parity and old-surface retirement
+
+The public capability registry is defined from the target Outliner domain, not
+from `DOCUMENT_COMMANDS`. Migration completeness is artifact-driven: a parity
+script reads the legacy renderer/Core commands, persisted asset capabilities,
+desktop action fixtures, native Agent tools, and the target registry. Every
+legacy item must be classified as:
+
+- represented by a public read/Projection;
+- represented by one public Change variant;
+- represented by porcelain;
+- internal initialization/recovery plumbing with a documented reason; or
+- intentionally excluded non-document OS/UI effect.
+
+The script fails on an unclassified item, duplicate ownership, accidental
+public Core-command spelling, or a documented public operation without a
+Runtime handler and test. It specifically proves coverage for rich content, fields, tags,
+definitions, references, saved searches, views, done state, batch selectors,
+templates, Daily Notes, capture provenance, Trash/purge, images, attachments,
+icons, banners, export, operation history, observation, and exact revert.
+
+Replay the fixture corpus for `node_search`, `node_read`, `node_create`,
+`node_edit`, `node_delete`, and `outline_undo_stack` through the `outline` Skill
+and CLI before removing them. Add fixtures for capabilities those tools lack:
+purge/Empty Trash, media, capture, template backfill, canonical multi-date
+writes, direct field values, reference/inline conversion, and bounded batch
+operations.
+
+After desktop and Agent parity pass on the feature branch, delete the old
+renderer document dispatcher and all six native tools from the registry,
+provider catalog, schemas, descriptions, handlers, result views,
+visibility/action-set paths, and active tests/specs. Existing frozen Threads
+must start a new Thread; no compatibility handler interprets old calls.
+
+A retirement guard derives its queue from `rg` over `src`, `tests`, `scripts`,
+`package.json`, active `docs/plans`, and `docs/spec`. It fails on live references
+to the six tool names, `tenon-import`, `AgentImportService`,
+`AgentImportApiServer`, Import Pack write types, import socket paths, import-only
+causation environment variables, or deleted package resources. Historical
+archive references are reported separately and allowed only as history. Ready
+means the live queue is empty, not that a hand-maintained checklist is checked.
+
+### Packaging and distribution
+
+`package.json` replaces `import-cli:build` with one `outline:build` step that
+produces two audited ESM bundles under `Resources/outline`: the thin
+`outline.mjs` client and the standalone `outline-runtime.mjs` server. A single
+`Resources/outline/bin/outline` launcher resolves development versus packaged
+entries and is added once to the ordinary Agent executable path.
+
+The CLI bundle includes only public contract, shared client, argv/parser,
+discovery/start, formatters, and porcelain builders. It cannot import Core,
+Loro, storage, Electron main, Agent runtime, or source adapters. The Runtime
+bundle includes contract, Runtime domain, Core, query/projection engine,
+transaction log, and blob stores; it cannot import Electron, renderer, Agent
+provider/runtime, CLI argv, or Skill code. Bundle dependency guards enforce both
+directions.
+
+Both built-in Skills invoke the one packaged `outline` launcher and contain no
+private executable wrapper. Replace `tenonImportRuntime`,
+`tenonImportShellEnvironment`, and `tenonImportResourceNames` with generic
+Runtime discovery/path plus Agent-attestation configuration.
+
+The packaged DMG smoke test verifies:
+
+- the CLI and Runtime resources exist and run as separate Node entries;
+- `outline version`, `schema`, and `capabilities` run without Runtime;
+- a document command starts standalone Runtime with isolated userData and no
+  Electron import;
+- desktop and CLI concurrently attach to the same Runtime and observe one
+  document/event sequence;
+- quitting/reopening desktop does not move document authority or start a second
+  writer; and
+- both built-in Skills resolve the same CLI binary.
+
+No global `/usr/local/bin` or shell profile mutation occurs during installation.
+The supported public entry is the bundled Skill/Agent path and the executable
+under the app's Resources directory; documentation gives the exact packaged
+path and an optional user-created symlink command without performing it.
+
+### Expected file surface
+
+New files are expected under:
+
+- `src/outline/contract/` for public contracts, schemas, canonical hashing,
+  errors, and the target capability registry;
+- `src/outline/runtime/` for Runtime domain, process/server, transaction log,
+  snapshots, recovery, events, projection index, and asset/blob storage;
+- `src/outline/client/` for shared discovery, supervision, negotiation,
+  requests, and streams;
+- `src/outline/cli/` for the thin client entry, formatting, and porcelain;
+- `src/main/outlineClient/` for Electron supervision, typed forwarding, and
+  preload integration;
+- `src/main/builtInSkills/outline/` and
+  `src/main/builtInSkills/outline-import/`;
+- `scripts/` for capability-parity, retirement, packaging, and provider probes;
+  and
+- focused Core/main/CLI/Skill/process fixtures under `tests/`.
+
+Coordinated modifications include `Core.transaction`, transaction patch types,
+renderer document state/actions/events, preload/main protocol forwarding,
+launcher capture, native file/asset handoff, Agent shell environment and tool
+catalog, Memory's Outliner projection hooks, built-in Skill configuration,
+`package.json`, and packaging resources.
+
+Current main-owned `DocumentService` behavior is decomposed/re-homed behind
+Runtime. `OperationJournal` becomes the transaction-log Operation index;
+`WorkspaceSaver` is removed; `WorkspacePersistenceStore` is replaced by the
+checksummed `WorkspaceTransactionLog` and snapshot compactor; `AssetService` is
+replaced by logical AssetRecords over the content-addressed blob store. Electron
+main retains no imports of those authorities after cutover.
+
+The feature deletes the live import-only files and `tenon-import` Skill/resource
+tree after its reusable adapter fixtures move to `outline-import`. It deletes
+`agentNodeTool*` and `agentOutlineParser` files only after shared selector/read
+logic has moved and the retirement guard proves no remaining consumer.
+
+The implementation updates current behavior in the same PR:
+
+- `docs/spec/architecture.md` owns standalone Runtime lifecycle, desktop client
+  boundary, socket security, transaction-log/recovery storage, and single-writer
+  ownership;
+- `docs/spec/commands.md` owns the unified desktop/CLI Outliner contract,
+  operation/revert behavior, assets, and GC;
+- `docs/spec/agent-tool-design.md` removes six native tools/import APIs and owns
+  CLI-through-Skill execution and result audit;
+- `docs/spec/agent-tool-permissions.md` records full Outliner authority with
+  trusted causation and no Node/action/projection scope;
+- `docs/spec/agent-skills.md` owns both built-in Skills and their division of
+  responsibility;
+- `docs/spec/agent-integration.md` owns causation, shell environment, parity,
+  and cross-layer verification; and
+- `docs/spec/outliner-parity-matrix.md` records the final public capability
+  mapping and evidence.
+
+No new spec authority is needed, so `docs/spec/README.md` should not change
+unless implementation proves an existing owner cannot carry one of these
+contracts.
+
+### Ownership and collision handling
+
+This feature requires one dev owner because `package.json`, main startup,
+`src/core/commands.ts`, and `src/core/types.ts` are infrastructure/protocol
+surfaces and the old consumers must disappear in the same PR. The first commit
+inside the Draft PR settles pure contracts and transaction hooks for review;
+it is not merged as separately released groundwork. Later commits build only on
+that settled shape.
+
+Before claiming the work, the dev reruns `gh pr list`, scans `docs/TASKS.md`, and
+compares every intended file area with open Draft-PR scope lines. Any real
+overlap on protocol, main lifecycle, persistence, assets, Agent tools, or built-in
+Skills is escalated before editing. With no overlap, the Draft PR's first body
+line claims those areas explicitly. The dev does not edit `docs/TASKS.md` or
+`CHANGELOG.md`; main owns those changes at the integration gate.
+
+### Requirements, acceptance, and verification matrix
+
+| Contract | Required evidence |
+| --- | --- |
+| Selector/Projection and output (`FR-1`, `FR-2`) | Golden schemas and envelopes; test titles `resolves identical human and JSON target sets`, `rejects ambiguous mutation selectors`, `paginates at a bound revision`, and `emits resumable JSONL records` |
+| ChangeSet normalization (`FR-3`, `FR-4`, `FR-12`) | Property/golden tests showing porcelain/direct equivalence, stable canonical hashes, fixed IDs/bindings, non-mutating Diff, 100-date one-diff/one-apply, and bounded returned Projection |
+| Atomicity and concurrency (`FR-5`, `FR-6`) | Tests `rolls back every chunk after a late Change failure`, `rejects a stale Diff without writes`, `does not retry a stale mutation`, and `requires Diff-bound destructive acknowledgement` |
+| Durable recovery (`FR-5`, `FR-12`) | Restart tests for ordinary edits, create/delete, purge, Empty Trash, revert conflict, revert-of-revert, crash before log append, crash after log fsync/before acknowledgement, truncated tail, orphan blob, corrupt referenced blob, idempotency, retention, and capacity |
+| Asset safety (`FR-5`, `FR-12`) | Fixtures proving live, leased, and recovery-only AssetRecords/blobs survive GC; expired unreferenced bytes are eventually removed; purge recovery restores media; `delete_asset` is absent |
+| Runtime lifecycle (`FR-10`) | Process tests for CLI start, desktop start, `--no-start`, stale descriptor/lock, simultaneous desktop/CLI startup, shared attachment, independent desktop restart, idle drain, unavailable timeout, private permissions, and no client persistence import |
+| Desktop cutover (`FR-3`, `FR-5`, `FR-11`) | Renderer/preload/E2E proof that every persisted desktop action produces Runtime Operation/Event, optimistic drafts reconcile once, conflict keeps draft, Undo/Redo uses guarded revert, and dependency guard finds no document authority in Electron main |
+| Agent authority (`FR-8`, `FR-9`) | Registry equality test for local-user and built-in-Agent schemas; valid/missing/expired attestation tests; immutable Thread/Turn/Item audit; full purge/revert coverage; no Memory projection filtering |
+| Import composition (`FR-7`, `FR-12`) | No-clean and cleaned source fixtures, complete coverage gate, changed-input/Diff mismatch, 100+ Daily Notes, mixed parents, failed verification with Operation ID, exact revert, and no scenario Runtime endpoint |
+| Native tool cutover (`FR-9`) | Six-tool fixture replay, new capability fixtures, generated parity report with zero gaps, provider probe, and retirement guard with an empty live queue |
+| Packaging/security (`NFR-1` through `NFR-6`) | Thin-bundle dependency assertion, packaged CLI/Skill smoke, socket/descriptor mode checks, credential-redaction checks, bounded JSONL/export probes, and recovery disk-budget tests |
+
+Provider parity is measured on the old-tool baseline and the new Skill/CLI branch
+with identical prompts, fixture workspaces, provider/model, and run count. At
+least one Anthropic and one OpenAI-compatible production model are exercised
+when credentials are available. The hard gate is identical correct final
+document state, no partial writes, visible Operation ID/recovery state, and no
+scenario requiring more than one mutation Operation. Record tool/schema tokens,
+model-visible tokens, CLI invocation count, end-to-end latency, and failure
+recovery; latency is evidence for optimization, not a reason to weaken
+atomicity, attribution, or durability.
+
+Performance probes cover cold Runtime start, warm reads, a single-intent porcelain
+mutation, 10,000-result export, 100-date apply, and a large tree ChangeSet.
+Capture event-loop stall distribution and memory high-water marks before tuning
+chunk sizes. Cooperative chunking may improve responsiveness but may not create
+multiple public transactions or expose intermediate persistence.
+
+The final branch runs:
+
+- `bun run typecheck`;
+- `bun run test:core`;
+- `bun run test:renderer` because renderer command/asset surfaces change;
+- focused CLI/process/Skill tests and relevant E2E coverage;
+- `bun run docs:check`;
+- the generated capability-parity and retirement guards;
+- `bun run app:build` plus packaged standalone-Runtime/desktop/CLI smoke; and
+- `git diff --check`.
+
+### Risks and mitigations
+
+- **Preview/live divergence:** An ephemeral Core could produce a different
+  patch from live execution. Fix all IDs during normalization, share one
+  executor, and compare exact patch digests inside the live rollback frontier.
+- **False recovery confidence:** History metadata alone does not restore state.
+  Commit document update, Operation, recovery-patch reference, asset delta, and
+  idempotency result in one fsynced log record; test replay at every crash edge.
+- **Recovery storage growth:** Large purges and media can retain substantial
+  state. Enforce the 30-day/1,000-operation floor, 2 GiB admission budget, and
+  fail before mutation rather than evict protected recovery.
+- **Asset loss or leaks:** Direct unlink can destroy revert data, while never
+  deleting grows storage forever. Remove public delete and use logical records,
+  content-addressed blobs, and live/recovery/lease mark-and-sweep with expiry
+  tests.
+- **Runtime startup races:** Desktop and CLI can start the server concurrently.
+  Use one Runtime-specific atomic lock/descriptor identity, make losers attach,
+  and keep Electron's UI single-instance lock unrelated.
+- **Desktop interaction latency:** Moving authority out of Electron main adds a
+  process hop and durable commit boundary. Keep editor drafts optimistic, batch
+  only at measured semantic boundaries, stream Events, and reject any design
+  that restores in-process document authority as a latency shortcut.
+- **Runtime crash visibility:** A separate process can exit while desktop is
+  open. The client reports unavailable state, preserves local drafts, restarts
+  through the common supervisor, and resumes from verified revision/cursor.
+- **Transaction-log corruption:** One log removes split settlement but raises
+  the importance of its codec. Use checksummed records, verified snapshots,
+  incomplete-tail handling, content-addressed blobs, replay/property tests, and
+  fail-closed mutation admission at decode boundaries.
+- **CLI business-logic growth:** Porcelain and route handlers can duplicate
+  Runtime semantics. Generate them from the registry and require every mutation
+  to lower into ChangeSet before document access.
+- **Oversized ChangeSets:** Import-sized input can block Runtime or exhaust memory.
+  Use bounded JSONL parsing, private spool files, cooperative Core chunks, and
+  one rollback frontier; measure stalls before selecting thresholds.
+- **Agent attribution loss:** A child process can drop or forge context. Keep
+  causation outside public JSON, bind the host attestation to Runtime/workspace/
+  Item, reject declared built-in mutation without it, and test expiry/consumption.
+- **Skill reliability regression:** Shell use can save schema tokens but add
+  model round trips or hide settlement. Give one concise Skill, batch dependent
+  work, keep Operation summaries visible, and require deterministic plus
+  production-provider parity before retirement.
+- **Incomplete retirement:** A private import or native handler could survive as
+  a second path. Generate parity and retirement queues from current files and
+  make empty output a readiness gate.
+- **Stale specs and plans:** Removing a subsystem invalidates current premises.
+  Sweep active specs/plans in the retirement PR; main updates the board,
+  changelog, lesson, plan archive, and any remaining retirement references at
+  the merge gate.
+
+## Open questions
+
+None. Standalone Runtime authority, desktop-as-client architecture, one durable
+transaction log, public binary name, authority model, lifecycle, one-PR delivery
+shape, recovery policy, asset deletion boundary, import composition, Agent
+capability equality, legacy retirement, and MCP exclusion are fixed for
+implementation.
+
+## Build checklist
+
+- [ ] **1. Claim one complete feature and freeze the public contract.** Re-run
+  collision checks, open one Draft PR with the full file/area scope, add the
+  pure `src/outline/contract/` schemas/registry/hash/error modules, and add golden
+  tests for all versioned contracts, commands, JSON/JSONL envelopes, and exit
+  mappings. Covers `FR-1`, `FR-2`, `FR-3`, `FR-6`, `FR-12`; acceptance
+  `AC-1` through `AC-6`, `AC-12`, `AC-13`, `AC-24`, `AC-29`.
+- [ ] **2. Expose exact Core transaction patches.** Extend the transaction
+  boundary to retain immutable complete before/after touched-Node patches until
+  post-fsync finalization, capture deterministic document updates, add the
+  trusted recovery-patch command, and prove create/update/move/heal/delete/chunk
+  rollback coverage. Covers `FR-3`, `FR-5`; acceptance `AC-6`, `AC-9`,
+  `AC-35`.
+- [ ] **3. Build the transactional storage authority.** Add checksummed
+  `WorkspaceTransactionLog`, verified snapshots, content-addressed recovery
+  blobs, atomic Operation/idempotency/Event records, guarded revert/revert-of-
+  revert, crash replay, 30-day/1,000-operation retention, and 2 GiB admission
+  budget. Delete split saver/journal settlement. Covers
+  `FR-5`, `FR-6`, `FR-12`; acceptance `AC-8` through `AC-13`, `AC-32` through
+  `AC-35`.
+- [ ] **4. Build the standalone Runtime process.** Add transport-independent
+  handlers, Unix-socket adapters, descriptor/authentication, Runtime-specific
+  single-writer lock, shared client/supervisor, event cursors, idle drain, and
+  deterministic desktop/CLI discovery/start. Prove the server imports no
+  Electron/renderer/Agent provider code and clients import no persistence. Covers
+  `FR-2`, `FR-10`, `FR-11`; acceptance `AC-3` through
+  `AC-5`, `AC-20` through `AC-22`, `AC-37`.
+- [ ] **5. Implement the shared Selector/Projection/ChangeSet kernel.** Move
+  reusable Outliner parser/read logic out of Agent capability modules; add
+  deterministic selectors, cardinality, bindings, fixed IDs, preview Core,
+  normalization, Diff/apply, large JSONL framing, bounded returned Projections,
+  and watch. Covers `FR-1` through `FR-7`, `FR-10`, `FR-12`; acceptance
+  `AC-1` through `AC-15`, `AC-20`, `AC-21`, `AC-24` through `AC-29`.
+- [ ] **6. Cut the desktop over as an equal client.** Route every persisted
+  renderer/launcher action, read, event, asset handoff, and Undo/Redo through
+  shared contracts; preserve optimistic editor drafts and conflict recovery;
+  add client-dependency guards; and pass complete desktop parity before deleting
+  the old dispatcher. Covers `FR-3`, `FR-5`, `FR-10`, `FR-11`; acceptance
+  `AC-6`, `AC-9` through `AC-13`, `AC-20` through `AC-22`, `AC-32` through
+  `AC-36`.
+- [ ] **7. Complete CLI and document parity.** Implement the thin client,
+  lifecycle discovery, output formatting, direct ChangeSet commands, all
+  porcelain families, schema/help generation, history/recovery commands, and a
+  registry mapping for every persisted Outliner capability. The generated
+  unsupported-capability report must be empty. Covers `FR-1` through `FR-6`,
+  `FR-10` through `FR-12`; acceptance `AC-1` through `AC-13`, `AC-20` through
+  `AC-22`, `AC-24` through `AC-29`, `AC-32` through `AC-35`, `AC-37`.
+- [ ] **8. Make assets transactional and recovery-aware.** Add logical
+  AssetRecords, content-addressed blobs, staged leases and CLI ingest/show/
+  export, include asset references and size reservations in recovery patches,
+  implement live/recovery/lease mark-and-sweep, remove public `delete_asset`, and prove
+  purge/revert/expiry/GC behavior. Covers `FR-5`, `FR-12`; acceptance `AC-11`,
+  `AC-34` through `AC-36`.
+- [ ] **9. Add both Skills and absorb import.** Add the schema-light `outline`
+  Skill; replace `tenon-import` with `outline-import`; retain source inspection,
+  optional cleaning, coverage, adapters, and verification; generate only generic
+  ChangeSets; prove no-clean and 100-date workflows; delete Import Pack writes,
+  private API/service, binary, causation exception, and packaging. Covers
+  `FR-7`, `FR-9`, `FR-12`; acceptance `AC-14`, `AC-15`, `AC-18`, `AC-19`,
+  `AC-23` through `AC-29`.
+- [ ] **10. Cut the built-in Agent over with full authority.** Put `outline` on
+  the ordinary Agent path, generalize host attestation for shell Items, record
+  immutable causation, keep Operation settlement visible, remove Node/action/
+  Memory projection scopes, and prove local-user/Agent registry equality plus
+  missing/expired attestation behavior. Covers `FR-8`, `FR-9`; acceptance
+  `AC-16` through `AC-19`, `AC-30`, `AC-31`.
+- [ ] **11. Retire every legacy document surface.** Replay desktop and six-tool
+  deterministic corpora plus the production-provider probe, then remove the
+  main-owned document dispatcher/store, catalog entries, schemas, handlers,
+  views, permission paths, stale tests, import writer, and active specs. Run the
+  generated retirement/dependency guards until both live queues are empty. Covers `FR-9`;
+  acceptance `AC-18`, `AC-19`.
+- [ ] **12. Fold design into current specs.** Update architecture, commands,
+  Agent tool design, Agent permissions, Agent Skills, Agent integration, and the
+  parity matrix in the same PR; sweep active plan/spec premises invalidated by
+  import/native-tool retirement. Covers architecture rule A6 and the complete
+  product-definition acceptance set.
+- [ ] **13. Pass the complete release gate.** Run typecheck, Core/renderer/
+  CLI/process/Skill/E2E tests, docs check, parity and retirement guards,
+  performance probes, package build, packaged Runtime/desktop/CLI smoke, provider
+  evidence, and diff check. Keep the PR Draft and do not report completion until
+  every test passes, both generated queues are empty, and no legacy mutation
+  surface remains.

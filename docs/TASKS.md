@@ -35,6 +35,14 @@ The flagship (`unified-command-surface`) shipped and the 2026-08-09 audit re-anc
 every stale entry, so the frontier is a set of parallel lanes (detail lives in each item's
 theme-section entry below; this list is the ordering, not a second record):
 
+- **Lane 0 — standalone Outliner Runtime and `outline` CLI**: the PM-ratified
+  [`outliner-runtime-cli`](plans/outliner-runtime-cli.md) plan is the immediate
+  P0 and is ready for one dev to claim. It is one complete feature in one Draft
+  PR: standalone Runtime authority, desktop/CLI protocol cutover, transactional
+  recovery, asset lifecycle, full Agent authority, both Skills, import
+  convergence, and complete legacy deletion. Do not split or merge an
+  intermediate state; its shared ownership surface pauses conflicting startup,
+  Core/persistence, asset, Agent-tool, and built-in-Skill work while claimed.
 - **Lane A — build-ready quick wins** (fast-track, parallelize freely; small items
   don't count against the review-queue cap): `floating-toolbar-polish` (**unblocked
   2026-08-10** — its `core/types.ts` dependency landed with #510; rebase and go),
@@ -105,6 +113,21 @@ completed, plans archived `done`). The persistence/context, memory, and experien
 live in `agent-data-model`, `agent-memory-foundations`, and `agent-conversation-model`
 (authorities). The remaining agent work is the small active/deferred set under **Agent
 capabilities** below — feature-completion tails and standalone items, not a milestone push.
+
+### Outliner Runtime And Automation
+
+- **[outliner-runtime-cli](plans/outliner-runtime-cli.md)** (P0, `draft`,
+  PM-ratified 2026-08-23, unclaimed) — replace every persisted Outliner access
+  path with one standalone local TypeScript Runtime and one versioned contract;
+  make desktop and `outline` CLI equal clients; commit document update,
+  Operation, recovery patch, asset delta, idempotency result, and Event sequence
+  at one transaction-log boundary; give Agents the complete caller-neutral
+  Outliner schema with trusted causation; compose import through generic
+  ChangeSets; then delete the renderer document authority, six native Node tools,
+  Import Pack writer/API, and `tenon-import`. Shape (a): one complete feature,
+  one dev owner, one Draft PR, no partial merge. The claiming dev reruns the
+  collision check and names protocol, startup, persistence, asset, Agent-tool,
+  built-in-Skill, packaging, and spec scope in the PR's first body line.
 
 ### Command surface & capture
 
