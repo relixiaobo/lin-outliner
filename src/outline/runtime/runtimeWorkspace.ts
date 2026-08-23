@@ -42,6 +42,7 @@ export interface OutlineRuntimeWorkspaceOptions {
 export class OutlineRuntimeWorkspace {
   private mutationChain: Promise<unknown> = Promise.resolve();
   private settlementUnknown = false;
+  private eventListeners = new Set<(event: OutlineEvent) => void>();
   private readonly now: () => Date;
 
   private constructor(
@@ -92,6 +93,11 @@ export class OutlineRuntimeWorkspace {
 
   documentState() {
     return this.core.state();
+  }
+
+  subscribe(listener: (event: OutlineEvent) => void): () => void {
+    this.eventListeners.add(listener);
+    return () => this.eventListeners.delete(listener);
   }
 
   async mutate(request: OutlineRuntimeMutationRequest): Promise<Operation> {
@@ -323,7 +329,16 @@ export class OutlineRuntimeWorkspace {
         { retryable: true, details: error instanceof Error ? error.message : String(error) },
       ));
     }
-    if (!appended.idempotent) this.core = candidate;
+    if (!appended.idempotent) {
+      this.core = candidate;
+      for (const listener of this.eventListeners) {
+        try {
+          listener(appended.event);
+        } catch {
+          // Observer failure cannot turn a durable Operation into a failed mutation.
+        }
+      }
+    }
     return appended.operation;
   }
 
