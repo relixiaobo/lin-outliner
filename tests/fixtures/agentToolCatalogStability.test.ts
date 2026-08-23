@@ -3,7 +3,6 @@ import type { EffectiveThreadConfiguration } from '../../src/core/agent/configur
 import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../../src/core/agent/tools';
 import type { ThreadService } from '../../src/main/agent/ThreadService';
 import type { AgentImageGenerationRuntime } from '../../src/main/agent/capabilities/agentImageGenerationTool';
-import type { OutlinerToolHost } from '../../src/main/agent/capabilities/agentNodeTools';
 import type { TurnExecutionContext } from '../../src/main/agent/runtime/types';
 
 mock.module('electron', () => ({
@@ -23,11 +22,6 @@ const configuration: EffectiveThreadConfiguration = {
   preloadedSkills: [],
   plugins: [],
   mcpServers: [],
-};
-
-const outliner: OutlinerToolHost = {
-  getProjection: () => { throw new Error('catalog test does not read the Outliner'); },
-  handle: async () => { throw new Error('catalog test does not mutate the Outliner'); },
 };
 
 const imageGeneration = {
@@ -75,7 +69,6 @@ describe('canonical provider tool catalog', () => {
       builtInSkills: [],
     });
     const runtime = new ToolRuntime(service, {
-      outliner,
       skillRuntime,
       imageGeneration,
       capabilityConfig: { blocks: [] },

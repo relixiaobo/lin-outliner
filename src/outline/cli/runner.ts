@@ -20,6 +20,7 @@ import {
 import { canonicalSha256 } from '../contract/canonical';
 import { canonicalJson } from '../contract/canonical';
 import { OutlineClientSupervisor, resolveOutlineRuntimeRoot } from '../client';
+import { OUTLINE_AGENT_ATTESTATION_ENV } from '../contract/agentAttestation';
 import {
   parseChangeSetInput,
   parseReadCommand,
@@ -116,10 +117,14 @@ async function executeInvocation(
   }
 
   const runtimeRoot = options.runtimeRoot ?? resolveOutlineRuntimeRoot({ env: options.env });
+  const environment = options.env ?? process.env;
+  const agentAttestation = environment[OUTLINE_AGENT_ATTESTATION_ENV];
   const supervisor = new OutlineClientSupervisor({
     root: runtimeRoot,
     noStart: invocation.noStart,
     startupTimeoutMs: invocation.startupTimeoutMs,
+    origin: agentAttestation ? 'built-in-agent' : 'local-user',
+    ...(agentAttestation ? { agentAttestation } : {}),
   });
   if (invocation.command === 'status') {
     assertNoArgs(invocation);
@@ -218,14 +223,12 @@ async function runtimeInput(
   }
   if (invocation.command === 'log') return parseLogInput(invocation.args);
   if (invocation.command === 'revert') {
-    const preview = takeFlag(invocation.args, '--preview');
-    if (preview.rest.length !== 1) throw usageError('revert requires exactly one Operation ID.');
-    return { operationId: preview.rest[0], ...(preview.present ? { preview: true } : {}) };
+    if (invocation.args.length !== 1) throw usageError('revert requires exactly one Operation ID.');
+    return { operationId: invocation.args[0] };
   }
   if (invocation.command === 'undo' || invocation.command === 'redo') {
-    const preview = takeFlag(invocation.args, '--preview');
-    if (preview.rest.length > 0) throw usageError(`${invocation.command} does not accept positional arguments.`);
-    return preview.present ? { preview: true } : {};
+    if (invocation.args.length > 0) throw usageError(`${invocation.command} does not accept arguments.`);
+    return {};
   }
   if (!['diff', 'apply'].includes(invocation.command)) {
     return buildPorcelainRequest(invocation.command, invocation.args, {
@@ -338,8 +341,12 @@ function parseLogInput(args: readonly string[]): Record<string, unknown> {
     if (arg === '--limit') result.limit = positiveInteger(args[++index], '--limit');
     else if (arg === '--cursor') result.cursor = requiredValue(args[++index], '--cursor');
     else if (arg === '--operation') result.operationId = requiredValue(args[++index], '--operation');
+    else if (arg === '--idempotency-key') result.idempotencyKey = requiredValue(args[++index], '--idempotency-key');
     else if (arg === '--node') result.nodeId = requiredValue(args[++index], '--node');
     else if (arg === '--origin') result.origin = requiredValue(args[++index], '--origin');
+    else if (arg === '--thread') result.threadId = requiredValue(args[++index], '--thread');
+    else if (arg === '--turn') result.turnId = requiredValue(args[++index], '--turn');
+    else if (arg === '--item') result.itemId = requiredValue(args[++index], '--item');
     else throw usageError(`Unknown log option: ${arg}`);
   }
   return result;

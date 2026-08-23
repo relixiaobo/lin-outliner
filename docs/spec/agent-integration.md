@@ -19,13 +19,18 @@ Agent Core. It is a contract checklist, not project status.
 ## Tool Contract
 
 - Register one collision-free canonical identity and complete schema.
+- Reach persisted Outliner state only through `bash` and the public `outline`
+  CLI; do not add a document-native model tool or private import endpoint.
+- Classify Outline shell calls from the executable capability registry and
+  require host attestation for built-in Agent mutations.
 - Keep the Agent orchestration surface to `agent`, `agent_message`, and unified
   `task_stop`; do not add a roster, inbox, follow-up, wait, or polling alias.
 - Declare Core scope and action kinds.
 - Apply effective configuration and parent capability ceilings.
 - Return native structured unavailable or failure results.
 - Emit one started and one terminal Item.
-- Attach Thread/Turn/Item causation to document mutations.
+- Attach Thread/Turn/Item causation to the Runtime Operation, not to a parallel
+  Agent document schema.
 - Keep visible output bounded without discarding durable details.
 - Start every new Agent from fresh context; reuse its own history only when the
   same stable ID is resumed.
@@ -38,7 +43,8 @@ Agent Core. It is a contract checklist, not project status.
 - Use host or per-Thread barriers for configuration changes.
 - Reconcile orphan extension state on startup.
 - Contribute context or terminal Items through typed hooks.
-- Use trusted document transactions for atomic Node plus receipt publication.
+- Use one idempotent Runtime ChangeSet for atomic Node plus receipt publication;
+  settle the feature store from the durable Operation.
 
 ## Renderer Contract
 
@@ -54,6 +60,8 @@ Agent Core. It is a contract checklist, not project status.
 ## Persistence Contract
 
 - Add no alternate history ledger.
+- Keep document Operation history, recovery patches, and asset reachability in
+  the standalone Runtime; Agent stores retain only feature control state.
 - Keep rollout JSONL append-only and projections rebuildable.
 - Keep feature stores explicitly owned and keyed by canonical IDs.
 - Persist Agent identity, recorded configuration, stop provenance, retained
@@ -71,5 +79,7 @@ Agent Core. It is a contract checklist, not project status.
 - Add renderer tests for each visible canonical state.
 - Add E2E coverage for the user workflow.
 - Keep the active repository residue guard clean.
+- Verify every Core document command has exactly one public capability owner and
+  no retired document/import authority remains live.
 - Run typecheck, Core tests, renderer tests, E2E, docs check, and diff check
   before the PR is ready.

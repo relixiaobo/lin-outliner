@@ -637,7 +637,7 @@ test.describe('canonical agent Thread surface', () => {
     ]));
   });
 
-  test('renders used Memory as an inline Node reference while keeping node_read in the process', async ({ page }) => {
+  test('renders used Memory as an inline Node reference while keeping supporting work in the process', async ({ page }) => {
     const fixture = await page.evaluate(async ({ memoryNodeId }) => {
       const target = window as Window & {
         lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
@@ -675,13 +675,13 @@ test.describe('canonical agent Thread surface', () => {
               type: 'dynamicToolCall',
               provenance: itemProvenance(toolId),
               namespace: null,
-              tool: 'node_read',
-              arguments: { node_id: memoryNodeId },
+              tool: 'file_read',
+              arguments: { file_path: '/workspace/saved-preference.md' },
               modelCall: {
                 disposition: 'replayable',
-                identity: { namespace: null, name: 'node_read' },
-                providerName: 'node_read',
-                arguments: { storage: 'inline', value: { node_id: memoryNodeId } },
+                identity: { namespace: null, name: 'file_read' },
+                providerName: 'file_read',
+                arguments: { storage: 'inline', value: { file_path: '/workspace/saved-preference.md' } },
                 schemaDigest: '0'.repeat(64),
               },
               status: 'completed',
@@ -736,7 +736,7 @@ test.describe('canonical agent Thread surface', () => {
     // The row stays in the process, but says what it did rather than which tool
     // was called.
     await expect(process.locator('.thread-tool').filter({ hasText: 'Read' })).toBeVisible();
-    await expect(process).not.toContainText('node_read');
+    await expect(process).not.toContainText('file_read');
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.mouse.move(0, 0);
     await expect(answer.getByRole('link', { name: 'Library' })).toBeVisible();
@@ -4505,16 +4505,16 @@ test.describe('canonical agent Thread surface', () => {
             id: toolId,
             type: 'dynamicToolCall',
             provenance: provenance(toolId),
-            namespace: 'node',
-            tool: 'read',
-            arguments: { node_id: nodeId, file_path: 'notes with spaces.md' },
+            namespace: null,
+            tool: 'file_read',
+            arguments: { file_path: 'notes with spaces.md' },
             modelCall: {
               disposition: 'replayable',
-              identity: { namespace: 'node', name: 'read' },
-              providerName: 'node__read',
+              identity: { namespace: null, name: 'file_read' },
+              providerName: 'file_read',
               arguments: {
                 storage: 'inline',
-                value: { node_id: nodeId, file_path: 'notes with spaces.md' },
+                value: { file_path: 'notes with spaces.md' },
               },
               schemaDigest: '0'.repeat(64),
             },
@@ -4706,8 +4706,8 @@ test.describe('canonical agent Thread surface', () => {
       '/mock/workspace',
       '```',
       '',
-      '```tool node.read',
-      JSON.stringify({ node_id: ids.alpha, file_path: 'notes with spaces.md' }, null, 2),
+      '```tool file_read',
+      JSON.stringify({ file_path: 'notes with spaces.md' }, null, 2),
       '```',
       '',
       '```tool-result',

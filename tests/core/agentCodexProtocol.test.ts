@@ -216,7 +216,7 @@ const allItems: readonly ThreadItem[] = [
     id: 'item-8',
     provenance: { ...itemProvenance, originItemId: 'item-8' },
     namespace: null,
-    tool: 'node_read',
+    tool: 'file_read',
     arguments: { nodeId: 'node-1' },
     status: 'completed',
     contentItems: [
@@ -227,7 +227,7 @@ const allItems: readonly ThreadItem[] = [
     durationMs: 3,
     outputRef: null,
     resourceRefs: [],
-    modelCall: replayableModelCall('node_read', { node_id: 'node-1' }),
+    modelCall: replayableModelCall('file_read', { file_path: 'notes.md' }),
   },
   {
     type: 'collabAgentToolCall',
@@ -363,7 +363,7 @@ const turnDiagnosticsPayload: TurnDiagnosticsPayload = {
     developerInstructions: [],
     model: 'openai/gpt-5',
     reasoningEffort: 'high',
-    tools: ['node_read'],
+    tools: ['file_read'],
     skills: [],
     plugins: [],
     mcpServers: [],

@@ -8,7 +8,6 @@ import {
   type ModelToolContract,
 } from '../../src/core/agent/tools';
 import type { ThreadService } from '../../src/main/agent/ThreadService';
-import type { OutlinerToolHost } from '../../src/main/agent/capabilities/agentNodeTools';
 import { ToolRuntime } from '../../src/main/agent/runtime/ToolRuntime';
 import { compileToolParameters } from '../../src/main/agent/runtime/kernel/exactToolArguments';
 import type { AgentTool } from '../../src/main/agent/runtime/kernel/types';
@@ -61,8 +60,7 @@ describe('canonical provider tool catalog', () => {
     // `automation_update` through for two weeks while OpenAI answered `schema
     // must be a JSON Schema of 'type: "object"', got 'type: null'` on every root
     // Turn that offered the tool. A root union is refused for the same reason
-    // `node_search` and `node_edit` normalize their mutually exclusive argument
-    // groups at runtime — see `agentNodeToolSchemas.ts`.
+    // Some provider tools normalize mutually exclusive argument groups at runtime.
     const rootUnion = { oneOf: [{ type: 'object', properties: {} }] };
     expect(() => compileToolParameters(rootUnion as never)).not.toThrow();
     expect(providerToolSchemaFailure(rootUnion)).toBe('schema root must be \'type: "object"\', got null');
@@ -142,9 +140,8 @@ describe('canonical provider tool catalog', () => {
     );
   });
 
-  test('keeps data import behind the CLI/API boundary', async () => {
+  test('keeps data import behind the public Skill and CLI boundary', async () => {
     const runtime = new ToolRuntime(runtimeService(), {
-      outliner: OUTLINER,
       capabilityTools: runtimeSchemaTools,
       assembleRegistry: true,
     });
@@ -153,53 +150,6 @@ describe('canonical provider tool catalog', () => {
     expect((await runtime.createTools(RUNTIME_CONTEXT)).some((tool) => tool.name === 'data_import')).toBe(false);
   });
 
-  test('blocks worktree import commits before Bash execution', async () => {
-    let executed = false;
-    const tools = runtimeSchemaTools().map((tool) => tool.name === 'bash'
-      ? {
-          ...tool,
-          execute: async () => {
-            executed = true;
-            return { content: [{ type: 'text' as const, text: 'unexpected execution' }], details: { ok: true } };
-          },
-        }
-      : tool);
-    const runtime = new ToolRuntime(runtimeService([], {
-      kind: 'general-purpose',
-      runInBackground: false,
-      worktree: true,
-      allowNesting: true,
-      requestedTools: null,
-    }), {
-      capabilityTools: () => tools,
-      capabilityConfig: { blocks: [] },
-      assembleRegistry: true,
-    });
-    const childContext = {
-      ...RUNTIME_CONTEXT,
-      thread: { ...RUNTIME_CONTEXT.thread, parentThreadId: '00000000-0000-7000-8000-000000000009' },
-    } as unknown as TurnExecutionContext;
-    const bash = (await runtime.createTools(childContext)).find((tool) => tool.name === 'bash');
-    if (!bash) throw new Error('Expected Bash in the worktree Agent catalog.');
-
-    for (const command of [
-      'tenon-import commit pack.json --preview-id preview:1',
-      'tenon-import commit pack.json --preview-id preview:1 npm install',
-      'tenon-import commit pack.json --preview-id preview:1 & npm install',
-      'tenon-import commit pack.json --preview-id preview:1 "$(npm install)"',
-    ]) {
-      const result = await bash.execute(`commit-import-${command.length}`, { command });
-
-      expect(executed, command).toBe(false);
-      expect(result.details, command).toMatchObject({
-        error: {
-          code: 'operation_unavailable',
-          message: 'Worktree Agents cannot mutate the live outline through Bash.',
-          details: { reason: 'subagent_repository_mutation_restricted' },
-        },
-      });
-    }
-  });
 });
 
 const CONFIGURATION: EffectiveThreadConfiguration = {
@@ -223,11 +173,6 @@ const RUNTIME_CONTEXT = {
   turn: { id: '00000000-0000-7000-8000-000000000002' },
   configuration: CONFIGURATION,
 } as unknown as TurnExecutionContext;
-
-const OUTLINER: OutlinerToolHost = {
-  getProjection: () => { throw new Error('Schema guard does not read the Outliner.'); },
-  handle: async () => { throw new Error('Schema guard does not mutate the Outliner.'); },
-};
 
 function runtimeService(
   extensionTools: readonly ModelToolContract[] = [],

@@ -1,164 +1,270 @@
 import { describe, expect, test } from 'bun:test';
 import { execFile as execFileCallback } from 'node:child_process';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { Value } from 'typebox/value';
+import { canonicalSha256 } from '../../src/outline/contract/canonical';
+import { ChangeSetSchema } from '../../src/outline/contract/schemas';
 
 const execFile = promisify(execFileCallback);
 const root = path.resolve(import.meta.dir, '..', '..');
-const tenonImportSkillRoot = path.join(root, 'src', 'main', 'builtInSkills', 'tenon-import');
-const tenonImportTool = path.join(tenonImportSkillRoot, 'scripts', 'tenon-import.ts');
+const skillRoot = path.join(root, 'src', 'main', 'builtInSkills', 'outline-import');
+const helper = path.join(skillRoot, 'scripts', 'outline-import.ts');
 
-describe('built-in skill helper scripts', () => {
-  test('tenon-import Tana adapter emits a validated Import Pack preview', async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), 'tenon-import-tana-'));
-    const fixture = path.join(tenonImportSkillRoot, 'fixtures', 'tana-fields-and-tags.json');
-    const packFile = path.join(dir, 'pack.json');
-    const coverageFile = path.join(dir, 'coverage.json');
-    const validationFile = path.join(dir, 'validation.json');
-    const previewFile = path.join(dir, 'preview.md');
+describe('built-in import Skill helper scripts', () => {
+  test('maps Tana source into a generic ChangeSet with bound coverage evidence', async () => {
+    const directory = await temporaryDirectory('outline-import-tana-');
+    const output = artifactPaths(directory);
+    await runHelper([
+      'tana',
+      path.join(skillRoot, 'fixtures', 'tana-fields-and-tags.json'),
+      '--out', output.changeSet,
+      '--evidence-out', output.evidence,
+      '--coverage-out', output.coverage,
+      '--fidelity', 'full',
+    ]);
+    await runHelper(['check-coverage', output.evidence, '--changeset', output.changeSet]);
 
-    await execFile('bun', [tenonImportTool, 'tana', fixture, '--out', packFile, '--coverage-out', coverageFile, '--fidelity', 'full']);
-    await execFile('bun', [tenonImportTool, 'validate', packFile, '--out', validationFile]);
-    await execFile('bun', [tenonImportTool, 'preview', packFile, '--out', previewFile, '--offline-preview']);
-
-    const pack = JSON.parse(await readFile(packFile, 'utf8'));
-    const coverage = JSON.parse(await readFile(coverageFile, 'utf8'));
-    const validation = JSON.parse(await readFile(validationFile, 'utf8'));
-    const preview = await readFile(previewFile, 'utf8');
-
-    expect(pack).toMatchObject({
-      version: 1,
-      source: { kind: 'tana' },
-      stats: {
-        sourceRecords: 14,
-        sections: 1,
-        nodes: 4,
-        descriptions: 1,
-        tags: 1,
-        fields: 1,
-        checked: 1,
-        dropped: 4,
-      },
+    const changeSet = await json(output.changeSet);
+    const evidence = await json(output.evidence) as Evidence;
+    const coverage = await json(output.coverage) as unknown[];
+    expect(Value.Check(ChangeSetSchema, changeSet)).toBe(true);
+    expect(changeSet).toMatchObject({
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      source: { kind: 'import' },
+    });
+    expect(evidence).toMatchObject({
       coverage: { unaccounted: 0 },
+      stats: { sourceRecords: 14, nodes: 4, fields: 1, tags: 1 },
+      mode: 'stage',
+      expectedCreatedNodes: 7,
+      verification: [{ kind: 'created-tree', expectedNodeCount: 7 }],
     });
-    expect(pack.sections[0].nodes[0].children[0].fields).toEqual([{
-      name: 'Status',
-      values: ['Active', 'Review'],
-    }]);
-    expect(Array.isArray(coverage)).toBe(true);
-    expect(coverage).toHaveLength(pack.stats.sourceRecords);
-    expect(coverage.every((entry: { status?: string }) => entry.status !== 'unaccounted')).toBe(true);
-    expect(validation).toMatchObject({ ok: true, stats: pack.stats, warnings: pack.warnings });
-    expect(preview).toContain('# Import Preview: tana');
-    expect(preview).toContain('Unaccounted: 0');
-    expect(preview).toContain('Fields: 1');
-    expect(preview).toContain('Home');
-    expect(preview).toContain('trash_node');
+    expect(coverage).toHaveLength(14);
+    expect(JSON.stringify(changeSet)).not.toContain('previewId');
+    expect(changeSet.return).toHaveLength(1);
   });
 
-  test('tenon-import Tana adapter emits native Daily Note sections only for valid journalPart dates', async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), 'tenon-import-tana-daily-'));
-    const fixture = path.join(tenonImportSkillRoot, 'fixtures', 'tana-daily-notes.json');
-    const packFile = path.join(dir, 'pack.json');
-    const coverageFile = path.join(dir, 'coverage.json');
-    const previewFile = path.join(dir, 'preview.md');
-    const stagedPreviewFile = path.join(dir, 'preview-stage.md');
+  test('emits one ChangeSet that ensures every valid Tana date in the same batch', async () => {
+    const directory = await temporaryDirectory('outline-import-daily-');
+    const output = artifactPaths(directory);
+    await runHelper([
+      'tana',
+      path.join(skillRoot, 'fixtures', 'tana-daily-notes.json'),
+      '--out', output.changeSet,
+      '--evidence-out', output.evidence,
+      '--coverage-out', output.coverage,
+      '--fidelity', 'full',
+    ]);
 
-    await execFile('bun', [tenonImportTool, 'tana', fixture, '--out', packFile, '--coverage-out', coverageFile, '--fidelity', 'full']);
-    await execFile('bun', [tenonImportTool, 'preview', packFile, '--out', previewFile, '--offline-preview']);
-    await execFile('bun', [tenonImportTool, 'preview', packFile, '--out', stagedPreviewFile, '--mode', 'stage', '--offline-preview']);
-
-    const pack = JSON.parse(await readFile(packFile, 'utf8'));
-    const coverage = JSON.parse(await readFile(coverageFile, 'utf8'));
-    const preview = await readFile(previewFile, 'utf8');
-    const stagedPreview = await readFile(stagedPreviewFile, 'utf8');
-
-    expect(pack).toMatchObject({
-      options: { dateGrouping: 'native_daily' },
-      stats: { sourceRecords: 10, sections: 3, nodes: 8 },
-      coverage: { imported: 8, merged: 2, unaccounted: 0 },
+    const changeSet = await json(output.changeSet) as ChangeSetView;
+    const evidence = await json(output.evidence) as Evidence;
+    const dates = changeSet.operations
+      .filter((operation) => operation.op === 'ensure' && operation.resource === 'date')
+      .map((operation) => operation.date);
+    expect(Value.Check(ChangeSetSchema, changeSet)).toBe(true);
+    expect(dates).toEqual(['2026-08-21', '2026-08-22']);
+    expect(evidence).toMatchObject({
+      mode: 'native_daily',
+      dates: ['2026-08-21', '2026-08-22'],
+      coverage: { unaccounted: 0 },
       warnings: [{ code: 'invalid_journal_date', count: 1 }],
-      sections: [{
-        title: '2026-08-21',
-        kind: 'date',
-        date: '2026-08-21',
-        nodes: [{ title: 'Morning note' }, { title: 'Evening note' }],
-      }, {
-        title: '2026-08-22',
-        kind: 'date',
-        date: '2026-08-22',
-      }, {
-        title: 'Tana Workspace',
-        kind: 'library',
+    });
+  });
+
+  test('accepts an already-normalized source without a cleanup or adapter pass', async () => {
+    const directory = await temporaryDirectory('outline-import-normalized-');
+    const output = artifactPaths(directory);
+    const normalized = path.join(directory, 'normalized.json');
+    await writeFile(normalized, JSON.stringify(normalizedSource([
+      { title: 'Already normalized', children: [{ title: 'Child' }] },
+    ])), 'utf8');
+
+    await runHelper([
+      'normalized', normalized,
+      '--out', output.changeSet,
+      '--evidence-out', output.evidence,
+    ]);
+    await runHelper(['check-coverage', output.evidence, '--changeset', output.changeSet]);
+
+    const changeSet = await json(output.changeSet) as ChangeSetView;
+    expect(Value.Check(ChangeSetSchema, changeSet)).toBe(true);
+    expect(changeSet.operations.filter((operation) => operation.op === 'create')).toHaveLength(4);
+    expect(JSON.stringify(changeSet.operations)).toContain('Import: normalized.json');
+  });
+
+  test('keeps 100 dates inside one ChangeSet and rejects evidence after artifact tampering', async () => {
+    const directory = await temporaryDirectory('outline-import-100-dates-');
+    const output = artifactPaths(directory);
+    const normalized = path.join(directory, 'normalized.json');
+    const sections = Array.from({ length: 100 }, (_, index) => {
+      const date = new Date(Date.UTC(2026, 0, index + 1)).toISOString().slice(0, 10);
+      return { title: date, kind: 'date', date, nodes: [{ title: `Entry ${index + 1}` }] };
+    });
+    await writeFile(normalized, JSON.stringify(normalizedSource([], sections)), 'utf8');
+    await runHelper([
+      'normalized', normalized,
+      '--out', output.changeSet,
+      '--evidence-out', output.evidence,
+    ]);
+
+    const changeSet = await json(output.changeSet) as ChangeSetView;
+    expect(Value.Check(ChangeSetSchema, changeSet)).toBe(true);
+    expect(changeSet.operations.filter((operation) => operation.op === 'ensure' && operation.resource === 'date'))
+      .toHaveLength(100);
+    expect(changeSet.operations.filter((operation) => operation.op === 'create')).toHaveLength(100);
+
+    changeSet.operations.push({ op: 'create' });
+    await writeFile(output.changeSet, JSON.stringify(changeSet), 'utf8');
+    const failed = await runHelper(['check-coverage', output.evidence, '--changeset', output.changeSet])
+      .then(() => null, (error: { stderr?: string }) => error.stderr ?? '');
+    expect(failed).toContain('fingerprint does not match');
+  });
+
+  test('verifies settlement against the reviewed Diff and performs an independent read', async () => {
+    const directory = await temporaryDirectory('outline-import-verify-');
+    const output = artifactPaths(directory);
+    const normalized = path.join(directory, 'normalized.json');
+    await writeFile(normalized, JSON.stringify(normalizedSource([
+      { title: 'Verified root', children: [{ title: 'Verified child' }] },
+    ])), 'utf8');
+    await runHelper([
+      'normalized', normalized,
+      '--out', output.changeSet,
+      '--evidence-out', output.evidence,
+    ]);
+
+    const changeSet = await json(output.changeSet) as ChangeSetView;
+    const evidence = await json(output.evidence) as Evidence;
+    const verification = evidence.verification[0]!;
+    const rootId = 'node:verified-root';
+    const affectedIds = Array.from(
+      { length: verification.expectedNodeCount },
+      (_, index) => index === 0 ? rootId : `node:verified-child-${index}`,
+    );
+    const diff = {
+      kind: 'outline.diff',
+      diffHash: 'd'.repeat(64),
+      changeSetHash: 'c'.repeat(64),
+      normalizedChangeSet: changeSet,
+      bindings: { [verification.binding]: [rootId] },
+      affected: affectedIds.map((id) => ({ id })),
+    };
+    const operation = {
+      kind: 'outline.operation',
+      operationId: 'operation:verified-import',
+      changeSetHash: diff.changeSetHash,
+      diffHash: diff.diffHash,
+      affectedNodeIds: affectedIds,
+      affectedNodeCount: affectedIds.length,
+      affectedNodeIdsHash: canonicalSha256(affectedIds),
+      revisionAfter: 1,
+      result: [{
+        projection: changeSet.return?.[0],
+        revision: 1,
+        nodes: affectedIds.map((id) => ({ id })),
       }],
+    };
+    const diffFile = path.join(directory, 'diff.json');
+    const operationFile = path.join(directory, 'operation.json');
+    const launcher = path.join(directory, 'outline');
+    const calls = path.join(directory, 'outline-calls.txt');
+    await writeFile(diffFile, JSON.stringify(diff), 'utf8');
+    await writeFile(operationFile, JSON.stringify({ data: operation }), 'utf8');
+    await writeFile(launcher, [
+      '#!/bin/sh',
+      'set -eu',
+      'printf "%s\\n" "$3" >> "$OUTLINE_TEST_CALL_LOG"',
+      'printf \'{"ok":true,"data":{"nodes":[{"id":"%s"}]}}\\n\' "$3"',
+      '',
+    ].join('\n'), 'utf8');
+    await chmod(launcher, 0o755);
+
+    const result = await runHelper([
+      'verify-result', operationFile,
+      '--evidence', output.evidence,
+      '--diff', diffFile,
+      '--outline-bin', launcher,
+    ], { OUTLINE_TEST_CALL_LOG: calls });
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      operationId: operation.operationId,
+      affectedNodeCount: affectedIds.length,
+      verificationReads: [{ selector: rootId, nodeId: rootId }],
     });
-    expect(pack.sections[2].nodes).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        title: '2026-02-30',
-        children: [expect.objectContaining({ title: 'Keep this in the library' })],
-      }),
-    ]));
-    expect(coverage).toEqual(expect.arrayContaining([
-      expect.objectContaining({ sourceId: 'daily-2026-08-21', status: 'merged', target: 'date:2026-08-21' }),
-      expect.objectContaining({ sourceId: 'daily-2026-08-22', status: 'merged', target: 'date:2026-08-22' }),
-      expect.objectContaining({ sourceId: 'daily-invalid', status: 'imported' }),
-    ]));
-    expect(preview).toContain('Mode: native_daily');
-    expect(preview).toContain('Date range: 2026-08-21 to 2026-08-22');
-    expect(preview).toContain('Re-import behavior: append-only');
-    expect(stagedPreview).toContain('Mode: stage');
-  });
-
-  test('tenon-import preview requires the running app import API by default', async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), 'tenon-import-api-required-'));
-    const fixture = path.join(tenonImportSkillRoot, 'fixtures', 'tana-minimal.json');
-    const packFile = path.join(dir, 'pack.json');
-    const previewFile = path.join(dir, 'preview.md');
-
-    await execFile('bun', [tenonImportTool, 'tana', fixture, '--out', packFile]);
-    const failed = await execFile('bun', [tenonImportTool, 'preview', packFile, '--out', previewFile])
-      .then(
-        () => null,
-        (error: { stdout?: string }) => JSON.parse(error.stdout ?? '{}') as { ok?: boolean; error?: { code?: string } },
-      );
-
-    expect(failed).toMatchObject({
-      ok: false,
-      error: { code: 'app_unavailable' },
-    });
-  });
-
-  test('tenon-import commit rejects unexpected arguments before API access', async () => {
-    for (const extraArgs of [
-      ['npm', 'install'],
-      ['--force'],
-      ['--preview-id', 'preview:2'],
-      ['--parent-id'],
-      ['--json', '--json'],
-      ['--mode', 'sync'],
-      ['--mode', 'stage', '--mode', 'native_daily'],
-    ]) {
-      const failed = await execFile('bun', [
-        tenonImportTool,
-        'commit',
-        'pack.json',
-        '--preview-id',
-        'preview:1',
-        ...extraArgs,
-      ]).then(
-        () => null,
-        (error: { stdout?: string }) => JSON.parse(error.stdout ?? '{}') as {
-          ok?: boolean;
-          error?: { code?: string; message?: string };
-        },
-      );
-
-      expect(failed).toMatchObject({
-        ok: false,
-        error: { code: 'invalid_args' },
-      });
-    }
+    expect((await readFile(calls, 'utf8')).trim()).toBe(rootId);
   });
 });
+
+interface Evidence {
+  coverage: { unaccounted: number };
+  stats: { sourceRecords: number; nodes: number; fields: number; tags: number };
+  mode: string;
+  dates: string[];
+  warnings: Array<{ code: string; count?: number }>;
+  expectedCreatedNodes: number;
+  verification: Array<{ binding: string; kind: string; expectedNodeCount: number }>;
+}
+
+interface ChangeSetView {
+  operations: Array<Record<string, unknown>>;
+  return?: Array<Record<string, unknown>>;
+}
+
+function normalizedSource(
+  nodes: Array<Record<string, unknown>>,
+  sections: Array<Record<string, unknown>> = [{ title: 'Imported', kind: 'library', nodes }],
+) {
+  const nodeCount = sections.reduce((total, section) => total + countNodes(section.nodes), 0);
+  return {
+    version: 1,
+    source: { kind: 'normalized', path: '/source/normalized.json' },
+    options: { fidelity: 'clean', dateGrouping: 'native_daily', tags: true, fields: 'text_children', doneState: true },
+    stats: {
+      sourceRecords: nodeCount,
+      sections: sections.length,
+      nodes: nodeCount,
+      descriptions: 0,
+      tags: 0,
+      fields: 0,
+      checked: 0,
+      dropped: 0,
+    },
+    coverage: { imported: nodeCount, merged: 0, dropped: 0, unsupported: 0, empty: 0, unaccounted: 0 },
+    warnings: [],
+    sections,
+  };
+}
+
+function countNodes(value: unknown): number {
+  if (!Array.isArray(value)) return 0;
+  return value.reduce((total, item) => {
+    const node = item && typeof item === 'object' ? item as { children?: unknown } : {};
+    return total + 1 + countNodes(node.children);
+  }, 0);
+}
+
+function runHelper(args: string[], env?: Readonly<Record<string, string>>) {
+  return execFile('bun', [helper, ...args], {
+    env: { ...process.env, ...env },
+  });
+}
+
+async function temporaryDirectory(prefix: string): Promise<string> {
+  return mkdtemp(path.join(tmpdir(), prefix));
+}
+
+function artifactPaths(directory: string) {
+  return {
+    changeSet: path.join(directory, 'changeset.json'),
+    evidence: path.join(directory, 'evidence.json'),
+    coverage: path.join(directory, 'coverage.json'),
+  };
+}
+
+async function json(filePath: string): Promise<unknown> {
+  return JSON.parse(await readFile(filePath, 'utf8')) as unknown;
+}

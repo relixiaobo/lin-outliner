@@ -1,18 +1,11 @@
-import { createHash } from 'node:crypto';
 import { chmod, lstat, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
+import type { OutlineRuntimePaths } from '../../runtimePaths';
+
+export { resolveOutlineRuntimePaths, type OutlineRuntimePaths } from '../../runtimePaths';
 
 const LOCK_STALE_GRACE_MS = 10_000;
-
-export interface OutlineRuntimePaths {
-  readonly root: string;
-  readonly descriptorPath: string;
-  readonly socketPath: string;
-  readonly lockPath: string;
-  readonly workspacePath: string;
-}
 
 export interface RuntimeLockOwner {
   readonly pid: number;
@@ -64,26 +57,6 @@ export class OutlineRuntimeLock {
       await rm(this.path, { recursive: true, force: true });
     }
   }
-}
-
-export function resolveOutlineRuntimePaths(root: string): OutlineRuntimePaths {
-  const resolved = path.resolve(root);
-  const directSocketPath = path.join(resolved, 'runtime.sock');
-  const runtimeTempRoot = process.platform === 'win32' ? tmpdir() : '/tmp';
-  const socketPath = Buffer.byteLength(directSocketPath) <= 90
-    ? directSocketPath
-    : path.join(
-        runtimeTempRoot,
-        `tenon-outline-${typeof process.getuid === 'function' ? process.getuid() : 'user'}`,
-        `${createHash('sha256').update(resolved).digest('hex').slice(0, 32)}.sock`,
-      );
-  return {
-    root: resolved,
-    descriptorPath: path.join(resolved, 'runtime.json'),
-    socketPath,
-    lockPath: path.join(resolved, 'writer.lock'),
-    workspacePath: path.join(resolved, 'workspace'),
-  };
 }
 
 export async function ensurePrivateDirectory(directory: string): Promise<void> {

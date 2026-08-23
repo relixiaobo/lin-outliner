@@ -635,7 +635,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   };
   // Materialization: turn the draft into a real node under its stable id on
   // commit. Runs once; the create and the text patches that follow share one undo
-  // group (see DocumentService). Keystrokes that land during the IPC round-trip
+  // group. Keystrokes that land during the Runtime round-trip
   // stay in the buffer and are reconciled when the node arrives, then focus moves
   // from the parent's trailing surface to this row's own id (without re-focusing,
   // so the caret is undisturbed) — that frees the trailing signal for the freshly
@@ -1247,8 +1247,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       // inline-conversion row (add_reference_conversion); a real (empty) row
       // converts itself in place (replace_node_with_reference_conversion).
       const outcome = onDraftTrigger
-        ? await api.addReferenceConversion(props.parentId, target.id)
-        : await api.replaceNodeWithReferenceConversion(props.nodeId, target.id);
+        ? await api.addReferenceConversion(props.parentId, target.id, null, textOf(target))
+        : await api.replaceNodeWithReferenceConversion(props.nodeId, target.id, textOf(target));
       if (onDraftTrigger) replaceLocalDraftContent(EMPTY_RICH_TEXT);
       const inlineNodeId = outcome.focus?.nodeId;
       if (!inlineNodeId) {

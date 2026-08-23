@@ -32,6 +32,13 @@ import { decodeEventCursor, encodeEventCursor } from '../eventCursor';
 import { formatOutlineExport } from '../export';
 import { projectOutline } from '../projection';
 import { OutlineRuntimeRouter } from './runtimeRouter';
+import { requestCanMutate } from './runtimeRouter';
+import {
+  OUTLINE_AGENT_ATTESTATION_HEADER,
+  OUTLINE_ORIGIN_HEADER,
+  verifyOutlineAgentAttestation,
+  type VerifiedOutlineAgentAttestation,
+} from '../../contract/agentAttestation';
 import {
   OutlineRuntimeLock,
   ensurePrivateDirectory,
@@ -61,6 +68,7 @@ export class OutlineRuntimeServer {
   private idleTimer?: ReturnType<typeof setTimeout>;
   private activeRequests = 0;
   private stopping = false;
+  private readonly agentAttestations = new AgentAttestationRegistry();
 
   private constructor(
     paths: OutlineRuntimePaths,
@@ -179,21 +187,47 @@ export class OutlineRuntimeServer {
       if (request.method === 'GET' && url.pathname.startsWith('/v1/assets/')) {
         const assetId = decodeURIComponent(url.pathname.slice('/v1/assets/'.length));
         const verified = await this.workspace.assets.verify(assetId);
-        response.writeHead(200, {
+        const range = parseRangeHeader(singleHeader(request.headers.range), verified.record.metadata.byteSize);
+        if (range === 'invalid') {
+          response.writeHead(416, {
+            'accept-ranges': 'bytes',
+            'content-range': `bytes */${verified.record.metadata.byteSize}`,
+            connection: 'close',
+          });
+          response.end();
+          return;
+        }
+        const contentLength = range
+          ? range.end - range.start + 1
+          : verified.record.metadata.byteSize;
+        response.writeHead(range ? 206 : 200, {
           'content-type': verified.record.metadata.mimeType,
-          'content-length': verified.record.metadata.byteSize,
+          'content-length': contentLength,
+          'accept-ranges': 'bytes',
+          ...(range ? {
+            'content-range': `bytes ${range.start}-${range.end}/${verified.record.metadata.byteSize}`,
+          } : {}),
           'x-outline-asset-id': verified.record.assetId,
           'x-outline-sha256': verified.record.metadata.sha256,
           'cache-control': 'private, max-age=31536000, immutable',
           connection: 'close',
         });
-        await pipeline(createReadStream(verified.path), response);
+        await pipeline(createReadStream(verified.path, range ?? undefined), response);
         return;
       }
       if (request.method === 'POST' && url.pathname === '/v1/request') {
         const body = await readJsonBody(request);
-        const result = await this.router.handle(body, { origin: 'external-client' });
-        writeJson(response, 200, result);
+        const decoded = Value.Check(OutlineRequestSchema, body) ? body : null;
+        const mutation = decoded ? requestCanMutate(decoded.command, decoded.input) : false;
+        const authorization = this.authorizeRequestContext(request, mutation);
+        try {
+          const result = await this.router.handle(body, authorization.context);
+          authorization.complete(result.ok && isOperation(result.data));
+          writeJson(response, 200, result);
+        } catch (error) {
+          authorization.complete(false);
+          throw error;
+        }
         return;
       }
       if (request.method === 'POST' && url.pathname === '/v1/stream') {
@@ -226,6 +260,38 @@ export class OutlineRuntimeServer {
       this.activeRequests -= 1;
       this.scheduleIdle();
     }
+  }
+
+  private authorizeRequestContext(
+    request: http.IncomingMessage,
+    mutation: boolean,
+  ): {
+    readonly context: import('./runtimeRouter').OutlineRuntimeRequestContext;
+    readonly complete: (committed: boolean) => void;
+  } {
+    const claimedOrigin = optionalHeader(request, OUTLINE_ORIGIN_HEADER);
+    const token = optionalHeader(request, OUTLINE_AGENT_ATTESTATION_HEADER);
+    if (token || claimedOrigin === 'built-in-agent') {
+      const verified = token ? verifyOutlineAgentAttestation({
+        token,
+        descriptor: this.descriptor,
+        runtimeRoot: this.paths.root,
+      }) : null;
+      const authorization = verified
+        ? this.agentAttestations.authorize(verified, mutation)
+        : null;
+      return {
+        context: {
+          origin: 'built-in-agent',
+          ...(authorization ? { causation: authorization.attestation.causation } : {}),
+        },
+        complete: authorization?.complete ?? (() => undefined),
+      };
+    }
+    const origin = claimedOrigin === 'desktop' || claimedOrigin === 'local-user'
+      ? claimedOrigin
+      : 'external-client';
+    return { context: { origin }, complete: () => undefined };
   }
 
   private async streamCommand(response: http.ServerResponse, request: OutlineRequest): Promise<void> {
@@ -421,6 +487,45 @@ export class OutlineRuntimeServer {
   }
 }
 
+class AgentAttestationRegistry {
+  private readonly claimed = new Set<string>();
+  private readonly consumed = new Map<string, number>();
+
+  authorize(
+    attestation: VerifiedOutlineAgentAttestation,
+    mutation: boolean,
+  ): {
+    readonly attestation: VerifiedOutlineAgentAttestation;
+    readonly complete: (committed: boolean) => void;
+  } | null {
+    this.prune();
+    if (this.consumed.has(attestation.nonce) || (mutation && this.claimed.has(attestation.nonce))) return null;
+    if (mutation) this.claimed.add(attestation.nonce);
+    let completed = false;
+    return {
+      attestation,
+      complete: (committed) => {
+        if (completed) return;
+        completed = true;
+        if (!mutation) return;
+        this.claimed.delete(attestation.nonce);
+        if (committed) this.consumed.set(attestation.nonce, attestation.expiresAt);
+      },
+    };
+  }
+
+  private prune(): void {
+    const now = Date.now();
+    for (const [nonce, expiresAt] of this.consumed) {
+      if (expiresAt <= now) this.consumed.delete(nonce);
+    }
+  }
+}
+
+function isOperation(value: unknown): boolean {
+  return isRecord(value) && value.kind === 'outline.operation';
+}
+
 function requiredHeader(request: http.IncomingMessage, name: string): string {
   const value = optionalHeader(request, name);
   if (!value) throw new Error(`Missing required Runtime header: ${name}`);
@@ -432,6 +537,37 @@ function optionalHeader(request: http.IncomingMessage, name: string): string | u
   if (Array.isArray(value)) throw new Error(`Runtime header must have one value: ${name}`);
   if (value !== undefined && value.length > 8_192) throw new Error(`Runtime header is too long: ${name}`);
   return value;
+}
+
+const SINGLE_RANGE_PATTERN = /^bytes=(\d*)-(\d*)$/u;
+
+function parseRangeHeader(
+  header: string | undefined,
+  sizeBytes: number,
+): { start: number; end: number } | 'invalid' | null {
+  if (!header) return null;
+  if (!Number.isSafeInteger(sizeBytes) || sizeBytes <= 0) return 'invalid';
+  const match = SINGLE_RANGE_PATTERN.exec(header.trim());
+  if (!match) return 'invalid';
+  const [, startText, endText] = match;
+  if (!startText && !endText) return 'invalid';
+  if (!startText) {
+    const suffixLength = Number(endText);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return 'invalid';
+    return { start: Math.max(sizeBytes - suffixLength, 0), end: sizeBytes - 1 };
+  }
+  const start = Number(startText);
+  const requestedEnd = endText ? Number(endText) : sizeBytes - 1;
+  if (!Number.isSafeInteger(start)
+    || !Number.isSafeInteger(requestedEnd)
+    || start < 0
+    || start >= sizeBytes
+    || requestedEnd < start) return 'invalid';
+  return { start, end: Math.min(requestedEnd, sizeBytes - 1) };
+}
+
+function singleHeader(value: string | readonly string[] | undefined): string | undefined {
+  return typeof value === 'string' ? value : undefined;
 }
 
 function optionalBase64UrlHeader(request: http.IncomingMessage, name: string): string | undefined {

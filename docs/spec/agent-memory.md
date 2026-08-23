@@ -74,10 +74,10 @@ ephemeral Threads, and external-context-polluted Threads are excluded by their
 canonical provenance. One ultimate `originItemId` can belong to only one
 extraction source.
 
-Fresh Agent context also excludes the Memory stable-prompt block, Memory data,
-and Memory projection filtering even when the child can call `node_read` or
-`node_search`. Memory is root-only by Thread provenance, not inferred from the
-child's tool pool.
+Fresh Agent context excludes the Memory stable-prompt block and routing context.
+Memory is root-only by Thread provenance, not inferred from the child's shell or
+Skill access. The public Outline Projection is actor-neutral and is never
+filtered by Memory eligibility.
 
 [`agent-automations.md`](agent-automations.md) owns the immutable Automation
 trigger and reciprocal run binding that this exclusion consumes. Memory never
@@ -137,15 +137,15 @@ global cleanup.
 
 Under the Memory write gate, Stage 1 rechecks modes, exclusions, rollback state,
 source version, and pollution, then rebuilds every target from the current graph.
-It prepares canonical `node:<uuid>` IDs, exact lineage, feature generation, reset
-epoch, command digest, target fingerprints and authority states, and a unique
-publication generation in `memories.sqlite` without releasing the gate. It then
-applies all Node commands and one projection-neutral `agent.memory` system
-receipt in a single non-user-undo document transaction. A generated Node whose
+It prepares canonical `node:<uuid>` IDs, exact lineage, feature generation,
+reset epoch, ChangeSet digest, target fingerprints and authority states, and a
+unique publication generation in `memories.sqlite` without releasing the gate.
+It then applies one ordinary Runtime ChangeSet with that publication ID as its
+idempotency key and the digest as source evidence. A generated Node whose
 fingerprint changed during model work is first promoted to user-authoritative
-and is never overwritten. The trusted transaction resolves only after workspace
-bytes containing both Nodes and receipt are durably flushed; SQLite finalizes
-source state only after that durable commit.
+and is never overwritten. Runtime resolves only after the Operation and
+workspace state are durable; SQLite finalizes source state only after that
+settlement.
 
 ## Consolidation
 
@@ -162,7 +162,7 @@ category beneath an existing or newly created canonical parent. Every created
 or updated Node names selected source Nodes with current terminal evidence. The
 host allocates real IDs, replaces the affected Node's complete lineage, and
 validates hierarchy, selection, authority, descendants, and evidence before
-producing document commands.
+producing the Runtime ChangeSet.
 
 Unsupported generated Nodes rank ahead of ordinary consolidation input and are
 cleaned in bounded deepest-first batches. A generated ancestor inherits current
@@ -179,141 +179,64 @@ Phase 2 acquires the Memory write gate before preparing publication, then
 rechecks every structural input fingerprint, the complete identity of every
 deletion subtree including ordinary descendants, mode generation, reset epoch,
 and the exact ordered rollback set. It writes a durable journal containing
-canonical commands, output fingerprints, deletion-subtree fingerprints, new
+canonical Changes, output fingerprints, deletion-subtree fingerprints, new
 generated records, complete lineage, and rollback IDs without releasing the
-gate. The document
-transaction writes the matching receipt; finalization uses only journaled state,
-never mutable live Nodes. A rollback is reconciled only after every remaining
+gate. Runtime idempotency settlement is the matching receipt; finalization uses
+only journaled state, never mutable live Nodes. A rollback is reconciled only
+after every remaining
 canonical generated Node has current evidence or is deleted.
 
-## Retrieval And Node Tools
+## Retrieval And Outline CLI
 
 An eligible Turn receives compact routing instructions, not Memory prose. The
-instructions tell the model to use `node_search` only when prior preferences,
+instructions tell the model to use `outline find` only when prior preferences,
 decisions, commitments, unresolved questions, or recurring workflow facts could
-materially improve the answer, then read only the one or two most relevant
-results with `node_read`. Self-contained requests such as current time, simple
-formatting, or questions fully answered by the current Turn skip Memory lookup.
-The existing Node tools are the only retrieval surface.
+materially improve the answer, then inspect only the one or two most relevant
+results with `outline show`. Self-contained requests such as current time,
+simple formatting, or questions fully answered by the current Turn skip Memory
+lookup. The public CLI is the only retrieval surface.
 
-Implicit Node-tool projections omit generated Nodes suppressed by a prepared or
-committed history rollback, Nodes without current evidence, and all canonical
-Memory when the Turn is ineligible. A visible authoritative descendant is
-promoted rather than hidden with a suppressed generated parent. If control state
-is missing or unreadable, implicit Memory fails closed. A Node explicitly
-attached or referenced by the user remains ordinary supplied input and bypasses
-implicit discovery filtering.
-
-The active Turn's explicit Node references are seeded from `turn/started` and
-updated from recorded `item/completed` and `items/completed` appends. Recovery
-or an extension attached after Turn start attempts a targeted Turn read. A
-missing Turn leaves recovery unresolved so a later filter access retries; the
-first successful read seals and reuses the reference set for the rest of that
-Turn. Item notifications update only filter state already opened by Turn start
-or a live recovery access. Recorded Items are canonical before extension
-notification delivery, so a recovery read includes any pre-state append that
-was ignored; late and orphaned notifications cannot retain unbounded state.
-Reference expansion and canonical membership come from the incrementally
-maintained `MemoryMutationIndex`; projection filtering never rebuilds the
-Memory graph.
-The hidden-ID set is cached by document, control-store, and explicit-reference
-revision. The full filtered projection and the filtered projection index are
-then reused while those revisions remain stable.
-
-`ToolRuntime` keeps the maintained document read model and text-search index
-available under Memory filtering. Their filtered views remove hidden IDs before
-candidate generation, BM25 corpus statistics, scoring, and limits, so a filtered
-search is identical to rebuilding the index from only visible records. This
-means Memory-filtered `node_search` uses the same indexed scorer as ordinary
-Threads rather than the legacy linear fallback scorer. `node_edit` likewise
-retains sparse transaction effects instead of comparing full projections.
-Generated ownership rows and the unsupported-generated-ID query are cached in
-`MemoryControlStore`; the latter is one grouped join across generated Nodes,
-lineage, and current origin claims. Every write that can change visibility
-advances the process-local filtering revision and invalidates those caches.
+Runtime does not filter document results by Thread, Agent, or Memory mode. A
+disabled or ineligible Turn receives no implicit Memory routing context, but an
+explicit user-supplied Node reference remains ordinary input and any deliberate
+public CLI read has actor-neutral semantics. Prepared or committed history
+rollback suppression remains pipeline control state: suppressed generated Nodes
+are not selected as implicit Memory support and are eventually reconciled, but
+the public Projection contract itself is unchanged.
 
 There are no model-callable Memory-specific tools. An eligible foreground root
-Turn may use ordinary Node tools to remember, update, or forget only when the
-user message explicitly requests that operation. Renderer-authored edits remain
-ordinary user mutations. Automation, Subagent, excluded, stale-generation, and
-unrelated feature Turns cannot change the canonical Memory graph. Every agent
-Node mutation carries exact Thread, Turn, and Item causation. The mutation
-classifier evaluates command owners, targets, and destination parents: creating
-an ordinary sibling directly under a Daily Note is not a Memory mutation, while
-writing beneath a canonical container or changing a container/date ancestor is.
-Tag-bearing commands resolve names through the same normalized active-definition
-lookup as Core, including nested tree and paste metadata; only a name that
-actually resolves to a protected Memory tag is sensitive. Arbitrary text that
-mentions a reserved tag name or ID is not classified as a tag mutation.
-Applying or removing `#day` is protected only on an ancestor of reserved-tagged
-Memory, where it can create or destroy canonical identity. Agent
-`outline_undo_stack` undo/redo carries the same causation and passes through the
-same coordinator. Core mirrors each origin-specific Loro UndoManager through its
-push/pop callbacks, preserving grouping, retention, redo clearing, and
-cross-scope metadata gaps. Before execution, DocumentService preflights the
-requested targets from that authoritative stack order, never journal adjacency,
-and passes their exact affected Node IDs. A mirror/top mismatch fails closed. At
-the original commit boundary, the guard also persists an internal monotonic
-`affectsMemory` bit in the operation
-journal and Loro undo value; a grouped operation remains sensitive if any child
-mutation touched Memory. Execution checks both that durable classification and
-the current graph, so de-canonicalized, deleted, restored, and newly canonical
-Nodes cannot bypass authorization. Ordinary history remains available. A stack
-that can execute but lacks a resolvable entry, or an entry with missing or
-truncated metadata, fails closed.
+Turn may use the public Outline workflow to remember, update, or forget only
+when the user explicitly requests it. Renderer-authored edits remain ordinary
+user mutations. Runtime capability is actor-neutral; Memory eligibility does
+not create a second authorization layer. Host shell policy, built-in Agent
+attestation, protected-definition invariants, and ordinary Diff preconditions
+apply exactly as they do to every other Outline mutation.
 
-Mutation authorization reads a process-local `MemoryMutationIndex` bootstrapped
-once from the live projection after workspace initialization. DocumentService
-supplies `core.projection()` as a lazy thunk, so an initialized guard never
-assembles a full projection on an ordinary command. The index maintains
-canonical ownership, reserved-tag membership, protected ancestors, active tag
-definitions, canonical fingerprint inputs, and ancestor-to-canonical reverse
-dependencies from sparse projection deltas. Every committed delta updates the
-index even when its command verdict is `affectsMemory: false`, because a tag
-definition rename or Trash move can change how the next by-name command resolves.
-Within a document transaction, each command's sparse changes enter a reversible
-journal before the next command is authorized; commit folds the journal and
-rollback restores the exact pre-transaction index. The same sparse changes remain
-available to the Agent tool effect collector, while Core still decides revision,
-persistence, and undo from the transaction's net before/after state. Observer
-failure is non-authoritative: it is recorded, never changes a committed mutation's
-result, and falls back to the normal committed projection delivery.
+The Memory extension observes committed Runtime projection deliveries. Each
+delivery carries the matching Operation when available, so trusted causation
+and source evidence identify the mutation without inspecting a private Core
+command or undo stack. `MemoryMutationIndex` applies sparse changed/removed IDs
+and maintains canonical ownership, reserved-tag membership, fingerprint inputs,
+and ancestor reverse dependencies. A missing generated Node drops its control
+row; a changed fingerprint promotes it to user-authoritative. A date rename,
+container move, or ancestor entering Trash therefore reconciles affected
+generated descendants without rebuilding the full graph.
 
-Projection deliveries carry the guard's `affectsMemory` verdict as an internal
-sidecar. Generated ownership reconciliation is synchronous and visits only
-generated records in the index's affected reverse-dependency closure: a missing
-canonical entry drops its generated control row, while a changed fingerprint
-promotes it to user-authoritative before the Memory write gate releases. A day
-rename, container move, or ancestor entering Trash therefore reconciles all
-affected generated descendants without rebuilding the full graph. Generated-row
-reads are cached in `MemoryControlStore` and invalidated by every write. Canonical
-graph digesting iterates the index's canonical entries rather than rebuilding a
-full-document graph, includes derived canonical identity such as source date, and
-coalesces pipeline wakes for at most 500 ms from the first pending change. An empty
-text-edit-group close performs no graph work, and worker shutdown rejects new
-timers before awaiting pipeline close. `memory:*` publications still update the
-mutation index but skip ownership reconciliation and digest scheduling.
+Memory-owned publications also update the index, but their Operation source
+marks them as already settled so they skip user-edit reconciliation and graph
+wake scheduling. Other committed mutations coalesce pipeline wakes for at most
+500 ms. Observation is non-authoritative: a projection inspection failure is
+recorded and recovered by a later full Projection, never used to change a
+committed Operation result.
 
-The Memory extension observes the existing canonical tool lifecycle. A
-successful built-in `node_read` counts as Memory use only for exact requested
-Node IDs that were returned and were canonical, visible Memory at read time.
-Search results, implicitly returned descendants, ordinary Nodes, failed reads,
-and extension/MCP tools with a coincidental name do not count. Reads deduplicate
-within the Turn and the tracked read set is bounded to eight Nodes. A read is
-recorded as citation usage only when the completed final response also contains
-that exact ordinary Node as an inline `[[node://UUID]]` reference which the Markdown surface
-materializes as a Node-link affordance. Literal markers in fenced code, inline
-code, image metadata, or an existing Markdown link do not count as citation
-usage. Display and attribution share the same remark AST traversal, including
-Markdown escape and character-entity normalization, so every visible Node-link
-affordance has identical citation semantics. Core appends no Memory-specific
-commentary Item or citation disclosure.
-The `node_search` and `node_read` Items remain visible in the process disclosure
-and Trajectory.
-Usage counts distinct current `originItemId` values, so copied fork history
-cannot inflate ranking. Deleting a source Thread does not delete already
-published Memory Nodes or their retained evidence; those Nodes remain
-user-editable until ordinary editing, consolidation, or Reset changes them.
+When a final answer relies on a Memory Node, the routing context asks the model
+to cite it inline as `[[node://UUID]]`, removing the internal `node:` prefix.
+The ordinary Markdown renderer owns
+that Node-link affordance; Memory adds no commentary Item, sources section, or
+separate disclosure. Shell calls remain visible in process disclosure and
+Trajectory. Deleting a source Thread does not delete already published Memory
+Nodes or their retained evidence; those Nodes remain user-editable until
+ordinary editing, consolidation, or Reset changes them.
 
 ## Rollback And Reset
 
@@ -335,10 +258,10 @@ Reset means "forget current Memory and learn only from future Turns." Under the
 host admission barrier and Memory write gate it advances the reset epoch and
 retains every active Turn ID as an indivisible exclusion. Phase 1 accepts only
 Turns whose immutable admission snapshot carries the current epoch, so rollback
-or replacement cannot move an Item across a positional boundary. One document
-transaction permanently deletes the snapshotted canonical `#d-memory`
-containers and every descendant inside them, including untagged ordinary notes,
-then writes the Reset receipt. Notes outside those containers and stray tagged
+or replacement cannot move an Item across a positional boundary. One destructive
+Runtime ChangeSet purges the snapshotted canonical `#d-memory` containers and
+every descendant inside them, including untagged ordinary notes. Its idempotency
+key is the Reset receipt. Notes outside those containers and stray tagged
 subtrees survive. SQLite finalization clears generated content indexes, lineage,
 source state, citations, rollback invalidations, and jobs while preserving
 feature mode, Thread modes, admission snapshots, exclusions, and tag definitions.
@@ -360,17 +283,18 @@ extensions may admit a Goal or feature Turn, startup ensures the protected tags,
 reconciles history rollback hooks, removes orphan admissions, and reconciles
 every prepared journal. The Memory worker starts only after ThreadService has
 finished initialization.
-A matching document receipt finalizes SQLite without rerunning the model. A
-non-Reset preparation without a receipt is discarded and retried from a fresh
-snapshot. A Reset without a receipt idempotently reapplies deletion before
+A matching Runtime Operation found by idempotency key and source fingerprint
+finalizes SQLite without rerunning the model. A non-Reset preparation without a
+settled Operation is discarded and retried from a fresh snapshot. A Reset
+without settlement idempotently reapplies the same destructive ChangeSet before
 finalization. Publication generations are atomically reserved and may have gaps
 but never duplicates.
 
-DocumentService serializes renderer, agent, and Memory mutations through one
-coordinator. Memory holds its additional write gate from final validation
-through SQLite finalization. Projection-change delivery carries the originating
-operation ID; `memory:*` publications are not mistaken for user edits between
-the document commit and control-store finalization.
+The Runtime serializes renderer, Agent, and Memory mutations. Memory holds its
+additional write gate from final validation through SQLite finalization.
+Projection delivery carries the originating Operation; Memory publications are
+not mistaken for user edits between Runtime commit and control-store
+finalization.
 
 ## User Surface
 
@@ -381,7 +305,7 @@ The Thread Details dialog exposes the per-Thread switch only for persistent root
 user Threads.
 
 Memory used by a response appears only as ordinary inline Node references near
-the claims they support. Node-tool calls remain inspectable in the process and
-Trajectory; there is no separate Memory disclosure, card view, artifact path,
-internal Thread, SQLite row, job, fingerprint, or publication state in the
+the claims they support. Outline shell calls remain inspectable in the process
+and Trajectory; there is no separate Memory disclosure, card view, artifact
+path, internal Thread, SQLite row, job, fingerprint, or publication state in the
 transcript.

@@ -50,9 +50,7 @@ import {
 } from '../core/agent/automation';
 import {
   LIN_AGENT_OAUTH_EVENT_CHANNEL,
-  LIN_DOCUMENT_EVENT_CHANNEL,
   type AgentProviderStoredApiKey,
-  type DocumentProjectionChangedEvent,
   type OAuthLoginEventEnvelope,
 } from '../core/types';
 import { windowMaterialKind } from '../core/windowMaterial';
@@ -373,13 +371,6 @@ const api = {
     ipcRenderer.on(LIN_AGENT_OAUTH_EVENT_CHANNEL, handler);
     return () => {
       ipcRenderer.removeListener(LIN_AGENT_OAUTH_EVENT_CHANNEL, handler);
-    };
-  },
-  onDocumentEvent: (listener: (event: DocumentProjectionChangedEvent) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, payload: DocumentProjectionChangedEvent) => listener(payload);
-    ipcRenderer.on(LIN_DOCUMENT_EVENT_CHANNEL, handler);
-    return () => {
-      ipcRenderer.removeListener(LIN_DOCUMENT_EVENT_CHANNEL, handler);
     };
   },
   window: {

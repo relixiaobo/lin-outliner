@@ -1,6 +1,6 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
-import type { AssetService } from './assetService';
+import type { AssetMetadata } from '../core/types';
 import { assetUrl } from '../core/assets';
 import type { ThreadImageArtifactReference, ThreadResourceReference } from '../core/agent/protocol';
 import type { PreviewCommand } from '../core/commands';
@@ -44,7 +44,10 @@ export interface PreviewCommandContext {
   // The app-owned roots an absolute local-file preview may resolve under: the agent workdir
   // and its scratch sibling (web-fetch and managed-resource observations live in scratch).
   agentLocalFileRoots: readonly string[];
-  assetService: Pick<AssetService, 'lookup' | 'pathFor'>;
+  assetService: {
+    lookup(assetId: string): Promise<AssetMetadata | null>;
+    pathFor(assetId: string): Promise<string | null>;
+  };
   assetFileStreamUrl?: (filePath: string, mimeType: string) => Promise<string | null>;
   inferMimeType: (filePath: string) => string;
   localFileStreamUrl?: (file: TrustedLocalFileReference, mimeType: string) => Promise<string | null>;

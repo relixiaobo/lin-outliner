@@ -188,9 +188,6 @@ test.describe('persistent preview translation cache', () => {
       document.querySelector('[data-tenon-bilingual-translation="true"]')?.textContent ?? null
     `)).toContain('Cached:');
 
-    await smoke.window.evaluate(async (id) => {
-      await window.lin?.invoke('delete_asset', { id });
-    }, assetId);
   });
 });
 
@@ -253,13 +250,19 @@ async function ingestEpub(page: Page): Promise<string> {
   return page.evaluate(async (input) => {
     const lin = window.lin;
     if (!lin) throw new Error('Missing preload API');
-    const asset = await lin.invoke<{ id: string }>('ingest_asset', {
-      kind: 'buffer',
-      data: Uint8Array.from(input),
-      mimeType: 'application/epub+zip',
-      originalFilename: 'persistent-translation.epub',
+    const data = btoa(String.fromCharCode(...input));
+    const response = await lin.outline.request({
+      requestId: `smoke:${Date.now()}`,
+      command: 'asset ingest',
+      input: {
+        source: 'bytes',
+        data,
+        mimeType: 'application/epub+zip',
+        originalFilename: 'persistent-translation.epub',
+      },
     });
-    return asset.id;
+    if (!response.ok) throw new Error(response.error.message);
+    return (response.data as { assetId: string }).assetId;
   }, bytes);
 }
 

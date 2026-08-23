@@ -264,31 +264,33 @@ legacy installations, or update the CLI independently of the active Skill.
 
 ## Built-In Floor
 
-The packaged platform floor contains `tenon-import`, Tenon's external-data
-cleanup and import workflow. Development registration also provides the
-authoring workflow used by the runtime. Packaged resource staging
-is explicit; arbitrary optional Skills are not copied into the application
-bundle. The packaged import wrapper is required: the macOS packaging hook
-restores its executable mode and fails the build when the resource is absent.
+The packaged platform floor contains two isolated built-in Skills:
 
-Import is CLI/API-only rather than a default model tool. The Skill creates and
-previews Import Pack v1 through `tenon-import`; `AgentImportService` remains an
-internal writer. Tana adapters map only exact `journalPart` records with valid
-`YYYY-MM-DD` local dates to native date sections. Preview defaults those packs
-to `native_daily`, reports existing/new canonical days and the affected range,
-and binds its ID to the pack, destination, and mode. Commit appends date-section
-rows directly below canonical Daily Notes while retaining non-date sections
-under one staging root; `--mode stage` explicitly keeps every section in one
-staging tree. Native re-import is append-only and never deduplicates or
-synchronizes earlier content.
+- `outline` teaches all persisted Outliner reads, edits, history, and recovery
+  through the public `outline` CLI.
+- `outline-import` teaches source inspection, optional cleanup, deterministic
+  normalization, coverage accounting, one reviewed Diff/apply, and independent
+  verification.
 
-A commit verification mismatch exits non-zero with preserved
-`staged_with_errors` or `imported_daily_with_errors` data for exactly one import
-operation. The Skill stops without retrying or manually deleting created
-content and reports its roots, Daily Note targets, `operationId`, and
-`mismatches` to the parent Agent. Exact reversal uses that operation ID as the
-`outline_undo_stack` stack-top guard; a newer operation causes refusal rather
-than undoing unrelated work.
+Both declare `execution: isolated` and a bounded tool ceiling. Packaged resource
+staging is explicit; arbitrary optional Skills are not copied into the
+application bundle. The packaged `outline` launcher and import-helper wrapper
+are required resources: the packaging hook restores executable mode where
+needed and fails the build when a resource is absent.
+
+Neither Skill owns document logic. `outline` discovers current capabilities and
+schemas from the executable registry. The import helper only reads source data
+and emits a generic ChangeSet plus evidence; it has no Runtime write client.
+Valid Tana `journalPart` records with canonical local dates lower to native
+Daily Note `ensure` bindings in the same ChangeSet, while non-date sections may
+remain under a staging root. Import is append-only and never implies
+deduplication or synchronization.
+
+The Skill stops before mutation when coverage, selectors, evidence binding, or
+Diff review is unresolved. After apply it reports the ordinary Operation ID,
+affected set, dates, warnings, and verification result. A mismatch is never
+retried or manually deleted; authorized recovery names that exact Operation in
+`outline revert`.
 
 ## Settings
 

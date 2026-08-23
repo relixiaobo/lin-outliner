@@ -194,9 +194,9 @@ describe('Subagent ToolRuntime policy', () => {
       assembleRegistry: true,
     });
 
-    const tools = await runtime.createTools(runtimeContext(true, ['node_read', 'file_read']));
+    const tools = await runtime.createTools(runtimeContext(true, ['file_read', 'file_grep']));
 
-    expect(tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(['node_read', 'file_read']));
+    expect(tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(['file_read', 'file_grep']));
   });
 
   test('does not refresh Skill catalog evidence for Explore or Plan children', async () => {

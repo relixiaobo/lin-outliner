@@ -153,7 +153,7 @@ describe('Agent Core persistence', () => {
       nameOrigin: 'manual',
       archived: false,
       configuration,
-      toolCeiling: ['node_read'],
+      toolCeiling: ['file_read'],
       modelOverride: 'worker-model',
       reasoningEffortOverride: 'high',
     }, {
@@ -170,7 +170,7 @@ describe('Agent Core persistence', () => {
       taskPath: '/root/worker',
       createdAt: 400,
     }]);
-    expect(store.require(childId).toolCeiling).toEqual(['node_read']);
+    expect(store.require(childId).toolCeiling).toEqual(['file_read']);
     expect(store.require(childId).modelOverride).toBe('worker-model');
     expect(store.require(childId).reasoningEffortOverride).toBe('high');
 

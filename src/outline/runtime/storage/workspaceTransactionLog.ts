@@ -465,6 +465,17 @@ export class WorkspaceTransactionLog {
     });
   }
 
+  async operationForIdempotencyKey(key: string): Promise<Operation | undefined> {
+    return this.enqueueWrite(async () => {
+      const state = await this.ensureState();
+      const idempotency = state.idempotencyByKey.get(key);
+      if (!idempotency) return undefined;
+      const operation = state.operationById.get(idempotency.operationId);
+      if (!operation) throw new Error(`Idempotency index references a missing Operation: ${key}`);
+      return clone(operation);
+    });
+  }
+
   async operations(): Promise<readonly Operation[]> {
     return this.enqueueWrite(async () => clone((await this.ensureState()).operations));
   }
@@ -555,6 +566,7 @@ export class WorkspaceTransactionLog {
         if (state.operationById.get(operationId)?.recovery.state === 'expired') continue;
         for (const assetId of reference.protectedAssetRecordIds) protectedIds.add(assetId);
       }
+      expandThumbnailProtection(protectedIds, state.assetRecordById);
       const removed = [...state.assetRecordById.values()]
         .filter((record) => !protectedIds.has(record.assetId));
       if (removed.length === 0) return [];
@@ -1024,6 +1036,19 @@ export class WorkspaceTransactionLog {
     const next = this.writeChain.then(task, task);
     this.writeChain = next.then(() => undefined, () => undefined);
     return next;
+  }
+}
+
+function expandThumbnailProtection(
+  protectedIds: Set<string>,
+  records: ReadonlyMap<string, AssetRecord>,
+): void {
+  const queue = [...protectedIds];
+  while (queue.length > 0) {
+    const thumbnailAssetId = records.get(queue.shift()!)?.metadata.thumbnailAssetId;
+    if (!thumbnailAssetId || protectedIds.has(thumbnailAssetId)) continue;
+    protectedIds.add(thumbnailAssetId);
+    queue.push(thumbnailAssetId);
   }
 }
 

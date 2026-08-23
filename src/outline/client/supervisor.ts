@@ -17,6 +17,8 @@ export interface OutlineClientSupervisorOptions {
   readonly noStart?: boolean;
   readonly startupTimeoutMs?: number;
   readonly launch?: OutlineRuntimeLaunch;
+  readonly origin?: 'desktop' | 'local-user' | 'external-client' | 'built-in-agent';
+  readonly agentAttestation?: string;
 }
 
 export class OutlineClientSupervisor {
@@ -61,7 +63,10 @@ export class OutlineClientSupervisor {
   private async tryConnect(): Promise<OutlineClient | null> {
     const descriptor = await readOutlineRuntimeDescriptor(this.options.root);
     if (!descriptor) return null;
-    const client = new OutlineClient(descriptor);
+    const client = new OutlineClient(descriptor, {
+      ...(this.options.origin ? { origin: this.options.origin } : {}),
+      ...(this.options.agentAttestation ? { agentAttestation: this.options.agentAttestation } : {}),
+    });
     try {
       await client.request('status', {});
       return client;

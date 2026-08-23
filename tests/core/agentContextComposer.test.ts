@@ -46,7 +46,7 @@ const configuration: EffectiveThreadConfiguration = {
   developerInstructions: ['Keep project terminology exact.'],
   model: 'test-model',
   reasoningEffort: 'medium',
-  tools: ['file_read', 'node_read', 'node_search', 'skill', 'agent'],
+  tools: ['file_read', 'web_search', 'skill', 'agent'],
   skills: [],
   preloadedSkills: [],
   plugins: [],
@@ -129,8 +129,6 @@ describe('stable agent prompt composition', () => {
     expect(prompt.blocks.map((block) => block.id)).toEqual([
       'framework-firmware',
       'files',
-      'outliner',
-      'memory',
       'skills',
       'agent',
       'agent-identity',
@@ -169,7 +167,7 @@ describe('stable agent prompt composition', () => {
     // A path is useless to a Thread that cannot open it.
     const noFileTools = composeStablePrompt({
       thread: rootThread(1),
-      configuration: { ...configuration, tools: ['node_read'] },
+      configuration: { ...configuration, tools: ['web_search'] },
       transcriptIndexPath,
     });
     expect(noFileTools.blocks.map((block) => block.id)).not.toContain('episodic-records');
@@ -207,7 +205,7 @@ describe('stable agent prompt composition', () => {
         ...configuration,
         tools: [
           'example.file_read',
-          'example.node_read',
+          'example.web_search',
           'example.skill',
           'example.spawn_agent',
           'example__file_glob',
@@ -303,7 +301,7 @@ describe('stable agent prompt composition', () => {
       },
     });
     expect(child.fingerprints.l0).toBe(first.fingerprints.l0);
-    expect(child.fingerprints.l1).not.toBe(first.fingerprints.l1);
+    expect(child.fingerprints.l1).toBe(first.fingerprints.l1);
     expect(child.fingerprints.l2).not.toBe(first.fingerprints.l2);
     expect(child.text).not.toContain(agentPersonaPrompt(DEFAULT_AGENT_PERSONA_NAME));
     expect(child.text).toContain('You are a headless Tenon Subagent Thread');
@@ -1010,7 +1008,7 @@ describe('canonical context projection', () => {
     const familyToolNames = [
       'file_read',
       'file_write',
-      'node_read',
+      'web_fetch',
       'update_plan',
       'agent',
       'web_search',
@@ -1026,7 +1024,7 @@ describe('canonical context projection', () => {
       ['bash', { command: 'pwd', description: 'Print the working directory' }],
       ['file_read', { file_path: '/workspace/read.txt', line_start: 2 }],
       ['file_write', { file_path: '/workspace/write.txt', content: 'exact content', overwrite: true }],
-      ['node_read', { node_ids: ['node-1'], include_content: true }],
+      ['web_fetch', { url: 'https://example.test', format: 'markdown' }],
       ['update_plan', { plan: [{ step: 'Ship', status: 'in_progress' }] }],
       ['agent', {
         description: 'review',

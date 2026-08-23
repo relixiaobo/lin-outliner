@@ -1,5 +1,6 @@
 import { Value } from 'typebox/value';
 import type { Core, CoreTransactionNodePatch } from '../../core/core';
+import type { FieldSlotMutation } from '../../core/types';
 import {
   TRASH_ID,
   plainText,
@@ -42,6 +43,7 @@ import { createSelectionIndex, resolveTargetSpec } from './selector';
 import type { OutlineRuntimeRequestContext } from './server/runtimeRouter';
 import type { OutlineRuntimeWorkspace } from './runtimeWorkspace';
 import type { CaptureNodeMetadata } from '../../core/launcher/sources';
+import { isSystemFieldId } from '../../core/systemFields';
 
 interface ExecuteResult {
   readonly bindings: Readonly<Record<string, readonly string[]>>;
@@ -156,6 +158,7 @@ export function normalizeOutlineChangeSet(core: Core, input: ChangeSet): ChangeS
         }
         continue;
       }
+      if (isVirtualSystemFieldTarget(change, reference)) continue;
       for (const nodeId of resolveTargetSpec(index, reference.target)) {
         addExpectedNode(index.byId.get(nodeId), expected);
         const parentId = index.byId.get(nodeId)?.parentId;
@@ -330,11 +333,24 @@ function executeEnsure(
     node.type === (change.definitionType === 'tag' ? 'tagDef' : 'fieldDef')
     && node.content.text.trim().toLocaleLowerCase() === change.name.trim().toLocaleLowerCase()
   ));
-  if (existing) return [existing.id];
+  if (existing) {
+    if (change.id && existing.id !== change.id) {
+      throw usageError(`Definition name is already bound to another ID: ${change.name}`);
+    }
+    return [existing.id];
+  }
+  if (change.id) {
+    const nodeAtId = core.projection().nodes.find((node) => node.id === change.id);
+    if (nodeAtId) throw usageError(`Definition ID is already in use: ${change.id}`);
+  }
   const outcome = change.definitionType === 'tag'
-    ? core.createTag(change.name)
-    : core.createFieldDefinition(change.name, (change.fieldType ?? 'plain') as FieldType);
+    ? core.createTag(change.name, change.id)
+    : core.createFieldDefinition(change.name, (change.fieldType ?? 'plain') as FieldType, change.id);
   if (!outcome.focus?.nodeId) throw new Error(`Core did not create definition: ${change.name}`);
+  if (change.definitionType === 'tag' && change.extends) {
+    const extendsId = exactlyOne(resolveTargetRef(baseIndex, change.extends, bindings), 'extended tag definition');
+    core.setTagConfig(outcome.focus.nodeId, { extends: extendsId });
+  }
   return [outcome.focus.nodeId];
 }
 
@@ -373,6 +389,7 @@ function createDraft(
       ...(typeof metadata.height === 'number'
         ? { height: metadata.height }
         : lease?.metadata.imageHeight !== undefined ? { height: lease.metadata.imageHeight } : {}),
+      ...(typeof metadata.alt === 'string' ? { alt: metadata.alt } : {}),
       name: draft.content.text,
     }, id);
   } else if (draft.type === 'attachment') {
@@ -430,9 +447,11 @@ function executeUpdate(
   } else if (instruction.kind === 'description') {
     core.updateNodeDescription(targetId, instruction.value);
   } else if (instruction.kind === 'text-patch') {
-    core.applyNodeTextPatch(targetId, {
-      ops: [{ type: 'replace', from: instruction.from, to: instruction.to, content: plainText(instruction.value) }],
-    });
+    if (instruction.field === 'content') core.applyNodeTextPatch(targetId, instruction.patch);
+    else {
+      const current = core.state().nodes[targetId]?.description ?? '';
+      core.updateNodeDescription(targetId, `${current.slice(0, instruction.from)}${instruction.value}${current.slice(instruction.to)}`);
+    }
   } else if (instruction.kind === 'code') {
     const node = core.state().nodes[targetId];
     if (node?.type === 'codeBlock') core.setCodeLanguage(targetId, instruction.language);
@@ -448,8 +467,9 @@ function executeUpdate(
     else core.removeTag(targetId, tagId);
   } else if (instruction.kind === 'field') {
     executeFieldUpdate(core, baseIndex, bindings, targetId, instruction);
+  } else if (instruction.kind === 'field-slot') {
+    executeFieldSlotUpdate(core, baseIndex, bindings, targetId, instruction, assetLeases);
   } else if (instruction.kind === 'definition') {
-    if (!isRecord(instruction.patch)) throw new Error('definition configure requires an object patch');
     if (instruction.definitionType === 'tag') core.setTagConfig(targetId, instruction.patch as TagConfigPatch);
     else core.setFieldConfig(targetId, instruction.patch as FieldConfigPatch);
   } else if (instruction.kind === 'reference') {
@@ -459,13 +479,10 @@ function executeUpdate(
     else if (instruction.action === 'inline') core.convertReferenceToInlineNode(targetId);
     else core.restoreInlineReferenceNodeToReference(targetId, referenceTargetId);
   } else if (instruction.kind === 'view') {
-    executeViewUpdate(core, targetId, instruction);
+    executeViewUpdate(core, baseIndex, bindings, targetId, instruction);
   } else if (instruction.kind === 'search') {
     if (instruction.action === 'refresh') core.refreshSearchNodeResults(targetId);
-    else {
-      if (!isRecord(instruction.value)) throw new Error('search set requires a config object');
-      core.setSearchNode(targetId, instruction.value as unknown as SearchNodeConfig);
-    }
+    else core.setSearchNode(targetId, { title: instruction.title, query: instruction.query });
   } else if (instruction.kind === 'icon') {
     const value = instruction.value && (instruction.iconKind === 'image' || instruction.iconKind === 'generated')
       ? requiredAssetLease(instruction.value, assetLeases).assetId
@@ -509,6 +526,11 @@ function collectChangeSetAssetLeaseIds(changeSet: ChangeSet): readonly string[] 
     for (const instruction of change.changes) {
       if (instruction.kind === 'banner' && instruction.assetLeaseId) result.add(instruction.assetLeaseId);
       if (instruction.kind === 'image' && instruction.assetLeaseId) result.add(instruction.assetLeaseId);
+      if (instruction.kind === 'field-slot'
+        && (instruction.mutation.action === 'append-image' || instruction.mutation.action === 'append-attachment')
+        && instruction.mutation.assetLeaseId) {
+        result.add(instruction.mutation.assetLeaseId);
+      }
       if (instruction.kind === 'icon'
         && instruction.value
         && (instruction.iconKind === 'image' || instruction.iconKind === 'generated')) {
@@ -517,6 +539,103 @@ function collectChangeSetAssetLeaseIds(changeSet: ChangeSet): readonly string[] 
     }
   }
   return [...result].sort();
+}
+
+function executeFieldSlotUpdate(
+  core: Core,
+  baseIndex: ReturnType<typeof createSelectionIndex>,
+  bindings: Readonly<Record<string, readonly string[]>>,
+  ownerId: string,
+  instruction: Extract<Extract<Change, { op: 'update' }>['changes'][number], { kind: 'field-slot' }>,
+  assetLeases: Readonly<Record<string, AssetLease>>,
+): void {
+  const fieldDefId = exactlyOne(resolveTargetRef(baseIndex, instruction.field, bindings), 'field definition');
+  const mutation = instruction.mutation;
+  const common = mutation.entryId ? { entryId: mutation.entryId } : {};
+  let lowered: FieldSlotMutation;
+  if (mutation.action === 'accept-default') {
+    lowered = { kind: 'acceptDefault' };
+  } else if (mutation.action === 'append-text') {
+    lowered = {
+      kind: 'appendText',
+      text: mutation.text,
+      ...(mutation.id ? { id: mutation.id } : {}),
+      ...(mutation.collect === true ? { collect: true } : {}),
+      ...common,
+    };
+  } else if (mutation.action === 'append-reference') {
+    lowered = {
+      kind: 'appendReference',
+      targetId: exactlyOne(resolveTargetRef(baseIndex, mutation.target, bindings), 'field reference target'),
+      ...(mutation.id ? { id: mutation.id } : {}),
+      ...common,
+    };
+  } else if (mutation.action === 'select-option') {
+    lowered = {
+      kind: 'selectOption',
+      optionNodeId: exactlyOne(resolveTargetRef(baseIndex, mutation.option, bindings), 'field option'),
+      ...(mutation.id ? { id: mutation.id } : {}),
+      ...common,
+    };
+  } else if (mutation.action === 'remove-value') {
+    const valueId = exactlyOne(resolveTargetRef(baseIndex, mutation.value, bindings), 'field value');
+    core.removeFieldValue(valueId);
+    return;
+  } else if (mutation.action === 'append-nodes') {
+    lowered = {
+      kind: 'appendNodes',
+      nodes: mutation.nodes.map(toCoreTree),
+      ...(mutation.firstTags ? {
+        firstTagIds: mutation.firstTags.map((tag) => exactlyOne(
+          resolveTargetRef(baseIndex, tag, bindings),
+          'field value tag',
+        )),
+      } : {}),
+      ...(mutation.id ? { id: mutation.id } : {}),
+      ...common,
+    };
+  } else if (mutation.action === 'append-field') {
+    lowered = {
+      kind: 'appendField',
+      name: mutation.name,
+      fieldType: mutation.fieldType,
+      ...(mutation.id ? { id: mutation.id } : {}),
+      ...common,
+    };
+  } else if (mutation.action === 'append-image') {
+    const lease = mutation.assetLeaseId
+      ? requiredAssetLease(mutation.assetLeaseId, assetLeases)
+      : undefined;
+    lowered = {
+      kind: 'appendImage',
+      ...(lease ? { assetId: lease.assetId } : {}),
+      ...(mutation.mediaUrl ? { mediaUrl: mutation.mediaUrl } : {}),
+      width: mutation.width,
+      height: mutation.height,
+      alt: mutation.alt,
+      name: mutation.name,
+      ...(mutation.id ? { id: mutation.id } : {}),
+      ...common,
+    };
+  } else if (mutation.action === 'append-attachment') {
+    const lease = requiredAssetLease(mutation.assetLeaseId, assetLeases);
+    lowered = {
+      kind: 'appendAttachment',
+      assetId: lease.assetId,
+      mimeType: lease.metadata.mimeType,
+      originalFilename: lease.metadata.originalFilename,
+      fileSize: lease.metadata.byteSize,
+      thumbnailAssetId: lease.metadata.thumbnailAssetId,
+      pdfPageCount: lease.metadata.pdfPageCount,
+      audioDurationMs: lease.metadata.audioDurationMs,
+      videoDurationMs: lease.metadata.videoDurationMs,
+      ...(mutation.id ? { id: mutation.id } : {}),
+      ...common,
+    };
+  } else {
+    lowered = { kind: 'commit', ...common };
+  }
+  core.updateFieldSlot(ownerId, fieldDefId, lowered);
 }
 
 function requiredAssetLease(
@@ -536,20 +655,35 @@ function executeFieldUpdate(
   ownerId: string,
   instruction: Extract<Extract<Change, { op: 'update' }>['changes'][number], { kind: 'field' }>,
 ): void {
-  let fieldDefId = instruction.field
-    ? exactlyOne(resolveTargetRef(baseIndex, instruction.field, bindings), 'field definition')
-    : undefined;
+  if (instruction.action === 'register-option') {
+    core.registerCollectedOption(ownerId, instruction.name);
+    return;
+  }
+  if (instruction.action === 'convert') {
+    core.createInlineFieldAfterNode(ownerId, instruction.name, instruction.fieldType);
+    return;
+  }
+  let fieldDefId: string;
+  let value: string | number | boolean | null | undefined;
   if (instruction.action === 'define') {
-    if (!instruction.name) throw new Error('field define requires name');
     const owner = core.state().nodes[ownerId];
     const outcome = owner?.type === 'tagDef'
-      ? core.createFieldDef(ownerId, instruction.name, (instruction.fieldType ?? 'plain') as FieldType)
-      : core.createInlineField(ownerId, null, instruction.name, (instruction.fieldType ?? 'plain') as FieldType);
+      ? core.createFieldDef(ownerId, instruction.name, instruction.fieldType)
+      : core.createInlineField(ownerId, instruction.index ?? null, instruction.name, instruction.fieldType);
     const entryId = outcome.focus?.nodeId;
     if (!entryId || instruction.value === undefined) return;
-    fieldDefId = (core.state().nodes[entryId] as Extract<Node, { type: 'fieldEntry' }> | undefined)?.fieldDefId;
+    const createdFieldDefId = (core.state().nodes[entryId] as Extract<Node, { type: 'fieldEntry' }> | undefined)?.fieldDefId;
+    if (!createdFieldDefId) throw new Error('field define did not create a field definition');
+    fieldDefId = createdFieldDefId;
+    value = instruction.value;
+  } else {
+    fieldDefId = exactlyOne(resolveFieldTargetRef(baseIndex, instruction.field, bindings), 'field definition');
+    if (instruction.action === 'set') value = instruction.value;
   }
-  if (!fieldDefId) throw new Error(`field ${instruction.action} requires a field definition`);
+  if (instruction.action === 'attach') {
+    core.createInlineField(ownerId, instruction.index ?? null, '', 'plain', fieldDefId);
+    return;
+  }
   const entry = fieldEntry(core, ownerId, fieldDefId);
   if (instruction.action === 'clear') {
     if (entry) core.clearFieldValue(entry.id);
@@ -557,60 +691,109 @@ function executeFieldUpdate(
     if (entry) core.deleteNode(entry.id);
   } else if (instruction.action === 'reuse') {
     const sourceFieldDefId = instruction.sourceField
-      ? exactlyOne(resolveTargetRef(baseIndex, instruction.sourceField, bindings), 'source field definition')
+      ? exactlyOne(resolveFieldTargetRef(baseIndex, instruction.sourceField, bindings), 'source field definition')
       : undefined;
     const sourceEntry = sourceFieldDefId ? fieldEntry(core, ownerId, sourceFieldDefId) : entry;
     if (!sourceEntry) throw new Error('field reuse requires an existing source field entry');
     core.reuseFieldDefinition(sourceEntry.id, fieldDefId);
   } else if (instruction.action === 'select') {
-    if (!entry || typeof instruction.value !== 'string') throw new Error('field select requires an entry and option Node ID');
-    core.selectFieldOption(entry.id, instruction.value);
-  } else if (instruction.value !== undefined) {
+    if (!entry) throw new Error('field select requires an entry');
+    const optionId = exactlyOne(resolveTargetRef(baseIndex, instruction.option, bindings), 'field option');
+    core.selectFieldOption(entry.id, optionId);
+  } else if (value !== undefined) {
     if (entry) core.clearFieldValue(entry.id);
     core.updateFieldSlot(ownerId, fieldDefId, {
       kind: 'appendNodes',
-      nodes: [{ content: plainText(fieldValueText(instruction.value)), children: [] }],
+      nodes: [{ content: plainText(fieldValueText(value)), children: [] }],
     });
   }
 }
 
+function resolveFieldTargetRef(
+  baseIndex: ReturnType<typeof createSelectionIndex>,
+  reference: TargetRef,
+  bindings: Readonly<Record<string, readonly string[]>>,
+): readonly string[] {
+  if (
+    'target' in reference
+    && reference.target.selector.by === 'id'
+    && isSystemFieldId(reference.target.selector.id)
+  ) {
+    return [reference.target.selector.id];
+  }
+  return resolveTargetRef(baseIndex, reference, bindings);
+}
+
 function executeViewUpdate(
   core: Core,
+  baseIndex: ReturnType<typeof createSelectionIndex>,
+  bindings: Readonly<Record<string, readonly string[]>>,
   targetId: string,
   instruction: Extract<Extract<Change, { op: 'update' }>['changes'][number], { kind: 'view' }>,
 ): void {
-  const value = isRecord(instruction.value) ? instruction.value : {};
   if (instruction.property === 'mode') {
-    const mode = typeof instruction.value === 'string' ? instruction.value : value.mode;
-    core.setViewMode(targetId, mode as ViewMode);
+    core.setViewMode(targetId, instruction.mode);
   } else if (instruction.property === 'toolbar') {
-    const visible = typeof instruction.value === 'boolean' ? instruction.value : value.visible;
-    core.setViewToolbarVisible(targetId, visible === true);
+    core.setViewToolbarVisible(targetId, instruction.visible);
   } else if (instruction.property === 'group') {
-    core.setGroupField(targetId, (typeof instruction.value === 'string' ? instruction.value : value.field) as ViewFieldRef);
+    core.setGroupField(targetId, resolveViewField(baseIndex, bindings, instruction.field));
   } else if (instruction.property === 'sort') {
-    if (instruction.action === 'add') core.addSortRule(targetId, String(value.field) as ViewFieldRef, value.direction as SortDirection);
-    else if (instruction.action === 'set') core.updateSortRule(String(value.ruleId), String(value.field) as ViewFieldRef, value.direction as SortDirection);
-    else if (instruction.action === 'remove') core.removeSortRule(String(value.ruleId));
+    if (instruction.action === 'add') core.addSortRule(
+      targetId,
+      resolveViewField(baseIndex, bindings, instruction.field)!,
+      instruction.direction,
+    );
+    else if (instruction.action === 'set') core.updateSortRule(
+      instruction.ruleId,
+      resolveViewField(baseIndex, bindings, instruction.field)!,
+      instruction.direction,
+    );
+    else if (instruction.action === 'remove') core.removeSortRule(instruction.ruleId);
     else core.clearSortRules(targetId);
   } else if (instruction.property === 'filter') {
     if (instruction.action === 'add') core.addFilterRule(
       targetId,
-      String(value.field) as ViewFieldRef,
-      value.operator as FilterOperator,
-      Array.isArray(value.values) ? value.values.map(String) : [],
-      value.valueLogic as FilterValueLogic,
+      resolveViewField(baseIndex, bindings, instruction.field)!,
+      instruction.operator,
+      instruction.values,
+      instruction.valueLogic,
     );
-    else if (instruction.action === 'set') core.updateFilterRule(String(value.ruleId), value);
-    else if (instruction.action === 'remove') core.removeFilterRule(String(value.ruleId));
+    else if (instruction.action === 'set') core.updateFilterRule(instruction.ruleId, {
+      ...(instruction.field !== undefined
+        ? { field: resolveViewField(baseIndex, bindings, instruction.field) }
+        : {}),
+      ...(instruction.operator !== undefined ? { operator: instruction.operator } : {}),
+      ...(instruction.values !== undefined ? { values: instruction.values } : {}),
+      ...(instruction.valueLogic !== undefined ? { valueLogic: instruction.valueLogic } : {}),
+    });
+    else if (instruction.action === 'remove') core.removeFilterRule(instruction.ruleId);
     else core.clearFilterRules(targetId);
   } else if (instruction.action === 'add') {
-    core.addDisplayField(targetId, String(value.field) as ViewFieldRef);
+    core.addDisplayField(targetId, resolveViewField(baseIndex, bindings, instruction.field)!);
   } else if (instruction.action === 'set') {
-    core.updateDisplayField(String(value.displayFieldId), value);
+    core.updateDisplayField(instruction.displayFieldId, {
+      ...(instruction.field !== undefined
+        ? { field: resolveViewField(baseIndex, bindings, instruction.field) }
+        : {}),
+      ...(instruction.visible !== undefined ? { visible: instruction.visible } : {}),
+      ...(instruction.width !== undefined ? { width: instruction.width } : {}),
+      ...(instruction.order !== undefined ? { order: instruction.order } : {}),
+      ...(instruction.label !== undefined ? { label: instruction.label } : {}),
+      ...(instruction.placement !== undefined ? { placement: instruction.placement } : {}),
+      ...(instruction.move !== undefined ? { move: instruction.move } : {}),
+    });
   } else {
-    core.removeDisplayField(String(value.displayFieldId));
+    core.removeDisplayField(instruction.displayFieldId);
   }
+}
+
+function resolveViewField(
+  baseIndex: ReturnType<typeof createSelectionIndex>,
+  bindings: Readonly<Record<string, readonly string[]>>,
+  field: ViewFieldRef | TargetRef | null,
+): ViewFieldRef | null {
+  if (field === null || typeof field === 'string') return field;
+  return exactlyOne(resolveTargetRef(baseIndex, field, bindings), 'view field');
 }
 
 function diffFromPatch(
@@ -687,14 +870,39 @@ function normalizeDraftIds(draft: NodeDraft, seed: string, path: string): NodeDr
 function changeTargetRefs(change: Change): readonly TargetRef[] {
   switch (change.op) {
     case 'resolve': return [{ target: change.target }];
-    case 'ensure': return change.resource === 'tag-search' ? [change.tag] : [];
+    case 'ensure': {
+      if (change.resource === 'tag-search') return [change.tag];
+      if (change.resource === 'definition' && change.definitionType === 'tag' && change.extends) {
+        return [change.extends];
+      }
+      return [];
+    }
     case 'create': return [change.parents];
     case 'update': return [
       change.targets,
       ...change.changes.flatMap((instruction): TargetRef[] => {
         if (instruction.kind === 'tag') return [instruction.tag];
         if (instruction.kind === 'reference') return [instruction.target];
-        if (instruction.kind === 'field') return [instruction.field, instruction.sourceField].filter((value): value is TargetRef => Boolean(value));
+        if (instruction.kind === 'field') {
+          return [
+            'field' in instruction ? instruction.field : undefined,
+            'sourceField' in instruction ? instruction.sourceField : undefined,
+            'option' in instruction ? instruction.option : undefined,
+          ].filter((value): value is TargetRef => Boolean(value));
+        }
+        if (instruction.kind === 'field-slot') {
+          const refs: TargetRef[] = [instruction.field];
+          if (instruction.mutation.action === 'append-reference') refs.push(instruction.mutation.target);
+          if (instruction.mutation.action === 'select-option') refs.push(instruction.mutation.option);
+          if (instruction.mutation.action === 'append-nodes') refs.push(...instruction.mutation.firstTags ?? []);
+          return refs;
+        }
+        if (instruction.kind === 'view'
+          && 'field' in instruction
+          && instruction.field
+          && typeof instruction.field === 'object') {
+          return [instruction.field];
+        }
         return [];
       }),
     ];
@@ -704,6 +912,24 @@ function changeTargetRefs(change: Change): readonly TargetRef[] {
     case 'template': return [change.tag];
     case 'lifecycle': return [change.targets];
   }
+}
+
+function isVirtualSystemFieldTarget(change: Change, reference: TargetRef): boolean {
+  if (
+    'binding' in reference
+    || reference.target.selector.by !== 'id'
+    || !isSystemFieldId(reference.target.selector.id)
+    || change.op !== 'update'
+  ) {
+    return false;
+  }
+  return change.changes.some((instruction) => (
+    instruction.kind === 'field'
+    && (
+      ('field' in instruction && instruction.field === reference)
+      || ('sourceField' in instruction && instruction.sourceField === reference)
+    )
+  ));
 }
 
 function changeBinding(change: Change): string | undefined {

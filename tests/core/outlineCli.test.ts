@@ -6,6 +6,10 @@ import path from 'node:path';
 import { Value } from 'typebox/value';
 import { runOutlineCli } from '../../src/outline/cli';
 import {
+  issueOutlineAgentAttestation,
+  OUTLINE_AGENT_ATTESTATION_ENV,
+} from '../../src/outline/contract/agentAttestation';
+import {
   OUTLINE_APP_VERSION,
   OUTLINE_CAPABILITIES,
   OUTLINE_PROTOCOL_VERSION,
@@ -106,18 +110,62 @@ describe('outline CLI', () => {
     }
   });
 
-  test('forwards history commands and preserves unavailable errors under no-start', async () => {
+  test('queries history by idempotency key and runs guarded revert, undo, and redo', async () => {
     const runningRoot = await makeRoot();
     const runtime = await OutlineRuntimeServer.start({ root: runningRoot, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
+      const created = captureIo();
+      expect(await runOutlineCli([
+        '--json', '--no-start', 'add', '--parent', '@today', '--idempotency-key', 'cli:history', 'History item',
+      ], { runtimeRoot: runningRoot, io: created.io })).toBe(0);
+      const createdOperation = JSON.parse(created.stdout).data;
+
       const log = captureIo();
-      expect(await runOutlineCli(['--json', '--no-start', 'log', '--limit', '10'], {
+      expect(await runOutlineCli(['--json', '--no-start', 'log', '--idempotency-key', 'cli:history'], {
         runtimeRoot: runningRoot,
         io: log.io,
       })).toBe(0);
-      expect(JSON.parse(log.stdout)).toMatchObject({ ok: true, command: 'log', data: [] });
+      expect(JSON.parse(log.stdout)).toMatchObject({
+        ok: true,
+        command: 'log',
+        data: { operations: [{ operationId: createdOperation.operationId }] },
+      });
+      const missingLog = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'log', '--idempotency-key', 'cli:missing'], {
+        runtimeRoot: runningRoot,
+        io: missingLog.io,
+      })).toBe(0);
+      expect(JSON.parse(missingLog.stdout).data).toEqual({ operations: [] });
+
+      const reverted = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'revert', createdOperation.operationId], {
+        runtimeRoot: runningRoot,
+        io: reverted.io,
+      })).toBe(0);
+      expect(JSON.parse(reverted.stdout).data.revertsOperationId).toBe(createdOperation.operationId);
+
+      const second = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'add', '--parent', '@today', 'Undo item'], {
+        runtimeRoot: runningRoot,
+        io: second.io,
+      })).toBe(0);
+      const secondOperation = JSON.parse(second.stdout).data;
+      const undone = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'undo'], {
+        runtimeRoot: runningRoot,
+        io: undone.io,
+      })).toBe(0);
+      const undoOperation = JSON.parse(undone.stdout).data;
+      expect(undoOperation.revertsOperationId).toBe(secondOperation.operationId);
+
+      const redone = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'redo'], {
+        runtimeRoot: runningRoot,
+        io: redone.io,
+      })).toBe(0);
+      expect(JSON.parse(redone.stdout).data.revertsOperationId).toBe(undoOperation.operationId);
     } finally {
       await runtime.stop();
     }
@@ -133,6 +181,60 @@ describe('outline CLI', () => {
       command: 'log',
       error: { code: 'runtime_unavailable', category: 'unavailable' },
     });
+  });
+
+  test('returns a typed non-writing conflict Diff when guarded revert preconditions changed', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const nodeId = `node:${crypto.randomUUID()}`;
+      const created = captureIo();
+      expect(await runOutlineCli([
+        '--json', '--no-start', 'add', '--parent', '@today', '--tree', JSON.stringify({
+          id: nodeId,
+          content: { text: 'Conflict target', marks: [], inlineRefs: [] },
+          children: [],
+        }),
+      ], { runtimeRoot: root, io: created.io })).toBe(0);
+      const operationId = JSON.parse(created.stdout).data.operationId as string;
+
+      const changed = captureIo();
+      expect(await runOutlineCli([
+        '--json', '--no-start', 'set', nodeId, '--description', 'Changed later',
+      ], { runtimeRoot: root, io: changed.io })).toBe(0);
+      const reverted = captureIo();
+      expect(await runOutlineCli([
+        '--json', '--no-start', 'revert', operationId,
+      ], { runtimeRoot: root, io: reverted.io })).toBe(3);
+      expect(JSON.parse(reverted.stdout)).toMatchObject({
+        ok: false,
+        command: 'revert',
+        error: {
+          code: 'revert_conflict',
+          details: {
+            conflictDiff: {
+              kind: 'outline.revert-conflict-diff',
+              operationId,
+              changedPreconditions: [{
+                id: nodeId,
+                expectedAfterDigest: expect.any(String),
+                actualDigest: expect.any(String),
+              }],
+            },
+          },
+        },
+      });
+      const shown = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'show', nodeId, '--include', 'description'], {
+        runtimeRoot: root,
+        io: shown.io,
+      })).toBe(0);
+      expect(JSON.parse(shown.stdout).data.nodes[0].description).toBe('Changed later');
+    } finally {
+      await runtime.stop();
+    }
   });
 
   test('reads structured input from stdin only when explicitly requested', async () => {
@@ -175,7 +277,7 @@ describe('outline CLI', () => {
         io: applied.io,
       })).toBe(0);
       const operation = JSON.parse(applied.stdout).data;
-      expect(operation).toMatchObject({ kind: 'outline.operation', origin: 'external-client' });
+      expect(operation).toMatchObject({ kind: 'outline.operation', origin: 'local-user' });
 
       const jsonFind = captureIo();
       expect(await runOutlineCli(['--json', '--no-start', 'find', 'CLI searchable result'], {
@@ -215,6 +317,32 @@ describe('outline CLI', () => {
       ], { runtimeRoot: root, io: exported.io })).toBe(0);
       expect(JSON.parse(exported.stdout).data.path).toBe(markdownPath);
       expect(await readFile(markdownPath, 'utf8')).toContain('CLI searchable result');
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('ensures and reads a Daily Note through the real CLI path', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const ensured = captureIo();
+      expect(await runOutlineCli([
+        '--json', '--no-start', 'daily', 'ensure', '--date', '2040-02-29',
+      ], { runtimeRoot: root, io: ensured.io })).toBe(0);
+      expect(JSON.parse(ensured.stdout).data).toMatchObject({
+        kind: 'outline.operation',
+        affectedNodeCount: expect.any(Number),
+      });
+
+      const shown = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'show', '@date:2040-02-29'], {
+        runtimeRoot: root,
+        io: shown.io,
+      })).toBe(0);
+      expect(JSON.parse(shown.stdout).data.nodes[0]).toMatchObject({ content: { text: '2040-02-29' } });
     } finally {
       await runtime.stop();
     }
@@ -315,6 +443,42 @@ describe('outline CLI', () => {
     }
   });
 
+  test('forwards shell Item attestation outside public input and records Agent causation', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const causation = { threadId: 'thread:cli', turnId: 'turn:cli', itemId: 'item:cli' };
+      const token = issueOutlineAgentAttestation({
+        descriptor: runtime.descriptor,
+        runtimeRoot: root,
+        causation,
+      });
+      const environment = { [OUTLINE_AGENT_ATTESTATION_ENV]: token };
+      const preview = captureIo(JSON.stringify(createTodayChangeSet('CLI Agent write')));
+      expect(await runOutlineCli(['--json', '--no-start', 'diff', '--input', '-'], {
+        runtimeRoot: root,
+        env: environment,
+        io: preview.io,
+      })).toBe(0);
+      const applied = captureIo(JSON.stringify(JSON.parse(preview.stdout).data));
+      expect(await runOutlineCli(['--json', '--no-start', 'apply', '--input', '-'], {
+        runtimeRoot: root,
+        env: environment,
+        io: applied.io,
+      })).toBe(0);
+      expect(JSON.parse(applied.stdout).data).toMatchObject({
+        origin: 'built-in-agent',
+        causation,
+      });
+      expect(preview.stdout).not.toContain(token);
+      expect(applied.stdout).not.toContain(token);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   test('runs the real entry as a thin local process with clean stdout', async () => {
     const root = await makeRoot();
     const child = Bun.spawn([process.execPath, cliEntry, '--json', 'version'], {
@@ -332,6 +496,31 @@ describe('outline CLI', () => {
     expect(stderr).toBe('');
     expect(JSON.parse(stdout)).toMatchObject({ ok: true, command: 'version' });
     expect(await readdir(root)).toEqual([]);
+  });
+
+  test('exits a real watch process with code 130 on SIGINT', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const child = Bun.spawn([process.execPath, cliEntry, '--json', '--no-start', 'watch'], {
+      env: { ...process.env, TENON_OUTLINE_RUNTIME_ROOT: root },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const reader = child.stdout.getReader();
+    const stderrPromise = new Response(child.stderr).text();
+    try {
+      const firstOutput = await readUntil(reader, '"type":"hello"');
+      expect(firstOutput).toContain('"type":"hello"');
+      child.kill('SIGINT');
+      expect(await child.exited).toBe(130);
+      expect(await stderrPromise).toBe('');
+    } finally {
+      child.kill();
+      reader.releaseLock();
+      await runtime.stop();
+    }
   });
 
   test('keeps the app version constant aligned with package metadata', async () => {
@@ -368,6 +557,19 @@ function captureIo(stdin: string | Uint8Array = '') {
     get stderr() { return stderr; },
     get stdinReads() { return stdinReads; },
   };
+}
+
+async function readUntil(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  expected: string,
+): Promise<string> {
+  let output = '';
+  while (!output.includes(expected)) {
+    const next = await reader.read();
+    if (next.done) break;
+    output += Buffer.from(next.value).toString('utf8');
+  }
+  return output;
 }
 
 async function makeRoot(): Promise<string> {

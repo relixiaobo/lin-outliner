@@ -10,6 +10,11 @@ import type {
 import { OutlineContractError, outlineError } from '../contract/errors';
 import { createChangeSet, parseChangeSetInput, parseSelectorToken, type StructuredReader } from './arguments';
 
+type PublicViewField = Extract<
+  UpdateInstruction,
+  { kind: 'view'; property: 'sort'; action: 'add' }
+>['field'];
+
 export interface PorcelainBuildContext {
   readonly read: StructuredReader;
   readonly lookup: (selector: Selector) => Promise<Record<string, unknown>>;
@@ -237,30 +242,57 @@ async function buildField(command: string, parsed: ParsedOptions, context: Porce
   allow(parsed, ['target', 'field', 'source-field', 'name', 'field-type', 'value', 'option']);
   const target = option(parsed, 'target') ?? parsed.positional.shift();
   if (!target) throw usageError(`${command} requires a target.`);
-  const action = command.slice('field '.length) as Extract<UpdateInstruction, { kind: 'field' }>['action'];
-  const fieldToken = option(parsed, 'field') ?? (action === 'define' ? undefined : parsed.positional.shift());
-  const instruction: Extract<UpdateInstruction, { kind: 'field' }> = {
-    kind: 'field',
-    action,
-    ...(fieldToken ? { field: await targetRef(fieldToken, context.read) } : {}),
-  };
+  const action = command.slice('field '.length);
+  let instruction: Extract<UpdateInstruction, { kind: 'field' }>;
   if (action === 'define') {
     const name = option(parsed, 'name') ?? parsed.positional.shift();
     if (!name) throw usageError('field define requires a name.');
-    instruction.name = name;
-    instruction.fieldType = option(parsed, 'field-type') ?? 'plain';
+    instruction = {
+      kind: 'field',
+      action: 'define',
+      name,
+      fieldType: fieldType(option(parsed, 'field-type') ?? 'plain'),
+    };
   } else if (action === 'set') {
+    const field = option(parsed, 'field') ?? parsed.positional.shift();
     const value = option(parsed, 'value') ?? parsed.positional.shift();
-    if (value === undefined) throw usageError('field set requires a value.');
-    instruction.value = scalar(value);
+    if (!field || value === undefined) throw usageError('field set requires FIELD and VALUE.');
+    instruction = {
+      kind: 'field',
+      action: 'set',
+      field: await targetRef(field, context.read),
+      value: scalarValue(value, 'field value'),
+    };
   } else if (action === 'reuse') {
+    const field = option(parsed, 'field') ?? parsed.positional.shift();
     const source = option(parsed, 'source-field') ?? parsed.positional.shift();
-    if (!source) throw usageError('field reuse requires SOURCE_FIELD and TARGET_FIELD.');
-    instruction.sourceField = await targetRef(source, context.read);
+    if (!field || !source) throw usageError('field reuse requires SOURCE_FIELD and TARGET_FIELD.');
+    instruction = {
+      kind: 'field',
+      action: 'reuse',
+      field: await targetRef(field, context.read),
+      sourceField: await targetRef(source, context.read),
+    };
   } else if (action === 'select') {
+    const field = option(parsed, 'field') ?? parsed.positional.shift();
     const selected = option(parsed, 'option') ?? parsed.positional.shift();
-    if (!selected) throw usageError('field select requires an option Node ID.');
-    instruction.value = selected;
+    if (!field || !selected) throw usageError('field select requires FIELD and OPTION.');
+    instruction = {
+      kind: 'field',
+      action: 'select',
+      field: await targetRef(field, context.read),
+      option: await targetRef(selected, context.read),
+    };
+  } else if (action === 'clear' || action === 'remove') {
+    const field = option(parsed, 'field') ?? parsed.positional.shift();
+    if (!field) throw usageError(`${command} requires FIELD.`);
+    instruction = {
+      kind: 'field',
+      action,
+      field: await targetRef(field, context.read),
+    };
+  } else {
+    throw usageError(`Unknown field command: ${command}`);
   }
   if (parsed.positional.length > 0) throw usageError(`Unexpected ${command} argument: ${parsed.positional[0]}`);
   return { op: 'update', targets: await targetRef(target, context.read), changes: [instruction] };
@@ -294,7 +326,11 @@ async function buildDefinitionConfigure(parsed: ParsedOptions, context: Porcelai
   return {
     op: 'update',
     targets: await targetRef(target, context.read),
-    changes: [{ kind: 'definition', definitionType: type, patch: parseJson(await context.read(patch), '--patch') }],
+    changes: [{
+      kind: 'definition',
+      definitionType: type,
+      patch: parseJson(await context.read(patch), '--patch'),
+    } as Extract<UpdateInstruction, { kind: 'definition' }>],
   };
 }
 
@@ -318,27 +354,97 @@ async function buildView(command: string, parsed: ParsedOptions, context: Porcel
   ]);
   const target = option(parsed, 'target') ?? parsed.positional.shift();
   if (!target) throw usageError(`${command} requires a target.`);
-  const mapping = viewMapping(command);
-  let value: unknown = option(parsed, 'value') ? scalar(option(parsed, 'value')!) : undefined;
-  if (value === undefined && parsed.positional.length > 0) value = scalar(parsed.positional.shift()!);
-  if (value === undefined) {
-    const object: Record<string, unknown> = {};
-    if (option(parsed, 'mode')) object.mode = option(parsed, 'mode');
-    if (option(parsed, 'visible')) object.visible = boolean(option(parsed, 'visible')!, '--visible');
-    if (option(parsed, 'field')) object.field = option(parsed, 'field');
-    if (option(parsed, 'direction')) object.direction = option(parsed, 'direction');
-    if (option(parsed, 'rule')) object.ruleId = option(parsed, 'rule');
-    if (option(parsed, 'operator')) object.operator = option(parsed, 'operator');
-    if (option(parsed, 'values')) object.values = scalar(option(parsed, 'values')!);
-    if (option(parsed, 'logic')) object.valueLogic = option(parsed, 'logic');
-    if (option(parsed, 'display-field')) object.displayFieldId = option(parsed, 'display-field');
-    value = object;
+  const value = option(parsed, 'value') ?? parsed.positional.shift();
+  const fieldToken = option(parsed, 'field');
+  const ruleId = option(parsed, 'rule');
+  const displayFieldId = option(parsed, 'display-field');
+  let instruction: Extract<UpdateInstruction, { kind: 'view' }>;
+  if (command === 'view set') {
+    instruction = { kind: 'view', property: 'mode', action: 'set', mode: viewMode(option(parsed, 'mode') ?? value) };
+  } else if (command === 'view group set') {
+    const field = fieldToken ?? value;
+    instruction = {
+      kind: 'view',
+      property: 'group',
+      action: 'set',
+      field: field === undefined || field === 'null' ? null : await viewField(field, context),
+    };
+  } else if (command === 'view sort add' || command === 'view sort set') {
+    if (!fieldToken) throw usageError(`${command} requires --field.`);
+    const base = {
+      kind: 'view' as const,
+      property: 'sort' as const,
+      field: await viewField(fieldToken, context),
+      direction: sortDirection(option(parsed, 'direction') ?? 'asc'),
+    };
+    if (command === 'view sort set') {
+      if (!ruleId) throw usageError('view sort set requires --rule.');
+      instruction = { ...base, action: 'set', ruleId };
+    } else instruction = { ...base, action: 'add' };
+  } else if (command === 'view sort remove') {
+    if (!ruleId) throw usageError('view sort remove requires --rule.');
+    instruction = { kind: 'view', property: 'sort', action: 'remove', ruleId };
+  } else if (command === 'view sort clear') {
+    instruction = { kind: 'view', property: 'sort', action: 'clear' };
+  } else if (command === 'view filter add') {
+    if (!fieldToken) throw usageError('view filter add requires --field.');
+    instruction = {
+      kind: 'view',
+      property: 'filter',
+      action: 'add',
+      field: await viewField(fieldToken, context),
+      operator: filterOperator(option(parsed, 'operator') ?? 'contains'),
+      values: option(parsed, 'values') ? stringArray(scalar(option(parsed, 'values')!)) : [],
+      valueLogic: filterLogic(option(parsed, 'logic') ?? 'any'),
+    };
+  } else if (command === 'view filter set') {
+    if (!ruleId) throw usageError('view filter set requires --rule.');
+    instruction = {
+      kind: 'view',
+      property: 'filter',
+      action: 'set',
+      ruleId,
+      ...(fieldToken ? { field: await viewField(fieldToken, context) } : {}),
+      ...(option(parsed, 'operator') ? { operator: filterOperator(option(parsed, 'operator')!) } : {}),
+      ...(option(parsed, 'values') ? { values: stringArray(scalar(option(parsed, 'values')!)) } : {}),
+      ...(option(parsed, 'logic') ? { valueLogic: filterLogic(option(parsed, 'logic')!) } : {}),
+    };
+  } else if (command === 'view filter remove') {
+    if (!ruleId) throw usageError('view filter remove requires --rule.');
+    instruction = { kind: 'view', property: 'filter', action: 'remove', ruleId };
+  } else if (command === 'view filter clear') {
+    instruction = { kind: 'view', property: 'filter', action: 'clear' };
+  } else if (command === 'view display add') {
+    if (!fieldToken) throw usageError('view display add requires --field.');
+    instruction = { kind: 'view', property: 'display-field', action: 'add', field: await viewField(fieldToken, context) };
+  } else if (command === 'view display set') {
+    if (!displayFieldId) throw usageError('view display set requires --display-field.');
+    const patch = value === undefined ? {} : scalar(value);
+    if (!isRecord(patch)) throw usageError('view display set value must be an object.');
+    instruction = {
+      kind: 'view',
+      property: 'display-field',
+      action: 'set',
+      displayFieldId,
+      ...(typeof patch.field === 'string' ? { field: await viewField(patch.field, context) } : {}),
+      ...(typeof patch.visible === 'boolean' ? { visible: patch.visible } : {}),
+      ...(typeof patch.width === 'number' ? { width: patch.width } : {}),
+      ...(typeof patch.order === 'number' ? { order: patch.order } : {}),
+      ...(typeof patch.label === 'string' || patch.label === null ? { label: patch.label } : {}),
+      ...(typeof patch.placement === 'string' ? { placement: displayPlacement(patch.placement) } : {}),
+      ...(patch.move === 'left' || patch.move === 'right' ? { move: patch.move } : {}),
+    };
+  } else if (command === 'view display remove') {
+    if (!displayFieldId) throw usageError('view display remove requires --display-field.');
+    instruction = { kind: 'view', property: 'display-field', action: 'remove', displayFieldId };
+  } else {
+    throw usageError(`Unsupported typed view command: ${command}`);
   }
   if (parsed.positional.length > 0) throw usageError(`Unexpected ${command} argument: ${parsed.positional[0]}`);
   return {
     op: 'update',
     targets: await targetRef(target, context.read),
-    changes: [{ kind: 'view', ...mapping, ...(mapping.action === 'clear' ? {} : { value }) }],
+    changes: [instruction],
   };
 }
 
@@ -354,7 +460,14 @@ async function buildSearch(command: string, parsed: ParsedOptions, context: Porc
     return {
       op: 'create',
       parents: await targetRef(parent, context.read),
-      nodes: [draft(title, { type: 'search', metadata: { query: parseJson(await context.read(query), '--query') } })],
+      nodes: [draft(title, {
+        type: 'search',
+        metadata: {
+          query: parseJson(await context.read(query), '--query') as NonNullable<
+            NonNullable<NodeDraft['metadata']>['query']
+          >,
+        },
+      })],
       ...(option(parsed, 'bind') ? { bind: option(parsed, 'bind')! } : {}),
     };
   }
@@ -367,13 +480,25 @@ async function buildSearch(command: string, parsed: ParsedOptions, context: Porc
   allow(parsed, ['target', 'value']);
   const target = option(parsed, 'target') ?? parsed.positional.shift();
   if (!target || parsed.positional.length > 0) throw usageError(`${command} requires TARGET.`);
+  if (command === 'search refresh') {
+    return {
+      op: 'update',
+      targets: await targetRef(target, context.read),
+      changes: [{ kind: 'search', action: 'refresh' }],
+    };
+  }
+  const config = scalar(requiredOption(parsed, 'value'));
+  if (!isRecord(config) || typeof config.title !== 'string' || !isRecord(config.query)) {
+    throw usageError('search set --value requires {"title": string, "query": QueryExpression}.');
+  }
   return {
     op: 'update',
     targets: await targetRef(target, context.read),
     changes: [{
       kind: 'search',
-      action: command === 'search refresh' ? 'refresh' : 'set',
-      ...(command === 'search set' ? { value: scalar(requiredOption(parsed, 'value')) } : {}),
+      action: 'set',
+      title: config.title,
+      query: config.query as Extract<UpdateInstruction, { kind: 'search'; action: 'set' }>['query'],
     }],
   };
 }
@@ -458,27 +583,6 @@ async function buildLifecycle(command: string, parsed: ParsedOptions, context: P
     targets: await targetRef(target, context.read),
     ...(command === 'purge' && flag(parsed, 'contents') ? { contents: true } : {}),
   };
-}
-
-function viewMapping(command: string): Pick<Extract<UpdateInstruction, { kind: 'view' }>, 'property' | 'action'> {
-  const map: Record<string, Pick<Extract<UpdateInstruction, { kind: 'view' }>, 'property' | 'action'>> = {
-    'view set': { property: 'mode', action: 'set' },
-    'view group set': { property: 'group', action: 'set' },
-    'view sort add': { property: 'sort', action: 'add' },
-    'view sort set': { property: 'sort', action: 'set' },
-    'view sort remove': { property: 'sort', action: 'remove' },
-    'view sort clear': { property: 'sort', action: 'clear' },
-    'view filter add': { property: 'filter', action: 'add' },
-    'view filter set': { property: 'filter', action: 'set' },
-    'view filter remove': { property: 'filter', action: 'remove' },
-    'view filter clear': { property: 'filter', action: 'clear' },
-    'view display add': { property: 'display-field', action: 'add' },
-    'view display set': { property: 'display-field', action: 'set' },
-    'view display remove': { property: 'display-field', action: 'remove' },
-  };
-  const result = map[command];
-  if (!result) throw usageError(`Unknown view command: ${command}`);
-  return result;
 }
 
 async function targetRef(token: string, read: StructuredReader): Promise<TargetRef> {
@@ -588,6 +692,63 @@ function scalar(value: string): unknown {
   } catch {
     return value;
   }
+}
+
+function scalarValue(value: string, label: string): string | number | boolean | null {
+  const parsed = scalar(value);
+  if (parsed === null || ['string', 'number', 'boolean'].includes(typeof parsed)) {
+    return parsed as string | number | boolean | null;
+  }
+  throw usageError(`${label} must be a string, number, boolean, or null.`);
+}
+
+const FIELD_TYPES = new Set([
+  'plain', 'options', 'options_from_supertag', 'date', 'number', 'url', 'email', 'checkbox',
+] as const);
+
+function fieldType(value: string): 'plain' | 'options' | 'options_from_supertag' | 'date' | 'number' | 'url' | 'email' | 'checkbox' {
+  if (!FIELD_TYPES.has(value as never)) throw usageError(`Unknown field type: ${value}`);
+  return value as ReturnType<typeof fieldType>;
+}
+
+function viewMode(value: string | undefined): 'list' | 'table' | 'cards' | 'calendar' {
+  if (value === 'list' || value === 'table' || value === 'cards' || value === 'calendar') return value;
+  throw usageError('view set requires list, table, cards, or calendar.');
+}
+
+async function viewField(
+  value: string,
+  context: PorcelainBuildContext,
+): Promise<PublicViewField> {
+  if (VIEW_SYSTEM_FIELDS.has(value as never)) {
+    return value as PublicViewField;
+  }
+  return targetRef(value, context.read);
+}
+
+const VIEW_SYSTEM_FIELDS = new Set([
+  'sys:name', 'sys:createdAt', 'sys:updatedAt', 'sys:done', 'sys:doneAt', 'sys:tags', 'sys:refCount',
+] as const);
+
+function sortDirection(value: string): 'asc' | 'desc' {
+  if (value === 'asc' || value === 'desc') return value;
+  throw usageError('sort direction must be asc or desc.');
+}
+
+function filterOperator(value: string): Extract<UpdateInstruction, { kind: 'view'; property: 'filter'; operator: unknown }>['operator'] {
+  const operators = new Set(['is', 'is_not', 'contains', 'not_contains', 'is_empty', 'is_not_empty', 'gt', 'lt', 'before', 'after']);
+  if (!operators.has(value)) throw usageError(`Unknown filter operator: ${value}`);
+  return value as ReturnType<typeof filterOperator>;
+}
+
+function filterLogic(value: string): 'all' | 'any' {
+  if (value === 'all' || value === 'any') return value;
+  throw usageError('filter logic must be all or any.');
+}
+
+function displayPlacement(value: string): 'title' | 'body' | 'footer' | 'hidden' {
+  if (value === 'title' || value === 'body' || value === 'footer' || value === 'hidden') return value;
+  throw usageError(`Unknown display placement: ${value}`);
 }
 
 function nullable(value: string): string | null {

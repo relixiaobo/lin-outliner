@@ -287,7 +287,7 @@ describe('parameter object generations', () => {
 
   test('candidates install in their exact slot and bind into the parent request', async () => {
     const { h, opened, slot, moving } = moveFixture();
-    const result = h.service.queryParameterObjects({
+    const result = await h.service.queryParameterObjects({
       invocationRef: opened.invocationRef,
       openSeq: null,
       slot,
@@ -312,7 +312,7 @@ describe('parameter object generations', () => {
 
   test('a stale generation is rejected by slot, never by backing identity', async () => {
     const { h, opened, slot } = moveFixture();
-    const first = h.service.queryParameterObjects({
+    const first = await h.service.queryParameterObjects({
       invocationRef: opened.invocationRef,
       openSeq: null,
       slot,
@@ -322,7 +322,7 @@ describe('parameter object generations', () => {
     if (first.status !== 'ready') throw new Error('expected candidates');
     const staleRef = first.items[0]!.objectRef;
     // A second query replaces the generation for this slot.
-    h.service.queryParameterObjects({
+    await h.service.queryParameterObjects({
       invocationRef: opened.invocationRef,
       openSeq: null,
       slot,
@@ -341,7 +341,7 @@ describe('parameter object generations', () => {
 
   test('a main-list subject ref cannot substitute for a destination ref', async () => {
     const { h, opened, slot } = moveFixture();
-    h.service.queryParameterObjects({
+    await h.service.queryParameterObjects({
       invocationRef: opened.invocationRef,
       openSeq: null,
       slot,
@@ -359,9 +359,9 @@ describe('parameter object generations', () => {
     expect(h.commands).toEqual([]);
   });
 
-  test('a slot no action owns cannot be created by naming it', () => {
+  test('a slot no action owns cannot be created by naming it', async () => {
     const { h, opened } = moveFixture();
-    const result = h.service.queryParameterObjects({
+    const result = await h.service.queryParameterObjects({
       invocationRef: opened.invocationRef,
       openSeq: null,
       slot: {
@@ -375,9 +375,9 @@ describe('parameter object generations', () => {
     expect(result.status).toBe('superseded');
   });
 
-  test('a query against an unknown invocation is superseded', () => {
+  test('a query against an unknown invocation is superseded', async () => {
     const { h, slot } = moveFixture();
-    const result = h.service.queryParameterObjects({
+    const result = await h.service.queryParameterObjects({
       invocationRef: 'nope' as InvocationRef,
       openSeq: null,
       slot,
@@ -481,7 +481,7 @@ describe('Move to retrieval convergence', () => {
     expect(naive.includes(valid)).toBe(false);
   });
 
-  test('a system container is still reachable by name', () => {
+  test('a system container is still reachable by name', async () => {
     const h = harness();
     const today = h.core.projection().todayId;
     const moving = h.core.createNode(today, null, 'Moving').focus!.nodeId;
@@ -491,7 +491,7 @@ describe('Move to retrieval convergence', () => {
       subjectRef: opened.menuActions.find((action) => action.actionId === 'move')!.subjectRef,
       parameterId: 'destination',
     };
-    const result = h.service.queryParameterObjects({
+    const result = await h.service.queryParameterObjects({
       invocationRef: opened.invocationRef,
       openSeq: null,
       slot,

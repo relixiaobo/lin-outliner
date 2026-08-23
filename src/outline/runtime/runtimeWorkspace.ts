@@ -2,7 +2,7 @@ import { Core } from '../../core/core';
 import type { CoreTransactionMetadata } from '../../core/core';
 import { canonicalSha256 } from '../contract/canonical';
 import { OutlineContractError, outlineError } from '../contract/errors';
-import type { Operation, OutlineEvent } from '../contract/schemas';
+import type { Operation, OutlineEvent, RevertConflictDiff } from '../contract/schemas';
 import type { Node } from '../../core/types';
 import { projectNode } from '../../core/projection';
 import { OUTLINE_PROTOCOL_VERSION } from '../contract/version';
@@ -18,6 +18,7 @@ import {
 } from './storage';
 import { semanticPatchDigest } from './semanticDigest';
 import { encodeEventCursor } from './eventCursor';
+import { encodeOperationLogCursor } from './operationLogCursor';
 
 const MAX_AFFECTED_NODE_ID_SAMPLE = 1_000;
 
@@ -154,51 +155,40 @@ export class OutlineRuntimeWorkspace {
         afterStateHash: recovery.afterStateHash,
         beforeStateHash: recovery.beforeStateHash,
       });
-      try {
-        return await this.applyMutation({
-          ...options,
-          changeSetHash,
-          diffHash,
-          summary: `Reverted Operation ${operationId}.`,
-          revertsOperationId: operationId,
-          protectedAssetRecordIds: recovery.protectedAssetRecordIds,
-          execute: (candidate) => {
-            candidate.applyRecoveryPatch(recoveryPatchToCorePatch(recovery));
-          },
-        });
-      } catch (error) {
-        if (error instanceof OutlineContractError) throw error;
-        throw new OutlineContractError(outlineError(
-          'revert_conflict',
-          'conflict',
-          `Operation cannot be reverted because an affected Node changed: ${operationId}`,
-          { details: error instanceof Error ? error.message : String(error) },
-        ));
-      }
+      this.assertRecoveryPreconditions(operationId, recovery);
+      return this.applyMutation({
+        ...options,
+        changeSetHash,
+        diffHash,
+        summary: `Reverted Operation ${operationId}.`,
+        revertsOperationId: operationId,
+        protectedAssetRecordIds: recovery.protectedAssetRecordIds,
+        execute: (candidate) => {
+          candidate.applyRecoveryPatch(recoveryPatchToCorePatch(recovery));
+        },
+      });
     });
   }
 
   async undo(options: Pick<OutlineRuntimeMutationRequest, 'origin' | 'causation'>): Promise<Operation> {
     return this.enqueueMutation(async () => {
       const operations = await this.store.operations();
-      const target = [...operations].reverse().find((operation) => operation.recovery.state === 'available');
-      if (!target) {
+      const operationId = operationHistory(operations).undo.at(-1);
+      if (!operationId) {
         throw new OutlineContractError(outlineError('not_found', 'selection', 'No recoverable Operation is available to undo.'));
       }
-      return this.revertInsideQueue(target.operationId, options);
+      return this.revertInsideQueue(operationId, options);
     });
   }
 
   async redo(options: Pick<OutlineRuntimeMutationRequest, 'origin' | 'causation'>): Promise<Operation> {
     return this.enqueueMutation(async () => {
       const operations = await this.store.operations();
-      const target = [...operations].reverse().find((operation) => (
-        operation.revertsOperationId && operation.recovery.state === 'available'
-      ));
-      if (!target) {
+      const operationId = operationHistory(operations).redo.at(-1);
+      if (!operationId) {
         throw new OutlineContractError(outlineError('not_found', 'selection', 'No recoverable revert Operation is available to redo.'));
       }
-      return this.revertInsideQueue(target.operationId, options);
+      return this.revertInsideQueue(operationId, options);
     });
   }
 
@@ -207,6 +197,7 @@ export class OutlineRuntimeWorkspace {
     options: Pick<OutlineRuntimeMutationRequest, 'origin' | 'causation'>,
   ): Promise<Operation> {
     const recovery = await this.store.recoveryPatch(operationId);
+    this.assertRecoveryPreconditions(operationId, recovery);
     return this.applyMutation({
       ...options,
       changeSetHash: canonicalSha256({ kind: 'outline.revert', operationId }),
@@ -223,6 +214,36 @@ export class OutlineRuntimeWorkspace {
         candidate.applyRecoveryPatch(recoveryPatchToCorePatch(recovery));
       },
     });
+  }
+
+  private assertRecoveryPreconditions(
+    operationId: string,
+    recovery: Awaited<ReturnType<WorkspaceTransactionLog['recoveryPatch']>>,
+  ): void {
+    const nodes = this.core.state().nodes;
+    const changedPreconditions: RevertConflictDiff['changedPreconditions'] = recovery.nodes.flatMap((entry) => {
+      const current = nodes[entry.id];
+      const actualDigest = current ? canonicalSha256(current) : null;
+      return actualDigest === entry.afterDigest ? [] : [{
+        id: entry.id,
+        expectedAfterDigest: entry.afterDigest,
+        actualDigest,
+      }];
+    });
+    if (changedPreconditions.length === 0) return;
+    const conflictDiff: RevertConflictDiff = {
+      protocolVersion: OUTLINE_PROTOCOL_VERSION,
+      kind: 'outline.revert-conflict-diff',
+      operationId,
+      currentRevision: this.core.revision(),
+      changedPreconditions,
+    };
+    throw new OutlineContractError(outlineError(
+      'revert_conflict',
+      'conflict',
+      `Operation cannot be reverted because ${changedPreconditions.length} affected Node precondition(s) changed: ${operationId}`,
+      { details: { conflictDiff } },
+    ));
   }
 
   private async applyMutation(request: OutlineRuntimeMutationRequest): Promise<Operation> {
@@ -258,11 +279,7 @@ export class OutlineRuntimeWorkspace {
       ...(request.causation ? { causation: request.causation } : {}),
     };
     const { result: transactionResult, patch } = await candidate.transactionWithPatch(
-      request.revertsOperationId
-        ? 'system'
-        : request.origin === 'built-in-agent'
-          ? 'agent'
-          : 'user',
+      'system',
       () => request.execute(candidate),
       metadata,
     );
@@ -347,7 +364,12 @@ export class OutlineRuntimeWorkspace {
       affectedNodeIdsHash: canonicalSha256(affectedNodeIds),
       ...(affectedNodeIds.length > MAX_AFFECTED_NODE_ID_SAMPLE ? {
         affectedNodeIdsTruncated: true,
-        affectedNodeIdsCursor: `operation:${operationId}:affected:${MAX_AFFECTED_NODE_ID_SAMPLE}`,
+        affectedNodeIdsCursor: encodeOperationLogCursor({
+          kind: 'affected',
+          filterHash: canonicalSha256({ operationId }),
+          operationId,
+          offset: MAX_AFFECTED_NODE_ID_SAMPLE,
+        }),
       } : {}),
       revisionBefore: patch.revisionBefore,
       revisionAfter: patch.revisionAfter,
@@ -436,4 +458,46 @@ function assetRecordIdsInNodes(nodes: readonly Node[]): Set<string> {
     if (node.type === 'attachment' && node.thumbnailAssetId) result.add(node.thumbnailAssetId);
   }
   return result;
+}
+
+function operationHistory(operations: readonly Operation[]): {
+  readonly undo: readonly string[];
+  readonly redo: readonly string[];
+} {
+  const undo: string[] = [];
+  const redo: string[] = [];
+  for (const operation of operations) {
+    const target = operation.revertsOperationId;
+    if (!target) {
+      undo.push(operation.operationId);
+      redo.length = 0;
+      continue;
+    }
+    if (undo.at(-1) === target) {
+      undo.pop();
+      redo.push(operation.operationId);
+      continue;
+    }
+    if (redo.at(-1) === target) {
+      redo.pop();
+      undo.push(operation.operationId);
+      continue;
+    }
+    removeOperationId(undo, target);
+    removeOperationId(redo, target);
+    undo.push(operation.operationId);
+    redo.length = 0;
+  }
+  const available = new Set(operations
+    .filter((operation) => operation.recovery.state === 'available')
+    .map((operation) => operation.operationId));
+  return {
+    undo: undo.filter((operationId) => available.has(operationId)),
+    redo: redo.filter((operationId) => available.has(operationId)),
+  };
+}
+
+function removeOperationId(stack: string[], operationId: string): void {
+  const index = stack.lastIndexOf(operationId);
+  if (index >= 0) stack.splice(index, 1);
 }

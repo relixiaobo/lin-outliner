@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { createReadStream } from 'node:fs';
 import {
   mkdir,
+  mkdtemp,
   open,
   readFile,
   readdir,
@@ -42,6 +44,7 @@ export interface OutlineVerifiedAsset {
 export interface OutlineAssetStoreOptions {
   readonly now?: () => Date;
   readonly leaseMs?: number;
+  readonly renderPdfThumbnail?: (pdfPath: string) => Promise<Uint8Array | undefined>;
 }
 
 export class OutlineAssetStore {
@@ -50,6 +53,7 @@ export class OutlineAssetStore {
   readonly quarantineDirectory: string;
   private readonly now: () => Date;
   private readonly leaseMs: number;
+  private readonly renderPdfThumbnail: (pdfPath: string) => Promise<Uint8Array | undefined>;
 
   constructor(
     workspaceRoot: string,
@@ -61,6 +65,7 @@ export class OutlineAssetStore {
     this.quarantineDirectory = path.join(this.root, QUARANTINE_DIRECTORY);
     this.now = options.now ?? (() => new Date());
     this.leaseMs = Math.max(1, options.leaseMs ?? DEFAULT_LEASE_MS);
+    this.renderPdfThumbnail = options.renderPdfThumbnail ?? renderPdfThumbnail;
   }
 
   ingestPath(sourcePath: string): Promise<AssetLease> {
@@ -215,6 +220,9 @@ export class OutlineAssetStore {
       const dimensions = assetImageDimensions(metadataBytes, mimeType);
       const durationMs = assetMediaDurationMs(metadataBytes, mimeType);
       const mediaKind = mediaKindForMimeType(mimeType);
+      const thumbnailLease = mimeType === 'application/pdf'
+        ? await this.ingestPdfThumbnail(finalPath, originalFilename)
+        : undefined;
       const metadata: AssetMetadata = {
         mimeType,
         byteSize,
@@ -224,6 +232,7 @@ export class OutlineAssetStore {
         ...(mimeType === 'application/pdf' && assetPdfPageCount(metadataBytes) !== undefined
           ? { pdfPageCount: assetPdfPageCount(metadataBytes) }
           : {}),
+        ...(thumbnailLease ? { thumbnailAssetId: thumbnailLease.assetId } : {}),
         ...(durationMs !== undefined && mediaKind === 'audio' ? { audioDurationMs: durationMs } : {}),
         ...(durationMs !== undefined && mediaKind === 'video' ? { videoDurationMs: durationMs } : {}),
       };
@@ -252,6 +261,19 @@ export class OutlineAssetStore {
     }
   }
 
+  private async ingestPdfThumbnail(
+    pdfPath: string,
+    originalFilename: string | undefined,
+  ): Promise<AssetLease | undefined> {
+    const bytes = await this.renderPdfThumbnail(pdfPath).catch(() => undefined);
+    if (!bytes || bytes.byteLength === 0) return undefined;
+    return this.ingest(
+      [bytes],
+      `${originalFilename ?? 'attachment.pdf'} thumbnail.png`,
+      'image/png',
+    );
+  }
+
   private blobPath(sha256: string): string {
     if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error(`Invalid asset blob digest: ${sha256}`);
     return path.join(this.blobDirectory, `${sha256}.blob`);
@@ -263,6 +285,47 @@ export class OutlineAssetStore {
     await mkdir(this.quarantineDirectory, { recursive: true, mode: 0o700 });
     await rename(source, path.join(this.quarantineDirectory, `${sha256}-${crypto.randomUUID()}.blob`));
   }
+}
+
+async function renderPdfThumbnail(pdfPath: string): Promise<Uint8Array | undefined> {
+  const temporaryDirectory = await mkdtemp(path.join(path.dirname(pdfPath), '.pdf-thumbnail-'));
+  try {
+    const outputPrefix = path.join(temporaryDirectory, 'page');
+    const rendered = await runProcess('pdftoppm', [
+      '-f', '1',
+      '-l', '1',
+      '-singlefile',
+      '-png',
+      '-scale-to', '512',
+      pdfPath,
+      outputPrefix,
+    ], 5_000);
+    if (!rendered) return undefined;
+    const bytes = await readFile(`${outputPrefix}.png`).catch(() => undefined);
+    return bytes && bytes.byteLength > 0 ? bytes : undefined;
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+function runProcess(command: string, args: readonly string[], timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const child = spawn(command, [...args], { stdio: 'ignore' });
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(ok);
+    };
+    const timeout = setTimeout(() => {
+      child.kill('SIGKILL');
+      finish(false);
+    }, timeoutMs);
+    timeout.unref?.();
+    child.once('error', () => finish(false));
+    child.once('exit', (code) => finish(code === 0));
+  });
 }
 
 async function fileDigest(filePath: string): Promise<{ sha256: string; byteSize: number }> {

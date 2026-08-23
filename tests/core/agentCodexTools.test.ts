@@ -349,12 +349,10 @@ describe('Codex Agent Core model-tool contract', () => {
     expect(modelToolCommandsMatch('printf "a  b"', 'printf "a b"')).toBe(false);
   });
 
-  test('maps only canonical action kinds and handles outline undo dynamically', () => {
+  test('maps only canonical action kinds', () => {
     expect(new Set(MODEL_TOOL_ACTION_KINDS).size).toBe(MODEL_TOOL_ACTION_KINDS.length);
     expect(MODEL_TOOL_ACTION_KINDS.some((kind) => kind.includes('.issue.'))).toBe(false);
     expect(MODEL_TOOL_ACTION_KINDS.some((kind) => kind.includes('.session.'))).toBe(false);
-    expect(modelToolActionKinds('outline_undo_stack', { action: 'list' })).toEqual(['outline.read']);
-    expect(modelToolActionKinds('outline_undo_stack', { action: 'undo' })).toEqual(['outline.edit']);
     expect(modelToolActionKinds('agent')).toEqual(['agent.subagent.spawn']);
     expect(modelToolActionKinds('agent_message')).toEqual(['agent.subagent.send']);
     expect(modelToolActionKinds('task_stop')).toEqual(['agent.subagent.interrupt', 'shell.stop']);

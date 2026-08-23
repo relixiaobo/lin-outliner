@@ -1,16 +1,4 @@
 import { autoInitStrategiesForFieldType } from './autoInit';
-import {
-  DocumentSystemContractError,
-  decodeDocumentSystemReceipt,
-  documentSystemReceiptKey,
-  encodeDocumentSystemReceipt,
-  resolveDocumentSystemTagEnsure,
-  validateDocumentSystemReceipt,
-  validateDocumentSystemTagDefinition,
-  type DocumentSystemReceipt,
-  type DocumentSystemTagDefinition,
-  type DocumentSystemTagObservedState,
-} from './documentSystem';
 import { CoreError } from './errors';
 import {
   LoroOutlinerDocument,
@@ -96,6 +84,7 @@ import {
   type NodeProjection,
   type AutoInitStrategy,
   type FieldConfigPatch,
+  type FieldSlotMutation,
   type FieldType,
   type DisplayPlacement,
   type FilterOperator,
@@ -129,6 +118,7 @@ import {
   type SplitNodeOptions,
   type SortDirection,
   type TagConfigPatch,
+  type TagTemplateBackfillPreview,
   type TextMark,
   type ViewFieldRef,
   type ViewMode,
@@ -176,56 +166,6 @@ export interface CoreReplicationImportResult extends CoreRevisionDelta {
 interface TemplateFieldRef {
   fieldDefId: NodeId;
   templateOriginId: NodeId;
-}
-
-export type FieldSlotMutation =
-  | { kind: 'acceptDefault'; entryId?: undefined }
-  | { kind: 'appendText'; text: string; id?: NodeId; collect?: boolean; entryId?: NodeId }
-  | { kind: 'appendReference'; targetId: NodeId; id?: NodeId; entryId?: NodeId }
-  | { kind: 'selectOption'; optionNodeId: NodeId; id?: NodeId; entryId?: NodeId }
-  | {
-      kind: 'appendNodes';
-      nodes: CreateNodeTree[];
-      firstTagIds?: NodeId[];
-      id?: NodeId;
-      entryId?: NodeId;
-    }
-  | {
-      kind: 'appendField';
-      name: string;
-      fieldType: FieldType;
-      id?: NodeId;
-      entryId?: NodeId;
-    }
-  | {
-      kind: 'appendImage';
-      assetId?: string;
-      mediaUrl?: string;
-      width?: number | null;
-      height?: number | null;
-      alt?: string | null;
-      name?: string | null;
-      id?: NodeId;
-      entryId?: NodeId;
-    }
-  | {
-      kind: 'appendAttachment';
-      assetId?: string | null;
-      mimeType?: string | null;
-      originalFilename?: string | null;
-      fileSize?: number | null;
-      thumbnailAssetId?: string | null;
-      pdfPageCount?: number | null;
-      audioDurationMs?: number | null;
-      videoDurationMs?: number | null;
-      id?: NodeId;
-      entryId?: NodeId;
-    }
-  | { kind: 'commit'; entryId?: NodeId };
-
-export interface TagTemplateBackfillPreview {
-  readonly nodeCount: number;
-  readonly additionCount: number;
 }
 
 interface TagTemplateBackfillTarget {
@@ -894,98 +834,9 @@ export class Core {
     return this.persistenceRevisionValue;
   }
 
-  readDocumentSystemReceipt(namespace: string, scopeId: string): DocumentSystemReceipt | null {
-    const encoded = this.loro.readDocumentSystemReceipt(documentSystemReceiptKey(namespace, scopeId));
-    return encoded === null ? null : decodeDocumentSystemReceipt(encoded);
-  }
-
-  putDocumentSystemReceipt(receiptInput: DocumentSystemReceipt): void {
-    this.requireHostDocumentTransaction();
-    const receipt = validateDocumentSystemReceipt(receiptInput);
-    this.loro.writeDocumentSystemReceipt(
-      documentSystemReceiptKey(receipt.namespace, receipt.scopeId),
-      encodeDocumentSystemReceipt(receipt),
-    );
-  }
-
-  readDocumentSystemTagDefinition(tagId: string): DocumentSystemTagDefinition | null {
-    const encoded = this.loro.readDocumentSystemTagClaim(tagId);
-    if (encoded === null) return null;
-    let value: unknown;
-    try {
-      value = JSON.parse(encoded);
-    } catch {
-      throw new DocumentSystemContractError(`invalid system tag ownership claim: ${tagId}`);
-    }
-    return validateDocumentSystemTagDefinition(value as DocumentSystemTagDefinition);
-  }
-
-  protectedDocumentSystemTagIds(): ReadonlySet<string> {
-    return new Set(this.loro.documentSystemTagIds());
-  }
-
-  ensureDocumentSystemTagDefinition(definitionInput: DocumentSystemTagDefinition): DocumentSystemTagDefinition {
-    this.requireHostDocumentTransaction();
-    const definition = validateDocumentSystemTagDefinition(definitionInput);
-    const state = this.snapshot();
-    const node = state.nodes[definition.tagId];
-    const claim = this.readDocumentSystemTagDefinition(definition.tagId) ?? undefined;
-    for (const claimedTagId of this.loro.documentSystemTagIds()) {
-      const existingClaim = this.readDocumentSystemTagDefinition(claimedTagId);
-      if (
-        existingClaim
-        && existingClaim.tagId !== definition.tagId
-        && existingClaim.namespace === definition.namespace
-        && existingClaim.name === definition.name
-      ) {
-        throw new DocumentSystemContractError('system tag name is already owned by another identity');
-      }
-    }
-    const duplicate = Object.values(state.nodes).find((candidate) =>
-      candidate.id !== definition.tagId
-      && candidate.type === 'tagDef'
-      && candidate.content.text === definition.name
-      && !isInTrash(state, candidate.id));
-    if (duplicate) throw new DocumentSystemContractError('system tag name conflicts with an existing tag definition');
-
-    const tag: DocumentSystemTagObservedState = !node
-      ? { kind: 'missing' }
-      : {
-          kind: isInTrash(state, node.id) ? 'trashed' : 'active',
-          tagId: node.id,
-          name: node.content.text,
-          nodeType: node.type ?? null,
-        };
-    if (node && tag.kind === 'active' && node.parentId !== SCHEMA_ID) {
-      throw new DocumentSystemContractError('system tag definition must be a direct child of Schema');
-    }
-    const resolution = resolveDocumentSystemTagEnsure(definition, { claim, tag });
-    this.loro.writeDocumentSystemTagClaim(definition.tagId, JSON.stringify(resolution.definition));
-    if (resolution.action === 'create') {
-      this.loro.createNodeWithId(definition.tagId, SCHEMA_ID, undefined, 'tagDef', (created) => {
-        created.content = plainText(definition.name);
-        created.locked = true;
-      });
-    } else if (resolution.action === 'restore') {
-      const restored = clone(requiredNode(this.snapshot(), definition.tagId));
-      delete restored.trashedFromParentId;
-      delete restored.trashedFromIndex;
-      restored.locked = true;
-      restored.updatedAt = nowMs();
-      this.loro.writeNode(restored);
-      this.loro.moveNode(definition.tagId, SCHEMA_ID, undefined);
-    } else if (node && !node.locked) {
-      const locked = clone(node);
-      locked.locked = true;
-      locked.updatedAt = nowMs();
-      this.loro.writeNode(locked);
-    }
-    return resolution.definition;
-  }
-
-  private requireHostDocumentTransaction(): void {
+  private requireSystemTransaction(): void {
     if (!this.activeTransaction || !this.activeTransaction.origin.startsWith('system:')) {
-      throw new DocumentSystemContractError('host document commands require a trusted system transaction');
+      throw CoreError.invalidOperation('recovery commands require a trusted system transaction');
     }
   }
 
@@ -1136,7 +987,6 @@ export class Core {
     const revisionBefore = this.revisionValue;
     const persistenceRevisionBefore = this.persistenceRevisionValue;
     this.loro.clearTouchedNodeIds();
-    this.loro.clearSystemDataChanged();
     this.activeTransaction = {
       origin: resolvedOrigin,
       metadata,
@@ -1167,7 +1017,6 @@ export class Core {
     } catch (error) {
       this.loro.revertTo(rollbackFrontiers, SYSTEM_COMMIT_ORIGIN);
       this.loro.clearTouchedNodeIds();
-      this.loro.clearSystemDataChanged();
       this.activeTransaction = undefined;
       // The revert rewrites the tree wholesale; drop the projection cache so the
       // next read rebuilds it from the rolled-back state.
@@ -2286,14 +2135,14 @@ export class Core {
     });
   }
 
-  createTag(name: string): CommandOutcome {
+  createTag(name: string, proposedId?: string): CommandOutcome {
     const normalized = name.trim();
     if (!normalized) throw CoreError.invalidOperation('tag name cannot be empty');
     return this.mutate(() => {
       const state = this.snapshot();
       const existing = findTagByName(state, normalized);
       if (existing) return focus(existing);
-      const id = this.createTagDefDirect(normalized);
+      const id = this.createTagDefDirect(normalized, proposedId);
       return focus(id);
     });
   }
@@ -2457,14 +2306,14 @@ export class Core {
     });
   }
 
-  createFieldDefinition(name: string, fieldType: FieldType = 'plain'): CommandOutcome {
+  createFieldDefinition(name: string, fieldType: FieldType = 'plain', proposedId?: string): CommandOutcome {
     const normalized = name.trim();
     if (!normalized) throw CoreError.invalidOperation('field name cannot be empty');
     return this.mutate(() => {
       const state = this.snapshot();
       const existing = findFieldDefByName(state, normalized);
       if (existing) return focus(existing);
-      const fieldDefId = this.insertFieldDefNodeDirect(SCHEMA_ID, normalized, fieldType);
+      const fieldDefId = this.insertFieldDefNodeDirect(SCHEMA_ID, normalized, fieldType, proposedId);
       return focus(fieldDefId);
     });
   }
@@ -3511,7 +3360,7 @@ export class Core {
     const { nodeCount, additionCount } = buildTagTemplateBackfillPlan(
       this.stateValue,
       tagId,
-      this.protectedDocumentSystemTagIds(),
+      new Set(),
     );
     return { nodeCount, additionCount };
   }
@@ -3523,7 +3372,7 @@ export class Core {
       const plan = buildTagTemplateBackfillPlan(
         state,
         tagId,
-        this.protectedDocumentSystemTagIds(),
+        new Set(),
       );
       for (const target of plan.targets) {
         for (const templateNodeId of target.templateNodeIds) {
@@ -3763,7 +3612,7 @@ export class Core {
   } {
     this.patchActiveTransactionTouchedNodes(transaction);
     this.captureActiveTransactionNetChanges(transaction);
-    const systemChanged = this.loro.drainSystemDataChanged();
+    const systemChanged = false;
     const nodes = coreTransactionNodePatch(transaction.initialNodes, this.stateValue.nodes);
     transaction.affectedNodeIds = new Set(nodes.map((entry) => entry.id));
     transaction.changed = nodes.length > 0;
@@ -3796,7 +3645,7 @@ export class Core {
   }
 
   applyRecoveryPatch(patch: CoreTransactionPatch): CommandOutcome {
-    this.requireHostDocumentTransaction();
+    this.requireSystemTransaction();
     return this.mutate(() => {
       const state = this.snapshot();
       for (const entry of patch.nodes) {
@@ -4518,8 +4367,8 @@ export class Core {
     });
   }
 
-  private createTagDefDirect(name: string) {
-    const id = this.freshId('tag');
+  private createTagDefDirect(name: string, proposedId?: string) {
+    const id = proposedId ?? this.freshId('tag');
     const color = nextTagColor(this.snapshot());
     this.loro.createNodeWithId(id, SCHEMA_ID, undefined, 'tagDef', (node) => {
       node.content = plainText(name);
@@ -4633,8 +4482,8 @@ export class Core {
     };
   }
 
-  private insertFieldDefNodeDirect(parentId: string, name: string, fieldType: FieldType) {
-    const id = this.freshId('field');
+  private insertFieldDefNodeDirect(parentId: string, name: string, fieldType: FieldType, proposedId?: string) {
+    const id = proposedId ?? this.freshId('field');
     this.loro.createNodeWithId(id, parentId, undefined, 'fieldDef', (node) => {
       node.content = plainText(name);
     });

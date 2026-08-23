@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { LinApi } from '../../src/preload';
-import type { OutlineResponse } from '../../src/outline/contract';
+import type { OutlineResponse, OutlineStreamRecord } from '../../src/outline/contract';
 import {
   OutlineRequestError,
   projectionUpdateFromOutlineEvent,
   readDesktopProjection,
   requestOutline,
+  runDesktopMutation,
+  subscribeDesktopProjection,
 } from '../../src/renderer/api/outline';
 
 let savedWindow: PropertyDescriptor | undefined;
@@ -83,6 +85,135 @@ describe('renderer Outline client', () => {
       removedIds: ['removed'],
     });
   });
+
+  test('buffers Events until the full desktop Projection is seeded', async () => {
+    let stream: ((record: OutlineStreamRecord) => void) | undefined;
+    let resolveProjection!: (response: OutlineResponse) => void;
+    installOutlineBridge({
+      request: async (request) => new Promise<OutlineResponse>((resolve) => {
+        resolveProjection = resolve;
+      }),
+      subscribe: (_subscription, listener) => {
+        stream = listener;
+        queueMicrotask(() => listener(streamHello('cursor:7')));
+        return () => undefined;
+      },
+    });
+    const updates: unknown[] = [];
+    const subscription = subscribeDesktopProjection((update) => updates.push(update), () => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    stream?.(streamEvent(8, 'cursor:8'));
+    resolveProjection(success('show', projectionPage(2)));
+
+    await subscription.ready;
+
+    expect(updates).toHaveLength(2);
+    expect(updates[0]).toMatchObject({ kind: 'full', revision: 7 });
+    expect(updates[1]).toMatchObject({ kind: 'delta', revision: 8 });
+    subscription.unsubscribe();
+  });
+
+  test('serializes a desktop ChangeSet at the latest revision and reconciles its cached Operation Event', async () => {
+    let stream: ((record: OutlineStreamRecord) => void) | undefined;
+    let submittedChangeSet: unknown;
+    const subscriptionUpdates: unknown[] = [];
+    installOutlineBridge({
+      request: async (request) => {
+        if (request.command === 'show') return success('show', projectionPage(2));
+        if (request.command === 'diff') {
+          submittedChangeSet = (request.input as { changeSet: unknown }).changeSet;
+          return success('diff', { kind: 'outline.diff' });
+        }
+        stream?.(streamEvent(8, 'cursor:8', operation(8)));
+        return success('apply', operation(8));
+      },
+      subscribe: (_subscription, listener) => {
+        stream = listener;
+        queueMicrotask(() => listener(streamHello('cursor:7')));
+        return () => undefined;
+      },
+    });
+    const subscription = subscribeDesktopProjection((update) => subscriptionUpdates.push(update), () => undefined);
+    await subscription.ready;
+
+    const result = await runDesktopMutation((revision) => ({
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      base: { revision },
+      operations: [{
+        op: 'update',
+        targets: { target: { selector: { by: 'id', id: 'today' }, cardinality: 'one' } },
+        changes: [{ kind: 'done', value: true }],
+      }],
+    }));
+
+    expect(submittedChangeSet).toMatchObject({ base: { revision: 7 } });
+    expect(result.update).toMatchObject({ kind: 'delta', revision: 8 });
+    expect(subscriptionUpdates).toHaveLength(1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(subscriptionUpdates.at(-1)).toMatchObject({ kind: 'delta', revision: 8 });
+    subscription.unsubscribe();
+  });
+
+  test('reconnects a completed watch from its last cursor', async () => {
+    const subscriptions: Array<{ input: unknown; listener: (record: OutlineStreamRecord) => void }> = [];
+    installOutlineBridge({
+      request: async (request) => success(request.command, projectionPage(2)),
+      subscribe: (subscription, listener) => {
+        subscriptions.push({ input: subscription.input, listener });
+        queueMicrotask(() => listener(streamHello('cursor:7')));
+        return () => undefined;
+      },
+    });
+    const subscription = subscribeDesktopProjection(() => undefined, () => undefined);
+    await subscription.ready;
+    subscriptions[0]!.listener({
+      protocolVersion: 1,
+      requestId: 'watch:1',
+      sequence: 1,
+      type: 'end',
+      cursor: 'cursor:7',
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 125));
+
+    expect(subscriptions).toHaveLength(2);
+    expect(subscriptions[1]!.input).toEqual({ cursor: 'cursor:7' });
+    subscription.unsubscribe();
+  });
+
+  test('buffers Events that arrive while a revision-gap resync is in flight', async () => {
+    let stream: ((record: OutlineStreamRecord) => void) | undefined;
+    let resolveResync!: (response: OutlineResponse) => void;
+    let requestCount = 0;
+    installOutlineBridge({
+      request: async (request) => {
+        requestCount += 1;
+        if (requestCount === 1) return success(request.command, projectionPage(2, 7));
+        return new Promise<OutlineResponse>((resolve) => { resolveResync = resolve; });
+      },
+      subscribe: (_subscription, listener) => {
+        stream = listener;
+        queueMicrotask(() => listener(streamHello('cursor:7')));
+        return () => undefined;
+      },
+    });
+    const updates: Array<{ kind: string; revision: number }> = [];
+    const subscription = subscribeDesktopProjection((update) => updates.push(update), () => undefined);
+    await subscription.ready;
+
+    stream?.(streamEvent(9, 'cursor:9'));
+    stream?.(streamEvent(10, 'cursor:10'));
+    resolveResync(success('show', projectionPage(2, 9)));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(updates.map(({ kind, revision }) => ({ kind, revision }))).toEqual([
+      { kind: 'full', revision: 7 },
+      { kind: 'full', revision: 9 },
+      { kind: 'delta', revision: 10 },
+    ]);
+    subscription.unsubscribe();
+  });
 });
 
 function installOutlineRequest(
@@ -99,6 +230,10 @@ function installOutlineRequest(
   });
 }
 
+function installOutlineBridge(outline: NonNullable<LinApi['outline']>): void {
+  Object.assign(window, { lin: { outline } as unknown as LinApi });
+}
+
 function success(command: string, data: unknown): OutlineResponse {
   return {
     protocolVersion: 1,
@@ -110,7 +245,7 @@ function success(command: string, data: unknown): OutlineResponse {
   };
 }
 
-function projectionPage(page: number) {
+function projectionPage(page: number, revision = 7) {
   return {
     projection: {
       kind: 'outline',
@@ -119,7 +254,7 @@ function projectionPage(page: number) {
       include: ['children'],
       page: { limit: 10_000 },
     },
-    revision: 7,
+    revision,
     anchors: {
       workspaceId: 'workspace-id',
       rootId: 'workspace',
@@ -146,5 +281,47 @@ function node(id: string) {
     updatedAt: 1,
     locked: false,
     autoCollected: false,
+  };
+}
+
+function streamHello(cursor: string): OutlineStreamRecord {
+  return {
+    protocolVersion: 1,
+    requestId: 'watch:1',
+    sequence: 0,
+    type: 'hello',
+    cursor,
+  };
+}
+
+function streamEvent(revision: number, cursor: string, committed = operation(revision)): OutlineStreamRecord {
+  return {
+    protocolVersion: 1,
+    requestId: 'watch:1',
+    sequence: revision,
+    type: 'event',
+    cursor,
+    event: {
+      protocolVersion: 1,
+      kind: 'outline.event',
+      type: 'operation.committed',
+      instanceId: 'runtime:1',
+      sequence: revision,
+      revision,
+      cursor,
+      operation: committed,
+      changes: {
+        todayId: 'today',
+        changedNodes: [node('today')],
+        removedIds: [],
+      },
+    },
+  } as OutlineStreamRecord;
+}
+
+function operation(revision: number) {
+  return {
+    operationId: `operation:${revision}`,
+    revisionAfter: revision,
   };
 }

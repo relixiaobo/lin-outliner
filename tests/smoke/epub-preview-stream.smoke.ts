@@ -17,35 +17,37 @@ test.describe('EPUB preview stream', () => {
     const result = await smoke.window.evaluate(async () => {
       const lin = window.lin;
       if (!lin) throw new Error('Missing preload API');
-      const asset = await lin.invoke<{ id: string }>('ingest_asset', {
-        kind: 'buffer',
-        data: new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3, 4]),
-        mimeType: 'application/epub+zip',
-        originalFilename: 'stream-smoke.epub',
+      const response = await lin.outline.request({
+        requestId: `smoke:${Date.now()}`,
+        command: 'asset ingest',
+        input: {
+          source: 'bytes',
+          data: 'UEsDBAECAwQ=',
+          mimeType: 'application/epub+zip',
+          originalFilename: 'stream-smoke.epub',
+        },
       });
-      try {
-        const resolved = await lin.invoke<{
-          source: { streamUrl?: string } | null;
-        }>('preview_resolve_source', {
-          target: { kind: 'asset', assetId: asset.id },
-        });
-        const streamUrl = resolved.source?.streamUrl;
-        if (!streamUrl) throw new Error('Missing EPUB stream URL');
+      if (!response.ok) throw new Error(response.error.message);
+      const asset = response.data as { assetId: string };
+      const resolved = await lin.invoke<{
+        source: { streamUrl?: string } | null;
+      }>('preview_resolve_source', {
+        target: { kind: 'asset', assetId: asset.assetId },
+      });
+      const streamUrl = resolved.source?.streamUrl;
+      if (!streamUrl) throw new Error('Missing EPUB stream URL');
 
-        const response = await fetch(streamUrl, {
-          headers: { Range: 'bytes=0-3' },
-        });
-        const stableAssetFetchBlocked = await fetch(`asset://${asset.id}`)
-          .then(() => false, () => true);
-        return {
-          bytes: Array.from(new Uint8Array(await response.arrayBuffer())),
-          contentRange: response.headers.get('content-range'),
-          stableAssetFetchBlocked,
-          status: response.status,
-        };
-      } finally {
-        await lin.invoke('delete_asset', { id: asset.id });
-      }
+      const streamResponse = await fetch(streamUrl, {
+        headers: { Range: 'bytes=0-3' },
+      });
+      const stableAssetFetchBlocked = await fetch(`asset://${asset.assetId}`)
+        .then(() => false, () => true);
+      return {
+        bytes: Array.from(new Uint8Array(await streamResponse.arrayBuffer())),
+        contentRange: streamResponse.headers.get('content-range'),
+        stableAssetFetchBlocked,
+        status: streamResponse.status,
+      };
     });
 
     expect(result).toEqual({

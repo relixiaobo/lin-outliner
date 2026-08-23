@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { ASSET_COMMANDS, DOCUMENT_COMMANDS } from '../../src/core/commands';
 import { Compile } from 'typebox/compile';
 import {
   ChangeSetSchema,
@@ -24,9 +25,9 @@ describe('outline public contract', () => {
   test('exports every named versioned schema as valid JSON Schema', () => {
     expect(Object.keys(OUTLINE_PUBLIC_SCHEMAS).sort()).toEqual([
       'AssetLease', 'AssetMetadata', 'AssetRecord', 'Change', 'ChangeSet', 'Diff', 'Event', 'EventFilter',
-      'NodeDraft', 'Operation', 'OutlineError', 'OutlineRequest',
-      'OutlineResponse', 'OutlineStreamRecord', 'Projection', 'ProjectionResult',
-      'RuntimeDescriptor', 'Selector', 'TargetRef', 'TargetSpec',
+      'NodeDraft', 'Operation', 'OperationLogPage', 'OutlineError', 'OutlineRequest',
+      'OutlineResponse', 'OutlineStreamRecord', 'Projection', 'ProjectionResult', 'RevertConflictDiff',
+      'RichTextPatch', 'RuntimeDescriptor', 'Selector', 'TargetRef', 'TargetSpec',
     ]);
     for (const schema of Object.values(OUTLINE_PUBLIC_SCHEMAS)) {
       expect(() => Compile(schema)).not.toThrow();
@@ -152,6 +153,43 @@ describe('outline public contract', () => {
     for (const entry of OUTLINE_CAPABILITIES) {
       expect(() => Compile(entry.requestSchema)).not.toThrow();
       expect(() => Compile(entry.resultSchema)).not.toThrow();
+    }
+  });
+
+  test('classifies every persisted desktop capability under one public owner', () => {
+    const coverageOwners = new Map<string, string[]>();
+    for (const capability of OUTLINE_CAPABILITIES) {
+      for (const covered of capability.coverage) {
+        const owners = coverageOwners.get(covered) ?? [];
+        owners.push(capability.name);
+        coverageOwners.set(covered, owners);
+      }
+    }
+
+    expect(coverageOwners.get('document_events')).toEqual(['watch']);
+    expect(coverageOwners.get('operation_history')).toEqual(['log']);
+    for (const command of DOCUMENT_COMMANDS) {
+      if (command === 'init_workspace') {
+        expect(coverageOwners.has(command)).toBe(false);
+        continue;
+      }
+      expect(coverageOwners.get(command)).toEqual([expect.any(String)]);
+    }
+
+    const osEffects = new Set([
+      'pick_image_files',
+      'pick_attachment_files',
+      'open_asset',
+      'reveal_asset',
+      'copy_asset_file',
+      'open_external_url',
+    ]);
+    for (const command of ASSET_COMMANDS) {
+      if (osEffects.has(command)) {
+        expect(coverageOwners.has(command)).toBe(false);
+        continue;
+      }
+      expect(coverageOwners.get(command)).toEqual([expect.any(String)]);
     }
   });
 

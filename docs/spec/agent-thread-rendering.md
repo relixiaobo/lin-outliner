@@ -575,8 +575,8 @@ reach it.
   and identity static while a live status phrase uses `WorkingText`; that
   mounted child status owns motion instead of the parent tool summary
 - Memory used by an answer renders through the ordinary inline Node-reference
-  affordance next to the supported claim; `node_search` and `node_read` remain
-  in the process and Trajectory, with no separate Memory Item or disclosure
+  affordance next to the supported claim; `outline` shell calls remain in the
+  process and Trajectory, with no separate Memory Item or disclosure
 - context evidence stays hidden from the ordinary transcript; `contextReset` and
   `contextCompaction` render dedicated `Context cleared.` and compaction boundary rows
   at their exact canonical positions. A completed standalone `/clear` or `/compact`

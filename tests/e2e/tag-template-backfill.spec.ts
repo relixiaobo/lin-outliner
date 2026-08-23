@@ -24,6 +24,22 @@ async function invokeDocumentCommand(page: Page, cmd: string, args: Record<strin
   }, { cmd, args });
 }
 
+async function templateRuntimeCalls(page: Page) {
+  const calls = await commandCalls(page);
+  const carriesTemplateChange = (value: unknown) => {
+    const input = value as {
+      changeSet?: { operations?: Array<{ op?: string; action?: string }> };
+      diff?: { normalizedChangeSet?: { operations?: Array<{ op?: string; action?: string }> } };
+    };
+    const operations = input.changeSet?.operations ?? input.diff?.normalizedChangeSet?.operations ?? [];
+    return operations.some((operation) => operation.op === 'template' && operation.action === 'apply');
+  };
+  return {
+    diffs: calls.filter((call) => call.cmd === 'outline/diff' && carriesTemplateChange(call.args)),
+    applies: calls.filter((call) => call.cmd === 'outline/apply' && carriesTemplateChange(call.args)),
+  };
+}
+
 test.describe('tag template seed backfill', () => {
   test.beforeEach(async ({ page }) => {
     await openMockedApp(page);
@@ -53,7 +69,7 @@ test.describe('tag template seed backfill', () => {
     await expect(dialog).toContainText('This adds 4 template children to 2 tagged nodes.');
     expect((await nodeById(page, ids.alpha))?.children).toEqual([]);
     expect((await nodeById(page, ids.beta))?.children).toEqual([]);
-    expect((await commandCalls(page)).filter((call) => call.cmd === 'apply_template_to_tagged_nodes')).toHaveLength(0);
+    expect((await templateRuntimeCalls(page)).applies).toHaveLength(0);
 
     await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
 
@@ -65,8 +81,8 @@ test.describe('tag template seed backfill', () => {
     const beta = await nodeById(page, ids.beta);
     expect(alpha?.children.map((childId) => childId)).toHaveLength(2);
     expect(beta?.children.map((childId) => childId)).toHaveLength(2);
-    expect((await commandCalls(page)).filter((call) => call.cmd === 'preview_tag_template_backfill')).toHaveLength(1);
-    expect((await commandCalls(page)).filter((call) => call.cmd === 'apply_template_to_tagged_nodes')).toHaveLength(1);
+    expect((await templateRuntimeCalls(page)).diffs).toHaveLength(2);
+    expect((await templateRuntimeCalls(page)).applies).toHaveLength(1);
 
     const projection = await e2eProjection(page);
     const byId = new Map(projection.nodes.map((node) => [node.id, node]));
@@ -86,10 +102,10 @@ test.describe('tag template seed backfill', () => {
     await tag.click({ button: 'right' });
     await menu.getByRole('menuitem', { name: 'Apply template to tagged nodes' }).click();
     await expect.poll(async () => (
-      (await commandCalls(page)).filter((call) => call.cmd === 'preview_tag_template_backfill').length
-    )).toBe(2);
+      (await templateRuntimeCalls(page)).diffs.length
+    )).toBe(3);
     await expect(dialog).toHaveCount(0);
-    expect((await commandCalls(page)).filter((call) => call.cmd === 'apply_template_to_tagged_nodes')).toHaveLength(1);
+    expect((await templateRuntimeCalls(page)).applies).toHaveLength(1);
     await expect(row(page, ids.alpha).getByRole('button', { name: 'Open project tag' })).toBeFocused();
   });
 });

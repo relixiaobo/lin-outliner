@@ -140,8 +140,9 @@ must never be written back over the complete saved query.
 
 ## Execution And Relevance
 
-The query protocol is stable: `SearchQueryExpr`, `QueryOp`, saved-search outline
-syntax, and `node_search` parameters do not change for text relevance.
+The query protocol is stable: `SearchQueryExpr`, public `QueryExpression`,
+`QueryOp`, saved-search outline syntax, and `outline find` selectors share the
+same operators and truth-table semantics.
 
 `STRING_MATCH` is executed through a derived in-memory text index when a caller
 provides one. The index is advisory for candidate generation and scoring; the
@@ -182,8 +183,8 @@ same linked reference count displayed by the References system field.
 Transient node lookup surfaces can opt into personal access ranking on top of
 the default relevance order. Personal access is stored outside the Loro document
 in per-user `userData` (`node-access-stats.json`) as one time-decayed accumulator
-per node, updated by deliberate human landings and weak agent recall from
-returned `node_search` pages. It is never encoded as a search-node rule, never
+per node, updated by deliberate human landings. It is never encoded as a
+search-node rule, never
 written into saved search results, and never participates in saved-search
 materialization unless a caller explicitly opts into ranking. Explicit
 sorts remain authoritative and do not use personal access.
@@ -197,24 +198,21 @@ Candidate pruning is conservative:
 - `NOT` never prunes solely from the negative text branch;
 - every returned hit still passes the existing structured evaluator.
 
-The main process keeps the node text index derived and disposable. It is built
-once on workspace load, updated incrementally from Core changed-node deltas, and
-rebuilt after undo/redo or other whole-tree rewrites. Tag and field definition
-changes fan out through dependency maps so dependent node records are refreshed
-without hiding a full rebuild behind `Core.revision()`. A tagged node records the
-complete applied `extends` chains as dependencies, so adding a field to an
-ancestor tag or changing an ancestor's own `extends` target refreshes existing
-descendant-tag instances even when their node records did not change.
+The Runtime resolves public query selectors against its committed Projection
+with `runTransientSearchExpr`; saved-search materialization uses the same Core
+grammar and evaluator. An optional text index remains a derived acceleration
+input for callers that maintain one, never a semantic authority. Runtime `find`,
+desktop search, CLI search, and Agent shell search therefore do not define a
+second query language or ranker.
 
 The text normalization, query analysis, CJK/Latin tokenization, snippet building,
 and label ranking described above are one shared pure module
 (`src/core/textSearchAnalyzer.ts`), consumed by the node text index and the
 renderer field/slash/file pickers
 so every surface agrees on whitespace, punctuation, CJK grams, and stop-word
-handling. Node lookups go through a single indexed evaluator path -- document
-search and agent `node_search` both call the main-side `NodeRetrievalService`
-around `runSearchExpr` plus the live index, so there is no second competing node
-ranker. Heavier retrieval machinery (persisted index, WAND/block-max top-k
+handling. Node lookups go through the shared evaluator path; public clients pass
+the same `QueryExpression` through Runtime. Heavier retrieval machinery
+(persisted index, WAND/block-max top-k
 pruning, SQLite/FTS, or embedding reranking) is intentionally absent: it is added
 only when a probe against a real workspace shows a concrete miss (broad 10k/50k
 query latency, cold-rebuild startup cost, a memory budget overrun, or a semantic

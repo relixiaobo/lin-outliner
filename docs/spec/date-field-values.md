@@ -84,8 +84,8 @@ Not canonical:
 
 - Date picker interactions store canonical values.
 - Typed date field editing normalizes to canonical values.
-- Agent `node_create` and `node_edit` outline field values for existing date
-  fields must use canonical text values.
+- Public ChangeSet field updates and `outline` CLI field porcelain for existing
+  date fields must use canonical text values.
 - Date-aware search/query operands use the same canonical forms.
 - Agent-facing instructions teach only this grammar.
 

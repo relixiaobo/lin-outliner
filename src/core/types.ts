@@ -2,15 +2,6 @@ import type { CaptureNodeMetadata } from './launcher/sources';
 import type { AgentIdentityEntry } from './agent/protocol';
 
 export type {
-  DocumentSystemReceipt,
-  DocumentSystemHost,
-  DocumentSystemTransaction,
-  DocumentSystemTransactionContext,
-  DocumentSystemTagDefinition,
-  HostDocumentCommandInvocation,
-  HostDocumentCommandArguments,
-} from './documentSystem';
-export type {
   AdditionalContext,
   AdditionalContextEntry,
   AgentCoreNotification,
@@ -543,8 +534,6 @@ export type NodeFieldKey = KeysOfUnion<Node>;
 // children with their live owner; the restore index remains core-internal.
 export type NodeProjection = DistributiveOmit<Node, 'trashedFromIndex'>;
 
-export const LIN_DOCUMENT_EVENT_CHANNEL = 'lin-document-event';
-
 export interface DocumentProjection {
   workspaceId: NodeId;
   rootId: NodeId;
@@ -579,13 +568,6 @@ export type ProjectionUpdate =
 export interface ProjectionSnapshot {
   revision: number;
   projection: DocumentProjection;
-}
-
-export interface DocumentProjectionChangedEvent {
-  type: 'projection_changed';
-  origin: 'agent' | 'user' | 'system';
-  update: ProjectionUpdate;
-  timestamp: number;
 }
 
 /**
@@ -684,6 +666,56 @@ export interface CreateNodeTree extends PasteRowMeta {
   type?: NodeType;
   /** Language hint for `codeBlock` trees; ignored for other types. */
   codeLanguage?: string;
+}
+
+export type FieldSlotMutation =
+  | { kind: 'acceptDefault'; entryId?: undefined }
+  | { kind: 'appendText'; text: string; id?: NodeId; collect?: boolean; entryId?: NodeId }
+  | { kind: 'appendReference'; targetId: NodeId; id?: NodeId; entryId?: NodeId }
+  | { kind: 'selectOption'; optionNodeId: NodeId; id?: NodeId; entryId?: NodeId }
+  | {
+      kind: 'appendNodes';
+      nodes: CreateNodeTree[];
+      firstTagIds?: NodeId[];
+      id?: NodeId;
+      entryId?: NodeId;
+    }
+  | {
+      kind: 'appendField';
+      name: string;
+      fieldType: FieldType;
+      id?: NodeId;
+      entryId?: NodeId;
+    }
+  | {
+      kind: 'appendImage';
+      assetId?: string;
+      mediaUrl?: string;
+      width?: number | null;
+      height?: number | null;
+      alt?: string | null;
+      name?: string | null;
+      id?: NodeId;
+      entryId?: NodeId;
+    }
+  | {
+      kind: 'appendAttachment';
+      assetId?: string | null;
+      mimeType?: string | null;
+      originalFilename?: string | null;
+      fileSize?: number | null;
+      thumbnailAssetId?: string | null;
+      pdfPageCount?: number | null;
+      audioDurationMs?: number | null;
+      videoDurationMs?: number | null;
+      id?: NodeId;
+      entryId?: NodeId;
+    }
+  | { kind: 'commit'; entryId?: NodeId };
+
+export interface TagTemplateBackfillPreview {
+  readonly nodeCount: number;
+  readonly additionCount: number;
 }
 
 export interface Backlink {

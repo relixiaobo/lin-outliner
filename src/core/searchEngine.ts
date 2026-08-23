@@ -1325,7 +1325,7 @@ function scoreTextSearchRecord(context: SearchContext, nodeId: NodeId, query: st
 
 function scoreTerm(index: SearchIndex, node: SearchNode, term: string): number {
   // Compatibility scorer for direct core calls that do not provide a
-  // TextSearchIndex. DocumentService, launcher search, and agent node_search pass
+  // TextSearchIndex. DocumentService and launcher search pass
   // the live index, so this is not a competing main/agent ranker.
   const q = term.trim().toLowerCase();
   if (!q) return 0;

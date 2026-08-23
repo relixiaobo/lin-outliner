@@ -154,7 +154,7 @@ describe('AgentConfigurationLoader', () => {
           developerInstructions: 'Follow the user configuration.',
           model: 'user-model',
           reasoningEffort: 'high',
-          tools: ['node_read', 'file_read'],
+          tools: ['file_grep', 'file_read'],
           skills: ['user-skill'],
           plugins: ['github'],
           mcpServers: ['docs'],
@@ -165,7 +165,7 @@ describe('AgentConfigurationLoader', () => {
           description: 'Review the implementation.',
           developerInstructions: 'Find concrete correctness issues.',
           presentation: { persona: 'Ada' },
-          overrides: { tools: ['node_read'] },
+          overrides: { tools: ['file_grep'] },
         },
       },
     });
@@ -174,7 +174,7 @@ describe('AgentConfigurationLoader', () => {
         coding: {
           developerInstructions: 'Follow the project configuration.',
           model: 'project-model',
-          tools: ['node_read'],
+          tools: ['file_grep'],
         },
       },
       roles: {
@@ -185,7 +185,7 @@ describe('AgentConfigurationLoader', () => {
           overrides: {
             model: 'review-model',
             reasoningEffort: 'xhigh',
-            tools: ['node_read'],
+            tools: ['file_grep'],
           },
         },
       },
@@ -197,7 +197,7 @@ describe('AgentConfigurationLoader', () => {
       developerInstructions: ['Follow the project configuration.'],
       model: 'project-model',
       reasoningEffort: 'medium',
-      tools: ['node_read'],
+      tools: ['file_grep'],
       skills: ['*'],
       preloadedSkills: [],
       plugins: [],
@@ -212,7 +212,7 @@ describe('AgentConfigurationLoader', () => {
       overrides: {
         model: 'review-model',
         reasoningEffort: 'xhigh',
-        tools: ['node_read'],
+        tools: ['file_grep'],
       },
     });
     const roleCatalog = loader.buildRoleCatalogSnapshot(cwd);

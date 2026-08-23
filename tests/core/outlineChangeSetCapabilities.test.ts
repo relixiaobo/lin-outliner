@@ -16,6 +16,44 @@ afterAll(async () => {
 });
 
 describe('outline ChangeSet capability coverage', () => {
+  test('keeps explicit definition IDs stable and rejects same-name ID conflicts without writing', async () => {
+    const workspace = await makeWorkspace();
+    const definition = {
+      op: 'ensure' as const,
+      resource: 'definition' as const,
+      definitionType: 'field' as const,
+      id: 'field:url',
+      name: 'URL',
+      fieldType: 'url',
+      bind: 'urlField',
+    };
+
+    const created = await settle(workspace, [definition]);
+    const repeated = await diffOutlineChangeSet(workspace, {
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      operations: [definition],
+    });
+    expect(created.diff.bindings.urlField).toEqual(['field:url']);
+    expect(repeated.bindings.urlField).toEqual(['field:url']);
+    expect(workspace.documentState().nodes['field:url']).toMatchObject({
+      id: 'field:url',
+      type: 'fieldDef',
+      content: { text: 'URL' },
+    });
+
+    const operationsBeforeConflict = await workspace.store.operations();
+    await expect(diffOutlineChangeSet(workspace, {
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      operations: [{ ...definition, id: 'field:other-url' }],
+    })).rejects.toMatchObject({
+      outlineError: { code: 'invalid_input', category: 'usage' },
+    });
+    expect(await workspace.store.operations()).toEqual(operationsBeforeConflict);
+    expect(workspace.documentState().nodes['field:other-url']).toBeUndefined();
+  });
+
   test('preserves rich content, capture provenance, fields, definitions, and references', async () => {
     const workspace = await makeWorkspace();
     const definitions = await settle(workspace, [
@@ -131,6 +169,71 @@ describe('outline ChangeSet capability coverage', () => {
     }]);
     expect(workspace.documentState().nodes[temporaryEntry.id]?.fieldDefId).toBe(replacementId);
     expect(workspace.documentState().nodes[temporaryDefinition.id]).toBeUndefined();
+    await settle(workspace, [{
+      op: 'update',
+      targets: oneId(richId),
+      changes: [{
+        kind: 'field',
+        action: 'reuse',
+        sourceField: oneId(replacementId),
+        field: oneId('sys:createdAt'),
+      }],
+    }]);
+    expect(workspace.documentState().nodes[temporaryEntry.id]?.fieldDefId).toBe('sys:createdAt');
+    expect(workspace.documentState().nodes[replacementId]).toBeUndefined();
+
+    const inlineTrigger = (await settle(workspace, [{
+      op: 'create',
+      parents: oneId(richId),
+      nodes: [draft('>')],
+      bind: 'inlineTrigger',
+    }])).diff.bindings.inlineTrigger![0]!;
+    await settle(workspace, [{
+      op: 'update',
+      targets: oneId(inlineTrigger),
+      changes: [{ kind: 'field', action: 'convert', name: '', fieldType: 'plain' }],
+    }]);
+    expect(workspace.documentState().nodes[inlineTrigger]).toMatchObject({
+      type: 'fieldEntry',
+      content: { text: '' },
+    });
+
+    await settle(workspace, [{
+      op: 'update',
+      targets: oneId(richId),
+      changes: [{
+        kind: 'text-patch',
+        field: 'content',
+        patch: {
+          ops: [
+            { type: 'replace', from: 0, to: 4, content: { text: 'Deep', marks: [], inlineRefs: [] } },
+            { type: 'add_mark', from: 0, to: 4, markType: 'italic' },
+          ],
+        },
+      }],
+    }]);
+    expect(workspace.documentState().nodes[richId]?.content).toMatchObject({
+      text: 'Deep captured node',
+      marks: [expect.objectContaining({ start: 0, end: 4, type: 'italic' })],
+    });
+
+    await settle(workspace, [{
+      op: 'update',
+      targets: oneId(richId),
+      changes: [{
+        kind: 'field-slot',
+        field: oneId(fieldId),
+        mutation: {
+          action: 'append-reference',
+          target: oneId(referenceB!),
+          id: 'node:00000000-0000-4000-8000-000000000001',
+        },
+      }],
+    }]);
+    expect(workspace.documentState().nodes['node:00000000-0000-4000-8000-000000000001']).toMatchObject({
+      type: 'reference',
+      targetId: referenceB,
+    });
   });
 
   test('executes view, search, template, and definition-merge behavior through one public union', async () => {
@@ -175,12 +278,12 @@ describe('outline ChangeSet capability coverage', () => {
       op: 'update',
       targets: oneId(todayId),
       changes: [
-        { kind: 'view', property: 'mode', action: 'set', value: 'table' },
-        { kind: 'view', property: 'toolbar', action: 'set', value: true },
-        { kind: 'view', property: 'group', action: 'set', value: 'sys:tags' },
-        { kind: 'view', property: 'sort', action: 'add', value: { field: 'sys:updatedAt', direction: 'desc' } },
-        { kind: 'view', property: 'filter', action: 'add', value: { field: 'sys:done', operator: 'is', values: ['true'], valueLogic: 'any' } },
-        { kind: 'view', property: 'display-field', action: 'add', value: { field: 'sys:name' } },
+        { kind: 'view', property: 'mode', action: 'set', mode: 'table' },
+        { kind: 'view', property: 'toolbar', action: 'set', visible: true },
+        { kind: 'view', property: 'group', action: 'set', field: 'sys:tags' },
+        { kind: 'view', property: 'sort', action: 'add', field: 'sys:updatedAt', direction: 'desc' },
+        { kind: 'view', property: 'filter', action: 'add', field: 'sys:done', operator: 'is', values: ['true'], valueLogic: 'any' },
+        { kind: 'view', property: 'display-field', action: 'add', field: 'sys:name' },
       ],
     }]);
     const viewState = workspace.documentState();
@@ -204,10 +307,64 @@ describe('outline ChangeSet capability coverage', () => {
       changes: [{
         kind: 'search',
         action: 'set',
-        value: { title: 'Renamed search', query: { kind: 'rule', op: 'STRING_MATCH', text: 'template' } },
+        title: 'Renamed search',
+        query: { kind: 'rule', op: 'STRING_MATCH', text: 'template' },
       }],
     }]);
     expect(workspace.documentState().nodes[searchId]).toMatchObject({ type: 'search', content: { text: 'Renamed search' } });
+  });
+
+  test('registers reusable options and removes one field value through typed field instructions', async () => {
+    const workspace = await makeWorkspace();
+    const setup = await settle(workspace, [
+      {
+        op: 'ensure',
+        resource: 'definition',
+        definitionType: 'field',
+        name: 'Status',
+        fieldType: 'options',
+        bind: 'field',
+      },
+      { op: 'create', parents: oneAlias('today'), nodes: [draft('Task')], bind: 'owner' },
+    ]);
+    const fieldId = setup.diff.bindings.field![0]!;
+    const ownerId = setup.diff.bindings.owner![0]!;
+    await settle(workspace, [{
+      op: 'update',
+      targets: oneId(fieldId),
+      changes: [{ kind: 'field', action: 'register-option', name: 'In progress' }],
+    }]);
+    const optionId = workspace.documentState().nodes[fieldId]?.children.find((childId) => (
+      workspace.documentState().nodes[childId]?.content.text === 'In progress'
+    ));
+    expect(optionId).toBeDefined();
+
+    await settle(workspace, [{
+      op: 'update',
+      targets: oneId(ownerId),
+      changes: [{
+        kind: 'field-slot',
+        field: oneId(fieldId),
+        mutation: { action: 'select-option', option: oneId(optionId!) },
+      }],
+    }]);
+    const entry = Object.values(workspace.documentState().nodes).find((node) => (
+      node.type === 'fieldEntry' && node.parentId === ownerId && node.fieldDefId === fieldId
+    ));
+    const valueId = entry?.children[0];
+    expect(workspace.documentState().nodes[valueId!]).toMatchObject({ type: 'reference', targetId: optionId });
+
+    await settle(workspace, [{
+      op: 'update',
+      targets: oneId(ownerId),
+      changes: [{
+        kind: 'field-slot',
+        field: oneId(fieldId),
+        mutation: { action: 'remove-value', value: oneId(valueId!), entryId: entry!.id },
+      }],
+    }]);
+    expect(workspace.documentState().nodes[valueId!]).toBeUndefined();
+    expect(workspace.documentState().nodes[optionId!]?.content.text).toBe('In progress');
   });
 });
 

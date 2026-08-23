@@ -1,29 +1,31 @@
 import type {
+  ChangeSet,
+  Diff,
   OutlineError,
   OutlineEvent,
   OutlineStreamRecord,
+  Operation,
   Projection,
   ProjectionResult,
 } from '../../outline/contract';
 import type {
+  CommandResult,
   DocumentProjection,
+  FocusHint,
   NodeProjection,
   ProjectionSnapshot,
   ProjectionUpdate,
 } from '../../core/types';
+import {
+  fullDocumentProjection,
+  projectionUpdateFromOutlineEvent,
+  readCompleteDocumentProjection,
+} from '../../outline/client/documentProjection';
 
-const FULL_PROJECTION_PAGE_SIZE = 10_000;
-const FULL_PROJECTION_MAX_NODES = 1_000_000;
-const FULL_PROJECTION_INCLUDE = [
-  'description',
-  'children',
-  'tags',
-  'fields',
-  'references',
-  'media',
-  'view',
-  'trash',
-] as const;
+const EVENT_RECONNECT_MIN_DELAY_MS = 100;
+const EVENT_RECONNECT_MAX_DELAY_MS = 2_000;
+const OPERATION_EVENT_TIMEOUT_MS = 10_000;
+const OPERATION_EVENT_CACHE_LIMIT = 256;
 
 export class OutlineRequestError extends Error {
   constructor(readonly outlineError: OutlineError) {
@@ -45,54 +47,108 @@ export async function requestOutline<TResult>(command: string, input: unknown): 
 }
 
 export async function readDesktopProjection(): Promise<ProjectionSnapshot> {
-  const nodes: NodeProjection[] = [];
-  let first: ProjectionResult | null = null;
-  let cursor: string | undefined;
-  do {
-    const projection = fullDesktopProjection(cursor);
-    const result = await requestOutline<ProjectionResult>('show', {
-      selector: { by: 'alias', alias: 'home' },
-      projection,
-    });
-    assertProjectionResult(result);
-    if (!first) first = result;
-    else if (result.revision !== first.revision) {
-      throw new Error('Outline Runtime changed revision while reading the desktop Projection.');
-    }
-    nodes.push(...result.nodes as NodeProjection[]);
-    if (nodes.length > FULL_PROJECTION_MAX_NODES) {
-      throw new Error('Outline Runtime desktop Projection exceeds the supported Node limit.');
-    }
-    cursor = result.truncated ? result.cursor : undefined;
-    if (result.truncated && !cursor) {
-      throw new Error('Outline Runtime returned a truncated desktop Projection without a cursor.');
-    }
-  } while (cursor);
-
-  if (!first) throw new Error('Outline Runtime returned no desktop Projection page.');
-  const projection: DocumentProjection = {
-    ...first.anchors,
-    nodes,
-  };
-  return { revision: first.revision, projection };
+  const snapshot = await readCompleteDocumentProjection<NodeProjection>(requestOutline);
+  sharedEventSource?.noteRevision(snapshot.revision);
+  return snapshot;
 }
 
-export function projectionUpdateFromOutlineEvent(event: OutlineEvent): ProjectionUpdate | null {
-  if (!event.changes) return null;
-  if (!Array.isArray(event.changes.changedNodes) || !Array.isArray(event.changes.removedIds)) {
-    throw new Error('Outline Runtime Event changes are invalid.');
+export type DesktopFocusHint = FocusHint | ((
+  operation: Operation,
+  diff: Diff,
+  update: ProjectionUpdate,
+) => FocusHint | undefined);
+
+export interface DesktopMutationOptions {
+  readonly acknowledgeDestructive?: boolean;
+}
+
+let desktopMutationTail = Promise.resolve();
+
+export function runDesktopMutation(
+  build: (revision: number) => ChangeSet,
+  focus?: DesktopFocusHint,
+  options: DesktopMutationOptions = {},
+): Promise<CommandResult> {
+  const result = desktopMutationTail.then(async () => {
+    const source = sharedEventSource;
+    const revision = source?.latestRevision;
+    if (!source || revision === undefined) {
+      throw new Error('Tenon Outline session has not loaded a document revision.');
+    }
+    const input = build(revision);
+    const changeSet: ChangeSet = {
+      ...input,
+      base: { ...input.base, revision },
+    };
+    const diff = await requestOutline<Diff>('diff', { changeSet });
+    const releaseEvents = source.holdEvents();
+    try {
+      const operation = await requestOutline<Operation>('apply', {
+        diff,
+        ...(options.acknowledgeDestructive ? { acknowledgeDestructive: true } : {}),
+      });
+      source.noteRevision(operation.revisionAfter);
+      let update: ProjectionUpdate;
+      try {
+        const event = await source.waitForOperation(operation.operationId);
+        update = projectionUpdateFromOutlineEvent<NodeProjection>(event) ?? await fullProjectionUpdate();
+      } catch {
+        update = await fullProjectionUpdate();
+      }
+      return {
+        update,
+        ...(focus ? { focus: typeof focus === 'function' ? focus(operation, diff, update) : focus } : {}),
+      };
+    } finally {
+      releaseEvents();
+    }
+  });
+  desktopMutationTail = result.then(() => undefined, () => undefined);
+  return result;
+}
+
+export function previewDesktopMutation(build: (revision: number) => ChangeSet): Promise<Diff> {
+  const revision = sharedEventSource?.latestRevision;
+  if (revision === undefined) {
+    return Promise.reject(new Error('Tenon Outline session has not loaded a document revision.'));
   }
-  return {
-    kind: 'delta',
-    revision: event.revision,
-    todayId: event.changes.todayId,
-    changedNodes: event.changes.changedNodes as NodeProjection[],
-    removedIds: event.changes.removedIds,
-  };
+  const input = build(revision);
+  return requestOutline<Diff>('diff', {
+    changeSet: { ...input, base: { ...input.base, revision } },
+  });
 }
+
+export function runDesktopHistory(command: 'undo' | 'redo'): Promise<CommandResult> {
+  const result = desktopMutationTail.then(async () => {
+    const source = sharedEventSource;
+    if (!source) throw new Error('Tenon Outline session is unavailable.');
+    const releaseEvents = source.holdEvents();
+    try {
+      const operation = await requestOutline<Operation>(command, {});
+      source.noteRevision(operation.revisionAfter);
+      try {
+        const event = await source.waitForOperation(operation.operationId);
+        return { update: projectionUpdateFromOutlineEvent<NodeProjection>(event) ?? await fullProjectionUpdate() };
+      } catch {
+        return { update: await fullProjectionUpdate() };
+      }
+    } finally {
+      releaseEvents();
+    }
+  });
+  desktopMutationTail = result.then(() => undefined, () => undefined);
+  return result;
+}
+
+export { projectionUpdateFromOutlineEvent };
 
 export interface DesktopOutlineEventSubscription {
   readonly ready: Promise<void>;
+  readonly unsubscribe: () => void;
+}
+
+export interface DesktopProjectionSubscription {
+  readonly ready: Promise<ProjectionSnapshot>;
   readonly unsubscribe: () => void;
 }
 
@@ -120,12 +176,84 @@ export function subscribeDesktopOutlineEvents(
   };
 }
 
+export function subscribeDesktopProjection(
+  listener: (update: ProjectionUpdate) => void,
+  onError: ErrorListener,
+): DesktopProjectionSubscription {
+  let active = true;
+  let seededRevision: number | undefined;
+  let buffered: OutlineEvent[] = [];
+  let resyncInFlight: Promise<ProjectionSnapshot> | null = null;
+
+  const seed = () => {
+    if (resyncInFlight) return resyncInFlight;
+    seededRevision = undefined;
+    resyncInFlight = readDesktopProjection().then((snapshot) => {
+      if (!active) return snapshot;
+      listener({ kind: 'full', ...snapshot });
+      seededRevision = snapshot.revision;
+      const pending = buffered;
+      buffered = [];
+      for (const event of pending.sort((left, right) => left.sequence - right.sequence)) acceptEvent(event);
+      return snapshot;
+    }).finally(() => {
+      resyncInFlight = null;
+    });
+    return resyncInFlight;
+  };
+
+  const acceptEvent = (event: OutlineEvent) => {
+    if (!active) return;
+    if (seededRevision === undefined) {
+      buffered.push(event);
+      return;
+    }
+    if (event.type === 'resync.required') {
+      void seed().catch(onError);
+      return;
+    }
+    if (event.revision <= seededRevision) return;
+    const update = projectionUpdateFromOutlineEvent<NodeProjection>(event);
+    if (!update || event.revision !== seededRevision + 1) {
+      void seed().catch(onError);
+      return;
+    }
+    listener(update);
+    seededRevision = event.revision;
+  };
+
+  const subscription = subscribeDesktopOutlineEvents(acceptEvent, onError);
+  const ready = subscription.ready.then(seed);
+  return {
+    ready,
+    unsubscribe: () => {
+      active = false;
+      buffered = [];
+      subscription.unsubscribe();
+    },
+  };
+}
+
 class DesktopOutlineEventSource {
   private readonly listeners = new Set<EventListener>();
   private readonly errorListeners = new Set<ErrorListener>();
   private readonly resolveReady: () => void;
   private readonly rejectReady: (error: Error) => void;
   private unsubscribeBridge: (() => void) | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private heldEventFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectDelayMs = EVENT_RECONNECT_MIN_DELAY_MS;
+  private cursor: string | undefined;
+  private closed = false;
+  private revision: number | undefined;
+  private readonly operationEvents = new Map<string, OutlineEvent>();
+  private readonly heldEvents: OutlineEvent[] = [];
+  private eventHoldCount = 0;
+  private readonly operationWaiters = new Map<string, Set<{
+    readonly resolve: (event: OutlineEvent) => void;
+    readonly reject: (error: Error) => void;
+    readonly timer: ReturnType<typeof setTimeout>;
+  }>>();
   readonly ready: Promise<void>;
   private readySettled = false;
 
@@ -138,19 +266,56 @@ class DesktopOutlineEventSource {
     });
     this.resolveReady = resolveReady;
     this.rejectReady = rejectReady;
-    const bridge = window.lin?.outline;
-    if (!bridge) {
-      this.fail(new Error('Tenon Outline bridge is unavailable'));
-      return;
-    }
-    this.unsubscribeBridge = bridge.subscribe(
-      { subscriptionId: `renderer-watch:${crypto.randomUUID()}`, input: {} },
-      (record) => this.accept(record),
-    );
+    this.connect();
   }
 
   get empty(): boolean {
     return this.listeners.size === 0;
+  }
+
+  get latestRevision(): number | undefined {
+    return this.revision;
+  }
+
+  noteRevision(revision: number): void {
+    this.revision = Math.max(this.revision ?? 0, revision);
+  }
+
+  waitForOperation(operationId: string): Promise<OutlineEvent> {
+    const cached = this.operationEvents.get(operationId);
+    if (cached) return Promise.resolve(cached);
+    return new Promise<OutlineEvent>((resolve, reject) => {
+      const waiter = {
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          const waiters = this.operationWaiters.get(operationId);
+          waiters?.delete(waiter);
+          if (waiters?.size === 0) this.operationWaiters.delete(operationId);
+          reject(new Error(`Timed out waiting for Outline Operation Event: ${operationId}`));
+        }, OPERATION_EVENT_TIMEOUT_MS),
+      };
+      const waiters = this.operationWaiters.get(operationId) ?? new Set();
+      waiters.add(waiter);
+      this.operationWaiters.set(operationId, waiters);
+    });
+  }
+
+  holdEvents(): () => void {
+    this.eventHoldCount += 1;
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      this.eventHoldCount = Math.max(0, this.eventHoldCount - 1);
+      if (this.eventHoldCount !== 0 || this.heldEvents.length === 0 || this.heldEventFlushTimer) return;
+      this.heldEventFlushTimer = setTimeout(() => {
+        this.heldEventFlushTimer = null;
+        if (this.closed || this.eventHoldCount !== 0) return;
+        const pending = this.heldEvents.splice(0);
+        for (const event of pending) this.dispatchEvent(event);
+      }, 0);
+    };
   }
 
   add(listener: EventListener, onError: ErrorListener): () => void {
@@ -163,12 +328,45 @@ class DesktopOutlineEventSource {
   }
 
   close(): void {
+    this.closed = true;
     this.unsubscribeBridge?.();
     this.unsubscribeBridge = null;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    if (this.heldEventFlushTimer) clearTimeout(this.heldEventFlushTimer);
+    this.heldEventFlushTimer = null;
+    this.heldEvents.length = 0;
+    const error = new Error('Tenon Outline session closed.');
+    for (const waiters of this.operationWaiters.values()) {
+      for (const waiter of waiters) {
+        clearTimeout(waiter.timer);
+        waiter.reject(error);
+      }
+    }
+    this.operationWaiters.clear();
+  }
+
+  private connect(): void {
+    if (this.closed) return;
+    const bridge = window.lin?.outline;
+    if (!bridge) {
+      this.fail(new Error('Tenon Outline bridge is unavailable'), false);
+      return;
+    }
+    this.unsubscribeBridge?.();
+    this.unsubscribeBridge = bridge.subscribe(
+      {
+        subscriptionId: `renderer-watch:${crypto.randomUUID()}`,
+        input: this.cursor ? { cursor: this.cursor } : {},
+      },
+      (record) => this.accept(record),
+    );
   }
 
   private accept(record: OutlineStreamRecord): void {
     if (record.type === 'hello') {
+      if (record.cursor) this.cursor = record.cursor;
+      this.reconnectDelayMs = EVENT_RECONNECT_MIN_DELAY_MS;
       if (!this.readySettled) {
         this.readySettled = true;
         this.resolveReady();
@@ -176,42 +374,74 @@ class DesktopOutlineEventSource {
       return;
     }
     if (record.type === 'event') {
-      for (const listener of this.listeners) listener(record.event);
+      this.cursor = record.cursor;
+      this.noteRevision(record.event.revision);
+      this.rememberOperation(record.event);
+      if (this.eventHoldCount > 0) this.heldEvents.push(record.event);
+      else this.dispatchEvent(record.event);
       return;
     }
-    if (record.type === 'error') this.fail(new OutlineRequestError(record.error as OutlineError));
+    if (record.type === 'error') {
+      const error = new OutlineRequestError(record.error as OutlineError);
+      this.fail(error, record.error.retryable === true);
+      return;
+    }
+    if (record.type === 'end') {
+      if (record.cursor) this.cursor = record.cursor;
+      this.scheduleReconnect();
+    }
   }
 
-  private fail(error: Error): void {
-    if (!this.readySettled) {
+  private dispatchEvent(event: OutlineEvent): void {
+    for (const listener of this.listeners) listener(event);
+    if (event.type === 'resync.required') {
+      this.cursor = undefined;
+      this.scheduleReconnect();
+    }
+  }
+
+  private fail(error: Error, retryable: boolean): void {
+    if (!this.readySettled && !retryable) {
       this.readySettled = true;
       this.rejectReady(error);
     }
     for (const listener of this.errorListeners) listener(error);
+    if (retryable) this.scheduleReconnect();
+  }
+
+  private scheduleReconnect(): void {
+    if (this.closed || this.reconnectTimer) return;
+    this.unsubscribeBridge?.();
+    this.unsubscribeBridge = null;
+    const delay = this.reconnectDelayMs;
+    this.reconnectDelayMs = Math.min(EVENT_RECONNECT_MAX_DELAY_MS, delay * 2);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect();
+    }, delay);
+  }
+
+  private rememberOperation(event: OutlineEvent): void {
+    const operationId = event.operation?.operationId;
+    if (!operationId) return;
+    this.operationEvents.delete(operationId);
+    this.operationEvents.set(operationId, event);
+    while (this.operationEvents.size > OPERATION_EVENT_CACHE_LIMIT) {
+      const oldest = this.operationEvents.keys().next().value;
+      if (oldest === undefined) break;
+      this.operationEvents.delete(oldest);
+    }
+    const waiters = this.operationWaiters.get(operationId);
+    if (!waiters) return;
+    this.operationWaiters.delete(operationId);
+    for (const waiter of waiters) {
+      clearTimeout(waiter.timer);
+      waiter.resolve(event);
+    }
   }
 }
 
-function fullDesktopProjection(cursor: string | undefined): Projection {
-  return {
-    kind: 'outline',
-    targets: {
-      target: { selector: { by: 'alias', alias: 'home' }, cardinality: 'one' },
-    },
-    depth: 1_024,
-    include: [...FULL_PROJECTION_INCLUDE],
-    page: {
-      limit: FULL_PROJECTION_PAGE_SIZE,
-      ...(cursor ? { cursor } : {}),
-    },
-  };
-}
-
-function assertProjectionResult(value: ProjectionResult): void {
-  if (!value
-    || typeof value !== 'object'
-    || !Number.isSafeInteger(value.revision)
-    || !value.anchors
-    || !Array.isArray(value.nodes)) {
-    throw new Error('Outline Runtime returned an invalid desktop Projection.');
-  }
+async function fullProjectionUpdate(): Promise<ProjectionUpdate> {
+  const snapshot = await readDesktopProjection();
+  return { kind: 'full', ...snapshot };
 }

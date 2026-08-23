@@ -15,6 +15,32 @@ async function todayChildren(page: Parameters<typeof trailingEditor>[0]) {
   return projection.nodes.find((node) => node.id === ids.today)?.children ?? [];
 }
 
+async function appliedAttachmentDrafts(page: Parameters<typeof trailingEditor>[0]) {
+  const calls = await commandCalls(page);
+  return calls.flatMap((call) => {
+    if (call.cmd !== 'outline/apply') return [];
+    const input = call.args as {
+      diff?: { normalizedChangeSet?: { operations?: Array<{
+        op?: string;
+        parents?: { target?: { selector?: { by?: string; id?: string } } };
+        index?: number | null;
+        nodes?: Array<Record<string, unknown>>;
+      }> } };
+    };
+    return (input.diff?.normalizedChangeSet?.operations ?? []).flatMap((operation) => (
+      operation.op === 'create'
+        ? (operation.nodes ?? []).filter((draft) => draft.type === 'attachment').map((draft) => ({
+            draft,
+            index: operation.index,
+            parentId: operation.parents?.target?.selector?.by === 'id'
+              ? operation.parents.target.selector.id
+              : undefined,
+          }))
+        : []
+    ));
+  });
+}
+
 async function contrastAgainstWhitePreview(locator: Locator): Promise<number> {
   return locator.evaluate((element) => {
     const parseColor = (value: string): [number, number, number, number] => {
@@ -998,7 +1024,7 @@ test.describe('file attachments', () => {
 
     const calls = await commandCalls(page);
     expect(calls.some((call) => call.cmd === 'pick_attachment_files')).toBe(true);
-    expect(calls.some((call) => call.cmd === 'create_attachment_node')).toBe(true);
+    expect(await appliedAttachmentDrafts(page)).toHaveLength(1);
     expect(calls.some((call) => call.cmd === 'open_asset')).toBe(true);
     expect(calls.some((call) => call.cmd === 'reveal_asset')).toBe(true);
     expect(calls.some((call) => call.cmd === 'copy_asset_file')).toBe(true);
@@ -1246,10 +1272,13 @@ test.describe('file attachments', () => {
       };
     }).toEqual({ childCount: 1, childName: 'drop-guide.md', childType: 'attachment' });
 
-    const calls = await commandCalls(page);
-    expect(calls).toContainEqual(expect.objectContaining({
-      cmd: 'create_attachment_node',
-      args: expect.objectContaining({ parentId: ids.gamma, index: 0, originalFilename: 'drop-guide.md' }),
+    expect(await appliedAttachmentDrafts(page)).toContainEqual(expect.objectContaining({
+      parentId: ids.gamma,
+      index: 0,
+      draft: expect.objectContaining({
+        type: 'attachment',
+        content: expect.objectContaining({ text: 'drop-guide.md' }),
+      }),
     }));
   });
 
@@ -1284,10 +1313,12 @@ test.describe('file attachments', () => {
     })).toBe(false);
 
     const calls = await commandCalls(page);
-    expect(calls.some((call) => call.cmd === 'ingest_asset')).toBe(true);
-    expect(calls).toContainEqual(expect.objectContaining({
-      cmd: 'create_attachment_node',
-      args: expect.objectContaining({ originalFilename: 'clipboard-report.pdf' }),
+    expect(calls.some((call) => call.cmd === 'outline/asset ingest')).toBe(true);
+    expect(await appliedAttachmentDrafts(page)).toContainEqual(expect.objectContaining({
+      draft: expect.objectContaining({
+        type: 'attachment',
+        content: expect.objectContaining({ text: 'clipboard-report.pdf' }),
+      }),
     }));
   });
 

@@ -28,6 +28,11 @@ export const OUTLINE_QUERY_OPS = [
   'FIELD_IS_DEFINED', 'FIELD_IS_NOT_DEFINED',
 ] as const;
 
+const QueryOpSchema = Type.Unsafe<(typeof OUTLINE_QUERY_OPS)[number]>({
+  type: 'string',
+  enum: [...OUTLINE_QUERY_OPS],
+});
+
 const QueryOperandSchema = Type.Object({
   text: Type.Optional(Type.String({ maxLength: 65_536 })),
   targetId: Type.Optional(Identifier),
@@ -37,7 +42,7 @@ export const QueryExpressionSchema = Type.Cyclic({
   QueryExpression: Type.Union([
     Type.Object({
       kind: Type.Literal('rule'),
-      op: Type.Union(OUTLINE_QUERY_OPS.map((value) => Type.Literal(value))),
+      op: QueryOpSchema,
       text: Type.Optional(Type.String({ maxLength: 65_536 })),
       fieldDefId: Type.Optional(Identifier),
       tagDefId: Type.Optional(Identifier),
@@ -112,7 +117,7 @@ export const ProjectionSchema = Type.Object({
   ])),
 }, { ...closed, $id: 'Projection' });
 
-const RichTextSchema = Type.Object({
+export const RichTextSchema = Type.Object({
   text: Type.String({ maxLength: 4_194_304 }),
   marks: Type.Array(Type.Object({
     start: Type.Integer({ minimum: 0 }),
@@ -140,6 +145,45 @@ const RichTextSchema = Type.Object({
   }, closed), { maxItems: 65_536 }),
 }, closed);
 
+const RichTextPatchOpSchema = Type.Union([
+  Type.Object({
+    type: Type.Literal('replace'),
+    from: Type.Integer({ minimum: 0 }),
+    to: Type.Integer({ minimum: 0 }),
+    content: RichTextSchema,
+    deletedInlineRefs: Type.Optional(RichTextSchema.properties.inlineRefs),
+  }, closed),
+  Type.Object({
+    type: Type.Literal('replace_all'),
+    content: RichTextSchema,
+  }, closed),
+  Type.Object({
+    type: Type.Literal('add_mark'),
+    from: Type.Integer({ minimum: 0 }),
+    to: Type.Integer({ minimum: 0 }),
+    markType: RichTextSchema.properties.marks.items.properties.type,
+    attrs: Type.Optional(Type.Record(Type.String(), Type.String())),
+  }, closed),
+  Type.Object({
+    type: Type.Literal('remove_mark'),
+    from: Type.Integer({ minimum: 0 }),
+    to: Type.Integer({ minimum: 0 }),
+    markType: RichTextSchema.properties.marks.items.properties.type,
+  }, closed),
+]);
+
+export const RichTextPatchSchema = Type.Object({
+  ops: Type.Array(RichTextPatchOpSchema, { minItems: 1, maxItems: 100_000 }),
+}, { ...closed, $id: 'RichTextPatch' });
+
+const NodeDraftMetadataSchema = Type.Object({
+  width: Type.Optional(Type.Union([Type.Number({ minimum: 0 }), Type.Null()])),
+  height: Type.Optional(Type.Union([Type.Number({ minimum: 0 }), Type.Null()])),
+  alt: Type.Optional(Type.Union([Type.String({ maxLength: 4_096 }), Type.Null()])),
+  capture: Type.Optional(JsonValue),
+  query: Type.Optional(QueryExpressionSchema),
+}, closed);
+
 export const NodeDraftSchema = Type.Cyclic({
   NodeDraft: Type.Object({
     id: Type.Optional(Identifier),
@@ -161,7 +205,7 @@ export const NodeDraftSchema = Type.Cyclic({
     referenceTargetId: Type.Optional(Identifier),
     assetLeaseId: Type.Optional(Identifier),
     mediaUrl: Type.Optional(Type.String({ maxLength: 32_768 })),
-    metadata: Type.Optional(Type.Record(Type.String(), JsonValue)),
+    metadata: Type.Optional(NodeDraftMetadataSchema),
     children: Type.Array(Type.Ref('NodeDraft'), { maxItems: 100_000 }),
   }, closed),
 }, 'NodeDraft');
@@ -178,8 +222,18 @@ const EnsureChangeSchema = Type.Union([
   Type.Object({
     op: Type.Literal('ensure'),
     resource: Type.Literal('definition'),
-    definitionType: Type.Union([Type.Literal('tag'), Type.Literal('field')]),
-    name: Type.String({ minLength: 1, maxLength: 1_024 }),
+    definitionType: Type.Literal('tag'),
+    id: Type.Optional(Identifier),
+    name: Type.String({ maxLength: 1_024 }),
+    extends: Type.Optional(TargetRefSchema),
+    bind: BindingName,
+  }, closed),
+  Type.Object({
+    op: Type.Literal('ensure'),
+    resource: Type.Literal('definition'),
+    definitionType: Type.Literal('field'),
+    id: Type.Optional(Identifier),
+    name: Type.String({ maxLength: 1_024 }),
     fieldType: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
     bind: BindingName,
   }, closed),
@@ -193,13 +247,261 @@ const CreateChangeSchema = Type.Object({
   bind: Type.Optional(BindingName),
 }, closed);
 
-const TextPatchSchema = Type.Object({
-  kind: Type.Literal('text-patch'),
-  field: Type.Union([Type.Literal('content'), Type.Literal('description')]),
-  from: Type.Integer({ minimum: 0 }),
-  to: Type.Integer({ minimum: 0 }),
-  value: Type.String({ maxLength: 4_194_304 }),
+const TextPatchSchema = Type.Union([
+  Type.Object({
+    kind: Type.Literal('text-patch'),
+    field: Type.Literal('content'),
+    patch: RichTextPatchSchema,
+  }, closed),
+  Type.Object({
+    kind: Type.Literal('text-patch'),
+    field: Type.Literal('description'),
+    from: Type.Integer({ minimum: 0 }),
+    to: Type.Integer({ minimum: 0 }),
+    value: Type.String({ maxLength: 4_194_304 }),
+  }, closed),
+]);
+
+const FieldTypeSchema = Type.Union([
+  Type.Literal('plain'), Type.Literal('options'), Type.Literal('options_from_supertag'),
+  Type.Literal('date'), Type.Literal('number'), Type.Literal('url'),
+  Type.Literal('email'), Type.Literal('checkbox'),
+]);
+
+const FieldSlotCommon = {
+  entryId: Type.Optional(Identifier),
+};
+
+const FieldSlotMutationSchema = Type.Union([
+  Type.Object({ action: Type.Literal('accept-default'), ...FieldSlotCommon }, closed),
+  Type.Object({
+    action: Type.Literal('append-text'),
+    text: Type.String({ maxLength: 4_194_304 }),
+    id: Type.Optional(Identifier),
+    collect: Type.Optional(Type.Boolean()),
+    ...FieldSlotCommon,
+  }, closed),
+  Type.Object({
+    action: Type.Literal('append-reference'),
+    target: TargetRefSchema,
+    id: Type.Optional(Identifier),
+    ...FieldSlotCommon,
+  }, closed),
+  Type.Object({
+    action: Type.Literal('select-option'),
+    option: TargetRefSchema,
+    id: Type.Optional(Identifier),
+    ...FieldSlotCommon,
+  }, closed),
+  Type.Object({
+    action: Type.Literal('remove-value'),
+    value: TargetRefSchema,
+    ...FieldSlotCommon,
+  }, closed),
+  Type.Object({
+    action: Type.Literal('append-nodes'),
+    nodes: Type.Array(NodeDraftSchema, { minItems: 1, maxItems: 100_000 }),
+    firstTags: Type.Optional(Type.Array(TargetRefSchema, { uniqueItems: true, maxItems: 1_024 })),
+    id: Type.Optional(Identifier),
+    ...FieldSlotCommon,
+  }, closed),
+  Type.Object({
+    action: Type.Literal('append-field'),
+    name: Type.String({ minLength: 1, maxLength: 1_024 }),
+    fieldType: FieldTypeSchema,
+    id: Type.Optional(Identifier),
+    ...FieldSlotCommon,
+  }, closed),
+  Type.Object({
+    action: Type.Literal('append-image'),
+    assetLeaseId: Type.Optional(Identifier),
+    mediaUrl: Type.Optional(Type.String({ maxLength: 32_768 })),
+    width: Type.Optional(Type.Union([Type.Number({ minimum: 0 }), Type.Null()])),
+    height: Type.Optional(Type.Union([Type.Number({ minimum: 0 }), Type.Null()])),
+    alt: Type.Optional(Type.Union([Type.String({ maxLength: 4_096 }), Type.Null()])),
+    name: Type.Optional(Type.Union([Type.String({ maxLength: 4_096 }), Type.Null()])),
+    id: Type.Optional(Identifier),
+    ...FieldSlotCommon,
+  }, closed),
+  Type.Object({
+    action: Type.Literal('append-attachment'),
+    assetLeaseId: Identifier,
+    id: Type.Optional(Identifier),
+    ...FieldSlotCommon,
+  }, closed),
+  Type.Object({ action: Type.Literal('commit'), ...FieldSlotCommon }, closed),
+]);
+
+const ScalarValueSchema = Type.Union([
+  Type.String({ maxLength: 4_194_304 }),
+  Type.Number(),
+  Type.Boolean(),
+  Type.Null(),
+]);
+
+const FieldInstructionSchema = Type.Union([
+  Type.Object({
+    kind: Type.Literal('field'),
+    action: Type.Literal('define'),
+    name: Type.String({ minLength: 1, maxLength: 1_024 }),
+    fieldType: FieldTypeSchema,
+    index: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Null()])),
+    value: Type.Optional(ScalarValueSchema),
+  }, closed),
+  Type.Object({
+    kind: Type.Literal('field'),
+    action: Type.Literal('convert'),
+    name: Type.String({ maxLength: 1_024 }),
+    fieldType: FieldTypeSchema,
+  }, closed),
+  Type.Object({
+    kind: Type.Literal('field'),
+    action: Type.Literal('register-option'),
+    name: Type.String({ minLength: 1, maxLength: 1_024 }),
+  }, closed),
+  Type.Object({
+    kind: Type.Literal('field'),
+    action: Type.Literal('attach'),
+    field: TargetRefSchema,
+    index: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Null()])),
+  }, closed),
+  Type.Object({
+    kind: Type.Literal('field'),
+    action: Type.Literal('set'),
+    field: TargetRefSchema,
+    value: ScalarValueSchema,
+  }, closed),
+  Type.Object({
+    kind: Type.Literal('field'),
+    action: Type.Union([Type.Literal('clear'), Type.Literal('remove')]),
+    field: TargetRefSchema,
+  }, closed),
+  Type.Object({
+    kind: Type.Literal('field'),
+    action: Type.Literal('reuse'),
+    field: TargetRefSchema,
+    sourceField: TargetRefSchema,
+  }, closed),
+  Type.Object({
+    kind: Type.Literal('field'),
+    action: Type.Literal('select'),
+    field: TargetRefSchema,
+    option: TargetRefSchema,
+  }, closed),
+]);
+
+const TagDefinitionPatchSchema = Type.Object({
+  color: Type.Optional(Type.Union([Type.String({ maxLength: 128 }), Type.Null()])),
+  extends: Type.Optional(Type.Union([Identifier, Type.Null()])),
+  childSupertag: Type.Optional(Type.Union([Identifier, Type.Null()])),
+  showCheckbox: Type.Optional(Type.Boolean()),
+  doneStateEnabled: Type.Optional(Type.Boolean()),
+  doneMapChecked: Type.Optional(Type.Array(Identifier, { uniqueItems: true, maxItems: 10_000 })),
+  doneMapUnchecked: Type.Optional(Type.Array(Identifier, { uniqueItems: true, maxItems: 10_000 })),
 }, closed);
+
+const FieldDefinitionPatchSchema = Type.Object({
+  fieldType: Type.Optional(FieldTypeSchema),
+  sourceSupertag: Type.Optional(Type.Union([Identifier, Type.Null()])),
+  nullable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+  hideField: Type.Optional(Type.Union([
+    Type.Literal('never'), Type.Literal('empty'), Type.Literal('not_empty'),
+    Type.Literal('value_is_default'), Type.Literal('always'), Type.Null(),
+  ])),
+  autoInitialize: Type.Optional(Type.Union([Type.String({ maxLength: 128 }), Type.Null()])),
+  autocollectOptions: Type.Optional(Type.Boolean()),
+  minValue: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+  maxValue: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+}, closed);
+
+const DefinitionInstructionSchema = Type.Union([
+  Type.Object({
+    kind: Type.Literal('definition'),
+    definitionType: Type.Literal('tag'),
+    patch: TagDefinitionPatchSchema,
+  }, closed),
+  Type.Object({
+    kind: Type.Literal('definition'),
+    definitionType: Type.Literal('field'),
+    patch: FieldDefinitionPatchSchema,
+  }, closed),
+]);
+
+const ViewSystemFieldSchema = Type.Union([
+  Type.Literal('sys:name'), Type.Literal('sys:createdAt'), Type.Literal('sys:updatedAt'),
+  Type.Literal('sys:done'), Type.Literal('sys:doneAt'), Type.Literal('sys:tags'),
+  Type.Literal('sys:refCount'),
+]);
+const ViewFieldSchema = Type.Union([ViewSystemFieldSchema, TargetRefSchema]);
+const ViewModeSchema = Type.Union([
+  Type.Literal('list'), Type.Literal('table'), Type.Literal('cards'), Type.Literal('calendar'),
+]);
+const SortDirectionSchema = Type.Union([Type.Literal('asc'), Type.Literal('desc')]);
+const FilterOperatorSchema = Type.Union([
+  Type.Literal('is'), Type.Literal('is_not'), Type.Literal('contains'), Type.Literal('not_contains'),
+  Type.Literal('is_empty'), Type.Literal('is_not_empty'), Type.Literal('gt'), Type.Literal('lt'),
+  Type.Literal('before'), Type.Literal('after'),
+]);
+const FilterValueLogicSchema = Type.Union([Type.Literal('all'), Type.Literal('any')]);
+const DisplayPlacementSchema = Type.Union([
+  Type.Literal('title'), Type.Literal('body'), Type.Literal('footer'), Type.Literal('hidden'),
+]);
+
+const ViewInstructionSchema = Type.Union([
+  Type.Object({ kind: Type.Literal('view'), property: Type.Literal('mode'), action: Type.Literal('set'), mode: ViewModeSchema }, closed),
+  Type.Object({ kind: Type.Literal('view'), property: Type.Literal('toolbar'), action: Type.Literal('set'), visible: Type.Boolean() }, closed),
+  Type.Object({ kind: Type.Literal('view'), property: Type.Literal('group'), action: Type.Literal('set'), field: Type.Union([ViewFieldSchema, Type.Null()]) }, closed),
+  Type.Object({ kind: Type.Literal('view'), property: Type.Literal('sort'), action: Type.Literal('add'), field: ViewFieldSchema, direction: SortDirectionSchema }, closed),
+  Type.Object({ kind: Type.Literal('view'), property: Type.Literal('sort'), action: Type.Literal('set'), ruleId: Identifier, field: ViewFieldSchema, direction: SortDirectionSchema }, closed),
+  Type.Object({ kind: Type.Literal('view'), property: Type.Literal('sort'), action: Type.Literal('remove'), ruleId: Identifier }, closed),
+  Type.Object({ kind: Type.Literal('view'), property: Type.Literal('sort'), action: Type.Literal('clear') }, closed),
+  Type.Object({
+    kind: Type.Literal('view'),
+    property: Type.Literal('filter'),
+    action: Type.Literal('add'),
+    field: ViewFieldSchema,
+    operator: FilterOperatorSchema,
+    values: Type.Array(Type.String({ maxLength: 65_536 }), { maxItems: 10_000 }),
+    valueLogic: FilterValueLogicSchema,
+  }, closed),
+  Type.Object({
+    kind: Type.Literal('view'),
+    property: Type.Literal('filter'),
+    action: Type.Literal('set'),
+    ruleId: Identifier,
+    field: Type.Optional(Type.Union([ViewFieldSchema, Type.Null()])),
+    operator: Type.Optional(Type.Union([FilterOperatorSchema, Type.Null()])),
+    values: Type.Optional(Type.Union([Type.Array(Type.String({ maxLength: 65_536 }), { maxItems: 10_000 }), Type.Null()])),
+    valueLogic: Type.Optional(Type.Union([FilterValueLogicSchema, Type.Null()])),
+  }, closed),
+  Type.Object({ kind: Type.Literal('view'), property: Type.Literal('filter'), action: Type.Literal('remove'), ruleId: Identifier }, closed),
+  Type.Object({ kind: Type.Literal('view'), property: Type.Literal('filter'), action: Type.Literal('clear') }, closed),
+  Type.Object({ kind: Type.Literal('view'), property: Type.Literal('display-field'), action: Type.Literal('add'), field: ViewFieldSchema }, closed),
+  Type.Object({
+    kind: Type.Literal('view'),
+    property: Type.Literal('display-field'),
+    action: Type.Literal('set'),
+    displayFieldId: Identifier,
+    field: Type.Optional(Type.Union([ViewFieldSchema, Type.Null()])),
+    visible: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+    width: Type.Optional(Type.Union([Type.Number({ minimum: 0 }), Type.Null()])),
+    order: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+    label: Type.Optional(Type.Union([Type.String({ maxLength: 4_096 }), Type.Null()])),
+    placement: Type.Optional(Type.Union([DisplayPlacementSchema, Type.Null()])),
+    move: Type.Optional(Type.Union([Type.Literal('left'), Type.Literal('right')])),
+  }, closed),
+  Type.Object({ kind: Type.Literal('view'), property: Type.Literal('display-field'), action: Type.Literal('remove'), displayFieldId: Identifier }, closed),
+]);
+
+const SearchInstructionSchema = Type.Union([
+  Type.Object({
+    kind: Type.Literal('search'),
+    action: Type.Literal('set'),
+    title: Type.String({ minLength: 1, maxLength: 4_194_304 }),
+    query: QueryExpressionSchema,
+  }, closed),
+  Type.Object({ kind: Type.Literal('search'), action: Type.Literal('refresh') }, closed),
+]);
 
 export const UpdateInstructionSchema = Type.Union([
   Type.Object({ kind: Type.Literal('content'), value: RichTextSchema }, closed),
@@ -209,23 +511,13 @@ export const UpdateInstructionSchema = Type.Union([
   Type.Object({ kind: Type.Literal('checkbox'), visible: Type.Boolean() }, closed),
   Type.Object({ kind: Type.Literal('done'), value: Type.Boolean() }, closed),
   Type.Object({ kind: Type.Literal('tag'), action: Type.Union([Type.Literal('add'), Type.Literal('remove')]), tag: TargetRefSchema }, closed),
+  FieldInstructionSchema,
   Type.Object({
-    kind: Type.Literal('field'),
-    action: Type.Union([
-      Type.Literal('define'), Type.Literal('set'), Type.Literal('clear'),
-      Type.Literal('remove'), Type.Literal('reuse'), Type.Literal('select'),
-    ]),
-    field: Type.Optional(TargetRefSchema),
-    sourceField: Type.Optional(TargetRefSchema),
-    name: Type.Optional(Type.String({ maxLength: 1_024 })),
-    fieldType: Type.Optional(Type.String({ maxLength: 128 })),
-    value: Type.Optional(JsonValue),
+    kind: Type.Literal('field-slot'),
+    field: TargetRefSchema,
+    mutation: FieldSlotMutationSchema,
   }, closed),
-  Type.Object({
-    kind: Type.Literal('definition'),
-    definitionType: Type.Union([Type.Literal('tag'), Type.Literal('field')]),
-    patch: JsonValue,
-  }, closed),
+  DefinitionInstructionSchema,
   Type.Object({
     kind: Type.Literal('reference'),
     action: Type.Union([
@@ -233,16 +525,8 @@ export const UpdateInstructionSchema = Type.Union([
     ]),
     target: TargetRefSchema,
   }, closed),
-  Type.Object({
-    kind: Type.Literal('view'),
-    property: Type.Union([
-      Type.Literal('mode'), Type.Literal('toolbar'), Type.Literal('sort'),
-      Type.Literal('filter'), Type.Literal('group'), Type.Literal('display-field'),
-    ]),
-    action: Type.Union([Type.Literal('set'), Type.Literal('add'), Type.Literal('remove'), Type.Literal('clear')]),
-    value: Type.Optional(JsonValue),
-  }, closed),
-  Type.Object({ kind: Type.Literal('search'), action: Type.Union([Type.Literal('set'), Type.Literal('refresh')]), value: Type.Optional(JsonValue) }, closed),
+  ViewInstructionSchema,
+  SearchInstructionSchema,
   Type.Object({ kind: Type.Literal('icon'), value: Type.Union([Type.String({ maxLength: 4_096 }), Type.Null()]), iconKind: Type.Optional(Type.String({ maxLength: 128 })) }, closed),
   Type.Object({ kind: Type.Literal('banner'), assetLeaseId: Type.Union([Identifier, Type.Null()]), position: Type.Optional(Type.Object({ x: Type.Optional(Type.Number()), y: Type.Optional(Type.Number()) }, closed)) }, closed),
   Type.Object({ kind: Type.Literal('image'), assetLeaseId: Type.Optional(Identifier), mediaUrl: Type.Optional(Type.String({ maxLength: 32_768 })), width: Type.Optional(Type.Number({ minimum: 0 })), height: Type.Optional(Type.Number({ minimum: 0 })) }, closed),
@@ -410,6 +694,30 @@ export const OperationSchema = Type.Object({
   result: Type.Optional(Type.Array(ProjectionResultSchema, { maxItems: 32 })),
 }, { ...closed, $id: 'Operation' });
 
+export const OperationLogPageSchema = Type.Object({
+  operations: Type.Array(OperationSchema, { maxItems: 1_000 }),
+  affectedNodeIds: Type.Optional(Type.Object({
+    operationId: Identifier,
+    nodeIds: Type.Array(Identifier, { maxItems: 1_000 }),
+    offset: Type.Integer({ minimum: 0 }),
+    totalCount: Type.Integer({ minimum: 0 }),
+    fullSetHash: Digest,
+  }, closed)),
+  cursor: Type.Optional(Type.String({ minLength: 1, maxLength: 4_096 })),
+}, { ...closed, $id: 'OperationLogPage' });
+
+export const RevertConflictDiffSchema = Type.Object({
+  protocolVersion: Type.Literal(OUTLINE_PROTOCOL_VERSION),
+  kind: Type.Literal('outline.revert-conflict-diff'),
+  operationId: Identifier,
+  currentRevision: Type.Integer({ minimum: 0 }),
+  changedPreconditions: Type.Array(Type.Object({
+    id: Identifier,
+    expectedAfterDigest: Type.Union([Digest, Type.Null()]),
+    actualDigest: Type.Union([Digest, Type.Null()]),
+  }, closed), { minItems: 1, maxItems: 100_000 }),
+}, { ...closed, $id: 'RevertConflictDiff' });
+
 export const EventSchema = Type.Object({
   protocolVersion: Type.Literal(OUTLINE_PROTOCOL_VERSION),
   kind: Type.Literal('outline.event'),
@@ -543,10 +851,13 @@ export const OUTLINE_PUBLIC_SCHEMAS = Object.freeze({
   Projection: ProjectionSchema,
   ProjectionResult: ProjectionResultSchema,
   NodeDraft: NodeDraftSchema,
+  RichTextPatch: RichTextPatchSchema,
   Change: ChangeSchema,
   ChangeSet: ChangeSetSchema,
   Diff: DiffSchema,
   Operation: OperationSchema,
+  OperationLogPage: OperationLogPageSchema,
+  RevertConflictDiff: RevertConflictDiffSchema,
   Event: EventSchema,
   EventFilter: EventFilterSchema,
   OutlineError: OutlineErrorSchema,
@@ -571,6 +882,8 @@ export type Change = Static<typeof ChangeSchema>;
 export type ChangeSet = Static<typeof ChangeSetSchema>;
 export type Diff = Static<typeof DiffSchema>;
 export type Operation = Static<typeof OperationSchema>;
+export type OperationLogPage = Static<typeof OperationLogPageSchema>;
+export type RevertConflictDiff = Static<typeof RevertConflictDiffSchema>;
 export type OutlineEvent = Static<typeof EventSchema>;
 export type EventFilter = Static<typeof EventFilterSchema>;
 export type WatchRequest = Static<typeof WatchRequestSchema>;

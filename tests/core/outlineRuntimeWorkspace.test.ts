@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { canonicalSha256 } from '../../src/outline/contract/canonical';
 import { OutlineRuntimeWorkspace } from '../../src/outline/runtime';
+import { OutlineRuntimeRouter } from '../../src/outline/runtime/server';
 import { WorkspaceTransactionLog } from '../../src/outline/runtime/storage';
 
 const roots: string[] = [];
@@ -28,6 +29,21 @@ describe('OutlineRuntimeWorkspace', () => {
     expect(operation.revisionAfter).toBe(operation.revisionBefore + 1);
     expect(workspace.projection().nodes.some((node) => node.content.text === 'Published after fsync')).toBe(true);
     expect((await store.operations()).map((entry) => entry.operationId)).toEqual([operation.operationId]);
+  });
+
+  test('keeps Runtime Operation history out of Core local undo persistence', async () => {
+    const root = await makeRoot();
+    const workspace = await OutlineRuntimeWorkspace.open(root);
+
+    await workspace.mutate(createRequest('Runtime-owned history'));
+
+    const loaded = await workspace.store.load();
+    expect(loaded.snapshot?.local.operationHistory).toEqual([]);
+    expect(loaded.replay.every((entry) => (
+      entry.local.operationHistoryUpserts.length === 0
+      && entry.local.operationHistoryDeletes.length === 0
+    ))).toBe(true);
+    expect(loaded.operations).toHaveLength(1);
   });
 
   test('discards the candidate when recovery capacity rejects admission', async () => {
@@ -135,6 +151,36 @@ describe('OutlineRuntimeWorkspace', () => {
     expect(restarted.documentState()).toEqual(createdState);
   });
 
+  test('reconstructs consecutive undo and redo history across Runtime restart', async () => {
+    const root = await makeRoot();
+    const firstNodeId = `node:${crypto.randomUUID()}`;
+    const secondNodeId = `node:${crypto.randomUUID()}`;
+    const workspace = await OutlineRuntimeWorkspace.open(root);
+    await workspace.mutate(createRequest('First history row', { nodeId: firstNodeId }));
+    await workspace.mutate(createRequest('Second history row', { nodeId: secondNodeId }));
+
+    await workspace.undo({ origin: 'local-user' });
+    expect(workspace.documentState().nodes[secondNodeId]).toBeUndefined();
+    expect(workspace.documentState().nodes[firstNodeId]).toBeDefined();
+    await workspace.undo({ origin: 'local-user' });
+    expect(workspace.documentState().nodes[firstNodeId]).toBeUndefined();
+
+    const restarted = await OutlineRuntimeWorkspace.open(root);
+    await restarted.redo({ origin: 'local-user' });
+    expect(restarted.documentState().nodes[firstNodeId]).toBeDefined();
+    expect(restarted.documentState().nodes[secondNodeId]).toBeUndefined();
+    await restarted.redo({ origin: 'local-user' });
+    expect(restarted.documentState().nodes[secondNodeId]).toBeDefined();
+    await expect(restarted.redo({ origin: 'local-user' })).rejects.toMatchObject({
+      outlineError: { code: 'not_found' },
+    });
+
+    const restartedAgain = await OutlineRuntimeWorkspace.open(root);
+    await restartedAgain.undo({ origin: 'local-user' });
+    expect(restartedAgain.documentState().nodes[firstNodeId]).toBeDefined();
+    expect(restartedAgain.documentState().nodes[secondNodeId]).toBeUndefined();
+  });
+
   test('rejects revert when one affected after value changed and writes no recovery Operation', async () => {
     const root = await makeRoot();
     const nodeId = `node:${crypto.randomUUID()}`;
@@ -143,7 +189,21 @@ describe('OutlineRuntimeWorkspace', () => {
     await workspace.mutate(updateRequest(nodeId, 'Changed after original Operation'));
 
     await expect(workspace.revert(created.operationId, { origin: 'local-user' })).rejects.toMatchObject({
-      outlineError: { code: 'revert_conflict' },
+      outlineError: {
+        code: 'revert_conflict',
+        details: {
+          conflictDiff: {
+            kind: 'outline.revert-conflict-diff',
+            operationId: created.operationId,
+            currentRevision: workspace.revision(),
+            changedPreconditions: [{
+              id: nodeId,
+              expectedAfterDigest: expect.any(String),
+              actualDigest: canonicalSha256(workspace.documentState().nodes[nodeId]),
+            }],
+          },
+        },
+      },
     });
 
     expect(workspace.documentState().nodes[nodeId]?.description).toBe('Changed after original Operation');
@@ -175,7 +235,107 @@ describe('OutlineRuntimeWorkspace', () => {
     expect(restarted.projection().nodes.some((node) => node.content.text === 'Committed without acknowledgement')).toBe(true);
     expect(restarted.projection().nodes.some((node) => node.content.text === 'Must not run on stale Core')).toBe(false);
   });
+
+  test('pages newest-first Operation history and filters trusted causation', async () => {
+    const root = await makeRoot();
+    const workspace = await OutlineRuntimeWorkspace.open(root);
+    const first = await workspace.mutate({
+      ...createRequest('Causation match'),
+      origin: 'built-in-agent',
+      causation: { threadId: 'thread:one', turnId: 'turn:one', itemId: 'item:one' },
+    });
+    const second = await workspace.mutate(createRequest('Newest Operation'));
+    const router = new OutlineRuntimeRouter(workspace);
+
+    const firstPage = await logPage(router, { limit: 1 });
+    expect(firstPage.operations.map((operation) => operation.operationId)).toEqual([second.operationId]);
+    expect(firstPage.cursor).toEqual(expect.any(String));
+    const secondPage = await logPage(router, { limit: 1, cursor: firstPage.cursor });
+    expect(secondPage.operations.map((operation) => operation.operationId)).toEqual([first.operationId]);
+    expect(secondPage.cursor).toBeUndefined();
+
+    const causal = await logPage(router, {
+      threadId: 'thread:one',
+      turnId: 'turn:one',
+      itemId: 'item:one',
+    });
+    expect(causal.operations.map((operation) => operation.operationId)).toEqual([first.operationId]);
+    await expect(logPage(router, {
+      limit: 1,
+      origin: 'local-user',
+      cursor: firstPage.cursor,
+    })).rejects.toMatchObject({ code: 'stale_revision' });
+  });
+
+  test('pages every affected Node ID from retained recovery data', async () => {
+    const root = await makeRoot();
+    const workspace = await OutlineRuntimeWorkspace.open(root);
+    const operation = await workspace.mutate({
+      origin: 'external-client',
+      changeSetHash: canonicalSha256({ kind: 'bulk-create' }),
+      diffHash: canonicalSha256({ kind: 'bulk-create-diff' }),
+      summary: 'Created a large affected set.',
+      execute: (core) => {
+        for (let index = 0; index < 1_001; index += 1) {
+          core.createNode(core.projection().todayId, null, `Bulk ${index}`, `node:${crypto.randomUUID()}`);
+        }
+      },
+    });
+    expect(operation.affectedNodeIdsTruncated).toBe(true);
+    expect(operation.affectedNodeIdsCursor).toEqual(expect.any(String));
+    const router = new OutlineRuntimeRouter(workspace);
+
+    const pages = [];
+    let cursor: string | undefined;
+    do {
+      const page = await logPage(router, {
+        operationId: operation.operationId,
+        limit: 400,
+        ...(cursor ? { cursor } : {}),
+      });
+      pages.push(...page.affectedNodeIds!.nodeIds);
+      cursor = page.cursor;
+    } while (cursor);
+    expect(pages).toHaveLength(operation.affectedNodeCount);
+    expect(canonicalSha256(pages)).toBe(operation.affectedNodeIdsHash);
+
+    const resumed = await logPage(router, {
+      operationId: operation.operationId,
+      cursor: operation.affectedNodeIdsCursor,
+    });
+    expect(resumed.affectedNodeIds).toMatchObject({ offset: 1_000, totalCount: operation.affectedNodeCount });
+    expect(resumed.affectedNodeIds?.nodeIds).toEqual(pages.slice(1_000));
+  });
+
+  test('rejects a handler result that violates the executable capability schema', async () => {
+    const root = await makeRoot();
+    const workspace = await OutlineRuntimeWorkspace.open(root);
+    const router = new OutlineRuntimeRouter(workspace);
+    router.register('show', () => ({ nodes: 'not-an-array' }));
+
+    const response = await router.handle({
+      protocolVersion: 1,
+      requestId: 'request:invalid-handler-result',
+      command: 'show',
+      input: { selector: { by: 'alias', alias: 'today' } },
+    }, { origin: 'local-user' });
+    expect(response).toMatchObject({
+      ok: false,
+      error: { code: 'internal_error', category: 'internal' },
+    });
+  });
 });
+
+async function logPage(router: OutlineRuntimeRouter, input: Record<string, unknown>) {
+  const response = await router.handle({
+    protocolVersion: 1,
+    requestId: `request:${crypto.randomUUID()}`,
+    command: 'log',
+    input,
+  }, { origin: 'local-user' });
+  if (!response.ok) throw response.error;
+  return response.data as import('../../src/outline/contract').OperationLogPage;
+}
 
 interface CreateRequestOptions {
   readonly nodeId?: string;

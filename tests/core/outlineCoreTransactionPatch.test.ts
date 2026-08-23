@@ -200,7 +200,7 @@ describe('Core transaction patches', () => {
       nodes: [],
     };
     expect(() => core.applyRecoveryPatch(patch)).toThrow(
-      'host document commands require a trusted system transaction',
+      'recovery commands require a trusted system transaction',
     );
     expect(RUNTIME_DOCUMENT_COMMANDS).toEqual(['apply_recovery_patch']);
     expect(DOCUMENT_COMMANDS).not.toContain('apply_recovery_patch' as never);

@@ -394,10 +394,10 @@ Skills, or recognize direct slash or natural-language Skill invocation.
 
 No fresh Agent inherits parent user or assistant messages, reasoning, tool calls
 or results, files the parent read, parent-only invoked Skill content, output
-style, Memory projection or data, or an address roster. The `files`, `outliner`,
+style, Memory routing context or data, or an address roster. The `files`, `outliner`,
 `skills`, and Agent-guidance stable-prompt modules are selected from the child's
-effective tools. The `memory` stable-prompt module and Memory data are root-only,
-even when the Agent can call `node_read` or `node_search`.
+effective tools. The `memory` stable-prompt module and implicit Memory routing
+are root-only, even when the Agent can invoke the public Outline CLI.
 
 Fresh startup and resume are deliberately different. A new `agent` call always
 uses the matrix above; `agent_message` to a terminal Agent appends to that
@@ -433,7 +433,6 @@ The durable category rules are:
 | Web and `skill` | Available when inherited | Role-policy dependent |
 | `agent` | Available only when the persisted policy permits nesting and the requested ceiling admits it | Removed |
 | `agent_message`, `task_stop` | Available | Available |
-| `outline_undo_stack` | Removed from every Agent | Removed from every Agent |
 
 Background mode further intersects the selected pool with the background-safe
 catalog. Worktree mode removes live outline mutations in addition to containing
@@ -754,13 +753,10 @@ provider I/O and makes it the Agent cwd for file and shell tools. Path and git
 containment checks reject mutation redirection into the main checkout. The shell
 sandbox treats the shared Git object database as append-only: commits may create
 new loose objects, while existing objects plus `objects/pack` and `objects/info`
-cannot be modified or removed. The tool pool also removes `node_create`,
-`node_edit`, and `node_delete`, because a git worktree cannot isolate the user's
-live outline. Bash commands dynamically classified as `outline.edit` or
-`outline.delete`, including `tenon-import commit`, are rejected before process
-launch. A rejected import commit receives no Item causation token, and the local
-API refuses a commit without one. Read-only import inspection and preview remain
-available when otherwise permitted.
+cannot be modified or removed. A git worktree cannot isolate the user's live
+outline, so Bash commands dynamically classified as `outline.edit` or
+`outline.delete` are rejected before process launch. Read-only `outline`
+commands and import inspection remain available when otherwise permitted.
 
 Planning a managed worktree is read-only. It resolves and persists the source
 checkout, exact base commit, deterministic managed path and branch, and shared

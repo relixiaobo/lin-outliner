@@ -77,7 +77,6 @@ import type { AgentTool } from '../../src/main/agent/runtime/kernel/types';
 import { ToolRuntime } from '../../src/main/agent/runtime/ToolRuntime';
 import { CanonicalContextProjector } from '../../src/main/agent/context/ContextProjector';
 import { Core } from '../../src/core/core';
-import { createNodeTools, type OutlinerToolHost } from '../../src/main/agent/capabilities/agentNodeTools';
 import {
   AgentSkillRuntime,
   createSkillTool,
@@ -89,8 +88,6 @@ import {
   threadTranscriptPath,
   threadTranscriptRoot,
 } from '../../src/main/agent/thread/ThreadTranscriptArtifact';
-import { indexProjection } from '../../src/main/agent/capabilities/agentNodeToolProjection';
-import { editableOutlineRevision } from '../../src/main/agent/capabilities/agentNodeToolRead';
 import { ThreadTranscriptIndex } from '../../src/main/agent/thread/ThreadTranscriptIndex';
 import { ThreadTranscriptWriter } from '../../src/main/agent/thread/ThreadTranscriptWriter';
 import {
@@ -882,7 +879,7 @@ describe('ThreadService', () => {
           developerInstructions: ['Fresh instructions'],
           model: 'inherit',
           reasoningEffort: 'low',
-          tools: ['node_read'],
+          tools: ['file_grep'],
           skills: ['fresh-skill'],
           preloadedSkills: [],
           plugins: ['fresh-plugin'],
@@ -908,7 +905,7 @@ describe('ThreadService', () => {
       developerInstructions: ['Fresh instructions'],
       model: 'anthropic/claude-sonnet-4',
       reasoningEffort: 'high',
-      tools: ['node_read'],
+      tools: ['file_grep'],
       skills: ['fresh-skill'],
       plugins: ['fresh-plugin'],
       mcpServers: ['fresh-mcp'],
@@ -948,7 +945,7 @@ describe('ThreadService', () => {
         developerInstructions: [],
         model: 'openai/gpt-5',
         reasoningEffort: 'low',
-        tools: ['node_read'],
+        tools: ['file_grep'],
         skills: [],
         preloadedSkills: [],
         plugins: [],
@@ -1530,7 +1527,7 @@ describe('ThreadService', () => {
         developerInstructions: [],
         model: 'inherit',
         reasoningEffort: 'medium',
-        tools: ['node_read'],
+        tools: ['file_grep'],
         skills: [],
         plugins: [],
         mcpServers: [],
@@ -1560,7 +1557,7 @@ describe('ThreadService', () => {
     });
     expect(fixture.stores.metadata.require(root.id)).toMatchObject({
       thread: { modelProvider: 'anthropic' },
-      configuration: { model: 'anthropic/claude-sonnet-4', reasoningEffort: 'high', tools: ['node_read'] },
+      configuration: { model: 'anthropic/claude-sonnet-4', reasoningEffort: 'high', tools: ['file_grep'] },
     });
     expect(validated).toEqual(['anthropic:anthropic/claude-sonnet-4:high']);
 
@@ -8144,7 +8141,7 @@ describe('ThreadService', () => {
       developerInstructions: ['Parent instructions'],
       model: 'parent-model',
       reasoningEffort: 'medium',
-      tools: ['node_read', 'agent'],
+      tools: ['file_grep', 'agent'],
       skills: ['allowed-skill'],
       plugins: ['allowed-plugin'],
       mcpServers: ['allowed-mcp'],
@@ -8155,7 +8152,7 @@ describe('ThreadService', () => {
       description: 'Attempts to expand capabilities.',
       developerInstructions: 'Child instructions',
       overrides: {
-        tools: ['node_read', 'bash'],
+        tools: ['file_grep', 'bash'],
         skills: ['allowed-skill', 'extra-skill'],
         plugins: ['extra-plugin'],
         mcpServers: ['allowed-mcp', 'extra-mcp'],
@@ -8193,7 +8190,7 @@ describe('ThreadService', () => {
     );
     await fixture.executor.waitUntilWaiting(1);
     expect(fixture.executor.contexts[1]?.configuration).toMatchObject({
-      tools: ['node_read'],
+      tools: ['file_grep'],
       skills: ['allowed-skill'],
       plugins: [],
       mcpServers: ['allowed-mcp'],
@@ -8557,7 +8554,7 @@ describe('ThreadService', () => {
       developerInstructions: ['Initial parent instructions'],
       model: 'parent-model',
       reasoningEffort: 'medium',
-      tools: ['node_read', 'bash'],
+      tools: ['file_grep', 'bash'],
       skills: ['initial-skill', 'shared-skill'],
       plugins: ['initial-plugin'],
       mcpServers: ['initial-mcp'],
@@ -8570,7 +8567,7 @@ describe('ThreadService', () => {
       overrides: {
         model: 'initial-role-model',
         reasoningEffort: 'low',
-        tools: ['node_read', 'bash'],
+        tools: ['file_grep', 'bash'],
         skills: ['initial-skill'],
         plugins: ['initial-plugin'],
         mcpServers: ['initial-mcp'],
@@ -8598,21 +8595,21 @@ describe('ThreadService', () => {
       prompt: 'Initial child work',
       taskPath: '/root/mutable',
       role: 'mutable',
-      allowedTools: ['node_read'],
+      allowedTools: ['file_grep'],
       childKind: 'collaboration',
-      execution: testChildExecution({ requestedTools: ['node_read'] }),
+      execution: testChildExecution({ requestedTools: ['file_grep'] }),
     });
     await fixture.executor.waitUntilWaiting(1);
     expect(fixture.executor.contexts[1]?.configuration.model).toBe('initial-role-model');
     expect(fixture.executor.contexts[1]?.configuration.reasoningEffort).toBe('low');
-    expect(fixture.executor.contexts[1]?.configuration.tools).toEqual(['node_read']);
+    expect(fixture.executor.contexts[1]?.configuration.tools).toEqual(['file_grep']);
     fixture.executor.finish(1);
     await fixture.service.waitForIdle(child.thread.id);
 
     const currentParent: EffectiveThreadConfiguration = {
       ...parentConfiguration,
       developerInstructions: ['Current parent instructions'],
-      tools: ['node_read', 'file_read'],
+      tools: ['file_grep', 'file_read'],
       skills: ['current-skill'],
       plugins: ['current-plugin'],
       mcpServers: ['current-mcp'],
@@ -8624,7 +8621,7 @@ describe('ThreadService', () => {
       overrides: {
         model: 'current-role-model',
         reasoningEffort: 'high',
-        tools: ['node_read', 'file_read'],
+        tools: ['file_grep', 'file_read'],
         skills: ['current-skill'],
         plugins: ['current-plugin'],
         mcpServers: ['current-mcp'],
@@ -8642,7 +8639,7 @@ describe('ThreadService', () => {
       developerInstructions: ['Initial role instructions'],
       model: 'initial-role-model',
       reasoningEffort: 'low',
-      tools: ['node_read'],
+      tools: ['file_grep'],
       skills: ['initial-skill'],
       plugins: ['initial-plugin'],
       mcpServers: ['initial-mcp'],
@@ -8660,7 +8657,7 @@ describe('ThreadService', () => {
       developerInstructions: ['PARENT-ONLY INSTRUCTIONS'],
       model: 'parent-model',
       reasoningEffort: 'medium',
-      tools: ['agent', 'node_read', 'skill'],
+      tools: ['agent', 'file_grep', 'skill'],
       skills: ['role-preload'],
       preloadedSkills: [],
       plugins: [],
@@ -8725,7 +8722,7 @@ describe('ThreadService', () => {
         description: `${roleName} fixture`,
         developerInstructions: `${roleName} instructions`,
         overrides: {
-          tools: ['node_read', 'skill'],
+          tools: ['file_grep', 'skill'],
           skills: ['role-preload'],
         },
       };
@@ -8739,7 +8736,7 @@ describe('ThreadService', () => {
         childKind: 'collaboration',
         execution: testChildExecution({
           kind: roleName === 'explorer' ? 'explore' : 'plan',
-          requestedTools: ['node_read', 'skill'],
+          requestedTools: ['file_grep', 'skill'],
         }),
       });
       children.push(child);
@@ -12567,53 +12564,6 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
-  test('binds document tool mutations to the executing Thread, Turn, and Item', async () => {
-    const fixture = await createFixture();
-    const thread = (await fixture.service.startThread({
-      modelProvider: 'test',
-      cwd: fixture.root,
-    })).thread;
-    await fixture.service.startRendererTurn({
-      threadId: thread.id,
-      input: [{ type: 'text', text: 'Read the outline' }],
-    });
-    await fixture.executor.waitUntilWaiting();
-    const context = fixture.executor.contexts[0]!;
-    const core = Core.new();
-    const metadata: Array<Parameters<NonNullable<OutlinerToolHost['transaction']>>[0]> = [];
-    const outliner: OutlinerToolHost = {
-      getProjection: () => core.projection(),
-      handle: async () => {
-        throw new Error('node_read must not mutate the document');
-      },
-      transaction: async (meta, operation) => {
-        metadata.push(meta);
-        return operation();
-      },
-    };
-    const runtime = new ToolRuntime(fixture.service, {
-      outliner,
-      capabilityConfig: { blocks: [] },
-      capabilityTools: (_runtimeContext, wrappedOutliner) => createNodeTools(wrappedOutliner!),
-    });
-    const tools = await runtime.createTools({
-      ...context,
-      configuration: { ...context.configuration, tools: ['node_read'] },
-    });
-    const itemId = context.recorder.createItemId();
-
-    await executeTool(tools, 'node_read', itemId, {
-      node_id: core.projection().todayId,
-      depth: 0,
-    });
-
-    expect(metadata).toEqual([expect.objectContaining({
-      causation: { threadId: thread.id, turnId: context.turn.id, itemId },
-    })]);
-    fixture.executor.finish();
-    await fixture.service.waitForIdle(thread.id);
-    await fixture.service.close();
-  });
 });
 
 class AdmissionProbe implements AgentCoreExtension {
@@ -13570,323 +13520,6 @@ async function recordReferencedImageEvidence(
 }
 
 
-describe('document drift notice', () => {
-  const PRICING = '019fb2da-0000-7000-8000-0000000000a1';
-
-  test('tells the model what moved under it, and stays quiet when nothing did', async () => {
-    let projection = contextProjection([contextNode(PRICING, 'Enterprise ¥3,900/seat', { updatedAt: 1 })]);
-    const fixture = await createFixture(undefined, {
-      getDocumentProjection: () => projection,
-      // Dated AFTER the read below, because an operation that predates the
-      // observation explains nothing about drift the model can see.
-      getRecentDocumentOperations: () => [
-        { origin: 'user', affectedNodeIds: [PRICING], createdAt: new Date(4_000_000_000_000).toISOString() },
-      ],
-    });
-    const thread = (await fixture.service.startThread({
-      source: 'app',
-      threadSource: 'user',
-      modelProvider: 'openai',
-      cwd: fixture.root,
-    })).thread;
-
-    // Turn 1: the model is shown the node. Reading is what creates the belief —
-    // the pure question-answering path never writes, so a write-derived set
-    // would have nothing here, which is exactly the case this defends.
-    await fixture.service.startRendererTurn({
-      threadId: thread.id,
-      input: [{ type: 'text', text: 'What does the pricing node say?' }],
-    });
-    await fixture.executor.waitUntilWaiting(0);
-    await fixture.service.notifyToolCompleted(
-      thread.id,
-      fixture.executor.contexts[0]!.turn.id,
-      'read-1',
-      { namespace: null, name: 'node_read' },
-      {},
-      { ok: true, data: { items: [{ nodeId: PRICING, revision: readRevision(projection, PRICING) }] } },
-      null,
-    );
-    fixture.executor.finish(0, completedExecutionResult(0));
-    await fixture.service.waitForIdle(thread.id);
-
-    // Someone else edits it while the Thread sits idle.
-    projection = contextProjection([
-      contextNode(PRICING, 'Enterprise ¥4,800/seat, 10% off annual', { updatedAt: 2 }),
-    ]);
-
-    await fixture.service.startRendererTurn({
-      threadId: thread.id,
-      input: [{ type: 'text', text: 'So what do we charge enterprise?' }],
-    });
-    await fixture.executor.waitUntilWaiting(1);
-    const notice = await driftNoticeFor(fixture, thread.id, 1);
-
-    expect(notice).toContain('1 node you were shown has changed since you saw it');
-    // A belief update, not a warning: the current content rides along, so the
-    // ordinary case costs no re-read round trip.
-    expect(notice).toContain('Enterprise ¥4,800/seat, 10% off annual');
-    expect(notice).toContain('by the user directly');
-    // The line that keeps this feature from creating its own failure: a model
-    // told its reads changed can treat that as an inconsistency to repair.
-    expect(notice).toContain('Do not revert them unless asked');
-
-    fixture.executor.finish(1, completedExecutionResult(0));
-    await fixture.service.waitForIdle(thread.id);
-
-    // Reporting is also forgetting, so an unchanged document says nothing at all
-    // rather than repeating what the model was already told.
-    await fixture.service.startRendererTurn({
-      threadId: thread.id,
-      input: [{ type: 'text', text: 'And annual?' }],
-    });
-    await fixture.executor.waitUntilWaiting(2);
-    expect(await driftNoticeFor(fixture, thread.id, 2)).toBeNull();
-
-    fixture.executor.finish(2, completedExecutionResult(0));
-    await fixture.service.waitForIdle(thread.id);
-    await fixture.service.close();
-  });
-
-  test('says nothing when the document did not move', async () => {
-    const projection = contextProjection([contextNode(PRICING, 'Enterprise pricing', { updatedAt: 1 })]);
-    const fixture = await createFixture(undefined, { getDocumentProjection: () => projection });
-    const thread = (await fixture.service.startThread({
-      source: 'app',
-      threadSource: 'user',
-      modelProvider: 'openai',
-      cwd: fixture.root,
-    })).thread;
-    await fixture.service.startRendererTurn({
-      threadId: thread.id,
-      input: [{ type: 'text', text: 'Read it' }],
-    });
-    await fixture.executor.waitUntilWaiting(0);
-    await fixture.service.notifyToolCompleted(
-      thread.id,
-      fixture.executor.contexts[0]!.turn.id,
-      'read-1',
-      { namespace: null, name: 'node_read' },
-      {},
-      { ok: true, data: { items: [{ nodeId: PRICING, revision: readRevision(projection, PRICING) }] } },
-      null,
-    );
-    fixture.executor.finish(0, completedExecutionResult(0));
-    await fixture.service.waitForIdle(thread.id);
-
-    await fixture.service.startRendererTurn({
-      threadId: thread.id,
-      input: [{ type: 'text', text: 'A follow-up that touches nothing' }],
-    });
-    await fixture.executor.waitUntilWaiting(1);
-
-    // The shipped version compared the emitted token against a different
-    // function, so this fired on every turn after every read — a false drift
-    // notice telling the model not to revert edits nobody made.
-    expect(await driftNoticeFor(fixture, thread.id, 1)).toBeNull();
-
-    fixture.executor.finish(1, completedExecutionResult(0));
-    await fixture.service.waitForIdle(thread.id);
-    await fixture.service.close();
-  });
-
-  test('keeps tracking a node after reporting it, so a second edit is reported too', async () => {
-    let projection = contextProjection([contextNode(PRICING, 'v1', { updatedAt: 1 })]);
-    const fixture = await createFixture(undefined, { getDocumentProjection: () => projection });
-    const thread = (await fixture.service.startThread({
-      source: 'app',
-      threadSource: 'user',
-      modelProvider: 'openai',
-      cwd: fixture.root,
-    })).thread;
-    await fixture.service.startRendererTurn({ threadId: thread.id, input: [{ type: 'text', text: 'Read it' }] });
-    await fixture.executor.waitUntilWaiting(0);
-    await fixture.service.notifyToolCompleted(
-      thread.id,
-      fixture.executor.contexts[0]!.turn.id,
-      'read-1',
-      { namespace: null, name: 'node_read' },
-      {},
-      { ok: true, data: { items: [{ nodeId: PRICING, revision: readRevision(projection, PRICING) }] } },
-      null,
-    );
-    fixture.executor.finish(0, completedExecutionResult(0));
-    await fixture.service.waitForIdle(thread.id);
-
-    projection = contextProjection([contextNode(PRICING, 'v2', { updatedAt: 2 })]);
-    await fixture.service.startRendererTurn({ threadId: thread.id, input: [{ type: 'text', text: 'And now?' }] });
-    await fixture.executor.waitUntilWaiting(1);
-    expect(await driftNoticeFor(fixture, thread.id, 1)).toContain('v2');
-    fixture.executor.finish(1, completedExecutionResult(0));
-    await fixture.service.waitForIdle(thread.id);
-
-    projection = contextProjection([contextNode(PRICING, 'v3', { updatedAt: 3 })]);
-    await fixture.service.startRendererTurn({ threadId: thread.id, input: [{ type: 'text', text: 'And now?' }] });
-    await fixture.executor.waitUntilWaiting(2);
-
-    // Reporting must UPDATE the belief, not drop it. Dropping inverted the
-    // feature: the host stopped tracking a node the moment it handed the model
-    // that node's content, so the next edit went unreported and the model
-    // answered from — or wrote over — the version it had been given.
-    expect(await driftNoticeFor(fixture, thread.id, 2)).toContain('v3');
-
-    fixture.executor.finish(2, completedExecutionResult(0));
-    await fixture.service.waitForIdle(thread.id);
-    await fixture.service.close();
-  });
-
-  test('rebuilds beliefs from the record when this process never observed them', async () => {
-    let projection = contextProjection([contextNode(PRICING, 'Enterprise ¥3,900/seat', { updatedAt: 1 })]);
-    const fixture = await createFixture(undefined, { getDocumentProjection: () => projection });
-    const thread = (await fixture.service.startThread({
-      source: 'app',
-      threadSource: 'user',
-      modelProvider: 'openai',
-      cwd: fixture.root,
-    })).thread;
-    await fixture.service.startRendererTurn({ threadId: thread.id, input: [{ type: 'text', text: 'Read it' }] });
-    await fixture.executor.waitUntilWaiting(0);
-    const context = fixture.executor.contexts[0]!;
-    const itemId = context.recorder.createItemId();
-    const started: ThreadItem = {
-      type: 'dynamicToolCall',
-      id: itemId,
-      provenance: context.recorder.localProvenance(itemId),
-      status: 'inProgress',
-      outputRef: null,
-      namespace: null,
-      tool: 'node_read',
-      arguments: {},
-      contentItems: null,
-      success: null,
-      durationMs: null,
-      modelCall: replayableModelCall('node_read', {}),
-    };
-    await context.recorder.started(started);
-    // The persisted output IS the observation, which is what makes the belief
-    // recoverable without anything new being written down.
-    const outputRef = await context.persistOutputText(
-      itemId,
-      JSON.stringify({
-        ok: true,
-        data: { items: [{ nodeId: PRICING, revision: readRevision(projection, PRICING) }] },
-      }),
-      'application/json',
-      'node_read output',
-    );
-    await context.recorder.completed({ ...started, status: 'completed', outputRef, success: true, durationMs: 1 });
-    const fileReadItemId = context.recorder.createItemId();
-    const fileReadOutputRef = await context.persistOutputText(
-      fileReadItemId,
-      JSON.stringify({ ok: true, data: { content: 'Large unrelated file output.' } }),
-      'application/json',
-      'file_read output',
-    );
-    await context.recorder.completedImmediately({
-      type: 'dynamicToolCall',
-      id: fileReadItemId,
-      provenance: context.recorder.localProvenance(fileReadItemId),
-      status: 'completed',
-      outputRef: fileReadOutputRef,
-      namespace: null,
-      tool: 'file_read',
-      arguments: { file_path: '/workspace/unrelated.txt' },
-      contentItems: [{ type: 'text', text: 'Large unrelated file output.' }],
-      success: true,
-      durationMs: 1,
-      modelCall: replayableModelCall('file_read', { file_path: '/workspace/unrelated.txt' }),
-    });
-    fixture.executor.finish(0, completedExecutionResult(0));
-    await fixture.service.waitForIdle(thread.id);
-
-    // Stand in for the process that did not watch this happen — a restart, or a
-    // fork inheriting a history it never observed live.
-    fixture.service.dropDocumentBeliefs(thread.id);
-    projection = contextProjection([contextNode(PRICING, 'Enterprise ¥4,800/seat', { updatedAt: 2 })]);
-    const readTextReference = spyOn(fixture.stores.payloads, 'readTextReference');
-
-    try {
-      await fixture.service.startRendererTurn({
-        threadId: thread.id,
-        input: [{ type: 'text', text: 'What do we charge?' }],
-      });
-      await fixture.executor.waitUntilWaiting(1);
-
-      expect(await driftNoticeFor(fixture, thread.id, 1)).toContain('Enterprise ¥4,800/seat');
-      expect(readTextReference.mock.calls.some(([, ref]) => ref.id === outputRef.id)).toBe(true);
-      expect(readTextReference.mock.calls.some(([, ref]) => ref.id === fileReadOutputRef.id)).toBe(false);
-    } finally {
-      readTextReference.mockRestore();
-    }
-
-    fixture.executor.finish(1, completedExecutionResult(0));
-    await fixture.service.waitForIdle(thread.id);
-    await fixture.service.close();
-  });
-
-  test('names a deleted node as deleted', async () => {
-    let projection = contextProjection([contextNode(PRICING, 'Enterprise pricing', { updatedAt: 1 })]);
-    const fixture = await createFixture(undefined, { getDocumentProjection: () => projection });
-    const thread = (await fixture.service.startThread({
-      source: 'app',
-      threadSource: 'user',
-      modelProvider: 'openai',
-      cwd: fixture.root,
-    })).thread;
-    await fixture.service.startRendererTurn({
-      threadId: thread.id,
-      input: [{ type: 'text', text: 'Read it' }],
-    });
-    await fixture.executor.waitUntilWaiting(0);
-    await fixture.service.notifyToolCompleted(
-      thread.id,
-      fixture.executor.contexts[0]!.turn.id,
-      'read-1',
-      { namespace: null, name: 'node_read' },
-      {},
-      { ok: true, data: { items: [{ nodeId: PRICING, revision: readRevision(projection, PRICING) }] } },
-      null,
-    );
-    fixture.executor.finish(0, completedExecutionResult(0));
-    await fixture.service.waitForIdle(thread.id);
-
-    projection = contextProjection([]);
-    await fixture.service.startRendererTurn({
-      threadId: thread.id,
-      input: [{ type: 'text', text: 'Now what?' }],
-    });
-    await fixture.executor.waitUntilWaiting(1);
-
-    // Deletion is the outcome a re-read cannot recover on its own, so it is
-    // named rather than folded into "changed".
-    expect(await driftNoticeFor(fixture, thread.id, 1)).toContain(`${PRICING} has been deleted`);
-
-    fixture.executor.finish(1, completedExecutionResult(0));
-    await fixture.service.waitForIdle(thread.id);
-    await fixture.service.close();
-  });
-});
-
-/**
- * The token `node_read` really emits for this node. Never hand-written: a
- * fixture written from an assumption about the format can only confirm the
- * assumption, which is how a comparison that could never match once shipped.
- */
-function readRevision(projection: DocumentProjection, nodeId: string): string {
-  return editableOutlineRevision(indexProjection(projection), nodeId);
-}
-
-/** The notice admitted as evidence for the Turn at `index`, or null when none was. */
-async function driftNoticeFor(fixture: Fixture, threadId: string, index: number): Promise<string | null> {
-  const turn = fixture.service.readThread({ threadId, includeTurns: true }).thread.turns![index]!;
-  for (const item of turn.items) {
-    if (item.type !== 'contextEvidence' || item.kind !== 'additionalContext') continue;
-    const payload = await fixture.stores.payloads.readContext(threadId, item.payloadRef);
-    const text = JSON.stringify(payload);
-    if (text.includes('document_drift')) return text;
-  }
-  return null;
-}
 
 describe('Thread transcript artifact', () => {
   test('materializes every persistent root Thread, whatever its source', async () => {

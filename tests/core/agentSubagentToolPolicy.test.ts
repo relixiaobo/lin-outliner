@@ -20,24 +20,20 @@ const foreground = {
 };
 
 describe('Subagent tool policy', () => {
-  test('removes root-only controls and undo from every Agent pool', () => {
+  test('removes root-only controls from every Agent pool', () => {
     const keys = filterSubagentToolContracts(MODEL_TOOL_CATALOG, foreground).map(toolKey);
     expect(keys).not.toContain('request_user_input');
     expect(keys).not.toContain('automation_update');
-    expect(keys).not.toContain('outline_undo_stack');
   });
 
-  test('keeps general foreground mutations but contains live outline state in worktrees', () => {
+  test('keeps the ordinary tool catalog stable across worktree isolation', () => {
     const regular = filterSubagentToolContracts(MODEL_TOOL_CATALOG, foreground).map(toolKey);
     const worktree = filterSubagentToolContracts(MODEL_TOOL_CATALOG, {
       ...foreground,
       worktree: true,
     }).map(toolKey);
-    expect(regular).toEqual(expect.arrayContaining(['node_create', 'node_edit', 'node_delete']));
-    for (const forbidden of ['node_create', 'node_edit', 'node_delete']) {
-      expect(worktree).not.toContain(forbidden);
-    }
-    expect(worktree).toEqual(expect.arrayContaining(['node_read', 'node_search']));
+    expect(regular).toEqual(expect.arrayContaining(['file_read', 'file_write', 'bash', 'skill']));
+    expect(worktree).toEqual(regular);
   });
 
   test('removes repository mutation and nesting from explore and plan pools', () => {
@@ -48,16 +44,13 @@ describe('Subagent tool policy', () => {
       }).map(toolKey);
       const forbidden = [
         'agent',
-        'node_create',
-        'node_edit',
-        'node_delete',
         'file_edit',
         'file_write',
         'file_delete',
         'generate_image',
       ];
       for (const key of forbidden) expect(keys).not.toContain(key);
-      expect(keys).toEqual(expect.arrayContaining(['node_read', 'file_read', 'bash', 'web_fetch', 'skill']));
+      expect(keys).toEqual(expect.arrayContaining(['file_read', 'bash', 'web_fetch', 'skill']));
     }
   });
 
@@ -108,20 +101,20 @@ describe('Subagent tool policy', () => {
     for (const forbidden of ['update_plan', 'get_goal', 'generate_image']) {
       expect(keys).not.toContain(forbidden);
     }
-    expect(keys).toEqual(expect.arrayContaining(['node_read', 'file_write', 'bash', 'web_fetch', 'skill', 'docs.lookup']));
+    expect(keys).toEqual(expect.arrayContaining(['file_read', 'file_write', 'bash', 'web_fetch', 'skill', 'docs.lookup']));
   });
 
   test('filters canonical keys through the same contract classifier and drops unknown entries', () => {
     const keys = filterSubagentToolKeys([
-      'node_read',
-      'outline_undo_stack',
+      'file_read',
+      'retired_tool',
       'agent',
       'missing_tool',
     ], {
       ...foreground,
       allowNesting: false,
     });
-    expect(keys).toEqual(['node_read']);
+    expect(keys).toEqual(['file_read']);
   });
 
   test('treats a Role wildcard as the resolved parent tool ceiling', () => {

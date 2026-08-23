@@ -34,6 +34,31 @@ describe('Outline Runtime assets', () => {
     });
   });
 
+  test('stores PDF thumbnails as linked AssetRecords protected by the parent lease and live Node', async () => {
+    let nowMs = Date.parse('2030-01-01T00:00:00.000Z');
+    const thumbnailBytes = pngBytes(128, 96);
+    const workspace = await makeWorkspace({
+      now: () => new Date(nowMs),
+      assetStoreOptions: {
+        leaseMs: 1_000,
+        renderPdfThumbnail: async () => thumbnailBytes,
+      },
+    });
+    const lease = await workspace.assets.ingestBytes(Buffer.from('%PDF-1.4\n/Type /Page\n'), 'report.pdf');
+    const thumbnailAssetId = lease.metadata.thumbnailAssetId;
+    expect(thumbnailAssetId).toBeDefined();
+    expect(await workspace.assets.show(thumbnailAssetId!)).toMatchObject({
+      assetId: thumbnailAssetId,
+      metadata: { mimeType: 'image/png', imageWidth: 128, imageHeight: 96 },
+    });
+
+    await applyChangeSet(workspace, createAttachmentChangeSet(lease.leaseId));
+    nowMs += 1_001;
+
+    expect(await workspace.collectAssetGarbage()).toEqual([]);
+    expect((await workspace.assets.readVerified(thumbnailAssetId!)).bytes).toEqual(thumbnailBytes);
+  });
+
   test('consumes a lease atomically and retains live and recovery-only bytes through purge and revert', async () => {
     const workspace = await makeWorkspace();
     const lease = await workspace.assets.ingestBytes(Buffer.from('attachment bytes'), 'note.txt');
@@ -140,7 +165,6 @@ function createAttachmentChangeSet(assetLeaseId: string): ChangeSet {
     type: 'attachment',
     content: { text: 'note.txt', marks: [], inlineRefs: [] },
     assetLeaseId,
-    metadata: { mimeType: 'text/plain', originalFilename: 'note.txt' },
     children: [],
   };
   return {

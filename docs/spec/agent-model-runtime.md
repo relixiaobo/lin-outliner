@@ -576,9 +576,9 @@ every action is repository inspection. They may execute an extension or MCP tool
 only when every classified action kind is read-only; an empty, unknown,
 mixed-write, or new classification yields a structured unavailable result. A
 worktree policy likewise rejects Bash commands classified as live-outline
-mutations before process launch, including `tenon-import commit`, and all
-descendant file and shell writes use the persisted worktree path as their
-containment root.
+mutations before process launch. Both `outline.edit` and `outline.delete` fail
+before process launch, and all descendant file and shell writes use the
+persisted worktree path as their containment root.
 
 The kernel freezes a schema-valid canonical call
 before `ToolRuntime` evaluates argument-dependent capability blocks. A valid blocked
@@ -587,12 +587,12 @@ audit; an invalid call never reaches capability evaluation. Admission starts the
 canonical Item, and every admission receives a terminal Item, including rejection,
 native unavailable, cancellation, or a thrown result.
 
-The current Item identity is bound through asynchronous execution context.
-Outliner tool transactions therefore receive exact
-`threadId`/`turnId`/`itemId` causation even when multiple tools overlap. A
-recognized CLI import commit receives equivalent causation through a
-short-lived, single-use host token bound to the Bash Item; the local API rejects
-raw causation fields and consumes the token before request-body parsing.
+For each Bash Item, main issues a short-lived Outline attestation into that
+process environment. It binds the Runtime descriptor and exact
+`threadId`/`turnId`/`itemId`, so overlapping shell calls cannot exchange
+causation. Runtime requires a valid attestation for built-in Agent mutations and
+rejects request-body causation fields. Read-only CLI calls do not gain mutation
+authority from the token.
 
 Capability audit data is attached to tool result details. It describes action
 kinds, access classification, source, and unavailable reason; it is not an
@@ -737,16 +737,15 @@ affected catalog, baseline, or observation. Projection renders the deduplicated 
 compaction, fork, and delegation remain usable. Strict dependency rejection remains at
 payload publication and Thread decode, not on the provider-request path.
 
-A successful non-preview `node_create`, `node_edit`, or `node_delete` invalidates all
-active Node observations because one bounded `node_read` can project descendants,
-references, and definition-dependent content that cannot be reconstructed from mutation
-arguments alone. Successful `outline_undo_stack` undo/redo has the same effect; list,
-preview, failed, and interrupted calls do not. File observations remain path-keyed and
-invalidate after a completed mutation of that path. The reducer resolves canonical
-arguments once per Item. A structured `evidenceOnly` summary may identify a conservative
-invalidation target, but it never creates a new observation. When a successful Node or
-file mutation's argument payload is unavailable, the reducer clears every observation
-in that domain rather than checkpointing a snapshot that may already be stale.
+Compaction does not reconstruct document observations from shell output. Outline
+CLI results remain ordinary canonical tool evidence, and a future Turn performs
+a fresh public read when current document state matters. File observations
+remain path-keyed and invalidate after a completed mutation of that path. The
+reducer resolves canonical arguments once per Item. A structured `evidenceOnly`
+summary may identify a conservative file invalidation target, but it never
+creates a new observation. When a successful file mutation's argument payload is
+unavailable, the reducer clears every file observation rather than checkpointing
+a snapshot that may already be stale.
 
 `/clear` records a `contextReset` in a completed feature Turn without invoking the
 provider. Projection starts after the latest reset, clears the user-view diff baseline,

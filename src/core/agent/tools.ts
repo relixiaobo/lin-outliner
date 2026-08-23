@@ -73,12 +73,6 @@ export const AGENT_TASK_TOOL_NAMES = [
 ] as const satisfies readonly AgentTaskToolName[];
 
 export const RETAINED_CAPABILITY_TOOL_NAMES = [
-  'node_search',
-  'node_read',
-  'node_create',
-  'node_edit',
-  'node_delete',
-  'outline_undo_stack',
   'file_read',
   'file_glob',
   'file_grep',
@@ -286,10 +280,8 @@ const automationMutableProperties = {
 // The root stays a flat object with no union keyword. OpenAI rejects a function
 // schema whose ROOT carries oneOf/anyOf/allOf/enum/not ("schema must have type
 // 'object' and not have ... at the top level"), which is the same rule that
-// keeps `node_search` and `node_edit` from expressing their mutually exclusive
-// argument groups in the schema — see the note at the top of
-// `src/main/agent/capabilities/agentNodeToolSchemas.ts`. Per-mode exactness
-// therefore lives in `decodeAutomationToolInput`, which refuses a wrong-shaped
+// keeps tools from expressing mutually exclusive argument groups in the schema.
+// Per-mode exactness therefore lives in `decodeAutomationToolInput`, which refuses a wrong-shaped
 // call before anything is written; the price is that a wrong shape costs one
 // round trip. Nested unions inside a property subschema are fine.
 const automationUpdateToolSchema: ObjectJsonSchema = objectSchema({
@@ -535,12 +527,6 @@ const coreControlToolContracts: readonly StaticModelToolContract[] = [
 ];
 
 const CAPABILITY_ACTION_KINDS = {
-  node_search: ['outline.read'],
-  node_read: ['outline.read'],
-  node_create: ['outline.edit'],
-  node_edit: ['outline.edit'],
-  node_delete: ['outline.delete'],
-  outline_undo_stack: ['outline.read', 'outline.edit'],
   file_read: ['file.read.local_path', 'file.read.sensitive_local_path'],
   file_glob: ['file.read.local_path', 'file.read.sensitive_local_path'],
   file_grep: ['file.read.local_path', 'file.read.sensitive_local_path'],
@@ -713,13 +699,10 @@ export function decodeProviderToolName(
 
 export function modelToolActionKinds(
   identity: ModelToolIdentity | string,
-  args?: unknown,
+  _args?: unknown,
 ): readonly ModelToolActionKind[] | null {
   const contract = modelToolContract(identity);
-  if (!contract) return null;
-  if (canonicalModelToolKey(contract.identity) !== 'outline_undo_stack') return contract.actionKinds;
-  const action = isRecord(args) && typeof args.action === 'string' ? args.action.trim().toLowerCase() : 'list';
-  return action === 'undo' || action === 'redo' ? ['outline.edit'] : ['outline.read'];
+  return contract?.actionKinds ?? null;
 }
 
 export function isReadOnlyModelToolActionKind(kind: ModelToolActionKind): boolean {

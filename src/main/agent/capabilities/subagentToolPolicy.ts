@@ -45,15 +45,11 @@ const SPECIALIZED_EXCLUDED_ACTION_KINDS = new Set<ModelToolActionKind>([
   'agent.image.generate',
 ]);
 const SPECIALIZED_BASH_ACTION_KINDS = new Set<ModelToolActionKind>([
+  'outline.read',
   'shell.read_search',
   'shell.background_process',
 ]);
 const BACKGROUND_TOOL_KEYS = new Set([
-  'node_search',
-  'node_read',
-  'node_create',
-  'node_edit',
-  'node_delete',
   'file_read',
   'file_glob',
   'file_grep',
@@ -116,7 +112,6 @@ export function subagentToolAllowed(
   if (
     tool.scope === 'rootThread'
     || hasActionKind(tool, ROOT_ONLY_ACTION_KINDS)
-    || key === 'outline_undo_stack'
   ) return false;
   if (policy.worktree && hasActionKind(tool, OUTLINE_MUTATION_ACTION_KINDS)) return false;
   if (!policy.allowNesting && tool.actionKinds.includes('agent.subagent.spawn')) return false;

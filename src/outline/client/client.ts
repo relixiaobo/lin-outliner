@@ -16,6 +16,10 @@ import {
   type WatchRequest,
 } from '../contract/schemas';
 import { OUTLINE_PROTOCOL_VERSION } from '../contract/version';
+import {
+  OUTLINE_AGENT_ATTESTATION_HEADER,
+  OUTLINE_ORIGIN_HEADER,
+} from '../contract/agentAttestation';
 
 const MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
 type OutlineSuccessResponse = Extract<OutlineResponse, { ok: true }>;
@@ -25,7 +29,13 @@ export class OutlineClient {
   // settle through this shared client while that stream remains open.
   private readonly agent = new http.Agent({ keepAlive: true, maxSockets: 8 });
 
-  constructor(readonly descriptor: RuntimeDescriptor) {}
+  constructor(
+    readonly descriptor: RuntimeDescriptor,
+    private readonly context: {
+      readonly origin?: 'desktop' | 'local-user' | 'external-client' | 'built-in-agent';
+      readonly agentAttestation?: string;
+    } = {},
+  ) {}
 
   async request(command: string, input: unknown, signal?: AbortSignal): Promise<OutlineSuccessResponse> {
     const value = await this.requestResponse(command, input, signal);
@@ -109,6 +119,62 @@ export class OutlineClient {
     if (byteCount !== expectedBytes || hash.digest('hex') !== expectedDigest) {
       throw protocolError('Outline Runtime asset export failed integrity verification.');
     }
+  }
+
+  async serveAsset(assetId: string, range: string | null, signal?: AbortSignal): Promise<Response> {
+    let response: http.IncomingMessage;
+    try {
+      response = await this.openRequest({
+        method: 'GET',
+        path: `/v1/assets/${encodeURIComponent(assetId)}`,
+        headers: range ? { range } : undefined,
+        signal,
+      });
+      if (response.statusCode !== 200 && response.statusCode !== 206 && response.statusCode !== 416) {
+        await throwHttpError(response, 'asset export');
+      }
+    } catch (error) {
+      this.close();
+      throw error;
+    }
+    const headers = new Headers();
+    for (const name of [
+      'accept-ranges',
+      'cache-control',
+      'content-length',
+      'content-range',
+      'content-type',
+      'x-outline-asset-id',
+      'x-outline-sha256',
+    ]) {
+      const value = response.headers[name];
+      if (typeof value === 'string') headers.set(name, value);
+    }
+    const iterator = response[Symbol.asyncIterator]();
+    const close = () => this.close();
+    if (response.statusCode === 416) this.close();
+    const body = response.statusCode === 416 ? null : new ReadableStream<Uint8Array>({
+      pull: async (controller) => {
+        try {
+          const next = await iterator.next();
+          if (next.done) {
+            close();
+            controller.close();
+          } else {
+            controller.enqueue(Buffer.isBuffer(next.value) ? next.value : Buffer.from(next.value));
+          }
+        } catch (error) {
+          close();
+          controller.error(error);
+        }
+      },
+      cancel: async () => {
+        response.destroy();
+        await iterator.return?.();
+        close();
+      },
+    });
+    return new Response(body, { status: response.statusCode, headers });
   }
 
   async *stream(command: string, input: unknown, signal?: AbortSignal): AsyncGenerator<OutlineStreamRecord> {
@@ -217,6 +283,10 @@ export class OutlineClient {
         path: options.path,
         headers: {
           authorization: `Bearer ${this.descriptor.bearerToken}`,
+          ...(this.context.origin ? { [OUTLINE_ORIGIN_HEADER]: this.context.origin } : {}),
+          ...(this.context.agentAttestation
+            ? { [OUTLINE_AGENT_ATTESTATION_HEADER]: this.context.agentAttestation }
+            : {}),
           ...options.headers,
         },
         agent: this.agent,
@@ -241,6 +311,10 @@ export class OutlineClient {
         path: options.path,
         headers: {
           authorization: `Bearer ${this.descriptor.bearerToken}`,
+          ...(this.context.origin ? { [OUTLINE_ORIGIN_HEADER]: this.context.origin } : {}),
+          ...(this.context.agentAttestation
+            ? { [OUTLINE_AGENT_ATTESTATION_HEADER]: this.context.agentAttestation }
+            : {}),
           'content-type': 'application/octet-stream',
           ...options.headers,
         },

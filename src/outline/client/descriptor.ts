@@ -1,7 +1,7 @@
 import { lstat, readFile } from 'node:fs/promises';
 import { Value } from 'typebox/value';
 import { RuntimeDescriptorSchema, type RuntimeDescriptor } from '../contract/schemas';
-import { resolveOutlineRuntimePaths } from '../runtime/server/runtimePaths';
+import { resolveOutlineRuntimePaths } from '../runtimePaths';
 
 export async function readOutlineRuntimeDescriptor(root: string): Promise<RuntimeDescriptor | null> {
   const paths = resolveOutlineRuntimePaths(root);

@@ -983,7 +983,7 @@ describe('agent skills', () => {
       expect(await runtime.getSkill(name)).toBeNull();
       expect(catalog.entries.some((entry) => entry.name === name)).toBe(false);
     }
-    for (const name of ['skillify', 'tenon-import']) {
+    for (const name of ['skillify', 'outline', 'outline-import']) {
       expect(await runtime.getSkill(name)).not.toBeNull();
     }
     expect(await runtime.getSkill('research')).toBeNull();
@@ -1213,39 +1213,70 @@ describe('agent skills', () => {
     const runtime = new AgentSkillRuntime({ includeUserSkills: false });
     const results = await Promise.allSettled([
       runtime.getSkill('skillify'),
-      runtime.getSkill('tenon-import'),
+      runtime.getSkill('outline'),
+      runtime.getSkill('outline-import'),
       runtime.listAllSkills(),
       runtime.buildSkillCatalogSnapshot(),
     ]);
 
-    expect(results.map((result) => result.status)).toEqual(['fulfilled', 'fulfilled', 'fulfilled', 'fulfilled']);
+    expect(results.map((result) => result.status)).toEqual([
+      'fulfilled',
+      'fulfilled',
+      'fulfilled',
+      'fulfilled',
+      'fulfilled',
+    ]);
     expect(results[0]).toMatchObject({ status: 'fulfilled', value: { name: 'skillify', source: 'built-in' } });
-    expect(results[1]).toMatchObject({ status: 'fulfilled', value: { name: 'tenon-import', source: 'built-in' } });
-    const allSkills = results[2].status === 'fulfilled' ? results[2].value : [];
+    expect(results[1]).toMatchObject({ status: 'fulfilled', value: { name: 'outline', source: 'built-in' } });
+    expect(results[2]).toMatchObject({ status: 'fulfilled', value: { name: 'outline-import', source: 'built-in' } });
+    const allSkills = results[3].status === 'fulfilled' ? results[3].value : [];
     expect(allSkills.map((skill) => skill.name).sort()).toEqual([
+      'outline',
+      'outline-import',
       'skillify',
-      'tenon-import',
     ]);
   });
 
-  test('ships tenon-import as a Tenon-owned cleanup and import workflow', async () => {
+  test('ships public outline workflows without legacy document authorities', async () => {
     const runtime = new AgentSkillRuntime({ includeUserSkills: false });
-    const skill = await runtime.getSkill('tenon-import');
+    const outline = await runtime.getSkill('outline');
+    const outlineImport = await runtime.getSkill('outline-import');
 
     expect(await runtime.getSkill('data-cleanup')).toBeNull();
-    expect(skill?.allowedTools).toContain('bash');
-    expect(skill?.body).toContain('# Tenon Data Cleanup and Import');
-    expect(skill?.body).toContain('tenon-import preview');
-    expect(skill?.body).toContain('tenon-import commit');
-    expect(skill?.body).toContain('Tana\n   `journalPart` dates default to `native_daily`');
-    expect(skill?.body).toContain('`status: "staged"` or `"imported_daily"`');
-    expect(skill?.body).toContain("Repeat the preview's explicit `--mode`\n   override on commit");
-    expect(skill?.body).toContain('data.status: "staged_with_errors"');
-    expect(skill?.body).toContain('`"imported_daily_with_errors"`');
-    expect(skill?.body).toContain('Native Daily Note imports are append-only.');
-    expect(skill?.body).toContain('retry the commit or manually\n   delete created content.');
-    expect(skill?.body).toContain('`dailyTargets`, `operationId`, and `mismatches`');
-    expect(skill?.body).toContain('`operation_id: <operationId>`');
+    expect(outline?.allowedTools).toContain('bash');
+    expect(outline?.execution).toBe('isolated');
+    expect(outline?.body).toContain('# Outline');
+    expect(outline?.body).toContain("outline --json show 'node:example'");
+    expect(outline?.body).toContain("outline --json find 'Quarterly plan' --limit 20");
+    expect(outline?.body).toContain('outline --json diff --input changeset.json --output diff.json');
+    expect(outline?.body).toContain('outline --json apply --input diff.json > operation.json');
+    expect(outline?.body).toContain("outline --json log --operation 'operation:example'");
+    expect(outline?.body).toContain("outline --json revert 'operation:example'");
+    expect(outlineImport?.allowedTools).toContain('bash');
+    expect(outlineImport?.execution).toBe('isolated');
+    expect(outlineImport?.body).toContain('# Outline Import');
+    expect(outlineImport?.body).toContain('one generic ChangeSet');
+    expect(outlineImport?.body).toContain('exactly one Runtime Diff');
+    expect(outlineImport?.body).toContain('one `outline diff` and one `outline\n  apply`');
+    expect(outlineImport?.body).toContain('outline --json diff --input changeset.json --output diff.json');
+    expect(outlineImport?.body).toContain('outline --json apply --input diff.json > operation.json');
+    const retiredToolPattern = new RegExp(`\\b(?:${[
+      ['node', 'search'],
+      ['node', 'read'],
+      ['node', 'create'],
+      ['node', 'edit'],
+      ['node', 'delete'],
+      ['outline', 'undo', 'stack'],
+    ].map((parts) => parts.join('_')).join('|')})\\b`);
+    for (const skill of [outline, outlineImport]) {
+      expect(skill).not.toBeNull();
+      expect(skill?.body).not.toMatch(retiredToolPattern);
+      expect(skill?.body).not.toMatch(/outline\s+(?:show|find|diff|apply|log|revert)[^\n]*\s--json\b/);
+      expect(skill?.body).not.toMatch(/outline\b[^\n]*(?:--file|--operation-id|--max)\b/);
+      expect(skill?.body).not.toContain(['tenon', 'import'].join('-'));
+      expect(skill?.body).not.toContain(['Agent', 'Import', 'Service'].join(''));
+      expect(skill?.body).not.toContain(['Agent', 'Import', 'Api', 'Server'].join(''));
+    }
   });
 
   test('resolves bundled built-in resource roots for dev and packaged modes', () => {
@@ -1765,13 +1796,15 @@ describe('agent skills', () => {
 });
 
 describe('built-in skill resource packaging', () => {
-  test('stages only the Tenon platform floor into packaged resources', async () => {
+  test('stages both public outline workflows into packaged resources', async () => {
     const repoRoot = path.resolve(import.meta.dir, '..', '..');
     await execFile('bun', ['scripts/sync-built-in-skills.ts'], { cwd: repoRoot });
     const generatedRoot = path.join(repoRoot, 'build', 'generated', 'built-in-skills');
-    expect((await readdir(generatedRoot)).sort()).toEqual(['tenon-import']);
-    expect(await readFile(path.join(generatedRoot, 'tenon-import', 'SKILL.md'), 'utf8'))
-      .toContain('Tenon Data Cleanup and Import');
+    expect((await readdir(generatedRoot)).sort()).toEqual(['outline', 'outline-import']);
+    expect(await readFile(path.join(generatedRoot, 'outline', 'SKILL.md'), 'utf8'))
+      .toContain('# Outline');
+    expect(await readFile(path.join(generatedRoot, 'outline-import', 'SKILL.md'), 'utf8'))
+      .toContain('# Outline Import');
     for (const name of ['data-analysis', 'document', 'feed-processing', 'pdf', 'presentation', 'spreadsheet']) {
       await expect(readFile(path.join(generatedRoot, name, 'SKILL.md'), 'utf8')).rejects.toThrow();
     }

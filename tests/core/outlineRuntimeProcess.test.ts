@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { canonicalSha256 } from '../../src/outline/contract/canonical';
+import { issueOutlineAgentAttestation } from '../../src/outline/contract/agentAttestation';
 import type { ChangeSet, Diff, Operation, OutlineEvent, ProjectionResult, RuntimeDescriptor } from '../../src/outline/contract/schemas';
 import { OutlineClient, OutlineClientSupervisor, readOutlineRuntimeDescriptor } from '../../src/outline/client';
 import { OutlineRuntimeServer, resolveOutlineRuntimePaths } from '../../src/outline/runtime/server';
@@ -172,6 +173,140 @@ describe('Outline Runtime process boundary', () => {
       ))).toContainEqual(expect.objectContaining({ id: nodeId }));
     } finally {
       client.close();
+      await runtime.stop();
+    }
+  });
+
+  test('streams verified AssetRecord bytes with browser-compatible range responses', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const bytes = Buffer.from('0123456789');
+    const lease = await runtime.workspace.assets.ingestBytes(bytes, 'range.txt');
+    try {
+      const client = new OutlineClient(runtime.descriptor);
+      const partial = await client.serveAsset(lease.assetId, 'bytes=2-5');
+      expect(partial.status).toBe(206);
+      expect(partial.headers.get('accept-ranges')).toBe('bytes');
+      expect(partial.headers.get('content-range')).toBe('bytes 2-5/10');
+      expect(Buffer.from(await partial.arrayBuffer())).toEqual(Buffer.from('2345'));
+
+      const invalidClient = new OutlineClient(runtime.descriptor);
+      const invalid = await invalidClient.serveAsset(lease.assetId, 'bytes=20-30');
+      expect(invalid.status).toBe(416);
+      expect(invalid.headers.get('content-range')).toBe('bytes */10');
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('records immutable Agent causation and consumes one attestation after a successful mutation', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const causation = { threadId: 'thread:agent', turnId: 'turn:agent', itemId: 'item:agent' };
+    const token = issueOutlineAgentAttestation({
+      descriptor: runtime.descriptor,
+      runtimeRoot: root,
+      causation,
+    });
+    const client = new OutlineClient(runtime.descriptor, {
+      origin: 'built-in-agent',
+      agentAttestation: token,
+    });
+    try {
+      const firstDiff = (await client.request('diff', {
+        changeSet: createTodayChangeSet('Attributed Agent write'),
+      })).data as Diff;
+      const first = (await client.request('apply', { diff: firstDiff })).data as Operation;
+      expect(first).toMatchObject({ origin: 'built-in-agent', causation });
+
+      await expect(client.request('show', { selector: { by: 'alias', alias: 'today' } })).resolves.toMatchObject({ ok: true });
+      const replayDiff = (await client.request('diff', {
+        changeSet: createTodayChangeSet('Rejected Agent replay'),
+      })).data as Diff;
+      await expect(client.request('apply', { diff: replayDiff })).rejects.toMatchObject({
+        outlineError: { code: 'agent_attestation_required' },
+      });
+      expect(runtime.workspace.projection().nodes.some((node) => node.content.text === 'Rejected Agent replay')).toBe(false);
+    } finally {
+      client.close();
+      await runtime.stop();
+    }
+  });
+
+  test('rejects missing and expired Agent attestations but releases a valid claim after a failed mutation', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const local = new OutlineClient(runtime.descriptor, { origin: 'local-user' });
+    const causation = { threadId: 'thread:retry', turnId: 'turn:retry', itemId: 'item:retry' };
+    const validToken = issueOutlineAgentAttestation({
+      descriptor: runtime.descriptor,
+      runtimeRoot: root,
+      causation,
+    });
+    const agent = new OutlineClient(runtime.descriptor, {
+      origin: 'built-in-agent',
+      agentAttestation: validToken,
+    });
+    try {
+      const missing = new OutlineClient(runtime.descriptor, { origin: 'built-in-agent' });
+      const missingDiff = (await missing.request('diff', {
+        changeSet: createTodayChangeSet('Missing attestation'),
+      })).data as Diff;
+      await expect(missing.request('apply', { diff: missingDiff })).rejects.toMatchObject({
+        outlineError: { code: 'agent_attestation_required' },
+      });
+      const revisionBeforeHistoryRequests = runtime.workspace.revision();
+      for (const [command, input] of [
+        ['revert', { operationId: 'operation:missing' }],
+        ['undo', {}],
+        ['redo', {}],
+      ] as const) {
+        await expect(missing.request(command, input)).rejects.toMatchObject({
+          outlineError: { code: 'agent_attestation_required' },
+        });
+      }
+      expect(runtime.workspace.revision()).toBe(revisionBeforeHistoryRequests);
+      missing.close();
+
+      const expired = new OutlineClient(runtime.descriptor, {
+        origin: 'built-in-agent',
+        agentAttestation: issueOutlineAgentAttestation({
+          descriptor: runtime.descriptor,
+          runtimeRoot: root,
+          causation,
+          now: Date.now() - 60_001,
+        }),
+      });
+      await expect(expired.request('apply', { diff: missingDiff })).rejects.toMatchObject({
+        outlineError: { code: 'agent_attestation_required' },
+      });
+      expired.close();
+
+      const stale = (await agent.request('diff', {
+        changeSet: createTodayChangeSet('Retry after stale failure'),
+      })).data as Diff;
+      const concurrent = (await local.request('diff', {
+        changeSet: createTodayChangeSet('Concurrent local write'),
+      })).data as Diff;
+      await local.request('apply', { diff: concurrent });
+      await expect(agent.request('apply', { diff: stale })).rejects.toMatchObject({
+        outlineError: { code: 'stale_revision' },
+      });
+
+      const fresh = (await agent.request('diff', {
+        changeSet: createTodayChangeSet('Retry after stale failure'),
+      })).data as Diff;
+      const applied = (await agent.request('apply', { diff: fresh })).data as Operation;
+      expect(applied).toMatchObject({ origin: 'built-in-agent', causation });
+    } finally {
+      agent.close();
+      local.close();
       await runtime.stop();
     }
   });
@@ -393,6 +528,20 @@ function createRequest(text: string) {
     >[0]['execute']>[0]) => {
       core.createNode(core.projection().todayId, null, text);
     },
+  };
+}
+
+function createTodayChangeSet(text: string): ChangeSet {
+  return {
+    protocolVersion: 1,
+    kind: 'outline.changeset',
+    operations: [{
+      op: 'create',
+      parents: {
+        target: { selector: { by: 'alias', alias: 'today' }, cardinality: 'one' },
+      },
+      nodes: [{ content: { text, marks: [], inlineRefs: [] }, children: [] }],
+    }],
   };
 }
 

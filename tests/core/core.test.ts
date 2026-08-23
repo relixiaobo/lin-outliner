@@ -511,7 +511,7 @@ describe('Core', () => {
           yieldEveryNodes: 2,
           commitEveryNodes: 2,
           yield: async () => { yields += 1; },
-        }), { tool: 'tenon-import', operationId: 'op:import-test', summary: 'Imported test nodes.' });
+        }), { tool: 'outline', operationId: 'op:import-test', summary: 'Imported test nodes.' });
     } finally {
       if (undoGroupStarted) core.endUndoGroup();
     }
@@ -3577,7 +3577,7 @@ describe('Core', () => {
     await expect(core.transaction('agent', async () => {
       core.createNode(today, null, 'Partial agent node');
       throw new Error('abort transaction');
-    }, { tool: 'node_create' })).rejects.toThrow('abort transaction');
+    }, { tool: 'outline' })).rejects.toThrow('abort transaction');
 
     expect(Object.values(core.state().nodes).map((node) => node.content.text)).not.toContain('Partial agent node');
     expect(core.operationHistory({ action: 'list', origin: 'agent' }).items).toEqual([]);
@@ -3969,7 +3969,7 @@ describe('Core', () => {
         expect(changes?.removedIds).toEqual([]);
         expect(changes?.changedNodes.find((node) => node.id === nodeId)?.content.text)
           .toBe('Edited in transaction');
-      }, { tool: 'node_edit', operationId: 'op:transaction-projection-drain' });
+      }, { tool: 'outline', operationId: 'op:transaction-projection-drain' });
     } finally {
       instrumented.materializeState = originalMaterializeState;
       if (previousVerifyCache === undefined) delete process.env.LIN_VERIFY_CACHE;
@@ -3994,7 +3994,7 @@ describe('Core', () => {
       core.deleteNode(nodeId);
       const deleted = core.drainTransactionProjectionChanges();
       expect(deleted?.removedIds).toContain(nodeId);
-    }, { tool: 'node_edit', operationId: 'op:net-zero-transaction' });
+    }, { tool: 'outline', operationId: 'op:net-zero-transaction' });
 
     expect(core.revision()).toBe(revisionBefore);
     expect(core.persistenceRevision()).toBe(persistenceRevisionBefore);

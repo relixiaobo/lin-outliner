@@ -11,11 +11,14 @@ import {
   type OutlineRequest,
   type OutlineResponse,
   type Operation,
+  type OperationLogPage,
 } from '../../contract/schemas';
+import { canonicalSha256 } from '../../contract/canonical';
 import { OUTLINE_PROTOCOL_VERSION } from '../../contract/version';
 import type { OutlineRuntimeWorkspace } from '../runtimeWorkspace';
 import { applyOutlineDiff, diffOutlineChangeSet } from '../changeSet';
 import { projectOutline } from '../projection';
+import { decodeOperationLogCursor, encodeOperationLogCursor } from '../operationLogCursor';
 
 export interface OutlineRuntimeRequestContext {
   readonly origin: Operation['origin'];
@@ -55,7 +58,23 @@ export class OutlineRuntimeRouter {
           `Input does not match the public schema for command: ${request.command}`,
         ));
       }
+      if (context.origin === 'built-in-agent'
+        && !context.causation
+        && requestCanMutate(request.command, request.input)) {
+        throw new OutlineContractError(outlineError(
+          'agent_attestation_required',
+          'protocol',
+          'Built-in Agent mutations require a valid causation attestation for the current shell Item.',
+        ));
+      }
       const data = await this.execute(request.command, request.input, context);
+      if (!Value.Check(capability.resultSchema, data)) {
+        throw new OutlineContractError(outlineError(
+          'internal_error',
+          'internal',
+          `Outline Runtime result does not match the public schema for command: ${request.command}`,
+        ));
+      }
       return {
         protocolVersion: OUTLINE_PROTOCOL_VERSION,
         requestId: request.requestId,
@@ -119,15 +138,29 @@ export class OutlineRuntimeRouter {
       });
     }
     if (command === 'asset ingest') {
-      const value = input as { source: 'path' | 'stdin'; path?: string };
-      if (value.source !== 'path' || !value.path) {
+      const value = input as {
+        source: 'path' | 'stdin' | 'bytes';
+        path?: string;
+        data?: string;
+        mimeType?: string;
+        originalFilename?: string;
+      };
+      if (value.source === 'path' && value.path) return this.workspace.assets.ingestPath(value.path);
+      if (value.source === 'bytes' && value.data) {
+        const bytes = Buffer.from(value.data, 'base64');
+        if (bytes.length === 0 || bytes.toString('base64') !== value.data) {
+          throw new OutlineContractError(outlineError('invalid_input', 'usage', 'Asset bytes are not canonical base64.'));
+        }
+        return this.workspace.assets.ingestBytes(bytes, value.originalFilename, value.mimeType);
+      }
+      if (value.source === 'stdin') {
         throw new OutlineContractError(outlineError(
           'invalid_input',
           'usage',
           'Asset stdin ingestion requires the binary upload transport.',
         ));
       }
-      return this.workspace.assets.ingestPath(value.path);
+      throw new OutlineContractError(outlineError('invalid_input', 'usage', 'Asset ingest input is incomplete.'));
     }
     if (command === 'asset show') {
       return this.workspace.assets.show(String((input as { assetId: string }).assetId));
@@ -177,19 +210,122 @@ export class OutlineRuntimeRouter {
     ));
   }
 
-  private async log(input: Record<string, unknown>): Promise<readonly Operation[]> {
+  private async log(input: Record<string, unknown>): Promise<OperationLogPage> {
     const limit = Math.max(1, Math.min(1_000, Number(input.limit ?? 100)));
     const operationId = typeof input.operationId === 'string' ? input.operationId : undefined;
-    const nodeId = typeof input.nodeId === 'string' ? input.nodeId : undefined;
-    const origin = typeof input.origin === 'string' ? input.origin : undefined;
+    const idempotencyKey = typeof input.idempotencyKey === 'string' ? input.idempotencyKey : undefined;
+    if (operationId) {
+      const operation = await this.workspace.store.operation(operationId);
+      if (!operation || (idempotencyKey && (await this.workspace.store.operationForIdempotencyKey(idempotencyKey))?.operationId !== operationId)) {
+        return { operations: [] };
+      }
+      const filterHash = canonicalSha256(logFilterIdentity(input));
+      if (!(await this.matchesLogFilters(operation, input))) return { operations: [] };
+      const cursor = typeof input.cursor === 'string' ? decodeOperationLogCursor(input.cursor) : undefined;
+      if (cursor && (cursor.kind !== 'affected'
+        || cursor.operationId !== operationId
+        || cursor.filterHash !== filterHash)) {
+        throw staleLogCursor();
+      }
+      const offset = cursor?.kind === 'affected' ? cursor.offset : 0;
+      const nodeIds = await this.completeAffectedNodeIds(operation);
+      if (offset > nodeIds.length) throw staleLogCursor();
+      const page = nodeIds.slice(offset, offset + limit);
+      const nextOffset = offset + page.length;
+      return {
+        operations: [operation],
+        affectedNodeIds: {
+          operationId,
+          nodeIds: page,
+          offset,
+          totalCount: nodeIds.length,
+          fullSetHash: operation.affectedNodeIdsHash,
+        },
+        ...(nextOffset < nodeIds.length ? {
+          cursor: encodeOperationLogCursor({ kind: 'affected', filterHash, operationId, offset: nextOffset }),
+        } : {}),
+      };
+    }
+    const exactOperation = idempotencyKey
+      ? await this.workspace.store.operationForIdempotencyKey(idempotencyKey)
+      : undefined;
+    if (idempotencyKey && !exactOperation) return { operations: [] };
     const operations = await this.workspace.store.operations();
-    return [...operations]
-      .reverse()
-      .filter((operation) => !operationId || operation.operationId === operationId)
-      .filter((operation) => !nodeId || operation.affectedNodeIds.includes(nodeId))
-      .filter((operation) => !origin || operation.origin === origin)
-      .slice(0, limit);
+    const filtered: Operation[] = [];
+    for (const operation of [...operations].reverse()) {
+      if (exactOperation && operation.operationId !== exactOperation.operationId) continue;
+      if (await this.matchesLogFilters(operation, input)) filtered.push(operation);
+    }
+    const filterHash = canonicalSha256(logFilterIdentity(input));
+    const cursor = typeof input.cursor === 'string' ? decodeOperationLogCursor(input.cursor) : undefined;
+    if (cursor && (cursor.kind !== 'history' || cursor.filterHash !== filterHash)) throw staleLogCursor();
+    const offset = cursor?.kind === 'history'
+      ? filtered.findIndex((operation) => operation.operationId === cursor.afterOperationId) + 1
+      : 0;
+    if (cursor && offset === 0) throw staleLogCursor();
+    const page = filtered.slice(offset, offset + limit);
+    const nextOffset = offset + page.length;
+    return {
+      operations: page,
+      ...(nextOffset < filtered.length && page.length > 0 ? {
+        cursor: encodeOperationLogCursor({
+          kind: 'history',
+          filterHash,
+          afterOperationId: page.at(-1)!.operationId,
+        }),
+      } : {}),
+    };
   }
+
+  private async matchesLogFilters(operation: Operation, input: Record<string, unknown>): Promise<boolean> {
+    if (typeof input.origin === 'string' && operation.origin !== input.origin) return false;
+    if (typeof input.threadId === 'string' && operation.causation?.threadId !== input.threadId) return false;
+    if (typeof input.turnId === 'string' && operation.causation?.turnId !== input.turnId) return false;
+    if (typeof input.itemId === 'string' && operation.causation?.itemId !== input.itemId) return false;
+    if (typeof input.nodeId === 'string') {
+      if (operation.affectedNodeIds.includes(input.nodeId)) return true;
+      if (!operation.affectedNodeIdsTruncated) return false;
+      return (await this.completeAffectedNodeIds(operation)).includes(input.nodeId);
+    }
+    return true;
+  }
+
+  private async completeAffectedNodeIds(operation: Operation): Promise<readonly string[]> {
+    if (!operation.affectedNodeIdsTruncated) return operation.affectedNodeIds;
+    const recovery = await this.workspace.store.recoveryPatch(operation.operationId);
+    const nodeIds = recovery.nodes.map((entry) => entry.id);
+    if (nodeIds.length !== operation.affectedNodeCount
+      || canonicalSha256(nodeIds) !== operation.affectedNodeIdsHash) {
+      throw new OutlineContractError(outlineError(
+        'recovery_inconsistent',
+        'durability',
+        `Affected Node index does not match Operation: ${operation.operationId}`,
+      ));
+    }
+    return nodeIds;
+  }
+}
+
+function logFilterIdentity(input: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    ['operationId', 'idempotencyKey', 'nodeId', 'origin', 'threadId', 'turnId', 'itemId']
+      .flatMap((key) => input[key] === undefined ? [] : [[key, input[key]]]),
+  );
+}
+
+function staleLogCursor(): OutlineContractError {
+  return new OutlineContractError(outlineError(
+    'stale_revision',
+    'conflict',
+    'Operation log cursor does not match the requested filters or retained history.',
+  ));
+}
+
+export function requestCanMutate(command: string, input: unknown): boolean {
+  if (command === 'diff') return false;
+  if (command === 'revert' || command === 'undo' || command === 'redo') return true;
+  const capability = outlineCapability(command);
+  return capability?.kind === 'mutate' && !(isRecord(input) && input.preview === true);
 }
 
 function decodeRequest(value: unknown): OutlineRequest {
@@ -207,4 +343,8 @@ function publicError(error: unknown) {
     'The Outline Runtime could not complete the request.',
     { details: error instanceof Error ? error.message : String(error) },
   );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }

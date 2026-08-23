@@ -180,29 +180,6 @@ function capabilityBlocks(
       ].join('\n'),
     });
   }
-  if (has('node_read', 'node_search', 'node_create', 'node_edit', 'node_delete')) {
-    blocks.push({
-      id: 'outliner',
-      layer: 'L1',
-      text: [
-        '# Outliner',
-        '- Outliner state is authoritative only when returned by the current Node tools. Evidence snapshots explain what the user was viewing at admission time.',
-        '- Preserve the user\'s authorship: inspect before changing Nodes, make requested mutations through tools, and report concrete Node identities.',
-      ].join('\n'),
-    });
-  }
-  if (thread.parentThreadId === null && has('node_read', 'node_search')) {
-    blocks.push({
-      id: 'memory',
-      layer: 'L1',
-      text: [
-        '# Memory',
-        '- Durable memory lives in ordinary timeline Nodes under the #d-memory, #d-episode, and #d-belief tag family. Search that family and read relevant Nodes before relying on it.',
-        '- Past-chat search results are navigation; read the source span before treating details as evidence.',
-        '- Foreground replies do not claim that background Memory consolidation saved or forgot anything.',
-      ].join('\n'),
-    });
-  }
   // Explore and Plan Agents may retain the Skill executable for captured
   // workflows, but their fresh startup deliberately omits the available
   // catalog. The Role's own instructions remain in the identity block.
