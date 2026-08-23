@@ -49,9 +49,9 @@ theme-section entry below; this list is the ordering, not a second record):
   #562 + #563, clearing the root-Turn deadlock that led the lane;
   `responses-tool-contract-hardening` shipped #527 and
   `agent-trajectory-workspace` shipped #575, replacing Model Interactions with
-  the Thread-wide Trajectory workspace. `agent-tool-artifact-resources` (#576
-  plan) is now unblocked and follows on the shipped Trajectory/resource
-  contracts; `computer-pilot-managed-skill` follows it.
+  the Thread-wide Trajectory workspace. `agent-tool-artifact-resources` shipped
+  #582 on those Trajectory/resource contracts;
+  `computer-pilot-managed-skill` is now unblocked.
 - **Lane C — product surface**: `update-check-and-prompt` shipped #514; next is the
   `file-preview` Office tail (apply its refresh note first), then the
   `agent-skills-authoring` security tail. `signed-builds-and-auto-update` stays
@@ -514,8 +514,9 @@ see *Recently completed*.
   `ManagedSkillShellEnvironment` contributor (env + PATH segment + per-Turn output dir —
   the `browserPilotHost.ts` shape, ~200 lines; note the registry lives at
   `src/main/managedSkillShellEnvironment.ts`, not under `src/main/agent/`); visual results reach the model through
-  existing `file_read` image content. Artifact durability rides the tool-agnostic
-  **agent-tool-artifact-resources** item under standalone agent items.
+  existing `file_read` image content. Artifact durability now rides the
+  execution-scoped output-root and tool-Item resource contracts shipped by
+  **agent-tool-artifact-resources** (#582).
 Standalone agent items (not part of the program):
 
 - **responses-tool-contract-hardening** (P1, `done` 2026-08-11; plan PR #526,
@@ -537,24 +538,21 @@ Standalone agent items (not part of the program):
   Windows currently falls back to the user-profile ACL with no extra restriction.
   Add Windows ACL hardening if/when Windows becomes a supported target. See
   `[[agent-secrets-plaintext-decision]]` rationale.
-- **[agent-tool-artifact-resources](plans/agent-tool-artifact-resources.md)**
-  (P3, `draft` 2026-08-21; plan PR #576, codex-3) — completed non-image
-  artifacts from `web_fetch`, bounded shell logs, and declared managed-Skill
-  output roots become tool-Item-owned `ThreadResourceReference`s in the existing
-  dependency graph. One complete implementation PR adds `ToolArtifactSink`,
-  typed output-root ownership, lifecycle coverage, and replay-time path
-  rematerialization; persisted history keeps stable identity rather than a
-  disposed Turn path. It now builds on #575's shipped protocol, runtime,
-  resource-inspection, and Trajectory contracts and must rebase before claiming
-  those shared files. It also carries the artifact mechanism required by
-  **computer-pilot-managed-skill** above.
+- **[agent-tool-artifact-resources](plans/archive/agent-tool-artifact-resources.md)**
+  (P3, `done` 2026-08-23; plan PR #576, implementation PR #582, codex-3) —
+  completed `web_fetch`, bounded shell, and declared managed-Skill outputs now
+  become tool-Item-owned Thread resources. Execution-scoped roots prevent
+  cross-command attribution, durable history retains stable identity instead of
+  scratch paths, and restart, fork, rollback, deletion, quota, and pruning share
+  the existing resource lifecycle. Design folded into `docs/spec/agent-core.md`,
+  `docs/spec/agent-model-runtime.md`, and `docs/spec/agent-tool-design.md`.
 - **[composer-large-paste-attachment](plans/composer-large-paste-attachment.md)**
   (P2, `draft` 2026-08-23; plan PR #581, codex-2) — the Agent composer
   classifies individual plain-text pastes and the projected complete draft
   before ProseMirror construction. Large eligible pastes become managed
   `pasted-content*.txt` attachments; small pastes stay inline until the
-  aggregate editor budget is reached. The implementation waits for #582 to
-  land before syncing its overlapping `agent-model-runtime.md` wording.
+  aggregate editor budget is reached. #582 is merged; implementation can now
+  sync its overlapping `agent-model-runtime.md` wording against `main`.
 - **agent-dream-followups** — **REMOVED 2026-08-03.** Seven polish items for a subsystem
   that no longer exists: `dream-channel-and-memory-retire` retired Dream in full (#324, #328,
   #329) and `rg -i dream src/` is empty. It survived the retirement because nothing links a
@@ -1127,6 +1125,11 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **[agent-tool-artifact-resources](plans/archive/agent-tool-artifact-resources.md)**
+  (codex-3, PR #582, merged 2026-08-23) — completed tool files now survive as
+  tool-Item-owned Thread resources with execution-scoped attribution and
+  rematerialized replay paths; gate review closed three Medium findings and the
+  final deep review found no reportable issues.
 - **[agent-trajectory-workspace](plans/archive/agent-trajectory-workspace.md)**
   (codex, PR #575, merged 2026-08-22) — Open Trajectory now provides the complete
   Thread timeline, ledger, lazy typed evidence, paging, live replacement, and

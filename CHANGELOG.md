@@ -12,6 +12,23 @@ Entries reference the pull request that introduced them.
 
 ### Added
 
+- **Completed Agent tool files now remain durable with their Thread (PR #582,
+  codex-3)** — binary `web_fetch` responses, bounded foreground and finalized
+  background shell output, and safe files from declared managed-Skill output
+  roots enter one `ToolArtifactSink` as tool-Item-owned resources. Their stable
+  identity survives restart, fork and inherited context, rollback, deletion,
+  quota reconciliation, and pruning; current projection rematerializes readable
+  handles while durable history excludes disposed execution paths. Browser
+  Pilot roots are execution-scoped, concurrent commands cannot claim each
+  other's files, and a later isolated-Skill failure preserves artifacts already
+  admitted by embedded shell work. Admission and materialization failures
+  degrade to bounded stable warnings instead of exposing canonical store paths
+  or killing the surrounding tool operation. Gate review found three Medium
+  ownership/replay defects across two rounds; all were fixed, and the final deep
+  review found no reportable issues. Verified with typecheck, `docs:check`, the
+  full Core suite (2637 passed, 6 skipped, 0 failed), 521 focused passing tests,
+  and whitespace checks; one E2E sample was green and four were still running at
+  merge time.
 - **A Thread now has one investigation workspace for its complete Agent
   trajectory (PR #575, codex)** — **Open Trajectory** replaces the single-Turn
   Model Interactions product route with a Thread-wide timeline, virtualized

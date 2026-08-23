@@ -73,9 +73,9 @@ composer messages/CSS, focused renderer/E2E tests, a calibration probe, and Agen
 Thread/model-runtime specs; not Core, IPC, dependencies, `docs/TASKS.md`, or
 `CHANGELOG.md`.
 
-No board item, active plan, or open PR claims the behavior. #575's overlap is merged.
-#582 overlaps only `agent-model-runtime.md`; implementation starts after it lands and
-this branch syncs with `main`.
+No board item, active plan, or open PR claims the behavior. #575 and #582 are
+merged; implementation starts from their shipped `agent-model-runtime.md`
+contract.
 
 ## Risks
 

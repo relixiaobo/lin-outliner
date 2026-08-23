@@ -1783,3 +1783,24 @@ deduplication.
 
 Tests for this boundary need two equal payloads with different display names and
 must assert both the logical attachment count and the physical storage outcome.
+
+## Artifact ownership follows the execution through every terminal path
+
+PR #582 initially scanned one Turn-scoped output root for concurrent Bash calls,
+so a delayed background write could be claimed by an unrelated foreground Item.
+The same implementation dropped already-admitted embedded-shell resources when
+a later isolated-Skill phase failed. In both cases the bytes existed, but the
+Item that actually produced them did not reliably own them.
+
+**Give each execution its own attribution boundary and preserve admitted
+ownership even when a later phase fails.** A shared before/after scan cannot
+identify the producer under concurrency, and a failed outer operation does not
+erase the resource side effects of an earlier successful phase. Allocate output
+roots per tool execution, carry admitted references through every terminal
+result, and let lifecycle reconciliation clean up only genuinely unreferenced
+resources.
+
+Regression coverage must interleave a delayed background write with an unrelated
+foreground execution, and must persist one artifact before forcing a later phase
+to fail. In both cases, assert that exactly the producing tool Item owns the
+resource.
