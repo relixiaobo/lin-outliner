@@ -29,6 +29,7 @@ import {
   type Change,
   type ChangeSet,
   type Diff,
+  type AssetLease,
   type NodeDraft,
   type Operation,
   type TargetRef,
@@ -52,10 +53,11 @@ export async function diffOutlineChangeSet(
 ): Promise<Diff> {
   const normalized = normalizeOutlineChangeSet(workspace.forkCore(), input);
   const changeSetHash = canonicalChangeSetHash(normalized);
+  const assetLeases = await resolveChangeSetAssetLeases(workspace, normalized);
   const candidate = workspace.forkCore({ idFactory: createDeterministicCoreIdFactory(changeSetHash) });
   let execution: ExecuteResult = { bindings: {} };
   const { patch } = await candidate.transactionWithPatch('user', async () => {
-    execution = await executeOutlineChangeSet(candidate, normalized);
+    execution = await executeOutlineChangeSet(candidate, normalized, assetLeases);
   }, { operationId: `preview:${changeSetHash}`, command: 'outline_diff' });
   return diffFromPatch(normalized, changeSetHash, execution.bindings, patch.nodes);
 }
@@ -75,6 +77,7 @@ export async function applyOutlineDiff(
     throw new OutlineContractError(outlineError('diff_mismatch', 'conflict', 'ChangeSet hash does not match the Diff.'));
   }
   assertBaseState(workspace.forkCore(), diff.normalizedChangeSet);
+  const assetLeases = await resolveChangeSetAssetLeases(workspace, diff.normalizedChangeSet);
   if (diff.destructive.length > 0 && !acknowledgeDestructive) {
     throw new OutlineContractError(outlineError(
       'confirmation_required',
@@ -96,8 +99,9 @@ export async function applyOutlineDiff(
     idempotencyKey: diff.normalizedChangeSet.idempotencyKey,
     ...(diff.normalizedChangeSet.idempotencyKey ? { idempotencyPayloadHash: diff.diffHash } : {}),
     idFactory: createDeterministicCoreIdFactory(diff.changeSetHash),
+    assetLeases: Object.fromEntries(Object.entries(assetLeases).map(([leaseId, lease]) => [leaseId, lease.assetId])),
     execute: async (candidate) => {
-      execution = await executeOutlineChangeSet(candidate, diff.normalizedChangeSet);
+      execution = await executeOutlineChangeSet(candidate, diff.normalizedChangeSet, assetLeases);
     },
     ...(diff.normalizedChangeSet.return ? {
       result: (candidate: Core) => diff.normalizedChangeSet.return!.map((projection) => (
@@ -171,12 +175,16 @@ export function normalizeOutlineChangeSet(core: Core, input: ChangeSet): ChangeS
   return normalized;
 }
 
-export async function executeOutlineChangeSet(core: Core, changeSet: ChangeSet): Promise<ExecuteResult> {
+export async function executeOutlineChangeSet(
+  core: Core,
+  changeSet: ChangeSet,
+  assetLeases: Readonly<Record<string, AssetLease>> = {},
+): Promise<ExecuteResult> {
   const baseIndex = createSelectionIndex(core.projection());
   const bindings: Record<string, readonly string[]> = {};
   for (const [operationIndex, change] of changeSet.operations.entries()) {
     try {
-      const result = await executeChange(core, baseIndex, bindings, change, operationIndex);
+      const result = await executeChange(core, baseIndex, bindings, change, operationIndex, assetLeases);
       const binding = changeBinding(change);
       if (binding) bindings[binding] = Object.freeze([...result]);
     } catch (error) {
@@ -219,6 +227,7 @@ async function executeChange(
   bindings: Readonly<Record<string, readonly string[]>>,
   change: Change,
   operationIndex: number,
+  assetLeases: Readonly<Record<string, AssetLease>>,
 ): Promise<readonly string[]> {
   switch (change.op) {
     case 'resolve': return resolveTargetSpec(baseIndex, change.target);
@@ -229,7 +238,7 @@ async function executeChange(
       for (const [parentIndex, parentId] of parentIds.entries()) {
         for (const [draftIndex, draft] of change.nodes.entries()) {
           const copyPath = `${operationIndex}:${parentIndex}:${draftIndex}`;
-          created.push(createDraft(core, parentId, change.index, draft, copyPath, parentIndex === 0));
+          created.push(createDraft(core, parentId, change.index, draft, copyPath, parentIndex === 0, assetLeases));
         }
       }
       return created;
@@ -237,7 +246,14 @@ async function executeChange(
     case 'update': {
       const targetIds = resolveTargetRef(baseIndex, change.targets, bindings);
       for (const targetId of targetIds) {
-        for (const instruction of change.changes) executeUpdate(core, baseIndex, bindings, targetId, instruction);
+        for (const instruction of change.changes) executeUpdate(
+          core,
+          baseIndex,
+          bindings,
+          targetId,
+          instruction,
+          assetLeases,
+        );
       }
       return targetIds;
     }
@@ -329,6 +345,7 @@ function createDraft(
   draft: NodeDraft,
   copyPath: string,
   preserveId: boolean,
+  assetLeases: Readonly<Record<string, AssetLease>>,
 ): string {
   const id = preserveId ? draft.id! : deterministicPublicNodeId(draft.id!, copyPath);
   const metadata = isRecord(draft.metadata) ? draft.metadata : {};
@@ -346,19 +363,29 @@ function createDraft(
     if (!draft.referenceTargetId) throw new Error('Reference draft requires referenceTargetId');
     core.addReference(parentId, draft.referenceTargetId, index, id);
   } else if (draft.type === 'image') {
+    const lease = draft.assetLeaseId ? requiredAssetLease(draft.assetLeaseId, assetLeases) : undefined;
     core.createImageNode(parentId, index, {
-      ...(draft.assetLeaseId ? { assetId: draft.assetLeaseId } : {}),
+      ...(lease ? { assetId: lease.assetId } : {}),
       ...(draft.mediaUrl ? { mediaUrl: draft.mediaUrl } : {}),
-      ...(typeof metadata.width === 'number' ? { width: metadata.width } : {}),
-      ...(typeof metadata.height === 'number' ? { height: metadata.height } : {}),
+      ...(typeof metadata.width === 'number'
+        ? { width: metadata.width }
+        : lease?.metadata.imageWidth !== undefined ? { width: lease.metadata.imageWidth } : {}),
+      ...(typeof metadata.height === 'number'
+        ? { height: metadata.height }
+        : lease?.metadata.imageHeight !== undefined ? { height: lease.metadata.imageHeight } : {}),
       name: draft.content.text,
     }, id);
   } else if (draft.type === 'attachment') {
+    const lease = requiredAssetLease(draft.assetLeaseId, assetLeases);
     core.createAttachmentNode(parentId, index, {
-      assetId: draft.assetLeaseId,
-      mimeType: typeof metadata.mimeType === 'string' ? metadata.mimeType : undefined,
-      originalFilename: typeof metadata.originalFilename === 'string' ? metadata.originalFilename : draft.content.text,
-      fileSize: typeof metadata.fileSize === 'number' ? metadata.fileSize : undefined,
+      assetId: lease.assetId,
+      mimeType: lease.metadata.mimeType,
+      originalFilename: lease.metadata.originalFilename ?? draft.content.text,
+      fileSize: lease.metadata.byteSize,
+      thumbnailAssetId: lease.metadata.thumbnailAssetId,
+      pdfPageCount: lease.metadata.pdfPageCount,
+      audioDurationMs: lease.metadata.audioDurationMs,
+      videoDurationMs: lease.metadata.videoDurationMs,
     }, id);
   } else if (draft.type === 'search') {
     if (!isRecord(metadata.query)) throw new Error('Search draft requires metadata.query');
@@ -385,7 +412,7 @@ function createDraft(
     core.updateFieldSlot(id, field.fieldDefId, { kind: 'appendNodes', nodes: field.values.map(toCoreTree) });
   }
   for (const [childIndex, child] of draft.children.entries()) {
-    createDraft(core, id, null, child, `${copyPath}:${childIndex}`, preserveId);
+    createDraft(core, id, null, child, `${copyPath}:${childIndex}`, preserveId, assetLeases);
   }
   return id;
 }
@@ -396,6 +423,7 @@ function executeUpdate(
   bindings: Readonly<Record<string, readonly string[]>>,
   targetId: string,
   instruction: Extract<Change, { op: 'update' }>['changes'][number],
+  assetLeases: Readonly<Record<string, AssetLease>>,
 ): void {
   if (instruction.kind === 'content') {
     core.applyNodeTextPatch(targetId, { ops: [{ type: 'replace_all', content: instruction.value }] });
@@ -439,17 +467,66 @@ function executeUpdate(
       core.setSearchNode(targetId, instruction.value as unknown as SearchNodeConfig);
     }
   } else if (instruction.kind === 'icon') {
-    core.setNodeIcon(targetId, instruction.value, instruction.iconKind as Parameters<Core['setNodeIcon']>[2]);
+    const value = instruction.value && (instruction.iconKind === 'image' || instruction.iconKind === 'generated')
+      ? requiredAssetLease(instruction.value, assetLeases).assetId
+      : instruction.value;
+    core.setNodeIcon(targetId, value, instruction.iconKind as Parameters<Core['setNodeIcon']>[2]);
   } else if (instruction.kind === 'banner') {
-    core.setNodeBanner(targetId, instruction.assetLeaseId, instruction.position);
+    core.setNodeBanner(
+      targetId,
+      instruction.assetLeaseId ? requiredAssetLease(instruction.assetLeaseId, assetLeases).assetId : null,
+      instruction.position,
+    );
   } else {
     core.setNodeImage(targetId, {
-      ...(instruction.assetLeaseId ? { assetId: instruction.assetLeaseId } : {}),
+      ...(instruction.assetLeaseId ? { assetId: requiredAssetLease(instruction.assetLeaseId, assetLeases).assetId } : {}),
       ...(instruction.mediaUrl ? { mediaUrl: instruction.mediaUrl } : {}),
       width: instruction.width,
       height: instruction.height,
     });
   }
+}
+
+async function resolveChangeSetAssetLeases(
+  workspace: OutlineRuntimeWorkspace,
+  changeSet: ChangeSet,
+): Promise<Readonly<Record<string, AssetLease>>> {
+  const leaseIds = collectChangeSetAssetLeaseIds(changeSet);
+  const leases = await workspace.assets.resolveLeases(leaseIds);
+  return Object.fromEntries(leases);
+}
+
+function collectChangeSetAssetLeaseIds(changeSet: ChangeSet): readonly string[] {
+  const result = new Set<string>();
+  const visitDraft = (draft: NodeDraft) => {
+    if (draft.assetLeaseId) result.add(draft.assetLeaseId);
+    for (const child of draft.children) visitDraft(child);
+    for (const field of draft.fields ?? []) for (const value of field.values) visitDraft(value);
+  };
+  for (const change of changeSet.operations) {
+    if (change.op === 'create') for (const draft of change.nodes) visitDraft(draft);
+    if (change.op !== 'update') continue;
+    for (const instruction of change.changes) {
+      if (instruction.kind === 'banner' && instruction.assetLeaseId) result.add(instruction.assetLeaseId);
+      if (instruction.kind === 'image' && instruction.assetLeaseId) result.add(instruction.assetLeaseId);
+      if (instruction.kind === 'icon'
+        && instruction.value
+        && (instruction.iconKind === 'image' || instruction.iconKind === 'generated')) {
+        result.add(instruction.value);
+      }
+    }
+  }
+  return [...result].sort();
+}
+
+function requiredAssetLease(
+  leaseId: string | undefined,
+  assetLeases: Readonly<Record<string, AssetLease>>,
+): AssetLease {
+  if (!leaseId) throw new Error('Asset lease is required');
+  const lease = assetLeases[leaseId];
+  if (!lease) throw new Error(`Asset lease was not resolved: ${leaseId}`);
+  return lease;
 }
 
 function executeFieldUpdate(

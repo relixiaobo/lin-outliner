@@ -1,6 +1,8 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import { chmod, lstat, readFile, rm } from 'node:fs/promises';
 import http from 'node:http';
+import { pipeline } from 'node:stream/promises';
 import type { Socket } from 'node:net';
 import path from 'node:path';
 import { Value } from 'typebox/value';
@@ -159,6 +161,35 @@ export class OutlineRuntimeServer {
         return;
       }
       const url = new URL(request.url ?? '/', 'http://outline.runtime');
+      if (request.method === 'POST' && url.pathname === '/v1/assets/ingest') {
+        const requestId = requiredHeader(request, 'x-outline-request-id');
+        const filename = optionalBase64UrlHeader(request, 'x-outline-filename');
+        const mimeType = optionalHeader(request, 'x-outline-mime-type');
+        const lease = await this.workspace.assets.ingestStream(request, filename, mimeType);
+        writeJson(response, 200, {
+          protocolVersion: OUTLINE_PROTOCOL_VERSION,
+          requestId,
+          ok: true,
+          command: 'asset ingest',
+          revision: this.workspace.revision(),
+          data: lease,
+        });
+        return;
+      }
+      if (request.method === 'GET' && url.pathname.startsWith('/v1/assets/')) {
+        const assetId = decodeURIComponent(url.pathname.slice('/v1/assets/'.length));
+        const verified = await this.workspace.assets.verify(assetId);
+        response.writeHead(200, {
+          'content-type': verified.record.metadata.mimeType,
+          'content-length': verified.record.metadata.byteSize,
+          'x-outline-asset-id': verified.record.assetId,
+          'x-outline-sha256': verified.record.metadata.sha256,
+          'cache-control': 'private, max-age=31536000, immutable',
+          connection: 'close',
+        });
+        await pipeline(createReadStream(verified.path), response);
+        return;
+      }
       if (request.method === 'POST' && url.pathname === '/v1/request') {
         const body = await readJsonBody(request);
         const result = await this.router.handle(body, { origin: 'external-client' });
@@ -364,7 +395,10 @@ export class OutlineRuntimeServer {
     if (this.stopping || this.activeRequests > 0 || this.idleTimer) return;
     this.idleTimer = setTimeout(() => {
       this.idleTimer = undefined;
-      void Promise.resolve(this.onIdle?.()).finally(() => this.stop());
+      void this.workspace.collectAssetGarbage()
+        .catch(() => undefined)
+        .then(() => this.onIdle?.())
+        .finally(() => this.stop());
     }, this.idleTimeoutMs);
     this.idleTimer.unref?.();
   }
@@ -385,6 +419,27 @@ export class OutlineRuntimeServer {
       // A missing or replaced descriptor is not owned by this Runtime instance.
     }
   }
+}
+
+function requiredHeader(request: http.IncomingMessage, name: string): string {
+  const value = optionalHeader(request, name);
+  if (!value) throw new Error(`Missing required Runtime header: ${name}`);
+  return value;
+}
+
+function optionalHeader(request: http.IncomingMessage, name: string): string | undefined {
+  const value = request.headers[name];
+  if (Array.isArray(value)) throw new Error(`Runtime header must have one value: ${name}`);
+  if (value !== undefined && value.length > 8_192) throw new Error(`Runtime header is too long: ${name}`);
+  return value;
+}
+
+function optionalBase64UrlHeader(request: http.IncomingMessage, name: string): string | undefined {
+  const value = optionalHeader(request, name);
+  if (!value) return undefined;
+  const decoded = Buffer.from(value, 'base64url').toString('utf8');
+  if (Buffer.from(decoded, 'utf8').toString('base64url') !== value) throw new Error(`Invalid Runtime header: ${name}`);
+  return decoded;
 }
 
 function authorized(header: string | undefined, expectedToken: string): boolean {

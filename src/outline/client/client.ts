@@ -1,14 +1,18 @@
 import http from 'node:http';
+import { createHash } from 'node:crypto';
+import { once } from 'node:events';
 import { Value } from 'typebox/value';
 import { OutlineContractError, outlineError } from '../contract/errors';
 import {
   OutlineErrorSchema,
+  AssetLeaseSchema,
   OutlineResponseSchema,
   OutlineStreamRecordSchema,
   type OutlineRequest,
   type OutlineResponse,
   type OutlineStreamRecord,
   type RuntimeDescriptor,
+  type AssetLease,
   type WatchRequest,
 } from '../contract/schemas';
 import { OUTLINE_PROTOCOL_VERSION } from '../contract/version';
@@ -41,6 +45,63 @@ export class OutlineClient {
 
   watch(input: WatchRequest = {}, signal?: AbortSignal): AsyncGenerator<OutlineStreamRecord> {
     return this.stream('watch', input, signal);
+  }
+
+  async ingestAsset(
+    source: AsyncIterable<Uint8Array> | Iterable<Uint8Array>,
+    options: { originalFilename?: string; mimeType?: string; signal?: AbortSignal } = {},
+  ): Promise<AssetLease> {
+    const requestId = `asset:${crypto.randomUUID()}`;
+    const response = await this.openUploadRequest({
+      path: '/v1/assets/ingest',
+      headers: {
+        'x-outline-request-id': requestId,
+        ...(options.originalFilename ? {
+          'x-outline-filename': Buffer.from(options.originalFilename, 'utf8').toString('base64url'),
+        } : {}),
+        ...(options.mimeType ? { 'x-outline-mime-type': options.mimeType } : {}),
+      },
+      source,
+      signal: options.signal,
+    });
+    const value = await readResponseJson(response);
+    if (response.statusCode !== 200) throwDecodedHttpError(value, response.statusCode, 'asset ingest');
+    if (!Value.Check(OutlineResponseSchema, value)
+      || value.ok === false
+      || value.requestId !== requestId
+      || value.command !== 'asset ingest'
+      || !Value.Check(AssetLeaseSchema, value.data)) {
+      throw protocolError('Outline Runtime returned an invalid asset ingest response.');
+    }
+    return value.data;
+  }
+
+  async *exportAsset(assetId: string, signal?: AbortSignal): AsyncGenerator<Uint8Array> {
+    const response = await this.openRequest({
+      method: 'GET',
+      path: `/v1/assets/${encodeURIComponent(assetId)}`,
+      signal,
+    });
+    if (response.statusCode !== 200) await throwHttpError(response, 'asset export');
+    const expectedDigest = response.headers['x-outline-sha256'];
+    const expectedBytes = Number(response.headers['content-length']);
+    if (typeof expectedDigest !== 'string'
+      || !/^[a-f0-9]{64}$/.test(expectedDigest)
+      || !Number.isSafeInteger(expectedBytes)
+      || expectedBytes < 0) {
+      throw protocolError('Outline Runtime returned invalid asset export headers.');
+    }
+    const hash = createHash('sha256');
+    let byteCount = 0;
+    for await (const chunk of response) {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      byteCount += bytes.byteLength;
+      hash.update(bytes);
+      yield bytes;
+    }
+    if (byteCount !== expectedBytes || hash.digest('hex') !== expectedDigest) {
+      throw protocolError('Outline Runtime asset export failed integrity verification.');
+    }
   }
 
   async *stream(command: string, input: unknown, signal?: AbortSignal): AsyncGenerator<OutlineStreamRecord> {
@@ -156,6 +217,39 @@ export class OutlineClient {
       request.once('error', reject);
       if (options.body) request.write(options.body);
       request.end();
+    });
+  }
+
+  private openUploadRequest(options: {
+    path: string;
+    headers?: http.OutgoingHttpHeaders;
+    source: AsyncIterable<Uint8Array> | Iterable<Uint8Array>;
+    signal?: AbortSignal;
+  }): Promise<http.IncomingMessage> {
+    return new Promise((resolve, reject) => {
+      const request = http.request({
+        socketPath: this.descriptor.socketPath,
+        method: 'POST',
+        path: options.path,
+        headers: {
+          authorization: `Bearer ${this.descriptor.bearerToken}`,
+          'content-type': 'application/octet-stream',
+          ...options.headers,
+        },
+        agent: this.agent,
+        signal: options.signal,
+      }, resolve);
+      request.once('error', reject);
+      void (async () => {
+        try {
+          for await (const chunk of options.source) {
+            if (!request.write(chunk)) await once(request, 'drain');
+          }
+          request.end();
+        } catch (error) {
+          request.destroy(error instanceof Error ? error : new Error(String(error)));
+        }
+      })();
     });
   }
 }

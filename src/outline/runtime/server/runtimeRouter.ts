@@ -118,6 +118,24 @@ export class OutlineRuntimeRouter {
         format: 'json',
       });
     }
+    if (command === 'asset ingest') {
+      const value = input as { source: 'path' | 'stdin'; path?: string };
+      if (value.source !== 'path' || !value.path) {
+        throw new OutlineContractError(outlineError(
+          'invalid_input',
+          'usage',
+          'Asset stdin ingestion requires the binary upload transport.',
+        ));
+      }
+      return this.workspace.assets.ingestPath(value.path);
+    }
+    if (command === 'asset show') {
+      return this.workspace.assets.show(String((input as { assetId: string }).assetId));
+    }
+    if (command === 'asset export') {
+      const { record, bytes } = await this.workspace.assets.readVerified(String((input as { assetId: string }).assetId));
+      return { asset: record, data: Buffer.from(bytes).toString('base64') };
+    }
     if (command === 'diff') {
       return diffOutlineChangeSet(this.workspace, (input as { changeSet: ChangeSet }).changeSet);
     }

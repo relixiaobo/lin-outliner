@@ -24,6 +24,10 @@ import { OutlineContractError, outlineError } from '../../contract/errors';
 import {
   EventSchema,
   OperationSchema,
+  AssetLeaseSchema,
+  AssetRecordSchema,
+  type AssetLease,
+  type AssetRecord,
   type Operation,
   type OutlineEvent,
 } from '../../contract/schemas';
@@ -38,6 +42,7 @@ import {
   assertOutlineRecoveryPatch,
   type OutlineRecoveryPatch,
 } from './recoveryPatch';
+import { assertOutlineAssetStage, type OutlineAssetStage } from './assetTypes';
 
 const SNAPSHOT_FILE = 'outline.snapshot.json';
 const TRANSACTION_LOG_FILE = 'outline.transactions.jsonl';
@@ -46,6 +51,8 @@ const SNAPSHOT_KIND = 'outline.workspace-snapshot';
 const LOG_HEADER_KIND = 'outline.transaction-log';
 const TRANSACTION_KIND = 'outline.transaction';
 const RECOVERY_EXPIRY_KIND = 'outline.recovery-expiry';
+const ASSET_STAGE_KIND = 'outline.asset-stage';
+const ASSET_GC_KIND = 'outline.asset-gc';
 const DEFAULT_INLINE_RECOVERY_BYTES = 64 * 1024;
 
 export interface OutlineAssetDelta {
@@ -116,6 +123,7 @@ interface RecoveryReference {
   readonly storage: 'inline' | 'blob';
   readonly inline?: OutlineRecoveryPatch;
   readonly recoveryOnlyAssetBytes: number;
+  readonly protectedAssetRecordIds: readonly string[];
 }
 
 interface EncodedPersistenceCapture {
@@ -149,7 +157,23 @@ interface RecoveryExpiryRecordBody {
   readonly event: OutlineEvent;
 }
 
-type LogRecordBody = TransactionRecordBody | RecoveryExpiryRecordBody;
+interface AssetStageRecordBody {
+  readonly kind: typeof ASSET_STAGE_KIND;
+  readonly storageVersion: typeof OUTLINE_STORAGE_VERSION;
+  readonly sequence: number;
+  readonly previousChecksum: string;
+  readonly stage: OutlineAssetStage;
+}
+
+interface AssetGcRecordBody {
+  readonly kind: typeof ASSET_GC_KIND;
+  readonly storageVersion: typeof OUTLINE_STORAGE_VERSION;
+  readonly sequence: number;
+  readonly previousChecksum: string;
+  readonly assetIds: readonly string[];
+}
+
+type LogRecordBody = TransactionRecordBody | RecoveryExpiryRecordBody | AssetStageRecordBody | AssetGcRecordBody;
 type LogRecord = LogRecordBody & { readonly checksum: string };
 
 interface LogHeaderBody {
@@ -172,6 +196,9 @@ interface SnapshotBody {
   readonly recovery: Readonly<Record<string, RecoveryReference>>;
   readonly idempotency: readonly OutlineIdempotencyRecord[];
   readonly events: readonly OutlineEvent[];
+  readonly assetRecords: readonly AssetRecord[];
+  readonly assetLeases: readonly AssetLease[];
+  readonly liveAssetRecordIds: readonly string[];
 }
 
 type SnapshotEnvelope = SnapshotBody & { readonly checksum: string };
@@ -185,6 +212,9 @@ interface LoadedState {
   recoveryByOperationId: Map<string, RecoveryReference>;
   idempotencyByKey: Map<string, OutlineIdempotencyRecord>;
   events: OutlineEvent[];
+  assetRecordById: Map<string, AssetRecord>;
+  assetLeaseById: Map<string, AssetLease>;
+  liveAssetRecordIds: Set<string>;
   latestSequence: number;
   latestEventSequence: number;
   headChecksum: string;
@@ -238,6 +268,10 @@ export class WorkspaceTransactionLog {
     this.afterSnapshotRename = options.afterSnapshotRename;
   }
 
+  workspaceRoot(): string {
+    return this.root;
+  }
+
   async initialize(documentSnapshotRaw: string): Promise<void> {
     return this.enqueueWrite(async () => {
       await mkdir(this.root, { recursive: true, mode: 0o700 });
@@ -262,6 +296,9 @@ export class WorkspaceTransactionLog {
         recovery: {},
         idempotency: [],
         events: [],
+        assetRecords: [],
+        assetLeases: [],
+        liveAssetRecordIds: [],
       });
       await writeJsonDurable(this.snapshotPath, snapshot, this.fsyncHandle);
       await this.afterSnapshotRename?.();
@@ -318,10 +355,15 @@ export class WorkspaceTransactionLog {
       }
 
       await this.expireEligibleRecovery(state, this.now());
+      assertAssetDeltaAdmission(input.assetDelta ?? EMPTY_ASSET_DELTA, state, this.now());
       assertEventSequence(input.event, state);
       const encodedPatch = canonicalJson(input.recoveryPatch);
       const patchBytes = Buffer.byteLength(encodedPatch);
-      const additionalRecoveryBytes = patchBytes + Math.max(0, input.assetDelta?.recoveryOnlyBytes ?? 0);
+      const additionalRecoveryBytes = patchBytes + this.additionalRecoveryAssetBytes(
+        state,
+        input.recoveryPatch,
+        input.assetDelta ?? EMPTY_ASSET_DELTA,
+      );
       const currentRecoveryBytes = this.availableRecoveryBytes(state);
       if (currentRecoveryBytes + additionalRecoveryBytes > this.recoveryBudgetBytes) {
         throw new OutlineContractError(outlineError(
@@ -434,6 +476,104 @@ export class WorkspaceTransactionLog {
     });
   }
 
+  async stageAsset(stage: OutlineAssetStage): Promise<void> {
+    return this.enqueueWrite(async () => {
+      const state = await this.requireWritableState();
+      assertOutlineAssetStage(stage);
+      if (state.assetRecordById.has(stage.record.assetId)) {
+        throw new Error(`Outline AssetRecord already exists: ${stage.record.assetId}`);
+      }
+      if (state.assetLeaseById.has(stage.lease.leaseId)) {
+        throw new Error(`Outline AssetLease already exists: ${stage.lease.leaseId}`);
+      }
+      const body: AssetStageRecordBody = {
+        kind: ASSET_STAGE_KIND,
+        storageVersion: OUTLINE_STORAGE_VERSION,
+        sequence: state.latestSequence + 1,
+        previousChecksum: state.headChecksum,
+        stage: clone(stage),
+      };
+      const record = logRecord(body);
+      assertReplayedRecord(record, state);
+      await this.prepareLogForAppend(state);
+      await appendJsonlDurable(this.transactionLogPath, record, this.fsyncHandle);
+      applyAssetStageRecord(state, record);
+    });
+  }
+
+  async assetRecord(assetId: string): Promise<AssetRecord | undefined> {
+    return this.enqueueWrite(async () => {
+      const record = (await this.ensureState()).assetRecordById.get(assetId);
+      return record ? clone(record) : undefined;
+    });
+  }
+
+  async assetRecords(): Promise<readonly AssetRecord[]> {
+    return this.enqueueWrite(async () => clone([...(await this.ensureState()).assetRecordById.values()]));
+  }
+
+  async resolveAssetLeases(
+    leaseIds: readonly string[],
+    now = this.now(),
+  ): Promise<ReadonlyMap<string, AssetLease>> {
+    return this.enqueueWrite(async () => {
+      const state = await this.requireWritableState();
+      const result = new Map<string, AssetLease>();
+      for (const leaseId of [...new Set(leaseIds)]) {
+        const lease = state.assetLeaseById.get(leaseId);
+        if (!lease) {
+          throw new OutlineContractError(outlineError(
+            'precondition_failed',
+            'conflict',
+            `Asset lease is unavailable or was already consumed: ${leaseId}`,
+          ));
+        }
+        if (Date.parse(lease.expiresAt) <= now.getTime()) {
+          throw new OutlineContractError(outlineError(
+            'precondition_failed',
+            'conflict',
+            `Asset lease has expired: ${leaseId}`,
+          ));
+        }
+        result.set(leaseId, clone(lease));
+      }
+      return result;
+    });
+  }
+
+  async collectUnprotectedAssetRecords(
+    liveAssetRecordIds: readonly string[],
+    now = this.now(),
+  ): Promise<readonly AssetRecord[]> {
+    return this.enqueueWrite(async () => {
+      const state = await this.requireWritableState();
+      const protectedIds = new Set(liveAssetRecordIds);
+      for (const lease of state.assetLeaseById.values()) {
+        if (Date.parse(lease.expiresAt) > now.getTime()) protectedIds.add(lease.assetId);
+      }
+      for (const [operationId, reference] of state.recoveryByOperationId) {
+        if (state.operationById.get(operationId)?.recovery.state === 'expired') continue;
+        for (const assetId of reference.protectedAssetRecordIds) protectedIds.add(assetId);
+      }
+      const removed = [...state.assetRecordById.values()]
+        .filter((record) => !protectedIds.has(record.assetId));
+      if (removed.length === 0) return [];
+      const body: AssetGcRecordBody = {
+        kind: ASSET_GC_KIND,
+        storageVersion: OUTLINE_STORAGE_VERSION,
+        sequence: state.latestSequence + 1,
+        previousChecksum: state.headChecksum,
+        assetIds: removed.map((record) => record.assetId).sort(),
+      };
+      const record = logRecord(body);
+      assertReplayedRecord(record, state);
+      await this.prepareLogForAppend(state);
+      await appendJsonlDurable(this.transactionLogPath, record, this.fsyncHandle);
+      applyAssetGcRecord(state, record);
+      return clone(removed);
+    });
+  }
+
   async compact(documentSnapshotRaw: string): Promise<void> {
     return this.enqueueWrite(async () => {
       const state = await this.requireWritableState();
@@ -460,6 +600,9 @@ export class WorkspaceTransactionLog {
         recovery: clone(recovery),
         idempotency: clone(idempotency),
         events: clone(state.events.slice(-this.eventRetention)),
+        assetRecords: clone([...state.assetRecordById.values()]),
+        assetLeases: clone([...state.assetLeaseById.values()]),
+        liveAssetRecordIds: [...state.liveAssetRecordIds].sort(),
       });
       await writeJsonDurable(this.snapshotPath, snapshot, this.fsyncHandle);
       await this.afterSnapshotRename?.();
@@ -498,6 +641,9 @@ export class WorkspaceTransactionLog {
       recoveryByOperationId: new Map(Object.entries(clone(snapshot.recovery))),
       idempotencyByKey: new Map(snapshot.idempotency.map((entry) => [entry.key, clone(entry)])),
       events: clone([...snapshot.events]),
+      assetRecordById: new Map(snapshot.assetRecords.map((record) => [record.assetId, clone(record)])),
+      assetLeaseById: new Map(snapshot.assetLeases.map((lease) => [lease.leaseId, clone(lease)])),
+      liveAssetRecordIds: new Set(snapshot.liveAssetRecordIds),
       latestSequence: snapshot.sequence,
       latestEventSequence: snapshot.latestEventSequence,
       headChecksum: snapshotChecksum,
@@ -562,8 +708,12 @@ export class WorkspaceTransactionLog {
               `Invalid referenced outline recovery patch: ${record.recovery.recoveryPatchId}`,
             );
           }
-        } else {
+        } else if (record.kind === RECOVERY_EXPIRY_KIND) {
           applyRecoveryExpiryRecord(state, record, this.eventRetention);
+        } else if (record.kind === ASSET_STAGE_KIND) {
+          applyAssetStageRecord(state, record);
+        } else {
+          applyAssetGcRecord(state, record);
         }
         state.logValidBytes += Buffer.byteLength(`${line}\n`);
       } catch (error) {
@@ -652,6 +802,7 @@ export class WorkspaceTransactionLog {
       sha256,
       byteSize,
       recoveryOnlyAssetBytes: Math.max(0, assetDelta?.recoveryOnlyBytes ?? 0),
+      protectedAssetRecordIds: [...patch.protectedAssetRecordIds],
     };
     if (byteSize <= this.inlineRecoveryBytes) return { ...base, storage: 'inline', inline: clone(patch) };
     await mkdir(this.recoveryDirectory, { recursive: true, mode: 0o700 });
@@ -677,6 +828,7 @@ export class WorkspaceTransactionLog {
       || patch.diffHash !== operation.diffHash
       || patch.revisionBefore !== operation.revisionBefore
       || patch.revisionAfter !== operation.revisionAfter
+      || canonicalSha256(patch.protectedAssetRecordIds) !== canonicalSha256(reference.protectedAssetRecordIds)
     )) {
       throw new Error(`Recovery patch Operation mismatch: ${operation.operationId}`);
     }
@@ -703,14 +855,58 @@ export class WorkspaceTransactionLog {
     for (const operation of state.operations) {
       if (operation.recovery.state === 'expired') continue;
       const reference = state.recoveryByOperationId.get(operation.operationId);
-      if (reference) total += reference.byteSize + reference.recoveryOnlyAssetBytes;
+      if (reference) total += reference.byteSize;
+    }
+    return total + this.recoveryAssetBytes(state);
+  }
+
+  private recoveryAssetBytes(state: LoadedState): number {
+    const protectedDigests = new Set<string>();
+    for (const [operationId, reference] of state.recoveryByOperationId) {
+      if (state.operationById.get(operationId)?.recovery.state === 'expired') continue;
+      for (const assetId of reference.protectedAssetRecordIds) {
+        if (state.liveAssetRecordIds.has(assetId)) continue;
+        const digest = state.assetRecordById.get(assetId)?.metadata.sha256;
+        if (digest) protectedDigests.add(digest);
+      }
+    }
+    let total = 0;
+    for (const record of state.assetRecordById.values()) {
+      if (protectedDigests.delete(record.metadata.sha256)) total += record.metadata.byteSize;
+    }
+    return total;
+  }
+
+  private additionalRecoveryAssetBytes(
+    state: LoadedState,
+    patch: OutlineRecoveryPatch,
+    delta: OutlineAssetDelta,
+  ): number {
+    const alreadyProtected = new Set<string>();
+    for (const [operationId, reference] of state.recoveryByOperationId) {
+      if (state.operationById.get(operationId)?.recovery.state === 'expired') continue;
+      for (const assetId of reference.protectedAssetRecordIds) alreadyProtected.add(assetId);
+    }
+    const additionalDigests = new Set<string>();
+    const liveAfter = new Set(state.liveAssetRecordIds);
+    for (const assetId of delta.liveRemovedAssetRecordIds) liveAfter.delete(assetId);
+    for (const assetId of delta.liveAddedAssetRecordIds) liveAfter.add(assetId);
+    for (const assetId of patch.protectedAssetRecordIds) {
+      if (liveAfter.has(assetId) || alreadyProtected.has(assetId)) continue;
+      const digest = state.assetRecordById.get(assetId)?.metadata.sha256;
+      if (digest) additionalDigests.add(digest);
+    }
+    let total = 0;
+    for (const record of state.assetRecordById.values()) {
+      if (additionalDigests.delete(record.metadata.sha256)) total += record.metadata.byteSize;
     }
     return total;
   }
 
   private async expireEligibleRecovery(state: LoadedState, now: Date): Promise<void> {
     const protectedIds = new Set(
-      state.operations.slice(-this.minimumRetentionOperations).map((operation) => operation.operationId),
+      (this.minimumRetentionOperations === 0 ? [] : state.operations.slice(-this.minimumRetentionOperations))
+        .map((operation) => operation.operationId),
     );
     const cutoff = now.getTime() - this.minimumRetentionDays * 86_400_000;
     const eligible = state.operations.filter((operation) => (
@@ -760,7 +956,8 @@ export class WorkspaceTransactionLog {
 
   private retainedOperationIds(state: LoadedState, now: Date): Set<string> {
     const retained = new Set(
-      state.operations.slice(-this.minimumRetentionOperations).map((operation) => operation.operationId),
+      (this.minimumRetentionOperations === 0 ? [] : state.operations.slice(-this.minimumRetentionOperations))
+        .map((operation) => operation.operationId),
     );
     const cutoff = now.getTime() - this.minimumRetentionDays * 86_400_000;
     for (const operation of state.operations) {
@@ -863,10 +1060,33 @@ function applyTransactionRecord(state: LoadedState, record: TransactionRecordBod
   state.operationById.set(operation.operationId, operation);
   state.recoveryByOperationId.set(operation.operationId, clone(record.recovery));
   if (record.idempotency) state.idempotencyByKey.set(record.idempotency.key, clone(record.idempotency));
+  for (const leaseId of record.assetDelta.consumedLeaseIds) state.assetLeaseById.delete(leaseId);
+  for (const assetId of record.assetDelta.liveAddedAssetRecordIds) state.liveAssetRecordIds.add(assetId);
+  for (const assetId of record.assetDelta.liveRemovedAssetRecordIds) state.liveAssetRecordIds.delete(assetId);
   state.events.push(clone(record.event));
   if (state.events.length > eventRetention) state.events.splice(0, state.events.length - eventRetention);
   state.latestSequence = record.sequence;
   state.latestEventSequence = Math.max(state.latestEventSequence, record.event.sequence);
+  state.headChecksum = record.checksum;
+}
+
+function applyAssetStageRecord(state: LoadedState, record: AssetStageRecordBody & { checksum: string }): void {
+  state.assetRecordById.set(record.stage.record.assetId, clone(record.stage.record));
+  state.assetLeaseById.set(record.stage.lease.leaseId, clone(record.stage.lease));
+  state.latestSequence = record.sequence;
+  state.headChecksum = record.checksum;
+}
+
+function applyAssetGcRecord(state: LoadedState, record: AssetGcRecordBody & { checksum: string }): void {
+  const removed = new Set(record.assetIds);
+  for (const assetId of removed) {
+    state.assetRecordById.delete(assetId);
+    state.liveAssetRecordIds.delete(assetId);
+  }
+  for (const [leaseId, lease] of state.assetLeaseById) {
+    if (removed.has(lease.assetId)) state.assetLeaseById.delete(leaseId);
+  }
+  state.latestSequence = record.sequence;
   state.headChecksum = record.checksum;
 }
 
@@ -937,6 +1157,9 @@ function assertSnapshotEnvelope(value: unknown): asserts value is SnapshotEnvelo
     || !isRecord(value.recovery)
     || !Array.isArray(value.idempotency)
     || !Array.isArray(value.events)
+    || !Array.isArray(value.assetRecords)
+    || !Array.isArray(value.assetLeases)
+    || !isStringArray(value.liveAssetRecordIds)
     || typeof value.checksum !== 'string') {
     throw new Error('Invalid outline workspace snapshot');
   }
@@ -945,7 +1168,9 @@ function assertSnapshotEnvelope(value: unknown): asserts value is SnapshotEnvelo
   Core.deserializeState(JSON.stringify(value.document));
   if (!value.operations.every((operation) => Value.Check(OperationSchema, operation))
     || !value.events.every((event) => Value.Check(EventSchema, event))
-    || !value.idempotency.every(isIdempotencyRecord)) {
+    || !value.idempotency.every(isIdempotencyRecord)
+    || !value.assetRecords.every((record) => Value.Check(AssetRecordSchema, record))
+    || !value.assetLeases.every((lease) => Value.Check(AssetLeaseSchema, lease))) {
     throw new Error('Outline workspace snapshot indexes are invalid');
   }
   for (const reference of Object.values(value.recovery)) assertRecoveryReferenceShape(reference);
@@ -963,6 +1188,21 @@ function assertSnapshotEnvelope(value: unknown): asserts value is SnapshotEnvelo
     if (!operations.has(entry.operationId)) {
       throw new Error(`Snapshot idempotency index references a missing Operation: ${entry.operationId}`);
     }
+  }
+  const assetIds = new Set<string>();
+  for (const record of value.assetRecords) {
+    if (assetIds.has(record.assetId)) throw new Error(`Duplicate snapshot AssetRecord: ${record.assetId}`);
+    assetIds.add(record.assetId);
+  }
+  const leaseIds = new Set<string>();
+  for (const lease of value.assetLeases) {
+    if (leaseIds.has(lease.leaseId) || !assetIds.has(lease.assetId)) {
+      throw new Error(`Duplicate or dangling snapshot AssetLease: ${lease.leaseId}`);
+    }
+    leaseIds.add(lease.leaseId);
+  }
+  if (value.liveAssetRecordIds.some((assetId) => !assetIds.has(assetId))) {
+    throw new Error('Snapshot live asset index references a missing AssetRecord');
   }
   let priorEventSequence = -1;
   for (const event of value.events) {
@@ -988,7 +1228,7 @@ function assertLogHeader(value: unknown): asserts value is LogHeader {
 
 function assertLogRecord(value: unknown, sequence: number, previousChecksum: string): asserts value is LogRecord {
   if (!isRecord(value)
-    || (value.kind !== TRANSACTION_KIND && value.kind !== RECOVERY_EXPIRY_KIND)
+    || ![TRANSACTION_KIND, RECOVERY_EXPIRY_KIND, ASSET_STAGE_KIND, ASSET_GC_KIND].includes(value.kind as string)
     || value.storageVersion !== OUTLINE_STORAGE_VERSION
     || value.sequence !== sequence
     || value.previousChecksum !== previousChecksum
@@ -1014,18 +1254,35 @@ function assertLogRecord(value: unknown, sequence: number, previousChecksum: str
     if (value.idempotency !== undefined && !isIdempotencyRecord(value.idempotency)) {
       throw new Error('Invalid outline transaction idempotency record');
     }
-  } else if (!Array.isArray(value.operationIds)
+  } else if (value.kind === RECOVERY_EXPIRY_KIND && (!Array.isArray(value.operationIds)
     || !Array.isArray(value.recoveryPatchIds)
     || !value.operationIds.every((entry) => typeof entry === 'string')
     || !value.recoveryPatchIds.every((entry) => typeof entry === 'string')
     || value.operationIds.length !== value.recoveryPatchIds.length
     || !Value.Check(EventSchema, value.event)
-    || value.event.type !== 'operation.recovery-expired') {
+    || value.event.type !== 'operation.recovery-expired')) {
     throw new Error('Invalid outline recovery expiry record');
+  } else if (value.kind === ASSET_STAGE_KIND) {
+    assertOutlineAssetStage(value.stage);
+  } else if (value.kind === ASSET_GC_KIND && (!isStringArray(value.assetIds) || new Set(value.assetIds).size !== value.assetIds.length)) {
+    throw new Error('Invalid outline asset GC record');
   }
 }
 
 function assertReplayedRecord(record: LogRecord, state: LoadedState): void {
+  if (record.kind === ASSET_STAGE_KIND) {
+    if (state.assetRecordById.has(record.stage.record.assetId)
+      || state.assetLeaseById.has(record.stage.lease.leaseId)) {
+      throw new Error(`Duplicate committed outline asset stage: ${record.stage.lease.leaseId}`);
+    }
+    return;
+  }
+  if (record.kind === ASSET_GC_KIND) {
+    for (const assetId of record.assetIds) {
+      if (!state.assetRecordById.has(assetId)) throw new Error(`Asset GC references a missing AssetRecord: ${assetId}`);
+    }
+    return;
+  }
   if (record.event.sequence !== state.latestEventSequence + 1) {
     throw new Error('Committed outline Event sequence is not monotonic');
   }
@@ -1141,7 +1398,8 @@ function assertRecoveryReferenceShape(value: unknown): asserts value is Recovery
     || value.byteSize < 0
     || (value.storage !== 'inline' && value.storage !== 'blob')
     || !Number.isSafeInteger(value.recoveryOnlyAssetBytes)
-    || value.recoveryOnlyAssetBytes < 0) {
+    || value.recoveryOnlyAssetBytes < 0
+    || !isStringArray(value.protectedAssetRecordIds)) {
     throw new Error('Invalid outline recovery reference');
   }
   if (value.storage === 'inline') {
@@ -1159,6 +1417,41 @@ function assertAssetDelta(value: unknown): asserts value is OutlineAssetDelta {
     || !Number.isSafeInteger(value.recoveryOnlyBytes)
     || value.recoveryOnlyBytes < 0) {
     throw new Error('Invalid outline asset delta');
+  }
+}
+
+function assertAssetDeltaAdmission(delta: OutlineAssetDelta, state: LoadedState, now: Date): void {
+  const consumed = new Set(delta.consumedLeaseIds);
+  const added = new Set(delta.liveAddedAssetRecordIds);
+  const removed = new Set(delta.liveRemovedAssetRecordIds);
+  if (consumed.size !== delta.consumedLeaseIds.length
+    || added.size !== delta.liveAddedAssetRecordIds.length
+    || removed.size !== delta.liveRemovedAssetRecordIds.length
+    || [...added].some((assetId) => removed.has(assetId))) {
+    throw new Error('Outline asset delta contains duplicate or contradictory entries');
+  }
+  for (const leaseId of consumed) {
+    const lease = state.assetLeaseById.get(leaseId);
+    if (!lease || Date.parse(lease.expiresAt) <= now.getTime()) {
+      throw new OutlineContractError(outlineError(
+        'precondition_failed',
+        'conflict',
+        `Asset lease is unavailable, expired, or already consumed: ${leaseId}`,
+      ));
+    }
+  }
+  for (const assetId of [...added, ...removed]) {
+    if (!state.assetRecordById.has(assetId)) {
+      throw new OutlineContractError(outlineError(
+        'precondition_failed',
+        'conflict',
+        `AssetRecord is unavailable: ${assetId}`,
+      ));
+    }
+  }
+  if ([...added].some((assetId) => state.liveAssetRecordIds.has(assetId))
+    || [...removed].some((assetId) => !state.liveAssetRecordIds.has(assetId))) {
+    throw new Error('Outline asset delta does not match the committed live asset index');
   }
 }
 

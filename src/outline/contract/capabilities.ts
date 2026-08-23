@@ -1,6 +1,7 @@
 import Type, { type Static, type TSchema } from 'typebox';
 import {
   AssetLeaseSchema,
+  AssetRecordSchema,
   ChangeSetSchema,
   DiffSchema,
   EventSchema,
@@ -61,7 +62,7 @@ const FIXED_CAPABILITIES = [
   capability({ name: 'undo', kind: 'mutate', runtimeRequired: true, streaming: false, destructive: false, auditCategory: 'history.undo', summary: 'Revert the latest applicable Operation.', requestSchema: Type.Object({ preview: Type.Optional(Type.Boolean()) }, closed), resultSchema: MutationResult, coverage: ['undo'] }),
   capability({ name: 'redo', kind: 'mutate', runtimeRequired: true, streaming: false, destructive: false, auditCategory: 'history.redo', summary: 'Revert the latest applicable revert Operation.', requestSchema: Type.Object({ preview: Type.Optional(Type.Boolean()) }, closed), resultSchema: MutationResult, coverage: ['redo'] }),
   capability({ name: 'asset ingest', kind: 'asset', runtimeRequired: true, streaming: false, destructive: false, auditCategory: 'asset.ingest', summary: 'Stage verified asset bytes under a recovery-aware lease.', requestSchema: Type.Object({ source: Type.Union([Type.Literal('path'), Type.Literal('stdin')]), path: Type.Optional(Type.String()) }, closed), resultSchema: AssetLeaseSchema, coverage: ['ingest_asset', 'ingest_local_file', 'ingest_thread_resource'] }),
-  capability({ name: 'asset show', kind: 'asset', runtimeRequired: true, streaming: false, destructive: false, auditCategory: 'asset.read', summary: 'Read logical asset metadata.', requestSchema: Type.Object({ assetId: Type.String({ minLength: 1 }) }, closed), resultSchema: Type.Unknown(), coverage: ['lookup_asset'] }),
+  capability({ name: 'asset show', kind: 'asset', runtimeRequired: true, streaming: false, destructive: false, auditCategory: 'asset.read', summary: 'Read logical asset metadata.', requestSchema: Type.Object({ assetId: Type.String({ minLength: 1 }) }, closed), resultSchema: AssetRecordSchema, coverage: ['lookup_asset'] }),
   capability({ name: 'asset export', kind: 'asset', runtimeRequired: true, streaming: true, destructive: false, auditCategory: 'asset.export', summary: 'Stream verified asset bytes.', requestSchema: Type.Object({ assetId: Type.String({ minLength: 1 }) }, closed), resultSchema: Type.Unknown(), coverage: ['open_asset', 'copy_asset_file'] }),
 ] as const;
 

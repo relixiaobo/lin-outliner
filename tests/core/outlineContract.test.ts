@@ -23,7 +23,7 @@ const digest = 'a'.repeat(64);
 describe('outline public contract', () => {
   test('exports every named versioned schema as valid JSON Schema', () => {
     expect(Object.keys(OUTLINE_PUBLIC_SCHEMAS).sort()).toEqual([
-      'AssetLease', 'AssetMetadata', 'Change', 'ChangeSet', 'Diff', 'Event', 'EventFilter',
+      'AssetLease', 'AssetMetadata', 'AssetRecord', 'Change', 'ChangeSet', 'Diff', 'Event', 'EventFilter',
       'NodeDraft', 'Operation', 'OutlineError', 'OutlineRequest',
       'OutlineResponse', 'OutlineStreamRecord', 'Projection', 'ProjectionResult',
       'RuntimeDescriptor', 'Selector', 'TargetRef', 'TargetSpec',

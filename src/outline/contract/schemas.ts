@@ -504,6 +504,14 @@ export const AssetMetadataSchema = Type.Object({
   videoDurationMs: Type.Optional(Type.Integer({ minimum: 0 })),
 }, { ...closed, $id: 'AssetMetadata' });
 
+export const AssetRecordSchema = Type.Object({
+  protocolVersion: Type.Literal(OUTLINE_PROTOCOL_VERSION),
+  kind: Type.Literal('outline.asset'),
+  assetId: Identifier,
+  metadata: AssetMetadataSchema,
+  createdAt: Timestamp,
+}, { ...closed, $id: 'AssetRecord' });
+
 export const AssetLeaseSchema = Type.Object({
   protocolVersion: Type.Literal(OUTLINE_PROTOCOL_VERSION),
   leaseId: Identifier,
@@ -531,6 +539,7 @@ export const OUTLINE_PUBLIC_SCHEMAS = Object.freeze({
   OutlineStreamRecord: OutlineStreamRecordSchema,
   RuntimeDescriptor: RuntimeDescriptorSchema,
   AssetMetadata: AssetMetadataSchema,
+  AssetRecord: AssetRecordSchema,
   AssetLease: AssetLeaseSchema,
 } satisfies Readonly<Record<string, TSchema>>);
 
@@ -554,3 +563,5 @@ export type OutlineResponse = Static<typeof OutlineResponseSchema>;
 export type OutlineStreamRecord = Static<typeof OutlineStreamRecordSchema>;
 export type RuntimeDescriptor = Static<typeof RuntimeDescriptorSchema>;
 export type AssetLease = Static<typeof AssetLeaseSchema>;
+export type AssetMetadata = Static<typeof AssetMetadataSchema>;
+export type AssetRecord = Static<typeof AssetRecordSchema>;

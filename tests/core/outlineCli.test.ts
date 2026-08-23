@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -252,6 +252,69 @@ describe('outline CLI', () => {
     }
   });
 
+  test('streams asset ingest, show, and verified export through the Runtime', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const sourcePath = path.join(root, 'source.txt');
+      const sourceBytes = Buffer.from('asset path bytes');
+      await writeFile(sourcePath, sourceBytes);
+      const ingested = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'asset', 'ingest', sourcePath], {
+        runtimeRoot: root,
+        io: ingested.io,
+      })).toBe(0);
+      const lease = JSON.parse(ingested.stdout).data;
+      expect(lease.leaseId).toMatch(/^lease:/);
+      expect(lease.assetId).toMatch(/^asset:/);
+      expect(lease.metadata).toMatchObject({ byteSize: sourceBytes.byteLength, mimeType: 'text/plain' });
+
+      const shown = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'asset', 'show', lease.assetId], {
+        runtimeRoot: root,
+        io: shown.io,
+      })).toBe(0);
+      expect(JSON.parse(shown.stdout).data).toMatchObject({
+        kind: 'outline.asset',
+        assetId: lease.assetId,
+        metadata: { sha256: lease.metadata.sha256 },
+      });
+
+      const outputPath = path.join(root, 'exported.txt');
+      const exported = captureIo();
+      expect(await runOutlineCli([
+        '--json', '--no-start', 'asset', 'export', lease.assetId, '--output', outputPath,
+      ], { runtimeRoot: root, io: exported.io })).toBe(0);
+      expect(JSON.parse(exported.stdout).data).toMatchObject({
+        path: outputPath,
+        byteCount: sourceBytes.byteLength,
+        sha256: lease.metadata.sha256,
+      });
+      expect(await readFile(outputPath)).toEqual(sourceBytes);
+
+      const stdinBytes = Buffer.from([0, 1, 2, 3, 255]);
+      const stdinIngest = captureIo(stdinBytes);
+      expect(await runOutlineCli(['--json', '--no-start', 'asset', 'ingest', '-'], {
+        runtimeRoot: root,
+        io: stdinIngest.io,
+      })).toBe(0);
+      const stdinLease = JSON.parse(stdinIngest.stdout).data;
+      expect(stdinLease.metadata.byteSize).toBe(stdinBytes.byteLength);
+      expect(stdinIngest.stdinReads).toBe(1);
+
+      const stdoutExport = captureIo();
+      expect(await runOutlineCli([
+        '--no-start', 'asset', 'export', stdinLease.assetId, '--output', '-',
+      ], { runtimeRoot: root, io: stdoutExport.io })).toBe(0);
+      expect(stdoutExport.binaryStdout).toEqual(stdinBytes);
+      expect(stdoutExport.stdout).toBe('');
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   test('runs the real entry as a thin local process with clean stdout', async () => {
     const root = await makeRoot();
     const child = Bun.spawn([process.execPath, cliEntry, '--json', 'version'], {
@@ -280,20 +343,28 @@ describe('outline CLI', () => {
   });
 });
 
-function captureIo(stdin = '') {
+function captureIo(stdin: string | Uint8Array = '') {
   let stdout = '';
+  const binaryStdout: Buffer[] = [];
   let stderr = '';
   let stdinReads = 0;
+  const stdinBuffer = typeof stdin === 'string' ? Buffer.from(stdin) : Buffer.from(stdin);
   return {
     io: {
       stdout: (value: string) => { stdout += value; },
+      stdoutBytes: (value: Uint8Array) => { binaryStdout.push(Buffer.from(value)); },
       stderr: (value: string) => { stderr += value; },
       readStdin: async () => {
         stdinReads += 1;
-        return stdin;
+        return stdinBuffer.toString('utf8');
       },
+      stdinBytes: () => (async function* () {
+        stdinReads += 1;
+        yield stdinBuffer;
+      })(),
     },
     get stdout() { return stdout; },
+    get binaryStdout() { return Buffer.concat(binaryStdout); },
     get stderr() { return stderr; },
     get stdinReads() { return stdinReads; },
   };

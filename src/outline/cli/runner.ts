@@ -31,8 +31,10 @@ const MAX_INLINE_DIFF_BYTES = 8 * 1024 * 1024;
 
 export interface OutlineCliIo {
   readonly stdout: (value: string) => void;
+  readonly stdoutBytes: (value: Uint8Array) => void;
   readonly stderr: (value: string) => void;
   readonly readStdin: () => Promise<string>;
+  readonly stdinBytes: () => AsyncIterable<Uint8Array>;
 }
 
 export interface OutlineCliRunOptions {
@@ -57,12 +59,14 @@ interface ParsedInvocation {
 
 const defaultIo: OutlineCliIo = {
   stdout: (value) => process.stdout.write(value),
+  stdoutBytes: (value) => process.stdout.write(value),
   stderr: (value) => process.stderr.write(value),
   readStdin: async () => {
     const chunks: Buffer[] = [];
     for await (const chunk of process.stdin) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     return Buffer.concat(chunks).toString('utf8');
   },
+  stdinBytes: () => process.stdin,
 };
 
 export async function runOutlineCli(argv: readonly string[], options: OutlineCliRunOptions = {}): Promise<number> {
@@ -148,6 +152,8 @@ async function executeInvocation(
   const capability = outlineCapability(invocation.command);
   if (!capability) throw usageError(`Unknown outline command: ${invocation.command}`);
   if (!capability.runtimeRequired) throw usageError(`Unsupported local outline command: ${invocation.command}`);
+  if (invocation.command === 'asset ingest') return executeAssetIngest(invocation, supervisor, io, options.signal);
+  if (invocation.command === 'asset export') return executeAssetExport(invocation, supervisor, io, options.signal);
   if (capability.streaming) return executeStreamingInvocation(invocation, supervisor, io, options.signal);
   const input = await runtimeInput(invocation, io, supervisor);
   if (!Value.Check(capability.requestSchema, input)) {
@@ -206,6 +212,10 @@ async function runtimeInput(
   if (invocation.command === 'find' || invocation.command === 'show') {
     return (await parseReadCommand(invocation.command, invocation.args, (source) => readStructuredSource(source, io))).input;
   }
+  if (invocation.command === 'asset show') {
+    if (invocation.args.length !== 1) throw usageError('asset show requires exactly one AssetRecord ID.');
+    return { assetId: invocation.args[0] };
+  }
   if (invocation.command === 'log') return parseLogInput(invocation.args);
   if (invocation.command === 'revert') {
     const preview = takeFlag(invocation.args, '--preview');
@@ -256,6 +266,69 @@ async function runtimeInput(
     return { diff: value, ...(parsed.yes ? { acknowledgeDestructive: true } : {}) };
   }
   return value;
+}
+
+async function executeAssetIngest(
+  invocation: ParsedInvocation,
+  supervisor: OutlineClientSupervisor,
+  io: OutlineCliIo,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  if (invocation.args.length !== 1) throw usageError('asset ingest requires exactly one PATH or -.');
+  const source = invocation.args[0]!;
+  const client = await supervisor.connect();
+  try {
+    if (source === '-') return client.ingestAsset(io.stdinBytes(), { signal });
+    return (await client.request('asset ingest', { source: 'path', path: source })).data;
+  } finally {
+    client.close();
+  }
+}
+
+async function executeAssetExport(
+  invocation: ParsedInvocation,
+  supervisor: OutlineClientSupervisor,
+  io: OutlineCliIo,
+  signal?: AbortSignal,
+): Promise<unknown | HandledExecution> {
+  let assetId: string | undefined;
+  let output: string | undefined;
+  for (let index = 0; index < invocation.args.length; index += 1) {
+    const arg = invocation.args[index]!;
+    if (arg === '--output') output = requiredValue(invocation.args[++index], '--output');
+    else if (!assetId) assetId = arg;
+    else throw usageError(`Unexpected asset export argument: ${arg}`);
+  }
+  if (!assetId) throw usageError('asset export requires exactly one AssetRecord ID.');
+  if (!output) throw usageError('asset export requires --output FILE|-.');
+  const client = await supervisor.connect();
+  let file: Awaited<ReturnType<typeof open>> | undefined;
+  let temporaryPath: string | undefined;
+  let bytes = 0;
+  const digest = createHash('sha256');
+  try {
+    if (output !== '-') {
+      temporaryPath = `${output}.outline-${crypto.randomUUID()}.tmp`;
+      file = await open(temporaryPath, 'wx', 0o600);
+    }
+    for await (const chunk of client.exportAsset(assetId, signal)) {
+      bytes += chunk.byteLength;
+      digest.update(chunk);
+      if (file) await file.write(chunk);
+      else io.stdoutBytes(chunk);
+    }
+    if (!file) return { handled: true, exitCode: OUTLINE_EXIT_CODES.success };
+    await file.sync();
+    await file.close();
+    file = undefined;
+    await rename(temporaryPath!, output);
+    temporaryPath = undefined;
+    return { path: output, byteCount: bytes, sha256: digest.digest('hex') };
+  } finally {
+    client.close();
+    if (file) await file.close().catch(() => undefined);
+    if (temporaryPath) await rm(temporaryPath, { force: true }).catch(() => undefined);
+  }
 }
 
 function parseLogInput(args: readonly string[]): Record<string, unknown> {

@@ -3,11 +3,14 @@ import type { CoreTransactionMetadata } from '../../core/core';
 import { canonicalSha256 } from '../contract/canonical';
 import { OutlineContractError, outlineError } from '../contract/errors';
 import type { Operation, OutlineEvent } from '../contract/schemas';
+import type { Node } from '../../core/types';
 import { OUTLINE_PROTOCOL_VERSION } from '../contract/version';
 import {
   createOutlineRecoveryPatch,
   recoveryPatchToCorePatch,
   WorkspaceTransactionLog,
+  OutlineAssetStore,
+  type OutlineAssetStoreOptions,
   type OutlineAssetDelta,
   type WorkspaceTransactionAppendResult,
   type WorkspaceTransactionLogOptions,
@@ -30,6 +33,7 @@ export interface OutlineRuntimeMutationRequest {
   readonly revertsOperationId?: string;
   readonly protectedAssetRecordIds?: readonly string[];
   readonly assetDelta?: OutlineAssetDelta;
+  readonly assetLeases?: Readonly<Record<string, string>>;
   readonly idFactory?: (prefix: string) => string;
   readonly execute: (candidate: Core) => void | Operation['result'] | Promise<void | Operation['result']>;
   readonly result?: (candidate: Core) => Operation['result'];
@@ -41,6 +45,7 @@ export interface OutlineRuntimeWorkspaceOptions {
   readonly initialCore?: Core;
   readonly instanceId?: string;
   readonly now?: () => Date;
+  readonly assetStoreOptions?: OutlineAssetStoreOptions;
 }
 
 export class OutlineRuntimeWorkspace {
@@ -52,6 +57,7 @@ export class OutlineRuntimeWorkspace {
   private constructor(
     private core: Core,
     readonly store: WorkspaceTransactionLog,
+    readonly assets: OutlineAssetStore,
     readonly instanceId: string,
     readonly eventBaselineSequence: number,
     now?: () => Date,
@@ -60,7 +66,10 @@ export class OutlineRuntimeWorkspace {
   }
 
   static async open(root: string, options: OutlineRuntimeWorkspaceOptions = {}): Promise<OutlineRuntimeWorkspace> {
-    const store = options.store ?? new WorkspaceTransactionLog(root, options.storeOptions);
+    const store = options.store ?? new WorkspaceTransactionLog(root, {
+      ...options.storeOptions,
+      ...(options.now ? { now: options.now } : {}),
+    });
     let loaded = await store.load();
     if (!loaded.snapshot) {
       const initialCore = options.initialCore ?? Core.new();
@@ -80,13 +89,20 @@ export class OutlineRuntimeWorkspace {
           installationId: loaded.snapshot.local.installationId,
           revision,
         });
-    return new OutlineRuntimeWorkspace(
+    const assets = new OutlineAssetStore(root, store, {
+      ...options.assetStoreOptions,
+      ...(options.now ? { now: options.now } : {}),
+    });
+    const workspace = new OutlineRuntimeWorkspace(
       core,
       store,
+      assets,
       options.instanceId ?? `runtime:${crypto.randomUUID()}`,
       loaded.latestEventSequence,
       options.now,
     );
+    await workspace.collectAssetGarbage().catch(() => undefined);
+    return workspace;
   }
 
   revision(): number {
@@ -108,6 +124,12 @@ export class OutlineRuntimeWorkspace {
   subscribe(listener: (event: OutlineEvent) => void): () => void {
     this.eventListeners.add(listener);
     return () => this.eventListeners.delete(listener);
+  }
+
+  collectAssetGarbage(): Promise<readonly string[]> {
+    return this.enqueueMutation(() => this.assets.collectGarbage([
+      ...assetRecordIdsInNodes(Object.values(this.core.state().nodes)),
+    ]));
   }
 
   async mutate(request: OutlineRuntimeMutationRequest): Promise<Operation> {
@@ -250,6 +272,41 @@ export class OutlineRuntimeWorkspace {
         'The mutation produced no document changes.',
       ));
     }
+    const resolvedLeases = await this.assets.resolveLeases(Object.keys(request.assetLeases ?? {}));
+    for (const [leaseId, expectedAssetId] of Object.entries(request.assetLeases ?? {})) {
+      if (resolvedLeases.get(leaseId)?.assetId !== expectedAssetId) {
+        throw new OutlineContractError(outlineError(
+          'precondition_failed',
+          'conflict',
+          `Asset lease resolution changed before settlement: ${leaseId}`,
+        ));
+      }
+    }
+    const beforeLiveAssetIds = assetRecordIdsInNodes(Object.values(this.core.state().nodes));
+    const afterLiveAssetIds = assetRecordIdsInNodes(Object.values(candidate.state().nodes));
+    for (const assetId of Object.values(request.assetLeases ?? {})) {
+      if (!afterLiveAssetIds.has(assetId)) {
+        throw new OutlineContractError(outlineError(
+          'precondition_failed',
+          'conflict',
+          `Consumed asset lease is not referenced by the settled document: ${assetId}`,
+        ));
+      }
+    }
+    const patchAssetIds = assetRecordIdsInNodes(patch.nodes.flatMap((entry) => (
+      [entry.before, entry.after].filter((node): node is Node => node !== null)
+    )));
+    const protectedAssetRecordIds = await this.assets.expandAssetIds([
+      ...patchAssetIds,
+      ...request.protectedAssetRecordIds ?? [],
+    ]);
+    const recoveryOnlyAssetIds = protectedAssetRecordIds.filter((assetId) => !afterLiveAssetIds.has(assetId));
+    const assetDelta: OutlineAssetDelta = {
+      consumedLeaseIds: Object.keys(request.assetLeases ?? {}).sort(),
+      liveAddedAssetRecordIds: [...afterLiveAssetIds].filter((assetId) => !beforeLiveAssetIds.has(assetId)).sort(),
+      liveRemovedAssetRecordIds: [...beforeLiveAssetIds].filter((assetId) => !afterLiveAssetIds.has(assetId)).sort(),
+      recoveryOnlyBytes: await this.assets.byteSizeOf(recoveryOnlyAssetIds),
+    };
     const patchHash = semanticPatchDigest(patch.nodes);
     if (request.expectedPatchHash && request.expectedPatchHash !== patchHash) {
       throw new OutlineContractError(outlineError(
@@ -269,7 +326,7 @@ export class OutlineRuntimeWorkspace {
       changeSetHash: request.changeSetHash,
       diffHash: request.diffHash,
       corePatch: patch,
-      protectedAssetRecordIds: request.protectedAssetRecordIds,
+      protectedAssetRecordIds,
       createdAt,
     });
     const affectedNodeIds = patch.nodes.map((entry) => entry.id);
@@ -331,7 +388,7 @@ export class OutlineRuntimeWorkspace {
             operationId,
           },
         } : {}),
-        ...(request.assetDelta ? { assetDelta: request.assetDelta } : {}),
+        assetDelta,
       });
     } catch (error) {
       if (error instanceof OutlineContractError
@@ -362,4 +419,15 @@ export class OutlineRuntimeWorkspace {
     this.mutationChain = next.then(() => undefined, () => undefined);
     return next;
   }
+}
+
+function assetRecordIdsInNodes(nodes: readonly Node[]): Set<string> {
+  const result = new Set<string>();
+  for (const node of nodes) {
+    if (node.bannerAssetId) result.add(node.bannerAssetId);
+    if (node.icon && (node.iconKind === 'image' || node.iconKind === 'generated')) result.add(node.icon);
+    if ((node.type === 'image' || node.type === 'attachment') && node.assetId) result.add(node.assetId);
+    if (node.type === 'attachment' && node.thumbnailAssetId) result.add(node.thumbnailAssetId);
+  }
+  return result;
 }
