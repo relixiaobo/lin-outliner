@@ -357,6 +357,7 @@ export interface CorePersistenceSnapshot {
 
 export interface CorePersistenceOptions {
   installationId?: string;
+  revision?: number;
 }
 
 export interface WorkspacePersistenceLocalDelta {
@@ -584,6 +585,12 @@ export class Core {
     this.stateValue = this.loro.materializeState();
     this.loro.clearTouchedNodeIds();
     if (this.initialPersistRequired) this.persistenceRevisionValue = Math.max(this.persistenceRevisionValue, 1);
+    this.revisionValue = Math.max(0, Math.trunc(options.revision ?? 0));
+    this.lastRevisionDelta = {
+      revision: this.revisionValue,
+      changedNodeIds: [],
+      requiresFullSearchRebuild: true,
+    };
   }
 
   /** Whether construction created/changed nodes that are not yet on disk (system
@@ -630,6 +637,13 @@ export class Core {
 
   static deserializeState(raw: string): WorkspacePersistenceEnvelopeV3 {
     return parseWorkspacePersistenceEnvelope(JSON.parse(raw));
+  }
+
+  forkForRuntime(): Core {
+    return Core.fromState(Core.deserializeState(this.serializeState()), {
+      installationId: this.installationIdValue,
+      revision: this.revisionValue,
+    });
   }
 
   state() {
@@ -5440,7 +5454,17 @@ function cloneOptionalNode(node: Node | undefined): Node | undefined {
 }
 
 function sameOptionalNode(left: Node | undefined, right: Readonly<Node> | null): boolean {
-  return sameJson(left ?? null, right);
+  return stableJson(left ?? null) === stableJson(right);
+}
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map((child) => stableJson(child ?? null)).join(',')}]`;
+  return `{${Object.entries(value as Record<string, unknown>)
+    .filter(([, child]) => child !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, child]) => `${JSON.stringify(key)}:${stableJson(child)}`)
+    .join(',')}}`;
 }
 
 function coreTransactionNodePatch(
