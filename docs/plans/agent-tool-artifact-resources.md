@@ -195,9 +195,10 @@ oversized-output result rule apply at stop/finalization time.
 
 #### Managed-Skill output roots
 
-Managed Skills already receive per-Turn output directories through their host
-environment, but environment variables are not ownership. Add a typed output-root
-seam to the managed shell environment contribution:
+Managed Skills receive per-command execution output directories, nested under
+their Thread and Turn, through their host environment, but environment variables
+are not ownership. Add a typed output-root seam to the managed shell environment
+contribution:
 
 ```ts
 interface AgentShellOutputRoot {
@@ -218,9 +219,11 @@ interface AgentShellProcessEnvironment {
 contributors, validates each root as a canonical physical child of the app-owned
 Agent scratch boundary, and passes the typed declarations to shell execution.
 Each contributor remains responsible for creating its narrower per-Thread,
-per-Turn directory without symlink escapes. Existing env vars such as Browser
-Pilot's output directory may continue to point the external CLI at the same
-directory, but the env var is not parsed back as authority.
+per-Turn, per-command execution directory without symlink escapes. Raw tool-call
+identities do not enter filesystem paths; the Browser Pilot host derives an opaque
+execution key for the final path segment. Existing env vars such as Browser Pilot's
+output directory may continue to point the external CLI at the same directory, but
+the env var is not parsed back as authority.
 
 The implementation adds a bounded collector at the real shell boundaries used
 by managed Skills. Ordinary foreground `bash` snapshots all roots declared by
@@ -235,6 +238,13 @@ the Skill being invoked. A background shell stores its launch-time snapshot and
    excess file counts;
 4. persist accepted files through the sink; and
 5. report a resource manifest plus bounded warnings for skipped files.
+
+The managed-Skill registry caches the active Skill set once per Turn, then builds
+and caches the composed environment separately for each tool-call execution. A
+foreground command and a concurrently running background command therefore never
+share a collector root: the foreground result cannot claim a file authored by the
+background process, and `task_stop` retains the background task's launch-time root
+and snapshot.
 
 This placement matters for Browser Pilot: the `skill` tool loads its inline
 instructions, while the actual `bp` invocation happens later through ordinary
@@ -322,6 +332,8 @@ Required test coverage:
   vars or scanning scratch.
 - managed-Skill output-root collection admits only bounded safe regular files
   and reports skipped files without failing the invocation.
+- a delayed background write cannot appear in a concurrent foreground Bash result;
+  terminal `task_stop` claims that file from the background execution's root only.
 - completed tool Item `resourceRefs` survive codec round trip, restart, fork,
   inherited context, and renderer item projection.
 - persisted tool output omits the producing Turn's live path; after that Turn's

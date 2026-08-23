@@ -37,11 +37,15 @@ export class BrowserPilotHost {
     this.loadInstallationId = options.loadInstallationId ?? loadOrCreateInstallationId;
   }
 
-  async processEnvironment(threadId: string, turnId: string): Promise<AgentShellProcessEnvironment> {
+  async processEnvironment(
+    threadId: string,
+    turnId: string,
+    executionId: string,
+  ): Promise<AgentShellProcessEnvironment> {
     await assertManagedCommandDirectory(this.installRoot, this.binDirectory);
     const [installationId, outputDirectory] = await Promise.all([
       this.installationIdentity(),
-      prepareBrowserPilotOutputDirectory(this.scratchRoot, threadId, turnId),
+      prepareBrowserPilotOutputDirectory(this.scratchRoot, threadId, turnId, executionId),
     ]);
     return {
       env: {
@@ -92,6 +96,7 @@ export async function prepareBrowserPilotOutputDirectory(
   scratchRoot: string,
   threadId: string,
   turnId: string,
+  executionId: string,
 ): Promise<string> {
   assertSafeExecutionId(threadId, 'Thread');
   assertSafeExecutionId(turnId, 'Turn');
@@ -99,8 +104,10 @@ export async function prepareBrowserPilotOutputDirectory(
   await ensurePrivateDirectory(root, true);
   const browserPilotRoot = path.join(root, 'browser-pilot');
   const threadRoot = path.join(browserPilotRoot, threadId);
-  const outputDirectory = path.join(threadRoot, turnId);
-  for (const directory of [browserPilotRoot, threadRoot, outputDirectory]) {
+  const turnRoot = path.join(threadRoot, turnId);
+  const executionKey = createHash('sha256').update(executionId).digest('base64url');
+  const outputDirectory = path.join(turnRoot, executionKey);
+  for (const directory of [browserPilotRoot, threadRoot, turnRoot, outputDirectory]) {
     await ensurePrivateDirectory(directory, false);
   }
   const [canonicalRoot, canonicalOutput] = await Promise.all([realpath(root), realpath(outputDirectory)]);

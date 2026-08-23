@@ -281,13 +281,15 @@ Agent -> browser-pilot Skill -> bash -> bp CLI -> Chrome
 ```
 
 On the first shell-environment request in a Turn, the managed-Skill environment
-registry reads the active managed runtime roots and invokes only contributors
-whose Skills are enabled, clean, and compatible. It memoizes the composed result
-for that Turn, so Skill-shell, foreground `bash`, and background `bash` processes
-share one environment. Browser Pilot contributes only while its managed record is
-active. An active-root lookup or one contributor failure is logged and omitted;
-the shell continues with the remaining or ordinary environment, so an optional
-integration cannot make unrelated `bash` unavailable.
+registry reads and caches the active managed runtime roots, then invokes only
+contributors whose Skills are enabled, clean, and compatible. It builds and caches
+the composed result separately for each tool-call execution. Stable host values
+remain consistent across Skill-shell, foreground `bash`, and background `bash`,
+while execution-owned output roots do not leak across commands. Browser Pilot
+contributes only while its managed record is active. An active-root lookup or one
+contributor failure is logged and omitted; the shell continues with the remaining
+or ordinary environment, so an optional integration cannot make unrelated `bash`
+unavailable.
 
 Agent command-path precedence is explicit: `LIN_AGENT_EXTRA_TOOL_PATH`, validated
 managed-Skill bin contributions, the inherited process `PATH`, then standard
@@ -303,8 +305,10 @@ Unexpected contents reject that contribution rather than entering Agent `PATH`.
 installation ID and Thread ID. It is stable across Turns in one Thread and
 different for root, forked, child, isolated-Skill, and concurrent Threads.
 `BROWSER_PILOT_OUTPUT_DIR` is a canonical private directory under Agent scratch,
-scoped by Thread ID and Turn ID. The host rejects unsafe IDs and symlink escapes
-before launching the process; the existing scratch TTL owns cleanup.
+scoped by Thread ID, Turn ID, and an opaque SHA-256 key derived from the raw
+tool-call identity. The raw identity never becomes a path segment. The host
+rejects unsafe Thread/Turn IDs and symlink escapes before launching the process;
+the existing scratch TTL owns cleanup.
 
 The same directory is contributed independently as a typed `declaredOutputRoots`
 entry owned by the `browser-pilot` Skill. Environment variables direct the external
@@ -312,14 +316,17 @@ process but never authorize collection. Ordinary foreground `bash` snapshots the
 declared by active contributors before launch and collects them after exit; embedded
 Skill shell narrows the roots to that managed Skill. A background command retains its
 launch snapshot, and terminal `task_stop` performs its collection after output closes.
+Each command receives a distinct execution-scoped root, so a delayed background write
+cannot be attributed to a concurrent foreground command; `task_stop` continues to use
+the background execution's original root and snapshot.
 The collector admits only new or changed regular files. It skips hidden control files,
 symlinks, non-files, files above 64 MiB, entries beyond the 512-entry scan ceiling, and
 artifacts beyond the 16-file result ceiling with bounded warnings. If the pre-command
 baseline cannot be scanned completely, that root is not collected for the execution.
 Contributor/root identity, canonical physical paths, and containment below Agent scratch
 are validated; one invalid contribution is omitted without disabling ordinary shell
-execution. Browser Pilot separately creates its root as a private per-Thread, per-Turn
-directory and rejects symlink escapes.
+execution. Browser Pilot separately creates its root as a private per-Thread, per-Turn,
+per-command execution directory and rejects symlink escapes.
 
 These values, `BROWSER_PILOT_INSTALL_ROOT`, and `BROWSER_PILOT_BIN_DIR` are host
 execution context. They never enter model parameters, tool arguments, canonical
@@ -327,8 +334,8 @@ Items, transcripts, or diagnostics. Tenon does not set `BROWSER_PILOT_HOME`, so
 compatible clients keep using Browser Pilot's ordinary shared service, and it
 does not set one Turn-wide `BROWSER_PILOT_REQUEST_ID` because request identity is
 per command. The installation identity is cached only after a successful load;
-a transient read failure drops that Turn's optional contribution and can retry on
-a later Turn.
+a transient read failure drops that command's optional contribution and can retry
+on a later command execution.
 
 ### Web And Image
 

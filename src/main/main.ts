@@ -588,7 +588,9 @@ managedSkillShellEnvironment = new ManagedSkillShellEnvironmentRegistry({
   outputRootBoundary: agentScratchRoot,
   contributors: [{
     skillId: BROWSER_PILOT_MANAGED_SKILL_ID,
-    processEnvironment: (threadId, turnId) => browserPilotHost.processEnvironment(threadId, turnId),
+    processEnvironment: ({ threadId, turnId, executionId }) => (
+      browserPilotHost.processEnvironment(threadId, turnId, executionId)
+    ),
   }],
 });
 // An available Skill update should be visible without going looking for it, but
@@ -867,7 +869,9 @@ threadService = ThreadService.open(
           localRoot: thread.cwd,
           scratchRoot: agentScratchRoot,
           signal,
-          processEnvironment: () => managedSkillShellEnvironment!.processEnvironment(thread.id, turnId),
+          processEnvironment: (shell) => (
+            managedSkillShellEnvironment!.processEnvironment(thread.id, turnId, shell)
+          ),
           writeBoundary: agentWriteBoundaryForThread(thread.id),
           subagentPolicy: threadService.subagentExecution(thread.id)?.toolPolicy,
         }),
@@ -940,7 +944,11 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
       localRoot: context.thread.cwd,
       scratchRoot: agentScratchRoot,
       signal,
-      processEnvironment: () => managedSkillShellEnvironment!.processEnvironment(context.thread.id, context.turn.id),
+      processEnvironment: (shell) => managedSkillShellEnvironment!.processEnvironment(
+        context.thread.id,
+        context.turn.id,
+        shell,
+      ),
       writeBoundary: agentWriteBoundaryForThread(context.thread.id),
       subagentPolicy: threadService.subagentExecution(context.thread.id)?.toolPolicy,
       artifactSink: createToolArtifactSink(context),
@@ -1042,7 +1050,11 @@ function localWorkspaceForTurn(context: Parameters<ToolRuntime['createTools']>[0
   const processEnvironment = createTenonImportShellEnvironmentProvider({
     threadId: context.thread.id,
     turnId: context.turn.id,
-    baseEnvironment: () => managedSkillShellEnvironment!.processEnvironment(context.thread.id, context.turn.id),
+    baseEnvironment: (shell) => managedSkillShellEnvironment!.processEnvironment(
+      context.thread.id,
+      context.turn.id,
+      shell,
+    ),
     issueCausationToken: (causation) => importApiServer.issueCausationToken(causation),
   });
   return createAgentLocalWorkspaceContext(

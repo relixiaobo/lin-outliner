@@ -38,6 +38,8 @@ import {
 } from '../../src/main/agent/capabilities/agentRipgrep';
 import { buildStoredZip, pptxFixtureEntries } from '../helpers/pptxFixture';
 import type { ToolArtifactSink } from '../../src/main/agent/runtime/ToolArtifactSink';
+import { BrowserPilotHost } from '../../src/main/browserPilotHost';
+import { ManagedSkillShellEnvironmentRegistry } from '../../src/main/managedSkillShellEnvironment';
 
 const localToolSets = new Map<string, ReturnType<typeof createLocalTools>>();
 
@@ -329,6 +331,82 @@ posixBashProcessTest('foreground bash and task_stop admit files from typed manag
         ref: expect.objectContaining({ fileName: 'background.txt' }),
       }),
     ]);
+  });
+});
+
+posixBashProcessTest('execution-scoped output roots prevent concurrent Bash artifact misattribution', async () => {
+  await withWorkspace(async (workspaceRoot) => {
+    const ownerThreadId = 'concurrent-output-thread';
+    const turnId = 'concurrent-output-turn';
+    const scratchRoot = path.join(workspaceRoot, 'agent-scratch');
+    const browserPilotHost = new BrowserPilotHost({
+      userDataRoot: path.join(workspaceRoot, 'user-data'),
+      scratchRoot,
+      loadInstallationId: async () => 'concurrent-output-installation',
+    });
+    const registry = new ManagedSkillShellEnvironmentRegistry({
+      activeSkillIds: async () => new Set(['browser-pilot']),
+      outputRootBoundary: scratchRoot,
+      contributors: [{
+        skillId: 'browser-pilot',
+        processEnvironment: ({ threadId, turnId: environmentTurnId, executionId }) => (
+          browserPilotHost.processEnvironment(threadId, environmentTurnId, executionId)
+        ),
+      }],
+    });
+    const processEnvironment = (shell: { toolCallId?: string; command: string }) => (
+      registry.processEnvironment(ownerThreadId, turnId, shell)
+    );
+    const artifactSink = testArtifactSink(workspaceRoot);
+    const workspace = createAgentLocalWorkspaceContext(
+      workspaceRoot,
+      scratchRoot,
+      undefined,
+      processEnvironment,
+      undefined,
+      ownerThreadId,
+    );
+    const bash = createLocalTools({ workspace, artifactSink }).find((tool) => tool.name === 'bash')!;
+    const backgroundCommand = 'sleep 0.2; printf background > "$BROWSER_PILOT_OUTPUT_DIR/background.txt"';
+    const foregroundCommand = 'sleep 0.5';
+
+    const background = await bash.execute('background-owner', {
+      command: backgroundCommand,
+      run_in_background: true,
+    });
+    const foreground = await bash.execute('foreground-empty', { command: foregroundCommand });
+    const foregroundData = (foreground.details as ToolEnvelope<BashData>).data;
+    expect(foreground.resourceRefs ?? []).toEqual([]);
+    expect(foregroundData?.artifacts).toBeUndefined();
+
+    const backgroundData = (background.details as ToolEnvelope<BashData>).data;
+    await waitForFileContent(
+      backgroundData!.temporaryOutputPath!,
+      (content) => content.includes('status: completed'),
+    );
+    const stopped = await stopBackgroundShellTaskResult(
+      backgroundData!.backgroundTaskId!,
+      ownerThreadId,
+      artifactSink,
+    );
+    expect((stopped?.details as ToolEnvelope<BackgroundShellStopToolData>).data?.artifacts).toEqual([{
+      ref: expect.objectContaining({ fileName: 'background.txt' }),
+      readablePath: expect.any(String),
+      label: 'Browser Pilot output/background.txt',
+    }]);
+
+    const [backgroundEnvironment, foregroundEnvironment] = await Promise.all([
+      registry.processEnvironment(ownerThreadId, turnId, {
+        toolCallId: 'background-owner',
+        command: backgroundCommand,
+      }),
+      registry.processEnvironment(ownerThreadId, turnId, {
+        toolCallId: 'foreground-empty',
+        command: foregroundCommand,
+      }),
+    ]);
+    expect(backgroundEnvironment.declaredOutputRoots?.[0]?.path)
+      .not.toBe(foregroundEnvironment.declaredOutputRoots?.[0]?.path);
   });
 });
 

@@ -11,19 +11,26 @@ afterEach(async () => {
 });
 
 describe('managed Skill shell environment registry', () => {
-  test('contributes only active Skills and memoizes one environment per Turn', async () => {
+  test('contributes only active Skills and memoizes active state per Turn plus environments per execution', async () => {
     const active = new Set(['browser-pilot']);
+    let activeLookups = 0;
     let browserCalls = 0;
     let inactiveCalls = 0;
     const registry = new ManagedSkillShellEnvironmentRegistry({
-      activeSkillIds: async () => active,
+      activeSkillIds: async () => {
+        activeLookups += 1;
+        return active;
+      },
       outputRootBoundary: tmpdir(),
       contributors: [{
         skillId: 'browser-pilot',
-        processEnvironment: async () => {
+        processEnvironment: async ({ executionId }) => {
           browserCalls += 1;
           return {
-            env: { BROWSER_PILOT_CLIENT_KEY: 'tenon.thread' },
+            env: {
+              BROWSER_PILOT_CLIENT_KEY: 'tenon.thread',
+              BROWSER_PILOT_EXECUTION: executionId,
+            },
             leadingToolPathSegments: ['/managed/browser-pilot/bin'],
           };
         },
@@ -36,24 +43,32 @@ describe('managed Skill shell environment registry', () => {
       }],
     });
 
-    const first = await registry.processEnvironment('thread-1', 'turn-1');
-    const repeated = await registry.processEnvironment('thread-1', 'turn-1');
+    const first = await registry.processEnvironment('thread-1', 'turn-1', shellContext('call-1'));
+    const repeated = await registry.processEnvironment('thread-1', 'turn-1', shellContext('call-1'));
+    const nextExecution = await registry.processEnvironment('thread-1', 'turn-1', shellContext('call-2'));
     expect(repeated).toBe(first);
     expect(first).toEqual({
-      env: { BROWSER_PILOT_CLIENT_KEY: 'tenon.thread' },
+      env: {
+        BROWSER_PILOT_CLIENT_KEY: 'tenon.thread',
+        BROWSER_PILOT_EXECUTION: 'call-1',
+      },
       leadingToolPathSegments: ['/managed/browser-pilot/bin'],
     });
-    expect(browserCalls).toBe(1);
+    expect(nextExecution.env?.BROWSER_PILOT_EXECUTION).toBe('call-2');
+    expect(activeLookups).toBe(1);
+    expect(browserCalls).toBe(2);
     expect(inactiveCalls).toBe(0);
 
     registry.clearTurn('turn-1');
-    await registry.processEnvironment('thread-1', 'turn-1');
-    expect(browserCalls).toBe(2);
+    await registry.processEnvironment('thread-1', 'turn-1', shellContext('call-1'));
+    expect(activeLookups).toBe(2);
+    expect(browserCalls).toBe(3);
 
     active.clear();
     registry.invalidate();
-    expect(await registry.processEnvironment('thread-1', 'turn-2')).toEqual({});
-    expect(browserCalls).toBe(2);
+    expect(await registry.processEnvironment('thread-1', 'turn-2', shellContext('call-3'))).toEqual({});
+    expect(activeLookups).toBe(3);
+    expect(browserCalls).toBe(3);
   });
 
   test('isolates contributor and active-record failures', async () => {
@@ -71,7 +86,7 @@ describe('managed Skill shell environment registry', () => {
       onError: (message) => errors.push(message),
     });
 
-    expect(await registry.processEnvironment('thread-1', 'turn-1')).toEqual({
+    expect(await registry.processEnvironment('thread-1', 'turn-1', shellContext('call-1'))).toEqual({
       env: { HEALTHY: 'true' },
     });
     expect(errors).toHaveLength(1);
@@ -83,7 +98,7 @@ describe('managed Skill shell environment registry', () => {
       contributors: [],
       onError: (message) => errors.push(message),
     });
-    expect(await lookupFailure.processEnvironment('thread-1', 'turn-2')).toEqual({});
+    expect(await lookupFailure.processEnvironment('thread-1', 'turn-2', shellContext('call-2'))).toEqual({});
     expect(errors.at(-1)).toContain('active Skill lookup failed');
   });
 
@@ -154,7 +169,7 @@ describe('managed Skill shell environment registry', () => {
       onError: (message) => errors.push(message),
     });
 
-    expect(await registry.processEnvironment('thread-1', 'turn-1')).toEqual({
+    expect(await registry.processEnvironment('thread-1', 'turn-1', shellContext('call-1'))).toEqual({
       env: { BROWSER_ACTIVE: 'true' },
       declaredOutputRoots: [{
         id: 'browser-output',
@@ -167,3 +182,7 @@ describe('managed Skill shell environment registry', () => {
     expect(errors.every((message) => message.includes('declared an invalid output root'))).toBe(true);
   });
 });
+
+function shellContext(toolCallId: string) {
+  return { toolCallId, command: 'true' };
+}

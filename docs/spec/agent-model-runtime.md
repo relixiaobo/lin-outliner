@@ -461,7 +461,8 @@ Turn's scratch path.
 For shell producers, durable text also substitutes every typed managed-output root in
 stdout, stderr, and warnings with its stable root identity. This covers the ordinary
 `bash` call that follows an inline Browser Pilot Skill load, not only embedded Skill shell
-expansion.
+expansion. Managed roots are scoped to one command execution, so concurrent foreground
+and background collectors cannot claim each other's files.
 
 Binary image output never enters rollout JSON, SQLite projection, or IPC as a
 data URL. Every accepted dynamic-tool image stores one immutable `artifactRef`; the

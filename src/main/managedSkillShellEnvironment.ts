@@ -1,13 +1,24 @@
 import type {
   AgentShellOutputRoot,
   AgentShellProcessEnvironment,
+  AgentShellProcessEnvironmentContext,
 } from './agent/capabilities/agentLocalTools';
+import { randomUUID } from 'node:crypto';
 import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
+export interface ManagedSkillShellEnvironmentContributorContext
+  extends AgentShellProcessEnvironmentContext {
+  readonly threadId: string;
+  readonly turnId: string;
+  readonly executionId: string;
+}
+
 export interface ManagedSkillShellEnvironmentContributor {
   skillId: string;
-  processEnvironment: (threadId: string, turnId: string) => Promise<AgentShellProcessEnvironment>;
+  processEnvironment: (
+    context: ManagedSkillShellEnvironmentContributorContext,
+  ) => Promise<AgentShellProcessEnvironment>;
 }
 
 export interface ManagedSkillShellEnvironmentRegistryOptions {
@@ -19,7 +30,8 @@ export interface ManagedSkillShellEnvironmentRegistryOptions {
 
 interface CachedTurnEnvironment {
   threadId: string;
-  promise: Promise<AgentShellProcessEnvironment>;
+  activeSkillIds: Promise<ReadonlySet<string>>;
+  executionEnvironments: Map<string, Promise<AgentShellProcessEnvironment>>;
 }
 
 /**
@@ -40,16 +52,37 @@ export class ManagedSkillShellEnvironmentRegistry {
     this.onError = options.onError ?? ((message, error) => console.warn(message, error));
   }
 
-  processEnvironment(threadId: string, turnId: string): Promise<AgentShellProcessEnvironment> {
-    const cached = this.turnEnvironments.get(turnId);
-    if (cached?.threadId === threadId) return cached.promise;
-    if (cached) {
+  processEnvironment(
+    threadId: string,
+    turnId: string,
+    context: AgentShellProcessEnvironmentContext,
+  ): Promise<AgentShellProcessEnvironment> {
+    let turnEnvironment = this.turnEnvironments.get(turnId);
+    if (turnEnvironment && turnEnvironment.threadId !== threadId) {
       this.onError('[managed-skills] one Turn identity was observed in multiple Threads; rebuilding shell environment', {
         turnId,
       });
+      turnEnvironment = undefined;
     }
-    const promise = this.buildEnvironment(threadId, turnId);
-    this.turnEnvironments.set(turnId, { threadId, promise });
+    if (!turnEnvironment) {
+      turnEnvironment = {
+        threadId,
+        activeSkillIds: this.loadActiveSkillIds(),
+        executionEnvironments: new Map(),
+      };
+      this.turnEnvironments.set(turnId, turnEnvironment);
+    }
+
+    const executionId = context.toolCallId?.trim() ? context.toolCallId : `anonymous-${randomUUID()}`;
+    const cached = turnEnvironment.executionEnvironments.get(executionId);
+    if (cached) return cached;
+    const promise = this.buildEnvironment(turnEnvironment.activeSkillIds, {
+      ...context,
+      threadId,
+      turnId,
+      executionId,
+    });
+    turnEnvironment.executionEnvironments.set(executionId, promise);
     return promise;
   }
 
@@ -61,22 +94,27 @@ export class ManagedSkillShellEnvironmentRegistry {
     this.turnEnvironments.clear();
   }
 
-  private async buildEnvironment(threadId: string, turnId: string): Promise<AgentShellProcessEnvironment> {
-    let activeSkillIds: ReadonlySet<string>;
+  private async loadActiveSkillIds(): Promise<ReadonlySet<string>> {
     try {
-      activeSkillIds = await this.activeSkillIds();
+      return new Set(await this.activeSkillIds());
     } catch (error) {
       this.onError('[managed-skills] active Skill lookup failed; continuing without managed shell environment', error);
-      return {};
+      return new Set();
     }
+  }
 
+  private async buildEnvironment(
+    activeSkillIdsPromise: Promise<ReadonlySet<string>>,
+    context: ManagedSkillShellEnvironmentContributorContext,
+  ): Promise<AgentShellProcessEnvironment> {
+    const activeSkillIds = await activeSkillIdsPromise;
     const contributions = await Promise.all(this.contributors
       .filter((contributor) => activeSkillIds.has(contributor.skillId))
       .map(async (contributor) => {
         try {
           return {
             contributor,
-            environment: await contributor.processEnvironment(threadId, turnId),
+            environment: await contributor.processEnvironment(context),
           };
         } catch (error) {
           this.onError(

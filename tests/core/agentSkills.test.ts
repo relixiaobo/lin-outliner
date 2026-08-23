@@ -677,6 +677,59 @@ describe('agent skills', () => {
     expect(JSON.stringify(result.details)).not.toContain(readablePath);
   });
 
+  test('preserves embedded shell artifacts when isolated Skill execution fails', async () => {
+    const root = await createSkillFixture('failed-isolated-artifact-skill', {
+      frontmatter: [
+        'description: Failed isolated artifact skill',
+        'execution: isolated',
+        'shell: bash',
+      ],
+      body: 'Inspect this output:\n```!\nproduce-report\n```',
+    });
+    const resourceRef = {
+      id: 'c'.repeat(64),
+      mimeType: 'application/pdf',
+      byteLength: 120,
+      fileName: 'failed-report.pdf',
+    };
+    const readablePath = '/tmp/turn-artifacts/failed-report.pdf';
+    const runtime = new AgentSkillRuntime({
+      localRoot: root,
+      includeUserSkills: false,
+      executeSkillShell: async () => ({
+        output: `resource=${resourceRef.id}\nCurrent readable path: ${readablePath}`,
+        persistedOutput: `resource=${resourceRef.id}`,
+        resourceRefs: [resourceRef],
+        artifacts: [{ ref: resourceRef, readablePath, label: 'Generated report' }],
+      }),
+      executeIsolatedSkill: async () => {
+        throw new Error('Child execution failed');
+      },
+    });
+
+    const invocation = await runtime.invokeSkill({
+      skill: 'failed-isolated-artifact-skill',
+      trigger: 'agent',
+    });
+    expect(invocation).toMatchObject({
+      ok: false,
+      code: 'isolated_execution_failed',
+      resourceRefs: [resourceRef],
+      artifactObservations: [{ ref: resourceRef, readablePath, label: 'Generated report' }],
+    });
+
+    const result = await createSkillTool(runtime).execute('failed-isolated-artifact-call', {
+      skill: 'failed-isolated-artifact-skill',
+    });
+    expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+      ok: false,
+      data: { artifacts: [{ filePath: readablePath, resourceRef }] },
+      error: { code: 'isolated_execution_failed', message: 'Child execution failed' },
+    });
+    expect(result.resourceRefs).toEqual([resourceRef]);
+    expect(JSON.stringify(result.details)).not.toContain(readablePath);
+  });
+
   test('preserves artifact ownership when embedded shell expansion fails', async () => {
     const root = await createSkillFixture('failing-artifact-skill', {
       frontmatter: [

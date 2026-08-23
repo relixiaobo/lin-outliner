@@ -552,6 +552,8 @@ export class AgentSkillRuntime {
           ok: false,
           code: 'isolated_execution_failed',
           message,
+          ...(resourceRefs.length > 0 ? { resourceRefs } : {}),
+          ...(artifactObservations.length > 0 ? { artifactObservations } : {}),
           skill,
         };
       }
