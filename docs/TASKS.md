@@ -569,13 +569,12 @@ Standalone agent items (not part of the program):
   scratch paths, and restart, fork, rollback, deletion, quota, and pruning share
   the existing resource lifecycle. Design folded into `docs/spec/agent-core.md`,
   `docs/spec/agent-model-runtime.md`, and `docs/spec/agent-tool-design.md`.
-- **[composer-large-paste-attachment](plans/composer-large-paste-attachment.md)**
-  (P2, `draft` 2026-08-23; plan PR #581, codex-2) — the Agent composer
-  classifies individual plain-text pastes and the projected complete draft
-  before ProseMirror construction. Large eligible pastes become managed
-  `pasted-content*.txt` attachments; small pastes stay inline until the
-  aggregate editor budget is reached. #582 is merged; implementation can now
-  sync its overlapping `agent-model-runtime.md` wording against `main`.
+- **[composer-large-paste-attachment](plans/archive/composer-large-paste-attachment.md)**
+  (P2, `done` 2026-08-24; plan PR #581, implementation PR #586, codex-2/codex-4) —
+  large plain-text pastes now become managed `Pasted*.txt` attachments in a
+  linked inline-marker and tray experience, with projected attachment budgets,
+  pending-upload submission guards, and identity-safe replacement recovery.
+  Design folded into the Agent runtime, Thread rendering, and design-system specs.
 - **agent-dream-followups** — **REMOVED 2026-08-03.** Seven polish items for a subsystem
   that no longer exists: `dream-channel-and-memory-retire` retired Dream in full (#324, #328,
   #329) and `rg -i dream src/` is empty. It survived the retirement because nothing links a

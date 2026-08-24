@@ -12,6 +12,27 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Large pastes now become linked composer attachments (PR #586, codex-4)** —
+  pasting at least 4 KiB of plain text creates a managed `Pasted.txt`,
+  `Pasted-2.txt`, and so on instead of flooding the editor; smaller pastes stay
+  inline. Every image, file, and pasted-text attachment now has one linked inline
+  marker and preview-first tray card, with marker selection from the tray,
+  identity-driven removal, narrow-rail edge navigation, and light/dark native
+  styling. Pending uploads block both button and Enter submission, failed
+  replacements restore the selected content and its managed ownership, and a
+  second paste cannot invalidate a pending request hidden inside its selection.
+  Admission is evaluated against the projected final draft, so replacing one
+  complete attachment at the 20-item limit remains valid; per-message limits are
+  now 20 total attachments, 10 images, and 24 MiB of normalized prompt-image
+  observations, while the existing per-file and Thread-storage limits remain.
+  Gate review found five Medium defects across two rounds in keyboard admission,
+  pending semantics, rollback ownership, nested pending replacement, and
+  replacement-at-limit counting; `8abc0938` and `4fa5cb66` closed all five, and
+  the final review found no reportable issue. Verified with typecheck, 1,371
+  renderer tests, 2,650 passing Core tests with 6 skipped, 12 focused attachment
+  E2E tests, 45 design-token guards, docs and whitespace checks, light/dark visual
+  QA, and all five GitHub E2E samples plus baseline subtraction.
+
 - **Tana journal dates can now import directly into canonical Daily Notes (PR
   #583, codex)** — the deterministic Tana adapter recognizes only exact
   `journalPart` records with canonical `YYYY-MM-DD` local dates, defaults eligible

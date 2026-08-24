@@ -1821,3 +1821,25 @@ Regression coverage needs both halves: a large pre-existing document that bounds
 the first and subsequent slices, and an injected failure after a setup chunk has
 committed that proves projection and operation history return to their original
 state.
+
+## Replacement admission is a projected transaction
+
+PR #586 initially treated large-paste replacement as an insertion checked against
+the current attachment count. That rejected a valid one-for-one replacement at
+the 20-item limit. Its first rollback fix also snapshotted another pending marker,
+then let slice removal cancel that marker's request; when the outer upload failed,
+rollback restored an identifier whose controller, queue entry, and tray state no
+longer existed.
+
+**Validate replacement against the state that can actually commit or roll back.**
+Capacity is `survivors + additions`, with an identity removed from `survivors`
+only when the selection removes every one of its markers. A rollback snapshot may
+contain asynchronous state only while the operation retains that state's
+ownership and liveness; otherwise reject the replacement before allocating an
+identifier or mutating the document. Restoring serialized shape without restoring
+the live operation behind it creates plausible-looking dead state.
+
+Regression coverage needs both boundaries: replace one fully selected identity at
+the exact capacity while a partially selected multi-marker identity still counts,
+and attempt a failing replacement over an unsettled operation while asserting no
+new request starts and no orphaned marker can return.
