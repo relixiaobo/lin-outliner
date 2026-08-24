@@ -1479,6 +1479,33 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.getByRole('status')).toContainText('Skipped 2 images over the 10 image limit.');
   });
 
+  test('allows a large paste to replace an attachment at the composer limit', async ({ page }) => {
+    await createNewThread(page);
+    await page.locator('.thread-composer-file-input').setInputFiles(Array.from({ length: 20 }, (_, index) => ({
+      name: `limit-${index + 1}.txt`,
+      mimeType: 'text/plain',
+      buffer: Buffer.from(`limit attachment ${index + 1}`),
+    })));
+
+    const markers = page.locator('.thread-composer-inline-ref[data-thread-file-ref]');
+    await expect(markers).toHaveCount(20);
+    await markers.first().evaluate((element) => {
+      const range = document.createRange();
+      range.selectNode(element);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      (element.closest('[role="textbox"]') as HTMLElement | null)?.focus();
+    });
+    await pasteComposerText(page, 'replacement at attachment limit\n'.repeat(5_000));
+
+    await expect(markers).toHaveCount(20);
+    await expect(markers.filter({ hasText: 'Pasted.txt' })).toHaveCount(1);
+    await expect(page.locator('.thread-composer-attachment-item')).toHaveCount(20);
+    await expect(page.getByRole('status').filter({ hasText: '20 attachment limit' })).toHaveCount(0);
+    expect((await commandCalls(page)).filter((call) => call.cmd === 'attachment-upload/begin')).toHaveLength(21);
+  });
+
   test('converts a large plain-text paste into a managed attachment at its marker position', async ({ page }) => {
     await createNewThread(page);
     const composer = page.getByRole('textbox', { name: 'Message this Thread' });
@@ -8435,6 +8462,40 @@ test('blocks Enter submission while a large-paste attachment is pending', async 
   await expect.poll(async () => (
     (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').length
   )).toBe(1);
+});
+
+test('rejects a large paste that would replace a pending paste marker', async ({ page }) => {
+  await openMockedApp(page, { attachmentUploadDelayMs: 200, attachmentUploadReject: true });
+  const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+  await composer.fill('Keep this text ');
+  await pasteComposerText(page, 'first pending paste\n'.repeat(6_000));
+
+  const pendingMarker = page.locator('.thread-composer-pending-ref');
+  await expect(pendingMarker).toContainText('Pasted.txt');
+  await expect.poll(async () => (
+    (await commandCalls(page)).filter((call) => call.cmd === 'attachment-upload/begin').length
+  )).toBe(1);
+  await pendingMarker.evaluate((element) => {
+    const range = document.createRange();
+    range.selectNode(element);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    (element.closest('[role="textbox"]') as HTMLElement | null)?.focus();
+  });
+  await pasteComposerText(page, 'second pending paste\n'.repeat(6_000));
+
+  await expect(page.locator('.thread-inline-error')).toContainText(
+    'Pasted text could not be attached in the current composer state.',
+  );
+  expect((await commandCalls(page)).filter((call) => call.cmd === 'attachment-upload/begin')).toHaveLength(1);
+  await expect(pendingMarker).toHaveCount(0);
+  await expect(page.locator('.thread-composer-attachment-item')).toHaveCount(0);
+  await expect(composer).toHaveText('Keep this text ');
+  await expect(page.getByRole('button', { name: 'Send' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Send' }).click();
+  const submit = (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').at(-1);
+  expect(submit?.args.input).toEqual([{ type: 'text', text: 'Keep this text' }]);
 });
 
 test('restores the replaced composer slice when large-paste attachment upload fails', async ({ page }) => {

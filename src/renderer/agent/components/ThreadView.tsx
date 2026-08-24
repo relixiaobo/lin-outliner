@@ -2308,7 +2308,13 @@ export function ThreadView({
       setError(t.agent.composer.largePasteUnavailable);
       return null;
     }
-    if (composerAttachmentCount(attachmentsRef.current, pendingPasteRequestsRef.current) >= MAX_COMPOSER_ATTACHMENTS) {
+    const replacedIds = fullyReplacedAttachmentIds(draftRef.current, replacedAttachmentIds);
+    const replacedAttachments = attachmentsRef.current.filter((attachment) => replacedIds.has(attachment.id));
+    const projectedAttachmentCount = composerAttachmentCount(
+      attachmentsRef.current,
+      pendingPasteRequestsRef.current,
+    ) - replacedAttachments.length + 1;
+    if (projectedAttachmentCount > MAX_COMPOSER_ATTACHMENTS) {
       setError(t.agent.composer.maxAttachments({ max: MAX_COMPOSER_ATTACHMENTS }));
       return null;
     }
@@ -2318,14 +2324,13 @@ export function ThreadView({
     const excerpt = pastedTextExcerpt(text);
     const controller = new AbortController();
     const abortFromLifecycle = () => controller.abort();
-    const replacedIds = fullyReplacedAttachmentIds(draftRef.current, replacedAttachmentIds);
     lifecycle.signal.addEventListener('abort', abortFromLifecycle, { once: true });
     const request: PendingComposerPasteRequest = {
       controller,
       detachLifecycleAbort: () => lifecycle.signal.removeEventListener('abort', abortFromLifecycle),
       excerpt,
       name,
-      replacedAttachments: attachmentsRef.current.filter((attachment) => replacedIds.has(attachment.id)),
+      replacedAttachments,
       requestId,
       settling: false,
     };
@@ -2425,10 +2430,12 @@ export function ThreadView({
     request.replacedAttachments = [];
   }
 
-  function rejectTextPaste(reason: 'ceiling' | 'draft-budget'): void {
+  function rejectTextPaste(reason: 'ceiling' | 'draft-budget' | 'pending-replacement'): void {
     setError(reason === 'ceiling'
       ? t.agent.composer.largePasteCeiling
-      : t.agent.composer.largePasteDraftBudget);
+      : reason === 'draft-budget'
+        ? t.agent.composer.largePasteDraftBudget
+        : t.agent.composer.largePasteUnavailable);
   }
 
   function addPickedFiles(): Promise<void> {

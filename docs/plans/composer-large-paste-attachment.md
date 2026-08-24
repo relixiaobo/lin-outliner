@@ -46,15 +46,19 @@ ProseMirror construction.
 **FR-2.** Admission replaces the selection with a fixed-size request atom. The serialized
 upload queue rechecks eligibility, the 20-attachment message limit, and the 10-image
 subset limit, then settles it in place. Button and keyboard submission share one guard
-that refuses Send while any upload is pending.
+that refuses Send while any upload is pending. A large paste cannot replace a selection
+containing another pending request atom; it is synchronously rejected without changing
+the draft or canceling the existing request. Count admission uses the projected result,
+so fully replacing a settled attachment at the 20-item limit remains allowed.
 Renderer admission rejects known count overflow immediately. Main-process turn admission
 normalizes image observations, rejects a normalized prompt-image total over 24 MiB, and
 preserves the complete draft on failure. The existing 2 GiB per-attachment and 8 GiB
 per-Thread managed-storage limits remain unchanged.
 
 **FR-3.** Only synchronous rejection may mention the clipboard. Later upload, quota,
-cancellation, or eligibility failure restores the selection and any attachment ownership
-carried by replaced markers, says the paste was not inserted, and discards unowned resources.
+cancellation, or eligibility failure restores the selection and any settled attachment
+ownership carried by replaced markers, says the paste was not inserted, and discards
+unowned resources. Restoration never recreates a pending atom whose request has ended.
 
 **FR-4.** Draft-local names increase from `Pasted.txt` to `Pasted-2.txt` and are never
 reused. Rapid or identical pastes remain separate

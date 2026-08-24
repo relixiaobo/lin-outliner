@@ -150,7 +150,7 @@ interface ThreadComposerEditorProps {
   onLocalFileSearch: (query: string) => Promise<ThreadComposerLocalFileCandidate[]>;
   onLocalFileSelect: (file: ThreadComposerLocalFileCandidate) => Promise<ThreadComposerFileReference | null>;
   onNodeReferenceClick: ThreadNodeReferenceOpenHandler;
-  onTextPasteRejected: (reason: 'ceiling' | 'draft-budget') => void;
+  onTextPasteRejected: (reason: 'ceiling' | 'draft-budget' | 'pending-replacement') => void;
   recentLocalFiles: readonly ThreadComposerLocalFileCandidate[];
   onStop: () => void;
   onSubmit: () => void;
@@ -736,9 +736,13 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
             }
             if (admission.outcome === 'attach') {
               event.preventDefault();
-              const requestId = crypto.randomUUID();
               const selection = viewInstance.state.selection;
               const replacedSlice = viewInstance.state.doc.slice(selection.from, selection.to);
+              if (sliceHasPendingFileReference(replacedSlice)) {
+                propsRef.current.onTextPasteRejected('pending-replacement');
+                return true;
+              }
+              const requestId = crypto.randomUUID();
               const name = propsRef.current.onLargeTextPaste(
                 requestId,
                 text,
@@ -1157,6 +1161,16 @@ function fileReferenceIdsInSlice(slice: Slice): string[] {
     if (attachmentId) attachmentIds.push(attachmentId);
   });
   return attachmentIds;
+}
+
+function sliceHasPendingFileReference(slice: Slice): boolean {
+  let found = false;
+  slice.content.descendants((node) => {
+    if (node.type.name !== 'pendingFileReference') return true;
+    found = true;
+    return false;
+  });
+  return found;
 }
 
 function replaceWithText(view: EditorView, range: Pick<ComposerTrigger, 'from' | 'to'>, text: string) {

@@ -1555,10 +1555,14 @@ and must be saved and attached manually. Rejection changes neither draft nor cli
 Conversion immediately replaces the selection with a fixed request-id atom while the
 body remains outside canonical draft content. Button and keyboard submission share one
 pending guard until the serialized upload settles that exact atom to the same
-`attachmentId`. Failure restores the replaced slice together with attachment ownership
-for any marker it contained and reports that the paste was not inserted; explicit removal
-cancels it. Names increase monotonically within the mounted draft and reset after a
-successful Send.
+`attachmentId`. A large paste synchronously rejects a replacement selection containing
+another pending atom, leaving that request and the draft unchanged. Attachment-count
+admission uses the projected result after fully replaced settled identities are removed,
+so replacing one attachment at the 20-item limit is allowed. Failure restores the replaced
+slice together with settled attachment ownership for any marker it contained and reports
+that the paste was not inserted; it never recreates a pending atom whose request has ended.
+Explicit removal cancels the request. Names increase monotonically within the mounted draft
+and reset after a successful Send.
 
 `request_user_input` replaces the editor inside the existing composer surface
 with an in-dock form tied to one Item. It is a product-input surface, never a
