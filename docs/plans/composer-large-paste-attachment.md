@@ -60,11 +60,10 @@ not a second attachment; inline markers control message position and tray order.
 pending tile/atom share a request ID, then settle onto one `attachmentId`. Removing
 either removes both and releases only resources with no remaining owner.
 
-Hovering a tray item's remove control, or focusing it by keyboard, gives its paired
-marker/request atom a transient neutral linked-removal preview without changing the
-real editor selection. Pointer leave, blur, Escape, or canceled activation clears the
-preview; activation removes both representations. Touch has no hover preview, so the
-accessible action label states that it removes the file and its message reference.
+Hover/focus on a remove control gives its marker/request atom a neutral deletion preview
+without changing editor selection. Leave, blur, Escape, or cancellation clears it;
+activation removes both. Touch relies on an accessible "Remove file and message
+reference" label.
 
 | Content | Tray presentation |
 | --- | --- |
@@ -73,9 +72,12 @@ accessible action label states that it removes the file and its message referenc
 | Text/code, PDF, Office, spreadsheet, presentation, audio/video, archive, or generic file | Semantic icon, name, type, and formatted size; use an existing thumbnail when available |
 | Directory | Folder treatment; never imply its contents were read |
 
-Eligible items open the shared preview. Unsupported, unavailable, and pending items
-remain identifiable/removable without broken actions. Stable wrapping prevents
-overflow or toolbar movement.
+Eligible items open the shared preview; other states remain identifiable/removable. The
+tray is a fixed-height horizontal list that never wraps. At the 280px rail minimum,
+stable tiles show one complete item plus the next-item affordance. Native scrolling and
+edge chevrons reveal overflow; Left/Right navigates and Enter opens. New items reveal
+without taking editor focus, rail collapse preserves scroll, and resize keeps the
+focused item visible. The six-item cap needs no collapse or `+N` state.
 
 ### Storage and Agent meaning
 
@@ -113,7 +115,8 @@ The board lists this plan as a P2 draft; no open PR claims its implementation. O
 - **AC-5:** Every attachment source/category shows one tray item and inline marker for
   the same identity; preview and fallback states work, pending tiles do not shift
   layout, remove-control hover/focus previews the paired deletion without moving the
-  caret, and removal from either representation synchronizes without orphaned data.
+  caret, removal from either representation synchronizes without orphaned data, and six
+  attachments remain reachable without wrapping at the 280px rail minimum.
 
 ## Open questions
 
