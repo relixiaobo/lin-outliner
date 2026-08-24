@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import {
+  appliedOutlineOperations,
   clipboardText,
   commandCalls,
   e2eInlineRefNodeId,
@@ -451,8 +452,7 @@ test.describe('outliner selection keyboard parity', () => {
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.alpha);
     await expect.poll(async () => (await nodeById(page, ids.gamma))?.parentId).toBe(ids.alpha);
     await expect.poll(async () => (await nodeById(page, ids.alpha))?.children).toEqual([ids.beta, ids.gamma]);
-    const calls = (await commandCalls(page)).slice(beforeCalls).map((call) => call.cmd);
-    expect(calls).not.toContain('batch_indent_nodes');
+    expect((await appliedOutlineOperations(page, beforeCalls)).filter((operation) => operation.op === 'move')).toHaveLength(0);
     await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
     await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
   });
@@ -482,8 +482,7 @@ test.describe('outliner selection keyboard parity', () => {
 
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.today);
     await expect.poll(async () => (await nodeById(page, ids.gamma))?.parentId).toBe(ids.today);
-    const calls = (await commandCalls(page)).slice(beforeCalls).map((call) => call.cmd);
-    expect(calls).not.toContain('batch_outdent_nodes');
+    expect((await appliedOutlineOperations(page, beforeCalls)).filter((operation) => operation.op === 'move')).toHaveLength(0);
     await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
     await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
   });
@@ -628,8 +627,10 @@ test.describe('outliner selection keyboard parity', () => {
       type: 'reference',
       targetId,
     });
-    const calls = (await commandCalls(page)).slice(beforeCalls).map((call) => call.cmd);
-    expect(calls).not.toContain('convert_reference_to_inline_node');
+    const referenceChanges = (await appliedOutlineOperations(page, beforeCalls)).flatMap((operation) => (
+      Array.isArray(operation.changes) ? operation.changes as Array<Record<string, unknown>> : []
+    )).filter((change) => change.kind === 'reference' && change.action === 'inline');
+    expect(referenceChanges).toHaveLength(0);
   });
 
   test('clicking inside an editing reference row keeps the reference editor active', async ({ page }) => {

@@ -15,6 +15,7 @@ import {
   canonicalChangeSetHash,
   canonicalDiffHash,
   canonicalJson,
+  canonicalJsonChunks,
   outlineError,
   outlineExitCodeForError,
 } from '../../src/outline/contract';
@@ -27,7 +28,7 @@ describe('outline public contract', () => {
       'AssetLease', 'AssetMetadata', 'AssetRecord', 'Change', 'ChangeSet', 'Diff', 'Event', 'EventFilter',
       'NodeDraft', 'Operation', 'OperationLogPage', 'OutlineError', 'OutlineRequest',
       'OutlineResponse', 'OutlineStreamRecord', 'Projection', 'ProjectionResult', 'RevertConflictDiff',
-      'RichTextPatch', 'RuntimeDescriptor', 'Selector', 'TargetRef', 'TargetSpec',
+      'RichTextPatch', 'RuntimeDescriptor', 'RuntimeStatus', 'Selector', 'TargetRef', 'TargetSpec',
     ]);
     for (const schema of Object.values(OUTLINE_PUBLIC_SCHEMAS)) {
       expect(() => Compile(schema)).not.toThrow();
@@ -71,6 +72,14 @@ describe('outline public contract', () => {
     expect(canonicalChangeSetHash(first)).toMatch(/^[a-f0-9]{64}$/);
     expect(() => canonicalJson({ value: Number.NaN })).toThrow('numbers must be finite');
     expect(() => canonicalJson({ value: undefined })).toThrow('unsupported value type');
+  });
+
+  test('streams canonical JSON in bounded chunks without changing its bytes', () => {
+    const value = { tail: true, text: '\u00e9'.repeat(128 * 1024) };
+    const chunks = [...canonicalJsonChunks(value)];
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(Math.max(...chunks.map((chunk) => chunk.length))).toBeLessThanOrEqual(64 * 1024);
+    expect(chunks.join('')).toBe(canonicalJson(value));
   });
 
   test('hashes a Diff without trusting its supplied diffHash', () => {

@@ -10,6 +10,7 @@ import {
   OperationLogPageSchema,
   ProjectionResultSchema,
   ProjectionSchema,
+  RuntimeStatusSchema,
   SelectorSchema,
   TargetSpecSchema,
 } from './schemas';
@@ -49,7 +50,7 @@ function capability<TRequest extends TSchema, TResult extends TSchema>(
 
 const FIXED_CAPABILITIES = [
   capability({ name: 'version', kind: 'local', runtimeRequired: false, streaming: false, destructive: false, auditCategory: 'metadata', summary: 'Print CLI, app, and protocol versions.', requestSchema: EmptyInput, resultSchema: Type.Object({ cliVersion: Type.String(), appVersion: Type.String(), protocolMajors: Type.Array(Type.Integer()), storageVersion: Type.Integer() }, closed), coverage: [] }),
-  capability({ name: 'status', kind: 'local', runtimeRequired: false, streaming: false, destructive: false, auditCategory: 'metadata', summary: 'Inspect Runtime presence and storage health without starting it.', requestSchema: EmptyInput, resultSchema: Type.Object({ running: Type.Boolean(), runtime: Type.Optional(Type.Unknown()) }, closed), coverage: [] }),
+  capability({ name: 'status', kind: 'local', runtimeRequired: false, streaming: false, destructive: false, auditCategory: 'metadata', summary: 'Inspect Runtime presence and storage health without starting it.', requestSchema: EmptyInput, resultSchema: RuntimeStatusSchema, coverage: [] }),
   capability({ name: 'capabilities', kind: 'local', runtimeRequired: false, streaming: false, destructive: false, auditCategory: 'metadata', summary: 'Print the executable public capability registry.', requestSchema: Type.Object({ runtime: Type.Optional(Type.Boolean()) }, closed), resultSchema: Type.Array(Type.Unknown()), coverage: [] }),
   capability({ name: 'schema', kind: 'local', runtimeRequired: false, streaming: false, destructive: false, auditCategory: 'metadata', summary: 'Print exact public JSON Schemas.', requestSchema: Type.Object({ name: Type.Optional(Type.String()) }, closed), resultSchema: Type.Unknown(), coverage: [] }),
   capability({ name: 'find', kind: 'read', runtimeRequired: true, streaming: false, destructive: false, auditCategory: 'read.search', summary: 'Find bounded Nodes with the structured query grammar.', requestSchema: Type.Object({ target: TargetSpecSchema, projection: Type.Optional(ProjectionSchema) }, closed), resultSchema: ProjectionResultSchema, coverage: ['search_nodes'] }),
@@ -141,7 +142,7 @@ const PORCELAIN_CAPABILITIES = PORCELAIN_COMMANDS.map(([name, auditCategory, cov
   kind: 'mutate',
   runtimeRequired: true,
   streaming: false,
-  destructive: name === 'purge',
+  destructive: name === 'purge' || name === 'merge' || name === 'definition merge',
   auditCategory,
   summary: `Lower ${name} intent into the public ChangeSet contract.`,
   requestSchema: MutationInput,

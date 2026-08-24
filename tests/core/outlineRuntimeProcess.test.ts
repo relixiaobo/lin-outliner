@@ -441,6 +441,26 @@ describe('Outline Runtime process boundary', () => {
     await waitFor(async () => (await readOutlineRuntimeDescriptor(root)) === null, 2_000);
   });
 
+  test('runs private storage maintenance before idle shutdown', async () => {
+    const root = await makeRoot();
+    let idleResolve: (() => void) | undefined;
+    const idle = new Promise<void>((resolve) => { idleResolve = resolve; });
+    const runtime = await OutlineRuntimeServer.start({
+      root,
+      idleTimeoutMs: 25,
+      onIdle: () => { idleResolve?.(); },
+    });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const orphan = path.join(runtime.workspace.store.recoveryDirectory, `${'f'.repeat(64)}.json`);
+    await writeFile(orphan, '{}', { mode: 0o600 });
+
+    await withTimeout(idle, 2_000, 'Runtime did not complete idle maintenance');
+
+    expect(await readdir(runtime.workspace.store.recoveryDirectory)).toEqual([]);
+    await waitFor(async () => (await readOutlineRuntimeDescriptor(root)) === null, 2_000);
+  });
+
   test('honors no-start and does not create Runtime artifacts', async () => {
     const root = await makeRoot();
     const supervisor = new OutlineClientSupervisor({ root, noStart: true });

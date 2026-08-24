@@ -196,6 +196,15 @@ provably torn final record, and fails closed on corruption that could admit an
 unknown state. Snapshot compaction never removes retained recovery or asset
 reachability information. Pre-release formats have no compatibility reader.
 
+Storage maintenance derives all work from the committed log and indexes. It
+repairs a torn tail, expires eligible recovery, removes orphan recovery blobs,
+collects unprotected assets, and compacts a log after its record/byte threshold.
+Runtime runs it at workspace startup, after successful settlement, and before
+idle shutdown. Recovery expiry is durable and observable before blob unlink;
+cleanup or compaction failure cannot reverse an already acknowledged Operation.
+A failed compaction invalidates the process-local log cache so the next write
+reloads the authoritative snapshot/log boundary before admission.
+
 Every successful mutation, including desktop editing and history reversal,
 creates one durable `Operation`. A revert is a new guarded Operation and never
 erases its target. Recovery patches retain the complete affected state even when

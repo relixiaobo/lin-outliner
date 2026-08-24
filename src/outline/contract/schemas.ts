@@ -736,6 +736,10 @@ export const EventSchema = Type.Object({
     changedNodes: Type.Array(JsonValue, { maxItems: 100_000 }),
     removedIds: Type.Array(Identifier, { maxItems: 100_000 }),
   }, closed)),
+  recovery: Type.Optional(Type.Object({
+    operationIds: Type.Array(Identifier, { minItems: 1, maxItems: 100_000 }),
+    recoveryPatchIds: Type.Array(Identifier, { minItems: 1, maxItems: 100_000 }),
+  }, closed)),
   projection: Type.Optional(ProjectionResultSchema),
 }, { ...closed, $id: 'Event' });
 
@@ -815,6 +819,42 @@ export const RuntimeDescriptorSchema = Type.Object({
   createdAt: Timestamp,
 }, { ...closed, $id: 'RuntimeDescriptor' });
 
+export const RuntimeStatusSchema = Type.Union([
+  Type.Object({ running: Type.Literal(false) }, closed),
+  Type.Object({
+    running: Type.Literal(true),
+    runtime: Type.Object({
+      instanceId: Identifier,
+      runtimeVersion: Type.String({ minLength: 1, maxLength: 128 }),
+      storageVersion: Type.Literal(OUTLINE_STORAGE_VERSION),
+      revision: Type.Integer({ minimum: 0 }),
+      transactionLog: Type.Object({
+        health: Type.Union([
+          Type.Literal('healthy'), Type.Literal('degraded'), Type.Literal('blocked'),
+        ]),
+        sequence: Type.Integer({ minimum: 0 }),
+        eventSequence: Type.Integer({ minimum: 0 }),
+        snapshotSequence: Type.Integer({ minimum: 0 }),
+        validBytes: Type.Integer({ minimum: 0 }),
+        totalBytes: Type.Integer({ minimum: 0 }),
+        tornTail: Type.Boolean(),
+        stale: Type.Boolean(),
+        inconsistent: Type.Boolean(),
+        maintenancePending: Type.Boolean(),
+      }, closed),
+      recovery: Type.Object({
+        available: Type.Integer({ minimum: 0 }),
+        conflicted: Type.Integer({ minimum: 0 }),
+        reverted: Type.Integer({ minimum: 0 }),
+        expired: Type.Integer({ minimum: 0 }),
+        retainedBytes: Type.Integer({ minimum: 0 }),
+        budgetBytes: Type.Integer({ minimum: 0 }),
+        orphanBlobCount: Type.Integer({ minimum: 0 }),
+      }, closed),
+    }, closed),
+  }, closed),
+], { $id: 'RuntimeStatus' });
+
 export const AssetMetadataSchema = Type.Object({
   mimeType: Type.String({ minLength: 1, maxLength: 256 }),
   byteSize: Type.Integer({ minimum: 0 }),
@@ -865,6 +905,7 @@ export const OUTLINE_PUBLIC_SCHEMAS = Object.freeze({
   OutlineResponse: OutlineResponseSchema,
   OutlineStreamRecord: OutlineStreamRecordSchema,
   RuntimeDescriptor: RuntimeDescriptorSchema,
+  RuntimeStatus: RuntimeStatusSchema,
   AssetMetadata: AssetMetadataSchema,
   AssetRecord: AssetRecordSchema,
   AssetLease: AssetLeaseSchema,
@@ -891,6 +932,7 @@ export type OutlineRequest = Static<typeof OutlineRequestSchema>;
 export type OutlineResponse = Static<typeof OutlineResponseSchema>;
 export type OutlineStreamRecord = Static<typeof OutlineStreamRecordSchema>;
 export type RuntimeDescriptor = Static<typeof RuntimeDescriptorSchema>;
+export type RuntimeStatus = Static<typeof RuntimeStatusSchema>;
 export type AssetLease = Static<typeof AssetLeaseSchema>;
 export type AssetMetadata = Static<typeof AssetMetadataSchema>;
 export type AssetRecord = Static<typeof AssetRecordSchema>;

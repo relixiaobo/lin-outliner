@@ -43,6 +43,7 @@ import {
   type OutlineRecoveryPatch,
 } from './recoveryPatch';
 import { assertOutlineAssetStage, type OutlineAssetStage } from './assetTypes';
+import { encodeEventCursor } from '../eventCursor';
 
 const SNAPSHOT_FILE = 'outline.snapshot.json';
 const TRANSACTION_LOG_FILE = 'outline.transactions.jsonl';
@@ -54,6 +55,8 @@ const RECOVERY_EXPIRY_KIND = 'outline.recovery-expiry';
 const ASSET_STAGE_KIND = 'outline.asset-stage';
 const ASSET_GC_KIND = 'outline.asset-gc';
 const DEFAULT_INLINE_RECOVERY_BYTES = 64 * 1024;
+const DEFAULT_COMPACTION_LOG_BYTES = 16 * 1024 * 1024;
+const DEFAULT_COMPACTION_RECORDS = 1_000;
 
 export interface OutlineAssetDelta {
   readonly consumedLeaseIds: readonly string[];
@@ -82,11 +85,42 @@ export interface WorkspaceTransactionAppendResult {
   readonly event: OutlineEvent;
   readonly sequence: number;
   readonly idempotent: boolean;
+  readonly maintenanceEvents: readonly OutlineEvent[];
 }
 
 export interface WorkspaceMutationAdmission {
   readonly latestEventSequence: number;
   readonly existingOperation?: Operation;
+  readonly maintenanceEvents: readonly OutlineEvent[];
+}
+
+export interface WorkspaceMaintenanceContext {
+  readonly instanceId: string;
+  readonly revision: number;
+}
+
+export interface WorkspaceTransactionLogHealth {
+  readonly transactionLog: {
+    readonly health: 'healthy' | 'degraded' | 'blocked';
+    readonly sequence: number;
+    readonly eventSequence: number;
+    readonly snapshotSequence: number;
+    readonly validBytes: number;
+    readonly totalBytes: number;
+    readonly tornTail: boolean;
+    readonly stale: boolean;
+    readonly inconsistent: boolean;
+    readonly maintenancePending: boolean;
+  };
+  readonly recovery: {
+    readonly available: number;
+    readonly conflicted: number;
+    readonly reverted: number;
+    readonly expired: number;
+    readonly retainedBytes: number;
+    readonly budgetBytes: number;
+    readonly orphanBlobCount: number;
+  };
 }
 
 export interface WorkspaceTransactionLoad {
@@ -109,6 +143,8 @@ export interface WorkspaceTransactionLogOptions {
   readonly minimumRetentionDays?: number;
   readonly minimumRetentionOperations?: number;
   readonly eventRetention?: number;
+  readonly compactionLogBytes?: number;
+  readonly compactionRecords?: number;
   readonly now?: () => Date;
   readonly fsync?: (handle: FileHandle) => Promise<void>;
   readonly afterRecoveryBlobFsync?: (patch: OutlineRecoveryPatch) => void | Promise<void>;
@@ -241,6 +277,8 @@ export class WorkspaceTransactionLog {
   private readonly minimumRetentionDays: number;
   private readonly minimumRetentionOperations: number;
   private readonly eventRetention: number;
+  private readonly compactionLogBytes: number;
+  private readonly compactionRecords: number;
   private readonly now: () => Date;
   private readonly fsyncHandle: (handle: FileHandle) => Promise<void>;
   private readonly afterRecoveryBlobFsync?: WorkspaceTransactionLogOptions['afterRecoveryBlobFsync'];
@@ -261,6 +299,8 @@ export class WorkspaceTransactionLog {
       options.minimumRetentionOperations ?? OUTLINE_RECOVERY_MINIMUM_OPERATIONS,
     );
     this.eventRetention = Math.max(1, options.eventRetention ?? OUTLINE_EVENT_RETENTION);
+    this.compactionLogBytes = Math.max(1, options.compactionLogBytes ?? DEFAULT_COMPACTION_LOG_BYTES);
+    this.compactionRecords = Math.max(1, options.compactionRecords ?? DEFAULT_COMPACTION_RECORDS);
     this.now = options.now ?? (() => new Date());
     this.fsyncHandle = options.fsync ?? (async (handle) => handle.sync());
     this.afterRecoveryBlobFsync = options.afterRecoveryBlobFsync;
@@ -337,6 +377,25 @@ export class WorkspaceTransactionLog {
     });
   }
 
+  async health(): Promise<WorkspaceTransactionLogHealth> {
+    return this.enqueueWrite(async () => this.publicHealth(await this.ensureState()));
+  }
+
+  async needsCompaction(): Promise<boolean> {
+    return this.enqueueWrite(async () => this.compactionNeeded(await this.ensureState()));
+  }
+
+  async maintain(context: WorkspaceMaintenanceContext): Promise<readonly OutlineEvent[]> {
+    return this.enqueueWrite(async () => {
+      const state = await this.ensureState();
+      if (state.inconsistent) return [];
+      await this.prepareLogForAppend(state);
+      const event = await this.expireEligibleRecovery(state, this.now(), context);
+      await this.collectOrphanRecoveryBlobs(state);
+      return event ? [event] : [];
+    });
+  }
+
   async append(input: WorkspaceTransactionInput): Promise<WorkspaceTransactionAppendResult> {
     return this.enqueueWrite(async () => {
       const state = await this.requireWritableState();
@@ -348,13 +407,22 @@ export class WorkspaceTransactionLog {
         const event = [...state.events].reverse()
           .find((candidate) => candidate.operation?.operationId === idempotent.operationId);
         if (!event) throw new Error(`Committed idempotent Operation has no retained Event: ${idempotent.operationId}`);
-        return { operation: idempotent, event, sequence: state.latestSequence, idempotent: true };
+        return {
+          operation: idempotent,
+          event,
+          sequence: state.latestSequence,
+          idempotent: true,
+          maintenanceEvents: [],
+        };
       }
       if (state.operationById.has(input.operation.operationId)) {
         throw new Error(`Outline Operation already exists: ${input.operation.operationId}`);
       }
 
-      await this.expireEligibleRecovery(state, this.now());
+      const maintenanceEvent = await this.expireEligibleRecovery(state, this.now(), {
+        instanceId: input.event.instanceId,
+        revision: input.operation.revisionBefore,
+      });
       assertAssetDeltaAdmission(input.assetDelta ?? EMPTY_ASSET_DELTA, state, this.now());
       assertEventSequence(input.event, state);
       const encodedPatch = canonicalJson(input.recoveryPatch);
@@ -408,22 +476,29 @@ export class WorkspaceTransactionLog {
         ));
       }
       applyTransactionRecord(state, record, this.eventRetention);
+      state.logValidBytes += jsonlRecordBytes(record);
       await this.afterTransactionFsync?.(clone(input.operation));
       return {
         operation: clone(input.operation),
         event: clone(input.event),
         sequence: record.sequence,
         idempotent: false,
+        maintenanceEvents: maintenanceEvent ? [maintenanceEvent] : [],
       };
     });
   }
 
-  async prepareMutation(idempotency?: Pick<OutlineIdempotencyRecord, 'key' | 'payloadHash'>): Promise<WorkspaceMutationAdmission> {
+  async prepareMutation(
+    idempotency?: Pick<OutlineIdempotencyRecord, 'key' | 'payloadHash'>,
+    context?: WorkspaceMaintenanceContext,
+  ): Promise<WorkspaceMutationAdmission> {
     return this.enqueueWrite(async () => {
       const state = await this.ensureState();
       if (idempotency) {
         const existing = this.resolveIdempotency(state, idempotency);
-        if (existing) return { latestEventSequence: state.latestEventSequence, existingOperation: existing };
+        if (existing) {
+          return { latestEventSequence: state.latestEventSequence, existingOperation: existing, maintenanceEvents: [] };
+        }
       }
       if (state.inconsistent) {
         throw new OutlineContractError(outlineError(
@@ -433,8 +508,11 @@ export class WorkspaceTransactionLog {
           { details: state.inconsistent.message },
         ));
       }
-      await this.expireEligibleRecovery(state, this.now());
-      return { latestEventSequence: state.latestEventSequence };
+      const event = await this.expireEligibleRecovery(state, this.now(), context);
+      return {
+        latestEventSequence: state.latestEventSequence,
+        maintenanceEvents: event ? [event] : [],
+      };
     });
   }
 
@@ -509,6 +587,7 @@ export class WorkspaceTransactionLog {
       await this.prepareLogForAppend(state);
       await appendJsonlDurable(this.transactionLogPath, record, this.fsyncHandle);
       applyAssetStageRecord(state, record);
+      state.logValidBytes += jsonlRecordBytes(record);
     });
   }
 
@@ -582,49 +661,59 @@ export class WorkspaceTransactionLog {
       await this.prepareLogForAppend(state);
       await appendJsonlDurable(this.transactionLogPath, record, this.fsyncHandle);
       applyAssetGcRecord(state, record);
+      state.logValidBytes += jsonlRecordBytes(record);
       return clone(removed);
     });
   }
 
-  async compact(documentSnapshotRaw: string): Promise<void> {
+  async compact(
+    documentSnapshotRaw: string,
+    context?: WorkspaceMaintenanceContext,
+  ): Promise<readonly OutlineEvent[]> {
     return this.enqueueWrite(async () => {
-      const state = await this.requireWritableState();
-      const document = Core.deserializeState(documentSnapshotRaw);
-      const now = this.now();
-      await this.expireEligibleRecovery(state, now);
-      const retainedOperationIds = this.retainedOperationIds(state, now);
-      const operations = state.operations.filter((operation) => retainedOperationIds.has(operation.operationId));
-      const recovery = Object.fromEntries([...state.recoveryByOperationId]
-        .filter(([operationId]) => (
-          retainedOperationIds.has(operationId)
-          && state.operationById.get(operationId)?.recovery.state !== 'expired'
-        )));
-      const idempotency = [...state.idempotencyByKey.values()]
-        .filter((entry) => retainedOperationIds.has(entry.operationId));
-      const snapshot = snapshotEnvelope({
-        kind: SNAPSHOT_KIND,
-        storageVersion: OUTLINE_STORAGE_VERSION,
-        sequence: state.latestSequence,
-        latestEventSequence: state.latestEventSequence,
-        createdAt: this.now().toISOString(),
-        document,
-        operations: clone(operations),
-        recovery: clone(recovery),
-        idempotency: clone(idempotency),
-        events: clone(state.events.slice(-this.eventRetention)),
-        assetRecords: clone([...state.assetRecordById.values()]),
-        assetLeases: clone([...state.assetLeaseById.values()]),
-        liveAssetRecordIds: [...state.liveAssetRecordIds].sort(),
-      });
-      await writeJsonDurable(this.snapshotPath, snapshot, this.fsyncHandle);
-      await this.afterSnapshotRename?.();
-      await writeJsonlDurable(
-        this.transactionLogPath,
-        `${JSON.stringify(logHeader(snapshot.checksum, snapshot.sequence))}\n`,
-        this.fsyncHandle,
-      );
-      this.state = await this.readState(snapshot);
-      await this.collectOrphanRecoveryBlobs(this.state);
+      try {
+        const state = await this.requireWritableState();
+        const document = Core.deserializeState(documentSnapshotRaw);
+        const now = this.now();
+        const maintenanceEvent = await this.expireEligibleRecovery(state, now, context);
+        const retainedOperationIds = this.retainedOperationIds(state, now);
+        const operations = state.operations.filter((operation) => retainedOperationIds.has(operation.operationId));
+        const recovery = Object.fromEntries([...state.recoveryByOperationId]
+          .filter(([operationId]) => (
+            retainedOperationIds.has(operationId)
+            && state.operationById.get(operationId)?.recovery.state !== 'expired'
+          )));
+        const idempotency = [...state.idempotencyByKey.values()]
+          .filter((entry) => retainedOperationIds.has(entry.operationId));
+        const snapshot = snapshotEnvelope({
+          kind: SNAPSHOT_KIND,
+          storageVersion: OUTLINE_STORAGE_VERSION,
+          sequence: state.latestSequence,
+          latestEventSequence: state.latestEventSequence,
+          createdAt: this.now().toISOString(),
+          document,
+          operations: clone(operations),
+          recovery: clone(recovery),
+          idempotency: clone(idempotency),
+          events: clone(state.events.slice(-this.eventRetention)),
+          assetRecords: clone([...state.assetRecordById.values()]),
+          assetLeases: clone([...state.assetLeaseById.values()]),
+          liveAssetRecordIds: [...state.liveAssetRecordIds].sort(),
+        });
+        await writeJsonDurable(this.snapshotPath, snapshot, this.fsyncHandle);
+        await this.afterSnapshotRename?.();
+        await writeJsonlDurable(
+          this.transactionLogPath,
+          `${JSON.stringify(logHeader(snapshot.checksum, snapshot.sequence))}\n`,
+          this.fsyncHandle,
+        );
+        this.state = await this.readState(snapshot);
+        await this.collectOrphanRecoveryBlobs(this.state);
+        return maintenanceEvent ? [maintenanceEvent] : [];
+      } catch (error) {
+        this.state = undefined;
+        throw error;
+      }
     });
   }
 
@@ -757,6 +846,47 @@ export class WorkspaceTransactionLog {
       orphanRecoveryBlobs: [...state.orphanRecoveryBlobs],
       ...(state.inconsistent ? { inconsistent: state.inconsistent } : {}),
     };
+  }
+
+  private async publicHealth(state: LoadedState): Promise<WorkspaceTransactionLogHealth> {
+    const totalBytes = (await stat(this.transactionLogPath).catch((error: unknown) => {
+      if (isNotFound(error)) return { size: 0 };
+      throw error;
+    })).size;
+    const recovery = { available: 0, conflicted: 0, reverted: 0, expired: 0 };
+    for (const operation of state.operations) recovery[operation.recovery.state] += 1;
+    const maintenancePending = state.tornTail
+      || state.staleLog
+      || state.orphanRecoveryBlobs.length > 0
+      || this.compactionNeeded(state, totalBytes);
+    const health = state.inconsistent
+      ? 'blocked'
+      : maintenancePending ? 'degraded' : 'healthy';
+    return {
+      transactionLog: {
+        health,
+        sequence: state.latestSequence,
+        eventSequence: state.latestEventSequence,
+        snapshotSequence: state.snapshot.sequence,
+        validBytes: state.logValidBytes,
+        totalBytes,
+        tornTail: state.tornTail,
+        stale: state.staleLog,
+        inconsistent: state.inconsistent !== undefined,
+        maintenancePending,
+      },
+      recovery: {
+        ...recovery,
+        retainedBytes: this.availableRecoveryBytes(state),
+        budgetBytes: this.recoveryBudgetBytes,
+        orphanBlobCount: state.orphanRecoveryBlobs.length,
+      },
+    };
+  }
+
+  private compactionNeeded(state: LoadedState, totalBytes = state.logValidBytes): boolean {
+    return state.latestSequence - state.snapshot.sequence >= this.compactionRecords
+      || totalBytes >= this.compactionLogBytes;
   }
 
   private async ensureState(): Promise<LoadedState> {
@@ -915,7 +1045,11 @@ export class WorkspaceTransactionLog {
     return total;
   }
 
-  private async expireEligibleRecovery(state: LoadedState, now: Date): Promise<void> {
+  private async expireEligibleRecovery(
+    state: LoadedState,
+    now: Date,
+    context?: WorkspaceMaintenanceContext,
+  ): Promise<OutlineEvent | undefined> {
     const protectedIds = new Set(
       (this.minimumRetentionOperations === 0 ? [] : state.operations.slice(-this.minimumRetentionOperations))
         .map((operation) => operation.operationId),
@@ -926,15 +1060,27 @@ export class WorkspaceTransactionLog {
       && !protectedIds.has(operation.operationId)
       && Date.parse(operation.createdAt) <= cutoff
     ));
-    if (eligible.length === 0) return;
+    if (eligible.length === 0) return undefined;
+    const instanceId = context?.instanceId
+      ?? state.events.at(-1)?.instanceId
+      ?? 'runtime:storage-maintenance';
+    const revision = context?.revision
+      ?? state.operations.at(-1)?.revisionAfter
+      ?? state.events.at(-1)?.revision
+      ?? 0;
+    const eventSequence = state.latestEventSequence + 1;
     const event: OutlineEvent = {
       protocolVersion: eligible[0]!.protocolVersion,
       kind: 'outline.event',
       type: 'operation.recovery-expired',
-      instanceId: state.events.at(-1)?.instanceId ?? 'runtime:storage-maintenance',
-      sequence: state.latestEventSequence + 1,
-      revision: state.operations.at(-1)?.revisionAfter ?? state.events.at(-1)?.revision ?? 0,
-      cursor: `event:${state.latestEventSequence + 1}`,
+      instanceId,
+      sequence: eventSequence,
+      revision,
+      cursor: encodeEventCursor({ instanceId, sequence: eventSequence, revision }),
+      recovery: {
+        operationIds: eligible.map((operation) => operation.operationId),
+        recoveryPatchIds: eligible.map((operation) => operation.recovery.recoveryPatchId),
+      },
     };
     const body: RecoveryExpiryRecordBody = {
       kind: RECOVERY_EXPIRY_KIND,
@@ -949,6 +1095,7 @@ export class WorkspaceTransactionLog {
     await this.prepareLogForAppend(state);
     await appendJsonlDurable(this.transactionLogPath, record, this.fsyncHandle);
     applyRecoveryExpiryRecord(state, record, this.eventRetention);
+    state.logValidBytes += jsonlRecordBytes(record);
     const referencedBlobDigests = new Set([...state.recoveryByOperationId.values()]
       .filter((reference) => reference.storage === 'blob')
       .filter((reference) => {
@@ -961,9 +1108,11 @@ export class WorkspaceTransactionLog {
     for (const operation of eligible) {
       const reference = state.recoveryByOperationId.get(operation.operationId);
       if (reference?.storage === 'blob' && !referencedBlobDigests.has(reference.sha256)) {
-        await rm(this.recoveryBlobPath(reference.sha256), { force: true });
+        await rm(this.recoveryBlobPath(reference.sha256), { force: true }).catch(() => undefined);
       }
     }
+    state.orphanRecoveryBlobs = await this.findOrphanRecoveryBlobs(state);
+    return event;
   }
 
   private retainedOperationIds(state: LoadedState, now: Date): Set<string> {
@@ -1068,6 +1217,10 @@ function logHeader(snapshotChecksum: string, snapshotSequence: number): LogHeade
 
 function logRecord<T extends LogRecordBody>(body: T): T & { readonly checksum: string } {
   return { ...body, checksum: canonicalSha256(body) };
+}
+
+function jsonlRecordBytes(record: LogRecord): number {
+  return Buffer.byteLength(`${JSON.stringify(record)}\n`);
 }
 
 function applyTransactionRecord(state: LoadedState, record: TransactionRecordBody & { checksum: string }, eventRetention: number) {

@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import { open, readFile, rename, rm } from 'node:fs/promises';
+import { createInterface } from 'node:readline/promises';
 import { Value } from 'typebox/value';
 import {
   OUTLINE_APP_VERSION,
@@ -9,6 +11,7 @@ import {
   OUTLINE_PROTOCOL_VERSION,
   OUTLINE_PUBLIC_SCHEMAS,
   OUTLINE_STORAGE_VERSION,
+  DiffSchema,
   OutlineContractError,
   outlineCapability,
   outlineCapabilityManifest,
@@ -18,11 +21,9 @@ import {
   type OutlineResponse,
 } from '../contract';
 import { canonicalSha256 } from '../contract/canonical';
-import { canonicalJson } from '../contract/canonical';
 import { OutlineClientSupervisor, resolveOutlineRuntimeRoot } from '../client';
 import { OUTLINE_AGENT_ATTESTATION_ENV } from '../contract/agentAttestation';
 import {
-  parseChangeSetInput,
   parseReadCommand,
   parseWatchCommand,
 } from './arguments';
@@ -36,6 +37,8 @@ export interface OutlineCliIo {
   readonly stderr: (value: string) => void;
   readonly readStdin: () => Promise<string>;
   readonly stdinBytes: () => AsyncIterable<Uint8Array>;
+  readonly interactive: boolean;
+  readonly confirm: (prompt: string) => Promise<boolean>;
 }
 
 export interface OutlineCliRunOptions {
@@ -68,6 +71,16 @@ const defaultIo: OutlineCliIo = {
     return Buffer.concat(chunks).toString('utf8');
   },
   stdinBytes: () => process.stdin,
+  interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
+  confirm: async (prompt) => {
+    const readline = createInterface({ input: process.stdin, output: process.stderr });
+    try {
+      const answer = await readline.question(`${prompt} [y/N] `);
+      return answer.trim().toLowerCase() === 'y' || answer.trim().toLowerCase() === 'yes';
+    } finally {
+      readline.close();
+    }
+  },
 };
 
 export async function runOutlineCli(argv: readonly string[], options: OutlineCliRunOptions = {}): Promise<number> {
@@ -157,6 +170,7 @@ async function executeInvocation(
   const capability = outlineCapability(invocation.command);
   if (!capability) throw usageError(`Unknown outline command: ${invocation.command}`);
   if (!capability.runtimeRequired) throw usageError(`Unsupported local outline command: ${invocation.command}`);
+  if (invocation.command === 'diff') return executeDiffInvocation(invocation, supervisor, io, options.signal);
   if (invocation.command === 'asset ingest') return executeAssetIngest(invocation, supervisor, io, options.signal);
   if (invocation.command === 'asset export') return executeAssetExport(invocation, supervisor, io, options.signal);
   if (capability.streaming) return executeStreamingInvocation(invocation, supervisor, io, options.signal);
@@ -166,12 +180,53 @@ async function executeInvocation(
   }
   const client = await supervisor.connect();
   try {
+    if (capability.destructive
+      && capability.kind === 'mutate'
+      && !invocation.json
+      && io.interactive
+      && isRecord(input)
+      && input.preview !== true
+      && input.acknowledgeDestructive !== true) {
+      return executeInteractiveDestructive(invocation.command, input, client, io);
+    }
     const data = (await client.request(invocation.command, input)).data;
-    if (invocation.command === 'diff') return writeDiffArtifact(invocation, data, io);
     return data;
   } finally {
     client.close();
   }
+}
+
+async function executeInteractiveDestructive(
+  command: string,
+  input: Record<string, unknown>,
+  client: import('../client').OutlineClient,
+  io: OutlineCliIo,
+): Promise<unknown> {
+  const preview = (await client.request(command, {
+    ...input,
+    preview: true,
+    acknowledgeDestructive: undefined,
+  })).data;
+  if (!Value.Check(DiffSchema, preview)) {
+    throw artifactProtocolError('Outline Runtime returned an invalid destructive Diff preview.');
+  }
+  if (typeof input.expectDiff === 'string' && input.expectDiff !== preview.diffHash) {
+    throw new OutlineContractError(outlineError(
+      'diff_mismatch',
+      'conflict',
+      'The current normalized Diff does not match --expect-diff.',
+      { details: { expected: input.expectDiff, actual: preview.diffHash } },
+    ));
+  }
+  io.stdout(`Review Diff:\n${JSON.stringify(preview, null, 2)}\n`);
+  if (!await io.confirm(`Apply destructive ${command} Diff ${preview.diffHash}?`)) {
+    throw new OutlineContractError(outlineError(
+      'confirmation_required',
+      'confirmation',
+      'The destructive Diff was not confirmed.',
+    ));
+  }
+  return (await client.request('apply', { diff: preview, acknowledgeDestructive: true })).data;
 }
 
 function parseInvocation(argv: readonly string[]): ParsedInvocation {
@@ -230,7 +285,7 @@ async function runtimeInput(
     if (invocation.args.length > 0) throw usageError(`${invocation.command} does not accept arguments.`);
     return {};
   }
-  if (!['diff', 'apply'].includes(invocation.command)) {
+  if (invocation.command !== 'apply') {
     return buildPorcelainRequest(invocation.command, invocation.args, {
       read: (source) => readStructuredSource(source, io),
       lookup: async (selector) => {
@@ -251,24 +306,58 @@ async function runtimeInput(
   if (!parsed.input) throw usageError(`${invocation.command} requires --input FILE|-.`);
   if (parsed.rest.length > 0) throw usageError(`Unexpected ${invocation.command} argument: ${parsed.rest[0]}`);
   const raw = parsed.input === '-' ? await io.readStdin() : await readFile(parsed.input, 'utf8');
-  if (invocation.command === 'diff') {
-    const changeSet = await parseChangeSetInput(raw, parsed.inputFormat);
-    if (parsed.idempotencyKey) {
-      if (changeSet.idempotencyKey && changeSet.idempotencyKey !== parsed.idempotencyKey) {
-        throw usageError('--idempotency-key does not match the ChangeSet input.');
-      }
-      changeSet.idempotencyKey = parsed.idempotencyKey;
-    }
-    return { changeSet };
-  }
   const value = parseJsonInput(raw);
-  if (invocation.command === 'apply') {
-    if (parsed.inputFormat !== 'json') throw usageError('apply accepts only --input-format json.');
-    if (parsed.output) throw usageError('--output is only valid for diff.');
-    if (parsed.idempotencyKey) throw usageError('apply cannot change the idempotency key bound into its Diff.');
-    return { diff: value, ...(parsed.yes ? { acknowledgeDestructive: true } : {}) };
+  if (parsed.inputFormat !== 'json') throw usageError('apply accepts only --input-format json.');
+  if (parsed.output) throw usageError('--output is only valid for diff.');
+  if (parsed.idempotencyKey) throw usageError('apply cannot change the idempotency key bound into its Diff.');
+  return { diff: value, ...(parsed.yes ? { acknowledgeDestructive: true } : {}) };
+}
+
+async function executeDiffInvocation(
+  invocation: ParsedInvocation,
+  supervisor: OutlineClientSupervisor,
+  io: OutlineCliIo,
+  signal?: AbortSignal,
+): Promise<unknown | HandledExecution> {
+  const parsed = parseInputOptions(invocation.args);
+  if (!parsed.input) throw usageError('diff requires --input FILE|-.');
+  if (parsed.yes) throw usageError('--yes is not valid for diff.');
+  if (parsed.rest.length > 0) throw usageError(`Unexpected diff argument: ${parsed.rest[0]}`);
+  const source = parsed.input === '-' ? io.stdinBytes() : createReadStream(parsed.input);
+  const client = await supervisor.connect();
+  try {
+    const artifact = await client.diffArtifact(source, {
+      inputFormat: parsed.inputFormat,
+      ...(parsed.idempotencyKey ? { idempotencyKey: parsed.idempotencyKey } : {}),
+      signal,
+    });
+    if (!parsed.output && artifact.byteCount > MAX_INLINE_DIFF_BYTES) {
+      throw usageError('Diff exceeds 8 MiB; specify --output DIFF_FILE or --output -.');
+    }
+    if (parsed.output === '-') {
+      for await (const chunk of artifact.chunks) io.stdoutBytes(chunk);
+      io.stdoutBytes(Buffer.from('\n'));
+      return { handled: true, exitCode: OUTLINE_EXIT_CODES.success };
+    }
+    if (parsed.output) {
+      await writeAtomicArtifact(parsed.output, artifact.chunks);
+      return { path: parsed.output, byteCount: artifact.byteCount, sha256: artifact.sha256 };
+    }
+    const chunks: Buffer[] = [];
+    for await (const chunk of artifact.chunks) chunks.push(Buffer.from(chunk));
+    let value: unknown;
+    try {
+      value = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+    } catch {
+      throw artifactProtocolError('Outline Runtime returned an invalid Diff artifact.');
+    }
+    if (!Value.Check(DiffSchema, value)) {
+      throw artifactProtocolError('Outline Runtime returned a Diff artifact that violates the public schema.');
+    }
+    return value;
+  } finally {
+    client.close();
   }
-  return value;
 }
 
 async function executeAssetIngest(
@@ -449,31 +538,12 @@ async function executeStreamingInvocation(
   }
 }
 
-async function writeDiffArtifact(
-  invocation: ParsedInvocation,
-  data: unknown,
-  io: OutlineCliIo,
-): Promise<unknown | HandledExecution> {
-  const parsed = parseInputOptions(invocation.args);
-  const encoded = canonicalJson(data);
-  const bytes = Buffer.byteLength(encoded);
-  if (!parsed.output && bytes > MAX_INLINE_DIFF_BYTES) {
-    throw usageError('Diff exceeds 8 MiB; specify --output DIFF_FILE or --output -.');
-  }
-  if (!parsed.output) return data;
-  if (parsed.output === '-') {
-    io.stdout(`${encoded}\n`);
-    return { handled: true, exitCode: OUTLINE_EXIT_CODES.success };
-  }
-  await writeAtomicFile(parsed.output, `${encoded}\n`);
-  return { path: parsed.output, byteCount: bytes, sha256: canonicalSha256(data) };
-}
-
-async function writeAtomicFile(target: string, contents: string): Promise<void> {
+async function writeAtomicArtifact(target: string, chunks: AsyncIterable<Uint8Array>): Promise<void> {
   const temporary = `${target}.outline-${crypto.randomUUID()}.tmp`;
   const handle = await open(temporary, 'wx', 0o600);
   try {
-    await handle.writeFile(contents, 'utf8');
+    for await (const chunk of chunks) await handle.write(chunk);
+    await handle.write(Buffer.from('\n'));
     await handle.sync();
     await handle.close();
     await rename(temporary, target);
@@ -482,6 +552,10 @@ async function writeAtomicFile(target: string, contents: string): Promise<void> 
     await rm(temporary, { force: true }).catch(() => undefined);
     throw error;
   }
+}
+
+function artifactProtocolError(message: string): OutlineContractError {
+  return new OutlineContractError(outlineError('protocol_incompatible', 'protocol', message));
 }
 
 async function readStructuredSource(source: string, io: OutlineCliIo): Promise<string> {

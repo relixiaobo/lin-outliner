@@ -93,6 +93,64 @@ export class OutlineClient {
     return value.data;
   }
 
+  async diffArtifact(
+    source: AsyncIterable<Uint8Array> | Iterable<Uint8Array>,
+    options: {
+      readonly inputFormat: 'json' | 'jsonl';
+      readonly idempotencyKey?: string;
+      readonly signal?: AbortSignal;
+    },
+  ): Promise<OutlineDiffArtifact> {
+    const requestId = `diff:${crypto.randomUUID()}`;
+    const response = await this.openUploadRequest({
+      path: '/v1/diff',
+      headers: {
+        'content-type': options.inputFormat === 'jsonl'
+          ? 'application/x-ndjson; charset=utf-8'
+          : 'application/json; charset=utf-8',
+        'x-outline-request-id': requestId,
+        'x-outline-input-format': options.inputFormat,
+        ...(options.idempotencyKey ? {
+          'x-outline-idempotency-key': Buffer.from(options.idempotencyKey, 'utf8').toString('base64url'),
+        } : {}),
+      },
+      source,
+      signal: options.signal,
+    });
+    if (response.statusCode !== 200) await throwHttpError(response, 'Diff upload');
+    const expectedRequestId = response.headers['x-outline-request-id'];
+    const expectedDigest = response.headers['x-outline-sha256'];
+    const expectedBytes = Number(response.headers['content-length']);
+    if (expectedRequestId !== requestId
+      || typeof expectedDigest !== 'string'
+      || !/^[a-f0-9]{64}$/.test(expectedDigest)
+      || !Number.isSafeInteger(expectedBytes)
+      || expectedBytes < 0) {
+      response.destroy();
+      throw protocolError('Outline Runtime returned invalid Diff artifact headers.');
+    }
+    let consumed = false;
+    return {
+      byteCount: expectedBytes,
+      sha256: expectedDigest,
+      chunks: (async function* () {
+        if (consumed) throw protocolError('Outline Diff artifact stream was already consumed.');
+        consumed = true;
+        const hash = createHash('sha256');
+        let byteCount = 0;
+        for await (const chunk of response) {
+          const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          byteCount += bytes.byteLength;
+          hash.update(bytes);
+          yield bytes;
+        }
+        if (byteCount !== expectedBytes || hash.digest('hex') !== expectedDigest) {
+          throw protocolError('Outline Runtime Diff artifact failed integrity verification.');
+        }
+      })(),
+    };
+  }
+
   async *exportAsset(assetId: string, signal?: AbortSignal): AsyncGenerator<Uint8Array> {
     const response = await this.openRequest({
       method: 'GET',
@@ -334,6 +392,12 @@ export class OutlineClient {
       })();
     });
   }
+}
+
+export interface OutlineDiffArtifact {
+  readonly byteCount: number;
+  readonly sha256: string;
+  readonly chunks: AsyncIterable<Uint8Array>;
 }
 
 async function readResponseJson(response: http.IncomingMessage): Promise<unknown> {

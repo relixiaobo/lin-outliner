@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import {
+  appliedOutlineOperations,
   commandCalls,
   e2eProjection,
   emitDocumentEvent,
@@ -17,16 +18,24 @@ async function delayCreateNode(page: Parameters<typeof trailingEditor>[0], delay
   await page.evaluate((delay) => {
     const win = window as unknown as {
       lin?: {
-        invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+        outline: {
+          request: <T>(request: { command: string; input: unknown }) => Promise<T>;
+        };
       };
     };
-    const originalInvoke = win.lin?.invoke;
-    if (!win.lin || !originalInvoke) return;
-    win.lin.invoke = async <T,>(cmd: string, args: Record<string, unknown> = {}) => {
-      if (cmd === 'create_node' || cmd === 'create_nodes_from_tree') {
+    const outline = win.lin?.outline;
+    const originalRequest = outline?.request;
+    if (!outline || !originalRequest) return;
+    outline.request = async <T,>(request: { command: string; input: unknown }) => {
+      const input = request.input as {
+        diff?: { normalizedChangeSet?: { operations?: Array<Record<string, unknown>> } };
+      };
+      const createsNode = request.command === 'apply'
+        && (input.diff?.normalizedChangeSet?.operations ?? []).some((operation) => operation.op === 'create');
+      if (createsNode) {
         await new Promise((resolve) => window.setTimeout(resolve, delay));
       }
-      return originalInvoke<T>(cmd, args);
+      return originalRequest<T>(request);
     };
   }, delayMs);
 }
@@ -38,18 +47,28 @@ async function rejectDraftMaterializations(
 ) {
   await page.evaluate(async ({ delay, rejections }) => {
     const win = window as Window & {
-      lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+      lin?: {
+        outline: {
+          request: <T>(request: { command: string; input: unknown }) => Promise<T>;
+        };
+      };
     };
-    const originalInvoke = win.lin?.invoke;
-    if (!win.lin || !originalInvoke) return;
+    const outline = win.lin?.outline;
+    const originalRequest = outline?.request;
+    if (!outline || !originalRequest) return;
     const pending = [...rejections];
-    win.lin.invoke = async <T,>(cmd: string, args: Record<string, unknown> = {}) => {
-      if (cmd === 'create_node' && args.materialize === true && pending.length > 0) {
+    outline.request = async <T,>(request: { command: string; input: unknown }) => {
+      const input = request.input as {
+        diff?: { normalizedChangeSet?: { operations?: Array<Record<string, unknown>> } };
+      };
+      const createsNode = request.command === 'apply'
+        && (input.diff?.normalizedChangeSet?.operations ?? []).some((operation) => operation.op === 'create');
+      if (createsNode && pending.length > 0) {
         const message = pending.shift()!;
         if (delay > 0) await new Promise((resolve) => window.setTimeout(resolve, delay));
         throw new Error(message);
       }
-      return originalInvoke<T>(cmd, args);
+      return originalRequest<T>(request);
     };
   }, { delay: delayMs, rejections: messages });
 }
@@ -635,13 +654,17 @@ test.describe('outliner trailing input and expansion parity', () => {
 
     const before = await e2eProjection(page);
     const beforeCount = before.nodes.find((node) => node.id === ids.today)!.children.length;
+    const beforeCall = (await commandCalls(page)).length;
     await trailingEditor(page).click();
     await page.keyboard.press('Meta+Enter');
 
     await expect(page.locator('.action-notice')).toContainText(rejection);
     await page.evaluate(() => new Promise<void>((resolve) => window.setTimeout(resolve, 0)));
     await expect(page.locator('.action-notice')).toContainText(rejection);
-    expect((await commandCalls(page)).filter(({ cmd }) => cmd === 'cycle_done_state')).toHaveLength(0);
+    const doneChanges = (await appliedOutlineOperations(page, beforeCall)).flatMap((operation) => (
+      Array.isArray(operation.changes) ? operation.changes as Array<Record<string, unknown>> : []
+    )).filter((change) => change.kind === 'done');
+    expect(doneChanges).toHaveLength(0);
     const after = await e2eProjection(page);
     expect(after.nodes.find((node) => node.id === ids.today)!.children).toHaveLength(beforeCount);
   });
@@ -653,6 +676,7 @@ test.describe('outliner trailing input and expansion parity', () => {
 
     const before = await e2eProjection(page);
     const beforeCount = before.nodes.find((node) => node.id === ids.today)!.children.length;
+    const beforeCall = (await commandCalls(page)).length;
     const editor = trailingEditor(page);
     await editor.click();
     await page.keyboard.type('abc', { delay: 0 });
@@ -663,7 +687,10 @@ test.describe('outliner trailing input and expansion parity', () => {
     await expect(page.locator('.action-notice')).toContainText(retryRejection);
     await page.evaluate(() => new Promise<void>((resolve) => window.setTimeout(resolve, 0)));
     await expect(page.locator('.action-notice')).toContainText(retryRejection);
-    expect((await commandCalls(page)).filter(({ cmd }) => cmd === 'cycle_done_state')).toHaveLength(0);
+    const doneChanges = (await appliedOutlineOperations(page, beforeCall)).flatMap((operation) => (
+      Array.isArray(operation.changes) ? operation.changes as Array<Record<string, unknown>> : []
+    )).filter((change) => change.kind === 'done');
+    expect(doneChanges).toHaveLength(0);
     const after = await e2eProjection(page);
     expect(after.nodes.find((node) => node.id === ids.today)!.children).toHaveLength(beforeCount);
     await expect(editor).toHaveText('abc');

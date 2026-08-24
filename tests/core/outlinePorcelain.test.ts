@@ -94,7 +94,76 @@ describe('outline porcelain CLI', () => {
       await runtime.stop();
     }
   });
+
+  test('reviews and confirms the exact destructive Diff on a TTY', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const acceptedId = await createTrashedNode(root, runtime, 'TTY accepted purge');
+      const accepted = await humanCommand(root, ['purge', acceptedId], async () => true);
+      expect(accepted.code).toBe(0);
+      expect(accepted.stdout).toContain('Review Diff:');
+      expect(accepted.stdout).toContain('"kind": "outline.diff"');
+      expect(accepted.prompts).toEqual([expect.stringContaining('Apply destructive purge Diff')]);
+      expect(runtime.workspace.documentState().nodes[acceptedId]).toBeUndefined();
+
+      const rejectedId = await createTrashedNode(root, runtime, 'TTY rejected purge');
+      const rejected = await humanCommand(root, ['purge', rejectedId], async () => false);
+      expect(rejected.code).toBe(4);
+      expect(rejected.stderr).toContain('not confirmed');
+      expect(runtime.workspace.documentState().nodes[rejectedId]).toBeDefined();
+
+      const staleId = await createTrashedNode(root, runtime, 'TTY stale purge');
+      const stale = await humanCommand(root, ['purge', staleId], async () => {
+        expect((await jsonCommand(root, ['add', '@today', 'Concurrent TTY write'])).code).toBe(0);
+        return true;
+      });
+      expect(stale.code).toBe(3);
+      expect(stale.stderr).toContain('revision changed');
+      expect(runtime.workspace.documentState().nodes[staleId]).toBeDefined();
+    } finally {
+      await runtime.stop();
+    }
+  });
 });
+
+async function createTrashedNode(
+  root: string,
+  runtime: OutlineRuntimeServer,
+  text: string,
+): Promise<string> {
+  expect((await jsonCommand(root, ['add', '@today', text])).code).toBe(0);
+  const nodeId = Object.values(runtime.workspace.documentState().nodes)
+    .find((node) => node.content.text === text)?.id;
+  expect(nodeId).toBeDefined();
+  expect((await jsonCommand(root, ['trash', nodeId!])).code).toBe(0);
+  return nodeId!;
+}
+
+async function humanCommand(
+  root: string,
+  args: readonly string[],
+  confirm: (prompt: string) => Promise<boolean>,
+): Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string; readonly prompts: readonly string[] }> {
+  let stdout = '';
+  let stderr = '';
+  const prompts: string[] = [];
+  const code = await runOutlineCli(['--no-start', ...args], {
+    runtimeRoot: root,
+    io: {
+      stdout: (value) => { stdout += value; },
+      stderr: (value) => { stderr += value; },
+      interactive: true,
+      confirm: async (prompt) => {
+        prompts.push(prompt);
+        return confirm(prompt);
+      },
+    },
+  });
+  return { code, stdout, stderr, prompts };
+}
 
 async function jsonCommand(root: string, args: readonly string[], stdin = ''): Promise<{
   code: number;
@@ -108,6 +177,7 @@ async function jsonCommand(root: string, args: readonly string[], stdin = ''): P
       stdout: (value) => { stdout += value; },
       stderr: () => undefined,
       readStdin: async () => stdin,
+      stdinBytes: () => (async function* () { yield Buffer.from(stdin); })(),
     },
   });
   const response = JSON.parse(stdout) as { data?: unknown; error?: unknown };

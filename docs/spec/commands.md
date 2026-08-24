@@ -43,6 +43,14 @@ owned. Missing and duplicate owners both fail the guard.
 and audit category drive host classification; execution context never removes a
 public schema field or document capability.
 
+`status` never starts Runtime. Absence is exactly `{ running: false }`. A live
+result includes the Runtime instance, runtime and storage versions, document
+revision, transaction/snapshot/Event sequences, verified and total log bytes,
+torn/stale/inconsistent flags, pending-maintenance state, recovery lifecycle
+counts, retained recovery bytes and budget, and orphan-blob count. Log health is
+`healthy`, `degraded` while recoverable maintenance remains, or `blocked` when
+the verified prefix is readable but mutation admission is closed.
+
 ## Selector And Projection
 
 A `Selector` is independent of renderer state:
@@ -94,6 +102,14 @@ lowers porcelain, executes Core validation on a disposable frontier, and hashes
 canonical JSON. Invalid semantic keys, unresolved bindings, protected targets,
 or stale preconditions write nothing.
 
+`diff --input-format jsonl` uploads a header, bounded operation records, and a
+count/SHA-256 trailer as a stream. After transport authentication, Runtime writes
+the upload to a `0700` private spool directory using a `0600` temporary file,
+checks the 64 MiB upload and 8 MiB record bounds while receiving it, then parses
+and validates records incrementally. Runtime removes the spool file on success
+or failure. An idempotency key supplied by the CLI is checked or injected only
+after the trailer digest authenticates the uploaded ChangeSet.
+
 ## Diff, Apply, And Operations
 
 `diff` normalizes a ChangeSet and returns an `outline.diff` containing its
@@ -105,6 +121,18 @@ not advance document revision, create an Operation, or retain staged assets.
 rechecks its hashes, base revision, target digests, asset leases, and destructive
 acknowledgement before executing. Purge and empty-Trash flows require a Diff-bound
 explicit acknowledgement; acknowledgement alone is insufficient.
+
+Human destructive porcelain on a TTY first prints the exact Runtime-produced
+Diff and asks for confirmation. Acceptance submits that same artifact to
+`apply`; rejection writes nothing, and a revision change during review returns a
+stale conflict without recomputing or retrying. JSON and non-TTY callers must
+provide both `--yes` and either a reviewed Diff artifact or `--expect-diff`.
+
+Canonical Diff responses stream from Runtime while SHA-256 and byte count advance
+over the same chunks. Results up to 8 MiB may be collected into the single JSON
+envelope. Larger results require an atomic `--output` file or raw `--output -`;
+the client verifies response identity, length, and digest as the stream is
+consumed and never retains the whole encoded artifact merely to hash it.
 
 Apply is atomic. Runtime keeps Core rollback live until one fsynced transaction
 record contains the document update, Operation, recovery patch, idempotency
@@ -141,6 +169,11 @@ Every commit appends ordered `projection.changed`, `operation.committed`,
 opaque cursor and emits `resync.required` when retained history cannot bridge a
 gap. Desktop adapters convert projection Events to the renderer's incremental
 `ProjectionUpdate`; revision gaps trigger a complete Projection read.
+
+Recovery expiry appends its maintenance record before removing unreferenced
+blobs and emits `operation.recovery-expired` with the expired Operation and patch
+IDs. Its cursor uses the active Runtime instance, current document revision, and
+durable Event sequence, so a live watcher can resume across maintenance.
 
 Renderer intent helpers in `src/renderer/api/outlineIntents.ts` map UI actions to
 public Changes. Main-side actions use `src/main/outlineActionCommands.ts` for the

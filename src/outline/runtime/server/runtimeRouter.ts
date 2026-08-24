@@ -14,7 +14,11 @@ import {
   type OperationLogPage,
 } from '../../contract/schemas';
 import { canonicalSha256 } from '../../contract/canonical';
-import { OUTLINE_PROTOCOL_VERSION } from '../../contract/version';
+import {
+  OUTLINE_CLI_VERSION,
+  OUTLINE_PROTOCOL_VERSION,
+  OUTLINE_STORAGE_VERSION,
+} from '../../contract/version';
 import type { OutlineRuntimeWorkspace } from '../runtimeWorkspace';
 import { applyOutlineDiff, diffOutlineChangeSet } from '../changeSet';
 import { projectOutline } from '../projection';
@@ -99,7 +103,15 @@ export class OutlineRuntimeRouter {
     const handler = this.handlers.get(command);
     if (handler) return handler(input, context);
     if (command === 'status') {
-      return { running: true, runtime: { instanceId: this.workspace.instanceId, revision: this.workspace.revision() } };
+      return {
+        running: true,
+        runtime: {
+          instanceId: this.workspace.instanceId,
+          runtimeVersion: OUTLINE_CLI_VERSION,
+          storageVersion: OUTLINE_STORAGE_VERSION,
+          ...await this.workspace.status(),
+        },
+      };
     }
     if (command === 'capabilities') return outlineCapabilityManifest();
     if (command === 'find') {

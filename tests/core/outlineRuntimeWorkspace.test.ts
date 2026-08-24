@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { canonicalSha256 } from '../../src/outline/contract/canonical';
-import { OutlineRuntimeWorkspace } from '../../src/outline/runtime';
+import { decodeEventCursor, OutlineRuntimeWorkspace } from '../../src/outline/runtime';
 import { OutlineRuntimeRouter } from '../../src/outline/runtime/server';
 import { WorkspaceTransactionLog } from '../../src/outline/runtime/storage';
 
@@ -59,6 +59,85 @@ describe('OutlineRuntimeWorkspace', () => {
 
     expect(workspace.documentState()).toEqual(before);
     expect(await workspace.store.operations()).toEqual([]);
+  });
+
+  test('publishes resumable recovery-expiry Events during live maintenance', async () => {
+    const root = await makeRoot();
+    let nowMs = Date.parse('2035-01-01T00:00:00.000Z');
+    const workspace = await OutlineRuntimeWorkspace.open(root, {
+      instanceId: 'runtime:maintenance-live',
+      now: () => new Date(nowMs),
+      storeOptions: { minimumRetentionDays: 1, minimumRetentionOperations: 0 },
+    });
+    const operation = await workspace.mutate(createRequest('Expiring recovery'));
+    const events: import('../../src/outline/contract').OutlineEvent[] = [];
+    const unsubscribe = workspace.subscribe((event) => events.push(event));
+
+    nowMs += 2 * 86_400_000;
+    await workspace.maintain();
+    unsubscribe();
+
+    expect((await workspace.store.operation(operation.operationId))?.recovery.state).toBe('expired');
+    expect(events).toEqual([expect.objectContaining({
+      type: 'operation.recovery-expired',
+      instanceId: workspace.instanceId,
+      revision: workspace.revision(),
+      recovery: {
+        operationIds: [operation.operationId],
+        recoveryPatchIds: [operation.recovery.recoveryPatchId],
+      },
+    })]);
+    expect(decodeEventCursor(events[0]!.cursor, { instanceId: workspace.instanceId })).toMatchObject({
+      sequence: events[0]!.sequence,
+      revision: workspace.revision(),
+    });
+  });
+
+  test('prunes eligible recovery at startup with the new Runtime identity', async () => {
+    const root = await makeRoot();
+    let nowMs = Date.parse('2036-01-01T00:00:00.000Z');
+    const options = {
+      now: () => new Date(nowMs),
+      storeOptions: { minimumRetentionDays: 1, minimumRetentionOperations: 0 },
+    };
+    const first = await OutlineRuntimeWorkspace.open(root, { ...options, instanceId: 'runtime:startup-first' });
+    const operation = await first.mutate(createRequest('Startup expiry'));
+    const baseline = (await first.store.health()).transactionLog.eventSequence;
+
+    nowMs += 2 * 86_400_000;
+    const restarted = await OutlineRuntimeWorkspace.open(root, { ...options, instanceId: 'runtime:startup-second' });
+    const [event] = await restarted.store.eventsAfter(baseline);
+
+    expect((await restarted.store.operation(operation.operationId))?.recovery.state).toBe('expired');
+    expect(event).toMatchObject({
+      type: 'operation.recovery-expired',
+      instanceId: 'runtime:startup-second',
+      revision: restarted.revision(),
+    });
+    expect(decodeEventCursor(event!.cursor, { instanceId: restarted.instanceId })).not.toBeNull();
+  });
+
+  test('does not reverse a durable Operation when post-settlement compaction maintenance fails', async () => {
+    const root = await makeRoot();
+    let snapshotRenames = 0;
+    const store = new WorkspaceTransactionLog(root, {
+      compactionRecords: 1,
+      afterSnapshotRename: () => {
+        snapshotRenames += 1;
+        if (snapshotRenames === 2) throw new Error('injected maintenance failure');
+      },
+    });
+    const workspace = await OutlineRuntimeWorkspace.open(root, { store });
+
+    const first = await workspace.mutate(createRequest('Committed before maintenance failure'));
+    expect(first.kind).toBe('outline.operation');
+    expect(workspace.projection().nodes.some((node) => node.content.text === 'Committed before maintenance failure')).toBe(true);
+
+    const second = await workspace.mutate(createRequest('Writable after maintenance reload'));
+    expect(second.revisionBefore).toBe(first.revisionAfter);
+    const restarted = await OutlineRuntimeWorkspace.open(root);
+    expect(restarted.projection().nodes.some((node) => node.content.text === 'Committed before maintenance failure')).toBe(true);
+    expect(restarted.projection().nodes.some((node) => node.content.text === 'Writable after maintenance reload')).toBe(true);
   });
 
   test('rejects an exact patch mismatch without changing live or durable state', async () => {

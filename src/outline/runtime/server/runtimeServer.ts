@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { chmod, lstat, readFile, rm } from 'node:fs/promises';
 import http from 'node:http';
@@ -7,7 +7,8 @@ import type { Socket } from 'node:net';
 import path from 'node:path';
 import { Value } from 'typebox/value';
 import { outlineCapability } from '../../contract/capabilities';
-import { outlineError } from '../../contract/errors';
+import { canonicalJsonChunks } from '../../contract/canonical';
+import { OutlineContractError, outlineError } from '../../contract/errors';
 import {
   OutlineRequestSchema,
   RuntimeDescriptorSchema,
@@ -46,6 +47,7 @@ import {
   writePrivateJson,
   type OutlineRuntimePaths,
 } from './runtimePaths';
+import { readChangeSetUpload } from './changeSetSpool';
 
 const MAX_REQUEST_BYTES = 64 * 1024 * 1024;
 
@@ -184,6 +186,44 @@ export class OutlineRuntimeServer {
         });
         return;
       }
+      if (request.method === 'POST' && url.pathname === '/v1/diff') {
+        const requestId = requiredHeader(request, 'x-outline-request-id');
+        const format = requiredHeader(request, 'x-outline-input-format');
+        if (format !== 'json' && format !== 'jsonl') throw new Error('Invalid ChangeSet upload format.');
+        const idempotencyKey = optionalBase64UrlHeader(request, 'x-outline-idempotency-key');
+        const changeSet = await readChangeSetUpload(this.paths.root, request, format, idempotencyKey);
+        const authorization = this.authorizeRequestContext(request, false);
+        const result = await this.router.handle({
+          protocolVersion: OUTLINE_PROTOCOL_VERSION,
+          requestId,
+          command: 'diff',
+          input: { changeSet },
+        }, authorization.context);
+        authorization.complete(false);
+        if (!result.ok) {
+          writeJson(response, 400, { error: result.error });
+          return;
+        }
+        const hash = createHash('sha256');
+        let byteCount = 0;
+        for (const chunk of canonicalJsonChunks(result.data)) {
+          hash.update(chunk);
+          byteCount += Buffer.byteLength(chunk);
+        }
+        response.writeHead(200, {
+          'content-type': 'application/vnd.tenon.outline-diff+json',
+          'content-length': byteCount,
+          'x-outline-request-id': requestId,
+          'x-outline-sha256': hash.digest('hex'),
+          'cache-control': 'no-store',
+          connection: 'close',
+        });
+        for (const chunk of canonicalJsonChunks(result.data)) {
+          await writeWithBackpressure(response, chunk);
+        }
+        response.end();
+        return;
+      }
       if (request.method === 'GET' && url.pathname.startsWith('/v1/assets/')) {
         const assetId = decodeURIComponent(url.pathname.slice('/v1/assets/'.length));
         const verified = await this.workspace.assets.verify(assetId);
@@ -248,14 +288,11 @@ export class OutlineRuntimeServer {
         error: outlineError('not_found', 'selection', 'Outline Runtime route not found.'),
       });
     } catch (error) {
-      writeJson(response, 400, {
-        error: outlineError(
-          'invalid_input',
-          'usage',
-          'Outline Runtime request could not be decoded.',
-          { details: error instanceof Error ? error.message : String(error) },
-        ),
-      });
+      if (response.headersSent) {
+        response.destroy(error instanceof Error ? error : new Error(String(error)));
+      } else {
+        writeJson(response, 400, { error: serverError(error) });
+      }
     } finally {
       this.activeRequests -= 1;
       this.scheduleIdle();
@@ -461,7 +498,7 @@ export class OutlineRuntimeServer {
     if (this.stopping || this.activeRequests > 0 || this.idleTimer) return;
     this.idleTimer = setTimeout(() => {
       this.idleTimer = undefined;
-      void this.workspace.collectAssetGarbage()
+      void this.workspace.maintain({ compactIfNeeded: true })
         .catch(() => undefined)
         .then(() => this.onIdle?.())
         .finally(() => this.stop());
@@ -485,6 +522,16 @@ export class OutlineRuntimeServer {
       // A missing or replaced descriptor is not owned by this Runtime instance.
     }
   }
+}
+
+function serverError(error: unknown) {
+  if (error instanceof OutlineContractError) return error.outlineError;
+  return outlineError(
+    'invalid_input',
+    'usage',
+    'Outline Runtime request could not be decoded.',
+    { details: error instanceof Error ? error.message : String(error) },
+  );
 }
 
 class AgentAttestationRegistry {
@@ -633,6 +680,33 @@ function writeJson(response: http.ServerResponse, status: number, value: unknown
     connection: 'close',
   });
   response.end(body);
+}
+
+async function writeWithBackpressure(response: http.ServerResponse, chunk: string): Promise<void> {
+  if (response.destroyed || response.writableEnded) throw new Error('Outline Runtime response closed during streaming.');
+  if (response.write(chunk)) return;
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      response.off('drain', onDrain);
+      response.off('close', onClose);
+      response.off('error', onError);
+    };
+    const onDrain = () => {
+      cleanup();
+      resolve();
+    };
+    const onClose = () => {
+      cleanup();
+      reject(new Error('Outline Runtime response closed during streaming.'));
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    response.once('drain', onDrain);
+    response.once('close', onClose);
+    response.once('error', onError);
+  });
 }
 
 async function removeStaleSocket(socketPath: string): Promise<void> {

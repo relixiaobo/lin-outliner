@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -12,7 +12,9 @@ import {
 import {
   OUTLINE_APP_VERSION,
   OUTLINE_CAPABILITIES,
+  OUTLINE_CLI_VERSION,
   OUTLINE_PROTOCOL_VERSION,
+  OUTLINE_STORAGE_VERSION,
   OutlineResponseSchema,
   OutlineStreamRecordSchema,
   canonicalSha256,
@@ -55,6 +57,70 @@ describe('outline CLI', () => {
     expect(await runOutlineCli(['--json', 'status'], { runtimeRoot: root, io: output.io })).toBe(0);
     expect(JSON.parse(output.stdout)).toMatchObject({ ok: true, command: 'status', data: { running: false } });
     expect(await readdir(root)).toEqual([]);
+  });
+
+  test('reports exact Runtime, transaction-log, and recovery health without starting another Runtime', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const output = captureIo();
+      expect(await runOutlineCli(['--json', 'status'], { runtimeRoot: root, io: output.io })).toBe(0);
+      expect(JSON.parse(output.stdout).data).toEqual({
+        running: true,
+        runtime: {
+          instanceId: runtime.workspace.instanceId,
+          runtimeVersion: OUTLINE_CLI_VERSION,
+          storageVersion: OUTLINE_STORAGE_VERSION,
+          revision: 0,
+          transactionLog: {
+            health: 'healthy',
+            sequence: 0,
+            eventSequence: 0,
+            snapshotSequence: 0,
+            validBytes: expect.any(Number),
+            totalBytes: expect.any(Number),
+            tornTail: false,
+            stale: false,
+            inconsistent: false,
+            maintenancePending: false,
+          },
+          recovery: {
+            available: 0,
+            conflicted: 0,
+            reverted: 0,
+            expired: 0,
+            retainedBytes: 0,
+            budgetBytes: 2 * 1024 * 1024 * 1024,
+            orphanBlobCount: 0,
+          },
+        },
+      });
+
+      const mutation = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'add', '@today', 'Status health row'], {
+        runtimeRoot: root,
+        io: mutation.io,
+      })).toBe(0);
+      const updated = captureIo();
+      expect(await runOutlineCli(['--json', 'status'], { runtimeRoot: root, io: updated.io })).toBe(0);
+      const updatedRuntime = JSON.parse(updated.stdout).data.runtime;
+      expect(updatedRuntime).toMatchObject({
+        revision: 1,
+        transactionLog: {
+          health: 'healthy',
+          sequence: 1,
+          eventSequence: 1,
+          snapshotSequence: 0,
+          maintenancePending: false,
+        },
+        recovery: { available: 1, retainedBytes: expect.any(Number) },
+      });
+      expect(updatedRuntime.transactionLog.validBytes).toBe(updatedRuntime.transactionLog.totalBytes);
+    } finally {
+      await runtime.stop();
+    }
   });
 
   test('serves exact named public and command schemas locally', async () => {
@@ -239,21 +305,28 @@ describe('outline CLI', () => {
 
   test('reads structured input from stdin only when explicitly requested', async () => {
     const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
     const explicit = captureIo('{not json');
     const missing = captureIo('{not json');
 
-    expect(await runOutlineCli(['--json', '--no-start', 'diff', '--input', '-'], {
-      runtimeRoot: root,
-      io: explicit.io,
-    })).toBe(2);
-    expect(explicit.stdinReads).toBe(1);
-    expect(JSON.parse(explicit.stdout).error.code).toBe('invalid_input');
+    try {
+      expect(await runOutlineCli(['--json', '--no-start', 'diff', '--input', '-'], {
+        runtimeRoot: root,
+        io: explicit.io,
+      })).toBe(2);
+      expect(explicit.stdinReads).toBe(1);
+      expect(JSON.parse(explicit.stdout).error.code).toBe('invalid_input');
 
-    expect(await runOutlineCli(['--json', '--no-start', 'diff'], {
-      runtimeRoot: root,
-      io: missing.io,
-    })).toBe(2);
-    expect(missing.stdinReads).toBe(0);
+      expect(await runOutlineCli(['--json', '--no-start', 'diff'], {
+        runtimeRoot: root,
+        io: missing.io,
+      })).toBe(2);
+      expect(missing.stdinReads).toBe(0);
+    } finally {
+      await runtime.stop();
+    }
   });
 
   test('runs read, Diff, apply, and streaming export through the public CLI grammar', async () => {
@@ -379,6 +452,53 @@ describe('outline CLI', () => {
       await runtime.stop();
     }
   });
+
+  test('requires an output artifact and streams a canonical Diff larger than 8 MiB', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const largeText = 'x'.repeat(4_194_304);
+      const changeSet: ChangeSet = {
+        protocolVersion: 1,
+        kind: 'outline.changeset',
+        operations: [{
+          op: 'create',
+          parents: { target: { selector: { by: 'alias', alias: 'today' }, cardinality: 'one' } },
+          nodes: [
+            { content: { text: largeText, marks: [], inlineRefs: [] }, children: [] },
+            { content: { text: largeText, marks: [], inlineRefs: [] }, children: [] },
+          ],
+        }],
+      };
+      const raw = JSON.stringify(changeSet);
+      const inline = captureIo(raw);
+      expect(await runOutlineCli(['--json', '--no-start', 'diff', '--input', '-'], {
+        runtimeRoot: root,
+        io: inline.io,
+      })).toBe(2);
+      expect(JSON.parse(inline.stdout).error.message).toContain('exceeds 8 MiB');
+
+      const outputPath = path.join(root, 'large.diff.json');
+      const output = captureIo(raw);
+      expect(await runOutlineCli([
+        '--json', '--no-start', 'diff', '--input', '-', '--output', outputPath,
+      ], { runtimeRoot: root, io: output.io })).toBe(0);
+      const result = JSON.parse(output.stdout).data;
+      const byteCount = result.byteCount as number;
+      const sha256 = result.sha256 as string;
+      expect(result.path).toBe(outputPath);
+      expect(typeof byteCount).toBe('number');
+      expect(typeof sha256).toBe('string');
+      expect(byteCount).toBeGreaterThan(8 * 1024 * 1024);
+      expect((await stat(outputPath)).size).toBe(byteCount + 1);
+      const diff = JSON.parse(await readFile(outputPath, 'utf8')) as Diff;
+      expect(canonicalSha256(diff)).toBe(sha256);
+    } finally {
+      await runtime.stop();
+    }
+  }, 30_000);
 
   test('streams asset ingest, show, and verified export through the Runtime', async () => {
     const root = await makeRoot();

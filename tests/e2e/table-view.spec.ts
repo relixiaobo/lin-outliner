@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import {
+  appliedOutlineOperations,
   commandCalls,
   e2eProjection,
   ids,
@@ -9,6 +10,24 @@ import {
 } from './outlinerMock';
 
 type MockCommand = { cmd: string; args: Record<string, unknown> };
+
+function targetId(value: unknown): string | undefined {
+  return (value as { target?: { selector?: { id?: string } } } | undefined)?.target?.selector?.id;
+}
+
+async function appliedUpdates(page: Page, fromCall = 0) {
+  return (await appliedOutlineOperations(page, fromCall)).flatMap((operation) => {
+    if (operation.op !== 'update' || !Array.isArray(operation.changes)) return [];
+    return (operation.changes as Array<Record<string, unknown>>).map((change) => ({
+      ownerId: targetId(operation.targets),
+      change,
+    }));
+  });
+}
+
+async function appliedCreates(page: Page, fromCall = 0) {
+  return (await appliedOutlineOperations(page, fromCall)).filter((operation) => operation.op === 'create');
+}
 
 async function invokeCommands(page: Page, commands: MockCommand[]) {
   await page.evaluate(async (input) => {
@@ -273,16 +292,16 @@ test.describe('table view', () => {
     const statusCell = rootGrid(page)
       .locator(`.outliner-table-cell[data-table-row-id="${ids.alpha}"]`)
       .first();
-    const slotMutationsBefore = (await commandCalls(page)).filter((call) => call.cmd === 'update_field_slot').length;
+    const beforeCall = (await commandCalls(page)).length;
 
     await statusCell.click();
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('ArrowUp');
-    expect((await commandCalls(page)).filter((call) => call.cmd === 'update_field_slot')).toHaveLength(slotMutationsBefore);
+    expect((await appliedUpdates(page, beforeCall)).filter(({ change }) => change.kind === 'field-slot')).toHaveLength(0);
 
     await statusCell.press('Enter');
     await expect(statusCell.locator('.ProseMirror')).toBeFocused();
-    expect((await commandCalls(page)).filter((call) => call.cmd === 'update_field_slot')).toHaveLength(slotMutationsBefore);
+    expect((await appliedUpdates(page, beforeCall)).filter(({ change }) => change.kind === 'field-slot')).toHaveLength(0);
 
     const beforeCommit = await e2eProjection(page);
     const alphaBeforeCommit = beforeCommit.nodes.find((node) => node.id === ids.alpha)!;
@@ -298,20 +317,22 @@ test.describe('table view', () => {
     await expect(statusCell.locator('.field-value-outliner .row-bullet-dot')).toBeVisible();
     await page.keyboard.type('3');
     await page.keyboard.press('Escape');
-    await expect.poll(async () => (await commandCalls(page)).filter((call) => (
-      call.cmd === 'update_field_slot'
-      && call.args.ownerId === ids.alpha
-      && call.args.fieldDefId === ids.statusField
-      && call.args.kind === 'appendText'
-      && call.args.text === '3'
-    )).length).toBe(1);
+    await expect.poll(async () => (await appliedUpdates(page, beforeCall)).filter(({ ownerId, change }) => {
+      const field = targetId(change.field);
+      const mutation = change.mutation as Record<string, unknown> | undefined;
+      return ownerId === ids.alpha
+        && change.kind === 'field-slot'
+        && field === ids.statusField
+        && mutation?.action === 'append-text'
+        && mutation.text === '3';
+    }).length).toBe(1);
     await expect(statusCell).toBeFocused();
     await page.keyboard.press('Tab');
     await expect(dueCell).toBeFocused();
     await expect(statusCell.locator('.field-value-outliner')).toContainText('3');
     await expect(statusCell.locator('.row-bullet-shape.content .row-bullet-dot')).toBeVisible();
     await expect(dueCell.locator('.field-value-outliner .row-bullet-dot')).toBeVisible();
-    expect((await commandCalls(page)).some((call) => call.cmd === 'indent_node')).toBe(false);
+    expect((await appliedOutlineOperations(page, beforeCall)).filter((operation) => operation.op === 'move')).toHaveLength(0);
   });
 
   test('serializes empty field materialization and replays rapid input', async ({ page }) => {
@@ -319,34 +340,50 @@ test.describe('table view', () => {
     await invokeCommands(page, [{ cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'table' } }]);
     await page.evaluate(() => {
       const win = window as typeof window & {
-        lin?: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
+        lin?: {
+          outline: {
+            request: <T>(request: { command: string; input: unknown }) => Promise<T>;
+          };
+        };
       };
-      const originalInvoke = win.lin!.invoke.bind(win.lin);
+      const outline = win.lin!.outline;
+      const originalRequest = outline.request;
       let delayed = false;
-      win.lin!.invoke = async (cmd, args) => {
-        if (cmd === 'update_field_slot' && args?.kind === 'appendText' && !delayed) {
+      outline.request = async <T,>(request: { command: string; input: unknown }) => {
+        const input = request.input as {
+          diff?: { normalizedChangeSet?: { operations?: Array<{ changes?: Array<Record<string, unknown>> }> } };
+        };
+        const appendsFieldText = request.command === 'apply'
+          && (input.diff?.normalizedChangeSet?.operations ?? []).some((operation) => (
+            operation.changes?.some((change) => {
+              const mutation = change.mutation as Record<string, unknown> | undefined;
+              return change.kind === 'field-slot' && mutation?.action === 'append-text';
+            })
+          ));
+        if (appendsFieldText && !delayed) {
           delayed = true;
           await new Promise<void>((resolve) => window.setTimeout(resolve, 80));
         }
-        return originalInvoke(cmd, args);
+        return originalRequest<T>(request);
       };
     });
 
     const statusCell = rootGrid(page)
       .locator(`.outliner-table-cell[data-table-row-id="${ids.alpha}"]`)
       .first();
-    const before = (await commandCalls(page)).filter((call) => call.cmd === 'update_field_slot').length;
+    const beforeCall = (await commandCalls(page)).length;
     await statusCell.focus();
     await page.keyboard.type('ab');
     await page.keyboard.press('Escape');
 
-    await expect.poll(async () => (await commandCalls(page)).filter((call) => (
-      call.cmd === 'update_field_slot'
-      && call.args.ownerId === ids.alpha
-      && call.args.fieldDefId === ids.statusField
-      && call.args.kind === 'appendText'
-      && call.args.text === 'ab'
-    )).length).toBe(before + 1);
+    await expect.poll(async () => (await appliedUpdates(page, beforeCall)).filter(({ ownerId, change }) => {
+      const mutation = change.mutation as Record<string, unknown> | undefined;
+      return ownerId === ids.alpha
+        && change.kind === 'field-slot'
+        && targetId(change.field) === ids.statusField
+        && mutation?.action === 'append-text'
+        && mutation.text === 'ab';
+    }).length).toBe(1);
     await expect(statusCell.locator('.field-value-outliner')).toContainText('ab');
   });
 
@@ -681,9 +718,10 @@ test.describe('table view', () => {
 
     const secondEditor = valueCell.locator('[data-node-id="table-interactive-value-2"] .ProseMirror').first();
     await secondEditor.click();
+    const beforeCall = (await commandCalls(page)).length;
     await page.keyboard.press('Tab');
-    await expect.poll(async () => (await commandCalls(page)).some((call) => (
-      call.cmd === 'indent_node' && call.args.nodeId === 'table-interactive-value-2'
+    await expect.poll(async () => (await appliedOutlineOperations(page, beforeCall)).some((operation) => (
+      operation.op === 'move' && targetId(operation.targets) === 'table-interactive-value-2'
     ))).toBe(true);
   });
 
@@ -692,7 +730,7 @@ test.describe('table view', () => {
     const finalTitleCell = rootGrid(page).locator(
       `[data-table-row-id="${ids.gamma}"][data-table-column-id="__title__"]`,
     );
-    const before = (await commandCalls(page)).filter((call) => call.cmd === 'create_node').length;
+    const beforeCall = (await commandCalls(page)).length;
 
     await finalTitleCell.focus();
     await finalTitleCell.press('Enter');
@@ -700,9 +738,9 @@ test.describe('table view', () => {
     await page.keyboard.press('End');
     await page.keyboard.press('Enter');
 
-    await expect.poll(async () => (await commandCalls(page)).filter((call) => (
-      call.cmd === 'create_node' && call.args.parentId === ids.today
-    )).length).toBe(before + 1);
+    await expect.poll(async () => (await appliedCreates(page, beforeCall)).filter((operation) => (
+      targetId(operation.parents) === ids.today
+    )).length).toBe(1);
     await expect(rootGrid(page).getByRole('row')).toHaveCount(6);
   });
 
@@ -852,16 +890,17 @@ test.describe('table view', () => {
     await dueMenu.getByRole('menuitem', { name: 'Rename for this view' }).click();
     const rename = page.getByLabel('Rename for this view');
     await rename.fill('Outside commit');
-    const commitsBefore = (await commandCalls(page)).filter((call) => (
-      call.cmd === 'update_display_field' && call.args.label === 'Outside commit'
-    )).length;
+    const beforeOutsideCommit = (await commandCalls(page)).length;
 
     await grid.getByRole('columnheader').first().click();
     await expect(grid.getByRole('columnheader').filter({ hasText: 'Outside commit' })).toBeVisible();
     await expect(page.getByLabel('Rename for this view')).toHaveCount(0);
-    await expect.poll(async () => (await commandCalls(page)).filter((call) => (
-      call.cmd === 'update_display_field' && call.args.label === 'Outside commit'
-    )).length).toBe(commitsBefore + 1);
+    await expect.poll(async () => (await appliedUpdates(page, beforeOutsideCommit)).filter(({ change }) => (
+      change.kind === 'view'
+      && change.property === 'display-field'
+      && change.action === 'set'
+      && change.label === 'Outside commit'
+    )).length).toBe(1);
 
     const outsideCommitButton = grid.getByRole('button', { name: 'Outside commit column menu' });
     await outsideCommitButton.click();
@@ -869,16 +908,17 @@ test.describe('table view', () => {
       .getByRole('menuitem', { name: 'Rename for this view' })
       .click();
     await rename.fill('Trigger commit');
-    const triggerCommitsBefore = (await commandCalls(page)).filter((call) => (
-      call.cmd === 'update_display_field' && call.args.label === 'Trigger commit'
-    )).length;
+    const beforeTriggerCommit = (await commandCalls(page)).length;
 
     await outsideCommitButton.click();
     await expect(page.getByRole('menu', { name: 'Outside commit column menu' })).toHaveCount(0);
     await expect(grid.getByRole('columnheader').filter({ hasText: 'Trigger commit' })).toBeVisible();
-    await expect.poll(async () => (await commandCalls(page)).filter((call) => (
-      call.cmd === 'update_display_field' && call.args.label === 'Trigger commit'
-    )).length).toBe(triggerCommitsBefore + 1);
+    await expect.poll(async () => (await appliedUpdates(page, beforeTriggerCommit)).filter(({ change }) => (
+      change.kind === 'view'
+      && change.property === 'display-field'
+      && change.action === 'set'
+      && change.label === 'Trigger commit'
+    )).length).toBe(1);
   });
 
   test('renders an expanded child table as an independent named grid', async ({ page }) => {
@@ -959,8 +999,8 @@ test.describe('table view', () => {
     // The in-flight gate coalesces React StrictMode's extra setup cycle. A second
     // call before another view mutation would mean the search has more than one
     // refresh owner.
-    await expect.poll(async () => (await commandCalls(page)).filter((call) => (
-      call.cmd === 'refresh_search_node_results' && call.args.nodeId === ids.recents
+    await expect.poll(async () => (await appliedUpdates(page)).filter(({ ownerId, change }) => (
+      ownerId === ids.recents && change.kind === 'search' && change.action === 'refresh'
     )).length).toBe(1);
 
     await tableControls.getByRole('button', { name: 'Sort by', exact: true }).click();
@@ -990,15 +1030,13 @@ test.describe('table view', () => {
     await row(page, ids.alpha).locator('.row-chevron-button').click({ force: true });
     const recentsRow = row(page, ids.recents);
     await expect(recentsRow).toBeVisible();
-    const refreshesBefore = (await commandCalls(page)).filter((call) => (
-      call.cmd === 'refresh_search_node_results' && call.args.nodeId === ids.recents
-    )).length;
+    const beforeCall = (await commandCalls(page)).length;
 
     await recentsRow.locator('.row-chevron-button').click({ force: true });
     await expect(page.getByRole('grid', { name: 'Recents table' })).toBeVisible();
-    await expect.poll(async () => (await commandCalls(page)).filter((call) => (
-      call.cmd === 'refresh_search_node_results' && call.args.nodeId === ids.recents
-    )).length - refreshesBefore).toBe(1);
+    await expect.poll(async () => (await appliedUpdates(page, beforeCall)).filter(({ ownerId, change }) => (
+      ownerId === ids.recents && change.kind === 'search' && change.action === 'refresh'
+    )).length).toBe(1);
   });
 });
 
@@ -1021,21 +1059,22 @@ test('reads and edits saved-search table fields through the complete reference c
   await expect(statusCell).toContainText('Chain value');
   await expect(statusCell.locator(`[data-node-id="${ids.searchStatusValue}"]`)).toBeVisible();
 
-  const slotMutationsBefore = (await commandCalls(page)).filter((call) => call.cmd === 'update_field_slot').length;
+  const beforeCall = (await commandCalls(page)).length;
   await dueCell.focus();
   await dueCell.press('Enter');
   await expect(dueCell.locator('.ProseMirror')).toBeFocused();
-  expect((await commandCalls(page)).filter((call) => call.cmd === 'update_field_slot')).toHaveLength(slotMutationsBefore);
+  expect((await appliedUpdates(page, beforeCall)).filter(({ change }) => change.kind === 'field-slot')).toHaveLength(0);
   await page.keyboard.type('2026-05-20');
   await page.keyboard.press('Escape');
-  await expect.poll(async () => (await commandCalls(page)).filter((call) => (
-    call.cmd === 'update_field_slot'
-    && call.args.ownerId === ids.alpha
-    && call.args.fieldDefId === ids.dueField
-    && call.args.kind === 'appendText'
-    && call.args.text === '2026-05-20'
-  )).length).toBe(1);
-  expect((await commandCalls(page)).filter((call) => call.cmd === 'update_field_slot')).toHaveLength(slotMutationsBefore + 2);
+  await expect.poll(async () => (await appliedUpdates(page, beforeCall)).filter(({ ownerId, change }) => {
+    const mutation = change.mutation as Record<string, unknown> | undefined;
+    return ownerId === ids.alpha
+      && change.kind === 'field-slot'
+      && targetId(change.field) === ids.dueField
+      && mutation?.action === 'append-text'
+      && mutation.text === '2026-05-20';
+  }).length).toBe(1);
+  expect((await appliedUpdates(page, beforeCall)).filter(({ change }) => change.kind === 'field-slot')).toHaveLength(2);
 
   const projection = await e2eProjection(page);
   const alpha = projection.nodes.find((node) => node.id === ids.alpha)!;

@@ -2358,6 +2358,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const eventRevision = typeof update.revision === 'number' ? update.revision : ++revision;
           revision = Math.max(revision, eventRevision);
           const fullProjection = update.projection as { todayId?: unknown; nodes?: unknown } | undefined;
+          const changedNodes = Array.isArray(fullProjection?.nodes) ? fullProjection.nodes : projection().nodes;
+          const changedNodeIds = new Set(changedNodes.flatMap((node) => (
+            node && typeof node === 'object' && typeof (node as { id?: unknown }).id === 'string'
+              ? [(node as { id: string }).id]
+              : []
+          )));
           const eventSequence = ++outlineEventSequence;
           const cursor = `cursor:${eventSequence}`;
           emitOutlineEvent({
@@ -2376,8 +2382,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 }
               : {
                   todayId: String(fullProjection?.todayId ?? ids.today),
-                  changedNodes: Array.isArray(fullProjection?.nodes) ? fullProjection.nodes : projection().nodes,
-                  removedIds: [],
+                  changedNodes,
+                  removedIds: projection().nodes
+                    .map((node) => node.id)
+                    .filter((id) => !changedNodeIds.has(id)),
                 },
           });
         }
@@ -2780,9 +2788,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         else delete view.groupField;
         return;
       }
-      const ownerView = nodes.get(targetId)?.type === 'viewDef'
-        ? nodes.get(targetId)!
-        : ensureViewDef(targetId);
+      const target = nodes.get(targetId);
+      const parent = target?.parentId ? nodes.get(target.parentId) : undefined;
+      const ownerView = target?.type === 'viewDef'
+        ? target
+        : parent?.type === 'viewDef'
+          ? parent
+          : ensureViewDef(targetId);
       if (instruction.property === 'sort') {
         if (instruction.action === 'add') {
           const id = `sort-${++sequence}`;
@@ -2851,7 +2863,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const siblings = directChildrenOfType(ownerView.id, 'displayField')
             .sort((left, right) => (left.displayOrder ?? 0) - (right.displayOrder ?? 0));
           const current = siblings.findIndex((node) => node.id === display.id);
-          const next = current + (instruction.move === 'left' ? -1 : 1);
+          const direction = instruction.move === 'left' ? -1 : 1;
+          let next = current + direction;
+          while (next >= 0 && next < siblings.length && siblings[next]?.displayVisible === false) {
+            next += direction;
+          }
           if (current >= 0 && next >= 0 && next < siblings.length) {
             [siblings[current], siblings[next]] = [siblings[next]!, siblings[current]!];
             siblings.forEach((node, order) => { node.displayOrder = order; });
@@ -6526,6 +6542,17 @@ export async function commandCalls(page: Page) {
   return page.evaluate(() => {
     const win = window as E2EWindow;
     return win.__LIN_E2E__?.calls ?? [];
+  });
+}
+
+export async function appliedOutlineOperations(page: Page, fromCall = 0): Promise<Array<Record<string, unknown>>> {
+  const calls = (await commandCalls(page)).slice(fromCall);
+  return calls.flatMap((call) => {
+    if (call.cmd !== 'outline/apply') return [];
+    const input = call.args as {
+      diff?: { normalizedChangeSet?: { operations?: Array<Record<string, unknown>> } };
+    };
+    return input.diff?.normalizedChangeSet?.operations ?? [];
   });
 }
 

@@ -103,12 +103,19 @@ export class OutlineRuntimeWorkspace {
       loaded.latestEventSequence,
       options.now,
     );
-    await workspace.collectAssetGarbage().catch(() => undefined);
+    await workspace.maintain({ compactIfNeeded: true }).catch(() => undefined);
     return workspace;
   }
 
   revision(): number {
     return this.core.revision();
+  }
+
+  async status() {
+    return {
+      revision: this.revision(),
+      ...await this.store.health(),
+    };
   }
 
   projection() {
@@ -132,6 +139,10 @@ export class OutlineRuntimeWorkspace {
     return this.enqueueMutation(() => this.assets.collectGarbage([
       ...assetRecordIdsInNodes(Object.values(this.core.state().nodes)),
     ]));
+  }
+
+  maintain(options: { readonly compactIfNeeded?: boolean } = {}): Promise<void> {
+    return this.enqueueMutation(() => this.runMaintenance(options.compactIfNeeded === true));
   }
 
   async mutate(request: OutlineRuntimeMutationRequest): Promise<Operation> {
@@ -262,10 +273,14 @@ export class OutlineRuntimeWorkspace {
         'An idempotency payload hash is required with an idempotency key.',
       ));
     }
-    const admission = await this.store.prepareMutation(request.idempotencyKey ? {
-      key: request.idempotencyKey,
-      payloadHash: request.idempotencyPayloadHash!,
-    } : undefined);
+    const admission = await this.store.prepareMutation(
+      request.idempotencyKey ? {
+        key: request.idempotencyKey,
+        payloadHash: request.idempotencyPayloadHash!,
+      } : undefined,
+      { instanceId: this.instanceId, revision: this.revision() },
+    );
+    this.publishEvents(admission.maintenanceEvents);
     if (admission.existingOperation) return admission.existingOperation;
 
     const candidate = this.core.forkForRuntime({ idFactory: request.idFactory });
@@ -431,15 +446,34 @@ export class OutlineRuntimeWorkspace {
     }
     if (!appended.idempotent) {
       this.core = candidate;
+      this.publishEvents(appended.maintenanceEvents);
+      this.publishEvents([appended.event]);
+      await this.runMaintenance(true).catch(() => undefined);
+    }
+    return appended.operation;
+  }
+
+  private async runMaintenance(compactIfNeeded: boolean): Promise<void> {
+    const context = { instanceId: this.instanceId, revision: this.revision() };
+    this.publishEvents(await this.store.maintain(context));
+    await this.assets.collectGarbage([
+      ...assetRecordIdsInNodes(Object.values(this.core.state().nodes)),
+    ]);
+    if (compactIfNeeded && await this.store.needsCompaction()) {
+      this.publishEvents(await this.store.compact(this.core.serializeState(), context));
+    }
+  }
+
+  private publishEvents(events: readonly OutlineEvent[]): void {
+    for (const event of events) {
       for (const listener of this.eventListeners) {
         try {
-          listener(appended.event);
+          listener(event);
         } catch {
-          // Observer failure cannot turn a durable Operation into a failed mutation.
+          // Observer failure cannot turn durable maintenance or an Operation into a failed mutation.
         }
       }
     }
-    return appended.operation;
   }
 
   private enqueueMutation<TResult>(task: () => Promise<TResult>): Promise<TResult> {

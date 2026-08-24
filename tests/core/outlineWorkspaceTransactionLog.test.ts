@@ -112,6 +112,17 @@ describe('WorkspaceTransactionLog', () => {
     expect(torn.tornTail).toBe(true);
     expect(torn.inconsistent).toBeUndefined();
     expect(torn.operations).toHaveLength(1);
+    expect((await restarted.health()).transactionLog).toMatchObject({
+      health: 'degraded',
+      tornTail: true,
+      maintenancePending: true,
+    });
+    await restarted.maintain({ instanceId: 'runtime:tail-repair', revision: 1 });
+    expect((await restarted.health()).transactionLog).toMatchObject({
+      health: 'healthy',
+      tornTail: false,
+      maintenancePending: false,
+    });
     const second = await createTransaction(core, 2, (candidate) => {
       candidate.createNode(candidate.projection().todayId, null, 'Second');
     });
@@ -145,6 +156,10 @@ describe('WorkspaceTransactionLog', () => {
     const restarted = new WorkspaceTransactionLog(root);
     const loaded = await restarted.load();
     expect(loaded.inconsistent).toBeDefined();
+    expect((await restarted.health()).transactionLog).toMatchObject({
+      health: 'blocked',
+      inconsistent: true,
+    });
     expect(loaded.operations.map((operation) => operation.operationId)).toEqual([first.operation.operationId]);
     const readable = Core.fromPersistenceState(loaded.snapshot!, loaded.replay, {
       installationId: core.persistenceIdentity().installationId,
@@ -208,6 +223,7 @@ describe('WorkspaceTransactionLog', () => {
       outlineError: { code: 'recovery_expired' },
     });
     expect(await recoveryBlobNames(store)).toHaveLength(2);
+    expect((await store.health()).recovery).toMatchObject({ available: 2, expired: 1 });
   });
 
   test('fails admission before append when every recovery patch is protected by the budget floor', async () => {

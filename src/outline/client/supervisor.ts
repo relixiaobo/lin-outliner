@@ -4,6 +4,7 @@ import { OutlineContractError, outlineError } from '../contract/errors';
 import { OUTLINE_DEFAULT_STARTUP_TIMEOUT_MS } from '../contract/version';
 import { OutlineClient } from './client';
 import { readOutlineRuntimeDescriptor } from './descriptor';
+import type { RuntimeStatus } from '../contract/schemas';
 
 export interface OutlineRuntimeLaunch {
   readonly command: string;
@@ -46,15 +47,19 @@ export class OutlineClientSupervisor {
     );
   }
 
-  async status(): Promise<{ running: boolean; runtime?: unknown }> {
+  async status(): Promise<RuntimeStatus> {
     const client = await this.tryConnect();
     if (!client) return { running: false };
     try {
       const response = await client.request('status', {});
       if (isRecord(response.data) && typeof response.data.running === 'boolean') {
-        return response.data as { running: boolean; runtime?: unknown };
+        return response.data as RuntimeStatus;
       }
-      return { running: true, runtime: response.data };
+      throw new OutlineContractError(outlineError(
+        'protocol_incompatible',
+        'protocol',
+        'Outline Runtime returned an invalid status result.',
+      ));
     } finally {
       client.close();
     }
