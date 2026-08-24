@@ -12,8 +12,9 @@ storage, the unified tray, cleanup, specs, and focused tests ship together.
 
 ## Non-goals
 
-- No Core/IPC/provider-format or Outliner change, per-Thread draft registry, quota
-  increase, or identical-byte deduplication guarantee.
+- No Core command/protocol/codec, IPC/provider-format, or Outliner change; no per-Thread
+  draft registry, managed-storage quota increase, or identical-byte deduplication
+  guarantee.
 - No truncation, splitting, summarization, full-body prompt injection, duplicate
   suppression, or conversion of existing text.
 - No new preview engine; reuse shared previews, thumbnails, and semantic fallbacks.
@@ -22,20 +23,23 @@ storage, the unified tray, cleanup, specs, and focused tests ship together.
 
 ### Admission
 
-**FR-1.** A pure renderer helper counts incoming UTF-16 units/line breaks and projected
-inline content (`document - selection + paste`, including reference atoms). Per-paste
-thresholds choose conversion; aggregate budgets only guard inline text.
+**FR-1.** A pure renderer helper measures incoming UTF-8 bytes/line breaks and projected
+inline content (`document - selection + paste`, including reference atoms and UTF-16
+units). Per-paste thresholds choose conversion; aggregate budgets only guard inline text.
 
 | Incoming paste | Projected inline draft | Outcome |
 | --- | --- | --- |
 | Above 8 Mi UTF-16 units | Any | Reject before encoding; ask the user to save and attach a `.txt` |
-| Over either per-paste threshold | Any | Admit one managed `.txt` attachment |
+| At least 4 KiB UTF-8 bytes or over 2,000 normalized line breaks | Any | Admit one managed `.txt` attachment |
 | Within both thresholds | Within aggregate budgets | Insert editable text |
 | Within both thresholds | Over either aggregate budget | Reject; ask the user to send or remove content |
 
 Electron calibration covers long-line, newline-dense, repeated, and replacement pastes;
-the 8 Mi ceiling may only be lowered. Rejection performs no parsing, encoding, hashing,
-or ProseMirror construction.
+the selected individual thresholds are 4 KiB UTF-8 bytes and 2,000 normalized line
+breaks, while aggregate editable-draft limits are 256 Ki UTF-16 units and 8,000 inline
+atoms. The byte threshold matches Claude Chat's current pasted-text boundary. The 8 Mi
+ceiling may only be lowered. Rejection performs no parsing, encoding, hashing, or
+ProseMirror construction.
 
 ### Pending, recovery, and multiple pastes
 
@@ -139,5 +143,7 @@ None.
 ## Verification
 
 Run `bun run typecheck`, `bun run test:renderer`, focused Agent Thread E2E,
-`bun run docs:check`, and `git diff --check`; visually verify light/dark, pending/error,
-reduced-motion, keyboard-focus, narrow-width, and 20-attachment states.
+`bun run docs:check`, and `git diff --check`. Build `scripts/probe-composer-paste.ts`
+for Electron and record classification, DOM construction, next-frame, and next-edit
+latency. Visually verify light/dark, pending/error, reduced-motion, keyboard-focus,
+narrow-width, and 20-attachment states.

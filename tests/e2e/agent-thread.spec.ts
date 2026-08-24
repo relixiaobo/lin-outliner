@@ -42,6 +42,20 @@ async function createNewThread(page: Page): Promise<void> {
     .click();
 }
 
+async function pasteComposerText(page: Page, text: string): Promise<void> {
+  await page.evaluate((value) => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData('text/plain', value);
+    const target = document.activeElement;
+    if (!target) throw new Error('No active composer paste target');
+    target.dispatchEvent(new ClipboardEvent('paste', {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: dataTransfer,
+    }));
+  }, text);
+}
+
 async function setTranscriptFollowingBottom(page: Page): Promise<void> {
   const transcript = page.locator('.thread-transcript');
   await transcript.evaluate((element) => {
@@ -1387,7 +1401,7 @@ test.describe('canonical agent Thread surface', () => {
       if (!input) throw new Error('Composer file input was not found');
       const dispatchBatch = (prefix: string) => {
         const transfer = new DataTransfer();
-        for (let index = 0; index < 4; index += 1) {
+        for (let index = 0; index < 12; index += 1) {
           transfer.items.add(new File([`${prefix}-${index}`], `${prefix}-${index}.txt`, { type: 'text/plain' }));
         }
         input.files = transfer.files;
@@ -1397,9 +1411,126 @@ test.describe('canonical agent Thread surface', () => {
       dispatchBatch('second');
     });
 
-    await expect(page.locator('.thread-composer-inline-ref')).toHaveCount(6);
-    await expect(page.getByRole('status')).toContainText('Skipped 2 files over the 6 attachment limit.');
-    expect((await commandCalls(page)).filter((call) => call.cmd === 'attachment-upload/begin')).toHaveLength(6);
+    await expect(page.locator('.thread-composer-inline-ref')).toHaveCount(20);
+    await expect(page.locator('.thread-composer-attachment-item')).toHaveCount(20);
+    await expect(page.getByRole('status')).toContainText('Skipped 4 files over the 20 attachment limit.');
+    expect((await commandCalls(page)).filter((call) => call.cmd === 'attachment-upload/begin')).toHaveLength(20);
+    await page.locator('.app').evaluate((element) => {
+      (element as HTMLElement).style.setProperty('--agent-width', '280px');
+    });
+    const trayGeometry = await page.locator('.thread-composer-attachment-tray').evaluate((tray) => {
+      tray.scrollLeft = 0;
+      const items = Array.from(tray.querySelectorAll<HTMLElement>('.thread-composer-attachment-item'));
+      const trayRect = tray.getBoundingClientRect();
+      const first = items[0]?.getBoundingClientRect();
+      const second = items[1]?.getBoundingClientRect();
+      return {
+        clientWidth: tray.clientWidth,
+        firstWidth: first?.width ?? 0,
+        rowTops: new Set(items.map((item) => Math.round(item.getBoundingClientRect().top))).size,
+        scrollWidth: tray.scrollWidth,
+        secondVisible: second ? Math.max(0, Math.min(trayRect.right, second.right) - Math.max(trayRect.left, second.left)) : 0,
+      };
+    });
+    expect(trayGeometry.rowTops).toBe(1);
+    expect(trayGeometry.firstWidth).toBeGreaterThanOrEqual(170);
+    expect(trayGeometry.secondVisible).toBeGreaterThan(24);
+    expect(trayGeometry.scrollWidth).toBeGreaterThan(trayGeometry.clientWidth);
+    await expect(page.getByRole('button', { name: 'Show more attachments' })).toBeVisible();
+  });
+
+  test('limits images independently from the message attachment budget', async ({ page }) => {
+    await createNewThread(page);
+    await page.locator('.thread-composer-file-input').setInputFiles(Array.from({ length: 12 }, (_, index) => ({
+      name: `image-${index + 1}.png`,
+      mimeType: 'image/png',
+      buffer: Buffer.from(`image-${index + 1}`),
+    })));
+
+    await expect(page.locator('.thread-composer-inline-ref')).toHaveCount(10);
+    await expect(page.locator('.thread-composer-attachment-item')).toHaveCount(10);
+    await expect(page.getByRole('status')).toContainText('Skipped 2 images over the 10 image limit.');
+  });
+
+  test('converts a large plain-text paste into a managed attachment at its marker position', async ({ page }) => {
+    await createNewThread(page);
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.fill('Before ');
+    const pastedText = `large pasted body\n${'x'.repeat(4 * 1024)}`;
+    await pasteComposerText(page, pastedText);
+
+    const marker = page.locator('.thread-composer-inline-ref[data-thread-file-ref]');
+    await expect(marker).toContainText('pasted-content.txt');
+    await expect(page.locator('.thread-composer-attachment-item')).toHaveCount(1);
+    await expect(page.locator('.thread-composer-attachment-excerpt')).toContainText('large pasted body');
+    expect(await composer.textContent()).not.toContain('x'.repeat(1_000));
+    await page.getByRole('button', { name: 'Send' }).click();
+
+    const submit = (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').at(-1);
+    expect(submit?.args.input).toEqual([
+      { type: 'text', text: 'Before' },
+      expect.objectContaining({
+        type: 'attachment',
+        id: expect.any(String),
+        name: 'pasted-content.txt',
+        mimeType: 'text/plain',
+        source: expect.objectContaining({ kind: 'threadPayload' }),
+      }),
+    ]);
+    expect(JSON.stringify(submit?.args.input)).not.toContain('extractedText');
+  });
+
+  test('keeps rapid identical large-text pastes as separate attachments', async ({ page }) => {
+    await createNewThread(page);
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.focus();
+    const pastedText = `repeated large paste\n${'x'.repeat(4 * 1024)}`;
+    await pasteComposerText(page, pastedText);
+    await pasteComposerText(page, pastedText);
+
+    const markers = page.locator('.thread-composer-inline-ref[data-thread-file-ref]');
+    await expect(markers).toHaveCount(2);
+    await expect(markers.nth(0)).toContainText('pasted-content.txt');
+    await expect(markers.nth(1)).toContainText('pasted-content-2.txt');
+    await expect(page.locator('.thread-composer-attachment-item')).toHaveCount(2);
+    await page.getByRole('button', { name: 'Send' }).click();
+
+    const submit = (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').at(-1);
+    const attachments = (submit?.args.input as Array<{
+      id?: string;
+      name?: string;
+      source?: { kind?: string; ref?: { id?: string } };
+      type?: string;
+    }>).filter((part) => part.type === 'attachment');
+    expect(attachments.map((attachment) => attachment.name)).toEqual([
+      'pasted-content.txt',
+      'pasted-content-2.txt',
+    ]);
+    expect(new Set(attachments.map((attachment) => attachment.id)).size).toBe(2);
+    expect(new Set(attachments.map((attachment) => attachment.source?.ref?.id)).size).toBe(1);
+  });
+
+  test('links attachment-block removal preview and deletion to the inline marker', async ({ page }) => {
+    await createNewThread(page);
+    await page.locator('.thread-composer-file-input').setInputFiles({
+      name: 'linked.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('linked attachment'),
+    });
+    const marker = page.locator('.thread-composer-inline-ref[data-thread-file-ref]');
+    const remove = page.getByRole('button', { name: 'Remove linked.txt and message reference' });
+    await expect(marker).toHaveCount(1);
+    await remove.hover();
+    await expect(marker).toHaveClass(/is-removal-preview/);
+    await page.getByRole('textbox', { name: 'Message this Thread' }).hover();
+    await expect(marker).not.toHaveClass(/is-removal-preview/);
+    await remove.focus();
+    await expect(marker).toHaveClass(/is-removal-preview/);
+    await remove.press('Escape');
+    await expect(marker).not.toHaveClass(/is-removal-preview/);
+    await remove.click();
+    await expect(marker).toHaveCount(0);
+    await expect(page.locator('.thread-composer-attachment-item')).toHaveCount(0);
   });
 
   test('preserves a directory selected from the composer mention menu', async ({ page }) => {
@@ -8194,6 +8325,51 @@ test('aborts an in-flight pathless upload when its Thread is left', async ({ pag
     (await commandCalls(page)).filter((call) => call.cmd === 'attachment-upload/abort').length
   )).toBe(1);
   expect((await commandCalls(page)).some((call) => call.cmd === 'attachment-upload/finish')).toBe(false);
+});
+
+test('keeps Send disabled and cancels a pending large-paste attachment when removed', async ({ page }) => {
+  await openMockedApp(page, { attachmentUploadDelayMs: 200 });
+  const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+  await composer.focus();
+  await pasteComposerText(page, 'pending paste\n'.repeat(6_000));
+
+  await expect(page.locator('.thread-composer-pending-ref')).toContainText('pasted-content.txt');
+  await expect(page.getByRole('button', { name: 'Send' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Remove pasted-content.txt and message reference' }).click();
+  await expect(page.locator('.thread-composer-pending-ref')).toHaveCount(0);
+  await expect(page.locator('.thread-composer-attachment-item')).toHaveCount(0);
+  await expect.poll(async () => (
+    (await commandCalls(page)).filter((call) => call.cmd === 'attachment-upload/abort').length
+  )).toBe(1);
+  expect((await commandCalls(page)).some((call) => call.cmd === 'attachment-upload/finish')).toBe(false);
+});
+
+test('restores the replaced composer slice when large-paste attachment upload fails', async ({ page }) => {
+  await openMockedApp(page, { attachmentUploadReject: true });
+  const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+  await composer.fill('Before selected after');
+  await composer.evaluate((element) => {
+    const paragraph = element.querySelector('p');
+    const text = paragraph?.firstChild;
+    if (!text) throw new Error('Composer text node was not found');
+    const range = document.createRange();
+    range.setStart(text, 7);
+    range.setEnd(text, 15);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    (element as HTMLElement).focus();
+  });
+  await pasteComposerText(page, 'replacement paste\n'.repeat(5_000));
+
+  await expect(page.locator('.thread-composer-pending-ref')).toHaveCount(0);
+  await expect(composer).toHaveText('Before selected after');
+  await expect(page.getByRole('status')).toContainText(
+    'pasted-content.txt could not be attached, so the paste was not inserted.',
+  );
+  await expect.poll(async () => (
+    (await commandCalls(page)).filter((call) => call.cmd === 'attachment-upload/abort').length
+  )).toBe(1);
 });
 
 test('opens provider settings instead of creating a Thread when no provider is usable', async ({ page }) => {

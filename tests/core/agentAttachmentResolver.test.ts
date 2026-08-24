@@ -3,7 +3,12 @@ import { mkdtemp, realpath, rm, stat, truncate, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ThreadFileSource, ThreadResourceReference } from '../../src/core/agent/protocol';
-import { MAX_IMAGE_ATTACHMENT_SOURCE_BYTES } from '../../src/core/agentAttachmentLimits';
+import {
+  MAX_COMPOSER_ATTACHMENTS,
+  MAX_COMPOSER_IMAGE_ATTACHMENTS,
+  MAX_IMAGE_ATTACHMENT_SOURCE_BYTES,
+  MAX_PROMPT_IMAGE_BYTES,
+} from '../../src/core/agentAttachmentLimits';
 import { AttachmentResolver } from '../../src/main/agent/tools/attachments';
 import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
 
@@ -15,6 +20,68 @@ afterEach(async () => {
 });
 
 describe('AttachmentResolver', () => {
+  test('rejects message attachment and image count overflow before resolving sources', async () => {
+    const workdir = await temporaryRoot('tenon-attachment-workdir-');
+    let resolutions = 0;
+    const resolver = new AttachmentResolver({
+      useResourcePath: async () => {
+        resolutions += 1;
+        return null;
+      },
+      prepareImageArtifact: async ({ attachment }) => preparedArtifact(
+        attachment.source,
+        resourceRef('f', 'image/png', 1, 'prompt.png'),
+        true,
+      ),
+    });
+    const files = Array.from({ length: MAX_COMPOSER_ATTACHMENTS + 1 }, (_, index) => attachment(
+      `file-${index}`,
+      `file-${index}.txt`,
+      'text/plain',
+      { kind: 'threadPayload', ref: resourceRef(String(index), 'text/plain', 1, `file-${index}.txt`) },
+    ));
+    await expect(resolver.resolve(files, resolutionContext(workdir)))
+      .rejects.toThrow(`at most ${MAX_COMPOSER_ATTACHMENTS} attachments`);
+
+    const images = Array.from({ length: MAX_COMPOSER_IMAGE_ATTACHMENTS + 1 }, (_, index) => attachment(
+      `image-${index}`,
+      `image-${index}.png`,
+      'image/png',
+      { kind: 'threadPayload', ref: resourceRef(String(index), 'image/png', 1, `image-${index}.png`) },
+    ));
+    await expect(resolver.resolve(images, resolutionContext(workdir)))
+      .rejects.toThrow(`at most ${MAX_COMPOSER_IMAGE_ATTACHMENTS} images`);
+    expect(resolutions).toBe(0);
+  });
+
+  test('rejects normalized prompt images over the aggregate byte budget', async () => {
+    const workdir = await temporaryRoot('tenon-attachment-workdir-');
+    const sourcePath = join(workdir, 'source.png');
+    await writeFile(sourcePath, 'image source');
+    let prepared = 0;
+    const resolver = new AttachmentResolver({
+      useResourcePath: async () => null,
+      prepareImageArtifact: async ({ attachment }) => {
+        prepared += 1;
+        return preparedArtifact(
+          attachment.source,
+          resourceRef(String(prepared), 'image/jpeg', MAX_PROMPT_IMAGE_BYTES, `prompt-${prepared}.jpg`),
+          true,
+        );
+      },
+    });
+    const images = Array.from({ length: 6 }, (_, index) => attachment(
+      `image-${index}`,
+      `image-${index}.png`,
+      'image/png',
+      { kind: 'localFile', path: sourcePath },
+    ));
+
+    await expect(resolver.resolve(images, resolutionContext(workdir)))
+      .rejects.toThrow('24 MiB normalized prompt-image budget');
+    expect(prepared).toBe(6);
+  });
+
   test('canonicalizes a very large local file without copying or applying a shared source limit', async () => {
     const workdir = await temporaryRoot('tenon-attachment-workdir-');
     const externalRoot = await temporaryRoot('tenon-attachment-source-');

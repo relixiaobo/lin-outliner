@@ -1693,7 +1693,21 @@ export const en = {
       couldNotSearchFiles: 'Could not search files',
       noMentions: 'No references',
       noRecentMentions: 'No recent references',
+      attachmentTrayLabel: 'Attached files',
+      showPreviousAttachments: 'Show previous attachments',
+      showMoreAttachments: 'Show more attachments',
+      attachingAttachment: ({ name }: { name: string }) => `Attaching ${name}`,
+      previewAttachment: ({ name }: { name: string }) => `Preview ${name}`,
+      removeAttachmentAndReference: ({ name }: { name: string }) => `Remove ${name} and message reference`,
+      attachmentStatusAttaching: 'Attaching',
+      attachmentKindFolder: 'Folder',
+      attachmentKindFile: 'File',
       maxAttachments: ({ max }: { max: number }) => `You can attach up to ${max} files.`,
+      maxImages: ({ max }: { max: number }) => `You can attach up to ${max} images.`,
+      largePasteCeiling: 'This paste is too large to convert. Save it as a .txt file and attach it instead; the clipboard and draft are unchanged.',
+      largePasteDraftBudget: 'The editable draft is full. Send or remove some text before pasting more; the clipboard and draft are unchanged.',
+      largePasteUnavailable: 'Pasted text could not be attached in the current composer state.',
+      largePasteNotInserted: ({ name }: { name: string }) => `${name} could not be attached, so the paste was not inserted.`,
       officeOwnershipFile: ({ name, suggestedName }: { name: string; suggestedName: string | null }) => suggestedName
         ? `${name} is a temporary Office ownership file. Choose ${suggestedName} instead.`
         : `${name} is a temporary Office ownership file. Choose the original document instead.`,
@@ -1703,6 +1717,9 @@ export const en = {
       skippedOverflow: ({ count, max }: { count: number; max: number }) => count === 1
         ? `Skipped 1 file over the ${max} attachment limit.`
         : `Skipped ${count} files over the ${max} attachment limit.`,
+      skippedImageOverflow: ({ count, max }: { count: number; max: number }) => count === 1
+        ? `Skipped 1 image over the ${max} image limit.`
+        : `Skipped ${count} images over the ${max} image limit.`,
       modelControlLabel: 'Model and reasoning',
       modelDefault: 'Default model',
       reasoningHeading: 'Reasoning',

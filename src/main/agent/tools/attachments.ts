@@ -1,8 +1,11 @@
 import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import {
+  MAX_COMPOSER_ATTACHMENTS,
+  MAX_COMPOSER_IMAGE_ATTACHMENTS,
   MAX_IMAGE_ATTACHMENT_SOURCE_BYTES,
   MAX_PROMPT_IMAGE_BYTES,
+  MAX_PROMPT_IMAGE_TOTAL_BYTES,
 } from '../../../core/agentAttachmentLimits';
 import type {
   ThreadAttachmentContent,
@@ -36,9 +39,29 @@ export class AttachmentResolver {
     content: readonly ThreadUserContent[],
     context: ThreadUserContentResolutionContext,
   ): Promise<readonly ThreadUserContent[]> {
+    const attachments = content.filter(
+      (part): part is ThreadAttachmentContent => part.type === 'attachment',
+    );
+    if (attachments.length > MAX_COMPOSER_ATTACHMENTS) {
+      throw new Error(`A message can contain at most ${MAX_COMPOSER_ATTACHMENTS} attachments.`);
+    }
+    const imageCount = attachments.reduce((count, attachment) => (
+      count + Number(attachmentSourceMimeType(attachment).startsWith('image/'))
+    ), 0);
+    if (imageCount > MAX_COMPOSER_IMAGE_ATTACHMENTS) {
+      throw new Error(`A message can contain at most ${MAX_COMPOSER_IMAGE_ATTACHMENTS} images.`);
+    }
     const resolved: ThreadUserContent[] = [];
+    let promptImageBytes = 0;
     for (const part of content) {
-      resolved.push(part.type === 'attachment' ? await this.resolveAttachment(part, context) : part);
+      const next = part.type === 'attachment' ? await this.resolveAttachment(part, context) : part;
+      if (next.type === 'attachment' && next.artifactRef) {
+        promptImageBytes += next.artifactRef.observation.byteLength;
+        if (promptImageBytes > MAX_PROMPT_IMAGE_TOTAL_BYTES) {
+          throw new Error('Image attachments exceed the 24 MiB normalized prompt-image budget.');
+        }
+      }
+      resolved.push(next);
     }
     return resolved;
   }
@@ -47,9 +70,7 @@ export class AttachmentResolver {
     attachment: ThreadAttachmentContent,
     context: ThreadUserContentResolutionContext,
   ): Promise<ThreadAttachmentContent> {
-    const sourceMimeType = attachment.source.kind === 'threadPayload'
-      ? attachment.source.ref.mimeType
-      : attachment.mimeType;
+    const sourceMimeType = attachmentSourceMimeType(attachment);
     if (
       sourceMimeType.startsWith('image/')
       && attachment.source.kind === 'threadPayload'
@@ -117,6 +138,12 @@ export class AttachmentResolver {
     const available = await this.options.useResourcePath(threadId, ref, async () => true);
     if (!available) throw new Error(`Managed attachment payload is unavailable or corrupt: ${ref.id}`);
   }
+}
+
+function attachmentSourceMimeType(attachment: ThreadAttachmentContent): string {
+  return (attachment.source.kind === 'threadPayload'
+    ? attachment.source.ref.mimeType
+    : attachment.mimeType).trim().toLowerCase();
 }
 
 async function canonicalAttachmentPath(cwd: string, inputPath: string): Promise<string> {

@@ -295,6 +295,13 @@ no shared source-size ceiling. A pathless browser `File` crosses preload in
 failure, cancellation, startup recovery, draft removal, and unreferenced-resource
 reconciliation reclaim incomplete or orphaned data.
 
+Main-process admission independently enforces at most 20 attachments and at most
+10 image attachments in one user message, so renderer bypass cannot widen the input.
+After every image is normalized, admission sums the immutable observation lengths and
+rejects a total above 24 MiB before publishing the user Item. The existing admission
+rollback deletes any observations created earlier in that rejected batch; renderer Send
+recovery restores the complete draft.
+
 Non-image provider input exposes the readable path through both the file marker and its
 independent attachment block; stable instructions define percent-decoding plus
 `file_read` for files and `file_glob` for directories. A `localFile`
@@ -305,7 +312,7 @@ removes that observation when execution ends, and model or tool writes to it can
 modify the private content-addressed payload. Images are decoded in main from a
 source of at most 256 MiB, orientation-normalized by the native image pipeline,
 bounded to 2,000 px, and persisted as an immutable prompt snapshot of at most
-4.5 MiB.
+4.5 MiB per image and 24 MiB across the message.
 All native image observations share one main-process queue, so attachment
 admission and parallel `file_read` calls cannot aggregate decode and resize work.
 The canonical attachment retains the original resource reference plus the

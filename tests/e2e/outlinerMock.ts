@@ -78,6 +78,8 @@ interface MockFixtureOptions {
   agentTurnStaysActive?: boolean;
   /** Holds each pathless attachment chunk long enough to exercise upload cancellation. */
   attachmentUploadDelayMs?: number;
+  /** Rejects pathless attachment chunks so composer recovery can be asserted. */
+  attachmentUploadReject?: boolean | string;
   /** Starts with the configured language-model provider disabled and uncredentialed. */
   agentProviderUsable?: boolean;
   /** Seeds the global Memory switch; defaults to enabled. */
@@ -3717,6 +3719,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       },
       appendAttachmentUpload: async (input) => {
         if (options.attachmentUploadDelayMs) await delay(options.attachmentUploadDelayMs);
+        if (options.attachmentUploadReject) {
+          throw new Error(typeof options.attachmentUploadReject === 'string'
+            ? options.attachmentUploadReject
+            : 'Mock attachment upload rejection');
+        }
         const upload = attachmentUploads.get(input.uploadId);
         if (!upload) throw new Error('Mock attachment upload was not found');
         upload.receivedBytes += input.bytes.byteLength;

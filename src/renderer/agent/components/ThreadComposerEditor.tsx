@@ -55,6 +55,10 @@ import {
   type ThreadNodeReferenceOpenHandler,
 } from '../threadReferences';
 import { isExactSlashCommandMenuQuery } from '../threadComposerCommands';
+import {
+  classifyComposerPaste,
+  type ComposerContentMetrics,
+} from '../composerPasteAdmission';
 
 export interface ThreadComposerNodeReference {
   nodeId: NodeId;
@@ -71,6 +75,11 @@ export interface ThreadComposerFileReference {
   mimeType: string;
   sizeBytes: number;
   thumbnailDataUrl?: string;
+}
+
+export interface ThreadComposerPendingFileReference {
+  name: string;
+  requestId: string;
 }
 
 export interface ThreadComposerLocalFileCandidate {
@@ -90,13 +99,15 @@ export interface ThreadComposerDraft {
   content: ThreadComposerDraftContent[];
   empty: boolean;
   fileRefs: ThreadComposerFileReference[];
+  pendingFileRefs: ThreadComposerPendingFileReference[];
   text: string;
 }
 
 export type ThreadComposerDraftContent =
   | { type: 'text'; text: string }
   | { type: 'nodeReference'; reference: ThreadComposerNodeReference }
-  | { type: 'fileReference'; reference: ThreadComposerFileReference };
+  | { type: 'fileReference'; reference: ThreadComposerFileReference }
+  | { type: 'pendingFileReference'; reference: ThreadComposerPendingFileReference };
 
 export interface ThreadComposerEditorSnapshot {
   doc: unknown;
@@ -105,11 +116,16 @@ export interface ThreadComposerEditorSnapshot {
 export interface ThreadComposerEditorHandle {
   clear: () => void;
   focus: () => void;
+  hasPendingFileReference: (requestId: string) => boolean;
   insertFileReferences: (refs: ThreadComposerFileReference[]) => void;
   insertNodeReference: (ref: ThreadComposerNodeReference) => void;
   removeFileReferences: (attachmentIds: readonly string[]) => void;
+  removePendingFileReferences: (requestIds: readonly string[]) => void;
+  restorePendingFileReference: (requestId: string) => boolean;
   restore: (snapshot: ThreadComposerEditorSnapshot) => void;
+  setFileRemovalPreview: (identity: string | null) => void;
   setPlainText: (text: string) => void;
+  settlePendingFileReference: (requestId: string, ref: ThreadComposerFileReference) => boolean;
   snapshot: () => ThreadComposerEditorSnapshot | null;
 }
 
@@ -125,10 +141,12 @@ interface ThreadComposerEditorProps {
   isStreaming: boolean;
   onChange: (draft: ThreadComposerDraft) => void;
   onFilesPasted: (files: File[]) => void;
+  onLargeTextPaste: (requestId: string, text: string) => string | null;
   onLocalFilePreview: (file: ThreadComposerLocalFileCandidate) => Promise<ThreadComposerLocalFileCandidate | null>;
   onLocalFileSearch: (query: string) => Promise<ThreadComposerLocalFileCandidate[]>;
   onLocalFileSelect: (file: ThreadComposerLocalFileCandidate) => Promise<ThreadComposerFileReference | null>;
   onNodeReferenceClick: ThreadNodeReferenceOpenHandler;
+  onTextPasteRejected: (reason: 'ceiling' | 'draft-budget') => void;
   recentLocalFiles: readonly ThreadComposerLocalFileCandidate[];
   onStop: () => void;
   onSubmit: () => void;
@@ -150,6 +168,7 @@ const EMPTY_DRAFT: ThreadComposerDraft = {
   content: [],
   empty: true,
   fileRefs: [],
+  pendingFileRefs: [],
   text: '',
 };
 
@@ -291,6 +310,33 @@ const threadComposerSchema = new Schema({
         ];
       },
     },
+    pendingFileReference: {
+      group: 'inline',
+      inline: true,
+      atom: true,
+      selectable: true,
+      attrs: {
+        requestId: { default: '' },
+        name: { default: '' },
+        ariaLabel: { default: '' },
+      },
+      toDOM(node) {
+        const requestId = String(node.attrs.requestId ?? '');
+        const name = String(node.attrs.name ?? '') || 'pasted-content.txt';
+        const ariaLabel = String(node.attrs.ariaLabel ?? '') || `Attaching ${name}`;
+        return [
+          'span',
+          {
+            'aria-busy': 'true',
+            'aria-label': ariaLabel,
+            class: 'inline-ref thread-composer-inline-ref thread-composer-pending-ref',
+            contenteditable: 'false',
+            'data-thread-pending-file-ref': requestId,
+          },
+          ...inlineFileMentionDomChildren('text', name),
+        ];
+      },
+    },
   },
 });
 
@@ -305,6 +351,7 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
     const selectedIndexRef = useRef(0);
     const triggerRef = useRef<ComposerTrigger | null>(null);
     const previewRequestIdsRef = useRef(new Set<string>());
+    const replacedPasteSlicesRef = useRef(new Map<string, Slice>());
     const [trigger, setTrigger] = useState<ComposerTrigger | null>(null);
     const [selectedIndex, setSelectedIndex] = useState(0);
     const [isEmpty, setIsEmpty] = useState(true);
@@ -326,6 +373,8 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
     // without recreating the editor (and losing in-progress draft state) on each render.
     const editorAriaLabelRef = useRef(t.agent.composer.editorAriaLabel);
     editorAriaLabelRef.current = t.agent.composer.editorAriaLabel;
+    const attachingAttachmentLabelRef = useRef(t.agent.composer.attachingAttachment);
+    attachingAttachmentLabelRef.current = t.agent.composer.attachingAttachment;
 
     propsRef.current = props;
     const allowFileReferences = props.allowFileReferences ?? true;
@@ -393,10 +442,16 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
         triggerRef.current = null;
         setTrigger(null);
         setIsEmpty(true);
+        replacedPasteSlicesRef.current.clear();
+        setFileRemovalPreviewOnView(view, null);
         propsRef.current.onChange(EMPTY_DRAFT);
       },
       focus() {
         viewRef.current?.focus();
+      },
+      hasPendingFileReference(requestId) {
+        const view = viewRef.current;
+        return view ? findPendingFileReference(view.state.doc, requestId) !== null : false;
       },
       insertFileReferences(refs) {
         const view = viewRef.current;
@@ -426,6 +481,29 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
         syncDraft(view);
         updateTrigger(view);
       },
+      removePendingFileReferences(requestIds) {
+        const view = viewRef.current;
+        if (!view || requestIds.length === 0) return;
+        removePendingFileReferenceNodes(view, new Set(requestIds));
+        syncDraft(view);
+        updateTrigger(view);
+      },
+      restorePendingFileReference(requestId) {
+        const view = viewRef.current;
+        const slice = replacedPasteSlicesRef.current.get(requestId);
+        if (!view || !slice) return false;
+        const range = findPendingFileReference(view.state.doc, requestId);
+        if (!range) return false;
+        replacedPasteSlicesRef.current.delete(requestId);
+        let tr = view.state.tr.replaceRange(range.from, range.to, slice);
+        const restoredSize = slice.content.size;
+        tr = tr.setSelection(TextSelection.create(
+          tr.doc,
+          Math.min(range.from + restoredSize, tr.doc.content.size - 1),
+        ));
+        view.dispatch(tr.scrollIntoView());
+        return true;
+      },
       restore(snapshot) {
         const view = viewRef.current;
         if (!view) return;
@@ -433,6 +511,10 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
         syncDraft(view);
         updateTrigger(view);
         view.focus();
+      },
+      setFileRemovalPreview(identity) {
+        const view = viewRef.current;
+        if (view) setFileRemovalPreviewOnView(view, identity);
       },
       setPlainText(text) {
         const view = viewRef.current;
@@ -447,6 +529,21 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
       snapshot() {
         const view = viewRef.current;
         return view ? { doc: view.state.doc.toJSON() } : null;
+      },
+      settlePendingFileReference(requestId, fileRef) {
+        const view = viewRef.current;
+        if (!view) return false;
+        const range = findPendingFileReference(view.state.doc, requestId);
+        if (!range) return false;
+        replacedPasteSlicesRef.current.delete(requestId);
+        const node = fileReferenceNode(fileRef);
+        let tr = view.state.tr.replaceWith(range.from, range.to, node);
+        tr = tr.setSelection(TextSelection.create(
+          tr.doc,
+          Math.min(range.from + node.nodeSize, tr.doc.content.size - 1),
+        ));
+        view.dispatch(tr.scrollIntoView());
+        return true;
       },
     }));
 
@@ -614,6 +711,43 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
             }
             const text = clipboard?.getData('text/plain') ?? '';
             if (!text) return false;
+            const admission = classifyComposerPaste({
+              current: composerRangeMetrics(viewInstance.state.doc, 0, viewInstance.state.doc.content.size),
+              incomingText: text,
+              selected: composerRangeMetrics(
+                viewInstance.state.doc,
+                viewInstance.state.selection.from,
+                viewInstance.state.selection.to,
+              ),
+            });
+            if (admission.outcome === 'reject-ceiling') {
+              event.preventDefault();
+              propsRef.current.onTextPasteRejected('ceiling');
+              return true;
+            }
+            if (admission.outcome === 'reject-draft-budget') {
+              event.preventDefault();
+              propsRef.current.onTextPasteRejected('draft-budget');
+              return true;
+            }
+            if (admission.outcome === 'attach') {
+              event.preventDefault();
+              const requestId = crypto.randomUUID();
+              const name = propsRef.current.onLargeTextPaste(requestId, text);
+              if (!name) return true;
+              const selection = viewInstance.state.selection;
+              replacedPasteSlicesRef.current.set(
+                requestId,
+                viewInstance.state.doc.slice(selection.from, selection.to),
+              );
+              const pending = threadComposerSchema.nodes.pendingFileReference.create({
+                requestId,
+                name,
+                ariaLabel: attachingAttachmentLabelRef.current({ name }),
+              });
+              viewInstance.dispatch(viewInstance.state.tr.replaceSelectionWith(pending).scrollIntoView());
+              return true;
+            }
             // This composer is a single paragraph that carries newlines as
             // hardBreaks (the same shape Shift+Enter produces). ProseMirror's
             // default paste splits text into paragraphs that the one-paragraph
@@ -686,6 +820,7 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
       viewRef.current = view;
       syncDraft(view);
       return () => {
+        replacedPasteSlicesRef.current.clear();
         view.destroy();
         viewRef.current = null;
       };
@@ -796,6 +931,10 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
 
     function syncDraft(view: EditorView) {
       const draft = docToDraft(view.state.doc);
+      const retainedRequests = new Set(draft.pendingFileRefs.map((reference) => reference.requestId));
+      for (const requestId of replacedPasteSlicesRef.current.keys()) {
+        if (!retainedRequests.has(requestId)) replacedPasteSlicesRef.current.delete(requestId);
+      }
       setIsEmpty(draft.empty);
       propsRef.current.onChange(draft);
     }
@@ -931,6 +1070,7 @@ function docToDraft(doc: PMNode): ThreadComposerDraft {
   const content: ThreadComposerDraftContent[] = [];
   let text = '';
   const fileRefs: ThreadComposerFileReference[] = [];
+  const pendingFileRefs: ThreadComposerPendingFileReference[] = [];
 
   const appendText = (value: string) => {
     text += value;
@@ -981,6 +1121,16 @@ function docToDraft(doc: PMNode): ThreadComposerDraft {
         fileRefs.push(reference);
         content.push({ type: 'fileReference', reference });
       }
+      return;
+    }
+    if (child.type.name === 'pendingFileReference') {
+      const requestId = String(child.attrs.requestId ?? '');
+      const name = String(child.attrs.name ?? '') || 'pasted-content.txt';
+      if (requestId) {
+        const reference = { name, requestId };
+        pendingFileRefs.push(reference);
+        content.push({ type: 'pendingFileReference', reference });
+      }
     }
   });
 
@@ -988,6 +1138,7 @@ function docToDraft(doc: PMNode): ThreadComposerDraft {
     content,
     empty: text.trim().length === 0 && content.some((part) => part.type !== 'text') === false,
     fileRefs,
+    pendingFileRefs,
     text,
   };
 }
@@ -1030,17 +1181,7 @@ function insertFileReferenceNodes(
 ) {
   const addTrailingSpace = shouldInsertTrailingSpace(view.state.doc, range.to);
   const nodes = refs.flatMap((ref, index) => {
-    const node = threadComposerSchema.nodes.fileReference.create({
-      attachmentId: ref.attachmentId,
-      entryKind: ref.entryKind ?? (ref.mimeType === 'inode/directory' ? 'directory' : 'file'),
-      iconDataUrl: ref.iconDataUrl ?? '',
-      name: ref.name,
-      path: ref.path ?? '',
-      ref: ref.ref,
-      mimeType: ref.mimeType,
-      sizeBytes: ref.sizeBytes,
-      thumbnailDataUrl: ref.thumbnailDataUrl ?? '',
-    });
+    const node = fileReferenceNode(ref);
     return index === refs.length - 1 && !addTrailingSpace ? [node] : [node, threadComposerSchema.text(' ')];
   });
   let tr = view.state.tr.replaceWith(range.from, range.to, nodes);
@@ -1048,6 +1189,20 @@ function insertFileReferenceNodes(
   const pos = Math.min(range.from + insertedSize, tr.doc.content.size - 1);
   tr = tr.setSelection(TextSelection.create(tr.doc, pos));
   view.dispatch(tr);
+}
+
+function fileReferenceNode(ref: ThreadComposerFileReference): PMNode {
+  return threadComposerSchema.nodes.fileReference.create({
+    attachmentId: ref.attachmentId,
+    entryKind: ref.entryKind ?? (ref.mimeType === 'inode/directory' ? 'directory' : 'file'),
+    iconDataUrl: ref.iconDataUrl ?? '',
+    name: ref.name,
+    path: ref.path ?? '',
+    ref: ref.ref,
+    mimeType: ref.mimeType,
+    sizeBytes: ref.sizeBytes,
+    thumbnailDataUrl: ref.thumbnailDataUrl ?? '',
+  });
 }
 
 function insertHardBreak(view: EditorView) {
@@ -1084,6 +1239,78 @@ function removeFileReferenceNodes(view: EditorView, attachmentIds: ReadonlySet<s
   view.dispatch(tr);
 }
 
+function removePendingFileReferenceNodes(view: EditorView, requestIds: ReadonlySet<string>) {
+  const ranges: Array<{ from: number; to: number }> = [];
+  view.state.doc.descendants((node, pos) => {
+    if (node.type.name === 'pendingFileReference' && requestIds.has(String(node.attrs.requestId ?? ''))) {
+      ranges.push({ from: pos, to: pos + node.nodeSize });
+    }
+    return true;
+  });
+  if (ranges.length === 0) return;
+  let tr = view.state.tr;
+  for (const range of ranges.sort((left, right) => right.from - left.from)) {
+    tr = tr.delete(range.from, range.to);
+  }
+  view.dispatch(tr);
+}
+
+function findPendingFileReference(
+  doc: PMNode,
+  requestId: string,
+): { from: number; to: number } | null {
+  let found: { from: number; to: number } | null = null;
+  doc.descendants((node, pos) => {
+    if (node.type.name !== 'pendingFileReference' || String(node.attrs.requestId ?? '') !== requestId) {
+      return found === null;
+    }
+    found = { from: pos, to: pos + node.nodeSize };
+    return false;
+  });
+  return found;
+}
+
+function setFileRemovalPreviewOnView(view: EditorView, identity: string | null): void {
+  const root = view.dom;
+  for (const element of root.querySelectorAll<HTMLElement>('.is-removal-preview')) {
+    element.classList.remove('is-removal-preview');
+  }
+  if (!identity) return;
+  for (const element of root.querySelectorAll<HTMLElement>(
+    '[data-thread-file-ref], [data-thread-pending-file-ref]',
+  )) {
+    if (element.dataset.threadFileRef === identity || element.dataset.threadPendingFileRef === identity) {
+      element.classList.add('is-removal-preview');
+    }
+  }
+}
+
+function composerRangeMetrics(doc: PMNode, from: number, to: number): ComposerContentMetrics {
+  const metrics = { inlineAtoms: 0, utf16Units: 0 };
+  if (to <= from) return metrics;
+  doc.descendants((node, pos) => {
+    if (node.isText) {
+      const start = Math.max(from, pos);
+      const end = Math.min(to, pos + node.nodeSize);
+      if (end > start) metrics.utf16Units += end - start;
+      return true;
+    }
+    if (pos < from || pos >= to) return true;
+    if (node.type.name === 'hardBreak') {
+      metrics.inlineAtoms += 1;
+      metrics.utf16Units += 1;
+    } else if (
+      node.type.name === 'nodeReference'
+      || node.type.name === 'fileReference'
+      || node.type.name === 'pendingFileReference'
+    ) {
+      metrics.inlineAtoms += 1;
+    }
+    return true;
+  });
+  return metrics;
+}
+
 function deleteAdjacentAtom(view: EditorView, key: string): boolean {
   const selection = view.state.selection;
   if (selection instanceof NodeSelection && isComposerAtom(selection.node)) {
@@ -1105,7 +1332,9 @@ function deleteAdjacentAtom(view: EditorView, key: string): boolean {
 }
 
 function isComposerAtom(node: PMNode | null | undefined): node is PMNode {
-  return node?.type.name === 'nodeReference' || node?.type.name === 'fileReference';
+  return node?.type.name === 'nodeReference'
+    || node?.type.name === 'fileReference'
+    || node?.type.name === 'pendingFileReference';
 }
 
 function filterSlashCommands(commands: readonly AgentSlashCommandView[], query: string): AgentSlashCommandView[] {
