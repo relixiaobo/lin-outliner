@@ -22,6 +22,13 @@ exact-revert path across Runtime restart. Agent causation changes attribution,
 not capability. All clients receive the same Selector, Projection, ChangeSet,
 Diff, Operation, Event, invariant, and recovery contracts.
 
+The CLI product contract is complete at the porcelain layer, not merely in the
+ChangeSet kernel. One complete resource intent uses one porcelain invocation;
+complex state for that resource uses the same command with `--input FILE|-`;
+multiple dependent resources use one ChangeSet with bindings. No ordinary flow
+requires a shell mutation loop, intermediate created-ID lookup, or several
+Operations for one atomic intent.
+
 This plan has shape **(a): ONE complete feature in one PR**. Standalone Runtime,
 desktop cutover, CLI, complete document capability coverage, transactional
 recovery, asset retention, both Skills, import convergence, Agent cutover, and
@@ -83,14 +90,14 @@ The explicit traceability manifest is:
 
 - flows: `FLOW-1`, `FLOW-2`, `FLOW-3`, `FLOW-4`, `FLOW-5`;
 - functional requirements: `FR-1`, `FR-2`, `FR-3`, `FR-4`, `FR-5`, `FR-6`,
-  `FR-7`, `FR-8`, `FR-9`, `FR-10`, `FR-11`, `FR-12`;
+  `FR-7`, `FR-8`, `FR-9`, `FR-10`, `FR-11`, `FR-12`, `FR-13`, `FR-14`;
 - non-functional requirements: `NFR-1`, `NFR-2`, `NFR-3`, `NFR-4`, `NFR-5`,
   `NFR-6`; and
 - acceptance: `AC-1`, `AC-2`, `AC-3`, `AC-4`, `AC-5`, `AC-6`, `AC-7`, `AC-8`,
   `AC-9`, `AC-10`, `AC-11`, `AC-12`, `AC-13`, `AC-14`, `AC-15`, `AC-16`,
   `AC-17`, `AC-18`, `AC-19`, `AC-20`, `AC-21`, `AC-22`, `AC-23`, `AC-24`,
   `AC-25`, `AC-26`, `AC-27`, `AC-28`, `AC-29`, `AC-30`, `AC-31`, `AC-32`,
-  `AC-33`, `AC-34`, `AC-35`, `AC-36`, `AC-37`, `AC-38`.
+  `AC-33`, `AC-34`, `AC-35`, `AC-36`, `AC-37`, and `AC-38` through `AC-64`.
 
 ### Completion contract
 
@@ -201,6 +208,71 @@ The explicit traceability manifest is:
   - **AC-36:** Asset bytes referenced by a reversible Operation shall not be
     physically deleted until no live document reference or retained recovery
     patch requires them.
+- **FR-13:** Porcelain expresses complete common resource intents without shell
+  choreography.
+  - **AC-38:** One complete resource shall be creatable with one porcelain
+    invocation, including its typed content and initial configuration.
+  - **AC-39:** Complex input for that same resource shall use the same command's
+    command-specific `--input FILE|-` schema rather than a generic MutationInput.
+  - **AC-40:** Multiple dependent resources shall use one ChangeSet with
+    bindings, without intermediate created-ID reads or a shell mutation loop.
+  - **AC-41:** Every successful atomic workflow shall produce exactly one
+    Operation and one guarded revert shall restore its complete pre-state.
+  - **AC-42:** Create and ensure forms shall return created or bound Node IDs in
+    the Operation result or one bounded returned Projection.
+  - **AC-43:** Stable system locations needed by common flows shall have direct
+    selectors, including `@library` and `@saved-searches`; Saved Search creation
+    shall default to `@saved-searches`.
+  - **AC-44:** Omitted patch properties shall preserve current state; collection
+    or resource replacement shall be explicitly named and documented.
+  - **AC-45:** Repeated `set`, `configure`, and `ensure` execution shall converge
+    or return semantic no-change without another Operation; `create` shall remain
+    explicit creation.
+- **FR-14:** Help, parser behavior, schema discovery, and completion metadata
+  form one drift-free public CLI contract.
+  - **AC-46:** `outline --help` shall list command families and concise purposes,
+    while `outline FAMILY --help` shall list that family's subcommands.
+  - **AC-47:** Exact command `--help` and `-h` shall show exact syntax,
+    positionals, options, defaults, selectors, cardinality, input/output forms,
+    mutation semantics, destructive requirements, and two or three examples.
+  - **AC-48:** Help shall distinguish argv shorthand from command-specific
+    `--input FILE|-`; `--json` shall neither wrap help in a Runtime response nor
+    start Runtime.
+  - **AC-49:** Destructive command help shall require `--preview`, reviewed
+    `--expect-diff`, and `--yes`, and shall state that `--yes` alone is invalid.
+  - **AC-50:** Capability help, completion metadata, parser option admission, and
+    `outline schema COMMAND` shall derive from the same per-command registry
+    contract; drift guards shall compare their exact option and schema data.
+  - **AC-51:** Unknown families, commands, and options and missing arguments
+    shall name the nearest valid command or the exact `--help` next step.
+  - **AC-52:** One Search creation invocation shall match `module`, create table
+    view state with updated-desc sort, materialize results, and exactly revert.
+  - **AC-53:** One ChangeSet, Diff, and apply shall create a Projects table with
+    definitions, rows, displayed columns, grouping, and sorting, then revert.
+  - **AC-54:** One ChangeSet shall create a tag or field definition and consume
+    its binding on new and existing Nodes, then revert.
+  - **AC-55:** One ChangeSet shall ensure a date and create a typed tree below
+    its binding without an ID lookup, then revert.
+  - **AC-56:** One `capture add` invocation shall ensure an optional date,
+    preserve provenance, create its typed tree, and revert.
+  - **AC-57:** One `media add` invocation shall stage a local image or attachment,
+    retain its asset through the Operation, and revert the media Node exactly.
+  - **AC-58:** One bounded `many + max` selector mutation shall apply done, tag,
+    and field changes to its exact query result, then revert.
+  - **AC-59:** One ChangeSet shall create two Nodes and cross-reference them
+    through bindings, without an intermediate read, then revert.
+  - **AC-60:** Template backfill shall preview and apply as one Operation, then
+    revert.
+  - **AC-61:** Node merge, definition merge, purge, and Empty Trash shall each
+    require exact preview/confirmation, settle once, and revert.
+  - **AC-62:** Repeated configure, set, and ensure calls shall create no duplicate
+    semantic state or additional Operation after convergence.
+  - **AC-63:** Every golden mutation flow shall expose a visible Operation ID,
+    affected count, and recovery state and assert final state, mutation invocation
+    count, Operation count, and successful revert.
+  - **AC-64:** Golden CLI tests shall cover root help, search-family help, exact
+    `search create`, `view sort add`, and `purge` help with real options and
+    examples rather than generic `[ARGS]` placeholders.
 
 ### End-state authority and invariants
 
@@ -914,13 +986,15 @@ Global form is:
 outline [--json] [--protocol 1] [--no-start] [--startup-timeout MS] COMMAND [ARGS]
 ```
 
-Every command accepts `--help`. Commands that accept structured input use
-`--input FILE|-` and `--input-format json|jsonl`; stdin is used only when
-explicitly named as `-` or when the command documents piped input. Output files
-use `--output`, never shell-like positional guessing. Mutation commands accept
-`--idempotency-key`; porcelain accepts `--preview` and
-`--expect-diff HASH`; destructive forms accept `--yes` under the binding rules
-above.
+Every command accepts `--help` and `-h`. Porcelain structured input is one exact
+command-specific JSON object through `--input FILE|-`; it never exposes the
+generic Runtime MutationInput as its user schema and does not accept
+`--input-format`. Direct `diff` accepts complete ChangeSet JSON or canonical
+JSONL with `--input-format`. Stdin is used only when explicitly named as `-` or
+when the command documents piped bytes. Output files use `--output`, never
+shell-like positional guessing. Mutation commands accept `--idempotency-key`;
+porcelain accepts `--preview` and `--expect-diff HASH`; only destructive forms
+accept `--yes` under the binding rules above.
 
 The stable command surface is:
 
@@ -960,14 +1034,77 @@ verb names are:
 | Media | `asset ingest`, `asset show`, `asset export`, `media add`, `media set` |
 | Lifecycle | `trash`, `restore`, `purge` |
 
-The option and input schemas for these fixed verbs are generated by the
-registry. `add --tree` is the bulk typed-tree path; `set` owns content,
-description, code, checkbox, icon, banner, and image properties. Every porcelain
-target accepts exact shorthand or a structured TargetSpec. Repeated targets and
-query targets use the same bounded cardinality semantics, so there is no
-separate `batch-*` namespace. Single-intent non-destructive work applies in one
-CLI invocation; multi-parent or dependent work uses one ChangeSet instead of a
-shell loop.
+The capability registry owns each command's exact input schema, syntax,
+positionals, options, defaults, selectors, cardinality, input/output forms,
+mutation semantics, destructive review text, examples, and completion metadata.
+Root, family, and exact help plus `outline schema COMMAND`, parser option
+admission, and shell completion data derive from that registry. A drift guard
+compares the published values. `--json` does not alter help or start Runtime.
+Unknown paths and options provide the nearest valid command or exact help step.
+
+### Complete-resource porcelain contract
+
+One complete resource intent uses one porcelain invocation. Complex state for
+that resource uses the same command's `--input FILE|-`; multiple resources,
+dependencies, cross-date work, or bounded batch updates use one ChangeSet with
+bindings. No common flow requires a shell mutation loop, an intermediate
+created-ID read, or several mutation Operations.
+
+`add` creates a complete typed tree, including rich content, descriptions, code,
+checkbox/done state, tags, fields, references, media, and children. `search
+create` accepts title, STRING_MATCH `--match` shorthand or canonical `--query`,
+and complete initial view state; its parent defaults to `@saved-searches`.
+`search set` atomically patches query, title, and complete view state and refreshes
+materialized results. `view set` is a declarative patch; omitted properties are
+preserved and only its explicit `replace` object replaces sort, filter, or
+display collections. Leaf view commands remain for small edits.
+
+`definition create` accepts complete initial tag or field configuration,
+templates or options, defaults, inheritance, and type-specific constraints.
+`field define` creates or reuses a field on one target and may include its initial
+value. `capture add` accepts one parent or local date, ensures the date when
+needed, preserves provenance, and creates the typed child tree. `media add`
+accepts a local path or stdin, stages its lease, and creates the media Node in
+one invocation; `asset ingest` remains the explicit staging/review primitive.
+Create and ensure results include created/bound IDs in the Operation's bounded
+return Projection. `@library` and `@saved-searches` avoid internal system-ID
+discovery.
+
+Command ownership is object-specific: `definition create` creates reusable
+definitions, `field define` attaches or creates a field on a target, and `tag
+add` applies an existing tag. Root `set` patches generic Node properties;
+`media set` patches media source/geometry; `search set` patches Search query/view
+state and refreshes results. `create` and `add` are explicit creation. Omitted
+patch properties preserve state, while `set`, `configure`, and `ensure` converge
+or return semantic no-change after settlement.
+
+Every exact command help names whether it is create, patch, replace, ensure,
+destructive, and/or idempotent. Destructive help requires preview, review, and
+the same command with `--expect-diff HASH --yes`; it explicitly rejects the idea
+that `--yes` alone is sufficient. The five golden help surfaces are root,
+`search`, `search create`, `view sort add`, and `purge`.
+
+### Complete-resource golden workflows
+
+CLI-level golden tests cover all of these observable workflows:
+
+1. create and revert a `module` table Saved Search with updated-desc sort;
+2. create and revert a complete Projects table through one ChangeSet/Diff/apply;
+3. create definitions and consume bindings on new and existing Nodes;
+4. ensure a date and create a typed tree below its binding;
+5. capture a provenanced typed tree to one date in one invocation;
+6. stage and add local media in one invocation while retaining its asset;
+7. apply done, tag, and field changes to a bounded `many + max` query;
+8. create two Nodes and cross-reference their bindings;
+9. preview and apply template backfill as one Operation;
+10. preview, confirm, and revert Node/definition merge, purge, and Empty Trash;
+11. prove repeated configure/set/ensure execution creates no duplicate semantic
+   state or additional Operation; and
+12. expose Operation ID, affected count, and recovery state for every flow.
+
+Each test asserts final document state, mutation invocation count, Operation
+count, and exact revert. Capability registry parity without these end-to-end
+workflow assertions is insufficient evidence.
 
 `purge @trash --contents` is Empty Trash. `purge` and `revert` are available to
 all callers, including built-in Agents. Confirmation and recovery admission are
@@ -1074,10 +1211,14 @@ it discoverable for any request to inspect, edit, organize, import into, or
 recover the outline. The instructions teach:
 
 - use `find` before mutation when an exact selector is unavailable;
-- use porcelain for one single intent and a ChangeSet for dependent or
-  multi-target work;
+- use one porcelain invocation for one complete resource, the same command's
+  `--input` for complex resource state, and a ChangeSet with bindings for
+  dependent, cross-date, or bounded bulk work;
 - use structured selectors and explicit cardinality rather than guessed text;
-- use `--json`, stdin/files, and schema discovery for machine workflows;
+- discover root/family/exact help and use `--json`, stdin/files, and exact
+  command schema discovery for machine workflows;
+- distinguish explicit create/add, convergent set/configure/ensure, patch
+  omission, and explicit replacement;
 - preview destructive, ambiguous, or high-volume changes and bind apply to the
   Diff hash;
 - preserve and report Operation IDs;
@@ -1316,6 +1457,8 @@ line claims those areas explicitly. The dev does not edit `docs/TASKS.md` or
 | --- | --- |
 | Selector/Projection and output (`FR-1`, `FR-2`) | Golden schemas and envelopes; test titles `resolves identical human and JSON target sets`, `rejects ambiguous mutation selectors`, `paginates at a bound revision`, and `emits resumable JSONL records` |
 | ChangeSet normalization (`FR-3`, `FR-4`, `FR-12`) | Property/golden tests showing porcelain/direct equivalence, stable canonical hashes, fixed IDs/bindings, non-mutating Diff, 100-date one-diff/one-apply, and bounded returned Projection |
+| Complete-resource porcelain (`FR-13`) | Twelve CLI golden workflows (`AC-52` through `AC-63`) asserting final state, mutation invocations, Operation count, visible settlement/recovery fields, created IDs, and exact revert; no common resource flow requires an ID lookup or shell mutation loop |
+| Help and discoverability (`FR-14`) | Root/family/exact help goldens for `outline`, `search`, `search create`, `view sort add`, and `purge`; registry drift tests compare exact command schema, help options, completion metadata, parser admission, semantics, defaults, and examples |
 | Atomicity and concurrency (`FR-5`, `FR-6`) | Tests `rolls back every chunk after a late Change failure`, `rejects a stale Diff without writes`, `does not retry a stale mutation`, and `requires Diff-bound destructive acknowledgement` |
 | Durable recovery (`FR-5`, `FR-12`) | Restart tests for ordinary edits, create/delete, purge, Empty Trash, revert conflict, revert-of-revert, crash before log append, crash after log fsync/before acknowledgement, truncated tail, orphan blob, corrupt referenced blob, idempotency, retention, and capacity |
 | Asset safety (`FR-5`, `FR-12`) | Fixtures proving Node-referenced, leased, and recovery-only AssetRecords retain exact revisions through opaque anchors; anchor-first crash points leak rather than lose; the Runtime barrier prevents reconciliation from releasing an in-flight anchor; successful reconciliation releases only orphan Outline anchors; central GC cannot race concurrent anchor creation; physical corruption differs from corrupt AssetRecord metadata; purge recovery restores media; `delete_asset`, public digests, and public anchor IDs are absent |
@@ -1415,53 +1558,53 @@ implementation.
 
 ## Build checklist
 
-- [ ] **1. Claim one complete feature and freeze the public contract.** Re-run
+- [x] **1. Claim one complete feature and freeze the public contract.** Re-run
   collision checks, open one Draft PR with the full file/area scope, add the
   pure `src/outline/contract/` schemas/registry/hash/error modules, and add golden
   tests for all versioned contracts, commands, JSON/JSONL envelopes, and exit
   mappings. Covers `FR-1`, `FR-2`, `FR-3`, `FR-6`, `FR-12`; acceptance
   `AC-1` through `AC-6`, `AC-12`, `AC-13`, `AC-24`, `AC-29`.
-- [ ] **2. Expose exact Core transaction patches.** Extend the transaction
+- [x] **2. Expose exact Core transaction patches.** Extend the transaction
   boundary to retain immutable complete before/after touched-Node patches until
   post-fsync finalization, capture deterministic document updates, add the
   trusted recovery-patch command, and prove create/update/move/heal/delete/chunk
   rollback coverage. Covers `FR-3`, `FR-5`; acceptance `AC-6`, `AC-9`,
   `AC-35`.
-- [ ] **3. Build the transactional storage authority.** Add checksummed
+- [x] **3. Build the transactional storage authority.** Add checksummed
   `WorkspaceTransactionLog`, verified snapshots, content-addressed recovery
   blobs, atomic Operation/idempotency/Event records, guarded revert/revert-of-
   revert, crash replay, 30-day/1,000-operation retention, and 2 GiB admission
   budget. Delete split saver/journal settlement. Covers
   `FR-5`, `FR-6`, `FR-12`; acceptance `AC-8` through `AC-13`, `AC-32` through
   `AC-35`.
-- [ ] **4. Build the standalone Runtime process.** Add transport-independent
+- [x] **4. Build the standalone Runtime process.** Add transport-independent
   handlers, Unix-socket adapters, descriptor/authentication, Runtime-specific
   single-writer lock, shared client/supervisor, event cursors, idle drain, and
   deterministic desktop/CLI discovery/start. Prove the server imports no
   Electron/renderer/Agent provider code and clients import no persistence. Covers
   `FR-2`, `FR-10`, `FR-11`; acceptance `AC-3` through
   `AC-5`, `AC-20` through `AC-22`, `AC-37`, `AC-38`.
-- [ ] **5. Implement the shared Selector/Projection/ChangeSet kernel.** Move
+- [x] **5. Implement the shared Selector/Projection/ChangeSet kernel.** Move
   reusable Outliner parser/read logic out of Agent capability modules; add
   deterministic selectors, cardinality, bindings, fixed IDs, preview Core,
   normalization, Diff/apply, large JSONL framing, bounded returned Projections,
   and watch. Covers `FR-1` through `FR-7`, `FR-10`, `FR-12`; acceptance
   `AC-1` through `AC-15`, `AC-20`, `AC-21`, `AC-24` through `AC-29`.
-- [ ] **6. Cut the desktop over as an equal client.** Route every persisted
+- [x] **6. Cut the desktop over as an equal client.** Route every persisted
   renderer/launcher action, read, event, asset handoff, and Undo/Redo through
   shared contracts; preserve optimistic editor drafts and conflict recovery;
   add client-dependency guards; and pass complete desktop parity before deleting
   the old dispatcher. Covers `FR-3`, `FR-5`, `FR-10`, `FR-11`; acceptance
   `AC-6`, `AC-9` through `AC-13`, `AC-20` through `AC-22`, `AC-32` through
   `AC-36`.
-- [ ] **7. Complete CLI and document parity.** Implement the thin client,
+- [x] **7. Complete CLI and document parity.** Implement the thin client,
   lifecycle discovery, output formatting, direct ChangeSet commands, all
-  porcelain families, schema/help generation, history/recovery commands, and a
-  registry mapping for every persisted Outliner capability. The generated
+  complete-resource porcelain families, exact root/family/command help and
+  schema/completion generation, history/recovery commands, and a registry
+  mapping for every persisted Outliner capability. The generated
   unsupported-capability report must be empty. Covers `FR-1` through `FR-6`,
-  `FR-10` through `FR-12`; acceptance `AC-1` through `AC-13`, `AC-20` through
-  `AC-22`, `AC-24` through `AC-29`, `AC-32` through `AC-35`, `AC-37`,
-  `AC-38`.
+  `FR-10` through `FR-14`; acceptance `AC-1` through `AC-13`, `AC-20` through
+  `AC-22`, `AC-24` through `AC-29`, and `AC-32` through `AC-64`.
 - [ ] **8. Make assets transactional and recovery-aware.** Add the neutral
   multi-process ContentStore, opaque retention anchors, and logical AssetRecords;
   add staged leases and CLI ingest/show/export; include asset references and size
@@ -1470,31 +1613,31 @@ implementation.
   versus record corruption; remove public `delete_asset`, digest, and anchor
   authority; and prove purge/revert/expiry/concurrency/crash behavior. Covers
   `FR-5`, `FR-12`; acceptance `AC-11`, `AC-34` through `AC-36`.
-- [ ] **9. Add both Skills and absorb import.** Add the schema-light `outline`
+- [x] **9. Add both Skills and absorb import.** Add the schema-light `outline`
   Skill; replace `tenon-import` with `outline-import`; retain source inspection,
   optional cleaning, coverage, adapters, and verification; generate only generic
   ChangeSets; prove no-clean and 100-date workflows; delete Import Pack writes,
   private API/service, binary, causation exception, and packaging. Covers
   `FR-7`, `FR-9`, `FR-12`; acceptance `AC-14`, `AC-15`, `AC-18`, `AC-19`,
   `AC-23` through `AC-29`.
-- [ ] **10. Cut the built-in Agent over with full authority.** Put `outline` on
+- [x] **10. Cut the built-in Agent over with full authority.** Put `outline` on
   the ordinary Agent path, generalize host attestation for shell Items, record
   immutable causation, keep Operation settlement visible, remove Node/action/
   Memory projection scopes, and prove local-user/Agent registry equality plus
   missing/expired attestation behavior. Covers `FR-8`, `FR-9`; acceptance
   `AC-16` through `AC-19`, `AC-30`, `AC-31`.
-- [ ] **11. Retire every legacy document surface.** Replay desktop and six-tool
+- [x] **11. Retire every legacy document surface.** Replay desktop and six-tool
   deterministic corpora plus the production-provider probe, then remove the
   main-owned document dispatcher/store, catalog entries, schemas, handlers,
   views, permission paths, stale tests, import writer, and active specs. Run the
   generated retirement/dependency guards until both live queues are empty. Covers `FR-9`;
   acceptance `AC-18`, `AC-19`.
-- [ ] **12. Fold design into current specs.** Update architecture, commands,
+- [x] **12. Fold design into current specs.** Update architecture, commands,
   Agent tool design, Agent permissions, Agent Skills, Agent integration, and the
   parity matrix in the same PR; sweep active plan/spec premises invalidated by
   import/native-tool retirement. Covers architecture rule A6 and the complete
   product-definition acceptance set.
-- [ ] **13. Pass the complete release gate.** Run typecheck, Core/renderer/
+- [x] **13. Pass the complete release gate.** Run typecheck, Core/renderer/
   CLI/process/Skill/E2E tests, docs check, parity and retirement guards,
   performance probes, package build, packaged Runtime/desktop/CLI smoke, provider
   evidence, and diff check. Keep the PR Draft and do not report completion until

@@ -33,11 +33,18 @@ to the same public Change union; only presentation and causation differ.
 | History and exact recovery | Operation ID and recovery state | `log`, `revert`, `undo`, `redo` | Reversal is another linked Operation |
 | Asset-backed media | `AssetLease` plus media `NodeDraft` | `asset ingest`, `asset show`, `asset export`, `media add`, `media set` | Digest-verified bytes; live/lease/recovery reachability |
 | Bulk import | ordinary bindings plus `ensure`/`create`/`update` | `outline-import` helper, then `diff` and `apply` | Coverage evidence, ChangeSet hash, Diff hash, Operation ID |
+| Complete single resource | typed `NodeDraft` or resource-specific create/update union | one porcelain invocation; complex state uses that command's `--input` | Final-state golden, one mutation invocation, one Operation, returned IDs, exact revert |
+| Dependent or bounded bulk resources | one ChangeSet with bindings and `many + max` | one `diff` and one `apply`; no shell loop or intermediate ID lookup | Golden ChangeSet/Diff/Operation counts and exact revert |
+| CLI discovery | per-command capability schema plus help/completion metadata | root, family, exact command help and `schema COMMAND` | Parser/help/completion drift guard and five help goldens |
 
 `src/outline/contract/capabilities.ts` owns the executable mapping from every
-persisted Core command to one public capability. Guard tests fail on a missing or
-duplicate owner, a parallel document authority, or a retired Agent/import write
-surface.
+persisted Core command to one public capability and each command's exact CLI
+schema, help, completion metadata, mutation semantics, and examples. Guard tests
+fail on a missing or duplicate owner, parser/help/schema drift, a parallel
+document authority, or a retired Agent/import write surface. Workflow goldens
+also cover complete Search/table/definition/date/capture/media creation, bounded
+query mutation, binding cross-reference, template backfill, merge/purge/Empty
+Trash review, idempotent convergence, visible Operation settlement, and revert.
 
 ## State Model
 

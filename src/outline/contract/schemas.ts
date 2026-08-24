@@ -7,10 +7,12 @@ import {
 } from './version';
 
 const closed = { additionalProperties: false } as const;
-const Identifier = Type.String({ minLength: 1, maxLength: 256 });
+export const IdentifierSchema = Type.String({ minLength: 1, maxLength: 256 });
+const Identifier = IdentifierSchema;
 const Digest = Type.String({ pattern: '^[a-f0-9]{64}$' });
 const BindingName = Type.String({ pattern: '^[A-Za-z][A-Za-z0-9_-]{0,63}$' });
-const LocalDate = Type.String({ pattern: '^\\d{4}-\\d{2}-\\d{2}$' });
+export const LocalDateSchema = Type.String({ pattern: '^\\d{4}-\\d{2}-\\d{2}$' });
+const LocalDate = LocalDateSchema;
 const Timestamp = Type.String({ format: 'date-time' });
 const JsonValue = Type.Unknown();
 
@@ -65,6 +67,7 @@ export const SelectorSchema = Type.Cyclic({
       alias: Type.Union([
         Type.Literal('home'), Type.Literal('inbox'), Type.Literal('schema'),
         Type.Literal('trash'), Type.Literal('daily-notes'), Type.Literal('today'),
+        Type.Literal('library'), Type.Literal('saved-searches'),
       ]),
     }, closed),
     Type.Object({ by: Type.Literal('date'), date: LocalDate }, closed),
@@ -239,7 +242,7 @@ const EnsureChangeSchema = Type.Union([
   }, closed),
 ]);
 
-const CreateChangeSchema = Type.Object({
+const CreateNodeChangeSchema = Type.Object({
   op: Type.Literal('create'),
   parents: TargetRefSchema,
   index: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Null()])),
@@ -262,7 +265,7 @@ const TextPatchSchema = Type.Union([
   }, closed),
 ]);
 
-const FieldTypeSchema = Type.Union([
+export const FieldTypeSchema = Type.Union([
   Type.Literal('plain'), Type.Literal('options'), Type.Literal('options_from_supertag'),
   Type.Literal('date'), Type.Literal('number'), Type.Literal('url'),
   Type.Literal('email'), Type.Literal('checkbox'),
@@ -390,7 +393,7 @@ const FieldInstructionSchema = Type.Union([
   }, closed),
 ]);
 
-const TagDefinitionPatchSchema = Type.Object({
+export const TagDefinitionPatchSchema = Type.Object({
   color: Type.Optional(Type.Union([Type.String({ maxLength: 128 }), Type.Null()])),
   extends: Type.Optional(Type.Union([Identifier, Type.Null()])),
   childSupertag: Type.Optional(Type.Union([Identifier, Type.Null()])),
@@ -400,7 +403,7 @@ const TagDefinitionPatchSchema = Type.Object({
   doneMapUnchecked: Type.Optional(Type.Array(Identifier, { uniqueItems: true, maxItems: 10_000 })),
 }, closed);
 
-const FieldDefinitionPatchSchema = Type.Object({
+export const FieldDefinitionPatchSchema = Type.Object({
   fieldType: Type.Optional(FieldTypeSchema),
   sourceSupertag: Type.Optional(Type.Union([Identifier, Type.Null()])),
   nullable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
@@ -413,6 +416,31 @@ const FieldDefinitionPatchSchema = Type.Object({
   minValue: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
   maxValue: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
 }, closed);
+
+const CreateDefinitionChangeSchema = Type.Union([
+  Type.Object({
+    op: Type.Literal('create'),
+    resource: Type.Literal('definition'),
+    definitionType: Type.Literal('tag'),
+    id: Type.Optional(Identifier),
+    name: Type.String({ minLength: 1, maxLength: 1_024 }),
+    config: Type.Optional(TagDefinitionPatchSchema),
+    template: Type.Optional(Type.Array(NodeDraftSchema, { maxItems: 100_000 })),
+    bind: BindingName,
+  }, closed),
+  Type.Object({
+    op: Type.Literal('create'),
+    resource: Type.Literal('definition'),
+    definitionType: Type.Literal('field'),
+    id: Type.Optional(Identifier),
+    name: Type.String({ minLength: 1, maxLength: 1_024 }),
+    config: Type.Optional(FieldDefinitionPatchSchema),
+    options: Type.Optional(Type.Array(NodeDraftSchema, { maxItems: 100_000 })),
+    bind: BindingName,
+  }, closed),
+]);
+
+const CreateChangeSchema = Type.Union([CreateNodeChangeSchema, CreateDefinitionChangeSchema]);
 
 const DefinitionInstructionSchema = Type.Union([
   Type.Object({
@@ -427,27 +455,74 @@ const DefinitionInstructionSchema = Type.Union([
   }, closed),
 ]);
 
-const ViewSystemFieldSchema = Type.Union([
+export const ViewSystemFieldSchema = Type.Union([
   Type.Literal('sys:name'), Type.Literal('sys:createdAt'), Type.Literal('sys:updatedAt'),
   Type.Literal('sys:done'), Type.Literal('sys:doneAt'), Type.Literal('sys:tags'),
   Type.Literal('sys:refCount'),
 ]);
-const ViewFieldSchema = Type.Union([ViewSystemFieldSchema, TargetRefSchema]);
-const ViewModeSchema = Type.Union([
+export const ViewFieldSchema = Type.Union([ViewSystemFieldSchema, TargetRefSchema]);
+export const ViewModeSchema = Type.Union([
   Type.Literal('list'), Type.Literal('table'), Type.Literal('cards'), Type.Literal('calendar'),
 ]);
-const SortDirectionSchema = Type.Union([Type.Literal('asc'), Type.Literal('desc')]);
-const FilterOperatorSchema = Type.Union([
+export const SortDirectionSchema = Type.Union([Type.Literal('asc'), Type.Literal('desc')]);
+export const FilterOperatorSchema = Type.Union([
   Type.Literal('is'), Type.Literal('is_not'), Type.Literal('contains'), Type.Literal('not_contains'),
   Type.Literal('is_empty'), Type.Literal('is_not_empty'), Type.Literal('gt'), Type.Literal('lt'),
   Type.Literal('before'), Type.Literal('after'),
 ]);
-const FilterValueLogicSchema = Type.Union([Type.Literal('all'), Type.Literal('any')]);
-const DisplayPlacementSchema = Type.Union([
+export const FilterValueLogicSchema = Type.Union([Type.Literal('all'), Type.Literal('any')]);
+export const DisplayPlacementSchema = Type.Union([
   Type.Literal('title'), Type.Literal('body'), Type.Literal('footer'), Type.Literal('hidden'),
 ]);
 
+export const ViewSortSpecificationSchema = Type.Object({
+  field: ViewFieldSchema,
+  direction: Type.Optional(SortDirectionSchema),
+}, closed);
+
+export const ViewFilterSpecificationSchema = Type.Object({
+  field: ViewFieldSchema,
+  operator: Type.Optional(FilterOperatorSchema),
+  values: Type.Optional(Type.Array(Type.String({ maxLength: 65_536 }), { maxItems: 10_000 })),
+  valueLogic: Type.Optional(FilterValueLogicSchema),
+}, closed);
+
+export const ViewDisplaySpecificationSchema = Type.Object({
+  field: ViewFieldSchema,
+  visible: Type.Optional(Type.Boolean()),
+  width: Type.Optional(Type.Number({ minimum: 0 })),
+  order: Type.Optional(Type.Number()),
+  label: Type.Optional(Type.Union([Type.String({ maxLength: 4_096 }), Type.Null()])),
+  placement: Type.Optional(DisplayPlacementSchema),
+}, closed);
+
+export const ViewCreateSpecificationSchema = Type.Object({
+  mode: Type.Optional(ViewModeSchema),
+  toolbar: Type.Optional(Type.Boolean()),
+  group: Type.Optional(Type.Union([ViewFieldSchema, Type.Null()])),
+  sort: Type.Optional(Type.Array(ViewSortSpecificationSchema, { maxItems: 1_000 })),
+  filters: Type.Optional(Type.Array(ViewFilterSpecificationSchema, { maxItems: 1_000 })),
+  display: Type.Optional(Type.Array(ViewDisplaySpecificationSchema, { maxItems: 1_000 })),
+}, closed);
+
+export const ViewSetSpecificationSchema = Type.Object({
+  mode: Type.Optional(ViewModeSchema),
+  toolbar: Type.Optional(Type.Boolean()),
+  group: Type.Optional(Type.Union([ViewFieldSchema, Type.Null()])),
+  replace: Type.Optional(Type.Object({
+    sort: Type.Optional(Type.Array(ViewSortSpecificationSchema, { maxItems: 1_000 })),
+    filters: Type.Optional(Type.Array(ViewFilterSpecificationSchema, { maxItems: 1_000 })),
+    display: Type.Optional(Type.Array(ViewDisplaySpecificationSchema, { maxItems: 1_000 })),
+  }, { ...closed, minProperties: 1 })),
+}, { ...closed, minProperties: 1 });
+
 const ViewInstructionSchema = Type.Union([
+  Type.Object({
+    kind: Type.Literal('view'),
+    property: Type.Literal('configuration'),
+    action: Type.Literal('set'),
+    view: ViewSetSpecificationSchema,
+  }, closed),
   Type.Object({ kind: Type.Literal('view'), property: Type.Literal('mode'), action: Type.Literal('set'), mode: ViewModeSchema }, closed),
   Type.Object({ kind: Type.Literal('view'), property: Type.Literal('toolbar'), action: Type.Literal('set'), visible: Type.Boolean() }, closed),
   Type.Object({ kind: Type.Literal('view'), property: Type.Literal('group'), action: Type.Literal('set'), field: Type.Union([ViewFieldSchema, Type.Null()]) }, closed),
@@ -497,8 +572,8 @@ const SearchInstructionSchema = Type.Union([
   Type.Object({
     kind: Type.Literal('search'),
     action: Type.Literal('set'),
-    title: Type.String({ minLength: 1, maxLength: 4_194_304 }),
-    query: QueryExpressionSchema,
+    title: Type.Optional(Type.String({ minLength: 1, maxLength: 4_194_304 })),
+    query: Type.Optional(QueryExpressionSchema),
   }, closed),
   Type.Object({ kind: Type.Literal('search'), action: Type.Literal('refresh') }, closed),
 ]);
@@ -660,6 +735,17 @@ export const ProjectionResultSchema = Type.Object({
   cursor: Type.Optional(Type.String({ minLength: 1, maxLength: 4_096 })),
   truncated: Type.Optional(Type.Boolean()),
 }, { ...closed, $id: 'ProjectionResult' });
+
+export const NoChangeResultSchema = Type.Object({
+  protocolVersion: Type.Literal(OUTLINE_PROTOCOL_VERSION),
+  kind: Type.Literal('outline.no-change'),
+  changeSetHash: Digest,
+  diffHash: Digest,
+  revision: Type.Integer({ minimum: 0 }),
+  affectedNodeCount: Type.Literal(0),
+  recovery: Type.Object({ state: Type.Literal('not-required') }, closed),
+  result: Type.Optional(Type.Array(ProjectionResultSchema, { maxItems: 32 })),
+}, { ...closed, $id: 'NoChangeResult' });
 
 export const OperationSchema = Type.Object({
   protocolVersion: Type.Literal(OUTLINE_PROTOCOL_VERSION),
@@ -895,6 +981,7 @@ export const OUTLINE_PUBLIC_SCHEMAS = Object.freeze({
   Change: ChangeSchema,
   ChangeSet: ChangeSetSchema,
   Diff: DiffSchema,
+  NoChangeResult: NoChangeResultSchema,
   Operation: OperationSchema,
   OperationLogPage: OperationLogPageSchema,
   RevertConflictDiff: RevertConflictDiffSchema,
@@ -922,6 +1009,7 @@ export type UpdateInstruction = Static<typeof UpdateInstructionSchema>;
 export type Change = Static<typeof ChangeSchema>;
 export type ChangeSet = Static<typeof ChangeSetSchema>;
 export type Diff = Static<typeof DiffSchema>;
+export type NoChangeResult = Static<typeof NoChangeResultSchema>;
 export type Operation = Static<typeof OperationSchema>;
 export type OperationLogPage = Static<typeof OperationLogPageSchema>;
 export type RevertConflictDiff = Static<typeof RevertConflictDiffSchema>;

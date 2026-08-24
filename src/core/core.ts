@@ -591,11 +591,13 @@ export class Core {
   }
 
   state() {
+    if (this.activeTransaction || this.activeAsyncMutations > 0) return cloneState(this.snapshot());
     this.refreshStateFromLoro();
     return cloneState(this.stateValue);
   }
 
   intoState() {
+    if (this.activeTransaction || this.activeAsyncMutations > 0) return cloneState(this.snapshot());
     this.refreshStateFromLoro();
     return cloneState(this.stateValue);
   }

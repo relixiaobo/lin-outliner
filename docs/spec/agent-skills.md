@@ -278,9 +278,22 @@ application bundle. The packaged `outline` launcher and import-helper wrapper
 are required resources: the packaging hook restores executable mode where
 needed and fails the build when a resource is absent.
 
-Neither Skill owns document logic. `outline` discovers current capabilities and
-schemas from the executable registry. The import helper only reads source data
-and emits a generic ChangeSet plus evidence; it has no Runtime write client.
+Neither Skill owns document logic. `outline` discovers current capabilities,
+root/family/exact command help, completion metadata, and command-specific schemas
+from the executable registry. It routes one complete resource to one porcelain
+invocation, complex state for that resource to the same command's `--input`, and
+dependent, cross-date, or bounded bulk work to one ChangeSet with bindings. It
+never uses a shell mutation loop or intermediate created-ID lookup.
+
+The Skill distinguishes explicit create/add from convergent set/configure/ensure,
+omitted patch properties from explicit replacement, and common STRING_MATCH
+shorthand from canonical structured queries. It teaches stable aliases including
+`@library` and `@saved-searches`, bounded selector cardinality, complete-resource
+creation, one-Operation settlement, exact Diff review, and guarded revert. It
+does not copy schemas or parser tables into Skill text.
+
+The import helper only reads source data and emits a generic ChangeSet plus
+evidence; it has no Runtime write client.
 Valid Tana `journalPart` records with canonical local dates lower to native
 Daily Note `ensure` bindings in the same ChangeSet, while non-date sections may
 remain under a staging root. Import is append-only and never implies

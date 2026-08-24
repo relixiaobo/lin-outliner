@@ -16,8 +16,10 @@ Runtime capabilities.
   Projection, ChangeSet, Diff, Operation, Event, asset, request, response, and
   stream schemas.
 - `src/outline/contract/capabilities.ts` is the executable public capability
-  registry. Each entry owns its name, request and result schema, kind,
-  streaming/destructive flags, audit category, summary, and coverage.
+  registry. Each entry owns its name, exact CLI request and result schema,
+  command-family placement, help and completion metadata, parser options,
+  streaming/destructive flags, mutation semantics, audit category, summary,
+  examples, and coverage.
 - `src/core/commands.ts` remains the Runtime-internal mutation protocol. Public
   Change variants lower to Core commands only inside Runtime.
 
@@ -39,9 +41,60 @@ owned. Missing and duplicate owners both fail the guard.
 | Porcelain mutation | `add`, `set`, `move`, `duplicate`, `merge`, `indent`, `outdent`, `done set`, `done cycle`, `tag add`, `tag remove`, `field define`, `field set`, `field clear`, `field remove`, `field reuse`, `field select`, `definition create`, `definition configure`, `definition merge`, `reference add`, `reference set`, `reference inline`, `reference restore`, `view set`, `view group set`, `view sort add`, `view sort set`, `view sort remove`, `view sort clear`, `view filter add`, `view filter set`, `view filter remove`, `view filter clear`, `view display add`, `view display set`, `view display remove`, `search create`, `search ensure-tag`, `search set`, `search refresh`, `template apply`, `daily ensure`, `capture add`, `media add`, `media set`, `trash`, `restore`, `purge` | Lowers one intent into the public ChangeSet contract. `--preview` returns its Diff; apply returns its Operation. |
 
 `capabilities` is executable authority rather than a hand-maintained help list.
-`schema` exposes the exact current JSON Schema for public types. Capability kind
-and audit category drive host classification; execution context never removes a
-public schema field or document capability.
+`outline --help`, family help, exact command help, shell completion metadata,
+parser option admission, and `outline schema COMMAND` derive from that registry.
+Porcelain command schemas describe their resource-specific input rather than the
+generic Runtime MutationInput. Drift tests compare the exact published options,
+schemas, positionals, and completion data. Capability kind and audit category
+drive host classification; execution context never removes a public schema
+field or document capability.
+
+Root help lists command families and direct commands. Family help lists its
+subcommands. Exact command `--help` and `-h` show syntax, positionals, options,
+defaults, selectors, cardinality, argv versus `--input FILE|-`, output,
+create/patch/replace/ensure/destructive and idempotency semantics, plus two or
+three canonical examples. Destructive help requires `--preview`, reviewed
+`--expect-diff`, and `--yes`, and states that `--yes` alone is invalid. Help is
+plain text even with `--json` and runs without Runtime. Unknown paths/options and
+missing arguments provide the nearest command or exact help next step.
+
+### Porcelain intent routing
+
+The public product rule is:
+
+- one complete resource intent uses one porcelain invocation;
+- complex state for that resource uses the same command with `--input FILE|-`;
+- multiple resources, dependencies, cross-date work, or bounded bulk edits use
+  one ChangeSet with bindings, one Diff, and one apply.
+
+No common flow requires a shell mutation loop, intermediate created-ID lookup,
+or multiple mutation Operations. Create and ensure results include created or
+bound IDs through the Operation result's bounded Projection. Repeated `set`,
+`configure`, and `ensure` calls converge or return `outline.no-change` without
+creating another Operation. `create` and `add` remain explicit creation.
+
+`add` accepts a complete typed `NodeDraft` tree, including rich content,
+description, code, checkbox/done state, tags, fields, references, media, and
+children. `definition create` owns complete reusable tag/field definitions and
+their type-specific configuration, templates/options, defaults, inheritance,
+and constraints. `field define` instead creates or reuses a field on one target
+and may set its initial value. `tag add` applies an existing definition.
+
+`search create` accepts title, canonical query or `--match` STRING_MATCH
+shorthand, and initial mode, ordered sort, filters, group, display fields, and
+toolbar state. Its default parent is `@saved-searches`. `search set` atomically
+patches Search title/query/view state and refreshes materialized results. `view
+set` applies one complete declarative view patch; omitted properties preserve
+state and only its explicit `replace` object replaces sort/filter/display
+collections. The view leaf commands remain for small edits.
+
+`capture add` accepts exactly one parent or local date, ensures the date when
+needed, preserves capture provenance, and creates its typed child tree in the
+same Operation. `media add` accepts a local path or stdin, stages the asset lease,
+and creates the image/attachment Node in one invocation. `asset ingest` remains
+the explicit primitive for automation that deliberately separates staging and
+review. Root `set` patches generic Node properties; `media set` owns media
+source/geometry; `search set` owns Search query/view configuration.
 
 `status` never starts Runtime. Absence is exactly `{ running: false }`. A live
 result includes the Runtime instance, runtime and storage versions, document
@@ -57,7 +110,7 @@ A `Selector` is independent of renderer state:
 
 - `{ by: 'id', id }` selects one exact Node ID.
 - `{ by: 'alias', alias }` selects `home`, `inbox`, `schema`, `trash`,
-  `daily-notes`, or `today`.
+  `daily-notes`, `library`, `saved-searches`, or `today`.
 - `{ by: 'date', date }` selects one canonical local date.
 - `{ by: 'query', query, within?, includeTrash?, order?, limit }` uses the shared
   structured search grammar.
@@ -119,14 +172,16 @@ not advance document revision, create an Operation, or retain staged assets.
 
 `apply` accepts the reviewed Diff, not an unreviewed private mutation. Runtime
 rechecks its hashes, base revision, target digests, asset leases, and destructive
-acknowledgement before executing. Purge and empty-Trash flows require a Diff-bound
-explicit acknowledgement; acknowledgement alone is insufficient.
+acknowledgement before executing. Node/definition merge, purge, and empty-Trash
+flows require a Diff-bound explicit acknowledgement; acknowledgement alone is
+insufficient.
 
 Human destructive porcelain on a TTY first prints the exact Runtime-produced
 Diff and asks for confirmation. Acceptance submits that same artifact to
 `apply`; rejection writes nothing, and a revision change during review returns a
 stale conflict without recomputing or retrying. JSON and non-TTY callers must
-provide both `--yes` and either a reviewed Diff artifact or `--expect-diff`.
+provide both `--yes` and either a reviewed Diff artifact or `--expect-diff`;
+`--yes` alone is rejected by the parser.
 
 Canonical Diff responses stream from Runtime while SHA-256 and byte count advance
 over the same chunks. Results up to 8 MiB may be collected into the single JSON

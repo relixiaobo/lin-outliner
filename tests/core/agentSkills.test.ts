@@ -989,6 +989,31 @@ describe('agent skills', () => {
     expect(await runtime.getSkill('research')).toBeNull();
   });
 
+  test('teaches the built-in outline Skill to route complete CRUD intents without shell choreography', async () => {
+    const runtime = new AgentSkillRuntime({
+      includeUserSkills: false,
+      executeIsolatedSkill: async () => ({
+        threadId: 'outline-skill-contract',
+        agentRole: 'default',
+        status: 'completed',
+        result: 'contract inspected',
+      }),
+    });
+    const invocation = await runtime.invokeSkill({ skill: 'outline', trigger: 'agent' });
+
+    expect(invocation.ok).toBe(true);
+    if (!invocation.ok) return;
+    expect(invocation.renderedContent).toContain('one complete resource intent -> one porcelain invocation');
+    expect(invocation.renderedContent).toContain('complex state for that same resource -> the same command with');
+    expect(invocation.renderedContent).toContain('one ChangeSet with bindings, then one `diff` and one `apply`');
+    expect(invocation.renderedContent).toContain('Never use a shell mutation loop, query intermediate created IDs');
+    expect(invocation.renderedContent).toContain('Patch forms preserve omitted properties');
+    expect(invocation.renderedContent).toContain('Repeated\n   `set`/`configure`/`ensure` calls must converge');
+    expect(invocation.renderedContent).toContain('`--yes` alone is invalid');
+    expect(invocation.renderedContent).toContain('`@saved-searches`');
+    expect(invocation.renderedContent).toContain('`many` mutation has an explicit\n   `max` bound');
+  });
+
   test('loads bundled built-in skills with real resource directories', async () => {
     const { skillsDir, skillDir } = await createBundledBuiltInSkillFixture('bundled-demo', {
       frontmatter: [

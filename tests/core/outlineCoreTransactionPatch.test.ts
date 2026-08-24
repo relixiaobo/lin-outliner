@@ -31,6 +31,26 @@ describe('Core transaction patches', () => {
     expect(Object.isFrozen(patch.nodes.find((entry) => entry.id === createdId)?.after)).toBe(true);
   });
 
+  test('keeps the original before state when transaction code reads current state between mutations', async () => {
+    const core = Core.new();
+    const parentId = core.projection().todayId;
+    const createdId = `node:${crypto.randomUUID()}`;
+    const before = core.state();
+
+    const { patch } = await core.transactionWithPatch('user', () => {
+      core.createNode(parentId, null, 'Created', createdId);
+      expect(core.state().nodes[createdId]?.content).toEqual(plainText('Created'));
+      core.updateNodeDescription(createdId, 'Description');
+    }, { operationId: 'op:state-read', command: 'create_node' });
+
+    expect(patch.nodes.find((entry) => entry.id === createdId)).toMatchObject({
+      before: null,
+      after: { description: 'Description' },
+    });
+    await core.transaction('system', () => core.applyRecoveryPatch(patch));
+    expect(core.state()).toEqual(before);
+  });
+
   test('retains the first before value across cooperative commit chunks', async () => {
     const core = Core.new();
     const parentId = core.projection().todayId;

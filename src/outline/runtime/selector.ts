@@ -127,9 +127,11 @@ function aliasNodeId(projection: DocumentProjection, alias: Extract<Selector, { 
   switch (alias) {
     case 'home': return projection.rootId;
     case 'inbox': return LIBRARY_ID;
+    case 'library': return LIBRARY_ID;
     case 'schema': return SCHEMA_ID;
     case 'trash': return TRASH_ID;
     case 'daily-notes': return DAILY_NOTES_ID;
+    case 'saved-searches': return projection.searchesId;
     case 'today': return projection.todayId;
   }
 }

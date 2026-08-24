@@ -37,6 +37,7 @@ try {
   const version = await runCli(['--json', 'version']);
   const schema = await runCli(['--json', 'schema', 'Selector']);
   const capabilities = await runCli(['--json', 'capabilities']);
+  const help = await runCli(['--json', 'search', 'create', '--help']);
   if (await readOutlineRuntimeDescriptor(runtimeRoot)) {
     throw new Error('Local-only CLI commands unexpectedly started Outline Runtime.');
   }
@@ -53,6 +54,12 @@ try {
       isRecord(entry) && entry.name === name
     )))) {
     throw new Error('The packaged CLI capability registry is incomplete.');
+  }
+  if (!help.stdout.includes('--match TEXT')
+    || !help.stdout.includes('--input FILE|-')
+    || !help.stdout.includes('outline search create --title "Modules" --match "module"')
+    || help.stdout.trimStart().startsWith('{')) {
+    throw new Error('The packaged CLI did not preserve exact plain-text command help.');
   }
 
   stage('launch first desktop');

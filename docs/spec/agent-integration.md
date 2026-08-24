@@ -23,6 +23,14 @@ Agent Core. It is a contract checklist, not project status.
   CLI; do not add a document-native model tool or private import endpoint.
 - Classify Outline shell calls from the executable capability registry and
   require host attestation for built-in Agent mutations.
+- Route one complete resource to one porcelain invocation, complex state for
+  that resource to the same command's `--input`, and dependent/cross-date/bulk
+  work to one ChangeSet with bindings; never use shell mutation loops or
+  intermediate created-ID discovery.
+- Discover exact syntax and semantics through root/family/command help and
+  `outline schema COMMAND`; preserve patch omission, explicit replacement,
+  selector cardinality, destructive Diff binding, and idempotent
+  set/configure/ensure behavior.
 - Keep the Agent orchestration surface to `agent`, `agent_message`, and unified
   `task_stop`; do not add a roster, inbox, follow-up, wait, or polling alias.
 - Declare Core scope and action kinds.
@@ -81,5 +89,11 @@ Agent Core. It is a contract checklist, not project status.
 - Keep the active repository residue guard clean.
 - Verify every Core document command has exactly one public capability owner and
   no retired document/import authority remains live.
+- Verify help, completion metadata, parser options, and exact command schemas
+  derive from one registry and cover root, family, create, leaf-view, and
+  destructive help goldens without starting Runtime.
+- Verify complete-resource and dependent-resource CLI goldens assert final
+  document state, mutation invocation count, Operation count, visible Operation
+  ID/affected/recovery data, and guarded exact revert.
 - Run typecheck, Core tests, renderer tests, E2E, docs check, and diff check
   before the PR is ready.

@@ -134,6 +134,12 @@ React interaction
   -> Runtime diff + apply
   -> one durable Operation and ordered projection Event
   -> renderer folds the Event delta into its projection index
+
+terminal or Agent intent
+  -> registry-derived outline parser/help/schema contract
+  -> one complete-resource porcelain command, or one dependent ChangeSet
+  -> authenticated Runtime diff + apply
+  -> one durable Operation with bounded returned Projection
 ```
 
 No renderer module may directly mutate document state. UI changes that affect
@@ -161,6 +167,15 @@ commit contains the document update, Operation metadata, recovery patch,
 idempotency result, asset-reference delta, and Event sequence. A client timeout
 or disconnect never retries a mutation automatically; it resolves unknown
 settlement through the idempotency key or Operation log.
+
+The CLI is a formal client boundary, not a thin exposure of the Runtime's generic
+MutationInput. One resource uses one porcelain command; complex state for that
+resource uses the same command's exact `--input` schema; dependent, cross-date,
+or bounded bulk work uses one ChangeSet with bindings. Parser options, root and
+family help, exact command help, completion metadata, and command schemas share
+the executable capability registry. Help is local and cannot start Runtime.
+No client uses a shell mutation loop or intermediate created-ID query to replace
+ChangeSet composition.
 
 Desktop mutation admission is serialized around the latest projected revision.
 The adapter runs `diff`, applies that exact reviewed artifact, then waits for the
@@ -223,6 +238,12 @@ document mutation. Apply atomically converts referenced leases into live asset
 reachability. Internal mark-and-sweep garbage collection may unlink bytes only
 when no live Node, unexpired lease, or retained recovery patch protects them.
 There is no public physical-delete capability.
+
+`media add PATH|-` composes staging and media-Node creation as one common CLI
+intent while retaining the same internal lease boundary. `asset ingest` remains
+available when automation deliberately separates staging from reviewed document
+mutation. A failed media creation leaves the staged bytes governed by lease
+expiry; a successful Operation and its recovery patch protect the asset.
 
 Import is ordinary ChangeSet composition. The `outline-import` helper inspects
 source data, accounts for coverage, and emits a ChangeSet plus evidence. It may

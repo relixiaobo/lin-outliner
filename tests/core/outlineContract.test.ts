@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { ASSET_COMMANDS, DOCUMENT_COMMANDS } from '../../src/core/commands';
 import { Compile } from 'typebox/compile';
+import { Value } from 'typebox/value';
 import {
   ChangeSetSchema,
   DiffSchema,
@@ -17,7 +18,9 @@ import {
   canonicalJson,
   canonicalJsonChunks,
   outlineError,
+  outlineCapabilityManifest,
   outlineExitCodeForError,
+  porcelainHelpOptions,
 } from '../../src/outline/contract';
 
 const digest = 'a'.repeat(64);
@@ -26,7 +29,7 @@ describe('outline public contract', () => {
   test('exports every named versioned schema as valid JSON Schema', () => {
     expect(Object.keys(OUTLINE_PUBLIC_SCHEMAS).sort()).toEqual([
       'AssetLease', 'AssetMetadata', 'AssetRecord', 'Change', 'ChangeSet', 'Diff', 'Event', 'EventFilter',
-      'NodeDraft', 'Operation', 'OperationLogPage', 'OutlineError', 'OutlineRequest',
+      'NoChangeResult', 'NodeDraft', 'Operation', 'OperationLogPage', 'OutlineError', 'OutlineRequest',
       'OutlineResponse', 'OutlineStreamRecord', 'Projection', 'ProjectionResult', 'RevertConflictDiff',
       'RichTextPatch', 'RuntimeDescriptor', 'RuntimeStatus', 'Selector', 'TargetRef', 'TargetSpec',
     ]);
@@ -159,9 +162,68 @@ describe('outline public contract', () => {
     expect(names).toContain('asset ingest');
     expect(names).toContain('purge');
     expect(names).not.toContain('asset delete');
+    const compiled = new Set<object>();
     for (const entry of OUTLINE_CAPABILITIES) {
-      expect(() => Compile(entry.requestSchema)).not.toThrow();
-      expect(() => Compile(entry.resultSchema)).not.toThrow();
+      for (const schema of [entry.requestSchema, entry.resultSchema, entry.porcelain?.inputSchema]) {
+        if (!schema || compiled.has(schema)) continue;
+        expect(() => Compile(schema)).not.toThrow();
+        compiled.add(schema);
+      }
+    }
+  }, 10_000);
+
+  test('publishes exact porcelain schemas and one registry-owned help option set', () => {
+    const porcelain = OUTLINE_CAPABILITIES.filter((entry) => entry.porcelain !== undefined);
+    expect(porcelain.length).toBeGreaterThan(0);
+    for (const capability of porcelain) {
+      const options = porcelainHelpOptions(capability.porcelain!);
+      expect(new Set(options.map((entry) => entry.name)).size).toBe(options.length);
+      expect(options.map((entry) => entry.name)).toEqual(expect.arrayContaining([
+        'input', 'preview', 'expect-diff', 'idempotency-key',
+      ]));
+      expect(options.some((entry) => entry.name === 'yes')).toBe(capability.destructive);
+      expect(capability.help.examples.length).toBeGreaterThanOrEqual(2);
+      expect(capability.help.examples.length).toBeLessThanOrEqual(3);
+      expect(capability.help.positionals.join(' ')).not.toContain('[ARGS]');
+      expect(capability.help.input).toContain('--input FILE|-');
+      expect(capability.help.output).toContain('Operation');
+      expect(capability.help.behavior.length).toBeGreaterThan(0);
+    }
+
+    const searchCreate = OUTLINE_CAPABILITIES.find((entry) => entry.name === 'search create')!.porcelain!;
+    const base = { title: 'Modules' };
+    expect(Value.Check(searchCreate.inputSchema, { ...base, match: 'module' })).toBe(true);
+    expect(Value.Check(searchCreate.inputSchema, { ...base, query: { kind: 'rule', op: 'STRING_MATCH', text: 'module' } })).toBe(true);
+    expect(Value.Check(searchCreate.inputSchema, base)).toBe(false);
+    expect(Value.Check(searchCreate.inputSchema, { ...base, match: 'module', query: { kind: 'rule', op: 'STRING_MATCH', text: 'module' } })).toBe(false);
+    expect(Value.Check(searchCreate.inputSchema, { changeSet: { operations: [] } })).toBe(false);
+
+    const displayRemove = OUTLINE_CAPABILITIES.find((entry) => entry.name === 'view display remove')!.porcelain!;
+    const target = { target: { selector: { by: 'id', id: 'node:owner' }, cardinality: 'one' } };
+    expect(Value.Check(displayRemove.inputSchema, { target, displayFieldId: 'display:field' })).toBe(true);
+    expect(Value.Check(displayRemove.inputSchema, { target, ruleId: 'display:field' })).toBe(false);
+  });
+
+  test('derives help, completion metadata, and exact CLI schemas from every capability contract', () => {
+    const manifest = outlineCapabilityManifest();
+    expect(manifest).toHaveLength(OUTLINE_CAPABILITIES.length);
+    for (const capability of OUTLINE_CAPABILITIES) {
+      const published = manifest.find((entry) => entry.name === capability.name)!;
+      const options = capability.porcelain
+        ? porcelainHelpOptions(capability.porcelain)
+        : capability.help.options;
+      expect(published.help.options).toEqual(options);
+      expect(published.completion).toEqual({
+        command: capability.name,
+        positionals: capability.help.positionals,
+        options: options.map((entry) => ({
+          name: entry.name,
+          ...(entry.value ? { value: entry.value } : {}),
+        })),
+      });
+      expect(published.requestSchema).toBe(capability.porcelain?.inputSchema ?? capability.requestSchema);
+      expect(capability.help.examples.length).toBeGreaterThanOrEqual(2);
+      expect(capability.help.examples.length).toBeLessThanOrEqual(3);
     }
   });
 

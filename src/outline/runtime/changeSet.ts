@@ -32,8 +32,10 @@ import {
   type Diff,
   type AssetLease,
   type NodeDraft,
+  type NoChangeResult,
   type Operation,
   type TargetRef,
+  type UpdateInstruction,
 } from '../contract/schemas';
 import { OUTLINE_PROTOCOL_VERSION } from '../contract/version';
 import { createDeterministicCoreIdFactory, deterministicPublicNodeId } from './deterministicIds';
@@ -44,6 +46,8 @@ import type { OutlineRuntimeRequestContext } from './server/runtimeRouter';
 import type { OutlineRuntimeWorkspace } from './runtimeWorkspace';
 import type { CaptureNodeMetadata } from '../../core/launcher/sources';
 import { isSystemFieldId } from '../../core/systemFields';
+import { buildConfigIndex } from '../../core/configProjection';
+import { searchNodeToQueryExpr } from '../../core/searchEngine';
 
 interface ExecuteResult {
   readonly bindings: Readonly<Record<string, readonly string[]>>;
@@ -69,7 +73,7 @@ export async function applyOutlineDiff(
   diff: Diff,
   context: OutlineRuntimeRequestContext,
   acknowledgeDestructive = false,
-): Promise<Operation> {
+): Promise<Operation | NoChangeResult> {
   if (!Value.Check(DiffSchema, diff)) throw usageError('Invalid outline Diff artifact.');
   const actualDiffHash = canonicalDiffHash(diff);
   if (actualDiffHash !== diff.diffHash) {
@@ -87,6 +91,23 @@ export async function applyOutlineDiff(
       'This Diff contains destructive changes and requires acknowledgement.',
       { details: diff.destructive },
     ));
+  }
+
+  if (diff.affected.length === 0) {
+    return {
+      protocolVersion: OUTLINE_PROTOCOL_VERSION,
+      kind: 'outline.no-change',
+      changeSetHash: diff.changeSetHash,
+      diffHash: diff.diffHash,
+      revision: workspace.revision(),
+      affectedNodeCount: 0,
+      recovery: { state: 'not-required' },
+      ...(diff.normalizedChangeSet.return ? {
+        result: diff.normalizedChangeSet.return.map((projection) => (
+          projectOutline(workspace.forkCore(), projection, diff.bindings)
+        )),
+      } : {}),
+    };
   }
 
   let execution: ExecuteResult = { bindings: {} };
@@ -126,6 +147,18 @@ export function normalizeOutlineChangeSet(core: Core, input: ChangeSet): ChangeS
   const publicIdSeed = canonicalSha256(input);
   normalized.operations = normalized.operations.map((change, operationIndex) => {
     if (change.op !== 'create') return change;
+    if ('resource' in change) {
+      const drafts = change.definitionType === 'tag' ? change.template : change.options;
+      if (!drafts) return change;
+      const normalizedDrafts = drafts.map((draft, nodeIndex) => normalizeDraftIds(
+        draft,
+        publicIdSeed,
+        `${operationIndex}:${nodeIndex}`,
+      ));
+      return change.definitionType === 'tag'
+        ? { ...change, template: normalizedDrafts }
+        : { ...change, options: normalizedDrafts };
+    }
     return {
       ...change,
       nodes: change.nodes.map((draft, nodeIndex) => normalizeDraftIds(
@@ -236,6 +269,7 @@ async function executeChange(
     case 'resolve': return resolveTargetSpec(baseIndex, change.target);
     case 'ensure': return executeEnsure(core, baseIndex, bindings, change);
     case 'create': {
+      if ('resource' in change) return executeCreateDefinition(core, change, operationIndex, assetLeases);
       const parentIds = resolveTargetRef(baseIndex, change.parents, bindings);
       const created: string[] = [];
       for (const [parentIndex, parentId] of parentIds.entries()) {
@@ -309,6 +343,33 @@ async function executeChange(
       return effectiveTargets;
     }
   }
+}
+
+function executeCreateDefinition(
+  core: Core,
+  change: Extract<Change, { op: 'create'; resource: 'definition' }>,
+  operationIndex: number,
+  assetLeases: Readonly<Record<string, AssetLease>>,
+): readonly string[] {
+  const existing = core.projection().nodes.find((node) => (
+    node.type === (change.definitionType === 'tag' ? 'tagDef' : 'fieldDef')
+    && node.content.text.trim().toLocaleLowerCase() === change.name.trim().toLocaleLowerCase()
+  ));
+  if (existing) throw usageError(`Definition already exists: ${change.name}`);
+  const outcome = change.definitionType === 'tag'
+    ? core.createTag(change.name, change.id)
+    : core.createFieldDefinition(change.name, change.config?.fieldType ?? 'plain', change.id);
+  const definitionId = outcome.focus?.nodeId;
+  if (!definitionId) throw new Error(`Core did not create definition: ${change.name}`);
+  if (change.config && Object.keys(change.config).length > 0) {
+    if (change.definitionType === 'tag') core.setTagConfig(definitionId, change.config);
+    else core.setFieldConfig(definitionId, change.config);
+  }
+  const children = change.definitionType === 'tag' ? change.template : change.options;
+  for (const [childIndex, draft] of (children ?? []).entries()) {
+    createDraft(core, definitionId, null, draft, `${operationIndex}:0:${childIndex}`, true, assetLeases);
+  }
+  return [definitionId];
 }
 
 function executeEnsure(
@@ -442,9 +503,12 @@ function executeUpdate(
   instruction: Extract<Change, { op: 'update' }>['changes'][number],
   assetLeases: Readonly<Record<string, AssetLease>>,
 ): void {
+  const current = core.state().nodes[targetId];
   if (instruction.kind === 'content') {
+    if (current && canonicalJson(current.content) === canonicalJson(instruction.value)) return;
     core.applyNodeTextPatch(targetId, { ops: [{ type: 'replace_all', content: instruction.value }] });
   } else if (instruction.kind === 'description') {
+    if ((current?.description ?? null) === instruction.value) return;
     core.updateNodeDescription(targetId, instruction.value);
   } else if (instruction.kind === 'text-patch') {
     if (instruction.field === 'content') core.applyNodeTextPatch(targetId, instruction.patch);
@@ -453,16 +517,20 @@ function executeUpdate(
       core.updateNodeDescription(targetId, `${current.slice(0, instruction.from)}${instruction.value}${current.slice(instruction.to)}`);
     }
   } else if (instruction.kind === 'code') {
-    const node = core.state().nodes[targetId];
+    const node = current;
+    if (node?.type === 'codeBlock' && (node.codeLanguage ?? '') === instruction.language) return;
     if (node?.type === 'codeBlock') core.setCodeLanguage(targetId, instruction.language);
     else core.setCodeBlock(targetId, instruction.language);
   } else if (instruction.kind === 'checkbox') {
+    const visible = current && 'checkbox' in current ? current.checkbox === true : false;
+    if (visible === instruction.visible) return;
     core.setNodeCheckboxVisible(targetId, instruction.visible);
   } else if (instruction.kind === 'done') {
     const done = (core.state().nodes[targetId]?.completedAt ?? 0) > 0;
     if (done !== instruction.value) core.toggleDone(targetId);
   } else if (instruction.kind === 'tag') {
     const tagId = exactlyOne(resolveTargetRef(baseIndex, instruction.tag, bindings), 'tag definition');
+    if ((current?.tags.includes(tagId) ?? false) === (instruction.action === 'add')) return;
     if (instruction.action === 'add') core.applyTag(targetId, tagId);
     else core.removeTag(targetId, tagId);
   } else if (instruction.kind === 'field') {
@@ -470,6 +538,7 @@ function executeUpdate(
   } else if (instruction.kind === 'field-slot') {
     executeFieldSlotUpdate(core, baseIndex, bindings, targetId, instruction, assetLeases);
   } else if (instruction.kind === 'definition') {
+    if (!definitionPatchChanges(core, targetId, instruction)) return;
     if (instruction.definitionType === 'tag') core.setTagConfig(targetId, instruction.patch as TagConfigPatch);
     else core.setFieldConfig(targetId, instruction.patch as FieldConfigPatch);
   } else if (instruction.kind === 'reference') {
@@ -482,11 +551,24 @@ function executeUpdate(
     executeViewUpdate(core, baseIndex, bindings, targetId, instruction);
   } else if (instruction.kind === 'search') {
     if (instruction.action === 'refresh') core.refreshSearchNodeResults(targetId);
-    else core.setSearchNode(targetId, { title: instruction.title, query: instruction.query });
+    else {
+      const state = core.state();
+      const node = state.nodes[targetId];
+      if (node?.type !== 'search') throw new Error('search set target must be a Search Node');
+      const resolved = searchNodeToQueryExpr(state, targetId);
+      if (!resolved.ok || !resolved.query) throw new Error('search set could not resolve the current query');
+      const title = instruction.title ?? node.content.text;
+      const query = instruction.query ?? resolved.query;
+      if (title !== node.content.text || canonicalJson(query) !== canonicalJson(resolved.query)) {
+        core.setSearchNode(targetId, { title, query });
+      }
+    }
   } else if (instruction.kind === 'icon') {
     const value = instruction.value && (instruction.iconKind === 'image' || instruction.iconKind === 'generated')
       ? requiredAssetLease(instruction.value, assetLeases).assetId
       : instruction.value;
+    if ((current?.icon ?? null) === (value ?? null)
+      && (!value || (current?.iconKind ?? 'emoji') === (instruction.iconKind ?? 'emoji'))) return;
     core.setNodeIcon(targetId, value, instruction.iconKind as Parameters<Core['setNodeIcon']>[2]);
   } else if (instruction.kind === 'banner') {
     core.setNodeBanner(
@@ -521,7 +603,12 @@ function collectChangeSetAssetLeaseIds(changeSet: ChangeSet): readonly string[] 
     for (const field of draft.fields ?? []) for (const value of field.values) visitDraft(value);
   };
   for (const change of changeSet.operations) {
-    if (change.op === 'create') for (const draft of change.nodes) visitDraft(draft);
+    if (change.op === 'create') {
+      const drafts = 'resource' in change
+        ? (change.definitionType === 'tag' ? change.template : change.options) ?? []
+        : change.nodes;
+      for (const draft of drafts) visitDraft(draft);
+    }
     if (change.op !== 'update') continue;
     for (const instruction of change.changes) {
       if (instruction.kind === 'banner' && instruction.assetLeaseId) result.add(instruction.assetLeaseId);
@@ -681,6 +768,7 @@ function executeFieldUpdate(
     if (instruction.action === 'set') value = instruction.value;
   }
   if (instruction.action === 'attach') {
+    if (fieldEntry(core, ownerId, fieldDefId)) return;
     core.createInlineField(ownerId, instruction.index ?? null, '', 'plain', fieldDefId);
     return;
   }
@@ -701,6 +789,11 @@ function executeFieldUpdate(
     const optionId = exactlyOne(resolveTargetRef(baseIndex, instruction.option, bindings), 'field option');
     core.selectFieldOption(entry.id, optionId);
   } else if (value !== undefined) {
+    if (entry) {
+      const state = core.state();
+      const values = entry.children.map((id) => state.nodes[id]).filter(Boolean);
+      if (values.length === 1 && values[0]?.content.text === fieldValueText(value)) return;
+    }
     if (entry) core.clearFieldValue(entry.id);
     core.updateFieldSlot(ownerId, fieldDefId, {
       kind: 'appendNodes',
@@ -731,7 +824,9 @@ function executeViewUpdate(
   targetId: string,
   instruction: Extract<Extract<Change, { op: 'update' }>['changes'][number], { kind: 'view' }>,
 ): void {
-  if (instruction.property === 'mode') {
+  if (instruction.property === 'configuration') {
+    applyDeclarativeView(core, baseIndex, bindings, targetId, instruction.view);
+  } else if (instruction.property === 'mode') {
     core.setViewMode(targetId, instruction.mode);
   } else if (instruction.property === 'toolbar') {
     core.setViewToolbarVisible(targetId, instruction.visible);
@@ -785,6 +880,166 @@ function executeViewUpdate(
   } else {
     core.removeDisplayField(instruction.displayFieldId);
   }
+}
+
+function applyDeclarativeView(
+  core: Core,
+  baseIndex: ReturnType<typeof createSelectionIndex>,
+  bindings: Readonly<Record<string, readonly string[]>>,
+  targetId: string,
+  view: Extract<UpdateInstruction, { kind: 'view'; property: 'configuration' }>['view'],
+): void {
+  const stateBefore = core.state();
+  const owner = stateBefore.nodes[targetId];
+  if (!owner) throw new Error(`View owner does not exist: ${targetId}`);
+  const viewDef = owner.children.map((id) => stateBefore.nodes[id]).find((node) => node?.type === 'viewDef');
+  if (view.mode !== undefined && viewDef?.viewMode !== view.mode) core.setViewMode(targetId, view.mode);
+  if (view.toolbar !== undefined && viewDef?.toolbarVisible !== view.toolbar) core.setViewToolbarVisible(targetId, view.toolbar);
+  if (view.group !== undefined) {
+    const group = resolveViewField(baseIndex, bindings, view.group);
+    if ((viewDef?.groupField ?? null) !== group) core.setGroupField(targetId, group);
+  }
+  if (!view.replace) return;
+
+  const current = declarativeViewState(core, targetId);
+  const expectedSort = view.replace.sort
+    ? normalizeSortSpecifications(view.replace.sort, baseIndex, bindings)
+    : undefined;
+  if (expectedSort && canonicalJson(current.sort) !== canonicalJson(expectedSort)) {
+    core.clearSortRules(targetId);
+    for (const rule of expectedSort) core.addSortRule(targetId, rule.field, rule.direction);
+  }
+  const expectedFilters = view.replace.filters
+    ? normalizeFilterSpecifications(view.replace.filters, baseIndex, bindings)
+    : undefined;
+  if (expectedFilters && canonicalJson(current.filters) !== canonicalJson(expectedFilters)) {
+    core.clearFilterRules(targetId);
+    for (const rule of expectedFilters) {
+      core.addFilterRule(targetId, rule.field, rule.operator, rule.values, rule.valueLogic);
+    }
+  }
+  const expectedDisplay = view.replace.display
+    ? normalizeDisplaySpecifications(view.replace.display, baseIndex, bindings)
+    : undefined;
+  if (expectedDisplay && canonicalJson(current.display) !== canonicalJson(expectedDisplay)) {
+    for (const display of current.nodes) core.removeDisplayField(display.id);
+    for (const specification of expectedDisplay) {
+      const outcome = core.addDisplayField(targetId, specification.field);
+      const displayFieldId = outcome.focus?.nodeId;
+      if (!displayFieldId) throw new Error('Core did not create a display field');
+      core.updateDisplayField(displayFieldId, {
+        visible: specification.visible,
+        order: specification.order,
+        ...(specification.width !== undefined ? { width: specification.width } : {}),
+        ...(specification.label !== undefined ? { label: specification.label } : {}),
+        ...(specification.placement !== undefined ? { placement: specification.placement } : {}),
+      });
+    }
+  }
+}
+
+function declarativeViewState(core: Core, targetId: string) {
+  const state = core.state();
+  const owner = state.nodes[targetId];
+  const viewDef = owner?.children.map((id) => state.nodes[id]).find((node) => node?.type === 'viewDef');
+  const children = viewDef?.children.map((id) => state.nodes[id]) ?? [];
+  const displayNodes = children.filter((node): node is Extract<Node, { type: 'displayField' }> => node?.type === 'displayField');
+  return {
+    sort: children.flatMap((node) => node?.type === 'sortRule' && node.sortField
+      ? [{ field: node.sortField, direction: node.sortDirection ?? 'asc' }]
+      : []),
+    filters: children.flatMap((node) => node?.type === 'filterRule' && node.filterField
+      ? [{
+          field: node.filterField,
+          operator: node.filterOperator ?? 'contains',
+          values: node.filterValues ?? [],
+          valueLogic: node.filterValueLogic ?? 'any',
+        }]
+      : []),
+    display: displayNodes.map((node, index) => ({
+      field: node.displayField!,
+      visible: node.displayVisible ?? true,
+      order: node.displayOrder ?? index,
+      ...(node.displayWidth !== undefined ? { width: node.displayWidth } : {}),
+      ...(node.displayLabel !== undefined ? { label: node.displayLabel } : {}),
+      ...(node.displayPlacement !== undefined ? { placement: node.displayPlacement } : {}),
+    })),
+    nodes: displayNodes,
+  };
+}
+
+function normalizeSortSpecifications(
+  rules: readonly { field: ViewFieldRef | TargetRef; direction?: SortDirection }[],
+  baseIndex: ReturnType<typeof createSelectionIndex>,
+  bindings: Readonly<Record<string, readonly string[]>>,
+) {
+  return rules.map((rule) => ({
+    field: resolveViewField(baseIndex, bindings, rule.field)!,
+    direction: rule.direction ?? 'asc',
+  }));
+}
+
+function normalizeFilterSpecifications(
+  rules: readonly {
+    field: ViewFieldRef | TargetRef;
+    operator?: FilterOperator;
+    values?: string[];
+    valueLogic?: FilterValueLogic;
+  }[],
+  baseIndex: ReturnType<typeof createSelectionIndex>,
+  bindings: Readonly<Record<string, readonly string[]>>,
+) {
+  return rules.map((rule) => ({
+    field: resolveViewField(baseIndex, bindings, rule.field)!,
+    operator: rule.operator ?? 'contains',
+    values: rule.values ?? [],
+    valueLogic: rule.valueLogic ?? 'any',
+  }));
+}
+
+function normalizeDisplaySpecifications(
+  fields: readonly {
+    field: ViewFieldRef | TargetRef;
+    visible?: boolean;
+    width?: number;
+    order?: number;
+    label?: string | null;
+    placement?: Extract<Node, { type: 'displayField' }>['displayPlacement'];
+  }[],
+  baseIndex: ReturnType<typeof createSelectionIndex>,
+  bindings: Readonly<Record<string, readonly string[]>>,
+) {
+  return fields.map((field, index) => ({
+    field: resolveViewField(baseIndex, bindings, field.field)!,
+    visible: field.visible ?? true,
+    order: field.order ?? index,
+    ...(field.width !== undefined ? { width: field.width } : {}),
+    ...(field.label !== undefined ? { label: field.label } : {}),
+    ...(field.placement !== undefined ? { placement: field.placement } : {}),
+  }));
+}
+
+function definitionPatchChanges(
+  core: Core,
+  targetId: string,
+  instruction: Extract<UpdateInstruction, { kind: 'definition' }>,
+): boolean {
+  const config = buildConfigIndex(core.state());
+  const current = instruction.definitionType === 'tag' ? config.tag(targetId) : config.field(targetId);
+  if (!current) throw new Error(`Definition config is unavailable: ${targetId}`);
+  for (const [key, value] of Object.entries(instruction.patch)) {
+    let normalized: unknown = value;
+    if (value === null) {
+      if (key === 'nullable') normalized = true;
+      else if (key === 'hideField') normalized = 'never';
+      else normalized = undefined;
+    }
+    if (key === 'autoInitialize' && typeof value === 'string') {
+      normalized = value.split(/[,+]/).map((entry) => entry.trim()).filter(Boolean);
+    }
+    if (canonicalJson((current as unknown as Record<string, unknown>)[key] ?? null) !== canonicalJson(normalized ?? null)) return true;
+  }
+  return false;
 }
 
 function resolveViewField(
@@ -877,7 +1132,7 @@ function changeTargetRefs(change: Change): readonly TargetRef[] {
       }
       return [];
     }
-    case 'create': return [change.parents];
+    case 'create': return 'resource' in change ? [] : [change.parents];
     case 'update': return [
       change.targets,
       ...change.changes.flatMap((instruction): TargetRef[] => {

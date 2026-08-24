@@ -65,9 +65,10 @@ contribute tools through this seam rather than adding domain logic to runtime.
 The Agent catalog has no document-native model tools. A model reaches the
 Outliner through `bash` and the public `outline` executable. The built-in
 `outline` Skill teaches deterministic selection, bounded reads, ChangeSet
-composition, Diff review, Operation inspection, and guarded recovery. Public
-schemas come from `outline schema`; the Skill does not reimplement parsing,
-selection, projection, validation, or mutation.
+composition, complete-resource porcelain, Diff review, Operation inspection,
+and guarded recovery. Public schemas and exact root/family/command help come from
+the executable registry; the Skill does not reimplement parsing, selection,
+projection, validation, mutation, or command schemas.
 
 The executable has the same capability registry for a user shell, built-in
 Agent, external Agent, and desktop adapter. Agent execution does not receive a
@@ -82,13 +83,29 @@ on the Operation. Request-body causation is untrusted. A declared built-in Agent
 mutation without valid attestation is rejected rather than downgraded to an
 unattributed local-user write.
 
-Reads use `outline find`, `outline show`, and `outline export`. Writes use one
-porcelain command for one independent intent or one composed ChangeSet for
-dependent and multi-target work. The model reviews a Diff, applies that exact
-artifact, records the returned Operation ID, and verifies consequential writes
-with an independent read. Recovery names the exact Operation with `outline
-revert`; it never guesses from renderer undo state or issues an unrelated
-compensating edit.
+Reads use `outline find`, `outline show`, and `outline export`. The Agent routes
+writes by resource boundary: one complete resource uses one porcelain invocation;
+complex state for that resource uses the same command's `--input FILE|-`; multiple
+resources, dependencies, cross-date work, or bounded bulk changes use one
+ChangeSet with bindings. It never substitutes a shell mutation loop or an
+intermediate created-ID query.
+
+The Skill distinguishes explicit create/add from convergent set/configure/ensure,
+patch omission from explicit `replace`, and common STRING_MATCH shorthand from
+canonical structured query input. It uses `@library`, `@saved-searches`, and
+other stable aliases instead of discovering internal system IDs. It consults
+exact command help for selector/cardinality and ownership boundaries:
+`definition create` creates reusable definitions, `field define` attaches or
+creates a target field with an optional initial value, `tag add` applies an
+existing tag, root `set` patches generic Node state, and media/search set forms
+own their resource-specific state.
+
+The model reviews a Diff, applies that exact artifact, records the returned
+Operation ID/affected count/recovery state, and verifies consequential writes
+with an independent read. Destructive porcelain uses preview plus the same
+command's `--expect-diff HASH --yes`; `--yes` alone is invalid. Recovery names
+the exact Operation with `outline revert`; it never guesses from renderer undo
+state or issues an unrelated compensating edit.
 
 Memory adds no parallel tools and no Agent-specific document projection filter.
 Eligible root Turns receive compact routing context for ordinary CLI reads.

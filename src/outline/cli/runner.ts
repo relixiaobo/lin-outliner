@@ -7,7 +7,9 @@ import {
   OUTLINE_APP_VERSION,
   OUTLINE_CAPABILITIES,
   OUTLINE_CLI_VERSION,
+  OUTLINE_COMMAND_FAMILIES,
   OUTLINE_EXIT_CODES,
+  OUTLINE_GLOBAL_OPTIONS,
   OUTLINE_PROTOCOL_VERSION,
   OUTLINE_PUBLIC_SCHEMAS,
   OUTLINE_STORAGE_VERSION,
@@ -17,6 +19,8 @@ import {
   outlineCapabilityManifest,
   outlineError,
   outlineExitCodeForError,
+  porcelainHelpOptions,
+  type CommandOptionHelp,
   type OutlineError,
   type OutlineResponse,
 } from '../contract';
@@ -98,7 +102,7 @@ export async function runOutlineCli(argv: readonly string[], options: OutlineCli
     writeSuccess(io, invocation, data);
     return OUTLINE_EXIT_CODES.success;
   } catch (error) {
-    const publicError = toPublicError(error);
+    const publicError = withUsageGuidance(toPublicError(error), invocation);
     writeFailure(io, invocation ?? (jsonRequested ? failedJsonInvocation() : undefined), publicError);
     return outlineExitCodeForError(publicError);
   }
@@ -119,6 +123,9 @@ async function executeInvocation(
   options: OutlineCliRunOptions,
   io: OutlineCliIo,
 ): Promise<unknown | HandledExecution> {
+  const capability = outlineCapability(invocation.command);
+  if (!capability) throw usageError(unknownCommandMessage([invocation.command]));
+  validateRegisteredOptions(invocation, capability.help.options, capability.porcelain);
   if (invocation.command === 'version') {
     assertNoArgs(invocation);
     return {
@@ -167,8 +174,6 @@ async function executeInvocation(
     }
   }
 
-  const capability = outlineCapability(invocation.command);
-  if (!capability) throw usageError(`Unknown outline command: ${invocation.command}`);
   if (!capability.runtimeRequired) throw usageError(`Unsupported local outline command: ${invocation.command}`);
   if (invocation.command === 'diff') return executeDiffInvocation(invocation, supervisor, io, options.signal);
   if (invocation.command === 'asset ingest') return executeAssetIngest(invocation, supervisor, io, options.signal);
@@ -254,7 +259,7 @@ function parseInvocation(argv: readonly string[]): ParsedInvocation {
   const remaining = argv.slice(index);
   if (remaining.length === 0) throw usageError('An outline command is required.');
   const command = longestCommandPrefix(remaining);
-  if (!command) throw usageError(`Unknown outline command: ${remaining[0]}`);
+  if (!command) throw usageError(unknownCommandMessage(remaining));
   return {
     json,
     noStart,
@@ -296,6 +301,15 @@ async function runtimeInput(
           const node = data.nodes?.[0];
           if (!isRecord(node)) throw usageError('Porcelain target did not resolve to one Node.');
           return node;
+        } finally {
+          client.close();
+        }
+      },
+      ingestAsset: async (source) => {
+        const client = await supervisor.connect();
+        try {
+          if (source === '-') return client.ingestAsset(io.stdinBytes());
+          return (await client.request('asset ingest', { source: 'path', path: source })).data as import('../contract').AssetLease;
         } finally {
           client.close();
         }
@@ -561,7 +575,8 @@ function artifactProtocolError(message: string): OutlineContractError {
 async function readStructuredSource(source: string, io: OutlineCliIo): Promise<string> {
   if (source === '-') return io.readStdin();
   const trimmed = source.trim();
-  if (trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed.startsWith('@') || trimmed.startsWith('node:')) {
+  if (trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed.startsWith('@')
+    || /^[A-Za-z][A-Za-z0-9_-]*:/.test(trimmed)) {
     return source;
   }
   return readFile(source, 'utf8');
@@ -599,7 +614,10 @@ function schemaResult(args: readonly string[]): unknown {
     return OUTLINE_PUBLIC_SCHEMAS[name as keyof typeof OUTLINE_PUBLIC_SCHEMAS];
   }
   const capability = outlineCapability(name);
-  if (capability) return { request: capability.requestSchema, result: capability.resultSchema };
+  if (capability) return {
+    request: capability.porcelain?.inputSchema ?? capability.requestSchema,
+    result: capability.resultSchema,
+  };
   throw usageError(`Unknown public schema or command: ${name}`);
 }
 
@@ -650,23 +668,198 @@ function writeFailure(io: OutlineCliIo, invocation: ParsedInvocation | undefined
     return;
   }
   io.stderr(`outline: ${error.message}\n`);
+  for (const next of error.next ?? []) io.stderr(`  ${next}\n`);
 }
 
 function renderHelp(argv: readonly string[]): string {
-  const nonOption = argv.filter((arg) => !arg.startsWith('-'));
-  if (nonOption.length > 0) {
-    const command = longestCommandPrefix(nonOption);
-    const capability = command ? outlineCapability(command) : undefined;
-    if (!capability) return 'Usage: outline [GLOBAL OPTIONS] COMMAND [ARGS]\n';
-    return `Usage: outline [GLOBAL OPTIONS] ${capability.name} [ARGS]\n\n${capability.summary}\n`;
+  const path = helpCommandPath(argv);
+  if (path.length > 0) {
+    const command = longestCommandPrefix(path);
+    if (command) return renderCommandHelp(outlineCapability(command)!);
+    const family = path.join(' ');
+    if (isCommandFamily(family)) return renderFamilyHelp(family);
+    throw usageError(unknownCommandMessage(path));
   }
+  const topLevelFamilies = OUTLINE_COMMAND_FAMILIES.filter((family) => !family.name.includes(' '));
+  const direct = OUTLINE_CAPABILITIES.filter((entry) => !entry.name.includes(' '));
   return [
-    'Usage: outline [--json] [--protocol 1] [--no-start] [--startup-timeout MS] COMMAND [ARGS]',
+    'Usage: outline [GLOBAL OPTIONS] COMMAND [ARGS]',
     '',
-    'Commands:',
-    ...OUTLINE_CAPABILITIES.map((entry) => `  ${entry.name.padEnd(22)} ${entry.summary}`),
+    'Operate the Tenon document through one stable, schema-discoverable CLI.',
+    '',
+    'Global options:',
+    ...OUTLINE_GLOBAL_OPTIONS.map(renderOption),
+    '  -h, --help\n      Show root, family, or exact command help without starting Runtime.',
+    '',
+    'Command families:',
+    ...topLevelFamilies.map((family) => `  ${family.name.padEnd(14)} ${family.summary}`),
+    '',
+    'Direct commands:',
+    ...direct.map((entry) => `  ${entry.name.padEnd(14)} ${entry.summary}`),
+    '',
+    'Run "outline FAMILY --help" for subcommands or "outline COMMAND --help" for the exact contract.',
     '',
   ].join('\n');
+}
+
+function renderFamilyHelp(family: string): string {
+  const metadata = OUTLINE_COMMAND_FAMILIES.find((entry) => entry.name === family)!;
+  const prefix = `${family} `;
+  const commands = OUTLINE_CAPABILITIES
+    .filter((entry) => entry.name.startsWith(prefix))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  return [
+    `Usage: outline [GLOBAL OPTIONS] ${family} SUBCOMMAND [ARGS]`,
+    '',
+    metadata.summary,
+    '',
+    'Subcommands:',
+    ...commands.map((entry) => `  ${entry.name.slice(prefix.length).padEnd(18)} ${entry.summary}`),
+    '',
+    `Run "outline ${family} SUBCOMMAND --help" for exact syntax, options, schemas, and examples.`,
+    '',
+  ].join('\n');
+}
+
+function renderCommandHelp(capability: import('../contract').OutlineCapability): string {
+  const help = capability.help;
+  const options = capability.porcelain ? porcelainHelpOptions(capability.porcelain) : help.options;
+  return [
+    `Usage: outline [GLOBAL OPTIONS] ${help.usage}`,
+    '',
+    help.summary,
+    '',
+    `Behavior: ${help.behavior}; ${help.idempotent ? 'idempotent (repeated settled execution converges or is a semantic no-op)' : 'not idempotent (repeated execution may create or change additional state)'}.`,
+    '',
+    'Positionals:',
+    ...(help.positionals.length > 0 ? help.positionals.map((entry) => `  ${entry}`) : ['  None.']),
+    '',
+    'Options:',
+    ...(options.length > 0 ? options.map(renderOption) : ['  None.']),
+    '',
+    'Selectors:',
+    `  ${help.selectors}`,
+    'Cardinality:',
+    `  ${help.cardinality}`,
+    '',
+    'Input:',
+    `  ${help.input}`,
+    'Output:',
+    `  ${help.output}`,
+    '',
+    'Defaults:',
+    ...(help.defaults.length > 0 ? help.defaults.map((entry) => `  ${entry}`) : ['  No command-specific defaults.']),
+    ...(help.destructive ? [
+      '',
+      'Destructive review:',
+      '  1. Run the same command with --preview and inspect the returned Diff.',
+      '  2. Re-run it with --expect-diff SHA256 --yes to apply only that exact Diff.',
+      '  --yes alone is rejected and never substitutes for preview/review.',
+    ] : []),
+    '',
+    'Structured schema:',
+    `  outline schema ${capability.name}`,
+    '',
+    'Examples:',
+    ...help.examples.map((example) => `  ${example}`),
+    '',
+  ].join('\n');
+}
+
+function renderOption(entry: CommandOptionHelp): string {
+  const suffix = [
+    entry.default ? `default: ${entry.default}` : undefined,
+    entry.repeatable ? 'repeatable' : undefined,
+  ].filter(Boolean).join('; ');
+  return `  --${entry.name}${entry.value ? ` ${entry.value}` : ''}\n      ${entry.description}${suffix ? ` (${suffix})` : ''}`;
+}
+
+function helpCommandPath(argv: readonly string[]): string[] {
+  const global = new Map(OUTLINE_GLOBAL_OPTIONS.map((entry) => [entry.name, entry]));
+  const path: string[] = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]!;
+    if (arg === '--help' || arg === '-h') continue;
+    if (arg.startsWith('--')) {
+      const metadata = global.get(arg.slice(2));
+      if (metadata) {
+        if (metadata.value) index += 1;
+        continue;
+      }
+      break;
+    }
+    path.push(arg);
+  }
+  return path;
+}
+
+function isCommandFamily(value: string): boolean {
+  return OUTLINE_COMMAND_FAMILIES.some((entry) => entry.name === value);
+}
+
+function validateRegisteredOptions(
+  invocation: ParsedInvocation,
+  fixedOptions: readonly CommandOptionHelp[],
+  porcelain: import('../contract').PorcelainContract | undefined,
+): void {
+  const options = porcelain ? porcelainHelpOptions(porcelain) : fixedOptions;
+  const names = new Set(options.map((entry) => entry.name));
+  for (const arg of invocation.args) {
+    if (!arg.startsWith('--')) continue;
+    const name = arg.slice(2);
+    if (names.has(name)) continue;
+    const nearest = nearestValue(name, [...names]);
+    throw usageError([
+      `Unknown option for ${invocation.command}: --${name}.`,
+      ...(nearest ? [`Did you mean --${nearest}?`] : []),
+    ].join(' '));
+  }
+}
+
+function unknownCommandMessage(args: readonly string[]): string {
+  const attempted = args.filter((arg) => !arg.startsWith('-')).join(' ') || String(args[0] ?? '');
+  const candidates = [
+    ...OUTLINE_CAPABILITIES.map((entry) => entry.name),
+    ...OUTLINE_COMMAND_FAMILIES.map((entry) => entry.name),
+  ];
+  const nearest = nearestValue(attempted, candidates);
+  return [
+    `Unknown outline command or family: ${attempted || '(missing)'}.`,
+    ...(nearest ? [`Did you mean "${nearest}"? Run "outline ${nearest} --help".`] : ['Run "outline --help" for valid commands.']),
+  ].join(' ');
+}
+
+function nearestValue(value: string, candidates: readonly string[]): string | undefined {
+  if (!value || candidates.length === 0) return undefined;
+  return [...candidates].sort((left, right) => {
+    const distance = editDistance(value, left) - editDistance(value, right);
+    return distance === 0 ? left.localeCompare(right) : distance;
+  })[0];
+}
+
+function editDistance(left: string, right: string): number {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    const current = [leftIndex];
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      current[rightIndex] = Math.min(
+        current[rightIndex - 1]! + 1,
+        previous[rightIndex]! + 1,
+        previous[rightIndex - 1]! + (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1),
+      );
+    }
+    previous.splice(0, previous.length, ...current);
+  }
+  return previous[right.length];
+}
+
+function withUsageGuidance(error: OutlineError, invocation: ParsedInvocation | undefined): OutlineError {
+  if (error.category !== 'usage') return error;
+  const next = invocation
+    ? `Run "outline ${invocation.command} --help" for the exact syntax and examples.`
+    : 'Run "outline --help" for valid command families and commands.';
+  if (error.next?.includes(next)) return error;
+  return { ...error, next: [...(error.next ?? []), next] };
 }
 
 function parseJsonInput(raw: string): unknown {

@@ -127,12 +127,129 @@ describe('outline CLI', () => {
     const root = await makeRoot();
     const selector = captureIo();
     const porcelain = captureIo();
+    const search = captureIo();
+    const help = captureIo();
+    const unknown = captureIo();
 
     expect(await runOutlineCli(['--json', 'schema', 'Selector'], { runtimeRoot: root, io: selector.io })).toBe(0);
     expect(JSON.parse(selector.stdout).data.$defs.Selector.$id).toBe('Selector');
     expect(await runOutlineCli(['--json', 'schema', 'done', 'set'], { runtimeRoot: root, io: porcelain.io })).toBe(0);
     expect(JSON.parse(porcelain.stdout).data).toHaveProperty('request');
     expect(JSON.parse(porcelain.stdout).data).toHaveProperty('result');
+    expect(await runOutlineCli(['--json', 'schema', 'search', 'create'], { runtimeRoot: root, io: search.io })).toBe(0);
+    const searchSchema = JSON.stringify(JSON.parse(search.stdout).data.request);
+    expect(searchSchema).toContain('match');
+    expect(searchSchema).toContain('query');
+    expect(searchSchema).not.toContain('changeSet');
+    expect(await runOutlineCli(['search', 'create', '--help'], { runtimeRoot: root, io: help.io })).toBe(0);
+    expect(help.stdout).toContain('--match TEXT');
+    expect(help.stdout).toContain('--input FILE|-');
+    expect(help.stdout).toContain('outline search create --title "Modules" --match "module"');
+    expect(help.stdout).not.toContain('--input-format');
+    expect(await runOutlineCli(['--json', 'search', 'create', '--unknown'], { runtimeRoot: root, io: unknown.io })).toBe(2);
+    expect(JSON.parse(unknown.stdout)).toMatchObject({ ok: false, error: { code: 'invalid_input' } });
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  test('renders root help as discoverable command families without starting Runtime', async () => {
+    const root = await makeRoot();
+    const output = captureIo();
+    const jsonOutput = captureIo();
+
+    expect(await runOutlineCli(['--help'], { runtimeRoot: root, io: output.io })).toBe(0);
+    expect(await runOutlineCli(['--json', '--help'], { runtimeRoot: root, io: jsonOutput.io })).toBe(0);
+    expect(jsonOutput.stdout).toBe(output.stdout);
+    expect(output.stdout).toContain('Command families:');
+    expect(output.stdout).toContain('search         Create, configure, ensure, and refresh Saved Searches.');
+    expect(output.stdout).toContain('view           Configure complete views');
+    expect(output.stdout).toContain('Direct commands:');
+    expect(output.stdout).toContain('schema         Print exact public JSON Schemas.');
+    expect(output.stdout).not.toContain('COMMAND [ARGS]\n\nCommands:');
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  test('renders search family help with its real subcommands', async () => {
+    const root = await makeRoot();
+    const output = captureIo();
+
+    expect(await runOutlineCli(['search', '--help'], { runtimeRoot: root, io: output.io })).toBe(0);
+    expect(output.stdout).toContain('Usage: outline [GLOBAL OPTIONS] search SUBCOMMAND [ARGS]');
+    expect(output.stdout).toContain('create             Create a complete Saved Search');
+    expect(output.stdout).toContain('ensure-tag         Ensure the canonical Saved Search');
+    expect(output.stdout).toContain('refresh            Refresh materialized results');
+    expect(output.stdout).toContain('set                Atomically patch a Search');
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  test('renders exact search create help and treats -h like --help', async () => {
+    const root = await makeRoot();
+    const output = captureIo();
+    const short = captureIo();
+
+    expect(await runOutlineCli(['search', 'create', '--help'], { runtimeRoot: root, io: output.io })).toBe(0);
+    expect(await runOutlineCli(['search', 'create', '-h'], { runtimeRoot: root, io: short.io })).toBe(0);
+    expect(short.stdout).toBe(output.stdout);
+    expect(output.stdout).toContain('Behavior: create; not idempotent');
+    expect(output.stdout).toContain('--match TEXT');
+    expect(output.stdout).toContain('--query JSON|FILE');
+    expect(output.stdout).toContain('--view MODE');
+    expect(output.stdout).toContain('--sort FIELD:DIRECTION');
+    expect(output.stdout).toContain('--input FILE|-');
+    expect(output.stdout).toContain('Parent defaults to @saved-searches.');
+    expect(output.stdout).toContain('outline schema search create');
+    expect(output.stdout).toContain('outline search create --title "Modules" --match "module"');
+    expect(output.stdout).toContain('outline search create --input complete-search.json');
+    expect(output.stdout).not.toContain('[ARGS]');
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  test('renders exact view sort add help with default and structured forms', async () => {
+    const root = await makeRoot();
+    const output = captureIo();
+
+    expect(await runOutlineCli(['view', 'sort', 'add', '--help'], { runtimeRoot: root, io: output.io })).toBe(0);
+    expect(output.stdout).toContain('Usage: outline [GLOBAL OPTIONS] view sort add TARGET --field FIELD');
+    expect(output.stdout).toContain('--target TARGET');
+    expect(output.stdout).toContain('--field FIELD');
+    expect(output.stdout).toContain('--direction asc|desc');
+    expect(output.stdout).toContain('(default: asc)');
+    expect(output.stdout).toContain('--input FILE|-');
+    expect(output.stdout).toContain('outline view sort add node:projects --field sys:updatedAt --direction desc');
+    expect(output.stdout).toContain('outline view sort add --input sort-rule.json');
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  test('renders purge help with exact destructive review requirements', async () => {
+    const root = await makeRoot();
+    const output = captureIo();
+
+    expect(await runOutlineCli(['purge', '--help'], { runtimeRoot: root, io: output.io })).toBe(0);
+    expect(output.stdout).toContain('Behavior: destructive; not idempotent');
+    expect(output.stdout).toContain('--preview');
+    expect(output.stdout).toContain('--expect-diff SHA256');
+    expect(output.stdout).toContain('--yes');
+    expect(output.stdout).toContain('--yes alone is rejected');
+    expect(output.stdout).toContain('outline purge @trash --contents --preview');
+    expect(output.stdout).toContain('outline purge @trash --contents --expect-diff SHA256 --yes');
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  test('suggests the nearest command, option, or exact help for invalid argv', async () => {
+    const root = await makeRoot();
+    const family = captureIo();
+    const command = captureIo();
+    const option = captureIo();
+    const missing = captureIo();
+
+    expect(await runOutlineCli(['searh'], { runtimeRoot: root, io: family.io })).toBe(2);
+    expect(family.stderr).toContain('Did you mean "search"?');
+    expect(await runOutlineCli(['search', 'creat'], { runtimeRoot: root, io: command.io })).toBe(2);
+    expect(command.stderr).toContain('Did you mean "search create"?');
+    expect(await runOutlineCli(['search', 'create', '--mach', 'module'], { runtimeRoot: root, io: option.io })).toBe(2);
+    expect(option.stderr).toContain('Did you mean --match?');
+    expect(option.stderr).toContain('outline search create --help');
+    expect(await runOutlineCli(['view', 'sort', 'add'], { runtimeRoot: root, io: missing.io })).toBe(2);
+    expect(missing.stderr).toContain('outline view sort add --help');
     expect(await readdir(root)).toEqual([]);
   });
 

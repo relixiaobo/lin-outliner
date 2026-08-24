@@ -133,8 +133,8 @@ export function parseSelectorToken(value: string): Selector {
     if (isAlias(alias)) return { by: 'alias', alias };
     throw usageError(`Unknown outline alias: ${value}`);
   }
-  if (value.startsWith('node:')) return { by: 'id', id: value };
-  throw usageError(`Selector must be an exact Node ID or semantic @alias: ${value}`);
+  if (value.length > 0) return { by: 'id', id: value };
+  throw usageError('Selector must be an exact Node ID or semantic @alias.');
 }
 
 export async function parseChangeSetInput(raw: string, format: 'json' | 'jsonl'): Promise<ChangeSet> {
@@ -198,7 +198,7 @@ function parseInclude(value: string): Projection['include'] {
 }
 
 function isAlias(value: string): value is Extract<Selector, { by: 'alias' }>['alias'] {
-  return ['home', 'inbox', 'schema', 'trash', 'daily-notes', 'today'].includes(value);
+  return ['home', 'inbox', 'library', 'schema', 'trash', 'daily-notes', 'saved-searches', 'today'].includes(value);
 }
 
 function oneOf<const T extends readonly string[]>(value: string, allowed: T, option: string): T[number] {
