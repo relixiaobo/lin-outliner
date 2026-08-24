@@ -13,6 +13,7 @@ import {
   OutlineAssetStore,
   type OutlineAssetStoreOptions,
   type OutlineAssetDelta,
+  type WorkspaceMutationAdmission,
   type WorkspaceTransactionAppendResult,
   type WorkspaceTransactionLogOptions,
 } from './storage';
@@ -154,6 +155,8 @@ export class OutlineRuntimeWorkspace {
     options: Pick<OutlineRuntimeMutationRequest, 'origin' | 'causation' | 'idempotencyKey' | 'idempotencyPayloadHash'>,
   ): Promise<Operation> {
     return this.enqueueMutation(async () => {
+      const admission = await this.prepareMutation(options);
+      if (admission.existingOperation) return admission.existingOperation;
       const target = await this.store.operation(operationId);
       if (!target) {
         throw new OutlineContractError(outlineError('not_found', 'selection', `Operation not found: ${operationId}`));
@@ -177,35 +180,44 @@ export class OutlineRuntimeWorkspace {
         execute: (candidate) => {
           candidate.applyRecoveryPatch(recoveryPatchToCorePatch(recovery));
         },
-      });
+      }, admission);
     });
   }
 
-  async undo(options: Pick<OutlineRuntimeMutationRequest, 'origin' | 'causation'>): Promise<Operation> {
+  async undo(
+    options: Pick<OutlineRuntimeMutationRequest, 'origin' | 'causation' | 'idempotencyKey' | 'idempotencyPayloadHash'>,
+  ): Promise<Operation> {
     return this.enqueueMutation(async () => {
+      const admission = await this.prepareMutation(options);
+      if (admission.existingOperation) return admission.existingOperation;
       const operations = await this.store.operations();
       const operationId = operationHistory(operations).undo.at(-1);
       if (!operationId) {
         throw new OutlineContractError(outlineError('not_found', 'selection', 'No recoverable Operation is available to undo.'));
       }
-      return this.revertInsideQueue(operationId, options);
+      return this.revertInsideQueue(operationId, options, admission);
     });
   }
 
-  async redo(options: Pick<OutlineRuntimeMutationRequest, 'origin' | 'causation'>): Promise<Operation> {
+  async redo(
+    options: Pick<OutlineRuntimeMutationRequest, 'origin' | 'causation' | 'idempotencyKey' | 'idempotencyPayloadHash'>,
+  ): Promise<Operation> {
     return this.enqueueMutation(async () => {
+      const admission = await this.prepareMutation(options);
+      if (admission.existingOperation) return admission.existingOperation;
       const operations = await this.store.operations();
       const operationId = operationHistory(operations).redo.at(-1);
       if (!operationId) {
         throw new OutlineContractError(outlineError('not_found', 'selection', 'No recoverable revert Operation is available to redo.'));
       }
-      return this.revertInsideQueue(operationId, options);
+      return this.revertInsideQueue(operationId, options, admission);
     });
   }
 
   private async revertInsideQueue(
     operationId: string,
-    options: Pick<OutlineRuntimeMutationRequest, 'origin' | 'causation'>,
+    options: Pick<OutlineRuntimeMutationRequest, 'origin' | 'causation' | 'idempotencyKey' | 'idempotencyPayloadHash'>,
+    admission: WorkspaceMutationAdmission,
   ): Promise<Operation> {
     const recovery = await this.store.recoveryPatch(operationId);
     this.assertRecoveryPreconditions(operationId, recovery);
@@ -224,7 +236,7 @@ export class OutlineRuntimeWorkspace {
       execute: (candidate) => {
         candidate.applyRecoveryPatch(recoveryPatchToCorePatch(recovery));
       },
-    });
+    }, admission);
   }
 
   private assertRecoveryPreconditions(
@@ -257,7 +269,9 @@ export class OutlineRuntimeWorkspace {
     ));
   }
 
-  private async applyMutation(request: OutlineRuntimeMutationRequest): Promise<Operation> {
+  private async prepareMutation(
+    request: Pick<OutlineRuntimeMutationRequest, 'idempotencyKey' | 'idempotencyPayloadHash'>,
+  ): Promise<WorkspaceMutationAdmission> {
     if (this.settlementUnknown) {
       throw new OutlineContractError(outlineError(
         'operation_settlement_unknown',
@@ -281,6 +295,14 @@ export class OutlineRuntimeWorkspace {
       { instanceId: this.instanceId, revision: this.revision() },
     );
     this.publishEvents(admission.maintenanceEvents);
+    return admission;
+  }
+
+  private async applyMutation(
+    request: OutlineRuntimeMutationRequest,
+    preparedAdmission?: WorkspaceMutationAdmission,
+  ): Promise<Operation> {
+    const admission = preparedAdmission ?? await this.prepareMutation(request);
     if (admission.existingOperation) return admission.existingOperation;
 
     const candidate = this.core.forkForRuntime({ idFactory: request.idFactory });

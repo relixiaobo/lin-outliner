@@ -16,6 +16,7 @@ export async function readChangeSetUpload(
   source: AsyncIterable<Uint8Array>,
   format: 'json' | 'jsonl',
   idempotencyKey?: string,
+  idempotencyKeyMode: 'exact' | 'if-missing' = 'exact',
 ): Promise<ChangeSet> {
   const spoolDirectory = path.join(root, 'spool');
   await ensurePrivateDirectory(spoolDirectory);
@@ -44,8 +45,8 @@ export async function readChangeSetUpload(
     await handle.sync();
     await handle.close();
     return await (format === 'jsonl'
-      ? readJsonlChangeSet(spoolPath, idempotencyKey)
-      : readJsonChangeSet(spoolPath, idempotencyKey));
+      ? readJsonlChangeSet(spoolPath, idempotencyKey, idempotencyKeyMode)
+      : readJsonChangeSet(spoolPath, idempotencyKey, idempotencyKeyMode));
   } catch (error) {
     await handle.close().catch(() => undefined);
     throw error;
@@ -63,17 +64,25 @@ async function writeAll(handle: Awaited<ReturnType<typeof open>>, bytes: Buffer)
   }
 }
 
-async function readJsonChangeSet(filePath: string, idempotencyKey?: string): Promise<ChangeSet> {
+async function readJsonChangeSet(
+  filePath: string,
+  idempotencyKey?: string,
+  idempotencyKeyMode: 'exact' | 'if-missing' = 'exact',
+): Promise<ChangeSet> {
   let value: unknown;
   try {
     value = JSON.parse(await readFile(filePath, 'utf8')) as unknown;
   } catch (error) {
     throw invalidUpload('ChangeSet input is not valid JSON.', error);
   }
-  return admitChangeSet(value, idempotencyKey);
+  return admitChangeSet(value, idempotencyKey, idempotencyKeyMode);
 }
 
-async function readJsonlChangeSet(filePath: string, idempotencyKey?: string): Promise<ChangeSet> {
+async function readJsonlChangeSet(
+  filePath: string,
+  idempotencyKey?: string,
+  idempotencyKeyMode: 'exact' | 'if-missing' = 'exact',
+): Promise<ChangeSet> {
   const lines = createInterface({ input: createReadStream(filePath), crlfDelay: Infinity });
   let header: Record<string, unknown> | undefined;
   let pending: unknown;
@@ -110,16 +119,23 @@ async function readJsonlChangeSet(filePath: string, idempotencyKey?: string): Pr
   if (pending.sha256 !== canonicalSha256(uploadedChangeSet)) {
     throw invalidUpload('JSONL ChangeSet SHA-256 does not match its records.');
   }
-  return admitChangeSet(uploadedChangeSet, idempotencyKey);
+  return admitChangeSet(uploadedChangeSet, idempotencyKey, idempotencyKeyMode);
 }
 
-function admitChangeSet(value: unknown, idempotencyKey?: string): ChangeSet {
+function admitChangeSet(
+  value: unknown,
+  idempotencyKey?: string,
+  idempotencyKeyMode: 'exact' | 'if-missing' = 'exact',
+): ChangeSet {
   if (!isRecord(value)) throw invalidUpload('ChangeSet input must be an object.');
   const existingKey = value.idempotencyKey;
-  if (idempotencyKey && existingKey !== undefined && existingKey !== idempotencyKey) {
+  if (idempotencyKey
+    && idempotencyKeyMode === 'exact'
+    && existingKey !== undefined
+    && existingKey !== idempotencyKey) {
     throw invalidUpload('--idempotency-key does not match the ChangeSet input.');
   }
-  const candidate = idempotencyKey ? { ...value, idempotencyKey } : value;
+  const candidate = idempotencyKey && existingKey === undefined ? { ...value, idempotencyKey } : value;
   if (!Value.Check(ChangeSetSchema, candidate)) {
     throw invalidUpload('ChangeSet input does not match the public schema.');
   }

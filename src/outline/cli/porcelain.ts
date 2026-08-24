@@ -43,13 +43,16 @@ export async function buildPorcelainRequest(
 ): Promise<PorcelainRequest> {
   const parsed = parseOptions(command, args);
   const input = option(parsed, 'input');
-  const idempotencyKey = option(parsed, 'idempotency-key');
+  const idempotencyKey = option(parsed, 'idempotency-key') ?? `cli:${crypto.randomUUID()}`;
   const preview = flag(parsed, 'preview');
   const expectDiff = option(parsed, 'expect-diff');
   const yes = flag(parsed, 'yes');
   if (preview && expectDiff) throw usageError('--preview cannot be combined with --expect-diff.');
   if (preview && yes) throw usageError('--preview cannot be combined with --yes.');
   if (yes && !expectDiff) throw usageError('--yes requires --expect-diff for porcelain commands.');
+  if (expectDiff && !option(parsed, 'idempotency-key')) {
+    throw usageError('--expect-diff requires the same --idempotency-key returned by the reviewed preview.');
+  }
 
   let changeSet: ChangeSet;
   let structuredInput: Record<string, unknown> | undefined;
@@ -72,12 +75,10 @@ export async function buildPorcelainRequest(
   } else {
     changeSet = createChangeSet(await buildChanges(command, parsed, context), idempotencyKey);
   }
-  if (idempotencyKey) {
-    if (changeSet.idempotencyKey && changeSet.idempotencyKey !== idempotencyKey) {
-      throw usageError('--idempotency-key does not match the ChangeSet input.');
-    }
-    changeSet.idempotencyKey = idempotencyKey;
+  if (changeSet.idempotencyKey && changeSet.idempotencyKey !== idempotencyKey) {
+    throw usageError('--idempotency-key does not match the ChangeSet input.');
   }
+  changeSet.idempotencyKey = idempotencyKey;
   attachDefaultReturn(command, changeSet);
   assertOnlyCommonOptionsConsumed(parsed);
   return {
@@ -416,15 +417,25 @@ function attachDefaultReturn(command: string, changeSet: ChangeSet): void {
   const binding = [...changeSet.operations].reverse().find((change) => (
     (change.op === 'create' || change.op === 'duplicate') && change.bind
   )) ?? changeSet.operations.find((change) => change.op === 'ensure' && change.bind);
-  const targets = preferred ?? (binding && 'bind' in binding && binding.bind ? { binding: binding.bind } as TargetRef : undefined);
+  const survivingTarget = [...changeSet.operations].reverse().find((change) => (
+    change.op === 'update' || change.op === 'move' || change.op === 'merge'
+  ));
+  const targets = preferred
+    ?? (binding && 'bind' in binding && binding.bind ? { binding: binding.bind } as TargetRef : undefined)
+    ?? (survivingTarget?.op === 'merge' ? survivingTarget.target : survivingTarget?.targets);
   if (!targets) return;
   changeSet.return = [{
     kind: preferred ? 'outline' : 'node',
     targets,
     ...(preferred ? { depth: 2 } : {}),
-    include: ['description', 'children', 'tags', 'fields', 'references', 'media', 'view', 'trash'],
-    page: { limit: 10_000 },
+    ...(preferred ? { include: ['children', 'fields'] as const } : {}),
+    page: { limit: returnProjectionLimit(targets) },
   }];
+}
+
+function returnProjectionLimit(targets: TargetRef): number {
+  if ('target' in targets) return targets.target.cardinality === 'many' ? targets.target.max ?? 100 : 1;
+  return 100;
 }
 
 function oneAlias(alias: Extract<Selector, { by: 'alias' }>['alias']): TargetRef {

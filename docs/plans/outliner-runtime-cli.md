@@ -97,7 +97,7 @@ The explicit traceability manifest is:
   `AC-9`, `AC-10`, `AC-11`, `AC-12`, `AC-13`, `AC-14`, `AC-15`, `AC-16`,
   `AC-17`, `AC-18`, `AC-19`, `AC-20`, `AC-21`, `AC-22`, `AC-23`, `AC-24`,
   `AC-25`, `AC-26`, `AC-27`, `AC-28`, `AC-29`, `AC-30`, `AC-31`, `AC-32`,
-  `AC-33`, `AC-34`, `AC-35`, `AC-36`, `AC-37`, and `AC-38` through `AC-66`.
+  `AC-33`, `AC-34`, `AC-35`, `AC-36`, `AC-37`, and `AC-38` through `AC-73`.
 
 ### Completion contract
 
@@ -115,6 +115,9 @@ The explicit traceability manifest is:
     JSONL records and expose a resumable revision cursor.
   - **AC-5:** Input artifacts shall be accepted from an explicit file or stdin,
     without argument-length dependence.
+  - **AC-70:** Non-TTY stdout shall default to the versioned machine envelope;
+    `--human` shall force human output, `--json` shall force machine output, and
+    combining those flags shall fail before Runtime access.
 - **FR-3:** Every document mutation normalizes to one ChangeSet path.
   - **AC-6:** Porcelain and direct ChangeSet forms that describe the same intent
     shall produce the same normalized Diff and Operation semantics.
@@ -132,6 +135,11 @@ The explicit traceability manifest is:
     transaction-log commit.
   - **AC-11:** A reversible Operation shall remain addressable for guarded exact
     revert after Runtime restart and within the documented retention boundary.
+  - **AC-71:** Before any CLI mutation dispatch, the exact payload shall carry a
+    durable idempotency key. Timeout, disconnect, `SIGINT`, or `SIGTERM` after
+    dispatch shall return `operation_settlement_unknown` with that key and the
+    exact `outline log --idempotency-key ...` recovery command; the CLI shall
+    never retry the mutation automatically.
 - **FR-6:** Destructive and concurrent behavior is explicit.
   - **AC-12:** Permanent delete and empty Trash shall require an interactive
     confirmation or explicit non-interactive acknowledgement after Diff.
@@ -183,6 +191,20 @@ The explicit traceability manifest is:
     subsequent packaged and development launches shall create only the new
     Runtime and ContentStore layout, while source and dependency guards find no
     migration reader, dual write, or automatic startup deletion path.
+  - **AC-67:** Initial attach probes and every command, upload, asset transfer,
+    and stream shall have separate finite deadlines. A process that remains
+    alive while its socket stops responding shall not block a client past the
+    applicable deadline.
+  - **AC-68:** Every attach shall compare the exact bundled capability-contract
+    digest with both the private Runtime descriptor and live status response.
+    A same-major mismatch shall fail closed with `protocol_incompatible` before
+    command execution.
+  - **AC-69:** `SIGINT` and `SIGTERM` shall abort startup, ordinary reads,
+    ordinary writes, uploads, assets, and streams, with shell-standard exit
+    codes and unknown-settlement recovery for a dispatched mutation.
+  - **AC-73:** The Unix socket, descriptor, bearer token, and request envelope
+    are private implementation details. The public integration surface is the
+    CLI plus its domain schemas, response envelope, and stream records.
 - **FR-11:** UI/session state is isolated from the document contract.
   - **AC-22:** Document CLI contracts shall not encode selection, focus,
     expansion, pane position, or sidebar pin state.
@@ -224,6 +246,9 @@ The explicit traceability manifest is:
     Operation and one guarded revert shall restore its complete pre-state.
   - **AC-42:** Create and ensure forms shall return created or bound Node IDs in
     the Operation result or one bounded returned Projection.
+  - **AC-72:** Common porcelain writes shall request the smallest bounded
+    post-operation Projection that identifies or verifies their primary target;
+    this convenience result shall not replace an independent verification read.
   - **AC-43:** Stable system locations needed by common flows shall have direct
     selectors, including `@library` and `@saved-searches`; Saved Search creation
     shall default to `@saved-searches`.
@@ -249,7 +274,8 @@ The explicit traceability manifest is:
     `--input FILE|-`; `--json` shall neither wrap help in a Runtime response nor
     start Runtime.
   - **AC-49:** Destructive command help shall require `--preview`, reviewed
-    `--expect-diff`, and `--yes`, and shall state that `--yes` alone is invalid.
+    `--expect-diff`, `--yes`, and one idempotency key reused across preview and
+    apply, and shall state that `--yes` alone is invalid.
   - **AC-50:** Capability help, completion metadata, parser option admission, and
     `outline schema COMMAND` shall derive from the same per-command registry
     contract; drift guards shall compare their exact option and schema data.
@@ -380,10 +406,13 @@ dispatcher and `agentNodeTool*` are deleted after desktop and Agent cutover.
 
 ### Protocol version and envelopes
 
-Protocol major version `1` is explicit in every file, request, response, schema,
-and stream record. Minor additions are backward compatible only when existing
-required fields and semantics do not change. An unsupported major fails before
-document access with `protocol_incompatible`.
+Protocol major version `1` is explicit in every public artifact, response, and
+stream record. While CLI and Runtime ship as one product, every attach also
+compares the exact SHA-256 digest of the canonical capability manifest. A
+same-major digest mismatch fails closed with `protocol_incompatible` before the
+requested command runs. Minor-version negotiation is deferred until CLI and
+Runtime can be distributed independently; there is no permissive same-major
+fallback in the bundled product.
 
 A non-stream machine response writes exactly one JSON value to stdout:
 
@@ -423,9 +452,12 @@ interface OutlineError {
 }
 ```
 
-Human output and `--json` output have identical behavior and target sets.
-`--json` changes presentation only. Machine stdout never contains progress,
-warnings, logs, ANSI control bytes, or diagnostic prose; those go to stderr.
+Human and machine output have identical behavior and target sets. A non-TTY
+stdout defaults to the versioned machine envelope; `--human` forces human
+output and `--json` explicitly forces machine output. The flags conflict, and
+help remains plain text without Runtime access. Output mode changes presentation
+only. Machine stdout never contains progress, warnings, logs, ANSI control
+bytes, or diagnostic prose; those go to stderr.
 An empty `find` result is a successful empty result, not an error.
 
 Streaming commands use JSON Lines. Every line is independently parseable and
@@ -447,6 +479,7 @@ Stable process exit codes are:
 | `7` | Recovery capacity, recovery decode, or durability failure |
 | `8` | Unexpected Runtime failure |
 | `130` | Client interrupted by `SIGINT`; mutation outcome must be resolved by idempotency key or `log` |
+| `143` | Client terminated by `SIGTERM`; mutation outcome must be resolved by idempotency key or `log` |
 
 The typed `error.code`, not the coarse exit code, is the automation decision
 surface. Errors include at least `invalid_input`, `not_found`,
@@ -655,13 +688,14 @@ format. Runtime verifies protocol, hashes, base revision, targeted Node digests,
 staging leases, and destructive acknowledgement before executing the embedded
 normalized ChangeSet. Non-destructive porcelain may perform the same
 diff-and-apply sequence inside one Runtime request; `--preview` returns its Diff
-without writing, and `--expect-diff HASH` binds a later invocation to the
-reviewed result.
+without writing, and the same idempotency key plus `--expect-diff HASH` binds a
+later invocation to the reviewed result.
 
 Interactive destructive porcelain shows the Diff and asks for confirmation on
 a TTY. Non-interactive destructive calls require both `--yes` and either a Diff
-artifact or `--expect-diff HASH`. `--yes` alone is rejected. The confirmation
-is bound to the exact Diff, so a concurrent change requires review again.
+artifact or the preview's idempotency key plus `--expect-diff HASH`. `--yes`
+alone is rejected. The confirmation is bound to the exact Diff, so a concurrent
+change requires review again.
 
 Apply returns one `Operation` and any requested bounded post-commit Projection:
 
@@ -708,11 +742,15 @@ that can consume it incrementally. Runtime and CLI never retain the whole
 encoded Diff merely to calculate a hash; canonical serialization and hashing
 advance together.
 
-Idempotency keys are scoped to the workspace and protocol major. Reusing a key
-with the same canonical payload returns the original Operation; reusing it with
-a different payload returns `idempotency_conflict`. A client disconnect never
-causes automatic mutation retry. The client resolves an unknown settlement via
-the key or `outline log --operation OPERATION_ID`.
+Idempotency keys are scoped to the workspace and protocol major. The CLI injects
+`cli:<uuid>` when porcelain, direct `diff`, `revert`, `undo`, or `redo` does not
+receive an explicit key. Direct `diff` fixes that key into the reviewed Diff;
+`apply` rejects a Diff without one rather than changing reviewed content.
+Reusing a key with the same canonical payload returns the original Operation;
+reusing it with a different payload returns `idempotency_conflict`. A client
+disconnect never causes automatic mutation retry. The client resolves an unknown
+settlement with the exact next command emitted in the error:
+`outline log --idempotency-key KEY`.
 
 ### One durable transaction and recovery patch
 
@@ -935,18 +973,22 @@ interface RuntimeDescriptor {
   pid: number;
   instanceId: string;
   protocolMajors: readonly [1];
+  contractDigest: string;
   runtimeVersion: string;
   storageVersion: number;
   createdAt: string;
 }
 ```
 
-The bearer token proves same-user descriptor access; it is never logged,
-persisted in Operation metadata, or accepted from argv. The server validates
-authorization before reading a request body. HTTP-over-Unix-socket routes are
-small versioned adapters: health/discovery, one command call, and one streaming
-call. Request bodies have schema and byte limits; JSONL uploads are parsed with
-per-record limits and private spool files.
+The socket path, descriptor, bearer token, and request envelope are private
+implementation details, not public schemas or supported integration points.
+The CLI, domain schemas, response envelope, and stream records are public. The
+bearer token proves same-user descriptor access; it is never logged, persisted
+in Operation metadata, or accepted from argv. The server validates authorization
+before reading a request body. HTTP-over-Unix-socket routes are small private
+adapters: health/discovery, one command call, and one streaming call. Request
+bodies have schema and byte limits; JSONL uploads are parsed with per-record
+limits and private spool files.
 
 The packaged product contains separate `outline.mjs` client and
 `outline-runtime.mjs` server entries. Development runs them with Bun; packaged
@@ -976,24 +1018,31 @@ CLI discovery rules are deterministic:
 
 1. Resolve userData exactly as the app does, honoring
    `ELECTRON_USER_DATA_DIR` for isolated development and tests.
-2. Read and validate the descriptor, connect, authenticate, and compare protocol
-   majors.
+2. Read and validate the descriptor, compare its exact contract digest, connect,
+   authenticate, and compare the live status digest under a bounded attach probe.
 3. If the descriptor is absent or stale, start the standalone Runtime unless
    `--no-start` is present.
 4. Wait up to the global `--startup-timeout` value, 10 seconds by default, then
    return `runtime_unavailable` with no persistence fallback.
 
+Every Runtime call has a separate `--timeout` deadline, 60 seconds by default
+and at most 300 seconds. It covers request, response-body consumption, uploads,
+asset transfers, and streams; startup probing remains governed by the shorter
+startup deadline. `SIGINT` and `SIGTERM` flow through both deadlines.
+
 `version`, `schema`, and the bundled portion of `capabilities` run locally and
 never start Runtime. `status` reports absence without starting it. Document,
 history, asset, and watch commands auto-start. `capabilities --runtime` compares
-the bundled CLI registry with the connected Runtime and fails on incompatibility.
+the bundled CLI registry with the connected Runtime and fails on incompatibility;
+ordinary attach already enforces the same exact digest.
 
 ### CLI command grammar
 
 Global form is:
 
 ```text
-outline [--json] [--protocol 1] [--no-start] [--startup-timeout MS] COMMAND [ARGS]
+outline [--json|--human] [--protocol 1] [--no-start]
+        [--startup-timeout MS] [--timeout MS] COMMAND [ARGS]
 ```
 
 Every command accepts `--help` and `-h`. Porcelain structured input is one exact
@@ -1003,8 +1052,9 @@ generic Runtime MutationInput as its user schema and does not accept
 JSONL with `--input-format`. Stdin is used only when explicitly named as `-` or
 when the command documents piped bytes. Output files use `--output`, never
 shell-like positional guessing. Mutation commands accept `--idempotency-key`;
-porcelain accepts `--preview` and `--expect-diff HASH`; only destructive forms
-accept `--yes` under the binding rules above.
+porcelain accepts `--preview` and `--expect-diff HASH`, with one key reused
+across those invocations; only destructive forms accept `--yes` under the
+binding rules above.
 
 The stable command surface is:
 
@@ -1100,9 +1150,10 @@ transform with no remaining match is semantic no-change.
 
 Every exact command help names whether it is create, patch, replace, ensure,
 destructive, and/or idempotent. Destructive help requires preview, review, and
-the same command with `--expect-diff HASH --yes`; it explicitly rejects the idea
-that `--yes` alone is sufficient. The five golden help surfaces are root,
-`search`, `search create`, `view sort add`, and `purge`.
+the same command with the preview's `--idempotency-key`, `--expect-diff HASH`,
+and `--yes`; it explicitly rejects the idea that `--yes` alone is sufficient.
+The five golden help surfaces are root, `search`, `search create`, `view sort
+add`, and `purge`.
 
 ### Complete-resource golden workflows
 
@@ -1666,3 +1717,10 @@ implementation.
   evidence, and diff check. Keep the PR Draft and do not report completion until
   every test passes, both generated queues are empty, and no legacy mutation
   surface remains.
+- [x] **14. Harden CLI/Runtime failure semantics.** Enforce exact contract-digest
+  attach, bounded startup and command deadlines, complete signal propagation,
+  durable CLI recovery keys, unknown-settlement guidance, non-TTY machine output,
+  private transport schemas, and minimal porcelain return Projections. Prove the
+  behavior with unresponsive-socket, mismatched-contract, lost-acknowledgement,
+  signal, recovery, and output-mode tests. Covers `FR-2`, `FR-5`, `FR-10`,
+  `FR-13`; acceptance `AC-67` through `AC-73`.

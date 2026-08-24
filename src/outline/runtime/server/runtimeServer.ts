@@ -6,7 +6,7 @@ import { pipeline } from 'node:stream/promises';
 import type { Socket } from 'node:net';
 import path from 'node:path';
 import { Value } from 'typebox/value';
-import { outlineCapability } from '../../contract/capabilities';
+import { outlineCapability, outlineCapabilityContractDigest } from '../../contract/capabilities';
 import { canonicalJsonChunks } from '../../contract/canonical';
 import { OutlineContractError, outlineError } from '../../contract/errors';
 import {
@@ -117,6 +117,7 @@ export class OutlineRuntimeServer {
         pid: process.pid,
         instanceId,
         protocolMajors: [OUTLINE_PROTOCOL_VERSION],
+        contractDigest: outlineCapabilityContractDigest(),
         runtimeVersion: OUTLINE_CLI_VERSION,
         storageVersion: OUTLINE_STORAGE_VERSION,
         createdAt: owner.createdAt,
@@ -191,7 +192,17 @@ export class OutlineRuntimeServer {
         const format = requiredHeader(request, 'x-outline-input-format');
         if (format !== 'json' && format !== 'jsonl') throw new Error('Invalid ChangeSet upload format.');
         const idempotencyKey = optionalBase64UrlHeader(request, 'x-outline-idempotency-key');
-        const changeSet = await readChangeSetUpload(this.paths.root, request, format, idempotencyKey);
+        const idempotencyKeyMode = optionalHeader(request, 'x-outline-idempotency-key-mode') ?? 'exact';
+        if (idempotencyKeyMode !== 'exact' && idempotencyKeyMode !== 'if-missing') {
+          throw new Error('Invalid ChangeSet idempotency key mode.');
+        }
+        const changeSet = await readChangeSetUpload(
+          this.paths.root,
+          request,
+          format,
+          idempotencyKey,
+          idempotencyKeyMode,
+        );
         const authorization = this.authorizeRequestContext(request, false);
         const result = await this.router.handle({
           protocolVersion: OUTLINE_PROTOCOL_VERSION,

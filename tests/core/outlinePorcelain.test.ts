@@ -32,6 +32,7 @@ describe('outline porcelain CLI', () => {
 
       const applied = await jsonCommand(root, [
         'add', '@today', 'Porcelain item', '--bind', 'created', '--expect-diff', diff.diffHash,
+        '--idempotency-key', diff.normalizedChangeSet.idempotencyKey!,
       ]);
       expect(applied.code).toBe(0);
       expect(applied.data).toMatchObject({ kind: 'outline.operation', diffHash: diff.diffHash });
@@ -57,13 +58,17 @@ describe('outline porcelain CLI', () => {
       expect(yesAlone.code).toBe(2);
       expect(yesAlone.error).toMatchObject({ code: 'invalid_input' });
 
-      const unacknowledged = await jsonCommand(root, ['purge', nodeId!, '--expect-diff', purgeDiff.diffHash]);
+      const unacknowledged = await jsonCommand(root, [
+        'purge', nodeId!, '--expect-diff', purgeDiff.diffHash,
+        '--idempotency-key', purgeDiff.normalizedChangeSet.idempotencyKey!,
+      ]);
       expect(unacknowledged.code).toBe(4);
       expect(unacknowledged.error).toMatchObject({ code: 'confirmation_required' });
       expect(runtime.workspace.documentState().nodes[nodeId!]).toBeDefined();
 
       const purged = await jsonCommand(root, [
         'purge', nodeId!, '--expect-diff', purgeDiff.diffHash, '--yes',
+        '--idempotency-key', purgeDiff.normalizedChangeSet.idempotencyKey!,
       ]);
       expect(purged.code).toBe(0);
       expect((purged.data as Operation).recovery.state).toBe('available');
@@ -173,6 +178,7 @@ describe('outline porcelain CLI', () => {
       const stale = await jsonCommand(root, [
         'text', 'replace', repeatedId, '--find', 'x', '--replace', 'y',
         '--expect-diff', (preview.data as Diff).diffHash, '--yes',
+        '--idempotency-key', (preview.data as Diff).normalizedChangeSet.idempotencyKey!,
       ]);
       expect(stale.code).toBe(3);
       expect(stale.error).toMatchObject({ code: 'diff_mismatch' });

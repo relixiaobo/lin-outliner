@@ -46,7 +46,7 @@ const CLI_RUNTIME_ENV = 'TENON_OUTLINE_CLI_RUNTIME';
 const RUN_AS_NODE_ENV = 'TENON_OUTLINE_RUN_AS_NODE';
 
 export interface ImportCliIo {
-  readonly readStdin: () => Promise<string>;
+  readonly readStdin: (signal?: AbortSignal) => Promise<string>;
 }
 
 export async function executeImportInvocation(
@@ -62,12 +62,12 @@ export async function executeImportInvocation(
   if (command === 'import inspect') {
     const input = parseInspectInput(args);
     assertRequest(command, input);
-    const result = await inspectSource(input.source, options.env);
+    const result = await inspectSource(input.source, options.env, options.signal);
     assertResult(command, result);
     return result;
   }
   if (command === 'import plan') {
-    const input = await parsePlanInput(args, options.io);
+    const input = await parsePlanInput(args, options.io, options.signal);
     assertRequest(command, input);
     const result = await planImport(input, options.supervisor, options.env, options.signal);
     assertResult(command, result);
@@ -76,7 +76,7 @@ export async function executeImportInvocation(
   if (command === 'import verify') {
     const input = parseVerifyInput(args);
     assertRequest(command, input);
-    const result = await verifyImport(input, options.supervisor);
+    const result = await verifyImport(input, options.supervisor, options.signal);
     assertResult(command, result);
     return result;
   }
@@ -88,7 +88,7 @@ function parseInspectInput(args: readonly string[]): { source: string } {
   return { source: args[0]! };
 }
 
-async function parsePlanInput(args: readonly string[], io: ImportCliIo) {
+async function parsePlanInput(args: readonly string[], io: ImportCliIo, signal?: AbortSignal) {
   let source: string | undefined;
   let sourceFormat: 'auto' | 'normalized' | 'tana' = 'auto';
   let fidelity: 'content' | 'clean' | 'full' = 'clean';
@@ -120,7 +120,7 @@ async function parsePlanInput(args: readonly string[], io: ImportCliIo) {
       }
       mode = value;
     } else if (arg === '--parent') {
-      parent = await parseParent(requiredValue(args[++index], '--parent'), io);
+      parent = await parseParent(requiredValue(args[++index], '--parent'), io, signal);
     } else if (arg === '--output') output = requiredValue(args[++index], '--output');
     else if (arg === '--evidence-output') evidenceOutput = requiredValue(args[++index], '--evidence-output');
     else if (arg === '--changeset-output') changeSetOutput = requiredValue(args[++index], '--changeset-output');
@@ -166,13 +166,13 @@ function parseVerifyInput(args: readonly string[]) {
   return { operationId, evidence, diff };
 }
 
-async function parseParent(value: string, io: ImportCliIo): Promise<TargetRef> {
+async function parseParent(value: string, io: ImportCliIo, signal?: AbortSignal): Promise<TargetRef> {
   const trimmed = value.trim();
   if (!trimmed.startsWith('{')) {
     if (trimmed.startsWith('@') || /^[A-Za-z][A-Za-z0-9_-]*:/.test(trimmed)) {
       return { target: { selector: parseSelectorToken(trimmed), cardinality: 'one' } };
     }
-    const raw = value === '-' ? await io.readStdin() : await readFile(value, 'utf8');
+    const raw = value === '-' ? await io.readStdin(signal) : await readFile(value, 'utf8');
     return parseStructuredParent(raw);
   }
   return parseStructuredParent(trimmed);
@@ -194,11 +194,12 @@ function parseStructuredParent(raw: string): TargetRef {
 async function inspectSource(
   source: string,
   env: Readonly<Record<string, string | undefined>> | undefined,
+  signal?: AbortSignal,
 ): Promise<ImportSourceProfile> {
   const directory = await mkdtemp(path.join(tmpdir(), 'outline-import-inspect-'));
   const output = path.join(directory, 'profile.json');
   try {
-    await runSourceAdapter(['inspect', source, '--out', output], env);
+    await runSourceAdapter(['inspect', source, '--out', output], env, signal);
     const profile = await readJson(output);
     if (!Value.Check(ImportSourceProfileSchema, profile)) {
       throw protocolError('The source adapter returned an invalid ImportSourceProfile.');
@@ -230,7 +231,7 @@ async function planImport(
   try {
     const sourceText = await readFile(input.source, 'utf8');
     const sourceFingerprint = sha256Text(sourceText);
-    const sourceFormat = await resolveSourceFormat(input.sourceFormat, input.source, sourceText, env);
+    const sourceFormat = await resolveSourceFormat(input.sourceFormat, input.source, sourceText, env, signal);
     if (sourceFormat === 'normalized' && (input.includeTrash || input.fidelity !== 'clean')) {
       throw usageError('--include-trash and non-default --fidelity apply only to bundled source adapters.');
     }
@@ -246,7 +247,7 @@ async function planImport(
         '--coverage-out', temporaryCoverage,
         '--fidelity', input.fidelity,
         ...(input.includeTrash ? ['--include-trash'] : []),
-      ], env);
+      ], env, signal);
       normalized = await readNormalizedSource(normalizedPath);
       coverageOutput = input.coverageOutput
         ?? `${input.evidenceOutput.replace(/\.json$/u, '')}.coverage.json`;
@@ -280,10 +281,12 @@ async function planImport(
     const changeSetPath = input.changeSetOutput ?? path.join(directory, 'changeset.json');
     await writeAtomicJson(changeSetPath, built.changeSet);
 
-    const client = await supervisor.connect();
+    const client = await supervisor.connect(signal);
     try {
       const artifact = await client.diffArtifact(createReadStream(changeSetPath), {
         inputFormat: 'json',
+        idempotencyKey: `cli:${crypto.randomUUID()}`,
+        idempotencyKeyMode: 'if-missing',
         signal,
       });
       await writeAtomicArtifact(input.output, artifact.chunks);
@@ -327,6 +330,7 @@ async function resolveSourceFormat(
   source: string,
   sourceText: string,
   env: Readonly<Record<string, string | undefined>> | undefined,
+  signal?: AbortSignal,
 ): Promise<'normalized' | 'tana'> {
   if (requested !== 'auto') return requested;
   try {
@@ -335,7 +339,7 @@ async function resolveSourceFormat(
   } catch {
     // The bounded source profile below owns the public unsupported-format error.
   }
-  const profile = await inspectSource(source, env);
+  const profile = await inspectSource(source, env, signal);
   if (profile.kind === 'tana') return 'tana';
   throw usageError(`No bundled adapter supports source kind ${profile.kind}; write a cleanup script that emits NormalizedImport v1, then use --format normalized.`);
 }
@@ -356,15 +360,16 @@ async function readNormalizedValue(value: unknown): Promise<NormalizedImport> {
 async function verifyImport(
   input: { operationId: string; evidence: string; diff: string },
   supervisor: OutlineClientSupervisor,
+  signal?: AbortSignal,
 ): Promise<ImportVerifyResult> {
   const evidence = await readJson(input.evidence);
   const diff = await readJson(input.diff);
   if (!Value.Check(ImportEvidenceSchema, evidence)) throw usageError('Evidence does not match outline schema ImportEvidence.');
   if (!Value.Check(DiffSchema, diff)) throw usageError('Diff does not match outline schema Diff.');
 
-  const client = await supervisor.connect();
+  const client = await supervisor.connect(signal);
   try {
-    const page = (await client.request('log', { operationId: input.operationId, limit: 1 })).data;
+    const page = (await client.request('log', { operationId: input.operationId, limit: 1 }, signal)).data;
     const operation = isRecord(page) && Array.isArray(page.operations) ? page.operations[0] : undefined;
     if (!Value.Check(OperationSchema, operation) || operation.operationId !== input.operationId) {
       throw usageError(`Operation was not found: ${input.operationId}`);
@@ -380,7 +385,7 @@ async function verifyImport(
       const selector = root.kind === 'date'
         ? { by: 'date' as const, date: root.date! }
         : { by: 'id' as const, id: root.nodeId };
-      const projection = (await client.request('show', { selector })).data;
+      const projection = (await client.request('show', { selector }, signal)).data;
       const shownId = isRecord(projection) && Array.isArray(projection.nodes)
         ? (projection.nodes[0] as { id?: unknown } | undefined)?.id
         : undefined;
@@ -408,6 +413,7 @@ async function verifyImport(
 async function runSourceAdapter(
   args: readonly string[],
   env: Readonly<Record<string, string | undefined>> | undefined,
+  signal?: AbortSignal,
 ): Promise<void> {
   const environment = { ...process.env, ...env };
   const entry = environment[IMPORT_ADAPTER_ENTRY_ENV]
@@ -418,6 +424,7 @@ async function runSourceAdapter(
     await execFile(runtime, [entry, ...args], {
       env: environment,
       maxBuffer: 16 * 1024 * 1024,
+      signal,
     });
   } catch (error) {
     const details = isRecord(error) && typeof error.stderr === 'string'

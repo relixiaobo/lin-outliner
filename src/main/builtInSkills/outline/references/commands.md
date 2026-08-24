@@ -35,9 +35,11 @@ Run `outline COMMAND --help` for the same command contract at runtime and
 Place global options before the command:
 
 - `--json`: Write stable machine-readable response envelopes; ignored by --help.
+- `--human`: Write human-readable output even when stdout is not a TTY; ignored by --help.
 - `--protocol MAJOR` (default 1): Require one supported protocol major.
 - `--no-start`: Fail if Runtime is not already running.
 - `--startup-timeout MS` (default 10000): Limit Runtime startup wait time.
+- `--timeout MS` (default 60000): Limit one Runtime request, transfer, or stream.
 
 ## Command Families
 
@@ -75,9 +77,9 @@ Root commands cover discovery, direct Node operations, ChangeSets, history, and 
 | `outline diff` | preview; idempotent | Normalize and preview one complete ChangeSet without writing. | `outline diff --input FILE\|- [--input-format json\|jsonl] [--output FILE\|-] [--idempotency-key KEY]` |
 | `outline apply` | exact apply; idempotent | Apply one exact reviewed Diff atomically. | `outline apply --input DIFF_FILE\|- [--yes]` |
 | `outline log` | read-only; idempotent | Read paginated durable Operation history. | `outline log [FILTER OPTIONS]` |
-| `outline revert` | recovery mutation; not idempotent | Guard and exactly revert one retained Operation. | `outline revert OPERATION_ID` |
-| `outline undo` | recovery mutation; not idempotent | Revert the latest applicable Operation. | `outline undo` |
-| `outline redo` | recovery mutation; not idempotent | Revert the latest applicable revert Operation. | `outline redo` |
+| `outline revert` | recovery mutation; idempotent | Guard and exactly revert one retained Operation. | `outline revert OPERATION_ID [--idempotency-key KEY]` |
+| `outline undo` | recovery mutation; idempotent | Revert the latest applicable Operation. | `outline undo [--idempotency-key KEY]` |
+| `outline redo` | recovery mutation; idempotent | Revert the latest applicable revert Operation. | `outline redo [--idempotency-key KEY]` |
 | `outline add` | create; not idempotent | Create one complete typed Node tree below a parent. | `outline add PARENT TEXT \| add --input FILE\|-` |
 | `outline set` | patch; idempotent | Patch content, description, code, checkbox, icon, banner, or image state. | `outline set TARGET [PROPERTY OPTIONS]` |
 | `outline move` | patch; idempotent | Move a bounded Node selection below one destination. | `outline move TARGET DESTINATION` |

@@ -52,6 +52,7 @@ export const OUTLINE_EXIT_CODES = {
   durability: 7,
   internal: 8,
   interrupted: 130,
+  terminated: 143,
 } as const;
 
 export type OutlineExitCode = typeof OUTLINE_EXIT_CODES[keyof typeof OUTLINE_EXIT_CODES];

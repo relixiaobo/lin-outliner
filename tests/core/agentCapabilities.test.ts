@@ -247,7 +247,7 @@ describe('agent capabilities', () => {
             TENON_OUTLINE_CLI_ENTRY: path.resolve('src/outline/cli/entry.ts'),
           },
         }),
-      })).resolves.toMatchObject({ output: expect.stringContaining('not running'), resourceRefs: [] });
+      })).resolves.toMatchObject({ output: expect.stringContaining('"running":false'), resourceRefs: [] });
       await expect(executeAgentSkillShellCommand({
         command: 'printf changed > tracked.txt',
         localRoot: workspace,

@@ -66,9 +66,10 @@ not a separate Skill or Runtime API.
 
 Preview destructive, ambiguous, or high-impact work. Inspect exact targets,
 warnings, and affected count before applying the reviewed Diff. Destructive
-porcelain requires `--preview`, followed by the same command with
-`--expect-diff SHA256 --yes`; `--yes` alone is invalid. Direct ChangeSets use
-one `diff` artifact and one exact `apply`.
+porcelain requires `--preview --idempotency-key KEY`, followed by the same
+command with the same key plus `--expect-diff SHA256 --yes`; changing the key
+changes the Diff hash, and `--yes` alone is invalid. Direct ChangeSets use one
+`diff` artifact and one exact `apply`.
 
 Use `--idempotency-key` for transport retry identity, but never treat it as
 permission to repeat an uncertain write. Do not retry when command settlement

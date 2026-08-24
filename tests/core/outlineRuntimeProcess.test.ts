@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { canonicalSha256 } from '../../src/outline/contract/canonical';
+import { outlineCapabilityContractDigest } from '../../src/outline/contract/capabilities';
 import { issueOutlineAgentAttestation } from '../../src/outline/contract/agentAttestation';
 import type { ChangeSet, Diff, Operation, OutlineEvent, ProjectionResult, RuntimeDescriptor } from '../../src/outline/contract/schemas';
 import { OutlineClient, OutlineClientSupervisor, readOutlineRuntimeDescriptor } from '../../src/outline/client';
@@ -472,6 +473,89 @@ describe('Outline Runtime process boundary', () => {
     expect(await readdir(root)).toEqual([]);
   });
 
+  test('bounds attach to a live process whose Runtime socket never responds', async () => {
+    const root = await makeRoot();
+    const paths = resolveOutlineRuntimePaths(root);
+    await mkdir(path.dirname(paths.socketPath), { recursive: true, mode: 0o700 });
+    const server = http.createServer(() => undefined);
+    await listenUnix(server, paths.socketPath);
+    await writeFile(paths.descriptorPath, JSON.stringify(runtimeDescriptor(paths.socketPath)), { mode: 0o600 });
+    try {
+      const supervisor = new OutlineClientSupervisor({ root, noStart: true, startupTimeoutMs: 40 });
+      const startedAt = Date.now();
+      await expect(supervisor.connect()).rejects.toMatchObject({
+        outlineError: { code: 'runtime_unavailable' },
+      });
+      expect(Date.now() - startedAt).toBeLessThan(500);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test('fails closed before socket access when a same-major descriptor contract drifts', async () => {
+    const root = await makeRoot();
+    const paths = resolveOutlineRuntimePaths(root);
+    await writeFile(paths.descriptorPath, JSON.stringify({
+      ...runtimeDescriptor(paths.socketPath),
+      contractDigest: 'f'.repeat(64),
+    }), { mode: 0o600 });
+
+    const supervisor = new OutlineClientSupervisor({ root, noStart: true, startupTimeoutMs: 100 });
+    await expect(supervisor.connect()).rejects.toMatchObject({
+      outlineError: {
+        code: 'protocol_incompatible',
+        details: {
+          expectedDigest: outlineCapabilityContractDigest(),
+          actualDigest: 'f'.repeat(64),
+        },
+      },
+    });
+  });
+
+  test('bounds a command response after a successful attach probe', async () => {
+    const root = await makeRoot();
+    const paths = resolveOutlineRuntimePaths(root);
+    await mkdir(path.dirname(paths.socketPath), { recursive: true, mode: 0o700 });
+    const server = http.createServer(async (request, response) => {
+      let body = '';
+      for await (const chunk of request) body += String(chunk);
+      const envelope = JSON.parse(body) as { requestId: string; command: string };
+      if (envelope.command !== 'status') {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.write('{"protocolVersion":1');
+        return;
+      }
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({
+        protocolVersion: 1,
+        requestId: envelope.requestId,
+        ok: true,
+        command: 'status',
+        data: {
+          running: true,
+          runtime: { contractDigest: outlineCapabilityContractDigest() },
+        },
+      }));
+    });
+    await listenUnix(server, paths.socketPath);
+    await writeFile(paths.descriptorPath, JSON.stringify(runtimeDescriptor(paths.socketPath)), { mode: 0o600 });
+    const supervisor = new OutlineClientSupervisor({
+      root,
+      noStart: true,
+      startupTimeoutMs: 200,
+      requestTimeoutMs: 40,
+    });
+    const client = await supervisor.connect();
+    try {
+      await expect(client.request('show', { selector: { by: 'alias', alias: 'today' } })).rejects.toMatchObject({
+        outlineError: { code: 'runtime_unavailable', details: { timeoutMs: 40 } },
+      });
+    } finally {
+      client.close();
+      await closeServer(server);
+    }
+  });
+
   test('lets simultaneous desktop and CLI supervisors attach to one standalone instance', async () => {
     const root = await makeRoot();
     const launch = {
@@ -574,10 +658,39 @@ function staleDescriptor(socketPath: string): RuntimeDescriptor {
     pid: 2_147_483_647,
     instanceId: 'runtime:stale',
     protocolMajors: [1],
+    contractDigest: '0'.repeat(64),
     runtimeVersion: '1.0.0',
     storageVersion: 1,
     createdAt: '2000-01-01T00:00:00.000Z',
   };
+}
+
+function runtimeDescriptor(socketPath: string): RuntimeDescriptor {
+  return {
+    descriptorVersion: 1,
+    transport: 'unix-http',
+    socketPath,
+    bearerToken: 'a'.repeat(64),
+    pid: process.pid,
+    instanceId: `runtime:test-${crypto.randomUUID()}`,
+    protocolMajors: [1],
+    contractDigest: outlineCapabilityContractDigest(),
+    runtimeVersion: '1.0.0',
+    storageVersion: 1,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+async function listenUnix(server: http.Server, socketPath: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(socketPath, resolve);
+  });
+}
+
+async function closeServer(server: http.Server): Promise<void> {
+  server.closeAllConnections?.();
+  await new Promise<void>((resolve) => server.close(() => resolve()));
 }
 
 function eventOperationId(record: Awaited<ReturnType<AsyncIterator<unknown>['next']>>['value']): string | undefined {

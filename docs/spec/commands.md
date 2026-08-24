@@ -13,8 +13,9 @@ Runtime capabilities.
 ## Sources Of Truth
 
 - `src/outline/contract/schemas.ts` defines the exact Selector, TargetSpec,
-  Projection, ChangeSet, Diff, Operation, Event, asset, request, response, and
-  stream schemas.
+  Projection, ChangeSet, Diff, Operation, Event, asset, response, and stream
+  schemas. Runtime request and descriptor schemas remain private transport
+  implementation.
 - `src/outline/contract/capabilities.ts` is the executable public capability
   registry. Each entry owns its name, exact CLI request and result schema,
   command-family placement, help and completion metadata, parser options,
@@ -56,8 +57,15 @@ defaults, selectors, cardinality, argv versus `--input FILE|-`, output,
 create/patch/replace/ensure/destructive and idempotency semantics, plus two or
 three canonical examples. Destructive help requires `--preview`, reviewed
 `--expect-diff`, and `--yes`, and states that `--yes` alone is invalid. Help is
-plain text even with `--json` and runs without Runtime. Unknown paths/options and
-missing arguments provide the nearest command or exact help next step.
+plain text even with `--json` or `--human` and runs without Runtime. Unknown
+paths/options and missing arguments provide the nearest command or exact help
+next step.
+
+Non-TTY stdout defaults to one versioned JSON response envelope, or JSONL for a
+stream. `--human` forces human presentation and `--json` explicitly forces the
+machine form; combining them is invalid. Output mode never changes selection,
+mutation, or error semantics. `SIGINT` and `SIGTERM` abort every command path and
+use exit codes 130 and 143 respectively.
 
 ### Porcelain intent routing
 
@@ -70,7 +78,11 @@ The public product rule is:
 
 No common flow requires a shell mutation loop, intermediate created-ID lookup,
 or multiple mutation Operations. Create and ensure results include created or
-bound IDs through the Operation result's bounded Projection. Repeated `set`,
+bound IDs through the Operation result's bounded Projection. Common
+single-resource writes also return the smallest bounded Projection that
+identifies or verifies their primary target. The convenience Projection is not
+independent verification; callers still use `show`, `find`, or `log` when the
+workflow requires a separate observation. Repeated `set`,
 `configure`, and `ensure` calls converge or return `outline.no-change` without
 creating another Operation. `create` and `add` remain explicit creation.
 
@@ -109,12 +121,33 @@ text-patch updates, requires destructive Diff review, creates one Operation, and
 returns semantic no-change when repeated after convergence.
 
 `status` never starts Runtime. Absence is exactly `{ running: false }`. A live
-result includes the Runtime instance, runtime and storage versions, document
-revision, transaction/snapshot/Event sequences, verified and total log bytes,
+result includes the Runtime instance, exact contract digest, runtime and storage
+versions, document revision, transaction/snapshot/Event sequences, verified and
+total log bytes,
 torn/stale/inconsistent flags, pending-maintenance state, recovery lifecycle
 counts, retained recovery bytes and budget, and orphan-blob count. Log health is
 `healthy`, `degraded` while recoverable maintenance remains, or `blocked` when
 the verified prefix is readable but mutation admission is closed.
+
+## CLI And Runtime Boundary
+
+The supported integration boundary is the `outline` CLI plus its public domain
+schemas, response envelope, and stream records. The Unix socket, HTTP routes,
+descriptor, bearer token, and `OutlineRequest` envelope are private and may
+change with the bundled product. `outline schema` therefore does not publish
+`OutlineRequest` or `RuntimeDescriptor`.
+
+CLI and Runtime currently ship together. The Runtime descriptor and live status
+both carry the SHA-256 digest of the canonical capability manifest. Every attach
+compares both values with the bundled CLI digest, including ordinary commands;
+same-major drift fails closed with `protocol_incompatible`. Minor-version
+negotiation is deferred until CLI and Runtime can be distributed independently.
+
+Startup discovery uses `--startup-timeout`, defaulting to 10 seconds. Every
+request, response body, upload, asset transfer, and stream has a separate hard
+`--timeout`, defaulting to 60 seconds and capped at 300 seconds. A live process
+with an unresponsive socket therefore settles as unavailable instead of hanging.
+Both deadlines compose with the caller's `AbortSignal`.
 
 ## Selector And Projection
 
@@ -141,7 +174,9 @@ sidebar pins, or Agent-specific filtering.
 
 One mutation request carries one `outline.changeset` with optional base revision
 and Node digests, idempotency key, source metadata, ordered operations, and
-bounded return Projections. Operations use this stable top-level vocabulary:
+bounded return Projections. The CLI generates `cli:<uuid>` before dispatch when
+porcelain or direct `diff` input does not provide a key; direct `diff` fixes the
+key into the reviewed artifact. Operations use this stable top-level vocabulary:
 
 | Change | Purpose |
 | --- | --- |
@@ -192,8 +227,10 @@ Human destructive porcelain on a TTY first prints the exact Runtime-produced
 Diff and asks for confirmation. Acceptance submits that same artifact to
 `apply`; rejection writes nothing, and a revision change during review returns a
 stale conflict without recomputing or retrying. JSON and non-TTY callers must
-provide both `--yes` and either a reviewed Diff artifact or `--expect-diff`;
-`--yes` alone is rejected by the parser.
+provide both `--yes` and either a reviewed Diff artifact or `--expect-diff`.
+Porcelain preview and apply invocations use the same `--idempotency-key`; a new
+key changes the normalized Diff and therefore its hash. `--yes` alone is
+rejected by the parser.
 
 Canonical Diff responses stream from Runtime while SHA-256 and byte count advance
 over the same chunks. Results up to 8 MiB may be collected into the single JSON
@@ -231,7 +268,12 @@ reported explicitly rather than returning an incomplete affected set.
 
 Idempotency keys are scoped to workspace and protocol major. Reuse with the same
 canonical payload returns the settled Operation; reuse with another payload is a
-conflict. Clients never automatically retry after an unknown apply settlement.
+conflict. `revert`, `undo`, and `redo` also carry durable CLI-generated keys.
+`apply` rejects an unkeyed Diff instead of modifying reviewed content. Clients
+never automatically retry after an unknown settlement. A timeout, disconnect,
+`SIGINT`, or `SIGTERM` after mutation dispatch returns
+`operation_settlement_unknown`, includes the exact key, and names the precise
+next command: `outline log --idempotency-key KEY`.
 
 ## Events And Desktop Intents
 

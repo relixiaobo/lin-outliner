@@ -10,6 +10,7 @@ import {
   OUTLINE_COMMAND_FAMILIES,
   OUTLINE_EXIT_CODES,
   OUTLINE_GLOBAL_OPTIONS,
+  OUTLINE_MAX_COMMAND_TIMEOUT_MS,
   OUTLINE_PROTOCOL_VERSION,
   OUTLINE_PUBLIC_SCHEMAS,
   OUTLINE_STORAGE_VERSION,
@@ -40,10 +41,10 @@ export interface OutlineCliIo {
   readonly stdout: (value: string) => void;
   readonly stdoutBytes: (value: Uint8Array) => void;
   readonly stderr: (value: string) => void;
-  readonly readStdin: () => Promise<string>;
-  readonly stdinBytes: () => AsyncIterable<Uint8Array>;
+  readonly readStdin: (signal?: AbortSignal) => Promise<string>;
+  readonly stdinBytes: (signal?: AbortSignal) => AsyncIterable<Uint8Array>;
   readonly interactive: boolean;
-  readonly confirm: (prompt: string) => Promise<boolean>;
+  readonly confirm: (prompt: string, signal?: AbortSignal) => Promise<boolean>;
 }
 
 export interface OutlineCliRunOptions {
@@ -62,6 +63,7 @@ interface ParsedInvocation {
   readonly json: boolean;
   readonly noStart: boolean;
   readonly startupTimeoutMs: number | undefined;
+  readonly timeoutMs: number | undefined;
   readonly command: string;
   readonly args: readonly string[];
 }
@@ -70,17 +72,20 @@ const defaultIo: OutlineCliIo = {
   stdout: (value) => process.stdout.write(value),
   stdoutBytes: (value) => process.stdout.write(value),
   stderr: (value) => process.stderr.write(value),
-  readStdin: async () => {
+  readStdin: async (signal) => {
     const chunks: Buffer[] = [];
-    for await (const chunk of process.stdin) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    for await (const chunk of signalAwareStdin(signal)) chunks.push(Buffer.from(chunk));
     return Buffer.concat(chunks).toString('utf8');
   },
-  stdinBytes: () => process.stdin,
+  stdinBytes: (signal) => signalAwareStdin(signal),
   interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
-  confirm: async (prompt) => {
+  confirm: async (prompt, signal) => {
     const readline = createInterface({ input: process.stdin, output: process.stderr });
     try {
-      const answer = await readline.question(`${prompt} [y/N] `);
+      const question = `${prompt} [y/N] `;
+      const answer = signal
+        ? await readline.question(question, { signal })
+        : await readline.question(question);
       return answer.trim().toLowerCase() === 'y' || answer.trim().toLowerCase() === 'yes';
     } finally {
       readline.close();
@@ -91,21 +96,26 @@ const defaultIo: OutlineCliIo = {
 export async function runOutlineCli(argv: readonly string[], options: OutlineCliRunOptions = {}): Promise<number> {
   const io = { ...defaultIo, ...options.io };
   let invocation: ParsedInvocation | undefined;
-  const jsonRequested = argv.includes('--json');
+  const machineOutput = argv.includes('--json')
+    || (!argv.includes('--human') && !io.interactive);
   try {
     if (argv.includes('--help') || argv.includes('-h')) {
       io.stdout(renderHelp(argv));
       return OUTLINE_EXIT_CODES.success;
     }
-    invocation = parseInvocation(argv);
+    invocation = parseInvocation(argv, io.interactive);
     const data = await executeInvocation(invocation, options, io);
     if (isHandledExecution(data)) return data.exitCode;
     writeSuccess(io, invocation, data);
     return OUTLINE_EXIT_CODES.success;
   } catch (error) {
     const publicError = withUsageGuidance(toPublicError(error), invocation);
-    writeFailure(io, invocation ?? (jsonRequested ? failedJsonInvocation() : undefined), publicError);
-    return outlineExitCodeForError(publicError);
+    if (!options.signal?.aborted || publicError.code === 'operation_settlement_unknown') {
+      writeFailure(io, invocation ?? (machineOutput ? failedJsonInvocation() : undefined), publicError);
+    }
+    return options.signal?.aborted
+      ? signalExitCode(options.signal)
+      : outlineExitCodeForError(publicError);
   }
 }
 
@@ -114,6 +124,7 @@ function failedJsonInvocation(): ParsedInvocation {
     json: true,
     noStart: false,
     startupTimeoutMs: undefined,
+    timeoutMs: undefined,
     command: 'unknown',
     args: [],
   };
@@ -144,12 +155,13 @@ async function executeInvocation(
     root: runtimeRoot,
     noStart: invocation.noStart,
     startupTimeoutMs: invocation.startupTimeoutMs,
+    requestTimeoutMs: invocation.timeoutMs,
     origin: agentAttestation ? 'built-in-agent' : 'local-user',
     ...(agentAttestation ? { agentAttestation } : {}),
   });
   if (invocation.command === 'status') {
     assertNoArgs(invocation);
-    return supervisor.status();
+    return supervisor.status(options.signal);
   }
   if (invocation.command === 'schema') {
     return schemaResult(invocation.args);
@@ -159,9 +171,9 @@ async function executeInvocation(
     if (runtime.rest.length > 0) throw usageError(`Unexpected capabilities argument: ${runtime.rest[0]}`);
     const bundled = outlineCapabilityManifest();
     if (!runtime.present) return bundled;
-    const client = await supervisor.connect();
+    const client = await supervisor.connect(options.signal);
     try {
-      const response = await client.request('capabilities', { runtime: true });
+      const response = await client.request('capabilities', { runtime: true }, options.signal);
       if (canonicalSha256(response.data) !== canonicalSha256(bundled)) {
         throw new OutlineContractError(outlineError(
           'protocol_incompatible',
@@ -188,7 +200,7 @@ async function executeInvocation(
   if (invocation.command === 'asset ingest') return executeAssetIngest(invocation, supervisor, io, options.signal);
   if (invocation.command === 'asset export') return executeAssetExport(invocation, supervisor, io, options.signal);
   if (capability.streaming) return executeStreamingInvocation(invocation, supervisor, io, options.signal);
-  const input = await runtimeInput(invocation, io, supervisor);
+  const input = await runtimeInput(invocation, io, supervisor, options.signal);
   if (!Value.Check(capability.requestSchema, input)) {
     throw usageError(`Input does not match the public schema for command: ${invocation.command}`);
   }
@@ -201,10 +213,10 @@ async function executeInvocation(
     throw new OutlineContractError(outlineError(
       'confirmation_required',
       'confirmation',
-      `Run ${invocation.command} with --preview, then apply the reviewed Diff with --expect-diff SHA256 --yes.`,
+      `Run ${invocation.command} with --preview --idempotency-key KEY, then reuse that key with --expect-diff SHA256 --yes.`,
     ));
   }
-  const client = await supervisor.connect();
+  const client = await supervisor.connect(options.signal);
   try {
     if (capability.destructive
       && capability.kind === 'mutate'
@@ -213,9 +225,15 @@ async function executeInvocation(
       && isRecord(input)
       && input.preview !== true
       && input.acknowledgeDestructive !== true) {
-      return executeInteractiveDestructive(invocation.command, input, client, io);
+      return executeInteractiveDestructive(invocation.command, input, client, io, options.signal);
     }
-    const data = (await client.request(invocation.command, input)).data;
+    const data = (await requestWithMutationRecovery(
+      client,
+      invocation.command,
+      input,
+      capability.kind === 'mutate' && isRecord(input) && input.preview !== true,
+      options.signal,
+    )).data;
     return data;
   } finally {
     client.close();
@@ -227,12 +245,13 @@ async function executeInteractiveDestructive(
   input: Record<string, unknown>,
   client: import('../client').OutlineClient,
   io: OutlineCliIo,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   const preview = (await client.request(command, {
     ...input,
     preview: true,
     acknowledgeDestructive: undefined,
-  })).data;
+  }, signal)).data;
   if (!Value.Check(DiffSchema, preview)) {
     throw artifactProtocolError('Outline Runtime returned an invalid destructive Diff preview.');
   }
@@ -245,31 +264,47 @@ async function executeInteractiveDestructive(
     ));
   }
   io.stdout(`Review Diff:\n${JSON.stringify(preview, null, 2)}\n`);
-  if (!await io.confirm(`Apply destructive ${command} Diff ${preview.diffHash}?`)) {
+  if (!await io.confirm(`Apply destructive ${command} Diff ${preview.diffHash}?`, signal)) {
     throw new OutlineContractError(outlineError(
       'confirmation_required',
       'confirmation',
       'The destructive Diff was not confirmed.',
     ));
   }
-  return (await client.request('apply', { diff: preview, acknowledgeDestructive: true })).data;
+  return (await requestWithMutationRecovery(
+    client,
+    'apply',
+    { diff: preview, acknowledgeDestructive: true },
+    true,
+    signal,
+  )).data;
 }
 
-function parseInvocation(argv: readonly string[]): ParsedInvocation {
-  let json = false;
+function parseInvocation(argv: readonly string[], interactive: boolean): ParsedInvocation {
+  let jsonRequested = false;
+  let humanRequested = false;
   let noStart = false;
   let startupTimeoutMs: number | undefined;
+  let timeoutMs: number | undefined;
   let protocol: number = OUTLINE_PROTOCOL_VERSION;
   let index = 0;
   while (index < argv.length && argv[index]?.startsWith('-')) {
     const arg = argv[index];
-    if (arg === '--json') json = true;
+    if (arg === '--json') jsonRequested = true;
+    else if (arg === '--human') humanRequested = true;
     else if (arg === '--no-start') noStart = true;
     else if (arg === '--protocol') protocol = positiveInteger(argv[++index], '--protocol');
     else if (arg === '--startup-timeout') startupTimeoutMs = positiveInteger(argv[++index], '--startup-timeout');
+    else if (arg === '--timeout') {
+      timeoutMs = positiveInteger(argv[++index], '--timeout');
+      if (timeoutMs > OUTLINE_MAX_COMMAND_TIMEOUT_MS) {
+        throw usageError(`--timeout must be at most ${OUTLINE_MAX_COMMAND_TIMEOUT_MS}.`);
+      }
+    }
     else throw usageError(`Unknown global option: ${arg}`);
     index += 1;
   }
+  if (jsonRequested && humanRequested) throw usageError('--json cannot be combined with --human.');
   if (protocol !== OUTLINE_PROTOCOL_VERSION) {
     throw new OutlineContractError(outlineError(
       'protocol_incompatible',
@@ -282,9 +317,10 @@ function parseInvocation(argv: readonly string[]): ParsedInvocation {
   const command = longestCommandPrefix(remaining);
   if (!command) throw usageError(unknownCommandMessage(remaining));
   return {
-    json,
+    json: jsonRequested || (!humanRequested && !interactive),
     noStart,
     startupTimeoutMs,
+    timeoutMs,
     command,
     args: remaining.slice(command.split(' ').length),
   };
@@ -294,30 +330,26 @@ async function runtimeInput(
   invocation: ParsedInvocation,
   io: OutlineCliIo,
   supervisor: OutlineClientSupervisor,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   if (invocation.command === 'find' || invocation.command === 'show') {
-    return (await parseReadCommand(invocation.command, invocation.args, (source) => readStructuredSource(source, io))).input;
+    return (await parseReadCommand(invocation.command, invocation.args, (source) => readStructuredSource(source, io, signal))).input;
   }
   if (invocation.command === 'asset show') {
     if (invocation.args.length !== 1) throw usageError('asset show requires exactly one AssetRecord ID.');
     return { assetId: invocation.args[0] };
   }
   if (invocation.command === 'log') return parseLogInput(invocation.args);
-  if (invocation.command === 'revert') {
-    if (invocation.args.length !== 1) throw usageError('revert requires exactly one Operation ID.');
-    return { operationId: invocation.args[0] };
-  }
-  if (invocation.command === 'undo' || invocation.command === 'redo') {
-    if (invocation.args.length > 0) throw usageError(`${invocation.command} does not accept arguments.`);
-    return {};
+  if (invocation.command === 'revert' || invocation.command === 'undo' || invocation.command === 'redo') {
+    return parseHistoryMutationInput(invocation.command, invocation.args);
   }
   if (invocation.command !== 'apply') {
     return buildPorcelainRequest(invocation.command, invocation.args, {
-      read: (source) => readStructuredSource(source, io),
+      read: (source) => readStructuredSource(source, io, signal),
       lookup: async (selector) => {
-        const client = await supervisor.connect();
+        const client = await supervisor.connect(signal);
         try {
-          const response = await client.request('show', { selector });
+          const response = await client.request('show', { selector }, signal);
           const data = response.data as { nodes?: unknown[] };
           const node = data.nodes?.[0];
           if (!isRecord(node)) throw usageError('Porcelain target did not resolve to one Node.');
@@ -327,22 +359,22 @@ async function runtimeInput(
         }
       },
       project: async (projection) => {
-        const client = await supervisor.connect();
+        const client = await supervisor.connect(signal);
         try {
           const target = 'target' in projection.targets
             ? projection.targets.target
             : undefined;
           if (!target) throw usageError('Porcelain Projection cannot resolve a ChangeSet binding before planning.');
-          return (await client.request('find', { target, projection })).data as import('../contract').ProjectionResult;
+          return (await client.request('find', { target, projection }, signal)).data as import('../contract').ProjectionResult;
         } finally {
           client.close();
         }
       },
       ingestAsset: async (source) => {
-        const client = await supervisor.connect();
+        const client = await supervisor.connect(signal);
         try {
-          if (source === '-') return client.ingestAsset(io.stdinBytes());
-          return (await client.request('asset ingest', { source: 'path', path: source })).data as import('../contract').AssetLease;
+          if (source === '-') return client.ingestAsset(io.stdinBytes(signal), { signal });
+          return (await client.request('asset ingest', { source: 'path', path: source }, signal)).data as import('../contract').AssetLease;
         } finally {
           client.close();
         }
@@ -352,11 +384,16 @@ async function runtimeInput(
   const parsed = parseInputOptions(invocation.args);
   if (!parsed.input) throw usageError(`${invocation.command} requires --input FILE|-.`);
   if (parsed.rest.length > 0) throw usageError(`Unexpected ${invocation.command} argument: ${parsed.rest[0]}`);
-  const raw = parsed.input === '-' ? await io.readStdin() : await readFile(parsed.input, 'utf8');
+  const raw = parsed.input === '-' ? await io.readStdin(signal) : await readFile(parsed.input, 'utf8');
   const value = parseJsonInput(raw);
   if (parsed.inputFormat !== 'json') throw usageError('apply accepts only --input-format json.');
   if (parsed.output) throw usageError('--output is only valid for diff.');
   if (parsed.idempotencyKey) throw usageError('apply cannot change the idempotency key bound into its Diff.');
+  if (!isRecord(value)
+    || !isRecord(value.normalizedChangeSet)
+    || typeof value.normalizedChangeSet.idempotencyKey !== 'string') {
+    throw usageError('apply requires a Diff with an idempotency key; create it with outline diff.');
+  }
   return { diff: value, ...(parsed.yes ? { acknowledgeDestructive: true } : {}) };
 }
 
@@ -370,12 +407,14 @@ async function executeDiffInvocation(
   if (!parsed.input) throw usageError('diff requires --input FILE|-.');
   if (parsed.yes) throw usageError('--yes is not valid for diff.');
   if (parsed.rest.length > 0) throw usageError(`Unexpected diff argument: ${parsed.rest[0]}`);
-  const source = parsed.input === '-' ? io.stdinBytes() : createReadStream(parsed.input);
-  const client = await supervisor.connect();
+  const source = parsed.input === '-' ? io.stdinBytes(signal) : createReadStream(parsed.input);
+  const client = await supervisor.connect(signal);
   try {
+    const idempotencyKey = parsed.idempotencyKey ?? newCliIdempotencyKey();
     const artifact = await client.diffArtifact(source, {
       inputFormat: parsed.inputFormat,
-      ...(parsed.idempotencyKey ? { idempotencyKey: parsed.idempotencyKey } : {}),
+      idempotencyKey,
+      idempotencyKeyMode: parsed.idempotencyKey ? 'exact' : 'if-missing',
       signal,
     });
     if (!parsed.output && artifact.byteCount > MAX_INLINE_DIFF_BYTES) {
@@ -415,10 +454,10 @@ async function executeAssetIngest(
 ): Promise<unknown> {
   if (invocation.args.length !== 1) throw usageError('asset ingest requires exactly one PATH or -.');
   const source = invocation.args[0]!;
-  const client = await supervisor.connect();
+  const client = await supervisor.connect(signal);
   try {
-    if (source === '-') return client.ingestAsset(io.stdinBytes(), { signal });
-    return (await client.request('asset ingest', { source: 'path', path: source })).data;
+    if (source === '-') return client.ingestAsset(io.stdinBytes(signal), { signal });
+    return (await client.request('asset ingest', { source: 'path', path: source }, signal)).data;
   } finally {
     client.close();
   }
@@ -440,7 +479,7 @@ async function executeAssetExport(
   }
   if (!assetId) throw usageError('asset export requires exactly one AssetRecord ID.');
   if (!output) throw usageError('asset export requires --output FILE|-.');
-  const client = await supervisor.connect();
+  const client = await supervisor.connect(signal);
   let file: Awaited<ReturnType<typeof open>> | undefined;
   let temporaryPath: string | undefined;
   let bytes = 0;
@@ -488,6 +527,29 @@ function parseLogInput(args: readonly string[]): Record<string, unknown> {
   return result;
 }
 
+function parseHistoryMutationInput(
+  command: 'revert' | 'undo' | 'redo',
+  args: readonly string[],
+): Record<string, unknown> {
+  let operationId: string | undefined;
+  let idempotencyKey: string | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === '--idempotency-key') {
+      idempotencyKey = requiredValue(args[++index], '--idempotency-key');
+    } else if (command === 'revert' && !operationId && !arg?.startsWith('-')) {
+      operationId = arg;
+    } else {
+      throw usageError(`Unexpected ${command} argument: ${arg}`);
+    }
+  }
+  if (command === 'revert' && !operationId) throw usageError('revert requires exactly one Operation ID.');
+  return {
+    ...(operationId ? { operationId } : {}),
+    idempotencyKey: idempotencyKey ?? newCliIdempotencyKey(),
+  };
+}
+
 function parseInputOptions(args: readonly string[]): {
   input?: string;
   inputFormat: 'json' | 'jsonl';
@@ -524,13 +586,13 @@ async function executeStreamingInvocation(
   signal?: AbortSignal,
 ): Promise<unknown | HandledExecution> {
   const parsed = invocation.command === 'watch'
-    ? { input: await parseWatchCommand(invocation.args, (source) => readStructuredSource(source, io)) }
-    : await parseReadCommand('export', invocation.args, (source) => readStructuredSource(source, io));
+    ? { input: await parseWatchCommand(invocation.args, (source) => readStructuredSource(source, io, signal)) }
+    : await parseReadCommand('export', invocation.args, (source) => readStructuredSource(source, io, signal));
   const capability = outlineCapability(invocation.command)!;
   if (!Value.Check(capability.requestSchema, parsed.input)) {
     throw usageError(`Input does not match the public schema for command: ${invocation.command}`);
   }
-  const client = await supervisor.connect();
+  const client = await supervisor.connect(signal);
   const output = 'output' in parsed ? parsed.output : undefined;
   let file: Awaited<ReturnType<typeof open>> | undefined;
   let temporaryPath: string | undefined;
@@ -576,7 +638,7 @@ async function executeStreamingInvocation(
     }
     return { handled: true, exitCode: OUTLINE_EXIT_CODES.success };
   } catch (error) {
-    if (signal?.aborted) return { handled: true, exitCode: OUTLINE_EXIT_CODES.interrupted };
+    if (signal?.aborted) return { handled: true, exitCode: signalExitCode(signal) };
     throw error;
   } finally {
     client.close();
@@ -605,14 +667,55 @@ function artifactProtocolError(message: string): OutlineContractError {
   return new OutlineContractError(outlineError('protocol_incompatible', 'protocol', message));
 }
 
-async function readStructuredSource(source: string, io: OutlineCliIo): Promise<string> {
-  if (source === '-') return io.readStdin();
+async function readStructuredSource(source: string, io: OutlineCliIo, signal?: AbortSignal): Promise<string> {
+  if (source === '-') return io.readStdin(signal);
   const trimmed = source.trim();
   if (trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed.startsWith('@')
     || /^[A-Za-z][A-Za-z0-9_-]*:/.test(trimmed)) {
     return source;
   }
   return readFile(source, 'utf8');
+}
+
+async function* signalAwareStdin(signal?: AbortSignal): AsyncGenerator<Uint8Array> {
+  const iterator = process.stdin[Symbol.asyncIterator]();
+  try {
+    while (true) {
+      const next = await nextWithSignal(iterator, signal);
+      if (next.done) return;
+      yield Buffer.isBuffer(next.value) ? next.value : Buffer.from(next.value);
+    }
+  } finally {
+    if (signal?.aborted) await iterator.return?.();
+  }
+}
+
+function nextWithSignal<T>(iterator: AsyncIterator<T>, signal?: AbortSignal): Promise<IteratorResult<T>> {
+  if (!signal) return iterator.next();
+  return new Promise((resolve, reject) => {
+    const cleanup = () => signal.removeEventListener('abort', abort);
+    const abort = () => {
+      cleanup();
+      reject(signal.reason instanceof Error
+        ? signal.reason
+        : new Error(signal.reason ? String(signal.reason) : 'Outline stdin read was aborted.'));
+    };
+    if (signal.aborted) {
+      abort();
+      return;
+    }
+    signal.addEventListener('abort', abort, { once: true });
+    void iterator.next().then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
 }
 
 function exportDataChunk(data: unknown, input: unknown): string {
@@ -638,6 +741,74 @@ function writeHumanStreamRecord(
 
 function isHandledExecution(value: unknown): value is HandledExecution {
   return isRecord(value) && value.handled === true && typeof value.exitCode === 'number';
+}
+
+async function requestWithMutationRecovery(
+  client: import('../client').OutlineClient,
+  command: string,
+  input: unknown,
+  mutation: boolean,
+  signal?: AbortSignal,
+): Promise<Extract<OutlineResponse, { ok: true }>> {
+  if (!mutation) return client.request(command, input, signal);
+  const idempotencyKey = mutationIdempotencyKey(command, input);
+  if (!idempotencyKey) {
+    throw usageError(`Mutation ${command} does not carry a durable idempotency key.`);
+  }
+  try {
+    return await client.request(command, input, signal);
+  } catch (error) {
+    if (isKnownMutationFailure(error)) throw error;
+    const nextCommand = `outline log --idempotency-key ${shellArgument(idempotencyKey)}`;
+    throw new OutlineContractError(outlineError(
+      'operation_settlement_unknown',
+      'durability',
+      `The ${command} mutation may have committed, but its response was not received.`,
+      {
+        retryable: false,
+        details: {
+          idempotencyKey,
+          cause: error instanceof OutlineContractError
+            ? error.outlineError.code
+            : error instanceof Error ? error.message : String(error),
+        },
+        next: [nextCommand],
+      },
+    ));
+  }
+}
+
+function mutationIdempotencyKey(command: string, input: unknown): string | undefined {
+  if (!isRecord(input)) return undefined;
+  if (command === 'apply' && isRecord(input.diff) && isRecord(input.diff.normalizedChangeSet)) {
+    const key = input.diff.normalizedChangeSet.idempotencyKey;
+    return typeof key === 'string' ? key : undefined;
+  }
+  if (isRecord(input.changeSet)) {
+    const key = input.changeSet.idempotencyKey;
+    return typeof key === 'string' ? key : undefined;
+  }
+  return typeof input.idempotencyKey === 'string' ? input.idempotencyKey : undefined;
+}
+
+function isKnownMutationFailure(error: unknown): boolean {
+  if (!(error instanceof OutlineContractError)) return false;
+  return !['operation_settlement_unknown', 'runtime_unavailable', 'protocol_incompatible']
+    .includes(error.outlineError.code);
+}
+
+function newCliIdempotencyKey(): string {
+  return `cli:${crypto.randomUUID()}`;
+}
+
+function shellArgument(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+function signalExitCode(signal: AbortSignal): number {
+  return signal.reason === 'SIGTERM'
+    ? OUTLINE_EXIT_CODES.terminated
+    : OUTLINE_EXIT_CODES.interrupted;
 }
 
 function schemaResult(args: readonly string[]): unknown {
@@ -785,8 +956,8 @@ function renderCommandHelp(capability: import('../contract').OutlineCapability):
     ...(help.destructive ? [
       '',
       'Destructive review:',
-      '  1. Run the same command with --preview and inspect the returned Diff.',
-      '  2. Re-run it with --expect-diff SHA256 --yes to apply only that exact Diff.',
+      '  1. Run the same command with --preview --idempotency-key KEY and inspect the returned Diff.',
+      '  2. Re-run it with the same --idempotency-key KEY plus --expect-diff SHA256 --yes.',
       '  --yes alone is rejected and never substitutes for preview/review.',
     ] : []),
     '',

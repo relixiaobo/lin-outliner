@@ -249,7 +249,10 @@ describe('outline mandatory CLI golden flows', () => {
       const callsBefore = cli.calls;
       const preview = diffResult(await cli.json(['template', 'apply', tagId, '--preview']));
       expect(preview.affected.some((entry) => entry.effect === 'create')).toBe(true);
-      const operation = operationResult(await cli.json(['template', 'apply', tagId, '--expect-diff', preview.diffHash]));
+      const operation = operationResult(await cli.json([
+        'template', 'apply', tagId, '--expect-diff', preview.diffHash,
+        '--idempotency-key', preview.normalizedChangeSet.idempotencyKey!,
+      ]));
       expect(cli.calls - callsBefore).toBe(2);
       expect(runtime.workspace.documentState().nodes[targetId]!.children.map((id) => runtime.workspace.documentState().nodes[id]?.content.text))
         .toContain('Template child');
@@ -372,6 +375,7 @@ describe('outline mandatory CLI golden flows', () => {
       expect(runtime.workspace.documentState()).toEqual(before);
       const operation = operationResult(await cli.json([
         ...args, '--expect-diff', preview.diffHash, '--yes',
+        '--idempotency-key', preview.normalizedChangeSet.idempotencyKey!,
       ]));
       expect(cli.calls - callsBefore).toBe(2);
       expect(await countOperations(runtime)).toBe(operationsBefore + 1);
@@ -389,6 +393,7 @@ describe('outline mandatory CLI golden flows', () => {
       const noChangePreview = diffResult(await cli.json([...args, '--preview']));
       const repeated = noChangeResult(await cli.json([
         ...args, '--expect-diff', noChangePreview.diffHash, '--yes',
+        '--idempotency-key', noChangePreview.normalizedChangeSet.idempotencyKey!,
       ]));
       expect(repeated).toMatchObject({ affectedNodeCount: 0, recovery: { state: 'not-required' } });
       expect(await countOperations(runtime)).toBe(operationsBefore + 1);
@@ -407,7 +412,10 @@ async function previewApplyRevert(
   const callsBefore = cli.calls;
   const preview = diffResult(await cli.json([...args, '--preview']));
   expect(preview.destructive.length).toBeGreaterThan(0);
-  const operation = operationResult(await cli.json([...args, '--expect-diff', preview.diffHash, '--yes']));
+  const operation = operationResult(await cli.json([
+    ...args, '--expect-diff', preview.diffHash, '--yes',
+    '--idempotency-key', preview.normalizedChangeSet.idempotencyKey!,
+  ]));
   expect(cli.calls - callsBefore).toBe(2);
   expect(await countOperations(runtime)).toBe(operationsBefore + 1);
   await exactRevert(runtime, operation, before, cli);

@@ -429,10 +429,10 @@ const PORCELAIN_SUMMARIES = {
 const PORCELAIN_EXAMPLES = {
   add: ['outline add @inbox "Project brief"', 'outline add --input complete-tree.json'],
   set: ['outline set node:brief --description "Ready for review"', 'outline set --input node-patch.json'],
-  'text replace': ['outline text replace node:brief --find "draft" --replace "final" --preview', 'outline text replace --matching "keyword 1" --max 500 --find "keyword 1" --replace "keyword 2" --preview', 'outline text replace --input replace.json --expect-diff SHA256 --yes'],
+  'text replace': ['outline text replace node:brief --find "draft" --replace "final" --preview --idempotency-key cli:review-replace', 'outline text replace --matching "keyword 1" --max 500 --find "keyword 1" --replace "keyword 2" --preview --idempotency-key cli:review-batch-replace', 'outline text replace --input replace.json --idempotency-key cli:review-replace --expect-diff SHA256 --yes'],
   move: ['outline move node:task node:project --index 0', 'outline move --input move.json'],
   duplicate: ['outline duplicate node:template node:project', 'outline duplicate --input duplicate.json'],
-  merge: ['outline merge node:duplicate node:canonical --preview', 'outline merge node:duplicate node:canonical --expect-diff SHA256 --yes'],
+  merge: ['outline merge node:duplicate node:canonical --preview --idempotency-key cli:review-merge', 'outline merge node:duplicate node:canonical --idempotency-key cli:review-merge --expect-diff SHA256 --yes'],
   indent: ['outline indent node:task', 'outline indent --input indent.json'],
   outdent: ['outline outdent node:task', 'outline outdent --input outdent.json'],
   'done set': ['outline done set node:task true', 'outline done set --input done-many.json'],
@@ -447,7 +447,7 @@ const PORCELAIN_EXAMPLES = {
   'field select': ['outline field select node:project field:status option:active', 'outline field select --input field-select-many.json'],
   'definition create': ['outline definition create field Status --field-type select --options options.json', 'outline definition create --input complete-definition.json'],
   'definition configure': ['outline definition configure field:status field --patch field-patch.json', 'outline definition configure --input definition-patch.json'],
-  'definition merge': ['outline definition merge tag:duplicate tag:canonical --preview', 'outline definition merge tag:duplicate tag:canonical --expect-diff SHA256 --yes'],
+  'definition merge': ['outline definition merge tag:duplicate tag:canonical --preview --idempotency-key cli:review-definition-merge', 'outline definition merge tag:duplicate tag:canonical --idempotency-key cli:review-definition-merge --expect-diff SHA256 --yes'],
   'reference add': ['outline reference add node:brief node:source', 'outline reference add --input references-many.json'],
   'reference set': ['outline reference set node:reference node:new-target', 'outline reference set --input reference-replace.json'],
   'reference inline': ['outline reference inline node:reference', 'outline reference inline --input reference-inline.json'],
@@ -476,7 +476,7 @@ const PORCELAIN_EXAMPLES = {
   'media set': ['outline media set node:image --width 1280 --height 720', 'outline media set --input media-patch.json'],
   trash: ['outline trash node:obsolete', 'outline trash --input trash-many.json'],
   restore: ['outline restore node:obsolete', 'outline restore --input restore-many.json'],
-  purge: ['outline purge @trash --contents --preview', 'outline purge @trash --contents --expect-diff SHA256 --yes'],
+  purge: ['outline purge @trash --contents --preview --idempotency-key cli:review-purge', 'outline purge @trash --contents --idempotency-key cli:review-purge --expect-diff SHA256 --yes'],
 } satisfies Record<PorcelainCommandKey, readonly [string, string, ...string[]]>;
 
 const CREATE_COMMANDS = new Set<PorcelainCommandKey>([

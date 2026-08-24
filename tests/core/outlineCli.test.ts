@@ -18,6 +18,7 @@ import {
   OutlineResponseSchema,
   OutlineStreamRecordSchema,
   canonicalSha256,
+  outlineCapabilityContractDigest,
   type ChangeSet,
   type Diff,
 } from '../../src/outline/contract';
@@ -50,6 +51,39 @@ describe('outline CLI', () => {
     expect(await readdir(root)).toEqual([]);
   });
 
+  test('selects output mode from TTY state and explicit json or human overrides', async () => {
+    const root = await makeRoot();
+    const nonTty = captureIo();
+    const forcedHuman = captureIo();
+    const tty = captureIo();
+    const forcedJson = captureIo();
+    const conflict = captureIo();
+
+    expect(await runOutlineCli(['version'], { runtimeRoot: root, io: nonTty.io })).toBe(0);
+    expect(JSON.parse(nonTty.stdout)).toMatchObject({ ok: true, command: 'version' });
+    expect(await runOutlineCli(['--human', 'version'], { runtimeRoot: root, io: forcedHuman.io })).toBe(0);
+    expect(forcedHuman.stdout).toStartWith('outline 1.0.0');
+    expect(await runOutlineCli(['version'], {
+      runtimeRoot: root,
+      io: { ...tty.io, interactive: true },
+    })).toBe(0);
+    expect(tty.stdout).toStartWith('outline 1.0.0');
+    expect(await runOutlineCli(['--json', 'version'], {
+      runtimeRoot: root,
+      io: { ...forcedJson.io, interactive: true },
+    })).toBe(0);
+    expect(JSON.parse(forcedJson.stdout)).toMatchObject({ ok: true, command: 'version' });
+    expect(await runOutlineCli(['--json', '--human', 'version'], {
+      runtimeRoot: root,
+      io: conflict.io,
+    })).toBe(2);
+    expect(JSON.parse(conflict.stdout)).toMatchObject({
+      ok: false,
+      error: { code: 'invalid_input' },
+    });
+    expect(await readdir(root)).toEqual([]);
+  });
+
   test('reports absent status without starting Runtime', async () => {
     const root = await makeRoot();
     const output = captureIo();
@@ -71,6 +105,7 @@ describe('outline CLI', () => {
         running: true,
         runtime: {
           instanceId: runtime.workspace.instanceId,
+          contractDigest: outlineCapabilityContractDigest(),
           runtimeVersion: OUTLINE_CLI_VERSION,
           storageVersion: OUTLINE_STORAGE_VERSION,
           revision: 0,
@@ -246,8 +281,9 @@ describe('outline CLI', () => {
     expect(output.stdout).toContain('--expect-diff SHA256');
     expect(output.stdout).toContain('--yes');
     expect(output.stdout).toContain('--yes alone is rejected');
-    expect(output.stdout).toContain('outline purge @trash --contents --preview');
-    expect(output.stdout).toContain('outline purge @trash --contents --expect-diff SHA256 --yes');
+    expect(output.stdout).toContain('same --idempotency-key KEY');
+    expect(output.stdout).toContain('outline purge @trash --contents --preview --idempotency-key cli:review-purge');
+    expect(output.stdout).toContain('outline purge @trash --contents --idempotency-key cli:review-purge --expect-diff SHA256 --yes');
     expect(await readdir(root)).toEqual([]);
   });
 
@@ -282,14 +318,14 @@ describe('outline CLI', () => {
     const option = captureIo();
     const missing = captureIo();
 
-    expect(await runOutlineCli(['searh'], { runtimeRoot: root, io: family.io })).toBe(2);
+    expect(await runOutlineCli(['--human', 'searh'], { runtimeRoot: root, io: family.io })).toBe(2);
     expect(family.stderr).toContain('Did you mean "search"?');
-    expect(await runOutlineCli(['search', 'creat'], { runtimeRoot: root, io: command.io })).toBe(2);
+    expect(await runOutlineCli(['--human', 'search', 'creat'], { runtimeRoot: root, io: command.io })).toBe(2);
     expect(command.stderr).toContain('Did you mean "search create"?');
-    expect(await runOutlineCli(['search', 'create', '--mach', 'module'], { runtimeRoot: root, io: option.io })).toBe(2);
+    expect(await runOutlineCli(['--human', 'search', 'create', '--mach', 'module'], { runtimeRoot: root, io: option.io })).toBe(2);
     expect(option.stderr).toContain('Did you mean --match?');
     expect(option.stderr).toContain('outline search create --help');
-    expect(await runOutlineCli(['view', 'sort', 'add'], { runtimeRoot: root, io: missing.io })).toBe(2);
+    expect(await runOutlineCli(['--human', 'view', 'sort', 'add'], { runtimeRoot: root, io: missing.io })).toBe(2);
     expect(missing.stderr).toContain('outline view sort add --help');
     expect(await readdir(root)).toEqual([]);
   });
@@ -364,11 +400,19 @@ describe('outline CLI', () => {
       expect(JSON.parse(missingLog.stdout).data).toEqual({ operations: [] });
 
       const reverted = captureIo();
-      expect(await runOutlineCli(['--json', '--no-start', 'revert', createdOperation.operationId], {
+      expect(await runOutlineCli([
+        '--json', '--no-start', 'revert', createdOperation.operationId, '--idempotency-key', 'cli:revert-history',
+      ], {
         runtimeRoot: runningRoot,
         io: reverted.io,
       })).toBe(0);
-      expect(JSON.parse(reverted.stdout).data.revertsOperationId).toBe(createdOperation.operationId);
+      const revertOperation = JSON.parse(reverted.stdout).data;
+      expect(revertOperation.revertsOperationId).toBe(createdOperation.operationId);
+      const repeatedRevert = captureIo();
+      expect(await runOutlineCli([
+        '--json', '--no-start', 'revert', createdOperation.operationId, '--idempotency-key', 'cli:revert-history',
+      ], { runtimeRoot: runningRoot, io: repeatedRevert.io })).toBe(0);
+      expect(JSON.parse(repeatedRevert.stdout).data.operationId).toBe(revertOperation.operationId);
 
       const second = captureIo();
       expect(await runOutlineCli(['--json', '--no-start', 'add', '--parent', '@today', 'Undo item'], {
@@ -377,19 +421,32 @@ describe('outline CLI', () => {
       })).toBe(0);
       const secondOperation = JSON.parse(second.stdout).data;
       const undone = captureIo();
-      expect(await runOutlineCli(['--json', '--no-start', 'undo'], {
+      expect(await runOutlineCli(['--json', '--no-start', 'undo', '--idempotency-key', 'cli:undo-history'], {
         runtimeRoot: runningRoot,
         io: undone.io,
       })).toBe(0);
       const undoOperation = JSON.parse(undone.stdout).data;
       expect(undoOperation.revertsOperationId).toBe(secondOperation.operationId);
+      const repeatedUndo = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'undo', '--idempotency-key', 'cli:undo-history'], {
+        runtimeRoot: runningRoot,
+        io: repeatedUndo.io,
+      })).toBe(0);
+      expect(JSON.parse(repeatedUndo.stdout).data.operationId).toBe(undoOperation.operationId);
 
       const redone = captureIo();
-      expect(await runOutlineCli(['--json', '--no-start', 'redo'], {
+      expect(await runOutlineCli(['--json', '--no-start', 'redo', '--idempotency-key', 'cli:redo-history'], {
         runtimeRoot: runningRoot,
         io: redone.io,
       })).toBe(0);
-      expect(JSON.parse(redone.stdout).data.revertsOperationId).toBe(undoOperation.operationId);
+      const redoOperation = JSON.parse(redone.stdout).data;
+      expect(redoOperation.revertsOperationId).toBe(undoOperation.operationId);
+      const repeatedRedo = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'redo', '--idempotency-key', 'cli:redo-history'], {
+        runtimeRoot: runningRoot,
+        io: repeatedRedo.io,
+      })).toBe(0);
+      expect(JSON.parse(repeatedRedo.stdout).data.operationId).toBe(redoOperation.operationId);
     } finally {
       await runtime.stop();
     }
@@ -405,6 +462,61 @@ describe('outline CLI', () => {
       command: 'log',
       error: { code: 'runtime_unavailable', category: 'unavailable' },
     });
+  });
+
+  test('recovers an auto-keyed mutation when the committed response is lost', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const originalHandle = runtime.router.handle.bind(runtime.router);
+    let dropCommittedResponse = true;
+    runtime.router.handle = async (value, context) => {
+      const result = await originalHandle(value, context);
+      if (dropCommittedResponse
+        && result.ok
+        && result.data
+        && typeof result.data === 'object'
+        && (result.data as { kind?: unknown }).kind === 'outline.operation') {
+        dropCommittedResponse = false;
+        for (const connection of (runtime as unknown as {
+          connections: Set<{ destroy: () => void }>;
+        }).connections) connection.destroy();
+      }
+      return result;
+    };
+    try {
+      const lost = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'add', '@today', 'Lost acknowledgement'], {
+        runtimeRoot: root,
+        io: lost.io,
+      })).toBe(7);
+      const failure = JSON.parse(lost.stdout);
+      const idempotencyKey = failure.error.details.idempotencyKey as string;
+      expect(failure).toMatchObject({
+        ok: false,
+        command: 'add',
+        error: {
+          code: 'operation_settlement_unknown',
+          retryable: false,
+          details: { idempotencyKey: expect.stringMatching(/^cli:/) },
+          next: [`outline log --idempotency-key '${idempotencyKey}'`],
+        },
+      });
+      expect(runtime.workspace.projection().nodes).toContainEqual(
+        expect.objectContaining({ content: expect.objectContaining({ text: 'Lost acknowledgement' }) }),
+      );
+
+      const recovered = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'log', '--idempotency-key', idempotencyKey], {
+        runtimeRoot: root,
+        io: recovered.io,
+      })).toBe(0);
+      expect(JSON.parse(recovered.stdout).data.operations).toHaveLength(1);
+    } finally {
+      runtime.router.handle = originalHandle;
+      await runtime.stop();
+    }
   });
 
   test('returns a typed non-writing conflict Diff when guarded revert preconditions changed', async () => {
@@ -519,7 +631,7 @@ describe('outline CLI', () => {
       expect(foundNodes).toContainEqual(expect.objectContaining({ text: 'CLI searchable result' }));
 
       const humanFind = captureIo();
-      expect(await runOutlineCli(['--no-start', 'find', 'CLI searchable result'], {
+      expect(await runOutlineCli(['--human', '--no-start', 'find', 'CLI searchable result'], {
         runtimeRoot: root,
         io: humanFind.io,
       })).toBe(0);
@@ -776,6 +888,119 @@ describe('outline CLI', () => {
     expect(await readdir(root)).toEqual([]);
   });
 
+  test('aborts an ordinary read with code 143 on SIGTERM', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    let startRead: (() => void) | undefined;
+    let releaseRead: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => { startRead = resolve; });
+    const blocked = new Promise<void>((resolve) => { releaseRead = resolve; });
+    runtime.router.register('show', async () => {
+      startRead?.();
+      await blocked;
+      return { invalidAfterCancellation: true };
+    });
+    const child = Bun.spawn([
+      process.execPath, cliEntry, '--json', '--no-start', '--timeout', '300000', 'show', '@today',
+    ], {
+      env: { ...process.env, TENON_OUTLINE_RUNTIME_ROOT: root },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const stdoutPromise = new Response(child.stdout).text();
+    const stderrPromise = new Response(child.stderr).text();
+    try {
+      await withTimeout(started, 2_000, 'Ordinary read did not reach Runtime');
+      child.kill('SIGTERM');
+      expect(await child.exited).toBe(143);
+      expect(await stdoutPromise).toBe('');
+      expect(await stderrPromise).toBe('');
+    } finally {
+      releaseRead?.();
+      child.kill();
+      await runtime.stop();
+    }
+  });
+
+  test('aborts a blocked stdin read with code 143 on SIGTERM', async () => {
+    const root = await makeRoot();
+    const child = Bun.spawn([
+      process.execPath, cliEntry, '--json', '--no-start', 'apply', '--input', '-',
+    ], {
+      env: { ...process.env, TENON_OUTLINE_RUNTIME_ROOT: root },
+      stdin: 'pipe',
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const stdoutPromise = new Response(child.stdout).text();
+    const stderrPromise = new Response(child.stderr).text();
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      child.kill('SIGTERM');
+      expect(await child.exited).toBe(143);
+      expect(await stdoutPromise).toBe('');
+      expect(await stderrPromise).toBe('');
+    } finally {
+      child.stdin.end();
+      child.kill();
+    }
+  });
+
+  test('aborts a dispatched ordinary write with recovery guidance on SIGINT', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const originalHandle = runtime.router.handle.bind(runtime.router);
+    let startWrite: (() => void) | undefined;
+    let releaseWrite: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => { startWrite = resolve; });
+    const blocked = new Promise<void>((resolve) => { releaseWrite = resolve; });
+    runtime.router.handle = async (value, context) => {
+      const result = await originalHandle(value, context);
+      if (result.ok
+        && result.data
+        && typeof result.data === 'object'
+        && (result.data as { kind?: unknown }).kind === 'outline.operation') {
+        startWrite?.();
+        await blocked;
+      }
+      return result;
+    };
+    const child = Bun.spawn([
+      process.execPath, cliEntry, '--json', '--no-start', '--timeout', '300000',
+      'add', '@today', 'Interrupted after commit',
+    ], {
+      env: { ...process.env, TENON_OUTLINE_RUNTIME_ROOT: root },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const stdoutPromise = new Response(child.stdout).text();
+    const stderrPromise = new Response(child.stderr).text();
+    try {
+      await withTimeout(started, 2_000, 'Ordinary write did not commit in Runtime');
+      child.kill('SIGINT');
+      expect(await child.exited).toBe(130);
+      const failure = JSON.parse(await stdoutPromise);
+      expect(failure).toMatchObject({
+        ok: false,
+        command: 'add',
+        error: {
+          code: 'operation_settlement_unknown',
+          details: { idempotencyKey: expect.stringMatching(/^cli:/) },
+        },
+      });
+      expect(await stderrPromise).toBe('');
+    } finally {
+      releaseWrite?.();
+      runtime.router.handle = originalHandle;
+      child.kill();
+      await runtime.stop();
+    }
+  });
+
   test('exits a real watch process with code 130 on SIGINT', async () => {
     const root = await makeRoot();
     const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
@@ -793,6 +1018,31 @@ describe('outline CLI', () => {
       expect(firstOutput).toContain('"type":"hello"');
       child.kill('SIGINT');
       expect(await child.exited).toBe(130);
+      expect(await stderrPromise).toBe('');
+    } finally {
+      child.kill();
+      reader.releaseLock();
+      await runtime.stop();
+    }
+  });
+
+  test('exits a real watch process with code 143 on SIGTERM', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const child = Bun.spawn([process.execPath, cliEntry, '--json', '--no-start', 'watch'], {
+      env: { ...process.env, TENON_OUTLINE_RUNTIME_ROOT: root },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const reader = child.stdout.getReader();
+    const stderrPromise = new Response(child.stderr).text();
+    try {
+      const firstOutput = await readUntil(reader, '"type":"hello"');
+      expect(firstOutput).toContain('"type":"hello"');
+      child.kill('SIGTERM');
+      expect(await child.exited).toBe(143);
       expect(await stderrPromise).toBe('');
     } finally {
       child.kill();
@@ -848,6 +1098,20 @@ async function readUntil(
     output += Buffer.from(next.value).toString('utf8');
   }
   return output;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 async function makeRoot(): Promise<string> {

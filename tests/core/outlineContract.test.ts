@@ -31,9 +31,9 @@ describe('outline public contract', () => {
       'AssetLease', 'AssetMetadata', 'AssetRecord', 'Change', 'ChangeSet', 'Diff', 'Event', 'EventFilter',
       'ImportCoverage', 'ImportEvidence', 'ImportOptions', 'ImportPlanResult', 'ImportSourceProfile',
       'ImportStats', 'ImportVerifyResult', 'ImportWarning', 'NoChangeResult', 'NodeDraft', 'NormalizedImport',
-      'NormalizedImportNode', 'Operation', 'OperationLogPage', 'OutlineError', 'OutlineRequest', 'OutlineResponse',
+      'NormalizedImportNode', 'Operation', 'OperationLogPage', 'OutlineError', 'OutlineResponse',
       'OutlineStreamRecord', 'Projection', 'ProjectionResult', 'RevertConflictDiff', 'RichTextPatch',
-      'RuntimeDescriptor', 'RuntimeStatus', 'Selector', 'TargetRef', 'TargetSpec',
+      'RuntimeStatus', 'Selector', 'TargetRef', 'TargetSpec',
     ]);
     for (const schema of Object.values(OUTLINE_PUBLIC_SCHEMAS)) {
       expect(() => Compile(schema)).not.toThrow();

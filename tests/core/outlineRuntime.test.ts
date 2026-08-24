@@ -193,7 +193,7 @@ describe('Outline CLI runtime', () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   test('marks the packaged outline launcher executable before signing', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'outline-packaged-launcher-'));

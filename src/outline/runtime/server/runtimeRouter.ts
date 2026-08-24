@@ -1,5 +1,9 @@
 import { Value } from 'typebox/value';
-import { outlineCapability, outlineCapabilityManifest } from '../../contract/capabilities';
+import {
+  outlineCapability,
+  outlineCapabilityContractDigest,
+  outlineCapabilityManifest,
+} from '../../contract/capabilities';
 import { OutlineContractError, outlineError } from '../../contract/errors';
 import {
   type ChangeSet,
@@ -107,6 +111,7 @@ export class OutlineRuntimeRouter {
         running: true,
         runtime: {
           instanceId: this.workspace.instanceId,
+          contractDigest: outlineCapabilityContractDigest(),
           runtimeVersion: OUTLINE_CLI_VERSION,
           storageVersion: OUTLINE_STORAGE_VERSION,
           ...await this.workspace.status(),
@@ -190,11 +195,16 @@ export class OutlineRuntimeRouter {
     }
     if (command === 'log') return this.log(input as Record<string, unknown>);
     if (command === 'revert') {
-      const operationId = String((input as Record<string, unknown>).operationId);
-      return this.workspace.revert(operationId, context);
+      const value = input as Record<string, unknown>;
+      const operationId = String(value.operationId);
+      return this.workspace.revert(operationId, historyMutationOptions(command, value, context));
     }
-    if (command === 'undo') return this.workspace.undo(context);
-    if (command === 'redo') return this.workspace.redo(context);
+    if (command === 'undo') {
+      return this.workspace.undo(historyMutationOptions(command, input as Record<string, unknown>, context));
+    }
+    if (command === 'redo') {
+      return this.workspace.redo(historyMutationOptions(command, input as Record<string, unknown>, context));
+    }
     const capability = outlineCapability(command);
     if (capability?.kind === 'mutate') {
       const value = input as {
@@ -316,6 +326,25 @@ export class OutlineRuntimeRouter {
     }
     return nodeIds;
   }
+}
+
+function historyMutationOptions(
+  command: 'revert' | 'undo' | 'redo',
+  input: Record<string, unknown>,
+  context: OutlineRuntimeRequestContext,
+): OutlineRuntimeRequestContext & { readonly idempotencyKey?: string; readonly idempotencyPayloadHash?: string } {
+  const idempotencyKey = typeof input.idempotencyKey === 'string' ? input.idempotencyKey : undefined;
+  return {
+    ...context,
+    ...(idempotencyKey ? {
+      idempotencyKey,
+      idempotencyPayloadHash: canonicalSha256({
+        kind: 'outline.history-mutation',
+        command,
+        ...(command === 'revert' ? { operationId: input.operationId } : {}),
+      }),
+    } : {}),
+  };
 }
 
 function logFilterIdentity(input: Record<string, unknown>): Record<string, unknown> {
