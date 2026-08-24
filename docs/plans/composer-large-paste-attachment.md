@@ -40,8 +40,12 @@ or ProseMirror construction.
 ### Pending, recovery, and multiple pastes
 
 **FR-2.** Admission replaces the selection with a fixed-size request atom. The serialized
-upload queue rechecks eligibility and the six-item limit, then settles it in place.
-Send stays disabled while any upload is pending.
+upload queue rechecks eligibility, the 20-attachment message limit, and the 10-image
+subset limit, then settles it in place. Send stays disabled while any upload is pending.
+Renderer admission rejects known count overflow immediately. Main-process turn admission
+normalizes image observations, rejects a normalized prompt-image total over 24 MiB, and
+preserves the complete draft on failure. The existing 2 GiB per-attachment and 8 GiB
+per-Thread managed-storage limits remain unchanged.
 
 **FR-3.** Only synchronous rejection may mention the clipboard. Later upload, quota,
 cancellation, or eligibility failure restores the selection, says the paste was not
@@ -77,7 +81,8 @@ tray is a fixed-height horizontal list that never wraps. At the 280px rail minim
 stable tiles show one complete item plus the next-item affordance. Native scrolling and
 edge chevrons reveal overflow; Left/Right navigates and Enter opens. New items reveal
 without taking editor focus, rail collapse preserves scroll, and resize keeps the
-focused item visible. The six-item cap needs no collapse or `+N` state.
+focused item visible. All 20 allowed attachments remain individually reachable; the tray
+does not collapse them into a `+N` state.
 
 ### Storage and Agent meaning
 
@@ -89,11 +94,15 @@ the body on demand.
 ### Surface and collision result
 
 Implementation touches the composer editor/view, classifier, attachment-tray component,
-messages/CSS, focused renderer/E2E tests, calibration probe, and Agent specs; not Core,
-IPC, dependencies, `docs/TASKS.md`, or `CHANGELOG.md`.
+attachment admission limits, main-process image admission, messages/CSS, focused
+renderer/core/E2E tests, calibration probe, and Agent specs; not IPC, dependencies,
+`docs/TASKS.md`, or `CHANGELOG.md`.
 
-The board lists this plan as a P2 draft; no open PR claims its implementation. Open PR
-#584 is disjoint, and the required #575/#582 contracts are merged.
+The board lists this plan as a P2 draft. Open PR #584 is disjoint. PR #585 currently
+changes only its input-history plan, but its future implementation will overlap
+`ThreadComposerEditor.tsx`, `ThreadView.tsx`, composer CSS/tests, and Agent specs; this
+feature claims those surfaces first, so #585 must coordinate and rebase before building.
+The required #575/#582 contracts are merged.
 
 ## Risks
 
@@ -102,6 +111,8 @@ The board lists this plan as a P2 draft; no open PR claims its implementation. O
 - Async settlement must use request IDs, not stale numeric positions.
 - Identical paste resources may duplicate bytes, bounded by existing quotas.
 - Tray and marker state must derive from one identity/draft to prevent drift.
+- Count limits can be checked before upload, but the 24 MiB prompt-image limit is exact
+  only after main-process normalization; a rejected Send must restore the entire draft.
 
 ## Acceptance Cases
 
@@ -115,8 +126,11 @@ The board lists this plan as a P2 draft; no open PR claims its implementation. O
 - **AC-5:** Every attachment source/category shows one tray item and inline marker for
   the same identity; preview and fallback states work, pending tiles do not shift
   layout, remove-control hover/focus previews the paired deletion without moving the
-  caret, removal from either representation synchronizes without orphaned data, and six
-  attachments remain reachable without wrapping at the 280px rail minimum.
+  caret, removal from either representation synchronizes without orphaned data, and all
+  20 attachments remain reachable without wrapping at the 280px rail minimum.
+- **AC-6:** A message admits at most 20 attachments and at most 10 images. Main admission
+  rejects normalized prompt-image observations above 24 MiB without losing the draft;
+  the 2 GiB per-attachment and 8 GiB per-Thread managed-storage limits still apply.
 
 ## Open questions
 
@@ -126,4 +140,4 @@ None.
 
 Run `bun run typecheck`, `bun run test:renderer`, focused Agent Thread E2E,
 `bun run docs:check`, and `git diff --check`; visually verify light/dark, pending/error,
-reduced-motion, keyboard-focus, narrow-width, and six-attachment states.
+reduced-motion, keyboard-focus, narrow-width, and 20-attachment states.
