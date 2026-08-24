@@ -4721,16 +4721,11 @@ function isImageMimeType(mimeType: string): boolean {
 }
 
 function pastedTextFileName(ordinal: number): string {
-  return ordinal <= 1 ? 'pasted-content.txt' : `pasted-content-${ordinal}.txt`;
+  return ordinal <= 1 ? 'Pasted.txt' : `Pasted-${ordinal}.txt`;
 }
 
 function pastedTextExcerpt(text: string): string {
-  return text
-    .replace(/\r\n?/gu, '\n')
-    .split('\n')
-    .slice(0, 3)
-    .join('\n')
-    .slice(0, 256);
+  return text.replace(/\s+/gu, ' ').trim().slice(0, 256);
 }
 
 function threadContentFromDraft(

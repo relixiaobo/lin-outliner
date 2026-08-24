@@ -62,6 +62,8 @@ const contrastRuleFiles = new Map([
 const hiddenScrollbarSelectors = new Set([
   '.document-outline-rail-track',
   '.document-outline-rail-track::-webkit-scrollbar',
+  '.thread-composer-attachment-tray',
+  '.thread-composer-attachment-tray::-webkit-scrollbar',
 ]);
 const layoutTransitionAllowlist = new Map([
   ['src/renderer/styles/canvas.css|.workspace-canvas|padding', 'Workspace canvas pads around rails during open/close layout motion.'],

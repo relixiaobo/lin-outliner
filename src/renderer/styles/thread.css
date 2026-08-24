@@ -2488,11 +2488,12 @@
 }
 
 .thread-composer-surface {
+  --thread-composer-inset: calc(var(--agent-content-x) - var(--space-3));
   position: relative;
   margin: 0;
   border-radius: var(--panel-radius) var(--panel-radius) 0 0;
   background: var(--fill-1);
-  padding: calc(var(--agent-content-x) - var(--space-3));
+  padding: var(--thread-composer-inset);
   transition: background var(--motion-fast);
 }
 
@@ -2524,8 +2525,8 @@
 .thread-composer-attachment-tray-shell {
   position: relative;
   min-width: 0;
-  height: 72px;
-  margin: 0 calc(-1 * (var(--agent-content-x) - var(--space-3))) var(--space-2);
+  height: 120px;
+  margin: 0 0 var(--space-2);
 }
 
 .thread-composer-attachment-tray {
@@ -2536,11 +2537,16 @@
   overflow-x: auto;
   overflow-y: hidden;
   margin: 0;
-  padding: var(--space-1) var(--agent-content-x);
+  padding: 0;
   list-style: none;
   overscroll-behavior-x: contain;
-  scroll-padding-inline: var(--agent-content-x);
-  scrollbar-width: thin;
+  /* The tray has touchpad, keyboard, and edge-button navigation; hiding only
+     this redundant track keeps the compact composer from splitting in two. */
+  scrollbar-width: none;
+}
+
+.thread-composer-attachment-tray::-webkit-scrollbar {
+  display: none;
 }
 
 .thread-composer-attachment-item {
@@ -2548,29 +2554,40 @@
   display: flex;
   width: 176px;
   min-width: 176px;
-  height: 64px;
+  height: 112px;
   overflow: hidden;
   border: 1px solid var(--separator);
   border-radius: var(--radius-md);
   background: var(--fill-1);
+  transition: border-color var(--motion-fast);
 }
 
 .thread-composer-attachment-item:hover,
 .thread-composer-attachment-item:focus-within {
-  background: var(--fill-2);
+  border-color: var(--border-emphasis);
 }
 
 .thread-composer-attachment-main {
   display: flex;
   width: 100%;
   min-width: 0;
-  align-items: center;
-  gap: var(--space-3);
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: var(--space-2);
   border: 0;
   background: transparent;
   color: var(--text-strong);
-  padding: var(--space-2) var(--space-5) var(--space-2) var(--space-2);
+  padding: var(--space-4);
   text-align: left;
+}
+
+.thread-composer-attachment-item.is-text-preview .thread-composer-attachment-main {
+  padding: var(--space-5);
+}
+
+.thread-composer-attachment-item.is-image-preview .thread-composer-attachment-main {
+  padding: 0;
 }
 
 .thread-composer-attachment-main:focus-visible,
@@ -2580,48 +2597,44 @@
   box-shadow: var(--focus-ring-shadow);
 }
 
-.thread-composer-attachment-thumbnail,
-.thread-composer-attachment-native-icon,
-.thread-composer-attachment-icon {
-  display: flex;
-  width: 42px;
-  height: 42px;
-  flex: 0 0 42px;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-sm);
-  background: var(--fill-2);
-  color: var(--text-soft);
-  object-fit: contain;
-}
-
 .thread-composer-attachment-thumbnail {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
   object-fit: cover;
 }
 
-.thread-composer-attachment-native-icon {
-  background: transparent;
-}
-
-.thread-composer-attachment-icon.is-pending svg {
+.thread-composer-attachment-kind.is-pending svg {
   animation: thread-tool-spin var(--motion-spin-cycle) linear infinite;
 }
 
 .thread-composer-attachment-copy {
   display: flex;
+  width: 100%;
   min-width: 0;
   flex: 1 1 auto;
   flex-direction: column;
   gap: var(--space-1);
 }
 
+.thread-composer-attachment-item.is-text-preview .thread-composer-attachment-copy {
+  justify-content: space-between;
+}
+
+.thread-composer-attachment-item.is-file-preview .thread-composer-attachment-copy {
+  justify-content: flex-start;
+}
+
 .thread-composer-attachment-name {
+  display: -webkit-box;
   overflow: hidden;
-  font-size: var(--font-ui-xs);
-  font-weight: 650;
-  line-height: var(--line-ui-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: var(--font-ui-sm);
+  font-weight: 600;
+  line-height: var(--line-ui-sm-tight);
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .thread-composer-attachment-meta,
@@ -2637,18 +2650,50 @@
   white-space: nowrap;
 }
 
+.thread-composer-attachment-item.is-file-preview .thread-composer-attachment-meta {
+  color: var(--text-secondary);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+}
+
 .thread-composer-attachment-excerpt {
   display: -webkit-box;
   overflow-wrap: anywhere;
-  white-space: pre-wrap;
+  white-space: normal;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
 }
 
+.thread-composer-attachment-item.is-text-preview .thread-composer-attachment-excerpt {
+  color: var(--text-secondary);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs-relaxed);
+}
+
+.thread-composer-attachment-kind {
+  display: inline-flex;
+  width: fit-content;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-1);
+  border-radius: var(--radius-xs);
+  box-shadow: var(--outline-muted);
+  color: var(--text-soft);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
+  padding: 0 var(--space-3);
+  text-transform: uppercase;
+}
+
+.thread-composer-attachment-item.is-file-preview .thread-composer-attachment-kind {
+  margin-top: auto;
+}
+
 .thread-composer-attachment-remove {
+  --thread-composer-attachment-remove-inset: calc(var(--radius-md) - var(--space-1));
   position: absolute;
-  top: var(--space-1);
-  right: var(--space-1);
+  top: var(--thread-composer-attachment-remove-inset);
+  right: var(--thread-composer-attachment-remove-inset);
   display: inline-flex;
   width: 20px;
   height: 20px;
@@ -2656,9 +2701,10 @@
   justify-content: center;
   border: 0;
   border-radius: var(--radius-pill);
-  background: var(--fill-2);
+  background: transparent;
   color: var(--text-faint);
   opacity: 0;
+  transition: color var(--motion-fast);
 }
 
 .thread-composer-attachment-item:hover .thread-composer-attachment-remove,
@@ -2668,13 +2714,12 @@
 
 .thread-composer-attachment-remove:hover,
 .thread-composer-attachment-remove:focus-visible {
-  background: var(--fill-3);
   color: var(--text-strong);
 }
 
 .thread-composer-attachment-edge {
   position: absolute;
-  top: 24px;
+  top: 48px;
   z-index: var(--z-raised);
   display: inline-flex;
   width: 24px;

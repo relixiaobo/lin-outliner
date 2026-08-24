@@ -1422,10 +1422,15 @@ test.describe('canonical agent Thread surface', () => {
       tray.scrollLeft = 0;
       const items = Array.from(tray.querySelectorAll<HTMLElement>('.thread-composer-attachment-item'));
       const trayRect = tray.getBoundingClientRect();
+      const surfaceRect = tray.closest<HTMLElement>('.thread-composer-surface')?.getBoundingClientRect();
       const first = items[0]?.getBoundingClientRect();
       const second = items[1]?.getBoundingClientRect();
       return {
         clientWidth: tray.clientWidth,
+        firstHeight: first?.height ?? 0,
+        horizontalInsetDelta: first && surfaceRect
+          ? Math.abs((first.left - surfaceRect.left) - (surfaceRect.right - trayRect.right))
+          : Number.POSITIVE_INFINITY,
         firstWidth: first?.width ?? 0,
         rowTops: new Set(items.map((item) => Math.round(item.getBoundingClientRect().top))).size,
         scrollWidth: tray.scrollWidth,
@@ -1433,10 +1438,24 @@ test.describe('canonical agent Thread surface', () => {
       };
     });
     expect(trayGeometry.rowTops).toBe(1);
+    expect(trayGeometry.firstHeight).toBeGreaterThanOrEqual(108);
+    expect(trayGeometry.horizontalInsetDelta).toBeLessThan(1);
     expect(trayGeometry.firstWidth).toBeGreaterThanOrEqual(170);
     expect(trayGeometry.secondVisible).toBeGreaterThan(24);
     expect(trayGeometry.scrollWidth).toBeGreaterThan(trayGeometry.clientWidth);
     await expect(page.getByRole('button', { name: 'Show more attachments' })).toBeVisible();
+    const edgeInsets = await page.getByRole('button', { name: 'Show more attachments' }).evaluate((edge) => {
+      const surface = edge.closest<HTMLElement>('.thread-composer-surface');
+      const first = surface?.querySelector<HTMLElement>('.thread-composer-attachment-item');
+      if (!surface || !first) return null;
+      const surfaceRect = surface.getBoundingClientRect();
+      return {
+        card: first.getBoundingClientRect().left - surfaceRect.left,
+        edge: surfaceRect.right - edge.getBoundingClientRect().right,
+      };
+    });
+    expect(edgeInsets).not.toBeNull();
+    expect(edgeInsets!.edge).toBeGreaterThan(edgeInsets!.card);
   });
 
   test('limits images independently from the message attachment budget', async ({ page }) => {
@@ -1456,13 +1475,23 @@ test.describe('canonical agent Thread surface', () => {
     await createNewThread(page);
     const composer = page.getByRole('textbox', { name: 'Message this Thread' });
     await composer.fill('Before ');
-    const pastedText = `large pasted body\n${'x'.repeat(4 * 1024)}`;
+    const pastedText = `large pasted body\nsecond preview line\tthird preview line\n${'x'.repeat(4 * 1024)}`;
     await pasteComposerText(page, pastedText);
 
     const marker = page.locator('.thread-composer-inline-ref[data-thread-file-ref]');
-    await expect(marker).toContainText('pasted-content.txt');
+    await expect(marker).toContainText('Pasted.txt');
     await expect(page.locator('.thread-composer-attachment-item')).toHaveCount(1);
-    await expect(page.locator('.thread-composer-attachment-excerpt')).toContainText('large pasted body');
+    const excerpt = page.locator('.thread-composer-attachment-excerpt');
+    await expect(excerpt).toContainText('large pasted body second preview line third preview line');
+    expect(await excerpt.textContent()).not.toMatch(/\s{2,}/u);
+    const insetDelta = await page.locator('.thread-composer-attachment-item').evaluate((card) => {
+      const surface = card.closest<HTMLElement>('.thread-composer-surface');
+      if (!surface) return Number.POSITIVE_INFINITY;
+      const cardRect = card.getBoundingClientRect();
+      const surfaceRect = surface.getBoundingClientRect();
+      return Math.abs((cardRect.top - surfaceRect.top) - (cardRect.left - surfaceRect.left));
+    });
+    expect(insetDelta).toBeLessThan(1);
     expect(await composer.textContent()).not.toContain('x'.repeat(1_000));
     await page.getByRole('button', { name: 'Send' }).click();
 
@@ -1472,7 +1501,7 @@ test.describe('canonical agent Thread surface', () => {
       expect.objectContaining({
         type: 'attachment',
         id: expect.any(String),
-        name: 'pasted-content.txt',
+        name: 'Pasted.txt',
         mimeType: 'text/plain',
         source: expect.objectContaining({ kind: 'threadPayload' }),
       }),
@@ -1490,8 +1519,8 @@ test.describe('canonical agent Thread surface', () => {
 
     const markers = page.locator('.thread-composer-inline-ref[data-thread-file-ref]');
     await expect(markers).toHaveCount(2);
-    await expect(markers.nth(0)).toContainText('pasted-content.txt');
-    await expect(markers.nth(1)).toContainText('pasted-content-2.txt');
+    await expect(markers.nth(0)).toContainText('Pasted.txt');
+    await expect(markers.nth(1)).toContainText('Pasted-2.txt');
     await expect(page.locator('.thread-composer-attachment-item')).toHaveCount(2);
     await page.getByRole('button', { name: 'Send' }).click();
 
@@ -1503,8 +1532,8 @@ test.describe('canonical agent Thread surface', () => {
       type?: string;
     }>).filter((part) => part.type === 'attachment');
     expect(attachments.map((attachment) => attachment.name)).toEqual([
-      'pasted-content.txt',
-      'pasted-content-2.txt',
+      'Pasted.txt',
+      'Pasted-2.txt',
     ]);
     expect(new Set(attachments.map((attachment) => attachment.id)).size).toBe(2);
     expect(new Set(attachments.map((attachment) => attachment.source?.ref?.id)).size).toBe(1);
@@ -1522,6 +1551,20 @@ test.describe('canonical agent Thread surface', () => {
     await expect(marker).toHaveCount(1);
     await remove.hover();
     await expect(marker).toHaveClass(/is-removal-preview/);
+    const removeInset = await remove.evaluate((button) => {
+      const card = button.closest<HTMLElement>('.thread-composer-attachment-item');
+      if (!card) return null;
+      const buttonRect = button.getBoundingClientRect();
+      const cardRect = card.getBoundingClientRect();
+      return {
+        right: cardRect.right - buttonRect.right,
+        top: buttonRect.top - cardRect.top,
+      };
+    });
+    expect(removeInset).not.toBeNull();
+    expect(removeInset!.right).toBeGreaterThanOrEqual(6);
+    expect(Math.abs(removeInset!.right - removeInset!.top)).toBeLessThan(1);
+    await expect(remove).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
     await page.getByRole('textbox', { name: 'Message this Thread' }).hover();
     await expect(marker).not.toHaveClass(/is-removal-preview/);
     await remove.focus();
@@ -1531,6 +1574,28 @@ test.describe('canonical agent Thread surface', () => {
     await remove.click();
     await expect(marker).toHaveCount(0);
     await expect(page.locator('.thread-composer-attachment-item')).toHaveCount(0);
+  });
+
+  test('opens attachment cards on click without showing a redundant hover preview', async ({ page }) => {
+    await createNewThread(page);
+    await page.locator('.thread-composer-file-input').setInputFiles({
+      name: 'preview.md',
+      mimeType: 'text/markdown',
+      buffer: Buffer.from('# Composer attachment preview'),
+    });
+
+    const card = page.getByRole('button', { name: 'Preview preview.md' });
+    await expect(card).not.toHaveAttribute('title');
+    const item = card.locator('xpath=..');
+    const restBorderWidth = await item.evaluate((element) => getComputedStyle(element).borderTopWidth);
+    await card.hover();
+    await page.waitForTimeout(550);
+    await expect(item).toHaveCSS('border-top-width', restBorderWidth);
+    await expect(page.locator('[data-inline-file-preview]')).toHaveCount(0);
+
+    await card.click();
+    await expect(page.locator('.outline-panel-surface.active-panel.is-file-preview'))
+      .toContainText('Mock preview text.');
   });
 
   test('preserves a directory selected from the composer mention menu', async ({ page }) => {
@@ -8333,9 +8398,9 @@ test('keeps Send disabled and cancels a pending large-paste attachment when remo
   await composer.focus();
   await pasteComposerText(page, 'pending paste\n'.repeat(6_000));
 
-  await expect(page.locator('.thread-composer-pending-ref')).toContainText('pasted-content.txt');
+  await expect(page.locator('.thread-composer-pending-ref')).toContainText('Pasted.txt');
   await expect(page.getByRole('button', { name: 'Send' })).toBeDisabled();
-  await page.getByRole('button', { name: 'Remove pasted-content.txt and message reference' }).click();
+  await page.getByRole('button', { name: 'Remove Pasted.txt and message reference' }).click();
   await expect(page.locator('.thread-composer-pending-ref')).toHaveCount(0);
   await expect(page.locator('.thread-composer-attachment-item')).toHaveCount(0);
   await expect.poll(async () => (
@@ -8365,7 +8430,7 @@ test('restores the replaced composer slice when large-paste attachment upload fa
   await expect(page.locator('.thread-composer-pending-ref')).toHaveCount(0);
   await expect(composer).toHaveText('Before selected after');
   await expect(page.getByRole('status')).toContainText(
-    'pasted-content.txt could not be attached, so the paste was not inserted.',
+    'Pasted.txt could not be attached, so the paste was not inserted.',
   );
   await expect.poll(async () => (
     (await commandCalls(page)).filter((call) => call.cmd === 'attachment-upload/abort').length

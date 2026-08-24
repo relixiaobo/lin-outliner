@@ -322,7 +322,7 @@ const threadComposerSchema = new Schema({
       },
       toDOM(node) {
         const requestId = String(node.attrs.requestId ?? '');
-        const name = String(node.attrs.name ?? '') || 'pasted-content.txt';
+        const name = String(node.attrs.name ?? '') || 'Pasted.txt';
         const ariaLabel = String(node.attrs.ariaLabel ?? '') || `Attaching ${name}`;
         return [
           'span',
@@ -1125,7 +1125,7 @@ function docToDraft(doc: PMNode): ThreadComposerDraft {
     }
     if (child.type.name === 'pendingFileReference') {
       const requestId = String(child.attrs.requestId ?? '');
-      const name = String(child.attrs.name ?? '') || 'pasted-content.txt';
+      const name = String(child.attrs.name ?? '') || 'Pasted.txt';
       if (requestId) {
         const reference = { name, requestId };
         pendingFileRefs.push(reference);

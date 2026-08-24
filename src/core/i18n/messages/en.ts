@@ -1700,6 +1700,7 @@ export const en = {
       previewAttachment: ({ name }: { name: string }) => `Preview ${name}`,
       removeAttachmentAndReference: ({ name }: { name: string }) => `Remove ${name} and message reference`,
       attachmentStatusAttaching: 'Attaching',
+      attachmentKindPasted: 'Pasted',
       attachmentKindFolder: 'Folder',
       attachmentKindFile: 'File',
       maxAttachments: ({ max }: { max: number }) => `You can attach up to ${max} files.`,

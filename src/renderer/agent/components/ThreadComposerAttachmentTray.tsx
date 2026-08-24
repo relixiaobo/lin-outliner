@@ -11,7 +11,8 @@ import {
 import type { ThreadAttachmentContent } from '../../../core/agent/protocol';
 import { useT } from '../../i18n/I18nProvider';
 import { inlineFileIconKind, type InlineFileIconKind } from '../../ui/editor/inlineFileIcon';
-import { inlineFilePreviewAttrs } from '../../ui/editor/inlineFilePreviewData';
+import { dispatchPreviewTargetOpen } from '../../ui/preview/previewEvents';
+import { wantsNewPaneFromClick } from '../../ui/shared';
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -189,46 +190,62 @@ function TrayItemView({
   readonly threadId: string;
 }) {
   const name = item.kind === 'attachment' ? item.attachment.name : item.name;
-  const previewAttrs = item.kind === 'attachment'
-    ? inlineFilePreviewAttrs({
-      attachmentId: item.attachment.id,
-      entryKind: item.reference.entryKind,
-      iconDataUrl: item.reference.iconDataUrl,
-      mimeType: item.attachment.mimeType,
-      name,
-      path: item.reference.path ?? (item.attachment.source.kind === 'localFile'
-        ? item.attachment.source.path
-        : item.attachment.name),
-      ref: item.reference.ref,
-      sizeBytes: item.attachment.sizeBytes,
-      thumbnailDataUrl: item.previewUrl ?? item.reference.thumbnailDataUrl,
-      threadId,
-    })
-    : {};
+  const hasTextPreview = Boolean(item.excerpt);
+  const hasImagePreview = trayItemHasImagePreview(item);
+  const presentation = hasTextPreview
+    ? 'is-text-preview'
+    : hasImagePreview ? 'is-image-preview' : 'is-file-preview';
+  const meta = trayItemMeta(item);
   return (
     <li
-      className={`thread-composer-attachment-item${item.kind === 'pending' ? ' is-pending' : ''}`}
+      className={`thread-composer-attachment-item ${presentation}${item.kind === 'pending' ? ' is-pending' : ''}`}
       data-attachment-tray-index={index}
     >
       <button
-        {...previewAttrs}
         aria-label={item.kind === 'pending'
           ? labels.attachingAttachment({ name })
           : labels.previewAttachment({ name })}
         className="thread-composer-attachment-main"
         data-attachment-tray-main
         data-attachment-tray-index={index}
+        onClick={(event) => {
+          if (item.kind === 'pending') return;
+          dispatchPreviewTargetOpen({
+            newPane: wantsNewPaneFromClick(event),
+            target: {
+              kind: 'local-file',
+              path: item.reference.path ?? (item.attachment.source.kind === 'localFile'
+                ? item.attachment.source.path
+                : item.attachment.name),
+              entryKind: item.reference.entryKind
+                ?? (item.attachment.mimeType === 'inode/directory' ? 'directory' : 'file'),
+              label: name,
+              threadId,
+              attachmentId: item.attachment.id,
+            },
+          });
+        }}
         type="button"
       >
-        <TrayVisual item={item} />
-        <span className="thread-composer-attachment-copy">
-          <span className="thread-composer-attachment-name" title={name}>{name}</span>
-          {item.excerpt ? (
+        {hasTextPreview ? (
+          <span className="thread-composer-attachment-copy">
             <span className="thread-composer-attachment-excerpt">{item.excerpt}</span>
-          ) : (
-            <span className="thread-composer-attachment-meta">{trayItemMeta(item, labels)}</span>
-          )}
-        </span>
+            <span className={`thread-composer-attachment-kind${item.kind === 'pending' ? ' is-pending' : ''}`}>
+              {item.kind === 'pending' ? <LoaderIcon size={ICON_SIZE.tiny} /> : null}
+              {item.kind === 'pending' ? labels.attachmentStatusAttaching : labels.attachmentKindPasted}
+            </span>
+          </span>
+        ) : (
+          <>
+            {hasImagePreview ? <TrayImage item={item} /> : (
+              <span className="thread-composer-attachment-copy">
+                <span className="thread-composer-attachment-name">{name}</span>
+                {meta ? <span className="thread-composer-attachment-meta">{meta}</span> : null}
+                <TrayKindBadge item={item} labels={labels} />
+              </span>
+            )}
+          </>
+        )}
       </button>
       <button
         aria-label={labels.removeAttachmentAndReference({ name })}
@@ -250,20 +267,35 @@ function TrayItemView({
   );
 }
 
-function TrayVisual({ item }: { readonly item: TrayItem }) {
-  if (item.kind === 'pending') {
-    return (
-      <span className="thread-composer-attachment-icon is-pending" aria-hidden="true">
-        <LoaderIcon size={ICON_SIZE.toolbar} />
-      </span>
-    );
-  }
+function trayItemHasImagePreview(item: TrayItem): boolean {
+  return item.kind === 'attachment'
+    && item.attachment.mimeType.startsWith('image/')
+    && Boolean(item.previewUrl ?? item.reference.thumbnailDataUrl);
+}
+
+function TrayImage({ item }: { readonly item: TrayItem }) {
+  if (item.kind === 'pending') return null;
   const thumbnail = item.previewUrl ?? item.reference.thumbnailDataUrl;
   if (thumbnail && item.attachment.mimeType.startsWith('image/')) {
     return <img alt="" className="thread-composer-attachment-thumbnail" src={thumbnail} />;
   }
-  if (item.reference.iconDataUrl) {
-    return <img alt="" className="thread-composer-attachment-native-icon" src={item.reference.iconDataUrl} />;
+  return null;
+}
+
+function TrayKindBadge({
+  item,
+  labels,
+}: {
+  readonly item: TrayItem;
+  readonly labels: ReturnType<typeof useT>['agent']['composer'];
+}) {
+  if (item.kind === 'pending') {
+    return (
+      <span className="thread-composer-attachment-kind is-pending">
+        <LoaderIcon size={ICON_SIZE.tiny} />
+        {labels.attachmentStatusAttaching}
+      </span>
+    );
   }
   const Icon = iconForKind(inlineFileIconKind({
     entryKind: item.reference.entryKind,
@@ -271,8 +303,9 @@ function TrayVisual({ item }: { readonly item: TrayItem }) {
     name: item.attachment.name,
   }));
   return (
-    <span className="thread-composer-attachment-icon" aria-hidden="true">
-      <Icon size={ICON_SIZE.toolbar} />
+    <span className="thread-composer-attachment-kind">
+      <Icon size={ICON_SIZE.tiny} />
+      {trayItemKind(item, labels)}
     </span>
   );
 }
@@ -317,14 +350,20 @@ function projectTrayItems({
 
 function trayItemMeta(
   item: TrayItem,
+): string {
+  if (item.kind === 'pending'
+    || item.reference.entryKind === 'directory'
+    || item.attachment.sizeBytes <= 0) return '';
+  return formatBytes(item.attachment.sizeBytes);
+}
+
+function trayItemKind(
+  item: Extract<TrayItem, { readonly kind: 'attachment' }>,
   labels: ReturnType<typeof useT>['agent']['composer'],
 ): string {
-  if (item.kind === 'pending') return labels.attachmentStatusAttaching;
-  const type = item.reference.entryKind === 'directory'
-    ? labels.attachmentKindFolder
-    : item.attachment.mimeType || labels.attachmentKindFile;
-  if (item.reference.entryKind === 'directory' || item.attachment.sizeBytes <= 0) return type;
-  return `${type} - ${formatBytes(item.attachment.sizeBytes)}`;
+  if (item.reference.entryKind === 'directory') return labels.attachmentKindFolder;
+  const extension = item.attachment.name.match(/\.([a-z0-9]{1,8})$/iu)?.[1];
+  return extension?.toUpperCase() || labels.attachmentKindFile;
 }
 
 function handleTrayKeyDown(event: KeyboardEvent<HTMLUListElement>): void {

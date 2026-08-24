@@ -1592,6 +1592,7 @@ export const zhHans: PartialMessages = {
       previewAttachment: ({ name }) => `预览 ${name}`,
       removeAttachmentAndReference: ({ name }) => `移除 ${name} 及消息中的引用`,
       attachmentStatusAttaching: '正在添加',
+      attachmentKindPasted: '粘贴文本',
       attachmentKindFolder: '文件夹',
       attachmentKindFile: '文件',
       maxAttachments: ({ max }) => `最多可添加 ${max} 个文件。`,

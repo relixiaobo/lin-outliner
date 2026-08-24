@@ -3,7 +3,7 @@
 ## Goal
 
 Keep the Agent composer responsive: large plain-text pastes become removable
-`pasted-content*.txt` attachments without entering ProseMirror, while fitting pastes
+`Pasted*.txt` attachments without entering ProseMirror, while fitting pastes
 remain editable. Every staged file appears in one tray and keeps an inline marker at
 its authored message position.
 
@@ -55,8 +55,8 @@ per-Thread managed-storage limits remain unchanged.
 cancellation, or eligibility failure restores the selection, says the paste was not
 inserted, and discards unowned resources.
 
-**FR-4.** Draft-local names increase from `pasted-content.txt` to
-`pasted-content-2.txt` and are never reused. Rapid or identical pastes remain separate
+**FR-4.** Draft-local names increase from `Pasted.txt` to `Pasted-2.txt` and are never
+reused. Rapid or identical pastes remain separate
 ordered slots. Send/clear resets naming; rail collapse preserves it; Thread switch
 keeps current discard and cleanup behavior.
 
@@ -75,18 +75,29 @@ reference" label.
 
 | Content | Tray presentation |
 | --- | --- |
-| Image or existing thumbnail | Thumbnail |
-| Generated pasted text | At most three visual lines and 256 UTF-16 units |
-| Text/code, PDF, Office, spreadsheet, presentation, audio/video, archive, or generic file | Semantic icon, name, type, and formatted size; use an existing thumbnail when available |
+| Image or existing thumbnail | Edge-to-edge thumbnail |
+| Generated pasted text | Whitespace-collapsed continuous excerpt of at most three visual lines and 256 UTF-16 units above a neutral `Pasted` / pending-status label |
+| Text/code, PDF, Office, spreadsheet, presentation, audio/video, archive, or generic file | Wrapping name and formatted size above a compact semantic type label/icon |
 | Directory | Folder treatment; never imply its contents were read |
 
 Eligible items open the shared preview; other states remain identifiable/removable. The
-tray is a fixed-height horizontal list that never wraps. At the 280px rail minimum,
-stable tiles show one complete item plus the next-item affordance. Native scrolling and
-edge chevrons reveal overflow; Left/Right navigates and Enter opens. New items reveal
+tray is a fixed-height horizontal list of preview-first 176 x 112 px cards that never
+wraps. At the 280px rail minimum, stable cards show one complete item plus the next-item
+affordance within the composer's trailing inset. The visual scrollbar stays hidden;
+native horizontal scrolling and inset edge chevrons reveal overflow, Left/Right
+navigates, and Enter opens. New items reveal
 without taking editor focus, rail collapse preserves scroll, and resize keeps the
 focused item visible. All 20 allowed attachments remain individually reachable; the tray
-does not collapse them into a `+N` state.
+does not collapse them into a `+N` state. The first card's top and inline-start offsets
+share the composer inset token.
+
+Because the card already previews the attachment, hover only deepens its existing 1 px
+neutral boundary without changing thickness and reveals the remove control; it does not
+open the inline-reference hover preview or a native title tooltip. Activating the card
+opens the shared full preview. The remove control is unboxed and keeps an equal
+radius-derived inset from the card's top and trailing edges; hovering or focusing it
+deepens only the glyph and highlights the linked marker, and leaving it clears that
+preview before deletion.
 
 ### Storage and Agent meaning
 
