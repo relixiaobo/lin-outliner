@@ -141,7 +141,11 @@ interface ThreadComposerEditorProps {
   isStreaming: boolean;
   onChange: (draft: ThreadComposerDraft) => void;
   onFilesPasted: (files: File[]) => void;
-  onLargeTextPaste: (requestId: string, text: string) => string | null;
+  onLargeTextPaste: (
+    requestId: string,
+    text: string,
+    replacedAttachmentIds: readonly string[],
+  ) => string | null;
   onLocalFilePreview: (file: ThreadComposerLocalFileCandidate) => Promise<ThreadComposerLocalFileCandidate | null>;
   onLocalFileSearch: (query: string) => Promise<ThreadComposerLocalFileCandidate[]>;
   onLocalFileSelect: (file: ThreadComposerLocalFileCandidate) => Promise<ThreadComposerFileReference | null>;
@@ -733,13 +737,15 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
             if (admission.outcome === 'attach') {
               event.preventDefault();
               const requestId = crypto.randomUUID();
-              const name = propsRef.current.onLargeTextPaste(requestId, text);
-              if (!name) return true;
               const selection = viewInstance.state.selection;
-              replacedPasteSlicesRef.current.set(
+              const replacedSlice = viewInstance.state.doc.slice(selection.from, selection.to);
+              const name = propsRef.current.onLargeTextPaste(
                 requestId,
-                viewInstance.state.doc.slice(selection.from, selection.to),
+                text,
+                fileReferenceIdsInSlice(replacedSlice),
               );
+              if (!name) return true;
+              replacedPasteSlicesRef.current.set(requestId, replacedSlice);
               const pending = threadComposerSchema.nodes.pendingFileReference.create({
                 requestId,
                 name,
@@ -1141,6 +1147,16 @@ function docToDraft(doc: PMNode): ThreadComposerDraft {
     pendingFileRefs,
     text,
   };
+}
+
+function fileReferenceIdsInSlice(slice: Slice): string[] {
+  const attachmentIds: string[] = [];
+  slice.content.descendants((node) => {
+    if (node.type.name !== 'fileReference') return;
+    const attachmentId = String(node.attrs.attachmentId ?? '');
+    if (attachmentId) attachmentIds.push(attachmentId);
+  });
+  return attachmentIds;
 }
 
 function replaceWithText(view: EditorView, range: Pick<ComposerTrigger, 'from' | 'to'>, text: string) {

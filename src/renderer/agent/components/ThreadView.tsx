@@ -621,6 +621,10 @@ interface PendingComposerPaste extends ThreadComposerPendingFileReference {
 interface PendingComposerPasteRequest extends PendingComposerPaste {
   readonly controller: AbortController;
   readonly detachLifecycleAbort: () => void;
+  // The pending atom owns attachment state removed with its replaced slice.
+  replacedAttachments: ThreadAttachmentContent[];
+  // Programmatic settle/restore also removes the atom; it is not user cancellation.
+  settling: boolean;
 }
 
 export function ThreadView({
@@ -2020,6 +2024,7 @@ export function ThreadView({
       for (const request of pendingPasteRequestsRef.current.values()) {
         request.controller.abort();
         request.detachLifecycleAbort();
+        releaseReplacedPasteAttachments(request);
       }
       pendingPasteRequestsRef.current.clear();
       for (const previewUrl of attachmentPreviewUrlsRef.current.values()) URL.revokeObjectURL(previewUrl);
@@ -2104,6 +2109,7 @@ export function ThreadView({
     const currentDraft = draftRef.current;
     if (!composerEnabled
       || currentDraft.empty
+      || currentDraft.pendingFileRefs.length > 0
       || sending
       || threadCreationPending
       || waitingForInput) return;
@@ -2292,7 +2298,11 @@ export function ThreadView({
     return result;
   }
 
-  function admitLargeTextPaste(requestId: string, text: string): string | null {
+  function admitLargeTextPaste(
+    requestId: string,
+    text: string,
+    replacedAttachmentIds: readonly string[],
+  ): string | null {
     const lifecycle = attachmentLifecycleControllerRef.current;
     if (!lifecycle || lifecycle.signal.aborted || !attachmentAdmissionEnabledRef.current) {
       setError(t.agent.composer.largePasteUnavailable);
@@ -2308,13 +2318,16 @@ export function ThreadView({
     const excerpt = pastedTextExcerpt(text);
     const controller = new AbortController();
     const abortFromLifecycle = () => controller.abort();
+    const replacedIds = fullyReplacedAttachmentIds(draftRef.current, replacedAttachmentIds);
     lifecycle.signal.addEventListener('abort', abortFromLifecycle, { once: true });
     const request: PendingComposerPasteRequest = {
       controller,
       detachLifecycleAbort: () => lifecycle.signal.removeEventListener('abort', abortFromLifecycle),
       excerpt,
       name,
+      replacedAttachments: attachmentsRef.current.filter((attachment) => replacedIds.has(attachment.id)),
       requestId,
+      settling: false,
     };
     pendingPasteRequestsRef.current.set(requestId, request);
     setPendingPastes((current) => [...current, { excerpt, name, requestId }]);
@@ -2341,14 +2354,29 @@ export function ThreadView({
       }
       attachmentTextExcerptsRef.current.set(prepared.content.id, request.excerpt);
       commitPreparedAttachments([prepared], { insertReferences: false });
+      request.settling = true;
       if (!composerRef.current.settlePendingFileReference(requestId, prepared.reference)) {
+        request.settling = false;
         updateAttachments((current) => current.filter((attachment) => attachment.id !== prepared.content.id));
         attachmentTextExcerptsRef.current.delete(prepared.content.id);
         discardPreparedAttachment(threadId, prepared);
       }
     } catch {
-      if (!controller.signal.aborted && composerRef.current?.restorePendingFileReference(requestId)) {
-        setError(t.agent.composer.largePasteNotInserted({ name: request.name }));
+      if (!controller.signal.aborted && composerRef.current?.hasPendingFileReference(requestId)) {
+        const replacedAttachments = request.replacedAttachments;
+        if (replacedAttachments.length > 0) {
+          updateAttachments((current) => uniqueAttachments([...current, ...replacedAttachments]));
+        }
+        request.replacedAttachments = [];
+        request.settling = true;
+        if (composerRef.current.restorePendingFileReference(requestId)) {
+          setError(t.agent.composer.largePasteNotInserted({ name: request.name }));
+        } else {
+          request.settling = false;
+          request.replacedAttachments = replacedAttachments;
+          const replacedIds = new Set(replacedAttachments.map((attachment) => attachment.id));
+          updateAttachments((current) => current.filter((attachment) => !replacedIds.has(attachment.id)));
+        }
       }
     } finally {
       finishPendingPaste(requestId);
@@ -2359,6 +2387,7 @@ export function ThreadView({
     const request = pendingPasteRequestsRef.current.get(requestId);
     if (!request) return;
     request.detachLifecycleAbort();
+    releaseReplacedPasteAttachments(request);
     pendingPasteRequestsRef.current.delete(requestId);
     setPendingPastes((current) => current.filter((candidate) => candidate.requestId !== requestId));
   }
@@ -2366,6 +2395,34 @@ export function ThreadView({
   function cancelPendingPaste(requestId: string): void {
     pendingPasteRequestsRef.current.get(requestId)?.controller.abort();
     finishPendingPaste(requestId);
+  }
+
+  function releaseReplacedPasteAttachments(request: PendingComposerPasteRequest): void {
+    if (request.replacedAttachments.length === 0) return;
+    const retained = [
+      ...attachmentsRef.current,
+      ...Array.from(pendingPasteRequestsRef.current.values())
+        .filter((candidate) => candidate !== request)
+        .flatMap((candidate) => candidate.replacedAttachments),
+    ];
+    const releasedResources: ThreadAttachmentContent[] = [];
+    for (const attachment of request.replacedAttachments) {
+      if (retained.some((candidate) => candidate.id === attachment.id)) continue;
+      if (
+        !retained.some((candidate) => sameManagedResource(candidate, attachment))
+        && !releasedResources.some((candidate) => sameManagedResource(candidate, attachment))
+      ) {
+        discardManagedAttachment(threadId, attachment);
+        releasedResources.push(attachment);
+      }
+      releaseAttachmentUiState(
+        attachment.id,
+        attachmentPreviewUrlsRef.current,
+        attachmentSourceKeysRef.current,
+        attachmentTextExcerptsRef.current,
+      );
+    }
+    request.replacedAttachments = [];
   }
 
   function rejectTextPaste(reason: 'ceiling' | 'draft-budget'): void {
@@ -2645,15 +2702,21 @@ export function ThreadView({
     });
     const retainedPendingRequests = new Set(next.pendingFileRefs.map((reference) => reference.requestId));
     for (const requestId of pendingPasteRequestsRef.current.keys()) {
-      if (!retainedPendingRequests.has(requestId)) cancelPendingPaste(requestId);
+      if (retainedPendingRequests.has(requestId)) continue;
+      const request = pendingPasteRequestsRef.current.get(requestId);
+      if (request?.settling) finishPendingPaste(requestId);
+      else cancelPendingPaste(requestId);
     }
     if (sendingRef.current) return;
     const referencedIds = new Set(next.fileRefs.map((ref) => ref.attachmentId));
+    const heldAttachmentIds = new Set(Array.from(pendingPasteRequestsRef.current.values())
+      .flatMap((request) => request.replacedAttachments.map((attachment) => attachment.id)));
     const current = attachmentsRef.current;
     const retained = current.filter((attachment) => referencedIds.has(attachment.id));
     if (retained.length === current.length) return;
     for (const attachment of current) {
       if (!referencedIds.has(attachment.id)) {
+        if (heldAttachmentIds.has(attachment.id)) continue;
         if (!retained.some((candidate) => sameManagedResource(candidate, attachment))) {
           discardManagedAttachment(threadId, attachment);
         }
@@ -4704,6 +4767,25 @@ function composerAttachmentCount(
   pending: ReadonlyMap<string, PendingComposerPasteRequest>,
 ): number {
   return attachments.length + pending.size;
+}
+
+function fullyReplacedAttachmentIds(
+  draft: ThreadComposerDraft,
+  selectedAttachmentIds: readonly string[],
+): Set<string> {
+  const draftCounts = new Map<string, number>();
+  const selectedCounts = new Map<string, number>();
+  for (const reference of draft.fileRefs) {
+    draftCounts.set(reference.attachmentId, (draftCounts.get(reference.attachmentId) ?? 0) + 1);
+  }
+  for (const attachmentId of selectedAttachmentIds) {
+    selectedCounts.set(attachmentId, (selectedCounts.get(attachmentId) ?? 0) + 1);
+  }
+  return new Set(Array.from(selectedCounts).flatMap(([attachmentId, selectedCount]) => (
+    selectedCount >= (draftCounts.get(attachmentId) ?? Number.POSITIVE_INFINITY)
+      ? [attachmentId]
+      : []
+  )));
 }
 
 function countImageAttachments(attachments: readonly ThreadAttachmentContent[]): number {

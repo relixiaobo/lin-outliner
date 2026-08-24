@@ -200,57 +200,69 @@ function TrayItemView({
     ? 'is-text-preview'
     : hasImagePreview ? 'is-image-preview' : 'is-file-preview';
   const meta = trayItemMeta(item);
+  const content = hasTextPreview ? (
+    <span className="thread-composer-attachment-copy">
+      <span className="thread-composer-attachment-excerpt">{item.excerpt}</span>
+      <span className={`thread-composer-attachment-kind${item.kind === 'pending' ? ' is-pending' : ''}`}>
+        {item.kind === 'pending' ? <LoaderIcon size={ICON_SIZE.tiny} /> : null}
+        {item.kind === 'pending' ? labels.attachmentStatusAttaching : labels.attachmentKindPasted}
+      </span>
+    </span>
+  ) : (
+    <>
+      {hasImagePreview ? <TrayImage item={item} /> : (
+        <span className="thread-composer-attachment-copy">
+          <span className="thread-composer-attachment-name">{name}</span>
+          {meta ? <span className="thread-composer-attachment-meta">{meta}</span> : null}
+          <TrayKindBadge item={item} labels={labels} />
+        </span>
+      )}
+    </>
+  );
   return (
     <li
       className={`thread-composer-attachment-item ${presentation}${item.kind === 'pending' ? ' is-pending' : ''}`}
       data-attachment-tray-index={index}
     >
-      <button
-        aria-label={item.kind === 'pending'
-          ? labels.attachingAttachment({ name })
-          : labels.previewAttachment({ name })}
-        className="thread-composer-attachment-main"
-        data-attachment-tray-main
-        data-attachment-tray-index={index}
-        onClick={(event) => {
-          if (item.kind === 'pending') return;
-          dispatchPreviewTargetOpen({
-            newPane: wantsNewPaneFromClick(event),
-            target: {
-              kind: 'local-file',
-              path: item.reference.path ?? (item.attachment.source.kind === 'localFile'
-                ? item.attachment.source.path
-                : item.attachment.name),
-              entryKind: item.reference.entryKind
-                ?? (item.attachment.mimeType === 'inode/directory' ? 'directory' : 'file'),
-              label: name,
-              threadId,
-              attachmentId: item.attachment.id,
-            },
-          });
-        }}
-        type="button"
-      >
-        {hasTextPreview ? (
-          <span className="thread-composer-attachment-copy">
-            <span className="thread-composer-attachment-excerpt">{item.excerpt}</span>
-            <span className={`thread-composer-attachment-kind${item.kind === 'pending' ? ' is-pending' : ''}`}>
-              {item.kind === 'pending' ? <LoaderIcon size={ICON_SIZE.tiny} /> : null}
-              {item.kind === 'pending' ? labels.attachmentStatusAttaching : labels.attachmentKindPasted}
-            </span>
-          </span>
-        ) : (
-          <>
-            {hasImagePreview ? <TrayImage item={item} /> : (
-              <span className="thread-composer-attachment-copy">
-                <span className="thread-composer-attachment-name">{name}</span>
-                {meta ? <span className="thread-composer-attachment-meta">{meta}</span> : null}
-                <TrayKindBadge item={item} labels={labels} />
-              </span>
-            )}
-          </>
-        )}
-      </button>
+      {item.kind === 'pending' ? (
+        <div
+          aria-busy="true"
+          aria-label={labels.attachingAttachment({ name })}
+          className="thread-composer-attachment-main"
+          data-attachment-tray-main
+          data-attachment-tray-index={index}
+          role="status"
+          tabIndex={-1}
+        >
+          {content}
+        </div>
+      ) : (
+        <button
+          aria-label={labels.previewAttachment({ name })}
+          className="thread-composer-attachment-main"
+          data-attachment-tray-main
+          data-attachment-tray-index={index}
+          onClick={(event) => {
+            dispatchPreviewTargetOpen({
+              newPane: wantsNewPaneFromClick(event),
+              target: {
+                kind: 'local-file',
+                path: item.reference.path ?? (item.attachment.source.kind === 'localFile'
+                  ? item.attachment.source.path
+                  : item.attachment.name),
+                entryKind: item.reference.entryKind
+                  ?? (item.attachment.mimeType === 'inode/directory' ? 'directory' : 'file'),
+                label: name,
+                threadId,
+                attachmentId: item.attachment.id,
+              },
+            });
+          }}
+          type="button"
+        >
+          {content}
+        </button>
+      )}
       <button
         aria-label={labels.removeAttachmentAndReference({ name })}
         className="thread-composer-attachment-remove"

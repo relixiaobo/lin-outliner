@@ -1553,10 +1553,12 @@ pastes are rejected when the projected editor would exceed 256 Ki UTF-16 units o
 8,000 inline atoms. Text above 8 Mi UTF-16 units is rejected before `File` construction
 and must be saved and attached manually. Rejection changes neither draft nor clipboard.
 Conversion immediately replaces the selection with a fixed request-id atom while the
-body remains outside canonical draft content. Send stays disabled until the serialized
-upload settles that exact atom to the same `attachmentId`. Failure restores the replaced
-slice and reports that the paste was not inserted; explicit removal cancels it. Names
-increase monotonically within the mounted draft and reset after a successful Send.
+body remains outside canonical draft content. Button and keyboard submission share one
+pending guard until the serialized upload settles that exact atom to the same
+`attachmentId`. Failure restores the replaced slice together with attachment ownership
+for any marker it contained and reports that the paste was not inserted; explicit removal
+cancels it. Names increase monotonically within the mounted draft and reset after a
+successful Send.
 
 `request_user_input` replaces the editor inside the existing composer surface
 with an in-dock form tied to one Item. It is a product-input surface, never a

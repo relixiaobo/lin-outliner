@@ -8407,6 +8407,8 @@ test('keeps Send disabled and cancels a pending large-paste attachment when remo
   await pasteComposerText(page, 'pending paste\n'.repeat(6_000));
 
   await expect(page.locator('.thread-composer-pending-ref')).toContainText('Pasted.txt');
+  await expect(page.getByRole('status', { name: 'Attaching Pasted.txt' })).toHaveAttribute('aria-busy', 'true');
+  await expect(page.getByRole('button', { name: 'Attaching Pasted.txt' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Send' })).toBeDisabled();
   await page.getByRole('button', { name: 'Remove Pasted.txt and message reference' }).click();
   await expect(page.locator('.thread-composer-pending-ref')).toHaveCount(0);
@@ -8415,6 +8417,24 @@ test('keeps Send disabled and cancels a pending large-paste attachment when remo
     (await commandCalls(page)).filter((call) => call.cmd === 'attachment-upload/abort').length
   )).toBe(1);
   expect((await commandCalls(page)).some((call) => call.cmd === 'attachment-upload/finish')).toBe(false);
+});
+
+test('blocks Enter submission while a large-paste attachment is pending', async ({ page }) => {
+  await openMockedApp(page, { attachmentUploadDelayMs: 500 });
+  const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+  await composer.fill('Keep this text ');
+  await pasteComposerText(page, 'pending Enter paste\n'.repeat(6_000));
+
+  await expect(page.locator('.thread-composer-pending-ref')).toContainText('Pasted.txt');
+  await composer.press('Enter');
+  expect((await commandCalls(page)).filter((call) => call.cmd === 'turn/submit')).toHaveLength(0);
+
+  await expect(page.locator('.thread-composer-pending-ref')).toHaveCount(0);
+  await expect(page.locator('.thread-composer-inline-ref[data-thread-file-ref]')).toContainText('Pasted.txt');
+  await composer.press('Enter');
+  await expect.poll(async () => (
+    (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').length
+  )).toBe(1);
 });
 
 test('restores the replaced composer slice when large-paste attachment upload fails', async ({ page }) => {
@@ -8443,6 +8463,39 @@ test('restores the replaced composer slice when large-paste attachment upload fa
   await expect.poll(async () => (
     (await commandCalls(page)).filter((call) => call.cmd === 'attachment-upload/abort').length
   )).toBe(1);
+});
+
+test('restores attachment state when a failed large paste replaced its marker', async ({ page }) => {
+  await openMockedApp(page, { attachmentUploadReject: true });
+  const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+  await page.locator('.thread-composer-file-input').setInputFiles({
+    name: 'existing.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.alloc(0),
+  });
+  const marker = page.locator('.thread-composer-inline-ref[data-thread-file-ref]');
+  await expect(marker).toContainText('existing.txt');
+  await marker.evaluate((element) => {
+    const range = document.createRange();
+    range.selectNode(element);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    (element.closest('[role="textbox"]') as HTMLElement | null)?.focus();
+  });
+  await pasteComposerText(page, 'replacement attachment paste\n'.repeat(5_000));
+
+  await expect(page.locator('.thread-composer-pending-ref')).toHaveCount(0);
+  await expect(marker).toContainText('existing.txt');
+  await expect(page.getByRole('button', { name: 'Preview existing.txt' })).toBeVisible();
+  expect((await commandCalls(page)).filter((call) => call.cmd === 'attachment-resource/discard')).toHaveLength(0);
+  await page.getByRole('button', { name: 'Send' }).click();
+  const submit = (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').at(-1);
+  expect(submit?.args.input).toEqual([expect.objectContaining({
+    type: 'attachment',
+    name: 'existing.txt',
+    source: expect.objectContaining({ kind: 'threadPayload' }),
+  })]);
 });
 
 test('opens provider settings instead of creating a Thread when no provider is usable', async ({ page }) => {
