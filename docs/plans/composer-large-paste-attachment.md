@@ -60,6 +60,12 @@ not a second attachment; inline markers control message position and tray order.
 pending tile/atom share a request ID, then settle onto one `attachmentId`. Removing
 either removes both and releases only resources with no remaining owner.
 
+Hovering a tray item's remove control, or focusing it by keyboard, gives its paired
+marker/request atom a transient neutral linked-removal preview without changing the
+real editor selection. Pointer leave, blur, Escape, or canceled activation clears the
+preview; activation removes both representations. Touch has no hover preview, so the
+accessible action label states that it removes the file and its message reference.
+
 | Content | Tray presentation |
 | --- | --- |
 | Image or existing thumbnail | Thumbnail |
@@ -106,7 +112,8 @@ The board lists this plan as a P2 draft; no open PR claims its implementation. O
   file access without body injection.
 - **AC-5:** Every attachment source/category shows one tray item and inline marker for
   the same identity; preview and fallback states work, pending tiles do not shift
-  layout, and removal from either representation synchronizes without orphaned data.
+  layout, remove-control hover/focus previews the paired deletion without moving the
+  caret, and removal from either representation synchronizes without orphaned data.
 
 ## Open questions
 
