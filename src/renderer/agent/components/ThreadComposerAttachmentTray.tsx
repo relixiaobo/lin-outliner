@@ -129,7 +129,11 @@ export function ThreadComposerAttachmentTray({
   };
 
   return (
-    <div className="thread-composer-attachment-tray-shell">
+    <div className={[
+      'thread-composer-attachment-tray-shell',
+      edges.left ? 'has-left-overflow' : '',
+      edges.right ? 'has-right-overflow' : '',
+    ].filter(Boolean).join(' ')}>
       {edges.left ? (
         <button
           aria-label={t.agent.composer.showPreviousAttachments}

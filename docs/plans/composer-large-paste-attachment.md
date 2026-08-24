@@ -81,15 +81,17 @@ reference" label.
 | Directory | Folder treatment; never imply its contents were read |
 
 Eligible items open the shared preview; other states remain identifiable/removable. The
-tray is a fixed-height horizontal list of preview-first 176 x 112 px cards that never
-wraps. At the 280px rail minimum, stable cards show one complete item plus the next-item
-affordance within the composer's trailing inset. The visual scrollbar stays hidden;
+tray is a fixed-height horizontal list of preview-first 176 x 112 px cards with an 8 px
+gap that never wraps. Its card-height viewport keeps a straight overflow cut, softened by
+a narrow tokenized inner shadow only on edges with more content. At the 280px rail minimum,
+stable cards show one complete item plus the next-item affordance within the composer's
+trailing inset. The visual scrollbar stays hidden;
 native horizontal scrolling and inset edge chevrons reveal overflow, Left/Right
 navigates, and Enter opens. New items reveal
 without taking editor focus, rail collapse preserves scroll, and resize keeps the
 focused item visible. All 20 allowed attachments remain individually reachable; the tray
-does not collapse them into a `+N` state. The first card's top and inline-start offsets
-share the composer inset token.
+does not collapse them into a `+N` state. The first card's top and inline-start offsets,
+plus the tray's following margin, share the composer inset token.
 
 Because the card already previews the attachment, hover only deepens its existing 1 px
 neutral boundary without changing thickness and reveals the remove control; it does not

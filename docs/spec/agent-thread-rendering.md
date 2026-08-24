@@ -1522,15 +1522,16 @@ tray above the editor. The tray includes picker, drop, clipboard, local-file men
 directory, and generated-paste inputs; it never creates another attachment. Preview-first
 176 x 112 px cards show images edge to edge, generated pasted text as a whitespace-collapsed
 continuous excerpt of at most three visual lines and 256 UTF-16 units above a neutral
-`Pasted` or pending-status label, and all other formats with a
-wrapping filename and size above a compact semantic type label/icon. The single row scrolls
-horizontally without wrapping or collapsing to `+N`; at the 280 px rail minimum one
-complete card remains visible with an overflow clue.
+`Pasted` or pending-status label, and all other formats with a wrapping filename and size
+above a compact semantic type label/icon. The single row uses an 8 px gap and scrolls
+horizontally without wrapping or collapsing to `+N`. Its card-height viewport keeps a
+straight overflow cut, softened by a narrow tokenized inner shadow only on edges with more
+content; at the 280 px rail minimum one complete card remains visible with an overflow clue.
 The visual scrollbar stays hidden; native horizontal scrolling, inset edge chevrons,
 Left/Right navigation, and Enter-to-preview expose all 20 items. Overflow clips at the
 composer inset instead of the rail edge. New items scroll into view without taking editor
-focus, and resize keeps the focused item visible. The first card uses the same composer
-inset on its top and inline-start edges.
+focus, and resize keeps the focused item visible. The first card's top and inline-start
+edges and the tray's following margin use the same composer inset.
 
 The card is already a preview surface, so card hover only deepens the existing 1 px neutral
 boundary without changing its thickness and reveals the remove control. It does not show

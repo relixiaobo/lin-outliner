@@ -2523,17 +2523,46 @@
 }
 
 .thread-composer-attachment-tray-shell {
+  --thread-composer-attachment-height: 112px;
   position: relative;
   min-width: 0;
-  height: 120px;
-  margin: 0 0 var(--space-2);
+  height: var(--thread-composer-attachment-height);
+  margin: 0 0 var(--thread-composer-inset);
+}
+
+.thread-composer-attachment-tray-shell::before,
+.thread-composer-attachment-tray-shell::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: var(--z-raised);
+  width: 1px;
+  content: '';
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-fast);
+}
+
+.thread-composer-attachment-tray-shell::before {
+  left: 0;
+  box-shadow: var(--attachment-tray-edge-shadow-start);
+}
+
+.thread-composer-attachment-tray-shell::after {
+  right: 0;
+  box-shadow: var(--attachment-tray-edge-shadow-end);
+}
+
+.thread-composer-attachment-tray-shell.has-left-overflow::before,
+.thread-composer-attachment-tray-shell.has-right-overflow::after {
+  opacity: 1;
 }
 
 .thread-composer-attachment-tray {
   display: flex;
   height: 100%;
   align-items: stretch;
-  gap: var(--space-2);
+  gap: var(--space-4);
   overflow-x: auto;
   overflow-y: hidden;
   margin: 0;
@@ -2554,7 +2583,7 @@
   display: flex;
   width: 176px;
   min-width: 176px;
-  height: 112px;
+  height: var(--thread-composer-attachment-height);
   overflow: hidden;
   border: 1px solid var(--separator);
   border-radius: var(--radius-md);
@@ -2719,11 +2748,13 @@
 
 .thread-composer-attachment-edge {
   position: absolute;
-  top: 48px;
+  top: calc(
+    (var(--thread-composer-attachment-height) - var(--control-size-md)) / 2
+  );
   z-index: var(--z-raised);
   display: inline-flex;
-  width: 24px;
-  height: 24px;
+  width: var(--control-size-md);
+  height: var(--control-size-md);
   align-items: center;
   justify-content: center;
   border: 0;

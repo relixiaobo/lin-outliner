@@ -301,7 +301,9 @@ toolbar is visually unified with the textarea; attach/send controls are capsules
 The attachment carousel stays within that inset, hides its redundant visual scrollbar,
 and preserves touchpad scrolling, edge buttons, and keyboard navigation. Card hover keeps
 the existing 1 px boundary and changes only its neutral colour; its radius-aligned Remove
-control is unboxed and deepens only the glyph.
+control is unboxed and deepens only the glyph. Card gaps use the 8 px spacing rung, and
+the card-height viewport keeps a straight overflow cut with a narrow tokenized inner
+shadow only where more content remains.
 Structured user-input requests render above the editor as bounded in-dock forms,
 not permission prompts or floating overlays. The submit action uses the neutral
 filled-default idiom; secondary actions remain neutral.

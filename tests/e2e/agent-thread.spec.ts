@@ -1427,20 +1427,28 @@ test.describe('canonical agent Thread surface', () => {
       const second = items[1]?.getBoundingClientRect();
       return {
         clientWidth: tray.clientWidth,
+        clipRadius: getComputedStyle(tray).borderTopRightRadius,
+        edgeShadow: getComputedStyle(tray.parentElement!, '::after').boxShadow,
         firstHeight: first?.height ?? 0,
+        heightDelta: first ? Math.abs(trayRect.height - first.height) : Number.POSITIVE_INFINITY,
         horizontalInsetDelta: first && surfaceRect
           ? Math.abs((first.left - surfaceRect.left) - (surfaceRect.right - trayRect.right))
           : Number.POSITIVE_INFINITY,
         firstWidth: first?.width ?? 0,
+        itemGap: first && second ? second.left - first.right : 0,
         rowTops: new Set(items.map((item) => Math.round(item.getBoundingClientRect().top))).size,
         scrollWidth: tray.scrollWidth,
         secondVisible: second ? Math.max(0, Math.min(trayRect.right, second.right) - Math.max(trayRect.left, second.left)) : 0,
       };
     });
     expect(trayGeometry.rowTops).toBe(1);
+    expect(trayGeometry.clipRadius).toBe('0px');
+    expect(trayGeometry.edgeShadow).not.toBe('none');
     expect(trayGeometry.firstHeight).toBeGreaterThanOrEqual(108);
+    expect(trayGeometry.heightDelta).toBeLessThan(1);
     expect(trayGeometry.horizontalInsetDelta).toBeLessThan(1);
     expect(trayGeometry.firstWidth).toBeGreaterThanOrEqual(170);
+    expect(trayGeometry.itemGap).toBeGreaterThanOrEqual(8);
     expect(trayGeometry.secondVisible).toBeGreaterThan(24);
     expect(trayGeometry.scrollWidth).toBeGreaterThan(trayGeometry.clientWidth);
     await expect(page.getByRole('button', { name: 'Show more attachments' })).toBeVisible();
