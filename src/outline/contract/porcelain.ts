@@ -11,6 +11,7 @@ import {
   RichTextSchema,
   TagDefinitionPatchSchema,
   TargetRefSchema,
+  TargetSpecSchema,
   ViewCreateSpecificationSchema,
   ViewDisplaySpecificationSchema,
   ViewFilterSpecificationSchema,
@@ -61,6 +62,18 @@ const SetInputSchema = Type.Object({
     height: Type.Optional(Type.Number({ minimum: 0 })),
   }, closed)),
 }, { ...closed, minProperties: 2 });
+
+const TextReplaceInputSchema = Type.Object({
+  target: TargetSpecSchema,
+  find: Type.String({ minLength: 1, maxLength: 65_536 }),
+  replacement: Type.String({ maxLength: 4_194_304 }),
+  field: Type.Optional(Type.Union([
+    Type.Literal('content'), Type.Literal('description'), Type.Literal('both'),
+  ])),
+  occurrence: Type.Optional(Type.Union([Type.Literal('first'), Type.Literal('all')])),
+  caseSensitive: Type.Optional(Type.Boolean()),
+  maxReplacements: Type.Integer({ minimum: 1, maximum: 100_000 }),
+}, closed);
 
 const MoveInputSchema = Type.Object({
   target: TargetRefSchema,
@@ -308,6 +321,7 @@ function contract(inputSchema: TSchema, usage: string, options: readonly Command
 const PORCELAIN_BASE_CONTRACTS = Object.freeze({
   add: contract(AddInputSchema, 'add PARENT TEXT | add --input FILE|-', [parent, option('tree', 'FILE|-', 'Create a complete typed Node tree.'), option('type', 'TYPE', 'Set the root Node type.'), option('description', 'TEXT', 'Set the root description.'), option('index', 'INDEX', 'Insert at a zero-based child index.'), bind]),
   set: contract(SetInputSchema, 'set TARGET [PROPERTY OPTIONS]', [target, option('text', 'TEXT', 'Replace plain content.'), option('content', 'TEXT', 'Replace plain content.'), option('description', 'TEXT|null', 'Patch the description.'), option('code', 'LANGUAGE', 'Set code-block language.'), option('checkbox', 'BOOLEAN', 'Set checkbox visibility.'), option('icon', 'VALUE|null', 'Set the Node icon.'), option('icon-kind', 'KIND', 'Set the icon kind.'), option('banner', 'LEASE|null', 'Set the banner asset lease.'), option('image', 'LEASE', 'Set the image asset lease.'), option('media-url', 'URL', 'Set an external media URL.'), option('width', 'NUMBER', 'Set media width.'), option('height', 'NUMBER', 'Set media height.')]),
+  'text replace': contract(TextReplaceInputSchema, 'text replace TARGET --find TEXT --replace TEXT | text replace --matching TEXT --max N --find TEXT --replace TEXT | text replace --input FILE|-', [target, option('matching', 'TEXT', 'Select a bounded many target with STRING_MATCH shorthand.'), option('query', 'JSON|FILE', 'Select with the canonical structured query.'), option('within', 'SELECTOR', 'Bound query selection below one exact Selector.'), option('include-trash', undefined, 'Include trashed Nodes in query selection.'), option('order', 'ORDER', 'Use document, created, updated, or text query order.', { default: 'document' }), option('max', 'N', 'Required maximum Node count for --matching or --query.'), option('find', 'TEXT', 'Literal text to replace.'), option('replace', 'TEXT', 'Replacement text; an empty string deletes matches.'), option('field', 'content|description|both', 'Select transformed fields.', { default: 'content' }), option('occurrence', 'first|all', 'Replace the first or all non-overlapping matches in each selected field.', { default: 'all' }), option('case-sensitive', 'BOOLEAN', 'Use case-sensitive literal matching.', { default: 'true' }), option('max-replacements', 'N', 'Bound total replacements across every selected Node.', { default: '1000' })]),
   move: contract(MoveInputSchema, 'move TARGET DESTINATION', [target, option('destination', 'TARGET', 'Destination parent.'), option('index', 'INDEX', 'Destination child index.')]),
   duplicate: contract(DuplicateInputSchema, 'duplicate TARGET DESTINATION', [target, option('destination', 'TARGET', 'Destination parent.'), option('index', 'INDEX', 'Destination child index.'), bind]),
   merge: contract(MergeInputSchema, 'merge SOURCE TARGET', [option('source', 'TARGET', 'Source Node or bounded set.'), target]),
@@ -362,6 +376,7 @@ type PorcelainCommandKey = keyof typeof PORCELAIN_BASE_CONTRACTS;
 const PORCELAIN_SUMMARIES = {
   add: 'Create one complete typed Node tree below a parent.',
   set: 'Patch content, description, code, checkbox, icon, banner, or image state.',
+  'text replace': 'Replace literal text across one exact or bounded query-selected Node set.',
   move: 'Move a bounded Node selection below one destination.',
   duplicate: 'Duplicate a bounded Node selection below one destination.',
   merge: 'Merge source Nodes into one target after exact Diff review.',
@@ -414,6 +429,7 @@ const PORCELAIN_SUMMARIES = {
 const PORCELAIN_EXAMPLES = {
   add: ['outline add @inbox "Project brief"', 'outline add --input complete-tree.json'],
   set: ['outline set node:brief --description "Ready for review"', 'outline set --input node-patch.json'],
+  'text replace': ['outline text replace node:brief --find "draft" --replace "final" --preview', 'outline text replace --matching "keyword 1" --max 500 --find "keyword 1" --replace "keyword 2" --preview', 'outline text replace --input replace.json --expect-diff SHA256 --yes'],
   move: ['outline move node:task node:project --index 0', 'outline move --input move.json'],
   duplicate: ['outline duplicate node:template node:project', 'outline duplicate --input duplicate.json'],
   merge: ['outline merge node:duplicate node:canonical --preview', 'outline merge node:duplicate node:canonical --expect-diff SHA256 --yes'],
@@ -468,10 +484,10 @@ const CREATE_COMMANDS = new Set<PorcelainCommandKey>([
   'view display add', 'search create', 'capture add', 'media add',
 ]);
 const ENSURE_COMMANDS = new Set<PorcelainCommandKey>(['search ensure-tag', 'daily ensure']);
-const DESTRUCTIVE_COMMANDS = new Set<PorcelainCommandKey>(['merge', 'definition merge', 'purge']);
+const DESTRUCTIVE_COMMANDS = new Set<PorcelainCommandKey>(['text replace', 'merge', 'definition merge', 'purge']);
 const REPLACE_COMMANDS = new Set<PorcelainCommandKey>(['reference set']);
 const IDEMPOTENT_COMMANDS = new Set<PorcelainCommandKey>([
-  'set', 'move', 'done set', 'tag add', 'tag remove', 'field define', 'field set', 'field clear',
+  'set', 'text replace', 'move', 'done set', 'tag add', 'tag remove', 'field define', 'field set', 'field clear',
   'field remove', 'field reuse', 'field select', 'definition configure', 'reference set', 'view set',
   'view group set', 'view sort set', 'view sort remove', 'view sort clear', 'view filter set',
   'view filter remove', 'view filter clear', 'view display set', 'view display remove', 'search ensure-tag',
@@ -483,6 +499,7 @@ const EXACT_TARGET_COMMANDS = new Set<PorcelainCommandKey>([
 ]);
 
 const PORCELAIN_DEFAULTS: Partial<Record<PorcelainCommandKey, readonly string[]>> = {
+  'text replace': ['Field defaults to content, occurrence to all, case-sensitive matching to true, and max replacements to 1000.', 'Matches use UTF-16 offsets. Rich-text marks and references outside replacement ranges are preserved; a replacement that would consume an inline reference is rejected.'],
   'search create': ['Parent defaults to @saved-searches.', 'Omitted view properties use the Saved Search defaults.'],
   'view sort add': ['Sort direction defaults to asc.'],
   'view filter add': ['Operator defaults to contains, values to [], and value logic to any.'],

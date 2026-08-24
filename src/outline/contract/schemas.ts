@@ -970,6 +970,156 @@ export const AssetLeaseSchema = Type.Object({
   expiresAt: Timestamp,
 }, { ...closed, $id: 'AssetLease' });
 
+const ImportCountSchema = Type.Integer({ minimum: 0 });
+
+export const ImportOptionsSchema = Type.Object({
+  fidelity: Type.Union([Type.Literal('content'), Type.Literal('clean'), Type.Literal('full')]),
+  dateGrouping: Type.Union([
+    Type.Literal('stage_headings'), Type.Literal('native_daily'), Type.Literal('none'),
+  ]),
+  tags: Type.Boolean(),
+  fields: Type.Union([Type.Literal('omit'), Type.Literal('text_children'), Type.Literal('field_rows')]),
+  doneState: Type.Boolean(),
+}, { ...closed, $id: 'ImportOptions' });
+
+export const ImportStatsSchema = Type.Object({
+  sourceRecords: ImportCountSchema,
+  sections: ImportCountSchema,
+  nodes: ImportCountSchema,
+  descriptions: ImportCountSchema,
+  tags: ImportCountSchema,
+  fields: ImportCountSchema,
+  checked: ImportCountSchema,
+  dropped: ImportCountSchema,
+}, { ...closed, $id: 'ImportStats' });
+
+export const ImportCoverageSchema = Type.Object({
+  imported: ImportCountSchema,
+  merged: ImportCountSchema,
+  dropped: ImportCountSchema,
+  unsupported: ImportCountSchema,
+  empty: ImportCountSchema,
+  unaccounted: ImportCountSchema,
+  entriesFile: Type.Optional(Type.String({ maxLength: 32_768 })),
+}, { ...closed, $id: 'ImportCoverage' });
+
+export const ImportWarningSchema = Type.Object({
+  code: Type.String({ minLength: 1, maxLength: 256 }),
+  message: Type.String({ minLength: 1, maxLength: 32_768 }),
+  sourceId: Type.Optional(Type.String({ maxLength: 4_096 })),
+  count: Type.Optional(ImportCountSchema),
+}, { ...closed, $id: 'ImportWarning' });
+
+export const NormalizedImportNodeSchema = Type.Cyclic({
+  NormalizedImportNode: Type.Object({
+    title: Type.String({ maxLength: 4_194_304 }),
+    description: Type.Optional(Type.String({ maxLength: 4_194_304 })),
+    tags: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 1_024 }), { maxItems: 10_000 })),
+    checked: Type.Optional(Type.Boolean()),
+    code: Type.Optional(Type.Object({
+      language: Type.Optional(Type.String({ maxLength: 128 })),
+      text: Type.String({ maxLength: 4_194_304 }),
+    }, closed)),
+    fields: Type.Optional(Type.Array(Type.Object({
+      name: Type.String({ minLength: 1, maxLength: 1_024 }),
+      values: Type.Array(Type.String({ minLength: 1, maxLength: 4_194_304 }), { minItems: 1, maxItems: 10_000 }),
+    }, closed), { maxItems: 10_000 })),
+    children: Type.Optional(Type.Array(Type.Ref('NormalizedImportNode'), { maxItems: 100_000 })),
+    sourceId: Type.Optional(Type.String({ maxLength: 4_096 })),
+  }, closed),
+}, 'NormalizedImportNode');
+
+export const NormalizedImportSchema = Type.Object({
+  version: Type.Literal(1),
+  source: Type.Object({
+    kind: Type.String({ minLength: 1, maxLength: 128 }),
+    path: Type.String({ minLength: 1, maxLength: 32_768 }),
+    sourceId: Type.Optional(Type.String({ maxLength: 4_096 })),
+  }, closed),
+  options: ImportOptionsSchema,
+  stats: ImportStatsSchema,
+  coverage: ImportCoverageSchema,
+  warnings: Type.Array(ImportWarningSchema, { maxItems: 100_000 }),
+  sections: Type.Array(Type.Object({
+    id: Type.Optional(Type.String({ minLength: 1, maxLength: 4_096 })),
+    title: Type.String({ maxLength: 4_194_304 }),
+    kind: Type.Union([Type.Literal('library'), Type.Literal('date'), Type.Literal('other')]),
+    date: Type.Optional(LocalDateSchema),
+    nodes: Type.Array(NormalizedImportNodeSchema, { maxItems: 100_000 }),
+  }, closed), { minItems: 1, maxItems: 100_000 }),
+}, { ...closed, $id: 'NormalizedImport' });
+
+export const ImportEvidenceSchema = Type.Object({
+  version: Type.Literal(1),
+  source: NormalizedImportSchema.properties.source,
+  sourceFingerprint: Digest,
+  changeSetFingerprint: Digest,
+  coverage: ImportCoverageSchema,
+  warnings: Type.Array(ImportWarningSchema, { maxItems: 100_000 }),
+  stats: ImportStatsSchema,
+  mode: Type.Union([Type.Literal('native_daily'), Type.Literal('stage')]),
+  dates: Type.Array(LocalDateSchema, { maxItems: 100_000 }),
+  expectedCreatedNodes: ImportCountSchema,
+  verification: Type.Array(Type.Object({
+    binding: BindingName,
+    kind: Type.Union([Type.Literal('created-tree'), Type.Literal('date')]),
+    expectedNodeCount: Type.Integer({ minimum: 1, maximum: 10_000 }),
+    date: Type.Optional(LocalDateSchema),
+    truncated: Type.Optional(Type.Literal(true)),
+  }, closed), { minItems: 1, maxItems: 32 }),
+}, { ...closed, $id: 'ImportEvidence' });
+
+export const ImportSourceProfileSchema = Type.Object({
+  ok: Type.Boolean(),
+  source: Type.String({ minLength: 1, maxLength: 32_768 }),
+  kind: Type.Union([
+    Type.Literal('normalized'), Type.Literal('tana'), Type.Literal('roam-edn'),
+    Type.Literal('directory'), Type.Literal('unknown'),
+  ]),
+  bytes: Type.Optional(ImportCountSchema),
+  confidence: Type.Number({ minimum: 0, maximum: 1 }),
+  stats: Type.Record(Type.String({ maxLength: 256 }), Type.Unknown()),
+  warnings: Type.Array(Type.String({ maxLength: 4_096 }), { maxItems: 10_000 }),
+  samples: Type.Optional(Type.Array(Type.Unknown(), { maxItems: 20 })),
+}, { ...closed, $id: 'ImportSourceProfile' });
+
+export const ImportPlanResultSchema = Type.Object({
+  kind: Type.Literal('outline.import-plan'),
+  sourceFormat: Type.Union([Type.Literal('normalized'), Type.Literal('tana')]),
+  sourceFingerprint: Digest,
+  changeSetFingerprint: Digest,
+  changeSetHash: Digest,
+  diffHash: Digest,
+  affectedNodeCount: ImportCountSchema,
+  destructive: Type.Boolean(),
+  output: Type.String({ minLength: 1, maxLength: 32_768 }),
+  evidenceOutput: Type.String({ minLength: 1, maxLength: 32_768 }),
+  changeSetOutput: Type.Optional(Type.String({ minLength: 1, maxLength: 32_768 })),
+  coverageOutput: Type.Optional(Type.String({ minLength: 1, maxLength: 32_768 })),
+  coverage: ImportCoverageSchema,
+  warnings: Type.Array(ImportWarningSchema, { maxItems: 100_000 }),
+  dates: Type.Array(LocalDateSchema, { maxItems: 100_000 }),
+}, { ...closed, $id: 'ImportPlanResult' });
+
+export const ImportVerifyResultSchema = Type.Object({
+  kind: Type.Literal('outline.import-verification'),
+  operationId: Identifier,
+  affectedNodeCount: ImportCountSchema,
+  expectedCreatedNodes: ImportCountSchema,
+  verifiedRoots: Type.Array(Type.Object({
+    binding: BindingName,
+    kind: Type.Union([Type.Literal('created-tree'), Type.Literal('date')]),
+    nodeId: Identifier,
+    date: Type.Optional(LocalDateSchema),
+    nodeCount: Type.Integer({ minimum: 1, maximum: 10_000 }),
+    truncated: Type.Boolean(),
+  }, closed), { maxItems: 32 }),
+  verificationReads: Type.Array(Type.Object({
+    selector: Type.String({ minLength: 1, maxLength: 32_768 }),
+    nodeId: Identifier,
+  }, closed), { maxItems: 8 }),
+}, { ...closed, $id: 'ImportVerifyResult' });
+
 export const OUTLINE_PUBLIC_SCHEMAS = Object.freeze({
   Selector: SelectorSchema,
   TargetSpec: TargetSpecSchema,
@@ -996,6 +1146,16 @@ export const OUTLINE_PUBLIC_SCHEMAS = Object.freeze({
   AssetMetadata: AssetMetadataSchema,
   AssetRecord: AssetRecordSchema,
   AssetLease: AssetLeaseSchema,
+  ImportOptions: ImportOptionsSchema,
+  ImportStats: ImportStatsSchema,
+  ImportCoverage: ImportCoverageSchema,
+  ImportWarning: ImportWarningSchema,
+  NormalizedImportNode: NormalizedImportNodeSchema,
+  NormalizedImport: NormalizedImportSchema,
+  ImportEvidence: ImportEvidenceSchema,
+  ImportSourceProfile: ImportSourceProfileSchema,
+  ImportPlanResult: ImportPlanResultSchema,
+  ImportVerifyResult: ImportVerifyResultSchema,
 } satisfies Readonly<Record<string, TSchema>>);
 
 export type QueryExpression = Static<typeof QueryExpressionSchema>;
@@ -1012,6 +1172,16 @@ export type Diff = Static<typeof DiffSchema>;
 export type NoChangeResult = Static<typeof NoChangeResultSchema>;
 export type Operation = Static<typeof OperationSchema>;
 export type OperationLogPage = Static<typeof OperationLogPageSchema>;
+export type ImportOptions = Static<typeof ImportOptionsSchema>;
+export type ImportStats = Static<typeof ImportStatsSchema>;
+export type ImportCoverage = Static<typeof ImportCoverageSchema>;
+export type ImportWarning = Static<typeof ImportWarningSchema>;
+export type NormalizedImportNode = Static<typeof NormalizedImportNodeSchema>;
+export type NormalizedImport = Static<typeof NormalizedImportSchema>;
+export type ImportEvidence = Static<typeof ImportEvidenceSchema>;
+export type ImportSourceProfile = Static<typeof ImportSourceProfileSchema>;
+export type ImportPlanResult = Static<typeof ImportPlanResultSchema>;
+export type ImportVerifyResult = Static<typeof ImportVerifyResultSchema>;
 export type RevertConflictDiff = Static<typeof RevertConflictDiffSchema>;
 export type OutlineEvent = Static<typeof EventSchema>;
 export type EventFilter = Static<typeof EventFilterSchema>;

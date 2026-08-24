@@ -1,114 +1,95 @@
 ---
 name: outline
 description: Inspect, edit, organize, import into, or recover the Tenon outline through the public outline CLI. Use for any request that reads or changes Outliner Nodes, fields, tags, references, views, searches, Daily Notes, media, Trash, or operation history.
-allowed-tools: bash, file_read, file_glob, file_grep, request_user_input
+allowed-tools: bash, file_read, file_write, file_edit, file_glob, file_grep, request_user_input
 execution: isolated
 ---
 
 # Outline
 
 Use the `outline` CLI as the only document access path. Never read workspace
-storage, invoke private app APIs, or substitute UI/session state for persisted
-document state.
+storage, call private app APIs, or substitute UI state for persisted document
+state.
 
-## Workflow
+## Start Every Task
 
-1. Run `outline status` when availability is uncertain. Discover from
-   `outline --help`, `outline FAMILY --help`, and `outline COMMAND --help`; use
-   `outline --json capabilities` and `outline schema COMMAND` for exact machine
-   contracts. Help is plain text even with `--json` and never starts Runtime.
-2. Select the narrowest complete mutation shape:
-   - one complete resource intent -> one porcelain invocation;
-   - complex state for that same resource -> the same command with
-     `--input FILE|-`;
-   - multiple resources, dependencies, cross-date work, or a bounded bulk edit
-     -> one ChangeSet with bindings, then one `diff` and one `apply`.
-   Never use a shell mutation loop, query intermediate created IDs, or split one
-   atomic intent into several writes.
-3. Use `outline show` for an exact selector and `outline find` when discovery is
-   needed. Common text search uses positional text or `search create --match`;
-   advanced search uses the canonical structured query through `--query` or
-   `--input`. Never invent another query language or guess a Node from display
-   text.
-4. Use exact IDs and stable aliases such as `@inbox`, `@library`,
-   `@saved-searches`, `@today`, or `@date:YYYY-MM-DD`. Structured selectors must
-   declare `one`, `zero-or-one`, or `many`; every `many` mutation has an explicit
-   `max` bound.
-5. Treat verbs by their declared help semantics. `create`/`add` explicitly
-   creates. Patch forms preserve omitted properties. Only an explicitly named
-   replacement form such as `--replace` replaces a collection. Repeated
-   `set`/`configure`/`ensure` calls must converge or return semantic no-change;
-   use `--idempotency-key` for transport retries.
-6. Preview destructive, ambiguous, or high-volume changes. Inspect targets,
-   warnings, and affected count, then apply the exact Diff. Destructive
-   porcelain requires the same command with `--expect-diff <hash> --yes`;
-   `--yes` alone is invalid. Direct ChangeSets use the exact Diff artifact with
-   `outline apply`.
-7. Read the Operation result after every write. Preserve and report its
-   Operation ID, status, affected count, and recovery state.
-8. Verify consequential writes independently with `outline show` or `outline
-   find`. On mismatch, stop and use `outline log` plus guarded `outline revert`;
-   never issue an unrelated compensating edit.
+Run `outline status` only when availability is uncertain. Use
+`outline --help` for the family map, `outline FAMILY --help` for its commands,
+and `outline COMMAND --help` for an exact command contract. Help is plain text
+even with `--json` and never starts Runtime.
 
-`outline log` returns `data.operations` and an optional `data.cursor`. Follow
-the cursor when complete history or affected IDs are required. A guarded
-revert conflict exits as an error without writing; inspect
-`error.details.conflictDiff` for the exact changed Node preconditions.
+Read [references/commands.md](references/commands.md) when the command choice is
+not already obvious, the request crosses command families, or a complete view
+of the public capability surface is useful. Use `outline schema COMMAND` for
+exact structured input and output schemas; never guess an option or invent a
+query language.
 
-## Canonical Patterns
+## Inspect Current State
 
-Read one exact Node:
+Use `outline show` for a known exact selector and `outline find` for discovery.
+Use exact IDs or stable aliases such as `@inbox`, `@library`,
+`@saved-searches`, `@today`, and `@date:YYYY-MM-DD`. Never select a Node from
+display text without a bounded read that proves the target.
 
-```sh
-outline --json show 'node:example'
-```
+Read only the smallest Projection needed to decide and later verify the work.
+Common text search uses positional text or `search create --match`; advanced
+search uses the canonical structured query through `--query` or `--input`.
 
-Discover before editing:
+## Choose One Mutation Shape
 
-```sh
-outline --json find 'Quarterly plan' --limit 20
-```
+| Intent | Use |
+|---|---|
+| Create one complete resource | One porcelain `create` or `add` invocation |
+| Supply complex state for that resource | The same command with `--input FILE|-` |
+| Patch one resource | One declared patch or leaf-edit command |
+| Configure a complete search or view | One convergent `set` command |
+| Change multiple resources or dependencies | One ChangeSet with bindings |
+| Perform a bounded bulk mutation | One bounded selector or one ChangeSet |
+| Replace literal text across bounded Nodes | One reviewed `text replace` invocation |
+| Import external data | The public import workflow |
 
-Create one complete resource with common argv shorthand:
+Create and add forms explicitly create. Patch forms preserve omitted
+properties. Only an explicitly documented replacement form replaces a
+collection. Repeated `set`, `configure`, and `ensure` calls must converge or
+return semantic no-change.
 
-```sh
-outline --json search create --title 'Modules' --match 'module' \
-  --view table --sort sys:updatedAt:desc
-```
+For multiple resources, bindings, cross-date work, or general batch mutation,
+read [references/changesets.md](references/changesets.md). Never use a shell
+mutation loop, query intermediate created IDs, or split one atomic intent into
+several writes. Every structured `many` mutation has an explicit `max` bound.
 
-Create complex state for that same resource:
+For external notes, exports, migrations, or cleanup-before-import, read
+[references/import.md](references/import.md). Import is an Outline workflow,
+not a separate Skill or Runtime API.
 
-```sh
-outline --json add --input complete-tree.json
-```
+## Review and Execute
 
-Review and apply one composed ChangeSet:
+Preview destructive, ambiguous, or high-impact work. Inspect exact targets,
+warnings, and affected count before applying the reviewed Diff. Destructive
+porcelain requires `--preview`, followed by the same command with
+`--expect-diff SHA256 --yes`; `--yes` alone is invalid. Direct ChangeSets use
+one `diff` artifact and one exact `apply`.
 
-```sh
-outline --json diff --input changeset.json --output diff.json
-outline --json apply --input diff.json > operation.json
-```
+Use `--idempotency-key` for transport retry identity, but never treat it as
+permission to repeat an uncertain write. Do not retry when command settlement
+is unknown.
 
-Use one-invocation date capture or local media creation:
+## Verify the Result
 
-```sh
-outline --json capture add --date 2026-08-24 --title 'Reading note' \
-  --metadata provenance.json
-outline --json media add @inbox image ./diagram.png
-```
+Every successful write returns one Operation or semantic no-change result.
+Preserve and report its Operation ID, status, affected count, returned created
+or bound IDs, and recovery state. Verify consequential work independently with
+a bounded `show` or `find`; successful command dispatch alone is not proof of
+the intended document state.
 
-Recover one known Operation:
+## Recover Safely
 
-```sh
-outline --json log --operation 'operation:example'
-outline --json revert 'operation:example'
-```
+On a mismatch or uncertain result, stop writing and inspect `outline log`.
+Follow its cursor when complete affected IDs or history are required. Revert a
+known completed Operation with `outline revert OPERATION_ID`; never issue an
+unrelated compensating edit. A guarded revert conflict writes nothing and
+returns the exact changed preconditions in `error.details.conflictDiff`.
 
-Use `--json` for machine workflows and explicit output files for large exports.
-Use `add`, `definition create`, `field define`, `search create`, `capture add`,
-or `media add` to create complete resources; use `set`, `search set`, or `view
-set` for declarative updates and the leaf view commands for small edits. Use
-`trash` for reversible deletion and reviewed `purge` only for permanent removal.
-Stop before writing when selection is unresolved, cardinality is surprising, a
-Diff has changed, destructive acknowledgement is missing, or verification
-cannot distinguish the intended result.
+Stop before writing when selection is unresolved, cardinality is surprising,
+the reviewed Diff changed, destructive acknowledgement is incomplete, or
+verification cannot distinguish the intended result.

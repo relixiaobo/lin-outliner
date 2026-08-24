@@ -13,7 +13,7 @@ The end state has one document implementation and three deliberate clients:
   preload/Electron-main transport adapter;
 - the `outline` CLI is the stable public interface for terminal users, scripts,
   external Agents, and harnesses; and
-- the built-in `outline` and `outline-import` Skills teach workflows over that
+- the built-in `outline` Skill teaches ordinary and import workflows over that
   CLI without owning document logic.
 
 Every persisted mutation from desktop, CLI, built-in Agent, or external client
@@ -31,9 +31,9 @@ Operations for one atomic intent.
 
 This plan has shape **(a): ONE complete feature in one PR**. Standalone Runtime,
 desktop cutover, CLI, complete document capability coverage, transactional
-recovery, asset retention, both Skills, import convergence, Agent cutover, and
-legacy deletion are build-order steps inside one Draft PR. No intermediate
-state is mergeable, releasable, or described as shipped.
+recovery, asset retention, the built-in Skill, import convergence, Agent
+cutover, and legacy deletion are build-order steps inside one Draft PR. No
+intermediate state is mergeable, releasable, or described as shipped.
 
 The requirement and acceptance identifiers defined below are the traceability
 contract for implementation and verification.
@@ -97,7 +97,7 @@ The explicit traceability manifest is:
   `AC-9`, `AC-10`, `AC-11`, `AC-12`, `AC-13`, `AC-14`, `AC-15`, `AC-16`,
   `AC-17`, `AC-18`, `AC-19`, `AC-20`, `AC-21`, `AC-22`, `AC-23`, `AC-24`,
   `AC-25`, `AC-26`, `AC-27`, `AC-28`, `AC-29`, `AC-30`, `AC-31`, `AC-32`,
-  `AC-33`, `AC-34`, `AC-35`, `AC-36`, `AC-37`, and `AC-38` through `AC-64`.
+  `AC-33`, `AC-34`, `AC-35`, `AC-36`, `AC-37`, and `AC-38` through `AC-66`.
 
 ### Completion contract
 
@@ -148,6 +148,10 @@ The explicit traceability manifest is:
     import shall permit ChangeSet generation without a cleaning transform.
   - **AC-24:** An unresolved Selector, invalid semantic key, or cardinality
     conflict shall block before mutation and identify the exact operation.
+  - **AC-66:** The Tana adapter shall map only deterministic source structures,
+    including ISO journal headings with an optional English weekday suffix and
+    `Node supertags(s)` metadata tuples; all other Tana-only structures shall
+    remain explicitly accounted as unsupported rather than being guessed.
 - **FR-8:** Agent execution receives complete reversible Outliner capability
   with trusted attribution rather than fine-grained Runtime authority.
   - **AC-16:** Where `outline` is present in an Agent execution, its public read,
@@ -228,6 +232,12 @@ The explicit traceability manifest is:
   - **AC-45:** Repeated `set`, `configure`, and `ensure` execution shall converge
     or return semantic no-change without another Operation; `create` shall remain
     explicit creation.
+  - **AC-65:** One exact or bounded query-selected Node set shall support a
+    reviewed literal text transform without a shell loop. The command shall
+    independently bound selected Nodes and total replacements, bind planning to
+    the read revision, preserve unaffected rich-text structure, reject ambiguous
+    inline-reference consumption, settle as one Operation, converge on repeat,
+    and exactly revert.
 - **FR-14:** Help, parser behavior, schema discovery, and completion metadata
   form one drift-free public CLI contract.
   - **AC-46:** `outline --help` shall list command families and concise purposes,
@@ -280,8 +290,7 @@ The explicit traceability manifest is:
 renderer -> preload -> Electron main adapter --+
                                                 |
 outline CLI ------------------------------------+-> authenticated protocol -> Outliner Runtime
-outline Skill -------- invokes CLI -------------+                              |
-outline-import Skill - invokes CLI -------------+                              +-> Core
+outline Skill -------- invokes CLI -------------+                              +-> Core
                                                                                 +-> transaction log
                                                                                 +-> Outline AssetRecords
                                                                                 `-> exact revisions + anchors
@@ -353,6 +362,7 @@ category, porcelain help, and mapping coverage. It generates:
 - `outline capabilities`;
 - `outline schema` output;
 - CLI help and completion metadata;
+- the generated Agent-facing `outline/references/commands.md` command map;
 - Runtime admission and response validation;
 - audit classification; and
 - the document-command and asset-capability parity report.
@@ -1078,6 +1088,16 @@ state and refreshes results. `create` and `add` are explicit creation. Omitted
 patch properties preserve state, while `set`, `configure`, and `ensure` converge
 or return semantic no-change after settlement.
 
+`text replace` is the generic literal `TextTransform` porcelain, not a
+scenario-specific Runtime API. It accepts one exact target or a canonical query /
+STRING_MATCH selection with mandatory `many + max`, plus a separate total
+replacement bound. It computes a text-patch ChangeSet from one bounded
+Projection, binds the ChangeSet to that Projection revision, preserves marks and
+inline references outside replacement ranges, and rejects a match that would
+consume an inline reference. It is destructive porcelain: preview and exact
+Diff acknowledgement are required for non-interactive apply. A repeated settled
+transform with no remaining match is semantic no-change.
+
 Every exact command help names whether it is create, patch, replace, ensure,
 destructive, and/or idempotent. Destructive help requires preview, review, and
 the same command with `--expect-diff HASH --yes`; it explicitly rejects the idea
@@ -1100,7 +1120,9 @@ CLI-level golden tests cover all of these observable workflows:
 10. preview, confirm, and revert Node/definition merge, purge, and Empty Trash;
 11. prove repeated configure/set/ensure execution creates no duplicate semantic
    state or additional Operation; and
-12. expose Operation ID, affected count, and recovery state for every flow.
+12. expose Operation ID, affected count, and recovery state for every flow; and
+13. preview, apply, converge, and exactly revert one literal replacement over a
+    bounded query while preserving unaffected rich-text marks and references.
 
 Each test asserts final document state, mutation invocation count, Operation
 count, and exact revert. Capability registry parity without these end-to-end
@@ -1206,51 +1228,50 @@ tool-result trimming cannot hide mutation settlement.
 
 ### `outline` Skill
 
-Add an immutable built-in Skill named `outline`. Its frontmatter summary makes
-it discoverable for any request to inspect, edit, organize, import into, or
-recover the outline. The instructions teach:
+Add one immutable built-in Skill named `outline`. Its frontmatter makes it
+discoverable for requests to inspect, edit, organize, import into, or recover
+the outline. Organize the Skill around the Agent's operating loop: discover,
+inspect, choose one mutation shape, review, execute, verify, and recover. Keep
+the entrypoint short enough to load for every Outline task while retaining the
+non-obvious invariants around selectors, cardinality, atomic composition,
+destructive review, Operation settlement, and guarded recovery.
 
-- use `find` before mutation when an exact selector is unavailable;
-- use one porcelain invocation for one complete resource, the same command's
-  `--input` for complex resource state, and a ChangeSet with bindings for
-  dependent, cross-date, or bounded bulk work;
-- use structured selectors and explicit cardinality rather than guessed text;
-- discover root/family/exact help and use `--json`, stdin/files, and exact
-  command schema discovery for machine workflows;
-- distinguish explicit create/add, convergent set/configure/ensure, patch
-  omission, and explicit replacement;
-- preview destructive, ambiguous, or high-volume changes and bind apply to the
-  Diff hash;
-- preserve and report Operation IDs;
-- use `log` and guarded `revert` for recovery; and
-- avoid UI/session state, direct workspace files, private APIs, and shell loops
-  that replace ChangeSet composition.
+Use progressive disclosure rather than many peer references:
 
-The Skill contains small canonical examples, not copied JSON Schemas, parser
-code, selector code, or mutation code. It obtains current help and schemas from
-`outline --help`, `outline capabilities`, and `outline schema`. It does not invent
-a model-native wrapper tool.
+- `SKILL.md` owns the common decision loop and routes conditional work;
+- generated `references/commands.md` is the complete public command map;
+- `references/changesets.md` is loaded only for dependent, cross-date, or
+  bounded multi-resource work; and
+- `references/import.md` is loaded only for external data workflows.
 
-### `outline-import` Skill and import convergence
+Generate `commands.md` from the same capability registry that owns parser,
+help, schema, and completion metadata. A drift guard fails when the generated
+reference is stale. The Skill uses root/family/exact help for discovery and
+`outline schema COMMAND` for exact structured contracts; it does not copy JSON
+Schemas or parser logic and does not invent a model-native wrapper tool.
 
-Replace `tenon-import` with an immutable built-in Skill named
-`outline-import`. Import is a scenario proof of general composition, not a
-Runtime namespace. The Skill owns only source workflow knowledge:
+### `outline` Skill import workflow and import convergence
 
-1. inspect the source and enumerate records;
-2. produce coverage showing every source record as mapped, intentionally
-   skipped, or blocked;
-3. apply optional cleanup and source-specific mapping when needed;
-4. generate a generic ChangeSet or JSONL ChangeSet stream;
-5. run `outline diff`, compare its ChangeSet/input fingerprints with reviewed
-   evidence, and stop on unresolved coverage or selectors;
-6. apply the exact Diff once; and
-7. verify through the returned bounded Projection and independent `show`/`find`
-   reads, reporting the Operation ID and using guarded revert on mismatch.
+Fold the retired `tenon-import` workflow into the immutable built-in `outline`
+Skill. Import is a scenario proof of general composition, not a separate Skill
+or Runtime namespace. Expose the general orchestration as public CLI commands:
 
-Cleaning is optional. Already-normalized source records proceed directly to
-ChangeSet generation. Coverage and source fingerprints remain review evidence;
-Runtime recognizes only the generic ChangeSet, Diff, and Operation contracts.
+1. `outline import inspect SOURCE` returns a bounded source profile without
+   starting Runtime or writing document state;
+2. a bundled or Agent-authored read-only adapter converts source-specific data
+   into public `NormalizedImport` plus complete source-record coverage;
+3. `outline import plan` validates the normalized source, builds one generic
+   ChangeSet, creates the immutable Diff, and binds coverage and fingerprints as
+   review evidence;
+4. `outline apply --input DIFF` applies the exact reviewed artifact once; and
+5. `outline import verify` binds the resulting Operation to the reviewed Diff
+   and evidence, then performs bounded independent reads.
+
+Cleaning is optional. Input that already matches `NormalizedImport` proceeds
+directly to `import plan --format normalized`. Adapters may only read authorized
+source files and emit normalized data and coverage; they cannot access Tenon,
+invoke mutations, or own ChangeSet/Diff/Operation semantics. Runtime recognizes
+only the generic ChangeSet, Diff, and Operation contracts.
 
 Cross-date import emits one `ensure` per unique local date, binds each date Node,
 and creates the corresponding trees below those bindings. One source containing
@@ -1258,13 +1279,14 @@ and creates the corresponding trees below those bindings. One source containing
 shell mutation loop. Existing date scaffolding remains untouched; newly ensured
 year/week/day Nodes are inside the same patch, Operation, and revert frontier.
 
-Keep source-specific read-only adapters and fixtures inside the Skill. Rename
-the Tana path around normalized source records and generic ChangeSet generation,
-for example `inspect-source`, `tana-to-changeset`, `check-coverage`, and
-`verify-result`. Delete the main-owned Import Pack parser/writer, preview cache,
-commit service, `/preview` and `/commit` endpoints, causation exception,
-`tenon-import` binary/wrapper, and import-specific packaging resources. No old
-Import Pack reader or alias remains.
+Keep optional source-specific read-only adapters and fixtures inside the Skill.
+An Agent may instead write a task-local adapter against the public normalized
+schema. Delete any Skill-local orchestration helper, Tana-to-ChangeSet writer,
+coverage verifier, or Runtime client so the public CLI remains the sole import
+workflow authority. Also delete the main-owned Import Pack parser/writer,
+preview cache, commit service, `/preview` and `/commit` endpoints, causation
+exception, `tenon-import` binary/wrapper, and import-specific packaging
+resources. No old Import Pack reader or alias remains.
 
 ### Capability parity and old-surface retirement
 
@@ -1325,7 +1347,7 @@ kernel;
 it cannot import Electron, renderer, Agent provider/runtime, CLI argv, or Skill
 code. Bundle dependency guards enforce both directions.
 
-Both built-in Skills invoke the one packaged `outline` launcher and contain no
+The built-in `outline` Skill invokes the one packaged launcher and contains no
 private executable wrapper. Replace `tenonImportRuntime`,
 `tenonImportShellEnvironment`, and `tenonImportResourceNames` with generic
 Runtime discovery/path plus Agent-attestation configuration.
@@ -1342,7 +1364,7 @@ The packaged DMG smoke test verifies:
   document/event sequence;
 - quitting/reopening desktop does not move document authority or start a second
   writer; and
-- both built-in Skills resolve the same CLI binary.
+- the built-in Skill resolves the packaged CLI binary for every workflow.
 
 No global `/usr/local/bin` or shell profile mutation occurs during installation.
 The supported public entry is the bundled Skill/Agent path and the executable
@@ -1366,8 +1388,8 @@ New files are expected under:
 - `src/outline/cli/` for the thin client entry, formatting, and porcelain;
 - `src/main/outlineClient/` for Electron supervision, typed forwarding, and
   preload integration;
-- `src/main/builtInSkills/outline/` and
-  `src/main/builtInSkills/outline-import/`;
+- `src/main/builtInSkills/outline/` for the Skill plus its import adapters,
+  fixtures, references, and helper scripts;
 - `scripts/` for capability-parity, retirement, packaging, and provider probes;
   and
 - focused Core/main/CLI/Skill/process fixtures under `tests/`.
@@ -1387,7 +1409,7 @@ Electron main retains no imports of Outline domain authorities after cutover;
 its later Agent services may import only the neutral content kernel.
 
 The feature deletes the live import-only files and `tenon-import` Skill/resource
-tree after its reusable adapter fixtures move to `outline-import`. It deletes
+tree after its reusable adapter fixtures move into `outline`. It deletes
 `agentNodeTool*` and `agentOutlineParser` files only after shared selector/read
 logic has moved and the retirement guard proves no remaining consumer.
 
@@ -1402,8 +1424,8 @@ The implementation updates current behavior in the same PR:
   CLI-through-Skill execution and result audit;
 - `docs/spec/agent-tool-permissions.md` records full Outliner authority with
   trusted causation and no Node/action/projection scope;
-- `docs/spec/agent-skills.md` owns both built-in Skills and their division of
-  responsibility;
+- `docs/spec/agent-skills.md` owns the built-in Skill and the boundary between
+  ordinary outline work and its import workflow;
 - `docs/spec/agent-integration.md` owns causation, shell environment, parity,
   and cross-layer verification; and
 - `docs/spec/outliner-parity-matrix.md` records the final public capability
@@ -1457,7 +1479,7 @@ line claims those areas explicitly. The dev does not edit `docs/TASKS.md` or
 | --- | --- |
 | Selector/Projection and output (`FR-1`, `FR-2`) | Golden schemas and envelopes; test titles `resolves identical human and JSON target sets`, `rejects ambiguous mutation selectors`, `paginates at a bound revision`, and `emits resumable JSONL records` |
 | ChangeSet normalization (`FR-3`, `FR-4`, `FR-12`) | Property/golden tests showing porcelain/direct equivalence, stable canonical hashes, fixed IDs/bindings, non-mutating Diff, 100-date one-diff/one-apply, and bounded returned Projection |
-| Complete-resource porcelain (`FR-13`) | Twelve CLI golden workflows (`AC-52` through `AC-63`) asserting final state, mutation invocations, Operation count, visible settlement/recovery fields, created IDs, and exact revert; no common resource flow requires an ID lookup or shell mutation loop |
+| Complete-resource porcelain (`FR-13`) | Thirteen CLI golden workflows (`AC-52` through `AC-65`) asserting final state, mutation invocations, Operation count, visible settlement/recovery fields, created IDs, and exact revert; no common resource flow requires an ID lookup or shell mutation loop |
 | Help and discoverability (`FR-14`) | Root/family/exact help goldens for `outline`, `search`, `search create`, `view sort add`, and `purge`; registry drift tests compare exact command schema, help options, completion metadata, parser admission, semantics, defaults, and examples |
 | Atomicity and concurrency (`FR-5`, `FR-6`) | Tests `rolls back every chunk after a late Change failure`, `rejects a stale Diff without writes`, `does not retry a stale mutation`, and `requires Diff-bound destructive acknowledgement` |
 | Durable recovery (`FR-5`, `FR-12`) | Restart tests for ordinary edits, create/delete, purge, Empty Trash, revert conflict, revert-of-revert, crash before log append, crash after log fsync/before acknowledgement, truncated tail, orphan blob, corrupt referenced blob, idempotency, retention, and capacity |
@@ -1465,7 +1487,7 @@ line claims those areas explicitly. The dev does not edit `docs/TASKS.md` or
 | Runtime lifecycle (`FR-10`) | Process tests for CLI start, desktop start, `--no-start`, stale descriptor/lock, simultaneous desktop/CLI startup, shared attachment, independent desktop restart, idle drain, unavailable timeout, private permissions, no client persistence import, one-time manual installed/dev reset, fresh physical layout, and no migration/automatic-deletion path |
 | Desktop cutover (`FR-3`, `FR-5`, `FR-11`) | Renderer/preload/E2E proof that every persisted desktop action produces Runtime Operation/Event, optimistic drafts reconcile once, conflict keeps draft, Undo/Redo uses guarded revert, and dependency guard finds no document authority in Electron main |
 | Agent authority (`FR-8`, `FR-9`) | Registry equality test for local-user and built-in-Agent schemas; valid/missing/expired attestation tests; immutable Thread/Turn/Item audit; full purge/revert coverage; no Memory projection filtering |
-| Import composition (`FR-7`, `FR-12`) | No-clean and cleaned source fixtures, complete coverage gate, changed-input/Diff mismatch, 100+ Daily Notes, mixed parents, failed verification with Operation ID, exact revert, and no scenario Runtime endpoint |
+| Import composition (`FR-7`, `FR-12`) | No-clean and cleaned source fixtures, complete coverage gate, changed-input/Diff mismatch, 100+ Daily Notes, deterministic Tana weekday/supertag mapping, explicit unsupported accounting, mixed parents, failed verification with Operation ID, exact revert, and no scenario Runtime endpoint |
 | Native tool cutover (`FR-9`) | Six-tool fixture replay, new capability fixtures, generated parity report with zero gaps, provider probe, and retirement guard with an empty live queue |
 | Packaging/security (`NFR-1` through `NFR-6`) | Thin-bundle dependency assertion, packaged CLI/Skill smoke, socket/descriptor mode checks, credential-redaction checks, bounded JSONL/export probes, and recovery disk-budget tests |
 
@@ -1613,11 +1635,12 @@ implementation.
   versus record corruption; remove public `delete_asset`, digest, and anchor
   authority; and prove purge/revert/expiry/concurrency/crash behavior. Covers
   `FR-5`, `FR-12`; acceptance `AC-11`, `AC-34` through `AC-36`.
-- [x] **9. Add both Skills and absorb import.** Add the schema-light `outline`
-  Skill; replace `tenon-import` with `outline-import`; retain source inspection,
-  optional cleaning, coverage, adapters, and verification; generate only generic
-  ChangeSets; prove no-clean and 100-date workflows; delete Import Pack writes,
-  private API/service, binary, causation exception, and packaging. Covers
+- [x] **9. Add the Outline Skill and absorb import.** Add the operation-loop
+  `outline` Skill, its registry-generated command map, and focused ChangeSet and
+  import references; expose public import inspect/plan/verify; keep adapters
+  read-only and normalized-output-only; prove no-clean and 100-date workflows;
+  delete Skill-local orchestration, Import Pack writes, private API/service,
+  binary, causation exception, and packaging. Covers
   `FR-7`, `FR-9`, `FR-12`; acceptance `AC-14`, `AC-15`, `AC-18`, `AC-19`,
   `AC-23` through `AC-29`.
 - [x] **10. Cut the built-in Agent over with full authority.** Put `outline` on

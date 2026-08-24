@@ -983,7 +983,7 @@ describe('agent skills', () => {
       expect(await runtime.getSkill(name)).toBeNull();
       expect(catalog.entries.some((entry) => entry.name === name)).toBe(false);
     }
-    for (const name of ['skillify', 'outline', 'outline-import']) {
+    for (const name of ['skillify', 'outline']) {
       expect(await runtime.getSkill(name)).not.toBeNull();
     }
     expect(await runtime.getSkill('research')).toBeNull();
@@ -1003,15 +1003,17 @@ describe('agent skills', () => {
 
     expect(invocation.ok).toBe(true);
     if (!invocation.ok) return;
-    expect(invocation.renderedContent).toContain('one complete resource intent -> one porcelain invocation');
-    expect(invocation.renderedContent).toContain('complex state for that same resource -> the same command with');
-    expect(invocation.renderedContent).toContain('one ChangeSet with bindings, then one `diff` and one `apply`');
-    expect(invocation.renderedContent).toContain('Never use a shell mutation loop, query intermediate created IDs');
-    expect(invocation.renderedContent).toContain('Patch forms preserve omitted properties');
-    expect(invocation.renderedContent).toContain('Repeated\n   `set`/`configure`/`ensure` calls must converge');
-    expect(invocation.renderedContent).toContain('`--yes` alone is invalid');
-    expect(invocation.renderedContent).toContain('`@saved-searches`');
-    expect(invocation.renderedContent).toContain('`many` mutation has an explicit\n   `max` bound');
+    const instructions = invocation.renderedContent.replace(/\s+/gu, ' ');
+    expect(instructions).toContain('| Create one complete resource | One porcelain `create` or `add` invocation |');
+    expect(instructions).toContain('| Supply complex state for that resource | The same command with `--input FILE|-` |');
+    expect(instructions).toContain('| Change multiple resources or dependencies | One ChangeSet with bindings |');
+    expect(instructions).toContain('| Replace literal text across bounded Nodes | One reviewed `text replace` invocation |');
+    expect(instructions).toContain('Never use a shell mutation loop, query intermediate created IDs');
+    expect(instructions).toContain('Patch forms preserve omitted properties');
+    expect(instructions).toContain('Repeated `set`, `configure`, and `ensure` calls must converge');
+    expect(instructions).toContain('`--yes` alone is invalid');
+    expect(instructions).toContain('`@saved-searches`');
+    expect(instructions).toContain('Every structured `many` mutation has an explicit `max` bound');
   });
 
   test('loads bundled built-in skills with real resource directories', async () => {
@@ -1239,7 +1241,6 @@ describe('agent skills', () => {
     const results = await Promise.allSettled([
       runtime.getSkill('skillify'),
       runtime.getSkill('outline'),
-      runtime.getSkill('outline-import'),
       runtime.listAllSkills(),
       runtime.buildSkillCatalogSnapshot(),
     ]);
@@ -1249,15 +1250,12 @@ describe('agent skills', () => {
       'fulfilled',
       'fulfilled',
       'fulfilled',
-      'fulfilled',
     ]);
     expect(results[0]).toMatchObject({ status: 'fulfilled', value: { name: 'skillify', source: 'built-in' } });
     expect(results[1]).toMatchObject({ status: 'fulfilled', value: { name: 'outline', source: 'built-in' } });
-    expect(results[2]).toMatchObject({ status: 'fulfilled', value: { name: 'outline-import', source: 'built-in' } });
-    const allSkills = results[3].status === 'fulfilled' ? results[3].value : [];
+    const allSkills = results[2].status === 'fulfilled' ? results[2].value : [];
     expect(allSkills.map((skill) => skill.name).sort()).toEqual([
       'outline',
-      'outline-import',
       'skillify',
     ]);
   });
@@ -1265,26 +1263,21 @@ describe('agent skills', () => {
   test('ships public outline workflows without legacy document authorities', async () => {
     const runtime = new AgentSkillRuntime({ includeUserSkills: false });
     const outline = await runtime.getSkill('outline');
-    const outlineImport = await runtime.getSkill('outline-import');
 
     expect(await runtime.getSkill('data-cleanup')).toBeNull();
+    expect(await runtime.getSkill('outline-import')).toBeNull();
     expect(outline?.allowedTools).toContain('bash');
+    expect(outline?.allowedTools).toContain('file_write');
+    expect(outline?.allowedTools).toContain('file_edit');
     expect(outline?.execution).toBe('isolated');
     expect(outline?.body).toContain('# Outline');
-    expect(outline?.body).toContain("outline --json show 'node:example'");
-    expect(outline?.body).toContain("outline --json find 'Quarterly plan' --limit 20");
-    expect(outline?.body).toContain('outline --json diff --input changeset.json --output diff.json');
-    expect(outline?.body).toContain('outline --json apply --input diff.json > operation.json');
-    expect(outline?.body).toContain("outline --json log --operation 'operation:example'");
-    expect(outline?.body).toContain("outline --json revert 'operation:example'");
-    expect(outlineImport?.allowedTools).toContain('bash');
-    expect(outlineImport?.execution).toBe('isolated');
-    expect(outlineImport?.body).toContain('# Outline Import');
-    expect(outlineImport?.body).toContain('one generic ChangeSet');
-    expect(outlineImport?.body).toContain('exactly one Runtime Diff');
-    expect(outlineImport?.body).toContain('one `outline diff` and one `outline\n  apply`');
-    expect(outlineImport?.body).toContain('outline --json diff --input changeset.json --output diff.json');
-    expect(outlineImport?.body).toContain('outline --json apply --input diff.json > operation.json');
+    expect(outline?.body).toContain('## Start Every Task');
+    expect(outline?.body).toContain('## Choose One Mutation Shape');
+    expect(outline?.body).toContain('## Recover Safely');
+    expect(outline?.body).toContain('[references/commands.md](references/commands.md)');
+    expect(outline?.body).toContain('[references/changesets.md](references/changesets.md)');
+    expect(outline?.body).toContain('[references/import.md](references/import.md)');
+    expect(outline?.body).not.toContain(['outline import', 'helper tana SOURCE'].join('-'));
     const retiredToolPattern = new RegExp(`\\b(?:${[
       ['node', 'search'],
       ['node', 'read'],
@@ -1293,11 +1286,11 @@ describe('agent skills', () => {
       ['node', 'delete'],
       ['outline', 'undo', 'stack'],
     ].map((parts) => parts.join('_')).join('|')})\\b`);
-    for (const skill of [outline, outlineImport]) {
+    for (const skill of [outline]) {
       expect(skill).not.toBeNull();
       expect(skill?.body).not.toMatch(retiredToolPattern);
       expect(skill?.body).not.toMatch(/outline\s+(?:show|find|diff|apply|log|revert)[^\n]*\s--json\b/);
-      expect(skill?.body).not.toMatch(/outline\b[^\n]*(?:--file|--operation-id|--max)\b/);
+      expect(skill?.body).not.toMatch(/outline\b[^\n]*(?:--file|--operation-id)\b/);
       expect(skill?.body).not.toContain(['tenon', 'import'].join('-'));
       expect(skill?.body).not.toContain(['Agent', 'Import', 'Service'].join(''));
       expect(skill?.body).not.toContain(['Agent', 'Import', 'Api', 'Server'].join(''));
@@ -1821,15 +1814,24 @@ describe('agent skills', () => {
 });
 
 describe('built-in skill resource packaging', () => {
-  test('stages both public outline workflows into packaged resources', async () => {
+  test('stages the complete public outline workflow into one packaged Skill', async () => {
     const repoRoot = path.resolve(import.meta.dir, '..', '..');
     await execFile('bun', ['scripts/sync-built-in-skills.ts'], { cwd: repoRoot });
     const generatedRoot = path.join(repoRoot, 'build', 'generated', 'built-in-skills');
-    expect((await readdir(generatedRoot)).sort()).toEqual(['outline', 'outline-import']);
+    expect((await readdir(generatedRoot)).sort()).toEqual(['outline']);
     expect(await readFile(path.join(generatedRoot, 'outline', 'SKILL.md'), 'utf8'))
-      .toContain('# Outline');
-    expect(await readFile(path.join(generatedRoot, 'outline-import', 'SKILL.md'), 'utf8'))
-      .toContain('# Outline Import');
+      .toContain('[references/commands.md](references/commands.md)');
+    expect((await readdir(path.join(generatedRoot, 'outline', 'references'))).sort()).toEqual([
+      'changesets.md',
+      'commands.md',
+      'import.md',
+    ]);
+    expect(await readFile(path.join(generatedRoot, 'outline', 'references', 'commands.md'), 'utf8'))
+      .toContain('| `outline search create` | create; not idempotent |');
+    expect(await readFile(path.join(generatedRoot, 'outline', 'references', 'changesets.md'), 'utf8'))
+      .toContain('# ChangeSets');
+    expect(await readFile(path.join(generatedRoot, 'outline', 'references', 'import.md'), 'utf8'))
+      .toContain('# Import External Data');
     for (const name of ['data-analysis', 'document', 'feed-processing', 'pdf', 'presentation', 'spreadsheet']) {
       await expect(readFile(path.join(generatedRoot, name, 'SKILL.md'), 'utf8')).rejects.toThrow();
     }

@@ -209,6 +209,29 @@ describe('outline ChangeSet kernel', () => {
     expect(workspace.projection().nodes.filter((node) => node.content.text.startsWith('Imported 2028-')).length).toBe(100);
   });
 
+  test('settles thousands of leaf mutations with one bounded Operation summary', async () => {
+    const workspace = await makeWorkspace();
+    const targetId = await createExisting(workspace, 'Bulk update target');
+    const operations: ChangeSet['operations'][number][] = Array.from({ length: 2_050 }, (_, index) => ({
+      op: 'update',
+      targets: oneId(targetId),
+      changes: [{ kind: 'description', value: `Bulk value ${index}` }],
+    }));
+    const diff = await diffOutlineChangeSet(workspace, {
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      operations,
+    });
+
+    const operation = await applyOutlineDiff(workspace, diff, { origin: 'external-client' });
+
+    expect(operation.summary).toBe('Applied 2050 ChangeSet operations: update x2050.');
+    expect(operation.affectedNodeCount).toBe(1);
+    expect(operation.recovery.state).toBe('available');
+    expect(workspace.documentState().nodes[targetId]?.description).toBe('Bulk value 2049');
+    expect(await workspace.store.operations()).toHaveLength(2);
+  }, 15_000);
+
   test('rolls back every earlier change when a late operation fails', async () => {
     const workspace = await makeWorkspace();
     const before = workspace.documentState();

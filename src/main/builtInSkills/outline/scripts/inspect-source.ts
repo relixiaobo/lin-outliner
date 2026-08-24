@@ -1,7 +1,14 @@
 #!/usr/bin/env bun
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { optionValue, readJson, readText, requiredArg, type SourceProfile, writeJson } from './import-source-lib';
+import {
+  optionValue,
+  readJson,
+  readText,
+  requiredArg,
+  type SourceProfile,
+  writeJson,
+} from '../../../../outline/import/normalized';
 
 const USAGE = 'Usage: bun inspect-source.ts <file-or-directory> [--out <profile.json>]';
 
@@ -61,6 +68,22 @@ async function inspectDirectory(source: string): Promise<SourceProfile> {
 
 async function inspectJson(source: string, bytes: number): Promise<SourceProfile> {
   const data = await readJson(source);
+  if (isNormalizedImport(data)) {
+    return {
+      ok: true,
+      source: path.resolve(source),
+      kind: 'normalized',
+      bytes,
+      confidence: 1,
+      stats: {
+        sourceRecords: data.stats.sourceRecords,
+        sections: data.stats.sections,
+        nodes: data.stats.nodes,
+        coverage: data.coverage,
+      },
+      warnings: [],
+    };
+  }
   if (isTanaExport(data)) {
     const docs = data.docs as Array<{ id?: unknown; props?: Record<string, unknown> }>;
     const typeCounts = countBy(docs.map((doc) => typeof doc.props?._docType === 'string' ? doc.props._docType : '(none)'));
@@ -98,6 +121,20 @@ async function inspectJson(source: string, bytes: number): Promise<SourceProfile
     stats: { topLevelKeys: data && typeof data === 'object' ? Object.keys(data as Record<string, unknown>) : [] },
     warnings: ['json_not_recognized_as_tana_export'],
   };
+}
+
+function isNormalizedImport(value: unknown): value is {
+  version: 1;
+  stats: { sourceRecords: number; sections: number; nodes: number };
+  coverage: Record<string, unknown>;
+  sections: unknown[];
+} {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return record.version === 1
+    && Array.isArray(record.sections)
+    && Boolean(record.stats && typeof record.stats === 'object')
+    && Boolean(record.coverage && typeof record.coverage === 'object');
 }
 
 async function inspectRoamEdn(source: string, bytes: number): Promise<SourceProfile> {

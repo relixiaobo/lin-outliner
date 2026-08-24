@@ -2,25 +2,18 @@
 import path from 'node:path';
 import {
   computeStats,
-  buildImportChangeSet,
   coverageFromEntries,
   extractInlineTags,
   htmlToText,
   isValidIsoLocalDate,
-  optionFlag,
-  optionValue,
-  readText,
-  requiredArg,
-  sha256Text,
   summarizeWarnings,
-  writeJson,
   type CoverageEntry,
   type ImportNode,
   type ImportOptions,
   type NormalizedImport,
   type ImportSection,
   type ImportWarning,
-} from './import-source-lib';
+} from '../../../../outline/import/normalized';
 
 interface TanaDoc {
   id: string;
@@ -46,7 +39,6 @@ interface TanaTupleField {
   consumedIds: string[];
 }
 
-const USAGE = 'Usage: bun tana-to-changeset.ts <tana-export.json> --out <changeset.json> [--evidence-out <evidence.json>] [--coverage-out <coverage.json>] [--fidelity content|clean|full] [--mode native_daily|stage] [--parent-id <node-id>]';
 const IMPORTABLE_TYPES = new Set(['', 'journal', 'home', 'journalPart', 'codeblock']);
 const UNSUPPORTED_TYPES = new Set([
   'metanode',
@@ -81,54 +73,6 @@ const EXCLUDED_ROOT_NAMES = new Set([
   'quick add',
   'trailing sidebar container',
 ]);
-
-async function main() {
-  const args = process.argv.slice(2);
-  const source = requiredArg(args, 0, USAGE);
-  const out = optionValue(args, '--out');
-  if (!out) throw new Error(USAGE);
-  const coverageOut = optionValue(args, '--coverage-out') ?? `${out.replace(/\.json$/u, '')}.coverage.json`;
-  const evidenceOut = optionValue(args, '--evidence-out') ?? `${out.replace(/\.json$/u, '')}.evidence.json`;
-  const fidelity = optionValue(args, '--fidelity') ?? 'clean';
-  if (fidelity !== 'content' && fidelity !== 'clean' && fidelity !== 'full') throw new Error('--fidelity must be content, clean, or full');
-  const includeTrash = optionFlag(args, '--include-trash');
-
-  const sourceText = await readText(source);
-  const raw = JSON.parse(sourceText) as unknown;
-  const pack = await normalizeTanaExport(raw, {
-    source,
-    coverageOut,
-    includeTrash,
-    options: {
-      fidelity,
-      dateGrouping: 'native_daily',
-      tags: fidelity !== 'content',
-      fields: fidelity === 'full' ? 'field_rows' : fidelity === 'clean' ? 'text_children' : 'omit',
-      doneState: fidelity !== 'content',
-    },
-  });
-  const rawMode = optionValue(args, '--mode');
-  if (rawMode && rawMode !== 'native_daily' && rawMode !== 'stage') {
-    throw new Error('--mode must be native_daily or stage');
-  }
-  const requestedMode = rawMode === 'native_daily' || rawMode === 'stage' ? rawMode : undefined;
-  const built = buildImportChangeSet(pack, {
-    sourceFingerprint: sha256Text(sourceText),
-    ...(requestedMode ? { mode: requestedMode } : {}),
-    ...(optionValue(args, '--parent-id') ? { parentId: optionValue(args, '--parent-id') } : {}),
-  });
-  await writeJson(pack.coverage.entriesFile ?? coverageOut, importCoverageEntries);
-  await writeJson(out, built.changeSet);
-  await writeJson(evidenceOut, built.evidence);
-  console.log(JSON.stringify({
-    ok: true,
-    out,
-    evidenceOut,
-    coverageOut: pack.coverage.entriesFile,
-    stats: pack.stats,
-    warnings: pack.warnings,
-  }, null, 2));
-}
 
 let importCoverageEntries: CoverageEntry[] = [];
 
@@ -207,8 +151,8 @@ export async function normalizeTanaExport(
     if (isInOwnedSet(doc, byId, systemRoots)) continue;
     if (isInOwnedSet(doc, byId, workspaceInternalRoots)) continue;
     if (!config.includeTrash && isInOwnedSet(doc, byId, trashRoots)) continue;
-    const date = nameOf(doc);
-    if (!isValidIsoLocalDate(date)) {
+    const date = journalLocalDate(doc);
+    if (!date) {
       invalidJournalParts.push(doc);
       continue;
     }
@@ -304,7 +248,7 @@ function invalidJournalWarnings(docs: readonly TanaDoc[]): ImportWarning[] {
   if (docs.length === 0) return [];
   return [{
     code: 'invalid_journal_date',
-    message: `${docs.length} journalPart record(s) did not have a valid YYYY-MM-DD title and remained in the Tana Workspace section.`,
+    message: `${docs.length} journalPart record(s) did not have a deterministic local-date title and remained in the Tana Workspace section.`,
     count: docs.length,
   }];
 }
@@ -330,6 +274,7 @@ function convertDoc(
 
   const title = htmlToText(doc.props?.name);
   const description = htmlToText(doc.props?.description);
+  const metadataTags = context.options.tags ? collectMetadataSupertags(doc, context) : [];
   const tupleFields = collectTupleFields(doc, context);
   const mergedFields = mergeTupleFields(tupleFields);
   const consumedFieldIds = new Set(tupleFields.flatMap((field) => [field.tuple.id, ...field.consumedIds]));
@@ -350,11 +295,12 @@ function convertDoc(
 
   const docType = docTypeOf(doc);
   const tagExtraction = context.options.tags ? extractInlineTags(title) : { title, tags: [] };
+  const tags = uniqueNames([...tagExtraction.tags, ...metadataTags]);
   const codeText = docType === 'codeblock' ? title || description : '';
   const node: ImportNode = {
     title: tagExtraction.title || description.slice(0, 80) || '(untitled)',
     ...(description ? { description } : {}),
-    ...(tagExtraction.tags.length ? { tags: tagExtraction.tags } : {}),
+    ...(tags.length ? { tags } : {}),
     ...(context.options.doneState && doc.props?._done ? { checked: true } : {}),
     ...(codeText ? { code: { text: codeText, language: undefined } } : {}),
     ...(context.options.fields === 'field_rows' && mergedFields.length ? { fields: mergedFields } : {}),
@@ -363,6 +309,39 @@ function convertDoc(
   };
   context.entries.push({ sourceId: doc.id, status: 'imported', target: doc.id });
   return node;
+}
+
+function collectMetadataSupertags(doc: TanaDoc, context: TanaConvertContext): string[] {
+  const metaNodeId = typeof doc.props?._metaNodeId === 'string' ? doc.props._metaNodeId : undefined;
+  const metaNode = metaNodeId ? context.byId.get(metaNodeId) : undefined;
+  if (!metaNode || docTypeOf(metaNode) !== 'metanode') return [];
+  const tags: string[] = [];
+  let consumedMetadata = false;
+  for (const tuple of context.children.get(metaNode.id) ?? []) {
+    if (docTypeOf(tuple) !== 'tuple' || context.visited.has(tuple.id)) continue;
+    const tupleChildren = tuple.children ?? [];
+    const attribute = tupleChildren[0] ? context.byId.get(tupleChildren[0]) : undefined;
+    if (!attribute || meaningfulName(attribute).trim().toLowerCase() !== 'node supertags(s)') continue;
+    const definitions = tupleChildren
+      .slice(1)
+      .map((childId) => context.byId.get(childId))
+      .filter((candidate): candidate is TanaDoc => Boolean(candidate && docTypeOf(candidate) === 'tagDef'));
+    const names = definitions.map(meaningfulName).filter(Boolean);
+    if (names.length === 0) continue;
+    consumedMetadata = true;
+    tags.push(...names);
+    context.visited.add(tuple.id);
+    context.entries.push({ sourceId: tuple.id, status: 'imported', reason: 'supertag_tuple', target: doc.id });
+    markMergedDoc(attribute.id, context, doc.id, 'supertag_tuple_part');
+    for (const definition of definitions) {
+      markMergedDoc(definition.id, context, doc.id, 'supertag_definition');
+    }
+  }
+  if (consumedMetadata && !context.visited.has(metaNode.id)) {
+    context.visited.add(metaNode.id);
+    context.entries.push({ sourceId: metaNode.id, status: 'merged', reason: 'node_metadata', target: doc.id });
+  }
+  return uniqueNames(tags);
 }
 
 function collectTupleFields(doc: TanaDoc, context: TanaConvertContext): TanaTupleField[] {
@@ -438,11 +417,25 @@ function meaningfulValue(doc: TanaDoc): string {
   return '';
 }
 
-function markMergedDoc(sourceId: string, context: TanaConvertContext, target: string): void {
+function markMergedDoc(
+  sourceId: string,
+  context: TanaConvertContext,
+  target: string,
+  reason = 'field_tuple_part',
+): void {
   const doc = context.byId.get(sourceId);
   if (!doc || context.visited.has(doc.id)) return;
   context.visited.add(doc.id);
-  context.entries.push({ sourceId: doc.id, status: 'merged', reason: 'field_tuple_part', target });
+  context.entries.push({ sourceId: doc.id, status: 'merged', reason, target });
+}
+
+function uniqueNames(values: readonly string[]): string[] {
+  const names = new Map<string, string>();
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (trimmed) names.set(trimmed.toLowerCase(), trimmed);
+  }
+  return [...names.values()];
 }
 
 function markSubtree(
@@ -517,13 +510,12 @@ function nameOf(doc: TanaDoc): string {
   return htmlToText(doc.props?.name);
 }
 
-function createdAt(doc: TanaDoc): number {
-  return typeof doc.props?.created === 'number' ? doc.props.created : 0;
+function journalLocalDate(doc: TanaDoc): string | null {
+  const match = /^(\d{4}-\d{2}-\d{2})(?: - (?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday))?$/u.exec(nameOf(doc));
+  const date = match?.[1];
+  return date && isValidIsoLocalDate(date) ? date : null;
 }
 
-if ((import.meta as ImportMeta & { main?: boolean }).main) {
-  main().catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
-  });
+function createdAt(doc: TanaDoc): number {
+  return typeof doc.props?.created === 'number' ? doc.props.created : 0;
 }

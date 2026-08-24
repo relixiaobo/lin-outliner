@@ -41,7 +41,43 @@
         "name": "Ship importer #project",
         "description": "Keep the write path generic.",
         "_done": 1783081052636,
+        "_metaNodeId": "task-1-meta",
         "_ownerId": "home"
+      }
+    },
+    {
+      "id": "task-1-meta",
+      "props": {
+        "created": 5,
+        "_docType": "metanode",
+        "_ownerId": "task-1"
+      },
+      "children": ["task-1-supertag-tuple"]
+    },
+    {
+      "id": "task-1-supertag-tuple",
+      "props": {
+        "created": 5,
+        "_docType": "tuple",
+        "_ownerId": "task-1-meta"
+      },
+      "children": ["node-supertags-attribute", "initiative-tag-definition"]
+    },
+    {
+      "id": "node-supertags-attribute",
+      "props": {
+        "created": 5,
+        "name": "Node supertags(s)",
+        "_ownerId": "task-1-supertag-tuple"
+      }
+    },
+    {
+      "id": "initiative-tag-definition",
+      "props": {
+        "created": 5,
+        "name": "Initiative",
+        "_docType": "tagDef",
+        "_ownerId": "task-1-supertag-tuple"
       }
     },
     {

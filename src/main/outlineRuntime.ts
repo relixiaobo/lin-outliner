@@ -2,7 +2,7 @@ import path from 'node:path';
 import { EXTRA_TOOL_PATH_ENV, pathSegments } from './agent/capabilities/agentToolPath';
 
 export const TENON_OUTLINE_CLI_ENTRY_ENV = 'TENON_OUTLINE_CLI_ENTRY';
-export const TENON_OUTLINE_IMPORT_HELPER_ENTRY_ENV = 'TENON_OUTLINE_IMPORT_HELPER_ENTRY';
+export const TENON_OUTLINE_IMPORT_ADAPTER_ENTRY_ENV = 'TENON_OUTLINE_IMPORT_ADAPTER_ENTRY';
 export const TENON_OUTLINE_CLI_RUNTIME_ENV = 'TENON_OUTLINE_CLI_RUNTIME';
 export const TENON_OUTLINE_RUNTIME_ENTRY_ENV = 'TENON_OUTLINE_RUNTIME_ENTRY';
 export const TENON_OUTLINE_RUN_AS_NODE_ENV = 'TENON_OUTLINE_RUN_AS_NODE';
@@ -11,7 +11,7 @@ export const TENON_OUTLINE_PACKAGED_ENV = 'TENON_OUTLINE_PACKAGED';
 export interface OutlineCliRuntimeConfig {
   readonly binDir: string;
   readonly cliEntry: string;
-  readonly importHelperEntry: string;
+  readonly importAdapterEntry: string;
   readonly runtimeEntry: string;
   readonly cliRuntime: string;
   readonly runAsNode: boolean;
@@ -28,7 +28,7 @@ export interface OutlineCliRuntimeOptions {
 export function configureOutlineCliRuntime(options: OutlineCliRuntimeOptions): OutlineCliRuntimeConfig {
   const config = resolveOutlineCliRuntime(options);
   process.env[TENON_OUTLINE_CLI_ENTRY_ENV] = config.cliEntry;
-  process.env[TENON_OUTLINE_IMPORT_HELPER_ENTRY_ENV] = config.importHelperEntry;
+  process.env[TENON_OUTLINE_IMPORT_ADAPTER_ENTRY_ENV] = config.importAdapterEntry;
   process.env[TENON_OUTLINE_RUNTIME_ENTRY_ENV] = config.runtimeEntry;
   process.env[TENON_OUTLINE_CLI_RUNTIME_ENV] = config.cliRuntime;
   if (config.runAsNode) process.env[TENON_OUTLINE_RUN_AS_NODE_ENV] = '1';
@@ -45,12 +45,12 @@ export function resolveOutlineCliRuntime(options: OutlineCliRuntimeOptions): Out
     return {
       binDir: path.join(root, 'bin'),
       cliEntry: path.join(root, 'outline.mjs'),
-      importHelperEntry: path.join(
+      importAdapterEntry: path.join(
         options.resourcesPath,
         'built-in-skills',
-        'outline-import',
+        'outline',
         'scripts',
-        'outline-import.mjs',
+        'source-adapters.mjs',
       ),
       runtimeEntry: path.join(root, 'outline-runtime.mjs'),
       cliRuntime: options.processExecPath,
@@ -62,14 +62,14 @@ export function resolveOutlineCliRuntime(options: OutlineCliRuntimeOptions): Out
   return {
     binDir: path.join(repositoryRoot, 'src', 'outline', 'bin'),
     cliEntry: path.join(repositoryRoot, 'src', 'outline', 'cli', 'entry.ts'),
-    importHelperEntry: path.join(
+    importAdapterEntry: path.join(
       repositoryRoot,
       'src',
       'main',
       'builtInSkills',
-      'outline-import',
+      'outline',
       'scripts',
-      'outline-import.ts',
+      'source-adapters.ts',
     ),
     runtimeEntry: path.join(repositoryRoot, 'src', 'outline', 'runtime', 'server', 'entry.ts'),
     cliRuntime: 'bun',

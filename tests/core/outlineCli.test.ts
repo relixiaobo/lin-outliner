@@ -161,6 +161,7 @@ describe('outline CLI', () => {
     expect(jsonOutput.stdout).toBe(output.stdout);
     expect(output.stdout).toContain('Command families:');
     expect(output.stdout).toContain('search         Create, configure, ensure, and refresh Saved Searches.');
+    expect(output.stdout).toContain('text           Apply bounded, reviewed literal text transformations.');
     expect(output.stdout).toContain('view           Configure complete views');
     expect(output.stdout).toContain('Direct commands:');
     expect(output.stdout).toContain('schema         Print exact public JSON Schemas.');
@@ -178,6 +179,22 @@ describe('outline CLI', () => {
     expect(output.stdout).toContain('ensure-tag         Ensure the canonical Saved Search');
     expect(output.stdout).toContain('refresh            Refresh materialized results');
     expect(output.stdout).toContain('set                Atomically patch a Search');
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  test('renders exact import plan help with public adapter and artifact boundaries', async () => {
+    const root = await makeRoot();
+    const output = captureIo();
+
+    expect(await runOutlineCli(['import', 'plan', '--help'], { runtimeRoot: root, io: output.io })).toBe(0);
+    expect(output.stdout).toContain('Behavior: preview; idempotent');
+    expect(output.stdout).toContain('--format auto|normalized|tana');
+    expect(output.stdout).toContain('--fidelity content|clean|full');
+    expect(output.stdout).toContain('--output FILE');
+    expect(output.stdout).toContain('--evidence-output FILE');
+    expect(output.stdout).toContain('SOURCE and every output artifact must use distinct paths.');
+    expect(output.stdout).toContain('outline import plan cleaned.json --format normalized');
+    expect(output.stdout).not.toContain('[ARGS]');
     expect(await readdir(root)).toEqual([]);
   });
 
@@ -231,6 +248,30 @@ describe('outline CLI', () => {
     expect(output.stdout).toContain('--yes alone is rejected');
     expect(output.stdout).toContain('outline purge @trash --contents --preview');
     expect(output.stdout).toContain('outline purge @trash --contents --expect-diff SHA256 --yes');
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  test('renders exact text replace help and schema from the same command contract', async () => {
+    const root = await makeRoot();
+    const help = captureIo();
+    const schema = captureIo();
+
+    expect(await runOutlineCli(['text', 'replace', '--help'], { runtimeRoot: root, io: help.io })).toBe(0);
+    expect(help.stdout).toContain('Behavior: destructive; idempotent');
+    expect(help.stdout).toContain('--matching TEXT');
+    expect(help.stdout).toContain('--query JSON|FILE');
+    expect(help.stdout).toContain('--max N');
+    expect(help.stdout).toContain('--max-replacements N');
+    expect(help.stdout).toContain('--field content|description|both');
+    expect(help.stdout).toContain('--preview');
+    expect(help.stdout).toContain('--expect-diff SHA256');
+    expect(help.stdout).toContain('--yes alone is rejected');
+    expect(help.stdout).toContain('outline text replace --matching "keyword 1" --max 500');
+    expect(await runOutlineCli(['--json', 'schema', 'text', 'replace'], { runtimeRoot: root, io: schema.io })).toBe(0);
+    const requestSchema = JSON.stringify(JSON.parse(schema.stdout).data.request);
+    expect(requestSchema).toContain('maxReplacements');
+    expect(requestSchema).toContain('caseSensitive');
+    expect(requestSchema).not.toContain('changeSet');
     expect(await readdir(root)).toEqual([]);
   });
 

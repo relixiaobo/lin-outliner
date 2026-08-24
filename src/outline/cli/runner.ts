@@ -32,6 +32,7 @@ import {
   parseWatchCommand,
 } from './arguments';
 import { buildPorcelainRequest } from './porcelain';
+import { executeImportInvocation } from './import';
 
 const MAX_INLINE_DIFF_BYTES = 8 * 1024 * 1024;
 
@@ -173,6 +174,14 @@ async function executeInvocation(
       client.close();
     }
   }
+  if (invocation.command.startsWith('import ')) {
+    return executeImportInvocation(invocation.command, invocation.args, {
+      io,
+      supervisor,
+      env: environment,
+      signal: options.signal,
+    });
+  }
 
   if (!capability.runtimeRequired) throw usageError(`Unsupported local outline command: ${invocation.command}`);
   if (invocation.command === 'diff') return executeDiffInvocation(invocation, supervisor, io, options.signal);
@@ -182,6 +191,18 @@ async function executeInvocation(
   const input = await runtimeInput(invocation, io, supervisor);
   if (!Value.Check(capability.requestSchema, input)) {
     throw usageError(`Input does not match the public schema for command: ${invocation.command}`);
+  }
+  if (capability.destructive
+    && capability.kind === 'mutate'
+    && isRecord(input)
+    && input.preview !== true
+    && input.acknowledgeDestructive !== true
+    && (invocation.json || !io.interactive)) {
+    throw new OutlineContractError(outlineError(
+      'confirmation_required',
+      'confirmation',
+      `Run ${invocation.command} with --preview, then apply the reviewed Diff with --expect-diff SHA256 --yes.`,
+    ));
   }
   const client = await supervisor.connect();
   try {
@@ -301,6 +322,18 @@ async function runtimeInput(
           const node = data.nodes?.[0];
           if (!isRecord(node)) throw usageError('Porcelain target did not resolve to one Node.');
           return node;
+        } finally {
+          client.close();
+        }
+      },
+      project: async (projection) => {
+        const client = await supervisor.connect();
+        try {
+          const target = 'target' in projection.targets
+            ? projection.targets.target
+            : undefined;
+          if (!target) throw usageError('Porcelain Projection cannot resolve a ChangeSet binding before planning.');
+          return (await client.request('find', { target, projection })).data as import('../contract').ProjectionResult;
         } finally {
           client.close();
         }

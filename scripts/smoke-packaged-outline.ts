@@ -19,7 +19,6 @@ const cliBundle = path.join(outlineRoot, 'outline.mjs');
 const runtimeBundle = path.join(outlineRoot, 'outline-runtime.mjs');
 const skillPaths = [
   path.join(resourcesRoot, 'built-in-skills', 'outline', 'SKILL.md'),
-  path.join(resourcesRoot, 'built-in-skills', 'outline-import', 'SKILL.md'),
 ] as const;
 const userData = mkdtempSync(path.join(tmpdir(), 'outline-packaged-lifecycle-'));
 const runtimeRoot = path.join(userData, 'outline-runtime');
@@ -292,7 +291,7 @@ interface PackagedMainConfiguration {
   pid: number;
   readonly cliEntry?: string;
   readonly runtimeEntry?: string;
-  readonly importHelperEntry?: string;
+  readonly importAdapterEntry?: string;
   readonly cliRuntime?: string;
   readonly runAsNode?: string;
   readonly packaged?: string;
@@ -304,7 +303,7 @@ async function packagedMainConfiguration(inspector: CdpClient): Promise<Packaged
     pid: process.pid,
     cliEntry: process.env.TENON_OUTLINE_CLI_ENTRY,
     runtimeEntry: process.env.TENON_OUTLINE_RUNTIME_ENTRY,
-    importHelperEntry: process.env.TENON_OUTLINE_IMPORT_HELPER_ENTRY,
+    importAdapterEntry: process.env.TENON_OUTLINE_IMPORT_ADAPTER_ENTRY,
     cliRuntime: process.env.TENON_OUTLINE_CLI_RUNTIME,
     runAsNode: process.env.TENON_OUTLINE_RUN_AS_NODE,
     packaged: process.env.TENON_OUTLINE_PACKAGED,
@@ -314,17 +313,17 @@ async function packagedMainConfiguration(inspector: CdpClient): Promise<Packaged
 }
 
 function assertPackagedMainConfiguration(config: Awaited<ReturnType<typeof packagedMainConfiguration>>): void {
-  const expectedImportHelper = path.join(
+  const expectedImportAdapter = path.join(
     resourcesRoot,
     'built-in-skills',
-    'outline-import',
+    'outline',
     'scripts',
-    'outline-import.mjs',
+    'source-adapters.mjs',
   );
   const toolPath = (config.extraToolPath ?? '').split(path.delimiter).filter(Boolean);
   if (config.cliEntry !== cliBundle
     || config.runtimeEntry !== runtimeBundle
-    || config.importHelperEntry !== expectedImportHelper
+    || config.importAdapterEntry !== expectedImportAdapter
     || config.cliRuntime !== appExecutable
     || config.runAsNode !== '1'
     || config.packaged !== '1'

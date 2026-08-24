@@ -4,6 +4,8 @@ import type {
   Change,
   ChangeSet,
   NodeDraft,
+  Projection,
+  ProjectionResult,
   Selector,
   TargetRef,
   TargetSpec,
@@ -21,6 +23,7 @@ type PublicViewField = Extract<
 export interface PorcelainBuildContext {
   readonly read: StructuredReader;
   readonly lookup: (selector: Selector) => Promise<Record<string, unknown>>;
+  readonly project: (projection: Projection) => Promise<ProjectionResult>;
   readonly ingestAsset: (source: string) => Promise<AssetLease>;
 }
 
@@ -49,6 +52,7 @@ export async function buildPorcelainRequest(
   if (yes && !expectDiff) throw usageError('--yes requires --expect-diff for porcelain commands.');
 
   let changeSet: ChangeSet;
+  let structuredInput: Record<string, unknown> | undefined;
   if (input) {
     if (parsed.positional.length > 0) throw usageError(`${command} cannot combine --input with positional arguments.`);
     const payload = parseJson(await context.read(input), `${command} input`);
@@ -56,7 +60,15 @@ export async function buildPorcelainRequest(
     if (!Value.Check(contract.inputSchema, payload)) {
       throw usageError(`Input does not match the public schema for command: ${command}`);
     }
-    changeSet = createChangeSet(await buildChangesFromInput(command, payload as Record<string, unknown>, context), idempotencyKey);
+    structuredInput = payload as Record<string, unknown>;
+  }
+  if (command === 'text replace') {
+    const replacementInput = structuredInput ?? await textReplaceInputFromArgv(parsed, context);
+    const plan = await planTextReplacement(replacementInput, context);
+    changeSet = createChangeSet(plan.changes, idempotencyKey);
+    changeSet.base = { revision: plan.revision };
+  } else if (structuredInput) {
+    changeSet = createChangeSet(await buildChangesFromInput(command, structuredInput, context), idempotencyKey);
   } else {
     changeSet = createChangeSet(await buildChanges(command, parsed, context), idempotencyKey);
   }
@@ -447,6 +459,239 @@ async function buildRelativeMove(
 
 function oneId(id: string): TargetRef {
   return { target: { selector: { by: 'id', id }, cardinality: 'one' } };
+}
+
+interface TextReplacementPlan {
+  readonly changes: readonly Change[];
+  readonly revision: number;
+}
+
+interface TextRange {
+  readonly from: number;
+  readonly to: number;
+}
+
+async function textReplaceInputFromArgv(
+  parsed: ParsedOptions,
+  context: PorcelainBuildContext,
+): Promise<Record<string, unknown>> {
+  allow(parsed, [
+    'target', 'matching', 'query', 'within', 'include-trash', 'order', 'max',
+    'find', 'replace', 'field', 'occurrence', 'case-sensitive', 'max-replacements',
+  ]);
+  const targetToken = option(parsed, 'target') ?? parsed.positional.shift();
+  const matching = option(parsed, 'matching');
+  const querySource = option(parsed, 'query');
+  const selectorForms = Number(Boolean(targetToken)) + Number(Boolean(matching)) + Number(Boolean(querySource));
+  if (selectorForms !== 1 || parsed.positional.length > 0) {
+    throw usageError('text replace requires exactly one TARGET, --matching TEXT, or --query JSON|FILE.');
+  }
+
+  let target: TargetSpec;
+  if (targetToken) {
+    const reference = await targetRef(targetToken, context.read);
+    if ('binding' in reference) throw usageError('text replace cannot read a ChangeSet binding before planning.');
+    target = reference.target;
+  } else {
+    const max = integer(requiredOption(parsed, 'max'), '--max', 1);
+    if (max > 10_000) throw usageError('--max must be between 1 and 10000.');
+    const withinToken = option(parsed, 'within');
+    const within = withinToken
+      ? selectorFromExactTarget(await targetRef(withinToken, context.read))
+      : undefined;
+    const order = option(parsed, 'order') ?? 'document';
+    if (!['document', 'created', 'updated', 'text'].includes(order)) {
+      throw usageError('--order must be document, created, updated, or text.');
+    }
+    target = {
+      selector: {
+        by: 'query',
+        query: querySource
+          ? parseJson(await context.read(querySource), '--query') as Extract<Selector, { by: 'query' }>['query']
+          : { kind: 'rule', op: 'STRING_MATCH', text: matching! },
+        ...(within ? { within } : {}),
+        ...(has(parsed, 'include-trash') ? { includeTrash: true } : {}),
+        order: order as Extract<Selector, { by: 'query' }>['order'],
+        limit: max,
+      },
+      cardinality: 'many',
+      max,
+    };
+  }
+  if (target.cardinality === 'many' && target.max === undefined) {
+    throw usageError('text replace many targets require an explicit max bound.');
+  }
+  return {
+    target,
+    find: requiredOption(parsed, 'find'),
+    replacement: requiredOption(parsed, 'replace'),
+    field: option(parsed, 'field') ?? 'content',
+    occurrence: option(parsed, 'occurrence') ?? 'all',
+    caseSensitive: boolean(option(parsed, 'case-sensitive') ?? 'true', '--case-sensitive'),
+    maxReplacements: integer(option(parsed, 'max-replacements') ?? '1000', '--max-replacements', 1),
+  };
+}
+
+async function planTextReplacement(
+  input: Record<string, unknown>,
+  context: PorcelainBuildContext,
+): Promise<TextReplacementPlan> {
+  const contract = porcelainContract('text replace')!;
+  if (!Value.Check(contract.inputSchema, input)) {
+    throw usageError('Input does not match the public schema for command: text replace');
+  }
+  const target = input.target as TargetSpec;
+  const find = String(input.find);
+  const replacement = String(input.replacement);
+  const field = (input.field ?? 'content') as 'content' | 'description' | 'both';
+  const occurrence = (input.occurrence ?? 'all') as 'first' | 'all';
+  const caseSensitive = input.caseSensitive !== false;
+  const maxReplacements = Number(input.maxReplacements);
+  const pageLimit = target.cardinality === 'many' ? target.max! : 1;
+  const projection = await context.project({
+    kind: 'node',
+    targets: { target },
+    include: ['description', 'references'],
+    page: { limit: pageLimit },
+  });
+  if (projection.truncated || projection.cursor) {
+    throw usageError('text replace Projection exceeded its declared Node bound.');
+  }
+
+  const changes: Change[] = [];
+  let replacementCount = 0;
+  for (const value of projection.nodes) {
+    if (!isRecord(value)) throw usageError('text replace Projection returned an invalid Node.');
+    const id = requiredString(value.id, 'text replace target ID');
+    const instructions: UpdateInstruction[] = [];
+    if (field === 'content' || field === 'both') {
+      const content = projectedRichText(value.content, id);
+      const ranges = literalTextRanges(content.text, find, caseSensitive, occurrence);
+      replacementCount += ranges.length;
+      assertReplacementBound(replacementCount, maxReplacements);
+      if (ranges.length > 0 && find !== replacement) {
+        instructions.push({
+          kind: 'text-patch',
+          field: 'content',
+          patch: { ops: [{ type: 'replace_all', content: transformedRichText(content, ranges, replacement, id) }] },
+        });
+      }
+    }
+    if (field === 'description' || field === 'both') {
+      const description = typeof value.description === 'string' ? value.description : '';
+      const ranges = literalTextRanges(description, find, caseSensitive, occurrence);
+      replacementCount += ranges.length;
+      assertReplacementBound(replacementCount, maxReplacements);
+      if (ranges.length > 0 && find !== replacement) {
+        const transformed = transformedPlainText(description, ranges, replacement);
+        instructions.push({
+          kind: 'text-patch', field: 'description', from: 0, to: description.length, value: transformed,
+        });
+      }
+    }
+    if (instructions.length > 0) changes.push({ op: 'update', targets: oneId(id), changes: instructions });
+  }
+
+  if (changes.length === 0) {
+    const first = projection.nodes.find(isRecord);
+    changes.push(first
+      ? {
+          op: 'update',
+          targets: oneId(requiredString(first.id, 'text replace target ID')),
+          changes: [{ kind: 'content', value: projectedRichText(first.content, requiredString(first.id, 'text replace target ID')) }],
+        }
+      : {
+          op: 'update',
+          targets: { target },
+          changes: [{ kind: 'content', value: richText('') }],
+        });
+  }
+  return { changes, revision: projection.revision };
+}
+
+function projectedRichText(value: unknown, nodeId: string): NodeDraft['content'] {
+  if (!isRecord(value)
+    || typeof value.text !== 'string'
+    || !Array.isArray(value.marks)
+    || !Array.isArray(value.inlineRefs)) {
+    throw usageError(`text replace Projection omitted rich content for Node: ${nodeId}`);
+  }
+  return value as NodeDraft['content'];
+}
+
+function literalTextRanges(
+  text: string,
+  find: string,
+  caseSensitive: boolean,
+  occurrence: 'first' | 'all',
+): TextRange[] {
+  const expression = new RegExp(find.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), caseSensitive ? 'gu' : 'giu');
+  const ranges: TextRange[] = [];
+  for (const match of text.matchAll(expression)) {
+    const from = match.index;
+    if (from === undefined) continue;
+    ranges.push({ from, to: from + match[0].length });
+    if (occurrence === 'first') break;
+  }
+  return ranges;
+}
+
+function transformedPlainText(text: string, ranges: readonly TextRange[], replacement: string): string {
+  let cursor = 0;
+  let result = '';
+  for (const range of ranges) {
+    result += text.slice(cursor, range.from) + replacement;
+    cursor = range.to;
+  }
+  result += text.slice(cursor);
+  if (result.length > 4_194_304) throw usageError('text replace result exceeds the maximum text length.');
+  return result;
+}
+
+function transformedRichText(
+  content: NodeDraft['content'],
+  ranges: readonly TextRange[],
+  replacement: string,
+  nodeId: string,
+): NodeDraft['content'] {
+  for (const reference of content.inlineRefs) {
+    if (ranges.some((range) => reference.offset > range.from && reference.offset < range.to)) {
+      throw usageError(`text replace would consume an inline reference in Node ${nodeId}; use an exact rich-text patch instead.`);
+    }
+  }
+  const text = transformedPlainText(content.text, ranges, replacement);
+  const mapPosition = (position: number, bias: 'start' | 'end') => {
+    let delta = 0;
+    for (const range of ranges) {
+      if (position <= range.from) return position + delta;
+      const replacementEnd = range.from + delta + replacement.length;
+      if (position < range.to) return bias === 'start' ? range.from + delta : replacementEnd;
+      delta += replacement.length - (range.to - range.from);
+    }
+    return position + delta;
+  };
+  return {
+    text,
+    marks: content.marks
+      .map((mark) => ({
+        ...mark,
+        ...(mark.attrs ? { attrs: { ...mark.attrs } } : {}),
+        start: mapPosition(mark.start, 'start'),
+        end: mapPosition(mark.end, 'end'),
+      }))
+      .filter((mark) => mark.end > mark.start),
+    inlineRefs: content.inlineRefs.map((reference) => ({
+      ...reference,
+      target: { ...reference.target },
+      offset: mapPosition(reference.offset, 'start'),
+    })),
+  };
+}
+
+function assertReplacementBound(count: number, max: number): void {
+  if (count > max) {
+    throw usageError(`text replace matched ${count} occurrences, exceeding maxReplacements ${max}.`);
+  }
 }
 
 async function buildChanges(

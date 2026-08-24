@@ -1070,6 +1070,16 @@ function diffFromPatch(
     }
     if (change.op === 'merge') destructive.push({ kind: 'merge', targetCount: affected.length });
   }
+  const replacesText = changeSet.operations.some((change) => (
+    change.op === 'update' && change.changes.some((instruction) => (
+      instruction.kind === 'text-patch'
+      && (instruction.field === 'description'
+        || instruction.patch.ops.some((operation) => operation.type === 'replace_all'))
+    ))
+  ));
+  if (replacesText) {
+    destructive.push({ kind: 'replace', targetCount: affected.filter((entry) => entry.effect === 'update').length });
+  }
   const withoutHash = {
     protocolVersion: OUTLINE_PROTOCOL_VERSION,
     kind: 'outline.diff' as const,
@@ -1254,8 +1264,12 @@ function exactlyOne(ids: readonly string[], label: string): string {
 }
 
 function summarizeChangeSet(changeSet: ChangeSet): string {
-  const names = changeSet.operations.map((change) => change.op);
-  return `Applied ${changeSet.operations.length} ChangeSet operation${changeSet.operations.length === 1 ? '' : 's'}: ${names.join(', ')}.`;
+  const counts = new Map<Change['op'], number>();
+  for (const change of changeSet.operations) {
+    counts.set(change.op, (counts.get(change.op) ?? 0) + 1);
+  }
+  const summary = [...counts].map(([name, count]) => count === 1 ? name : `${name} x${count}`).join(', ');
+  return `Applied ${changeSet.operations.length} ChangeSet operation${changeSet.operations.length === 1 ? '' : 's'}: ${summary}.`;
 }
 
 function usageError(message: string): OutlineContractError {

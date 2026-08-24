@@ -70,6 +70,13 @@ and guarded recovery. Public schemas and exact root/family/command help come fro
 the executable registry; the Skill does not reimplement parsing, selection,
 projection, validation, mutation, or command schemas.
 
+`SKILL.md` is the Agent operating loop rather than a compressed command manual.
+Its generated `references/commands.md` provides the complete family/command map
+from the same registry; `references/changesets.md` and `references/import.md`
+carry only the two advanced workflows. Selecting a command leads to exact
+runtime help and `schema COMMAND`, so the Agent can learn the whole surface
+without creating a second hand-maintained CLI contract.
+
 The executable has the same capability registry for a user shell, built-in
 Agent, external Agent, and desktop adapter. Agent execution does not receive a
 reduced Selector, Projection, or Change union. Host capability policy classifies
@@ -99,6 +106,14 @@ exact command help for selector/cardinality and ownership boundaries:
 creates a target field with an optional initial value, `tag add` applies an
 existing tag, root `set` patches generic Node state, and media/search set forms
 own their resource-specific state.
+
+For a common literal replacement, the model uses `text replace` rather than
+inventing a shell loop or query language. One exact target needs no query; a
+bulk transform uses STRING_MATCH or the canonical query with `many + max`, plus
+the independent total replacement bound. The model previews and reviews the
+affected set, applies the exact Diff, and relies on the base revision, rich-text
+reference guard, semantic no-change, and exact revert supplied by the ordinary
+ChangeSet path.
 
 The model reviews a Diff, applies that exact artifact, records the returned
 Operation ID/affected count/recovery state, and verifies consequential writes
@@ -337,13 +352,15 @@ that consumes them.
 ### Import Workflow
 
 Bulk import is not a canonical model tool or private write API. The built-in
-`outline-import` Skill coordinates bounded source inspection, optional cleanup,
-deterministic conversion, coverage accounting, Diff review, one apply, and
-independent verification through the public `outline` CLI.
+`outline` Skill's import workflow coordinates bounded source inspection,
+optional cleanup, deterministic conversion, coverage accounting, Diff review,
+one apply, and independent verification through the public `outline` CLI.
 
-The import helper may read source files and emit a generic ChangeSet plus
-evidence. It has no Runtime client and cannot mutate the document. Every source
-record must be mapped, intentionally skipped, merged, empty, or blocked;
+Bundled or Agent-authored source adapters may read source files and emit only
+public `NormalizedImport` plus coverage. They have no Runtime client and cannot
+mutate the document. Public `import plan` validates normalized data, generates
+the generic ChangeSet, binds evidence, and writes the reviewed Diff. Every
+source record must be mapped, intentionally skipped, merged, empty, or blocked;
 unaccounted coverage prevents Diff review. Input that already matches the
 normalized source shape bypasses cleaning.
 

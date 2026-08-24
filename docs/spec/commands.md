@@ -38,16 +38,17 @@ owned. Missing and duplicate owners both fail the guard.
 | Mutation kernel | `diff`, `apply` | Previews one ChangeSet, then atomically applies that exact Diff. |
 | History | `log`, `revert`, `undo`, `redo` | Reads durable Operations or records a guarded reversal as another Operation. |
 | Asset | `asset ingest`, `asset show`, `asset export` | Stages verified bytes, reads metadata, or streams verified bytes. |
-| Porcelain mutation | `add`, `set`, `move`, `duplicate`, `merge`, `indent`, `outdent`, `done set`, `done cycle`, `tag add`, `tag remove`, `field define`, `field set`, `field clear`, `field remove`, `field reuse`, `field select`, `definition create`, `definition configure`, `definition merge`, `reference add`, `reference set`, `reference inline`, `reference restore`, `view set`, `view group set`, `view sort add`, `view sort set`, `view sort remove`, `view sort clear`, `view filter add`, `view filter set`, `view filter remove`, `view filter clear`, `view display add`, `view display set`, `view display remove`, `search create`, `search ensure-tag`, `search set`, `search refresh`, `template apply`, `daily ensure`, `capture add`, `media add`, `media set`, `trash`, `restore`, `purge` | Lowers one intent into the public ChangeSet contract. `--preview` returns its Diff; apply returns its Operation. |
+| Porcelain mutation | `add`, `set`, `text replace`, `move`, `duplicate`, `merge`, `indent`, `outdent`, `done set`, `done cycle`, `tag add`, `tag remove`, `field define`, `field set`, `field clear`, `field remove`, `field reuse`, `field select`, `definition create`, `definition configure`, `definition merge`, `reference add`, `reference set`, `reference inline`, `reference restore`, `view set`, `view group set`, `view sort add`, `view sort set`, `view sort remove`, `view sort clear`, `view filter add`, `view filter set`, `view filter remove`, `view filter clear`, `view display add`, `view display set`, `view display remove`, `search create`, `search ensure-tag`, `search set`, `search refresh`, `template apply`, `daily ensure`, `capture add`, `media add`, `media set`, `trash`, `restore`, `purge` | Lowers one intent into the public ChangeSet contract. `--preview` returns its Diff; apply returns its Operation. |
 
 `capabilities` is executable authority rather than a hand-maintained help list.
 `outline --help`, family help, exact command help, shell completion metadata,
-parser option admission, and `outline schema COMMAND` derive from that registry.
+parser option admission, `outline schema COMMAND`, and the built-in Skill's
+generated `references/commands.md` derive from that registry.
 Porcelain command schemas describe their resource-specific input rather than the
 generic Runtime MutationInput. Drift tests compare the exact published options,
-schemas, positionals, and completion data. Capability kind and audit category
-drive host classification; execution context never removes a public schema
-field or document capability.
+schemas, positionals, completion data, and generated Agent command inventory.
+Capability kind and audit category drive host classification; execution context
+never removes a public schema field or document capability.
 
 Root help lists command families and direct commands. Family help lists its
 subcommands. Exact command `--help` and `-h` show syntax, positionals, options,
@@ -95,6 +96,17 @@ and creates the image/attachment Node in one invocation. `asset ingest` remains
 the explicit primitive for automation that deliberately separates staging and
 review. Root `set` patches generic Node properties; `media set` owns media
 source/geometry; `search set` owns Search query/view configuration.
+
+`text replace` is a general bounded literal transform over Node content,
+description, or both. It accepts one exact target, STRING_MATCH `--matching`
+shorthand, or the canonical structured query. Query selection requires an
+explicit Node `max`; `max-replacements` independently bounds total matches across
+the selection. Planning reads one bounded Projection and writes its revision into
+the ChangeSet base, so an intervening mutation invalidates exact apply. The
+transform preserves marks and inline references outside replacement ranges and
+rejects a range that would consume an inline reference. It lowers to ordinary
+text-patch updates, requires destructive Diff review, creates one Operation, and
+returns semantic no-change when repeated after convergence.
 
 `status` never starts Runtime. Absence is exactly `{ running: false }`. A live
 result includes the Runtime instance, runtime and storage versions, document
@@ -205,6 +217,10 @@ nothing. The Diff identifies each changed Node precondition by its expected
 post-Operation and actual digest. A successful revert is a new Operation linked to its target.
 `undo` and `redo` are convenience selection over the same retained history and
 do not expose a separate stack authority.
+
+Operation summaries aggregate ChangeSet operations by change kind, so their
+encoded size remains bounded even when one legal ChangeSet contains tens of
+thousands of leaf operations.
 
 `log` returns an `OperationLogPage` in newest-first order. Opaque cursors bind
 the origin, Thread/Turn/Item causation, affected-Node, Operation, and idempotency

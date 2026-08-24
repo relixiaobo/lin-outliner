@@ -332,6 +332,69 @@ describe('outline mandatory CLI golden flows', () => {
       await exactRevert(runtime, operation, before, cli);
     });
   });
+
+  test('13. replaces literal text over one bounded query with one reviewed Operation and exact revert', async () => {
+    await withRuntime(async ({ runtime, cli }) => {
+      const referenceId = returnedIds(operationResult(await cli.json(['add', '@library', 'Reference target'])))[0]!;
+      const setup = await diffApply(cli, {
+        protocolVersion: 1, kind: 'outline.changeset', operations: [
+          {
+            op: 'create', parents: oneAlias('library'), bind: 'rich', nodes: [{
+              content: {
+                text: 'keyword 1 keyword 1',
+                marks: [{ start: 0, end: 9, type: 'bold' }],
+                inlineRefs: [{ offset: 10, target: { kind: 'node', nodeId: referenceId } }],
+              },
+              children: [],
+            }],
+          },
+          {
+            op: 'create', parents: oneAlias('library'), bind: 'described', nodes: [draft('Description target', {
+              description: 'Keyword 1 appears here',
+            })],
+          },
+          { op: 'create', parents: oneAlias('library'), nodes: [draft('Unrelated target')] },
+        ],
+      });
+      const richId = setup.diff.bindings.rich![0]!;
+      const describedId = setup.diff.bindings.described![0]!;
+      const before = snapshot(runtime);
+      const operationsBefore = await countOperations(runtime);
+      const callsBefore = cli.calls;
+      const args = [
+        'text', 'replace', '--matching', 'keyword 1', '--max', '10',
+        '--find', 'keyword 1', '--replace', 'replacement', '--field', 'both',
+        '--case-sensitive', 'false', '--max-replacements', '10',
+      ] as const;
+
+      const preview = diffResult(await cli.json([...args, '--preview']));
+      expect(preview.destructive).toContainEqual({ kind: 'replace', targetCount: 2 });
+      expect(runtime.workspace.documentState()).toEqual(before);
+      const operation = operationResult(await cli.json([
+        ...args, '--expect-diff', preview.diffHash, '--yes',
+      ]));
+      expect(cli.calls - callsBefore).toBe(2);
+      expect(await countOperations(runtime)).toBe(operationsBefore + 1);
+      expect(operation).toMatchObject({ affectedNodeCount: 2, recovery: { state: 'available' } });
+
+      const state = runtime.workspace.documentState();
+      expect(state.nodes[richId]?.content).toEqual({
+        text: 'replacement replacement',
+        marks: [{ start: 0, end: 11, type: 'bold' }],
+        inlineRefs: [{ offset: 12, target: { kind: 'node', nodeId: referenceId } }],
+      });
+      expect(state.nodes[describedId]?.description).toBe('replacement appears here');
+      expect(Object.values(state.nodes)).toContainEqual(expect.objectContaining({ content: { text: 'Unrelated target', marks: [], inlineRefs: [] } }));
+
+      const noChangePreview = diffResult(await cli.json([...args, '--preview']));
+      const repeated = noChangeResult(await cli.json([
+        ...args, '--expect-diff', noChangePreview.diffHash, '--yes',
+      ]));
+      expect(repeated).toMatchObject({ affectedNodeCount: 0, recovery: { state: 'not-required' } });
+      expect(await countOperations(runtime)).toBe(operationsBefore + 1);
+      await exactRevert(runtime, operation, before, cli);
+    });
+  });
 });
 
 async function previewApplyRevert(

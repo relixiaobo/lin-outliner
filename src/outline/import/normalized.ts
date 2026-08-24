@@ -1,88 +1,38 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import type {
+  Diff,
+  ImportCoverage,
+  ImportEvidence,
+  ImportOptions,
+  ImportSourceProfile,
+  ImportStats,
+  ImportWarning,
+  NormalizedImport,
+  NormalizedImportNode,
+  Operation,
+  TargetRef,
+} from '../contract/schemas';
 
-export interface NormalizedImport {
-  version: 1;
-  source: { kind: string; path: string; sourceId?: string };
-  options: ImportOptions;
-  stats: ImportStats;
-  coverage: ImportCoverage;
-  warnings: ImportWarning[];
-  sections: ImportSection[];
-}
+export type {
+  ImportCoverage,
+  ImportEvidence,
+  ImportOptions,
+  ImportStats,
+  ImportWarning,
+  NormalizedImport,
+};
 
-export interface ImportOptions {
-  fidelity: 'content' | 'clean' | 'full';
-  dateGrouping: 'stage_headings' | 'native_daily' | 'none';
-  tags: boolean;
-  fields: 'omit' | 'text_children' | 'field_rows';
-  doneState: boolean;
-}
-
-export interface ImportStats {
-  sourceRecords: number;
-  sections: number;
-  nodes: number;
-  descriptions: number;
-  tags: number;
-  fields: number;
-  checked: number;
-  dropped: number;
-}
-
-export interface ImportCoverage {
-  imported: number;
-  merged: number;
-  dropped: number;
-  unsupported: number;
-  empty: number;
-  unaccounted: number;
-  entriesFile?: string;
-}
-
-export interface ImportWarning {
-  code: string;
-  message: string;
-  sourceId?: string;
-  count?: number;
-}
-
-export interface ImportSection {
-  id: string;
-  title: string;
-  kind: 'library' | 'date' | 'other';
-  date?: string;
-  nodes: ImportNode[];
-}
-
-export interface ImportNode {
-  title: string;
-  description?: string;
-  tags?: string[];
-  checked?: boolean;
-  code?: { language?: string; text: string };
-  fields?: { name: string; values: string[] }[];
-  children?: ImportNode[];
-  sourceId?: string;
-}
+export type ImportNode = NormalizedImportNode;
+export type ImportSection = NormalizedImport['sections'][number];
+export type SourceProfile = ImportSourceProfile;
 
 export interface CoverageEntry {
   sourceId: string;
   status: 'imported' | 'merged' | 'dropped' | 'unsupported' | 'empty';
   reason?: string;
   target?: string;
-}
-
-export interface SourceProfile {
-  ok: boolean;
-  source: string;
-  kind: 'tana' | 'roam-edn' | 'directory' | 'unknown';
-  bytes?: number;
-  confidence: number;
-  stats: Record<string, unknown>;
-  warnings: string[];
-  samples?: unknown[];
 }
 
 export interface GenericChangeSet {
@@ -97,27 +47,15 @@ export interface GenericChangeSet {
   operations: Array<Record<string, unknown>>;
   return?: Array<Record<string, unknown>>;
 }
+export type ImportVerification = ImportEvidence['verification'][number];
 
-export interface ImportVerification {
+export interface VerifiedImportRoot {
   binding: string;
   kind: 'created-tree' | 'date';
-  expectedNodeCount: number;
+  nodeId: string;
   date?: string;
-  truncated?: true;
-}
-
-export interface ImportEvidence {
-  version: 1;
-  source: NormalizedImport['source'];
-  sourceFingerprint: string;
-  changeSetFingerprint: string;
-  coverage: ImportCoverage;
-  warnings: ImportWarning[];
-  stats: ImportStats;
-  mode: 'native_daily' | 'stage';
-  dates: string[];
-  expectedCreatedNodes: number;
-  verification: ImportVerification[];
+  nodeCount: number;
+  truncated: boolean;
 }
 
 export async function readText(filePath: string): Promise<string> {
@@ -142,7 +80,7 @@ export function buildImportChangeSet(
   options: {
     sourceFingerprint: string;
     mode?: 'native_daily' | 'stage';
-    parentId?: string;
+    parent?: TargetRef;
   },
 ): { changeSet: GenericChangeSet; evidence: ImportEvidence } {
   const validation = validateNormalizedImportShape(normalized);
@@ -166,9 +104,7 @@ export function buildImportChangeSet(
       bind: binding,
     });
   }
-  const defaultParent = options.parentId
-    ? targetId(options.parentId)
-    : targetId('library');
+  const defaultParent = options.parent ?? targetAlias('library');
   const dates: string[] = [];
   const verificationCandidates: ImportVerification[] = [];
   let bindingSequence = 0;
@@ -309,6 +245,48 @@ export function validateImportEvidence(
   return errors;
 }
 
+export function verifyImportSettlement(
+  evidence: ImportEvidence,
+  diff: Diff,
+  operation: Operation,
+): VerifiedImportRoot[] {
+  const evidenceErrors = validateImportEvidence(evidence, diff.normalizedChangeSet);
+  if (evidenceErrors.length > 0) throw new Error(evidenceErrors.join('; '));
+  const affectedIds = diff.affected.map((entry) => entry.id);
+  const valid = operation.changeSetHash === diff.changeSetHash
+    && operation.diffHash === diff.diffHash
+    && operation.affectedNodeCount === affectedIds.length
+    && operation.affectedNodeIdsHash === sha256Text(JSON.stringify(affectedIds))
+    && JSON.stringify(operation.affectedNodeIds) === JSON.stringify(affectedIds.slice(0, operation.affectedNodeIds.length));
+  if (!valid) throw new Error('Operation settlement does not match the reviewed Diff.');
+
+  return evidence.verification.map((expected) => {
+    const bindingIds = diff.bindings[expected.binding];
+    if (!bindingIds || bindingIds.length !== 1) {
+      throw new Error(`Diff binding is missing or ambiguous: ${expected.binding}`);
+    }
+    const result = operation.result?.find((candidate) => (
+      'binding' in candidate.projection.targets
+      && candidate.projection.targets.binding === expected.binding
+    ));
+    if (!result
+      || result.revision !== operation.revisionAfter
+      || result.nodes.length !== expected.expectedNodeCount
+      || (result.nodes[0] as { id?: unknown } | undefined)?.id !== bindingIds[0]
+      || Boolean(result.truncated) !== Boolean(expected.truncated)) {
+      throw new Error(`Returned Projection does not match evidence binding: ${expected.binding}`);
+    }
+    return {
+      binding: expected.binding,
+      kind: expected.kind,
+      nodeId: bindingIds[0]!,
+      ...(expected.date ? { date: expected.date } : {}),
+      nodeCount: result.nodes.length,
+      truncated: Boolean(expected.truncated),
+    };
+  });
+}
+
 function verificationForTree(binding: string, nodeCount: number): ImportVerification {
   return {
     binding,
@@ -343,8 +321,8 @@ function richText(text: string) {
   return { text, marks: [], inlineRefs: [] };
 }
 
-function targetId(id: string) {
-  return { target: { selector: { by: 'id', id }, cardinality: 'one' } };
+function targetAlias(alias: 'library') {
+  return { target: { selector: { by: 'alias' as const, alias }, cardinality: 'one' as const } };
 }
 
 

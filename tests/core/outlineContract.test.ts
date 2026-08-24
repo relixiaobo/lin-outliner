@@ -29,9 +29,11 @@ describe('outline public contract', () => {
   test('exports every named versioned schema as valid JSON Schema', () => {
     expect(Object.keys(OUTLINE_PUBLIC_SCHEMAS).sort()).toEqual([
       'AssetLease', 'AssetMetadata', 'AssetRecord', 'Change', 'ChangeSet', 'Diff', 'Event', 'EventFilter',
-      'NoChangeResult', 'NodeDraft', 'Operation', 'OperationLogPage', 'OutlineError', 'OutlineRequest',
-      'OutlineResponse', 'OutlineStreamRecord', 'Projection', 'ProjectionResult', 'RevertConflictDiff',
-      'RichTextPatch', 'RuntimeDescriptor', 'RuntimeStatus', 'Selector', 'TargetRef', 'TargetSpec',
+      'ImportCoverage', 'ImportEvidence', 'ImportOptions', 'ImportPlanResult', 'ImportSourceProfile',
+      'ImportStats', 'ImportVerifyResult', 'ImportWarning', 'NoChangeResult', 'NodeDraft', 'NormalizedImport',
+      'NormalizedImportNode', 'Operation', 'OperationLogPage', 'OutlineError', 'OutlineRequest', 'OutlineResponse',
+      'OutlineStreamRecord', 'Projection', 'ProjectionResult', 'RevertConflictDiff', 'RichTextPatch',
+      'RuntimeDescriptor', 'RuntimeStatus', 'Selector', 'TargetRef', 'TargetSpec',
     ]);
     for (const schema of Object.values(OUTLINE_PUBLIC_SCHEMAS)) {
       expect(() => Compile(schema)).not.toThrow();

@@ -264,21 +264,23 @@ legacy installations, or update the CLI independently of the active Skill.
 
 ## Built-In Floor
 
-The packaged platform floor contains two isolated built-in Skills:
+The packaged platform floor contains one isolated built-in Outliner Skill:
 
 - `outline` teaches all persisted Outliner reads, edits, history, and recovery
-  through the public `outline` CLI.
-- `outline-import` teaches source inspection, optional cleanup, deterministic
-  normalization, coverage accounting, one reviewed Diff/apply, and independent
-  verification.
+  through the public `outline` CLI, including complete-resource routing and
+  bounded reviewed literal text transforms. Its import workflow teaches source
+  inspection, optional cleanup, deterministic normalization, coverage
+  accounting, one reviewed Diff/apply, and independent verification. Tana
+  guidance maps only deterministic source structures and treats unsupported
+  coverage as an explicit fidelity limit, not proof of a lossless migration.
 
-Both declare `execution: isolated` and a bounded tool ceiling. Packaged resource
+It declares `execution: isolated` and a bounded tool ceiling. Packaged resource
 staging is explicit; arbitrary optional Skills are not copied into the
-application bundle. The packaged `outline` launcher and import-helper wrapper
-are required resources: the packaging hook restores executable mode where
-needed and fails the build when a resource is absent.
+application bundle. The packaged `outline` launcher and internal read-only
+source-adapter worker are required resources: the packaging hook restores
+executable mode where needed and fails the build when a resource is absent.
 
-Neither Skill owns document logic. `outline` discovers current capabilities,
+The Skill owns no document logic. `outline` discovers current capabilities,
 root/family/exact command help, completion metadata, and command-specific schemas
 from the executable registry. It routes one complete resource to one porcelain
 invocation, complex state for that resource to the same command's `--input`, and
@@ -292,8 +294,20 @@ shorthand from canonical structured queries. It teaches stable aliases including
 creation, one-Operation settlement, exact Diff review, and guarded revert. It
 does not copy schemas or parser tables into Skill text.
 
-The import helper only reads source data and emits a generic ChangeSet plus
-evidence; it has no Runtime write client.
+Its Agent-facing information architecture has four layers. `SKILL.md` teaches
+the inspect/choose/review/execute/verify/recover loop. A generated
+`references/commands.md` gives one compact complete command-family and command
+inventory. `references/changesets.md` and `references/import.md` are loaded only
+for their advanced paths. Exact options, defaults, examples, schemas, and parser
+admission remain registry-owned through command help and `schema COMMAND`; a
+drift test byte-compares the generated command map with the registry renderer.
+
+The Skill routes import requests to its import workflow. Bundled or
+Agent-authored source adapters only read source data and emit normalized data
+plus coverage; they have no Runtime write client. Public `import inspect`,
+`import plan`, and `import verify` own the bounded profile, generic
+ChangeSet/Diff planning, evidence binding, and post-Operation verification. An
+Agent-authored task-local adapter must emit public `NormalizedImport`.
 Valid Tana `journalPart` records with canonical local dates lower to native
 Daily Note `ensure` bindings in the same ChangeSet, while non-date sections may
 remain under a staging root. Import is append-only and never implies

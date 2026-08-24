@@ -5,6 +5,9 @@ import {
   ChangeSetSchema,
   DiffSchema,
   EventSchema,
+  ImportPlanResultSchema,
+  ImportSourceProfileSchema,
+  ImportVerifyResultSchema,
   WatchRequestSchema,
   OperationSchema,
   NoChangeResultSchema,
@@ -13,6 +16,7 @@ import {
   ProjectionSchema,
   RuntimeStatusSchema,
   SelectorSchema,
+  TargetRefSchema,
   TargetSpecSchema,
 } from './schemas';
 import {
@@ -94,11 +98,13 @@ export const OUTLINE_COMMAND_FAMILIES = Object.freeze([
   { name: 'definition', summary: 'Create, configure, and merge tag or field definitions.' },
   { name: 'done', summary: 'Set or cycle checkbox completion state.' },
   { name: 'field', summary: 'Define, reuse, set, clear, remove, or select fields.' },
+  { name: 'import', summary: 'Inspect external sources and plan reviewed imports through normalized data.' },
   { name: 'media', summary: 'Create and patch image or attachment Nodes.' },
   { name: 'reference', summary: 'Add, retarget, inline, and restore references.' },
   { name: 'search', summary: 'Create, configure, ensure, and refresh Saved Searches.' },
   { name: 'tag', summary: 'Apply or remove tag definitions.' },
   { name: 'template', summary: 'Preview and apply tag-template backfill.' },
+  { name: 'text', summary: 'Apply bounded, reviewed literal text transformations.' },
   { name: 'view', summary: 'Configure complete views or edit group, sort, filter, and display leaves.' },
   { name: 'view display', summary: 'Add, patch, or remove displayed fields.' },
   { name: 'view filter', summary: 'Add, patch, remove, or clear filter rules.' },
@@ -116,6 +122,31 @@ const READ_OPTIONS = Object.freeze([
   option('format', 'FORMAT', 'Select json, jsonl, markdown, or opml Projection format.'),
   option('projection', 'FILE|-', 'Read one complete structured Projection; cannot be mixed with leaf Projection options.'),
 ]);
+
+const ImportInspectInput = Type.Object({
+  source: Type.String({ minLength: 1, maxLength: 32_768 }),
+}, closed);
+const ImportPlanInput = Type.Object({
+  source: Type.String({ minLength: 1, maxLength: 32_768 }),
+  sourceFormat: Type.Optional(Type.Union([
+    Type.Literal('auto'), Type.Literal('normalized'), Type.Literal('tana'),
+  ])),
+  fidelity: Type.Optional(Type.Union([
+    Type.Literal('content'), Type.Literal('clean'), Type.Literal('full'),
+  ])),
+  mode: Type.Optional(Type.Union([Type.Literal('native_daily'), Type.Literal('stage')])),
+  parent: Type.Optional(TargetRefSchema),
+  output: Type.String({ minLength: 1, maxLength: 32_768 }),
+  evidenceOutput: Type.String({ minLength: 1, maxLength: 32_768 }),
+  changeSetOutput: Type.Optional(Type.String({ minLength: 1, maxLength: 32_768 })),
+  coverageOutput: Type.Optional(Type.String({ minLength: 1, maxLength: 32_768 })),
+  includeTrash: Type.Optional(Type.Boolean()),
+}, closed);
+const ImportVerifyInput = Type.Object({
+  operationId: Type.String({ minLength: 1, maxLength: 256 }),
+  evidence: Type.String({ minLength: 1, maxLength: 32_768 }),
+  diff: Type.String({ minLength: 1, maxLength: 32_768 }),
+}, closed);
 
 const FIXED_COMMAND_HELP = Object.freeze({
   version: fixedHelp({ usage: 'version', summary: 'Print CLI, app, protocol, and storage versions.', behavior: 'metadata', idempotent: true, positionals: [], options: [], selectors: 'No selectors.', cardinality: 'Not applicable.', input: 'No input.', output: 'Writes version fields; human output is one concise line.', defaults: noDefaults, destructive: false, examples: ['outline version', 'outline --json version'] }),
@@ -135,6 +166,9 @@ const FIXED_COMMAND_HELP = Object.freeze({
   'asset ingest': fixedHelp({ usage: 'asset ingest PATH|-', summary: 'Stage verified asset bytes under a recovery-aware lease.', behavior: 'asset staging', idempotent: false, positionals: ['PATH reads one local file; - streams bytes from stdin.'], options: [], selectors: 'No Node selector; staging does not create a media Node.', cardinality: 'Stages exactly one asset lease.', input: 'Reads bytes from PATH or stdin.', output: 'Returns one AssetLease for later reviewed automation.', defaults: noDefaults, destructive: false, examples: ['outline asset ingest ./diagram.png', 'outline asset ingest - < attachment.pdf'] }),
   'asset show': fixedHelp({ usage: 'asset show ASSET_ID', summary: 'Read logical asset metadata.', behavior: 'read-only', idempotent: true, positionals: ['ASSET_ID is one retained AssetRecord ID.'], options: [], selectors: 'Uses one exact AssetRecord ID.', cardinality: 'Returns exactly one AssetRecord.', input: 'Accepts one AssetRecord ID.', output: 'Returns logical metadata and retention state, never asset bytes.', defaults: noDefaults, destructive: false, examples: ['outline asset show asset:example', 'outline --json asset show asset:example'] }),
   'asset export': fixedHelp({ usage: 'asset export ASSET_ID --output FILE|-', summary: 'Stream verified asset bytes.', behavior: 'read-only stream', idempotent: true, positionals: ['ASSET_ID is one retained AssetRecord ID.'], options: [option('output', 'FILE|-', 'Write atomically to a file or stream raw bytes to stdout.')], selectors: 'Uses one exact AssetRecord ID.', cardinality: 'Exports exactly one retained asset.', input: 'Accepts one AssetRecord ID and required output destination.', output: 'Writes verified bytes; file output reports byte count and SHA-256.', defaults: noDefaults, destructive: false, examples: ['outline asset export asset:example --output ./diagram.png', 'outline asset export asset:example --output - > diagram.png'] }),
+  'import inspect': fixedHelp({ usage: 'import inspect SOURCE', summary: 'Return a bounded profile of one external source without writing.', behavior: 'read-only local inspection', idempotent: true, positionals: ['SOURCE is one readable local file or directory.'], options: [], selectors: 'No document selector is used.', cardinality: 'Inspects exactly one source and returns bounded samples.', input: 'Reads source metadata and bounded structural samples; it never loads records into Runtime.', output: 'Returns an exact ImportSourceProfile. Known profiles include normalized, Tana, Roam EDN, directory, and unknown.', defaults: noDefaults, destructive: false, examples: ['outline import inspect ./export.json', 'outline --json import inspect ./notes-directory'] }),
+  'import plan': fixedHelp({ usage: 'import plan SOURCE --output DIFF --evidence-output EVIDENCE [OPTIONS]', summary: 'Normalize one external source and produce one reviewed import Diff.', behavior: 'preview', idempotent: true, positionals: ['SOURCE is normalized import v1 or a source supported by a bundled adapter.'], options: [option('format', 'auto|normalized|tana', 'Select normalized input or one bundled cleanup adapter.', { default: 'auto' }), option('fidelity', 'content|clean|full', 'Select adapter fidelity.', { default: 'clean' }), option('mode', 'native_daily|stage', 'Import valid dates natively or place everything below one staging root.'), option('parent', 'PARENT', 'Exact destination ID, semantic alias, or structured target.', { default: '@library' }), option('output', 'FILE', 'Write the immutable reviewed Diff.'), option('evidence-output', 'FILE', 'Write source, coverage, warning, and ChangeSet evidence.'), option('changeset-output', 'FILE', 'Optionally retain the generated generic ChangeSet.'), option('coverage-output', 'FILE', 'Optionally retain source-record coverage from a bundled adapter.'), option('include-trash', undefined, 'Allow a bundled adapter to include source Trash records.')], selectors: 'PARENT accepts one exact Node ID, typed ID, semantic @alias, or structured TargetRef JSON.', cardinality: 'One source produces one ChangeSet and one Diff regardless of record or date count.', input: 'Use --format normalized for output from a bundled or Agent-authored cleanup script. Inspect NormalizedImport with outline schema NormalizedImport. SOURCE and every output artifact must use distinct paths.', output: 'Writes one exact Diff and evidence, then returns hashes, affected count, coverage, dates, and artifact paths. It does not mutate the document.', defaults: ['Format defaults to auto.', 'Fidelity defaults to clean.', 'Mode follows normalized date grouping; destination defaults to @library.'], destructive: false, examples: ['outline import plan cleaned.json --format normalized --output import.diff.json --evidence-output import.evidence.json', 'outline import plan tana-export.json --format tana --fidelity full --output import.diff.json --evidence-output import.evidence.json', 'outline apply --input import.diff.json'] }),
+  'import verify': fixedHelp({ usage: 'import verify OPERATION_ID --diff DIFF --evidence EVIDENCE', summary: 'Verify one import Operation against its reviewed Diff and evidence.', behavior: 'read-only verification', idempotent: true, positionals: ['OPERATION_ID is the visible ID returned by outline apply.'], options: [option('diff', 'FILE', 'Read the exact applied Diff.'), option('evidence', 'FILE', 'Read the evidence emitted by import plan.')], selectors: 'Verification reads only the exact bindings and representative targets recorded in evidence.', cardinality: 'Verifies one Operation and at most eight representative roots.', input: 'Accepts one Operation ID plus its exact Diff and evidence artifacts.', output: 'Returns settlement checks and independent bounded read results; mismatch never writes or retries.', defaults: noDefaults, destructive: false, examples: ['outline import verify operation:example --diff import.diff.json --evidence import.evidence.json', 'outline revert operation:example'] }),
 } satisfies Record<string, CommandHelpContract>);
 
 function capability<TRequest extends TSchema, TResult extends TSchema>(
@@ -172,6 +206,9 @@ const FIXED_CAPABILITIES = [
   ]), resultSchema: AssetLeaseSchema, coverage: ['ingest_asset', 'ingest_local_file', 'ingest_thread_resource'] }),
   capability({ name: 'asset show', kind: 'asset', runtimeRequired: true, streaming: false, destructive: false, auditCategory: 'asset.read', summary: 'Read logical asset metadata.', requestSchema: Type.Object({ assetId: Type.String({ minLength: 1 }) }, closed), resultSchema: AssetRecordSchema, coverage: ['lookup_asset'] }),
   capability({ name: 'asset export', kind: 'asset', runtimeRequired: true, streaming: true, destructive: false, auditCategory: 'asset.export', summary: 'Stream verified asset bytes.', requestSchema: Type.Object({ assetId: Type.String({ minLength: 1 }) }, closed), resultSchema: Type.Unknown(), coverage: [] }),
+  capability({ name: 'import inspect', kind: 'local', runtimeRequired: false, streaming: false, destructive: false, auditCategory: 'import.inspect', summary: 'Return a bounded profile of one external source without writing.', requestSchema: ImportInspectInput, resultSchema: ImportSourceProfileSchema, coverage: [] }),
+  capability({ name: 'import plan', kind: 'local', runtimeRequired: true, streaming: false, destructive: false, auditCategory: 'import.plan', summary: 'Normalize one external source and produce one reviewed import Diff.', requestSchema: ImportPlanInput, resultSchema: ImportPlanResultSchema, coverage: [] }),
+  capability({ name: 'import verify', kind: 'local', runtimeRequired: true, streaming: false, destructive: false, auditCategory: 'import.verify', summary: 'Verify one import Operation against its reviewed Diff and evidence.', requestSchema: ImportVerifyInput, resultSchema: ImportVerifyResultSchema, coverage: [] }),
 ] as const;
 
 const PORCELAIN_COMMANDS = [
@@ -183,6 +220,7 @@ const PORCELAIN_COMMANDS = [
     'apply_node_text_patch', 'update_node_description', 'set_node_checkbox_visible',
     'set_code_block', 'set_code_language', 'set_node_icon', 'set_node_banner',
   ]],
+  ['text replace', 'content.replace', []],
   ['move', 'structure.move', ['move_node', 'batch_move_nodes', 'batch_move_nodes_up', 'batch_move_nodes_down']],
   ['duplicate', 'structure.duplicate', ['batch_duplicate_nodes']],
   ['merge', 'structure.merge', ['merge_node_into']],

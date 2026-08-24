@@ -127,7 +127,70 @@ describe('outline porcelain CLI', () => {
       await runtime.stop();
     }
   });
+
+  test('bounds text replacement, rejects consumed inline references, and invalidates stale plans', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const reference = await jsonCommand(root, ['add', '@library', 'Reference target']);
+      const referenceId = returnedIds(reference.data)[0]!;
+      const rich = await jsonCommand(root, ['add', '--input', '-'], JSON.stringify({
+        parent: { target: { selector: { by: 'alias', alias: 'library' }, cardinality: 'one' } },
+        nodes: [{
+          content: {
+            text: 'alpha keyword omega',
+            marks: [],
+            inlineRefs: [{ offset: 10, target: { kind: 'node', nodeId: referenceId } }],
+          },
+          children: [],
+        }],
+      }));
+      const richId = returnedIds(rich.data)[0]!;
+      const consumedReference = await jsonCommand(root, [
+        'text', 'replace', richId, '--find', 'keyword', '--replace', 'term', '--preview',
+      ]);
+      expect(consumedReference.code).toBe(2);
+      expect(consumedReference.error).toMatchObject({ code: 'invalid_input' });
+      expect(JSON.stringify(consumedReference.error)).toContain('inline reference');
+      expect(runtime.workspace.documentState().nodes[richId]?.content.text).toBe('alpha keyword omega');
+
+      const repeated = await jsonCommand(root, ['add', '@library', 'x x x']);
+      const repeatedId = returnedIds(repeated.data)[0]!;
+      const overBound = await jsonCommand(root, [
+        'text', 'replace', repeatedId, '--find', 'x', '--replace', 'y',
+        '--max-replacements', '2', '--preview',
+      ]);
+      expect(overBound.code).toBe(2);
+      expect(JSON.stringify(overBound.error)).toContain('exceeding maxReplacements 2');
+
+      const preview = await jsonCommand(root, [
+        'text', 'replace', repeatedId, '--find', 'x', '--replace', 'y', '--preview',
+      ]);
+      expect(preview.code).toBe(0);
+      expect((await jsonCommand(root, ['add', '@library', 'Concurrent write'])).code).toBe(0);
+      const stale = await jsonCommand(root, [
+        'text', 'replace', repeatedId, '--find', 'x', '--replace', 'y',
+        '--expect-diff', (preview.data as Diff).diffHash, '--yes',
+      ]);
+      expect(stale.code).toBe(3);
+      expect(stale.error).toMatchObject({ code: 'diff_mismatch' });
+      expect(runtime.workspace.documentState().nodes[repeatedId]?.content.text).toBe('x x x');
+    } finally {
+      await runtime.stop();
+    }
+  });
 });
+
+function returnedIds(value: unknown): string[] {
+  const result = (value as { result?: Array<{ nodes?: unknown[] }> } | undefined)?.result;
+  return (result?.[0]?.nodes ?? []).flatMap((node) => (
+    node && typeof node === 'object' && typeof (node as { id?: unknown }).id === 'string'
+      ? [(node as { id: string }).id]
+      : []
+  ));
+}
 
 async function createTrashedNode(
   root: string,

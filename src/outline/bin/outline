@@ -22,24 +22,20 @@ export TENON_OUTLINE_LAUNCHER
 if [ -f "$bin_dir/../outline.mjs" ] && [ -f "$bin_dir/../outline-runtime.mjs" ]; then
   : "${TENON_OUTLINE_CLI_RUNTIME:=$bin_dir/../../../MacOS/Tenon}"
   : "${TENON_OUTLINE_CLI_ENTRY:=$bin_dir/../outline.mjs}"
-  : "${TENON_OUTLINE_IMPORT_HELPER_ENTRY:=$bin_dir/../../built-in-skills/outline-import/scripts/outline-import.mjs}"
+  : "${TENON_OUTLINE_IMPORT_ADAPTER_ENTRY:=$bin_dir/../../built-in-skills/outline/scripts/source-adapters.mjs}"
   : "${TENON_OUTLINE_RUNTIME_ENTRY:=$bin_dir/../outline-runtime.mjs}"
   : "${TENON_OUTLINE_RUN_AS_NODE:=1}"
   : "${TENON_OUTLINE_PACKAGED:=1}"
 else
   : "${TENON_OUTLINE_CLI_RUNTIME:=bun}"
   : "${TENON_OUTLINE_CLI_ENTRY:=$bin_dir/../cli/entry.ts}"
-  : "${TENON_OUTLINE_IMPORT_HELPER_ENTRY:=$bin_dir/../../../main/builtInSkills/outline-import/scripts/outline-import.ts}"
+  : "${TENON_OUTLINE_IMPORT_ADAPTER_ENTRY:=$bin_dir/../../main/builtInSkills/outline/scripts/source-adapters.ts}"
   : "${TENON_OUTLINE_RUNTIME_ENTRY:=$bin_dir/../runtime/server/entry.ts}"
 fi
 
-export TENON_OUTLINE_RUNTIME_ENTRY TENON_OUTLINE_PACKAGED TENON_OUTLINE_RUN_AS_NODE
+export TENON_OUTLINE_IMPORT_ADAPTER_ENTRY TENON_OUTLINE_RUNTIME_ENTRY TENON_OUTLINE_PACKAGED TENON_OUTLINE_RUN_AS_NODE
 
 entry=$TENON_OUTLINE_CLI_ENTRY
-if [ "${1:-}" = "import-helper" ]; then
-  shift
-  entry=$TENON_OUTLINE_IMPORT_HELPER_ENTRY
-fi
 
 if [ ! -f "$entry" ]; then
   printf '%s\n' "outline: requested entry does not exist: $entry" >&2

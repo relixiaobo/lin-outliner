@@ -1513,8 +1513,14 @@ function assertReplayedRecord(record: LogRecord, state: LoadedState): void {
 
 function assertTransactionInput(input: WorkspaceTransactionInput): void {
   assertOutlineRecoveryPatch(input.recoveryPatch);
-  if (!Value.Check(OperationSchema, input.operation) || !Value.Check(EventSchema, input.event)) {
-    throw new Error('Outline transaction public records do not match their schemas');
+  const operationValid = Value.Check(OperationSchema, input.operation);
+  const eventValid = Value.Check(EventSchema, input.event);
+  if (!operationValid || !eventValid) {
+    const [error] = operationValid
+      ? Value.Errors(EventSchema, input.event)
+      : Value.Errors(OperationSchema, input.operation);
+    const record = operationValid ? 'Event' : 'Operation';
+    throw new Error(`Outline transaction ${record} does not match its schema at ${error?.instancePath || '/'}: ${error?.message ?? 'invalid value'}`);
   }
   assertAssetDelta(input.assetDelta ?? EMPTY_ASSET_DELTA);
   if (input.operation.operationId !== input.recoveryPatch.operationId

@@ -245,11 +245,11 @@ available when automation deliberately separates staging from reviewed document
 mutation. A failed media creation leaves the staged bytes governed by lease
 expiry; a successful Operation and its recovery patch protect the asset.
 
-Import is ordinary ChangeSet composition. The `outline-import` helper inspects
-source data, accounts for coverage, and emits a ChangeSet plus evidence. It may
-use `ensure` bindings to create multiple canonical dates and attach all imported
-trees in one Diff and one apply. The helper never opens Core, persistence, or an
-import-only write endpoint.
+Import is ordinary ChangeSet composition. The `outline` Skill's import helper
+inspects source data, accounts for coverage, and emits a ChangeSet plus evidence.
+It may use `ensure` bindings to create multiple canonical dates and attach all
+imported trees in one Diff and one apply. The helper never opens Core,
+persistence, or an import-only write endpoint.
 
 The Runtime process is discovered through a user-private descriptor and local
 authenticated transport. The descriptor and socket/token paths are derived by
