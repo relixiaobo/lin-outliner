@@ -373,7 +373,12 @@ async function settle(
   operations: readonly Change[],
   acknowledgeDestructive = false,
 ): Promise<{ diff: Awaited<ReturnType<typeof diffOutlineChangeSet>>; operation: Operation }> {
-  const changeSet: ChangeSet = { protocolVersion: 1, kind: 'outline.changeset', operations: [...operations] };
+  const changeSet: ChangeSet = {
+    protocolVersion: 1,
+    kind: 'outline.changeset',
+    idempotencyKey: `test:${crypto.randomUUID()}`,
+    operations: [...operations],
+  };
   const diff = await diffOutlineChangeSet(workspace, changeSet);
   let operation: Operation;
   try {

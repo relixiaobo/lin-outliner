@@ -527,9 +527,11 @@ existing structured search grammar, not a second text-query language.
 `includeTrash` defaults to false. A `many` mutation must provide a finite `max`;
 read projections receive bounded defaults from the registry.
 
-Resolution returns candidates in document order with Node ID as the stable tie
-breaker. Mutations never pick the first fuzzy match. CLI shorthand is limited
-to exact IDs and the semantic aliases `@home`, `@inbox`, `@schema`, `@trash`,
+Query resolution evaluates the complete matching set, removes Trash unless
+requested, applies `within`, then applies the requested order with Node ID as a
+stable tie breaker before taking `limit`. The default order is document order.
+Mutations never pick the first fuzzy match. CLI shorthand is limited to exact
+IDs and the semantic aliases `@home`, `@inbox`, `@schema`, `@trash`,
 `@daily-notes`, `@today`, and `@date:YYYY-MM-DD`. Structured queries arrive
 through `--query`, `--selector`, stdin, or a file.
 
@@ -565,6 +567,11 @@ The schema sets finite maxima for depth, result count, text bytes, and expanded
 field/reference data. Pagination cursors bind the Projection hash and revision;
 changing either requires a fresh read. `export` streams large results and does
 not weaken target or Trash visibility rules.
+
+Projection `include` values are explicit optional-metadata gates. `fields`
+admits field-definition linkage, `view` admits view/sort/filter/display/query
+metadata, and `trash` admits the original-parent linkage used for restoration.
+Omitting a gate redacts its metadata from Node results.
 
 ### ChangeSet and operation model
 
@@ -745,11 +752,14 @@ advance together.
 Idempotency keys are scoped to the workspace and protocol major. The CLI injects
 `cli:<uuid>` when porcelain, direct `diff`, `revert`, `undo`, or `redo` does not
 receive an explicit key. Direct `diff` fixes that key into the reviewed Diff;
-`apply` rejects a Diff without one rather than changing reviewed content.
-Reusing a key with the same canonical payload returns the original Operation;
-reusing it with a different payload returns `idempotency_conflict`. A client
-disconnect never causes automatic mutation retry. The client resolves an unknown
-settlement with the exact next command emitted in the error:
+desktop and Electron-main mutation, preview, undo, and redo paths generate
+`desktop:<uuid>`. `apply` rejects a Diff without a key rather than changing
+reviewed content. Runtime checks a matching key and canonical payload before
+base-revision and Node-precondition validation, so replay returns the original
+Operation even after the workspace advances; a different payload returns
+`idempotency_conflict`. A client disconnect never causes automatic mutation
+retry. The client resolves an unknown settlement with the exact next command
+emitted in the error:
 `outline log --idempotency-key KEY`.
 
 ### One durable transaction and recovery patch
@@ -789,8 +799,9 @@ references required by policy.
 
 Apply settlement is ordered as follows:
 
-1. Enter Runtime's single workspace mutation queue and recheck the Diff revision
-   and expected Node digests.
+1. Enter Runtime's single workspace mutation queue, resolve an existing matching
+   idempotency receipt, then recheck the Diff revision and expected Node digests
+   only when no receipt exists.
 2. Reserve recovery/asset capacity, execute the normalized plan tentatively in
    one Core transaction, and keep the rollback frontier live.
 3. Compare the actual affected set, per-Node after values, and aggregate digest
@@ -1012,7 +1023,10 @@ windows and is unrelated to document authority.
 Runtime exits after five minutes with no client leases, watch streams, active
 transaction, pending log/blob maintenance, or unflushed storage. It closes the
 socket, removes only its own descriptor/lock identity, and exits. A desktop
-connection or active watch holds a lease.
+connection or active watch holds a lease. Each admitted request advances a drain
+generation; idle maintenance and the optional idle hook recheck that generation
+and active requests before shutdown, so work admitted during an old drain
+cancels that shutdown.
 
 CLI discovery rules are deterministic:
 
@@ -1205,6 +1219,11 @@ or filter mismatch emits one `resync.required` record and closes cleanly. The
 client performs a bounded read and starts a new watch; Runtime never implies
 that an incomplete stream is complete.
 
+An attached Projection is valid only at its Event revision. When a projected
+watch replays a historical Event that Runtime cannot reconstruct at that exact
+revision, it emits one `resync.required` and closes rather than attaching the
+current workspace Projection to the historical Event.
+
 ### Desktop client cutover
 
 Electron main creates one shared `OutlineClient`, starts Runtime when needed,
@@ -1235,6 +1254,10 @@ so self-originated acknowledgement and broadcast apply once. Desktop Undo/Redo
 select recoverable Operations and use guarded revert. Window close and app quit
 wait for submitted ChangeSets to settle but do not flush workspace files
 themselves; Runtime owns durability.
+
+Semantic no-change produces no Operation Event. Desktop mutation adapters branch
+on `outline.no-change`, adopt its revision and current/full Projection directly,
+and never enter Operation-ID settlement waiting.
 
 Desktop parity is a hard gate before legacy deletion: every persisted command,
 batch action, launcher capture, date ensure, view/definition mutation,

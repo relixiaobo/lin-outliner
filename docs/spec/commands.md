@@ -160,6 +160,11 @@ A `Selector` is independent of renderer state:
 - `{ by: 'query', query, within?, includeTrash?, order?, limit }` uses the shared
   structured search grammar.
 
+Query resolution evaluates the complete match set, removes Trash unless
+`includeTrash` is true, applies `within`, and applies the requested stable order
+before taking `limit`. The limit therefore bounds the final selector result, not
+an intermediate relevance-ranked candidate set.
+
 `TargetSpec` adds `one`, `zero-or-one`, or bounded `many` cardinality. Mutation
 resolution never picks the first fuzzy match. Missing, ambiguous, over-limit,
 or cardinality-invalid targets fail before any write.
@@ -170,13 +175,20 @@ format. Pagination cursors bind the Projection hash and revision. A Projection
 contains document facts only, never selection, focus, expansion, pane placement,
 sidebar pins, or Agent-specific filtering.
 
+`include` is an allow-list for optional Node metadata. In particular, `fields`
+admits field-definition linkage, `view` admits view/sort/filter/display/query
+metadata, and `trash` admits the original-parent linkage used for restoration.
+When one of these values is absent, its metadata is redacted from Node results.
+
 ## ChangeSet
 
 One mutation request carries one `outline.changeset` with optional base revision
 and Node digests, idempotency key, source metadata, ordered operations, and
 bounded return Projections. The CLI generates `cli:<uuid>` before dispatch when
 porcelain or direct `diff` input does not provide a key; direct `diff` fixes the
-key into the reviewed artifact. Operations use this stable top-level vocabulary:
+key into the reviewed artifact. Desktop and Electron-main mutations, previews,
+and history actions generate `desktop:<uuid>` keys. Operations use this stable
+top-level vocabulary:
 
 | Change | Purpose |
 | --- | --- |
@@ -222,6 +234,11 @@ rechecks its hashes, base revision, target digests, asset leases, and destructiv
 acknowledgement before executing. Node/definition merge, purge, and empty-Trash
 flows require a Diff-bound explicit acknowledgement; acknowledgement alone is
 insufficient.
+
+After Diff hash and key validation, Runtime resolves an existing idempotency
+receipt before base-revision and Node-precondition checks. The same key and
+canonical Diff payload returns the original Operation even when its base is now
+historical; the same key with another payload remains an idempotency conflict.
 
 Human destructive porcelain on a TTY first prints the exact Runtime-produced
 Diff and asks for confirmation. Acceptance submits that same artifact to
@@ -275,6 +292,11 @@ never automatically retry after an unknown settlement. A timeout, disconnect,
 `operation_settlement_unknown`, includes the exact key, and names the precise
 next command: `outline log --idempotency-key KEY`.
 
+Semantic no-change returns `outline.no-change` at the current revision without
+creating an Operation or Operation Event. Desktop clients consume that result
+directly, refresh or reuse their current Projection as appropriate, and never
+wait for an Operation Event that cannot exist.
+
 ## Events And Desktop Intents
 
 Every commit appends ordered `projection.changed`, `operation.committed`,
@@ -282,6 +304,11 @@ Every commit appends ordered `projection.changed`, `operation.committed`,
 opaque cursor and emits `resync.required` when retained history cannot bridge a
 gap. Desktop adapters convert projection Events to the renderer's incremental
 `ProjectionUpdate`; revision gaps trigger a complete Projection read.
+
+A watch that requests an attached Projection may receive one only when Runtime
+can produce it at that Event's revision. If replay reaches a historical Event
+whose Projection cannot be reconstructed, Runtime emits one `resync.required`
+and closes instead of attaching the current workspace Projection to old history.
 
 Recovery expiry appends its maintenance record before removing unreferenced
 blobs and emits `operation.recovery-expired` with the expired Operation and patch

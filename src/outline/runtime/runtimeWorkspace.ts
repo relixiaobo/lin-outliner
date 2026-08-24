@@ -150,6 +150,29 @@ export class OutlineRuntimeWorkspace {
     return this.enqueueMutation(() => this.applyMutation(request));
   }
 
+  async settledOperation(idempotencyKey: string, payloadHash: string): Promise<Operation | undefined> {
+    return this.enqueueMutation(async () => {
+      const admission = await this.store.prepareMutation(
+        { key: idempotencyKey, payloadHash },
+        { instanceId: this.instanceId, revision: this.revision() },
+      );
+      this.publishEvents(admission.maintenanceEvents);
+      if (admission.existingOperation) {
+        this.settlementUnknown = false;
+        return admission.existingOperation;
+      }
+      if (this.settlementUnknown) {
+        throw new OutlineContractError(outlineError(
+          'operation_settlement_unknown',
+          'durability',
+          'A prior mutation may have committed; resolve it by idempotency key or restart before writing again.',
+          { retryable: true, details: { idempotencyKey } },
+        ));
+      }
+      return undefined;
+    });
+  }
+
   async revert(
     operationId: string,
     options: Pick<OutlineRuntimeMutationRequest, 'origin' | 'causation' | 'idempotencyKey' | 'idempotencyPayloadHash'>,
@@ -463,7 +486,13 @@ export class OutlineRuntimeWorkspace {
         'operation_settlement_unknown',
         'durability',
         'The mutation may have committed, but acknowledgement was not completed.',
-        { retryable: true, details: error instanceof Error ? error.message : String(error) },
+        {
+          retryable: true,
+          details: {
+            ...(request.idempotencyKey ? { idempotencyKey: request.idempotencyKey } : {}),
+            cause: error instanceof Error ? error.message : String(error),
+          },
+        },
       ));
     }
     if (!appended.idempotent) {

@@ -8,8 +8,10 @@ import { DiffSchema, type ChangeSet, type NodeDraft, type Projection } from '../
 import {
   OutlineRuntimeWorkspace,
   applyOutlineDiff,
+  createSelectionIndex,
   diffOutlineChangeSet,
   projectOutline,
+  resolveSelector,
 } from '../../src/outline/runtime';
 
 const roots: string[] = [];
@@ -25,6 +27,7 @@ describe('outline ChangeSet kernel', () => {
     const changeSet: ChangeSet = {
       protocolVersion: 1,
       kind: 'outline.changeset',
+      idempotencyKey: 'test:preview-apply-replay',
       source: { kind: 'cli', label: 'kernel test' },
       operations: [{
         op: 'create',
@@ -42,7 +45,15 @@ describe('outline ChangeSet kernel', () => {
       }],
     };
 
-    const diff = await diffOutlineChangeSet(workspace, changeSet);
+    const conflictingDiff = await diffKeyed(workspace, {
+      ...changeSet,
+      operations: [{
+        op: 'create',
+        parents: oneAlias('today'),
+        nodes: [draft('Different payload under the same key')],
+      }],
+    });
+    const diff = await diffKeyed(workspace, changeSet);
     expect(Value.Check(DiffSchema, diff)).toBe(true);
     expect(workspace.revision()).toBe(beforeRevision);
     expect(await workspace.store.operations()).toEqual([]);
@@ -55,6 +66,10 @@ describe('outline ChangeSet kernel', () => {
     expect(operation.revisionAfter).toBe(beforeRevision + 1);
     expect(operation.affectedNodeIds).toEqual(diff.affected.map((entry) => entry.id));
     expect(operation.result?.[0]?.nodes).toHaveLength(2);
+    expect(await applyOutlineDiff(workspace, diff, { origin: 'local-user' })).toEqual(operation);
+    await expect(applyOutlineDiff(workspace, conflictingDiff, { origin: 'local-user' })).rejects.toMatchObject({
+      outlineError: { code: 'idempotency_conflict' },
+    });
     expect(workspace.documentState().nodes[diff.bindings.created![0]!]?.content.text).toBe('Created through ChangeSet');
     expect(await workspace.store.operations()).toHaveLength(1);
   });
@@ -62,7 +77,7 @@ describe('outline ChangeSet kernel', () => {
   test('keeps a Diff self-contained across Runtime restart', async () => {
     const root = await makeRoot();
     const first = await OutlineRuntimeWorkspace.open(root, { instanceId: 'runtime:first' });
-    const diff = await diffOutlineChangeSet(first, createTodayChangeSet('Applied after restart'));
+    const diff = await diffKeyed(first, createTodayChangeSet('Applied after restart'));
 
     const restarted = await OutlineRuntimeWorkspace.open(root, { instanceId: 'runtime:second' });
     const operation = await applyOutlineDiff(restarted, diff, { origin: 'external-client' });
@@ -71,10 +86,28 @@ describe('outline ChangeSet kernel', () => {
     expect(restarted.documentState().nodes[diff.bindings.created![0]!]?.content.text).toBe('Applied after restart');
   });
 
+  test('rejects an unkeyed Diff before mutation admission', async () => {
+    const workspace = await makeWorkspace();
+    const diff = await diffOutlineChangeSet(workspace, {
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      operations: [{
+        op: 'create',
+        parents: oneAlias('today'),
+        nodes: [draft('Unkeyed apply')],
+      }],
+    });
+
+    await expect(applyOutlineDiff(workspace, diff, { origin: 'external-client' })).rejects.toMatchObject({
+      outlineError: { code: 'invalid_input', message: expect.stringContaining('idempotency key') },
+    });
+    expect(await workspace.store.operations()).toEqual([]);
+  });
+
   test('rejects stale Diff and targeted digest changes without writing', async () => {
     const workspace = await makeWorkspace();
     const targetId = await createExisting(workspace, 'Target');
-    const diff = await diffOutlineChangeSet(workspace, {
+    const diff = await diffKeyed(workspace, {
       protocolVersion: 1,
       kind: 'outline.changeset',
       operations: [{
@@ -111,7 +144,7 @@ describe('outline ChangeSet kernel', () => {
         changes: [{ kind: 'done', value: true }],
       }],
     };
-    await expect(diffOutlineChangeSet(workspace, ambiguous)).rejects.toMatchObject({
+    await expect(diffKeyed(workspace, ambiguous)).rejects.toMatchObject({
       outlineError: { code: 'ambiguous_selector' },
     });
 
@@ -123,20 +156,51 @@ describe('outline ChangeSet kernel', () => {
         { op: 'resolve', target: oneAliasTarget('today'), bind: 'later' },
       ],
     };
-    await expect(diffOutlineChangeSet(workspace, forward)).rejects.toMatchObject({
+    await expect(diffKeyed(workspace, forward)).rejects.toMatchObject({
       outlineError: { code: 'invalid_input', message: expect.stringContaining('forward-references') },
     });
+  });
+
+  test('applies query selector filtering and document ordering before limit', async () => {
+    const workspace = await makeWorkspace();
+    const earlierId = await createExisting(workspace, 'Needle in an earlier document row with more words');
+    await createExisting(workspace, 'Needle');
+    const scopedParentId = `node:${crypto.randomUUID()}`;
+    const scopedChildId = `node:${crypto.randomUUID()}`;
+    await workspace.mutate({
+      ...createRequest('Scoped query fixture'),
+      execute: (core) => {
+        core.createNode(core.projection().todayId, null, 'Scoped query parent', scopedParentId);
+        core.createNode(scopedParentId, null, 'Needle inside the requested subtree', scopedChildId);
+      },
+    });
+    const index = createSelectionIndex(workspace.projection());
+    const query = { kind: 'rule' as const, op: 'STRING_MATCH' as const, text: 'Needle' };
+
+    expect(resolveSelector(index, {
+      by: 'query',
+      query,
+      order: 'document',
+      limit: 1,
+    })).toEqual([earlierId]);
+    expect(resolveSelector(index, {
+      by: 'query',
+      query,
+      within: { by: 'id', id: scopedParentId },
+      order: 'document',
+      limit: 1,
+    })).toEqual([scopedChildId]);
   });
 
   test('requires Diff-bound acknowledgement for purge and preserves exact recovery', async () => {
     const workspace = await makeWorkspace();
     const targetId = await createExisting(workspace, 'Purge me');
-    await applyOutlineDiff(workspace, await diffOutlineChangeSet(workspace, {
+    await applyOutlineDiff(workspace, await diffKeyed(workspace, {
       protocolVersion: 1,
       kind: 'outline.changeset',
       operations: [{ op: 'lifecycle', action: 'trash', targets: oneId(targetId) }],
     }), { origin: 'local-user' });
-    const purgeDiff = await diffOutlineChangeSet(workspace, {
+    const purgeDiff = await diffKeyed(workspace, {
       protocolVersion: 1,
       kind: 'outline.changeset',
       operations: [{ op: 'lifecycle', action: 'purge', targets: oneId(targetId) }],
@@ -179,6 +243,87 @@ describe('outline ChangeSet kernel', () => {
     })).toThrow('Projection cursor does not match');
   });
 
+  test('redacts and preserves field view and trash metadata through include controls', async () => {
+    const workspace = await makeWorkspace();
+    const setup = await diffKeyed(workspace, {
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      operations: [
+        {
+          op: 'create',
+          resource: 'definition',
+          definitionType: 'field',
+          name: 'Projection field',
+          config: { fieldType: 'plain' },
+          bind: 'field',
+        },
+        { op: 'create', parents: oneAlias('today'), nodes: [draft('Projection owner')], bind: 'owner' },
+        {
+          op: 'update',
+          targets: { binding: 'owner' },
+          changes: [{ kind: 'field', action: 'set', field: { binding: 'field' }, value: 'Projected value' }],
+        },
+        {
+          op: 'update',
+          targets: { binding: 'owner' },
+          changes: [{
+            kind: 'view',
+            property: 'configuration',
+            action: 'set',
+            view: {
+              mode: 'table',
+              group: { binding: 'field' },
+              replace: {
+                sort: [{ field: 'sys:updatedAt', direction: 'desc' }],
+                display: [{ field: 'sys:name' }, { field: { binding: 'field' } }],
+              },
+            },
+          }],
+        },
+      ],
+    });
+    await applyOutlineDiff(workspace, setup, { origin: 'external-client' });
+    const ownerId = setup.bindings.owner![0]!;
+    const fieldId = setup.bindings.field![0]!;
+    const request: Projection = {
+      kind: 'outline',
+      targets: oneId(ownerId),
+      depth: 3,
+      include: ['children'],
+      page: { limit: 100 },
+    };
+    const redacted = projectOutline(workspace.forkCore(), request).nodes as Array<Record<string, unknown>>;
+    const expanded = projectOutline(workspace.forkCore(), {
+      ...request,
+      include: ['children', 'fields', 'view'],
+    }).nodes as Array<Record<string, unknown>>;
+    const redactedField = redacted.find((node) => node.type === 'fieldEntry')!;
+    const expandedField = expanded.find((node) => node.type === 'fieldEntry')!;
+    const redactedView = redacted.find((node) => node.type === 'viewDef')!;
+    const expandedView = expanded.find((node) => node.type === 'viewDef')!;
+    const redactedSort = redacted.find((node) => node.type === 'sortRule')!;
+    const expandedSort = expanded.find((node) => node.type === 'sortRule')!;
+    expect(redactedField.fieldDefId).toBeUndefined();
+    expect(expandedField.fieldDefId).toBe(fieldId);
+    expect(redactedView.viewMode).toBeUndefined();
+    expect(redactedView.groupField).toBeUndefined();
+    expect(expandedView).toMatchObject({ viewMode: 'table', groupField: fieldId });
+    expect(redactedSort.sortField).toBeUndefined();
+    expect(expandedSort).toMatchObject({ sortField: 'sys:updatedAt', sortDirection: 'desc' });
+
+    const trashed = await diffKeyed(workspace, {
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      operations: [{ op: 'lifecycle', action: 'trash', targets: oneId(ownerId) }],
+    });
+    await applyOutlineDiff(workspace, trashed, { origin: 'external-client' });
+    const trashRequest: Projection = { kind: 'node', targets: oneId(ownerId), page: { limit: 1 } };
+    expect((projectOutline(workspace.forkCore(), trashRequest).nodes[0] as Record<string, unknown>)
+      .trashedFromParentId).toBeUndefined();
+    expect((projectOutline(workspace.forkCore(), { ...trashRequest, include: ['trash'] }).nodes[0] as Record<string, unknown>)
+      .trashedFromParentId).toBe(workspace.projection().todayId);
+  });
+
   test('composes 100 date ensures and dependent creates into one Diff and one Operation', async () => {
     const workspace = await makeWorkspace();
     const operations: ChangeSet['operations'][number][] = [];
@@ -199,7 +344,7 @@ describe('outline ChangeSet kernel', () => {
       });
     }
     const changeSet: ChangeSet = { protocolVersion: 1, kind: 'outline.changeset', operations };
-    const diff = await diffOutlineChangeSet(workspace, changeSet);
+    const diff = await diffKeyed(workspace, changeSet);
     expect(Object.keys(diff.bindings).filter((name) => name.startsWith('date'))).toHaveLength(100);
     expect(workspace.revision()).toBe(0);
 
@@ -217,7 +362,7 @@ describe('outline ChangeSet kernel', () => {
       targets: oneId(targetId),
       changes: [{ kind: 'description', value: `Bulk value ${index}` }],
     }));
-    const diff = await diffOutlineChangeSet(workspace, {
+    const diff = await diffKeyed(workspace, {
       protocolVersion: 1,
       kind: 'outline.changeset',
       operations,
@@ -245,7 +390,7 @@ describe('outline ChangeSet kernel', () => {
       ],
     };
 
-    await expect(diffOutlineChangeSet(workspace, changeSet)).rejects.toMatchObject({
+    await expect(diffKeyed(workspace, changeSet)).rejects.toMatchObject({
       outlineError: { code: 'precondition_failed', message: expect.stringContaining('operation 1') },
     });
     expect(workspace.documentState()).toEqual(before);
@@ -267,6 +412,13 @@ function createTodayChangeSet(text: string): ChangeSet {
     kind: 'outline.changeset',
     operations: [{ op: 'create', parents: oneAlias('today'), nodes: [draft(text)], bind: 'created' }],
   };
+}
+
+function diffKeyed(workspace: OutlineRuntimeWorkspace, changeSet: ChangeSet) {
+  return diffOutlineChangeSet(workspace, {
+    ...changeSet,
+    idempotencyKey: changeSet.idempotencyKey ?? `test:${crypto.randomUUID()}`,
+  });
 }
 
 function oneAlias(alias: 'today') {

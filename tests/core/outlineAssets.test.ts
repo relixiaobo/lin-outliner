@@ -170,6 +170,7 @@ function createAttachmentChangeSet(assetLeaseId: string): ChangeSet {
   return {
     protocolVersion: 1,
     kind: 'outline.changeset',
+    idempotencyKey: `test:${crypto.randomUUID()}`,
     operations: [{ op: 'create', parents: oneAlias('today'), nodes: [attachment], bind: 'created' }],
   };
 }
@@ -178,6 +179,7 @@ function createPlainChangeSet(text: string): ChangeSet {
   return {
     protocolVersion: 1,
     kind: 'outline.changeset',
+    idempotencyKey: `test:${crypto.randomUUID()}`,
     operations: [{
       op: 'create',
       parents: oneAlias('today'),
@@ -193,7 +195,10 @@ async function applyChangeSet(
 ) {
   return applyOutlineDiff(
     workspace,
-    await diffOutlineChangeSet(workspace, changeSet),
+    await diffOutlineChangeSet(workspace, {
+      ...changeSet,
+      idempotencyKey: changeSet.idempotencyKey ?? `test:${crypto.randomUUID()}`,
+    }),
     { origin: 'local-user' },
     acknowledgeDestructive,
   );

@@ -1,6 +1,6 @@
 import { execFile as execFileCallback } from 'node:child_process';
 import { createReadStream } from 'node:fs';
-import { mkdir, mkdtemp, open, readFile, rename, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -133,7 +133,7 @@ async function parsePlanInput(args: readonly string[], io: ImportCliIo, signal?:
   if (!source) throw usageError('import plan requires SOURCE.');
   if (!output) throw usageError('import plan requires --output DIFF.');
   if (!evidenceOutput) throw usageError('import plan requires --evidence-output EVIDENCE.');
-  assertDistinctImportPaths({ source, output, evidenceOutput, changeSetOutput, coverageOutput });
+  await assertDistinctImportPaths({ source, output, evidenceOutput, changeSetOutput, coverageOutput });
   return {
     source,
     sourceFormat,
@@ -251,7 +251,7 @@ async function planImport(
       normalized = await readNormalizedSource(normalizedPath);
       coverageOutput = input.coverageOutput
         ?? `${input.evidenceOutput.replace(/\.json$/u, '')}.coverage.json`;
-      assertDistinctImportPaths({
+      await assertDistinctImportPaths({
         source: input.source,
         output: input.output,
         evidenceOutput: input.evidenceOutput,
@@ -493,23 +493,56 @@ function requiredValue(value: string | undefined, option: string): string {
   return value;
 }
 
-function assertDistinctImportPaths(paths: {
+async function assertDistinctImportPaths(paths: {
   source: string;
   output: string;
   evidenceOutput: string;
   changeSetOutput?: string;
   coverageOutput?: string;
-}): void {
-  const seen = new Map<string, string>();
+}): Promise<void> {
+  const seenPaths = new Map<string, string>();
+  const seenFiles = new Map<string, string>();
   for (const [name, value] of Object.entries(paths)) {
     if (!value) continue;
-    const resolved = path.resolve(value);
-    const previous = seen.get(resolved);
+    const canonical = await canonicalImportPath(value);
+    const previous = seenPaths.get(canonical.path)
+      ?? (canonical.fileIdentity ? seenFiles.get(canonical.fileIdentity) : undefined);
     if (previous) {
-      throw usageError(`Import paths must be distinct: ${previous} and ${name} both resolve to ${resolved}.`);
+      throw usageError(`Import paths must be distinct: ${previous} and ${name} resolve to the same file.`);
     }
-    seen.set(resolved, name);
+    seenPaths.set(canonical.path, name);
+    if (canonical.fileIdentity) seenFiles.set(canonical.fileIdentity, name);
   }
+}
+
+async function canonicalImportPath(value: string): Promise<{ path: string; fileIdentity?: string }> {
+  const resolved = path.resolve(value);
+  try {
+    const canonical = await realpath(resolved);
+    const metadata = await stat(canonical);
+    return { path: canonical, fileIdentity: `${metadata.dev}:${metadata.ino}` };
+  } catch (error) {
+    if (!isNotFound(error)) throw error;
+  }
+
+  const suffix: string[] = [];
+  let ancestor = resolved;
+  while (true) {
+    try {
+      const canonicalAncestor = await realpath(ancestor);
+      return { path: path.join(canonicalAncestor, ...suffix) };
+    } catch (error) {
+      if (!isNotFound(error)) throw error;
+    }
+    const parent = path.dirname(ancestor);
+    if (parent === ancestor) return { path: resolved };
+    suffix.unshift(path.basename(ancestor));
+    ancestor = parent;
+  }
+}
+
+function isNotFound(error: unknown): boolean {
+  return isRecord(error) && error.code === 'ENOENT';
 }
 
 function usageError(message: string): OutlineContractError {

@@ -11,6 +11,7 @@ import { OUTLINE_PROTOCOL_VERSION } from '../../src/outline/contract/version';
 import {
   createOutlineRecoveryPatch,
   WorkspaceTransactionLog,
+  type OutlineAssetStage,
   type OutlineRecoveryPatch,
   type WorkspaceTransactionInput,
 } from '../../src/outline/runtime/storage';
@@ -74,6 +75,65 @@ describe('WorkspaceTransactionLog', () => {
     })).rejects.toMatchObject({
       outlineError: { code: 'idempotency_conflict' },
     });
+  });
+
+  test('reloads the asset-stage sequence after an uncertain fsync settlement', async () => {
+    const root = await makeRoot();
+    const core = Core.new({ installationId: crypto.randomUUID() });
+    let failNextFsync = false;
+    const store = await initializedStore(root, core, {
+      fsync: async (handle) => {
+        await handle.sync();
+        if (failNextFsync) {
+          failNextFsync = false;
+          throw new Error('injected asset-stage fsync failure');
+        }
+      },
+    });
+
+    failNextFsync = true;
+    await expect(store.stageAsset(assetStage('uncertain-stage'))).rejects.toMatchObject({
+      outlineError: { code: 'durability_failed', retryable: true },
+    });
+    await store.stageAsset(assetStage('after-stage-reload'));
+
+    const restarted = new WorkspaceTransactionLog(root);
+    const loaded = await restarted.load();
+    expect(loaded.inconsistent).toBeUndefined();
+    expect((await restarted.assetRecords()).map((record) => record.metadata.originalFilename)).toEqual([
+      'uncertain-stage.bin',
+      'after-stage-reload.bin',
+    ]);
+  });
+
+  test('reloads the asset-gc sequence after an uncertain fsync settlement', async () => {
+    const root = await makeRoot();
+    const core = Core.new({ installationId: crypto.randomUUID() });
+    let failNextFsync = false;
+    const store = await initializedStore(root, core, {
+      fsync: async (handle) => {
+        await handle.sync();
+        if (failNextFsync) {
+          failNextFsync = false;
+          throw new Error('injected asset-gc fsync failure');
+        }
+      },
+    });
+    await store.stageAsset(assetStage('collected-before-reload'));
+
+    failNextFsync = true;
+    await expect(store.collectUnprotectedAssetRecords([], new Date('2031-01-01T00:00:00.000Z')))
+      .rejects.toMatchObject({
+        outlineError: { code: 'durability_failed', retryable: true },
+      });
+    expect(await store.collectUnprotectedAssetRecords([], new Date('2031-01-01T00:00:00.000Z'))).toEqual([]);
+    await store.stageAsset(assetStage('after-gc-reload'));
+
+    const restarted = new WorkspaceTransactionLog(root);
+    const loaded = await restarted.load();
+    expect(loaded.inconsistent).toBeUndefined();
+    expect((await restarted.assetRecords()).map((record) => record.metadata.originalFilename))
+      .toEqual(['after-gc-reload.bin']);
   });
 
   test('leaves an inert orphan when a recovery blob fsyncs before the transaction append', async () => {
@@ -350,6 +410,32 @@ async function initializedStore(
   const store = new WorkspaceTransactionLog(root, options);
   await store.initialize(core.serializeState());
   return store;
+}
+
+function assetStage(name: string): OutlineAssetStage {
+  const assetId = `asset:${crypto.randomUUID()}`;
+  const metadata = {
+    mimeType: 'application/octet-stream',
+    byteSize: name.length,
+    sha256: canonicalSha256({ name }),
+    originalFilename: `${name}.bin`,
+  };
+  return {
+    record: {
+      protocolVersion: OUTLINE_PROTOCOL_VERSION,
+      kind: 'outline.asset',
+      assetId,
+      metadata,
+      createdAt: '2030-01-01T00:00:00.000Z',
+    },
+    lease: {
+      protocolVersion: OUTLINE_PROTOCOL_VERSION,
+      leaseId: `lease:${crypto.randomUUID()}`,
+      assetId,
+      metadata,
+      expiresAt: '2030-01-02T00:00:00.000Z',
+    },
+  };
 }
 
 async function makeRoot(): Promise<string> {

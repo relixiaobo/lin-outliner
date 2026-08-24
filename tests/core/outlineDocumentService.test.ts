@@ -89,6 +89,43 @@ describe('OutlineDocumentService', () => {
       await runtime.stop();
     }
   });
+
+  test('keeps the desktop revision valid after a semantic no-change settlement', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const document = new OutlineDocumentService(new OutlineClientSupervisor({
+      root,
+      noStart: true,
+      origin: 'desktop',
+    }));
+    try {
+      await document.init();
+      const ensure = [{
+        op: 'ensure' as const,
+        resource: 'definition' as const,
+        definitionType: 'tag' as const,
+        name: 'Convergent tag',
+        bind: 'convergentTag',
+      }];
+      await document.runChanges(ensure);
+      const revision = document.revision();
+      const noChange = await document.runChanges(ensure);
+      expect(noChange.update).toMatchObject({ kind: 'full', revision });
+      expect(Number.isFinite(document.revision())).toBe(true);
+
+      const next = await document.runChanges([{
+        op: 'create',
+        parents: oneToday(),
+        nodes: [{ content: richText('After no-change'), children: [] }],
+      }]);
+      expect(next.update.revision).toBe(revision + 1);
+    } finally {
+      document.close();
+      await runtime.stop();
+    }
+  });
 });
 
 function oneToday() {

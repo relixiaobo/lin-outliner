@@ -68,6 +68,7 @@ export class OutlineRuntimeServer {
   private readonly idleTimeoutMs: number;
   private readonly onIdle?: OutlineRuntimeServerOptions['onIdle'];
   private idleTimer?: ReturnType<typeof setTimeout>;
+  private idleGeneration = 0;
   private activeRequests = 0;
   private stopping = false;
   private readonly agentAttestations = new AgentAttestationRegistry();
@@ -162,6 +163,7 @@ export class OutlineRuntimeServer {
   }
 
   private async handleRequest(request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
+    this.idleGeneration += 1;
     this.activeRequests += 1;
     this.clearIdleTimer();
     try {
@@ -418,53 +420,19 @@ export class OutlineRuntimeServer {
         })
       : undefined;
     let latestEventSequence = decoded?.sequence ?? this.workspace.eventBaselineSequence;
+    let retainedLatestSequence = this.workspace.eventBaselineSequence;
+    let ended = false;
     const pendingEvents: OutlineEvent[] = [];
     const closed = new Promise<void>((resolve) => response.once('close', resolve));
     const write = (record: OutlineStreamRecord) => response.write(`${JSON.stringify(record)}\n`);
-    const writeEvent = (event: OutlineEvent) => {
-      if (event.sequence <= latestEventSequence) return;
-      latestEventSequence = event.sequence;
-      if (!matchesEventFilter(event, input.filter)) return;
-      const projectedEvent = eventForWatch(event, input.filter, input.projection, this.workspace);
-      write({
-        protocolVersion: OUTLINE_PROTOCOL_VERSION,
-        requestId,
-        sequence: streamSequence++,
-        type: 'event',
-        event: projectedEvent,
-        cursor: projectedEvent.cursor,
-      });
-    };
-    let acceptEvent: (event: OutlineEvent) => void = (event) => { pendingEvents.push(event); };
-    const unsubscribe = this.workspace.subscribe((event) => acceptEvent(event));
-    response.once('close', unsubscribe);
-    write({
-      protocolVersion: OUTLINE_PROTOCOL_VERSION,
-      requestId,
-      sequence: streamSequence++,
-      type: 'hello',
-      cursor: encodeEventCursor({
-        instanceId: this.workspace.instanceId,
-        sequence: latestEventSequence,
-        revision: decoded?.revision ?? this.workspace.revision(),
-        filter: input.filter,
-        projection: input.projection,
-      }),
-    });
-    const replay = (await this.workspace.store.eventsAfter(this.workspace.eventBaselineSequence))
-      .filter((event) => event.instanceId === this.workspace.instanceId);
-    const retainedFirstSequence = replay[0]?.sequence;
-    const retainedLatestSequence = replay.at(-1)?.sequence ?? this.workspace.eventBaselineSequence;
-    const cursorInvalid = input.cursor !== undefined && (
-      !decoded
-      || decoded.sequence < this.workspace.eventBaselineSequence
-      || decoded.sequence > retainedLatestSequence
-      || (retainedFirstSequence !== undefined && decoded.sequence < retainedFirstSequence - 1)
-    );
-    if (cursorInvalid) {
+    let unsubscribe: () => void = () => undefined;
+    const endForResync = () => {
+      if (ended) return;
+      ended = true;
+      const sequence = Math.max(latestEventSequence, retainedLatestSequence);
       const cursor = encodeEventCursor({
         instanceId: this.workspace.instanceId,
-        sequence: retainedLatestSequence,
+        sequence,
         revision: this.workspace.revision(),
         filter: input.filter,
         projection: input.projection,
@@ -474,7 +442,7 @@ export class OutlineRuntimeServer {
         kind: 'outline.event',
         type: 'resync.required',
         instanceId: this.workspace.instanceId,
-        sequence: retainedLatestSequence,
+        sequence,
         revision: this.workspace.revision(),
         cursor,
       };
@@ -495,6 +463,53 @@ export class OutlineRuntimeServer {
       });
       unsubscribe();
       response.end();
+    };
+    const writeEvent = (event: OutlineEvent) => {
+      if (ended || event.sequence <= latestEventSequence) return;
+      latestEventSequence = event.sequence;
+      if (!matchesEventFilter(event, input.filter)) return;
+      if (input.projection && event.revision !== this.workspace.revision()) {
+        endForResync();
+        return;
+      }
+      const projectedEvent = eventForWatch(event, input.filter, input.projection, this.workspace);
+      write({
+        protocolVersion: OUTLINE_PROTOCOL_VERSION,
+        requestId,
+        sequence: streamSequence++,
+        type: 'event',
+        event: projectedEvent,
+        cursor: projectedEvent.cursor,
+      });
+    };
+    let acceptEvent: (event: OutlineEvent) => void = (event) => { pendingEvents.push(event); };
+    unsubscribe = this.workspace.subscribe((event) => acceptEvent(event));
+    response.once('close', unsubscribe);
+    write({
+      protocolVersion: OUTLINE_PROTOCOL_VERSION,
+      requestId,
+      sequence: streamSequence++,
+      type: 'hello',
+      cursor: encodeEventCursor({
+        instanceId: this.workspace.instanceId,
+        sequence: latestEventSequence,
+        revision: decoded?.revision ?? this.workspace.revision(),
+        filter: input.filter,
+        projection: input.projection,
+      }),
+    });
+    const replay = (await this.workspace.store.eventsAfter(this.workspace.eventBaselineSequence))
+      .filter((event) => event.instanceId === this.workspace.instanceId);
+    const retainedFirstSequence = replay[0]?.sequence;
+    retainedLatestSequence = replay.at(-1)?.sequence ?? this.workspace.eventBaselineSequence;
+    const cursorInvalid = input.cursor !== undefined && (
+      !decoded
+      || decoded.sequence < this.workspace.eventBaselineSequence
+      || decoded.sequence > retainedLatestSequence
+      || (retainedFirstSequence !== undefined && decoded.sequence < retainedFirstSequence - 1)
+    );
+    if (cursorInvalid) {
+      endForResync();
       return;
     }
     for (const event of replay) {
@@ -507,14 +522,30 @@ export class OutlineRuntimeServer {
 
   private scheduleIdle(): void {
     if (this.stopping || this.activeRequests > 0 || this.idleTimer) return;
+    const generation = this.idleGeneration;
     this.idleTimer = setTimeout(() => {
       this.idleTimer = undefined;
-      void this.workspace.maintain({ compactIfNeeded: true })
-        .catch(() => undefined)
-        .then(() => this.onIdle?.())
-        .finally(() => this.stop());
+      void this.drainIdle(generation);
     }, this.idleTimeoutMs);
     this.idleTimer.unref?.();
+  }
+
+  private async drainIdle(generation: number): Promise<void> {
+    await this.workspace.maintain({ compactIfNeeded: true }).catch(() => undefined);
+    if (!this.canFinishIdleDrain(generation)) return;
+    try {
+      await this.onIdle?.();
+    } catch {
+      // Idle callback failure must not strand a Runtime that has no clients.
+    }
+    if (!this.canFinishIdleDrain(generation)) return;
+    await this.stop();
+  }
+
+  private canFinishIdleDrain(generation: number): boolean {
+    return !this.stopping
+      && this.activeRequests === 0
+      && this.idleGeneration === generation;
   }
 
   private clearIdleTimer(): void {

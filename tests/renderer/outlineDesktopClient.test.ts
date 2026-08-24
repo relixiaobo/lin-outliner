@@ -147,11 +147,55 @@ describe('renderer Outline client', () => {
       }],
     }));
 
-    expect(submittedChangeSet).toMatchObject({ base: { revision: 7 } });
+    expect(submittedChangeSet).toMatchObject({
+      base: { revision: 7 },
+      idempotencyKey: expect.stringMatching(/^desktop:/),
+    });
     expect(result.update).toMatchObject({ kind: 'delta', revision: 8 });
     expect(subscriptionUpdates).toHaveLength(1);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(subscriptionUpdates.at(-1)).toMatchObject({ kind: 'delta', revision: 8 });
+    subscription.unsubscribe();
+  });
+
+  test('settles a no-change desktop mutation without waiting for an Operation Event', async () => {
+    let stream: ((record: OutlineStreamRecord) => void) | undefined;
+    const commands: string[] = [];
+    installOutlineBridge({
+      request: async (request) => {
+        commands.push(request.command);
+        if (request.command === 'show') return success('show', projectionPage(2));
+        if (request.command === 'diff') return success('diff', { kind: 'outline.diff' });
+        return success('apply', {
+          protocolVersion: 1,
+          kind: 'outline.no-change',
+          changeSetHash: 'a'.repeat(64),
+          diffHash: 'b'.repeat(64),
+          revision: 7,
+          affectedNodeCount: 0,
+          recovery: { state: 'not-required' },
+        });
+      },
+      subscribe: (_subscription, listener) => {
+        stream = listener;
+        queueMicrotask(() => listener(streamHello('cursor:7')));
+        return () => undefined;
+      },
+    });
+    const subscription = subscribeDesktopProjection(() => undefined, () => undefined);
+    await subscription.ready;
+    commands.length = 0;
+
+    const result = await runDesktopMutation((revision) => ({
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      base: { revision },
+      operations: [{ op: 'ensure', resource: 'date', date: '2026-08-24' }],
+    }));
+
+    expect(result.update).toMatchObject({ kind: 'full', revision: 7 });
+    expect(commands).toEqual(['diff', 'apply', 'show']);
+    expect(stream).toBeDefined();
     subscription.unsubscribe();
   });
 

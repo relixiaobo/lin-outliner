@@ -3,6 +3,7 @@ import type {
   Change,
   ChangeSet,
   Diff,
+  NoChangeResult,
   Operation,
   OperationLogPage,
   OutlineEvent,
@@ -35,7 +36,7 @@ export interface OutlineMutationOptions {
   readonly acknowledgeDestructive?: boolean;
   readonly idempotencyKey?: string;
   readonly source?: ChangeSet['source'];
-  readonly focus?: FocusHint | ((operation: Operation, diff: Diff, update: ProjectionUpdate) => FocusHint | undefined);
+  readonly focus?: FocusHint | ((settlement: Operation | NoChangeResult, diff: Diff, update: ProjectionUpdate) => FocusHint | undefined);
 }
 
 export interface OutlineProjectionDelivery {
@@ -147,30 +148,37 @@ export class OutlineDocumentService {
   ): Promise<CommandResult> {
     if (this.admissionFrozen) return Promise.reject(new Error('Outline mutation admission is frozen.'));
     const acceptedSequence = ++this.acceptedSequence;
+    const idempotencyKey = options.idempotencyKey ?? `desktop:${crypto.randomUUID()}`;
     const result = this.mutationTail.then(async () => {
       const revision = this.revision();
       const input = build(revision);
       const changeSet: ChangeSet = {
         ...input,
         base: { ...input.base, revision },
+        idempotencyKey: input.idempotencyKey ?? idempotencyKey,
       };
       const diff = await this.request<Diff>('diff', { changeSet });
-      const operation = await this.request<Operation>('apply', {
+      const settlement = await this.request<Operation | NoChangeResult>('apply', {
         diff,
         ...(options.acknowledgeDestructive ? { acknowledgeDestructive: true } : {}),
       });
       let update: ProjectionUpdate;
-      try {
-        const event = await this.waitForOperation(operation.operationId);
-        update = projectionUpdateFromOutlineEvent<NodeProjection>(event) ?? await this.resyncUpdate();
-      } catch {
-        update = await this.resyncUpdate();
+      if (settlement.kind === 'outline.no-change') {
+        if (!this.snapshot) throw new Error('Outline Runtime Projection is not initialized.');
+        update = { kind: 'full', revision: settlement.revision, projection: this.snapshot.projection };
+      } else {
+        try {
+          const event = await this.waitForOperation(settlement.operationId);
+          update = projectionUpdateFromOutlineEvent<NodeProjection>(event) ?? await this.resyncUpdate();
+        } catch {
+          update = await this.resyncUpdate();
+        }
       }
       return {
         update,
         ...(options.focus ? {
           focus: typeof options.focus === 'function'
-            ? options.focus(operation, diff, update)
+            ? options.focus(settlement, diff, update)
             : options.focus,
         } : {}),
       };

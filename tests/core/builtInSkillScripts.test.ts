@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { execFile as execFileCallback } from 'node:child_process';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -179,6 +179,62 @@ describe('built-in outline Skill import workflow', () => {
       '--format', 'tana',
       '--output', source,
       '--evidence-output', artifacts.evidence,
+    ], adapterEnvironment);
+    expect(result).toMatchObject({
+      code: 2,
+      response: {
+        ok: false,
+        error: { code: 'invalid_input', message: expect.stringContaining('Import paths must be distinct') },
+      },
+    });
+    expect(await readFile(source, 'utf8')).toBe(sourceText);
+  });
+
+  test('rejects an import output redirected to the source through a symlinked parent', async () => {
+    const directory = await temporaryDirectory('outline-import-symlink-collision-');
+    const physical = path.join(directory, 'physical');
+    const alias = path.join(directory, 'alias');
+    await mkdir(physical);
+    await symlink(physical, alias, 'dir');
+    const source = path.join(physical, 'source.json');
+    const sourceText = await readFile(
+      path.join(skillRoot, 'fixtures', 'tana-minimal.json'),
+      'utf8',
+    );
+    await writeFile(source, sourceText, 'utf8');
+
+    const result = await runOutlineFailure(path.join(directory, 'runtime'), [
+      'import', 'plan', source,
+      '--format', 'tana',
+      '--output', path.join(alias, 'source.json'),
+      '--evidence-output', path.join(directory, 'evidence.json'),
+    ], adapterEnvironment);
+    expect(result).toMatchObject({
+      code: 2,
+      response: {
+        ok: false,
+        error: { code: 'invalid_input', message: expect.stringContaining('Import paths must be distinct') },
+      },
+    });
+    expect(await readFile(source, 'utf8')).toBe(sourceText);
+  });
+
+  test('rejects an existing import output that is a hardlink to the source', async () => {
+    const directory = await temporaryDirectory('outline-import-hardlink-collision-');
+    const source = path.join(directory, 'source.json');
+    const output = path.join(directory, 'output.json');
+    const sourceText = await readFile(
+      path.join(skillRoot, 'fixtures', 'tana-minimal.json'),
+      'utf8',
+    );
+    await writeFile(source, sourceText, 'utf8');
+    await link(source, output);
+
+    const result = await runOutlineFailure(path.join(directory, 'runtime'), [
+      'import', 'plan', source,
+      '--format', 'tana',
+      '--output', output,
+      '--evidence-output', path.join(directory, 'evidence.json'),
     ], adapterEnvironment);
     expect(result).toMatchObject({
       code: 2,

@@ -355,8 +355,9 @@ describe('OutlineRuntimeWorkspace', () => {
       diffHash: canonicalSha256({ kind: 'bulk-create-diff' }),
       summary: 'Created a large affected set.',
       execute: (core) => {
+        const parentId = core.projection().todayId;
         for (let index = 0; index < 1_001; index += 1) {
-          core.createNode(core.projection().todayId, null, `Bulk ${index}`, `node:${crypto.randomUUID()}`);
+          core.createNode(parentId, null, `Bulk ${index}`, `node:${crypto.randomUUID()}`);
         }
       },
     });

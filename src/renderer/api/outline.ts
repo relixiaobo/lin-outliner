@@ -4,6 +4,7 @@ import type {
   OutlineError,
   OutlineEvent,
   OutlineStreamRecord,
+  NoChangeResult,
   Operation,
   Projection,
   ProjectionResult,
@@ -53,7 +54,7 @@ export async function readDesktopProjection(): Promise<ProjectionSnapshot> {
 }
 
 export type DesktopFocusHint = FocusHint | ((
-  operation: Operation,
+  settlement: Operation | NoChangeResult,
   diff: Diff,
   update: ProjectionUpdate,
 ) => FocusHint | undefined);
@@ -69,6 +70,7 @@ export function runDesktopMutation(
   focus?: DesktopFocusHint,
   options: DesktopMutationOptions = {},
 ): Promise<CommandResult> {
+  const idempotencyKey = `desktop:${crypto.randomUUID()}`;
   const result = desktopMutationTail.then(async () => {
     const source = sharedEventSource;
     const revision = source?.latestRevision;
@@ -79,25 +81,30 @@ export function runDesktopMutation(
     const changeSet: ChangeSet = {
       ...input,
       base: { ...input.base, revision },
+      idempotencyKey: input.idempotencyKey ?? idempotencyKey,
     };
     const diff = await requestOutline<Diff>('diff', { changeSet });
     const releaseEvents = source.holdEvents();
     try {
-      const operation = await requestOutline<Operation>('apply', {
+      const settlement = await requestOutline<Operation | NoChangeResult>('apply', {
         diff,
         ...(options.acknowledgeDestructive ? { acknowledgeDestructive: true } : {}),
       });
-      source.noteRevision(operation.revisionAfter);
+      source.noteRevision(settlement.kind === 'outline.no-change' ? settlement.revision : settlement.revisionAfter);
       let update: ProjectionUpdate;
-      try {
-        const event = await source.waitForOperation(operation.operationId);
-        update = projectionUpdateFromOutlineEvent<NodeProjection>(event) ?? await fullProjectionUpdate();
-      } catch {
+      if (settlement.kind === 'outline.no-change') {
         update = await fullProjectionUpdate();
+      } else {
+        try {
+          const event = await source.waitForOperation(settlement.operationId);
+          update = projectionUpdateFromOutlineEvent<NodeProjection>(event) ?? await fullProjectionUpdate();
+        } catch {
+          update = await fullProjectionUpdate();
+        }
       }
       return {
         update,
-        ...(focus ? { focus: typeof focus === 'function' ? focus(operation, diff, update) : focus } : {}),
+        ...(focus ? { focus: typeof focus === 'function' ? focus(settlement, diff, update) : focus } : {}),
       };
     } finally {
       releaseEvents();
@@ -114,17 +121,22 @@ export function previewDesktopMutation(build: (revision: number) => ChangeSet): 
   }
   const input = build(revision);
   return requestOutline<Diff>('diff', {
-    changeSet: { ...input, base: { ...input.base, revision } },
+    changeSet: {
+      ...input,
+      base: { ...input.base, revision },
+      idempotencyKey: input.idempotencyKey ?? `desktop:${crypto.randomUUID()}`,
+    },
   });
 }
 
 export function runDesktopHistory(command: 'undo' | 'redo'): Promise<CommandResult> {
+  const idempotencyKey = `desktop:${crypto.randomUUID()}`;
   const result = desktopMutationTail.then(async () => {
     const source = sharedEventSource;
     if (!source) throw new Error('Tenon Outline session is unavailable.');
     const releaseEvents = source.holdEvents();
     try {
-      const operation = await requestOutline<Operation>(command, {});
+      const operation = await requestOutline<Operation>(command, { idempotencyKey });
       source.noteRevision(operation.revisionAfter);
       try {
         const event = await source.waitForOperation(operation.operationId);

@@ -585,7 +585,12 @@ export class WorkspaceTransactionLog {
       const record = logRecord(body);
       assertReplayedRecord(record, state);
       await this.prepareLogForAppend(state);
-      await appendJsonlDurable(this.transactionLogPath, record, this.fsyncHandle);
+      try {
+        await appendJsonlDurable(this.transactionLogPath, record, this.fsyncHandle);
+      } catch (error) {
+        this.state = undefined;
+        throw uncertainDurabilityError(error);
+      }
       applyAssetStageRecord(state, record);
       state.logValidBytes += jsonlRecordBytes(record);
     });
@@ -659,7 +664,12 @@ export class WorkspaceTransactionLog {
       const record = logRecord(body);
       assertReplayedRecord(record, state);
       await this.prepareLogForAppend(state);
-      await appendJsonlDurable(this.transactionLogPath, record, this.fsyncHandle);
+      try {
+        await appendJsonlDurable(this.transactionLogPath, record, this.fsyncHandle);
+      } catch (error) {
+        this.state = undefined;
+        throw uncertainDurabilityError(error);
+      }
       applyAssetGcRecord(state, record);
       state.logValidBytes += jsonlRecordBytes(record);
       return clone(removed);
@@ -1750,6 +1760,15 @@ function clone<T>(value: T): T {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function uncertainDurabilityError(error: unknown): OutlineContractError {
+  return new OutlineContractError(outlineError(
+    'durability_failed',
+    'durability',
+    'The transaction log could not confirm durable settlement.',
+    { retryable: true, details: errorMessage(error) },
+  ));
 }
 
 function asError(error: unknown, prefix: string): Error {

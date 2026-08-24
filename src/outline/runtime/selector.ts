@@ -64,7 +64,7 @@ export function resolveSelector(index: OutlineSelectionIndex, selector: Selector
   const result = runTransientSearchExpr(
     index.projection,
     selector.query as SearchQueryExpr,
-    { limit: selector.limit },
+    {},
   );
   if (!result.ok) {
     throw new OutlineContractError(outlineError(

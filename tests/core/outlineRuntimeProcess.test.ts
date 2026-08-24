@@ -125,6 +125,7 @@ describe('Outline Runtime process boundary', () => {
       const changeSet: ChangeSet = {
         protocolVersion: 1,
         kind: 'outline.changeset',
+        idempotencyKey: `test:${crypto.randomUUID()}`,
         operations: [{
           op: 'create',
           parents: {
@@ -348,6 +349,44 @@ describe('Outline Runtime process boundary', () => {
     }
   });
 
+  test('requires resync instead of projecting a historical replay from a future revision', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const projection = {
+      kind: 'outline' as const,
+      targets: {
+        target: { selector: { by: 'alias' as const, alias: 'today' as const }, cardinality: 'one' as const },
+      },
+      depth: 1,
+      page: { limit: 100 },
+    };
+    try {
+      const firstClient = new OutlineClient(runtime.descriptor);
+      const firstIterator = firstClient.watch({ projection })[Symbol.asyncIterator]();
+      const initial = (await firstIterator.next()).value;
+      expect(initial?.type).toBe('hello');
+      const cursor = initial?.cursor;
+      await firstIterator.return?.();
+      firstClient.close();
+
+      await runtime.workspace.mutate(createRequest('Historical projection revision one'));
+      await runtime.workspace.mutate(createRequest('Historical projection revision two'));
+
+      const replayClient = new OutlineClient(runtime.descriptor);
+      const replay = replayClient.watch({ cursor, projection })[Symbol.asyncIterator]();
+      expect((await replay.next()).value?.type).toBe('hello');
+      const resync = (await replay.next()).value;
+      expect(resync?.type === 'event' ? resync.event.type : undefined).toBe('resync.required');
+      expect(resync?.type === 'event' ? resync.event.projection : undefined).toBeUndefined();
+      expect((await replay.next()).value?.type).toBe('end');
+      replayClient.close();
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   test('serves requests while one shared client holds an open watch', async () => {
     const root = await makeRoot();
     const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
@@ -460,6 +499,57 @@ describe('Outline Runtime process boundary', () => {
 
     expect(await readdir(runtime.workspace.store.recoveryDirectory)).toEqual([]);
     await waitFor(async () => (await readOutlineRuntimeDescriptor(root)) === null, 2_000);
+  });
+
+  test('does not let an old idle drain stop a watch admitted during onIdle', async () => {
+    const root = await makeRoot();
+    let enterIdle!: () => void;
+    let releaseIdle!: () => void;
+    const idleEntered = new Promise<void>((resolve) => { enterIdle = resolve; });
+    const idleGate = new Promise<void>((resolve) => { releaseIdle = resolve; });
+    let idleCalls = 0;
+    const runtime = await OutlineRuntimeServer.start({
+      root,
+      idleTimeoutMs: 10,
+      onIdle: async () => {
+        idleCalls += 1;
+        if (idleCalls !== 1) return;
+        enterIdle();
+        await idleGate;
+      },
+    });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const client = new OutlineClient(runtime.descriptor);
+    const iterator = client.watch()[Symbol.asyncIterator]();
+    try {
+      await withTimeout(idleEntered, 2_000, 'Runtime did not enter the gated idle callback');
+      expect((await iterator.next()).value?.type).toBe('hello');
+      releaseIdle();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      expect((await readOutlineRuntimeDescriptor(root))?.instanceId).toBe(runtime.descriptor.instanceId);
+      expect((await client.request('status', {})).ok).toBe(true);
+    } finally {
+      releaseIdle();
+      await iterator.return?.();
+      client.close();
+      await runtime.stop();
+    }
+  });
+
+  test('stops an idle Runtime after its idle callback rejects', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({
+      root,
+      idleTimeoutMs: 10,
+      onIdle: async () => { throw new Error('injected idle callback failure'); },
+    });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+
+    await waitFor(async () => (await readOutlineRuntimeDescriptor(root)) === null, 2_000);
+    await runtime.stop();
   });
 
   test('honors no-start and does not create Runtime artifacts', async () => {
@@ -639,6 +729,7 @@ function createTodayChangeSet(text: string): ChangeSet {
   return {
     protocolVersion: 1,
     kind: 'outline.changeset',
+    idempotencyKey: `test:${crypto.randomUUID()}`,
     operations: [{
       op: 'create',
       parents: {

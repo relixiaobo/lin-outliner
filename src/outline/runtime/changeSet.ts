@@ -82,6 +82,12 @@ export async function applyOutlineDiff(
   if (canonicalChangeSetHash(diff.normalizedChangeSet) !== diff.changeSetHash) {
     throw new OutlineContractError(outlineError('diff_mismatch', 'conflict', 'ChangeSet hash does not match the Diff.'));
   }
+  const idempotencyKey = diff.normalizedChangeSet.idempotencyKey;
+  if (!idempotencyKey) {
+    throw usageError('Apply requires an idempotency key bound into the reviewed Diff.');
+  }
+  const settled = await workspace.settledOperation(idempotencyKey, diff.diffHash);
+  if (settled) return settled;
   assertBaseState(workspace.forkCore(), diff.normalizedChangeSet);
   const assetLeases = await resolveChangeSetAssetLeases(workspace, diff.normalizedChangeSet);
   if (diff.destructive.length > 0 && !acknowledgeDestructive) {

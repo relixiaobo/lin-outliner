@@ -111,6 +111,32 @@ function projectNode(node: NodeProjection, projection: Projection): Record<strin
   if (!include.has('media')) {
     for (const key of ['assetId', 'thumbnailAssetId', 'mediaUrl', 'bannerAssetId']) delete result[key];
   }
+  if (!include.has('fields')) delete result.fieldDefId;
+  if (!include.has('view')) {
+    for (const key of [
+      'viewMode',
+      'toolbarVisible',
+      'groupField',
+      'sortField',
+      'sortDirection',
+      'filterField',
+      'filterOperator',
+      'filterValueLogic',
+      'filterValues',
+      'displayField',
+      'displayVisible',
+      'displayWidth',
+      'displayOrder',
+      'displayLabel',
+      'displayPlacement',
+      'queryLogic',
+      'queryOp',
+      'queryTagDefId',
+      'queryFieldDefId',
+      'queryTargetId',
+    ]) delete result[key];
+  }
+  if (!include.has('trash')) delete result.trashedFromParentId;
   return result;
 }
 

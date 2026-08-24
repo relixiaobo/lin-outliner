@@ -112,7 +112,12 @@ async function settle(
   workspace: OutlineRuntimeWorkspace,
   operations: readonly Change[],
 ): Promise<{ diff: Awaited<ReturnType<typeof diffOutlineChangeSet>>; operation: Operation }> {
-  const changeSet: ChangeSet = { protocolVersion: 1, kind: 'outline.changeset', operations: [...operations] };
+  const changeSet: ChangeSet = {
+    protocolVersion: 1,
+    kind: 'outline.changeset',
+    idempotencyKey: `test:${crypto.randomUUID()}`,
+    operations: [...operations],
+  };
   const diff = await diffOutlineChangeSet(workspace, changeSet);
   const operation = await applyOutlineDiff(workspace, diff, { origin: 'local-user' });
   return { diff, operation };
