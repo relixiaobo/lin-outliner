@@ -1500,7 +1500,10 @@ Local paths deduplicate by path. Pathless files stream to Thread-owned storage
 and deduplicate by the returned content digest, so same-named files with
 different content remain distinct. Native picker, browser file, drag-and-drop,
 and mention admissions share one serialized composer queue, so duplicate and
-six-attachment limit checks observe every previously committed admission.
+attachment-limit checks observe every previously committed admission. One message
+accepts at most 20 attachments, of which at most 10 may be images. Pending generated
+text attachments reserve a total-attachment slot before encoding; all attachment
+entry points recheck their capacity inside the queue.
 Removing an unsent managed reference or leaving its Thread aborts an unfinished
 upload and discards a completed payload when neither another retained draft
 reference nor canonical history owns it. Duplicate and attachment-count skips
@@ -1511,7 +1514,55 @@ snapshot during main-process admission, not in renderer canvas code.
 Office ownership files with `.~` or `~$` prefixes and Office document extensions
 are rejected before upload by picker, paste, and drop admission. A native picker
 names an exact original-file sibling when present but never silently substitutes
-it. Rejected ownership files do not consume the six accepted-attachment slots.
+it. Rejected ownership files do not consume accepted-attachment slots.
+
+Every staged attachment has two linked projections over one identity: an inline
+file-reference atom at its authored message position and one item in the fixed-height
+tray above the editor. The tray includes picker, drop, clipboard, local-file mention,
+directory, and generated-paste inputs; it never creates another attachment. Preview-first
+176 x 112 px cards show images edge to edge, generated pasted text as a whitespace-collapsed
+continuous excerpt of at most three visual lines and 256 UTF-16 units above a neutral
+`Pasted` or pending-status label, and all other formats with a wrapping filename and size
+above a compact semantic type label/icon. The single row uses an 8 px gap and scrolls
+horizontally without wrapping or collapsing to `+N`. Its card-height viewport keeps a
+straight overflow cut, softened by a narrow tokenized inner shadow only on edges with more
+content; at the 280 px rail minimum one complete card remains visible with an overflow clue.
+The visual scrollbar stays hidden; native horizontal scrolling, inset edge chevrons,
+Left/Right navigation, and Enter-to-preview expose all 20 items. Overflow clips at the
+composer inset instead of the rail edge. New items scroll into view without taking editor
+focus, and resize keeps the focused item visible. The first card's top and inline-start
+edges and the tray's following margin use the same composer inset.
+
+The card is already a preview surface, so card hover only deepens the existing 1 px neutral
+boundary without changing its thickness and reveals the remove control. It does not show
+the inline-reference hover preview or a native title tooltip. Activating the card opens
+the shared full preview.
+
+Removing either projection deletes both and releases a managed resource only when no
+retained draft or history identity owns it. The unboxed Remove control keeps an equal
+radius-derived inset from the card's top and trailing edges and deepens only its glyph on
+hover/focus. That state also applies a neutral transient removal preview to the paired
+inline atom without changing ProseMirror selection or the caret; leave, blur, Escape,
+cancellation, and activation clear it. The control's accessible name states that both the
+file and its message reference are removed.
+
+A plain-text paste is classified before ProseMirror construction. An incoming paste
+at or above 4 KiB UTF-8 bytes or over 2,000 normalized line breaks becomes one managed
+`Pasted*.txt` attachment; a fitting paste stays editable. Repeated fitting
+pastes are rejected when the projected editor would exceed 256 Ki UTF-16 units or
+8,000 inline atoms. Text above 8 Mi UTF-16 units is rejected before `File` construction
+and must be saved and attached manually. Rejection changes neither draft nor clipboard.
+Conversion immediately replaces the selection with a fixed request-id atom while the
+body remains outside canonical draft content. Button and keyboard submission share one
+pending guard until the serialized upload settles that exact atom to the same
+`attachmentId`. A large paste synchronously rejects a replacement selection containing
+another pending atom, leaving that request and the draft unchanged. Attachment-count
+admission uses the projected result after fully replaced settled identities are removed,
+so replacing one attachment at the 20-item limit is allowed. Failure restores the replaced
+slice together with settled attachment ownership for any marker it contained and reports
+that the paste was not inserted; it never recreates a pending atom whose request has ended.
+Explicit removal cancels the request. Names increase monotonically within the mounted draft
+and reset after a successful Send.
 
 `request_user_input` replaces the editor inside the existing composer surface
 with an in-dock form tied to one Item. It is a product-input surface, never a

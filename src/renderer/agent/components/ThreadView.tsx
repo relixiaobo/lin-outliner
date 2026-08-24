@@ -18,6 +18,8 @@ import {
 import { createPortal, flushSync } from 'react-dom';
 import {
   ATTACHMENT_UPLOAD_CHUNK_BYTES,
+  MAX_COMPOSER_ATTACHMENTS,
+  MAX_COMPOSER_IMAGE_ATTACHMENTS,
   MAX_MANAGED_ATTACHMENT_BYTES,
 } from '../../../core/agentAttachmentLimits';
 import type { Messages } from '../../../core/i18n';
@@ -78,6 +80,7 @@ import { ButtonControl } from '../../ui/primitives/ButtonControl';
 import { WorkingText } from '../../ui/primitives/WorkingText';
 import { ThreadGoalView } from './ThreadGoalView';
 import { ThreadComposerModelControl } from './ThreadComposerModelControl';
+import { ThreadComposerAttachmentTray } from './ThreadComposerAttachmentTray';
 import { UserInputRequest } from './UserInputRequest';
 import {
   ThreadComposerEditor,
@@ -85,6 +88,7 @@ import {
   type ThreadComposerEditorHandle,
   type ThreadComposerFileReference,
   type ThreadComposerLocalFileCandidate,
+  type ThreadComposerPendingFileReference,
 } from './ThreadComposerEditor';
 import { isProviderUsable } from '../../ui/agent/providerUsability';
 import {
@@ -230,7 +234,6 @@ interface ThreadViewProps {
   readonly onSubmitUserInput: (answers: readonly RequestUserInputAnswer[]) => Promise<void>;
 }
 
-const MAX_ATTACHMENTS = 6;
 const ATTACHMENT_ERROR_TIMEOUT_MS = 5_000;
 const MAX_CACHED_THREAD_UI_STATES = 32;
 const SENT_TURN_SEARCH_DEPTH = 16;
@@ -279,6 +282,7 @@ const EMPTY_COMPOSER_DRAFT: ThreadComposerDraft = {
   content: [],
   empty: true,
   fileRefs: [],
+  pendingFileRefs: [],
   text: '',
 };
 
@@ -610,6 +614,19 @@ interface PreparedComposerAttachment {
   readonly sourceKey: string;
 }
 
+interface PendingComposerPaste extends ThreadComposerPendingFileReference {
+  readonly excerpt: string;
+}
+
+interface PendingComposerPasteRequest extends PendingComposerPaste {
+  readonly controller: AbortController;
+  readonly detachLifecycleAbort: () => void;
+  // The pending atom owns attachment state removed with its replaced slice.
+  replacedAttachments: ThreadAttachmentContent[];
+  // Programmatic settle/restore also removes the atom; it is not user cancellation.
+  settling: boolean;
+}
+
 export function ThreadView({
   active,
   composerEnabled,
@@ -664,6 +681,7 @@ export function ThreadView({
   const [newThreadValidation, setNewThreadValidation] = useState<NewThreadValidation>(null);
   const [failedThreadCreationFocusToken, setFailedThreadCreationFocusToken] = useState(0);
   const [attachments, setAttachments] = useState<ThreadAttachmentContent[]>([]);
+  const [pendingPastes, setPendingPastes] = useState<PendingComposerPaste[]>([]);
   const [recentLocalFiles, setRecentLocalFiles] = useState<ThreadComposerLocalFileCandidate[]>([]);
   const [follow, setFollow] = useState(initialScrollSnapshot?.follow ?? true);
   const [sendAnchorSpacer, setSendAnchorSpacer] = useState<SendAnchorSpacer | null>(null);
@@ -714,6 +732,10 @@ export function ThreadView({
   const attachmentLifecycleControllerRef = useRef<AbortController | null>(null);
   const attachmentPreviewUrlsRef = useRef(new Map<string, string>());
   const attachmentSourceKeysRef = useRef(new Map<string, string>());
+  const attachmentTextExcerptsRef = useRef(new Map<string, string>());
+  const pendingPasteRequestsRef = useRef(new Map<string, PendingComposerPasteRequest>());
+  const pastedTextOrdinalRef = useRef(0);
+  const attachmentAdmissionEnabledRef = useRef(false);
   const draftRef = useRef<ThreadComposerDraft>(EMPTY_COMPOSER_DRAFT);
   const handledFocusTokenRef = useRef(0);
   const handledFailedThreadCreationFocusTokenRef = useRef(0);
@@ -804,9 +826,15 @@ export function ThreadView({
   const hasUsableProvider = Boolean(providerSettings?.providers.some(
     (provider) => isProviderUsable(providerSettings, provider),
   ));
+  attachmentAdmissionEnabledRef.current = !activeTurn
+    && !providerBlocksSend
+    && !sending
+    && !threadCreationPending
+    && !waitingForInput;
   const newThreadCommandState = classifyNewThreadCommand(draft);
   const newThreadAction = newThreadCommandState !== 'ordinary';
   const composerActionDisabled = !hasDraft
+    || draft.pendingFileRefs.length > 0
     || sending
     || threadCreationPending
     || (newThreadCommandState === 'ready' ? threadCreationBlocked : false)
@@ -1993,8 +2021,16 @@ export function ThreadView({
         attachmentLifecycleControllerRef.current = null;
       }
       for (const attachment of attachmentsRef.current) discardManagedAttachment(threadId, attachment);
+      for (const request of pendingPasteRequestsRef.current.values()) {
+        request.controller.abort();
+        request.detachLifecycleAbort();
+        releaseReplacedPasteAttachments(request);
+      }
+      pendingPasteRequestsRef.current.clear();
       for (const previewUrl of attachmentPreviewUrlsRef.current.values()) URL.revokeObjectURL(previewUrl);
       attachmentPreviewUrlsRef.current.clear();
+      attachmentTextExcerptsRef.current.clear();
+      pastedTextOrdinalRef.current = 0;
     };
   }, [threadId]);
 
@@ -2073,6 +2109,7 @@ export function ThreadView({
     const currentDraft = draftRef.current;
     if (!composerEnabled
       || currentDraft.empty
+      || currentDraft.pendingFileRefs.length > 0
       || sending
       || threadCreationPending
       || waitingForInput) return;
@@ -2206,7 +2243,9 @@ export function ThreadView({
         attachmentId,
         attachmentPreviewUrlsRef.current,
         attachmentSourceKeysRef.current,
+        attachmentTextExcerptsRef.current,
       );
+      pastedTextOrdinalRef.current = 0;
     } catch (sendError) {
       if (pendingSendScrollRef.current === pendingSend) {
         cancelSendAnchorSettlement();
@@ -2259,6 +2298,146 @@ export function ThreadView({
     return result;
   }
 
+  function admitLargeTextPaste(
+    requestId: string,
+    text: string,
+    replacedAttachmentIds: readonly string[],
+  ): string | null {
+    const lifecycle = attachmentLifecycleControllerRef.current;
+    if (!lifecycle || lifecycle.signal.aborted || !attachmentAdmissionEnabledRef.current) {
+      setError(t.agent.composer.largePasteUnavailable);
+      return null;
+    }
+    const replacedIds = fullyReplacedAttachmentIds(draftRef.current, replacedAttachmentIds);
+    const replacedAttachments = attachmentsRef.current.filter((attachment) => replacedIds.has(attachment.id));
+    const projectedAttachmentCount = composerAttachmentCount(
+      attachmentsRef.current,
+      pendingPasteRequestsRef.current,
+    ) - replacedAttachments.length + 1;
+    if (projectedAttachmentCount > MAX_COMPOSER_ATTACHMENTS) {
+      setError(t.agent.composer.maxAttachments({ max: MAX_COMPOSER_ATTACHMENTS }));
+      return null;
+    }
+    const ordinal = pastedTextOrdinalRef.current + 1;
+    pastedTextOrdinalRef.current = ordinal;
+    const name = pastedTextFileName(ordinal);
+    const excerpt = pastedTextExcerpt(text);
+    const controller = new AbortController();
+    const abortFromLifecycle = () => controller.abort();
+    lifecycle.signal.addEventListener('abort', abortFromLifecycle, { once: true });
+    const request: PendingComposerPasteRequest = {
+      controller,
+      detachLifecycleAbort: () => lifecycle.signal.removeEventListener('abort', abortFromLifecycle),
+      excerpt,
+      name,
+      replacedAttachments,
+      requestId,
+      settling: false,
+    };
+    pendingPasteRequestsRef.current.set(requestId, request);
+    setPendingPastes((current) => [...current, { excerpt, name, requestId }]);
+    setError(null);
+    void enqueueAttachmentOperation(() => processLargeTextPaste(request, text));
+    return name;
+  }
+
+  async function processLargeTextPaste(request: PendingComposerPasteRequest, text: string): Promise<void> {
+    const { controller, requestId } = request;
+    try {
+      throwIfAttachmentUploadAborted(controller.signal);
+      if (!composerRef.current?.hasPendingFileReference(requestId)) return;
+      if (
+        !attachmentAdmissionEnabledRef.current
+        || composerAttachmentCount(attachmentsRef.current, pendingPasteRequestsRef.current) > MAX_COMPOSER_ATTACHMENTS
+      ) throw new Error('Pasted text is no longer eligible for attachment admission.');
+      const file = new File([text], request.name, { type: 'text/plain' });
+      const prepared = await attachmentFromBrowserFile(file, threadId, controller.signal, requestId);
+      throwIfAttachmentUploadAborted(controller.signal);
+      if (!composerRef.current?.hasPendingFileReference(requestId)) {
+        discardPreparedAttachment(threadId, prepared);
+        return;
+      }
+      attachmentTextExcerptsRef.current.set(prepared.content.id, request.excerpt);
+      commitPreparedAttachments([prepared], { insertReferences: false });
+      request.settling = true;
+      if (!composerRef.current.settlePendingFileReference(requestId, prepared.reference)) {
+        request.settling = false;
+        updateAttachments((current) => current.filter((attachment) => attachment.id !== prepared.content.id));
+        attachmentTextExcerptsRef.current.delete(prepared.content.id);
+        discardPreparedAttachment(threadId, prepared);
+      }
+    } catch {
+      if (!controller.signal.aborted && composerRef.current?.hasPendingFileReference(requestId)) {
+        const replacedAttachments = request.replacedAttachments;
+        if (replacedAttachments.length > 0) {
+          updateAttachments((current) => uniqueAttachments([...current, ...replacedAttachments]));
+        }
+        request.replacedAttachments = [];
+        request.settling = true;
+        if (composerRef.current.restorePendingFileReference(requestId)) {
+          setError(t.agent.composer.largePasteNotInserted({ name: request.name }));
+        } else {
+          request.settling = false;
+          request.replacedAttachments = replacedAttachments;
+          const replacedIds = new Set(replacedAttachments.map((attachment) => attachment.id));
+          updateAttachments((current) => current.filter((attachment) => !replacedIds.has(attachment.id)));
+        }
+      }
+    } finally {
+      finishPendingPaste(requestId);
+    }
+  }
+
+  function finishPendingPaste(requestId: string): void {
+    const request = pendingPasteRequestsRef.current.get(requestId);
+    if (!request) return;
+    request.detachLifecycleAbort();
+    releaseReplacedPasteAttachments(request);
+    pendingPasteRequestsRef.current.delete(requestId);
+    setPendingPastes((current) => current.filter((candidate) => candidate.requestId !== requestId));
+  }
+
+  function cancelPendingPaste(requestId: string): void {
+    pendingPasteRequestsRef.current.get(requestId)?.controller.abort();
+    finishPendingPaste(requestId);
+  }
+
+  function releaseReplacedPasteAttachments(request: PendingComposerPasteRequest): void {
+    if (request.replacedAttachments.length === 0) return;
+    const retained = [
+      ...attachmentsRef.current,
+      ...Array.from(pendingPasteRequestsRef.current.values())
+        .filter((candidate) => candidate !== request)
+        .flatMap((candidate) => candidate.replacedAttachments),
+    ];
+    const releasedResources: ThreadAttachmentContent[] = [];
+    for (const attachment of request.replacedAttachments) {
+      if (retained.some((candidate) => candidate.id === attachment.id)) continue;
+      if (
+        !retained.some((candidate) => sameManagedResource(candidate, attachment))
+        && !releasedResources.some((candidate) => sameManagedResource(candidate, attachment))
+      ) {
+        discardManagedAttachment(threadId, attachment);
+        releasedResources.push(attachment);
+      }
+      releaseAttachmentUiState(
+        attachment.id,
+        attachmentPreviewUrlsRef.current,
+        attachmentSourceKeysRef.current,
+        attachmentTextExcerptsRef.current,
+      );
+    }
+    request.replacedAttachments = [];
+  }
+
+  function rejectTextPaste(reason: 'ceiling' | 'draft-budget' | 'pending-replacement'): void {
+    setError(reason === 'ceiling'
+      ? t.agent.composer.largePasteCeiling
+      : reason === 'draft-budget'
+        ? t.agent.composer.largePasteDraftBudget
+        : t.agent.composer.largePasteUnavailable);
+  }
+
   function addPickedFiles(): Promise<void> {
     return enqueueAttachmentOperation(processPickedFiles);
   }
@@ -2266,20 +2445,24 @@ export function ThreadView({
   async function processPickedFiles() {
     const signal = attachmentLifecycleControllerRef.current?.signal;
     if (!signal || signal.aborted) return;
-    if (attachmentsRef.current.length >= MAX_ATTACHMENTS) {
-      setError(t.agent.composer.maxAttachments({ max: MAX_ATTACHMENTS }));
+    if (composerAttachmentCount(attachmentsRef.current, pendingPasteRequestsRef.current) >= MAX_COMPOSER_ATTACHMENTS) {
+      setError(t.agent.composer.maxAttachments({ max: MAX_COMPOSER_ATTACHMENTS }));
       return;
     }
     setError(null);
     if (window.lin?.pickLocalFiles) {
       try {
-        const result = await window.lin.pickLocalFiles({ maxFiles: MAX_ATTACHMENTS - attachmentsRef.current.length });
+        const result = await window.lin.pickLocalFiles({
+          maxFiles: MAX_COMPOSER_ATTACHMENTS
+            - composerAttachmentCount(attachmentsRef.current, pendingPasteRequestsRef.current),
+        });
         if (signal.aborted) return;
         if (!result.canceled) {
           const next: PreparedComposerAttachment[] = [];
           const existingKeys = currentAttachmentSourceKeys(attachmentsRef.current, attachmentSourceKeysRef.current);
           let skippedDuplicates = 0;
           let skippedOverflow = result.skippedCount ?? 0;
+          let skippedImageOverflow = 0;
           const rejectedOwnershipFile = result.rejectedFiles?.find((file) => file.reason === 'officeOwnershipFile');
           let failure: string | null = rejectedOwnershipFile
             ? t.agent.composer.officeOwnershipFile({
@@ -2289,13 +2472,22 @@ export function ThreadView({
             : null;
           for (const file of result.files) {
             if (signal.aborted) return;
-            if (next.length >= MAX_ATTACHMENTS - attachmentsRef.current.length) {
+            if (next.length >= MAX_COMPOSER_ATTACHMENTS
+              - composerAttachmentCount(attachmentsRef.current, pendingPasteRequestsRef.current)) {
               skippedOverflow += 1;
               continue;
             }
             const sourceKey = `path:${file.path}`;
             if (existingKeys.has(sourceKey)) {
               skippedDuplicates += 1;
+              continue;
+            }
+            if (
+              isImageMimeType(file.mimeType)
+              && countImageAttachments(attachmentsRef.current) + countImagePreparedAttachments(next)
+                >= MAX_COMPOSER_IMAGE_ATTACHMENTS
+            ) {
+              skippedImageOverflow += 1;
               continue;
             }
             try {
@@ -2310,7 +2502,8 @@ export function ThreadView({
           commitPreparedAttachments(next);
           setError(failure
             ?? duplicateAttachmentMessage(skippedDuplicates, t.agent.composer)
-            ?? overflowAttachmentMessage(skippedOverflow, t.agent.composer));
+            ?? overflowAttachmentMessage(skippedOverflow, t.agent.composer)
+            ?? imageOverflowAttachmentMessage(skippedImageOverflow, t.agent.composer));
         }
         return;
       } catch {
@@ -2336,8 +2529,8 @@ export function ThreadView({
     const signal = attachmentLifecycleControllerRef.current?.signal;
     if (!signal || signal.aborted) return;
     if (waitingForInput || files.length === 0) return;
-    if (attachmentsRef.current.length >= MAX_ATTACHMENTS) {
-      setError(t.agent.composer.maxAttachments({ max: MAX_ATTACHMENTS }));
+    if (composerAttachmentCount(attachmentsRef.current, pendingPasteRequestsRef.current) >= MAX_COMPOSER_ATTACHMENTS) {
+      setError(t.agent.composer.maxAttachments({ max: MAX_COMPOSER_ATTACHMENTS }));
       return;
     }
     setError(null);
@@ -2345,9 +2538,11 @@ export function ThreadView({
     const existingKeys = currentAttachmentSourceKeys(attachmentsRef.current, attachmentSourceKeysRef.current);
     let skippedDuplicates = 0;
     let skippedOverflow = 0;
+    let skippedImageOverflow = 0;
     let failure: string | null = null;
     for (const file of files) {
-      if (next.length >= MAX_ATTACHMENTS - attachmentsRef.current.length) {
+      if (next.length >= MAX_COMPOSER_ATTACHMENTS
+        - composerAttachmentCount(attachmentsRef.current, pendingPasteRequestsRef.current)) {
         skippedOverflow += 1;
         continue;
       }
@@ -2357,6 +2552,14 @@ export function ThreadView({
           name: ownershipFile.name,
           suggestedName: null,
         });
+        continue;
+      }
+      if (
+        isImageMimeType(file.type)
+        && countImageAttachments(attachmentsRef.current) + countImagePreparedAttachments(next)
+          >= MAX_COMPOSER_IMAGE_ATTACHMENTS
+      ) {
+        skippedImageOverflow += 1;
         continue;
       }
       try {
@@ -2383,7 +2586,8 @@ export function ThreadView({
     commitPreparedAttachments(next);
     setError(failure
       ?? duplicateAttachmentMessage(skippedDuplicates, t.agent.composer)
-      ?? overflowAttachmentMessage(skippedOverflow, t.agent.composer));
+      ?? overflowAttachmentMessage(skippedOverflow, t.agent.composer)
+      ?? imageOverflowAttachmentMessage(skippedImageOverflow, t.agent.composer));
   }
 
   function handleDragEnter(event: DragEvent<HTMLDivElement>) {
@@ -2458,11 +2662,18 @@ export function ThreadView({
   ): Promise<ThreadComposerFileReference | null> {
     const signal = attachmentLifecycleControllerRef.current?.signal;
     if (!signal || signal.aborted) return null;
-    if (attachmentsRef.current.length >= MAX_ATTACHMENTS) {
-      setError(t.agent.composer.maxAttachments({ max: MAX_ATTACHMENTS }));
+    if (composerAttachmentCount(attachmentsRef.current, pendingPasteRequestsRef.current) >= MAX_COMPOSER_ATTACHMENTS) {
+      setError(t.agent.composer.maxAttachments({ max: MAX_COMPOSER_ATTACHMENTS }));
       return null;
     }
     setError(null);
+    if (
+      isImageMimeType(file.mimeType)
+      && countImageAttachments(attachmentsRef.current) >= MAX_COMPOSER_IMAGE_ATTACHMENTS
+    ) {
+      setError(t.agent.composer.maxImages({ max: MAX_COMPOSER_IMAGE_ATTACHMENTS }));
+      return null;
+    }
     try {
       const prepared = await window.lin?.prepareLocalFile?.({ id: file.id });
       if (signal.aborted) return null;
@@ -2496,13 +2707,23 @@ export function ThreadView({
       if (current === 'providerRequired' && nextCommandState === 'ready' && threadCreationBlocked) return current;
       return null;
     });
+    const retainedPendingRequests = new Set(next.pendingFileRefs.map((reference) => reference.requestId));
+    for (const requestId of pendingPasteRequestsRef.current.keys()) {
+      if (retainedPendingRequests.has(requestId)) continue;
+      const request = pendingPasteRequestsRef.current.get(requestId);
+      if (request?.settling) finishPendingPaste(requestId);
+      else cancelPendingPaste(requestId);
+    }
     if (sendingRef.current) return;
     const referencedIds = new Set(next.fileRefs.map((ref) => ref.attachmentId));
+    const heldAttachmentIds = new Set(Array.from(pendingPasteRequestsRef.current.values())
+      .flatMap((request) => request.replacedAttachments.map((attachment) => attachment.id)));
     const current = attachmentsRef.current;
     const retained = current.filter((attachment) => referencedIds.has(attachment.id));
     if (retained.length === current.length) return;
     for (const attachment of current) {
       if (!referencedIds.has(attachment.id)) {
+        if (heldAttachmentIds.has(attachment.id)) continue;
         if (!retained.some((candidate) => sameManagedResource(candidate, attachment))) {
           discardManagedAttachment(threadId, attachment);
         }
@@ -2510,6 +2731,7 @@ export function ThreadView({
           attachment.id,
           attachmentPreviewUrlsRef.current,
           attachmentSourceKeysRef.current,
+          attachmentTextExcerptsRef.current,
         );
       }
     }
@@ -2750,6 +2972,17 @@ export function ThreadView({
                   ))}
                 </ul>
               ) : null}
+              <ThreadComposerAttachmentTray
+                attachments={attachments}
+                draft={draft}
+                onRemovalPreviewChange={(identity) => composerRef.current?.setFileRemovalPreview(identity)}
+                onRemoveAttachment={(attachmentId) => composerRef.current?.removeFileReferences([attachmentId])}
+                onRemovePending={(requestId) => composerRef.current?.removePendingFileReferences([requestId])}
+                pending={pendingPastes}
+                previewUrls={attachmentPreviewUrlsRef.current}
+                textExcerpts={attachmentTextExcerptsRef.current}
+                threadId={threadId}
+              />
               <ThreadComposerEditor
                 allowFileReferences={!activeTurn && !providerBlocksSend && !waitingForInput && !threadCreationPending}
                 allowNodeReferences={!waitingForInput && !threadCreationPending}
@@ -2760,10 +2993,12 @@ export function ThreadView({
                 isStreaming={Boolean(activeTurn)}
                 onChange={handleDraftChange}
                 onFilesPasted={(files) => void addBrowserFiles(files)}
+                onLargeTextPaste={admitLargeTextPaste}
                 onLocalFilePreview={previewLocalFile}
                 onLocalFileSearch={searchLocalFiles}
                 onLocalFileSelect={selectLocalFile}
                 onNodeReferenceClick={onOpenNodeReference}
+                onTextPasteRejected={rejectTextPaste}
                 onStop={() => void onInterrupt()}
                 onSubmit={() => void submit()}
                 placeholder={activeTurn
@@ -2784,7 +3019,7 @@ export function ThreadView({
                 <IconButton
                   disabled={providerBlocksSend
                     || Boolean(activeTurn)
-                    || attachments.length >= MAX_ATTACHMENTS
+                    || attachments.length + pendingPastes.length >= MAX_COMPOSER_ATTACHMENTS
                     || sending
                     || threadCreationPending}
                   icon={AttachmentIcon}
@@ -4354,11 +4589,12 @@ async function attachmentFromBrowserFile(
   file: File,
   threadId: string,
   signal: AbortSignal,
+  attachmentId?: string,
 ): Promise<PreparedComposerAttachment> {
   throwIfAttachmentUploadAborted(signal);
   const name = file.name || 'attachment';
   const mimeType = file.type || 'application/octet-stream';
-  const id = crypto.randomUUID();
+  const id = attachmentId ?? crypto.randomUUID();
   const nativePath = window.lin?.getFilePath?.(file) ?? '';
   let content: ThreadAttachmentContent;
   if (nativePath) {
@@ -4466,11 +4702,8 @@ function throwIfAttachmentUploadAborted(signal: AbortSignal): void {
 function uniqueAttachments(attachments: readonly ThreadAttachmentContent[]): ThreadAttachmentContent[] {
   const seen = new Set<string>();
   return attachments.filter((attachment) => {
-    const key = attachment.source.kind === 'localFile'
-      ? `path:${attachment.source.path}`
-      : `payload:${attachment.source.ref.id}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
+    if (seen.has(attachment.id)) return false;
+    seen.add(attachment.id);
     return true;
   });
 }
@@ -4515,11 +4748,13 @@ function releaseAttachmentUiState(
   attachmentId: string,
   previewUrls: Map<string, string>,
   sourceKeys: Map<string, string>,
+  textExcerpts: Map<string, string>,
 ): void {
   const previewUrl = previewUrls.get(attachmentId);
   if (previewUrl) URL.revokeObjectURL(previewUrl);
   previewUrls.delete(attachmentId);
   sourceKeys.delete(attachmentId);
+  textExcerpts.delete(attachmentId);
 }
 
 function duplicateAttachmentMessage(count: number, labels: Messages['agent']['composer']): string | null {
@@ -4527,7 +4762,59 @@ function duplicateAttachmentMessage(count: number, labels: Messages['agent']['co
 }
 
 function overflowAttachmentMessage(count: number, labels: Messages['agent']['composer']): string | null {
-  return count > 0 ? labels.skippedOverflow({ count, max: MAX_ATTACHMENTS }) : null;
+  return count > 0 ? labels.skippedOverflow({ count, max: MAX_COMPOSER_ATTACHMENTS }) : null;
+}
+
+function imageOverflowAttachmentMessage(count: number, labels: Messages['agent']['composer']): string | null {
+  return count > 0 ? labels.skippedImageOverflow({ count, max: MAX_COMPOSER_IMAGE_ATTACHMENTS }) : null;
+}
+
+function composerAttachmentCount(
+  attachments: readonly ThreadAttachmentContent[],
+  pending: ReadonlyMap<string, PendingComposerPasteRequest>,
+): number {
+  return attachments.length + pending.size;
+}
+
+function fullyReplacedAttachmentIds(
+  draft: ThreadComposerDraft,
+  selectedAttachmentIds: readonly string[],
+): Set<string> {
+  const draftCounts = new Map<string, number>();
+  const selectedCounts = new Map<string, number>();
+  for (const reference of draft.fileRefs) {
+    draftCounts.set(reference.attachmentId, (draftCounts.get(reference.attachmentId) ?? 0) + 1);
+  }
+  for (const attachmentId of selectedAttachmentIds) {
+    selectedCounts.set(attachmentId, (selectedCounts.get(attachmentId) ?? 0) + 1);
+  }
+  return new Set(Array.from(selectedCounts).flatMap(([attachmentId, selectedCount]) => (
+    selectedCount >= (draftCounts.get(attachmentId) ?? Number.POSITIVE_INFINITY)
+      ? [attachmentId]
+      : []
+  )));
+}
+
+function countImageAttachments(attachments: readonly ThreadAttachmentContent[]): number {
+  return attachments.reduce((count, attachment) => count + Number(isImageMimeType(attachment.mimeType)), 0);
+}
+
+function countImagePreparedAttachments(attachments: readonly PreparedComposerAttachment[]): number {
+  return attachments.reduce((count, attachment) => (
+    count + Number(isImageMimeType(attachment.content.mimeType))
+  ), 0);
+}
+
+function isImageMimeType(mimeType: string): boolean {
+  return mimeType.trim().toLowerCase().startsWith('image/');
+}
+
+function pastedTextFileName(ordinal: number): string {
+  return ordinal <= 1 ? 'Pasted.txt' : `Pasted-${ordinal}.txt`;
+}
+
+function pastedTextExcerpt(text: string): string {
+  return text.replace(/\s+/gu, ' ').trim().slice(0, 256);
 }
 
 function threadContentFromDraft(
@@ -4544,6 +4831,7 @@ function threadContentFromDraft(
         note: part.reference.title,
       }];
     }
+    if (part.type === 'pendingFileReference') return [];
     const attachment = byId.get(part.reference.attachmentId);
     return attachment ? [attachment] : [];
   });

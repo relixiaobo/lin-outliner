@@ -171,6 +171,8 @@
   --rail-surface-shadow: var(--shadow-rail), inset 0 0 0 0.5px var(--rail-edge);
   --overlay-shadow-level-1: 0 8px 20px -12px rgba(0, 0, 0, 0.22), 0 2px 8px -4px rgba(0, 0, 0, 0.10);
   --overlay-shadow-level-2: 0 18px 48px -20px rgba(0, 0, 0, 0.24), 0 6px 18px -10px rgba(0, 0, 0, 0.14);
+  --attachment-tray-edge-shadow-start: 8px 0 12px -6px rgba(0, 0, 0, 0.16);
+  --attachment-tray-edge-shadow-end: -8px 0 12px -6px rgba(0, 0, 0, 0.16);
 
   /* inset outline ladder — alpha-on-ink so strokes invert with the theme */
   /* inset stroke ladder — shares the fill ladder's alphas (.04/.07/.10/.16)

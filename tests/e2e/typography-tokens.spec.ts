@@ -62,6 +62,8 @@ const contrastRuleFiles = new Map([
 const hiddenScrollbarSelectors = new Set([
   '.document-outline-rail-track',
   '.document-outline-rail-track::-webkit-scrollbar',
+  '.thread-composer-attachment-tray',
+  '.thread-composer-attachment-tray::-webkit-scrollbar',
 ]);
 const layoutTransitionAllowlist = new Map([
   ['src/renderer/styles/canvas.css|.workspace-canvas|padding', 'Workspace canvas pads around rails during open/close layout motion.'],
@@ -82,6 +84,9 @@ const materialSurfaceSelectors = new Map([
   // is level-1 chrome rather than document or Thread content.
   ['src/renderer/styles/thread.css|.thread-jump-latest', 'Thread jump-to-latest navigation overlay.'],
   ['src/renderer/styles/thread.css|.thread-composer-file-preview-popover', 'Thread composer file preview popover.'],
+  // These circular controls float above the attachment scroller only while
+  // hidden items exist, matching the transcript jump control's level-1 chrome.
+  ['src/renderer/styles/thread.css|.thread-composer-attachment-edge', 'Composer attachment overflow navigation chrome.'],
   ['src/renderer/styles/thread.css|.thread-composer-model-popover', 'Thread composer model menu.'],
   ['src/renderer/styles/thread.css|.thread-list', 'Thread history popover.'],
   // The trigger for that overlay, and the same class of surface: a floating
