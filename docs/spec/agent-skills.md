@@ -55,6 +55,14 @@ file-tool authoring and runtime loading both reject an inline declaration or bod
 containing any execution override. Invalid content fails instead of silently changing
 mode or partially applying metadata.
 
+Invocation arguments are task input, not a second instruction source. Inline Skills
+substitute values only at placeholders explicitly authored in the Skill body; arguments
+are never appended implicitly when no placeholder exists because the canonical user
+message already carries the task. Isolated Skill instructions never interpolate
+argument values. Their placeholders refer to the separate child user message that
+carries the exact invocation task, so model-authored arguments cannot acquire developer
+authority merely by appearing after the Skill body.
+
 ## Discovery And Invocation
 
 Every ordinary start or steering admission refreshes the current Skill registry and
@@ -93,8 +101,11 @@ durable after the complete Skill tool Item and before the next provider request.
 An invocation snapshots canonical identity, content hash, exact rendered instructions,
 arguments, source, execution mode, resource root, constraints, invocation source, and
 time. Inline instructions project as application guidance; isolated instructions remain
-child-only while the parent receives identity, constraints, and the tool result for
-audit. There is no prompt overlay, private steering queue, or text parser. Restart
+child-only developer instructions, while the invocation task is the child's canonical
+user message and the parent receives identity, constraints, and the tool result for
+audit. The model-facing `skill` tool requires the parent to preserve the user's task and
+explicit constraints in arguments without inventing an implementation plan or
+overriding the Skill workflow. There is no prompt overlay, private steering queue, or text parser. Restart
 replays the same payload bytes from canonical Items. A later invocation of the same
 canonical name is authoritative from that point forward without deleting or rebinding
 older evidence.
@@ -150,6 +161,12 @@ of re-reading mutable Skill files.
 
 Isolated child output is not restored as reusable Skill guidance. A future call
 starts a new child Turn under current configuration.
+
+An isolated child receives the loaded Skill body as host-owned developer instructions
+and the invocation task as a separate user message. The developer block explicitly
+defines the user message as task input rather than workflow authority. An invocation
+with no task receives only a neutral execute-without-additional-input message; the host
+never manufactures task content from the parent conversation.
 
 Every isolated Skill catalog entry appends a host-derived execution constraint.
 The constraint states that invocation runs once in a single isolated child Thread
@@ -264,7 +281,7 @@ legacy installations, or update the CLI independently of the active Skill.
 
 ## Built-In Floor
 
-The packaged platform floor contains one isolated built-in Outliner Skill:
+The packaged platform floor contains one built-in Outliner Skill:
 
 - `outline` teaches all persisted Outliner reads, edits, history, and recovery
   through the public `outline` CLI, including complete-resource routing and
@@ -274,11 +291,14 @@ The packaged platform floor contains one isolated built-in Outliner Skill:
   guidance maps only deterministic source structures and treats unsupported
   coverage as an explicit fidelity limit, not proof of a lossless migration.
 
-It declares `execution: isolated` and a bounded tool ceiling. Packaged resource
-staging is explicit; arbitrary optional Skills are not copied into the
-application bundle. The packaged `outline` launcher and internal read-only
-source-adapter worker are required resources: the packaging hook restores
-executable mode where needed and fails the build when a resource is absent.
+It uses inline execution because document work depends on the current user's exact
+request, visible document context, research, and follow-up corrections. Loading the
+workflow into the parent Turn avoids a lossy model-authored task handoff and does not
+widen the parent's effective tool catalog. Packaged resource staging is explicit;
+arbitrary optional Skills are not copied into the application bundle. The packaged
+`outline` launcher and internal read-only source-adapter worker are required resources:
+the packaging hook restores executable mode where needed and fails the build when a
+resource is absent.
 
 The Skill owns no document logic. `outline` discovers current capabilities,
 root/family/exact command help, completion metadata, and command-specific schemas

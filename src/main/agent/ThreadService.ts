@@ -427,6 +427,8 @@ export interface SpawnChildThreadInput {
   readonly parentTurnId: string;
   readonly parentItemId: string;
   readonly prompt: string;
+  /** Host-loaded Skill guidance. Required only for isolated Skill children. */
+  readonly skillInstructions?: string;
   readonly taskPath: string;
   /**
    * What the child is called for a human reader. Defaults to the task path's
@@ -469,6 +471,7 @@ export interface SpawnIsolatedSkillThreadInput {
   readonly parentTurnId: string;
   readonly parentItemId: string;
   readonly skillName: string;
+  readonly skillInstructions: string;
   readonly prompt: string;
   readonly allowedTools: readonly string[];
   readonly model?: string;

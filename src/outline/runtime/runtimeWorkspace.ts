@@ -77,6 +77,7 @@ export class OutlineRuntimeWorkspace {
   }
 
   static async open(root: string, options: OutlineRuntimeWorkspaceOptions = {}): Promise<OutlineRuntimeWorkspace> {
+    const instanceId = options.instanceId ?? `runtime:${crypto.randomUUID()}`;
     const store = options.store ?? new WorkspaceTransactionLog(root, {
       ...options.storeOptions,
       ...(options.now ? { now: options.now } : {}),
@@ -104,7 +105,7 @@ export class OutlineRuntimeWorkspace {
       // Core reconciliation may create durable system state, such as today's
       // Daily Note. Make that state the verified baseline before a transaction
       // can capture an update that causally depends on it.
-      await store.compact(core.serializeState());
+      await store.compact(core.serializeState(), { instanceId, revision: core.revision() });
     }
     const assets = new OutlineAssetStore(root, store, {
       ...options.assetStoreOptions,
@@ -114,7 +115,7 @@ export class OutlineRuntimeWorkspace {
       core,
       store,
       assets,
-      options.instanceId ?? `runtime:${crypto.randomUUID()}`,
+      instanceId,
       loaded.latestEventSequence,
       options.now,
     );

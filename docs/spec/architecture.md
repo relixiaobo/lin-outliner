@@ -216,7 +216,10 @@ local-date Daily Note. When `requiresInitialPersist()` reports that condition,
 Runtime atomically compacts the reconciled Core into the verified snapshot/log
 baseline before publishing its descriptor or accepting requests. Startup fails
 if that baseline cannot be persisted; no later transaction may depend on
-process-local reconciliation state.
+process-local reconciliation state. Runtime resolves its new instance identity before
+that compaction and supplies it to any recovery-expiry maintenance Event. The workspace
+keeps the pre-compaction Event sequence as its replay baseline, so a startup Event is
+visible to watches under the identity that will publish the descriptor.
 
 Storage maintenance derives all work from the committed log and indexes. It
 repairs a torn tail, expires eligible recovery, removes orphan recovery blobs,

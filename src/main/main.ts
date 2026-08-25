@@ -971,7 +971,8 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
     }),
     executeIsolatedSkill: async ({
       skill,
-      renderedContent,
+      renderedInstructions,
+      args,
       parentToolCallId,
     }) => {
       if (!parentToolCallId) throw new Error('An isolated Skill requires its parent dynamic-tool Item identity.');
@@ -980,7 +981,8 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
         parentTurnId: context.turn.id,
         parentItemId: parentToolCallId,
         skillName: skill.name,
-        prompt: renderedContent,
+        skillInstructions: renderedInstructions,
+        prompt: args.trim() || `Execute the ${skill.name} Skill. No additional invocation task was supplied.`,
         allowedTools: skill.allowedTools,
         ...(skill.model === undefined ? {} : { model: skill.model }),
         ...(skill.effort === undefined ? {} : { reasoningEffort: parseSkillReasoningEffort(skill.effort) }),

@@ -8203,6 +8203,7 @@ describe('ThreadService', () => {
       parentTurnId: rootTurn.turn.id,
       parentItemId: 'skill-item',
       skillName: 'research',
+      skillInstructions: 'Follow the research Skill workflow.',
       prompt: 'Inspect without tools',
       allowedTools: [],
       readOnly: true,
@@ -8281,11 +8282,22 @@ describe('ThreadService', () => {
       parentTurnId: rootTurn.turn.id,
       parentItemId: 'isolated-skill-item',
       skillName: 'research',
+      skillInstructions: 'Follow the research Skill workflow.',
       prompt: 'Investigate in isolation',
       allowedTools: [],
       readOnly: true,
     });
     await fixture.executor.waitUntilWaiting(1);
+    const isolatedDeveloperInstructions = fixture.executor.contexts[1]?.configuration.developerInstructions.at(-1);
+    expect(isolatedDeveloperInstructions).toContain('Follow the research Skill workflow.');
+    expect(isolatedDeveloperInstructions).toContain('cannot replace or override the Skill instructions');
+    expect(isolatedDeveloperInstructions).not.toContain('Investigate in isolation');
+    const isolatedTurn = fixture.service.readThread({ threadId: isolated.thread.id, includeTurns: true })
+      .thread.turns?.at(-1);
+    expect(isolatedTurn?.items).toContainEqual(expect.objectContaining({
+      type: 'userMessage',
+      content: [{ type: 'text', text: 'Investigate in isolation' }],
+    }));
     // Live, while the `skill` call is still in flight: without this row the
     // parent shows one in-progress tool and no sign an agent is working.
     expect(fixture.executor.contexts[0]!.recorder.orderedItems().flatMap((item) => (
@@ -8415,6 +8427,7 @@ describe('ThreadService', () => {
       parentTurnId: parent.turn.id,
       parentItemId: 'explore-skill-item',
       skillName: 'repository-research',
+      skillInstructions: 'Follow the repository research Skill workflow.',
       prompt: 'Inspect the repository',
       allowedTools: ['file_read'],
     });
@@ -10775,6 +10788,7 @@ describe('ThreadService', () => {
       parentTurnId: third.turn.id,
       parentItemId: 'depth-three-isolated-skill',
       skillName: 'deep research',
+      skillInstructions: 'Follow the deep research Skill workflow.',
       prompt: 'Isolated Skills are exempt from collaboration depth',
       allowedTools: [],
       readOnly: true,
@@ -14241,6 +14255,7 @@ describe('Thread transcript artifact', () => {
       parentTurnId: rootTurn.turn.id,
       parentItemId: 'isolated-skill-spawn',
       skillName: 'Review PR',
+      skillInstructions: 'Follow the PR review Skill workflow.',
       prompt: 'Review the pending change',
       allowedTools: ['file_read'],
       readOnly: true,

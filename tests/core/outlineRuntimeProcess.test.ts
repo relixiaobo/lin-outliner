@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
+import { Core, type CoreTransactionPatch } from '../../src/core/core';
 import { canonicalSha256 } from '../../src/outline/contract/canonical';
 import { outlineCapabilityContractDigest } from '../../src/outline/contract/capabilities';
 import { issueOutlineAgentAttestation } from '../../src/outline/contract/agentAttestation';
@@ -346,6 +347,93 @@ describe('Outline Runtime process boundary', () => {
       client.close();
     } finally {
       await runtime.stop();
+    }
+  });
+
+  test('replays startup recovery expiry emitted while reconciling Today under the new Runtime identity', async () => {
+    const root = await makeRoot();
+    let nowMs = Date.parse('2037-01-01T00:00:00.000Z');
+    const workspaceOptions = {
+      now: () => new Date(nowMs),
+      storeOptions: { minimumRetentionDays: 1, minimumRetentionOperations: 0 },
+    };
+    const first = await OutlineRuntimeServer.start({
+      root,
+      idleTimeoutMs: 60_000,
+      workspaceOptions: { ...workspaceOptions, instanceId: 'runtime:startup-old' },
+    });
+    expect(first).not.toBeNull();
+    if (!first) return;
+    let baseline = 0;
+    let todayId = '';
+    let firstStore: import('../../src/outline/runtime/storage').WorkspaceTransactionLog | undefined;
+    try {
+      todayId = first.workspace.projection().todayId;
+      await first.workspace.mutate(createRequest('Recovery that expires during reconciliation'));
+      baseline = (await first.workspace.store.health()).transactionLog.eventSequence;
+      firstStore = first.workspace.store;
+    } finally {
+      await first.stop();
+    }
+
+    if (!firstStore) throw new Error('Runtime store was not available');
+    const loaded = await firstStore.load();
+    if (!loaded.snapshot) throw new Error('Runtime snapshot was not available');
+    const core = loaded.replay.length > 0
+      ? Core.fromPersistenceState(loaded.snapshot, loaded.replay, {
+          installationId: loaded.snapshot.local.installationId,
+          revision: loaded.events.at(-1)?.revision ?? 0,
+        })
+      : Core.fromState(loaded.snapshot, {
+          installationId: loaded.snapshot.local.installationId,
+          revision: loaded.events.at(-1)?.revision ?? 0,
+        });
+    const today = core.state().nodes[todayId]!;
+    const removalPatch: CoreTransactionPatch = {
+      revisionBefore: core.revision(),
+      revisionAfter: core.revision() + 1,
+      persistenceRevisionBefore: core.persistenceRevision(),
+      persistenceRevisionAfter: core.persistenceRevision() + 1,
+      systemChanged: false,
+      nodes: [{ id: todayId, before: null, after: today }],
+    };
+    await core.transaction('system', () => core.applyRecoveryPatch(removalPatch));
+    await firstStore.compact(core.serializeState(), {
+      instanceId: 'runtime:startup-old',
+      revision: core.revision(),
+    });
+
+    nowMs += 2 * 86_400_000;
+    const restarted = await OutlineRuntimeServer.start({
+      root,
+      idleTimeoutMs: 60_000,
+      workspaceOptions: { ...workspaceOptions, instanceId: 'runtime:startup-new' },
+    });
+    expect(restarted).not.toBeNull();
+    if (!restarted) return;
+    const client = new OutlineClient(restarted.descriptor);
+    const iterator = client.watch()[Symbol.asyncIterator]();
+    try {
+      expect(restarted.workspace.eventBaselineSequence).toBe(baseline);
+      const [persisted] = await restarted.workspace.store.eventsAfter(baseline);
+      expect(persisted).toMatchObject({
+        type: 'operation.recovery-expired',
+        instanceId: 'runtime:startup-new',
+        revision: restarted.workspace.revision(),
+      });
+
+      expect((await iterator.next()).value?.type).toBe('hello');
+      const replayed = (await iterator.next()).value;
+      expect(replayed?.type).toBe('event');
+      expect(replayed?.type === 'event' ? replayed.event : undefined).toMatchObject({
+        type: 'operation.recovery-expired',
+        instanceId: 'runtime:startup-new',
+        sequence: persisted?.sequence,
+      });
+    } finally {
+      await iterator.return?.();
+      client.close();
+      await restarted.stop();
     }
   });
 

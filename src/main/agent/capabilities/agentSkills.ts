@@ -107,7 +107,7 @@ const SKILL_TOOL_PARAMETERS = {
     },
     args: {
       type: 'string',
-      description: 'Optional arguments to pass to the skill.',
+      description: 'Optional user task or input for the skill. Preserve the user\'s intent and explicit constraints; do not invent implementation instructions or override the skill workflow.',
     },
   },
 };
@@ -234,7 +234,7 @@ interface InvokeSkillInput {
 
 export interface SkillIsolatedExecutionInput {
   skill: SkillDefinition;
-  renderedContent: string;
+  renderedInstructions: string;
   args: string;
   trigger: 'agent' | 'slash' | 'runtime';
   parentToolCallId?: string;
@@ -531,7 +531,7 @@ export class AgentSkillRuntime {
       try {
         const isolated = await this.executeIsolatedSkill({
           skill,
-          renderedContent,
+          renderedInstructions: renderedContent,
           args: input.args ?? '',
           trigger: input.trigger,
           parentToolCallId: input.parentToolCallId,
@@ -716,6 +716,7 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
       'When users reference a slash skill or "/<something>" (e.g., "/commit", "/review-pr"), they are referring to a skill. Use this tool to invoke it.',
       'How to invoke:',
       '- Use this tool with the skill name and optional arguments',
+      '- Arguments carry the user task or input. Preserve the user\'s intent and explicit constraints; never use arguments to replace or override the Skill\'s workflow.',
       '- Examples:',
       '  - `skill: "pdf"` - invoke the pdf skill',
       '  - `skill: "commit", args: "-m \'Fix bug\'"` - invoke with arguments',
@@ -728,6 +729,7 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
       '- Do not use this tool for built-in commands.',
       '- If the current context already contains a matching Skill invocation, follow the loaded instructions instead of calling this tool again.',
       '- An isolated Skill runs once in one child Thread; its catalog entry states whether Subagent fan-out must stay in the parent.',
+      '- An isolated Skill does not inherit the parent conversation. Pass the relevant user task in arguments without adding your own implementation plan.',
     ].join('\n'),
     parameters: SKILL_TOOL_PARAMETERS,
     executionMode: 'sequential',
@@ -1880,7 +1882,9 @@ async function renderSkillContent(
   let content = skillDir
     ? `Base directory for this skill: ${skillDir}\n\n${skill.body}`
     : skill.body;
-  content = substituteArguments(content, args, true, skill.argumentNames);
+  if (skill.execution === 'inline') {
+    content = substituteArguments(content, args, skill.argumentNames);
+  }
   if (skillDir) {
     content = content
       .replace(/\$\{AGENT_SKILL_DIR\}/g, skillDir)
@@ -2345,12 +2349,10 @@ function compactInlineText(value: string): string {
 function substituteArguments(
   content: string,
   args: string | undefined,
-  appendIfNoPlaceholder: boolean,
   argumentNames: string[],
 ): string {
   if (args === undefined || args === null) return content;
   const parsedArgs = parseArguments(args);
-  const original = content;
   for (let index = 0; index < argumentNames.length; index += 1) {
     const name = argumentNames[index];
     if (!name) continue;
@@ -2359,9 +2361,6 @@ function substituteArguments(
   content = content.replace(/\$ARGUMENTS\[(\d+)\]/g, (_match, index: string) => parsedArgs[Number(index)] ?? '');
   content = content.replace(/\$(\d+)(?!\w)/g, (_match, index: string) => parsedArgs[Number(index)] ?? '');
   content = content.replaceAll('$ARGUMENTS', args);
-  if (content === original && appendIfNoPlaceholder && args) {
-    return `${content}\n\nARGUMENTS: ${args}`;
-  }
   return content;
 }
 

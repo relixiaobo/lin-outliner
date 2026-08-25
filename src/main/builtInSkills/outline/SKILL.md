@@ -1,8 +1,6 @@
 ---
 name: outline
 description: Inspect, edit, organize, import into, or recover the Tenon outline through the public outline CLI. Use for any request that reads or changes Outliner Nodes, fields, tags, references, views, searches, Daily Notes, media, Trash, or operation history.
-allowed-tools: bash, file_read, file_write, file_edit, file_glob, file_grep, request_user_input
-execution: isolated
 ---
 
 # Outline

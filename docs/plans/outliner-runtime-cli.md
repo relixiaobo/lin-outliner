@@ -913,7 +913,10 @@ Empty Trash.
 
 Recovery pruning runs at startup, after successful settlement, after revert,
 and during Runtime idle maintenance. It is derived from committed log/index and
-blob reachability, not an in-memory checklist.
+blob reachability, not an in-memory checklist. Runtime resolves the new instance
+identity before startup reconciliation can compact or expire recovery. Any maintenance
+Event emitted by that compaction uses the new identity and remains after the workspace's
+pre-compaction replay baseline for watch delivery.
 
 ### Asset staging, retention, and garbage collection
 
@@ -1376,6 +1379,14 @@ inspect, choose one mutation shape, review, execute, verify, and recover. Keep
 the entrypoint short enough to load for every Outline task while retaining the
 non-obvious invariants around selectors, cardinality, atomic composition,
 destructive review, Operation settlement, and guarded recovery.
+
+Use inline execution. Outline work depends on the parent Turn's exact user request,
+visible document context, research, and corrections; an isolated child would require a
+lossy model-authored restatement of that state. Inline loading does not widen the
+parent's effective tool catalog. Across the general Skill runtime, invocation arguments
+remain task input: no-placeholder bodies never receive an implicit appended argument,
+and isolated Skills receive authored instructions as child developer guidance plus the
+invocation task as a separate user message.
 
 Use progressive disclosure rather than many peer references:
 
