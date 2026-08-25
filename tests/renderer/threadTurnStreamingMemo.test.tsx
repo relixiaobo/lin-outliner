@@ -36,6 +36,7 @@ describe('streaming Turn item memoization', () => {
       id: 'user',
       provenance: { originThreadId: 'thread', originTurnId: 'turn', originItemId: 'user' },
       type: 'userMessage' as const,
+      author: { kind: 'reader' } as const,
       clientId: null,
       acceptedAt: 1,
       get content() {
@@ -96,6 +97,64 @@ describe('streaming Turn item memoization', () => {
 });
 
 describe('Turn provider recovery', () => {
+  test('resolves canonical root-Thread input to the conversation Agent', async () => {
+    const { document, root } = installDom();
+    const ThreadTurnView = await loadThreadTurnView();
+    const notice = {
+      ...userMessage('Delegated by the conversation Agent'),
+      author: { kind: 'agent', threadId: 'thread' } as const,
+    };
+
+    await render(root, (
+      <ThreadTurnView
+        {...turnProps()}
+        {...turnAnchors(turn([notice]))}
+      />
+    ));
+
+    expect(document.querySelector('.thread-speaker-name')?.textContent).toBe('Main Agent');
+    expect(document.querySelector('.thread-host-event')?.textContent)
+      .toContain('Delegated by the conversation Agent');
+    await act(async () => root.unmount());
+  });
+
+  test('keeps a canonical delivery input neutral when its Agent registry entry is gone', async () => {
+    const { document, root } = installDom();
+    const ThreadTurnView = await loadThreadTurnView();
+    const notice = {
+      ...userMessage('[Agent finished] Retained delivery evidence'),
+      author: { kind: 'agent', threadId: 'missing-agent' } as const,
+    };
+    const value: Turn = {
+      ...turn([notice]),
+      provenance: {
+        originThreadId: 'thread',
+        originTurnId: 'turn',
+        trigger: {
+          kind: 'subagent',
+          parentThreadId: 'thread',
+          parentItemId: 'parent-tool',
+        },
+      },
+      status: 'completed',
+      completedAt: 2,
+      durationMs: 1,
+    };
+
+    await render(root, (
+      <ThreadTurnView
+        {...turnProps()}
+        {...turnAnchors(value)}
+        delivery={{ agentId: 'missing-agent', fromLatest: 0, generationIndex: 0 }}
+      />
+    ));
+
+    expect(document.querySelector('.thread-speaker-name')?.textContent).toBe('From an Agent');
+    expect(document.querySelector('.thread-host-event')?.textContent).toContain('Retained delivery evidence');
+    expect(document.querySelector('[aria-label="Edit message"]')).toBeNull();
+    await act(async () => root.unmount());
+  });
+
   test('distinguishes request retries from stream reconnection', async () => {
     const { document, root } = installDom();
     const ThreadTurnView = await loadThreadTurnView();
@@ -157,6 +216,7 @@ function turnAnchors(value: Turn) {
 function turnProps() {
   return {
     active: true,
+    agentEntries: new Map(),
     agentTranscript: false,
     canEditUserMessage: false,
     composerEnabled: true,
@@ -192,7 +252,9 @@ function turnProps() {
     onReadToolOutput: async () => null,
     onRetryTurn: async () => undefined,
     providerRetry: null,
-    selfSpeaker: { participantId: 'main', avatarKey: 'main', name: 'main' },
+    rootSpeaker: { participantId: 'main', avatarKey: 'main', name: 'Main Agent' },
+    rootThreadId: 'thread',
+    selfSpeaker: { participantId: 'main', avatarKey: 'main', name: 'Main Agent' },
     threadCwd: '/workspace',
     threadId: 'thread',
     threadsById: new Map(),
@@ -205,6 +267,7 @@ function userMessage(text: string): Extract<ThreadItem, { type: 'userMessage' }>
     id: 'user',
     provenance: { originThreadId: 'thread', originTurnId: 'turn', originItemId: 'user' },
     type: 'userMessage',
+    author: { kind: 'reader' },
     clientId: 'user-client-id',
     content: [{ type: 'text', text }],
     acceptedAt: 1,
@@ -212,8 +275,12 @@ function userMessage(text: string): Extract<ThreadItem, { type: 'userMessage' }>
 }
 
 function failedHostTurn(): Turn {
+  const notice = {
+    ...userMessage('[Agent finished] Canonical host notice'),
+    author: { kind: 'host' } as const,
+  };
   return {
-    ...turn([userMessage('[Agent finished] Canonical host notice')]),
+    ...turn([notice]),
     provenance: {
       originThreadId: 'thread',
       originTurnId: 'turn',

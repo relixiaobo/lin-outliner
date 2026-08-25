@@ -1913,6 +1913,7 @@ function storePayload(
 function userItem(id: string, acceptedAt: number, text: string): ThreadItem {
   return {
     type: 'userMessage',
+    author: { kind: 'reader' },
     id,
     provenance: { originThreadId: rootThread(1).id, originTurnId: uuidV7(acceptedAt), originItemId: id },
     clientId: null,

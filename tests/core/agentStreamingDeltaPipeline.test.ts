@@ -414,6 +414,7 @@ async function createFixture(
   };
   const userItem: ThreadItem = {
     type: 'userMessage',
+    author: { kind: 'reader' },
     id: 'user-one',
     provenance: provenance('user-one'),
     clientId: null,

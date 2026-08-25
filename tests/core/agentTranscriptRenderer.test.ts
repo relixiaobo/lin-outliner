@@ -271,6 +271,7 @@ function completedTurn(diagnosticsRef: TurnDiagnosticsPayloadReference | null = 
   const turn = turnWith([
     {
       type: 'userMessage',
+      author: { kind: 'reader' },
       id: 'item-user',
       provenance: provenance('item-user'),
       clientId: null,

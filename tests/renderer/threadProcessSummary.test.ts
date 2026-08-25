@@ -287,6 +287,7 @@ function userMessage(id: string): Extract<ThreadItem, { type: 'userMessage' }> {
     id,
     provenance: { originThreadId: 'thread-parent', originTurnId: 'turn-parent', originItemId: id },
     type: 'userMessage',
+    author: { kind: 'reader' },
     clientId: null,
     content: [{ type: 'text', text: 'Inspect the workspace.' }],
     acceptedAt: 1,

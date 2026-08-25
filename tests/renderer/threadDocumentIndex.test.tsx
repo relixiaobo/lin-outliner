@@ -290,6 +290,7 @@ function threadSnapshot(loading: boolean): ThreadStoreSnapshot {
 function turnProps(indexStore: DocumentIndexStore) {
   return {
     active: true,
+    agentEntries: new Map(),
     agentTranscript: false,
     canEditUserMessage: false,
     composerEnabled: true,
@@ -399,6 +400,7 @@ function userMessage(
     id: 'user',
     provenance: { originThreadId: 'thread', originTurnId: 'turn', originItemId: 'user' },
     type: 'userMessage',
+    author: { kind: 'reader' },
     clientId: null,
     content,
     acceptedAt: 1,

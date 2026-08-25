@@ -370,6 +370,7 @@ describe('renderer Thread store', () => {
     const items: ThreadItem[] = [
       {
         type: 'userMessage',
+        author: { kind: 'reader' },
         id: 'turn-1-steer',
         provenance: { originThreadId: owner.id, originTurnId: active.id, originItemId: 'turn-1-steer' },
         clientId: 'steer-1',
@@ -862,6 +863,7 @@ describe('renderer Thread store', () => {
       ...active,
       items: [{
         type: 'userMessage',
+        author: { kind: 'reader' },
         id: userItemId,
         provenance: {
           originThreadId: unloaded.id,
@@ -1035,6 +1037,7 @@ describe('renderer Thread store', () => {
       ...active,
       items: [{
         type: 'userMessage',
+        author: { kind: 'reader' },
         id: userItemId,
         provenance: {
           originThreadId: owner.id,

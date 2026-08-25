@@ -1743,8 +1743,14 @@ function userTurn(
   originThreadId = THREAD_ID,
 ): Turn {
   const startedAt = new Date(2026, 6, 24).getTime();
+  const author = trigger.kind === 'user'
+    ? { kind: 'reader' as const }
+    : trigger.kind === 'subagent'
+      ? { kind: 'agent' as const, threadId: trigger.parentThreadId }
+      : { kind: 'feature' as const, feature: trigger.feature, ...(trigger.ref ? { ref: trigger.ref } : {}) };
   const item: ThreadItem = {
     type: 'userMessage',
+    author,
     id: itemId,
     clientId: null,
     acceptedAt: startedAt,

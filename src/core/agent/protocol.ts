@@ -962,10 +962,25 @@ interface ThreadToolItemBase extends ThreadItemBase {
 
 export interface UserMessageThreadItem extends ThreadItemBase {
   readonly type: 'userMessage';
+  readonly author: ThreadInputAuthor;
   readonly clientId: string | null;
   readonly content: readonly ThreadUserContent[];
   readonly acceptedAt: number;
 }
+
+export type ThreadInputAuthor =
+  | { readonly kind: 'reader' }
+  | { readonly kind: 'agent'; readonly threadId: ThreadId }
+  | { readonly kind: 'host' }
+  | {
+      readonly kind: 'feature';
+      readonly feature: string;
+      readonly ref?: string;
+    }
+  | { readonly kind: 'unknown' };
+
+export type KnownThreadInputAuthor = Exclude<ThreadInputAuthor, { readonly kind: 'unknown' }>;
+export type PrivilegedThreadInputAuthor = Exclude<KnownThreadInputAuthor, { readonly kind: 'reader' }>;
 
 export interface AgentMessageThreadItem extends ThreadItemBase {
   readonly type: 'agentMessage';
@@ -1256,6 +1271,12 @@ export type ThreadItem =
   | ContextEvidenceThreadItem
   | ContextResetThreadItem
   | ContextCompactionThreadItem;
+
+export function isReaderAuthoredUserMessage(
+  item: ThreadItem,
+): item is UserMessageThreadItem & { readonly author: { readonly kind: 'reader' } } {
+  return item.type === 'userMessage' && item.author.kind === 'reader';
+}
 
 export const THREAD_ITEM_TYPES = [
   'userMessage',
@@ -1955,6 +1976,7 @@ export interface RendererTurnSubmitRequest extends Omit<RendererTurnStartRequest
 }
 
 export interface PrivilegedTurnStartRequest extends TurnInputRequest {
+  readonly author: PrivilegedThreadInputAuthor;
   readonly turnId?: TurnId;
   readonly additionalContextSource?: string;
   readonly trigger: TurnTrigger;
@@ -1976,6 +1998,10 @@ export interface RendererTurnSteerRequest extends Omit<TurnSteerRequest, 'additi
     readonly kind: 'untrusted';
     readonly purpose?: 'observation';
   }>>;
+}
+
+export interface PrivilegedTurnSteerRequest extends TurnSteerRequest {
+  readonly author: PrivilegedThreadInputAuthor;
 }
 
 export interface TurnSteerResponse {

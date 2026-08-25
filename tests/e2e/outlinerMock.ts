@@ -811,33 +811,48 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       manualError: null,
     } satisfies AppUpdateView);
     const delay = (ms: number) => new Promise((resolve) => { window.setTimeout(resolve, ms); });
-    type MockThreadItem = {
+    type MockThreadInputAuthor =
+      | { kind: 'reader' }
+      | { kind: 'agent'; threadId: string }
+      | { kind: 'host' }
+      | { kind: 'feature'; feature: string; ref?: string }
+      | { kind: 'unknown' };
+    type MockThreadUserContent = Array<
+      | { type: 'text'; text: string }
+      | { type: 'nodeReference'; nodeId: string; note?: string }
+      | {
+          type: 'attachment';
+          id: string;
+          name: string;
+          mimeType: string;
+          sizeBytes: number;
+          source:
+            | { kind: 'localFile'; path: string }
+            | {
+                kind: 'threadPayload';
+                ref: { id: string; mimeType: string; byteLength: number; fileName: string };
+              };
+        }
+    >;
+    type MockThreadItemBase = {
       id: string;
-      type: 'userMessage' | 'agentMessage';
       provenance: { originThreadId: string; originTurnId: string; originItemId: string };
-      clientId?: string | null;
-      acceptedAt?: number;
-      content?: Array<
-        | { type: 'text'; text: string }
-        | { type: 'nodeReference'; nodeId: string; note?: string }
-        | {
-            type: 'attachment';
-            id: string;
-            name: string;
-            mimeType: string;
-            sizeBytes: number;
-            source:
-              | { kind: 'localFile'; path: string }
-              | {
-                  kind: 'threadPayload';
-                  ref: { id: string; mimeType: string; byteLength: number; fileName: string };
-                };
-          }
-      >;
-      text?: string;
-      phase?: 'commentary' | 'final_answer' | 'interrupted' | null;
-      memoryCitation?: null;
     };
+    type MockThreadItem = MockThreadItemBase & (
+      | {
+          type: 'userMessage';
+          author: MockThreadInputAuthor;
+          clientId: string | null;
+          acceptedAt: number;
+          content: MockThreadUserContent;
+        }
+      | {
+          type: 'agentMessage';
+          text: string;
+          phase: 'commentary' | 'final_answer' | 'interrupted' | null;
+          memoryCitation: null;
+        }
+    );
     type MockTurn = {
       id: string;
       items: MockThreadItem[];
@@ -3897,6 +3912,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               {
                 id: userItemId,
                 type: 'userMessage',
+                author: { kind: 'feature', feature: 'automation', ref: automationRunId },
                 provenance: itemProvenance(thread.id, turnId, userItemId),
                 clientId: automationRunId,
                 acceptedAt: timestamp,
@@ -4818,6 +4834,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const userItem: MockThreadItem = {
             id: userItemId,
             type: 'userMessage',
+            author: { kind: 'reader' },
             provenance: itemProvenance(thread.id, turnId, userItemId),
             clientId: typeof input.clientUserMessageId === 'string' ? input.clientUserMessageId : null,
             acceptedAt: startedAt,
@@ -4925,6 +4942,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const item: MockThreadItem = {
             id: acceptedItemId,
             type: 'userMessage',
+            author: { kind: 'reader' },
             provenance: itemProvenance(threadId, turnId, acceptedItemId),
             clientId: typeof input.clientUserMessageId === 'string' ? input.clientUserMessageId : null,
             acceptedAt,

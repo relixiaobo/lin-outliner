@@ -21,6 +21,7 @@ import type {
   ThreadUserContent,
   UserMessageThreadItem,
 } from '../../../../core/agent/protocol';
+import { isReaderAuthoredUserMessage } from '../../../../core/agent/protocol';
 import type { Messages } from '../../../../core/i18n';
 import { useT } from '../../../i18n/I18nProvider';
 import type { DocumentIndex } from '../../../state/document';
@@ -108,13 +109,6 @@ interface ThreadItemViewProps {
   readonly index: DocumentIndex;
   readonly indexStore: DocumentIndexStore;
   readonly item: ThreadItem;
-  /** This user-role Item was authored by the host, as proven by its Turn. */
-  readonly hostAuthoredEvent?: boolean;
-  /**
-   * Who wrote a host-authored user-role Item: `main` for the conversation
-   * itself, otherwise the delegating Agent. Absent in a conversation, where a
-   * host event has no single author to name.
-   */
   readonly showMessageActions: boolean;
   readonly streaming: boolean;
   /** This Item is where a delegation happened, so a chip takes its slot. */
@@ -360,13 +354,13 @@ function UserMessageItem({
   index,
   indexStore,
   item,
-  hostAuthoredEvent = false,
   onEditUserMessage,
   onOpenNodeReference,
   showMessageActions,
   threadId,
 }: Omit<ThreadItemViewProps, 'item'> & { readonly item: UserMessageThreadItem }) {
   const t = useT();
+  const readerAuthored = isReaderAuthoredUserMessage(item);
   const textEditable = canEditUserContentText(item.content);
   const textParts = item.content.flatMap((content) => content.type === 'text' ? [content.text] : []);
   const [editing, setEditing] = useState(false);
@@ -396,7 +390,7 @@ function UserMessageItem({
     // which put two different senders in one place and left the difference to a
     // hover. The attribution itself lives in the speaker header above this, so
     // one participant saying three things in a row is named once, not thrice.
-    <article className={`thread-item thread-user-message${hostAuthoredEvent ? ' thread-host-event' : ''}`}>
+    <article className={`thread-item thread-user-message${readerAuthored ? '' : ' thread-host-event'}`}>
       {editing ? (
         <div className="thread-message-editor">
           <textarea
@@ -434,7 +428,7 @@ function UserMessageItem({
           <div className="thread-message-actions-slot">
             {showMessageActions ? (
               <div className="thread-message-actions">
-                {!hostAuthoredEvent && canEditUserMessage && textEditable ? (
+                {readerAuthored && canEditUserMessage && textEditable ? (
                   <IconButton
                     icon={PencilIcon}
                     iconSize={ICON_SIZE.menu}

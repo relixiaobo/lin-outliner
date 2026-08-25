@@ -1,6 +1,11 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { decodeAgentCoreRecordedNotification, decodeThreadItem, decodeTurn } from '../../../core/agent/codec';
+import {
+  decodeAgentCoreRecordedNotification,
+  decodePersistedThreadItem,
+  decodeThreadItem,
+  decodeTurn,
+} from '../../../core/agent/codec';
 import type {
   AgentCoreRecordedNotification,
   ThreadId,
@@ -679,7 +684,7 @@ export class ThreadHistoryProjectionStore {
     if (row.turn_id !== turnId) throw new Error(`Thread Item does not belong to Turn: ${itemId}`);
     if (row.completed_at !== null) throw new Error(`Completed Thread Item is immutable: ${itemId}`);
     const item = this.streamingItems.get(threadId)?.get(turnId)?.get(itemId)
-      ?? decodeThreadItem(JSON.parse(row.item_json));
+      ?? decodePersistedThreadItem(JSON.parse(row.item_json));
     const updated = applyThreadItemDelta(item, delta);
     this.setStreamingItem(threadId, turnId, updated);
   }
@@ -710,12 +715,9 @@ export class ThreadHistoryProjectionStore {
     if (rows.length !== items.length) throw new Error(`Terminal Turn Items do not match recorded Items: ${turnId}`);
     for (const [index, item] of items.entries()) {
       const row = rows[index]!;
-      // Compare canonical decoded forms, not stored bytes. The invariant is
-      // "this terminal Item did not change" — a row written before the protocol
-      // gained an optional field is the same Item, and byte equality would call
-      // it a mutation and wedge the Thread at startup (A12: the check belongs
-      // on the Item, not on its serialization).
-      const stored = JSON.stringify(decodeThreadItem(JSON.parse(row.item_json)));
+      // Compare canonical decoded forms, not stored bytes. The persisted decoder
+      // upgrades only the exact pre-author userMessage shape to explicit unknown.
+      const stored = JSON.stringify(decodePersistedThreadItem(JSON.parse(row.item_json)));
       if (row.item_id !== item.id || stored !== JSON.stringify(decodeThreadItem(item))) {
         throw new Error(`Terminal Turn Item mutation is not allowed: ${item.id}`);
       }
@@ -784,7 +786,7 @@ export class ThreadHistoryProjectionStore {
 
   private itemFromRow(row: ItemRow): ThreadItem {
     return this.streamingItems.get(row.thread_id)?.get(row.turn_id)?.get(row.item_id)
-      ?? decodeThreadItem(JSON.parse(row.item_json));
+      ?? decodePersistedThreadItem(JSON.parse(row.item_json));
   }
 
   private setStreamingItem(threadId: ThreadId, turnId: string, item: ThreadItem): void {

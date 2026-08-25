@@ -1,7 +1,7 @@
-import { decodePrivilegedTurnStartRequest,decodeThread,decodeThreadItem,decodeTurn } from '../../../core/agent/codec';
+import { decodePrivilegedTurnStartRequest,decodePrivilegedTurnSteerRequest,decodeThread,decodeThreadItem,decodeTurn } from '../../../core/agent/codec';
 import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import { createHostRootTurnAdmissionBarrierSnapshot,createThreadAdmissionBarrierSnapshot } from '../../../core/agent/extensions';
-import { RUNTIME_FAILURE_ERROR_CODE,SUBAGENT_DELIVERY_ADMISSION_ERROR_CODE,normalizeTurnErrorCode,type AdditionalContext,type AdditionalContextPayload,type ContextCompactionThreadItem,type ContextCursor,type ContextEvidenceKind,type ContextEvidenceThreadItem,type PrivilegedTurnStartRequest,type RendererTurnStartRequest,type RequestUserInputRequest,type RequestUserInputResponse,type RoleCatalogContextPayload,type SubagentTurnAdmission,type Thread,type ThreadContextPayload,type ThreadContextPayloadReference,type ThreadId,type ThreadItem,type ThreadResourceReference,type ThreadStatus,type ThreadUserContent,type Turn,type TurnDiagnosticsPayload,type TurnError,type TurnErrorCode,type TurnId,type TurnStartResponse,type TurnStatus,type TurnSteerRequest,type TurnSteerResponse } from '../../../core/agent/protocol';
+import { RUNTIME_FAILURE_ERROR_CODE,SUBAGENT_DELIVERY_ADMISSION_ERROR_CODE,normalizeTurnErrorCode,type AdditionalContext,type AdditionalContextPayload,type ContextCompactionThreadItem,type ContextCursor,type ContextEvidenceKind,type ContextEvidenceThreadItem,type PrivilegedTurnStartRequest,type PrivilegedTurnSteerRequest,type RendererTurnStartRequest,type RendererTurnSteerRequest,type RequestUserInputRequest,type RequestUserInputResponse,type RoleCatalogContextPayload,type SubagentTurnAdmission,type Thread,type ThreadContextPayload,type ThreadContextPayloadReference,type ThreadId,type ThreadInputAuthor,type ThreadItem,type ThreadResourceReference,type ThreadStatus,type ThreadUserContent,type Turn,type TurnDiagnosticsPayload,type TurnError,type TurnErrorCode,type TurnId,type TurnStartResponse,type TurnStatus,type TurnSteerResponse } from '../../../core/agent/protocol';
 import { threadPreviewFromContent } from '../../../core/agent/threadPreview';
 import { normalizeRequestUserInputToolInput } from '../../../core/agent/tools';
 import { MAX_PROMPT_IMAGE_BYTES,MAX_PROMPT_IMAGE_DIMENSION } from '../../../core/agentAttachmentLimits';
@@ -65,7 +65,8 @@ export type ExplicitSubagentAdmissionPreparer = (input: {
   readonly maxSidecarBytes: number;
   readonly reservedSidecarItemId: string;
 }) => Promise<ExplicitSubagentAdmissionPreparation>;
-type InternalTurnStartRequest = PrivilegedTurnStartRequest & {
+type InternalTurnStartRequest = Omit<PrivilegedTurnStartRequest, 'author'> & {
+  readonly author: ThreadInputAuthor;
   readonly stagedContextEvidence?: readonly StagedContextEvidence[];
   readonly additionalContextResourceRefs?: readonly ThreadResourceReference[];
   readonly additionalContextSource?: string;
@@ -76,7 +77,11 @@ type InternalTurnStartRequest = PrivilegedTurnStartRequest & {
   readonly prepareExplicitSubagentAdmission?: ExplicitSubagentAdmissionPreparer;
   readonly bypassSubagentBudget?: boolean;
 };
+type InternalTurnSteerRequest = Omit<PrivilegedTurnSteerRequest, 'author'> & {
+  readonly author: ThreadInputAuthor;
+};
 export interface CanonicalTurnRetryInputBatch {
+  readonly author: ThreadInputAuthor;
   readonly input: readonly ThreadUserContent[];
   readonly clientUserMessageId: string | null;
   readonly acceptedAt: number;
@@ -278,6 +283,7 @@ export class TurnLifecycle {
         const accepted = await this.startPrivilegedTurn({
           threadId: thread.id,
           input: [{ type: 'text', text: input.prompt }],
+          author: { kind: 'feature', feature: 'memory' },
           trigger: { kind: 'feature', feature: 'memory' },
         });
         acceptedTurnId = accepted.turn.id;
@@ -306,12 +312,13 @@ export class TurnLifecycle {
     ): Promise<TurnStartResponse> {
       const contextCommand = parseContextCommand(request.input);
       if (contextCommand) return this.startContextCommand(request, contextCommand, admissionGuard);
-      const privileged: PrivilegedTurnStartRequest = {
+      const privileged: InternalTurnStartRequest = {
         ...request,
       ...(reservedTurnId === undefined ? {} : { turnId: reservedTurnId }),
       ...(prepareExplicitSubagentAdmission
         ? { prepareExplicitSubagentAdmission, bypassSubagentBudget: true }
         : {}),
+      author: { kind: 'reader' },
       trigger: { kind: 'user' },
       };
       return (await this.acceptAndLaunch(privileged, false, admissionGuard)).response;
@@ -555,12 +562,13 @@ export class TurnLifecycle {
       const initialInput = request.inputBatches[0];
       if (!initialInput) throw new Error('Retry input is missing from the canonical Turn');
       for (const batch of request.inputBatches) assertCanonicalUserContent(batch.input);
-      const canonicalRequest = decodePrivilegedTurnStartRequest({
+      const canonicalRequest: InternalTurnStartRequest = {
         threadId: request.threadId,
         input: initialInput.input,
         clientUserMessageId: initialInput.clientUserMessageId,
+        author: initialInput.author,
         trigger: request.trigger,
-      });
+      };
       const accepted = await this.core.threadMutex.run(request.threadId, () => this.acceptTurn({
         ...canonicalRequest,
         stagedContextEvidence: initialInput.stagedContextEvidence,
@@ -580,8 +588,22 @@ export class TurnLifecycle {
         throw error;
       }
     }
-  async steerTurn(
-      request: TurnSteerRequest,
+  async steerRendererTurn(
+      request: RendererTurnSteerRequest,
+      deliveryFailureMode: 'fatal' | 'advisory' = 'fatal',
+      admissionGuard?: () => void,
+    ): Promise<TurnSteerResponse> {
+      return this.steerTurn({ ...request, author: { kind: 'reader' } }, deliveryFailureMode, admissionGuard);
+    }
+  async steerPrivilegedTurn(
+      request: PrivilegedTurnSteerRequest,
+      deliveryFailureMode: 'fatal' | 'advisory' = 'fatal',
+      admissionGuard?: () => void,
+    ): Promise<TurnSteerResponse> {
+      return this.steerTurn(decodePrivilegedTurnSteerRequest(request), deliveryFailureMode, admissionGuard);
+    }
+  private async steerTurn(
+      request: InternalTurnSteerRequest,
       deliveryFailureMode: 'fatal' | 'advisory' = 'fatal',
       admissionGuard?: () => void,
     ): Promise<TurnSteerResponse> { return this.core.threadMutex.run(request.threadId, async () => {
@@ -674,6 +696,7 @@ export class TurnLifecycle {
           item = userMessage(
             request.threadId,
             active.turnId,
+            request.author,
             admission.content,
             request.clientUserMessageId ?? null,
             acceptedAt,
@@ -990,6 +1013,7 @@ export class TurnLifecycle {
       const item = userMessage(
         request.threadId,
         turnId,
+        initialRetryInput?.author ?? request.author,
         input,
         request.clientUserMessageId ?? null,
         initialRetryInput?.acceptedAt ?? startedAt,
@@ -1033,6 +1057,7 @@ export class TurnLifecycle {
         const replayedUser = userMessage(
           request.threadId,
           turnId,
+          batch.author,
           batch.input,
           batch.clientUserMessageId,
           batch.acceptedAt,
@@ -1942,9 +1967,10 @@ export class TurnLifecycle {
           updatedAt: this.now(),
         })
       ) return;
-      await this.steerTurn({
+      await this.steerPrivilegedTurn({
         threadId: active.threadId,
         expectedTurnId: active.turnId,
+        author: { kind: 'host' },
         input: [{
           type: 'text',
           text: `[Budget notice] ~80% of the token budget is consumed (${used} of ${budget}). `
@@ -2221,6 +2247,7 @@ function firstTurnCursor(turns: readonly Turn[], turnId: TurnId): ContextCursor 
 function userMessage(
   threadId: ThreadId,
   turnId: string,
+  author: ThreadInputAuthor,
   content: readonly ThreadUserContent[],
   clientId: string | null,
   acceptedAt: number,
@@ -2231,6 +2258,7 @@ function userMessage(
     type: 'userMessage',
     id,
     provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: id },
+    author,
     clientId,
     content,
     acceptedAt,

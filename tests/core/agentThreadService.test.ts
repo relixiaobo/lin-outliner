@@ -3312,6 +3312,7 @@ describe('ThreadService', () => {
     await fixture.service.startPrivilegedTurn({
       threadId: thread.id,
       input: [{ type: 'text', text: 'Run scheduled work' }],
+      author: { kind: 'feature', feature: 'automation', ref: 'automation-1' },
       additionalContext: {
         automation_info: { kind: 'application', value: 'Host schedule guidance' },
       },
@@ -3474,6 +3475,7 @@ describe('ThreadService', () => {
     const turnId = uuidV7(fixture.clock());
     const userItem: ThreadItem = {
       type: 'userMessage',
+      author: { kind: 'reader' },
       id: 'restart-user',
       provenance: { originThreadId: thread.id, originTurnId: turnId, originItemId: 'restart-user' },
       clientId: null,
@@ -5129,6 +5131,7 @@ describe('ThreadService', () => {
       threadId: thread.id,
       input: [{ type: 'text', text: '[Agent finished] Canonical host notice' }],
       clientUserMessageId: 'agent-notification-stable-id',
+      author: { kind: 'host' },
       trigger,
     });
     await fixture.executor.waitUntilWaiting(0);
@@ -6096,11 +6099,13 @@ describe('ThreadService', () => {
         () => fixture.service.startPrivilegedTurn({
           threadId: child.thread.id,
           input: [{ type: 'text', text: 'Privileged retry must be rejected' }],
+          author: { kind: 'feature' as const, feature: 'automation' as const },
           trigger: { kind: 'feature' as const, feature: 'automation' as const },
         }),
         () => fixture.service.tryStartTurnIfIdle({
           threadId: child.thread.id,
           input: [{ type: 'text', text: 'Idle retry must be rejected' }],
+          author: { kind: 'feature' as const, feature: 'automation' as const },
           trigger: { kind: 'feature' as const, feature: 'automation' as const },
         }),
         () => fixture.service.steerTurn({
@@ -8794,6 +8799,7 @@ describe('ThreadService', () => {
     await fixture.service.startPrivilegedTurn({
       threadId: child.thread.id,
       input: [{ type: 'text', text: 'Resume with current configuration' }],
+      author: { kind: 'agent', threadId: root.id },
       trigger: { kind: 'subagent', parentThreadId: root.id, parentItemId: 'followup-item' },
     });
     await fixture.executor.waitUntilWaiting(2);
@@ -8938,6 +8944,7 @@ describe('ThreadService', () => {
     await fixture.service.startPrivilegedTurn({
       threadId: resumed.thread.id,
       input: [{ type: 'text', text: 'Resume without reloading Role Skills' }],
+      author: { kind: 'agent', threadId: root.id },
       trigger: { kind: 'subagent', parentThreadId: root.id, parentItemId: 'preload-resume' },
     });
     await fixture.executor.waitUntilWaiting(3);
@@ -10468,6 +10475,11 @@ describe('ThreadService', () => {
       threadId: thread.id,
       turnId: reservedTurnId,
       input: [{ type: 'text', text: 'Persist the reserved continuation' }],
+      author: {
+        kind: 'feature',
+        feature: 'goal_continuation',
+        ref: String(record.generation),
+      },
       trigger: { kind: 'feature', feature: 'goal_continuation', ref: String(record.generation) },
     });
     await fixture.executor.waitUntilWaiting();
@@ -11750,6 +11762,7 @@ describe('ThreadService', () => {
     await expect(fixture.service.tryStartTurnIfIdle({
       threadId: child.thread.id,
       input: [{ type: 'text', text: 'Automation work after the user stopped' }],
+      author: { kind: 'feature', feature: 'automation', ref: 'closed-request-run' },
       trigger: { kind: 'feature', feature: 'automation', ref: 'closed-request-run' },
     })).rejects.toBeInstanceOf(SubagentRequestClosedError);
     // ...while the user bright line is untouched.
@@ -11778,6 +11791,7 @@ describe('ThreadService', () => {
     const featureTurn = await fixture.service.tryStartTurnIfIdle({
       threadId: feature.id,
       input: [{ type: 'text', text: 'Internal work' }],
+      author: { kind: 'feature', feature: 'memory', ref: 'consolidation' },
       trigger: { kind: 'feature', feature: 'memory', ref: 'consolidation' },
     });
     expect(featureTurn).not.toBeNull();
@@ -12387,6 +12401,7 @@ describe('ThreadService', () => {
     const turn = await fixture.service.tryStartTurnIfIdle({
       threadId: root.id,
       input: [{ type: 'text', text: 'Run root automation work' }],
+      author: { kind: 'feature', feature: 'automation', ref: 'root-budget-run' },
       trigger: { kind: 'feature', feature: 'automation', ref: 'root-budget-run' },
     });
     expect(turn).not.toBeNull();
@@ -13852,6 +13867,7 @@ describe('Thread transcript artifact', () => {
     const automationTurn = await fixture.service.tryStartTurnIfIdle({
       threadId: automation.id,
       input: [{ type: 'text', text: 'Review what yesterday left behind' }],
+      author: { kind: 'feature', feature: 'automation', ref: 'run-a' },
       trigger: { kind: 'feature', feature: 'automation', ref: 'run-a' },
     });
     expect(automationTurn).not.toBeNull();
@@ -14150,6 +14166,7 @@ describe('Thread transcript artifact', () => {
     await fixture.service.tryStartTurnIfIdle({
       threadId: automation.id,
       input: [{ type: 'text', text: 'Sweep' }],
+      author: { kind: 'feature', feature: 'automation', ref: 'run-b' },
       trigger: { kind: 'feature', feature: 'automation', ref: 'run-b' },
     });
     await fixture.executor.waitUntilWaiting(0);
