@@ -481,7 +481,7 @@ describe('OutlineRuntimeWorkspace', () => {
       ...createRequest('Create Runtime read Saved Search'),
       execute: (core) => {
         core.createSearchNode(core.projection().searchesId, null, {
-          title: 'Runtime read fixtures',
+          title: 'Bounded selector fixture',
           query: { kind: 'rule', op: 'STRING_MATCH', text: marker },
         }, undefined, searchId);
       },
