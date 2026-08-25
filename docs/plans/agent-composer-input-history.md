@@ -1,22 +1,27 @@
 # Agent Composer Input History
 
-Shape: **(a) ONE complete feature in one PR.** Per-Thread history derivation,
-editor navigation, structured draft restoration, attachment lifecycle handling,
-tests, and the current Agent rendering specification land together. The
-implementation establishes the history state machine before wiring keyboard
-events into the composer.
+Shape: **(a) ONE complete feature in one PR.** The canonical input-author
+contract, every admission/replay and transcript consumer, per-Thread history
+derivation, semantic editor-action routing, structured draft restoration,
+attachment lifecycle handling, tests, and the current Agent specifications land
+together. Inside that PR, the author model and codec enforcement land first in
+build order, followed by its transcript and history consumers; there is no
+independently shipped interface-only slice.
 
 ## Goal
 
 Give every editable Agent composer terminal-style input recall without weakening
-its existing multi-line, structured-input, focus, or menu behavior.
+its existing multi-line, structured-input, focus, speaker attribution, or menu
+behavior.
 
 The minimum acceptable outcome is that a reader can use plain Up and Down from
 the visual boundary of the composer to revisit accepted inputs from the current
 Thread, edit and resend a recalled copy, and return to the exact unsent draft
 that existed before history navigation began. Text, Node references, inline
 attachment positions, the linked attachment tray, selection, and resource
-ownership must survive that round trip as one coherent composer state.
+ownership must survive that round trip as one coherent composer state. Agent-,
+host-, and feature-authored provider inputs must never enter this reader history
+or appear as the reader's editable words in the transcript.
 
 ## Non-goals
 
@@ -26,7 +31,7 @@ ownership must survive that round trip as one coherent composer state.
   shortcut preferences. Those are separate product decisions after boundary
   navigation is proven.
 - Do not record raw composer keystrokes or create a second persisted history.
-  Canonical `userMessage` Items remain the authority.
+  Canonical reader-authored `userMessage` Items remain the authority.
 - Do not make `/new`, `/clear`, `/compact`, or feature Turns with no
   `userMessage` Item recallable. A direct Skill invocation remains recallable
   because its exact submitted input is canonical user content.
@@ -36,13 +41,61 @@ ownership must survive that round trip as one coherent composer state.
 - Do not change Enter, Shift+Enter, Stop, slash-command, mention, paste, staged
   context, model-selection, or `request_user_input` behavior.
 - Do not add visible history chrome, status copy, CSS, or renderer theme work.
-- Do not change Agent Core protocol, persistence, codecs, commands, or preload
-  APIs.
+- Do not expose canonical author as renderer input, infer it from prose,
+  Turn position, trigger, or `clientId`, or change provider-role serialization.
+  The renderer cannot declare its own trust classification.
 - Do not make pending attachment admissions recallable or suspend their
   controllers in hidden history slots. History waits for the current picker,
   drop, paste, browser-file, or mention admission to settle, cancel, or fail.
 
 ## Design
+
+### Decision and constraints
+
+- **DEC-1:** The clean-slate answer and the selected target are the same:
+  represent the semantic author on every canonical provider-role user Item, use
+  that fact for both transcript trust and reader history, and route editor keys
+  through performable semantic actions. The repository is pre-release, so there
+  is no product reason to preserve an ambiguous persisted format.
+- **CON-1:** `userMessage` remains the provider-role boundary. Changing how an
+  Item projects to a provider request is outside this feature.
+- **CON-2:** Main is the trusted admission authority. Renderer requests must not
+  be able to self-declare reader identity, and privileged callers must not be
+  able to mint it through a generic input DTO.
+- **CON-3:** #586's pending-paste atom, unified attachment tray, serialized
+  admission queue, linked marker removal, and resource budgets are the current
+  composer model and must remain coherent during recall.
+- **CON-4:** The approved delivery shape is one complete implementation PR.
+  Foundation-before-consumers is an internal build order, not a separately
+  shipped protocol slice.
+
+A binary `reader | runtime` field is rejected as the minimum patch. It filters
+history, but it permanently collapses delegating Agents, peer Agents, host
+envelopes, and feature automation into one anonymous speaker and leaves the
+transcript dependent on Turn-position heuristics. Inferring from
+`TurnTrigger`, `ItemProvenance`, the first Item, or `clientId` is also rejected:
+those values describe causation, copy lineage, ordering, and deduplication, and
+machine steering can coexist with reader steering inside one active Turn.
+
+### Design basis
+
+- `UserMessageThreadItem` currently records provider-role content but no
+  semantic author, while `TurnLifecycle.userMessage` is the common canonical
+  constructor. This makes a required Item-level field enforceable at one write
+  boundary.
+- `ThreadView` currently uses `hostAuthoredEvent` and `hostNoticeItemId` to infer
+  that the first user-role Item in a subagent-triggered Turn is non-reader. The
+  inference cannot classify a later machine steer and already drives speaker,
+  bubble, and Edit trust.
+- #586 establishes one serialized attachment-admission queue, a pending paste
+  atom, and one linked inline-marker/tray projection. History must switch whole
+  settled draft bundles without moving pending controllers between slots.
+- Ghostty's `Surface.keyCallback`, `Surface.maybeHandleBinding`,
+  `Binding.Flags.performable`, and GTK `Surface.keyEvent` establish the relevant
+  input precedent: normalize first, respect active context and IME ownership,
+  perform semantic actions before lower-level input, and fall through when a
+  performable action declines. Ghostty delegates command history to the shell,
+  so only this routing discipline transfers to the composer.
 
 ### Product contract
 
@@ -65,23 +118,149 @@ together. Recalled canonical history is copied into a draft bundle; it is never
 edited in place. In-flight attachment operations, pending request controllers,
 pending atoms, and their replaced slices are not draft-bundle state.
 
+The existing `userMessage` name denotes provider role, not who supplied the
+words. Add this required Item-level author model to
+`UserMessageThreadItem.author`:
+
+```ts
+export type ThreadInputAuthor =
+  | { readonly kind: 'reader' }
+  | { readonly kind: 'agent'; readonly threadId: ThreadId }
+  | { readonly kind: 'host' }
+  | {
+      readonly kind: 'feature';
+      readonly feature: string;
+      readonly ref?: string;
+    };
+
+export type PrivilegedThreadInputAuthor = Exclude<
+  ThreadInputAuthor,
+  { readonly kind: 'reader' }
+>;
+```
+
+`reader` means input accepted from the renderer composer. `agent` names the
+Thread whose Agent semantically supplied a delegated brief, direct message, or
+delivered result. `host` means synthesized runtime framing with no single Agent
+speaker. `feature` names an automation, Goal continuation, Memory pass, or other
+product feature that generated the input. The optional feature reference is a
+stable source reference when one already exists; it is not a display identity.
+
+Four canonical facts remain orthogonal:
+
+| Fact | Answers | Must not be used as |
+|---|---|---|
+| `userMessage` Item type | Which provider role receives this content? | Proof that the reader wrote it |
+| `ThreadInputAuthor` | Who is accountable for the input's words? | Turn causation or copy lineage |
+| `ItemProvenance` | Where did this physical Item originate? | Speaker identity |
+| `TurnTrigger` | Why did this Turn start? | Author of every Item later admitted to the Turn |
+
+Add the shared `isReaderAuthoredUserMessage` classifier over the canonical Item.
+History eligibility, reader-bubble projection, and Edit eligibility use that
+classifier rather than maintaining separate notions of reader trust.
+
+Main assigns author at trusted entry points after renderer request decoding.
+Renderer start/steer DTOs do not contain `author`; their dedicated lifecycle
+paths mint `{ kind: 'reader' }`. Split privileged steering from renderer
+steering, and require every privileged start/steer caller to provide a
+non-reader author explicitly. The common admission primitive requires an author
+with no default, so a future machine caller cannot silently inherit reader
+authority. The canonical Item codec exhaustively decodes the union and rejects
+a missing or unknown author at write/decode boundaries.
+
+Trusted attribution is exact:
+
+| Admission | Canonical author |
+|---|---|
+| Renderer initial submit or steer | `reader` |
+| Delegated child brief | `agent(parentThreadId)` |
+| Agent-to-Agent or Agent-to-main message | `agent(senderThreadId)` |
+| Child terminal result delivered to its parent | `agent(childThreadId)` |
+| Budget notice, explicit delivery sidecar, or exhausted-settlement envelope with no single speaker | `host` |
+| Automation prompt | `{ kind: 'feature', feature: 'automation', ref: executionId }` |
+| Goal continuation | `{ kind: 'feature', feature: GOAL_CONTINUATION_FEATURE, ref: continuationRef }` |
+| Internal Memory or another feature-owned prompt | `{ kind: 'feature', feature, optional ref }` |
+| Retry | Preserve each source Item's author |
+| Fork | Preserve each copied Item's author |
+| New renderer submit after Edit or rollback | A new `reader` Item |
+
+A direct Skill invocation remains reader-authored because the renderer supplied
+the canonical input; Skill resolution and context evidence do not change its
+author. A `request_user_input` response remains a separate control-plane record,
+not a `userMessage`, so this author model does not invent an Item for it.
+
 ### Canonical history source
 
 Derive entries lazily from the `Turn[]` already supplied to `ThreadView`. The
 Thread store loads every Turn page with `itemsView: 'full'`, so history recall
 does not need a second query, cache, or persistence format.
 
-Each canonical `userMessage` Item is one entry, including steering Items inside
-an active Turn. Preserve Item order across Turns and within each Turn; do not
-flatten all user content in a Turn into one entry. Use the Item ID as stable
-navigation identity and its accepted structured `content` as the source.
+Each Item accepted by `isReaderAuthoredUserMessage` is one entry, including
+reader steering Items inside an active Turn. A delegated Agent's initial brief,
+a host-mediated child delivery Item, a peer-Agent message, and machine-authored
+steering are excluded even though each is a canonical `userMessage`. Preserve
+Item order across Turns and within each Turn; do not flatten all reader content
+in a Turn into one entry. Use the Item ID as stable navigation identity and its
+accepted structured `content` as the source.
+
+Author is durable canonical data. Retry input batches copy it from each source
+Item, fork copies retain it through `copyItem`, rollback never reclassifies
+surviving Items, and replayed Items use the copied value rather than the actor
+who requested retry. A new renderer submission after Edit/rollback is
+reader-authored because it is a new composer admission. Pre-release storage uses
+no legacy decoder or inferred fallback: implementation updates fixtures and
+wipes clone-scoped dev userData that predates the required field.
 
 The history selector runs only when navigation is requested. Streaming deltas
 must not add an O(Thread history) derivation to the render hot path. While a
 reader is browsing, reconcile against the newest entry list by selected Item ID:
 newer accepted inputs become reachable through Down without moving the selected
-entry, and a rolled-back selected Item falls back to the closest surviving
-neighbor or the scratch slot.
+entry. Reconciliation never replaces the visible working draft merely because a
+stream update removed its source Item; it runs on the next eligible history
+navigation request.
+
+If the selected Item no longer exists, retain its prior zero-based chronological
+index `i` and consume that navigation request by re-anchoring exactly once:
+
+1. select the entry now at `i` when it exists;
+2. otherwise select the newest surviving entry, which is the predecessor at the
+   truncated tail; or
+3. when no entry survives, restore scratch and return to idle.
+
+The re-anchor consumes the arrow without applying another Up/Down step. The
+departed orphan working bundle is released after the replacement bundle becomes
+visible. A subsequent eligible arrow resumes ordinary navigation from the new
+anchor. This successor-first, then predecessor, then scratch rule also defines
+the middle, tail, deleted-range, and empty-history boundaries without asking the
+reducer to guess.
+
+### Transcript author projection
+
+Canonical author also replaces the renderer's existing inference that the first
+`userMessage` in a subagent-triggered Turn is host-authored and every later one
+is reader-authored. That inference is false for mixed machine and reader
+steering, and adding a durable author only for history would preserve the same
+trust bug in another consumer.
+
+Project each provider-role user Item independently:
+
+- `reader` uses the established reader-side bubble and is the only author kind
+  eligible for Edit;
+- `agent(threadId)` uses that Agent Thread's resolved identity and the
+  established opposite-side prose presentation;
+- `host` and `feature` use the existing neutral Agent-event presentation and
+  never borrow the reader or the transcript's own Agent identity; and
+- an unavailable Agent identity degrades to the same neutral event speaker
+  instead of guessing another participant.
+
+Delete `hostAuthoredEvent`, `hostNoticeItemId`, and the "first user Item" speaker
+rule. The existing `SubagentReport` remains the content projection for a child
+terminal delivery, but its speaker comes from that Item's canonical
+`agent(childThreadId)` author. Copy remains available for visible provider-role
+user Items. Edit requires both the existing latest-terminal-message conditions
+and `isReaderAuthoredUserMessage`, so a delegated brief, peer message, host
+envelope, feature prompt, or machine steer can never become a reader-authored
+rollback submission.
 
 ### Navigation state machine
 
@@ -127,32 +306,57 @@ never strips attachments, skips attachment-bearing entries, or presents a
 text-only approximation. If the source is no longer admissible, the steer fails
 recoverably and restores the complete bundle.
 
-### Keyboard ownership and visual boundaries
+### Semantic input routing and visual boundaries
 
-Keep the current event priority:
+Adopt Ghostty's input-routing principle rather than its shell-history behavior.
+Ghostty normalizes a raw key event, gives the active context and binding action
+first refusal, and consumes a performable binding only when its action actually
+performs; a declined performable action behaves as if no binding existed. The
+composer uses the same contract at its own boundaries:
+
+```text
+normalized editor key
+-> active surface, menu, and IME ownership
+-> performable semantic history action
+-> performed: consume the key
+-> declined: fall through to ProseMirror/browser movement
+```
+
+Keep this ownership order:
 
 1. disabled composer and IME composition guards;
 2. open slash or mention trigger, which owns Up, Down, Enter, Tab, and Escape;
 3. Stop and submission shortcuts;
-4. history navigation; and
+4. performable history actions; and
 5. ProseMirror/browser editing defaults.
 
-History handles only unmodified `ArrowUp` and `ArrowDown` with a collapsed text
-selection in the editor. Shift selection and Meta, Control, or Alt movement
-remain native. Node selections do not enter history. When focus is in the
-attachment tray, its established Left/Right/Escape behavior remains the sole
-keyboard owner and editor history is not invoked.
+Normalize an eligible key into `historyOlder` or `historyNewer` and pass it
+through a narrow semantic-action callback. `ThreadComposerEditor` owns DOM key,
+focus, IME, selection, menu, and visual-layout checks; it does not import Thread
+history or attachment lifecycle. `ThreadView` owns the history controller and
+returns `performed | declined`. The editor calls `preventDefault` only for
+`performed`; `declined` makes no editor mutation and falls through unchanged.
 
-Use `EditorView.endOfTextblock('up' | 'down')` to decide whether vertical motion
-would leave the current text block. This is the ProseMirror layout-aware
+History is performable only for an editor-focused, non-composing, unmodified Up
+or Down event with a collapsed text selection, no menu ownership, the required
+visual boundary, no queued or running attachment admission, and an applicable
+history transition. Shift selection and Meta, Control, or Alt movement remain
+native. Node selections do not enter history. When focus is in the attachment
+tray, its established Left/Right/Escape behavior remains the sole keyboard owner
+and editor history is not invoked.
+
+Use `EditorView.endOfTextblock('up' | 'down')` as the ProseMirror layout-aware
 authority for explicit hard breaks, soft-wrapped visual lines, and bidirectional
 text. Up enters or advances history only at the first visual line; Down advances
 or exits only at the last visual line. A single visual line is both boundaries.
 
-The editor reports an eligible navigation request to `ThreadView`; it does not
-import Thread protocol history or own attachment lifecycle. If no entry exists
-or `ThreadView` reports an in-flight attachment operation, the callback declines
-the request and native cursor behavior remains unchanged.
+Down while idle, an Up with no eligible entry, an ineligible boundary, or an
+in-flight attachment admission returns `declined`, preserving native cursor
+behavior. Once history owns the draft, Up at the oldest entry is a performed
+boundary no-op so the caret does not escape the recalled slot; Down past the
+newest performs the scratch restoration. A missing-anchor re-anchor is also
+performed, including the transition that restores scratch because no entry
+survives.
 
 ### Structured draft materialization
 
@@ -220,18 +424,43 @@ resources.
 
 ### Component boundaries
 
+Update `src/core/agent/protocol.ts` and `src/core/agent/codec.ts` first within the
+single implementation PR to define `ThreadInputAuthor`, the required
+`UserMessageThreadItem.author`, exhaustive decode enforcement, the shared
+`isReaderAuthoredUserMessage` classifier, and distinct renderer versus
+privileged steer request contracts. Renderer request codecs continue to reject
+an `author` key. A privileged request requires a non-reader author; the retry
+admission is the only internal route allowed to replay any canonical author.
+
+Update `TurnLifecycle` and `ThreadService` so `startRendererTurn` and
+`steerRendererTurn` mint `reader`, while `startPrivilegedTurn`,
+`tryStartTurnIfIdle`, and `steerPrivilegedTurn` require the caller's explicit
+non-reader author. The common `userMessage` constructor requires the author and
+has no default. Update `SubagentCollaboration`, `GoalExtension`,
+`AutomationDispatcher`, Memory admission, budget notices, explicit sidecars,
+and exhausted settlement to supply the exact attribution table above. Extend
+`CanonicalTurnRetryInputBatch` to retain each source Item's author. Verify that
+`ThreadCatalogOps.copyItem` preserves it through the normal codec path.
+
+Update the transcript projection in `ThreadView`, `ThreadItemView`, and
+`ThreadSpeaker` to consume canonical author per Item. Remove Turn-position
+author inference and gate reader bubble/Edit behavior through the shared
+classifier before history is added.
+
 Add `src/renderer/agent/threadComposerHistory.ts` for the pure history entry
-selector and ID-anchored navigation reducer. It must not own React, DOM,
-ProseMirror, persistence, or resource cleanup.
+selector and ID-anchored navigation reducer. It filters exclusively through
+`isReaderAuthoredUserMessage` and implements the exact removed-anchor rule. It
+must not own React, DOM, ProseMirror, persistence, or resource cleanup.
 
 Update `ThreadComposerEditor` to:
 
 - include selection in `ThreadComposerEditorSnapshot` and restore it safely;
 - materialize ordered structured composer content with an explicit final-caret
   option for a fresh history entry;
-- use `endOfTextblock` for eligible plain-arrow requests; and
-- expose a narrow history-navigation callback while preserving trigger-menu
-  ownership.
+- use `endOfTextblock` for eligible plain-arrow requests;
+- normalize eligible arrows into semantic history actions; and
+- consume only a `performed` result while preserving trigger-menu, IME, and
+  native-editor fallthrough.
 
 Update `ThreadView` to own canonical entry lookup, history session refs, draft
 bundle swaps, the hidden-slot ownership registry, fresh attachment identities,
@@ -244,36 +473,48 @@ The attachment tray remains a pure projection of the active draft, attachments,
 pending requests, preview URLs, and excerpts; it does not acquire a second
 history state.
 
-Update `docs/spec/agent-thread-rendering.md` in the same implementation change.
-The owning specification must define the canonical source, per-Thread boundary,
-visual-line keyboard precedence, scratch restoration, structured recall,
+Update `docs/spec/agent-model-runtime.md` and
+`docs/spec/agent-thread-rendering.md` in the same implementation change. The
+owning specifications must distinguish provider role, canonical author, Item
+provenance, and Turn trigger; define trusted assignment, retry/fork preservation,
+and transcript projection; and define canonical history source, per-Thread
+boundary, semantic key-action fallthrough, visual-line eligibility, scratch
+restoration, deterministic removed-anchor reconciliation, structured recall,
 control-command exclusion, in-flight-admission pause, active-Turn attachment
 reuse, linked marker/tray restoration, visible-only attachment budgets, and
 attachment degradation behavior.
 
 ### Files and collision result
 
-The implementation is expected to add
-`src/renderer/agent/threadComposerHistory.ts` and its renderer test, and update
-`ThreadComposerEditor`, `ThreadView`, `tests/e2e/agent-thread.spec.ts`, and
-`docs/spec/agent-thread-rendering.md`. No Core protocol, preload, dependency,
-build, CSS, or tray-component change is intended.
+The implementation is expected to update `src/core/agent/protocol.ts`,
+`src/core/agent/codec.ts`, `TurnLifecycle`, `ThreadService`,
+`SubagentCollaboration`, `GoalExtension`, `AutomationDispatcher`,
+`ThreadCatalogOps`, focused Core tests, and canonical fixtures; add
+`src/renderer/agent/threadComposerHistory.ts` and its renderer test; and update
+`ThreadComposerEditor`, `ThreadView`, `ThreadItemView`, `ThreadSpeaker`,
+`tests/e2e/agent-thread.spec.ts`, `docs/spec/agent-model-runtime.md`, and
+`docs/spec/agent-thread-rendering.md`. No command, preload API, dependency,
+build, new CSS, or tray-component change is intended.
 
 PR #586 has merged. This plan is reconciled with its pending paste atom, unified
 attachment tray, expanded budgets, renderer-only excerpt metadata, and linked
-removal behavior; it is no longer an open collision. The only other open claim
-is #584. Its future implementation overlap is limited to
-`docs/spec/agent-thread-rendering.md`; source and test ownership are otherwise
-disjoint. Begin implementation from updated `origin/main` after #584 lands, or
-coordinate that specification file before opening the implementation claim.
-This plan-only PR edits no main-owned board or changelog file.
+removal behavior; it is no longer an open collision. `gh pr list` shows one
+other open claim, #584. Its current diff overlaps this future implementation on
+`src/main/agent/ThreadService.ts`, `docs/spec/agent-model-runtime.md`, and
+`docs/spec/agent-thread-rendering.md`; it does not claim the author protocol,
+`TurnLifecycle`, collaboration admission, renderer components, or history
+tests. Begin implementation by rebasing on `origin/main` after #584 lands, then
+re-run the file-scope check because #584 retires substantial Agent surface. The
+PM has selected one complete implementation PR despite the shared author field:
+foundation-first is the internal build order, not a separately shipped
+interface PR. This plan-only PR edits no main-owned board or changelog file.
 
 ### Product rules
 
-- **BR-1:** History contains only canonical `userMessage` Items belonging to the
-  exact composer Thread.
-- **BR-2:** One `userMessage` Item is one history entry, even when multiple user
-  messages belong to one Turn.
+- **BR-1:** History contains only canonical reader-authored `userMessage` Items
+  belonging to the exact composer Thread.
+- **BR-2:** One reader-authored `userMessage` Item is one history entry, even
+  when multiple provider-role user messages belong to one Turn.
 - **BR-3:** Recall produces a mutable draft copy and never mutates, rolls back,
   or re-identifies the canonical entry.
 - **BR-4:** History navigation never changes staged page context, provider/model
@@ -291,12 +532,28 @@ This plan-only PR edits no main-owned board or changelog file.
 - **BR-9:** Recall is atomic: an attachment resource, inline marker, and tray
   projection are one visible unit and are never partially restored or silently
   omitted.
+- **BR-10:** Canonical author is assigned only by trusted main admission and is
+  preserved by retry, replay, fork, and surviving rollback history.
+- **BR-11:** An Agent-, host-, or feature-authored `userMessage` is never
+  recallable or editable as reader input, regardless of its Turn trigger,
+  position, `clientId`, text, or coexistence with reader Items.
+- **BR-12:** A removed history anchor resolves by its prior chronological index:
+  successor at that index, otherwise newest predecessor, otherwise scratch and
+  idle.
+- **BR-13:** Provider role, canonical author, Item provenance, and Turn trigger
+  are independent facts; no consumer reconstructs one from another.
+- **BR-14:** The editor consumes an arrow for history only when the history
+  controller returns `performed`; `declined` always preserves the established
+  ProseMirror/browser behavior.
+- **BR-15:** Only reader-authored Items use the reader bubble or expose Edit.
+  Agent Items use their source Thread identity; host, feature, and unresolved
+  Agent Items use neutral Agent-event presentation.
 
 ### Acceptance criteria
 
 - **AC-1:** When a collapsed caret on the first visual line receives plain Up
-  with no trigger menu open, the composer recalls the newest current-Thread
-  entry; repeated eligible Up recalls older entries.
+  with no trigger menu open, the composer recalls the newest reader-authored
+  current-Thread entry; repeated eligible Up recalls older reader entries.
 - **AC-2:** When the caret can still move vertically within a multi-line or
   soft-wrapped draft, Up and Down retain native cursor movement and do not
   replace the draft.
@@ -347,6 +604,37 @@ This plan-only PR edits no main-owned board or changelog file.
 - **AC-17:** When a history swap begins with a tray removal preview active, the
   preview clears and neither the source nor target editor selection changes
   because of that transient UI state.
+- **AC-18:** When a delegated child Thread contains its
+  `agent(parentThreadId)` initial brief followed by a reader-authored steer, Up
+  recalls the reader steer and never the delegated brief.
+- **AC-19:** When a parent Thread receives a host-mediated
+  `agent(childThreadId)` terminal delivery or an `agent(senderThreadId)` peer
+  message as provider-role user input, neither Item appears in reader history.
+- **AC-20:** When host- or feature-authored steering and reader-authored steering
+  coexist in one active Turn, history recalls each reader steer in canonical
+  order and excludes every machine-authored steer.
+- **AC-21:** When reader, Agent, host, and feature Items pass through codec
+  round-trip, retry replay, and fork copy, each retains its exact author. Missing
+  or unknown authors fail decode, renderer request payloads cannot set author,
+  and ordinary privileged requests cannot claim `reader`.
+- **AC-22:** When the transcript projects provider-role user Items, only
+  reader-authored Items use the reader bubble or expose Edit. Agent-authored
+  Items use the named source Thread identity, while host, feature, and
+  unavailable Agent identities use neutral Agent-event presentation without
+  borrowing the transcript's own Agent identity.
+- **AC-23:** When the selected source Item disappears, the visible working draft
+  remains unchanged until the next eligible history arrow; that request selects
+  the entry now at the old index, otherwise the newest predecessor, and restores
+  scratch/idle only when history is empty, without applying a second movement.
+- **AC-24:** When a history action is ineligible because no applicable entry
+  exists, the visual boundary is not reached, IME or a menu owns the event, the
+  selection/modifiers are incompatible, or an attachment admission is in
+  flight, the action declines without `preventDefault` and native editor
+  behavior receives the key.
+- **AC-25:** While history owns a recalled slot, Up at the oldest entry consumes
+  the key as a performed boundary no-op; Down past the newest, and a
+  missing-anchor reconciliation with no surviving entries, consume the key only
+  after restoring scratch and returning to idle.
 
 ### Risks and mitigations
 
@@ -365,8 +653,26 @@ This plan-only PR edits no main-owned board or changelog file.
   but canonical attachment reuse is valid. Keep new admissions disabled, route
   recalled settled resources through ordinary steer admission, and never
   degrade a structured entry to text.
+- **Author laundering:** provider-role `userMessage`, Turn trigger, provenance,
+  position, and `clientId` are each insufficient to identify the speaker.
+  Require the canonical union, keep `reader` exclusive to renderer admission,
+  require explicit non-reader attribution from privileged callers, and test
+  mixed author kinds inside one Turn.
+- **Half-adopted author model:** adding author only to history would leave the
+  transcript and Edit action on unsafe heuristics. Convert speaker grouping,
+  bubble placement, and Edit eligibility in the same PR, and delete the old
+  first-Item inference rather than keeping two authorities.
+- **Protocol format change:** a permissive fallback would silently classify old
+  machine input as reader history. Fail closed at decode, update every canonical
+  fixture and constructor, and wipe pre-release clone-scoped dev data instead of
+  shipping a legacy reader.
+- **Key consumption regression:** calling `preventDefault` before the history
+  owner proves it can act would break multiline cursor movement and IME/menu
+  behavior. Return an explicit `performed | declined` effect, consume only the
+  former, and cover fallthrough in unit and Chromium E2E tests.
 - **History drift during live updates or rollback:** anchor browsing by Item ID,
-  never array index, and define deterministic fallback when an entry disappears.
+  retain the prior ordinal only for a missing anchor, and test the exact
+  successor/predecessor/scratch rule at every boundary.
 - **Hot-path regression:** derive history only on navigation events and keep the
   session in refs; do not scan all Turns on every stream delta or add per-delta
   React state.
@@ -379,26 +685,40 @@ This plan-only PR edits no main-owned board or changelog file.
 None. The selected target is per-Thread canonical history, visual-boundary
 plain-arrow navigation, atomic structured restoration, session-local working
 copies, in-flight attachment navigation pause, and settled attachment reuse
-during an active Turn. Reverse search and alternate keymaps require a separate
-product review.
+during an active Turn. `ThreadInputAuthor` is a required rich canonical field,
+reader authority is minted only at renderer admission, every privileged caller
+states its non-reader author, and transcript trust and history use the same
+classifier. Semantic history actions consume keys only when performed. The
+feature ships with all protocol and renderer consumers in one implementation
+PR. Reverse search and alternate keymaps require a separate product review.
 
 ## Implementation checklist
 
+- [ ] Add `ThreadInputAuthor`, the required canonical Item field, strict codec,
+  separate renderer/privileged admission contracts, exact producer attribution,
+  retry propagation, fork preservation, shared classifier, and focused
+  codec/lifecycle/collaboration/feature coverage.
+- [ ] Convert transcript speaker grouping, reader bubble placement, and Edit
+  eligibility to canonical author; delete `hostAuthoredEvent`,
+  `hostNoticeItemId`, and first-user-Item inference before adding history.
 - [ ] Add the pure history selector/reducer and focused renderer tests covering
-  entry ordering, bounds, scratch, working copies, dynamic entry reconciliation,
-  and reset.
-- [ ] Extend the editor snapshot/materialization seam and wire layout-aware,
-  priority-preserving arrow handling.
+  author filtering, entry ordering, bounds, scratch, working copies, exact
+  removed-anchor reconciliation, dynamic entry addition, and reset.
+- [ ] Extend the editor snapshot/materialization seam and add the semantic
+  `performed | declined` action route with layout-aware, priority-preserving
+  arrow handling and native fallthrough.
 - [ ] Integrate Thread-owned session bundles and attachment retention/cleanup in
   `ThreadView`, including visible-only budgets, the in-flight admission guard,
   and atomic marker/resource/tray swaps.
 - [ ] Add Agent Thread E2E for single-line recall, multi-line and soft-wrap
-  boundaries, menu/IME/modifier priority, structured resend, Thread isolation,
-  queued admission safety, pending paste safety, tray projection, hidden-slot
-  budgets, active-Turn attachment steer, refused-send restoration, and
-  managed-resource cleanup.
-- [ ] Fold the shipped behavior into `docs/spec/agent-thread-rendering.md` and
-  verify no visual or focus regression in light and dark mode.
-- [ ] Run `bun run typecheck`, `bun run test:renderer`,
+  boundaries, menu/IME/modifier priority and fallthrough, all canonical author
+  kinds, transcript speaker/Edit trust, deterministic rollback reconciliation,
+  structured resend, Thread isolation, queued admission safety, pending paste
+  safety, tray projection, hidden-slot budgets, active-Turn attachment steer,
+  refused-send restoration, and managed-resource cleanup.
+- [ ] Fold the shipped behavior into `docs/spec/agent-model-runtime.md` and
+  `docs/spec/agent-thread-rendering.md`, then verify no visual or focus
+  regression in light and dark mode.
+- [ ] Run `bun run typecheck`, `bun run test:core`, `bun run test:renderer`,
   `bun run test:e2e -- tests/e2e/agent-thread.spec.ts`,
   `bun run docs:check`, and `git diff --check`.
