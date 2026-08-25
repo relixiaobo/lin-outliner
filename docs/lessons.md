@@ -1843,3 +1843,22 @@ Regression coverage needs both boundaries: replace one fully selected identity a
 the exact capacity while a partially selected multi-marker identity still counts,
 and attempt a failing replacement over an unsettled operation while asserting no
 new request starts and no orphaned marker can return.
+
+## A persisted upgrade must cover every authority that can restore the other
+
+PR #585's first authorship design made a new field strict everywhere and offered
+only a clone-scoped dev-data wipe. That would have quarantined installed Threads
+whose append-only rollout and SQLite projection both contained the valid previous
+shape. Fixing only the ordinary read path would still fail when either store later
+rebuilt the other.
+
+**Keep new admission and writes strict, but apply one exact-schema upgrade at
+every persisted read seam that can become recovery authority.** Materialize one
+explicit conservative value such as `unknown`, then let canonical validation and
+all downstream recovery operate on that value. Do not recursively rewrite raw
+JSON, infer trust from surrounding records, or let the compatibility rule become
+a default for new callers.
+
+Regression coverage must exercise both recovery directions, every nested event
+carrier, and a malformed near-match that still fails closed. A compatibility test
+that covers only the primary store proves normal startup, not durable recovery.

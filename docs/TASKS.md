@@ -575,6 +575,16 @@ Standalone agent items (not part of the program):
   linked inline-marker and tray experience, with projected attachment budgets,
   pending-upload submission guards, and identity-safe replacement recovery.
   Design folded into the Agent runtime, Thread rendering, and design-system specs.
+- **[agent-composer-input-history](plans/agent-composer-input-history.md)**
+  (`draft`, ratified 2026-08-25; plan PR #585, codex-3; priority pending PM
+  assignment) — every editable Agent composer recalls reader-authored structured
+  inputs from its exact Thread through visual-boundary Up/Down navigation while
+  preserving scratch, selection, references, attachments, and resource ownership.
+  One canonical input-author contract keeps provider role separate from speaker
+  trust; exact pre-author rollout/projection rows degrade to neutral `unknown`
+  rather than gaining reader trust or quarantining installed history. The one
+  complete implementation PR must land after and rebase on overlapping #584,
+  then rerun the collision check before claiming shared Agent files.
 - **agent-dream-followups** — **REMOVED 2026-08-03.** Seven polish items for a subsystem
   that no longer exists: `dream-channel-and-memory-retire` retired Dream in full (#324, #328,
   #329) and `rg -i dream src/` is empty. It survived the retirement because nothing links a

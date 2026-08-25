@@ -481,6 +481,19 @@ outline workspace migration is required.
 
 ### Internal
 
+- **Agent composer input history plan (PR #585, codex-3, plan-only)** — ratifies
+  terminal-style visual-boundary Up/Down recall for every editable Agent
+  composer, derived from reader-authored canonical Items in the exact Thread and
+  restoring text, references, attachments, selection, scratch, and resource
+  ownership as one structured draft. A durable rich author model separates
+  provider role from speaker trust across admission, retry, fork, transcript,
+  Edit, and history; exact pre-author rollout and projection rows become neutral
+  `unknown` only at persisted read seams, so installed conversations remain
+  readable without laundering machine input. Menu and IME owners run before the
+  semantic history callback, and only a performed history action consumes the
+  key. Three review rounds closed four findings around authorship, deterministic
+  rollback anchoring, installed-history compatibility, and input ownership.
+  Product behavior is unchanged until the implementation PR ships.
 - **Documentation lifecycle and navigation cleanup (main fast-track)** — removed
   obsolete lifecycle frontmatter from 75 archived plans, repaired current and
   historical Markdown links, replaced numeric code-line anchors in active
