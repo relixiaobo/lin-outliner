@@ -128,9 +128,9 @@ describe('Outline Runtime process boundary', () => {
         idempotencyKey: `test:${crypto.randomUUID()}`,
         operations: [{
           op: 'create',
-          parents: {
+          placement: { kind: 'last', parent: {
             target: { selector: { by: 'alias', alias: 'today' }, cardinality: 'one' },
-          },
+          } },
           nodes: [{ content: { text: 'Created over Runtime socket', marks: [], inlineRefs: [] }, children: [] }],
           bind: 'created',
         }],
@@ -732,9 +732,9 @@ function createTodayChangeSet(text: string): ChangeSet {
     idempotencyKey: `test:${crypto.randomUUID()}`,
     operations: [{
       op: 'create',
-      parents: {
+      placement: { kind: 'last', parent: {
         target: { selector: { by: 'alias', alias: 'today' }, cardinality: 'one' },
-      },
+      } },
       nodes: [{ content: { text, marks: [], inlineRefs: [] }, children: [] }],
     }],
   };

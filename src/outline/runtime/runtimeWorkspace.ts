@@ -42,6 +42,14 @@ export interface OutlineRuntimeMutationRequest {
   readonly result?: (candidate: Core) => Operation['result'];
 }
 
+export interface OutlineHistoryMutationOptions extends Pick<
+  OutlineRuntimeMutationRequest,
+  'origin' | 'causation' | 'idempotencyKey' | 'idempotencyPayloadHash'
+> {
+  readonly selectionOrigin?: Operation['origin'] | 'all';
+  readonly expectOperationId?: string;
+}
+
 export interface OutlineRuntimeWorkspaceOptions {
   readonly store?: WorkspaceTransactionLog;
   readonly storeOptions?: WorkspaceTransactionLogOptions;
@@ -208,31 +216,37 @@ export class OutlineRuntimeWorkspace {
   }
 
   async undo(
-    options: Pick<OutlineRuntimeMutationRequest, 'origin' | 'causation' | 'idempotencyKey' | 'idempotencyPayloadHash'>,
+    options: OutlineHistoryMutationOptions,
   ): Promise<Operation> {
     return this.enqueueMutation(async () => {
       const admission = await this.prepareMutation(options);
       if (admission.existingOperation) return admission.existingOperation;
       const operations = await this.store.operations();
-      const operationId = operationHistory(operations).undo.at(-1);
+      const operationId = operationHistory(
+        filterHistoryOperations(operations, options.selectionOrigin ?? options.origin),
+      ).undo.at(-1);
       if (!operationId) {
         throw new OutlineContractError(outlineError('not_found', 'selection', 'No recoverable Operation is available to undo.'));
       }
+      assertExpectedHistoryOperation('undo', operationId, options.expectOperationId);
       return this.revertInsideQueue(operationId, options, admission);
     });
   }
 
   async redo(
-    options: Pick<OutlineRuntimeMutationRequest, 'origin' | 'causation' | 'idempotencyKey' | 'idempotencyPayloadHash'>,
+    options: OutlineHistoryMutationOptions,
   ): Promise<Operation> {
     return this.enqueueMutation(async () => {
       const admission = await this.prepareMutation(options);
       if (admission.existingOperation) return admission.existingOperation;
       const operations = await this.store.operations();
-      const operationId = operationHistory(operations).redo.at(-1);
+      const operationId = operationHistory(
+        filterHistoryOperations(operations, options.selectionOrigin ?? options.origin),
+      ).redo.at(-1);
       if (!operationId) {
         throw new OutlineContractError(outlineError('not_found', 'selection', 'No recoverable revert Operation is available to redo.'));
       }
+      assertExpectedHistoryOperation('redo', operationId, options.expectOperationId);
       return this.revertInsideQueue(operationId, options, admission);
     });
   }
@@ -580,6 +594,27 @@ function operationHistory(operations: readonly Operation[]): {
     undo: undo.filter((operationId) => available.has(operationId)),
     redo: redo.filter((operationId) => available.has(operationId)),
   };
+}
+
+function filterHistoryOperations(
+  operations: readonly Operation[],
+  origin: Operation['origin'] | 'all',
+): readonly Operation[] {
+  return origin === 'all' ? operations : operations.filter((operation) => operation.origin === origin);
+}
+
+function assertExpectedHistoryOperation(
+  command: 'undo' | 'redo',
+  actualOperationId: string,
+  expectedOperationId: string | undefined,
+): void {
+  if (!expectedOperationId || expectedOperationId === actualOperationId) return;
+  throw new OutlineContractError(outlineError(
+    'stale_revision',
+    'conflict',
+    `The ${command} stack top changed before recovery.`,
+    { details: { expectedOperationId, actualOperationId } },
+  ));
 }
 
 function removeOperationId(stack: string[], operationId: string): void {

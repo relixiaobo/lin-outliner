@@ -2,10 +2,10 @@ import { createReadStream } from 'node:fs';
 import { open, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
-import { Value } from 'typebox/value';
 import { canonicalSha256 } from '../../contract/canonical';
 import { OutlineContractError, outlineError } from '../../contract/errors';
 import { ChangeSetSchema, type ChangeSet } from '../../contract/schemas';
+import { checkOutlineSchema } from '../../contract/validation';
 import { ensurePrivateDirectory } from './runtimePaths';
 
 export const OUTLINE_CHANGESET_UPLOAD_LIMIT_BYTES = 64 * 1024 * 1024;
@@ -136,7 +136,7 @@ function admitChangeSet(
     throw invalidUpload('--idempotency-key does not match the ChangeSet input.');
   }
   const candidate = idempotencyKey && existingKey === undefined ? { ...value, idempotencyKey } : value;
-  if (!Value.Check(ChangeSetSchema, candidate)) {
+  if (!checkOutlineSchema(ChangeSetSchema, candidate)) {
     throw invalidUpload('ChangeSet input does not match the public schema.');
   }
   return candidate;

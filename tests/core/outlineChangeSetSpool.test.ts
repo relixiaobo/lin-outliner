@@ -77,7 +77,7 @@ function createChangeSet(): ChangeSet {
     kind: 'outline.changeset',
     operations: [{
       op: 'create',
-      parents: { target: { selector: { by: 'alias', alias: 'today' }, cardinality: 'one' } },
+      placement: { kind: 'last', parent: { target: { selector: { by: 'alias', alias: 'today' }, cardinality: 'one' } } },
       nodes: [{ content: { text: 'Spool input', marks: [], inlineRefs: [] }, children: [] }],
     }],
   };

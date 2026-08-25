@@ -30,6 +30,57 @@ Run `outline COMMAND --help` for the same command contract at runtime and
 - Every successful mutation returns one visible Operation or semantic no-change result.
 - Every `many` mutation is bounded by an explicit maximum.
 
+## Canonical Query Operators
+
+Structured queries use only the executable operators below. Omitted operators are not public.
+Use `--match` or positional text for common STRING_MATCH search, and use this canonical shape
+through `--query` or `--input` for advanced search.
+
+| Operator | Operands | Value format | Purpose | Canonical example |
+|---|---|---|---|---|
+| `STRING_MATCH` | `text` required; `operands` optional | Non-empty UTF-8 text. | Match indexed Node text, descriptions, tags, and field text. | `{"kind":"rule","op":"STRING_MATCH","text":"module"}` |
+| `REGEXP_MATCH` | `text` required; `operands` optional | A JavaScript regular expression body or /pattern/flags. | Match Node title or description text with a regular expression. | `{"kind":"rule","op":"REGEXP_MATCH","text":"/module/i"}` |
+| `HAS_TAG` | `tagDefId` required | n/a | Match Nodes carrying one exact tag definition. | `{"kind":"rule","op":"HAS_TAG","tagDefId":"tag:task"}` |
+| `TODO` | none | n/a | Match Nodes that display a checkbox. | `{"kind":"rule","op":"TODO"}` |
+| `DONE` | none | n/a | Match completed Nodes. | `{"kind":"rule","op":"DONE"}` |
+| `NOT_DONE` | none | n/a | Match checkbox Nodes that are not completed. | `{"kind":"rule","op":"NOT_DONE"}` |
+| `FIELD_IS` | `fieldDefId` required; `text` or `operands` required | One or more non-empty text values or referenced Node operands. | Match an exact field value. | `{"kind":"rule","op":"FIELD_IS","fieldDefId":"field:status","text":"Open"}` |
+| `FIELD_IS_NOT` | `fieldDefId` required; `text` or `operands` required | One or more non-empty text values or referenced Node operands. | Match Nodes with the field but without the specified value. | `{"kind":"rule","op":"FIELD_IS_NOT","fieldDefId":"field:status","text":"Closed"}` |
+| `FIELD_CONTAINS` | `fieldDefId` required; `text` or `operands` required | Non-empty UTF-8 text. | Match field values containing text. | `{"kind":"rule","op":"FIELD_CONTAINS","fieldDefId":"field:notes","text":"module"}` |
+| `IS_EMPTY` | `fieldDefId` required | n/a | Match Nodes where the field exists without a value. | `{"kind":"rule","op":"IS_EMPTY","fieldDefId":"field:owner"}` |
+| `IS_NOT_EMPTY` | `fieldDefId` required | n/a | Match Nodes where the field has a value. | `{"kind":"rule","op":"IS_NOT_EMPTY","fieldDefId":"field:owner"}` |
+| `HAS_FIELD` | `fieldDefId` optional | n/a | Match any field, or one exact field when fieldDefId is supplied. | `{"kind":"rule","op":"HAS_FIELD","fieldDefId":"field:status"}` |
+| `FIELD_IS_SET` | `fieldDefId` required | n/a | Match Nodes where the field has at least one value. | `{"kind":"rule","op":"FIELD_IS_SET","fieldDefId":"field:status"}` |
+| `FIELD_IS_NOT_SET` | `fieldDefId` required | n/a | Match Nodes where the field has no value, including an absent field. | `{"kind":"rule","op":"FIELD_IS_NOT_SET","fieldDefId":"field:status"}` |
+| `FIELD_IS_DEFINED` | `fieldDefId` required | n/a | Match Nodes where the field slot exists. | `{"kind":"rule","op":"FIELD_IS_DEFINED","fieldDefId":"field:status"}` |
+| `FIELD_IS_NOT_DEFINED` | `fieldDefId` required | n/a | Match Nodes where the field slot does not exist. | `{"kind":"rule","op":"FIELD_IS_NOT_DEFINED","fieldDefId":"field:status"}` |
+| `LT` | `fieldDefId` required; `text` or `operands` required | A number, date value, or field-compatible scalar. | Match field values less than a scalar value. | `{"kind":"rule","op":"LT","fieldDefId":"field:price","text":"10"}` |
+| `GT` | `fieldDefId` required; `text` or `operands` required | A number, date value, or field-compatible scalar. | Match field values greater than a scalar value. | `{"kind":"rule","op":"GT","fieldDefId":"field:price","text":"10"}` |
+| `DATE_OVERLAPS` | `fieldDefId` required; `text` or `operands` required | YYYY-MM-DD, YYYY-MM-DDTHH:mm, or start/end with "/". | Match date-field ranges overlapping one or more supplied ranges. | `{"kind":"rule","op":"DATE_OVERLAPS","fieldDefId":"field:due","text":"2026-08-24/2026-08-31"}` |
+| `OVERDUE` | `fieldDefId` optional | n/a | Match unfinished Nodes with overdue date values, optionally in one field. | `{"kind":"rule","op":"OVERDUE","fieldDefId":"field:due"}` |
+| `CREATED_LAST_DAYS` | `text` required; `operands` optional | A non-negative integer day count. | Match Nodes created within the last number of days. | `{"kind":"rule","op":"CREATED_LAST_DAYS","text":"7"}` |
+| `EDITED_LAST_DAYS` | `text` required; `operands` optional | A non-negative integer day count. | Match Nodes edited within the last number of days. | `{"kind":"rule","op":"EDITED_LAST_DAYS","text":"7"}` |
+| `DONE_LAST_DAYS` | `text` required; `operands` optional | A non-negative integer day count. | Match Nodes completed within the last number of days. | `{"kind":"rule","op":"DONE_LAST_DAYS","text":"7"}` |
+| `LINKS_TO` | `targetId` required | n/a | Match Nodes containing a reference to one exact target. | `{"kind":"rule","op":"LINKS_TO","targetId":"node:source"}` |
+| `CHILD_OF` | `targetId` required | n/a | Match direct children of a target, including referenced children. | `{"kind":"rule","op":"CHILD_OF","targetId":"node:project"}` |
+| `OWNED_BY` | `targetId` required | n/a | Match direct children owned by one exact parent. | `{"kind":"rule","op":"OWNED_BY","targetId":"node:project"}` |
+| `DESCENDANT_OF` | `targetId` required | n/a | Match descendants of one exact target. | `{"kind":"rule","op":"DESCENDANT_OF","targetId":"node:project"}` |
+| `DESCENDANT_OF_WITH_REFS` | `targetId` required | n/a | Match descendants and referenced content below one exact target. | `{"kind":"rule","op":"DESCENDANT_OF_WITH_REFS","targetId":"node:project"}` |
+| `PARENTS_DESCENDANTS` | none | n/a | Match descendants of the Saved Search parent. | `{"kind":"rule","op":"PARENTS_DESCENDANTS"}` |
+| `GRANDPARENTS_DESCENDANTS` | none | n/a | Match descendants of the Saved Search grandparent. | `{"kind":"rule","op":"GRANDPARENTS_DESCENDANTS"}` |
+| `PARENTS_DESCENDANTS_WITH_REFS` | none | n/a | Match descendants and referenced content below the Saved Search parent. | `{"kind":"rule","op":"PARENTS_DESCENDANTS_WITH_REFS"}` |
+| `GRANDPARENTS_DESCENDANTS_WITH_REFS` | none | n/a | Match descendants and referenced content below the Saved Search grandparent. | `{"kind":"rule","op":"GRANDPARENTS_DESCENDANTS_WITH_REFS"}` |
+| `SIBLING_NAMED` | `text` required; `operands` optional | Non-empty UTF-8 text. | Match descendants of a Saved Search sibling with the exact supplied name. | `{"kind":"rule","op":"SIBLING_NAMED","text":"Projects"}` |
+| `IN_LIBRARY` | none | n/a | Match direct children of Library. | `{"kind":"rule","op":"IN_LIBRARY"}` |
+| `ON_DAY_NODE` | none | n/a | Match direct children of a Daily Note day Node. | `{"kind":"rule","op":"ON_DAY_NODE"}` |
+| `FOR_DATE` | `text` or `operands` required | YYYY-MM-DD, YYYY-MM-DDTHH:mm, or start/end with "/". | Match Nodes associated with an exact date or date range. | `{"kind":"rule","op":"FOR_DATE","text":"2026-08-24"}` |
+| `FOR_RELATIVE_DATE` | `text` or `operands` required | today, yesterday, tomorrow, this/last/next week, month, or year, or a resolvable calendar operand. | Match Nodes associated with a relative calendar range. | `{"kind":"rule","op":"FOR_RELATIVE_DATE","text":"this week"}` |
+| `IS_TYPE` | `text` or `operands` required | node, tag, field, search, calendar, day, week, year, image, attachment, or code. | Match one or more Node type names. | `{"kind":"rule","op":"IS_TYPE","text":"attachment"}` |
+| `HAS_MEDIA` | none | n/a | Match image, audio, or video Nodes. | `{"kind":"rule","op":"HAS_MEDIA"}` |
+| `HAS_IMAGE` | none | n/a | Match image Nodes. | `{"kind":"rule","op":"HAS_IMAGE"}` |
+| `HAS_AUDIO` | none | n/a | Match attachment Nodes with an audio MIME type. | `{"kind":"rule","op":"HAS_AUDIO"}` |
+| `HAS_VIDEO` | none | n/a | Match attachment Nodes with a video MIME type. | `{"kind":"rule","op":"HAS_VIDEO"}` |
+
 ## Global Options
 
 Place global options before the command:
@@ -53,7 +104,7 @@ Place global options before the command:
 | `field` | Define, reuse, set, clear, remove, or select fields. |
 | `import` | Inspect external sources and plan reviewed imports through normalized data. |
 | `media` | Create and patch image or attachment Nodes. |
-| `reference` | Add, retarget, inline, and restore references. |
+| `reference` | Add, retarget, replace, inline, and restore references. |
 | `search` | Create, configure, ensure, and refresh Saved Searches. |
 | `tag` | Apply or remove tag definitions. |
 | `template` | Preview and apply tag-template backfill. |
@@ -70,20 +121,20 @@ Root commands cover discovery, direct Node operations, ChangeSets, history, and 
 | `outline status` | read-only; idempotent | Inspect Runtime presence and storage health without starting it. | `outline status` |
 | `outline capabilities` | metadata; idempotent | Print the executable CLI registry and optionally verify Runtime parity. | `outline capabilities [--runtime]` |
 | `outline schema` | metadata; idempotent | Print an exact public or command-specific JSON Schema. | `outline schema [SCHEMA\|COMMAND...]` |
-| `outline find` | read-only; idempotent | Find bounded Nodes with text shorthand or the canonical query grammar. | `outline find [TEXT] [OPTIONS]` |
-| `outline show` | read-only; idempotent | Read one deterministic target with a bounded Projection. | `outline show SELECTOR [PROJECTION OPTIONS]` |
+| `outline find` | read-only; idempotent | Find or exactly count Nodes with text shorthand, live Saved Searches, or canonical queries. | `outline find [TEXT] [OPTIONS]` |
+| `outline show` | read-only; idempotent | Read one or more exact targets with a bounded Projection. | `outline show SELECTOR... [PROJECTION OPTIONS]` |
 | `outline export` | read-only stream; idempotent | Export a bounded target as JSON, JSONL, Markdown, or OPML. | `outline export SELECTOR [PROJECTION OPTIONS] [--output FILE\|-]` |
 | `outline watch` | read-only stream; idempotent | Stream ordered, resumable Runtime events. | `outline watch [--cursor CURSOR] [--filter FILE\|-] [--projection FILE\|-]` |
 | `outline diff` | preview; idempotent | Normalize and preview one complete ChangeSet without writing. | `outline diff --input FILE\|- [--input-format json\|jsonl] [--output FILE\|-] [--idempotency-key KEY]` |
 | `outline apply` | exact apply; idempotent | Apply one exact reviewed Diff atomically. | `outline apply --input DIFF_FILE\|- [--yes]` |
 | `outline log` | read-only; idempotent | Read paginated durable Operation history. | `outline log [FILTER OPTIONS]` |
 | `outline revert` | recovery mutation; idempotent | Guard and exactly revert one retained Operation. | `outline revert OPERATION_ID [--idempotency-key KEY]` |
-| `outline undo` | recovery mutation; idempotent | Revert the latest applicable Operation. | `outline undo [--idempotency-key KEY]` |
-| `outline redo` | recovery mutation; idempotent | Revert the latest applicable revert Operation. | `outline redo [--idempotency-key KEY]` |
-| `outline add` | create; not idempotent | Create one complete typed Node tree below a parent. | `outline add PARENT TEXT \| add --input FILE\|-` |
+| `outline undo` | recovery mutation; idempotent | Revert the latest applicable Operation in one origin scope. | `outline undo [--origin ORIGIN] [--expect-operation ID] [--idempotency-key KEY]` |
+| `outline redo` | recovery mutation; idempotent | Revert the latest applicable revert Operation in one origin scope. | `outline redo [--origin ORIGIN] [--expect-operation ID] [--idempotency-key KEY]` |
+| `outline add` | create; not idempotent | Create one complete typed Node tree below a parent. | `outline add PARENT TEXT \| add --before\|--after SIBLING TEXT \| add --input FILE\|-` |
 | `outline set` | patch; idempotent | Patch content, description, code, checkbox, icon, banner, or image state. | `outline set TARGET [PROPERTY OPTIONS]` |
-| `outline move` | patch; idempotent | Move a bounded Node selection below one destination. | `outline move TARGET DESTINATION` |
-| `outline duplicate` | create; not idempotent | Duplicate a bounded Node selection below one destination. | `outline duplicate TARGET DESTINATION` |
+| `outline move` | patch; idempotent | Move a bounded Node selection below one destination. | `outline move TARGET DESTINATION \| move TARGET --before\|--after SIBLING \| move TARGET --previous\|--next` |
+| `outline duplicate` | create; not idempotent | Duplicate a bounded Node selection below one destination. | `outline duplicate TARGET DESTINATION \| duplicate TARGET --before\|--after SIBLING \| duplicate TARGET --previous\|--next` |
 | `outline merge` | destructive; not idempotent; destructive review required | Merge source Nodes into one target after exact Diff review. | `outline merge SOURCE TARGET` |
 | `outline indent` | patch; not idempotent | Move one Node below its preceding sibling. | `outline indent TARGET` |
 | `outline outdent` | patch; not idempotent | Move one Node after its parent. | `outline outdent TARGET` |
@@ -170,12 +221,13 @@ Create and patch image or attachment Nodes.
 
 ## Reference
 
-Add, retarget, inline, and restore references.
+Add, retarget, replace, inline, and restore references.
 
 | Command | Semantics | Purpose | Common syntax |
 |---|---|---|---|
 | `outline reference add` | patch; not idempotent | Add a reference from a bounded Node selection. | `outline reference add TARGET REFERENCE` |
-| `outline reference set` | replace; idempotent | Replace the target of an existing reference. | `outline reference set TARGET REFERENCE` |
+| `outline reference set` | patch; idempotent | Replace the target of an existing reference. | `outline reference set TARGET REFERENCE` |
+| `outline reference replace` | replace; not idempotent | Replace one content Node with a tree reference and move the original subtree to Trash. | `outline reference replace TARGET REFERENCE` |
 | `outline reference inline` | patch; not idempotent | Inline a referenced Node into one exact target. | `outline reference inline TARGET [REFERENCE]` |
 | `outline reference restore` | patch; not idempotent | Restore an inlined Node to a reference. | `outline reference restore TARGET REFERENCE` |
 

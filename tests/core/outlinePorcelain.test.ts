@@ -142,7 +142,10 @@ describe('outline porcelain CLI', () => {
       const reference = await jsonCommand(root, ['add', '@library', 'Reference target']);
       const referenceId = returnedIds(reference.data)[0]!;
       const rich = await jsonCommand(root, ['add', '--input', '-'], JSON.stringify({
-        parent: { target: { selector: { by: 'alias', alias: 'library' }, cardinality: 'one' } },
+        placement: {
+          kind: 'last',
+          parent: { target: { selector: { by: 'alias', alias: 'library' }, cardinality: 'one' } },
+        },
         nodes: [{
           content: {
             text: 'alpha keyword omega',
@@ -187,6 +190,104 @@ describe('outline porcelain CLI', () => {
       await runtime.stop();
     }
   });
+
+  test('expresses exact create, move, and duplicate placement through argv and exactly reverts each mutation', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      expect((await jsonCommand(root, ['add', '--input', '-'], JSON.stringify({
+        placement: {
+          kind: 'last',
+          parent: { target: { selector: { by: 'alias', alias: 'library' }, cardinality: 'one' } },
+        },
+        nodes: [
+          tree('Placement source', [tree('A'), tree('B'), tree('C')]),
+          tree('Placement destination', [tree('X'), tree('Y')]),
+        ],
+      }))).code).toBe(0);
+      const sourceId = nodeIdByText(runtime, 'Placement source');
+      const destinationId = nodeIdByText(runtime, 'Placement destination');
+      const aId = nodeIdByText(runtime, 'A');
+      const bId = nodeIdByText(runtime, 'B');
+      const cId = nodeIdByText(runtime, 'C');
+
+      await mutateAndRevert(root, runtime, ['add', '--before', bId, 'Before B'], (operation) => {
+        expect(childTexts(runtime, sourceId)).toEqual(['A', 'Before B', 'B', 'C']);
+        expect(returnedIds(operation)).toHaveLength(1);
+      });
+      await mutateAndRevert(root, runtime, ['add', '--after', bId, 'After B'], (operation) => {
+        expect(childTexts(runtime, sourceId)).toEqual(['A', 'B', 'After B', 'C']);
+        expect(returnedIds(operation)).toHaveLength(1);
+      });
+      await mutateAndRevert(root, runtime, ['move', bId, '--previous'], () => {
+        expect(childTexts(runtime, sourceId)).toEqual(['B', 'A', 'C']);
+      });
+      await mutateAndRevert(root, runtime, ['move', bId, '--next'], () => {
+        expect(childTexts(runtime, sourceId)).toEqual(['A', 'C', 'B']);
+      });
+      await mutateAndRevert(root, runtime, ['move', bId, destinationId, '--first'], () => {
+        expect(childTexts(runtime, destinationId)).toEqual(['B', 'X', 'Y']);
+      });
+      await mutateAndRevert(root, runtime, ['move', bId, destinationId, '--last'], () => {
+        expect(childTexts(runtime, destinationId)).toEqual(['X', 'Y', 'B']);
+      });
+      await mutateAndRevert(root, runtime, ['move', bId, destinationId, '--index', '1'], () => {
+        expect(childTexts(runtime, destinationId)).toEqual(['X', 'B', 'Y']);
+      });
+      await mutateAndRevert(root, runtime, ['duplicate', cId, '--previous'], (operation) => {
+        const copyId = returnedIds(operation)[0]!;
+        expect(runtime.workspace.documentState().nodes[sourceId]?.children).toEqual([aId, bId, copyId, cId]);
+      });
+      await mutateAndRevert(root, runtime, ['duplicate', cId, '--next'], (operation) => {
+        const copyId = returnedIds(operation)[0]!;
+        expect(runtime.workspace.documentState().nodes[sourceId]?.children).toEqual([aId, bId, cId, copyId]);
+      });
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('keeps retarget and content-to-reference replacement distinct and exactly reversible', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      expect((await jsonCommand(root, ['add', '--input', '-'], JSON.stringify({
+        placement: {
+          kind: 'last',
+          parent: { target: { selector: { by: 'alias', alias: 'library' }, cardinality: 'one' } },
+        },
+        nodes: [
+          tree('Reference replacement parent', [tree('Original subtree', [tree('Original child')])]),
+          tree('Canonical reference target'),
+        ],
+      }))).code).toBe(0);
+      const parentId = nodeIdByText(runtime, 'Reference replacement parent');
+      const originalId = nodeIdByText(runtime, 'Original subtree');
+      const originalChildId = nodeIdByText(runtime, 'Original child');
+      const canonicalId = nodeIdByText(runtime, 'Canonical reference target');
+      const operationCount = (await runtime.workspace.store.operations()).length;
+
+      const invalidRetarget = await jsonCommand(root, ['reference', 'set', originalId, canonicalId]);
+      expect(invalidRetarget).toMatchObject({ code: 3, error: { code: 'precondition_failed' } });
+      expect((await runtime.workspace.store.operations()).length).toBe(operationCount);
+      expect(runtime.workspace.documentState().nodes[originalId]?.parentId).toBe(parentId);
+
+      await mutateAndRevert(root, runtime, ['reference', 'replace', originalId, canonicalId], () => {
+        const state = runtime.workspace.documentState();
+        expect(state.nodes[originalId]).toMatchObject({ parentId: 'trash', trashedFromParentId: parentId });
+        expect(state.nodes[originalChildId]?.parentId).toBe(originalId);
+        expect(state.nodes[parentId]?.children.map((id) => state.nodes[id])).toContainEqual(
+          expect.objectContaining({ type: 'reference', targetId: canonicalId }),
+        );
+      });
+    } finally {
+      await runtime.stop();
+    }
+  });
 });
 
 function returnedIds(value: unknown): string[] {
@@ -196,6 +297,55 @@ function returnedIds(value: unknown): string[] {
       ? [(node as { id: string }).id]
       : []
   ));
+}
+
+async function mutateAndRevert(
+  root: string,
+  runtime: OutlineRuntimeServer,
+  args: readonly string[],
+  assertApplied: (operation: Operation) => void,
+): Promise<void> {
+  const before = JSON.parse(JSON.stringify(runtime.workspace.documentState())) as unknown;
+  const operationCount = (await runtime.workspace.store.operations()).length;
+  const result = await jsonCommand(root, args);
+  expect(result.code).toBe(0);
+  const operation = result.data as Operation;
+  const operationId = operation.operationId;
+  expect(typeof operationId).toBe('string');
+  expect(operation).toMatchObject({
+    kind: 'outline.operation',
+    operationId: expect.any(String),
+    affectedNodeCount: expect.any(Number),
+    recovery: { state: 'available' },
+  });
+  expect((await runtime.workspace.store.operations()).length).toBe(operationCount + 1);
+  assertApplied(operation);
+
+  const reverted = await jsonCommand(root, ['revert', operationId]);
+  expect(reverted).toMatchObject({ code: 0 });
+  expect(reverted.data).toMatchObject({ kind: 'outline.operation', revertsOperationId: operation.operationId });
+  expect(runtime.workspace.documentState()).toEqual(before);
+}
+
+function childTexts(runtime: OutlineRuntimeServer, parentId: string): string[] {
+  const state = runtime.workspace.documentState();
+  return state.nodes[parentId]!.children.map((id) => state.nodes[id]!.content.text);
+}
+
+function nodeIdByText(runtime: OutlineRuntimeServer, text: string): string {
+  const nodeId = Object.values(runtime.workspace.documentState().nodes)
+    .find((node) => node.content.text === text)?.id;
+  expect(nodeId).toBeDefined();
+  return nodeId!;
+}
+
+interface TestTree {
+  readonly content: { readonly text: string; readonly marks: readonly []; readonly inlineRefs: readonly [] };
+  readonly children: readonly TestTree[];
+}
+
+function tree(text: string, children: readonly TestTree[] = []): TestTree {
+  return { content: { text, marks: [], inlineRefs: [] }, children };
 }
 
 async function createTrashedNode(

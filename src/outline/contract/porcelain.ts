@@ -12,6 +12,8 @@ import {
   TagDefinitionPatchSchema,
   TargetRefSchema,
   TargetSpecSchema,
+  DestinationPlacementSchema,
+  PlacementSchema,
   ViewCreateSpecificationSchema,
   ViewDisplaySpecificationSchema,
   ViewFilterSpecificationSchema,
@@ -40,9 +42,8 @@ const TargetFieldSchema = Type.Object({ target: TargetRefSchema, field: TargetRe
 const TargetTagSchema = Type.Object({ target: TargetRefSchema, tag: TargetRefSchema }, closed);
 
 const AddInputSchema = Type.Object({
-  parent: TargetRefSchema,
+  placement: DestinationPlacementSchema,
   nodes: Type.Array(NodeDraftSchema, { minItems: 1, maxItems: 100_000 }),
-  index: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Null()])),
   bind: OptionalBind,
 }, closed);
 
@@ -77,14 +78,12 @@ const TextReplaceInputSchema = Type.Object({
 
 const MoveInputSchema = Type.Object({
   target: TargetRefSchema,
-  destination: TargetRefSchema,
-  index: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Null()])),
+  placement: PlacementSchema,
 }, closed);
 
 const DuplicateInputSchema = Type.Object({
   target: TargetRefSchema,
-  destination: TargetRefSchema,
-  index: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Null()])),
+  placement: PlacementSchema,
   bind: OptionalBind,
 }, closed);
 
@@ -319,11 +318,11 @@ function contract(inputSchema: TSchema, usage: string, options: readonly Command
 }
 
 const PORCELAIN_BASE_CONTRACTS = Object.freeze({
-  add: contract(AddInputSchema, 'add PARENT TEXT | add --input FILE|-', [parent, option('tree', 'FILE|-', 'Create a complete typed Node tree.'), option('type', 'TYPE', 'Set the root Node type.'), option('description', 'TEXT', 'Set the root description.'), option('index', 'INDEX', 'Insert at a zero-based child index.'), bind]),
+  add: contract(AddInputSchema, 'add PARENT TEXT | add --before|--after SIBLING TEXT | add --input FILE|-', [parent, option('tree', 'FILE|-', 'Create a complete typed Node tree.'), option('type', 'TYPE', 'Set the root Node type.'), option('description', 'TEXT', 'Set the root description.'), option('first', undefined, 'Insert first under PARENT.'), option('last', undefined, 'Insert last under PARENT.', { default: 'true' }), option('index', 'INDEX', 'Insert at a zero-based child index under PARENT.'), option('before', 'SIBLING', 'Insert immediately before one exact sibling; PARENT is not required.'), option('after', 'SIBLING', 'Insert immediately after one exact sibling; PARENT is not required.'), bind]),
   set: contract(SetInputSchema, 'set TARGET [PROPERTY OPTIONS]', [target, option('text', 'TEXT', 'Replace plain content.'), option('content', 'TEXT', 'Replace plain content.'), option('description', 'TEXT|null', 'Patch the description.'), option('code', 'LANGUAGE', 'Set code-block language.'), option('checkbox', 'BOOLEAN', 'Set checkbox visibility.'), option('icon', 'VALUE|null', 'Set the Node icon.'), option('icon-kind', 'KIND', 'Set the icon kind.'), option('banner', 'LEASE|null', 'Set the banner asset lease.'), option('image', 'LEASE', 'Set the image asset lease.'), option('media-url', 'URL', 'Set an external media URL.'), option('width', 'NUMBER', 'Set media width.'), option('height', 'NUMBER', 'Set media height.')]),
   'text replace': contract(TextReplaceInputSchema, 'text replace TARGET --find TEXT --replace TEXT | text replace --matching TEXT --max N --find TEXT --replace TEXT | text replace --input FILE|-', [target, option('matching', 'TEXT', 'Select a bounded many target with STRING_MATCH shorthand.'), option('query', 'JSON|FILE', 'Select with the canonical structured query.'), option('within', 'SELECTOR', 'Bound query selection below one exact Selector.'), option('include-trash', undefined, 'Include trashed Nodes in query selection.'), option('order', 'ORDER', 'Use document, created, updated, or text query order.', { default: 'document' }), option('max', 'N', 'Required maximum Node count for --matching or --query.'), option('find', 'TEXT', 'Literal text to replace.'), option('replace', 'TEXT', 'Replacement text; an empty string deletes matches.'), option('field', 'content|description|both', 'Select transformed fields.', { default: 'content' }), option('occurrence', 'first|all', 'Replace the first or all non-overlapping matches in each selected field.', { default: 'all' }), option('case-sensitive', 'BOOLEAN', 'Use case-sensitive literal matching.', { default: 'true' }), option('max-replacements', 'N', 'Bound total replacements across every selected Node.', { default: '1000' })]),
-  move: contract(MoveInputSchema, 'move TARGET DESTINATION', [target, option('destination', 'TARGET', 'Destination parent.'), option('index', 'INDEX', 'Destination child index.')]),
-  duplicate: contract(DuplicateInputSchema, 'duplicate TARGET DESTINATION', [target, option('destination', 'TARGET', 'Destination parent.'), option('index', 'INDEX', 'Destination child index.'), bind]),
+  move: contract(MoveInputSchema, 'move TARGET DESTINATION | move TARGET --before|--after SIBLING | move TARGET --previous|--next', [target, option('destination', 'TARGET', 'Destination parent for first, last, or index placement.'), option('first', undefined, 'Place first under DESTINATION.'), option('last', undefined, 'Place last under DESTINATION.', { default: 'true' }), option('index', 'INDEX', 'Place at a zero-based index under DESTINATION.'), option('before', 'SIBLING', 'Place immediately before one exact sibling.'), option('after', 'SIBLING', 'Place immediately after one exact sibling.'), option('previous', undefined, 'Move the selected sibling block one position earlier.'), option('next', undefined, 'Move the selected sibling block one position later.')]),
+  duplicate: contract(DuplicateInputSchema, 'duplicate TARGET DESTINATION | duplicate TARGET --before|--after SIBLING | duplicate TARGET --previous|--next', [target, option('destination', 'TARGET', 'Destination parent for first, last, or index placement.'), option('first', undefined, 'Place copies first under DESTINATION.'), option('last', undefined, 'Place copies last under DESTINATION.', { default: 'true' }), option('index', 'INDEX', 'Place copies at a zero-based index under DESTINATION.'), option('before', 'SIBLING', 'Place copies immediately before one exact sibling.'), option('after', 'SIBLING', 'Place copies immediately after one exact sibling.'), option('previous', undefined, 'Place each copy immediately before its source.'), option('next', undefined, 'Place each copy immediately after its source.'), bind]),
   merge: contract(MergeInputSchema, 'merge SOURCE TARGET', [option('source', 'TARGET', 'Source Node or bounded set.'), target]),
   indent: contract(TargetOnlySchema, 'indent TARGET', [target]),
   outdent: contract(TargetOnlySchema, 'outdent TARGET', [target]),
@@ -342,6 +341,7 @@ const PORCELAIN_BASE_CONTRACTS = Object.freeze({
   'definition merge': contract(MergeInputSchema, 'definition merge SOURCE TARGET', [option('source', 'TARGET', 'Source definitions.'), target]),
   'reference add': contract(ReferenceInputSchema, 'reference add TARGET REFERENCE', [target, option('reference', 'TARGET', 'Referenced Node target.')]),
   'reference set': contract(ReferenceInputSchema, 'reference set TARGET REFERENCE', [target, option('reference', 'TARGET', 'New referenced Node target.')]),
+  'reference replace': contract(ReferenceInputSchema, 'reference replace TARGET REFERENCE', [target, option('reference', 'TARGET', 'Referenced Node that replaces the content Node.')]),
   'reference inline': contract(ReferenceInputSchema, 'reference inline TARGET [REFERENCE]', [target, option('reference', 'TARGET', 'Referenced Node target.')]),
   'reference restore': contract(ReferenceInputSchema, 'reference restore TARGET REFERENCE', [target, option('reference', 'TARGET', 'Referenced Node target.')]),
   'view set': contract(ViewSetInputSchema, 'view set TARGET MODE | view set --input FILE|-', [target, option('mode', 'MODE', 'Set list, table, cards, or calendar mode.'), option('toolbar', 'BOOLEAN', 'Set toolbar visibility.'), option('group', 'FIELD|null', 'Set the grouping field.'), option('replace', 'JSON|FILE', 'Explicitly replace sort, filter, or display collections.')]),
@@ -397,6 +397,7 @@ const PORCELAIN_SUMMARIES = {
   'definition merge': 'Merge source definitions into one target after exact Diff review.',
   'reference add': 'Add a reference from a bounded Node selection.',
   'reference set': 'Replace the target of an existing reference.',
+  'reference replace': 'Replace one content Node with a tree reference and move the original subtree to Trash.',
   'reference inline': 'Inline a referenced Node into one exact target.',
   'reference restore': 'Restore an inlined Node to a reference.',
   'view set': 'Apply one complete declarative view patch with explicit collection replacement.',
@@ -449,7 +450,8 @@ const PORCELAIN_EXAMPLES = {
   'definition configure': ['outline definition configure field:status field --patch field-patch.json', 'outline definition configure --input definition-patch.json'],
   'definition merge': ['outline definition merge tag:duplicate tag:canonical --preview --idempotency-key cli:review-definition-merge', 'outline definition merge tag:duplicate tag:canonical --idempotency-key cli:review-definition-merge --expect-diff SHA256 --yes'],
   'reference add': ['outline reference add node:brief node:source', 'outline reference add --input references-many.json'],
-  'reference set': ['outline reference set node:reference node:new-target', 'outline reference set --input reference-replace.json'],
+  'reference set': ['outline reference set node:reference node:new-target', 'outline reference set --input reference-retarget.json'],
+  'reference replace': ['outline reference replace node:draft node:canonical', 'outline reference replace --input node-to-reference.json'],
   'reference inline': ['outline reference inline node:reference', 'outline reference inline --input reference-inline.json'],
   'reference restore': ['outline reference restore node:inline node:source', 'outline reference restore --input reference-restore.json'],
   'view set': ['outline view set node:projects table --toolbar true --group field:status', 'outline view set --input complete-view.json'],
@@ -485,7 +487,7 @@ const CREATE_COMMANDS = new Set<PorcelainCommandKey>([
 ]);
 const ENSURE_COMMANDS = new Set<PorcelainCommandKey>(['search ensure-tag', 'daily ensure']);
 const DESTRUCTIVE_COMMANDS = new Set<PorcelainCommandKey>(['text replace', 'merge', 'definition merge', 'purge']);
-const REPLACE_COMMANDS = new Set<PorcelainCommandKey>(['reference set']);
+const REPLACE_COMMANDS = new Set<PorcelainCommandKey>(['reference replace']);
 const IDEMPOTENT_COMMANDS = new Set<PorcelainCommandKey>([
   'set', 'text replace', 'move', 'done set', 'tag add', 'tag remove', 'field define', 'field set', 'field clear',
   'field remove', 'field reuse', 'field select', 'definition configure', 'reference set', 'view set',
@@ -494,7 +496,7 @@ const IDEMPOTENT_COMMANDS = new Set<PorcelainCommandKey>([
   'search set', 'search refresh', 'template apply', 'daily ensure', 'media set', 'trash', 'restore',
 ]);
 const EXACT_TARGET_COMMANDS = new Set<PorcelainCommandKey>([
-  'indent', 'outdent', 'done cycle', 'reference inline', 'reference restore', 'view sort set',
+  'indent', 'outdent', 'done cycle', 'reference replace', 'reference inline', 'reference restore', 'view sort set',
   'view sort remove', 'view filter set', 'view filter remove', 'view display set', 'view display remove',
 ]);
 

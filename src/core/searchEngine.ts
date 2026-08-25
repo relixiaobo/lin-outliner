@@ -216,6 +216,7 @@ export interface SearchRunOptions {
   limit?: number;
   searchNodeId?: NodeId;
   textIndex?: TextSearchIndex;
+  includeTrash?: boolean;
 }
 
 export interface TransientSearchRunOptions extends SearchRunOptions, TransientSearchOptions {}
@@ -341,14 +342,17 @@ function runSearchExprInternal(
     textAnalysisByQuery: options.textIndex ? new Map<string, TextSearchQueryAnalysis>() : undefined,
   };
 
-  const candidateIds = candidateIdsForCompiledQuery(prepared.compiled, options.textIndex);
+  const candidateIds = options.includeTrash
+    ? null
+    : candidateIdsForCompiledQuery(prepared.compiled, options.textIndex);
   const candidateNodes = candidateIds
     ? [...candidateIds].map((nodeId) => prepared.evalIndex.nodes.get(nodeId)).filter((node): node is SearchNode => Boolean(node))
     : prepared.evalIndex.allNodes;
 
   const scored: SearchHit[] = [];
   for (const node of candidateNodes) {
-    if ((searchNode && node.id === searchNode.id) || !isSearchCandidate(prepared.evalIndex, node.id)) continue;
+    if ((searchNode && node.id === searchNode.id)
+      || !isSearchCandidate(prepared.evalIndex, node.id, options.includeTrash === true)) continue;
     const evaluation = evaluateCompiledCondition(prepared, node, context);
     if (!evaluation.ok) return evaluation;
     if (evaluation.match) scored.push({ nodeId: node.id, score: evaluation.score });
@@ -2114,10 +2118,10 @@ function uniqueDateRanges(ranges: DateRange[]): DateRange[] {
   return result;
 }
 
-function isSearchCandidate(index: SearchIndex, nodeId: NodeId): boolean {
+function isSearchCandidate(index: SearchIndex, nodeId: NodeId, includeTrash = false): boolean {
   const node = index.nodes.get(nodeId);
   if (!node) return false;
-  return !isInTrash(index, nodeId)
+  return (includeTrash || !isInTrash(index, nodeId))
     && !hasAncestorOfType(index, nodeId, 'queryCondition')
     && !SYSTEM_IDS.has(nodeId)
     && (node.type === undefined || ['tagDef', 'fieldDef', 'search', 'codeBlock', 'image', 'attachment'].includes(node.type));

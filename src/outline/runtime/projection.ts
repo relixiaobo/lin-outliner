@@ -22,9 +22,13 @@ export function projectOutline(
   const offset = decodePageCursor(projection.page?.cursor, projectionHash, core.revision());
   const limit = projection.page?.limit ?? DEFAULT_PAGE_LIMIT;
   const pageIds = selectedIds.slice(offset, offset + limit);
+  const includeBacklinks = projection.kind === 'backlinks' || projection.include?.includes('backlinks') === true;
   const nodes = projection.kind === 'backlinks'
-    ? pageIds.flatMap((nodeId) => core.backlinks(nodeId).map((backlink) => ({ targetId: nodeId, ...backlink })))
+    ? []
     : pageIds.map((nodeId) => projectNode(index.byId.get(nodeId)!, projection));
+  const backlinks = includeBacklinks
+    ? pageIds.flatMap((nodeId) => core.backlinks(nodeId).map((backlink) => ({ targetId: nodeId, ...backlink })))
+    : undefined;
   const nextOffset = offset + pageIds.length;
   return {
     projection,
@@ -41,6 +45,7 @@ export function projectOutline(
       todayId: document.todayId,
     },
     nodes,
+    ...(backlinks ? { backlinks } : {}),
     ...(nextOffset < selectedIds.length ? {
       cursor: encodePageCursor({ projectionHash, revision: core.revision(), offset: nextOffset }),
       truncated: true,

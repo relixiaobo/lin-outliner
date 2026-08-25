@@ -255,6 +255,57 @@ describe('outline CLI', () => {
     expect(await readdir(root)).toEqual([]);
   });
 
+  test('keeps undo help, schema, and argv origin guards in sync', async () => {
+    const root = await makeRoot();
+    const help = captureIo();
+    const schema = captureIo();
+    const invalid = captureIo();
+
+    expect(await runOutlineCli(['undo', '--help'], { runtimeRoot: root, io: help.io })).toBe(0);
+    expect(help.stdout).toContain('--origin ORIGIN');
+    expect(help.stdout).toContain('own, all, desktop, local-user, built-in-agent, or external-client');
+    expect(help.stdout).toContain('--expect-operation ID');
+    expect(help.stdout).toContain('(default: own)');
+    expect(help.stdout).toContain('outline undo --origin built-in-agent --expect-operation operation:example');
+
+    expect(await runOutlineCli(['--json', 'schema', 'undo'], { runtimeRoot: root, io: schema.io })).toBe(0);
+    const requestSchema = JSON.stringify(JSON.parse(schema.stdout).data.request);
+    expect(requestSchema).toContain('expectOperationId');
+    expect(requestSchema).toContain('built-in-agent');
+    expect(requestSchema).toContain('external-client');
+
+    expect(await runOutlineCli(['--json', 'undo', '--origin', 'agent'], {
+      runtimeRoot: root,
+      io: invalid.io,
+    })).toBe(2);
+    expect(JSON.parse(invalid.stdout)).toMatchObject({
+      ok: false,
+      error: { code: 'invalid_input', category: 'usage' },
+    });
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  test('renders exact find help and schema for live search and count forms', async () => {
+    const root = await makeRoot();
+    const help = captureIo();
+    const schema = captureIo();
+
+    expect(await runOutlineCli(['find', '--help'], { runtimeRoot: root, io: help.io })).toBe(0);
+    expect(help.stdout).toContain('--search SEARCH_ID');
+    expect(help.stdout).toContain('--count');
+    expect(help.stdout).toContain('--input FILE|-');
+    expect(help.stdout).toContain('named batch counts');
+    expect(help.stdout).toContain('outline find --search search:modules --count');
+
+    expect(await runOutlineCli(['--json', 'schema', 'find'], { runtimeRoot: root, io: schema.io })).toBe(0);
+    const requestSchema = JSON.stringify(JSON.parse(schema.stdout).data.request);
+    expect(requestSchema).toContain('searchId');
+    expect(requestSchema).toContain('sharedQuery');
+    expect(requestSchema).toContain('queries');
+    expect(requestSchema).not.toContain('changeSet');
+    expect(await readdir(root)).toEqual([]);
+  });
+
   test('renders exact view sort add help with default and structured forms', async () => {
     const root = await makeRoot();
     const output = captureIo();
@@ -308,6 +359,86 @@ describe('outline CLI', () => {
     expect(requestSchema).toContain('maxReplacements');
     expect(requestSchema).toContain('caseSensitive');
     expect(requestSchema).not.toContain('changeSet');
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  test('derives placement and reference replacement help and schemas from their exact command contracts', async () => {
+    const root = await makeRoot();
+    const addHelp = captureIo();
+    const moveHelp = captureIo();
+    const referenceHelp = captureIo();
+    const replaceHelp = captureIo();
+    const addSchema = captureIo();
+    const replaceSchema = captureIo();
+
+    expect(await runOutlineCli(['add', '--help'], { runtimeRoot: root, io: addHelp.io })).toBe(0);
+    expect(addHelp.stdout).toContain('--first');
+    expect(addHelp.stdout).toContain('--last');
+    expect(addHelp.stdout).toContain('--index INDEX');
+    expect(addHelp.stdout).toContain('--before SIBLING');
+    expect(addHelp.stdout).toContain('--after SIBLING');
+    expect(addHelp.stdout).toContain('outline add --input complete-tree.json');
+
+    expect(await runOutlineCli(['move', '--help'], { runtimeRoot: root, io: moveHelp.io })).toBe(0);
+    expect(moveHelp.stdout).toContain('--previous');
+    expect(moveHelp.stdout).toContain('--next');
+    expect(moveHelp.stdout).toContain('zero-based index');
+
+    expect(await runOutlineCli(['reference', '--help'], { runtimeRoot: root, io: referenceHelp.io })).toBe(0);
+    expect(referenceHelp.stdout).toContain('replace');
+    expect(referenceHelp.stdout).toContain('Replace one content Node with a tree reference');
+    expect(await runOutlineCli(['reference', 'replace', '--help'], { runtimeRoot: root, io: replaceHelp.io })).toBe(0);
+    expect(replaceHelp.stdout).toContain('Behavior: replace; not idempotent');
+    expect(replaceHelp.stdout).toContain('outline reference replace node:draft node:canonical');
+
+    expect(await runOutlineCli(['--json', 'schema', 'add'], { runtimeRoot: root, io: addSchema.io })).toBe(0);
+    const addRequest = JSON.stringify(JSON.parse(addSchema.stdout).data.request);
+    for (const placement of ['first', 'last', 'index', 'before', 'after']) {
+      expect(addRequest).toContain(`\"const\":\"${placement}\"`);
+    }
+    expect(addRequest).not.toContain('\"const\":\"previous\"');
+    expect(addRequest).not.toContain('\"const\":\"next\"');
+
+    expect(await runOutlineCli(['--json', 'schema', 'reference', 'replace'], {
+      runtimeRoot: root,
+      io: replaceSchema.io,
+    })).toBe(0);
+    const replaceRequest = JSON.stringify(JSON.parse(replaceSchema.stdout).data.request);
+    expect(replaceRequest).toContain('target');
+    expect(replaceRequest).toContain('reference');
+    expect(replaceRequest).not.toContain('changeSet');
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  test('publishes only executable query operators through schema and completion metadata', async () => {
+    const root = await makeRoot();
+    const schema = captureIo();
+    const capabilities = captureIo();
+
+    expect(await runOutlineCli(['--json', 'schema', 'QueryExpression'], {
+      runtimeRoot: root,
+      io: schema.io,
+    })).toBe(0);
+    const querySchema = JSON.stringify(JSON.parse(schema.stdout).data);
+    expect(querySchema).toContain('STRING_MATCH');
+    expect(querySchema).toContain('FIELD_IS');
+    expect(querySchema).not.toContain('EDITED_BY');
+
+    expect(await runOutlineCli(['--json', 'capabilities'], {
+      runtimeRoot: root,
+      io: capabilities.io,
+    })).toBe(0);
+    const manifest = JSON.parse(capabilities.stdout).data as Array<{
+      name: string;
+      completion: { queryOperators?: Array<{ name: string; summary: string }> };
+    }>;
+    const findOperators = manifest.find((entry) => entry.name === 'find')?.completion.queryOperators ?? [];
+    expect(findOperators).toContainEqual({
+      name: 'STRING_MATCH',
+      summary: expect.stringContaining('indexed Node text'),
+    });
+    expect(findOperators.some((entry) => entry.name === 'EDITED_BY')).toBe(false);
+    expect(manifest.find((entry) => entry.name === 'show')?.completion.queryOperators).toBeUndefined();
     expect(await readdir(root)).toEqual([]);
   });
 
@@ -421,28 +552,44 @@ describe('outline CLI', () => {
       })).toBe(0);
       const secondOperation = JSON.parse(second.stdout).data;
       const undone = captureIo();
-      expect(await runOutlineCli(['--json', '--no-start', 'undo', '--idempotency-key', 'cli:undo-history'], {
+      expect(await runOutlineCli([
+        '--json', '--no-start', 'undo', '--origin', 'own',
+        '--expect-operation', secondOperation.operationId,
+        '--idempotency-key', 'cli:undo-history',
+      ], {
         runtimeRoot: runningRoot,
         io: undone.io,
       })).toBe(0);
       const undoOperation = JSON.parse(undone.stdout).data;
       expect(undoOperation.revertsOperationId).toBe(secondOperation.operationId);
       const repeatedUndo = captureIo();
-      expect(await runOutlineCli(['--json', '--no-start', 'undo', '--idempotency-key', 'cli:undo-history'], {
+      expect(await runOutlineCli([
+        '--json', '--no-start', 'undo', '--origin', 'own',
+        '--expect-operation', secondOperation.operationId,
+        '--idempotency-key', 'cli:undo-history',
+      ], {
         runtimeRoot: runningRoot,
         io: repeatedUndo.io,
       })).toBe(0);
       expect(JSON.parse(repeatedUndo.stdout).data.operationId).toBe(undoOperation.operationId);
 
       const redone = captureIo();
-      expect(await runOutlineCli(['--json', '--no-start', 'redo', '--idempotency-key', 'cli:redo-history'], {
+      expect(await runOutlineCli([
+        '--json', '--no-start', 'redo', '--origin', 'own',
+        '--expect-operation', undoOperation.operationId,
+        '--idempotency-key', 'cli:redo-history',
+      ], {
         runtimeRoot: runningRoot,
         io: redone.io,
       })).toBe(0);
       const redoOperation = JSON.parse(redone.stdout).data;
       expect(redoOperation.revertsOperationId).toBe(undoOperation.operationId);
       const repeatedRedo = captureIo();
-      expect(await runOutlineCli(['--json', '--no-start', 'redo', '--idempotency-key', 'cli:redo-history'], {
+      expect(await runOutlineCli([
+        '--json', '--no-start', 'redo', '--origin', 'own',
+        '--expect-operation', undoOperation.operationId,
+        '--idempotency-key', 'cli:redo-history',
+      ], {
         runtimeRoot: runningRoot,
         io: repeatedRedo.io,
       })).toBe(0);
@@ -665,6 +812,94 @@ describe('outline CLI', () => {
     }
   });
 
+  test('runs exact and batch counts, live Saved Searches, and multi-ID reads through the CLI', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const add = async (text: string) => {
+      const output = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'add', '@today', text], {
+        runtimeRoot: root,
+        io: output.io,
+      })).toBe(0);
+      return Object.values(runtime.workspace.documentState().nodes)
+        .find((node) => node.content.text === text)!.id;
+    };
+    try {
+      const alphaId = await add('Batch scope alpha');
+      const betaId = await add('Batch scope beta');
+      await add('Outside scope alpha');
+
+      const count = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'find', 'Batch scope', '--count'], {
+        runtimeRoot: root,
+        io: count.io,
+      })).toBe(0);
+      expect(JSON.parse(count.stdout).data).toEqual(expect.objectContaining({
+        kind: 'outline.count',
+        exact: true,
+        count: 2,
+      }));
+
+      const batchRequest = {
+        mode: 'count',
+        sharedQuery: { kind: 'rule', op: 'STRING_MATCH', text: 'Batch scope' },
+        queries: [
+          { name: 'alpha', query: { kind: 'rule', op: 'STRING_MATCH', text: 'alpha' } },
+          { name: 'beta', query: { kind: 'rule', op: 'STRING_MATCH', text: 'beta' } },
+        ],
+      };
+      const batch = captureIo(JSON.stringify(batchRequest));
+      expect(await runOutlineCli(['--json', '--no-start', 'find', '--input', '-'], {
+        runtimeRoot: root,
+        io: batch.io,
+      })).toBe(0);
+      expect(JSON.parse(batch.stdout).data).toMatchObject({
+        kind: 'outline.batch-count',
+        exact: true,
+        counts: [{ name: 'alpha', count: 1 }, { name: 'beta', count: 1 }],
+      });
+
+      const shown = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'show', betaId, alphaId], {
+        runtimeRoot: root,
+        io: shown.io,
+      })).toBe(0);
+      expect(JSON.parse(shown.stdout).data.nodes.map((node: { id: string }) => node.id)).toEqual([betaId, alphaId]);
+
+      await add('live-module first');
+      const createdSearch = captureIo();
+      expect(await runOutlineCli([
+        '--json', '--no-start', 'search', 'create', '--title', 'Live module query', '--match', 'live-module',
+      ], { runtimeRoot: root, io: createdSearch.io })).toBe(0);
+      const searchId = Object.values(runtime.workspace.documentState().nodes)
+        .find((node) => node.type === 'search' && node.content.text === 'Live module query')!.id;
+      const laterId = await add('live-module added later');
+      const state = runtime.workspace.documentState();
+      expect(state.nodes[searchId]!.children
+        .map((childId) => state.nodes[childId])
+        .filter((node) => node?.type === 'reference')
+        .map((node) => node.targetId)).not.toContain(laterId);
+
+      const liveCount = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'find', '--search', searchId, '--count'], {
+        runtimeRoot: root,
+        io: liveCount.io,
+      })).toBe(0);
+      expect(JSON.parse(liveCount.stdout).data.count).toBe(2);
+
+      const liveNodes = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'find', '--search', searchId, '--limit', '10'], {
+        runtimeRoot: root,
+        io: liveNodes.io,
+      })).toBe(0);
+      expect(JSON.parse(liveNodes.stdout).data.nodes.map((node: { id: string }) => node.id)).toContain(laterId);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   test('ensures and reads a Daily Note through the real CLI path', async () => {
     const root = await makeRoot();
     const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
@@ -735,7 +970,7 @@ describe('outline CLI', () => {
         kind: 'outline.changeset',
         operations: [{
           op: 'create',
-          parents: { target: { selector: { by: 'alias', alias: 'today' }, cardinality: 'one' } },
+          placement: { kind: 'last', parent: { target: { selector: { by: 'alias', alias: 'today' }, cardinality: 'one' } } },
           nodes: [
             { content: { text: largeText, marks: [], inlineRefs: [] }, children: [] },
             { content: { text: largeText, marks: [], inlineRefs: [] }, children: [] },
@@ -1126,9 +1361,9 @@ function createTodayChangeSet(text: string): ChangeSet {
     kind: 'outline.changeset',
     operations: [{
       op: 'create',
-      parents: {
+      placement: { kind: 'last', parent: {
         target: { selector: { by: 'alias', alias: 'today' }, cardinality: 'one' },
-      },
+      } },
       nodes: [{ content: { text, marks: [], inlineRefs: [] }, children: [] }],
       bind: 'created',
     }],

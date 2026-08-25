@@ -218,7 +218,7 @@ function largeTreeChangeSet(): ChangeSet {
     source: { kind: 'automation', label: 'repeatable Runtime performance probe' },
     operations: [{
       op: 'create',
-      parents: oneAlias('inbox'),
+      placement: { kind: 'last', parent: oneAlias('inbox') },
       nodes: roots,
       bind: 'largeTree',
     }],
@@ -235,7 +235,7 @@ function hundredDateChangeSet(): ChangeSet {
     operations.push({ op: 'ensure', resource: 'date', date: localDate, bind: `date${index}` });
     operations.push({
       op: 'create',
-      parents: { binding: `date${index}` },
+      placement: { kind: 'last', parent: { binding: `date${index}` } },
       nodes: [draft(`Runtime probe date ${localDate}`)],
     });
   }

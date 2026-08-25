@@ -292,7 +292,18 @@ omitted patch properties from explicit replacement, and common STRING_MATCH
 shorthand from canonical structured queries. It teaches stable aliases including
 `@library` and `@saved-searches`, bounded selector cardinality, complete-resource
 creation, one-Operation settlement, exact Diff review, and guarded revert. It
-does not copy schemas or parser tables into Skill text.
+does not copy schemas or parser tables into Skill text. The executable query
+operator inventory and operand formats are generated from the public query
+registry into `references/commands.md` and remain available exactly through
+`outline schema QueryExpression`.
+
+Three frequent modeling rules remain in the entrypoint because they change
+ordinary task decisions. A document table is one owner with table view state,
+direct child row Nodes, field-backed cells, and explicit display/group/sort
+configuration; it is not Markdown or aligned text. Date field values use
+`YYYY-MM-DD`, `YYYY-MM-DDTHH:mm`, or `start/end`, and local Daily Note dates are
+not timezone-converted. Final Agent answers reference persisted Nodes as
+`[[node:^exact-id]]` so the client resolves current titles.
 
 Its Agent-facing information architecture has four layers. `SKILL.md` teaches
 the inspect/choose/review/execute/verify/recover loop. A generated

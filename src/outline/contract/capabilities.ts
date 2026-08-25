@@ -11,9 +11,12 @@ import {
   WatchRequestSchema,
   OperationSchema,
   NoChangeResultSchema,
+  OutlineBatchCountResultSchema,
+  OutlineCountResultSchema,
   OperationLogPageSchema,
   ProjectionResultSchema,
   ProjectionSchema,
+  QueryExpressionSchema,
   RuntimeStatusSchema,
   SelectorSchema,
   TargetRefSchema,
@@ -27,6 +30,7 @@ import {
   type PorcelainContract,
 } from './porcelain';
 import { canonicalSha256 } from './canonical';
+import { OUTLINE_QUERY_OPERATORS } from './queryOperators';
 
 export type OutlineCapabilityKind = 'local' | 'read' | 'mutate' | 'observe' | 'asset';
 
@@ -49,6 +53,33 @@ const closed = { additionalProperties: false } as const;
 const EmptyInput = Type.Object({}, closed);
 const EmptyResult = Type.Object({}, closed);
 const SelectorInput = Type.Object({ selector: SelectorSchema, projection: Type.Optional(ProjectionSchema) }, closed);
+const FindProjectionInput = Type.Object({
+  target: TargetSpecSchema,
+  projection: Type.Optional(ProjectionSchema),
+}, closed);
+const FindCountInput = Type.Union([
+  Type.Object({
+    mode: Type.Literal('count'),
+    query: QueryExpressionSchema,
+    within: Type.Optional(SelectorSchema),
+    includeTrash: Type.Optional(Type.Boolean()),
+  }, closed),
+  Type.Object({
+    mode: Type.Literal('count'),
+    searchId: Type.String({ minLength: 1, maxLength: 256 }),
+  }, closed),
+  Type.Object({
+    mode: Type.Literal('count'),
+    queries: Type.Array(Type.Object({
+      name: Type.String({ pattern: '^[A-Za-z][A-Za-z0-9_-]{0,63}$' }),
+      query: QueryExpressionSchema,
+    }, closed), { minItems: 1, maxItems: 256 }),
+    sharedQuery: Type.Optional(QueryExpressionSchema),
+    within: Type.Optional(SelectorSchema),
+    includeTrash: Type.Optional(Type.Boolean()),
+  }, closed),
+]);
+const FindInput = Type.Union([FindProjectionInput, FindCountInput]);
 const MutationInput = Type.Object({
   changeSet: ChangeSetSchema,
   preview: Type.Optional(Type.Boolean()),
@@ -76,7 +107,7 @@ function fixedHelp(value: CommandHelpContract): CommandHelpContract {
   });
 }
 
-const selectorSyntax = 'Selectors accept exact IDs, typed IDs, @aliases, @date:YYYY-MM-DD, or structured Selector JSON where the command permits it.';
+const selectorSyntax = 'Selectors accept exact IDs, ordered ID lists, typed IDs, @aliases, @date:YYYY-MM-DD, live Saved Searches, or structured Selector JSON where the command permits it.';
 const projectionOutput = 'Returns a bounded Projection with revision and pagination metadata.';
 const noDefaults = Object.freeze([]) as readonly string[];
 
@@ -103,7 +134,7 @@ export const OUTLINE_COMMAND_FAMILIES = Object.freeze([
   { name: 'field', summary: 'Define, reuse, set, clear, remove, or select fields.' },
   { name: 'import', summary: 'Inspect external sources and plan reviewed imports through normalized data.' },
   { name: 'media', summary: 'Create and patch image or attachment Nodes.' },
-  { name: 'reference', summary: 'Add, retarget, inline, and restore references.' },
+  { name: 'reference', summary: 'Add, retarget, replace, inline, and restore references.' },
   { name: 'search', summary: 'Create, configure, ensure, and refresh Saved Searches.' },
   { name: 'tag', summary: 'Apply or remove tag definitions.' },
   { name: 'template', summary: 'Preview and apply tag-template backfill.' },
@@ -121,7 +152,7 @@ const READ_OPTIONS = Object.freeze([
   option('cursor', 'CURSOR', 'Continue a bounded Projection page.'),
   option('kind', 'KIND', 'Select summary, node, outline, backlinks, view, or export Projection.'),
   option('depth', 'N', 'Bound descendant depth.'),
-  option('include', 'LIST', 'Comma-separated description, children, tags, fields, references, media, view, or trash.'),
+  option('include', 'LIST', 'Comma-separated description, children, tags, fields, references, media, view, trash, or backlinks.'),
   option('format', 'FORMAT', 'Select json, jsonl, markdown, or opml Projection format.'),
   option('projection', 'FILE|-', 'Read one complete structured Projection; cannot be mixed with leaf Projection options.'),
 ]);
@@ -155,17 +186,17 @@ const FIXED_COMMAND_HELP = Object.freeze({
   version: fixedHelp({ usage: 'version', summary: 'Print CLI, app, protocol, and storage versions.', behavior: 'metadata', idempotent: true, positionals: [], options: [], selectors: 'No selectors.', cardinality: 'Not applicable.', input: 'No input.', output: 'Writes version fields; human output is one concise line.', defaults: noDefaults, destructive: false, examples: ['outline version', 'outline --json version'] }),
   status: fixedHelp({ usage: 'status', summary: 'Inspect Runtime presence and storage health without starting it.', behavior: 'read-only', idempotent: true, positionals: [], options: [], selectors: 'No selectors.', cardinality: 'Not applicable.', input: 'No input.', output: 'Returns Runtime, transaction-log, and recovery state.', defaults: noDefaults, destructive: false, examples: ['outline status', 'outline --json status'] }),
   capabilities: fixedHelp({ usage: 'capabilities [--runtime]', summary: 'Print the executable CLI registry and optionally verify Runtime parity.', behavior: 'metadata', idempotent: true, positionals: [], options: [option('runtime', undefined, 'Compare the bundled registry with the running Runtime without accepting drift.')], selectors: 'No selectors.', cardinality: 'Not applicable.', input: 'No structured input.', output: 'Returns command schemas plus help and completion metadata.', defaults: ['Without --runtime, reads only the bundled registry.'], destructive: false, examples: ['outline capabilities', 'outline --json capabilities --runtime'] }),
-  schema: fixedHelp({ usage: 'schema [SCHEMA|COMMAND...]', summary: 'Print an exact public or command-specific JSON Schema.', behavior: 'metadata', idempotent: true, positionals: ['SCHEMA names a public schema; COMMAND may contain multiple command-path words.'], options: [], selectors: 'No selectors.', cardinality: 'Not applicable.', input: 'The positional name is optional; omission returns every public schema.', output: 'Returns JSON Schema. Command schemas contain exact CLI request and result contracts.', defaults: ['Omitting the name returns all public schemas.'], destructive: false, examples: ['outline schema Selector', 'outline schema search create', 'outline --json schema view sort add'] }),
-  find: fixedHelp({ usage: 'find [TEXT] [OPTIONS]', summary: 'Find bounded Nodes with text shorthand or the canonical query grammar.', behavior: 'read-only', idempotent: true, positionals: ['TEXT is ergonomic STRING_MATCH shorthand; use --query for canonical structured queries.'], options: [option('query', 'FILE|-', 'Read a canonical structured query.'), option('within', 'FILE|-', 'Bound the query below one structured Selector.'), option('include-trash', undefined, 'Include trashed Nodes.'), option('order', 'ORDER', 'Use document, created, updated, or text order.', { default: 'document' }), ...READ_OPTIONS], selectors: selectorSyntax, cardinality: 'Find always uses cardinality many with an explicit --limit bound.', input: 'Use TEXT for common search or --query FILE|- for canonical JSON; do not combine --selector and --query.', output: projectionOutput, defaults: ['Limit defaults to 100.', 'Projection kind defaults to summary.'], destructive: false, examples: ['outline find "quarterly plan" --limit 20', 'outline find --query query.json --within project-selector.json', 'outline --json find "module" --kind summary'] }),
-  show: fixedHelp({ usage: 'show SELECTOR [PROJECTION OPTIONS]', summary: 'Read one deterministic target with a bounded Projection.', behavior: 'read-only', idempotent: true, positionals: ['SELECTOR is one exact ID, typed ID, @alias, or @date:YYYY-MM-DD.'], options: READ_OPTIONS, selectors: selectorSyntax, cardinality: 'Exact selectors use cardinality one; a structured query selector must carry a bounded cardinality.', input: 'Use positional shorthand, --selector FILE|-, or one complete --projection FILE|-.', output: projectionOutput, defaults: ['Limit defaults to 100.', 'Projection kind defaults to node.'], destructive: false, examples: ['outline show node:project', 'outline show @today --kind outline --depth 2', 'outline --json show node:project --include tags,fields,references'] }),
+  schema: fixedHelp({ usage: 'schema [SCHEMA|COMMAND...]', summary: 'Print an exact public or command-specific JSON Schema.', behavior: 'metadata', idempotent: true, positionals: ['SCHEMA names a public schema; COMMAND may contain multiple command-path words.'], options: [], selectors: 'No selectors.', cardinality: 'Not applicable.', input: 'The positional name is optional; omission returns every public schema.', output: 'Returns JSON Schema. Command schemas contain exact CLI request and result contracts.', defaults: ['Omitting the name returns all public schemas.'], destructive: false, examples: ['outline schema QueryExpression', 'outline schema search create', 'outline --json schema view sort add'] }),
+  find: fixedHelp({ usage: 'find [TEXT] [OPTIONS]', summary: 'Find or exactly count Nodes with text shorthand, live Saved Searches, or canonical queries.', behavior: 'read-only', idempotent: true, positionals: ['TEXT is ergonomic STRING_MATCH shorthand; use --query for one canonical query.'], options: [option('query', 'FILE|-', 'Read one canonical structured query.'), option('search', 'SEARCH_ID', 'Execute a Saved Search live without refreshing materialized children.'), option('count', undefined, 'Return an exact count without Node payloads.'), option('input', 'FILE|-', 'Read one complete find request, including named batch counts and an optional sharedQuery.'), option('within', 'FILE|-', 'Bound the query below one structured Selector.'), option('include-trash', undefined, 'Include trashed Nodes in transient query execution.'), option('order', 'ORDER', 'Use document, created, updated, or text order.', { default: 'document' }), ...READ_OPTIONS], selectors: selectorSyntax, cardinality: 'Node results use cardinality many with explicit --limit; count forms are exact and return no Nodes.', input: 'Use TEXT for common search, --query for one canonical query, --search for a live Saved Search, or --input alone for the exact command schema. Run outline schema QueryExpression for every executable structured operator.', output: 'Returns a bounded Projection, one exact count, or named exact batch counts. Batch sharedQuery is combined with every query using canonical AND.', defaults: ['Limit defaults to 100 for Node results.', 'Projection kind defaults to summary.'], destructive: false, examples: ['outline find "quarterly plan" --limit 20', 'outline find --search search:modules --count', 'outline find --input named-counts.json'] }),
+  show: fixedHelp({ usage: 'show SELECTOR... [PROJECTION OPTIONS]', summary: 'Read one or more exact targets with a bounded Projection.', behavior: 'read-only', idempotent: true, positionals: ['Each SELECTOR is an exact ID, typed ID, @alias, or @date:YYYY-MM-DD; multiple positional values form one ordered ID selector.'], options: READ_OPTIONS, selectors: selectorSyntax, cardinality: 'One positional selector uses cardinality one; multiple exact IDs and structured query/search selectors use bounded many.', input: 'Use positional shorthand, --selector FILE|-, or one complete --projection FILE|-.', output: projectionOutput, defaults: ['Limit defaults to 100.', 'Projection kind defaults to node.'], destructive: false, examples: ['outline show node:project', 'outline show node:first node:second --include backlinks', 'outline show @today --kind outline --depth 2'] }),
   export: fixedHelp({ usage: 'export SELECTOR [PROJECTION OPTIONS] [--output FILE|-]', summary: 'Export a bounded target as JSON, JSONL, Markdown, or OPML.', behavior: 'read-only stream', idempotent: true, positionals: ['SELECTOR is one exact ID, typed ID, @alias, or @date:YYYY-MM-DD.'], options: [...READ_OPTIONS, option('output', 'FILE|-', 'Write atomically to a file or stream raw records to stdout.')], selectors: selectorSyntax, cardinality: 'The Projection must remain bounded by target cardinality, page limit, and depth.', input: 'Use positional shorthand, --selector FILE|-, or one complete --projection FILE|-.', output: 'Streams the selected export format; file output is atomic and reports byte count plus SHA-256.', defaults: ['Format defaults to json.', 'Depth defaults to 1024 and includes all document resource fields.'], destructive: false, examples: ['outline export node:project --format markdown --output project.md', 'outline export @today --format jsonl --output -'] }),
   watch: fixedHelp({ usage: 'watch [--cursor CURSOR] [--filter FILE|-] [--projection FILE|-]', summary: 'Stream ordered, resumable Runtime events.', behavior: 'read-only stream', idempotent: true, positionals: [], options: [option('cursor', 'CURSOR', 'Resume after an emitted event cursor.'), option('filter', 'FILE|-', 'Read a structured EventFilter.'), option('projection', 'FILE|-', 'Attach one bounded Projection to matching events.')], selectors: 'Selectors appear only inside structured filter or Projection input.', cardinality: 'Any attached Projection must declare bounded target cardinality.', input: 'Filter and Projection use canonical JSON from a file or stdin.', output: 'Streams ordered event records and resumable cursors until interrupted.', defaults: ['Without a cursor, starts at the current live boundary.'], destructive: false, examples: ['outline watch', 'outline --json watch --cursor CURSOR --filter events.json'] }),
   diff: fixedHelp({ usage: 'diff --input FILE|- [--input-format json|jsonl] [--output FILE|-] [--idempotency-key KEY]', summary: 'Normalize and preview one complete ChangeSet without writing.', behavior: 'preview', idempotent: true, positionals: [], options: [option('input', 'FILE|-', 'Read one ChangeSet artifact.'), option('input-format', 'json|jsonl', 'Select canonical ChangeSet encoding.', { default: 'json' }), option('output', 'FILE|-', 'Write the Diff atomically or stream it.'), option('idempotency-key', 'KEY', 'Bind retries to one settled result.')], selectors: 'Selectors and bindings are declared inside the ChangeSet.', cardinality: 'Every mutating selector declares one, zero-or-one, or many; many requires max.', input: 'Accepts one canonical ChangeSet, including dependent resources and bindings.', output: 'Returns one immutable normalized Diff with diffHash, affected count, warnings, and recovery estimate.', defaults: ['Input format defaults to json.', 'Diffs above 8 MiB require --output.'], destructive: false, examples: ['outline diff --input changeset.json', 'outline diff --input changeset.jsonl --input-format jsonl --output reviewed-diff.json'] }),
   apply: fixedHelp({ usage: 'apply --input DIFF_FILE|- [--yes]', summary: 'Apply one exact reviewed Diff atomically.', behavior: 'exact apply', idempotent: true, positionals: [], options: [option('input', 'FILE|-', 'Read the exact Diff returned by outline diff.'), option('input-format', 'json', 'Diff artifacts use JSON.', { default: 'json' }), option('yes', undefined, 'Acknowledge a destructive reviewed Diff; never substitutes for preview/review.')], selectors: 'Target resolution is frozen in the reviewed Diff.', cardinality: 'Affected targets are exactly those recorded in the Diff.', input: 'Accepts one exact Diff artifact; create it with outline diff and do not reconstruct it.', output: 'Returns one Operation or semantic no-change result with affected count and recovery state.', defaults: ['Input format is json.'], destructive: false, examples: ['outline apply --input reviewed-diff.json', 'outline apply --input destructive-diff.json --yes'] }),
   log: fixedHelp({ usage: 'log [FILTER OPTIONS]', summary: 'Read paginated durable Operation history.', behavior: 'read-only', idempotent: true, positionals: [], options: [option('limit', 'N', 'Bound returned Operations.', { default: '100' }), option('cursor', 'CURSOR', 'Continue one history page.'), option('operation', 'ID', 'Select one Operation ID.'), option('idempotency-key', 'KEY', 'Select by idempotency key.'), option('node', 'ID', 'Select Operations affecting one Node.'), option('origin', 'ORIGIN', 'Filter by operation origin.'), option('thread', 'ID', 'Filter by Agent Thread.'), option('turn', 'ID', 'Filter by Agent Turn.'), option('item', 'ID', 'Filter by Agent Item.')], selectors: 'History filters use stable IDs, not display-text selection.', cardinality: 'Returns at most --limit Operations and an optional cursor.', input: 'All filters are argv options.', output: 'Returns Operation summaries, recovery state, and an optional cursor.', defaults: ['Limit defaults to the Runtime page default.'], destructive: false, examples: ['outline log --operation operation:example', 'outline log --node node:project --limit 20', 'outline log --idempotency-key import:2026-08-24'] }),
   revert: fixedHelp({ usage: 'revert OPERATION_ID [--idempotency-key KEY]', summary: 'Guard and exactly revert one retained Operation.', behavior: 'recovery mutation', idempotent: true, positionals: ['OPERATION_ID is the visible ID returned by the original mutation.'], options: [option('idempotency-key', 'KEY', 'Bind recovery and retries to one settled revert.')], selectors: 'The Operation fixes the affected target set.', cardinality: 'Reverts exactly one retained Operation as one new Operation.', input: 'Accepts one Operation ID.', output: 'Returns the revert Operation with affected count and recovery state; conflicts do not write.', defaults: ['The CLI generates a recovery key when omitted.'], destructive: false, examples: ['outline revert operation:example', 'outline --json revert operation:example --idempotency-key cli:revert-example'] }),
-  undo: fixedHelp({ usage: 'undo [--idempotency-key KEY]', summary: 'Revert the latest applicable Operation.', behavior: 'recovery mutation', idempotent: true, positionals: [], options: [option('idempotency-key', 'KEY', 'Bind recovery and retries to one settled undo.')], selectors: 'The latest applicable Operation fixes the target set.', cardinality: 'Reverts at most one Operation.', input: 'No positional input.', output: 'Returns one revert Operation.', defaults: ['The CLI generates a recovery key when omitted.'], destructive: false, examples: ['outline undo', 'outline --json undo --idempotency-key cli:undo-example'] }),
-  redo: fixedHelp({ usage: 'redo [--idempotency-key KEY]', summary: 'Revert the latest applicable revert Operation.', behavior: 'recovery mutation', idempotent: true, positionals: [], options: [option('idempotency-key', 'KEY', 'Bind recovery and retries to one settled redo.')], selectors: 'The latest applicable revert fixes the target set.', cardinality: 'Reapplies at most one Operation.', input: 'No positional input.', output: 'Returns one redo Operation.', defaults: ['The CLI generates a recovery key when omitted.'], destructive: false, examples: ['outline redo', 'outline --json redo --idempotency-key cli:redo-example'] }),
+  undo: fixedHelp({ usage: 'undo [--origin ORIGIN] [--expect-operation ID] [--idempotency-key KEY]', summary: 'Revert the latest applicable Operation in one origin scope.', behavior: 'recovery mutation', idempotent: true, positionals: [], options: [option('origin', 'ORIGIN', 'Select own, all, desktop, local-user, built-in-agent, or external-client.', { default: 'own' }), option('expect-operation', 'ID', 'Require this Operation to remain at the selected stack top.'), option('idempotency-key', 'KEY', 'Bind recovery and retries to one settled undo.')], selectors: 'The selected origin stack and optional Operation guard fix the target set.', cardinality: 'Reverts at most one Operation.', input: 'No positional input.', output: 'Returns one revert Operation.', defaults: ['Origin defaults to the authenticated caller origin.', 'The CLI generates a recovery key when omitted.'], destructive: false, examples: ['outline undo', 'outline undo --origin built-in-agent --expect-operation operation:example', 'outline --json undo --idempotency-key cli:undo-example'] }),
+  redo: fixedHelp({ usage: 'redo [--origin ORIGIN] [--expect-operation ID] [--idempotency-key KEY]', summary: 'Revert the latest applicable revert Operation in one origin scope.', behavior: 'recovery mutation', idempotent: true, positionals: [], options: [option('origin', 'ORIGIN', 'Select own, all, desktop, local-user, built-in-agent, or external-client.', { default: 'own' }), option('expect-operation', 'ID', 'Require this revert Operation to remain at the selected stack top.'), option('idempotency-key', 'KEY', 'Bind recovery and retries to one settled redo.')], selectors: 'The selected origin stack and optional Operation guard fix the target set.', cardinality: 'Reapplies at most one Operation.', input: 'No positional input.', output: 'Returns one redo Operation.', defaults: ['Origin defaults to the authenticated caller origin.', 'The CLI generates a recovery key when omitted.'], destructive: false, examples: ['outline redo', 'outline redo --origin built-in-agent --expect-operation operation:example', 'outline --json redo --idempotency-key cli:redo-example'] }),
   'asset ingest': fixedHelp({ usage: 'asset ingest PATH|-', summary: 'Stage verified asset bytes under a recovery-aware lease.', behavior: 'asset staging', idempotent: false, positionals: ['PATH reads one local file; - streams bytes from stdin.'], options: [], selectors: 'No Node selector; staging does not create a media Node.', cardinality: 'Stages exactly one asset lease.', input: 'Reads bytes from PATH or stdin.', output: 'Returns one AssetLease for later reviewed automation.', defaults: noDefaults, destructive: false, examples: ['outline asset ingest ./diagram.png', 'outline asset ingest - < attachment.pdf'] }),
   'asset show': fixedHelp({ usage: 'asset show ASSET_ID', summary: 'Read logical asset metadata.', behavior: 'read-only', idempotent: true, positionals: ['ASSET_ID is one retained AssetRecord ID.'], options: [], selectors: 'Uses one exact AssetRecord ID.', cardinality: 'Returns exactly one AssetRecord.', input: 'Accepts one AssetRecord ID.', output: 'Returns logical metadata and retention state, never asset bytes.', defaults: noDefaults, destructive: false, examples: ['outline asset show asset:example', 'outline --json asset show asset:example'] }),
   'asset export': fixedHelp({ usage: 'asset export ASSET_ID --output FILE|-', summary: 'Stream verified asset bytes.', behavior: 'read-only stream', idempotent: true, positionals: ['ASSET_ID is one retained AssetRecord ID.'], options: [option('output', 'FILE|-', 'Write atomically to a file or stream raw bytes to stdout.')], selectors: 'Uses one exact AssetRecord ID.', cardinality: 'Exports exactly one retained asset.', input: 'Accepts one AssetRecord ID and required output destination.', output: 'Writes verified bytes; file output reports byte count and SHA-256.', defaults: noDefaults, destructive: false, examples: ['outline asset export asset:example --output ./diagram.png', 'outline asset export asset:example --output - > diagram.png'] }),
@@ -182,12 +213,22 @@ function capability<TRequest extends TSchema, TResult extends TSchema>(
   return Object.freeze({ ...value, help });
 }
 
+function historySelectionSchema() {
+  return Type.Object({
+    origin: Type.Optional(Type.Union([
+      Type.Literal('own'), Type.Literal('all'), OperationSchema.properties.origin,
+    ])),
+    expectOperationId: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
+    idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
+  }, closed);
+}
+
 const FIXED_CAPABILITIES = [
   capability({ name: 'version', kind: 'local', runtimeRequired: false, streaming: false, destructive: false, auditCategory: 'metadata', summary: 'Print CLI, app, and protocol versions.', requestSchema: EmptyInput, resultSchema: Type.Object({ cliVersion: Type.String(), appVersion: Type.String(), protocolMajors: Type.Array(Type.Integer()), storageVersion: Type.Integer() }, closed), coverage: [] }),
   capability({ name: 'status', kind: 'local', runtimeRequired: false, streaming: false, destructive: false, auditCategory: 'metadata', summary: 'Inspect Runtime presence and storage health without starting it.', requestSchema: EmptyInput, resultSchema: RuntimeStatusSchema, coverage: [] }),
   capability({ name: 'capabilities', kind: 'local', runtimeRequired: false, streaming: false, destructive: false, auditCategory: 'metadata', summary: 'Print the executable public capability registry.', requestSchema: Type.Object({ runtime: Type.Optional(Type.Boolean()) }, closed), resultSchema: Type.Array(Type.Unknown()), coverage: [] }),
   capability({ name: 'schema', kind: 'local', runtimeRequired: false, streaming: false, destructive: false, auditCategory: 'metadata', summary: 'Print exact public JSON Schemas.', requestSchema: Type.Object({ name: Type.Optional(Type.String()) }, closed), resultSchema: Type.Unknown(), coverage: [] }),
-  capability({ name: 'find', kind: 'read', runtimeRequired: true, streaming: false, destructive: false, auditCategory: 'read.search', summary: 'Find bounded Nodes with the structured query grammar.', requestSchema: Type.Object({ target: TargetSpecSchema, projection: Type.Optional(ProjectionSchema) }, closed), resultSchema: ProjectionResultSchema, coverage: ['search_nodes'] }),
+  capability({ name: 'find', kind: 'read', runtimeRequired: true, streaming: false, destructive: false, auditCategory: 'read.search', summary: 'Find or exactly count Nodes with canonical queries or live Saved Searches.', requestSchema: FindInput, resultSchema: Type.Union([ProjectionResultSchema, OutlineCountResultSchema, OutlineBatchCountResultSchema]), coverage: ['search_nodes'] }),
   capability({ name: 'show', kind: 'read', runtimeRequired: true, streaming: false, destructive: false, auditCategory: 'read.node', summary: 'Read one deterministic target with a bounded Projection.', requestSchema: SelectorInput, resultSchema: ProjectionResultSchema, coverage: ['get_projection', 'backlinks'] }),
   capability({ name: 'export', kind: 'read', runtimeRequired: true, streaming: true, destructive: false, auditCategory: 'read.export', summary: 'Export a bounded target as JSON, JSONL, Markdown, or OPML.', requestSchema: SelectorInput, resultSchema: Type.Unknown(), coverage: [] }),
   capability({ name: 'watch', kind: 'observe', runtimeRequired: true, streaming: true, destructive: false, auditCategory: 'observe', summary: 'Stream ordered resumable Runtime events.', requestSchema: WatchRequestSchema, resultSchema: EventSchema, coverage: ['document_events'] }),
@@ -195,8 +236,8 @@ const FIXED_CAPABILITIES = [
   capability({ name: 'apply', kind: 'mutate', runtimeRequired: true, streaming: false, destructive: false, auditCategory: 'mutation.apply', summary: 'Apply one exact reviewed Diff atomically.', requestSchema: Type.Object({ diff: DiffSchema, acknowledgeDestructive: Type.Optional(Type.Boolean()) }, closed), resultSchema: Type.Union([OperationSchema, NoChangeResultSchema]), coverage: [] }),
   capability({ name: 'log', kind: 'read', runtimeRequired: true, streaming: false, destructive: false, auditCategory: 'history.read', summary: 'Read paginated durable Operation history.', requestSchema: Type.Object({ cursor: Type.Optional(Type.String({ minLength: 1, maxLength: 4_096 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 1_000 })), operationId: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })), nodeId: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })), origin: Type.Optional(OperationSchema.properties.origin), threadId: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })), turnId: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })), itemId: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })) }, closed), resultSchema: OperationLogPageSchema, coverage: ['operation_history'] }),
   capability({ name: 'revert', kind: 'mutate', runtimeRequired: true, streaming: false, destructive: false, auditCategory: 'history.revert', summary: 'Guard and exactly revert a retained Operation.', requestSchema: Type.Object({ operationId: Type.String({ minLength: 1 }), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })) }, closed), resultSchema: OperationSchema, coverage: [] }),
-  capability({ name: 'undo', kind: 'mutate', runtimeRequired: true, streaming: false, destructive: false, auditCategory: 'history.undo', summary: 'Revert the latest applicable Operation.', requestSchema: Type.Object({ idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })) }, closed), resultSchema: OperationSchema, coverage: ['undo'] }),
-  capability({ name: 'redo', kind: 'mutate', runtimeRequired: true, streaming: false, destructive: false, auditCategory: 'history.redo', summary: 'Revert the latest applicable revert Operation.', requestSchema: Type.Object({ idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })) }, closed), resultSchema: OperationSchema, coverage: ['redo'] }),
+  capability({ name: 'undo', kind: 'mutate', runtimeRequired: true, streaming: false, destructive: false, auditCategory: 'history.undo', summary: 'Revert the latest applicable Operation in one origin scope.', requestSchema: historySelectionSchema(), resultSchema: OperationSchema, coverage: ['undo'] }),
+  capability({ name: 'redo', kind: 'mutate', runtimeRequired: true, streaming: false, destructive: false, auditCategory: 'history.redo', summary: 'Revert the latest applicable revert Operation in one origin scope.', requestSchema: historySelectionSchema(), resultSchema: OperationSchema, coverage: ['redo'] }),
   capability({ name: 'asset ingest', kind: 'asset', runtimeRequired: true, streaming: false, destructive: false, auditCategory: 'asset.ingest', summary: 'Stage verified asset bytes under a recovery-aware lease.', requestSchema: Type.Union([
     Type.Object({ source: Type.Literal('path'), path: Type.String({ minLength: 1, maxLength: 32_768 }) }, closed),
     Type.Object({ source: Type.Literal('stdin') }, closed),
@@ -245,8 +286,9 @@ const PORCELAIN_COMMANDS = [
   ['definition configure', 'definition.configure', ['set_tag_config', 'set_field_config']],
   ['definition merge', 'definition.merge', ['merge_definitions']],
   ['reference add', 'reference.add', ['add_reference', 'add_reference_conversion']],
-  ['reference set', 'reference.retarget', ['set_reference_target', 'replace_node_with_reference', 'replace_node_with_reference_conversion']],
-  ['reference inline', 'reference.inline', ['replace_node_with_inline_reference', 'convert_reference_to_inline_node']],
+  ['reference set', 'reference.retarget', ['set_reference_target']],
+  ['reference replace', 'reference.replace', ['replace_node_with_reference']],
+  ['reference inline', 'reference.inline', ['replace_node_with_reference_conversion', 'replace_node_with_inline_reference', 'convert_reference_to_inline_node']],
   ['reference restore', 'reference.restore', ['restore_inline_reference_node_to_reference']],
   ['view set', 'view.set', ['set_view_toolbar_visible', 'set_view_mode']],
   ['view group set', 'view.group', ['set_group_field']],
@@ -300,6 +342,82 @@ export function outlineCapability(name: string): OutlineCapability | undefined {
   return capabilityByName.get(name);
 }
 
+function isSchemaRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+const compactedSchemaCache = new WeakMap<object, TSchema>();
+
+export function compactOutlineSchema(schema: TSchema): TSchema {
+  const cachedSchema = compactedSchemaCache.get(schema);
+  if (cachedSchema) return cachedSchema;
+  const definitions = new Map<string, unknown>();
+  const definitionSources = new Map<string, object>();
+  const transformed = new WeakMap<object, unknown>();
+  const sourceDigests = new WeakMap<object, string>();
+
+  const sourceDigest = (value: object): string => {
+    const existing = sourceDigests.get(value);
+    if (existing) return existing;
+    const digest = canonicalSha256(value);
+    sourceDigests.set(value, digest);
+    return digest;
+  };
+
+  const visit = (value: unknown): unknown => {
+    if (!value || typeof value !== 'object') return value;
+    const cached = transformed.get(value);
+    if (cached) return cached;
+    if (Array.isArray(value)) {
+      const result: unknown[] = [];
+      transformed.set(value, result);
+      result.push(...value.map(visit));
+      return result;
+    }
+
+    const record = value as Record<string, unknown>;
+    const nestedDefinitions = record.$defs;
+    const reference = record.$ref;
+    if (isSchemaRecord(nestedDefinitions)
+      && typeof reference === 'string'
+      && Object.hasOwn(nestedDefinitions, reference)) {
+      const result: Record<string, unknown> = {};
+      transformed.set(value, result);
+      for (const [key, entry] of Object.entries(record)) {
+        if (key !== '$defs') result[key] = visit(entry);
+      }
+      for (const [name, definition] of Object.entries(nestedDefinitions)) {
+        if (!definition || typeof definition !== 'object') {
+          throw new Error(`Invalid cyclic schema definition: ${name}`);
+        }
+        const existingSource = definitionSources.get(name);
+        if (existingSource && existingSource !== definition
+          && sourceDigest(existingSource) !== sourceDigest(definition)) {
+          throw new Error(`Conflicting cyclic schema definition: ${name}`);
+        }
+        if (!existingSource) {
+          definitionSources.set(name, definition);
+          definitions.set(name, visit(definition));
+        }
+      }
+      return result;
+    }
+
+    const result: Record<string, unknown> = {};
+    transformed.set(value, result);
+    for (const [key, entry] of Object.entries(record)) result[key] = visit(entry);
+    return result;
+  };
+
+  const root = visit(schema) as Record<string, unknown>;
+  const compacted = definitions.size === 0 ? root as TSchema : {
+    ...root,
+    $defs: Object.fromEntries(definitions),
+  } as TSchema;
+  compactedSchemaCache.set(schema, compacted);
+  return compacted;
+}
+
 export function outlineCapabilityManifest() {
   return OUTLINE_CAPABILITIES.map((entry) => ({
     name: entry.name,
@@ -310,8 +428,8 @@ export function outlineCapabilityManifest() {
     auditCategory: entry.auditCategory,
     summary: entry.summary,
     coverage: [...entry.coverage],
-    requestSchema: entry.porcelain?.inputSchema ?? entry.requestSchema,
-    resultSchema: entry.resultSchema,
+    requestSchema: compactOutlineSchema(entry.porcelain?.inputSchema ?? entry.requestSchema),
+    resultSchema: compactOutlineSchema(entry.resultSchema),
     help: {
       ...entry.help,
       options: entry.porcelain ? porcelainHelpOptions(entry.porcelain) : entry.help.options,
@@ -321,13 +439,21 @@ export function outlineCapabilityManifest() {
       positionals: entry.help.positionals,
       options: (entry.porcelain ? porcelainHelpOptions(entry.porcelain) : entry.help.options)
         .map((option) => ({ name: option.name, ...(option.value ? { value: option.value } : {}) })),
+      ...(QUERY_INPUT_COMMANDS.has(entry.name) ? {
+        queryOperators: OUTLINE_QUERY_OPERATORS.map((operator) => ({
+          name: operator.name,
+          summary: operator.summary,
+        })),
+      } : {}),
     },
     ...(entry.porcelain ? {
-      inputSchema: entry.porcelain.inputSchema,
-      runtimeRequestSchema: entry.requestSchema,
+      inputSchema: compactOutlineSchema(entry.porcelain.inputSchema),
+      runtimeRequestSchema: compactOutlineSchema(entry.requestSchema),
     } : {}),
   }));
 }
+
+const QUERY_INPUT_COMMANDS = new Set(['find', 'text replace', 'search create', 'search set']);
 
 let capabilityContractDigest: string | undefined;
 

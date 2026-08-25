@@ -52,9 +52,15 @@ describe('renderer Outline intents', () => {
       expect.objectContaining({ op: 'ensure', definitionType: 'field', name: 'owner', bind: expect.any(String) }),
     ]);
     const childCreate = operations.find((change) => (
-      change.op === 'create' && change.parents.binding !== undefined
+      change.op === 'create'
+      && 'placement' in change
+      && 'parent' in change.placement
+      && 'binding' in change.placement.parent
     ));
-    expect(childCreate).toMatchObject({ op: 'create', parents: { binding: expect.any(String) } });
+    expect(childCreate).toMatchObject({
+      op: 'create',
+      placement: { kind: 'last', parent: { binding: expect.any(String) } },
+    });
     expect(operations).toContainEqual(expect.objectContaining({
       op: 'update',
       changes: expect.arrayContaining([
@@ -74,8 +80,7 @@ describe('renderer Outline intents', () => {
 
     expect(harness.changeSets[0]!.operations[1]).toMatchObject({
       op: 'create',
-      parents: oneId('root'),
-      index: 1,
+      placement: { kind: 'index', parent: oneId('root'), index: 1 },
       nodes: [expect.objectContaining({ tags: ['tag:a', 'tag:b'] })],
     });
   });
@@ -92,8 +97,8 @@ describe('renderer Outline intents', () => {
     await outlineDocumentApi.batchMoveNodesDown(['b', 'c']);
 
     expect(harness.changeSets[0]!.operations).toEqual([
-      { op: 'move', targets: oneId('c'), destination: oneId('root'), index: 3 },
-      { op: 'move', targets: oneId('b'), destination: oneId('root'), index: 2 },
+      { op: 'move', targets: oneId('c'), placement: { kind: 'index', parent: oneId('root'), index: 3 } },
+      { op: 'move', targets: oneId('b'), placement: { kind: 'index', parent: oneId('root'), index: 2 } },
     ]);
   });
 

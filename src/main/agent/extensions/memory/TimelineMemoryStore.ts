@@ -566,8 +566,7 @@ function createTaggedChange(
 ): Change {
   return {
     op: 'create',
-    parents: parent,
-    index: null,
+    placement: { kind: 'last', parent },
     nodes: [{ id: nodeId, content: plainText(text), tags: [tagId], children: [] }],
     bind,
   };

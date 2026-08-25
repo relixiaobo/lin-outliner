@@ -24,12 +24,23 @@ export async function parseReadCommand(
   args: readonly string[],
   read: StructuredReader,
 ): Promise<ParsedReadCommand> {
+  const inputIndex = args.indexOf('--input');
+  if (inputIndex >= 0) {
+    if (command !== 'find') throw usageError('--input is only available for find.');
+    if (inputIndex !== 0 || args.length !== 2) throw usageError('find --input must be used alone.');
+    return {
+      input: parseJson(await read(requiredValue(args[1], '--input')), '--input'),
+    };
+  }
   let selector: Selector | undefined;
   let query: unknown;
+  let searchId: string | undefined;
+  let count = false;
   let within: Selector | undefined;
   let includeTrash = false;
   let order: 'document' | 'created' | 'updated' | 'text' | undefined;
   let limit = 100;
+  let limitSpecified = false;
   let cursor: string | undefined;
   let kind: Projection['kind'] | undefined;
   let depth: number | undefined;
@@ -42,10 +53,15 @@ export async function parseReadCommand(
     const arg = args[index];
     if (arg === '--selector') selector = parseSelector(await read(requiredValue(args[++index], '--selector')));
     else if (arg === '--query') query = parseJson(await read(requiredValue(args[++index], '--query')), '--query');
+    else if (arg === '--search') searchId = requiredValue(args[++index], '--search');
+    else if (arg === '--count') count = true;
     else if (arg === '--within') within = parseSelector(await read(requiredValue(args[++index], '--within')));
     else if (arg === '--include-trash') includeTrash = true;
     else if (arg === '--order') order = oneOf(requiredValue(args[++index], '--order'), ['document', 'created', 'updated', 'text'], '--order');
-    else if (arg === '--limit') limit = boundedInteger(args[++index], '--limit', 1, 10_000);
+    else if (arg === '--limit') {
+      limit = boundedInteger(args[++index], '--limit', 1, 10_000);
+      limitSpecified = true;
+    }
     else if (arg === '--cursor') cursor = requiredValue(args[++index], '--cursor');
     else if (arg === '--kind') kind = oneOf(requiredValue(args[++index], '--kind'), ['summary', 'node', 'outline', 'backlinks', 'view', 'export'], '--kind');
     else if (arg === '--depth') depth = boundedInteger(args[++index], '--depth', 0, 1_024);
@@ -58,17 +74,39 @@ export async function parseReadCommand(
   }
   if (selector && positional.length > 0) throw usageError(`${command} cannot combine a positional target with --selector.`);
   if (command === 'find') {
-    if (selector && query !== undefined) throw usageError('find cannot combine --selector and --query.');
-    if (!selector) {
+    if (selector && (query !== undefined || searchId)) throw usageError('find cannot combine --selector with --query or --search.');
+    if (searchId && (query !== undefined || positional.length > 0)) {
+      throw usageError('find --search cannot be combined with TEXT or --query.');
+    }
+    if (count) {
+      if (selector || projection || kind || depth !== undefined || include || cursor || format || order || limitSpecified) {
+        throw usageError('find --count cannot use Selector, Projection, order, cursor, or limit options.');
+      }
+      if (searchId) {
+        if (within || includeTrash) throw usageError('find --search --count uses the Saved Search scope as configured.');
+        return { input: { mode: 'count', searchId } };
+      }
       const expression = query ?? { kind: 'rule', op: 'STRING_MATCH', text: positional.join(' ') };
-      selector = {
-        by: 'query',
-        query: expression as Selector & never,
-        ...(within ? { within } : {}),
-        ...(includeTrash ? { includeTrash: true } : {}),
-        ...(order ? { order } : {}),
-        limit,
+      return {
+        input: {
+          mode: 'count',
+          query: expression,
+          ...(within ? { within } : {}),
+          ...(includeTrash ? { includeTrash: true } : {}),
+        },
       };
+    }
+    if (!selector) {
+      selector = searchId
+        ? { by: 'search', id: searchId, limit }
+        : {
+            by: 'query',
+            query: (query ?? { kind: 'rule', op: 'STRING_MATCH', text: positional.join(' ') }) as Selector & never,
+            ...(within ? { within } : {}),
+            ...(includeTrash ? { includeTrash: true } : {}),
+            ...(order ? { order } : {}),
+            limit,
+          };
     } else if (positional.length > 0) {
       throw usageError('find accepts at most one text query.');
     }
@@ -77,12 +115,25 @@ export async function parseReadCommand(
       throw usageError(`${command} does not accept find query options.`);
     }
     if (!selector) {
-      if (positional.length !== 1) throw usageError(`${command} requires exactly one Selector.`);
-      selector = parseSelectorToken(positional[0]!);
+      if (positional.length === 0) throw usageError(`${command} requires at least one Selector.`);
+      if (positional.length === 1) selector = parseSelectorToken(positional[0]!);
+      else {
+        const selectors = positional.map(parseSelectorToken);
+        if (selectors.some((entry) => entry.by !== 'id')) {
+          throw usageError(`${command} accepts multiple positional selectors only when every value is an exact Node ID.`);
+        }
+        selector = { by: 'ids', ids: selectors.map((entry) => (entry as Extract<Selector, { by: 'id' }>).id) };
+        if (!limitSpecified) limit = selector.ids.length;
+      }
     }
   }
-  const cardinality: TargetSpec['cardinality'] = command === 'find' || selector.by === 'query' ? 'many' : 'one';
-  const target = targetRef(selector, cardinality, cardinality === 'many' ? limit : undefined);
+  const selectorMax = selector.by === 'query' || selector.by === 'search'
+    ? selector.limit
+    : selector.by === 'ids'
+      ? selector.ids.length
+      : undefined;
+  const cardinality: TargetSpec['cardinality'] = command === 'find' || selectorMax !== undefined ? 'many' : 'one';
+  const target = targetRef(selector, cardinality, cardinality === 'many' ? selectorMax ?? limit : undefined);
   const requestedProjection: Projection = projection ?? {
     kind: kind ?? (command === 'find' ? 'summary' : command === 'show' ? 'node' : 'export'),
     targets: target,
@@ -189,7 +240,7 @@ function targetRef(selector: Selector, cardinality: TargetSpec['cardinality'], m
 }
 
 function parseInclude(value: string): Projection['include'] {
-  const allowed = ['description', 'children', 'tags', 'fields', 'references', 'media', 'view', 'trash'] as const;
+  const allowed = ['description', 'children', 'tags', 'fields', 'references', 'media', 'view', 'trash', 'backlinks'] as const;
   const result = value.split(',').map((entry) => entry.trim()).filter(Boolean);
   for (const entry of result) {
     if (!(allowed as readonly string[]).includes(entry)) throw usageError(`Unknown Projection include: ${entry}`);

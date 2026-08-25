@@ -110,26 +110,44 @@ export function buildImportChangeSet(
   let bindingSequence = 0;
   let expectedCreatedNodes = 0;
   const nextBinding = (prefix: string) => `${prefix}_${++bindingSequence}`;
-  const appendNode = (node: ImportNode, parent: Record<string, unknown>): { binding: string; nodeCount: number } => {
-    const binding = nextBinding('node');
+  const requiresBinding = new WeakMap<ImportNode, boolean>();
+  const needsBinding = (node: ImportNode): boolean => {
+    const cached = requiresBinding.get(node);
+    if (cached !== undefined) return cached;
+    const result = Boolean(node.tags?.length) || (node.children ?? []).some(needsBinding);
+    requiresBinding.set(node, result);
+    return result;
+  };
+  const draftTree = (node: ImportNode, includeAllChildren: boolean): { draft: Record<string, unknown>; nodeCount: number } => {
     const fieldChildren = (node.fields ?? []).map((field) => ({
       content: richText(`${field.name}: ${field.values.join(', ')}`),
       children: [],
     }));
-    operations.push({
-      op: 'create',
-      parents: parent,
-      nodes: [{
+    const children = (node.children ?? [])
+      .filter((child) => includeAllChildren || !needsBinding(child))
+      .map((child) => draftTree(child, true));
+    return {
+      draft: {
         content: richText(node.code?.text ?? node.title),
-        children: fieldChildren,
+        children: [...fieldChildren, ...children.map((child) => child.draft)],
         ...(node.description ? { description: node.description } : {}),
         ...(node.code ? { type: 'codeBlock', codeLanguage: node.code.language ?? '' } : {}),
         ...(node.checked !== undefined ? { checkbox: true, done: node.checked } : {}),
-      }],
+      },
+      nodeCount: 1 + fieldChildren.length + children.reduce((count, child) => count + child.nodeCount, 0),
+    };
+  };
+  const appendNode = (node: ImportNode, parent: Record<string, unknown>): { binding: string; nodeCount: number } => {
+    const binding = nextBinding('node');
+    const createdTree = draftTree(node, false);
+    operations.push({
+      op: 'create',
+      placement: { kind: 'last', parent },
+      nodes: [createdTree.draft],
       bind: binding,
     });
-    let nodeCount = 1 + fieldChildren.length;
-    expectedCreatedNodes += nodeCount;
+    let nodeCount = createdTree.nodeCount;
+    expectedCreatedNodes += createdTree.nodeCount;
     for (const tag of node.tags ?? []) {
       const tagBinding = tagBindings.get(tag);
       if (!tagBinding) throw new Error(`Missing tag binding for normalized tag: ${tag}`);
@@ -139,7 +157,9 @@ export function buildImportChangeSet(
         changes: [{ kind: 'tag', action: 'add', tag: { binding: tagBinding } }],
       });
     }
-    for (const child of node.children ?? []) nodeCount += appendNode(child, { binding }).nodeCount;
+    for (const child of node.children ?? []) {
+      if (needsBinding(child)) nodeCount += appendNode(child, { binding }).nodeCount;
+    }
     return { binding, nodeCount };
   };
   const needsStagingRoot = mode === 'stage'
@@ -149,7 +169,7 @@ export function buildImportChangeSet(
   if (stagingBinding) {
     operations.push({
       op: 'create',
-      parents: defaultParent,
+      placement: { kind: 'last', parent: defaultParent },
       nodes: [{ content: richText(`Import: ${sourceLabel(normalized.source)}`), children: [] }],
       bind: stagingBinding,
     });
@@ -173,7 +193,7 @@ export function buildImportChangeSet(
     const sectionBinding = nextBinding('section');
     operations.push({
       op: 'create',
-      parents: { binding: stagingBinding! },
+      placement: { kind: 'last', parent: { binding: stagingBinding! } },
       nodes: [{ content: richText(section.title), children: [] }],
       bind: sectionBinding,
     });

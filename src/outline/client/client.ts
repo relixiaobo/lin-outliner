@@ -1,8 +1,8 @@
 import http from 'node:http';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { Value } from 'typebox/value';
 import { OutlineContractError, outlineError } from '../contract/errors';
+import { checkOutlineSchema } from '../contract/validation';
 import {
   OutlineErrorSchema,
   AssetLeaseSchema,
@@ -65,7 +65,7 @@ export class OutlineClient {
     };
     try {
       const value = await this.jsonRequest('/v1/request', request, lifetime.signal);
-      if (!Value.Check(OutlineResponseSchema, value)) {
+      if (!checkOutlineSchema(OutlineResponseSchema, value)) {
         throw protocolError('Outline Runtime returned an invalid response envelope.');
       }
       if (value.requestId !== request.requestId || value.command !== command) {
@@ -104,11 +104,11 @@ export class OutlineClient {
       });
       const value = await readResponseJson(response);
       if (response.statusCode !== 200) throwDecodedHttpError(value, response.statusCode, 'asset ingest');
-      if (!Value.Check(OutlineResponseSchema, value)
+      if (!checkOutlineSchema(OutlineResponseSchema, value)
         || value.ok === false
         || value.requestId !== requestId
         || value.command !== 'asset ingest'
-        || !Value.Check(AssetLeaseSchema, value.data)) {
+        || !checkOutlineSchema(AssetLeaseSchema, value.data)) {
         throw protocolError('Outline Runtime returned an invalid asset ingest response.');
       }
       return value.data;
@@ -334,7 +334,7 @@ export class OutlineClient {
             } catch {
               throw protocolError('Outline Runtime returned an invalid JSONL record.');
             }
-            if (!Value.Check(OutlineStreamRecordSchema, record)) {
+            if (!checkOutlineSchema(OutlineStreamRecordSchema, record)) {
               throw protocolError('Outline Runtime returned an invalid stream record.');
             }
             if (record.requestId !== requestId || record.sequence !== expectedSequence) {
@@ -558,7 +558,7 @@ async function throwHttpError(response: http.IncomingMessage, operation: string)
 }
 
 function throwDecodedHttpError(value: unknown, statusCode: number | undefined, operation: string): never {
-  if (isRecord(value) && Value.Check(OutlineErrorSchema, value.error)) {
+  if (isRecord(value) && checkOutlineSchema(OutlineErrorSchema, value.error)) {
     throw new OutlineContractError(value.error);
   }
   throw protocolError(`Outline Runtime ${operation} failed with HTTP ${statusCode ?? 0}.`);

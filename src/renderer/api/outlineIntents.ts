@@ -159,8 +159,7 @@ export const outlineDocumentApi = {
 function createNode(parentId: string, index: number | null, text: string, id = freshId('node')): Promise<CommandResult> {
   return mutate(() => [{
     op: 'create',
-    parents: oneId(parentId),
-    index,
+    placement: structuralPlacement(oneId(parentId), index),
     nodes: [draft({ text, marks: [], inlineRefs: [] }, id)],
   }], focus(id, parentId, { kind: 'end' }));
 }
@@ -169,8 +168,7 @@ function createRichTextNode(parentId: string, index: number | null, content: Ric
   const id = freshId('node');
   return mutate(() => [{
     op: 'create',
-    parents: oneId(parentId),
-    index,
+    placement: structuralPlacement(oneId(parentId), index),
     nodes: [draft(content, id)],
   }], focus(id, parentId, { kind: 'end' }));
 }
@@ -179,7 +177,7 @@ function createTaggedNode(parentId: string, content: RichText, tagId: string): P
   const id = freshId('node');
   return mutate(() => [{
     op: 'create',
-    parents: oneId(parentId),
+    placement: { kind: 'last', parent: oneId(parentId) },
     nodes: [draft(content, id, { tags: [tagId] })],
   }], focus(id, parentId, { kind: 'end' }));
 }
@@ -188,7 +186,7 @@ function createTagAndTaggedNode(parentId: string, content: RichText, name: strin
   const id = freshId('node');
   return mutate(() => [
     { op: 'ensure', resource: 'definition', definitionType: 'tag', name, bind: 'tag' },
-    { op: 'create', parents: oneId(parentId), nodes: [draft(content, id)], bind: 'created' },
+    { op: 'create', placement: { kind: 'last', parent: oneId(parentId) }, nodes: [draft(content, id)], bind: 'created' },
     {
       op: 'update',
       targets: binding('created'),
@@ -255,8 +253,7 @@ function splitNode(
       { op: 'update', targets: oneId(nodeId), changes: [{ kind: 'content', value: before }] },
       {
         op: 'create',
-        parents: oneId(targetParentId),
-        index: targetIndex,
+        placement: structuralPlacement(oneId(targetParentId), targetIndex),
         nodes: [draft(after, createdId, {
           ...(targetParentId === node.parentId ? { tags: [...node.tags] } : {}),
         })],
@@ -304,8 +301,7 @@ function createImageNode(
   const id = freshId('node');
   return mutate(() => [{
     op: 'create',
-    parents: oneId(parentId),
-    index,
+    placement: structuralPlacement(oneId(parentId), index),
     nodes: [draft({ text: options.name ?? '', marks: [], inlineRefs: [] }, id, {
       type: 'image',
       ...(options.assetId ? { assetLeaseId: options.assetId } : {}),
@@ -336,8 +332,7 @@ function createAttachmentNode(
   const id = freshId('node');
   return mutate(() => [{
     op: 'create',
-    parents: oneId(parentId),
-    index,
+    placement: structuralPlacement(oneId(parentId), index),
     nodes: [draft({ text: options.originalFilename, marks: [], inlineRefs: [] }, id, {
       type: 'attachment',
       assetLeaseId: options.assetId,
@@ -520,7 +515,7 @@ function mergeNodeInto(nodeId: string, targetId: string): Promise<CommandResult>
 
 function moveNode(nodeId: string, parentId: string, index: number | null = null): Promise<CommandResult> {
   return mutate(() => [{
-    op: 'move', targets: oneId(nodeId), destination: oneId(parentId), index,
+    op: 'move', targets: oneId(nodeId), placement: structuralPlacement(oneId(parentId), index),
   }], focus(nodeId));
 }
 
@@ -528,8 +523,7 @@ function batchMoveNodes(moves: readonly BatchMoveNodeInput[]): Promise<CommandRe
   return mutate(() => moves.map((move) => ({
     op: 'move' as const,
     targets: oneId(move.nodeId),
-    destination: oneId(move.parentId),
-    index: move.index,
+    placement: structuralPlacement(oneId(move.parentId), move.index),
   })));
 }
 
@@ -541,7 +535,7 @@ function indentNode(nodeId: string): Promise<CommandResult> {
     const siblings = requiredNode(view, node.parentId).children;
     const index = siblings.indexOf(nodeId);
     if (index <= 0) throw new Error('Cannot indent without a previous sibling.');
-    return [{ op: 'move', targets: oneId(nodeId), destination: oneId(siblings[index - 1]!), index: null }];
+    return [{ op: 'move', targets: oneId(nodeId), placement: { kind: 'last', parent: oneId(siblings[index - 1]!) } }];
   }, focus(nodeId));
 }
 
@@ -570,7 +564,7 @@ function batchIndentNodes(nodeIds: string[]): Promise<CommandResult> {
         if (!parent || index <= 0) return [];
         const previousId: string = parent.children[index - 1]!;
         if (!selected.has(previousId)) {
-          return [{ op: 'move', targets: oneId(nodeId), destination: oneId(previousId), index: null }];
+          return [{ op: 'move', targets: oneId(nodeId), placement: { kind: 'last', parent: oneId(previousId) } }];
         }
         currentId = previousId;
       }
@@ -605,8 +599,7 @@ function batchDuplicateNodes(nodeIds: string[]): Promise<CommandResult> {
     return topLevelIds(view, nodeIds).map((nodeId) => {
       const node = requiredNode(view, nodeId);
       if (!node.parentId) throw new Error('Cannot duplicate a root Node.');
-      const index = requiredNode(view, node.parentId).children.indexOf(nodeId) + 1;
-      return { op: 'duplicate' as const, targets: oneId(nodeId), destination: oneId(node.parentId), index };
+      return { op: 'duplicate' as const, targets: oneId(nodeId), placement: { kind: 'next' as const } };
     });
   }, (_operation, diff) => {
     const created = diff.affected.find((entry) => entry.effect === 'create')?.id;
@@ -791,8 +784,7 @@ function addReference(parentId: string, targetId: string, index: number | null =
   const id = freshId('ref');
   return mutate(() => [{
     op: 'create',
-    parents: oneId(parentId),
-    index,
+    placement: structuralPlacement(oneId(parentId), index),
     nodes: [draft({ text: '', marks: [], inlineRefs: [] }, id, {
       type: 'reference', referenceTargetId: targetId,
     })],
@@ -808,8 +800,7 @@ function addReferenceConversion(
   const id = freshId('node');
   return mutate(() => [{
     op: 'create',
-    parents: oneId(parentId),
-    index,
+    placement: structuralPlacement(oneId(parentId), index),
     nodes: [draft(inlineReferenceContent(targetId, displayName), id)],
   }], focus(id, parentId, { kind: 'text-offset', offset: 0, inlineRefBias: 'after' }));
 }
@@ -890,7 +881,7 @@ function setSearchQueryOutline(nodeId: string, queryOutline: string): Promise<Co
     kind: 'search',
     action: 'set',
     title: node.content.text.trim() || 'Search',
-    query: parsed.query,
+    query: parsed.query as Extract<UpdateInstruction, { kind: 'search'; action: 'set' }>['query'],
   }]);
 }
 
@@ -970,7 +961,7 @@ function replaceNode(
     parentId = node.parentId;
     const index = requiredNode(view, parentId).children.indexOf(nodeId);
     return [
-      { op: 'create', parents: oneId(parentId), index, nodes: [replacement] },
+      { op: 'create', placement: { kind: 'index', parent: oneId(parentId), index }, nodes: [replacement] },
       { op: 'lifecycle', action: 'trash', targets: oneId(nodeId) },
     ];
   }, () => focus(replacementId, parentId, placement));
@@ -978,6 +969,12 @@ function replaceNode(
 
 function oneId(id: string): TargetRef {
   return { target: { selector: { by: 'id', id }, cardinality: 'one' } };
+}
+
+function structuralPlacement(parent: TargetRef, index: number | null) {
+  return index === null
+    ? { kind: 'last' as const, parent }
+    : { kind: 'index' as const, parent, index };
 }
 
 function binding(name: string): TargetRef {
@@ -1109,8 +1106,7 @@ function buildTreePlan(
     const bind = `created${sequence += 1}`;
     operations.push({
       op: 'create',
-      parents: parentRef,
-      index: treeIndex,
+      placement: structuralPlacement(parentRef, treeIndex),
       nodes: [draft(tree.content, id, {
         ...(tree.description !== undefined ? { description: tree.description } : {}),
         ...(tree.type === 'codeBlock' ? { type: 'codeBlock', codeLanguage: tree.codeLanguage } : {}),
@@ -1186,7 +1182,7 @@ function outdentChange(view: DesktopProjectionView, nodeId: string): Change {
   const parent = requiredNode(view, node.parentId);
   if (!parent.parentId) throw new Error('Cannot outdent beyond the document root.');
   const index = requiredNode(view, parent.parentId).children.indexOf(parent.id) + 1;
-  return { op: 'move', targets: oneId(nodeId), destination: oneId(parent.parentId), index };
+  return { op: 'move', targets: oneId(nodeId), placement: { kind: 'index', parent: oneId(parent.parentId), index } };
 }
 
 function documentOrder(view: DesktopProjectionView, nodeIds: readonly string[]): string[] {
@@ -1247,7 +1243,9 @@ function moveSelectedSiblings(nodeIds: string[], direction: 'up' | 'down'): Prom
         .filter(({ nodeId }) => selected.has(nodeId));
       if (direction === 'down') moved.reverse();
       operations.push(...moved.map(({ nodeId, index }) => ({
-        op: 'move' as const, targets: oneId(nodeId), destination: oneId(parentId), index,
+        op: 'move' as const,
+        targets: oneId(nodeId),
+        placement: { kind: 'index' as const, parent: oneId(parentId), index },
       })));
     }
     return operations;

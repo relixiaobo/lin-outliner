@@ -217,6 +217,18 @@ export interface CreateNodeTreeBatchOptions {
   onRootCreated?: (batchIndex: number, nodeId: NodeId) => void;
 }
 
+export interface ResolvedContentTree {
+  readonly id: NodeId;
+  readonly content: RichText;
+  readonly description?: string;
+  readonly type?: 'plain' | 'codeBlock';
+  readonly codeLanguage?: string;
+  readonly checkbox?: boolean;
+  readonly done?: boolean;
+  readonly tagIds?: readonly NodeId[];
+  readonly children: readonly ResolvedContentTree[];
+}
+
 export interface EnsureDateNodeInput {
   year: number;
   month: number;
@@ -1243,6 +1255,58 @@ export class Core {
     });
   }
 
+  tryCreateResolvedContentTrees(
+    parentId: string,
+    index: number | null | undefined,
+    trees: readonly ResolvedContentTree[],
+  ): boolean {
+    let created = false;
+    this.mutate(() => {
+      const state = this.snapshot();
+      ensureParentMutable(state, parentId);
+      const ids = new Set<NodeId>();
+      const preflight = (tree: ResolvedContentTree) => {
+        if (!isClientNodeId(tree.id) || ids.has(tree.id) || state.nodes[tree.id]) return false;
+        ids.add(tree.id);
+        for (const tagId of tree.tagIds ?? []) ensureTagDefinition(state, tagId);
+        return tree.children.every(preflight);
+      };
+      if (!trees.every(preflight)) return undefined;
+
+      const insert = (
+        parent: string,
+        tree: ResolvedContentTree,
+        targetIndex: number | null | undefined,
+      ): void => {
+        const type = tree.type === 'codeBlock' ? 'codeBlock' : undefined;
+        this.loro.createNodeWithId(tree.id, parent, targetIndex, type, (node) => {
+          node.content = clone(tree.content);
+          const description = normalizeOptionalText(tree.description);
+          if (description !== undefined) node.description = description;
+          if (type === 'codeBlock') {
+            (node as CodeBlockNode).codeLanguage = normalizeCodeLanguage(tree.codeLanguage) || undefined;
+          }
+          if (tree.done) node.completedAt = nowMs();
+          else if (tree.checkbox) node.completedAt = 0;
+        });
+        // Resolved trees already carry exact definition IDs and never need the
+        // name/field indexes used by paste materialization. Resolve inherited
+        // child tags only when the actual parent has tags instead of scanning
+        // the whole document once per ChangeSet create operation.
+        this.applyChildTagsDirect(parent, tree.id);
+        for (const tagId of tree.tagIds ?? []) this.applyTagNoHistoryDirect(tree.id, tagId);
+        for (const child of tree.children) insert(tree.id, child, undefined);
+      };
+      for (const [treeIndex, tree] of trees.entries()) {
+        insert(parentId, tree, index === undefined || index === null ? index : index + treeIndex);
+      }
+      created = true;
+      const last = trees.at(-1);
+      return last ? focus(last.id, { parentId, placement: { kind: 'end' } }) : undefined;
+    });
+    return created;
+  }
+
   async createNodesFromTreeYielding(
     parentId: string,
     nodes: CreateNodeTree[],
@@ -1885,7 +1949,7 @@ export class Core {
   batchTrashNodes(nodeIds: string[]): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
-      for (const nodeId of [...nodeIds].reverse()) {
+      for (const nodeId of topLevelNodeIds(state, nodeIds).reverse()) {
         if (state.nodes[nodeId]) this.trashNodeDirect(nodeId);
       }
       return undefined;
@@ -2161,6 +2225,7 @@ export class Core {
       const state = this.snapshot();
       ensureNodeEditable(state, nodeId);
       const node = clone(requiredNode(state, nodeId));
+      if (!node.tags.includes(tagId)) return undefined;
       node.tags = node.tags.filter((id) => id !== tagId);
       node.updatedAt = nowMs();
       this.loro.writeNode(node);
@@ -2218,7 +2283,14 @@ export class Core {
       ensureNodeEditable(state, fieldId);
       ensureFieldDefinition(state, fieldId);
       const current = clone(requiredNode(state, fieldId));
-      const nextFieldType = patch.fieldType ?? fieldTypeOf(state, fieldId);
+      const currentFieldType = fieldTypeOf(state, fieldId);
+      const nextFieldType = patch.fieldType ?? currentFieldType;
+      if (nextFieldType !== currentFieldType) {
+        const compatibilityError = fieldDefinitionValueCompatibilityError(state, fieldId, nextFieldType);
+        if (compatibilityError) {
+          throw CoreError.invalidOperation(`Field type change is incompatible with existing values. ${compatibilityError}`);
+        }
+      }
       const nextMin = 'minValue' in patch ? patch.minValue ?? undefined : fieldNumberConfigOf(state, fieldId, 'minValue');
       const nextMax = 'maxValue' in patch ? patch.maxValue ?? undefined : fieldNumberConfigOf(state, fieldId, 'maxValue');
       if (patch.sourceSupertag) {
@@ -3839,7 +3911,7 @@ export class Core {
   }
 
   private snapshot() {
-    return this.loro.materializeState();
+    return this.loro.materializeStateView();
   }
 
   private nodeSnapshot(nodeId: string) {
@@ -6315,6 +6387,29 @@ function indexActiveFieldEntryIdsByDefinition(state: DocumentState): FieldEntryI
     result.set(node.fieldDefId, entryIds);
   }
   return result;
+}
+
+function fieldDefinitionValueCompatibilityError(
+  state: DocumentState,
+  fieldDefId: NodeId,
+  fieldType: FieldType,
+): string | undefined {
+  const fieldName = fieldNameForDefId(state, fieldDefId);
+  for (const entryId of indexActiveFieldEntryIdsByDefinition(state).get(fieldDefId) ?? []) {
+    const entry = state.nodes[entryId];
+    if (!entry) continue;
+    const values = entry.children
+      .map((valueId) => state.nodes[valueId])
+      .filter((value): value is Node => Boolean(value) && !isInTrash(state, value!.id))
+      .map((value) => ({
+        text: value.content.text,
+        targetId: value.type === 'reference' ? value.targetId : undefined,
+        hasInlineRefs: value.content.inlineRefs.length > 0,
+      }));
+    const validation = validateFieldValuesForType(fieldName, fieldType, values);
+    if (!validation.ok) return validation.error;
+  }
+  return undefined;
 }
 
 function getTemplateContentNodes(state: DocumentState, tagId: string) {

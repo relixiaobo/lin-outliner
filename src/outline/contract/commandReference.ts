@@ -5,6 +5,7 @@ import {
   type OutlineCapability,
 } from './capabilities';
 import type { CommandOptionHelp } from './porcelain';
+import { OUTLINE_QUERY_OPERATORS, type QueryOperatorContract } from './queryOperators';
 
 const GENERATED_NOTICE = '<!-- Generated from the Outline capability registry. Do not edit by hand. -->';
 
@@ -44,6 +45,16 @@ export function renderOutlineCommandReference(): string {
     '- Every successful mutation returns one visible Operation or semantic no-change result.',
     '- Every `many` mutation is bounded by an explicit maximum.',
     '',
+    '## Canonical Query Operators',
+    '',
+    'Structured queries use only the executable operators below. Omitted operators are not public.',
+    'Use `--match` or positional text for common STRING_MATCH search, and use this canonical shape',
+    'through `--query` or `--input` for advanced search.',
+    '',
+    '| Operator | Operands | Value format | Purpose | Canonical example |',
+    '|---|---|---|---|---|',
+    ...OUTLINE_QUERY_OPERATORS.map(renderQueryOperatorRow),
+    '',
     '## Global Options',
     '',
     'Place global options before the command:',
@@ -77,6 +88,33 @@ export function renderOutlineCommandReference(): string {
   }
 
   return `${lines.join('\n').replace(/\n{3,}/gu, '\n\n').trim()}\n`;
+}
+
+function renderQueryOperatorRow(operator: QueryOperatorContract): string {
+  const operands = [
+    renderOperandRequirement('fieldDefId', operator.operands.field),
+    renderOperandRequirement('tagDefId', operator.operands.tag),
+    renderOperandRequirement('targetId', operator.operands.target),
+    operator.operands.value === 'required-text'
+      ? '`text` required; `operands` optional'
+      : operator.operands.value === 'required-text-or-operands'
+        ? '`text` or `operands` required'
+        : undefined,
+  ].filter((entry): entry is string => Boolean(entry));
+  return [
+    `\`${operator.name}\``,
+    operands.join('; ') || 'none',
+    operator.valueFormat ?? 'n/a',
+    operator.summary,
+    `\`${JSON.stringify(operator.example)}\``,
+  ].map(escapeTable).join(' | ').replace(/^/u, '| ').replace(/$/u, ' |');
+}
+
+function renderOperandRequirement(
+  name: string,
+  requirement: QueryOperatorContract['operands']['field'],
+): string | undefined {
+  return requirement === 'none' ? undefined : `\`${name}\` ${requirement}`;
 }
 
 function renderCapabilityTable(capabilities: readonly OutlineCapability[]): string[] {

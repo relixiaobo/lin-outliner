@@ -633,6 +633,19 @@ export class LoroOutlinerDocument {
     };
   }
 
+  materializeStateView(): DocumentState {
+    this.reconcileStateCache();
+    // Core's private transaction snapshot is read-only. Reusing this incremental
+    // node map avoids copying every Node before each command in a large batch;
+    // public state access continues through materializeState() and its fresh map.
+    return {
+      schemaVersion: 1,
+      workspaceId: WORKSPACE_ID,
+      rootId: WORKSPACE_ID,
+      nodes: this.stateCacheNodes!,
+    };
+  }
+
   private reconcileStateCache() {
     if (this.stateCacheNodes === null || this.stateDirtyFull) {
       this.stateCacheNodes = this.buildAllNodes();

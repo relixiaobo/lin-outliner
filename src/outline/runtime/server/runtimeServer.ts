@@ -5,10 +5,10 @@ import http from 'node:http';
 import { pipeline } from 'node:stream/promises';
 import type { Socket } from 'node:net';
 import path from 'node:path';
-import { Value } from 'typebox/value';
 import { outlineCapability, outlineCapabilityContractDigest } from '../../contract/capabilities';
 import { canonicalJsonChunks } from '../../contract/canonical';
 import { OutlineContractError, outlineError } from '../../contract/errors';
+import { checkOutlineSchema } from '../../contract/validation';
 import {
   OutlineRequestSchema,
   RuntimeDescriptorSchema,
@@ -270,7 +270,7 @@ export class OutlineRuntimeServer {
       }
       if (request.method === 'POST' && url.pathname === '/v1/request') {
         const body = await readJsonBody(request);
-        const decoded = Value.Check(OutlineRequestSchema, body) ? body : null;
+        const decoded = checkOutlineSchema(OutlineRequestSchema, body) ? body : null;
         const mutation = decoded ? requestCanMutate(decoded.command, decoded.input) : false;
         const authorization = this.authorizeRequestContext(request, mutation);
         try {
@@ -285,12 +285,12 @@ export class OutlineRuntimeServer {
       }
       if (request.method === 'POST' && url.pathname === '/v1/stream') {
         const body = await readJsonBody(request);
-        if (!Value.Check(OutlineRequestSchema, body)) throw new Error('Invalid outline stream request envelope');
+        if (!checkOutlineSchema(OutlineRequestSchema, body)) throw new Error('Invalid outline stream request envelope');
         const capability = outlineCapability(body.command);
-        if (!capability?.streaming || !Value.Check(capability.requestSchema, body.input)) {
+        if (!capability?.streaming || !checkOutlineSchema(capability.requestSchema, body.input)) {
           throw new Error('Invalid outline streaming command or input');
         }
-        if (body.command === 'watch' && Value.Check(WatchRequestSchema, body.input)) {
+        if (body.command === 'watch' && checkOutlineSchema(WatchRequestSchema, body.input)) {
           await this.streamEvents(response, body.requestId, body.input);
         } else {
           await this.streamCommand(response, body);
@@ -557,7 +557,7 @@ export class OutlineRuntimeServer {
   private async removeOwnedDescriptor(): Promise<void> {
     try {
       const value = JSON.parse(await readFile(this.paths.descriptorPath, 'utf8')) as unknown;
-      if (Value.Check(RuntimeDescriptorSchema, value) && value.instanceId === this.descriptor.instanceId) {
+      if (checkOutlineSchema(RuntimeDescriptorSchema, value) && value.instanceId === this.descriptor.instanceId) {
         await rm(this.paths.descriptorPath, { force: true });
       }
     } catch {

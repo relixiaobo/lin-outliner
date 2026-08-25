@@ -31,7 +31,7 @@ describe('outline ChangeSet kernel', () => {
       source: { kind: 'cli', label: 'kernel test' },
       operations: [{
         op: 'create',
-        parents: oneAlias('today'),
+        placement: { kind: 'last', parent: oneAlias('today') },
         nodes: [draft('Created through ChangeSet', {
           children: [draft('Nested child')],
         })],
@@ -49,7 +49,7 @@ describe('outline ChangeSet kernel', () => {
       ...changeSet,
       operations: [{
         op: 'create',
-        parents: oneAlias('today'),
+        placement: { kind: 'last', parent: oneAlias('today') },
         nodes: [draft('Different payload under the same key')],
       }],
     });
@@ -93,7 +93,7 @@ describe('outline ChangeSet kernel', () => {
       kind: 'outline.changeset',
       operations: [{
         op: 'create',
-        parents: oneAlias('today'),
+        placement: { kind: 'last', parent: oneAlias('today') },
         nodes: [draft('Unkeyed apply')],
       }],
     });
@@ -152,7 +152,7 @@ describe('outline ChangeSet kernel', () => {
       protocolVersion: 1,
       kind: 'outline.changeset',
       operations: [
-        { op: 'create', parents: { binding: 'later' }, nodes: [draft('Invalid')] },
+        { op: 'create', placement: { kind: 'last', parent: { binding: 'later' } }, nodes: [draft('Invalid')] },
         { op: 'resolve', target: oneAliasTarget('today'), bind: 'later' },
       ],
     };
@@ -190,6 +190,88 @@ describe('outline ChangeSet kernel', () => {
       order: 'document',
       limit: 1,
     })).toEqual([scopedChildId]);
+  });
+
+  test('resolves exact ID lists and executes Saved Searches from live state', async () => {
+    const workspace = await makeWorkspace();
+    const firstId = await createExisting(workspace, 'Live module first');
+    const secondId = await createExisting(workspace, 'Exact second');
+    const searchId = `node:${crypto.randomUUID()}`;
+    await workspace.mutate({
+      ...createRequest('Create live Saved Search'),
+      execute: (core) => {
+        core.createSearchNode(core.projection().searchesId, null, {
+          title: 'Live modules',
+          query: { kind: 'rule', op: 'STRING_MATCH', text: 'Live module' },
+        }, undefined, searchId);
+      },
+    });
+    const laterId = await createExisting(workspace, 'Live module added after materialization');
+    const state = workspace.documentState();
+    expect(state.nodes[searchId]!.children
+      .map((childId) => state.nodes[childId])
+      .filter((node) => node?.type === 'reference')
+      .map((node) => node.targetId)).not.toContain(laterId);
+
+    const index = createSelectionIndex(workspace.projection());
+    expect(resolveSelector(index, { by: 'ids', ids: [secondId, firstId] })).toEqual([secondId, firstId]);
+    expect(() => resolveSelector(index, { by: 'ids', ids: [firstId, 'node:missing'] }))
+      .toThrow('exact Node IDs');
+    expect(resolveSelector(index, { by: 'search', id: searchId, limit: 10 }))
+      .toEqual(expect.arrayContaining([firstId, laterId]));
+  });
+
+  test('returns a Node and its backlinks in one bounded Projection', async () => {
+    const workspace = await makeWorkspace();
+    const targetId = await createExisting(workspace, 'Backlink target');
+    const sourceId = await createExisting(workspace, 'Backlink source');
+    await workspace.mutate({
+      ...createRequest('Create inline backlink'),
+      execute: (core) => {
+        core.applyNodeTextPatch(sourceId, {
+          ops: [{
+            type: 'replace_all',
+            content: {
+              text: 'Backlink source',
+              marks: [],
+              inlineRefs: [{
+                offset: 0,
+                target: { kind: 'node', nodeId: targetId },
+                displayName: 'Backlink target',
+              }],
+            },
+          }],
+        });
+      },
+    });
+
+    const result = projectOutline(workspace.forkCore(), {
+      kind: 'node',
+      targets: oneId(targetId),
+      include: ['references', 'backlinks'],
+      page: { limit: 1 },
+    });
+
+    expect(result.nodes).toContainEqual(expect.objectContaining({ id: targetId }));
+    expect(result.backlinks).toContainEqual(expect.objectContaining({
+      targetId,
+      sourceId,
+      kind: 'inline',
+    }));
+  });
+
+  test('honors includeTrash during transient query execution', async () => {
+    const workspace = await makeWorkspace();
+    const nodeId = await createExisting(workspace, 'Searchable trashed row');
+    await workspace.mutate({
+      ...createRequest('Trash search fixture'),
+      execute: (core) => { core.trashNode(nodeId); },
+    });
+    const index = createSelectionIndex(workspace.projection());
+    const query = { kind: 'rule' as const, op: 'STRING_MATCH' as const, text: 'Searchable trashed row' };
+
+    expect(resolveSelector(index, { by: 'query', query, limit: 10 })).not.toContain(nodeId);
+    expect(resolveSelector(index, { by: 'query', query, includeTrash: true, limit: 10 })).toContain(nodeId);
   });
 
   test('requires Diff-bound acknowledgement for purge and preserves exact recovery', async () => {
@@ -257,7 +339,7 @@ describe('outline ChangeSet kernel', () => {
           config: { fieldType: 'plain' },
           bind: 'field',
         },
-        { op: 'create', parents: oneAlias('today'), nodes: [draft('Projection owner')], bind: 'owner' },
+        { op: 'create', placement: { kind: 'last', parent: oneAlias('today') }, nodes: [draft('Projection owner')], bind: 'owner' },
         {
           op: 'update',
           targets: { binding: 'owner' },
@@ -339,7 +421,7 @@ describe('outline ChangeSet kernel', () => {
       operations.push({ op: 'ensure', resource: 'date', date: localDate, bind: `date${index}` });
       operations.push({
         op: 'create',
-        parents: { binding: `date${index}` },
+        placement: { kind: 'last', parent: { binding: `date${index}` } },
         nodes: [draft(`Imported ${localDate}`)],
       });
     }
@@ -385,8 +467,8 @@ describe('outline ChangeSet kernel', () => {
       protocolVersion: 1,
       kind: 'outline.changeset',
       operations: [
-        { op: 'create', parents: oneAlias('today'), nodes: [draft('Must roll back')], bind: 'created' },
-        { op: 'move', targets: { binding: 'created' }, destination: { binding: 'created' } },
+        { op: 'create', placement: { kind: 'last', parent: oneAlias('today') }, nodes: [draft('Must roll back')], bind: 'created' },
+        { op: 'move', targets: { binding: 'created' }, placement: { kind: 'last', parent: { binding: 'created' } } },
       ],
     };
 
@@ -410,7 +492,7 @@ function createTodayChangeSet(text: string): ChangeSet {
   return {
     protocolVersion: 1,
     kind: 'outline.changeset',
-    operations: [{ op: 'create', parents: oneAlias('today'), nodes: [draft(text)], bind: 'created' }],
+    operations: [{ op: 'create', placement: { kind: 'last', parent: oneAlias('today') }, nodes: [draft(text)], bind: 'created' }],
   };
 }
 

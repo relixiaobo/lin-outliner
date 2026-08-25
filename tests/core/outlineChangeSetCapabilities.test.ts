@@ -77,7 +77,7 @@ describe('outline ChangeSet capability coverage', () => {
 
     const seeds = await settle(workspace, [{
       op: 'create',
-      parents: oneAlias('today'),
+      placement: { kind: 'last', parent: oneAlias('today') },
       nodes: [draft('Reference A'), draft('Reference B')],
       bind: 'seeds',
     }]);
@@ -85,7 +85,7 @@ describe('outline ChangeSet capability coverage', () => {
     const capture = captureMetadata();
     const rich = await settle(workspace, [{
       op: 'create',
-      parents: oneAlias('today'),
+      placement: { kind: 'last', parent: oneAlias('today') },
       nodes: [draft('Rich captured node', {
         content: {
           text: 'Rich captured node',
@@ -116,7 +116,7 @@ describe('outline ChangeSet capability coverage', () => {
 
     const reference = await settle(workspace, [{
       op: 'create',
-      parents: oneId(richId),
+      placement: { kind: 'last', parent: oneId(richId) },
       nodes: [draft('', { type: 'reference', referenceTargetId: referenceA })],
       bind: 'reference',
     }]);
@@ -184,7 +184,7 @@ describe('outline ChangeSet capability coverage', () => {
 
     const inlineTrigger = (await settle(workspace, [{
       op: 'create',
-      parents: oneId(richId),
+      placement: { kind: 'last', parent: oneId(richId) },
       nodes: [draft('>')],
       bind: 'inlineTrigger',
     }])).diff.bindings.inlineTrigger![0]!;
@@ -248,14 +248,14 @@ describe('outline ChangeSet capability coverage', () => {
     const mergeTargetId = definitions.diff.bindings.mergeTarget![0]!;
     const tagged = await settle(workspace, [{
       op: 'create',
-      parents: oneAlias('today'),
+      placement: { kind: 'last', parent: oneAlias('today') },
       nodes: [draft('Tagged before template', { tags: [templateTagId] })],
       bind: 'tagged',
     }]);
     const taggedId = tagged.diff.bindings.tagged![0]!;
     const template = await settle(workspace, [{
       op: 'create',
-      parents: oneId(templateTagId),
+      placement: { kind: 'last', parent: oneId(templateTagId) },
       nodes: [draft('Template child')],
       bind: 'template',
     }]);
@@ -293,7 +293,7 @@ describe('outline ChangeSet capability coverage', () => {
 
     const search = await settle(workspace, [{
       op: 'create',
-      parents: oneAlias('today'),
+      placement: { kind: 'last', parent: oneAlias('today') },
       nodes: [draft('Runtime search', {
         type: 'search',
         metadata: { query: { kind: 'rule', op: 'STRING_MATCH', text: 'Tagged' } },
@@ -325,7 +325,7 @@ describe('outline ChangeSet capability coverage', () => {
         fieldType: 'options',
         bind: 'field',
       },
-      { op: 'create', parents: oneAlias('today'), nodes: [draft('Task')], bind: 'owner' },
+      { op: 'create', placement: { kind: 'last', parent: oneAlias('today') }, nodes: [draft('Task')], bind: 'owner' },
     ]);
     const fieldId = setup.diff.bindings.field![0]!;
     const ownerId = setup.diff.bindings.owner![0]!;

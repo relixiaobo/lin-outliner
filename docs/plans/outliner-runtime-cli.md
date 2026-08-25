@@ -90,14 +90,15 @@ The explicit traceability manifest is:
 
 - flows: `FLOW-1`, `FLOW-2`, `FLOW-3`, `FLOW-4`, `FLOW-5`;
 - functional requirements: `FR-1`, `FR-2`, `FR-3`, `FR-4`, `FR-5`, `FR-6`,
-  `FR-7`, `FR-8`, `FR-9`, `FR-10`, `FR-11`, `FR-12`, `FR-13`, `FR-14`;
+  `FR-7`, `FR-8`, `FR-9`, `FR-10`, `FR-11`, `FR-12`, `FR-13`, `FR-14`,
+  `FR-15`;
 - non-functional requirements: `NFR-1`, `NFR-2`, `NFR-3`, `NFR-4`, `NFR-5`,
   `NFR-6`; and
 - acceptance: `AC-1`, `AC-2`, `AC-3`, `AC-4`, `AC-5`, `AC-6`, `AC-7`, `AC-8`,
   `AC-9`, `AC-10`, `AC-11`, `AC-12`, `AC-13`, `AC-14`, `AC-15`, `AC-16`,
   `AC-17`, `AC-18`, `AC-19`, `AC-20`, `AC-21`, `AC-22`, `AC-23`, `AC-24`,
   `AC-25`, `AC-26`, `AC-27`, `AC-28`, `AC-29`, `AC-30`, `AC-31`, `AC-32`,
-  `AC-33`, `AC-34`, `AC-35`, `AC-36`, `AC-37`, and `AC-38` through `AC-73`.
+  `AC-33`, `AC-34`, `AC-35`, `AC-36`, `AC-37`, and `AC-38` through `AC-79`.
 
 ### Completion contract
 
@@ -309,6 +310,32 @@ The explicit traceability manifest is:
   - **AC-64:** Golden CLI tests shall cover root help, search-family help, exact
     `search create`, `view sort add`, and `purge` help with real options and
     examples rather than generic `[ARGS]` placeholders.
+- **FR-15:** Common reads, placement, references, queries, and recovery guards
+  compose as efficient general capabilities rather than scenario-specific CLI
+  commands.
+  - **AC-74:** One read invocation shall support ordered exact multi-ID results,
+    selected Nodes plus backlinks, live Saved Search execution, exact count, and
+    named batch counts with one shared canonical query. Batch query execution
+    shall reuse one request-local selection index.
+  - **AC-75:** Public create placement shall support first, last, zero-based
+    index, before, and after. Move and duplicate shall additionally support
+    previous and next. Argv, structured schema, help, Diff, Operation, and exact
+    revert shall preserve the same placement semantics.
+  - **AC-76:** `reference set` shall retarget only an existing reference;
+    `reference replace` shall replace one content Node with a tree reference and
+    Trash its complete original subtree; `reference inline` shall own inline
+    conversion or replacement. These forms shall not silently overlap.
+  - **AC-77:** One query-operator registry shall own every executable public
+    operator's required and optional operands, value format, summary, and
+    example. It shall derive the exact QueryExpression schema, completion
+    metadata, and Agent command reference; non-executable operators shall be
+    absent and rejected.
+  - **AC-78:** A field type change shall validate all existing values before
+    commit, and a lifecycle selection containing ancestors and descendants shall
+    mutate each covered subtree once without stranding descendants.
+  - **AC-79:** Undo and redo shall default to the authenticated caller's origin,
+    support explicit origin scope and expected-Operation guards, and write
+    nothing when the visible stack head changed.
 
 ### End-state authority and invariants
 
@@ -1077,9 +1104,9 @@ The stable command surface is:
 | `outline version` | CLI/app/protocol versions; no Runtime start |
 | `outline status` | Runtime presence, instance/runtime/storage versions, revision, transaction-log and recovery health; no start |
 | `outline capabilities [--runtime]` | Generated capability registry and optional live compatibility check |
-| `outline schema` / `outline schema SCHEMA_NAME` | Exact JSON Schema for Selector, Projection, ChangeSet, Diff, Operation, Event, envelopes, errors, or a named command |
-| `outline find [TEXT]` | Structured search with `--query`, `--within`, Trash, ordering, cursor, limit, and Projection controls |
-| `outline show SELECTOR` | One deterministic target by default; Projection, depth, include, and pagination controls |
+| `outline schema` / `outline schema SCHEMA_NAME` | Exact JSON Schema for QueryExpression, Selector, placement, Projection, ChangeSet, Diff, Operation, Event, envelopes, errors, or a named command |
+| `outline find [TEXT]` | Structured or live Saved Search with exact count, named batch counts, `--within`, Trash, ordering, cursor, limit, and Projection controls |
+| `outline show SELECTOR...` | One target or an ordered exact ID list; Projection, depth, backlinks include, and pagination controls |
 | `outline export SELECTOR` | Bounded/streaming JSON, JSONL, Markdown, or OPML to stdout or `--output` |
 | `outline watch` | Ordered JSONL projection/Operation events from `--cursor`, with explicit resync |
 | `outline diff --input FILE|-` | Normalize and preview one ChangeSet without mutation |
@@ -1161,6 +1188,26 @@ inline references outside replacement ranges, and rejects a match that would
 consume an inline reference. It is destructive porcelain: preview and exact
 Diff acknowledgement are required for non-interactive apply. A repeated settled
 transform with no remaining match is semantic no-change.
+
+Common discovery does not require repeated reads. `show ID...` preserves ordered
+exact IDs; a Projection may return selected Nodes and backlinks in one response.
+`find --search` executes Saved Search query state live rather than trusting stale
+materialized children. Exact count omits Node payloads, while named batch counts
+combine one optional shared query with each named query through canonical `AND`
+and reuse one request-local text selection index.
+
+Create, move, and duplicate share the public placement union: first, last,
+zero-based index, before, and after; move and duplicate add previous and next.
+Relative move shifts a selected sibling block, while relative duplicate places a
+copy next to each source. Structured ChangeSets and argv porcelain lower to the
+same placement and one exact-revert Operation.
+
+Reference actions remain semantic rather than overloaded. Set retargets an
+existing tree reference, replace substitutes a tree reference for a content Node
+and Trashes the original subtree, and inline owns inline-reference replacement or
+conversion. Query rules likewise use one executable registry with closed
+operator-specific schemas; internal non-executable values such as `EDITED_BY`
+are not public input.
 
 Every exact command help names whether it is create, patch, replace, ensure,
 destructive, and/or idempotent. Destructive help requires preview, review, and
@@ -1352,6 +1399,14 @@ and creates the corresponding trees below those bindings. One source containing
 100 dates uses one `diff` and one `apply`, with no per-date ID discovery and no
 shell mutation loop. Existing date scaffolding remains untouched; newly ensured
 year/week/day Nodes are inside the same patch, Operation, and revert frontier.
+
+Normalized hierarchy lowering preserves a separate create binding only when a
+later operation consumes that Node ID, including the ancestor path required to
+place a tagged descendant. Other descendants fold into the nearest bound
+`NodeDraft.children` tree. This reduces operation count without changing source
+coverage, final hierarchy, typed content, one-Operation settlement, or exact
+revert semantics. It is generic ChangeSet composition, not an adapter-specific
+Runtime fast path.
 
 Keep optional source-specific read-only adapters and fixtures inside the Skill.
 An Agent may instead write a task-local adapter against the public normalized
@@ -1555,13 +1610,14 @@ line claims those areas explicitly. The dev does not edit `docs/TASKS.md` or
 | ChangeSet normalization (`FR-3`, `FR-4`, `FR-12`) | Property/golden tests showing porcelain/direct equivalence, stable canonical hashes, fixed IDs/bindings, non-mutating Diff, 100-date one-diff/one-apply, and bounded returned Projection |
 | Complete-resource porcelain (`FR-13`) | Thirteen CLI golden workflows (`AC-52` through `AC-65`) asserting final state, mutation invocations, Operation count, visible settlement/recovery fields, created IDs, and exact revert; no common resource flow requires an ID lookup or shell mutation loop |
 | Help and discoverability (`FR-14`) | Root/family/exact help goldens for `outline`, `search`, `search create`, `view sort add`, and `purge`; registry drift tests compare exact command schema, help options, completion metadata, parser admission, semantics, defaults, and examples |
+| Efficient general composition (`FR-15`) | CLI tests for ordered multi-ID, backlinks, live Saved Search, exact and named batch counts, every placement form, disjoint reference actions, exact query-operator registry parity, field-type validation, ancestor-folded Trash, origin-isolated undo/redo, expected-operation conflicts, one Operation, and exact revert |
 | Atomicity and concurrency (`FR-5`, `FR-6`) | Tests `rolls back every chunk after a late Change failure`, `rejects a stale Diff without writes`, `does not retry a stale mutation`, and `requires Diff-bound destructive acknowledgement` |
 | Durable recovery (`FR-5`, `FR-12`) | Restart tests for ordinary edits, create/delete, purge, Empty Trash, revert conflict, revert-of-revert, crash before log append, crash after log fsync/before acknowledgement, truncated tail, orphan blob, corrupt referenced blob, idempotency, retention, and capacity |
 | Asset safety (`FR-5`, `FR-12`) | Fixtures proving Node-referenced, leased, and recovery-only AssetRecords retain exact revisions through opaque anchors; anchor-first crash points leak rather than lose; the Runtime barrier prevents reconciliation from releasing an in-flight anchor; successful reconciliation releases only orphan Outline anchors; central GC cannot race concurrent anchor creation; physical corruption differs from corrupt AssetRecord metadata; purge recovery restores media; `delete_asset`, public digests, and public anchor IDs are absent |
 | Runtime lifecycle (`FR-10`) | Process tests for CLI start, desktop start, `--no-start`, stale descriptor/lock, simultaneous desktop/CLI startup, shared attachment, independent desktop restart, idle drain, unavailable timeout, private permissions, no client persistence import, one-time manual installed/dev reset, fresh physical layout, and no migration/automatic-deletion path |
 | Desktop cutover (`FR-3`, `FR-5`, `FR-11`) | Renderer/preload/E2E proof that every persisted desktop action produces Runtime Operation/Event, optimistic drafts reconcile once, conflict keeps draft, Undo/Redo uses guarded revert, and dependency guard finds no document authority in Electron main |
 | Agent authority (`FR-8`, `FR-9`) | Registry equality test for local-user and built-in-Agent schemas; valid/missing/expired attestation tests; immutable Thread/Turn/Item audit; full purge/revert coverage; no Memory projection filtering |
-| Import composition (`FR-7`, `FR-12`) | No-clean and cleaned source fixtures, complete coverage gate, changed-input/Diff mismatch, 100+ Daily Notes, deterministic Tana weekday/supertag mapping, explicit unsupported accounting, mixed parents, failed verification with Operation ID, exact revert, and no scenario Runtime endpoint |
+| Import composition (`FR-7`, `FR-12`) | No-clean and cleaned source fixtures, complete coverage gate, changed-input/Diff mismatch, 100+ Daily Notes, binding-required hierarchy folding, deterministic Tana weekday/supertag mapping, explicit unsupported accounting, mixed parents, failed verification with Operation ID, exact revert, and no scenario Runtime endpoint |
 | Native tool cutover (`FR-9`) | Six-tool fixture replay, new capability fixtures, generated parity report with zero gaps, provider probe, and retirement guard with an empty live queue |
 | Packaging/security (`NFR-1` through `NFR-6`) | Thin-bundle dependency assertion, packaged CLI/Skill smoke, socket/descriptor mode checks, credential-redaction checks, bounded JSONL/export probes, and recovery disk-budget tests |
 
@@ -1627,8 +1683,10 @@ The final branch runs:
   Runtime semantics. Generate them from the registry and require every mutation
   to lower into ChangeSet before document access.
 - **Oversized ChangeSets:** Import-sized input can block Runtime or exhaust memory.
-  Use bounded JSONL parsing, private spool files, cooperative Core chunks, and
-  one rollback frontier; measure stalls before selecting thresholds.
+  Use bounded JSONL parsing, private spool files, registry-schema compiled
+  validators, binding-aware tree folding, incremental Core state views,
+  cooperative Core chunks, and one rollback frontier; measure stalls before
+  selecting thresholds.
 - **Agent attribution loss:** A child process can drop or forge context. Keep
   causation outside public JSON, bind the host attestation to Runtime/workspace/
   Item, reject declared built-in mutation without it, and test expiry/consumption.

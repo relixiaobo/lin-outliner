@@ -1,4 +1,5 @@
-import { runTransientSearchExpr } from '../../core/searchEngine';
+import { buildTextSearchIndex, runSearchNode, runTransientSearchExpr } from '../../core/searchEngine';
+import type { TextSearchIndex } from '../../core/textSearchIndex';
 import {
   DAILY_NOTES_ID,
   LIBRARY_ID,
@@ -10,13 +11,14 @@ import {
   type SearchQueryExpr,
 } from '../../core/types';
 import { OutlineContractError, outlineError } from '../contract/errors';
-import type { Selector, TargetSpec } from '../contract/schemas';
+import type { QueryExpression, Selector, TargetSpec } from '../contract/schemas';
 
 export interface OutlineSelectionIndex {
   readonly projection: DocumentProjection;
   readonly byId: ReadonlyMap<string, NodeProjection>;
   readonly documentOrder: readonly string[];
   readonly documentPosition: ReadonlyMap<string, number>;
+  readonly textIndex: () => TextSearchIndex;
 }
 
 export function createSelectionIndex(projection: DocumentProjection): OutlineSelectionIndex {
@@ -35,11 +37,16 @@ export function createSelectionIndex(projection: DocumentProjection): OutlineSel
   for (const nodeId of [...byId.keys()].sort(compareText)) {
     if (!visited.has(nodeId)) documentOrder.push(nodeId);
   }
+  let textIndex: TextSearchIndex | undefined;
   return {
     projection,
     byId,
     documentOrder,
     documentPosition: new Map(documentOrder.map((nodeId, index) => [nodeId, index])),
+    textIndex: () => {
+      textIndex ??= buildTextSearchIndex(projection);
+      return textIndex;
+    },
   };
 }
 
@@ -47,6 +54,18 @@ export function resolveSelector(index: OutlineSelectionIndex, selector: Selector
   if (selector.by === 'id') {
     const node = index.byId.get(selector.id);
     return node ? [node.id] : [];
+  }
+  if (selector.by === 'ids') {
+    const missingIds = selector.ids.filter((nodeId) => !index.byId.has(nodeId));
+    if (missingIds.length > 0) {
+      throw new OutlineContractError(outlineError(
+        'not_found',
+        'selection',
+        'One or more exact Node IDs do not exist.',
+        { details: { missingIds: missingIds.slice(0, 100), missingCount: missingIds.length } },
+      ));
+    }
+    return selector.ids;
   }
   if (selector.by === 'alias') {
     const nodeId = aliasNodeId(index.projection, selector.alias);
@@ -60,32 +79,86 @@ export function resolveSelector(index: OutlineSelectionIndex, selector: Selector
     ));
     return node ? [node.id] : [];
   }
-
-  const result = runTransientSearchExpr(
-    index.projection,
-    selector.query as SearchQueryExpr,
-    {},
-  );
-  if (!result.ok) {
-    throw new OutlineContractError(outlineError(
-      'invalid_input',
-      'selection',
-      result.issue.message,
-      { details: result.issue },
-    ));
+  if (selector.by === 'search') {
+    return savedSearchMatches(index, selector.id, selector.limit);
   }
-  const withinIds = selector.within
-    ? new Set(resolveSelector(index, selector.within))
+
+  return queryMatches(index, selector.query, {
+    ...(selector.within ? { within: selector.within } : {}),
+    includeTrash: selector.includeTrash === true,
+    order: selector.order ?? 'document',
+    limit: selector.limit,
+  });
+}
+
+export function countQueryMatches(
+  index: OutlineSelectionIndex,
+  query: QueryExpression,
+  options: { readonly within?: Selector; readonly includeTrash?: boolean } = {},
+): number {
+  return queryMatches(index, query, options).length;
+}
+
+export function countSavedSearchMatches(index: OutlineSelectionIndex, searchNodeId: string): number {
+  return savedSearchMatches(index, searchNodeId).length;
+}
+
+function queryMatches(
+  index: OutlineSelectionIndex,
+  query: QueryExpression,
+  options: {
+    readonly within?: Selector;
+    readonly includeTrash?: boolean;
+    readonly order?: 'document' | 'created' | 'updated' | 'text';
+    readonly limit?: number;
+  },
+): readonly string[] {
+  const result = runTransientSearchExpr(index.projection, query as SearchQueryExpr, {
+    ...(options.includeTrash ? { includeTrash: true } : { textIndex: index.textIndex() }),
+  });
+  if (!result.ok) throw searchSelectionError(result.issue);
+  const withinIds = options.within
+    ? new Set(resolveSelector(index, options.within))
     : undefined;
   const candidates = result.hits
     .map((hit) => index.byId.get(hit.nodeId))
     .filter((node): node is NodeProjection => Boolean(node))
-    .filter((node) => selector.includeTrash === true || !isInTrash(index, node.id))
+    .filter((node) => options.includeTrash === true || !isInTrash(index, node.id))
     .filter((node) => !withinIds || [...withinIds].some((rootId) => (
       node.id === rootId || isDescendantOf(index, node.id, rootId)
     )));
-  candidates.sort((left, right) => compareSelectedNodes(index, left, right, selector.order ?? 'document'));
-  return candidates.slice(0, selector.limit).map((node) => node.id);
+  candidates.sort((left, right) => compareSelectedNodes(index, left, right, options.order ?? 'document'));
+  const bounded = options.limit === undefined ? candidates : candidates.slice(0, options.limit);
+  return bounded.map((node) => node.id);
+}
+
+function savedSearchMatches(
+  index: OutlineSelectionIndex,
+  searchNodeId: string,
+  limit?: number,
+): readonly string[] {
+  if (index.byId.get(searchNodeId)?.type !== 'search') {
+    throw new OutlineContractError(outlineError(
+      'invalid_input',
+      'selection',
+      `Saved Search selector requires a Search Node: ${searchNodeId}`,
+    ));
+  }
+  const result = runSearchNode(index.projection, searchNodeId, {
+    textIndex: index.textIndex(),
+    ...(limit !== undefined ? { limit } : {}),
+  });
+  if (!result.ok) throw searchSelectionError(result.issue);
+  return result.hits.map((hit) => hit.nodeId).filter((nodeId) => index.byId.has(nodeId));
+}
+
+function searchSelectionError(issue: { readonly message: string }): OutlineContractError {
+  return new OutlineContractError(outlineError(
+    'invalid_input',
+    'selection',
+    issue.message,
+    { details: issue },
+  ));
 }
 
 export function resolveTargetSpec(index: OutlineSelectionIndex, target: TargetSpec): readonly string[] {

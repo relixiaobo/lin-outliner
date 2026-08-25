@@ -381,6 +381,48 @@ describe('Core', () => {
     expect(core.state().nodes[childId].description).toBe('Child description');
   });
 
+  test('resolved content trees preserve tag inheritance without building paste indexes', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const parentTagId = mustFocus(core.createTag('Resolved parent'));
+    const childTagId = mustFocus(core.createTag('Resolved child'));
+    core.setTagConfig(parentTagId, { childSupertag: childTagId });
+    const parentId = mustFocus(core.createNode(today, null, 'Tagged destination'));
+    core.applyTag(parentId, parentTagId);
+
+    type State = ReturnType<Core['state']>;
+    const internal = core as unknown as {
+      createTreeMaterializeContext: (state: State) => unknown;
+    };
+    const originalCreateContext = internal.createTreeMaterializeContext.bind(core);
+    let pasteIndexBuilds = 0;
+    internal.createTreeMaterializeContext = (state) => {
+      pasteIndexBuilds += 1;
+      return originalCreateContext(state);
+    };
+    const rootId = `node:${crypto.randomUUID()}`;
+    const childId = `node:${crypto.randomUUID()}`;
+
+    try {
+      expect(core.tryCreateResolvedContentTrees(parentId, null, [{
+        id: rootId,
+        content: plainText('Resolved root'),
+        children: [{ id: childId, content: plainText('Resolved child'), children: [] }],
+      }])).toBe(true);
+    } finally {
+      internal.createTreeMaterializeContext = originalCreateContext;
+    }
+
+    expect(pasteIndexBuilds).toBe(0);
+    expect(core.state().nodes[rootId]?.tags).toContain(childTagId);
+    expect(core.state().nodes[childId]?.parentId).toBe(rootId);
+
+    const revision = core.revision();
+    core.applyTag(rootId, childTagId);
+    core.removeTag(childId, childTagId);
+    expect(core.revision()).toBe(revision);
+  });
+
   test('yielding tree materialization gives large creates cooperative breaks', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
@@ -2723,6 +2765,39 @@ describe('Core', () => {
       .toThrow('auto-initialize');
   });
 
+  test('field type changes validate every existing value before mutating config', () => {
+    const incompatible = Core.new();
+    const incompatibleEntryId = mustFocus(incompatible.createInlineField(
+      incompatible.projection().todayId,
+      null,
+      'Estimate',
+      'plain',
+    ));
+    const incompatibleFieldId = incompatible.state().nodes[incompatibleEntryId].fieldDefId!;
+    incompatible.setFieldFreeTextValue(incompatibleEntryId, 'not a number');
+    const before = incompatible.state();
+
+    expect(() => incompatible.setFieldConfig(incompatibleFieldId, { fieldType: 'number' }))
+      .toThrow('incompatible with existing values');
+    expect(incompatible.state()).toEqual(before);
+    expect(buildConfigIndex(incompatible.state()).field(incompatibleFieldId)?.fieldType).toBe('plain');
+
+    const compatible = Core.new();
+    const compatibleEntryId = mustFocus(compatible.createInlineField(
+      compatible.projection().todayId,
+      null,
+      'Estimate',
+      'plain',
+    ));
+    const compatibleFieldId = compatible.state().nodes[compatibleEntryId].fieldDefId!;
+    compatible.setFieldFreeTextValue(compatibleEntryId, '42');
+
+    compatible.setFieldConfig(compatibleFieldId, { fieldType: 'number' });
+
+    expect(buildConfigIndex(compatible.state()).field(compatibleFieldId)?.fieldType).toBe('number');
+    expect(fieldValueTexts(compatible, compatibleEntryId)).toEqual(['42']);
+  });
+
   test('changing a field type prunes auto-init strategies the new type does not offer', () => {
     const core = Core.new();
     const tagId = mustFocus(core.createTag('project'));
@@ -3407,6 +3482,23 @@ describe('Core', () => {
     expect(core.state().nodes[second].parentId).toBe(today);
   });
 
+  test('batch trash collapses selected descendants and preserves their subtree', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const parent = mustFocus(core.createNode(today, null, 'Parent'));
+    const child = mustFocus(core.createNode(parent, null, 'Child'));
+
+    core.batchTrashNodes([parent, child]);
+
+    expect(core.state().nodes[parent].parentId).toBe(TRASH_ID);
+    expect(core.state().nodes[parent].children).toEqual([child]);
+    expect(core.state().nodes[child].parentId).toBe(parent);
+
+    core.undo();
+    expect(core.state().nodes[parent].parentId).toBe(today);
+    expect(core.state().nodes[child].parentId).toBe(parent);
+  });
+
   test('agent undo only reverts agent-origin commits', () => {
     const core = Core.new();
     const today = core.projection().todayId;
@@ -3917,12 +4009,19 @@ describe('Core', () => {
     const loro = (core as unknown as { loro: LoroOutlinerDocument }).loro;
     const instrumented = loro as unknown as {
       materializeState: () => ReturnType<LoroOutlinerDocument['materializeState']>;
+      materializeStateView: () => ReturnType<LoroOutlinerDocument['materializeStateView']>;
     };
     const originalMaterializeState = instrumented.materializeState.bind(loro);
+    const originalMaterializeStateView = instrumented.materializeStateView.bind(loro);
     let fullStateMaterializations = 0;
+    let incrementalStateViews = 0;
     instrumented.materializeState = () => {
       fullStateMaterializations += 1;
       return originalMaterializeState();
+    };
+    instrumented.materializeStateView = () => {
+      incrementalStateViews += 1;
+      return originalMaterializeStateView();
     };
     const previousVerifyCache = process.env.LIN_VERIFY_CACHE;
 
@@ -3932,11 +4031,13 @@ describe('Core', () => {
       outcome = core.applyNodeTextPatch(nodeId, replaceAllRichTextPatch(plainText('Edited')));
     } finally {
       instrumented.materializeState = originalMaterializeState;
+      instrumented.materializeStateView = originalMaterializeStateView;
       if (previousVerifyCache === undefined) delete process.env.LIN_VERIFY_CACHE;
       else process.env.LIN_VERIFY_CACHE = previousVerifyCache;
     }
 
-    expect(fullStateMaterializations).toBe(1);
+    expect(fullStateMaterializations).toBe(0);
+    expect(incrementalStateViews).toBe(1);
     expect(outcome!).not.toHaveProperty('projection');
     expect(core.state().nodes[nodeId]!.content.text).toBe('Edited');
   });

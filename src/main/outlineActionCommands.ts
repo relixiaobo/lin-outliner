@@ -58,8 +58,7 @@ function actionChanges(
         changes: [{
           op: 'move',
           targets: oneId(nodeId),
-          destination: oneId(stringArg(args, 'parentId')),
-          index: nullableIndexArg(args, 'index'),
+          placement: placement(oneId(stringArg(args, 'parentId')), nullableIndexArg(args, 'index')),
         }],
         options: { focus: focus(nodeId) },
       };
@@ -181,8 +180,7 @@ function captureChanges(input: CreateCaptureInput, view: ProjectionView): {
   ));
   operations.push({
     op: 'create',
-    parents: oneId(input.destinationParentId),
-    index: input.index ?? null,
+    placement: placement(oneId(input.destinationParentId), input.index ?? null),
     nodes: [{
       content: input.title,
       ...(input.description !== undefined ? { description: input.description } : {}),
@@ -285,7 +283,7 @@ function batchIndentChanges(view: ProjectionView, nodeIds: string[]): Change[] {
       if (!parent || index <= 0) return [];
       const previousId: string = parent.children[index - 1]!;
       if (!selected.has(previousId)) {
-        return [{ op: 'move', targets: oneId(nodeId), destination: oneId(previousId), index: null }];
+        return [{ op: 'move', targets: oneId(nodeId), placement: { kind: 'last', parent: oneId(previousId) } }];
       }
       currentId = previousId;
     }
@@ -301,8 +299,7 @@ function duplicateChanges(
     changes: topLevelIds(view, nodeIds).map((nodeId) => {
       const node = requiredNode(view, nodeId);
       if (!node.parentId) throw new Error('Cannot duplicate a root Node.');
-      const index = requiredNode(view, node.parentId).children.indexOf(nodeId) + 1;
-      return { op: 'duplicate', targets: oneId(nodeId), destination: oneId(node.parentId), index };
+      return { op: 'duplicate', targets: oneId(nodeId), placement: { kind: 'next' } };
     }),
     options: {
       focus: (_operation, diff) => {
@@ -345,8 +342,7 @@ function moveSelectedSiblingChanges(
     operations.push(...moved.map(({ nodeId, index }) => ({
       op: 'move' as const,
       targets: oneId(nodeId),
-      destination: oneId(parentId),
-      index,
+      placement: { kind: 'index' as const, parent: oneId(parentId), index },
     })));
   }
   return operations;
@@ -397,7 +393,13 @@ function outdentChange(view: ProjectionView, nodeId: string): Change {
   const parent = requiredNode(view, node.parentId);
   if (!parent.parentId) throw new Error('Cannot outdent beyond the document root.');
   const index = requiredNode(view, parent.parentId).children.indexOf(parent.id) + 1;
-  return { op: 'move', targets: oneId(nodeId), destination: oneId(parent.parentId), index };
+  return { op: 'move', targets: oneId(nodeId), placement: { kind: 'index', parent: oneId(parent.parentId), index } };
+}
+
+function placement(parent: TargetRef, index: number | null) {
+  return index === null
+    ? { kind: 'last' as const, parent }
+    : { kind: 'index' as const, parent, index };
 }
 
 function documentOrder(view: ProjectionView, nodeIds: readonly string[]): string[] {

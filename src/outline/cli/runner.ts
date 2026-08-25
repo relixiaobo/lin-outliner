@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { open, readFile, rename, rm } from 'node:fs/promises';
 import { createInterface } from 'node:readline/promises';
-import { Value } from 'typebox/value';
 import {
   OUTLINE_APP_VERSION,
   OUTLINE_CAPABILITIES,
@@ -18,6 +17,7 @@ import {
   OutlineContractError,
   outlineCapability,
   outlineCapabilityManifest,
+  checkOutlineSchema,
   outlineError,
   outlineExitCodeForError,
   porcelainHelpOptions,
@@ -25,7 +25,6 @@ import {
   type OutlineError,
   type OutlineResponse,
 } from '../contract';
-import { canonicalSha256 } from '../contract/canonical';
 import { OutlineClientSupervisor, resolveOutlineRuntimeRoot } from '../client';
 import { OUTLINE_AGENT_ATTESTATION_ENV } from '../contract/agentAttestation';
 import {
@@ -172,19 +171,8 @@ async function executeInvocation(
     const bundled = outlineCapabilityManifest();
     if (!runtime.present) return bundled;
     const client = await supervisor.connect(options.signal);
-    try {
-      const response = await client.request('capabilities', { runtime: true }, options.signal);
-      if (canonicalSha256(response.data) !== canonicalSha256(bundled)) {
-        throw new OutlineContractError(outlineError(
-          'protocol_incompatible',
-          'protocol',
-          'Bundled CLI capabilities do not match the connected Outline Runtime.',
-        ));
-      }
-      return bundled;
-    } finally {
-      client.close();
-    }
+    client.close();
+    return bundled;
   }
   if (invocation.command.startsWith('import ')) {
     return executeImportInvocation(invocation.command, invocation.args, {
@@ -201,7 +189,7 @@ async function executeInvocation(
   if (invocation.command === 'asset export') return executeAssetExport(invocation, supervisor, io, options.signal);
   if (capability.streaming) return executeStreamingInvocation(invocation, supervisor, io, options.signal);
   const input = await runtimeInput(invocation, io, supervisor, options.signal);
-  if (!Value.Check(capability.requestSchema, input)) {
+  if (!checkOutlineSchema(capability.requestSchema, input)) {
     throw usageError(`Input does not match the public schema for command: ${invocation.command}`);
   }
   if (capability.destructive
@@ -252,7 +240,7 @@ async function executeInteractiveDestructive(
     preview: true,
     acknowledgeDestructive: undefined,
   }, signal)).data;
-  if (!Value.Check(DiffSchema, preview)) {
+  if (!checkOutlineSchema(DiffSchema, preview)) {
     throw artifactProtocolError('Outline Runtime returned an invalid destructive Diff preview.');
   }
   if (typeof input.expectDiff === 'string' && input.expectDiff !== preview.diffHash) {
@@ -437,7 +425,7 @@ async function executeDiffInvocation(
     } catch {
       throw artifactProtocolError('Outline Runtime returned an invalid Diff artifact.');
     }
-    if (!Value.Check(DiffSchema, value)) {
+    if (!checkOutlineSchema(DiffSchema, value)) {
       throw artifactProtocolError('Outline Runtime returned a Diff artifact that violates the public schema.');
     }
     return value;
@@ -532,11 +520,20 @@ function parseHistoryMutationInput(
   args: readonly string[],
 ): Record<string, unknown> {
   let operationId: string | undefined;
+  let origin: string | undefined;
+  let expectOperationId: string | undefined;
   let idempotencyKey: string | undefined;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === '--idempotency-key') {
       idempotencyKey = requiredValue(args[++index], '--idempotency-key');
+    } else if (command !== 'revert' && arg === '--origin') {
+      origin = requiredValue(args[++index], '--origin');
+      if (!['own', 'all', 'desktop', 'local-user', 'built-in-agent', 'external-client'].includes(origin)) {
+        throw usageError('--origin must be own, all, desktop, local-user, built-in-agent, or external-client.');
+      }
+    } else if (command !== 'revert' && arg === '--expect-operation') {
+      expectOperationId = requiredValue(args[++index], '--expect-operation');
     } else if (command === 'revert' && !operationId && !arg?.startsWith('-')) {
       operationId = arg;
     } else {
@@ -546,6 +543,8 @@ function parseHistoryMutationInput(
   if (command === 'revert' && !operationId) throw usageError('revert requires exactly one Operation ID.');
   return {
     ...(operationId ? { operationId } : {}),
+    ...(origin ? { origin } : {}),
+    ...(expectOperationId ? { expectOperationId } : {}),
     idempotencyKey: idempotencyKey ?? newCliIdempotencyKey(),
   };
 }
@@ -589,7 +588,7 @@ async function executeStreamingInvocation(
     ? { input: await parseWatchCommand(invocation.args, (source) => readStructuredSource(source, io, signal)) }
     : await parseReadCommand('export', invocation.args, (source) => readStructuredSource(source, io, signal));
   const capability = outlineCapability(invocation.command)!;
-  if (!Value.Check(capability.requestSchema, parsed.input)) {
+  if (!checkOutlineSchema(capability.requestSchema, parsed.input)) {
     throw usageError(`Input does not match the public schema for command: ${invocation.command}`);
   }
   const client = await supervisor.connect(signal);

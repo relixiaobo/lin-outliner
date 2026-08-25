@@ -1,11 +1,12 @@
-import { Value } from 'typebox/value';
 import type {
   AssetLease,
   Change,
   ChangeSet,
+  DestinationPlacement,
   NodeDraft,
   Projection,
   ProjectionResult,
+  Placement,
   Selector,
   TargetRef,
   TargetSpec,
@@ -13,6 +14,7 @@ import type {
 } from '../contract/schemas';
 import { OutlineContractError, outlineError } from '../contract/errors';
 import { porcelainContract, porcelainHelpOptions } from '../contract/porcelain';
+import { checkOutlineSchema } from '../contract/validation';
 import { createChangeSet, parseSelectorToken, type StructuredReader } from './arguments';
 
 type PublicViewField = Extract<
@@ -60,7 +62,7 @@ export async function buildPorcelainRequest(
     if (parsed.positional.length > 0) throw usageError(`${command} cannot combine --input with positional arguments.`);
     const payload = parseJson(await context.read(input), `${command} input`);
     const contract = porcelainContract(command)!;
-    if (!Value.Check(contract.inputSchema, payload)) {
+    if (!checkOutlineSchema(contract.inputSchema, payload)) {
       throw usageError(`Input does not match the public schema for command: ${command}`);
     }
     structuredInput = payload as Record<string, unknown>;
@@ -97,9 +99,8 @@ async function buildChangesFromInput(
   if (command === 'add') {
     return [{
       op: 'create',
-      parents: input.parent as TargetRef,
+      placement: input.placement as DestinationPlacement,
       nodes: input.nodes as NodeDraft[],
-      ...(input.index !== undefined ? { index: input.index as number | null } : {}),
       bind: String(input.bind ?? 'created'),
     }];
   }
@@ -108,15 +109,13 @@ async function buildChangesFromInput(
     if (command === 'duplicate') return [{
       op: 'duplicate',
       targets: input.target as TargetRef,
-      destination: input.destination as TargetRef,
-      ...(input.index !== undefined ? { index: input.index as number | null } : {}),
+      placement: input.placement as Placement,
       bind: String(input.bind ?? 'copies'),
     }];
     return [{
       op: 'move',
       targets: input.target as TargetRef,
-      destination: input.destination as TargetRef,
-      ...(input.index !== undefined ? { index: input.index as number | null } : {}),
+      placement: input.placement as Placement,
     }];
   }
   if (command === 'indent' || command === 'outdent') {
@@ -151,7 +150,7 @@ async function buildChangesFromInput(
     } as Extract<UpdateInstruction, { kind: 'definition' }>],
   }];
   if (command.startsWith('reference ')) {
-    const actions = { 'reference add': 'add', 'reference set': 'retarget', 'reference inline': 'inline', 'reference restore': 'restore' } as const;
+    const actions = { 'reference add': 'add', 'reference set': 'retarget', 'reference replace': 'replace', 'reference inline': 'inline', 'reference restore': 'restore' } as const;
     return [{
       op: 'update',
       targets: input.target as TargetRef,
@@ -319,7 +318,7 @@ function searchCreateChanges(input: Record<string, unknown>): readonly Change[] 
   const bind = String(input.bind ?? 'search');
   const changes: Change[] = [{
     op: 'create',
-    parents: (input.parent as TargetRef | undefined) ?? oneAlias('saved-searches'),
+    placement: { kind: 'last', parent: (input.parent as TargetRef | undefined) ?? oneAlias('saved-searches') },
     nodes: [draft(String(input.title), { type: 'search', metadata: { query } })],
     bind,
   }];
@@ -357,7 +356,7 @@ function captureChanges(input: Record<string, unknown>): readonly Change[] {
     parent = { binding: 'captureDate' };
   }
   changes.push({
-    op: 'create', parents: parent!, bind,
+    op: 'create', placement: { kind: 'last', parent: parent! }, bind,
     nodes: [draft(String(input.title), {
       ...(input.description !== undefined ? { description: String(input.description) } : {}),
       metadata: { capture: input.provenance },
@@ -376,7 +375,7 @@ async function mediaAddChanges(input: Record<string, unknown>, context: Porcelai
   if (!assetLeaseId && !input.mediaUrl) throw usageError('media add requires source, assetLeaseId, or mediaUrl.');
   if (mediaType === 'attachment' && input.mediaUrl) throw usageError('attachments cannot use mediaUrl.');
   return [{
-    op: 'create', parents: input.parent as TargetRef, bind: String(input.bind ?? 'media'),
+    op: 'create', placement: { kind: 'last', parent: input.parent as TargetRef }, bind: String(input.bind ?? 'media'),
     nodes: [draft(String(input.name ?? lease?.metadata.originalFilename ?? ''), {
       type: mediaType,
       ...(assetLeaseId ? { assetLeaseId } : {}),
@@ -460,12 +459,16 @@ async function buildRelativeMove(
     const siblings = stringArray(parent.children);
     const position = siblings.indexOf(requiredString(node.id, 'target ID'));
     if (position <= 0) throw usageError('indent target has no previous sibling.');
-    return { op: 'move', targets, destination: oneId(siblings[position - 1]!) };
+    return { op: 'move', targets, placement: { kind: 'last', parent: oneId(siblings[position - 1]!) } };
   }
   const grandparentId = requiredString(parent.parentId, 'outdent grandparent');
   const grandparent = await context.lookup({ by: 'id', id: grandparentId });
   const parentPosition = stringArray(grandparent.children).indexOf(parentId);
-  return { op: 'move', targets, destination: oneId(grandparentId), index: Math.max(0, parentPosition + 1) };
+  return {
+    op: 'move',
+    targets,
+    placement: { kind: 'index', parent: oneId(grandparentId), index: Math.max(0, parentPosition + 1) },
+  };
 }
 
 function oneId(id: string): TargetRef {
@@ -548,7 +551,7 @@ async function planTextReplacement(
   context: PorcelainBuildContext,
 ): Promise<TextReplacementPlan> {
   const contract = porcelainContract('text replace')!;
-  if (!Value.Check(contract.inputSchema, input)) {
+  if (!checkOutlineSchema(contract.inputSchema, input)) {
     throw usageError('Input does not match the public schema for command: text replace');
   }
   const target = input.target as TargetSpec;
@@ -736,9 +739,10 @@ async function buildChanges(
 }
 
 async function buildAdd(parsed: ParsedOptions, context: PorcelainBuildContext): Promise<Change> {
-  allow(parsed, ['parent', 'tree', 'index', 'bind', 'type', 'description']);
-  const parentToken = takeTargetToken(parsed, 'parent');
-  const parents = await targetRef(parentToken, context.read);
+  allow(parsed, ['parent', 'tree', 'first', 'last', 'index', 'before', 'after', 'bind', 'type', 'description']);
+  const anchored = parsed.options.has('before') || parsed.options.has('after');
+  const parentToken = option(parsed, 'parent') ?? (!anchored ? parsed.positional.shift() : undefined);
+  const placement = await placementFromParsed(parsed, context, parentToken, false);
   const tree = option(parsed, 'tree');
   let nodes: NodeDraft[];
   if (tree) {
@@ -754,9 +758,8 @@ async function buildAdd(parsed: ParsedOptions, context: PorcelainBuildContext): 
   }
   return {
     op: 'create',
-    parents,
+    placement: placement as DestinationPlacement,
     nodes,
-    ...(option(parsed, 'index') ? { index: integer(option(parsed, 'index')!, '--index', 0) } : {}),
     bind: option(parsed, 'bind') ?? 'created',
   };
 }
@@ -798,41 +801,63 @@ async function buildMove(
   parsed: ParsedOptions,
   context: PorcelainBuildContext,
 ): Promise<Change> {
-  allow(parsed, ['target', 'destination', 'index', 'bind']);
+  allow(parsed, ['target', 'destination', 'first', 'last', 'index', 'before', 'after', 'previous', 'next', 'bind']);
   const targetToken = takeTargetToken(parsed, 'target');
   const targets = await targetRef(targetToken, context.read);
-  let destinationToken = option(parsed, 'destination') ?? parsed.positional.shift();
-  let index = option(parsed, 'index') ? integer(option(parsed, 'index')!, '--index', 0) : undefined;
-  if ((command === 'indent' || command === 'outdent') && !destinationToken) {
-    const selector = selectorFromExactTarget(targets);
-    const node = await context.lookup(selector);
-    const parentId = requiredString(node.parentId, `${command} target parent`);
-    const parent = await context.lookup({ by: 'id', id: parentId });
-    if (command === 'indent') {
-      const siblings = stringArray(parent.children);
-      const position = siblings.indexOf(requiredString(node.id, 'target ID'));
-      if (position <= 0) throw usageError('indent target has no previous sibling.');
-      destinationToken = siblings[position - 1]!;
-      index = undefined;
-    } else {
-      const grandparentId = requiredString(parent.parentId, 'outdent grandparent');
-      const grandparent = await context.lookup({ by: 'id', id: grandparentId });
-      const parentPosition = stringArray(grandparent.children).indexOf(parentId);
-      destinationToken = grandparentId;
-      index = Math.max(0, parentPosition + 1);
+  if (command === 'indent' || command === 'outdent') {
+    if (parsed.positional.length > 0 || parsed.options.has('destination')) {
+      throw usageError(`${command} does not accept an explicit destination.`);
     }
+    return buildRelativeMove(command, targets, context);
   }
-  if (!destinationToken) throw usageError(`${command} requires a destination.`);
-  const destination = await targetRef(destinationToken, context.read);
+  const selfContained = ['before', 'after', 'previous', 'next'].some((name) => parsed.options.has(name));
+  const destinationToken = option(parsed, 'destination') ?? (!selfContained ? parsed.positional.shift() : undefined);
+  const placement = await placementFromParsed(parsed, context, destinationToken, true);
   if (parsed.positional.length > 0) throw usageError(`Unexpected ${command} argument: ${parsed.positional[0]}`);
   if (command === 'duplicate') {
     return {
-      op: 'duplicate', targets, destination,
-      ...(index !== undefined ? { index } : {}),
+      op: 'duplicate', targets, placement,
       bind: option(parsed, 'bind') ?? 'copies',
     };
   }
-  return { op: 'move', targets, destination, ...(index !== undefined ? { index } : {}) };
+  return { op: 'move', targets, placement };
+}
+
+async function placementFromParsed(
+  parsed: ParsedOptions,
+  context: PorcelainBuildContext,
+  parentToken: string | undefined,
+  allowRelative: boolean,
+): Promise<Placement | DestinationPlacement> {
+  const before = option(parsed, 'before');
+  const after = option(parsed, 'after');
+  const indexValue = option(parsed, 'index');
+  const first = flag(parsed, 'first');
+  const last = flag(parsed, 'last');
+  const previous = flag(parsed, 'previous');
+  const next = flag(parsed, 'next');
+  const selectedCount = [before, after, indexValue, first, last, previous, next]
+    .filter((value) => Boolean(value)).length;
+  if (selectedCount > 1) {
+    throw usageError('Choose exactly one of --first, --last, --index, --before, --after, --previous, or --next.');
+  }
+  if ((previous || next) && !allowRelative) throw usageError('Relative placement is not valid for create.');
+  if (before || after) {
+    if (parentToken) throw usageError('--before and --after infer their parent and cannot be combined with a destination.');
+    return {
+      kind: before ? 'before' : 'after',
+      sibling: await targetRef((before ?? after)!, context.read),
+    };
+  }
+  if (previous || next) {
+    if (parentToken) throw usageError('--previous and --next cannot be combined with a destination.');
+    return { kind: previous ? 'previous' : 'next' };
+  }
+  if (!parentToken) throw usageError('This placement requires a parent or destination.');
+  const parent = await targetRef(parentToken, context.read);
+  if (indexValue !== undefined) return { kind: 'index', parent, index: integer(indexValue, '--index', 0) };
+  if (first) return { kind: 'first', parent };
+  return { kind: 'last', parent };
 }
 
 async function buildMerge(parsed: ParsedOptions, context: PorcelainBuildContext): Promise<Change> {
@@ -1008,7 +1033,7 @@ async function buildReference(command: string, parsed: ParsedOptions, context: P
   const owner = option(parsed, 'target') ?? parsed.positional.shift();
   const reference = option(parsed, 'reference') ?? parsed.positional.shift() ?? owner;
   if (!owner || !reference || parsed.positional.length > 0) throw usageError(`${command} requires a target.`);
-  const actions = { 'reference add': 'add', 'reference set': 'retarget', 'reference inline': 'inline', 'reference restore': 'restore' } as const;
+  const actions = { 'reference add': 'add', 'reference set': 'retarget', 'reference replace': 'replace', 'reference inline': 'inline', 'reference restore': 'restore' } as const;
   return {
     op: 'update',
     targets: await targetRef(owner, context.read),

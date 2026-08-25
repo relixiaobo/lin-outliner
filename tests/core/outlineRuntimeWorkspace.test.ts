@@ -260,6 +260,70 @@ describe('OutlineRuntimeWorkspace', () => {
     expect(restartedAgain.documentState().nodes[secondNodeId]).toBeUndefined();
   });
 
+  test('scopes undo by origin and guards the selected Operation', async () => {
+    const root = await makeRoot();
+    const workspace = await OutlineRuntimeWorkspace.open(root);
+    const userNodeId = `node:${crypto.randomUUID()}`;
+    const agentNodeId = `node:${crypto.randomUUID()}`;
+    const newestUserNodeId = `node:${crypto.randomUUID()}`;
+    await workspace.mutate(createRequest('User row', { nodeId: userNodeId }));
+    await workspace.mutate(createRequest('Agent row', { nodeId: agentNodeId }));
+    await workspace.mutate(createRequest('Newest user row', { nodeId: newestUserNodeId }));
+    await workspace.mutate(updateRequest(userNodeId, 'Edited by user'));
+    const agentOperation = await workspace.mutate({
+      ...updateRequest(agentNodeId, 'Edited by agent'),
+      origin: 'built-in-agent',
+    });
+    const newestUserOperation = await workspace.mutate(updateRequest(newestUserNodeId, 'Edited newest by user'));
+
+    const operationsBeforeConflict = await workspace.store.operations();
+    await expect(workspace.undo({
+      origin: 'built-in-agent',
+      selectionOrigin: 'built-in-agent',
+      expectOperationId: newestUserOperation.operationId,
+    })).rejects.toMatchObject({
+      outlineError: {
+        code: 'stale_revision',
+        details: {
+          expectedOperationId: newestUserOperation.operationId,
+          actualOperationId: agentOperation.operationId,
+        },
+      },
+    });
+    expect(await workspace.store.operations()).toEqual(operationsBeforeConflict);
+
+    const agentUndo = await workspace.undo({
+      origin: 'built-in-agent',
+      selectionOrigin: 'built-in-agent',
+      expectOperationId: agentOperation.operationId,
+    });
+    expect(agentUndo.revertsOperationId).toBe(agentOperation.operationId);
+    expect(workspace.documentState().nodes[agentNodeId]?.description).toBeUndefined();
+    expect(workspace.documentState().nodes[userNodeId]?.description).toBe('Edited by user');
+    expect(workspace.documentState().nodes[newestUserNodeId]?.description).toBe('Edited newest by user');
+
+    const globalRoot = await makeRoot();
+    const globalWorkspace = await OutlineRuntimeWorkspace.open(globalRoot);
+    const globalUserNodeId = `node:${crypto.randomUUID()}`;
+    const globalAgentNodeId = `node:${crypto.randomUUID()}`;
+    await globalWorkspace.mutate(createRequest('Global user row', { nodeId: globalUserNodeId }));
+    await globalWorkspace.mutate(createRequest('Global agent row', { nodeId: globalAgentNodeId }));
+    await globalWorkspace.mutate(updateRequest(globalUserNodeId, 'Global user edit'));
+    const globalAgentOperation = await globalWorkspace.mutate({
+      ...updateRequest(globalAgentNodeId, 'Global agent edit'),
+      origin: 'built-in-agent',
+    });
+
+    const globalUndo = await globalWorkspace.undo({
+      origin: 'local-user',
+      selectionOrigin: 'all',
+      expectOperationId: globalAgentOperation.operationId,
+    });
+    expect(globalUndo.revertsOperationId).toBe(globalAgentOperation.operationId);
+    expect(globalWorkspace.documentState().nodes[globalAgentNodeId]?.description).toBeUndefined();
+    expect(globalWorkspace.documentState().nodes[globalUserNodeId]?.description).toBe('Global user edit');
+  });
+
   test('rejects revert when one affected after value changed and writes no recovery Operation', async () => {
     const root = await makeRoot();
     const nodeId = `node:${crypto.randomUUID()}`;

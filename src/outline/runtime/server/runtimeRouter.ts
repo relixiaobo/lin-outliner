@@ -1,4 +1,3 @@
-import { Value } from 'typebox/value';
 import {
   outlineCapability,
   outlineCapabilityContractDigest,
@@ -10,6 +9,7 @@ import {
   type Diff,
   OutlineRequestSchema,
   type Projection,
+  type QueryExpression,
   type Selector,
   type TargetSpec,
   type OutlineRequest,
@@ -18,14 +18,16 @@ import {
   type OperationLogPage,
 } from '../../contract/schemas';
 import { canonicalSha256 } from '../../contract/canonical';
+import { checkOutlineSchema } from '../../contract/validation';
 import {
   OUTLINE_CLI_VERSION,
   OUTLINE_PROTOCOL_VERSION,
   OUTLINE_STORAGE_VERSION,
 } from '../../contract/version';
-import type { OutlineRuntimeWorkspace } from '../runtimeWorkspace';
+import type { OutlineHistoryMutationOptions, OutlineRuntimeWorkspace } from '../runtimeWorkspace';
 import { applyOutlineDiff, diffOutlineChangeSet } from '../changeSet';
 import { projectOutline } from '../projection';
+import { countQueryMatches, countSavedSearchMatches, createSelectionIndex } from '../selector';
 import { decodeOperationLogCursor, encodeOperationLogCursor } from '../operationLogCursor';
 
 export interface OutlineRuntimeRequestContext {
@@ -59,7 +61,7 @@ export class OutlineRuntimeRouter {
           `Unknown outline command: ${request.command}`,
         ));
       }
-      if (!Value.Check(capability.requestSchema, request.input)) {
+      if (!checkOutlineSchema(capability.requestSchema, request.input)) {
         throw new OutlineContractError(outlineError(
           'invalid_input',
           'usage',
@@ -76,7 +78,7 @@ export class OutlineRuntimeRouter {
         ));
       }
       const data = await this.execute(request.command, request.input, context);
-      if (!Value.Check(capability.resultSchema, data)) {
+      if (!checkOutlineSchema(capability.resultSchema, data)) {
         throw new OutlineContractError(outlineError(
           'internal_error',
           'internal',
@@ -120,7 +122,64 @@ export class OutlineRuntimeRouter {
     }
     if (command === 'capabilities') return outlineCapabilityManifest();
     if (command === 'find') {
-      const value = input as { target: TargetSpec; projection?: Projection };
+      const value = input as {
+        target?: TargetSpec;
+        projection?: Projection;
+        mode?: 'count';
+        query?: QueryExpression;
+        searchId?: string;
+        queries?: Array<{ name: string; query: QueryExpression }>;
+        sharedQuery?: QueryExpression;
+        within?: Selector;
+        includeTrash?: boolean;
+      };
+      if (value.mode === 'count') {
+        const core = this.workspace.forkCore();
+        const index = createSelectionIndex(core.projection());
+        if (value.queries) {
+          const names = new Set<string>();
+          for (const entry of value.queries) {
+            if (names.has(entry.name)) {
+              throw new OutlineContractError(outlineError(
+                'invalid_input',
+                'usage',
+                `Batch count query names must be unique: ${entry.name}`,
+              ));
+            }
+            names.add(entry.name);
+          }
+          return {
+            kind: 'outline.batch-count',
+            revision: core.revision(),
+            exact: true,
+            counts: value.queries.map((entry) => ({
+              name: entry.name,
+              count: countQueryMatches(
+                index,
+                value.sharedQuery
+                  ? { kind: 'group', logic: 'AND', children: [value.sharedQuery, entry.query] }
+                  : entry.query,
+                {
+                  ...(value.within ? { within: value.within } : {}),
+                  ...(value.includeTrash ? { includeTrash: true } : {}),
+                },
+              ),
+            })),
+          };
+        }
+        return {
+          kind: 'outline.count',
+          revision: core.revision(),
+          exact: true,
+          count: value.searchId
+            ? countSavedSearchMatches(index, value.searchId)
+            : countQueryMatches(index, value.query!, {
+                ...(value.within ? { within: value.within } : {}),
+                ...(value.includeTrash ? { includeTrash: true } : {}),
+              }),
+        };
+      }
+      if (!value.target) throw new Error('validated find projection input is missing target');
       return projectOutline(this.workspace.forkCore(), value.projection ?? {
         kind: 'summary',
         targets: { target: value.target },
@@ -332,16 +391,25 @@ function historyMutationOptions(
   command: 'revert' | 'undo' | 'redo',
   input: Record<string, unknown>,
   context: OutlineRuntimeRequestContext,
-): OutlineRuntimeRequestContext & { readonly idempotencyKey?: string; readonly idempotencyPayloadHash?: string } {
+): OutlineHistoryMutationOptions {
   const idempotencyKey = typeof input.idempotencyKey === 'string' ? input.idempotencyKey : undefined;
+  const requestedOrigin = typeof input.origin === 'string' ? input.origin : 'own';
+  const selectionOrigin = requestedOrigin === 'own'
+    ? context.origin
+    : requestedOrigin as Operation['origin'] | 'all';
+  const expectOperationId = typeof input.expectOperationId === 'string' ? input.expectOperationId : undefined;
   return {
     ...context,
+    ...(command === 'undo' || command === 'redo' ? { selectionOrigin } : {}),
+    ...(expectOperationId ? { expectOperationId } : {}),
     ...(idempotencyKey ? {
       idempotencyKey,
       idempotencyPayloadHash: canonicalSha256({
         kind: 'outline.history-mutation',
         command,
         ...(command === 'revert' ? { operationId: input.operationId } : {}),
+        ...(command !== 'revert' ? { selectionOrigin } : {}),
+        ...(expectOperationId ? { expectOperationId } : {}),
       }),
     } : {}),
   };
@@ -370,7 +438,7 @@ export function requestCanMutate(command: string, input: unknown): boolean {
 }
 
 function decodeRequest(value: unknown): OutlineRequest {
-  if (!Value.Check(OutlineRequestSchema, value)) {
+  if (!checkOutlineSchema(OutlineRequestSchema, value)) {
     throw new OutlineContractError(outlineError('invalid_input', 'usage', 'Invalid outline request envelope.'));
   }
   return value;

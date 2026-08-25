@@ -1273,7 +1273,12 @@ describe('agent skills', () => {
     expect(outline?.body).toContain('# Outline');
     expect(outline?.body).toContain('## Start Every Task');
     expect(outline?.body).toContain('## Choose One Mutation Shape');
+    expect(outline?.body).toContain('## Model Common Structures');
     expect(outline?.body).toContain('## Recover Safely');
+    expect(outline?.body).toContain('one direct child Node per row');
+    expect(outline?.body).toContain('Never substitute a Markdown table');
+    expect(outline?.body).toContain('`YYYY-MM-DDTHH:mm`');
+    expect(outline?.body).toContain('`[[node:^exact-id]]`');
     expect(outline?.body).toContain('[references/commands.md](references/commands.md)');
     expect(outline?.body).toContain('[references/changesets.md](references/changesets.md)');
     expect(outline?.body).toContain('[references/import.md](references/import.md)');

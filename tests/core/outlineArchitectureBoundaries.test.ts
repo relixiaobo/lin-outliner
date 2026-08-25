@@ -40,6 +40,19 @@ describe('Outline process dependency boundaries', () => {
     ))).toEqual([]);
   });
 
+  test('uses cached compiled schema validation at public process boundaries', async () => {
+    const files = [
+      ...await sourceFiles([
+        path.join(sourceRoot, 'outline', 'cli'),
+        path.join(sourceRoot, 'outline', 'client'),
+        path.join(sourceRoot, 'outline', 'runtime', 'server'),
+      ]),
+      path.join(sourceRoot, 'outline', 'runtime', 'changeSet.ts'),
+    ];
+
+    expect(await forbiddenImports(files, ({ specifier }) => specifier === 'typebox/value')).toEqual([]);
+  });
+
   test('keeps desktop processes outside Core and Runtime storage authority', async () => {
     const files = await sourceFiles([
       path.join(sourceRoot, 'main'),

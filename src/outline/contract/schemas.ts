@@ -5,6 +5,7 @@ import {
   OUTLINE_PROTOCOL_VERSION,
   OUTLINE_STORAGE_VERSION,
 } from './version';
+import { QueryRuleSchema } from './queryOperators';
 
 const closed = { additionalProperties: false } as const;
 export const IdentifierSchema = Type.String({ minLength: 1, maxLength: 256 });
@@ -16,41 +17,9 @@ const LocalDate = LocalDateSchema;
 const Timestamp = Type.String({ format: 'date-time' });
 const JsonValue = Type.Unknown();
 
-export const OUTLINE_QUERY_OPS = [
-  'HAS_TAG', 'TODO', 'DONE', 'NOT_DONE', 'FIELD_IS', 'FIELD_IS_NOT',
-  'IS_EMPTY', 'IS_NOT_EMPTY', 'FIELD_CONTAINS', 'LT', 'GT',
-  'CREATED_LAST_DAYS', 'EDITED_LAST_DAYS', 'DONE_LAST_DAYS', 'HAS_FIELD',
-  'LINKS_TO', 'STRING_MATCH', 'REGEXP_MATCH', 'CHILD_OF', 'IS_TYPE',
-  'FOR_DATE', 'FOR_RELATIVE_DATE', 'DATE_OVERLAPS', 'DESCENDANT_OF',
-  'DESCENDANT_OF_WITH_REFS', 'PARENTS_DESCENDANTS',
-  'GRANDPARENTS_DESCENDANTS', 'PARENTS_DESCENDANTS_WITH_REFS',
-  'GRANDPARENTS_DESCENDANTS_WITH_REFS', 'SIBLING_NAMED', 'IN_LIBRARY',
-  'ON_DAY_NODE', 'EDITED_BY', 'OWNED_BY', 'OVERDUE', 'HAS_MEDIA',
-  'HAS_AUDIO', 'HAS_VIDEO', 'HAS_IMAGE', 'FIELD_IS_SET', 'FIELD_IS_NOT_SET',
-  'FIELD_IS_DEFINED', 'FIELD_IS_NOT_DEFINED',
-] as const;
-
-const QueryOpSchema = Type.Unsafe<(typeof OUTLINE_QUERY_OPS)[number]>({
-  type: 'string',
-  enum: [...OUTLINE_QUERY_OPS],
-});
-
-const QueryOperandSchema = Type.Object({
-  text: Type.Optional(Type.String({ maxLength: 65_536 })),
-  targetId: Type.Optional(Identifier),
-}, closed);
-
 export const QueryExpressionSchema = Type.Cyclic({
   QueryExpression: Type.Union([
-    Type.Object({
-      kind: Type.Literal('rule'),
-      op: QueryOpSchema,
-      text: Type.Optional(Type.String({ maxLength: 65_536 })),
-      fieldDefId: Type.Optional(Identifier),
-      tagDefId: Type.Optional(Identifier),
-      targetId: Type.Optional(Identifier),
-      operands: Type.Optional(Type.Array(QueryOperandSchema, { maxItems: 256 })),
-    }, closed),
+    QueryRuleSchema,
     Type.Object({
       kind: Type.Literal('group'),
       logic: Type.Union([Type.Literal('AND'), Type.Literal('OR'), Type.Literal('NOT')]),
@@ -63,6 +32,10 @@ export const SelectorSchema = Type.Cyclic({
   Selector: Type.Union([
     Type.Object({ by: Type.Literal('id'), id: Identifier }, closed),
     Type.Object({
+      by: Type.Literal('ids'),
+      ids: Type.Array(Identifier, { minItems: 1, maxItems: 10_000, uniqueItems: true }),
+    }, closed),
+    Type.Object({
       by: Type.Literal('alias'),
       alias: Type.Union([
         Type.Literal('home'), Type.Literal('inbox'), Type.Literal('schema'),
@@ -71,6 +44,11 @@ export const SelectorSchema = Type.Cyclic({
       ]),
     }, closed),
     Type.Object({ by: Type.Literal('date'), date: LocalDate }, closed),
+    Type.Object({
+      by: Type.Literal('search'),
+      id: Identifier,
+      limit: Type.Integer({ minimum: 1, maximum: 10_000 }),
+    }, closed),
     Type.Object({
       by: Type.Literal('query'),
       query: QueryExpressionSchema,
@@ -98,6 +76,46 @@ export const TargetRefSchema = Type.Union([
   Type.Object({ binding: BindingName }, closed),
 ], { $id: 'TargetRef' });
 
+const FirstPlacementSchema = Type.Object({
+  kind: Type.Literal('first'),
+  parent: TargetRefSchema,
+}, closed);
+const LastPlacementSchema = Type.Object({
+  kind: Type.Literal('last'),
+  parent: TargetRefSchema,
+}, closed);
+const IndexPlacementSchema = Type.Object({
+  kind: Type.Literal('index'),
+  parent: TargetRefSchema,
+  index: Type.Integer({ minimum: 0 }),
+}, closed);
+const BeforePlacementSchema = Type.Object({
+  kind: Type.Literal('before'),
+  sibling: TargetRefSchema,
+}, closed);
+const AfterPlacementSchema = Type.Object({
+  kind: Type.Literal('after'),
+  sibling: TargetRefSchema,
+}, closed);
+
+export const DestinationPlacementSchema = Type.Union([
+  FirstPlacementSchema,
+  LastPlacementSchema,
+  IndexPlacementSchema,
+  BeforePlacementSchema,
+  AfterPlacementSchema,
+], { $id: 'DestinationPlacement' });
+
+export const PlacementSchema = Type.Union([
+  FirstPlacementSchema,
+  LastPlacementSchema,
+  IndexPlacementSchema,
+  BeforePlacementSchema,
+  AfterPlacementSchema,
+  Type.Object({ kind: Type.Literal('previous') }, closed),
+  Type.Object({ kind: Type.Literal('next') }, closed),
+], { $id: 'Placement' });
+
 export const ProjectionSchema = Type.Object({
   kind: Type.Union([
     Type.Literal('summary'), Type.Literal('node'), Type.Literal('outline'),
@@ -108,7 +126,7 @@ export const ProjectionSchema = Type.Object({
   include: Type.Optional(Type.Array(Type.Union([
     Type.Literal('description'), Type.Literal('children'), Type.Literal('tags'),
     Type.Literal('fields'), Type.Literal('references'), Type.Literal('media'),
-    Type.Literal('view'), Type.Literal('trash'),
+    Type.Literal('view'), Type.Literal('trash'), Type.Literal('backlinks'),
   ]), { uniqueItems: true, maxItems: 8 })),
   page: Type.Optional(Type.Object({
     limit: Type.Integer({ minimum: 1, maximum: 10_000 }),
@@ -244,8 +262,7 @@ const EnsureChangeSchema = Type.Union([
 
 const CreateNodeChangeSchema = Type.Object({
   op: Type.Literal('create'),
-  parents: TargetRefSchema,
-  index: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Null()])),
+  placement: DestinationPlacementSchema,
   nodes: Type.Array(NodeDraftSchema, { minItems: 1, maxItems: 100_000 }),
   bind: Type.Optional(BindingName),
 }, closed);
@@ -596,7 +613,8 @@ export const UpdateInstructionSchema = Type.Union([
   Type.Object({
     kind: Type.Literal('reference'),
     action: Type.Union([
-      Type.Literal('add'), Type.Literal('retarget'), Type.Literal('inline'), Type.Literal('restore'),
+      Type.Literal('add'), Type.Literal('retarget'), Type.Literal('replace'),
+      Type.Literal('inline'), Type.Literal('restore'),
     ]),
     target: TargetRefSchema,
   }, closed),
@@ -616,15 +634,13 @@ const UpdateChangeSchema = Type.Object({
 const MoveChangeSchema = Type.Object({
   op: Type.Literal('move'),
   targets: TargetRefSchema,
-  destination: TargetRefSchema,
-  index: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Null()])),
+  placement: PlacementSchema,
 }, closed);
 
 const DuplicateChangeSchema = Type.Object({
   op: Type.Literal('duplicate'),
   targets: TargetRefSchema,
-  destination: TargetRefSchema,
-  index: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Null()])),
+  placement: PlacementSchema,
   bind: Type.Optional(BindingName),
 }, closed);
 
@@ -732,9 +748,32 @@ export const ProjectionResultSchema = Type.Object({
     todayId: Identifier,
   }, closed),
   nodes: Type.Array(JsonValue, { maxItems: 10_000 }),
+  backlinks: Type.Optional(Type.Array(Type.Object({
+    targetId: Identifier,
+    sourceId: Identifier,
+    referenceId: Identifier,
+    kind: Type.String({ minLength: 1, maxLength: 128 }),
+  }, closed), { maxItems: 100_000 })),
   cursor: Type.Optional(Type.String({ minLength: 1, maxLength: 4_096 })),
   truncated: Type.Optional(Type.Boolean()),
 }, { ...closed, $id: 'ProjectionResult' });
+
+export const OutlineCountResultSchema = Type.Object({
+  kind: Type.Literal('outline.count'),
+  revision: Type.Integer({ minimum: 0 }),
+  exact: Type.Literal(true),
+  count: Type.Integer({ minimum: 0 }),
+}, { ...closed, $id: 'OutlineCountResult' });
+
+export const OutlineBatchCountResultSchema = Type.Object({
+  kind: Type.Literal('outline.batch-count'),
+  revision: Type.Integer({ minimum: 0 }),
+  exact: Type.Literal(true),
+  counts: Type.Array(Type.Object({
+    name: Type.String({ pattern: '^[A-Za-z][A-Za-z0-9_-]{0,63}$' }),
+    count: Type.Integer({ minimum: 0 }),
+  }, closed), { minItems: 1, maxItems: 256 }),
+}, { ...closed, $id: 'OutlineBatchCountResult' });
 
 export const NoChangeResultSchema = Type.Object({
   protocolVersion: Type.Literal(OUTLINE_PROTOCOL_VERSION),
@@ -1123,11 +1162,16 @@ export const ImportVerifyResultSchema = Type.Object({
 }, { ...closed, $id: 'ImportVerifyResult' });
 
 export const OUTLINE_PUBLIC_SCHEMAS = Object.freeze({
+  QueryExpression: QueryExpressionSchema,
   Selector: SelectorSchema,
   TargetSpec: TargetSpecSchema,
   TargetRef: TargetRefSchema,
+  DestinationPlacement: DestinationPlacementSchema,
+  Placement: PlacementSchema,
   Projection: ProjectionSchema,
   ProjectionResult: ProjectionResultSchema,
+  OutlineCountResult: OutlineCountResultSchema,
+  OutlineBatchCountResult: OutlineBatchCountResultSchema,
   NodeDraft: NodeDraftSchema,
   RichTextPatch: RichTextPatchSchema,
   Change: ChangeSchema,
@@ -1162,8 +1206,12 @@ export type QueryExpression = Static<typeof QueryExpressionSchema>;
 export type Selector = Static<typeof SelectorSchema>;
 export type TargetSpec = Static<typeof TargetSpecSchema>;
 export type TargetRef = Static<typeof TargetRefSchema>;
+export type DestinationPlacement = Static<typeof DestinationPlacementSchema>;
+export type Placement = Static<typeof PlacementSchema>;
 export type Projection = Static<typeof ProjectionSchema>;
 export type ProjectionResult = Static<typeof ProjectionResultSchema>;
+export type OutlineCountResult = Static<typeof OutlineCountResultSchema>;
+export type OutlineBatchCountResult = Static<typeof OutlineBatchCountResultSchema>;
 export type NodeDraft = Static<typeof NodeDraftSchema>;
 export type UpdateInstruction = Static<typeof UpdateInstructionSchema>;
 export type Change = Static<typeof ChangeSchema>;

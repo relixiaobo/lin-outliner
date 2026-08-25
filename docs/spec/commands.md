@@ -12,10 +12,14 @@ Runtime capabilities.
 
 ## Sources Of Truth
 
-- `src/outline/contract/schemas.ts` defines the exact Selector, TargetSpec,
-  Projection, ChangeSet, Diff, Operation, Event, asset, response, and stream
-  schemas. Runtime request and descriptor schemas remain private transport
-  implementation.
+- `src/outline/contract/schemas.ts` defines the exact QueryExpression, Selector,
+  TargetSpec, placement, Projection, ChangeSet, Diff, Operation, Event, asset,
+  response, and stream schemas. Runtime request and descriptor schemas remain
+  private transport implementation.
+- `src/outline/contract/queryOperators.ts` owns every executable public query
+  operator, its exact required and optional operands, value format, summary, and
+  canonical example. The generated QueryExpression schema excludes internal but
+  non-executable operators.
 - `src/outline/contract/capabilities.ts` is the executable public capability
   registry. Each entry owns its name, exact CLI request and result schema,
   command-family placement, help and completion metadata, parser options,
@@ -39,7 +43,7 @@ owned. Missing and duplicate owners both fail the guard.
 | Mutation kernel | `diff`, `apply` | Previews one ChangeSet, then atomically applies that exact Diff. |
 | History | `log`, `revert`, `undo`, `redo` | Reads durable Operations or records a guarded reversal as another Operation. |
 | Asset | `asset ingest`, `asset show`, `asset export` | Stages verified bytes, reads metadata, or streams verified bytes. |
-| Porcelain mutation | `add`, `set`, `text replace`, `move`, `duplicate`, `merge`, `indent`, `outdent`, `done set`, `done cycle`, `tag add`, `tag remove`, `field define`, `field set`, `field clear`, `field remove`, `field reuse`, `field select`, `definition create`, `definition configure`, `definition merge`, `reference add`, `reference set`, `reference inline`, `reference restore`, `view set`, `view group set`, `view sort add`, `view sort set`, `view sort remove`, `view sort clear`, `view filter add`, `view filter set`, `view filter remove`, `view filter clear`, `view display add`, `view display set`, `view display remove`, `search create`, `search ensure-tag`, `search set`, `search refresh`, `template apply`, `daily ensure`, `capture add`, `media add`, `media set`, `trash`, `restore`, `purge` | Lowers one intent into the public ChangeSet contract. `--preview` returns its Diff; apply returns its Operation. |
+| Porcelain mutation | `add`, `set`, `text replace`, `move`, `duplicate`, `merge`, `indent`, `outdent`, `done set`, `done cycle`, `tag add`, `tag remove`, `field define`, `field set`, `field clear`, `field remove`, `field reuse`, `field select`, `definition create`, `definition configure`, `definition merge`, `reference add`, `reference set`, `reference replace`, `reference inline`, `reference restore`, `view set`, `view group set`, `view sort add`, `view sort set`, `view sort remove`, `view sort clear`, `view filter add`, `view filter set`, `view filter remove`, `view filter clear`, `view display add`, `view display set`, `view display remove`, `search create`, `search ensure-tag`, `search set`, `search refresh`, `template apply`, `daily ensure`, `capture add`, `media add`, `media set`, `trash`, `restore`, `purge` | Lowers one intent into the public ChangeSet contract. `--preview` returns its Diff; apply returns its Operation. |
 
 `capabilities` is executable authority rather than a hand-maintained help list.
 `outline --help`, family help, exact command help, shell completion metadata,
@@ -60,6 +64,13 @@ three canonical examples. Destructive help requires `--preview`, reviewed
 plain text even with `--json` or `--human` and runs without Runtime. Unknown
 paths/options and missing arguments provide the nearest command or exact help
 next step.
+
+Advanced query help and completion metadata use the same executable operator
+registry as `QueryExpressionSchema` and the generated Agent command reference.
+`outline schema QueryExpression` is the exact public grammar. Each rule is a
+closed operator-specific object: required field, tag, target, or value operands
+cannot be omitted, unrelated operands cannot be supplied, and an operator absent
+from that schema is not a supported CLI operator.
 
 Non-TTY stdout defaults to one versioned JSON response envelope, or JSONL for a
 stream. `--human` forces human presentation and `--json` explicitly forces the
@@ -109,6 +120,20 @@ the explicit primitive for automation that deliberately separates staging and
 review. Root `set` patches generic Node properties; `media set` owns media
 source/geometry; `search set` owns Search query/view configuration.
 
+Create, move, and duplicate use a public placement union rather than loosely
+coupled parent/index fields. Destination placement is `first(parent)`,
+`last(parent)`, `index(parent, index)`, `before(sibling)`, or `after(sibling)`.
+Move and duplicate additionally accept `previous` and `next`; move shifts the
+selected sibling block, while duplicate places each copy immediately before or
+after its source. Porcelain exposes the same choices as `--first`, `--last`,
+`--index`, `--before`, `--after`, `--previous`, and `--next`.
+
+Reference commands have non-overlapping semantics. `reference set` retargets an
+existing reference and rejects a content Node. `reference replace` inserts a tree
+reference at a content Node's position and moves the complete original subtree to
+Trash. `reference inline` converts a tree reference to inline form or replaces a
+content Node with an inline reference. Each is one reversible Operation.
+
 `text replace` is a general bounded literal transform over Node content,
 description, or both. It accepts one exact target, STRING_MATCH `--matching`
 shorthand, or the canonical structured query. Query selection requires an
@@ -154,9 +179,12 @@ Both deadlines compose with the caller's `AbortSignal`.
 A `Selector` is independent of renderer state:
 
 - `{ by: 'id', id }` selects one exact Node ID.
+- `{ by: 'ids', ids }` selects an ordered, unique list of exact Node IDs.
 - `{ by: 'alias', alias }` selects `home`, `inbox`, `schema`, `trash`,
   `daily-notes`, `library`, `saved-searches`, or `today`.
 - `{ by: 'date', date }` selects one canonical local date.
+- `{ by: 'search', id, limit }` executes one Saved Search live and does not trust
+  or refresh its materialized reference children.
 - `{ by: 'query', query, within?, includeTrash?, order?, limit }` uses the shared
   structured search grammar.
 
@@ -164,6 +192,13 @@ Query resolution evaluates the complete match set, removes Trash unless
 `includeTrash` is true, applies `within`, and applies the requested stable order
 before taking `limit`. The limit therefore bounds the final selector result, not
 an intermediate relevance-ranked candidate set.
+
+`show ID...` lowers multiple exact IDs to one ordered `ids` selector. `find
+--count` returns an exact count without a Node payload; `find --input` can return
+several uniquely named counts with one optional `sharedQuery`, combined with each
+query using canonical `AND`. One request builds and reuses its text selection
+index. `find --search SEARCH_ID` executes a Saved Search live, including stale
+materialized searches, and can also return an exact count.
 
 `TargetSpec` adds `one`, `zero-or-one`, or bounded `many` cardinality. Mutation
 resolution never picks the first fuzzy match. Missing, ambiguous, over-limit,
@@ -177,8 +212,10 @@ sidebar pins, or Agent-specific filtering.
 
 `include` is an allow-list for optional Node metadata. In particular, `fields`
 admits field-definition linkage, `view` admits view/sort/filter/display/query
-metadata, and `trash` admits the original-parent linkage used for restoration.
-When one of these values is absent, its metadata is redacted from Node results.
+metadata, `trash` admits the original-parent linkage used for restoration, and
+`backlinks` returns a separate bounded backlinks collection without replacing the
+selected Node result. When one of these values is absent, its metadata is redacted
+from Node results.
 
 ## ChangeSet
 
@@ -194,10 +231,10 @@ top-level vocabulary:
 | --- | --- |
 | `resolve` | Resolve and bind an exact target set without changing state. |
 | `ensure` | Resolve or create a canonical date, tag search, tag definition, or field definition, then bind it. |
-| `create` | Create typed Node trees under one or many targets and optionally bind their IDs. |
+| `create` | Create typed Node trees at one explicit destination placement and optionally bind their IDs. |
 | `update` | Apply ordered typed content, description, code, done, tag, field, reference, view, search, icon, banner, or image instructions. |
-| `move` | Reparent or reorder bounded targets. |
-| `duplicate` | Copy bounded targets to an explicit destination and optionally bind the copies. |
+| `move` | Reparent or reorder bounded targets through one explicit placement. |
+| `duplicate` | Copy bounded targets through one explicit placement and optionally bind the copies. |
 | `merge` | Merge Nodes or compatible definitions under Core invariants. |
 | `template` | Apply tag-template backfill to the Diff-computed affected set. |
 | `lifecycle` | Trash, restore, or purge bounded targets. |
@@ -213,6 +250,12 @@ revision, assigns new IDs, records target and structural-parent preconditions,
 lowers porcelain, executes Core validation on a disposable frontier, and hashes
 canonical JSON. Invalid semantic keys, unresolved bindings, protected targets,
 or stale preconditions write nothing.
+
+Validation covers the complete semantic frontier before commit. Changing a field
+definition type validates every existing value against the proposed type.
+Lifecycle targeting collapses selected ancestors and descendants so Trash moves
+each covered subtree once and never strands descendants. These checks apply to
+desktop and CLI callers through the same ChangeSet executor.
 
 `diff --input-format jsonl` uploads a header, bounded operation records, and a
 count/SHA-256 trailer as a stream. After transport authentication, Runtime writes
@@ -270,7 +313,10 @@ retained recovery patch and current affected state; a conflict returns a typed
 nothing. The Diff identifies each changed Node precondition by its expected
 post-Operation and actual digest. A successful revert is a new Operation linked to its target.
 `undo` and `redo` are convenience selection over the same retained history and
-do not expose a separate stack authority.
+do not expose a separate stack authority. They default to the authenticated
+caller's origin, accept an explicit `--origin` scope, and can require the visible
+stack head with `--expect-operation`. A mismatched guard returns a conflict and
+creates no Operation.
 
 Operation summaries aggregate ChangeSet operations by change kind, so their
 encoded size remains bounded even when one legal ChangeSet contains tens of
@@ -362,6 +408,9 @@ Outliner except by acting as an ordinary authenticated Runtime client.
 - Runtime is the only process importing Core, Loro document state, transaction
   storage, recovery storage, or the asset index.
 - Public schema validation and conflict checks happen before write admission.
+  Process boundaries compile and cache validators from the exact registry
+  schema object; large recursive ChangeSets, Diffs, normalized imports, and
+  response envelopes do not fall back to interpretive union validation.
 - Renderer and Electron main never open workspace persistence directly.
 - Adding a Core document command requires exactly one capability owner; adding a
   public capability requires schema, admission, CLI, audit, and parity coverage.

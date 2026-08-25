@@ -171,7 +171,7 @@ function createAttachmentChangeSet(assetLeaseId: string): ChangeSet {
     protocolVersion: 1,
     kind: 'outline.changeset',
     idempotencyKey: `test:${crypto.randomUUID()}`,
-    operations: [{ op: 'create', parents: oneAlias('today'), nodes: [attachment], bind: 'created' }],
+    operations: [{ op: 'create', placement: { kind: 'last', parent: oneAlias('today') }, nodes: [attachment], bind: 'created' }],
   };
 }
 
@@ -182,7 +182,7 @@ function createPlainChangeSet(text: string): ChangeSet {
     idempotencyKey: `test:${crypto.randomUUID()}`,
     operations: [{
       op: 'create',
-      parents: oneAlias('today'),
+      placement: { kind: 'last', parent: oneAlias('today') },
       nodes: [{ content: { text, marks: [], inlineRefs: [] }, children: [] }],
     }],
   };

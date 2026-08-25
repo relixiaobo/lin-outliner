@@ -34,6 +34,9 @@ display text without a bounded read that proves the target.
 Read only the smallest Projection needed to decide and later verify the work.
 Common text search uses positional text or `search create --match`; advanced
 search uses the canonical structured query through `--query` or `--input`.
+Read its executable operators and exact operands from
+`outline schema QueryExpression`; operators absent from that schema are not
+public even if they exist in internal document data.
 
 ## Choose One Mutation Shape
 
@@ -61,6 +64,20 @@ several writes. Every structured `many` mutation has an explicit `max` bound.
 For external notes, exports, migrations, or cleanup-before-import, read
 [references/import.md](references/import.md). Import is an Outline workflow,
 not a separate Skill or Runtime API.
+
+## Model Common Structures
+
+Model a table as one owner Node with a table view, reusable field definitions,
+and one direct child Node per row. Store cells as field values and configure the
+visible display fields, grouping, and sort on the owner. Create definitions,
+owner, rows, values, and view together in one ChangeSet when they form one user
+intent. Never substitute a Markdown table or aligned plain text for document
+table state.
+
+Date field values use `YYYY-MM-DD`, `YYYY-MM-DDTHH:mm`, or `start/end` with `/`.
+Use exact local-date selectors for Daily Notes; do not apply timezone conversion
+to a local calendar date. In the final response, mention persisted Nodes as
+`[[node:^exact-id]]` so the client resolves the current title.
 
 ## Review and Execute
 

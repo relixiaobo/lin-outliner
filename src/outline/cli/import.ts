@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { Value } from 'typebox/value';
 import {
   DiffSchema,
   ImportEvidenceSchema,
@@ -19,6 +18,7 @@ import {
   TargetSpecSchema,
   SelectorSchema,
   outlineCapability,
+  checkOutlineSchema,
   outlineError,
   type Diff,
   type ImportEvidence,
@@ -185,9 +185,9 @@ function parseStructuredParent(raw: string): TargetRef {
   } catch (error) {
     throw usageError(`Parent input is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
-  if (Value.Check(TargetRefSchema, value)) return value;
-  if (Value.Check(TargetSpecSchema, value)) return { target: value };
-  if (Value.Check(SelectorSchema, value)) return { target: { selector: value, cardinality: 'one' } };
+  if (checkOutlineSchema(TargetRefSchema, value)) return value;
+  if (checkOutlineSchema(TargetSpecSchema, value)) return { target: value };
+  if (checkOutlineSchema(SelectorSchema, value)) return { target: { selector: value, cardinality: 'one' } };
   throw usageError('Parent input must be a Selector, TargetSpec, or TargetRef.');
 }
 
@@ -201,7 +201,7 @@ async function inspectSource(
   try {
     await runSourceAdapter(['inspect', source, '--out', output], env, signal);
     const profile = await readJson(output);
-    if (!Value.Check(ImportSourceProfileSchema, profile)) {
+    if (!checkOutlineSchema(ImportSourceProfileSchema, profile)) {
       throw protocolError('The source adapter returned an invalid ImportSourceProfile.');
     }
     return profile;
@@ -295,7 +295,7 @@ async function planImport(
     }
 
     const diff = await readJson(input.output);
-    if (!Value.Check(DiffSchema, diff)) throw protocolError('Outline Runtime returned an invalid import Diff.');
+    if (!checkOutlineSchema(DiffSchema, diff)) throw protocolError('Outline Runtime returned an invalid import Diff.');
     const reviewedEvidence = {
       ...built.evidence,
       changeSetFingerprint: sha256Text(JSON.stringify(diff.normalizedChangeSet)),
@@ -335,7 +335,7 @@ async function resolveSourceFormat(
   if (requested !== 'auto') return requested;
   try {
     const value = JSON.parse(sourceText) as unknown;
-    if (Value.Check(NormalizedImportSchema, value) && validateNormalizedImportShape(value).ok) return 'normalized';
+    if (checkOutlineSchema(NormalizedImportSchema, value) && validateNormalizedImportShape(value).ok) return 'normalized';
   } catch {
     // The bounded source profile below owns the public unsupported-format error.
   }
@@ -349,7 +349,7 @@ async function readNormalizedSource(source: string): Promise<NormalizedImport> {
 }
 
 async function readNormalizedValue(value: unknown): Promise<NormalizedImport> {
-  if (!Value.Check(NormalizedImportSchema, value)) {
+  if (!checkOutlineSchema(NormalizedImportSchema, value)) {
     throw usageError('Source does not match outline schema NormalizedImport.');
   }
   const validation = validateNormalizedImportShape(value);
@@ -364,14 +364,14 @@ async function verifyImport(
 ): Promise<ImportVerifyResult> {
   const evidence = await readJson(input.evidence);
   const diff = await readJson(input.diff);
-  if (!Value.Check(ImportEvidenceSchema, evidence)) throw usageError('Evidence does not match outline schema ImportEvidence.');
-  if (!Value.Check(DiffSchema, diff)) throw usageError('Diff does not match outline schema Diff.');
+  if (!checkOutlineSchema(ImportEvidenceSchema, evidence)) throw usageError('Evidence does not match outline schema ImportEvidence.');
+  if (!checkOutlineSchema(DiffSchema, diff)) throw usageError('Diff does not match outline schema Diff.');
 
   const client = await supervisor.connect(signal);
   try {
     const page = (await client.request('log', { operationId: input.operationId, limit: 1 }, signal)).data;
     const operation = isRecord(page) && Array.isArray(page.operations) ? page.operations[0] : undefined;
-    if (!Value.Check(OperationSchema, operation) || operation.operationId !== input.operationId) {
+    if (!checkOutlineSchema(OperationSchema, operation) || operation.operationId !== input.operationId) {
       throw usageError(`Operation was not found: ${input.operationId}`);
     }
     let verifiedRoots;
@@ -469,14 +469,14 @@ async function writeAtomicArtifact(target: string, chunks: AsyncIterable<Uint8Ar
 
 function assertRequest(command: string, input: unknown): void {
   const capability = outlineCapability(command)!;
-  if (!Value.Check(capability.requestSchema, input)) {
+  if (!checkOutlineSchema(capability.requestSchema, input)) {
     throw usageError(`Input does not match the public schema for command: ${command}`);
   }
 }
 
 function assertResult(command: string, result: unknown): void {
   const capability = outlineCapability(command)!;
-  if (!Value.Check(capability.resultSchema, result)) {
+  if (!checkOutlineSchema(capability.resultSchema, result)) {
     throw protocolError(`Result does not match the public schema for command: ${command}`);
   }
 }

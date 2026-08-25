@@ -52,9 +52,9 @@ describe('outline mandatory CLI golden flows', () => {
         operations: [
           { op: 'create', resource: 'definition', definitionType: 'field', name: 'Project Status', config: { fieldType: 'plain' }, bind: 'status' },
           { op: 'create', resource: 'definition', definitionType: 'field', name: 'Project Budget', config: { fieldType: 'number', minValue: 0 }, bind: 'budget' },
-          { op: 'create', parents: oneAlias('library'), nodes: [draft('Projects')], bind: 'projects' },
-          { op: 'create', parents: { binding: 'projects' }, nodes: [draft('Alpha')], bind: 'alpha' },
-          { op: 'create', parents: { binding: 'projects' }, nodes: [draft('Beta')], bind: 'beta' },
+          { op: 'create', placement: { kind: 'last', parent: oneAlias('library') }, nodes: [draft('Projects')], bind: 'projects' },
+          { op: 'create', placement: { kind: 'last', parent: { binding: 'projects' } }, nodes: [draft('Alpha')], bind: 'alpha' },
+          { op: 'create', placement: { kind: 'last', parent: { binding: 'projects' } }, nodes: [draft('Beta')], bind: 'beta' },
           { op: 'update', targets: { binding: 'alpha' }, changes: [
             { kind: 'field', action: 'set', field: { binding: 'status' }, value: 'Active' },
             { kind: 'field', action: 'set', field: { binding: 'budget' }, value: 100 },
@@ -99,7 +99,7 @@ describe('outline mandatory CLI golden flows', () => {
         protocolVersion: 1, kind: 'outline.changeset', operations: [
           { op: 'create', resource: 'definition', definitionType: 'tag', name: 'Bound Tag', config: { showCheckbox: true }, bind: 'tag' },
           { op: 'create', resource: 'definition', definitionType: 'field', name: 'Bound Field', config: { fieldType: 'plain' }, bind: 'field' },
-          { op: 'create', parents: oneAlias('library'), nodes: [draft('New target')], bind: 'created' },
+          { op: 'create', placement: { kind: 'last', parent: oneAlias('library') }, nodes: [draft('New target')], bind: 'created' },
           { op: 'update', targets: { binding: 'created' }, changes: [
             { kind: 'tag', action: 'add', tag: { binding: 'tag' } },
             { kind: 'field', action: 'set', field: { binding: 'field' }, value: 'new value' },
@@ -128,7 +128,7 @@ describe('outline mandatory CLI golden flows', () => {
       const changeSet = {
         protocolVersion: 1, kind: 'outline.changeset', operations: [
           { op: 'ensure', resource: 'date', date: '2041-02-03', bind: 'date' },
-          { op: 'create', parents: { binding: 'date' }, nodes: [draft('Daily tree', {
+          { op: 'create', placement: { kind: 'last', parent: { binding: 'date' } }, nodes: [draft('Daily tree', {
             description: 'Typed root', checkbox: true, done: true,
             children: [draft('const value = 1', { type: 'codeBlock', codeLanguage: 'typescript' })],
           })], bind: 'tree' },
@@ -218,8 +218,8 @@ describe('outline mandatory CLI golden flows', () => {
       const before = snapshot(runtime);
       const changeSet = {
         protocolVersion: 1, kind: 'outline.changeset', operations: [
-          { op: 'create', parents: oneAlias('library'), nodes: [draft('Node A')], bind: 'a' },
-          { op: 'create', parents: oneAlias('library'), nodes: [draft('Node B')], bind: 'b' },
+          { op: 'create', placement: { kind: 'last', parent: oneAlias('library') }, nodes: [draft('Node A')], bind: 'a' },
+          { op: 'create', placement: { kind: 'last', parent: oneAlias('library') }, nodes: [draft('Node B')], bind: 'b' },
           { op: 'update', targets: { binding: 'a' }, changes: [{ kind: 'reference', action: 'add', target: { binding: 'b' } }] },
         ],
       };
@@ -238,9 +238,9 @@ describe('outline mandatory CLI golden flows', () => {
       const setup = await diffApply(cli, {
         protocolVersion: 1, kind: 'outline.changeset', operations: [
           { op: 'create', resource: 'definition', definitionType: 'tag', name: 'Template Golden', bind: 'tag' },
-          { op: 'create', parents: oneAlias('library'), nodes: [draft('Tagged before backfill')], bind: 'target' },
+          { op: 'create', placement: { kind: 'last', parent: oneAlias('library') }, nodes: [draft('Tagged before backfill')], bind: 'target' },
           { op: 'update', targets: { binding: 'target' }, changes: [{ kind: 'tag', action: 'add', tag: { binding: 'tag' } }] },
-          { op: 'create', parents: { binding: 'tag' }, nodes: [draft('Template child')], bind: 'template' },
+          { op: 'create', placement: { kind: 'last', parent: { binding: 'tag' } }, nodes: [draft('Template child')], bind: 'template' },
         ],
       });
       const tagId = setup.diff.bindings.tag![0]!;
@@ -342,7 +342,7 @@ describe('outline mandatory CLI golden flows', () => {
       const setup = await diffApply(cli, {
         protocolVersion: 1, kind: 'outline.changeset', operations: [
           {
-            op: 'create', parents: oneAlias('library'), bind: 'rich', nodes: [{
+            op: 'create', placement: { kind: 'last', parent: oneAlias('library') }, bind: 'rich', nodes: [{
               content: {
                 text: 'keyword 1 keyword 1',
                 marks: [{ start: 0, end: 9, type: 'bold' }],
@@ -352,11 +352,11 @@ describe('outline mandatory CLI golden flows', () => {
             }],
           },
           {
-            op: 'create', parents: oneAlias('library'), bind: 'described', nodes: [draft('Description target', {
+            op: 'create', placement: { kind: 'last', parent: oneAlias('library') }, bind: 'described', nodes: [draft('Description target', {
               description: 'Keyword 1 appears here',
             })],
           },
-          { op: 'create', parents: oneAlias('library'), nodes: [draft('Unrelated target')] },
+          { op: 'create', placement: { kind: 'last', parent: oneAlias('library') }, nodes: [draft('Unrelated target')] },
         ],
       });
       const richId = setup.diff.bindings.rich![0]!;

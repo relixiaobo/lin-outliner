@@ -246,6 +246,100 @@ describe('built-in outline Skill import workflow', () => {
     expect(await readFile(source, 'utf8')).toBe(sourceText);
   });
 
+  test('folds untagged descendants while retaining bindings required by tagged branches', async () => {
+    const directory = await temporaryDirectory('outline-import-tree-folding-');
+    const artifacts = artifactPaths(directory);
+    const normalizedPath = path.join(directory, 'normalized.json');
+    const normalized = normalizedSource([{
+      title: 'Nested section',
+      kind: 'library',
+      nodes: [{
+        title: 'Imported root',
+        children: [{
+          title: 'Binding ancestor',
+          children: [{
+            title: 'Tagged branch',
+            tags: ['Project'],
+            children: [{ title: 'Folded leaf' }],
+          }],
+        }],
+      }],
+    }]);
+    await writeFile(normalizedPath, JSON.stringify({
+      ...normalized,
+      stats: { ...normalized.stats, tags: 1 },
+    }), 'utf8');
+    const runtime = await OutlineRuntimeServer.start({ root: artifacts.runtime, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+
+    try {
+      const before = JSON.parse(JSON.stringify(runtime.workspace.documentState())) as unknown;
+      const operationsBefore = (await runtime.workspace.store.operations()).length;
+      await runOutlineJson(artifacts.runtime, [
+        'import', 'plan', normalizedPath,
+        '--format', 'normalized',
+        '--output', artifacts.diff,
+        '--evidence-output', artifacts.evidence,
+        '--changeset-output', artifacts.changeSet,
+      ]);
+      const changeSet = await json(artifacts.changeSet) as {
+        operations: Array<Record<string, unknown>>;
+      };
+      const creates = changeSet.operations.filter((operation) => operation.op === 'create');
+      const createdRoots = creates.flatMap((operation) => (
+        Array.isArray(operation.nodes) ? operation.nodes as Array<Record<string, unknown>> : []
+      ));
+      const rootText = (draft: Record<string, unknown>) => (
+        draft.content as { text?: unknown } | undefined
+      )?.text;
+      const taggedDraft = createdRoots.find((draft) => rootText(draft) === 'Tagged branch');
+
+      expect(creates).toHaveLength(5);
+      expect(createdRoots.map(rootText)).toEqual(expect.arrayContaining([
+        'Imported root',
+        'Binding ancestor',
+        'Tagged branch',
+      ]));
+      expect(createdRoots.map(rootText)).not.toContain('Folded leaf');
+      expect(taggedDraft).toMatchObject({
+        children: [expect.objectContaining({
+          content: expect.objectContaining({ text: 'Folded leaf' }),
+        })],
+      });
+      expect(changeSet.operations.filter((operation) => operation.op === 'update')).toHaveLength(1);
+      expect(changeSet.operations.filter((operation) => operation.op === 'ensure')).toEqual([
+        expect.objectContaining({ resource: 'definition', definitionType: 'tag', name: 'Project' }),
+      ]);
+
+      const diff = await json(artifacts.diff) as Diff;
+      const operation = await runOutlineJson(
+        artifacts.runtime,
+        ['apply', '--input', artifacts.diff],
+      ) as Operation;
+      expect(operation).toMatchObject({
+        kind: 'outline.operation',
+        affectedNodeCount: diff.affected.length,
+        recovery: { state: 'available' },
+      });
+      expect((await runtime.workspace.store.operations()).length).toBe(operationsBefore + 1);
+
+      const nodes = Object.values(runtime.workspace.documentState().nodes);
+      const tag = nodes.find((node) => node.type === 'tagDef' && node.content.text === 'Project');
+      const tagged = nodes.find((node) => node.content.text === 'Tagged branch');
+      const leaf = nodes.find((node) => node.content.text === 'Folded leaf');
+      expect(tag).toBeDefined();
+      expect(tagged?.tags).toContain(tag!.id);
+      expect(leaf?.parentId).toBe(tagged?.id);
+
+      const reverted = await runOutlineJson(artifacts.runtime, ['revert', operation.operationId]) as Operation;
+      expect(reverted.revertsOperationId).toBe(operation.operationId);
+      expect(runtime.workspace.documentState()).toEqual(before);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   test('plans and applies 100 normalized dates without an adapter or intermediate ID lookup', async () => {
     const directory = await temporaryDirectory('outline-import-100-dates-');
     const artifacts = artifactPaths(directory);

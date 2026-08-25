@@ -1900,8 +1900,11 @@ function mutableTimelineHost(
       bindings.set(change.bind, existing.id);
       return;
     }
-    if (change.op === 'create') {
-      const parentId = resolveMemoryTestTarget(change.parents, bindings);
+    if (change.op === 'create' && 'placement' in change) {
+      if (!('parent' in change.placement)) {
+        throw new Error('Memory test create requires a parent placement');
+      }
+      const parentId = resolveMemoryTestTarget(change.placement.parent, bindings);
       for (const input of change.nodes) {
         if (!input.id) throw new Error('Memory test create requires a stable Node ID');
         const created = node(

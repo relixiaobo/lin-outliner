@@ -1,5 +1,4 @@
-import { Value } from 'typebox/value';
-import type { Core, CoreTransactionNodePatch } from '../../core/core';
+import type { Core, CoreTransactionNodePatch, ResolvedContentTree } from '../../core/core';
 import type { FieldSlotMutation } from '../../core/types';
 import {
   TRASH_ID,
@@ -31,13 +30,16 @@ import {
   type ChangeSet,
   type Diff,
   type AssetLease,
+  type DestinationPlacement,
   type NodeDraft,
   type NoChangeResult,
   type Operation,
   type TargetRef,
+  type Placement,
   type UpdateInstruction,
 } from '../contract/schemas';
 import { OUTLINE_PROTOCOL_VERSION } from '../contract/version';
+import { checkOutlineSchema } from '../contract/validation';
 import { createDeterministicCoreIdFactory, deterministicPublicNodeId } from './deterministicIds';
 import { projectOutline, resolveTargetRef } from './projection';
 import { semanticAffectedDigest, semanticNodeDigest } from './semanticDigest';
@@ -74,7 +76,7 @@ export async function applyOutlineDiff(
   context: OutlineRuntimeRequestContext,
   acknowledgeDestructive = false,
 ): Promise<Operation | NoChangeResult> {
-  if (!Value.Check(DiffSchema, diff)) throw usageError('Invalid outline Diff artifact.');
+  if (!checkOutlineSchema(DiffSchema, diff)) throw usageError('Invalid outline Diff artifact.');
   const actualDiffHash = canonicalDiffHash(diff);
   if (actualDiffHash !== diff.diffHash) {
     throw new OutlineContractError(outlineError('diff_mismatch', 'conflict', 'Diff hash does not match its content.'));
@@ -141,7 +143,7 @@ export async function applyOutlineDiff(
 }
 
 export function normalizeOutlineChangeSet(core: Core, input: ChangeSet): ChangeSet {
-  if (!Value.Check(ChangeSetSchema, input)) throw usageError('Input does not match the public ChangeSet schema.');
+  if (!checkOutlineSchema(ChangeSetSchema, input)) throw usageError('Input does not match the public ChangeSet schema.');
   if (input.base?.revision !== undefined && input.base.revision !== core.revision()) {
     throw new OutlineContractError(outlineError(
       'stale_revision',
@@ -276,12 +278,31 @@ async function executeChange(
     case 'ensure': return executeEnsure(core, baseIndex, bindings, change);
     case 'create': {
       if ('resource' in change) return executeCreateDefinition(core, change, operationIndex, assetLeases);
-      const parentIds = resolveTargetRef(baseIndex, change.parents, bindings);
+      const destinations = resolveDestinationPlacements(core, baseIndex, bindings, change.placement);
       const created: string[] = [];
-      for (const [parentIndex, parentId] of parentIds.entries()) {
+      for (const [parentIndex, destination] of destinations.entries()) {
+        const fastTrees = change.nodes.every(isResolvedContentDraft)
+          ? change.nodes.map((draft, draftIndex) => resolvedContentTree(
+              draft,
+              `${operationIndex}:${parentIndex}:${draftIndex}`,
+              parentIndex === 0,
+            ))
+          : undefined;
+        if (fastTrees && core.tryCreateResolvedContentTrees(destination.parentId, destination.index, fastTrees)) {
+          created.push(...fastTrees.map((tree) => tree.id));
+          continue;
+        }
         for (const [draftIndex, draft] of change.nodes.entries()) {
           const copyPath = `${operationIndex}:${parentIndex}:${draftIndex}`;
-          created.push(createDraft(core, parentId, change.index, draft, copyPath, parentIndex === 0, assetLeases));
+          created.push(createDraft(
+            core,
+            destination.parentId,
+            destination.index === undefined ? undefined : destination.index + draftIndex,
+            draft,
+            copyPath,
+            parentIndex === 0,
+            assetLeases,
+          ));
         }
       }
       return created;
@@ -302,20 +323,61 @@ async function executeChange(
     }
     case 'move': {
       const targetIds = resolveTargetRef(baseIndex, change.targets, bindings);
-      const destinationId = exactlyOne(resolveTargetRef(baseIndex, change.destination, bindings), 'move destination');
+      if (change.placement.kind === 'previous') {
+        core.batchMoveNodesUp([...targetIds]);
+        return targetIds;
+      }
+      if (change.placement.kind === 'next') {
+        core.batchMoveNodesDown([...targetIds]);
+        return targetIds;
+      }
+      const destination = exactlyOneDestination(resolveDestinationPlacements(
+        core,
+        baseIndex,
+        bindings,
+        change.placement,
+      ), 'move destination');
       for (const [index, targetId] of targetIds.entries()) {
-        core.moveNode(targetId, destinationId, change.index == null ? change.index : change.index + index);
+        core.moveNode(
+          targetId,
+          destination.parentId,
+          destination.index === undefined ? undefined : destination.index + index,
+        );
       }
       return targetIds;
     }
     case 'duplicate': {
       const targetIds = resolveTargetRef(baseIndex, change.targets, bindings);
-      const destinationId = exactlyOne(resolveTargetRef(baseIndex, change.destination, bindings), 'duplicate destination');
       const created: string[] = [];
+      if (change.placement.kind === 'previous' || change.placement.kind === 'next') {
+        for (const targetId of targetIds) {
+          const duplicateId = core.batchDuplicateNodes([targetId]).focus?.nodeId;
+          if (!duplicateId) throw new Error(`Core did not return the duplicate root for ${targetId}`);
+          if (change.placement.kind === 'previous') {
+            const state = core.state();
+            const source = state.nodes[targetId];
+            const parent = source?.parentId ? state.nodes[source.parentId] : undefined;
+            if (!source?.parentId || !parent) throw new Error(`Duplicate source has no parent: ${targetId}`);
+            core.moveNode(duplicateId, source.parentId, parent.children.indexOf(targetId));
+          }
+          created.push(duplicateId);
+        }
+        return created;
+      }
+      const destination = exactlyOneDestination(resolveDestinationPlacements(
+        core,
+        baseIndex,
+        bindings,
+        change.placement,
+      ), 'duplicate destination');
       for (const [index, targetId] of targetIds.entries()) {
         const duplicateId = core.batchDuplicateNodes([targetId]).focus?.nodeId;
         if (!duplicateId) throw new Error(`Core did not return the duplicate root for ${targetId}`);
-        core.moveNode(duplicateId, destinationId, change.index == null ? change.index : change.index + index);
+        core.moveNode(
+          duplicateId,
+          destination.parentId,
+          destination.index === undefined ? undefined : destination.index + index,
+        );
         created.push(duplicateId);
       }
       return created;
@@ -349,6 +411,54 @@ async function executeChange(
       return effectiveTargets;
     }
   }
+}
+
+interface ResolvedDestination {
+  readonly parentId: string;
+  readonly index?: number;
+}
+
+function resolveDestinationPlacements(
+  core: Core,
+  baseIndex: ReturnType<typeof createSelectionIndex>,
+  bindings: Readonly<Record<string, readonly string[]>>,
+  placement: DestinationPlacement,
+): readonly ResolvedDestination[] {
+  if (placement.kind === 'first' || placement.kind === 'last' || placement.kind === 'index') {
+    const parentIds = resolveTargetRef(baseIndex, placement.parent, bindings);
+    return parentIds.map((parentId) => ({
+      parentId,
+      ...(placement.kind === 'first'
+        ? { index: 0 }
+        : placement.kind === 'index'
+          ? { index: placement.index }
+          : {}),
+    }));
+  }
+  const siblingId = exactlyOne(resolveTargetRef(baseIndex, placement.sibling, bindings), `${placement.kind} sibling`);
+  const state = core.state();
+  const sibling = state.nodes[siblingId];
+  const parent = sibling?.parentId ? state.nodes[sibling.parentId] : undefined;
+  if (!sibling?.parentId || !parent) throw usageError(`Placement sibling has no parent: ${siblingId}`);
+  const siblingIndex = parent.children.indexOf(siblingId);
+  if (siblingIndex < 0) throw usageError(`Placement sibling is absent from its parent: ${siblingId}`);
+  return [{
+    parentId: sibling.parentId,
+    index: siblingIndex + (placement.kind === 'after' ? 1 : 0),
+  }];
+}
+
+function exactlyOneDestination(
+  destinations: readonly ResolvedDestination[],
+  label: string,
+): ResolvedDestination {
+  if (destinations.length !== 1) throw usageError(`${label} must resolve to exactly one parent.`);
+  return destinations[0]!;
+}
+
+function placementTargetRefs(placement: Placement | DestinationPlacement): readonly TargetRef[] {
+  if (placement.kind === 'previous' || placement.kind === 'next') return [];
+  return [placement.kind === 'before' || placement.kind === 'after' ? placement.sibling : placement.parent];
 }
 
 function executeCreateDefinition(
@@ -501,6 +611,37 @@ function createDraft(
   return id;
 }
 
+function isResolvedContentDraft(draft: NodeDraft): boolean {
+  return (draft.type === undefined || draft.type === 'plain' || draft.type === 'codeBlock')
+    && draft.content.inlineRefs.length === 0
+    && draft.fields === undefined
+    && draft.metadata === undefined
+    && (draft.tags ?? []).every((tagId) => typeof tagId === 'string')
+    && draft.children.every(isResolvedContentDraft);
+}
+
+function resolvedContentTree(
+  draft: NodeDraft,
+  copyPath: string,
+  preserveId: boolean,
+): ResolvedContentTree {
+  return {
+    id: preserveId ? draft.id! : deterministicPublicNodeId(draft.id!, copyPath),
+    content: draft.content,
+    ...(draft.description !== undefined ? { description: draft.description } : {}),
+    ...(draft.type ? { type: draft.type as 'plain' | 'codeBlock' } : {}),
+    ...(draft.codeLanguage !== undefined ? { codeLanguage: draft.codeLanguage } : {}),
+    ...(draft.checkbox !== undefined ? { checkbox: draft.checkbox } : {}),
+    ...(draft.done !== undefined ? { done: draft.done } : {}),
+    ...(draft.tags ? { tagIds: draft.tags } : {}),
+    children: draft.children.map((child, index) => resolvedContentTree(
+      child,
+      `${copyPath}:${index}`,
+      preserveId,
+    )),
+  };
+}
+
 function executeUpdate(
   core: Core,
   baseIndex: ReturnType<typeof createSelectionIndex>,
@@ -509,7 +650,9 @@ function executeUpdate(
   instruction: Extract<Change, { op: 'update' }>['changes'][number],
   assetLeases: Readonly<Record<string, AssetLease>>,
 ): void {
-  const current = core.state().nodes[targetId];
+  // Tag commands are already idempotent in Core. Avoid cloning the complete
+  // document merely to preflight each tag edit in a large ChangeSet.
+  const current = instruction.kind === 'tag' ? undefined : core.state().nodes[targetId];
   if (instruction.kind === 'content') {
     if (current && canonicalJson(current.content) === canonicalJson(instruction.value)) return;
     core.applyNodeTextPatch(targetId, { ops: [{ type: 'replace_all', content: instruction.value }] });
@@ -536,7 +679,6 @@ function executeUpdate(
     if (done !== instruction.value) core.toggleDone(targetId);
   } else if (instruction.kind === 'tag') {
     const tagId = exactlyOne(resolveTargetRef(baseIndex, instruction.tag, bindings), 'tag definition');
-    if ((current?.tags.includes(tagId) ?? false) === (instruction.action === 'add')) return;
     if (instruction.action === 'add') core.applyTag(targetId, tagId);
     else core.removeTag(targetId, tagId);
   } else if (instruction.kind === 'field') {
@@ -551,7 +693,11 @@ function executeUpdate(
     const referenceTargetId = exactlyOne(resolveTargetRef(baseIndex, instruction.target, bindings), 'reference target');
     if (instruction.action === 'add') core.addReference(targetId, referenceTargetId);
     else if (instruction.action === 'retarget') core.setReferenceTarget(targetId, referenceTargetId);
-    else if (instruction.action === 'inline') core.convertReferenceToInlineNode(targetId);
+    else if (instruction.action === 'replace') core.replaceNodeWithReference(targetId, referenceTargetId);
+    else if (instruction.action === 'inline') {
+      if (current?.type === 'reference') core.convertReferenceToInlineNode(targetId);
+      else core.replaceNodeWithInlineReference(targetId, referenceTargetId);
+    }
     else core.restoreInlineReferenceNodeToReference(targetId, referenceTargetId);
   } else if (instruction.kind === 'view') {
     executeViewUpdate(core, baseIndex, bindings, targetId, instruction);
@@ -1148,7 +1294,7 @@ function changeTargetRefs(change: Change): readonly TargetRef[] {
       }
       return [];
     }
-    case 'create': return 'resource' in change ? [] : [change.parents];
+    case 'create': return 'resource' in change ? [] : placementTargetRefs(change.placement);
     case 'update': return [
       change.targets,
       ...change.changes.flatMap((instruction): TargetRef[] => {
@@ -1177,8 +1323,8 @@ function changeTargetRefs(change: Change): readonly TargetRef[] {
         return [];
       }),
     ];
-    case 'move': return [change.targets, change.destination];
-    case 'duplicate': return [change.targets, change.destination];
+    case 'move': return [change.targets, ...placementTargetRefs(change.placement)];
+    case 'duplicate': return [change.targets, ...placementTargetRefs(change.placement)];
     case 'merge': return [change.sources, change.target];
     case 'template': return [change.tag];
     case 'lifecycle': return [change.targets];

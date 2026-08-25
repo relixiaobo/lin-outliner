@@ -1,6 +1,6 @@
 import { lstat, readFile } from 'node:fs/promises';
-import { Value } from 'typebox/value';
 import { RuntimeDescriptorSchema, type RuntimeDescriptor } from '../contract/schemas';
+import { checkOutlineSchema } from '../contract/validation';
 import { resolveOutlineRuntimePaths } from '../runtimePaths';
 
 export async function readOutlineRuntimeDescriptor(root: string): Promise<RuntimeDescriptor | null> {
@@ -21,7 +21,7 @@ export async function readOutlineRuntimeDescriptor(root: string): Promise<Runtim
     throw new Error(`Outline Runtime descriptor permissions are not private: ${paths.descriptorPath}`);
   }
   const value = JSON.parse(raw) as unknown;
-  if (!Value.Check(RuntimeDescriptorSchema, value)) {
+  if (!checkOutlineSchema(RuntimeDescriptorSchema, value)) {
     throw new Error(`Outline Runtime descriptor is invalid: ${paths.descriptorPath}`);
   }
   if (value.socketPath !== paths.socketPath) {

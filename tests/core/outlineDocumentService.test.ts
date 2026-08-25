@@ -31,7 +31,7 @@ describe('OutlineDocumentService', () => {
       await document.init();
       const mutation = document.runChanges([{
         op: 'create',
-        parents: oneToday(),
+        placement: { kind: 'last', parent: oneToday() },
         nodes: [{ content: richText('Desktop mutation'), children: [] }],
         bind: 'created',
       }]);
@@ -45,7 +45,7 @@ describe('OutlineDocumentService', () => {
       document.freezeMutationAdmission();
       await expect(document.runChanges([{
         op: 'create',
-        parents: oneToday(),
+        placement: { kind: 'last', parent: oneToday() },
         nodes: [{ content: richText('Rejected during quit'), children: [] }],
       }])).rejects.toThrow('admission is frozen');
       document.unfreezeMutationAdmission();
@@ -117,7 +117,7 @@ describe('OutlineDocumentService', () => {
 
       const next = await document.runChanges([{
         op: 'create',
-        parents: oneToday(),
+        placement: { kind: 'last', parent: oneToday() },
         nodes: [{ content: richText('After no-change'), children: [] }],
       }]);
       expect(next.update.revision).toBe(revision + 1);

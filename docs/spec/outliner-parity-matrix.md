@@ -24,11 +24,11 @@ to the same public Change union; only presentation and causation differ.
 
 | Behavior domain | Public contract | Porcelain / capability | Evidence |
 | --- | --- | --- | --- |
-| Deterministic read and discovery | `Selector`, `TargetSpec`, bounded `Projection` | `find`, `show`, `export` | Revisioned `ProjectionResult`; resumable export records |
+| Deterministic read and discovery | exact ID/ID-list/query/live-search `Selector`, `TargetSpec`, bounded `Projection` | `find`, `show`, `export`; exact and named batch counts; backlinks include | Revisioned `ProjectionResult`, count results, and resumable export records |
 | Tree and content creation | `ensure`, `create`, typed `NodeDraft`, `update` | `add`, `set`, `daily ensure`, `capture add`, `media add` | Reviewed `Diff`; one durable `Operation` |
-| Structure and batch order | `move`, `duplicate`, `merge` | `move`, `indent`, `outdent`, `duplicate`, `merge` | Affected before/after digests and projection Event |
+| Structure and batch order | placement-based `create`, `move`, `duplicate`, and `merge` | first/last/index/before/after plus move/duplicate previous/next | Affected before/after digests, one Operation, exact revert, and projection Event |
 | Done, tags, fields, and definitions | typed `update`, `create`, `merge`, `template` instructions | `done *`, `tag *`, `field *`, `definition *`, `template apply` | Schema validation plus atomic Operation |
-| References, views, and searches | typed reference/view/search update instructions | `reference *`, `view *`, `search *` | Same Diff semantics as desktop intent |
+| References, views, and searches | typed reference/view/search update instructions and exact executable query-rule union | distinct `reference set`, `reference replace`, and `reference inline`; `view *`; `search *` | Same Diff semantics as desktop intent; registry/schema/executor parity |
 | Trash and permanent removal | `lifecycle` | `trash`, `restore`, `purge` | Destructive Diff binding; retained recovery patch |
 | History and exact recovery | Operation ID and recovery state | `log`, `revert`, `undo`, `redo` | Reversal is another linked Operation |
 | Asset-backed media | `AssetLease` plus media `NodeDraft` | `asset ingest`, `asset show`, `asset export`, `media add`, `media set` | Digest-verified bytes; live/lease/recovery reachability |
