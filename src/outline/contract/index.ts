@@ -3,6 +3,7 @@ export * from './capabilities';
 export * from './errors';
 export * from './porcelain';
 export * from './queryOperators';
+export * from './readTargets';
 export * from './schemas';
 export * from './validation';
 export * from './version';

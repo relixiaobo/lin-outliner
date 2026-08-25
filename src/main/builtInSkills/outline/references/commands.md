@@ -122,8 +122,8 @@ Root commands cover discovery, direct Node operations, ChangeSets, history, and 
 | `outline capabilities` | metadata; idempotent | Print the executable CLI registry and optionally verify Runtime parity. | `outline capabilities [--runtime]` |
 | `outline schema` | metadata; idempotent | Print an exact public or command-specific JSON Schema. | `outline schema [SCHEMA\|COMMAND...]` |
 | `outline find` | read-only; idempotent | Find or exactly count Nodes with text shorthand, live Saved Searches, or canonical queries. | `outline find [TEXT] [OPTIONS]` |
-| `outline show` | read-only; idempotent | Read one or more exact targets with a bounded Projection. | `outline show SELECTOR... [PROJECTION OPTIONS]` |
-| `outline export` | read-only stream; idempotent | Export a bounded target as JSON, JSONL, Markdown, or OPML. | `outline export SELECTOR [PROJECTION OPTIONS] [--output FILE\|-]` |
+| `outline show` | read-only; idempotent | Read one or more exact targets with a bounded Projection. | `outline show [SELECTOR...] [PROJECTION OPTIONS]` |
+| `outline export` | read-only stream; idempotent | Export bounded targets as JSON, JSONL, Markdown, or OPML. | `outline export [SELECTOR] [PROJECTION OPTIONS] [--output FILE\|-]` |
 | `outline watch` | read-only stream; idempotent | Stream ordered, resumable Runtime events. | `outline watch [--cursor CURSOR] [--filter FILE\|-] [--projection FILE\|-]` |
 | `outline diff` | preview; idempotent | Normalize and preview one complete ChangeSet without writing. | `outline diff --input FILE\|- [--input-format json\|jsonl] [--output FILE\|-] [--idempotency-key KEY]` |
 | `outline apply` | exact apply; idempotent | Apply one exact reviewed Diff atomically. | `outline apply --input DIFF_FILE\|- [--yes]` |

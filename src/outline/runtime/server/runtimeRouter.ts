@@ -19,6 +19,7 @@ import {
 } from '../../contract/schemas';
 import { canonicalSha256 } from '../../contract/canonical';
 import { checkOutlineSchema } from '../../contract/validation';
+import { readTargetSpec, reconcileReadSelector } from '../../contract/readTargets';
 import {
   OUTLINE_CLI_VERSION,
   OUTLINE_PROTOCOL_VERSION,
@@ -187,26 +188,20 @@ export class OutlineRuntimeRouter {
       });
     }
     if (command === 'show') {
-      const value = input as { selector: Selector; projection?: Projection };
+      const value = input as { selector?: Selector; projection?: Projection };
+      const selector = reconcileReadSelector('show', value.selector, value.projection);
       return projectOutline(this.workspace.forkCore(), value.projection ?? {
         kind: 'node',
-        targets: { target: { selector: value.selector, cardinality: 'one' } },
+        targets: { target: readTargetSpec(selector) },
         include: ['description', 'children', 'tags', 'fields', 'references', 'media', 'view', 'trash'],
       });
     }
     if (command === 'export') {
-      const value = input as { selector: Selector; projection?: Projection };
-      const many = value.selector.by === 'query';
-      const max = value.selector.by === 'query' ? value.selector.limit : undefined;
+      const value = input as { selector?: Selector; projection?: Projection };
+      const selector = reconcileReadSelector('export', value.selector, value.projection);
       return projectOutline(this.workspace.forkCore(), value.projection ?? {
         kind: 'export',
-        targets: {
-          target: {
-            selector: value.selector,
-            cardinality: many ? 'many' : 'one',
-            ...(max !== undefined ? { max } : {}),
-          },
-        },
+        targets: { target: readTargetSpec(selector) },
         depth: 1_024,
         include: ['description', 'children', 'tags', 'fields', 'references', 'media', 'view', 'trash'],
         page: { limit: 10_000 },

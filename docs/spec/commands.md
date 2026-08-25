@@ -196,7 +196,14 @@ Query resolution evaluates the complete match set, removes Trash unless
 before taking `limit`. The limit therefore bounds the final selector result, not
 an intermediate relevance-ranked candidate set.
 
-`show ID...` lowers multiple exact IDs to one ordered `ids` selector. `find
+`show ID...` lowers multiple exact IDs to one ordered `ids` selector. Runtime
+defaults lower `ids`, `query`, and `search` selectors to bounded `many` targets
+using the selector's exact list length or declared limit; exact IDs, aliases, and
+dates lower to `one`. `show` and `export` also accept a complete Projection with
+no redundant Selector. If both are supplied, they must declare the same Selector,
+and standalone read Projections cannot use ChangeSet bindings.
+
+`find
 --count` returns an exact count without a Node payload; `find --input` can return
 several uniquely named counts with one optional `sharedQuery`, combined with each
 query using canonical `AND`. One request builds and reuses its text selection
@@ -217,8 +224,10 @@ sidebar pins, or Agent-specific filtering.
 admits field-definition linkage, `view` admits view/sort/filter/display/query
 metadata, `trash` admits the original-parent linkage used for restoration, and
 `backlinks` returns a separate bounded backlinks collection without replacing the
-selected Node result. When one of these values is absent, its metadata is redacted
-from Node results.
+selected Node result. Each Projection builds one reference summary and reuses it
+across every selected target and page slice; pagination never triggers one
+whole-document backlink scan per target. When one of these values is absent, its
+metadata is redacted from Node results.
 
 ## ChangeSet
 

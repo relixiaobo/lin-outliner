@@ -1190,7 +1190,12 @@ Diff acknowledgement are required for non-interactive apply. A repeated settled
 transform with no remaining match is semantic no-change.
 
 Common discovery does not require repeated reads. `show ID...` preserves ordered
-exact IDs; a Projection may return selected Nodes and backlinks in one response.
+exact IDs; direct and CLI reads infer bounded `many` cardinality for `ids`,
+`query`, and `search`. A complete read Projection is standalone input; any
+separately supplied Selector must match its target exactly, and ChangeSet bindings
+remain unavailable outside ChangeSets. A Projection may return selected Nodes and
+backlinks in one response, using one request-local reference summary for every
+selected target rather than one whole-document scan per target.
 `find --search` executes Saved Search query state live rather than trusting stale
 materialized children. Exact count omits Node payloads, while named batch counts
 combine one optional shared query with each named query through canonical `AND`

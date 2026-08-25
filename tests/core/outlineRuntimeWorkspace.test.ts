@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { canonicalSha256 } from '../../src/outline/contract/canonical';
+import type { ProjectionResult, Selector } from '../../src/outline/contract/schemas';
 import { decodeEventCursor, OutlineRuntimeWorkspace } from '../../src/outline/runtime';
 import { OutlineRuntimeRouter } from '../../src/outline/runtime/server';
 import { WorkspaceTransactionLog } from '../../src/outline/runtime/storage';
@@ -460,6 +461,118 @@ describe('OutlineRuntimeWorkspace', () => {
     });
     expect(resumed.affectedNodeIds).toMatchObject({ offset: 1_000, totalCount: operation.affectedNodeCount });
     expect(resumed.affectedNodeIds?.nodeIds).toEqual(pages.slice(1_000));
+  });
+
+  test('derives bounded many defaults for every multi-target Runtime read selector', async () => {
+    const root = await makeRoot();
+    const workspace = await OutlineRuntimeWorkspace.open(root);
+    const nodeIds = [`node:${crypto.randomUUID()}`, `node:${crypto.randomUUID()}`];
+    const marker = `runtime-read-${crypto.randomUUID()}`;
+    await workspace.mutate({
+      ...createRequest('Create Runtime read fixtures'),
+      execute: (core) => {
+        const parentId = core.projection().todayId;
+        core.createNode(parentId, null, `${marker} alpha`, nodeIds[0]);
+        core.createNode(parentId, null, `${marker} beta`, nodeIds[1]);
+      },
+    });
+    const searchId = `node:${crypto.randomUUID()}`;
+    await workspace.mutate({
+      ...createRequest('Create Runtime read Saved Search'),
+      execute: (core) => {
+        core.createSearchNode(core.projection().searchesId, null, {
+          title: 'Runtime read fixtures',
+          query: { kind: 'rule', op: 'STRING_MATCH', text: marker },
+        }, undefined, searchId);
+      },
+    });
+    const selectors: Array<{ selector: Selector; max: number }> = [
+      { selector: { by: 'ids', ids: nodeIds }, max: 2 },
+      {
+        selector: {
+          by: 'query',
+          query: { kind: 'rule', op: 'STRING_MATCH', text: marker },
+          limit: 10,
+        },
+        max: 10,
+      },
+      { selector: { by: 'search', id: searchId, limit: 10 }, max: 10 },
+    ];
+    const router = new OutlineRuntimeRouter(workspace);
+
+    for (const command of ['show', 'export'] as const) {
+      for (const { selector, max } of selectors) {
+        const response = await router.handle({
+          protocolVersion: 1,
+          requestId: `request:${command}:${selector.by}`,
+          command,
+          input: { selector },
+        }, { origin: 'local-user' });
+        expect(response.ok).toBe(true);
+        if (!response.ok) continue;
+        const result = response.data as ProjectionResult;
+        const resultIds = result.nodes.map((node) => (node as { id: string }).id);
+        if (selector.by === 'ids') expect(resultIds).toEqual(nodeIds);
+        else expect(new Set(resultIds)).toEqual(new Set(nodeIds));
+        expect(result.projection.targets).toEqual({
+          target: { selector, cardinality: 'many', max },
+        });
+      }
+    }
+  });
+
+  test('accepts standalone read Projections and rejects conflicting duplicate selectors', async () => {
+    const root = await makeRoot();
+    const workspace = await OutlineRuntimeWorkspace.open(root);
+    const firstId = `node:${crypto.randomUUID()}`;
+    const secondId = `node:${crypto.randomUUID()}`;
+    await workspace.mutate({
+      ...createRequest('Create standalone Projection fixtures'),
+      execute: (core) => {
+        const parentId = core.projection().todayId;
+        core.createNode(parentId, null, 'Standalone first', firstId);
+        core.createNode(parentId, null, 'Standalone second', secondId);
+      },
+    });
+    const router = new OutlineRuntimeRouter(workspace);
+    const projection = {
+      kind: 'summary' as const,
+      targets: {
+        target: {
+          selector: { by: 'id' as const, id: firstId },
+          cardinality: 'one' as const,
+        },
+      },
+      page: { limit: 1 },
+    };
+
+    const standalone = await router.handle({
+      protocolVersion: 1,
+      requestId: 'request:standalone-projection',
+      command: 'show',
+      input: { projection },
+    }, { origin: 'local-user' });
+    expect(standalone.ok).toBe(true);
+    if (standalone.ok) {
+      expect((standalone.data as ProjectionResult).nodes).toEqual([
+        expect.objectContaining({ id: firstId }),
+      ]);
+    }
+
+    const conflicting = await router.handle({
+      protocolVersion: 1,
+      requestId: 'request:conflicting-projection',
+      command: 'show',
+      input: { selector: { by: 'id', id: secondId }, projection },
+    }, { origin: 'local-user' });
+    expect(conflicting).toMatchObject({
+      ok: false,
+      error: {
+        code: 'invalid_input',
+        category: 'usage',
+        message: 'show Selector conflicts with the Selector declared by --projection.',
+      },
+    });
   });
 
   test('rejects a handler result that violates the executable capability schema', async () => {

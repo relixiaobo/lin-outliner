@@ -306,6 +306,29 @@ describe('outline CLI', () => {
     expect(await readdir(root)).toEqual([]);
   });
 
+  test('documents standalone Projections for show and export from their exact schemas', async () => {
+    const root = await makeRoot();
+    const showHelp = captureIo();
+    const exportHelp = captureIo();
+    const showSchema = captureIo();
+
+    expect(await runOutlineCli(['show', '--help'], { runtimeRoot: root, io: showHelp.io })).toBe(0);
+    expect(showHelp.stdout).toContain('Usage: outline [GLOBAL OPTIONS] show [SELECTOR...]');
+    expect(showHelp.stdout).toContain('Omit SELECTOR when --projection declares targets.');
+    expect(showHelp.stdout).toContain('A separate Selector must match the Projection target exactly.');
+    expect(showHelp.stdout).toContain('outline show --projection node-with-backlinks.json');
+
+    expect(await runOutlineCli(['export', '--help'], { runtimeRoot: root, io: exportHelp.io })).toBe(0);
+    expect(exportHelp.stdout).toContain('Usage: outline [GLOBAL OPTIONS] export [SELECTOR]');
+    expect(exportHelp.stdout).toContain('outline export --projection complete-export.json');
+
+    expect(await runOutlineCli(['--json', 'schema', 'show'], { runtimeRoot: root, io: showSchema.io })).toBe(0);
+    const requestSchema = JSON.stringify(JSON.parse(showSchema.stdout).data.request);
+    expect(requestSchema).toContain('projection');
+    expect(requestSchema).toContain('selector');
+    expect(await readdir(root)).toEqual([]);
+  });
+
   test('renders exact view sort add help with default and structured forms', async () => {
     const root = await makeRoot();
     const output = captureIo();
@@ -872,6 +895,54 @@ describe('outline CLI', () => {
         io: shown.io,
       })).toBe(0);
       expect(JSON.parse(shown.stdout).data.nodes.map((node: { id: string }) => node.id)).toEqual([betaId, alphaId]);
+
+      const projection = {
+        kind: 'summary',
+        targets: {
+          target: {
+            selector: { by: 'ids', ids: [betaId, alphaId] },
+            cardinality: 'many',
+            max: 2,
+          },
+        },
+        page: { limit: 2 },
+      };
+      const projectionOnlyShow = captureIo(JSON.stringify(projection));
+      expect(await runOutlineCli(['--json', '--no-start', 'show', '--projection', '-'], {
+        runtimeRoot: root,
+        io: projectionOnlyShow.io,
+      })).toBe(0);
+      expect(JSON.parse(projectionOnlyShow.stdout).data.nodes.map((node: { id: string }) => node.id))
+        .toEqual([betaId, alphaId]);
+
+      const projectionOnlyExport = captureIo(JSON.stringify({ ...projection, kind: 'export', format: 'json' }));
+      expect(await runOutlineCli(['--json', '--no-start', 'export', '--projection', '-'], {
+        runtimeRoot: root,
+        io: projectionOnlyExport.io,
+      })).toBe(0);
+      const exportRecords = projectionOnlyExport.stdout.trim().split('\n').map((line) => JSON.parse(line));
+      expect(exportRecords.find((record) => record.type === 'data')?.data.nodes
+        .map((node: { id: string }) => node.id)).toEqual([betaId, alphaId]);
+
+      const conflicting = captureIo(JSON.stringify({
+        ...projection,
+        targets: {
+          target: {
+            selector: { by: 'id', id: alphaId },
+            cardinality: 'one',
+          },
+        },
+      }));
+      expect(await runOutlineCli([
+        '--json', '--no-start', 'show', betaId, '--projection', '-',
+      ], { runtimeRoot: root, io: conflicting.io })).toBe(2);
+      expect(JSON.parse(conflicting.stdout)).toMatchObject({
+        ok: false,
+        error: {
+          code: 'invalid_input',
+          message: 'show Selector conflicts with the Selector declared by --projection.',
+        },
+      });
 
       await add('live-module first');
       const createdSearch = captureIo();

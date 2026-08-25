@@ -1,9 +1,10 @@
 import type { Core } from '../../core/core';
+import { buildReferenceSummary } from '../../core/references';
 import type { NodeProjection } from '../../core/types';
 import { canonicalSha256 } from '../contract/canonical';
 import { OutlineContractError, outlineError } from '../contract/errors';
 import type { Projection, ProjectionResult, TargetRef } from '../contract/schemas';
-import { createSelectionIndex, resolveTargetSpec, type OutlineSelectionIndex } from './selector';
+import { createSelectionIndex, isInTrash, resolveTargetSpec, type OutlineSelectionIndex } from './selector';
 
 const DEFAULT_PAGE_LIMIT = 100;
 
@@ -23,9 +24,17 @@ export function projectOutline(
   const limit = projection.page?.limit ?? DEFAULT_PAGE_LIMIT;
   const pageIds = selectedIds.slice(offset, offset + limit);
   const includeBacklinks = projection.kind === 'backlinks' || projection.include?.includes('backlinks') === true;
+  const referenceSummary = includeBacklinks
+    ? buildReferenceSummary(index.byId, { isDeleted: (nodeId) => isInTrash(index, nodeId) })
+    : undefined;
   const allBacklinks = includeBacklinks
-    ? selectedIds.flatMap((nodeId) => core.backlinks(nodeId)
-        .map((backlink) => ({ targetId: nodeId, ...backlink }))
+    ? selectedIds.flatMap((nodeId) => (referenceSummary?.byTarget.get(nodeId) ?? [])
+        .map((backlink) => ({
+          targetId: nodeId,
+          sourceId: backlink.sourceNodeId,
+          referenceId: backlink.referenceNodeId,
+          kind: backlink.kind,
+        }))
         .sort(compareBacklinks))
     : undefined;
   const nodes = projection.kind === 'backlinks'

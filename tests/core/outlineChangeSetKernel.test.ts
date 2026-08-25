@@ -289,6 +289,43 @@ describe('outline ChangeSet kernel', () => {
     expect(backlinksOnlySecond.truncated).toBeUndefined();
   });
 
+  test('builds backlinks once for a bounded page across many selected targets', async () => {
+    const workspace = await makeWorkspace();
+    const targetIds = Array.from({ length: 250 }, () => `node:${crypto.randomUUID()}`);
+    await workspace.mutate({
+      ...createRequest('Create many backlink targets'),
+      execute: (core) => {
+        const parentId = core.projection().todayId;
+        for (const [index, targetId] of targetIds.entries()) {
+          core.createNode(parentId, null, `Backlink target ${index}`, targetId);
+        }
+      },
+    });
+    const core = workspace.forkCore();
+    const originalBacklinks = core.backlinks.bind(core);
+    let perTargetScans = 0;
+    core.backlinks = (targetId) => {
+      perTargetScans += 1;
+      return originalBacklinks(targetId);
+    };
+
+    const result = projectOutline(core, {
+      kind: 'backlinks',
+      targets: {
+        target: {
+          selector: { by: 'ids', ids: targetIds },
+          cardinality: 'many',
+          max: targetIds.length,
+        },
+      },
+      page: { limit: 1 },
+    });
+
+    expect(result.nodes).toEqual([]);
+    expect(result.backlinks).toEqual([]);
+    expect(perTargetScans).toBe(0);
+  });
+
   test('moves an ordered target block before and after same-parent siblings atomically', async () => {
     const workspace = await makeWorkspace();
     const ids = {

@@ -10,6 +10,7 @@ import type {
 } from '../contract/schemas';
 import { canonicalSha256 } from '../contract/canonical';
 import { OutlineContractError, outlineError } from '../contract/errors';
+import { readTargetSpec, reconcileReadSelector } from '../contract/readTargets';
 import { OUTLINE_PROTOCOL_VERSION } from '../contract/version';
 
 export type StructuredReader = (source: string) => Promise<string>;
@@ -114,8 +115,7 @@ export async function parseReadCommand(
     if (query !== undefined || within || includeTrash || order) {
       throw usageError(`${command} does not accept find query options.`);
     }
-    if (!selector) {
-      if (positional.length === 0) throw usageError(`${command} requires at least one Selector.`);
+    if (!selector && positional.length > 0) {
       if (positional.length === 1) selector = parseSelectorToken(positional[0]!);
       else {
         const selectors = positional.map(parseSelectorToken);
@@ -127,13 +127,15 @@ export async function parseReadCommand(
       }
     }
   }
-  const selectorMax = selector.by === 'query' || selector.by === 'search'
-    ? selector.limit
-    : selector.by === 'ids'
-      ? selector.ids.length
-      : undefined;
-  const cardinality: TargetSpec['cardinality'] = command === 'find' || selectorMax !== undefined ? 'many' : 'one';
-  const target = targetRef(selector, cardinality, cardinality === 'many' ? selectorMax ?? limit : undefined);
+  if (projection && (kind || depth !== undefined || include || cursor || format || limitSpecified)) {
+    throw usageError('--projection cannot be combined with individual Projection options.');
+  }
+  const resolvedSelector = command === 'find'
+    ? selector!
+    : reconcileReadSelector(command, selector, projection);
+  const target = command === 'find'
+    ? targetRef(resolvedSelector, 'many', selectorBound(resolvedSelector) ?? limit)
+    : { target: readTargetSpec(resolvedSelector) };
   const requestedProjection: Projection = projection ?? {
     kind: kind ?? (command === 'find' ? 'summary' : command === 'show' ? 'node' : 'export'),
     targets: target,
@@ -144,14 +146,11 @@ export async function parseReadCommand(
     page: { limit, ...(cursor ? { cursor } : {}) },
     ...(format ? { format } : command === 'export' ? { format: 'json' } : {}),
   };
-  if (projection && (kind || depth !== undefined || include || cursor || format)) {
-    throw usageError('--projection cannot be combined with individual Projection options.');
-  }
   if (command !== 'export' && output) throw usageError('--output is only valid for export.');
   return {
     input: command === 'find'
       ? { target: target.target, projection: requestedProjection }
-      : { selector, projection: requestedProjection },
+      : { projection: requestedProjection },
     ...(output ? { output } : {}),
   };
 }
@@ -237,6 +236,12 @@ function targetRef(selector: Selector, cardinality: TargetSpec['cardinality'], m
       ...(max !== undefined ? { max } : {}),
     },
   };
+}
+
+function selectorBound(selector: Selector): number | undefined {
+  if (selector.by === 'ids') return selector.ids.length;
+  if (selector.by === 'query' || selector.by === 'search') return selector.limit;
+  return undefined;
 }
 
 function parseInclude(value: string): Projection['include'] {
