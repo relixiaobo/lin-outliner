@@ -63,6 +63,27 @@ Selection controls availability, not host-account authority. A tool that survive
 selection runs directly; a tool that does not survive is absent or returns its
 owner's structured unavailable result.
 
+### Read-only delegated execution
+
+`agent.execution: "read-only"` adds a Host-enforced action ceiling to one
+delegated Agent. It is narrower than Full Access, is persisted in the Agent
+execution policy, and is inherited by nested Agents and isolated Skills. A
+descendant cannot clear it by selecting another Agent type, Role, tool list,
+worktree mode, or Skill execution mode. Historical execution policies that
+predate the field decode as mutable rather than being retroactively narrowed.
+
+Static catalog selection removes direct file mutation and other tools whose
+declared action kinds are not read-only. Read tools and narrowly scoped Host
+coordination controls may remain visible so the Agent can inspect, report,
+delegate under the same ceiling, and invoke a Skill without laundering
+authority. At execution time, extension/MCP calls and dynamically classified
+`bash` calls must consist entirely of read-only action kinds. File writes and
+deletes, Outline mutations, local code or project-script execution, dependency
+installation, background processes, network writes, publishing, destructive
+cleanup, and unknown shell behavior return structured unavailability before
+the underlying action starts. The ceiling does not rewrite commands or infer
+safety from the Agent's stated intent.
+
 ## Admission Is Not Permission
 
 Full Access authorizes a valid operation exposed in the Thread; it does not make an

@@ -16,6 +16,7 @@ const foreground = {
   kind: 'general-purpose' as const,
   runInBackground: false,
   worktree: false,
+  readOnly: false,
   allowNesting: true,
 };
 
@@ -66,6 +67,19 @@ describe('Subagent tool policy', () => {
     expect(subagentBashExecutionAllowed(foreground, ['file.edit.local_path'])).toBe(true);
     expect(subagentBashExecutionAllowed({ ...foreground, worktree: true }, ['outline.edit'])).toBe(false);
     expect(subagentBashExecutionAllowed({ ...foreground, worktree: true }, ['shell.local_code_execution'])).toBe(true);
+  });
+
+  test('fails closed on unclassified read-only actions while preserving inspection and host control', () => {
+    const policy = { ...foreground, readOnly: true };
+    const keys = filterSubagentToolContracts(MODEL_TOOL_CATALOG, policy).map(toolKey);
+    expect(keys).toEqual(expect.arrayContaining(['file_read', 'file_glob', 'bash', 'agent', 'skill']));
+    expect(keys).not.toEqual(expect.arrayContaining(['file_edit', 'file_write', 'file_delete']));
+    expect(subagentBashExecutionAllowed(policy, [])).toBe(false);
+    expect(subagentBashExecutionAllowed(policy, ['shell.read_search'])).toBe(true);
+    expect(subagentBashExecutionAllowed(policy, ['shell.unknown'])).toBe(false);
+    expect(subagentToolExecutionAllowed(policy, [])).toBe(false);
+    expect(subagentToolExecutionAllowed(policy, ['web.fetch'])).toBe(true);
+    expect(subagentToolExecutionAllowed(policy, ['external.message.send'])).toBe(false);
   });
 
   test('keeps extension tools visible while enforcing specialized mutation actions at execution', () => {

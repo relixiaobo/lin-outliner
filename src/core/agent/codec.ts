@@ -566,7 +566,8 @@ function decodeRendererTurnSubmitRequest(value: unknown): RendererTurnSubmitRequ
 export function decodePrivilegedTurnStartRequest(value: unknown): PrivilegedTurnStartRequest {
   const record = recordValue(value, 'privilegedTurnStart');
   exactKeys(record, [
-    'threadId', 'turnId', 'input', 'clientUserMessageId', 'additionalContext', 'userView', 'trigger',
+    'threadId', 'turnId', 'input', 'clientUserMessageId', 'additionalContext', 'additionalContextSource',
+    'userView', 'trigger',
   ], 'privilegedTurnStart');
   return deepFreeze({
     threadId: uuidV7(record.threadId, 'privilegedTurnStart.threadId'),
@@ -578,6 +579,9 @@ export function decodePrivilegedTurnStartRequest(value: unknown): PrivilegedTurn
     ...(record.additionalContext === undefined
       ? {}
       : { additionalContext: decodeAdditionalContext(record.additionalContext, true) }),
+    ...(record.additionalContextSource === undefined
+      ? {}
+      : { additionalContextSource: stringValue(record.additionalContextSource, 'privilegedTurnStart.additionalContextSource', true) }),
     ...(record.userView === undefined ? {} : { userView: decodeRendererUserViewHints(record.userView) }),
     trigger: decodeTurnTrigger(record.trigger),
   });
@@ -646,7 +650,10 @@ function decodeRendererUserViewHints(value: unknown) {
 export function decodeAdditionalContext(
   value: unknown,
   allowApplication: false,
-): Readonly<Record<string, AdditionalContextEntry & { readonly kind: 'untrusted' }>>;
+): Readonly<Record<string, AdditionalContextEntry & {
+  readonly kind: 'untrusted';
+  readonly purpose?: 'observation';
+}>>;
 export function decodeAdditionalContext(value: unknown, allowApplication: true): AdditionalContext;
 export function decodeAdditionalContext(value: unknown, allowApplication: boolean): AdditionalContext {
   const record = recordValue(value, 'additionalContext');
@@ -654,12 +661,22 @@ export function decodeAdditionalContext(value: unknown, allowApplication: boolea
   for (const [key, entryValue] of Object.entries(record)) {
     if (!key.trim()) fail('additionalContext', 'keys must be non-empty');
     const entry = recordValue(entryValue, `additionalContext.${key}`);
-    exactKeys(entry, ['value', 'kind'], `additionalContext.${key}`);
+    exactKeys(entry, ['value', 'kind', 'purpose'], `additionalContext.${key}`);
     const kind = enumValue(entry.kind, ['untrusted', 'application'], `additionalContext.${key}.kind`);
+    const purpose = entry.purpose === undefined
+      ? undefined
+      : enumValue(entry.purpose, ['instruction', 'observation'], `additionalContext.${key}.purpose`);
     if (!allowApplication && kind === 'application') {
       fail(`additionalContext.${key}.kind`, 'renderer input may author only untrusted context');
     }
-    result[key] = { value: stringValue(entry.value, `additionalContext.${key}.value`, true), kind };
+    if (!allowApplication && purpose === 'instruction') {
+      fail(`additionalContext.${key}.purpose`, 'renderer input may author only observation context');
+    }
+    result[key] = {
+      value: stringValue(entry.value, `additionalContext.${key}.value`, true),
+      kind,
+      ...(purpose === undefined ? {} : { purpose }),
+    };
   }
   return deepFreeze(result);
 }

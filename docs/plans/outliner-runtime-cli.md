@@ -91,14 +91,14 @@ The explicit traceability manifest is:
 - flows: `FLOW-1`, `FLOW-2`, `FLOW-3`, `FLOW-4`, `FLOW-5`;
 - functional requirements: `FR-1`, `FR-2`, `FR-3`, `FR-4`, `FR-5`, `FR-6`,
   `FR-7`, `FR-8`, `FR-9`, `FR-10`, `FR-11`, `FR-12`, `FR-13`, `FR-14`,
-  `FR-15`;
+  `FR-15`, `FR-16`;
 - non-functional requirements: `NFR-1`, `NFR-2`, `NFR-3`, `NFR-4`, `NFR-5`,
   `NFR-6`; and
 - acceptance: `AC-1`, `AC-2`, `AC-3`, `AC-4`, `AC-5`, `AC-6`, `AC-7`, `AC-8`,
   `AC-9`, `AC-10`, `AC-11`, `AC-12`, `AC-13`, `AC-14`, `AC-15`, `AC-16`,
   `AC-17`, `AC-18`, `AC-19`, `AC-20`, `AC-21`, `AC-22`, `AC-23`, `AC-24`,
   `AC-25`, `AC-26`, `AC-27`, `AC-28`, `AC-29`, `AC-30`, `AC-31`, `AC-32`,
-  `AC-33`, `AC-34`, `AC-35`, `AC-36`, `AC-37`, and `AC-38` through `AC-79`.
+  `AC-33`, `AC-34`, `AC-35`, `AC-36`, `AC-37`, and `AC-38` through `AC-87`.
 
 ### Completion contract
 
@@ -172,11 +172,19 @@ The explicit traceability manifest is:
     unattributed local-user Operation.
   - **AC-31:** Node-resource scopes, action-set grants, and Agent-specific Memory
     filtering shall not change the Runtime's public document schema or results.
+  - **AC-80:** `agent.execution: "read-only"` shall impose a persisted
+    Host-enforced action ceiling, reject Outline/file/process/network/external
+    mutations at static and dynamic admission, and remain inherited by nested
+    Agents and isolated Skills without reducing the public read schema.
 - **FR-9:** Skill cutover preserves existing model workflows.
   - **AC-18:** Fixture coverage for all six native tools shall pass through the
     Skill and CLI before those tools are removed from the catalog.
   - **AC-19:** After cutover, the built-in Skill shall contain workflow guidance
     but no duplicated parser, selector, validation, or mutation implementation.
+  - **AC-81:** The Outline Skill shall remain inline so it observes the exact
+    parent request and document context; its table guidance shall include one
+    executable field-backed Table View fixture exercised by the mandatory golden
+    Diff/apply/revert flow.
 - **FR-10:** Runtime lifecycle supports external automation.
   - **AC-20:** The supported packaged standalone Runtime shall serve every
     desktop and CLI document operation without importing Electron or renderer
@@ -310,6 +318,15 @@ The explicit traceability manifest is:
   - **AC-64:** Golden CLI tests shall cover root help, search-family help, exact
     `search create`, `view sort add`, and `purge` help with real options and
     examples rather than generic `[ARGS]` placeholders.
+  - **AC-82:** Command schema discovery shall return compact request schema by
+    default and expose result/both only through `--part`; command and named
+    public schema output shall publish at most one root `$defs` and remain
+    within 512 KiB.
+  - **AC-83:** Invalid CLI and Runtime inputs shall report bounded branch-focused
+    validation paths without echoing rejected values.
+  - **AC-84:** Node drafts shall require canonical lowercase RFC 4122 variant v4
+    UUID Node IDs from the shared Core validator, the closed shared field-type
+    union, and complete capture provenance at every public admission boundary.
 - **FR-15:** Common reads, placement, references, queries, and recovery guards
   compose as efficient general capabilities rather than scenario-specific CLI
   commands.
@@ -336,6 +353,18 @@ The explicit traceability manifest is:
   - **AC-79:** Undo and redo shall default to the authenticated caller's origin,
     support explicit origin scope and expected-Operation guards, and write
     nothing when the visible stack head changed.
+- **FR-16:** Agent collaboration evidence preserves user, Host, and peer
+  authority across delivery and restart.
+  - **AC-85:** Background notifications and peer messages shall start with empty
+    canonical user input and project typed additional context with
+    `systemContext`, never `userInput`, provenance.
+  - **AC-86:** Agent-authored notification output and peer-message bodies shall
+    remain `untrusted/observation`; Host metadata is
+    `application/observation`, and only Host handling rules are
+    `application/instruction`.
+  - **AC-87:** Nested exhausted settlement shall verify its durable batch digest
+    from the exact typed context payload during live admission and startup
+    recovery rather than from synthetic user text.
 
 ### End-state authority and invariants
 
@@ -1156,6 +1185,12 @@ admission, and shell completion data derive from that registry. A drift guard
 compares the published values. `--json` does not alter help or start Runtime.
 Unknown paths and options provide the nearest valid command or exact help step.
 
+Command schema discovery returns the compact request schema by default and
+exposes result or request/result pairs only through `--part`. Reusable cyclic
+definitions are hoisted into one root `$defs`; each request schema is guarded
+below 512 KiB. Schema failures follow the best matching discriminated branch
+and return bounded JSON Pointer issues without reflecting rejected values.
+
 ### Complete-resource porcelain contract
 
 One complete resource intent uses one porcelain invocation. Complex state for
@@ -1165,7 +1200,10 @@ bindings. No common flow requires a shell mutation loop, an intermediate
 created-ID read, or several mutation Operations.
 
 `add` creates a complete typed tree, including rich content, descriptions, code,
-checkbox/done state, tags, fields, references, media, and children. `search
+checkbox/done state, tags, fields, references, media, and children. Authored IDs
+use canonical `node:<uuid>` values, all definition paths share one closed field
+type union, and capture metadata uses the complete public provenance schema.
+`search
 create` accepts title, STRING_MATCH `--match` shorthand or canonical `--query`,
 and complete initial view state; its parent defaults to `@saved-searches`.
 `search set` atomically patches query, title, and complete view state and refreshes
@@ -1370,6 +1408,18 @@ always keeps Operation ID, status, affected count, and recovery state visible;
 large Projection/export data is streamed or written to an explicit artifact so
 tool-result trimming cannot hide mutation settlement.
 
+An optional `agent.execution: "read-only"` policy remains outside the Outline
+contract. The Host persists and inherits it across nested Agents and isolated
+Skills, filters static mutation tools, and dynamically rejects non-read-only
+Bash or extension action kinds before execution. It preserves Outline schema
+discovery and reads while rejecting `outline.edit` and `outline.delete`.
+
+Background notification, peer-message, and exhausted-settlement Turns carry no
+synthetic user text. Host rules and metadata plus untrusted Agent output travel
+through typed additional context with `systemContext` provenance; durable
+settlement digest recovery validates that context payload rather than a
+`userMessage` Item.
+
 ### `outline` Skill
 
 Add one immutable built-in Skill named `outline`. Its frontmatter makes it
@@ -1404,7 +1454,16 @@ Generate `commands.md` from the same capability registry that owns parser,
 help, schema, and completion metadata. A drift guard fails when the generated
 reference is stale. The Skill uses root/family/exact help for discovery and
 `outline schema COMMAND` for exact structured contracts; it does not copy JSON
-Schemas or parser logic and does not invent a model-native wrapper tool.
+Schemas or parser logic and does not invent a model-native wrapper tool. For
+ordinary document work it does not create ad hoc Python, Node, or shell programs
+to inspect schemas, transform CLI output, or assemble ChangeSets; it uses the
+public command-specific schemas, supplied fixtures, and direct `--input`
+artifacts. Bundled source adapters remain limited to the external import path.
+
+`references/changesets.md` links one complete field-backed Daily Note table
+fixture. The mandatory table golden executes that same artifact through Diff,
+apply, independent view/field assertions, and exact revert, so Table View
+topology is executable Skill guidance rather than a schema-discovery script.
 
 ### `outline` Skill import workflow and import convergence
 

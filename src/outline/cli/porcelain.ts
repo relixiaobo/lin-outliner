@@ -12,9 +12,10 @@ import type {
   TargetSpec,
   UpdateInstruction,
 } from '../contract/schemas';
+import { CaptureProvenanceSchema } from '../contract/schemas';
 import { OutlineContractError, outlineError } from '../contract/errors';
 import { porcelainContract, porcelainHelpOptions } from '../contract/porcelain';
-import { checkOutlineSchema } from '../contract/validation';
+import { checkOutlineSchema, outlineSchemaValidationDetails } from '../contract/validation';
 import { createChangeSet, parseSelectorToken, type StructuredReader } from './arguments';
 
 type PublicViewField = Extract<
@@ -63,7 +64,11 @@ export async function buildPorcelainRequest(
     const payload = parseJson(await context.read(input), `${command} input`);
     const contract = porcelainContract(command)!;
     if (!checkOutlineSchema(contract.inputSchema, payload)) {
-      throw usageError(`Input does not match the public schema for command: ${command}`);
+      throw schemaUsageError(
+        `Input does not match the public schema for command: ${command}`,
+        contract.inputSchema,
+        payload,
+      );
     }
     structuredInput = payload as Record<string, unknown>;
   }
@@ -348,6 +353,13 @@ function searchSetChange(input: Record<string, unknown>): Change {
 
 function captureChanges(input: Record<string, unknown>): readonly Change[] {
   if (Boolean(input.parent) === Boolean(input.date)) throw usageError('capture add requires exactly one of parent or date.');
+  if (!checkOutlineSchema(CaptureProvenanceSchema, input.provenance)) {
+    throw schemaUsageError(
+      'capture add provenance does not match CaptureProvenance.',
+      CaptureProvenanceSchema,
+      input.provenance,
+    );
+  }
   const bind = String(input.bind ?? 'capture');
   const changes: Change[] = [];
   let parent = input.parent as TargetRef | undefined;
@@ -555,7 +567,11 @@ async function planTextReplacement(
 ): Promise<TextReplacementPlan> {
   const contract = porcelainContract('text replace')!;
   if (!checkOutlineSchema(contract.inputSchema, input)) {
-    throw usageError('Input does not match the public schema for command: text replace');
+    throw schemaUsageError(
+      'Input does not match the public schema for command: text replace',
+      contract.inputSchema,
+      input,
+    );
   }
   const target = input.target as TargetSpec;
   const find = String(input.find);
@@ -1563,6 +1579,19 @@ function parseJson(raw: string, label: string): unknown {
 
 function usageError(message: string): OutlineContractError {
   return new OutlineContractError(outlineError('invalid_input', 'usage', message));
+}
+
+function schemaUsageError(
+  message: string,
+  schema: Parameters<typeof outlineSchemaValidationDetails>[0],
+  value: unknown,
+): OutlineContractError {
+  return new OutlineContractError(outlineError(
+    'invalid_input',
+    'usage',
+    message,
+    { details: { validation: outlineSchemaValidationDetails(schema, value) } },
+  ));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

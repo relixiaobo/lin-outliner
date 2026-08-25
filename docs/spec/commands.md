@@ -55,6 +55,20 @@ schemas, positionals, completion data, and generated Agent command inventory.
 Capability kind and audit category drive host classification; execution context
 never removes a public schema field or document capability.
 
+`outline schema COMMAND` returns only the compact request schema by default.
+`--part result` returns the result schema and `--part both` returns the explicit
+request/result pair. Named public schemas such as `ChangeSet` and
+`QueryExpression` retain their direct shape, reject `--part`, and use the same
+compaction. Schema compaction hoists reusable cyclic definitions into one root
+`$defs`; every published command request and named public schema is bounded to
+512 KiB and guarded against duplicated nested `$defs` expansion.
+
+CLI and Runtime schema rejection returns bounded structured validation details.
+For a union, the validator follows the best matching discriminated branch before
+collecting issues, so errors identify useful JSON Pointer paths instead of
+exhausting the issue limit on unrelated alternatives. Details include path,
+schema path, keyword, and message, but never echo the rejected input value.
+
 Root help lists command families and direct commands. Family help lists its
 subcommands. Exact command `--help` and `-h` show syntax, positionals, options,
 defaults, selectors, cardinality, argv versus `--input FILE|-`, output,
@@ -99,7 +113,13 @@ creating another Operation. `create` and `add` remain explicit creation.
 
 `add` accepts a complete typed `NodeDraft` tree, including rich content,
 description, code, checkbox/done state, tags, fields, references, media, and
-children. `definition create` owns complete reusable tag/field definitions and
+children. Authored Node IDs use the canonical `node:<uuid>` form: a lowercase
+RFC 4122 variant v4 UUID matching the Core client-ID validator and every
+Runtime-generated public Node ID. `NodeDraft` capture metadata uses the complete
+shared capture-provenance schema rather than
+arbitrary JSON, and every definition create/ensure form uses the same closed
+field-type union. Invalid IDs, field types, or nested provenance are rejected at
+CLI and Runtime admission with no write. `definition create` owns complete reusable tag/field definitions and
 their type-specific configuration, templates/options, defaults, inheritance,
 and constraints. `field define` instead creates or reuses a field on one target
 and may set its initial value. `tag add` applies an existing definition.
@@ -111,6 +131,15 @@ patches Search title/query/view state and refreshes materialized results. `view
 set` applies one complete declarative view patch; omitted properties preserve
 state and only its explicit `replace` object replaces sort/filter/display
 collections. The view leaf commands remain for small edits.
+
+A real table is represented by one owner Node with `viewMode: table`, direct
+child row Nodes, reusable field definitions, field-backed cell values, and an
+explicit display/sort/filter configuration. The built-in Skill's
+`fixtures/table-view-changeset.json` is the canonical executable example: the
+mandatory golden flow reads that fixture, creates the table below an ensured
+Daily Note through one Diff/apply, verifies its fields/view, and exactly reverts
+it. Markdown tables, aligned child text, and owner Nodes without a table
+`viewDef` do not satisfy a table request.
 
 `capture add` accepts exactly one parent or local date, ensures the date when
 needed, preserves capture provenance, and creates its typed child tree in the

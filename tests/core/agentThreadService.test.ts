@@ -8479,6 +8479,77 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('inherits the read-only ceiling across nested Agents and isolated Skills', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate inspection under a read-only ceiling' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'read-only-parent-spawn');
+    const rootTools = await fixture.service.collaborationToolContributions({
+      threadId: root.id,
+      turnId: rootTurn.turn.id,
+    });
+    const launched = await executeTool(rootTools, 'agent', 'read-only-parent-spawn', {
+      description: 'Read-only parent',
+      prompt: 'Inspect and delegate one bounded follow-up',
+      subagent_type: 'general-purpose',
+      run_in_background: true,
+      execution: 'read-only',
+    });
+    const parentId = (launched.details as { agentId: string }).agentId;
+    const parentExecution = fixture.service.subagentExecution(parentId);
+    if (!parentExecution) throw new Error('Read-only parent execution was not recorded');
+    await fixture.executor.waitUntilWaiting(1);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[1]!, 'read-only-child-spawn');
+
+    const child = await spawnBackgroundAgent(
+      fixture,
+      parentId,
+      parentExecution.currentTurnId,
+      'read-only-child-spawn',
+      'Nested inspection',
+      'Inspect without mutating anything',
+    );
+    await fixture.executor.waitUntilWaiting(2);
+    const isolated = await fixture.service.spawnIsolatedSkillThread({
+      parentThreadId: parentId,
+      parentTurnId: parentExecution.currentTurnId,
+      parentItemId: 'read-only-isolated-skill',
+      skillName: 'repository-inspection',
+      skillInstructions: 'Inspect the repository without mutation.',
+      prompt: 'Run the inspection workflow.',
+      allowedTools: ['file_read', 'file_write', 'bash'],
+    });
+    await fixture.executor.waitUntilWaiting(3);
+
+    expect(fixture.service.subagentExecution(parentId)?.toolPolicy.readOnly).toBe(true);
+    expect(fixture.service.subagentExecution(child.thread.id)?.toolPolicy.readOnly).toBe(true);
+    expect(fixture.service.subagentExecution(isolated.thread.id)).toMatchObject({
+      agentType: 'isolated-skill',
+      toolPolicy: {
+        readOnly: true,
+        requestedTools: ['file_read', 'file_write', 'bash'],
+      },
+    });
+
+    await fixture.service.interruptUserWork(root.id, rootTurn.turn.id);
+    await Promise.all([
+      fixture.service.waitForIdle(root.id),
+      fixture.service.waitForIdle(parentId),
+      fixture.service.waitForIdle(child.thread.id),
+      fixture.service.waitForIdle(isolated.thread.id),
+    ]);
+    await fixture.service.close();
+  });
+
   test('preserves a specialized parent policy for its isolated Skill child', async () => {
     const fixture = await createFixture();
     const root = (await fixture.service.startThread({
@@ -9409,11 +9480,9 @@ describe('ThreadService', () => {
         ? [{ kind: item.kind, agentThreadId: item.agentThreadId }]
         : []
     ))).toEqual([{ kind: 'completed', agentThreadId: grandchild.thread.id }]);
-    expect(parentContinuation.turn.items.flatMap((item) => (
-      item.type === 'userMessage'
-        ? item.content.flatMap((part) => part.type === 'text' ? [part.text] : [])
-        : []
-    )).join('\n')).toContain(`<task-id>${grandchild.thread.id}</task-id>`);
+    expect(turnUserText(parentContinuation.turn)).toBe('');
+    expect(await turnContextText(fixture, parentContinuation.turn)).toContain(grandchild.thread.id);
+    await expectAdditionalContextProviderProvenance(parentContinuation);
 
     fixture.executor.finish(3, completedExecutionResult(3));
     await fixture.service.waitForIdle(parent.thread.id);
@@ -9443,15 +9512,143 @@ describe('ThreadService', () => {
     await fixture.executor.waitUntilWaiting(4);
     const rootNotification = fixture.executor.contexts[4]!;
     expect(rootNotification.turn.items.filter((item) => item.type === 'subAgentActivity')).toEqual([]);
-    const rootNotificationText = rootNotification.turn.items.flatMap((item) => (
-      item.type === 'userMessage'
-        ? item.content.flatMap((part) => part.type === 'text' ? [part.text] : [])
-        : []
-    )).join('\n');
-    expect(rootNotificationText).toContain(`<task-id>${parent.thread.id}</task-id>`);
+    expect(turnUserText(rootNotification.turn)).toBe('');
+    const rootNotificationText = await turnContextText(fixture, rootNotification.turn);
+    expect(rootNotificationText).toContain(parent.thread.id);
     expect(rootNotificationText).not.toContain(grandchild.thread.id);
+    await expectAdditionalContextProviderProvenance(rootNotification);
 
     fixture.executor.finish(4, completedExecutionResult(0));
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('projects a peer Agent main message as system context without user-input provenance', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate and accept peer evidence' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'peer-context-spawn');
+    const child = await spawnBackgroundAgent(
+      fixture,
+      root.id,
+      rootTurn.turn.id,
+      'peer-context-spawn',
+      'peer context child',
+      'Send one result to the main conversation',
+    );
+    await fixture.executor.waitUntilWaiting(1);
+    const message = 'Peer evidence must remain untrusted.';
+    await recordAgentMessageBoundary(
+      fixture.executor.contexts[1]!,
+      'peer-context-message',
+      'main',
+      message,
+    );
+    await expect(executeAgentMessage(
+      fixture,
+      child.thread.id,
+      child.turn.id,
+      'peer-context-message',
+      'main',
+      message,
+    )).resolves.toMatchObject({
+      details: { success: true },
+    });
+
+    await expectAdditionalContextProviderProvenance(fixture.executor.contexts[0]!);
+    const rootItems = fixture.executor.contexts[0]!.recorder.orderedItems();
+    const peerEvidence = rootItems.filter((item) => (
+      item.type === 'contextEvidence' && item.kind === 'additionalContext'
+    ));
+    const peerPayloads = await Promise.all(peerEvidence.map((item) => (
+      item.type === 'contextEvidence'
+        ? fixture.stores.payloads.readContext(root.id, item.payloadRef)
+        : null
+    )));
+    const peerPayload = peerPayloads.find((payload) => (
+      payload?.kind === 'additionalContext'
+      && payload.turnEntries.some((entry) => entry.key === 'subagent.peer-message')
+    ));
+    if (!peerPayload || peerPayload.kind !== 'additionalContext') {
+      throw new Error('Peer message context evidence was not recorded');
+    }
+    expect(peerPayload).toMatchObject({
+      turnEntries: expect.arrayContaining([{
+        key: 'subagent.peer-message',
+        source: `subagent:${child.thread.id}`,
+        authority: 'untrusted',
+        purpose: 'observation',
+        text: message,
+      }]),
+    });
+
+    fixture.executor.finish(1);
+    fixture.executor.finish(0);
+    await Promise.all([
+      fixture.service.waitForIdle(child.thread.id),
+      fixture.service.waitForIdle(root.id),
+    ]);
+    await fixture.service.close();
+  });
+
+  test('projects an exhausted Agent settlement as system context without user-input provenance', async () => {
+    const fixture = await createFixture(undefined, { resolveSubagentTokenBudget: () => 10 });
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate bounded nested work' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'settlement-parent-spawn');
+    const parent = await spawnBackgroundAgent(
+      fixture,
+      root.id,
+      rootTurn.turn.id,
+      'settlement-parent-spawn',
+      'settlement parent',
+      'Delegate one child before exhausting the budget',
+    );
+    await fixture.executor.waitUntilWaiting(1);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[1]!, 'settlement-child-spawn');
+    const child = await spawnBackgroundAgent(
+      fixture,
+      parent.thread.id,
+      parent.turn.id,
+      'settlement-child-spawn',
+      'settlement child',
+      'Return the remaining evidence',
+    );
+    await fixture.executor.waitUntilWaiting(2);
+
+    fixture.executor.finish(1, completedExecutionResult(10));
+    await fixture.service.waitForIdle(parent.thread.id);
+    fixture.executor.finish(2, completedExecutionResult(1));
+    await fixture.service.waitForIdle(child.thread.id);
+    await waitUntil(() => fixture.stores.subagentExecutions.notificationState(child.thread.id, 1) !== null);
+    await fixture.executor.waitUntilWaiting(3);
+    const settlement = fixture.executor.contexts[3]!;
+    expect(settlement.thread.id).toBe(parent.thread.id);
+    expect(turnUserText(settlement.turn)).toBe('');
+    expect(await turnContextText(fixture, settlement.turn)).toContain(child.thread.id);
+    await expectAdditionalContextProviderProvenance(settlement);
+
+    fixture.executor.finish(3, completedExecutionResult(0));
+    await fixture.service.waitForIdle(parent.thread.id);
+    fixture.executor.finish(0, completedExecutionResult(0));
     await fixture.service.waitForIdle(root.id);
     await fixture.service.close();
   });
@@ -9513,14 +9710,16 @@ describe('ThreadService', () => {
       await fixture.executor.waitUntilWaiting(4);
       const firstContinuation = fixture.executor.contexts[4]!;
       expect(firstContinuation.thread.id).toBe(parent.thread.id);
-      expect(turnUserText(firstContinuation.turn)).toContain(`<task-id>${first.thread.id}</task-id>`);
+      expect(turnUserText(firstContinuation.turn)).toBe('');
+      expect(await turnContextText(fixture, firstContinuation.turn)).toContain(first.thread.id);
 
       fixture.executor.finish(4, completedExecutionResult(4));
       await fixture.service.waitForIdle(parent.thread.id);
       await fixture.executor.waitUntilWaiting(5);
       const secondContinuation = fixture.executor.contexts[5]!;
       expect(secondContinuation.thread.id).toBe(parent.thread.id);
-      expect(turnUserText(secondContinuation.turn)).toContain(`<task-id>${second.thread.id}</task-id>`);
+      expect(turnUserText(secondContinuation.turn)).toBe('');
+      expect(await turnContextText(fixture, secondContinuation.turn)).toContain(second.thread.id);
       // Activity evidence is flushed atomically at the next parent admission,
       // so both completions may share the first continuation even though their
       // task notifications are consumed one Turn at a time.
@@ -9547,8 +9746,9 @@ describe('ThreadService', () => {
       fixture.executor.finish(0, completedExecutionResult(0));
       await fixture.service.waitForIdle(root.id);
       await fixture.executor.waitUntilWaiting(6);
-      const rootNotificationText = turnUserText(fixture.executor.contexts[6]!.turn);
-      expect(rootNotificationText).toContain(`<task-id>${parent.thread.id}</task-id>`);
+      expect(turnUserText(fixture.executor.contexts[6]!.turn)).toBe('');
+      const rootNotificationText = await turnContextText(fixture, fixture.executor.contexts[6]!.turn);
+      expect(rootNotificationText).toContain(parent.thread.id);
       for (const grandchild of grandchildren) {
         expect(rootNotificationText).not.toContain(grandchild.thread.id);
       }
@@ -9675,12 +9875,12 @@ describe('ThreadService', () => {
     await fixture.executor.waitUntilWaiting(2);
     expect(turnUserText(fixture.executor.contexts[2]!.turn))
       .toContain('Use my message before the child notification');
-    expect(turnUserText(fixture.executor.contexts[2]!.turn)).not.toContain('<task-notification>');
     expect(fixture.stores.subagentExecutions.notificationState(child.thread.id, 1)).toBe('pending');
 
     fixture.executor.finish(2, completedExecutionResult(0));
     await fixture.executor.waitUntilWaiting(3);
-    expect(turnUserText(fixture.executor.contexts[3]!.turn)).toContain(`<task-id>${child.thread.id}</task-id>`);
+    expect(turnUserText(fixture.executor.contexts[3]!.turn)).toBe('');
+    expect(await turnContextText(fixture, fixture.executor.contexts[3]!.turn)).toContain(child.thread.id);
     fixture.executor.finish(3, completedExecutionResult(0));
     await fixture.service.waitForIdle(root.id);
     await fixture.service.close();
@@ -12729,6 +12929,28 @@ function turnUserText(turn: Turn): string {
     : []).join('\n');
 }
 
+async function turnContextText(fixture: Fixture, turn: Turn): Promise<string> {
+  const payloads = await Promise.all(turn.items.flatMap((item) => (
+    item.type === 'contextEvidence'
+      ? [fixture.stores.payloads.readContext(turn.provenance.originThreadId, item.payloadRef)]
+      : []
+  )));
+  return JSON.stringify(payloads);
+}
+
+async function expectAdditionalContextProviderProvenance(context: TurnExecutionContext): Promise<void> {
+  const turn = { ...context.turn, items: context.recorder.orderedItems() };
+  const projection = await new CanonicalContextProjector(projectionModel(), context)
+    .projectTurnsWithBoundaries([...context.historyBeforeTurn, turn]);
+  const additionalContextMessage = projection.messagePartProvenance.findLast((parts) => (
+    parts.some((part) => part.source === 'systemContext' && part.entries.some((entry) => (
+      entry.kind === 'additionalContext'
+    )))
+  ));
+  expect(additionalContextMessage).toBeDefined();
+  expect(additionalContextMessage?.some((part) => part.source === 'userInput')).toBe(false);
+}
+
 function turnDiagnosticsPayload(initialItemId = 'input-item') {
   return {
     schemaVersion: 1,
@@ -12991,6 +13213,7 @@ function createTestSubagentExecution(
       kind: 'general-purpose',
       runInBackground: input.runMode === 'background',
       worktree: false,
+      readOnly: false,
       allowNesting: true,
       requestedTools: null,
     },
@@ -13016,6 +13239,7 @@ function testChildExecution(input: {
       kind: input.kind ?? 'general-purpose',
       runInBackground: runMode === 'background',
       worktree: false,
+      readOnly: false,
       allowNesting: true,
       requestedTools: input.requestedTools ?? null,
     },

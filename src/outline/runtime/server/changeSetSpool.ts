@@ -5,7 +5,7 @@ import { createInterface } from 'node:readline';
 import { canonicalSha256 } from '../../contract/canonical';
 import { OutlineContractError, outlineError } from '../../contract/errors';
 import { ChangeSetSchema, type ChangeSet } from '../../contract/schemas';
-import { checkOutlineSchema } from '../../contract/validation';
+import { checkOutlineSchema, outlineSchemaValidationDetails } from '../../contract/validation';
 import { ensurePrivateDirectory } from './runtimePaths';
 
 export const OUTLINE_CHANGESET_UPLOAD_LIMIT_BYTES = 64 * 1024 * 1024;
@@ -137,7 +137,11 @@ function admitChangeSet(
   }
   const candidate = idempotencyKey && existingKey === undefined ? { ...value, idempotencyKey } : value;
   if (!checkOutlineSchema(ChangeSetSchema, candidate)) {
-    throw invalidUpload('ChangeSet input does not match the public schema.');
+    throw invalidUpload(
+      'ChangeSet input does not match the public schema.',
+      undefined,
+      { validation: outlineSchemaValidationDetails(ChangeSetSchema, candidate) },
+    );
   }
   return candidate;
 }
@@ -159,12 +163,14 @@ function operationRecord(value: unknown, index: number): unknown {
   return value.operation;
 }
 
-function invalidUpload(message: string, cause?: unknown): OutlineContractError {
+function invalidUpload(message: string, cause?: unknown, details?: unknown): OutlineContractError {
   return new OutlineContractError(outlineError(
     'invalid_input',
     'usage',
     message,
-    cause === undefined ? undefined : { details: cause instanceof Error ? cause.message : String(cause) },
+    details === undefined && cause === undefined
+      ? undefined
+      : { details: details ?? (cause instanceof Error ? cause.message : String(cause)) },
   ));
 }
 

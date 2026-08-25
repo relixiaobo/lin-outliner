@@ -1,4 +1,5 @@
 import Type, { type Static, type TSchema } from 'typebox';
+import { CLIENT_NODE_ID_PATTERN } from '../../shared/nodeId';
 import { OUTLINE_ERROR_CODES } from './errors';
 import {
   OUTLINE_DESCRIPTOR_VERSION,
@@ -10,12 +11,21 @@ import { QueryRuleSchema } from './queryOperators';
 const closed = { additionalProperties: false } as const;
 export const IdentifierSchema = Type.String({ minLength: 1, maxLength: 256 });
 const Identifier = IdentifierSchema;
+export const NodeIdentifierSchema = Type.String({
+  pattern: CLIENT_NODE_ID_PATTERN,
+});
 const Digest = Type.String({ pattern: '^[a-f0-9]{64}$' });
 const BindingName = Type.String({ pattern: '^[A-Za-z][A-Za-z0-9_-]{0,63}$' });
 export const LocalDateSchema = Type.String({ pattern: '^\\d{4}-\\d{2}-\\d{2}$' });
 const LocalDate = LocalDateSchema;
 const Timestamp = Type.String({ format: 'date-time' });
 const JsonValue = Type.Unknown();
+
+export const FieldTypeSchema = Type.Union([
+  Type.Literal('plain'), Type.Literal('options'), Type.Literal('options_from_supertag'),
+  Type.Literal('date'), Type.Literal('number'), Type.Literal('url'),
+  Type.Literal('email'), Type.Literal('checkbox'),
+]);
 
 export const QueryExpressionSchema = Type.Cyclic({
   QueryExpression: Type.Union([
@@ -197,17 +207,127 @@ export const RichTextPatchSchema = Type.Object({
   ops: Type.Array(RichTextPatchOpSchema, { minItems: 1, maxItems: 100_000 }),
 }, { ...closed, $id: 'RichTextPatch' });
 
+const ContextProviderIdSchema = Type.Union([
+  Type.Literal('generic-webpage'), Type.Literal('youtube'), Type.Literal('x-twitter'),
+  Type.Literal('gmail'), Type.Literal('superhuman'), Type.Literal('apple-mail'),
+  Type.Literal('mimestream'), Type.Literal('linkedin'), Type.Literal('slack'),
+  Type.Literal('whatsapp'), Type.Literal('loom'), Type.Literal('spotify'),
+  Type.Literal('messages'), Type.Literal('pdf'), Type.Literal('github'),
+  Type.Literal('circle'), Type.Literal('substack'), Type.Literal('notion-public'),
+  Type.Literal('unknown-app'),
+]);
+
+const OriginalResourceSchema = Type.Union([
+  Type.Object({
+    kind: Type.Literal('remote-url'),
+    url: Type.String({ minLength: 1, maxLength: 32_768 }),
+    canonicalUrl: Type.Optional(Type.String({ maxLength: 32_768 })),
+    preview: Type.Union([Type.Literal('web-preview'), Type.Literal('external-browser')]),
+  }, closed),
+  Type.Object({
+    kind: Type.Literal('local-file'),
+    path: Type.String({ minLength: 1, maxLength: 32_768 }),
+    entryKind: Type.Union([Type.Literal('file'), Type.Literal('directory')]),
+    displayName: Type.Optional(Type.String({ maxLength: 4_096 })),
+    mimeType: Type.Optional(Type.String({ maxLength: 256 })),
+    sizeBytes: Type.Optional(Type.Number({ minimum: 0 })),
+    modifiedAt: Type.Optional(Type.String({ format: 'date-time' })),
+    contentHash: Type.Optional(Type.String({ maxLength: 256 })),
+    preview: Type.Union([
+      Type.Literal('text'), Type.Literal('image'), Type.Literal('pdf'),
+      Type.Literal('native-open'), Type.Literal('unsupported'),
+    ]),
+  }, closed),
+  Type.Object({
+    kind: Type.Literal('asset'),
+    assetId: Type.String({ minLength: 1, maxLength: 256 }),
+    name: Type.Optional(Type.String({ maxLength: 4_096 })),
+    mimeType: Type.Optional(Type.String({ maxLength: 256 })),
+    preview: Type.Union([Type.Literal('asset-preview'), Type.Literal('native-open')]),
+  }, closed),
+  Type.Object({
+    kind: Type.Literal('app-resource'),
+    appUrl: Type.Optional(Type.String({ maxLength: 32_768 })),
+    externalUrl: Type.Optional(Type.String({ maxLength: 32_768 })),
+    preview: Type.Union([
+      Type.Literal('app-open'), Type.Literal('external-browser'), Type.Literal('unsupported'),
+    ]),
+  }, closed),
+]);
+
+const CaptureSourceSchema = Type.Object({
+  kind: Type.Union([
+    Type.Literal('webpage'), Type.Literal('article'), Type.Literal('video'),
+    Type.Literal('tweet'), Type.Literal('email'), Type.Literal('chat'),
+    Type.Literal('profile'), Type.Literal('repo'), Type.Literal('pdf'),
+    Type.Literal('music'), Type.Literal('app'),
+  ]),
+  title: Type.String({ maxLength: 32_768 }),
+  original: OriginalResourceSchema,
+  url: Type.Optional(Type.String({ maxLength: 32_768 })),
+  canonicalUrl: Type.Optional(Type.String({ maxLength: 32_768 })),
+  appUrl: Type.Optional(Type.String({ maxLength: 32_768 })),
+  author: Type.Optional(Type.Object({
+    name: Type.Optional(Type.String({ maxLength: 4_096 })),
+    handle: Type.Optional(Type.String({ maxLength: 4_096 })),
+    url: Type.Optional(Type.String({ maxLength: 32_768 })),
+    avatarUrl: Type.Optional(Type.String({ maxLength: 32_768 })),
+  }, closed)),
+  imageUrl: Type.Optional(Type.String({ maxLength: 32_768 })),
+  publishedAt: Type.Optional(Type.String({ format: 'date-time' })),
+  timestampSeconds: Type.Optional(Type.Number({ minimum: 0 })),
+  durationSeconds: Type.Optional(Type.Number({ minimum: 0 })),
+  providerId: ContextProviderIdSchema,
+  metadata: Type.Optional(Type.Record(Type.String(), JsonValue)),
+}, closed);
+
+const PermissionRequirementSchema = Type.Union([
+  Type.Literal('macos-accessibility'), Type.Literal('macos-automation'),
+  Type.Literal('browser-automation'), Type.Literal('apple-mail-automation'),
+  Type.Literal('screen-recording'), Type.Literal('local-file-access'),
+  Type.Literal('notion-oauth'), Type.Literal('ai-provider-key'),
+]);
+
+export const CaptureProvenanceSchema = Type.Object({
+  schemaVersion: Type.Literal(1),
+  captureId: Type.String({ minLength: 1, maxLength: 256 }),
+  createdBy: Type.Union([Type.Literal('launcher'), Type.Literal('agent'), Type.Literal('import')]),
+  capturedAt: Timestamp,
+  origin: Type.Union([
+    Type.Literal('global-hotkey'), Type.Literal('manual-refresh'),
+    Type.Literal('deep-link'), Type.Literal('test'),
+  ]),
+  providerId: ContextProviderIdSchema,
+  app: Type.Object({
+    name: Type.String({ minLength: 1, maxLength: 4_096 }),
+    bundleId: Type.Optional(Type.String({ maxLength: 4_096 })),
+    windowTitle: Type.Optional(Type.String({ maxLength: 32_768 })),
+  }, closed),
+  source: CaptureSourceSchema,
+  status: Type.Union([Type.Literal('saved'), Type.Literal('partial')]),
+  intent: Type.Union([
+    Type.Literal('capture'), Type.Literal('clip'), Type.Literal('read-later'),
+    Type.Literal('watch-later'), Type.Literal('summarize'), Type.Literal('ask-ai'),
+  ]),
+  warnings: Type.Array(Type.Object({
+    code: Type.String({ minLength: 1, maxLength: 256 }),
+    message: Type.String({ maxLength: 32_768 }),
+    providerId: Type.Optional(ContextProviderIdSchema),
+    permission: Type.Optional(PermissionRequirementSchema),
+  }, closed), { maxItems: 10_000 }),
+}, { ...closed, $id: 'CaptureProvenance' });
+
 const NodeDraftMetadataSchema = Type.Object({
   width: Type.Optional(Type.Union([Type.Number({ minimum: 0 }), Type.Null()])),
   height: Type.Optional(Type.Union([Type.Number({ minimum: 0 }), Type.Null()])),
   alt: Type.Optional(Type.Union([Type.String({ maxLength: 4_096 }), Type.Null()])),
-  capture: Type.Optional(JsonValue),
+  capture: Type.Optional(CaptureProvenanceSchema),
   query: Type.Optional(QueryExpressionSchema),
 }, closed);
 
 export const NodeDraftSchema = Type.Cyclic({
   NodeDraft: Type.Object({
-    id: Type.Optional(Identifier),
+    id: Type.Optional(NodeIdentifierSchema),
     type: Type.Optional(Type.Union([
       Type.Literal('plain'), Type.Literal('codeBlock'), Type.Literal('image'),
       Type.Literal('attachment'), Type.Literal('reference'), Type.Literal('search'),
@@ -255,7 +375,7 @@ const EnsureChangeSchema = Type.Union([
     definitionType: Type.Literal('field'),
     id: Type.Optional(Identifier),
     name: Type.String({ maxLength: 1_024 }),
-    fieldType: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    fieldType: Type.Optional(FieldTypeSchema),
     bind: BindingName,
   }, closed),
 ]);
@@ -280,12 +400,6 @@ const TextPatchSchema = Type.Union([
     to: Type.Integer({ minimum: 0 }),
     value: Type.String({ maxLength: 4_194_304 }),
   }, closed),
-]);
-
-export const FieldTypeSchema = Type.Union([
-  Type.Literal('plain'), Type.Literal('options'), Type.Literal('options_from_supertag'),
-  Type.Literal('date'), Type.Literal('number'), Type.Literal('url'),
-  Type.Literal('email'), Type.Literal('checkbox'),
 ]);
 
 const FieldSlotCommon = {

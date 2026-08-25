@@ -187,7 +187,7 @@ function additionalContextPayload(
     key,
     source: directSource ?? (entry.kind === 'application' ? 'main' : 'renderer'),
     authority: entry.kind,
-    purpose: entry.kind === 'application' ? 'instruction' as const : 'observation' as const,
+    purpose: entry.purpose ?? (entry.kind === 'application' ? 'instruction' as const : 'observation' as const),
     text: entry.value,
   }))
     .sort((left, right) => compareStableText(left.key, right.key));

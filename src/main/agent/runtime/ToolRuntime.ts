@@ -399,33 +399,40 @@ export class ToolRuntime {
           }
           activeSubagentPolicy = persistedPolicy;
         }
-        const specializedBashBlocked = canonicalIdentity === 'bash'
+        const bashPolicyBlocked = canonicalIdentity === 'bash'
           && !subagentBashExecutionAllowed(
             activeSubagentPolicy,
             capability.descriptors.map((descriptor) => descriptor.actionKind),
           );
-        const worktreeBashOutlineBlocked = specializedBashBlocked
+        const worktreeBashOutlineBlocked = bashPolicyBlocked
           && activeSubagentPolicy.worktree
           && capability.descriptors.some((descriptor) => (
             descriptor.actionKind === 'outline.edit' || descriptor.actionKind === 'outline.delete'
           ));
-        const specializedMutationBlocked = contract.schemaOwner === 'extension'
+        const extensionPolicyBlocked = contract.schemaOwner === 'extension'
           && !subagentToolExecutionAllowed(
             activeSubagentPolicy,
             capability.descriptors.map((descriptor) => descriptor.actionKind),
           );
-        const specializedPolicyBlocked = specializedBashBlocked || specializedMutationBlocked;
-        if (capability.behavior === 'unavailable' || specializedPolicyBlocked) {
+        const subagentPolicyBlocked = bashPolicyBlocked || extensionPolicyBlocked;
+        if (capability.behavior === 'unavailable' || subagentPolicyBlocked) {
           const reason = capability.behavior === 'unavailable'
             ? capability.reason
-            : specializedBashBlocked
-              ? worktreeBashOutlineBlocked
-                ? 'Worktree Agents cannot mutate the live outline through Bash.'
-                : 'Explore and Plan Agents may use Bash only for repository inspection.'
-              : 'Explore and Plan Agents cannot execute repository mutations.';
-          const code = capability.behavior === 'unavailable'
-            ? capability.code
-            : 'subagent_repository_mutation_restricted';
+            : bashPolicyBlocked
+              ? activeSubagentPolicy.readOnly
+                ? 'Read-only Agents may use Bash only for inspection commands.'
+                : worktreeBashOutlineBlocked
+                  ? 'Worktree Agents cannot mutate the live outline through Bash.'
+                  : 'Explore and Plan Agents may use Bash only for repository inspection.'
+              : activeSubagentPolicy.readOnly
+                ? 'Read-only Agents cannot execute mutating extension tools.'
+                : 'Explore and Plan Agents cannot execute repository mutations.';
+          const policyCode = capability.behavior === 'unavailable'
+            ? null
+            : activeSubagentPolicy.readOnly
+              ? 'subagent_read_only_restricted'
+              : 'subagent_repository_mutation_restricted';
+          const code = capability.behavior === 'unavailable' ? capability.code : policyCode!;
           const result = toolResult({
             ok: false,
             tool: canonicalIdentity,
@@ -437,7 +444,7 @@ export class ToolRuntime {
               details: { reason: code },
             },
             instructions: 'This operation is unavailable in the current context. Continue with another available approach.',
-            capabilityAudit: capabilityAudit(capability, specializedPolicyBlocked),
+            capabilityAudit: capabilityAudit(capability, policyCode),
           });
           await this.service.notifyToolCompleted(
             context.thread.id,
@@ -515,21 +522,22 @@ const ROOT_SUBAGENT_POLICY: PersistedSubagentToolPolicy = {
   kind: 'general-purpose',
   runInBackground: false,
   worktree: false,
+  readOnly: false,
   allowNesting: true,
   requestedTools: null,
 };
 
 function capabilityAudit(
   capability: ReturnType<typeof evaluateAgentToolCapability>,
-  specializedPolicyBlocked = false,
+  policyCode: 'subagent_read_only_restricted' | 'subagent_repository_mutation_restricted' | null = null,
 ): JsonValue {
   return jsonValue({
-    behavior: specializedPolicyBlocked ? 'unavailable' : capability.behavior,
+    behavior: policyCode === null ? capability.behavior : 'unavailable',
     access: capability.access,
-    source: specializedPolicyBlocked ? 'subagent_policy' : capability.source,
+    source: policyCode === null ? capability.source : 'subagent_policy',
     descriptors: capability.descriptors,
-    ...(specializedPolicyBlocked
-      ? { code: 'subagent_repository_mutation_restricted' }
+    ...(policyCode !== null
+      ? { code: policyCode }
       : capability.behavior === 'unavailable'
         ? { code: capability.code }
         : {}),

@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { runOutlineCli } from '../../src/outline/cli';
@@ -41,51 +41,37 @@ describe('outline mandatory CLI golden flows', () => {
     });
   });
 
-  test('2. creates a complete Projects table through one ChangeSet, one Diff, and one apply', async () => {
+  test('2. executes the documented Daily Note table ChangeSet through one Diff and one apply', async () => {
     await withRuntime(async ({ runtime, cli }) => {
       const before = snapshot(runtime);
       const operationsBefore = await countOperations(runtime);
-      const changeSet = {
-        protocolVersion: 1,
-        kind: 'outline.changeset',
-        source: { kind: 'cli', label: 'Projects table golden flow' },
-        operations: [
-          { op: 'create', resource: 'definition', definitionType: 'field', name: 'Project Status', config: { fieldType: 'plain' }, bind: 'status' },
-          { op: 'create', resource: 'definition', definitionType: 'field', name: 'Project Budget', config: { fieldType: 'number', minValue: 0 }, bind: 'budget' },
-          { op: 'create', placement: { kind: 'last', parent: oneAlias('library') }, nodes: [draft('Projects')], bind: 'projects' },
-          { op: 'create', placement: { kind: 'last', parent: { binding: 'projects' } }, nodes: [draft('Alpha')], bind: 'alpha' },
-          { op: 'create', placement: { kind: 'last', parent: { binding: 'projects' } }, nodes: [draft('Beta')], bind: 'beta' },
-          { op: 'update', targets: { binding: 'alpha' }, changes: [
-            { kind: 'field', action: 'set', field: { binding: 'status' }, value: 'Active' },
-            { kind: 'field', action: 'set', field: { binding: 'budget' }, value: 100 },
-          ] },
-          { op: 'update', targets: { binding: 'beta' }, changes: [
-            { kind: 'field', action: 'set', field: { binding: 'status' }, value: 'Planned' },
-            { kind: 'field', action: 'set', field: { binding: 'budget' }, value: 50 },
-          ] },
-          { op: 'update', targets: { binding: 'projects' }, changes: [{
-            kind: 'view', property: 'configuration', action: 'set', view: {
-              mode: 'table', group: { binding: 'status' }, replace: {
-                sort: [{ field: 'sys:updatedAt', direction: 'desc' }],
-                display: [{ field: 'sys:name' }, { field: { binding: 'status' } }, { field: { binding: 'budget' } }],
-              },
-            },
-          }] },
-        ],
-        return: [{ kind: 'outline', targets: { binding: 'projects' }, depth: 2, include: ['children', 'fields', 'view'], page: { limit: 100 } }],
-      };
+      const changeSet = JSON.parse(await readFile(path.resolve(
+        import.meta.dir,
+        '../../src/main/builtInSkills/outline/fixtures/table-view-changeset.json',
+      ), 'utf8')) as unknown;
       const callsBefore = cli.calls;
       const preview = diffResult(await cli.json(['diff', '--input', '-'], JSON.stringify(changeSet)));
       expect(runtime.workspace.documentState()).toEqual(before);
       const operation = operationResult(await cli.json(['apply', '--input', '-'], JSON.stringify(preview)));
       expect(cli.calls - callsBefore).toBe(2);
       expect(await countOperations(runtime)).toBe(operationsBefore + 1);
-      const projectId = preview.bindings.projects![0]!;
+      const tableId = preview.bindings.table![0]!;
+      const dayId = preview.bindings.day![0]!;
+      const inputPriceId = preview.bindings.inputPrice![0]!;
       const state = runtime.workspace.documentState();
-      const project = state.nodes[projectId]!;
-      expect(project.children.map((id) => state.nodes[id]?.content.text)).toEqual(expect.arrayContaining(['Alpha', 'Beta']));
-      const view = project.children.map((id) => state.nodes[id]).find((node) => node?.type === 'viewDef');
-      expect(view).toMatchObject({ viewMode: 'table', groupField: preview.bindings.status![0] });
+      const table = state.nodes[tableId]!;
+      expect(table.parentId).toBe(dayId);
+      expect(table.children.map((id) => state.nodes[id]?.content.text))
+        .toEqual(expect.arrayContaining(['Model Alpha', 'Model Beta']));
+      const view = table.children.map((id) => state.nodes[id]).find((node) => node?.type === 'viewDef');
+      expect(view).toMatchObject({ viewMode: 'table', toolbarVisible: true });
+      expect(view!.children.map((id) => state.nodes[id])).toContainEqual(expect.objectContaining({
+        type: 'sortRule',
+        sortField: inputPriceId,
+        sortDirection: 'asc',
+      }));
+      expect(view!.children.map((id) => state.nodes[id]).filter((node) => node?.type === 'displayField'))
+        .toHaveLength(3);
       expect(operation.result?.[0]?.nodes.length).toBeGreaterThanOrEqual(3);
       await exactRevert(runtime, operation, before, cli);
     });

@@ -104,6 +104,78 @@ describe('outline ChangeSet kernel', () => {
     expect(await workspace.store.operations()).toEqual([]);
   });
 
+  test('reports focused schema paths for invalid Node IDs, field types, and capture provenance', async () => {
+    const workspace = await makeWorkspace();
+    const invalidCases = [
+      {
+        value: {
+          protocolVersion: 1,
+          kind: 'outline.changeset',
+          operations: [{
+            op: 'create',
+            placement: { kind: 'last', parent: oneAlias('today') },
+            nodes: [{ ...draft('Invalid ID'), id: 'node:not-canonical' }],
+          }],
+        },
+        path: '/operations/0/nodes/0/id',
+        secret: 'node:not-canonical',
+      },
+      {
+        value: {
+          protocolVersion: 1,
+          kind: 'outline.changeset',
+          operations: [{
+            op: 'ensure',
+            resource: 'definition',
+            definitionType: 'field',
+            id: 'field:invalid',
+            name: 'Invalid field',
+            fieldType: 'currency',
+            bind: 'field',
+          }],
+        },
+        path: '/operations/0/fieldType',
+        secret: 'currency',
+      },
+      {
+        value: {
+          protocolVersion: 1,
+          kind: 'outline.changeset',
+          operations: [{
+            op: 'create',
+            placement: { kind: 'last', parent: oneAlias('today') },
+            nodes: [{
+              ...draft('Invalid capture'),
+              metadata: { capture: captureProvenance('not-a-timestamp') },
+            }],
+          }],
+        },
+        path: '/operations/0/nodes/0/metadata/capture/capturedAt',
+        secret: 'not-a-timestamp',
+      },
+    ] as const;
+
+    for (const invalidCase of invalidCases) {
+      try {
+        await diffKeyed(workspace, invalidCase.value as unknown as ChangeSet);
+        throw new Error('Expected invalid ChangeSet admission to fail.');
+      } catch (error) {
+        expect(error).toMatchObject({
+          outlineError: {
+            code: 'invalid_input',
+            details: {
+              validation: {
+                issues: expect.arrayContaining([expect.objectContaining({ path: invalidCase.path })]),
+              },
+            },
+          },
+        });
+        expect(JSON.stringify(error)).not.toContain(invalidCase.secret);
+      }
+    }
+    expect(await workspace.store.operations()).toEqual([]);
+  });
+
   test('rejects stale Diff and targeted digest changes without writing', async () => {
     const workspace = await makeWorkspace();
     const targetId = await createExisting(workspace, 'Target');
@@ -593,6 +665,31 @@ function draft(text: string, patch: Partial<NodeDraft> = {}): NodeDraft {
     content: { text, marks: [], inlineRefs: [] },
     children: [],
     ...patch,
+  };
+}
+
+function captureProvenance(capturedAt: string) {
+  return {
+    schemaVersion: 1 as const,
+    captureId: 'capture:invalid-schema-fixture',
+    createdBy: 'agent' as const,
+    capturedAt,
+    origin: 'test' as const,
+    providerId: 'generic-webpage' as const,
+    app: { name: 'Schema fixture' },
+    source: {
+      kind: 'webpage' as const,
+      title: 'Schema fixture',
+      original: {
+        kind: 'remote-url' as const,
+        url: 'https://example.com/schema-fixture',
+        preview: 'web-preview' as const,
+      },
+      providerId: 'generic-webpage' as const,
+    },
+    status: 'saved' as const,
+    intent: 'capture' as const,
+    warnings: [],
   };
 }
 

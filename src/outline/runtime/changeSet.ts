@@ -1,4 +1,5 @@
 import type { Core, CoreTransactionNodePatch, ResolvedContentTree } from '../../core/core';
+import { isClientNodeId } from '../../shared/nodeId';
 import type { BatchMoveNodeInput, FieldSlotMutation } from '../../core/types';
 import {
   TRASH_ID,
@@ -24,6 +25,7 @@ import {
 } from '../contract/canonical';
 import { OutlineContractError, outlineError } from '../contract/errors';
 import {
+  CaptureProvenanceSchema,
   ChangeSetSchema,
   DiffSchema,
   type Change,
@@ -39,14 +41,13 @@ import {
   type UpdateInstruction,
 } from '../contract/schemas';
 import { OUTLINE_PROTOCOL_VERSION } from '../contract/version';
-import { checkOutlineSchema } from '../contract/validation';
+import { checkOutlineSchema, outlineSchemaValidationDetails } from '../contract/validation';
 import { createDeterministicCoreIdFactory, deterministicPublicNodeId } from './deterministicIds';
 import { projectOutline, resolveTargetRef } from './projection';
 import { semanticAffectedDigest, semanticNodeDigest } from './semanticDigest';
 import { createSelectionIndex, resolveTargetSpec } from './selector';
 import type { OutlineRuntimeRequestContext } from './server/runtimeRouter';
 import type { OutlineRuntimeWorkspace } from './runtimeWorkspace';
-import type { CaptureNodeMetadata } from '../../core/launcher/sources';
 import { isSystemFieldId } from '../../core/systemFields';
 import { buildConfigIndex } from '../../core/configProjection';
 import { searchNodeToQueryExpr } from '../../core/searchEngine';
@@ -143,7 +144,14 @@ export async function applyOutlineDiff(
 }
 
 export function normalizeOutlineChangeSet(core: Core, input: ChangeSet): ChangeSet {
-  if (!checkOutlineSchema(ChangeSetSchema, input)) throw usageError('Input does not match the public ChangeSet schema.');
+  if (!checkOutlineSchema(ChangeSetSchema, input)) {
+    throw new OutlineContractError(outlineError(
+      'invalid_input',
+      'usage',
+      'Input does not match the public ChangeSet schema.',
+      { details: { validation: outlineSchemaValidationDetails(ChangeSetSchema, input) } },
+    ));
+  }
   if (input.base?.revision !== undefined && input.base.revision !== core.revision()) {
     throw new OutlineContractError(outlineError(
       'stale_revision',
@@ -575,8 +583,10 @@ function createDraft(
 ): string {
   const id = preserveId ? draft.id! : deterministicPublicNodeId(draft.id!, copyPath);
   const metadata = isRecord(draft.metadata) ? draft.metadata : {};
-  if (isRecord(metadata.capture)) {
-    assertCaptureMetadata(metadata.capture);
+  if (metadata.capture !== undefined) {
+    if (!checkOutlineSchema(CaptureProvenanceSchema, metadata.capture)) {
+      throw usageError('NodeDraft metadata.capture does not match CaptureProvenance');
+    }
     core.createCapture({
       destinationParentId: parentId,
       index,
@@ -1302,7 +1312,7 @@ function patchEffect(entry: CoreTransactionNodePatch): Diff['affected'][number][
 
 function normalizeDraftIds(draft: NodeDraft, seed: string, path: string): NodeDraft {
   const id = draft.id ?? deterministicPublicNodeId(seed, path);
-  if (!/^node:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+  if (!isClientNodeId(id)) {
     throw usageError(`NodeDraft.id must be a node:<uuid> identifier: ${id}`);
   }
   return {
@@ -1433,19 +1443,6 @@ function parseLocalDate(value: string): { year: number; month: number; day: numb
     throw new Error(`Invalid local date: ${value}`);
   }
   return { year, month, day };
-}
-
-function assertCaptureMetadata(value: Record<string, unknown>): asserts value is Record<string, unknown> & CaptureNodeMetadata {
-  if (value.schemaVersion !== 1
-    || typeof value.captureId !== 'string'
-    || !['launcher', 'agent', 'import'].includes(String(value.createdBy))
-    || typeof value.capturedAt !== 'string'
-    || typeof value.providerId !== 'string'
-    || !isRecord(value.app)
-    || !isRecord(value.source)
-    || !Array.isArray(value.warnings)) {
-    throw new Error('NodeDraft metadata.capture is not valid capture provenance');
-  }
 }
 
 function exactlyOne(ids: readonly string[], label: string): string {

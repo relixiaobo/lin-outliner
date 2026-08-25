@@ -83,6 +83,14 @@ reduced Selector, Projection, or Change union. Host capability policy classifies
 the shell segment as `outline.read`, `outline.edit`, or `outline.delete`; ordinary
 shell admission and explicit blocks still apply.
 
+An Agent spawned with `execution: "read-only"` retains the same discoverable
+public schemas but receives a Host-enforced action ceiling. Direct mutation
+tools are removed, dynamically classified Bash/extension actions are checked at
+execution, and every nested Agent or isolated Skill inherits the ceiling.
+Outline reads remain available while `outline.edit` and `outline.delete` are
+rejected before process launch. This is an orchestration policy, not a reduced
+Runtime schema or a model-authored request convention.
+
 For a built-in Agent shell call, main injects a short-lived attestation bound to
 the Runtime descriptor and exact Thread, Turn, and tool-call Item. Runtime
 validates it before a mutation and records immutable `built-in-agent` causation
@@ -425,6 +433,13 @@ These are top-level tools. There is no model-managed roster, inbox, follow-up,
 wait, or polling tool. Child completion is pushed by the host as specified in
 [`agent-subagent-threads.md`](agent-subagent-threads.md).
 
+Background notifications, peer messages, and exhausted nested settlement are
+Host-started Turns with empty user input. Their metadata and handling rules use
+application additional-context entries, while Agent-authored text uses an
+untrusted observation entry. Projection records these entries as
+`systemContext`, so no Agent-generated instruction, completion event, or
+delivery retry can become user provenance or user approval.
+
 `agent` is exposed, and the Agent-type catalog is published, only when the
 current Thread can actually spawn. A root Thread requires `agent` in its
 effective tool set. A child additionally requires persisted nesting permission,
@@ -616,7 +631,8 @@ Role preload cannot bypass that gate.
 An isolated Skill persists a foreground execution policy before its child Turn
 starts. Its `allowed-tools` list is normalized into the durable requested-tool
 ceiling, while Agent kind, worktree restriction, and nesting permission inherit
-from the parent. The child source is `agent.skill`; its result returns only
+from the parent. A parent `readOnly` ceiling is inherited as well and cannot be
+widened by the Skill's declared tools. The child source is `agent.skill`; its result returns only
 through the owning `skill` call, and neither `agent_message` nor `task_stop` can
 use its Thread ID as a collaboration address.
 

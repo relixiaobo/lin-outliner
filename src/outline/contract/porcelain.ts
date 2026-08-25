@@ -1,5 +1,6 @@
 import Type, { type TSchema } from 'typebox';
 import {
+  CaptureProvenanceSchema,
   FieldDefinitionPatchSchema,
   FieldTypeSchema,
   FilterOperatorSchema,
@@ -184,24 +185,6 @@ const SearchSetInputSchema = Type.Union([
 ]);
 const SearchEnsureTagInputSchema = Type.Object({ tag: TargetRefSchema, bind: OptionalBind }, closed);
 const DailyEnsureInputSchema = Type.Object({ date: LocalDateSchema, bind: OptionalBind }, closed);
-
-const CaptureProvenanceSchema = Type.Object({
-  schemaVersion: Type.Literal(1),
-  captureId: Type.String({ minLength: 1, maxLength: 256 }),
-  createdBy: Type.Union([Type.Literal('launcher'), Type.Literal('agent'), Type.Literal('import')]),
-  capturedAt: Type.String({ format: 'date-time' }),
-  origin: Type.String({ minLength: 1, maxLength: 128 }),
-  providerId: Type.String({ minLength: 1, maxLength: 256 }),
-  app: Type.Object({
-    name: Type.String({ minLength: 1, maxLength: 4_096 }),
-    bundleId: Type.Optional(Type.String({ maxLength: 4_096 })),
-    windowTitle: Type.Optional(Type.String({ maxLength: 32_768 })),
-  }, closed),
-  source: Type.Record(Type.String(), Type.Unknown()),
-  status: Type.Union([Type.Literal('saved'), Type.Literal('partial')]),
-  intent: Type.String({ minLength: 1, maxLength: 128 }),
-  warnings: Type.Array(Type.Unknown(), { maxItems: 10_000 }),
-}, closed);
 
 const CaptureAddInputSchema = Type.Union([
   Type.Object({

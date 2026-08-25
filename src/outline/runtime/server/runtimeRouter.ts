@@ -18,7 +18,7 @@ import {
   type OperationLogPage,
 } from '../../contract/schemas';
 import { canonicalSha256 } from '../../contract/canonical';
-import { checkOutlineSchema } from '../../contract/validation';
+import { checkOutlineSchema, outlineSchemaValidationDetails } from '../../contract/validation';
 import { readTargetSpec, reconcileReadSelector } from '../../contract/readTargets';
 import {
   OUTLINE_CLI_VERSION,
@@ -67,6 +67,7 @@ export class OutlineRuntimeRouter {
           'invalid_input',
           'usage',
           `Input does not match the public schema for command: ${request.command}`,
+          { details: { validation: outlineSchemaValidationDetails(capability.requestSchema, request.input) } },
         ));
       }
       if (context.origin === 'built-in-agent'
@@ -434,7 +435,12 @@ export function requestCanMutate(command: string, input: unknown): boolean {
 
 function decodeRequest(value: unknown): OutlineRequest {
   if (!checkOutlineSchema(OutlineRequestSchema, value)) {
-    throw new OutlineContractError(outlineError('invalid_input', 'usage', 'Invalid outline request envelope.'));
+    throw new OutlineContractError(outlineError(
+      'invalid_input',
+      'usage',
+      'Invalid outline request envelope.',
+      { details: { validation: outlineSchemaValidationDetails(OutlineRequestSchema, value) } },
+    ));
   }
   return value;
 }

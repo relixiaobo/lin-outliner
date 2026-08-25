@@ -131,8 +131,9 @@ after an earlier miss.
 Only isolated Skill metadata may select tools or execution settings, and it cannot
 widen the effective parent catalog. Isolated execution intersects its declared tools
 with the parent ceiling. Plugins and MCP servers obey the same parent ceiling through
-child configuration. Generic `execution: isolated` remains; there is no dedicated
-read-only isolated execution partition.
+child configuration. Generic `execution: isolated` remains; a Skill has no separate
+read-only mode of its own, but an isolated child inherits an enclosing Agent's durable
+`readOnly` ceiling and cannot reset it with `allowed-tools`.
 
 Embedded shell snippets are valid only in isolated Skills and execute from the already
 recorded canonical `skill` tool Item through the standard shell capability and its Full
@@ -315,7 +316,12 @@ root/family/exact command help, completion metadata, and command-specific schema
 from the executable registry. It routes one complete resource to one porcelain
 invocation, complex state for that resource to the same command's `--input`, and
 dependent, cross-date, or bounded bulk work to one ChangeSet with bindings. It
-never uses a shell mutation loop or intermediate created-ID lookup.
+never uses a shell mutation loop or intermediate created-ID lookup. For ordinary
+document work it also avoids ad hoc Python, Node, or shell programs for schema
+discovery, CLI-output transformation, or ChangeSet assembly; public
+command-specific schemas, supplied fixtures, and direct `--input` artifacts are
+the execution path. Bundled source adapters remain reserved for the documented
+external import workflow.
 
 The Skill distinguishes explicit create/add from convergent set/configure/ensure,
 omitted patch properties from explicit replacement, and common STRING_MATCH
@@ -334,6 +340,13 @@ configuration; it is not Markdown or aligned text. Date field values use
 `YYYY-MM-DD`, `YYYY-MM-DDTHH:mm`, or `start/end`, and local Daily Note dates are
 not timezone-converted. Final Agent answers reference persisted Nodes as
 `[[node:^exact-id]]` so the client resolves current titles.
+
+`references/changesets.md` includes a complete field-backed Daily Note table
+pattern backed by `fixtures/table-view-changeset.json`. The mandatory CLI golden
+flow executes that same fixture through one Diff, one apply, and exact revert.
+This makes the non-obvious field-definition, row-value, sort, display, and
+`viewMode: table` bindings executable guidance rather than prose that a model
+must rediscover with a local script.
 
 Its Agent-facing information architecture has four layers. `SKILL.md` teaches
 the inspect/choose/review/execute/verify/recover loop. A generated

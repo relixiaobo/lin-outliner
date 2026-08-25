@@ -12,6 +12,7 @@ export interface SubagentToolPolicy {
   readonly kind: SubagentPolicyKind;
   readonly runInBackground: boolean;
   readonly worktree: boolean;
+  readonly readOnly: boolean;
   readonly allowNesting: boolean;
 }
 
@@ -48,6 +49,12 @@ const SPECIALIZED_BASH_ACTION_KINDS = new Set<ModelToolActionKind>([
   'outline.read',
   'shell.read_search',
   'shell.background_process',
+]);
+const READ_ONLY_HOST_CONTROL_ACTION_KINDS = new Set<ModelToolActionKind>([
+  'agent.plan.update',
+  'agent.subagent.spawn',
+  'agent.subagent.send',
+  'agent.skill.invoke',
 ]);
 const BACKGROUND_TOOL_KEYS = new Set([
   'file_read',
@@ -115,17 +122,18 @@ export function subagentToolAllowed(
   ) return false;
   if (policy.worktree && hasActionKind(tool, OUTLINE_MUTATION_ACTION_KINDS)) return false;
   if (!policy.allowNesting && tool.actionKinds.includes('agent.subagent.spawn')) return false;
+  if (policy.readOnly && key !== 'bash' && !readOnlyToolAllowed(tool, extensionTool(tool))) return false;
 
   const specialized = policy.kind === 'explore' || policy.kind === 'plan';
-  const extensionTool = tool.identity.namespace !== null;
-  if (specialized && !extensionTool && key !== 'bash') {
+  const isExtensionTool = extensionTool(tool);
+  if (specialized && !isExtensionTool && key !== 'bash') {
     if (hasActionKind(tool, REPOSITORY_MUTATION_ACTION_KINDS)) return false;
     if (hasActionKind(tool, SPECIALIZED_EXCLUDED_ACTION_KINDS)) return false;
   }
   if (specialized && tool.actionKinds.includes('agent.subagent.spawn')) return false;
 
   if (!policy.runInBackground) return true;
-  if (extensionTool) return true;
+  if (isExtensionTool) return true;
   return BACKGROUND_TOOL_KEYS.has(key);
 }
 
@@ -138,6 +146,9 @@ export function subagentBashExecutionAllowed(
   actionKinds: readonly ModelToolActionKind[],
 ): boolean {
   if (policy.worktree && actionKinds.some((kind) => OUTLINE_MUTATION_ACTION_KINDS.has(kind))) return false;
+  if (policy.readOnly && (
+    actionKinds.length === 0 || !actionKinds.every(isReadOnlyModelToolActionKind)
+  )) return false;
   if (policy.kind !== 'explore' && policy.kind !== 'plan') return true;
   return actionKinds.length > 0 && actionKinds.every((kind) => SPECIALIZED_BASH_ACTION_KINDS.has(kind));
 }
@@ -151,6 +162,9 @@ export function subagentToolExecutionAllowed(
   policy: SubagentToolPolicy,
   actionKinds: readonly ModelToolActionKind[],
 ): boolean {
+  if (policy.readOnly && (
+    actionKinds.length === 0 || !actionKinds.every(isReadOnlyModelToolActionKind)
+  )) return false;
   if (policy.kind !== 'explore' && policy.kind !== 'plan') return true;
   return actionKinds.length > 0
     && actionKinds.every(isReadOnlyModelToolActionKind);
@@ -161,4 +175,15 @@ function hasActionKind(
   kinds: ReadonlySet<ModelToolActionKind>,
 ): boolean {
   return tool.actionKinds.some((kind) => kinds.has(kind));
+}
+
+function extensionTool(tool: ModelToolContract): boolean {
+  return tool.identity.namespace !== null;
+}
+
+function readOnlyToolAllowed(tool: ModelToolContract, extension: boolean): boolean {
+  return tool.actionKinds.length > 0 && tool.actionKinds.every((kind) => (
+    isReadOnlyModelToolActionKind(kind)
+    || (!extension && READ_ONLY_HOST_CONTROL_ACTION_KINDS.has(kind))
+  ));
 }

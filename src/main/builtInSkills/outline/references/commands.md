@@ -4,7 +4,7 @@
 
 Use this guide to understand the complete public CLI surface and choose a command.
 Run `outline COMMAND --help` for the same command contract at runtime and
-`outline schema COMMAND` for its exact structured request and result schemas.
+`outline schema COMMAND` for its request schema; use `--part result` or `--part both` when needed.
 
 ## Choose an Execution Shape
 
@@ -120,7 +120,7 @@ Root commands cover discovery, direct Node operations, ChangeSets, history, and 
 | `outline version` | metadata; idempotent | Print CLI, app, protocol, and storage versions. | `outline version` |
 | `outline status` | read-only; idempotent | Inspect Runtime presence and storage health without starting it. | `outline status` |
 | `outline capabilities` | metadata; idempotent | Print the executable CLI registry and optionally verify Runtime parity. | `outline capabilities [--runtime]` |
-| `outline schema` | metadata; idempotent | Print an exact public or command-specific JSON Schema. | `outline schema [SCHEMA\|COMMAND...]` |
+| `outline schema` | metadata; idempotent | Print an exact public or command-specific JSON Schema. | `outline schema [SCHEMA\|COMMAND...] [--part request\|result\|both]` |
 | `outline find` | read-only; idempotent | Find or exactly count Nodes with text shorthand, live Saved Searches, or canonical queries. | `outline find [TEXT] [OPTIONS]` |
 | `outline show` | read-only; idempotent | Read one or more exact targets with a bounded Projection. | `outline show [SELECTOR...] [PROJECTION OPTIONS]` |
 | `outline export` | read-only stream; idempotent | Export bounded targets as JSON, JSONL, Markdown, or OPML. | `outline export [SELECTOR] [PROJECTION OPTIONS] [--output FILE\|-]` |

@@ -169,10 +169,11 @@ describe('outline CLI', () => {
     expect(await runOutlineCli(['--json', 'schema', 'Selector'], { runtimeRoot: root, io: selector.io })).toBe(0);
     expect(JSON.parse(selector.stdout).data.$defs.Selector.$id).toBe('Selector');
     expect(await runOutlineCli(['--json', 'schema', 'done', 'set'], { runtimeRoot: root, io: porcelain.io })).toBe(0);
-    expect(JSON.parse(porcelain.stdout).data).toHaveProperty('request');
-    expect(JSON.parse(porcelain.stdout).data).toHaveProperty('result');
+    expect(JSON.parse(porcelain.stdout).data).toHaveProperty('properties');
+    expect(JSON.parse(porcelain.stdout).data).not.toHaveProperty('request');
+    expect(JSON.parse(porcelain.stdout).data).not.toHaveProperty('result');
     expect(await runOutlineCli(['--json', 'schema', 'search', 'create'], { runtimeRoot: root, io: search.io })).toBe(0);
-    const searchSchema = JSON.stringify(JSON.parse(search.stdout).data.request);
+    const searchSchema = JSON.stringify(JSON.parse(search.stdout).data);
     expect(searchSchema).toContain('match');
     expect(searchSchema).toContain('query');
     expect(searchSchema).not.toContain('changeSet');
@@ -183,6 +184,60 @@ describe('outline CLI', () => {
     expect(help.stdout).not.toContain('--input-format');
     expect(await runOutlineCli(['--json', 'search', 'create', '--unknown'], { runtimeRoot: root, io: unknown.io })).toBe(2);
     expect(JSON.parse(unknown.stdout)).toMatchObject({ ok: false, error: { code: 'invalid_input' } });
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  test('bounds command schema discovery and returns result or both only when requested', async () => {
+    const root = await makeRoot();
+    const request = captureIo();
+    const result = captureIo();
+    const both = captureIo();
+    const publicSchema = captureIo();
+    const invalid = captureIo();
+    const publicPart = captureIo();
+
+    expect(await runOutlineCli(['--json', 'schema', 'add'], { runtimeRoot: root, io: request.io })).toBe(0);
+    const requestSchema = JSON.parse(request.stdout).data as Record<string, unknown>;
+    expect(Buffer.byteLength(JSON.stringify(requestSchema))).toBeLessThanOrEqual(512 * 1024);
+    expect(countObjectKey(requestSchema, 'Selector')).toBe(1);
+
+    expect(await runOutlineCli(['--json', 'schema', 'ChangeSet'], {
+      runtimeRoot: root,
+      io: publicSchema.io,
+    })).toBe(0);
+    const changeSetSchema = JSON.parse(publicSchema.stdout).data as Record<string, unknown>;
+    expect(Buffer.byteLength(JSON.stringify(changeSetSchema))).toBeLessThanOrEqual(512 * 1024);
+    expect(countObjectKey(changeSetSchema, '$defs')).toBeLessThanOrEqual(1);
+
+    expect(await runOutlineCli(['--json', 'schema', 'add', '--part', 'result'], {
+      runtimeRoot: root,
+      io: result.io,
+    })).toBe(0);
+    expect(JSON.parse(result.stdout).data).not.toEqual(requestSchema);
+
+    expect(await runOutlineCli(['--json', 'schema', '--part', 'both', 'add'], {
+      runtimeRoot: root,
+      io: both.io,
+    })).toBe(0);
+    expect(JSON.parse(both.stdout).data).toEqual({
+      request: requestSchema,
+      result: JSON.parse(result.stdout).data,
+    });
+
+    expect(await runOutlineCli(['--json', 'schema', 'add', '--part', 'unknown'], {
+      runtimeRoot: root,
+      io: invalid.io,
+    })).toBe(2);
+    expect(JSON.parse(invalid.stdout)).toMatchObject({
+      error: { code: 'invalid_input', message: '--part requires request, result, or both.' },
+    });
+    expect(await runOutlineCli(['--json', 'schema', 'Selector', '--part', 'request'], {
+      runtimeRoot: root,
+      io: publicPart.io,
+    })).toBe(2);
+    expect(JSON.parse(publicPart.stdout)).toMatchObject({
+      error: { code: 'invalid_input', message: '--part applies only to command schemas.' },
+    });
     expect(await readdir(root)).toEqual([]);
   });
 
@@ -269,7 +324,7 @@ describe('outline CLI', () => {
     expect(help.stdout).toContain('outline undo --origin built-in-agent --expect-operation operation:example');
 
     expect(await runOutlineCli(['--json', 'schema', 'undo'], { runtimeRoot: root, io: schema.io })).toBe(0);
-    const requestSchema = JSON.stringify(JSON.parse(schema.stdout).data.request);
+    const requestSchema = JSON.stringify(JSON.parse(schema.stdout).data);
     expect(requestSchema).toContain('expectOperationId');
     expect(requestSchema).toContain('built-in-agent');
     expect(requestSchema).toContain('external-client');
@@ -298,7 +353,7 @@ describe('outline CLI', () => {
     expect(help.stdout).toContain('outline find --search search:modules --count');
 
     expect(await runOutlineCli(['--json', 'schema', 'find'], { runtimeRoot: root, io: schema.io })).toBe(0);
-    const requestSchema = JSON.stringify(JSON.parse(schema.stdout).data.request);
+    const requestSchema = JSON.stringify(JSON.parse(schema.stdout).data);
     expect(requestSchema).toContain('searchId');
     expect(requestSchema).toContain('sharedQuery');
     expect(requestSchema).toContain('queries');
@@ -323,7 +378,7 @@ describe('outline CLI', () => {
     expect(exportHelp.stdout).toContain('outline export --projection complete-export.json');
 
     expect(await runOutlineCli(['--json', 'schema', 'show'], { runtimeRoot: root, io: showSchema.io })).toBe(0);
-    const requestSchema = JSON.stringify(JSON.parse(showSchema.stdout).data.request);
+    const requestSchema = JSON.stringify(JSON.parse(showSchema.stdout).data);
     expect(requestSchema).toContain('projection');
     expect(requestSchema).toContain('selector');
     expect(await readdir(root)).toEqual([]);
@@ -378,7 +433,7 @@ describe('outline CLI', () => {
     expect(help.stdout).toContain('--yes alone is rejected');
     expect(help.stdout).toContain('outline text replace --matching "keyword 1" --max 500');
     expect(await runOutlineCli(['--json', 'schema', 'text', 'replace'], { runtimeRoot: root, io: schema.io })).toBe(0);
-    const requestSchema = JSON.stringify(JSON.parse(schema.stdout).data.request);
+    const requestSchema = JSON.stringify(JSON.parse(schema.stdout).data);
     expect(requestSchema).toContain('maxReplacements');
     expect(requestSchema).toContain('caseSensitive');
     expect(requestSchema).not.toContain('changeSet');
@@ -420,7 +475,7 @@ describe('outline CLI', () => {
     expect(inlineHelp.stdout).toContain('outline reference inline node:draft node:canonical');
 
     expect(await runOutlineCli(['--json', 'schema', 'add'], { runtimeRoot: root, io: addSchema.io })).toBe(0);
-    const addRequest = JSON.stringify(JSON.parse(addSchema.stdout).data.request);
+    const addRequest = JSON.stringify(JSON.parse(addSchema.stdout).data);
     for (const placement of ['first', 'last', 'index', 'before', 'after']) {
       expect(addRequest).toContain(`\"const\":\"${placement}\"`);
     }
@@ -431,7 +486,7 @@ describe('outline CLI', () => {
       runtimeRoot: root,
       io: replaceSchema.io,
     })).toBe(0);
-    const replaceRequest = JSON.stringify(JSON.parse(replaceSchema.stdout).data.request);
+    const replaceRequest = JSON.stringify(JSON.parse(replaceSchema.stdout).data);
     expect(replaceRequest).toContain('target');
     expect(replaceRequest).toContain('reference');
     expect(replaceRequest).not.toContain('changeSet');
@@ -1444,4 +1499,12 @@ function createTodayChangeSet(text: string): ChangeSet {
       bind: 'created',
     }],
   };
+}
+
+function countObjectKey(value: unknown, key: string): number {
+  if (!value || typeof value !== 'object') return 0;
+  if (Array.isArray(value)) return value.reduce((total, entry) => total + countObjectKey(entry, key), 0);
+  return Object.entries(value).reduce((total, [entryKey, entry]) => (
+    total + (entryKey === key ? 1 : 0) + countObjectKey(entry, key)
+  ), 0);
 }

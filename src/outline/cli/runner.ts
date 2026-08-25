@@ -17,7 +17,9 @@ import {
   OutlineContractError,
   outlineCapability,
   outlineCapabilityManifest,
+  compactOutlineSchema,
   checkOutlineSchema,
+  outlineSchemaValidationDetails,
   outlineError,
   outlineExitCodeForError,
   porcelainHelpOptions,
@@ -190,7 +192,11 @@ async function executeInvocation(
   if (capability.streaming) return executeStreamingInvocation(invocation, supervisor, io, options.signal);
   const input = await runtimeInput(invocation, io, supervisor, options.signal);
   if (!checkOutlineSchema(capability.requestSchema, input)) {
-    throw usageError(`Input does not match the public schema for command: ${invocation.command}`);
+    throw schemaUsageError(
+      `Input does not match the public schema for command: ${invocation.command}`,
+      capability.requestSchema,
+      input,
+    );
   }
   if (capability.destructive
     && capability.kind === 'mutate'
@@ -589,7 +595,11 @@ async function executeStreamingInvocation(
     : await parseReadCommand('export', invocation.args, (source) => readStructuredSource(source, io, signal));
   const capability = outlineCapability(invocation.command)!;
   if (!checkOutlineSchema(capability.requestSchema, parsed.input)) {
-    throw usageError(`Input does not match the public schema for command: ${invocation.command}`);
+    throw schemaUsageError(
+      `Input does not match the public schema for command: ${invocation.command}`,
+      capability.requestSchema,
+      parsed.input,
+    );
   }
   const client = await supervisor.connect(signal);
   const output = 'output' in parsed ? parsed.output : undefined;
@@ -811,16 +821,43 @@ function signalExitCode(signal: AbortSignal): number {
 }
 
 function schemaResult(args: readonly string[]): unknown {
-  const name = args.join(' ');
-  if (!name) return OUTLINE_PUBLIC_SCHEMAS;
+  let part: 'request' | 'result' | 'both' = 'request';
+  let partSpecified = false;
+  const nameParts: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!;
+    if (arg !== '--part') {
+      nameParts.push(arg);
+      continue;
+    }
+    if (partSpecified) throw usageError('--part may be specified only once.');
+    const value = args[index + 1];
+    if (value !== 'request' && value !== 'result' && value !== 'both') {
+      throw usageError('--part requires request, result, or both.');
+    }
+    part = value;
+    partSpecified = true;
+    index += 1;
+  }
+  const name = nameParts.join(' ');
+  if (!name) {
+    if (partSpecified) throw usageError('--part applies only to command schemas.');
+    return Object.fromEntries(Object.entries(OUTLINE_PUBLIC_SCHEMAS).map(([schemaName, schema]) => (
+      [schemaName, compactOutlineSchema(schema)]
+    )));
+  }
   if (Object.hasOwn(OUTLINE_PUBLIC_SCHEMAS, name)) {
-    return OUTLINE_PUBLIC_SCHEMAS[name as keyof typeof OUTLINE_PUBLIC_SCHEMAS];
+    if (partSpecified) throw usageError('--part applies only to command schemas.');
+    return compactOutlineSchema(OUTLINE_PUBLIC_SCHEMAS[name as keyof typeof OUTLINE_PUBLIC_SCHEMAS]);
   }
   const capability = outlineCapability(name);
-  if (capability) return {
-    request: capability.porcelain?.inputSchema ?? capability.requestSchema,
-    result: capability.resultSchema,
-  };
+  if (capability) {
+    const request = compactOutlineSchema(capability.porcelain?.inputSchema ?? capability.requestSchema);
+    const result = compactOutlineSchema(capability.resultSchema);
+    if (part === 'request') return request;
+    if (part === 'result') return result;
+    return { request, result };
+  }
   throw usageError(`Unknown public schema or command: ${name}`);
 }
 
@@ -1095,6 +1132,19 @@ function assertNoArgs(invocation: ParsedInvocation): void {
 
 function usageError(message: string): OutlineContractError {
   return new OutlineContractError(outlineError('invalid_input', 'usage', message));
+}
+
+function schemaUsageError(
+  message: string,
+  schema: Parameters<typeof outlineSchemaValidationDetails>[0],
+  value: unknown,
+): OutlineContractError {
+  return new OutlineContractError(outlineError(
+    'invalid_input',
+    'usage',
+    message,
+    { details: { validation: outlineSchemaValidationDetails(schema, value) } },
+  ));
 }
 
 function toPublicError(error: unknown): OutlineError {

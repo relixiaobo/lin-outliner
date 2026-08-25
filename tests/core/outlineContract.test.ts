@@ -42,9 +42,13 @@ describe('outline public contract', () => {
       'OutlineError', 'OutlineResponse', 'OutlineStreamRecord', 'Placement', 'Projection', 'ProjectionResult',
       'QueryExpression', 'RevertConflictDiff', 'RichTextPatch', 'RuntimeStatus', 'Selector', 'TargetRef', 'TargetSpec',
     ]);
-    for (const schema of Object.values(OUTLINE_PUBLIC_SCHEMAS)) {
+    for (const [name, schema] of Object.entries(OUTLINE_PUBLIC_SCHEMAS)) {
       expect(() => Compile(schema)).not.toThrow();
       expect(JSON.parse(JSON.stringify(schema))).toEqual(schema);
+      const compacted = compactOutlineSchema(schema);
+      expect(() => Compile(compacted), `${name} compacted`).not.toThrow();
+      expect(Buffer.byteLength(JSON.stringify(compacted)), name).toBeLessThanOrEqual(512 * 1024);
+      expect(countSchemaKey(compacted, '$defs'), name).toBeLessThanOrEqual(1);
     }
   });
 
@@ -299,6 +303,8 @@ describe('outline public contract', () => {
       expect(published.requestSchema).toEqual(
         compactOutlineSchema(capability.porcelain?.inputSchema ?? capability.requestSchema),
       );
+      expect(Buffer.byteLength(JSON.stringify(published.requestSchema))).toBeLessThanOrEqual(512 * 1024);
+      expect(countSchemaKey(published.requestSchema, '$defs')).toBeLessThanOrEqual(1);
       expect(capability.help.examples.length).toBeGreaterThanOrEqual(2);
       expect(capability.help.examples.length).toBeLessThanOrEqual(3);
     }
@@ -399,3 +405,11 @@ describe('outline public contract', () => {
     expect(Compile(DiffSchema).Check(value)).toBe(true);
   });
 });
+
+function countSchemaKey(value: unknown, key: string): number {
+  if (!value || typeof value !== 'object') return 0;
+  if (Array.isArray(value)) return value.reduce((total, entry) => total + countSchemaKey(entry, key), 0);
+  return Object.entries(value).reduce((total, [entryKey, entry]) => (
+    total + (entryKey === key ? 1 : 0) + countSchemaKey(entry, key)
+  ), 0);
+}

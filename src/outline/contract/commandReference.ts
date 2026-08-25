@@ -19,7 +19,7 @@ export function renderOutlineCommandReference(): string {
     '',
     'Use this guide to understand the complete public CLI surface and choose a command.',
     'Run `outline COMMAND --help` for the same command contract at runtime and',
-    '`outline schema COMMAND` for its exact structured request and result schemas.',
+    '`outline schema COMMAND` for its request schema; use `--part result` or `--part both` when needed.',
     '',
     '## Choose an Execution Shape',
     '',

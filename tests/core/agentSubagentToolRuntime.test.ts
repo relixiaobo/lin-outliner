@@ -273,6 +273,53 @@ describe('Subagent ToolRuntime policy', () => {
     }
   });
 
+  test('keeps inspection tools visible while enforcing a read-only action ceiling at execution', async () => {
+    let executions = 0;
+    const policy: PersistedSubagentToolPolicy = {
+      ...CHILD_POLICY,
+      readOnly: true,
+    };
+    const runtime = new ToolRuntime(runtimeService(policy), {
+      capabilityTools: () => runtimeSchemaTools(() => { executions += 1; }),
+      capabilityConfig: { blocks: [] },
+      assembleRegistry: true,
+    });
+    const tools = await runtime.createTools(runtimeContext(true));
+    const names = tools.map((tool) => tool.name);
+    expect(names).toEqual(expect.arrayContaining([
+      'file_read', 'file_glob', 'file_grep', 'bash', 'web_search', 'web_fetch',
+      'agent', 'skill',
+    ]));
+    expect(names).not.toEqual(expect.arrayContaining(['file_edit', 'file_write', 'file_delete']));
+
+    const bash = tools.find((tool) => tool.name === 'bash');
+    if (!bash) throw new Error('Expected read-only Bash tool.');
+    await bash.execute('read', { command: 'rg -n "needle" src' });
+    expect(executions).toBe(1);
+
+    for (const command of [
+      'printf changed > tracked.txt',
+      'python3 -c "open(\'tracked.txt\', \'w\').write(\'changed\')"',
+      'node -e "require(\'fs\').writeFileSync(\'tracked.txt\', \'changed\')"',
+      'curl -X POST https://example.test/items -d value=changed',
+      'outline add @today changed',
+    ]) {
+      const result = await bash.execute('blocked', { command });
+      expect(result.details).toMatchObject({
+        error: {
+          code: 'operation_unavailable',
+          details: { reason: 'subagent_read_only_restricted' },
+        },
+        capabilityAudit: {
+          behavior: 'unavailable',
+          source: 'subagent_policy',
+          code: 'subagent_read_only_restricted',
+        },
+      });
+    }
+    expect(executions).toBe(1);
+  });
+
   test('keeps specialized extension reads while rejecting declared repository mutations before execution', async () => {
     for (const kind of ['explore', 'plan'] as const) {
       let readExecutions = 0;
@@ -402,6 +449,7 @@ const CHILD_POLICY: PersistedSubagentToolPolicy = {
   kind: 'general-purpose',
   runInBackground: false,
   worktree: false,
+  readOnly: false,
   allowNesting: true,
   requestedTools: null,
 };

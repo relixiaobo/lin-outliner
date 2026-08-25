@@ -3120,14 +3120,18 @@ function decodeToolPolicy(value: unknown): SubagentRecordedToolPolicy {
   }
   const record = value as Record<string, unknown>;
   const requestedTools = record.requestedTools;
+  const currentKeys = [
+    'kind', 'runInBackground', 'worktree', 'readOnly', 'allowNesting', 'requestedTools',
+  ];
+  const historicalKeys = currentKeys.filter((key) => key !== 'readOnly');
   if (
-    !exactObjectKeys(record, [
-      'kind', 'runInBackground', 'worktree', 'allowNesting', 'requestedTools',
-    ])
+    !exactObjectKeys(record, currentKeys)
+    && !exactObjectKeys(record, historicalKeys)
     ||
     !['general-purpose', 'explore', 'plan', 'role'].includes(String(record.kind))
     || typeof record.runInBackground !== 'boolean'
     || typeof record.worktree !== 'boolean'
+    || (record.readOnly !== undefined && typeof record.readOnly !== 'boolean')
     || typeof record.allowNesting !== 'boolean'
     || (requestedTools !== null && (
       !Array.isArray(requestedTools) || requestedTools.some((entry) => typeof entry !== 'string')
@@ -3137,6 +3141,8 @@ function decodeToolPolicy(value: unknown): SubagentRecordedToolPolicy {
     kind: record.kind as SubagentToolPolicy['kind'],
     runInBackground: record.runInBackground,
     worktree: record.worktree,
+    // Historical executions predate the ceiling and therefore ran mutable.
+    readOnly: record.readOnly === true,
     allowNesting: record.allowNesting,
     requestedTools: requestedTools === null ? null : Object.freeze([...requestedTools]),
   };

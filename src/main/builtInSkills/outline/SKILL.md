@@ -19,8 +19,15 @@ even with `--json` and never starts Runtime.
 Read [references/commands.md](references/commands.md) when the command choice is
 not already obvious, the request crosses command families, or a complete view
 of the public capability surface is useful. Use `outline schema COMMAND` for
-exact structured input and output schemas; never guess an option or invent a
-query language.
+the exact structured request schema; it defaults to `--part request`, while
+`--part result` and `--part both` expose response contracts. Never guess an
+option or invent a query language.
+
+For ordinary Outline work, do not write ad hoc Python, Node, or shell programs
+to discover schema shapes, transform CLI output, or assemble ChangeSets. Use
+the public CLI, its command-specific schemas, the supplied fixtures, and direct
+`--input` artifacts. Bundled source adapters are reserved for the documented
+external import workflow.
 
 ## Inspect Current State
 
@@ -70,7 +77,9 @@ and one direct child Node per row. Store cells as field values and configure the
 visible display fields, grouping, and sort on the owner. Create definitions,
 owner, rows, values, and view together in one ChangeSet when they form one user
 intent. Never substitute a Markdown table or aligned plain text for document
-table state.
+table state. Start from
+[fixtures/table-view-changeset.json](fixtures/table-view-changeset.json) and
+adapt that executable pattern instead of reconstructing the table schema.
 
 Date field values use `YYYY-MM-DD`, `YYYY-MM-DDTHH:mm`, or `start/end` with `/`.
 Use exact local-date selectors for Daily Notes; do not apply timezone conversion

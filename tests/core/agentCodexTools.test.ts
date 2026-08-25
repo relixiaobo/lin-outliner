@@ -95,13 +95,17 @@ describe('Codex Agent Core model-tool contract', () => {
       'subagent_type',
       'model',
       'run_in_background',
+      'execution',
       'isolation',
     ]);
     expect(agent).toMatchObject({
       $schema: 'https://json-schema.org/draft/2020-12/schema',
       required: ['description', 'prompt'],
       additionalProperties: false,
-      properties: { model: { enum: ['model-b', 'model-a'] } },
+      properties: {
+        model: { enum: ['model-b', 'model-a'] },
+        execution: { enum: ['read-only'] },
+      },
     });
     expect(agentInputSchema([]).properties).not.toHaveProperty('model');
     expect(() => agentInputSchema([''])).toThrow('only non-empty');
@@ -131,7 +135,17 @@ describe('Codex Agent Core model-tool contract', () => {
       prompt: 'Review it.',
       subagent_type: 'explore',
       run_in_background: false,
-    })).toMatchObject({ subagent_type: 'explore', run_in_background: false });
+      execution: 'read-only',
+    })).toMatchObject({
+      subagent_type: 'explore',
+      run_in_background: false,
+      execution: 'read-only',
+    });
+    expect(() => normalizeAgentToolInput({
+      description: 'Inspect code',
+      prompt: 'Review it.',
+      execution: 'mutable',
+    })).toThrow('agent.execution must be "read-only"');
 
     expect(normalizeAgentMessageToolInput({ to: ' agent-1 ', message: '  First line\nSecond line  ' }))
       .toEqual({ to: ' agent-1 ', message: '  First line\nSecond line  ', summary: 'First line' });
