@@ -445,6 +445,10 @@ export interface SpawnChildThreadInput {
   /** Additional child-only ceiling. Values absent from the parent/role result are ignored. */
   readonly allowedTools?: readonly string[];
   readonly additionalContext?: AdditionalContext;
+  /** Stable context resources copied from the parent before child admission. */
+  readonly additionalContextResourceRefs?: readonly ThreadResourceReference[];
+  /** Host-owned provenance label for direct additional-context entries. */
+  readonly additionalContextSource?: string;
   /** Selects the parent-facing result channel while retaining one child-Thread mechanism. */
   readonly childKind: 'collaboration' | 'isolatedSkill';
   /** Host-owned execution policy prepared before any child state is written. */
@@ -474,6 +478,9 @@ export interface SpawnIsolatedSkillThreadInput {
   readonly skillInstructions: string;
   readonly prompt: string;
   readonly allowedTools: readonly string[];
+  readonly additionalContext?: AdditionalContext;
+  readonly additionalContextResourceRefs?: readonly ThreadResourceReference[];
+  readonly additionalContextSource?: string;
   readonly model?: string;
   readonly reasoningEffort?: EffectiveThreadConfiguration['reasoningEffort'];
 }

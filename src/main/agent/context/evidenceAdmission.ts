@@ -37,6 +37,8 @@ export async function admitContextEvidence(input: {
   readonly content: readonly ThreadUserContent[];
   readonly userView?: RendererUserViewHints;
   readonly additionalContext?: AdditionalContext;
+  readonly additionalContextResourceRefs?: readonly ThreadResourceReference[];
+  readonly additionalContextSource?: string;
   readonly extensionContext: readonly ThreadContextContribution[];
   readonly skillCatalog?: SkillCatalogContextPayload | null;
   readonly roleCatalog?: RoleCatalogContextPayload | null;
@@ -103,11 +105,13 @@ export async function admitContextEvidence(input: {
     input.additionalContext,
     input.extensionContext,
     input.includeHostContext,
+    input.additionalContextSource,
   );
   if (additionalContext) {
     await publish(
       additionalContext,
       `Additional context (${additionalContext.turnEntries.length} turn, ${additionalContext.threadState?.length ?? 0} state)`,
+      input.additionalContextResourceRefs ?? [],
     );
   }
 
@@ -177,10 +181,11 @@ function additionalContextPayload(
   direct: AdditionalContext | undefined,
   extensions: readonly ThreadContextContribution[],
   includeThreadState: boolean,
+  directSource?: string,
 ): AdditionalContextPayload | null {
   const turnEntries = Object.entries(direct ?? {}).map(([key, entry]) => ({
     key,
-    source: entry.kind === 'application' ? 'main' : 'renderer',
+    source: directSource ?? (entry.kind === 'application' ? 'main' : 'renderer'),
     authority: entry.kind,
     purpose: entry.kind === 'application' ? 'instruction' as const : 'observation' as const,
     text: entry.value,

@@ -354,6 +354,38 @@ describe('agent capabilities', () => {
     expect(result.output).toContain('were skipped after 16 artifacts');
   });
 
+  test('transports embedded Skill shell arguments through controlled environment bindings', async () => {
+    const { workspace } = await workspaceFixture();
+    const injectionMarker = path.join(workspace, 'argument-injection-ran');
+    const payload = `$(touch ${injectionMarker}); literal * value`;
+    const aggregate = `"target with spaces" "${payload}"`;
+    const result = await executeAgentSkillShellCommand({
+      command: [
+        'printf \'aggregate=<%s>\\npositional=<%s>\\nzero=<%s>\\nnamed=<%s>\\npayload=<%s>\\nbase=<%s>\\n\'',
+        '"$ARGUMENTS" "$ARGUMENTS[1]" "$0" "$target" "$payload" "$BASE_MARKER"',
+      ].join(' '),
+      argumentBindings: {
+        aggregate,
+        positional: ['target with spaces', payload],
+        named: [
+          { name: 'target', value: 'target with spaces', index: 0 },
+          { name: 'payload', value: payload, index: 1 },
+        ],
+      },
+      localRoot: workspace,
+      capabilityConfig: parseAgentCapabilitySettings({ blocks: [] }),
+      processEnvironment: async () => ({ env: { BASE_MARKER: 'base environment retained' } }),
+    });
+
+    expect(result.output).toContain(`aggregate=<${aggregate}>`);
+    expect(result.output).toContain(`positional=<${payload}>`);
+    expect(result.output).toContain('zero=<target with spaces>');
+    expect(result.output).toContain('named=<target with spaces>');
+    expect(result.output).toContain(`payload=<${payload}>`);
+    expect(result.output).toContain('base=<base environment retained>');
+    expect(await readFile(injectionMarker, 'utf8').catch(() => null)).toBeNull();
+  });
+
   test('keeps admitted managed Skill artifacts when the embedded command fails', async () => {
     const { workspace } = await workspaceFixture();
     const declaredPath = path.join(workspace, 'failed-output');

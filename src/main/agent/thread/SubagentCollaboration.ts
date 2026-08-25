@@ -1052,6 +1052,7 @@ export class SubagentCollaboration {
       let initialWorktreeIntent: AgentWorktreeRecoveryIntent | null = null;
       let admissionStarted = false;
       let createdChildThreadId: ThreadId | null = null;
+      let copiedAdditionalContextResourceRefs: readonly ThreadResourceReference[] = [];
       let result: SpawnChildThreadResult;
       try {
         result = await this.core.threadTreeMutex.run(async () => {
@@ -1162,6 +1163,11 @@ export class SubagentCollaboration {
               reasoningEffortOverride: input.reasoningEffort ?? null,
               taskPath: input.taskPath,
             });
+            copiedAdditionalContextResourceRefs = await this.copyAdditionalContextResources(
+              parent.thread.id,
+              thread.id,
+              input.additionalContextResourceRefs ?? [],
+            );
             this.subagentBudgets.createAdmission({
               request: {
                 originThreadId: parent.thread.id,
@@ -1183,6 +1189,12 @@ export class SubagentCollaboration {
                 parentItemId: input.parentItemId,
               },
               ...(input.additionalContext === undefined ? {} : { additionalContext: input.additionalContext }),
+              ...(copiedAdditionalContextResourceRefs.length === 0
+                ? {}
+                : { additionalContextResourceRefs: copiedAdditionalContextResourceRefs }),
+              ...(input.additionalContextSource === undefined
+                ? {}
+                : { additionalContextSource: input.additionalContextSource }),
             });
           return { thread, turn: accepted.response.turn, taskPath: input.taskPath };
         });
@@ -1258,6 +1270,13 @@ export class SubagentCollaboration {
         parentItemId: input.parentItemId,
         prompt: input.prompt,
         skillInstructions: input.skillInstructions,
+        ...(input.additionalContext === undefined ? {} : { additionalContext: input.additionalContext }),
+        ...(input.additionalContextResourceRefs === undefined
+          ? {}
+          : { additionalContextResourceRefs: input.additionalContextResourceRefs }),
+        ...(input.additionalContextSource === undefined
+          ? {}
+          : { additionalContextSource: input.additionalContextSource }),
         taskPath: `${parentPath}/${taskName}`,
         // The task path is a session address; the Skill's own name is what a
         // reader is owed. Recorded on the Thread and as the nickname so the
@@ -1290,6 +1309,28 @@ export class SubagentCollaboration {
         ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
       });
     }
+
+  private async copyAdditionalContextResources(
+    sourceThreadId: ThreadId,
+    targetThreadId: ThreadId,
+    refs: readonly ThreadResourceReference[],
+  ): Promise<readonly ThreadResourceReference[]> {
+    const copied = new Map<string, ThreadResourceReference>();
+    for (const ref of refs) {
+      const key = `${ref.id}\0${ref.fileName}`;
+      if (copied.has(key)) continue;
+      try {
+        if (await this.core.payloads.copyResourceToThread(sourceThreadId, targetThreadId, ref)) {
+          copied.set(key, ref);
+        } else {
+          console.warn(`[agent] Skill shell context resource is unavailable: ${ref.id}`);
+        }
+      } catch (error) {
+        console.warn(`[agent] Skill shell context resource copy failed: ${ref.id}`, error);
+      }
+    }
+    return [...copied.values()];
+  }
 
   private async rollbackInitialWorktree(
     agentId: ThreadId,

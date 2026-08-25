@@ -98,12 +98,14 @@ evidence before instructions can affect the model. Direct invocation evidence is
 admitted before the unchanged canonical `userMessage`; model invocation evidence is
 durable after the complete Skill tool Item and before the next provider request.
 
-An invocation snapshots canonical identity, content hash, exact rendered instructions,
-arguments, source, execution mode, resource root, constraints, invocation source, and
-time. Inline instructions project as application guidance; isolated instructions remain
-child-only developer instructions, while the invocation task is the child's canonical
-user message and the parent receives identity, constraints, and the tool result for
-audit. The model-facing `skill` tool requires the parent to preserve the user's task and
+An invocation snapshots canonical identity, content hash, exact rendered authored
+instructions, arguments, source, execution mode, resource root, constraints, invocation
+source, and time. Inline instructions project as application guidance; isolated authored
+instructions remain child-only developer instructions, while the invocation task is the
+child's canonical user message. Dynamic embedded-shell results are excluded from the
+instruction snapshot and admitted separately as untrusted child observations. The parent
+receives identity, constraints, and the tool result for audit. The model-facing `skill`
+tool requires the parent to preserve the user's task and
 explicit constraints in arguments without inventing an implementation plan or
 overriding the Skill workflow. There is no prompt overlay, private steering queue, or text parser. Restart
 replays the same payload bytes from canonical Items. A later invocation of the same
@@ -134,7 +136,10 @@ read-only isolated execution partition.
 
 Embedded shell snippets are valid only in isolated Skills and execute from the already
 recorded canonical `skill` tool Item through the standard shell capability and its Full
-Access capability evaluation. A Skill never bypasses explicit blocks.
+Access capability evaluation. Invocation values for `$ARGUMENTS`, `$ARGUMENTS[n]`,
+`$0`/`$1`, and named placeholders travel through host-controlled environment bindings;
+argument bytes are never interpolated into the authored command source. A Skill never
+bypasses explicit blocks.
 
 ## Compaction Restore
 
@@ -166,7 +171,12 @@ An isolated child receives the loaded Skill body as host-owned developer instruc
 and the invocation task as a separate user message. The developer block explicitly
 defines the user message as task input rather than workflow authority. An invocation
 with no task receives only a neutral execute-without-additional-input message; the host
-never manufactures task content from the parent conversation.
+never manufactures task content from the parent conversation. Embedded shell syntax is
+replaced in that developer block by a stable observation marker. Each command result is
+persisted as an `untrusted` / `observation` additional-context entry, never as developer
+or system guidance. Related retained resources are copied into the child Thread before
+admission, and projection resolves their current readable paths from stable resource
+references so transient paths are not frozen into canonical history.
 
 Every isolated Skill catalog entry appends a host-derived execution constraint.
 The constraint states that invocation runs once in a single isolated child Thread

@@ -67,6 +67,8 @@ export type ExplicitSubagentAdmissionPreparer = (input: {
 }) => Promise<ExplicitSubagentAdmissionPreparation>;
 type InternalTurnStartRequest = PrivilegedTurnStartRequest & {
   readonly stagedContextEvidence?: readonly StagedContextEvidence[];
+  readonly additionalContextResourceRefs?: readonly ThreadResourceReference[];
+  readonly additionalContextSource?: string;
   readonly reuseStagedContextEvidenceOnly?: boolean;
   readonly retryReplacementTarget?: Turn;
   readonly retryInputBatches?: readonly CanonicalTurnRetryInputBatch[];
@@ -1100,6 +1102,8 @@ export class TurnLifecycle {
         content: input,
         userView: request.userView,
         additionalContext: { ...request.additionalContext, ...drift.context },
+        additionalContextResourceRefs: request.additionalContextResourceRefs,
+        additionalContextSource: request.additionalContextSource,
         extensionContext,
         skillCatalog,
         roleCatalog,

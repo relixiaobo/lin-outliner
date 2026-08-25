@@ -48,6 +48,7 @@ import { Mutex } from './agent/Mutex';
 import {
   AgentSkillRuntime,
   expandSkillDirectory,
+  isolatedSkillShellContext,
   resolvePreloadedSkillInvocations,
   resolveUserSkillInvocation,
 } from './agent/capabilities/agentSkills';
@@ -948,9 +949,10 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
     assertManagedSkillInvocable: (skillId, expectedContentHash) => (
       managedSkillService.assertInvocable(skillId, expectedContentHash)
     ),
-    executeSkillShell: ({ skill, command, signal }) => executeAgentSkillShellCommand({
+    executeSkillShell: ({ skill, command, argumentBindings, signal }) => executeAgentSkillShellCommand({
       skill,
       command,
+      argumentBindings,
       localRoot: context.thread.cwd,
       scratchRoot: agentScratchRoot,
       signal,
@@ -972,10 +974,12 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
     executeIsolatedSkill: async ({
       skill,
       renderedInstructions,
+      shellObservations,
       args,
       parentToolCallId,
     }) => {
       if (!parentToolCallId) throw new Error('An isolated Skill requires its parent dynamic-tool Item identity.');
+      const shellContext = isolatedSkillShellContext(shellObservations);
       const spawned = await threadService.spawnIsolatedSkillThread({
         parentThreadId: context.thread.id,
         parentTurnId: context.turn.id,
@@ -984,6 +988,11 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
         skillInstructions: renderedInstructions,
         prompt: args.trim() || `Execute the ${skill.name} Skill. No additional invocation task was supplied.`,
         allowedTools: skill.allowedTools,
+        ...(shellContext.additionalContext === undefined ? {} : {
+          additionalContext: shellContext.additionalContext,
+          additionalContextSource: `skill:${skill.name}:shell`,
+          additionalContextResourceRefs: shellContext.resourceRefs,
+        }),
         ...(skill.model === undefined ? {} : { model: skill.model }),
         ...(skill.effort === undefined ? {} : { reasoningEffort: parseSkillReasoningEffort(skill.effort) }),
       });

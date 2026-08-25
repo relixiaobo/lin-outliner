@@ -1386,7 +1386,11 @@ lossy model-authored restatement of that state. Inline loading does not widen th
 parent's effective tool catalog. Across the general Skill runtime, invocation arguments
 remain task input: no-placeholder bodies never receive an implicit appended argument,
 and isolated Skills receive authored instructions as child developer guidance plus the
-invocation task as a separate user message.
+invocation task as a separate user message. Isolated embedded-shell output is a distinct
+untrusted child observation rather than developer guidance. Standard shell placeholders
+bind invocation values through controlled environment variables instead of command-source
+interpolation; retained resources cross into the child by stable references and resolve
+fresh readable paths during projection.
 
 Use progressive disclosure rather than many peer references:
 

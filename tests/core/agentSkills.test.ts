@@ -609,6 +609,8 @@ describe('agent skills', () => {
       ].join('\n'),
     });
     const calls: Array<{ skill: string; command: string; shell: string }> = [];
+    let isolatedInstructions = '';
+    let shellObservations: readonly import('../../src/main/agent/capabilities/agentSkills').SkillShellObservation[] = [];
     const runtime = new AgentSkillRuntime({
       localRoot: root,
       includeUserSkills: false,
@@ -619,11 +621,15 @@ describe('agent skills', () => {
           resourceRefs: [],
         };
       },
-      executeIsolatedSkill: async () => ({
-        threadId: 'isolated-thread-test',
-        agentRole: 'worker',
-        status: 'completed',
-      }),
+      executeIsolatedSkill: async ({ renderedInstructions, shellObservations: observations }) => {
+        isolatedInstructions = renderedInstructions;
+        shellObservations = observations;
+        return {
+          threadId: 'isolated-thread-test',
+          agentRole: 'worker',
+          status: 'completed',
+        };
+      },
     });
 
     const invocation = await runtime.invokeSkill({
@@ -633,11 +639,71 @@ describe('agent skills', () => {
 
     expect(invocation.ok).toBe(true);
     if (!invocation.ok) return;
-    expect(invocation.renderedContent).toContain('Before block.\nBLOCK_OUTPUT\nInline INLINE_OUTPUT done.');
+    expect(invocation.renderedContent).toContain(
+      'Before block.\n[Embedded shell observation is available in untrusted context: skill_shell_output_1]',
+    );
+    expect(invocation.renderedContent).not.toContain('BLOCK_OUTPUT');
+    expect(invocation.renderedContent).not.toContain('INLINE_OUTPUT');
+    expect(isolatedInstructions).toBe(invocation.renderedContent);
+    expect(shellObservations).toEqual([
+      {
+        key: 'skill_shell_output_1',
+        output: 'BLOCK_OUTPUT',
+        persistedOutput: 'BLOCK_OUTPUT',
+        resourceRefs: [],
+      },
+      {
+        key: 'skill_shell_output_2',
+        output: 'INLINE_OUTPUT',
+        persistedOutput: 'INLINE_OUTPUT',
+        resourceRefs: [],
+      },
+    ]);
     expect(calls).toEqual([
       { skill: 'demo', command: 'echo block', shell: 'bash' },
       { skill: 'demo', command: 'echo inline', shell: 'bash' },
     ]);
+  });
+
+  test('passes isolated embedded shell arguments as structured bindings without source interpolation', async () => {
+    const root = await createSkillFixture('bound-shell', {
+      frontmatter: [
+        'description: Bound shell skill',
+        'execution: isolated',
+        'arguments: target payload',
+      ],
+      body: '```!\nprintf "%s\\n" "$ARGUMENTS" "$ARGUMENTS[1]" "$0" "$target" "$payload"\n```',
+    });
+    let command = '';
+    let bindings: import('../../src/main/agent/capabilities/agentSkills').SkillShellArgumentBindings | null = null;
+    const runtime = new AgentSkillRuntime({
+      localRoot: root,
+      includeUserSkills: false,
+      executeSkillShell: async (input) => {
+        command = input.command;
+        bindings = input.argumentBindings;
+        return { output: 'BOUND', resourceRefs: [] };
+      },
+      executeIsolatedSkill: async () => ({
+        threadId: 'bound-shell-child',
+        agentRole: 'worker',
+        status: 'completed',
+      }),
+    });
+    const args = '"target with spaces" "$(touch should-not-run); literal"';
+
+    const invocation = await runtime.invokeSkill({ skill: 'bound-shell', args, trigger: 'agent' });
+
+    expect(invocation.ok).toBe(true);
+    expect(command).toBe('printf "%s\\n" "$ARGUMENTS" "$ARGUMENTS[1]" "$0" "$target" "$payload"');
+    expect(bindings).toEqual({
+      aggregate: args,
+      positional: ['target with spaces', '$(touch should-not-run); literal'],
+      named: [
+        { name: 'target', value: 'target with spaces', index: 0 },
+        { name: 'payload', value: '$(touch should-not-run); literal', index: 1 },
+      ],
+    });
   });
 
   test('keeps embedded shell paths live while persisting only stable Skill evidence', async () => {
@@ -657,6 +723,8 @@ describe('agent skills', () => {
     };
     const readablePath = '/tmp/turn-artifacts/report.pdf';
     let isolatedInstructions = '';
+    let isolatedShellOutput = '';
+    let persistedShellOutput = '';
     const runtime = new AgentSkillRuntime({
       localRoot: root,
       includeUserSkills: false,
@@ -666,8 +734,10 @@ describe('agent skills', () => {
         resourceRefs: [resourceRef],
         artifacts: [{ ref: resourceRef, readablePath, label: 'Generated report' }],
       }),
-      executeIsolatedSkill: async ({ renderedInstructions }) => {
+      executeIsolatedSkill: async ({ renderedInstructions, shellObservations }) => {
         isolatedInstructions = renderedInstructions;
+        isolatedShellOutput = shellObservations[0]?.output ?? '';
+        persistedShellOutput = shellObservations[0]?.persistedOutput ?? '';
         return {
           threadId: 'artifact-skill-child',
           agentRole: 'worker',
@@ -680,10 +750,14 @@ describe('agent skills', () => {
     const invocation = await runtime.invokeSkill({ skill: 'artifact-skill', trigger: 'agent' });
     expect(invocation.ok).toBe(true);
     if (!invocation.ok) return;
-    expect(isolatedInstructions).toContain(readablePath);
-    expect(invocation.renderedContent).toContain(readablePath);
+    expect(isolatedInstructions).not.toContain(readablePath);
+    expect(isolatedInstructions).toContain('skill_shell_output_1');
+    expect(isolatedShellOutput).toContain(readablePath);
+    expect(persistedShellOutput).not.toContain(readablePath);
+    expect(persistedShellOutput).toContain(resourceRef.id);
+    expect(invocation.renderedContent).not.toContain(readablePath);
     expect(invocation.evidence.instructions).not.toContain(readablePath);
-    expect(invocation.evidence.instructions).toContain(resourceRef.id);
+    expect(invocation.evidence.instructions).not.toContain(resourceRef.id);
     expect(invocation.resourceRefs).toEqual([resourceRef]);
 
     const result = await createSkillTool(runtime).execute('artifact-skill-call', {

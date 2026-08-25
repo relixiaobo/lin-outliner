@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type {
+  AdditionalContext,
   SkillCatalogContextPayload,
   SkillInvocationContextPayload,
   ThreadResourceReference,
@@ -203,7 +204,18 @@ export interface SkillShellExecutionInput {
   skill: SkillDefinition;
   command: string;
   shell: string;
+  argumentBindings: SkillShellArgumentBindings;
   signal?: AbortSignal;
+}
+
+export interface SkillShellArgumentBindings {
+  readonly aggregate: string;
+  readonly positional: readonly string[];
+  readonly named: readonly {
+    readonly name: string;
+    readonly value: string;
+    readonly index: number;
+  }[];
 }
 
 export interface SkillShellExecutionResult {
@@ -223,6 +235,15 @@ export interface SkillShellArtifactObservation {
   readonly label: string;
 }
 
+export interface SkillShellObservation {
+  readonly key: string;
+  /** Current-process output; it may contain Turn-scoped readable paths. */
+  readonly output: string;
+  /** Stable output safe to persist in the child Thread. */
+  readonly persistedOutput: string;
+  readonly resourceRefs: readonly ThreadResourceReference[];
+}
+
 interface InvokeSkillInput {
   skill: string;
   args?: string;
@@ -235,6 +256,7 @@ interface InvokeSkillInput {
 export interface SkillIsolatedExecutionInput {
   skill: SkillDefinition;
   renderedInstructions: string;
+  shellObservations: readonly SkillShellObservation[];
   args: string;
   trigger: 'agent' | 'slash' | 'runtime';
   parentToolCallId?: string;
@@ -251,6 +273,24 @@ export interface SkillIsolatedExecutionResult {
 }
 
 export type SkillIsolatedExecutor = (input: SkillIsolatedExecutionInput) => Promise<SkillIsolatedExecutionResult>;
+
+export function isolatedSkillShellContext(
+  observations: readonly SkillShellObservation[],
+): {
+  readonly additionalContext: AdditionalContext | undefined;
+  readonly resourceRefs: readonly ThreadResourceReference[];
+} {
+  if (observations.length === 0) return { additionalContext: undefined, resourceRefs: [] };
+  const resourceRefs = new Map<string, ThreadResourceReference>();
+  const additionalContext = Object.fromEntries(observations.map((observation) => {
+    for (const ref of observation.resourceRefs) resourceRefs.set(skillResourceKey(ref), ref);
+    return [observation.key, {
+      kind: 'untrusted' as const,
+      value: observation.persistedOutput || 'The embedded shell command completed without output.',
+    }];
+  }));
+  return { additionalContext, resourceRefs: [...resourceRefs.values()] };
+}
 
 export type SkillInvocationResult =
   | {
@@ -494,6 +534,7 @@ export class AgentSkillRuntime {
     let persistedContent: string;
     let resourceRefs: readonly ThreadResourceReference[];
     let artifactObservations: readonly SkillShellArtifactObservation[];
+    let shellObservations: readonly SkillShellObservation[];
     try {
       const rendered = await renderSkillContent(
         skill,
@@ -506,6 +547,7 @@ export class AgentSkillRuntime {
       persistedContent = rendered.persistedContent;
       resourceRefs = rendered.resourceRefs;
       artifactObservations = rendered.artifacts;
+      shellObservations = rendered.shellObservations;
     } catch (error) {
       const shellFailure = skillShellFailure(error);
       return {
@@ -532,6 +574,7 @@ export class AgentSkillRuntime {
         const isolated = await this.executeIsolatedSkill({
           skill,
           renderedInstructions: renderedContent,
+          shellObservations,
           args: input.args ?? '',
           trigger: input.trigger,
           parentToolCallId: input.parentToolCallId,
@@ -1877,6 +1920,7 @@ async function renderSkillContent(
   readonly persistedContent: string;
   readonly resourceRefs: readonly ThreadResourceReference[];
   readonly artifacts: readonly SkillShellArtifactObservation[];
+  readonly shellObservations: readonly SkillShellObservation[];
 }> {
   const skillDir = skillDirectoryForPrompt(skill);
   let content = skillDir
@@ -1891,7 +1935,13 @@ async function renderSkillContent(
       .replace(/\{baseDir\}/g, skillDir);
   }
   content = content.replace(/\$\{AGENT_THREAD_ID\}/g, threadId);
-  return executeShellCommandsInSkillContent(content, skill, executeSkillShell, signal);
+  return executeShellCommandsInSkillContent(
+    content,
+    skill,
+    createSkillShellArgumentBindings(args, skill.argumentNames),
+    executeSkillShell,
+    signal,
+  );
 }
 
 function skillDirectoryForPrompt(skill: SkillDefinition): string | null {
@@ -1914,6 +1964,7 @@ function isResourceBackedBuiltInSkill(skill: SkillDefinition): boolean {
 async function executeShellCommandsInSkillContent(
   content: string,
   skill: SkillDefinition,
+  argumentBindings: SkillShellArgumentBindings,
   executeSkillShell?: SkillShellExecutor,
   signal?: AbortSignal,
 ): Promise<{
@@ -1921,10 +1972,17 @@ async function executeShellCommandsInSkillContent(
   readonly persistedContent: string;
   readonly resourceRefs: readonly ThreadResourceReference[];
   readonly artifacts: readonly SkillShellArtifactObservation[];
+  readonly shellObservations: readonly SkillShellObservation[];
 }> {
   const matches = collectSkillShellMatches(content);
   if (matches.length === 0) {
-    return { content, persistedContent: content, resourceRefs: [], artifacts: [] };
+    return {
+      content,
+      persistedContent: content,
+      resourceRefs: [],
+      artifacts: [],
+      shellObservations: [],
+    };
   }
 
   const shell = (skill.shell ?? 'bash').trim().toLowerCase();
@@ -1940,12 +1998,19 @@ async function executeShellCommandsInSkillContent(
   let cursor = 0;
   const resourceRefs = new Map<string, ThreadResourceReference>();
   const artifacts = new Map<string, SkillShellArtifactObservation>();
-  for (const match of matches) {
+  const shellObservations: SkillShellObservation[] = [];
+  for (const [index, match] of matches.entries()) {
     rendered += content.slice(cursor, match.index);
     persisted += content.slice(cursor, match.index);
     let result: SkillShellExecutionResult;
     try {
-      result = await executeSkillShell({ skill, command: match.command, shell, signal });
+      result = await executeSkillShell({
+        skill,
+        command: match.command,
+        shell,
+        argumentBindings,
+        signal,
+      });
     } catch (error) {
       const failure = skillShellFailure(error);
       for (const ref of failure.resourceRefs) resourceRefs.set(skillResourceKey(ref), ref);
@@ -1957,8 +2022,16 @@ async function executeShellCommandsInSkillContent(
         [...artifacts.values()],
       );
     }
-    rendered += result.output;
-    persisted += result.persistedOutput ?? result.output;
+    const key = `skill_shell_output_${index + 1}`;
+    const marker = `[Embedded shell observation is available in untrusted context: ${key}]`;
+    rendered += marker;
+    persisted += marker;
+    shellObservations.push({
+      key,
+      output: result.output,
+      persistedOutput: result.persistedOutput ?? result.output,
+      resourceRefs: result.resourceRefs,
+    });
     for (const ref of result.resourceRefs) resourceRefs.set(skillResourceKey(ref), ref);
     for (const artifact of result.artifacts ?? []) artifacts.set(skillArtifactKey(artifact), artifact);
     cursor = match.index + match.raw.length;
@@ -1968,6 +2041,7 @@ async function executeShellCommandsInSkillContent(
     persistedContent: persisted + content.slice(cursor),
     resourceRefs: [...resourceRefs.values()],
     artifacts: [...artifacts.values()],
+    shellObservations,
   };
 }
 
@@ -2344,6 +2418,22 @@ function extractDescriptionFromMarkdown(markdown: string, name: string): string 
 
 function compactInlineText(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
+}
+
+function createSkillShellArgumentBindings(
+  args: string,
+  argumentNames: readonly string[],
+): SkillShellArgumentBindings {
+  const positional = parseArguments(args);
+  return {
+    aggregate: args,
+    positional,
+    named: argumentNames.map((name, index) => ({
+      name,
+      index,
+      value: positional[index] ?? '',
+    })),
+  };
 }
 
 function substituteArguments(
