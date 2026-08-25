@@ -739,7 +739,7 @@ test.describe('table view', () => {
     await page.keyboard.press('Enter');
 
     await expect.poll(async () => (await appliedCreates(page, beforeCall)).filter((operation) => (
-      targetId(operation.parents) === ids.today
+      targetId((operation.placement as { parent?: unknown } | undefined)?.parent) === ids.today
     )).length).toBe(1);
     await expect(rootGrid(page).getByRole('row')).toHaveCount(6);
   });

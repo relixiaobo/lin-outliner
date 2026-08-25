@@ -520,11 +520,39 @@ function moveNode(nodeId: string, parentId: string, index: number | null = null)
 }
 
 function batchMoveNodes(moves: readonly BatchMoveNodeInput[]): Promise<CommandResult> {
-  return mutate(() => moves.map((move) => ({
-    op: 'move' as const,
-    targets: oneId(move.nodeId),
-    placement: structuralPlacement(oneId(move.parentId), move.index),
-  })));
+  return mutate(() => {
+    if (moves.length === 0) return [];
+    const parentId = moves[0]!.parentId;
+    if (moves.some((move) => move.parentId !== parentId)) {
+      throw new Error('A batch move must have one destination parent.');
+    }
+
+    const parent = requiredNode(requireProjection(), parentId);
+    const finalChildren = [...parent.children];
+    for (const move of moves) {
+      const currentIndex = finalChildren.indexOf(move.nodeId);
+      if (currentIndex >= 0) finalChildren.splice(currentIndex, 1);
+      const index = move.index == null
+        ? finalChildren.length
+        : Math.max(0, Math.min(move.index, finalChildren.length));
+      finalChildren.splice(index, 0, move.nodeId);
+    }
+
+    const moved = new Set(moves.map((move) => move.nodeId));
+    const orderedIds = finalChildren.filter((nodeId) => moved.has(nodeId));
+    const start = finalChildren.indexOf(orderedIds[0]!);
+    if (orderedIds.length !== moved.size || finalChildren.slice(start, start + orderedIds.length).some((nodeId) => !moved.has(nodeId))) {
+      throw new Error('A batch move must produce one contiguous destination block.');
+    }
+    const anchorId = finalChildren[start + orderedIds.length];
+    return [{
+      op: 'move',
+      targets: manyIds(orderedIds),
+      placement: anchorId
+        ? { kind: 'before', sibling: oneId(anchorId) }
+        : { kind: 'last', parent: oneId(parentId) },
+    }];
+  });
 }
 
 function indentNode(nodeId: string): Promise<CommandResult> {
@@ -898,8 +926,7 @@ async function backlinks(targetId: string): Promise<Backlink[]> {
       page: { limit: 10_000 },
     },
   });
-  return projection.nodes.map((entry) => {
-    const backlink = entry as { sourceId: string; referenceId: string; kind: string };
+  return (projection.backlinks ?? []).map((backlink) => {
     return { sourceId: backlink.sourceId, referenceId: backlink.referenceId, kind: backlink.kind };
   });
 }
@@ -969,6 +996,10 @@ function replaceNode(
 
 function oneId(id: string): TargetRef {
   return { target: { selector: { by: 'id', id }, cardinality: 'one' } };
+}
+
+function manyIds(ids: readonly string[]): TargetRef {
+  return { target: { selector: { by: 'ids', ids: [...ids] }, cardinality: 'many', max: ids.length } };
 }
 
 function structuralPlacement(parent: TargetRef, index: number | null) {

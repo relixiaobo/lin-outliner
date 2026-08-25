@@ -2184,10 +2184,10 @@ test.describe('tag-projected field slot interactions', () => {
     }).not.toBe('');
     await expect.poll(async () => (await appliedOperations(page)).filter((operation) => (
       operation.op === 'create'
-      && (operation.parents as { target?: { selector?: { by?: string; id?: string } } } | undefined)
-        ?.target?.selector?.by === 'id'
-      && (operation.parents as { target?: { selector?: { id?: string } } } | undefined)
-        ?.target?.selector?.id === alphaEntryId
+      && (operation.placement as { parent?: { target?: { selector?: { by?: string; id?: string } } } } | undefined)
+        ?.parent?.target?.selector?.by === 'id'
+      && (operation.placement as { parent?: { target?: { selector?: { id?: string } } } } | undefined)
+        ?.parent?.target?.selector?.id === alphaEntryId
       && (operation.nodes as Array<Record<string, unknown>> | undefined)
         ?.some((draft) => draft.type === 'image')
     )).length).toBe(1);
@@ -2220,10 +2220,10 @@ test.describe('tag-projected field slot interactions', () => {
     }).not.toBe('');
     await expect.poll(async () => (await appliedOperations(page)).filter((operation) => (
       operation.op === 'create'
-      && (operation.parents as { target?: { selector?: { by?: string; id?: string } } } | undefined)
-        ?.target?.selector?.by === 'id'
-      && (operation.parents as { target?: { selector?: { id?: string } } } | undefined)
-        ?.target?.selector?.id === betaEntryId
+      && (operation.placement as { parent?: { target?: { selector?: { by?: string; id?: string } } } } | undefined)
+        ?.parent?.target?.selector?.by === 'id'
+      && (operation.placement as { parent?: { target?: { selector?: { id?: string } } } } | undefined)
+        ?.parent?.target?.selector?.id === betaEntryId
       && (operation.nodes as Array<Record<string, unknown>> | undefined)
         ?.some((draft) => draft.type === 'attachment')
     )).length).toBe(1);

@@ -1,5 +1,5 @@
 import type { Core, CoreTransactionNodePatch, ResolvedContentTree } from '../../core/core';
-import type { FieldSlotMutation } from '../../core/types';
+import type { BatchMoveNodeInput, FieldSlotMutation } from '../../core/types';
 import {
   TRASH_ID,
   plainText,
@@ -337,13 +337,7 @@ async function executeChange(
         bindings,
         change.placement,
       ), 'move destination');
-      for (const [index, targetId] of targetIds.entries()) {
-        core.moveNode(
-          targetId,
-          destination.parentId,
-          destination.index === undefined ? undefined : destination.index + index,
-        );
-      }
+      core.batchMoveNodes(planDestinationMoves(core, targetIds, destination));
       return targetIds;
     }
     case 'duplicate': {
@@ -454,6 +448,45 @@ function exactlyOneDestination(
 ): ResolvedDestination {
   if (destinations.length !== 1) throw usageError(`${label} must resolve to exactly one parent.`);
   return destinations[0]!;
+}
+
+function planDestinationMoves(
+  core: Core,
+  targetIds: readonly string[],
+  destination: ResolvedDestination,
+): readonly BatchMoveNodeInput[] {
+  const state = core.state();
+  const destinationNode = state.nodes[destination.parentId];
+  if (!destinationNode) throw usageError(`Move destination does not exist: ${destination.parentId}`);
+  const selected = new Set(targetIds);
+  const anchorId = destination.index === undefined
+    ? undefined
+    : destinationNode.children.slice(destination.index).find((childId) => !selected.has(childId));
+  const childrenByParent = new Map<string, string[]>();
+  const parentByNode = new Map(targetIds.map((nodeId) => [nodeId, state.nodes[nodeId]?.parentId]));
+  const children = (parentId: string): string[] => {
+    const existing = childrenByParent.get(parentId);
+    if (existing) return existing;
+    const planned = [...(state.nodes[parentId]?.children ?? [])];
+    childrenByParent.set(parentId, planned);
+    return planned;
+  };
+  const moves: BatchMoveNodeInput[] = [];
+  for (const targetId of targetIds) {
+    const previousParentId = parentByNode.get(targetId);
+    if (previousParentId) {
+      const previousChildren = children(previousParentId);
+      const previousIndex = previousChildren.indexOf(targetId);
+      if (previousIndex >= 0) previousChildren.splice(previousIndex, 1);
+    }
+    const destinationChildren = children(destination.parentId);
+    const anchorIndex = anchorId ? destinationChildren.indexOf(anchorId) : -1;
+    const index = anchorIndex >= 0 ? anchorIndex : destinationChildren.length;
+    destinationChildren.splice(index, 0, targetId);
+    parentByNode.set(targetId, destination.parentId);
+    moves.push({ nodeId: targetId, parentId: destination.parentId, index });
+  }
+  return moves;
 }
 
 function placementTargetRefs(placement: Placement | DestinationPlacement): readonly TargetRef[] {
@@ -696,7 +729,12 @@ function executeUpdate(
     else if (instruction.action === 'replace') core.replaceNodeWithReference(targetId, referenceTargetId);
     else if (instruction.action === 'inline') {
       if (current?.type === 'reference') core.convertReferenceToInlineNode(targetId);
-      else core.replaceNodeWithInlineReference(targetId, referenceTargetId);
+      else {
+        if (referenceTargetId === targetId) {
+          throw usageError('reference inline requires REFERENCE when TARGET is a content Node.');
+        }
+        core.replaceNodeWithInlineReference(targetId, referenceTargetId);
+      }
     }
     else core.restoreInlineReferenceNodeToReference(targetId, referenceTargetId);
   } else if (instruction.kind === 'view') {

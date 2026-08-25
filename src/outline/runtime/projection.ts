@@ -23,13 +23,18 @@ export function projectOutline(
   const limit = projection.page?.limit ?? DEFAULT_PAGE_LIMIT;
   const pageIds = selectedIds.slice(offset, offset + limit);
   const includeBacklinks = projection.kind === 'backlinks' || projection.include?.includes('backlinks') === true;
+  const allBacklinks = includeBacklinks
+    ? selectedIds.flatMap((nodeId) => core.backlinks(nodeId)
+        .map((backlink) => ({ targetId: nodeId, ...backlink }))
+        .sort(compareBacklinks))
+    : undefined;
   const nodes = projection.kind === 'backlinks'
     ? []
     : pageIds.map((nodeId) => projectNode(index.byId.get(nodeId)!, projection));
-  const backlinks = includeBacklinks
-    ? pageIds.flatMap((nodeId) => core.backlinks(nodeId).map((backlink) => ({ targetId: nodeId, ...backlink })))
-    : undefined;
-  const nextOffset = offset + pageIds.length;
+  const backlinks = allBacklinks?.slice(offset, offset + limit);
+  const pageWidth = Math.max(pageIds.length, backlinks?.length ?? 0);
+  const nextOffset = offset + pageWidth;
+  const totalWidth = Math.max(projection.kind === 'backlinks' ? 0 : selectedIds.length, allBacklinks?.length ?? 0);
   return {
     projection,
     revision: core.revision(),
@@ -46,11 +51,22 @@ export function projectOutline(
     },
     nodes,
     ...(backlinks ? { backlinks } : {}),
-    ...(nextOffset < selectedIds.length ? {
+    ...(nextOffset < totalWidth ? {
       cursor: encodePageCursor({ projectionHash, revision: core.revision(), offset: nextOffset }),
       truncated: true,
     } : {}),
   };
+}
+
+function compareBacklinks(
+  left: { readonly sourceId: string; readonly referenceId: string; readonly kind: string },
+  right: { readonly sourceId: string; readonly referenceId: string; readonly kind: string },
+): number {
+  for (const key of ['sourceId', 'referenceId', 'kind'] as const) {
+    if (left[key] < right[key]) return -1;
+    if (left[key] > right[key]) return 1;
+  }
+  return 0;
 }
 
 export function resolveTargetRef(

@@ -132,7 +132,10 @@ Reference commands have non-overlapping semantics. `reference set` retargets an
 existing reference and rejects a content Node. `reference replace` inserts a tree
 reference at a content Node's position and moves the complete original subtree to
 Trash. `reference inline` converts a tree reference to inline form or replaces a
-content Node with an inline reference. Each is one reversible Operation.
+content Node with an inline reference. The argv shorthand may omit `REFERENCE`
+only when `TARGET` is already a tree reference; content replacement and
+structured input require an explicit reference target. Each is one reversible
+Operation.
 
 `text replace` is a general bounded literal transform over Node content,
 description, or both. It accepts one exact target, STRING_MATCH `--matching`

@@ -228,7 +228,7 @@ Add, retarget, replace, inline, and restore references.
 | `outline reference add` | patch; not idempotent | Add a reference from a bounded Node selection. | `outline reference add TARGET REFERENCE` |
 | `outline reference set` | patch; idempotent | Replace the target of an existing reference. | `outline reference set TARGET REFERENCE` |
 | `outline reference replace` | replace; not idempotent | Replace one content Node with a tree reference and move the original subtree to Trash. | `outline reference replace TARGET REFERENCE` |
-| `outline reference inline` | patch; not idempotent | Inline a referenced Node into one exact target. | `outline reference inline TARGET [REFERENCE]` |
+| `outline reference inline` | patch; not idempotent | Convert a tree reference to inline form or replace one content Node with an explicit inline reference. | `outline reference inline TARGET [REFERENCE]` |
 | `outline reference restore` | patch; not idempotent | Restore an inlined Node to a reference. | `outline reference restore TARGET REFERENCE` |
 
 ## Search

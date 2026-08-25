@@ -22,8 +22,11 @@ async function appliedAttachmentDrafts(page: Parameters<typeof trailingEditor>[0
     const input = call.args as {
       diff?: { normalizedChangeSet?: { operations?: Array<{
         op?: string;
-        parents?: { target?: { selector?: { by?: string; id?: string } } };
-        index?: number | null;
+        placement?: {
+          kind?: string;
+          parent?: { target?: { selector?: { by?: string; id?: string } } };
+          index?: number;
+        };
         nodes?: Array<Record<string, unknown>>;
       }> } };
     };
@@ -31,9 +34,9 @@ async function appliedAttachmentDrafts(page: Parameters<typeof trailingEditor>[0
       operation.op === 'create'
         ? (operation.nodes ?? []).filter((draft) => draft.type === 'attachment').map((draft) => ({
             draft,
-            index: operation.index,
-            parentId: operation.parents?.target?.selector?.by === 'id'
-              ? operation.parents.target.selector.id
+            index: operation.placement?.index,
+            parentId: operation.placement?.parent?.target?.selector?.by === 'id'
+              ? operation.placement.parent.target.selector.id
               : undefined,
           }))
         : []

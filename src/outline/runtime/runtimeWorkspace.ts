@@ -600,7 +600,25 @@ function filterHistoryOperations(
   operations: readonly Operation[],
   origin: Operation['origin'] | 'all',
 ): readonly Operation[] {
-  return origin === 'all' ? operations : operations.filter((operation) => operation.origin === origin);
+  if (origin === 'all') return operations;
+  const byId = new Map(operations.map((operation) => [operation.operationId, operation]));
+  return operations.filter((operation) => rootOperationOrigin(operation, byId) === origin);
+}
+
+function rootOperationOrigin(
+  operation: Operation,
+  byId: ReadonlyMap<string, Operation>,
+): Operation['origin'] | undefined {
+  let current = operation;
+  const visited = new Set<string>();
+  while (current.revertsOperationId) {
+    if (visited.has(current.operationId)) return undefined;
+    visited.add(current.operationId);
+    const target = byId.get(current.revertsOperationId);
+    if (!target) return undefined;
+    current = target;
+  }
+  return current.origin;
 }
 
 function assertExpectedHistoryOperation(

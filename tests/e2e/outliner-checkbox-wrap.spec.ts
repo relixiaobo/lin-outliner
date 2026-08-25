@@ -43,10 +43,12 @@ test.describe('outliner checkbox row wrapping', () => {
           kind: 'outline.changeset',
           operations: [{
             op: 'create',
-            parents: {
-              target: { selector: { by: 'id', id: parentId }, cardinality: 'one' },
+            placement: {
+              kind: 'last',
+              parent: {
+                target: { selector: { by: 'id', id: parentId }, cardinality: 'one' },
+              },
             },
-            index: null,
             nodes: [{
               id: 'cbx-long',
               content: { text, marks: [], inlineRefs: [] },

@@ -102,6 +102,32 @@ describe('renderer Outline intents', () => {
     ]);
   });
 
+  test('encodes a drag block as one ordered multi-target move', async () => {
+    const harness = await createHarness([
+      node('root', { children: ['a', 'b', 'c'] }),
+      node('a', { parentId: 'root' }),
+      node('b', { parentId: 'root' }),
+      node('c', { parentId: 'root' }),
+    ]);
+
+    await outlineDocumentApi.batchMoveNodes([
+      { nodeId: 'b', parentId: 'root', index: 2 },
+      { nodeId: 'a', parentId: 'root', index: 1 },
+    ]);
+
+    expect(harness.changeSets[0]!.operations).toEqual([{
+      op: 'move',
+      targets: {
+        target: {
+          selector: { by: 'ids', ids: ['a', 'b'] },
+          cardinality: 'many',
+          max: 2,
+        },
+      },
+      placement: { kind: 'last', parent: oneId('root') },
+    }]);
+  });
+
   test('cycles checkbox visibility and completion state from Projection state', async () => {
     const harness = await createHarness([
       node('root', { children: ['hidden', 'todo', 'done'] }),
@@ -117,6 +143,16 @@ describe('renderer Outline intents', () => {
     expect(firstUpdate(harness.changeSets[0]!)).toEqual({ kind: 'checkbox', visible: true });
     expect(firstUpdate(harness.changeSets[1]!)).toEqual({ kind: 'done', value: true });
     expect(firstUpdate(harness.changeSets[2]!)).toEqual({ kind: 'checkbox', visible: false });
+  });
+
+  test('reads desktop backlinks from the dedicated Projection collection', async () => {
+    await createHarness([node('target')], [{
+      targetId: 'target', sourceId: 'source', referenceId: 'reference', kind: 'tree',
+    }]);
+
+    await expect(outlineDocumentApi.backlinks('target')).resolves.toEqual([{
+      sourceId: 'source', referenceId: 'reference', kind: 'tree',
+    }]);
   });
 
   test('binds a newly ensured field into the display-field instruction', async () => {
@@ -306,7 +342,10 @@ interface IntentHarness {
   readonly applyInputs: Array<{ diff: Diff; acknowledgeDestructive?: boolean }>;
 }
 
-async function createHarness(nodes: NodeProjection[]): Promise<IntentHarness> {
+async function createHarness(
+  nodes: NodeProjection[],
+  backlinks: Array<{ targetId: string; sourceId: string; referenceId: string; kind: string }> = [],
+): Promise<IntentHarness> {
   savedWindow ??= Object.getOwnPropertyDescriptor(globalThis, 'window');
   Object.assign(globalThis, { window: {} });
   const projection = documentProjection(nodes);
@@ -319,7 +358,10 @@ async function createHarness(nodes: NodeProjection[]): Promise<IntentHarness> {
 
   const outline: NonNullable<LinApi['outline']> = {
     request: async (request) => {
-      if (request.command === 'show') return success(request, projectionResult(projection, revision));
+      if (request.command === 'show') return success(request, {
+        ...projectionResult(projection, revision),
+        ...(backlinks.length > 0 ? { backlinks } : {}),
+      });
       if (request.command === 'diff') {
         const changeSet = (request.input as { changeSet: ChangeSet }).changeSet;
         changeSets.push(changeSet);

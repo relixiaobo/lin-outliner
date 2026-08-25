@@ -2411,6 +2411,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     type MockTargetRef =
       | { binding: string }
       | { target: { selector: Record<string, unknown>; cardinality: string; max?: number } };
+    type MockPlacement =
+      | { kind: 'first' | 'last'; parent: MockTargetRef }
+      | { kind: 'index'; parent: MockTargetRef; index: number }
+      | { kind: 'before' | 'after'; sibling: MockTargetRef }
+      | { kind: 'previous' | 'next' };
     type MockChangeSet = {
       protocolVersion: 1;
       kind: 'outline.changeset';
@@ -2466,11 +2471,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       return (hash >>> 0).toString(16).padStart(8, '0').repeat(8);
     };
     const outlineAliases: Record<string, string> = {
-      home: ids.workspace,
-      inbox: ids.today,
+      home: ids.root,
+      inbox: ids.library,
+      library: ids.library,
       schema: ids.schema,
       trash: ids.trash,
       'daily-notes': ids.daily,
+      'saved-searches': ids.searches,
       today: ids.today,
     };
     const queryMatches = (node: MockNode, query: Record<string, unknown>): boolean => {
@@ -2493,6 +2500,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     };
     const resolveMockSelector = (selector: Record<string, unknown>): string[] => {
       if (selector.by === 'id') return nodes.has(String(selector.id)) ? [String(selector.id)] : [];
+      if (selector.by === 'ids') {
+        const selectedIds = Array.isArray(selector.ids) ? selector.ids.map(String) : [];
+        const missingIds = selectedIds.filter((nodeId) => !nodes.has(nodeId));
+        if (missingIds.length > 0) throw new Error(`Outline targets do not exist: ${missingIds.join(', ')}`);
+        return selectedIds;
+      }
       if (selector.by === 'alias') {
         const id = outlineAliases[String(selector.alias)];
         return id && nodes.has(id) ? [id] : [];
@@ -2528,6 +2541,45 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       const resolved = resolveMockTarget(reference, bindings);
       if (resolved.length !== 1) throw new Error(`Expected one Outline target; found ${resolved.length}.`);
       return resolved[0]!;
+    };
+    const resolveMockDestinations = (
+      placement: Exclude<MockPlacement, { kind: 'previous' | 'next' }>,
+      bindings: Record<string, string[]>,
+    ): Array<{ parentId: string; index: number | null }> => {
+      if (placement.kind === 'first' || placement.kind === 'last' || placement.kind === 'index') {
+        return resolveMockTarget(placement.parent, bindings).map((parentId) => ({
+          parentId,
+          index: placement.kind === 'first' ? 0 : placement.kind === 'index' ? placement.index : null,
+        }));
+      }
+      const siblingId = oneMockTarget(placement.sibling, bindings);
+      const sibling = nodes.get(siblingId);
+      const parent = sibling?.parentId ? nodes.get(sibling.parentId) : undefined;
+      if (!sibling?.parentId || !parent) throw new Error(`Placement sibling has no parent: ${siblingId}`);
+      const siblingIndex = parent.children.indexOf(siblingId);
+      if (siblingIndex < 0) throw new Error(`Placement sibling is absent from its parent: ${siblingId}`);
+      return [{
+        parentId: sibling.parentId,
+        index: siblingIndex + (placement.kind === 'after' ? 1 : 0),
+      }];
+    };
+    const moveMockTargetBlock = (
+      targetIds: string[],
+      destination: { parentId: string; index: number | null },
+    ) => {
+      const parent = nodes.get(destination.parentId);
+      if (!parent) throw new Error(`Move destination does not exist: ${destination.parentId}`);
+      const selected = new Set(targetIds);
+      const anchorId = destination.index === null
+        ? undefined
+        : parent.children.slice(destination.index).find((childId) => !selected.has(childId));
+      for (const targetId of targetIds) {
+        removeFromParent(targetId);
+        const destinationParent = nodes.get(destination.parentId);
+        if (!destinationParent) throw new Error(`Move destination does not exist: ${destination.parentId}`);
+        const anchorIndex = anchorId ? destinationParent.children.indexOf(anchorId) : -1;
+        moveNode(targetId, destination.parentId, anchorIndex >= 0 ? anchorIndex : null);
+      }
     };
     const oneMockFieldTarget = (reference: MockTargetRef, bindings: Record<string, string[]>) => {
       if (
@@ -3038,15 +3090,15 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             }
           }
         } else if (change.op === 'create') {
-          const parents = resolveMockTarget(change.parents as MockTargetRef, bindings);
-          for (const [parentIndex, parentId] of parents.entries()) {
+          const destinations = resolveMockDestinations(change.placement as Exclude<MockPlacement, { kind: 'previous' | 'next' }>, bindings);
+          for (const [parentIndex, destination] of destinations.entries()) {
             for (const [draftIndex, draft] of (change.nodes as Array<Record<string, unknown>>).entries()) {
               const copy = parentIndex === 0 ? draft : {
                 ...clone(draft), id: `${String(draft.id ?? 'node')}:copy:${parentIndex}:${draftIndex}`,
               };
               result.push(createMockDraft(
-                parentId,
-                typeof change.index === 'number' ? change.index + draftIndex : null,
+                destination.parentId,
+                destination.index === null ? null : destination.index + draftIndex,
                 copy,
               ));
             }
@@ -3060,18 +3112,37 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           }
         } else if (change.op === 'move') {
           result = resolveMockTarget(change.targets as MockTargetRef, bindings);
-          const destinationId = oneMockTarget(change.destination as MockTargetRef, bindings);
-          result.forEach((targetId, index) => moveNode(
-            targetId,
-            destinationId,
-            typeof change.index === 'number' ? change.index + index : null,
-          ));
+          const placement = change.placement as MockPlacement;
+          if (placement.kind === 'previous' || placement.kind === 'next') {
+            siblingMove(result, placement.kind === 'previous' ? 'up' : 'down');
+          } else {
+            const destinations = resolveMockDestinations(placement, bindings);
+            if (destinations.length !== 1) throw new Error('Move destination must resolve to exactly one parent.');
+            moveMockTargetBlock(result, destinations[0]!);
+          }
         } else if (change.op === 'duplicate') {
-          const destinationId = oneMockTarget(change.destination as MockTargetRef, bindings);
+          const placement = change.placement as MockPlacement;
+          const destinations = placement.kind === 'previous' || placement.kind === 'next'
+            ? []
+            : resolveMockDestinations(placement, bindings);
+          if (destinations.length > 1) throw new Error('Duplicate destination must resolve to exactly one parent.');
+          const destination = destinations[0] ?? null;
           for (const [index, targetId] of resolveMockTarget(change.targets as MockTargetRef, bindings).entries()) {
             const duplicateId = duplicateNode(targetId);
             if (!duplicateId) continue;
-            moveNode(duplicateId, destinationId, typeof change.index === 'number' ? change.index + index : null);
+            if (placement.kind === 'previous') {
+              const source = nodes.get(targetId);
+              const parent = source?.parentId ? nodes.get(source.parentId) : undefined;
+              if (!source?.parentId || !parent) throw new Error(`Duplicate source has no parent: ${targetId}`);
+              moveNode(duplicateId, source.parentId, parent.children.indexOf(targetId));
+            } else if (placement.kind !== 'next') {
+              if (!destination) throw new Error('Duplicate destination must resolve to exactly one parent.');
+              moveNode(
+                duplicateId,
+                destination.parentId,
+                destination.index === null ? null : destination.index + index,
+              );
+            }
             result.push(duplicateId);
           }
         } else if (change.op === 'merge') {

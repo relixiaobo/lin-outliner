@@ -221,43 +221,114 @@ describe('outline ChangeSet kernel', () => {
       .toEqual(expect.arrayContaining([firstId, laterId]));
   });
 
-  test('returns a Node and its backlinks in one bounded Projection', async () => {
+  test('returns a Node and its backlinks in separately bounded Projection pages', async () => {
     const workspace = await makeWorkspace();
     const targetId = await createExisting(workspace, 'Backlink target');
     const sourceId = await createExisting(workspace, 'Backlink source');
+    const secondSourceId = await createExisting(workspace, 'Second backlink source');
     await workspace.mutate({
-      ...createRequest('Create inline backlink'),
+      ...createRequest('Create inline backlinks'),
       execute: (core) => {
-        core.applyNodeTextPatch(sourceId, {
-          ops: [{
-            type: 'replace_all',
-            content: {
-              text: 'Backlink source',
-              marks: [],
-              inlineRefs: [{
-                offset: 0,
-                target: { kind: 'node', nodeId: targetId },
-                displayName: 'Backlink target',
-              }],
-            },
-          }],
-        });
+        for (const id of [sourceId, secondSourceId]) {
+          core.applyNodeTextPatch(id, {
+            ops: [{
+              type: 'replace_all',
+              content: {
+                text: 'Backlink source',
+                marks: [],
+                inlineRefs: [{
+                  offset: 0,
+                  target: { kind: 'node', nodeId: targetId },
+                  displayName: 'Backlink target',
+                }],
+              },
+            }],
+          });
+        }
       },
     });
 
-    const result = projectOutline(workspace.forkCore(), {
+    const projection: Projection = {
       kind: 'node',
       targets: oneId(targetId),
       include: ['references', 'backlinks'],
       page: { limit: 1 },
+    };
+    const first = projectOutline(workspace.forkCore(), projection);
+    const second = projectOutline(workspace.forkCore(), {
+      ...projection,
+      page: { limit: 1, cursor: first.cursor },
     });
 
-    expect(result.nodes).toContainEqual(expect.objectContaining({ id: targetId }));
-    expect(result.backlinks).toContainEqual(expect.objectContaining({
-      targetId,
-      sourceId,
-      kind: 'inline',
-    }));
+    expect(first.nodes).toContainEqual(expect.objectContaining({ id: targetId }));
+    expect(first.backlinks).toHaveLength(1);
+    expect(first.truncated).toBe(true);
+    expect(first.cursor).toBeDefined();
+    expect(second.nodes).toEqual([]);
+    expect(second.backlinks).toHaveLength(1);
+    expect(second.cursor).toBeUndefined();
+    const pagedBacklinks = [...(first.backlinks ?? []), ...(second.backlinks ?? [])];
+    expect(new Set(pagedBacklinks.map((entry) => entry.sourceId))).toEqual(new Set([sourceId, secondSourceId]));
+    expect(pagedBacklinks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ targetId, sourceId, kind: 'inline' }),
+      expect.objectContaining({ targetId, sourceId: secondSourceId, kind: 'inline' }),
+    ]));
+
+    const backlinksOnlyFirst = projectOutline(workspace.forkCore(), {
+      kind: 'backlinks', targets: oneId(targetId), page: { limit: 1 },
+    });
+    const backlinksOnlySecond = projectOutline(workspace.forkCore(), {
+      kind: 'backlinks', targets: oneId(targetId),
+      page: { limit: 1, cursor: backlinksOnlyFirst.cursor },
+    });
+    expect(backlinksOnlyFirst.nodes).toEqual([]);
+    expect(backlinksOnlyFirst.backlinks).toHaveLength(1);
+    expect(backlinksOnlyFirst.truncated).toBe(true);
+    expect(backlinksOnlySecond.nodes).toEqual([]);
+    expect(backlinksOnlySecond.backlinks).toHaveLength(1);
+    expect(backlinksOnlySecond.truncated).toBeUndefined();
+  });
+
+  test('moves an ordered target block before and after same-parent siblings atomically', async () => {
+    const workspace = await makeWorkspace();
+    const ids = {
+      parent: `node:${crypto.randomUUID()}`,
+      a: `node:${crypto.randomUUID()}`,
+      b: `node:${crypto.randomUUID()}`,
+      c: `node:${crypto.randomUUID()}`,
+      d: `node:${crypto.randomUUID()}`,
+    };
+    await workspace.mutate({
+      ...createRequest('Create move fixture'),
+      execute: (core) => {
+        core.createNode(core.projection().todayId, null, 'Move parent', ids.parent);
+        for (const [id, text] of [[ids.a, 'A'], [ids.b, 'B'], [ids.c, 'C'], [ids.d, 'D']] as const) {
+          core.createNode(ids.parent, null, text, id);
+        }
+      },
+    });
+    const original = [ids.a, ids.b, ids.c, ids.d];
+    const many = (nodeIds: string[]) => ({
+      target: { selector: { by: 'ids' as const, ids: nodeIds }, cardinality: 'many' as const, max: nodeIds.length },
+    });
+
+    const after = await applyOutlineDiff(workspace, await diffKeyed(workspace, {
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      operations: [{ op: 'move', targets: many([ids.a, ids.b]), placement: { kind: 'after', sibling: oneId(ids.c) } }],
+    }), { origin: 'local-user' });
+    expect(workspace.documentState().nodes[ids.parent]?.children).toEqual([ids.c, ids.a, ids.b, ids.d]);
+    await workspace.revert(after.operationId, { origin: 'local-user' });
+    expect(workspace.documentState().nodes[ids.parent]?.children).toEqual(original);
+
+    const before = await applyOutlineDiff(workspace, await diffKeyed(workspace, {
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      operations: [{ op: 'move', targets: many([ids.c, ids.d]), placement: { kind: 'before', sibling: oneId(ids.a) } }],
+    }), { origin: 'local-user' });
+    expect(workspace.documentState().nodes[ids.parent]?.children).toEqual([ids.c, ids.d, ids.a, ids.b]);
+    await workspace.revert(before.operationId, { origin: 'local-user' });
+    expect(workspace.documentState().nodes[ids.parent]?.children).toEqual(original);
   });
 
   test('honors includeTrash during transient query execution', async () => {

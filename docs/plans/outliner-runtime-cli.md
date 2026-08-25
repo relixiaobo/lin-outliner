@@ -1205,7 +1205,9 @@ same placement and one exact-revert Operation.
 Reference actions remain semantic rather than overloaded. Set retargets an
 existing tree reference, replace substitutes a tree reference for a content Node
 and Trashes the original subtree, and inline owns inline-reference replacement or
-conversion. Query rules likewise use one executable registry with closed
+conversion. Inline argv may omit its reference target only when converting an
+existing tree reference; content replacement and structured input require an
+explicit reference target. Query rules likewise use one executable registry with closed
 operator-specific schemas; internal non-executable values such as `EDITED_BY`
 are not public input.
 

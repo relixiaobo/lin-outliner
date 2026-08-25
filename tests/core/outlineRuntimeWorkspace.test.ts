@@ -293,7 +293,7 @@ describe('OutlineRuntimeWorkspace', () => {
     expect(await workspace.store.operations()).toEqual(operationsBeforeConflict);
 
     const agentUndo = await workspace.undo({
-      origin: 'built-in-agent',
+      origin: 'local-user',
       selectionOrigin: 'built-in-agent',
       expectOperationId: agentOperation.operationId,
     });
@@ -301,6 +301,17 @@ describe('OutlineRuntimeWorkspace', () => {
     expect(workspace.documentState().nodes[agentNodeId]?.description).toBeUndefined();
     expect(workspace.documentState().nodes[userNodeId]?.description).toBe('Edited by user');
     expect(workspace.documentState().nodes[newestUserNodeId]?.description).toBe('Edited newest by user');
+
+    const restarted = await OutlineRuntimeWorkspace.open(root);
+    const agentRedo = await restarted.redo({
+      origin: 'local-user',
+      selectionOrigin: 'built-in-agent',
+      expectOperationId: agentUndo.operationId,
+    });
+    expect(agentRedo.revertsOperationId).toBe(agentUndo.operationId);
+    expect(restarted.documentState().nodes[agentNodeId]?.description).toBe('Edited by agent');
+    expect(restarted.documentState().nodes[userNodeId]?.description).toBe('Edited by user');
+    expect(restarted.documentState().nodes[newestUserNodeId]?.description).toBe('Edited newest by user');
 
     const globalRoot = await makeRoot();
     const globalWorkspace = await OutlineRuntimeWorkspace.open(globalRoot);

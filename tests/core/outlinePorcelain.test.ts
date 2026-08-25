@@ -284,6 +284,43 @@ describe('outline porcelain CLI', () => {
           expect.objectContaining({ type: 'reference', targetId: canonicalId }),
         );
       });
+
+      const invalidInline = await jsonCommand(root, ['reference', 'inline', originalId]);
+      expect(invalidInline).toMatchObject({
+        code: 2,
+        error: { code: 'invalid_input', message: expect.stringContaining('requires REFERENCE') },
+      });
+      expect((await runtime.workspace.store.operations()).length).toBe(operationCount + 2);
+      expect(runtime.workspace.documentState().nodes[originalId]?.parentId).toBe(parentId);
+
+      await mutateAndRevert(root, runtime, ['reference', 'inline', originalId, canonicalId], () => {
+        const state = runtime.workspace.documentState();
+        expect(state.nodes[originalId]).toMatchObject({ parentId: 'trash', trashedFromParentId: parentId });
+        expect(state.nodes[parentId]?.children.map((id) => state.nodes[id])).toContainEqual(
+          expect.objectContaining({
+            content: expect.objectContaining({
+              inlineRefs: [expect.objectContaining({ target: { kind: 'node', nodeId: canonicalId } })],
+            }),
+          }),
+        );
+      });
+
+      expect((await jsonCommand(root, ['reference', 'add', parentId, canonicalId])).code).toBe(0);
+      const referenceId = Object.values(runtime.workspace.documentState().nodes).find((node) => (
+        node.type === 'reference' && node.parentId === parentId && node.targetId === canonicalId
+      ))?.id;
+      expect(referenceId).toBeDefined();
+      await mutateAndRevert(root, runtime, ['reference', 'inline', referenceId!], () => {
+        const state = runtime.workspace.documentState();
+        expect(state.nodes[referenceId!]).toBeUndefined();
+        expect(state.nodes[parentId]?.children.map((id) => state.nodes[id])).toContainEqual(
+          expect.objectContaining({
+            content: expect.objectContaining({
+              inlineRefs: [expect.objectContaining({ target: { kind: 'node', nodeId: canonicalId } })],
+            }),
+          }),
+        );
+      });
     } finally {
       await runtime.stop();
     }

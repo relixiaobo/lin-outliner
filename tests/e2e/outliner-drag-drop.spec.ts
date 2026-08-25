@@ -99,21 +99,18 @@ test.describe('outliner drag and drop', () => {
     await expect(rowEditor(page, ids.alpha)).not.toBeFocused();
     await expect(rowEditor(page, ids.beta)).not.toBeFocused();
 
-    const moves = (await appliedOutlineOperations(page, beforeCall))
-      .filter((operation) => operation.op === 'move')
-      .map((operation) => {
-        const target = operation.targets as { target?: { selector?: { id?: string } } };
-        const destination = operation.destination as { target?: { selector?: { id?: string } } };
-        return {
-          nodeId: target.target?.selector?.id,
-          parentId: destination.target?.selector?.id,
-          index: operation.index,
-        };
-      });
-    expect(moves).toEqual([
-      { nodeId: ids.beta, parentId: ids.today, index: 2 },
-      { nodeId: ids.alpha, parentId: ids.today, index: 1 },
-    ]);
+    const moves = (await appliedOutlineOperations(page, beforeCall)).filter((operation) => operation.op === 'move');
+    expect(moves).toEqual([{
+      op: 'move',
+      targets: {
+        target: {
+          selector: { by: 'ids', ids: [ids.alpha, ids.beta] },
+          cardinality: 'many',
+          max: 2,
+        },
+      },
+      placement: { kind: 'last', parent: { target: { selector: { by: 'id', id: ids.today }, cardinality: 'one' } } },
+    }]);
   });
 
   test('invalid drops on the selected block leave no guide line or stray focus', async ({ page }) => {

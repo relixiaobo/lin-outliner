@@ -416,9 +416,12 @@ function attachDefaultReturn(command: string, changeSet: ChangeSet): void {
   const binding = [...changeSet.operations].reverse().find((change) => (
     (change.op === 'create' || change.op === 'duplicate') && change.bind
   )) ?? changeSet.operations.find((change) => change.op === 'ensure' && change.bind);
-  const survivingTarget = [...changeSet.operations].reverse().find((change) => (
-    change.op === 'update' || change.op === 'move' || change.op === 'merge'
-  ));
+  const targetMayBeReplaced = command === 'reference inline' || command === 'reference restore';
+  const survivingTarget = targetMayBeReplaced
+    ? undefined
+    : [...changeSet.operations].reverse().find((change) => (
+        change.op === 'update' || change.op === 'move' || change.op === 'merge'
+      ));
   const targets = preferred
     ?? (binding && 'bind' in binding && binding.bind ? { binding: binding.bind } as TargetRef : undefined)
     ?? (survivingTarget?.op === 'merge' ? survivingTarget.target : survivingTarget?.targets);

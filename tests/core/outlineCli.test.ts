@@ -368,6 +368,7 @@ describe('outline CLI', () => {
     const moveHelp = captureIo();
     const referenceHelp = captureIo();
     const replaceHelp = captureIo();
+    const inlineHelp = captureIo();
     const addSchema = captureIo();
     const replaceSchema = captureIo();
 
@@ -390,6 +391,10 @@ describe('outline CLI', () => {
     expect(await runOutlineCli(['reference', 'replace', '--help'], { runtimeRoot: root, io: replaceHelp.io })).toBe(0);
     expect(replaceHelp.stdout).toContain('Behavior: replace; not idempotent');
     expect(replaceHelp.stdout).toContain('outline reference replace node:draft node:canonical');
+    expect(await runOutlineCli(['reference', 'inline', '--help'], { runtimeRoot: root, io: inlineHelp.io })).toBe(0);
+    expect(inlineHelp.stdout).toContain('Required referenced Node target when TARGET is a content Node');
+    expect(inlineHelp.stdout).toContain('REFERENCE may be omitted only when TARGET is already a tree reference');
+    expect(inlineHelp.stdout).toContain('outline reference inline node:draft node:canonical');
 
     expect(await runOutlineCli(['--json', 'schema', 'add'], { runtimeRoot: root, io: addSchema.io })).toBe(0);
     const addRequest = JSON.stringify(JSON.parse(addSchema.stdout).data.request);
