@@ -83,6 +83,10 @@ export class OutlineClient {
     return this.stream('watch', input, signal);
   }
 
+  watchSubscription(input: WatchRequest = {}, signal?: AbortSignal): AsyncGenerator<OutlineStreamRecord> {
+    return this.stream('watch', input, signal, 'hello');
+  }
+
   async ingestAsset(
     source: AsyncIterable<Uint8Array> | Iterable<Uint8Array>,
     options: { originalFilename?: string; mimeType?: string; signal?: AbortSignal } = {},
@@ -289,7 +293,12 @@ export class OutlineClient {
     return new Response(body, { status: response.statusCode, headers });
   }
 
-  async *stream(command: string, input: unknown, signal?: AbortSignal): AsyncGenerator<OutlineStreamRecord> {
+  async *stream(
+    command: string,
+    input: unknown,
+    signal?: AbortSignal,
+    deadline: 'request' | 'hello' = 'request',
+  ): AsyncGenerator<OutlineStreamRecord> {
     const lifetime = createRequestLifetime(signal, this.requestTimeoutMs);
     const requestId = `stream:${crypto.randomUUID()}`;
     const request: OutlineRequest = {
@@ -350,6 +359,7 @@ export class OutlineClient {
             expectedSequence += 1;
             sawHello = true;
             sawEnd = record.type === 'end';
+            if (record.type === 'hello' && deadline === 'hello') lifetime.clearDeadline();
             yield record;
           }
           newline = buffered.indexOf('\n');
@@ -498,26 +508,34 @@ interface RequestLifetime {
   readonly signal: AbortSignal;
   readonly timeoutMs: number;
   readonly timedOut: () => boolean;
+  readonly clearDeadline: () => void;
   readonly cleanup: () => void;
 }
 
 function createRequestLifetime(signal: AbortSignal | undefined, timeoutMs: number): RequestLifetime {
   const controller = new AbortController();
   let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const abortFromCaller = () => controller.abort(signal?.reason);
   if (signal?.aborted) abortFromCaller();
   else signal?.addEventListener('abort', abortFromCaller, { once: true });
-  const timer = setTimeout(() => {
+  timer = setTimeout(() => {
     timedOut = true;
     controller.abort(new Error(`Outline Runtime request exceeded ${timeoutMs} ms.`));
   }, timeoutMs);
   timer.unref?.();
+  const clearDeadline = () => {
+    if (!timer) return;
+    clearTimeout(timer);
+    timer = undefined;
+  };
   return {
     signal: controller.signal,
     timeoutMs,
     timedOut: () => timedOut,
+    clearDeadline,
     cleanup: () => {
-      clearTimeout(timer);
+      clearDeadline();
       signal?.removeEventListener('abort', abortFromCaller);
     },
   };

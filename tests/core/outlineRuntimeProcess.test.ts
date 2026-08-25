@@ -409,6 +409,36 @@ describe('Outline Runtime process boundary', () => {
     }
   });
 
+  test('keeps a desktop subscription alive beyond the finite command timeout', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const subscriptionClient = new OutlineClient(runtime.descriptor, { requestTimeoutMs: 40 });
+    const boundedClient = new OutlineClient(runtime.descriptor, { requestTimeoutMs: 40 });
+    const subscription = subscriptionClient.watchSubscription()[Symbol.asyncIterator]();
+    const bounded = boundedClient.watch()[Symbol.asyncIterator]();
+    try {
+      expect((await subscription.next()).value?.type).toBe('hello');
+      expect((await bounded.next()).value?.type).toBe('hello');
+      await new Promise((resolve) => setTimeout(resolve, 60));
+
+      const operation = await runtime.workspace.mutate(createRequest('After subscription deadline'));
+      const live = await subscription.next();
+      expect(live.value?.type).toBe('event');
+      expect(eventOperationId(live.value)).toBe(operation.operationId);
+      await expect(bounded.next()).rejects.toMatchObject({
+        outlineError: { code: 'runtime_unavailable', details: { timeoutMs: 40 } },
+      });
+    } finally {
+      await subscription.return?.();
+      await bounded.return?.();
+      subscriptionClient.close();
+      boundedClient.close();
+      await runtime.stop();
+    }
+  });
+
   test('binds watch cursors to Runtime instance, filter, and Projection', async () => {
     const root = await makeRoot();
     const first = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
@@ -641,6 +671,31 @@ describe('Outline Runtime process boundary', () => {
         outlineError: { code: 'runtime_unavailable', details: { timeoutMs: 40 } },
       });
     } finally {
+      client.close();
+      await closeServer(server);
+    }
+  });
+
+  test('bounds a desktop subscription until Runtime sends its hello record', async () => {
+    const root = await makeRoot();
+    const paths = resolveOutlineRuntimePaths(root);
+    await mkdir(path.dirname(paths.socketPath), { recursive: true, mode: 0o700 });
+    const server = http.createServer(async (request, response) => {
+      for await (const _chunk of request) {
+        // Consume the request before holding the response open without a hello.
+      }
+      response.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8' });
+      response.flushHeaders();
+    });
+    await listenUnix(server, paths.socketPath);
+    const client = new OutlineClient(runtimeDescriptor(paths.socketPath), { requestTimeoutMs: 40 });
+    const subscription = client.watchSubscription()[Symbol.asyncIterator]();
+    try {
+      await expect(subscription.next()).rejects.toMatchObject({
+        outlineError: { code: 'runtime_unavailable', details: { timeoutMs: 40 } },
+      });
+    } finally {
+      await subscription.return?.();
       client.close();
       await closeServer(server);
     }

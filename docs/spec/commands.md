@@ -172,10 +172,13 @@ same-major drift fails closed with `protocol_incompatible`. Minor-version
 negotiation is deferred until CLI and Runtime can be distributed independently.
 
 Startup discovery uses `--startup-timeout`, defaulting to 10 seconds. Every
-request, response body, upload, asset transfer, and stream has a separate hard
-`--timeout`, defaulting to 60 seconds and capped at 300 seconds. A live process
-with an unresponsive socket therefore settles as unavailable instead of hanging.
-Both deadlines compose with the caller's `AbortSignal`.
+request, response body, upload, asset transfer, and public CLI stream has a
+separate hard `--timeout`, defaulting to 60 seconds and capped at 300 seconds. A
+live process with an unresponsive socket therefore settles as unavailable
+instead of hanging. Both deadlines compose with the caller's `AbortSignal`.
+Desktop Event subscriptions use the command deadline only until the first
+validated `hello`; after that, cancellation, transport closure, or a Runtime
+`end` record owns their lifetime.
 
 ## Selector And Projection
 

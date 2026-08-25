@@ -100,6 +100,12 @@ export class OutlineRuntimeWorkspace {
           installationId: loaded.snapshot.local.installationId,
           revision,
         });
+    if (core.requiresInitialPersist()) {
+      // Core reconciliation may create durable system state, such as today's
+      // Daily Note. Make that state the verified baseline before a transaction
+      // can capture an update that causally depends on it.
+      await store.compact(core.serializeState());
+    }
     const assets = new OutlineAssetStore(root, store, {
       ...options.assetStoreOptions,
       ...(options.now ? { now: options.now } : {}),

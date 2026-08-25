@@ -271,7 +271,7 @@ export class OutlineDocumentService {
       let client: OutlineClient | null = null;
       try {
         client = await this.supervisor.connect();
-        for await (const record of client.watch(
+        for await (const record of client.watchSubscription(
           this.watchCursor ? { cursor: this.watchCursor } : {},
           signal,
         )) {

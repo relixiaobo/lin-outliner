@@ -8,7 +8,7 @@ import { OUTLINE_PROTOCOL_VERSION } from '../../outline/contract/version';
 
 export interface DesktopOutlineTransportClient {
   requestResponse(command: string, input: unknown, signal?: AbortSignal): Promise<OutlineResponse>;
-  watch(input: WatchRequest, signal?: AbortSignal): AsyncGenerator<OutlineStreamRecord>;
+  watchSubscription(input: WatchRequest, signal?: AbortSignal): AsyncGenerator<OutlineStreamRecord>;
   close(): void;
 }
 
@@ -110,7 +110,7 @@ export class DesktopOutlineClient {
   ): Promise<void> {
     try {
       const client = await this.connect();
-      for await (const record of client.watch(input, controller.signal)) emit(record);
+      for await (const record of client.watchSubscription(input, controller.signal)) emit(record);
     } catch (error) {
       if (!controller.signal.aborted) {
         this.invalidateClientAfterTransportFailure(error);

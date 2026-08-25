@@ -211,6 +211,13 @@ provably torn final record, and fails closed on corruption that could admit an
 unknown state. Snapshot compaction never removes retained recovery or asset
 reachability information. Pre-release formats have no compatibility reader.
 
+Core startup reconciliation can create durable system state, such as the current
+local-date Daily Note. When `requiresInitialPersist()` reports that condition,
+Runtime atomically compacts the reconciled Core into the verified snapshot/log
+baseline before publishing its descriptor or accepting requests. Startup fails
+if that baseline cannot be persisted; no later transaction may depend on
+process-local reconciliation state.
+
 Storage maintenance derives all work from the committed log and indexes. It
 repairs a torn tail, expires eligible recovery, removes orphan recovery blobs,
 collects unprotected assets, and compacts a log after its record/byte threshold.
@@ -281,6 +288,10 @@ Per-edit cost scales with what changed, not document size.
 - **Client adapter** (`src/outline/client/documentProjection.ts`): converts a
   Runtime projection Event into the existing renderer delta and reads a bounded
   complete Projection when initialization or resync requires `full`.
+- **Subscription lifetime** (`src/outline/client/client.ts`): public CLI streams
+  retain their finite command deadline. Desktop Event subscriptions use that
+  deadline only until the first validated `hello`, then remain open until caller
+  cancellation, transport closure, or a Runtime `end` record.
 - **Renderer reducer** (`reduceProjection` in `renderer/state/document.ts`): a
   `full` rebuilds the index; a `delta` creates a new immutable snapshot backed by
   a bucketed copy-on-write `byId` map and a lazy `projection.nodes` array view.

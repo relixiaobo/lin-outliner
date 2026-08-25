@@ -824,6 +824,13 @@ document commit. Small patches may be inlined in the record. Snapshots compact
 document updates but retain the bounded Operation index and live recovery-blob
 references required by policy.
 
+After replay, Core may reconcile durable system state that was absent from the
+stored snapshot, including the current local-date Daily Note. Runtime must
+atomically compact that reconciled Core into the verified snapshot/log baseline
+before it publishes a descriptor or accepts a request. A later transaction may
+therefore capture only its own update without depending on unpersisted startup
+operations. Baseline persistence failure aborts Runtime startup.
+
 Apply settlement is ordered as follows:
 
 1. Enter Runtime's single workspace mutation queue, resolve an existing matching
@@ -1066,10 +1073,13 @@ CLI discovery rules are deterministic:
 4. Wait up to the global `--startup-timeout` value, 10 seconds by default, then
    return `runtime_unavailable` with no persistence fallback.
 
-Every Runtime call has a separate `--timeout` deadline, 60 seconds by default
-and at most 300 seconds. It covers request, response-body consumption, uploads,
-asset transfers, and streams; startup probing remains governed by the shorter
-startup deadline. `SIGINT` and `SIGTERM` flow through both deadlines.
+Every finite Runtime call has a separate `--timeout` deadline, 60 seconds by
+default and at most 300 seconds. It covers request, response-body consumption,
+uploads, asset transfers, and public CLI streams; startup probing remains
+governed by the shorter startup deadline. `SIGINT` and `SIGTERM` flow through
+both deadlines. Desktop Event subscriptions use the same deadline only through
+the first validated `hello` record, then remain open until caller cancellation,
+transport closure, or a Runtime `end` record.
 
 `version`, `schema`, and the bundled portion of `capabilities` run locally and
 never start Runtime. `status` reports absence without starting it. Document,
@@ -1285,7 +1295,10 @@ and forwards versioned request/stream envelopes through preload. Preload exposes
 only typed `request`, `subscribe`, and cancellation methods; it never exposes
 socket paths, tokens, filesystem handles, or Node APIs. Renderer state consumes
 Projection results and revision-ordered Events exactly as an external client
-would.
+would. A desktop subscription is handshake-bounded rather than command-bounded:
+failure before the first `hello` settles as unavailable, while an established
+subscription remains a Runtime lease and resumes from its cursor after a clean
+end or transport reconnect.
 
 Every renderer action that changes persisted Outliner state constructs the same
 public ChangeSet used by CLI. Shared intent builders may provide typed desktop

@@ -96,7 +96,7 @@ class FakeTransport implements DesktopOutlineTransportClient {
     return this.response;
   }
 
-  async *watch(_input: WatchRequest, signal?: AbortSignal): AsyncGenerator<OutlineStreamRecord> {
+  async *watchSubscription(_input: WatchRequest, signal?: AbortSignal): AsyncGenerator<OutlineStreamRecord> {
     yield {
       protocolVersion: 1,
       requestId: 'runtime:watch',
