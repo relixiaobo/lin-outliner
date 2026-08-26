@@ -191,8 +191,8 @@ before any directional/security-sensitive build.
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/reference/agent-program.md`.
 - **[agent-result-and-file-lifecycle](plans/agent-result-and-file-lifecycle.md)**
-  (`draft`; one complete feature PR) — make final Agent results plain text with
-  explicit file citations; represent content through canonical Agent/Outline
+  (`draft`; plan PR #588; one complete feature PR) — make final Agent results
+  plain text with explicit file citations; represent content through canonical Agent/Outline
   resource references, resolve each use by context and intent, and retain exact
   captured revisions through the neutral ContentStore; give root conversations
   isolated managed filesystem scopes; and

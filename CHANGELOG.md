@@ -56,11 +56,12 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
-- **Agent results and file handling now share one reference-based architecture**
-  — the governing plan keeps terminal results as plain text, models live
-  locations and captured revisions as independent representations, resolves use
-  through access context and intent, and limits the neutral ContentStore to
-  captured bytes, retention anchors, integrity, and garbage collection. The
+- **Agent results and file handling now share one reference-based architecture
+  (PR #588, main)** — the governing plan keeps terminal results as plain text,
+  models live locations and captured revisions as independent representations,
+  resolves use through access context and intent, and limits the neutral
+  ContentStore to captured bytes, retention anchors, integrity, and garbage
+  collection. The
   Outliner Runtime and Composer History plans now consume that authority without
   introducing physical ownership, a managed artifact directory, structured
   Agent results, or compatibility storage paths.
