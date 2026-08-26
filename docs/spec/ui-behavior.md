@@ -284,8 +284,13 @@ semantics at every query length, including one- and two-character queries,
 single CJK characters, and mid-word matches. Retrieval is complete by text-rank
 tier: no excluded node has a better text rank than an included node, while the
 disabled, untitled, context, length, recency, and label tie-breaks apply within
-the retrieved set. Empty queries use recency order. Cycle status is evaluated
-only for shortlisted nodes from a cached reverse-reachability set. Posting keys
+the retrieved set. Empty queries use recency order. Before the shortlist limit,
+candidate admission applies the canonical public-Node-ID predicate: only UUIDv4
+content Nodes and the explicit public system-Node allowlist can create a Node
+reference. Date shortcuts and image/attachment Node identities are omitted
+because they have no public `node://` URI; Composer local-file results remain
+separately referenceable through canonical `file:` URIs. Cycle status is
+evaluated only for shortlisted nodes from a cached reverse-reachability set. Posting keys
 share their normalized label storage through offsets, and an overflow edit
 overlay is compacted outside the projection commit by a cooperatively yielding
 rebuild. The idle timer follows input, while an independent maximum-age timer

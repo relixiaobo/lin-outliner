@@ -174,7 +174,11 @@ text inside code blocks; small inline enumerations remain ordinary lists.
 return stable Node edit handles for subsequent tool calls; final user text uses
 normal `[[node://UUID]]` references rather than internal edit syntax. Public
 reference markers contain only identity; provider-facing text may put a resolved
-title before the marker, while typed field/tag/view IDs stay unwrapped.
+title before the marker, while typed field/tag/view IDs stay unwrapped. Titles
+placed beside markers in Lin outline output use the same semantic escaping as
+ordinary outline text, including the trailing `:` marker boundary, so a title
+cannot become a tag, checkbox, field header, search directive, or view directive
+when the outline is parsed again.
 
 `outline_undo_stack` is an explicit world-state operation. Thread forking never
 invokes it.

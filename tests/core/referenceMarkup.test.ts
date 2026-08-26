@@ -4,6 +4,7 @@ import { PUBLIC_REFERENCE_NODE_IDS } from '../../src/core/nodeId';
 import {
   formatFileReferenceMarker,
   formatFileReferenceUri,
+  formatNamedNodeReference,
   formatNodeReferenceMarker,
   formatNodeReferenceUri,
   nodeReferenceMarkersToText,
@@ -49,6 +50,12 @@ describe('reference URI markup', () => {
       expect(formatNodeReferenceUri(nodeId)).toBeNull();
       expect(formatNodeReferenceMarker(nodeId)).toBe(nodeId);
     }
+    expect(formatNamedNodeReference(
+      'date:550e8400-e29b-41d4-a716-446655440000',
+      'Today',
+      { unavailable: 'display' },
+    ))
+      .toBe('Today');
     for (const uri of [
       `node://node%3A${NODE_UUID}`,
       `node:///${NODE_UUID}`,
@@ -221,5 +228,24 @@ describe('reference URI markup', () => {
         target: { kind: 'node', nodeId: NODE_ID },
       }],
     });
+  });
+
+  test('degrades private structured Node references to display text without exposing internal ids', () => {
+    expect(richTextToReferenceMarkup({
+      text: '',
+      inlineRefs: [{
+        offset: 0,
+        target: { kind: 'node', nodeId: 'date:550e8400-e29b-41d4-a716-446655440000' },
+        displayName: 'Today',
+      }],
+    })).toBe('Today');
+    expect(richTextToReferenceMarkup({
+      text: 'Today',
+      inlineRefs: [{
+        offset: 0,
+        target: { kind: 'node', nodeId: 'date:550e8400-e29b-41d4-a716-446655440000' },
+        displayName: 'Today',
+      }],
+    })).toBe('Today');
   });
 });

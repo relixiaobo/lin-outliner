@@ -1,9 +1,12 @@
 import {
-  formatReferenceMarker,
+  formatFileReferenceUri,
+  formatNodeReferenceUri,
+  referenceDisplayFallback,
 } from './referenceMarkup';
 import type { RichText, TextMark } from './types';
 import { mergeEquivalentTextMarks, textMarkIdentity } from './textMarks';
 import {
+  escapeSemanticText,
   escapeSemanticTextChar,
   parseMarkdownReferenceRichText,
   type SemanticEscapeOptions,
@@ -78,7 +81,13 @@ export function richTextToMarkdownReferenceMarkup(
 }
 
 function inlineRefMarker(ref: RichText['inlineRefs'][number]): string {
-  return formatReferenceMarker(ref.target);
+  const uri = ref.target.kind === 'node'
+    ? formatNodeReferenceUri(ref.target.nodeId)
+    : formatFileReferenceUri(ref.target.path, ref.target.entryKind);
+  if (uri) return `[[${uri}]]`;
+  const display = ref.displayName?.replace(/[\r\n]+/gu, ' ').replace(/\s+/gu, ' ').trim()
+    || referenceDisplayFallback(ref.target);
+  return escapeSemanticText(display);
 }
 
 function markdownSerializableMarks(marks: readonly TextMark[]): TextMark[] {

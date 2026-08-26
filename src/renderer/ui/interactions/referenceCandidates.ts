@@ -13,6 +13,7 @@ import {
   type ReferenceCandidateQueryStats,
 } from '../../state/referenceCandidateIndex';
 import { buildTrashNodeIds } from '../../state/projectionDerived';
+import { isPublicReferenceNodeId } from '../../../core/nodeId';
 
 // Localized strings the candidate builder needs (it is a pure helper outside React).
 // Callers thread these from useT(); they default to the canonical English tree so
@@ -53,6 +54,19 @@ export type ReferenceCandidate =
     type: 'create';
     label: string;
   };
+
+export type AdmittedReferenceCandidate = Extract<ReferenceCandidate, { type: 'node' | 'create' }>;
+
+export function admitReferenceCandidates(
+  candidates: readonly ReferenceCandidate[],
+): AdmittedReferenceCandidate[] {
+  const admitted: AdmittedReferenceCandidate[] = [];
+  for (const candidate of candidates) {
+    if (candidate.type === 'create') admitted.push(candidate);
+    else if (candidate.type === 'node' && isPublicReferenceNodeId(candidate.id)) admitted.push(candidate);
+  }
+  return admitted;
+}
 
 const DATE_SHORTCUTS: Array<{
   key: 'today' | 'tomorrow' | 'yesterday';
@@ -143,6 +157,7 @@ function nodeCandidates(
   labels: ReferenceCandidateLabels,
   resolveTreeReferenceBlockReason: ((targetId: NodeId) => TreeReferenceBlockReason | null) | undefined,
   skipTreeReferenceChecks: boolean,
+  publicNodeIdsOnly: boolean,
   stats: ReferenceCandidateQueryStats | undefined,
 ): ReferenceCandidate[] {
   const normalized = query.trim().toLowerCase();
@@ -158,6 +173,7 @@ function nodeCandidates(
     untitledLabel: labels.untitled,
     includeFileNodes,
     limit: DEFAULT_REFERENCE_LIMIT + (excludeCurrentNode ? 1 : 0),
+    publicNodeIdsOnly,
     stats,
   })
     .flatMap((entry) => {
@@ -241,6 +257,7 @@ export function buildReferenceCandidates(params: {
   labels?: ReferenceCandidateLabels;
   resolveTreeReferenceBlockReason?: (targetId: NodeId) => TreeReferenceBlockReason | null;
   skipTreeReferenceChecks?: boolean;
+  publicNodeIdsOnly?: boolean;
   stats?: ReferenceCandidateQueryStats;
 }): ReferenceCandidate[] {
   const {
@@ -254,6 +271,7 @@ export function buildReferenceCandidates(params: {
     labels = DEFAULT_REFERENCE_LABELS,
     resolveTreeReferenceBlockReason,
     skipTreeReferenceChecks = false,
+    publicNodeIdsOnly = false,
     stats,
   } = params;
   const normalized = query.trim();
@@ -269,6 +287,7 @@ export function buildReferenceCandidates(params: {
       labels,
       resolveTreeReferenceBlockReason,
       skipTreeReferenceChecks,
+      publicNodeIdsOnly,
       stats,
     ),
     ...(normalized && allowCreate ? [{ type: 'create' as const, label: normalized }] : []),

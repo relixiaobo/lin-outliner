@@ -43,6 +43,10 @@ export interface ParseReferenceMarkerOptions {
   includeEscaped?: boolean;
 }
 
+export interface FormatNamedNodeReferenceOptions {
+  unavailable?: 'display' | 'identity';
+}
+
 export type NodeReferenceTextSegment =
   | { text: string; type: 'text' }
   | {
@@ -79,10 +83,19 @@ export function formatNodeReferenceMarker(nodeId: string): string {
   return uri ? `[[${uri}]]` : nodeId.trim();
 }
 
-export function formatNamedNodeReference(nodeId: string, displayName?: string): string {
-  const marker = formatNodeReferenceMarker(nodeId);
-  if (!marker.startsWith('[[')) return marker;
+export function formatNamedNodeReference(
+  nodeId: string,
+  displayName?: string,
+  options: FormatNamedNodeReferenceOptions = {},
+): string {
   const display = singleLineDisplayName(displayName);
+  const uri = formatNodeReferenceUri(nodeId);
+  if (!uri) {
+    return options.unavailable === 'display'
+      ? display || referenceDisplayFallback({ kind: 'node', nodeId })
+      : nodeId.trim();
+  }
+  const marker = `[[${uri}]]`;
   return display && display !== nodeId ? `${display}: ${marker}` : marker;
 }
 
@@ -306,7 +319,13 @@ export function richTextToReferenceMarkup(content: Pick<RichText, 'text' | 'inli
     const offset = clampReferenceOffset(ref.offset, text.length);
     if (offset < cursor) continue;
     out += text.slice(cursor, offset);
-    out += formatReferenceMarker(ref.target);
+    const marker = referenceMarker(ref.target);
+    if (marker) {
+      out += marker;
+    } else {
+      const display = singleLineDisplayName(ref.displayName) || referenceDisplayFallback(ref.target);
+      if (text.slice(offset, offset + display.length) !== display) out += display;
+    }
     cursor = offset;
   }
   return out + text.slice(cursor);
@@ -349,6 +368,13 @@ function parseNodeReferenceUri(value: string): Extract<ReferenceUri, { scheme: '
 function referenceTargetFromUri(uri: ReferenceUri): ReferenceTarget {
   if (uri.scheme === 'node') return { kind: 'node', nodeId: uri.nodeId };
   return { kind: 'local-file', path: uri.path, entryKind: uri.entryKind };
+}
+
+function referenceMarker(target: ReferenceTarget): string | null {
+  const uri = target.kind === 'node'
+    ? formatNodeReferenceUri(target.nodeId)
+    : formatFileReferenceUri(target.path, target.entryKind);
+  return uri ? `[[${uri}]]` : null;
 }
 
 function formatReferenceUri(uri: ReferenceUri): string | null {

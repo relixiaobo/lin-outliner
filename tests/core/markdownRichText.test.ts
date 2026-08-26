@@ -45,6 +45,31 @@ describe('markdown rich text outline bridge', () => {
     })).toBe(`See ${NODE_MARKER}`);
   });
 
+  test('degrades private Node families to safe plain display text at the Markdown boundary', () => {
+    for (const [nodeId, displayName] of [
+      ['date:11111111-1111-4111-8111-111111111111', 'Today'],
+      ['image:22222222-2222-4222-8222-222222222222', 'Diagram'],
+      ['attachment:33333333-3333-4333-8333-333333333333', 'Brief.pdf'],
+    ]) {
+      const serialized = richTextToMarkdownReferenceMarkup({
+        text: '',
+        marks: [],
+        inlineRefs: [{
+          offset: 0,
+          target: { kind: 'node', nodeId },
+          displayName,
+        }],
+      });
+      expect(serialized).toBe(displayName);
+      expect(serialized).not.toContain(nodeId);
+      expect(markdownReferenceMarkupToRichText(serialized)).toEqual({
+        text: displayName,
+        marks: [],
+        inlineRefs: [],
+      });
+    }
+  });
+
   test('drops marks that only cover stored inline reference display text', () => {
     const marker = NODE_MARKER;
 

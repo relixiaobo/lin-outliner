@@ -6,8 +6,14 @@ import {
   displayReachabilityForParent,
   type DisplayReachabilityResult,
 } from '../../state/displayReachability';
-import { AddIcon, CalendarIcon, ICON_SIZE } from '../icons';
-import { buildReferenceCandidates, referenceCandidateLabels, type ReferenceCandidate, type ReferenceCandidateLabels } from '../interactions/referenceCandidates';
+import { AddIcon, ICON_SIZE } from '../icons';
+import {
+  admitReferenceCandidates,
+  buildReferenceCandidates,
+  referenceCandidateLabels,
+  type AdmittedReferenceCandidate,
+  type ReferenceCandidateLabels,
+} from '../interactions/referenceCandidates';
 import {
   getTreeReferenceBlockReason,
   getTreeReferenceBlockReasonFromReachability,
@@ -41,8 +47,8 @@ export function referenceItems(params: {
   labels?: ReferenceCandidateLabels;
   resolveTreeReferenceBlockReason?: (targetId: NodeId) => TreeReferenceBlockReason | null;
   skipTreeReferenceChecks?: boolean;
-}): ReferenceCandidate[] {
-  return buildReferenceCandidates({
+}): AdmittedReferenceCandidate[] {
+  return admitReferenceCandidates(buildReferenceCandidates({
     index: params.index,
     currentNodeId: params.currentNodeId,
     query: params.query,
@@ -52,23 +58,15 @@ export function referenceItems(params: {
     labels: params.labels,
     resolveTreeReferenceBlockReason: params.resolveTreeReferenceBlockReason,
     skipTreeReferenceChecks: params.skipTreeReferenceChecks,
-  });
+    publicNodeIdsOnly: true,
+  }));
 }
 
 function nodeFromOutcome(outcome: CommandResult, nodeId: NodeId): NodeProjection | undefined {
   return nodeFromProjectionUpdate(outcome.update, nodeId);
 }
 
-function dateParts(date: Date): { year: number; month: number; day: number } {
-  return {
-    year: date.getFullYear(),
-    month: date.getMonth() + 1,
-    day: date.getDate(),
-  };
-}
-
-function iconForItem(item: ReferenceCandidate, index: DocumentIndex) {
-  if (item.type === 'date') return <CalendarIcon size={ICON_SIZE.menu} />;
+function iconForItem(item: AdmittedReferenceCandidate, index: DocumentIndex) {
   if (item.type === 'create') return <AddIcon size={ICON_SIZE.menu} />;
   return <NodeReferenceMenuIcon index={index} node={index.byId.get(item.id)} />;
 }
@@ -167,28 +165,6 @@ export function ReferenceSelector(props: ReferenceSelectorProps) {
     });
   };
 
-  const ensureDateAndSelect = (date: Date) => {
-    props.close();
-    void props.run(async () => {
-      const parts = dateParts(date);
-      const outcome = await api.ensureDateNode(parts.year, parts.month, parts.day);
-      const targetId = outcome.focus?.nodeId;
-      // `ensure_date_node` is idempotent: referencing an already-existing daily
-      // note bumps no revision, so its delta is empty and the node isn't in
-      // `changedNodes`. Fall back to the held index, where it already lives.
-      const target = targetId
-        ? nodeFromOutcome(outcome, targetId) ?? props.index.byId.get(targetId)
-        : undefined;
-      if (!target) return outcome;
-      if (props.applyReference) {
-        const result = await props.applyReference(target);
-        return result ?? outcome;
-      }
-      await props.clearTriggerText();
-      return api.addReference(props.currentNodeId, target.id);
-    });
-  };
-
   if (items.length === 0) {
     return <PopoverEmpty>{tr.noMatches}</PopoverEmpty>;
   }
@@ -227,10 +203,6 @@ export function ReferenceSelector(props: ReferenceSelectorProps) {
                 if (!targetIsSelectable(item.id)) return;
                 const target = props.index.byId.get(item.id);
                 if (target) selectTarget(target);
-                return;
-              }
-              if (item.type === 'date') {
-                ensureDateAndSelect(item.date);
                 return;
               }
               createAndSelect(item.label);

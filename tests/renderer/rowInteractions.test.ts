@@ -12,6 +12,7 @@ import { clampMenuIndex, nextMenuIndex } from '../../src/renderer/ui/interaction
 import { resolveFieldOptions, resolveSelectedOptionId } from '../../src/renderer/ui/interactions/fieldOptions';
 import { parseOutlinerPaste, parsePlainTextOutlinerPaste } from '../../src/renderer/ui/interactions/pasteParser';
 import { buildReferenceCandidates } from '../../src/renderer/ui/interactions/referenceCandidates';
+import { referenceItems } from '../../src/renderer/ui/outliner/ReferenceSelector';
 import { getTreeReferenceBlockReason } from '../../src/renderer/ui/interactions/referenceRules';
 import { resolveSelectedReferenceShortcut } from '../../src/renderer/ui/interactions/selectedReferenceShortcuts';
 import { filterSlashCommands } from '../../src/renderer/ui/interactions/slashCommands';
@@ -2817,6 +2818,66 @@ describe('row interaction resolvers', () => {
     expect(composerCandidates).toContainEqual(expect.objectContaining({
       id: 'pdf',
       label: '微信背后的产品观.pdf',
+      type: 'node',
+    }));
+  });
+
+  test('reference admission excludes date shortcuts and private Composer file-node identities', () => {
+    const publicNodeId = 'node:550e8400-e29b-41d4-a716-446655440000';
+    const attachmentId = 'attachment:6ba7b810-9dad-4d80-b4f0-21cf460d5c2f';
+    const imageId = 'image:7ba7b810-9dad-4d80-b4f0-21cf460d5c2f';
+    const privateDateNodes = Array.from({ length: 48 }, (_, offset) => (
+      makeNode(`date:${String(offset).padStart(2, '0')}`, 'Shared result', { updatedAt: 1_000 - offset })
+    ));
+    const nodes = [
+      makeNode(publicNodeId, 'Shared result'),
+      makeNode(attachmentId, '', {
+        type: 'attachment',
+        assetId: 'asset-pdf',
+        mimeType: 'application/pdf',
+        originalFilename: 'Private brief.pdf',
+      }),
+      makeNode(imageId, 'Private diagram', {
+        type: 'image',
+        assetId: 'asset-image',
+        mimeType: 'image/png',
+      }),
+      ...privateDateNodes,
+    ];
+    const projection = {
+      workspaceId: 'workspace',
+      rootId: 'workspace',
+      libraryId: 'library',
+      dailyNotesId: 'daily-notes',
+      schemaId: 'schema',
+      searchesId: 'searches',
+      recentsId: 'recents',
+      trashId: 'trash',
+      todayId: 'date:today',
+      nodes,
+    };
+    const index = { projection, byId: new Map(nodes.map((node) => [node.id, node])) } as any;
+
+    expect(referenceItems({
+      index,
+      currentNodeId: null,
+      query: 'tod',
+    })).toEqual([{ type: 'create', label: 'tod' }]);
+    expect(referenceItems({
+      index,
+      currentNodeId: null,
+      query: 'Private',
+      includeFileNodes: true,
+      excludeCurrentNode: false,
+    }).some((candidate) => candidate.type === 'node')).toBe(false);
+    expect(referenceItems({
+      index,
+      currentNodeId: null,
+      query: 'Shared',
+      includeFileNodes: true,
+      excludeCurrentNode: false,
+    })).toContainEqual(expect.objectContaining({
+      id: publicNodeId,
       type: 'node',
     }));
   });

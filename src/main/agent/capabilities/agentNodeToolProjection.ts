@@ -147,12 +147,16 @@ export function tagLabel(node: NodeProjection | undefined): string | null {
   return formatTag(name);
 }
 
-export function nodeTitle(index: ProjectionIndex, node: NodeProjection): string {
+export function nodeTitle(
+  index: ProjectionIndex,
+  node: NodeProjection,
+  context: { prefix?: string; suffix?: string } = {},
+): string {
   if (node.type === 'reference' && node.targetId) {
     const target = index.nodes.get(node.targetId);
-    if (target) return nodeTitle(index, target);
+    if (target) return nodeTitle(index, target, context);
   }
-  return nodeContentText(node) || '(untitled)';
+  return richTextToMarkdownReferenceMarkup(node.content, context) || '(untitled)';
 }
 
 export function nodeKind(node: NodeProjection): string {
@@ -188,8 +192,12 @@ export function breadcrumb(index: ProjectionIndex, nodeId: string): NodeRef[] {
 export function referenceText(index: ProjectionIndex, node: NodeProjection): string | null {
   if (node.type !== 'reference' || !node.targetId) return null;
   const target = index.nodes.get(node.targetId);
-  const display = target ? nodeTitle(index, target) : node.targetId;
-  return formatNamedNodeReference(node.targetId, display);
+  const display = target ? nodeTitle(index, target, { suffix: ':' }) : node.targetId;
+  return formatNamedNodeReference(
+    node.targetId,
+    display,
+    { unavailable: 'display' },
+  );
 }
 
 export function fieldName(index: ProjectionIndex, fieldEntry: NodeProjection): string {

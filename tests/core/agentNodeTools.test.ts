@@ -1659,6 +1659,44 @@ describe('agent node tools', () => {
     expect(core.state().nodes[today]!.children).toEqual([targetParentId, afterId, refId]);
   });
 
+  test('node_read and node_edit round-trip semantic reference titles without creating directives', async () => {
+    for (const title of [
+      '#project',
+      'Status:: Open',
+      '[x] Task',
+      '%%search%% Notes',
+      'Trailing:',
+    ]) {
+      const core = Core.new();
+      const today = core.projection().todayId;
+      const targetParentId = mustFocus(core.createNode(today, null, 'Targets'));
+      const targetId = mustFocus(core.createNode(targetParentId, null, title));
+      const referenceId = mustFocus(core.addReference(today, targetId, null));
+      const read = await executeRawTool<{
+        items: Array<{ revision: string }>;
+      }>(core, 'node_read', { node_id: referenceId, depth: 0 });
+      const visible = parseVisibleToolResult<{
+        data?: { outline?: string };
+      }>(read.contentText);
+      const outline = visible.data?.outline;
+
+      expect(typeof outline).toBe('string');
+      const edit = await executeTool(core, 'node_edit', {
+        node_id: referenceId,
+        old_string: '*',
+        new_string: outline,
+        expected_revision: read.details.data!.items[0]!.revision,
+      });
+
+      expect(edit.ok).toBe(true);
+      expect(core.state().nodes[referenceId]).toMatchObject({
+        type: 'reference',
+        targetId,
+        tags: [],
+      });
+    }
+  });
+
   test('node_create rejects references to trashed targets before mutation', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
