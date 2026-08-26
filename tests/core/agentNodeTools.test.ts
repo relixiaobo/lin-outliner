@@ -1893,6 +1893,80 @@ describe('agent node tools', () => {
     ]);
   });
 
+  test('node_edit and duplicate_id preserve marker-only ordinary inline references in titles and field values', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const targetId = mustFocus(core.createNode(today, null, 'Target'));
+    const draftId = mustFocus(core.createNode(today, null, ''));
+    const sourceId = mustFocus(core.replaceNodeWithInlineReference(draftId, targetId));
+    const pureInlineReference = core.state().nodes[sourceId]!.content;
+    const fieldEntryId = mustFocus(core.createInlineField(sourceId, null, 'Notes', 'plain'));
+    mustFocus(core.createRichTextContentNode(fieldEntryId, null, pureInlineReference));
+    const destinationId = mustFocus(core.createNode(today, null, 'Destination'));
+
+    const read = await executeRawTool<{
+      items: Array<{ outline?: string; revision: string }>;
+    }>(core, 'node_read', { node_id: sourceId, depth: 0 });
+    const visibleRead = parseVisibleToolResult<{
+      data?: { outline?: string };
+    }>(read.contentText);
+    const outline = read.details.data!.items[0]!.outline;
+    expect(outline).toBe([
+      `- %%inline-reference%% ${formatNodeReferenceMarker(targetId)}`,
+      `  - Notes:: %%inline-reference%% ${formatNodeReferenceMarker(targetId)}`,
+    ].join('\n'));
+    expect(visibleRead.data!.outline).toContain(`%%inline-reference%% ${formatNodeReferenceMarker(targetId)}`);
+
+    const edit = await executeTool(core, 'node_edit', {
+      node_id: sourceId,
+      old_string: '*',
+      new_string: visibleRead.data!.outline,
+      expected_revision: read.details.data!.items[0]!.revision,
+    });
+
+    expect(edit.ok).toBe(true);
+    const edited = core.state().nodes[sourceId]!;
+    expect(edited.type).not.toBe('reference');
+    expect(edited).not.toHaveProperty('targetId');
+    expect(edited.content).toEqual(pureInlineReference);
+    const editedFieldEntryId = fieldEntryByName(core, sourceId, 'Notes');
+    const editedValue = core.state().nodes[core.state().nodes[editedFieldEntryId]!.children[0]!]!;
+    expect(editedValue.type).not.toBe('reference');
+    expect(editedValue).not.toHaveProperty('targetId');
+    expect(editedValue.content).toEqual(pureInlineReference);
+
+    const duplicated = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: destinationId,
+      duplicate_id: sourceId,
+    });
+
+    expect(duplicated.ok).toBe(true);
+    const cloneId = duplicated.data!.createdRootIds[0]!;
+    const clone = core.state().nodes[cloneId]!;
+    expect(clone.type).not.toBe('reference');
+    expect(clone).not.toHaveProperty('targetId');
+    expect(clone.content).toMatchObject({
+      text: '',
+      marks: [],
+      inlineRefs: [{
+        offset: 0,
+        target: { kind: 'node', nodeId: targetId },
+      }],
+    });
+    const clonedFieldEntryId = fieldEntryByName(core, cloneId, 'Notes');
+    const clonedValue = core.state().nodes[core.state().nodes[clonedFieldEntryId]!.children[0]!]!;
+    expect(clonedValue.type).not.toBe('reference');
+    expect(clonedValue).not.toHaveProperty('targetId');
+    expect(clonedValue.content).toMatchObject({
+      text: '',
+      marks: [],
+      inlineRefs: [{
+        offset: 0,
+        target: { kind: 'node', nodeId: targetId },
+      }],
+    });
+  });
+
   test('node_create rejects references to trashed targets before mutation', async () => {
     const core = Core.new();
     const today = core.projection().todayId;

@@ -28,7 +28,7 @@ import type {
 import { asRecord, clampInteger, compactOutline } from './agentNodeToolUtils';
 import { viewModeOf } from './agentNodeToolView';
 import { viewConfigOutlineLines } from './agentNodeToolViewConfig';
-import { escapeOrdinaryOutlineReferenceShape } from './agentOutlineParser';
+import { disambiguateOrdinaryOutlineReferenceShape } from './agentOutlineParser';
 
 export function normalizeReadParams(rawParams: unknown): NormalizedReadParams {
   const input = asRecord(rawParams);
@@ -287,7 +287,7 @@ function outlineNodeText(index: ProjectionIndex, node: NodeProjection): string {
   const reference = referenceText(index, node);
   parts.push((
     reference
-    ?? escapeOrdinaryOutlineReferenceShape(
+    ?? disambiguateOrdinaryOutlineReferenceShape(
       richTextToMarkdownReferenceMarkup(node.content, { suffix: titleSuffix }),
     )
   ) || '(untitled)');
@@ -299,7 +299,7 @@ function outlineNodeText(index: ProjectionIndex, node: NodeProjection): string {
 function outlineFieldValueText(value: { text: string; targetId?: string }): string {
   return value.targetId
     ? value.text
-    : escapeOrdinaryOutlineReferenceShape(value.text);
+    : disambiguateOrdinaryOutlineReferenceShape(value.text);
 }
 
 function serializeCodeBlockOutlineNode(node: NodeProjection, indent: string, marker = ''): string[] {

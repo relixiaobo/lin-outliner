@@ -54,6 +54,30 @@ describe('agent outline parser', () => {
     ]);
   });
 
+  test('uses the inline-reference directive only for bare ordinary Node markers', () => {
+    const parsed = parseLinOutline([
+      `- %%inline-reference%% ${NODE_ALPHA_MARKER} - Details`,
+      `  - Notes:: %%inline-reference%% ${NODE_BETA_MARKER}`,
+      `- %%inline-reference%% Label: ${NODE_BETA_MARKER}`,
+    ].join('\n'));
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.document.roots[0]).toMatchObject({
+      title: NODE_ALPHA_MARKER,
+      description: 'Details',
+      fields: [{
+        name: 'Notes',
+        values: [{ text: '', outlineSource: NODE_BETA_MARKER }],
+      }],
+    });
+    expect(parsed.document.roots[0]).not.toHaveProperty('referenceTargetId');
+    expect(parsed.document.roots[1]).toMatchObject({
+      title: `%%inline-reference%% Label: ${NODE_BETA_MARKER}`,
+    });
+    expect(parsed.document.roots[1]).not.toHaveProperty('referenceTargetId');
+  });
+
   test('does not promote mixed file and Node inline references to a tree reference', () => {
     const parsed = parseLinOutline(
       '- Compare [[file:///tmp/left.txt]]: [[node://11111111-1111-4111-8111-111111111111]]',

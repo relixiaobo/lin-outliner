@@ -90,6 +90,7 @@ type StackFrame =
   | { kind: 'field'; level: number; field: OutlineField };
 
 const FENCE_START_RE = /^(`{3,}|~{3,})[ \t]*([^\n]*?)[ \t]*$/u;
+const ORDINARY_INLINE_REFERENCE_DIRECTIVE = '%%inline-reference%%';
 
 export function parseLinOutline(
   input: string,
@@ -299,7 +300,8 @@ function parseOutlineNode(input: string, nodeId?: string): OutlineNode {
   const tags = scanned.tags.map((tag) => tag.name);
   text = scanned.source.trim();
 
-  const reference = parseReference(text);
+  const hasOrdinaryReferenceDirective = text.startsWith(ORDINARY_INLINE_REFERENCE_DIRECTIVE);
+  const reference = hasOrdinaryReferenceDirective ? null : parseReference(text);
   if (reference && reference.full) {
     return {
       ...(nodeId ? { nodeId } : {}),
@@ -315,7 +317,9 @@ function parseOutlineNode(input: string, nodeId?: string): OutlineNode {
     };
   }
 
-  const [titlePart, descriptionPart] = splitDescription(text);
+  const [wireTitlePart, descriptionPart] = splitDescription(text);
+  const ordinaryReferenceSource = stripOrdinaryInlineReferenceDirective(wireTitlePart.trim());
+  const titlePart = ordinaryReferenceSource ?? wireTitlePart;
   return {
     ...(nodeId ? { nodeId } : {}),
     title: titlePart.trim() || '(untitled)',
@@ -340,8 +344,10 @@ function parseFieldHeader(text: string): { name: string; value: string } | null 
 function parseOutlineValue(text: string, lineNodeId?: string): OutlineValue {
   const annotated = stripNodeMarker(text.trim());
   const nodeId = lineNodeId ?? annotated.nodeId;
-  const source = annotated.text.trim();
-  const reference = parseReference(source);
+  const wireSource = annotated.text.trim();
+  const ordinaryReferenceSource = stripOrdinaryInlineReferenceDirective(wireSource);
+  const source = ordinaryReferenceSource ?? wireSource;
+  const reference = ordinaryReferenceSource === null ? parseReference(source) : null;
   if (reference?.full) {
     return {
       ...(nodeId ? { nodeId } : {}),
@@ -380,14 +386,19 @@ function parseReference(text: string): { display: string; targetId: string; full
   return { display: display || shape.targetId, targetId: shape.targetId, full: true };
 }
 
-export function escapeOrdinaryOutlineReferenceShape(text: string): string {
+export function disambiguateOrdinaryOutlineReferenceShape(text: string): string {
   const shape = terminalNodeReferenceShape(text);
-  if (
-    !shape
-    || shape.delimiterIndex === null
-    || isEscapedSemanticAt(text, shape.delimiterIndex)
-  ) return text;
+  if (!shape) return text;
+  if (shape.delimiterIndex === null) return `${ORDINARY_INLINE_REFERENCE_DIRECTIVE} ${text}`;
+  if (isEscapedSemanticAt(text, shape.delimiterIndex)) return text;
   return `${text.slice(0, shape.delimiterIndex)}\\${text.slice(shape.delimiterIndex)}`;
+}
+
+function stripOrdinaryInlineReferenceDirective(text: string): string | null {
+  if (!text.startsWith(`${ORDINARY_INLINE_REFERENCE_DIRECTIVE} `)) return null;
+  const source = text.slice(ORDINARY_INLINE_REFERENCE_DIRECTIVE.length).trimStart();
+  const shape = terminalNodeReferenceShape(source);
+  return shape?.delimiterIndex === null ? source : null;
 }
 
 function terminalNodeReferenceShape(text: string): {

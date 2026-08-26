@@ -183,10 +183,13 @@ inline references to their readable current/snapshot names before appending the
 single identity marker. A named tree reference uses an unescaped terminal `:` before
 exactly one unprotected canonical Node marker; marker-shaped literals inside Markdown
 code or links do not participate. Ordinary title and field-value serializers escape
-that colon when normal rich text would otherwise have the same terminal shape, and
-the parser admits only the unescaped delimiter. Ordinary surrounding text that ends
-in an inline reference therefore cannot be promoted to a tree reference during
-read/edit, create, or duplicate round trips.
+that colon when normal rich text would otherwise have the same terminal shape. A
+marker-only ordinary inline reference uses the reserved
+`%%inline-reference%% [[node://UUID]]` outline form; the parser removes the directive
+only when it guards exactly that bare-marker shape. The parser admits only the
+unescaped named delimiter or an undiscriminated bare marker as a tree reference, so
+ordinary inline-reference content cannot be promoted during read/edit, create, or
+duplicate round trips.
 
 `outline_undo_stack` is an explicit world-state operation. Thread forking never
 invokes it.
