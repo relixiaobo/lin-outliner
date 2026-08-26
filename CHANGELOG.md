@@ -56,6 +56,17 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
+- **Reference URIs and historical Thread access now have one execution-ready
+  architecture (PR #589, main)** — Node and file citations use canonical
+  URI-only markers with resolver-owned labels; ordinary internal `node:<uuid>`
+  IDs serialize once as `node://<uuid>`, while current referenceable system Nodes
+  use explicit public keys. The file lifecycle now distinguishes profile-wide
+  resource resolution from container working sets and copies exact bytes before
+  editing across managed roots. A separate cross-Thread plan adds lazy
+  `thread://` references, bounded history tools with independent capability
+  checks, untrusted transcript projection, and explicit historical-file
+  selection without exposing bound source locators.
+
 - **Agent results and file handling now share one reference-based architecture
   (PR #588, main)** — the governing plan keeps terminal results as plain text,
   models source locators and exact revisions as independent representations,

@@ -122,7 +122,7 @@ capabilities** below — feature-completion tails and standalone items, not a mi
 ### Shared Reference Foundation
 
 - **[reference-uri-unification](plans/reference-uri-unification.md)** (`draft`,
-  PM-ratified 2026-08-26; one complete refactor PR) — replace the custom
+  PM-ratified 2026-08-26; plan PR #589; one complete refactor PR) — replace the custom
   `kind:label^value` and `file:^path` text protocols with canonical URI-only
   markers: `[[node://<uuid>]]`, explicit system-Node keys such as
   `[[node://library]]`, and standard `[[file:///absolute/path]]` first, with
@@ -206,7 +206,7 @@ before any directional/security-sensitive build.
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/reference/agent-program.md`.
 - **[agent-result-and-file-lifecycle](plans/agent-result-and-file-lifecycle.md)**
-  (`draft`; plan PR #588; one complete feature PR) — make final Agent results
+  (`draft`; plan PR #588 + architecture follow-up #589; one complete feature PR) — make final Agent results
   plain text with explicit `[[file:///...]]` citations; represent content through
   canonical Agent/Outline resource references, resolve each use by profile
   context and intent, and retain exact revisions through the neutral
@@ -218,7 +218,7 @@ before any directional/security-sensitive build.
   rebase/land #587, then start this implementation. Scope is rechecked after all
   dependencies land.
 - **[agent-cross-thread-reference](plans/agent-cross-thread-reference.md)**
-  (`draft`; one complete feature PR after the file lifecycle) — let users mention
+  (`draft`; plan PR #589; one complete feature PR after the file lifecycle) — let users mention
   prior conversations through `[[thread://<uuidv7>]]` and let Agents search/read
   bounded same-profile history without resuming, forking, messaging, or copying
   transcripts. Historical content is lazy and untrusted. Historical file reuse
