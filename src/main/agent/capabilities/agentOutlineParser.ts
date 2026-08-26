@@ -370,8 +370,8 @@ function stripNodeMarker(text: string): { nodeId?: string; text: string } {
 
 function parseReference(text: string): { display: string; targetId: string; full: boolean } | null {
   const markers = parseNodeReferenceMarkers(text);
-  if (markers.length !== 1) return null;
-  const marker = markers[0]!;
+  if (markers.length === 0) return null;
+  const marker = markers.at(-1)!;
   const before = text.slice(0, marker.start).trim();
   const after = text.slice(marker.end).trim();
   if (after || (before && !before.endsWith(':'))) return null;

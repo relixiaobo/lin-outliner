@@ -270,8 +270,15 @@ as `[[node://UUID]]`, with the internal `node:` prefix removed, at its original
 position. The five public system Nodes use `workspace`, `daily-notes`, `library`,
 `schema`, or `searches` as the URI authority. A readable current/snapshot name is
 placed immediately before a marker when provider context needs it, but the name is
-not part of reference identity. Typed structural IDs such as `field:*`, `tag:*`,
-and `sys:*` remain exact unwrapped protocol operands. The serializer joins those
+not part of reference identity. At textual reference and presentation boundaries,
+a structured Node reference whose private target identity has no public URI projects
+as its readable current/snapshot name, or a neutral unavailable label when no name
+exists; the private ID never replaces that display text. User View and
+referenced-resource presentation resolve reference chains through the same rule,
+including focused, selected, panel-root, and breadcrumb titles. Other model-facing title
+fallbacks, including drift notices without a target projection, use the neutral label.
+Typed structural IDs such as `field:*`, `tag:*`, and `sys:*` remain exact unwrapped
+protocol operands. The serializer joins those
 values with the surrounding text into one user narrative, preserving whitespace
 and position. It then appends one independent attachment block per file in attachment
 order: name, MIME type, source byte length, readable path, file/directory tool guidance,

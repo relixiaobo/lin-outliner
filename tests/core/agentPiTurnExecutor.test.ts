@@ -1003,6 +1003,21 @@ describe('PiTurnExecutor event normalization', () => {
     ]);
   });
 
+  test('projects a private structured Node reference as display text without exposing its id', async () => {
+    const privateNodeId = 'date:550e8400-e29b-41d4-a716-446655440000';
+    const content = await serializeUserContent([{
+      type: 'nodeReference',
+      nodeId: privateNodeId,
+      note: '2026-08-26',
+    }], fixtureResources());
+
+    expect(content).toEqual([
+      { type: 'text', text: 'Please review the referenced Outliner Nodes.' },
+      { type: 'text', text: '2026-08-26' },
+    ]);
+    expect(JSON.stringify(content)).not.toContain(privateNodeId);
+  });
+
   test('does not create an Agent when Stop arrives during any async initialization stage', async () => {
     for (const stage of ['runtime', 'tools'] as const) {
       const fixture = createContext();

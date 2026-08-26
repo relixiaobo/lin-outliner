@@ -898,7 +898,11 @@ export async function serializeUserContent(
         narrative.push(part.text);
         break;
       case 'nodeReference':
-        narrative.push(formatNamedNodeReference(part.nodeId, part.note));
+        narrative.push(formatNamedNodeReference(
+          part.nodeId,
+          part.note,
+          { unavailable: 'display' },
+        ));
         break;
       case 'attachment': {
         const location = part.artifactRef

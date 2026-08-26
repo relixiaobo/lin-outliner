@@ -95,7 +95,7 @@ export function nodeSnapshot(
   surface: string | null = null,
 ): UserViewNodeSnapshot | null {
   const node = byId.get(nodeId);
-  return node ? { nodeId, title: nodeTitle(node), panelId, surface } : null;
+  return node ? { nodeId, title: resolvedNodeTitle(node, byId), panelId, surface } : null;
 }
 
 export function nodeBreadcrumb(
@@ -112,7 +112,7 @@ export function nodeBreadcrumb(
   }
   return nodes.reverse().slice(-MAX_BREADCRUMB_NODES).map((entry) => ({
     nodeId: entry.id,
-    title: nodeTitle(entry),
+    title: resolvedNodeTitle(entry, byId),
     panelId: null,
     surface: null,
   }));
@@ -125,7 +125,9 @@ export function nodeTitle(node: NodeProjection): string {
       ? node.content.text || node.mediaUrl || node.mediaAlt
       : null;
   const text = fileName
-    || (node.type === 'reference' && node.targetId ? `@${node.targetId}` : null)
+    || (node.type === 'reference' && node.targetId
+      ? formatNamedNodeReference(node.targetId, undefined, { unavailable: 'display' })
+      : null)
     || richTextToReferenceMarkup(node.content)
     || 'Untitled';
   return compact(text, MAX_TITLE_CHARS);
@@ -163,7 +165,31 @@ function referenceText(
 ): string | null {
   if (node.type !== 'reference' || !node.targetId) return null;
   const target = byId.get(node.targetId);
-  return formatNamedNodeReference(node.targetId, target ? nodeTitle(target) : undefined);
+  return formatNamedNodeReference(
+    node.targetId,
+    target ? resolvedNodeTitle(target, byId) : undefined,
+    { unavailable: 'display' },
+  );
+}
+
+export function resolvedNodeTitle(
+  node: NodeProjection,
+  byId: ReadonlyMap<string, NodeProjection>,
+): string {
+  let current = node;
+  const seen = new Set<string>();
+  while (current.type === 'reference' && current.targetId) {
+    if (seen.has(current.id)) {
+      return formatNamedNodeReference(current.targetId, undefined, { unavailable: 'display' });
+    }
+    seen.add(current.id);
+    const target = byId.get(current.targetId);
+    if (!target) {
+      return formatNamedNodeReference(current.targetId, undefined, { unavailable: 'display' });
+    }
+    current = target;
+  }
+  return nodeTitle(current);
 }
 
 function panelSnapshot(
@@ -180,7 +206,7 @@ function panelSnapshot(
   return {
     panelId,
     rootNodeId,
-    rootTitle: nodeTitle(root),
+    rootTitle: resolvedNodeTitle(root, byId),
     rootType: root.type ?? 'outline',
     active,
     focused,

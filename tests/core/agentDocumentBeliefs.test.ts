@@ -7,6 +7,7 @@ import {
 import { ThreadDocumentBeliefs } from '../../src/main/agent/context/ThreadDocumentBeliefs';
 import { indexProjection, revisionOf } from '../../src/main/agent/capabilities/agentNodeToolProjection';
 import { editableOutlineRevision } from '../../src/main/agent/capabilities/agentNodeToolRead';
+import { documentDriftNotice } from '../../src/main/agent/context/documentDriftNotice';
 import { TRASH_ID, type DocumentProjection, type NodeProjection } from '../../src/core/types';
 
 const ROOT = '019fb2da-0000-7000-8000-00000000000r';
@@ -171,6 +172,21 @@ describe('document beliefs', () => {
       index,
       1,
     )).toEqual([]);
+  });
+
+  test('does not expose a private reference target in a drift notice', () => {
+    const privateTargetId = 'date:550e8400-e29b-41d4-a716-446655440000';
+    const reference = textNode(PRICING, '', {
+      type: 'reference',
+      targetId: privateTargetId,
+    });
+
+    const notice = documentDriftNotice([
+      { nodeId: PRICING, kind: 'changed', node: reference, observedAt: 1 },
+    ], 1, null);
+
+    expect(notice).toContain('Referenced node');
+    expect(notice).not.toContain(privateTargetId);
   });
 
   test('a re-observed node keeps one belief, and the newest one', () => {

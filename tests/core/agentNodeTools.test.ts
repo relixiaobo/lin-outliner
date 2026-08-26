@@ -1697,6 +1697,36 @@ describe('agent node tools', () => {
     }
   });
 
+  test('node_create duplicate_id preserves a tree reference whose target title contains an inline reference', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const targets = mustFocus(core.createNode(today, null, 'Targets'));
+    const nestedTargetId = mustFocus(core.createNode(targets, null, 'Nested target'));
+    const outerTargetId = mustFocus(core.createRichTextContentNode(targets, null, {
+      text: 'See ',
+      marks: [],
+      inlineRefs: [{
+        offset: 4,
+        target: { kind: 'node', nodeId: nestedTargetId },
+        displayName: 'Nested target',
+      }],
+    }));
+    const referenceId = mustFocus(core.addReference(today, outerTargetId, null));
+    const destinationId = mustFocus(core.createNode(today, null, 'Destination'));
+
+    const duplicated = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: destinationId,
+      duplicate_id: referenceId,
+    });
+
+    expect(duplicated.ok).toBe(true);
+    const cloneId = duplicated.data!.createdRootIds[0]!;
+    expect(core.state().nodes[cloneId]).toMatchObject({
+      type: 'reference',
+      targetId: outerTargetId,
+    });
+  });
+
   test('node_create rejects references to trashed targets before mutation', async () => {
     const core = Core.new();
     const today = core.projection().todayId;

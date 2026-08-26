@@ -178,7 +178,10 @@ title before the marker, while typed field/tag/view IDs stay unwrapped. Titles
 placed beside markers in Lin outline output use the same semantic escaping as
 ordinary outline text, including the trailing `:` marker boundary, so a title
 cannot become a tag, checkbox, field header, search directive, or view directive
-when the outline is parsed again.
+when the outline is parsed again. When that title itself contains canonical Node
+markers, the final terminal marker remains the outer tree-reference identity;
+earlier markers belong to the readable display and do not demote the row to an
+ordinary rich-text Node during read/edit, create, or duplicate round trips.
 
 `outline_undo_stack` is an explicit world-state operation. Thread forking never
 invokes it.
