@@ -228,10 +228,11 @@ function referenceDisplayTitle(
     const offset = Math.min(Math.max(0, Math.trunc(ref.offset)), text.length);
     if (offset < cursor) continue;
     display += text.slice(cursor, offset);
-    const storedDisplay = singleLine(ref.displayName);
+    const rawStoredDisplay = ref.displayName ?? '';
+    const storedDisplay = singleLine(rawStoredDisplay);
     display += resolvedInlineReferenceDisplay(index, ref.target, storedDisplay);
-    cursor = storedDisplay && text.slice(offset, offset + storedDisplay.length) === storedDisplay
-      ? offset + storedDisplay.length
+    cursor = rawStoredDisplay && text.slice(offset, offset + rawStoredDisplay.length) === rawStoredDisplay
+      ? offset + rawStoredDisplay.length
       : offset;
   }
   display += text.slice(cursor);

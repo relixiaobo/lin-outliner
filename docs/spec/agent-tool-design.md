@@ -180,10 +180,11 @@ ordinary outline text, including the trailing `:` marker boundary, so a title
 cannot become a tag, checkbox, field header, search directive, or view directive
 when the outline is parsed again. A tree-reference display title flattens its
 inline references to their readable current/snapshot names before appending the
-single identity marker. The parser requires exactly one canonical reference marker
-in the row and requires that marker to target a Node, so ordinary rich text with
-multiple Node/file inline references cannot be promoted to a tree reference during
-read/edit, create, or duplicate round trips.
+single identity marker. The parser requires exactly one unprotected canonical
+reference marker in the row and requires that marker to target a Node; marker-shaped
+literals inside Markdown code or links do not participate. Ordinary rich text with
+multiple Node/file inline references therefore cannot be promoted to a tree reference
+during read/edit, create, or duplicate round trips.
 
 `outline_undo_stack` is an explicit world-state operation. Thread forking never
 invokes it.

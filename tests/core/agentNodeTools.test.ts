@@ -1732,6 +1732,76 @@ describe('agent node tools', () => {
     });
   });
 
+  test('node_create duplicate_id preserves a tree reference whose target title contains a code-marked URI literal', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const targets = mustFocus(core.createNode(today, null, 'Targets'));
+    const literal = '[[file:///tmp/a.txt]]';
+    const outerTargetId = mustFocus(core.createRichTextContentNode(targets, null, {
+      text: `See ${literal}`,
+      marks: [{ start: 4, end: 4 + literal.length, type: 'code' }],
+      inlineRefs: [],
+    }));
+    const referenceId = mustFocus(core.addReference(today, outerTargetId, null));
+    const destinationId = mustFocus(core.createNode(today, null, 'Destination'));
+    const index = indexProjection(core.projection());
+
+    expect(referenceText(index, index.nodes.get(referenceId)!))
+      .toBe(`See \`${literal}\`: ${formatNodeReferenceMarker(outerTargetId)}`);
+
+    const duplicated = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: destinationId,
+      duplicate_id: referenceId,
+    });
+
+    expect(duplicated.ok).toBe(true);
+    expect(core.state().nodes[duplicated.data!.createdRootIds[0]!]).toMatchObject({
+      type: 'reference',
+      targetId: outerTargetId,
+    });
+  });
+
+  test('tree reference projection consumes raw inline-reference display snapshots before normalizing replacements', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const targets = mustFocus(core.createNode(today, null, 'Targets'));
+    const spacedTargetId = mustFocus(core.createNode(targets, null, 'Old   Name'));
+    const multilineTargetId = mustFocus(core.createNode(targets, null, 'Line\nBreak'));
+    const outerTargetId = mustFocus(core.createRichTextContentNode(targets, null, {
+      text: 'See Old   Name and Line\nBreak',
+      marks: [],
+      inlineRefs: [
+        {
+          offset: 4,
+          target: { kind: 'node', nodeId: spacedTargetId },
+          displayName: 'Old   Name',
+        },
+        {
+          offset: 19,
+          target: { kind: 'node', nodeId: multilineTargetId },
+          displayName: 'Line\nBreak',
+        },
+      ],
+    }));
+    const referenceId = mustFocus(core.addReference(today, outerTargetId, null));
+    const destinationId = mustFocus(core.createNode(today, null, 'Destination'));
+    const index = indexProjection(core.projection());
+
+    expect(referenceText(index, index.nodes.get(referenceId)!))
+      .toBe(`See Old Name and Line Break: ${formatNodeReferenceMarker(outerTargetId)}`);
+
+    const duplicated = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: destinationId,
+      duplicate_id: referenceId,
+    });
+
+    expect(duplicated.ok).toBe(true);
+    expect(core.state().nodes[duplicated.data!.createdRootIds[0]!]).toMatchObject({
+      type: 'reference',
+      targetId: outerTargetId,
+    });
+  });
+
   test('node_create duplicate_id keeps ordinary colon-separated inline references as rich text', async () => {
     const core = Core.new();
     const today = core.projection().todayId;

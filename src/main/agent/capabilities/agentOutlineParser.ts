@@ -1,6 +1,7 @@
 import { parseCheckboxMarker } from '../../../core/textSyntax';
 import { parseReferenceMarkers } from '../../../core/referenceMarkup';
 import { normalizeCodeLanguage } from '../../../core/codeLanguages';
+import { canonicalMarkdownProtectedRanges } from '../../../core/semanticIngest/canonicalMarkdown';
 import {
   decodeSemanticEscapes,
   markdownInlineProtectedRanges,
@@ -369,7 +370,10 @@ function stripNodeMarker(text: string): { nodeId?: string; text: string } {
 }
 
 function parseReference(text: string): { display: string; targetId: string; full: boolean } | null {
-  const markers = parseReferenceMarkers(text);
+  const protectedRanges = canonicalMarkdownProtectedRanges(text);
+  const markers = parseReferenceMarkers(text).filter((marker) => (
+    !protectedRanges.some((range) => marker.start < range.end && range.start < marker.end)
+  ));
   if (markers.length !== 1) return null;
   const marker = markers[0]!;
   if (marker.target.kind !== 'node') return null;
