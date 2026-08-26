@@ -4,6 +4,7 @@ import type {
   ChangeSet,
   Diff,
   Operation,
+  OperationUndoGroup,
   OutlineResponse,
   OutlineStreamRecord,
 } from '../../src/outline/contract';
@@ -43,6 +44,25 @@ describe('renderer Outline intents', () => {
     expect(firstUpdate(harness.commitInputs[1]!)).toMatchObject({ kind: 'text-patch' });
   });
 
+  test('passes text-edit undo groups through direct desktop commits', async () => {
+    const harness = await createHarness([
+      node('root', { children: ['target'] }),
+      node('target', { parentId: 'root' }),
+    ]);
+    const undoGroup: OperationUndoGroup = {
+      groupId: 'undo-group:test-materialize',
+      kind: 'text-edit',
+      nodeId: 'node:draft',
+    };
+
+    await outlineDocumentApi.materializeDraftNode('root', 1, 'A', 'node:draft', undoGroup);
+    await outlineDocumentApi.applyNodeTextPatch('node:draft', {
+      ops: [{ type: 'replace', from: 1, to: 1, content: rich('B') }],
+    }, { undoGroup });
+
+    expect(harness.commitRequests.map((input) => input.undoGroup)).toEqual([undoGroup, undoGroup]);
+  });
+
   test('builds pasted metadata and trees through same-ChangeSet bindings', async () => {
     const harness = await createHarness([
       node('root', { children: ['parent'] }),
@@ -64,6 +84,11 @@ describe('renderer Outline intents', () => {
     );
 
     const operations = harness.changeSets[0]!.operations;
+    const createBinds = operations.flatMap((change) => (
+      change.op === 'create' && change.bind ? [change.bind] : []
+    ));
+    expect(createBinds).toHaveLength(3);
+    expect(new Set(createBinds).size).toBe(createBinds.length);
     expect(operations.slice(0, 2)).toEqual([
       expect.objectContaining({ op: 'ensure', definitionType: 'tag', name: 'work', bind: expect.any(String) }),
       expect.objectContaining({ op: 'ensure', definitionType: 'field', name: 'owner', bind: expect.any(String) }),
@@ -85,6 +110,49 @@ describe('renderer Outline intents', () => {
         expect.objectContaining({ kind: 'field', action: 'set', field: { binding: expect.any(String) } }),
       ]),
     }));
+  });
+
+  test('round-trips paste metadata through field-slot appendNodes drafts', async () => {
+    const harness = await createHarness([
+      node('root', { children: ['owner'] }),
+      node('owner', { parentId: 'root' }),
+      node('field', { type: 'fieldDef' }),
+    ]);
+
+    await outlineDocumentApi.updateFieldSlot('owner', 'field', {
+      kind: 'appendNodes',
+      id: 'node:value',
+      nodes: [{
+        content: rich('Task #Work'),
+        tags: ['Work'],
+        fields: [{ name: 'Status', value: 'Open' }],
+        children: [{
+          content: rich('Child #Next'),
+          tags: ['Next'],
+          fields: [],
+          children: [],
+        }],
+      }],
+    });
+
+    const instruction = firstUpdate(harness.changeSets[0]!);
+    expect(instruction).toMatchObject({
+      kind: 'field-slot',
+      mutation: {
+        action: 'append-nodes',
+        nodes: [{
+          metadata: {
+            pasteTags: ['Work'],
+            pasteFields: [{ name: 'Status', value: 'Open' }],
+          },
+          children: [{
+            metadata: {
+              pasteTags: ['Next'],
+            },
+          }],
+        }],
+      },
+    });
   });
 
   test('copies tags when splitting beside the source node', async () => {
@@ -384,6 +452,7 @@ describe('renderer Outline intents', () => {
 interface IntentHarness {
   readonly changeSets: ChangeSet[];
   readonly commitInputs: ChangeSet[];
+  readonly commitRequests: Array<{ changeSet: ChangeSet; undoGroup?: OperationUndoGroup }>;
   readonly applyInputs: Array<{ diff: Diff; acknowledgeDestructive?: boolean }>;
 }
 
@@ -397,6 +466,7 @@ async function createHarness(
   const byId = new Map(nodes.map((entry) => [entry.id, entry]));
   const changeSets: ChangeSet[] = [];
   const commitInputs: ChangeSet[] = [];
+  const commitRequests: Array<{ changeSet: ChangeSet; undoGroup?: OperationUndoGroup }> = [];
   const applyInputs: Array<{ diff: Diff; acknowledgeDestructive?: boolean }> = [];
   let stream: ((record: OutlineStreamRecord) => void) | undefined;
   let revision = 7;
@@ -404,19 +474,23 @@ async function createHarness(
 
   const outline: NonNullable<LinApi['outline']> = {
     request: async (request) => {
-      if (request.command === 'show') return success(request, {
-        ...projectionResult(projection, revision),
-        ...(backlinks.length > 0 ? { backlinks } : {}),
-      });
+      if (request.command === 'show') {
+        return success(request, {
+          ...projectionResult(projection, revision),
+          ...(backlinks.length > 0 ? { backlinks } : {}),
+        });
+      }
       if (request.command === 'diff') {
         const changeSet = (request.input as { changeSet: ChangeSet }).changeSet;
         changeSets.push(changeSet);
         return success(request, diffFor(changeSet, revision));
       }
       if (request.command === 'commit') {
-        const changeSet = (request.input as { changeSet: ChangeSet }).changeSet;
+        const input = request.input as { changeSet: ChangeSet; undoGroup?: OperationUndoGroup };
+        const changeSet = input.changeSet;
         changeSets.push(changeSet);
         commitInputs.push(changeSet);
+        commitRequests.push(input);
         revision += 1;
         operationSequence += 1;
         const operation = operationFor(revision, operationSequence);
@@ -454,7 +528,12 @@ async function createHarness(
   const subscription = subscribeDesktopProjection(() => undefined, () => undefined);
   subscriptions.push(uninstallReader, subscription.unsubscribe);
   await subscription.ready;
-  return { changeSets, commitInputs, applyInputs };
+  return {
+    changeSets,
+    commitInputs,
+    commitRequests,
+    applyInputs,
+  };
 }
 
 function documentProjection(nodes: NodeProjection[]): DocumentProjection {

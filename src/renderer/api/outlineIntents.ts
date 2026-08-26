@@ -3,6 +3,7 @@ import type {
   Change,
   Diff,
   NodeDraft,
+  OperationUndoGroup,
   ProjectionResult,
   TargetRef,
   UpdateInstruction,
@@ -67,7 +68,7 @@ export const outlineDocumentApi = {
   initWorkspace: readDesktopProjection,
   getProjection: readDesktopProjection,
   createNode,
-  materializeDraftNode: createNode,
+  materializeDraftNode,
   createRichTextNode,
   createTaggedNode,
   createTagAndTaggedNode,
@@ -156,12 +157,34 @@ export const outlineDocumentApi = {
   redo: () => runDesktopHistory('redo'),
 };
 
-function createNode(parentId: string, index: number | null, text: string, id = freshId('node')): Promise<CommandResult> {
+type MutationOptions = {
+  readonly acknowledgeDestructive?: boolean;
+  readonly requiresDiff?: boolean;
+  readonly undoGroup?: OperationUndoGroup;
+};
+
+function createNode(
+  parentId: string,
+  index: number | null,
+  text: string,
+  id = freshId('node'),
+  options?: MutationOptions,
+): Promise<CommandResult> {
   return mutate(() => [{
     op: 'create',
     placement: structuralPlacement(oneId(parentId), index),
     nodes: [draft({ text, marks: [], inlineRefs: [] }, id)],
-  }], focus(id, parentId, { kind: 'end' }));
+  }], focus(id, parentId, { kind: 'end' }), options);
+}
+
+function materializeDraftNode(
+  parentId: string,
+  index: number | null,
+  text: string,
+  id = freshId('node'),
+  undoGroup?: OperationUndoGroup,
+): Promise<CommandResult> {
+  return createNode(parentId, index, text, id, undoGroup ? { undoGroup } : undefined);
 }
 
 function createRichTextNode(parentId: string, index: number | null, content: RichText): Promise<CommandResult> {
@@ -221,8 +244,9 @@ function pasteNodesIntoNode(
     if (firstMeta.done !== undefined) firstChanges.push({ kind: 'done', value: firstMeta.done });
     firstChanges.push(...metadataInstructions(firstMeta, definitions));
     operations.push({ op: 'update', targets: oneId(nodeId), changes: firstChanges });
-    const childPlan = buildTreePlan(oneId(nodeId), children, null, definitions);
-    const siblingPlan = buildTreePlan(oneId(node.parentId), siblingsAfter, siblingIndex, definitions);
+    const context = createTreePlanContext();
+    const childPlan = buildTreePlan(oneId(nodeId), children, null, definitions, context);
+    const siblingPlan = buildTreePlan(oneId(node.parentId), siblingsAfter, siblingIndex, definitions, context);
     operations.push(...childPlan.operations, ...siblingPlan.operations);
     return operations;
   }, (_operation, diff) => {
@@ -262,8 +286,12 @@ function splitNode(
   }, () => focus(createdId, targetParentId, options.focusPlacement ?? { kind: 'start' }), { requiresDiff: false });
 }
 
-function applyNodeTextPatch(nodeId: string, patch: RichTextPatch): Promise<CommandResult> {
-  return update(nodeId, [{ kind: 'text-patch', field: 'content', patch }], focus(nodeId));
+function applyNodeTextPatch(
+  nodeId: string,
+  patch: RichTextPatch,
+  options?: Pick<MutationOptions, 'undoGroup'>,
+): Promise<CommandResult> {
+  return update(nodeId, [{ kind: 'text-patch', field: 'content', patch }], focus(nodeId), options);
 }
 
 function replaceNodeText(nodeId: string, content: RichText): Promise<CommandResult> {
@@ -936,7 +964,7 @@ async function backlinks(targetId: string): Promise<Backlink[]> {
 function mutate(
   build: () => readonly Change[],
   focusHint?: DesktopFocusHint,
-  options?: { readonly acknowledgeDestructive?: boolean; readonly requiresDiff?: boolean },
+  options?: MutationOptions,
 ): Promise<CommandResult> {
   return runDesktopMutation((revision) => ({
     protocolVersion: 1,
@@ -959,7 +987,7 @@ function update(
   nodeId: string,
   changes: UpdateInstruction[],
   focusHint?: DesktopFocusHint,
-  options?: { readonly acknowledgeDestructive?: boolean; readonly requiresDiff?: boolean },
+  options?: MutationOptions,
 ): Promise<CommandResult> {
   return mutate(() => [updateChange(nodeId, changes)], focusHint, options);
 }
@@ -1129,19 +1157,30 @@ interface TreePlan {
   readonly lastRootId?: string;
 }
 
+interface TreePlanContext {
+  nextCreateBinding(): string;
+}
+
+function createTreePlanContext(): TreePlanContext {
+  let sequence = 0;
+  return {
+    nextCreateBinding: () => `created${sequence += 1}`,
+  };
+}
+
 function buildTreePlan(
   parent: TargetRef,
   trees: readonly CreateNodeTree[],
   index: number | null = null,
   existingDefinitions?: DefinitionBindings,
+  context: TreePlanContext = createTreePlanContext(),
 ): TreePlan {
   const definitions = existingDefinitions ?? collectTreeDefinitions(trees);
   const operations = existingDefinitions ? [] : definitionEnsureOperations(definitions);
-  let sequence = 0;
   let lastRootId: string | undefined;
   const addTree = (tree: CreateNodeTree, parentRef: TargetRef, treeIndex: number | null): string => {
     const id = freshId('node');
-    const bind = `created${sequence += 1}`;
+    const bind = context.nextCreateBinding();
     operations.push({
       op: 'create',
       placement: structuralPlacement(parentRef, treeIndex),
@@ -1382,6 +1421,7 @@ function lowerFieldSlotMutation(
 }
 
 function treeDraft(tree: CreateNodeTree): NodeDraft {
+  const pasteMetadata = treeDraftPasteMetadata(tree);
   return {
     content: tree.content,
     children: tree.children.map(treeDraft),
@@ -1389,7 +1429,17 @@ function treeDraft(tree: CreateNodeTree): NodeDraft {
     ...(tree.type === 'codeBlock' ? { type: 'codeBlock', codeLanguage: tree.codeLanguage } : {}),
     ...(tree.checkbox !== undefined ? { checkbox: tree.checkbox } : {}),
     ...(tree.done !== undefined ? { done: tree.done } : {}),
+    ...(pasteMetadata ? { metadata: pasteMetadata } : {}),
   };
+}
+
+function treeDraftPasteMetadata(tree: CreateNodeTree): NodeDraft['metadata'] | undefined {
+  const metadata: NonNullable<NodeDraft['metadata']> = {};
+  if (tree.tags && tree.tags.length > 0) metadata.pasteTags = [...tree.tags];
+  if (tree.fields && tree.fields.length > 0) {
+    metadata.pasteFields = tree.fields.map((field) => ({ name: field.name, value: field.value }));
+  }
+  return metadata.pasteTags || metadata.pasteFields ? metadata : undefined;
 }
 
 function inlineReferenceContent(targetId: string, suppliedDisplayName?: string): RichText {

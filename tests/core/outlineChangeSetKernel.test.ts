@@ -115,6 +115,94 @@ describe('outline ChangeSet kernel', () => {
     }
   });
 
+  test('commits empty field placeholders through the public ChangeSet schema', async () => {
+    const workspace = await makeWorkspace();
+    const ownerId = await createExisting(workspace, 'Placeholder owner');
+    const nestedEntryId = `node:${crypto.randomUUID()}`;
+
+    await commitOutlineChangeSet(workspace, {
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      idempotencyKey: 'test:empty-field-placeholder',
+      operations: [
+        {
+          op: 'update',
+          targets: oneId(ownerId),
+          changes: [{ kind: 'field', action: 'define', name: '', fieldType: 'plain' }],
+        },
+        { op: 'ensure', resource: 'definition', definitionType: 'field', name: 'Outer', fieldType: 'plain', bind: 'outer' },
+        {
+          op: 'update',
+          targets: oneId(ownerId),
+          changes: [{
+            kind: 'field-slot',
+            field: { binding: 'outer' },
+            mutation: { action: 'append-field', name: '', fieldType: 'plain', id: nestedEntryId },
+          }],
+        },
+      ],
+    }, { origin: 'desktop' });
+
+    const state = workspace.documentState();
+    const directEntry = Object.values(state.nodes).find((node) => (
+      node.type === 'fieldEntry'
+      && node.parentId === ownerId
+      && node.id !== nestedEntryId
+      && state.nodes[node.fieldDefId]?.content.text === ''
+    ));
+    expect(directEntry).toBeDefined();
+    const nestedEntry = state.nodes[nestedEntryId];
+    expect(nestedEntry?.type).toBe('fieldEntry');
+    if (nestedEntry?.type !== 'fieldEntry') throw new Error('Expected nested placeholder field entry.');
+    expect(state.nodes[nestedEntry.fieldDefId]?.content.text).toBe('');
+  });
+
+  test('preserves pasted metadata when appending field value NodeDraft trees', async () => {
+    const workspace = await makeWorkspace();
+    const ownerId = await createExisting(workspace, 'Field value metadata owner');
+    const valueId = `node:${crypto.randomUUID()}`;
+
+    await commitOutlineChangeSet(workspace, {
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      idempotencyKey: 'test:field-value-paste-metadata',
+      operations: [
+        { op: 'ensure', resource: 'definition', definitionType: 'field', name: 'Slot', fieldType: 'plain', bind: 'slot' },
+        {
+          op: 'update',
+          targets: oneId(ownerId),
+          changes: [{
+            kind: 'field-slot',
+            field: { binding: 'slot' },
+            mutation: {
+              action: 'append-nodes',
+              id: valueId,
+              nodes: [draft('Task #Work', {
+                metadata: {
+                  pasteTags: ['Work'],
+                  pasteFields: [{ name: 'Status', value: 'Open' }],
+                },
+                children: [draft('Child #Next', { metadata: { pasteTags: ['Next'] } })],
+              })],
+            },
+          }],
+        },
+      ],
+    }, { origin: 'desktop' });
+
+    const state = workspace.documentState();
+    const workTagId = Object.values(state.nodes).find((node) => node.type === 'tagDef' && node.content.text === 'Work')?.id;
+    const statusFieldId = Object.values(state.nodes).find((node) => node.type === 'fieldDef' && node.content.text === 'Status')?.id;
+    const value = state.nodes[valueId];
+    expect(workTagId).toBeDefined();
+    expect(statusFieldId).toBeDefined();
+    expect(value?.tags).toContain(workTagId);
+    const statusEntry = value?.children
+      .map((childId) => state.nodes[childId])
+      .find((node) => node?.type === 'fieldEntry' && node.fieldDefId === statusFieldId);
+    expect(statusEntry?.children.map((childId) => state.nodes[childId]?.content.text)).toEqual(['Open']);
+  });
+
   test('previews without mutation and applies the exact fixed-ID result as one Operation', async () => {
     const workspace = await makeWorkspace();
     const beforeRevision = workspace.revision();

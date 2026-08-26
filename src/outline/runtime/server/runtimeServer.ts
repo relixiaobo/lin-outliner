@@ -69,7 +69,11 @@ export class OutlineRuntimeServer {
   private readonly onIdle?: OutlineRuntimeServerOptions['onIdle'];
   private idleTimer?: ReturnType<typeof setTimeout>;
   private idleGeneration = 0;
+  // All requests are lifecycle leases. Only finite foreground requests postpone
+  // maintenance; watch streams keep Runtime alive without starving cleanup.
   private activeRequests = 0;
+  private activeForegroundRequests = 0;
+  private idleDrainActive = false;
   private stopping = false;
   private readonly agentAttestations = new AgentAttestationRegistry();
 
@@ -165,6 +169,14 @@ export class OutlineRuntimeServer {
   private async handleRequest(request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
     this.idleGeneration += 1;
     this.activeRequests += 1;
+    this.activeForegroundRequests += 1;
+    let foregroundActive = true;
+    const releaseForegroundRequest = () => {
+      if (!foregroundActive) return;
+      foregroundActive = false;
+      this.activeForegroundRequests -= 1;
+      this.scheduleIdle();
+    };
     this.clearIdleTimer();
     try {
       if (!authorized(request.headers.authorization, this.descriptor.bearerToken)) {
@@ -309,6 +321,7 @@ export class OutlineRuntimeServer {
           throw new Error('Invalid outline streaming command or input');
         }
         if (body.command === 'watch' && checkOutlineSchema(WatchRequestSchema, body.input)) {
+          releaseForegroundRequest();
           await this.streamEvents(response, body.requestId, body.input);
         } else {
           await this.streamCommand(response, body);
@@ -325,6 +338,7 @@ export class OutlineRuntimeServer {
         writeJson(response, 400, { error: serverError(error) });
       }
     } finally {
+      releaseForegroundRequest();
       this.activeRequests -= 1;
       this.scheduleIdle();
     }
@@ -539,7 +553,7 @@ export class OutlineRuntimeServer {
   }
 
   private scheduleIdle(): void {
-    if (this.stopping || this.activeRequests > 0 || this.idleTimer) return;
+    if (this.stopping || this.activeForegroundRequests > 0 || this.idleTimer || this.idleDrainActive) return;
     const generation = this.idleGeneration;
     this.idleTimer = setTimeout(() => {
       this.idleTimer = undefined;
@@ -549,15 +563,28 @@ export class OutlineRuntimeServer {
   }
 
   private async drainIdle(generation: number): Promise<void> {
-    await this.workspace.maintain({ compactIfNeeded: true }).catch(() => undefined);
-    if (!this.canFinishIdleDrain(generation)) return;
+    if (!this.canRunIdleMaintenance(generation)) return;
+    this.idleDrainActive = true;
     try {
-      await this.onIdle?.();
-    } catch {
-      // Idle callback failure must not strand a Runtime that has no clients.
+      await this.workspace.maintain({ compactIfNeeded: true }).catch(() => undefined);
+      if (!this.canFinishIdleDrain(generation)) return;
+      try {
+        await this.onIdle?.();
+      } catch {
+        // Idle callback failure must not strand a Runtime that has no clients.
+      }
+      if (!this.canFinishIdleDrain(generation)) return;
+      await this.stop();
+    } finally {
+      this.idleDrainActive = false;
+      this.scheduleIdle();
     }
-    if (!this.canFinishIdleDrain(generation)) return;
-    await this.stop();
+  }
+
+  private canRunIdleMaintenance(generation: number): boolean {
+    return !this.stopping
+      && this.activeForegroundRequests === 0
+      && this.idleGeneration === generation;
   }
 
   private canFinishIdleDrain(generation: number): boolean {

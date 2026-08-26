@@ -94,7 +94,7 @@ describe('OutlineRuntimeWorkspace', () => {
     });
   });
 
-  test('prunes eligible recovery at startup with the new Runtime identity', async () => {
+  test('prunes eligible recovery during restarted maintenance with the new Runtime identity', async () => {
     const root = await makeRoot();
     let nowMs = Date.parse('2036-01-01T00:00:00.000Z');
     const options = {
@@ -107,6 +107,7 @@ describe('OutlineRuntimeWorkspace', () => {
 
     nowMs += 2 * 86_400_000;
     const restarted = await OutlineRuntimeWorkspace.open(root, { ...options, instanceId: 'runtime:startup-second' });
+    await restarted.maintain();
     const [event] = await restarted.store.eventsAfter(baseline);
 
     expect((await restarted.store.operation(operation.operationId))?.recovery.state).toBe('expired');
@@ -118,7 +119,34 @@ describe('OutlineRuntimeWorkspace', () => {
     expect(decodeEventCursor(event!.cursor, { instanceId: restarted.instanceId })).not.toBeNull();
   });
 
-  test('does not reverse a durable Operation when post-settlement compaction maintenance fails', async () => {
+  test('acknowledges mutations before post-commit compaction maintenance', async () => {
+    const root = await makeRoot();
+    let snapshotRenames = 0;
+    let enterCompaction!: () => void;
+    const compactionEntered = new Promise<void>((resolve) => { enterCompaction = resolve; });
+    const store = new WorkspaceTransactionLog(root, {
+      compactionRecords: 1,
+      afterSnapshotRename: () => {
+        snapshotRenames += 1;
+        if (snapshotRenames === 2) enterCompaction();
+      },
+    });
+    const workspace = await OutlineRuntimeWorkspace.open(root, { store });
+
+    const mutation = workspace.mutate(createRequest('Acknowledged before compaction'));
+    const firstSettlement = await Promise.race([
+      mutation.then(() => 'mutation' as const),
+      compactionEntered.then(() => 'compaction' as const),
+    ]);
+
+    expect(firstSettlement).toBe('mutation');
+    const operation = await mutation;
+    expect(operation.kind).toBe('outline.operation');
+    expect(workspace.projection().nodes.some((node) => node.content.text === 'Acknowledged before compaction')).toBe(true);
+    expect(snapshotRenames).toBe(1);
+  });
+
+  test('does not reverse a durable Operation when later compaction maintenance fails', async () => {
     const root = await makeRoot();
     let snapshotRenames = 0;
     const store = new WorkspaceTransactionLog(root, {
@@ -132,6 +160,8 @@ describe('OutlineRuntimeWorkspace', () => {
 
     const first = await workspace.mutate(createRequest('Committed before maintenance failure'));
     expect(first.kind).toBe('outline.operation');
+    expect(workspace.projection().nodes.some((node) => node.content.text === 'Committed before maintenance failure')).toBe(true);
+    await expect(workspace.maintain({ compactIfNeeded: true })).rejects.toThrow('injected maintenance failure');
     expect(workspace.projection().nodes.some((node) => node.content.text === 'Committed before maintenance failure')).toBe(true);
 
     const second = await workspace.mutate(createRequest('Writable after maintenance reload'));
@@ -259,6 +289,38 @@ describe('OutlineRuntimeWorkspace', () => {
     await restartedAgain.undo({ origin: 'local-user' });
     expect(restartedAgain.documentState().nodes[firstNodeId]).toBeDefined();
     expect(restartedAgain.documentState().nodes[secondNodeId]).toBeUndefined();
+  });
+
+  test('undo reverts a materialized text-edit group as one user action', async () => {
+    const root = await makeRoot();
+    const nodeId = `node:${crypto.randomUUID()}`;
+    const workspace = await OutlineRuntimeWorkspace.open(root);
+    const undoGroup = {
+      groupId: `undo-group:${crypto.randomUUID()}`,
+      kind: 'text-edit' as const,
+      nodeId,
+    };
+    const created = await workspace.mutate({ ...createRequest('A', { nodeId }), undoGroup });
+    const edited = await workspace.mutate({
+      ...textPatchRequest(nodeId, 'AB'),
+      undoGroup,
+    });
+
+    const undo = await workspace.undo({ origin: 'local-user' });
+
+    expect(workspace.documentState().nodes[nodeId]).toBeUndefined();
+    expect(undo.revertsOperationId).toBe(edited.operationId);
+    expect(undo.revertsOperationIds).toEqual([created.operationId, edited.operationId]);
+    expect((await workspace.store.operations()).map((operation) => operation.recovery.state)).toEqual([
+      'reverted',
+      'reverted',
+      'available',
+    ]);
+
+    const restarted = await OutlineRuntimeWorkspace.open(root);
+    const redo = await restarted.redo({ origin: 'local-user' });
+    expect(redo.revertsOperationId).toBe(undo.operationId);
+    expect(restarted.documentState().nodes[nodeId]?.content.text).toBe('AB');
   });
 
   test('scopes undo by origin and guards the selected Operation', async () => {
@@ -641,6 +703,21 @@ function updateRequest(nodeId: string, description: string) {
     summary: `Updated ${nodeId}.`,
     execute: (core: Parameters<Parameters<OutlineRuntimeWorkspace['mutate']>[0]['execute']>[0]) => {
       core.updateNodeDescription(nodeId, description);
+    },
+  };
+}
+
+function textPatchRequest(nodeId: string, text: string) {
+  const payload = { kind: 'text-patch', nodeId, text };
+  return {
+    origin: 'local-user' as const,
+    changeSetHash: canonicalSha256(payload),
+    diffHash: canonicalSha256({ ...payload, kind: 'diff' }),
+    summary: `Edited ${nodeId}.`,
+    execute: (core: Parameters<Parameters<OutlineRuntimeWorkspace['mutate']>[0]['execute']>[0]) => {
+      core.applyNodeTextPatch(nodeId, {
+        ops: [{ type: 'replace_all', content: { text, marks: [], inlineRefs: [] } }],
+      });
     },
   };
 }

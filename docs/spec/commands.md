@@ -101,13 +101,16 @@ The public product rule is:
 - multiple resources, dependencies, cross-date work, or bounded bulk edits use
   one ChangeSet with bindings, one Diff, and one apply.
 
-No common flow requires a shell mutation loop, intermediate created-ID lookup,
-or multiple mutation Operations. Create and ensure results include created or
-bound IDs through the Operation result's bounded Projection. Common
-single-resource writes also return the smallest bounded Projection that
+No complete command intent requires a shell mutation loop, intermediate
+created-ID lookup, or several mutation Operations. Create and ensure results
+include created or bound IDs through the Operation result's bounded Projection.
+Common single-resource writes also return the smallest bounded Projection that
 identifies or verifies their primary target. The convenience Projection is not
 independent verification; callers still use `show`, `find`, or `log` when the
-workflow requires a separate observation. Repeated `set`,
+workflow requires a separate observation. Ordinary focused editor typing may
+settle as several low-latency direct-commit Operations; when the renderer marks
+adjacent materialize/text-patch Operations with the same text-edit undo group,
+Runtime undo/redo selection treats them as one user action. Repeated `set`,
 `configure`, and `ensure` calls converge or return `outline.no-change` without
 creating another Operation. `create` and `add` remain explicit creation.
 
@@ -115,14 +118,18 @@ creating another Operation. `create` and `add` remain explicit creation.
 description, code, checkbox/done state, tags, fields, references, media, and
 children. Authored Node IDs use the canonical `node:<uuid>` form: a lowercase
 RFC 4122 variant v4 UUID matching the Core client-ID validator and every
-Runtime-generated public Node ID. `NodeDraft` capture metadata uses the complete
-shared capture-provenance schema rather than
-arbitrary JSON, and every definition create/ensure form uses the same closed
-field-type union. Invalid IDs, field types, or nested provenance are rejected at
-CLI and Runtime admission with no write. `definition create` owns complete reusable tag/field definitions and
-their type-specific configuration, templates/options, defaults, inheritance,
-and constraints. `field define` instead creates or reuses a field on one target
-and may set its initial value. `tag add` applies an existing definition.
+Runtime-generated public Node ID. `NodeDraft` metadata is closed: capture
+metadata uses the complete shared capture-provenance schema, query metadata uses
+the public query grammar, and paste metadata may carry `pasteTags` plus
+`pasteFields` so structured paste and slash-trigger trees preserve semantic
+tags/fields through field-slot append paths. Arbitrary JSON is not admitted, and
+invalid IDs, field types, or nested provenance are rejected at CLI and Runtime
+admission with no write. `definition create` owns complete reusable tag/field
+definitions and their type-specific configuration, templates/options, defaults,
+inheritance, and constraints. `field define` instead creates or reuses a field on
+one target and may set its initial value; an empty field name is valid only as an
+editor placeholder slot and is still recorded through the public schema rather
+than a renderer-only command. `tag add` applies an existing definition.
 
 `search create` accepts title, canonical query or `--match` STRING_MATCH
 shorthand, and initial mode, ordered sort, filters, group, display fields, and
@@ -371,16 +378,21 @@ unchanged.
 
 An Operation records origin, optional trusted causation, source, summary,
 bounded affected IDs plus complete-set count/hash, before/after revisions,
-recovery state, and requested bounded result Projections. `revert` checks the
-retained recovery patch and current affected state; a conflict returns a typed
+recovery state, optional text-edit undo-group metadata, and requested bounded
+result Projections. `revert` checks one retained recovery patch and current
+affected state; a conflict returns a typed
 `RevertConflictDiff` in `revert_conflict.error.details.conflictDiff` and writes
 nothing. The Diff identifies each changed Node precondition by its expected
-post-Operation and actual digest. A successful revert is a new Operation linked to its target.
+post-Operation and actual digest. A successful `revert OPERATION_ID` is a new
+Operation linked to that exact target through `revertsOperationId`.
 `undo` and `redo` are convenience selection over the same retained history and
 do not expose a separate stack authority. They default to the authenticated
 caller's origin, accept an explicit `--origin` scope, and can require the visible
-stack head with `--expect-operation`. A mismatched guard returns a conflict and
-creates no Operation.
+stack head with `--expect-operation`. Consecutive available Operations with the
+same text-edit `undoGroup.groupId` are selected together; the group recovery
+Operation links the visible stack head in `revertsOperationId` and the complete
+covered ordered set in `revertsOperationIds`. A mismatched guard returns a
+conflict and creates no Operation.
 
 Operation summaries aggregate ChangeSet operations by change kind, so their
 encoded size remains bounded even when one legal ChangeSet contains tens of

@@ -145,7 +145,9 @@ terminal or Agent intent
 No renderer module may directly mutate document state. UI changes that affect
 document content or tree structure must use a public ChangeSet. Desktop intent
 helpers preserve focus and interaction hints locally; those hints are not part
-of the persisted contract.
+of the persisted contract. Renderer text-edit undo groups may span adjacent
+direct-commit Operations for undo/redo selection, but recovery remains durable
+and Operation-addressed.
 
 Surfaces that act on a presented object go through the **action seam** rather
 than assembling commands themselves — see [`action-registry.md`](action-registry.md):
@@ -224,9 +226,14 @@ visible to watches under the identity that will publish the descriptor.
 Storage maintenance derives all work from the committed log and indexes. It
 repairs a torn tail, expires eligible recovery, removes orphan recovery blobs,
 collects unprotected assets, and compacts a log after its record/byte threshold.
-Runtime runs it at workspace startup, after successful settlement, and before
-idle shutdown. Recovery expiry is durable and observable before blob unlink;
-cleanup or compaction failure cannot reverse an already acknowledged Operation.
+Runtime schedules it after startup once the descriptor is serviceable, during
+foreground-idle windows, and before idle shutdown. A watch stream keeps Runtime
+alive but does not count as foreground work, so ordinary desktop sessions still
+receive maintenance while the live event stream is open. Successful mutation
+acknowledgement never waits for post-commit cleanup, asset garbage collection,
+or compaction. Recovery expiry that is required for admission may still run
+before a write; recovery expiry is durable and observable before blob unlink.
+Cleanup or compaction failure cannot reverse an already acknowledged Operation.
 A failed compaction invalidates the process-local log cache so the next write
 reloads the authoritative snapshot/log boundary before admission.
 

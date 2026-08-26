@@ -57,6 +57,10 @@ interface ExecuteResult {
   readonly reviewedReplaceTargetIds: readonly string[];
 }
 
+interface CommitOptions {
+  readonly undoGroup?: Operation['undoGroup'];
+}
+
 export async function diffOutlineChangeSet(
   workspace: OutlineRuntimeWorkspace,
   input: ChangeSet,
@@ -76,6 +80,7 @@ export async function commitOutlineChangeSet(
   workspace: OutlineRuntimeWorkspace,
   input: ChangeSet,
   context: OutlineRuntimeRequestContext,
+  options: CommitOptions = {},
 ): Promise<Operation | NoChangeResult> {
   const directPayloadHash = directCommitPayloadHash(input);
   return workspace.commitPrepared({
@@ -102,6 +107,7 @@ export async function commitOutlineChangeSet(
       idempotencyKey: normalized.idempotencyKey,
       ...(normalized.idempotencyKey ? { idempotencyPayloadHash: directPayloadHash } : {}),
       idFactory: createDeterministicCoreIdFactory(changeSetHash),
+      undoGroup: options.undoGroup,
       assetLeases: Object.fromEntries(Object.entries(assetLeases).map(([leaseId, lease]) => [leaseId, lease.assetId])),
       execute: async (candidate) => {
         execution = await executeOutlineChangeSet(candidate, normalized, assetLeases);
@@ -1526,11 +1532,18 @@ function fieldEntry(core: Core, ownerId: string, fieldDefId: string): Extract<No
 }
 
 function toCoreTree(draft: NodeDraft): CreateNodeTree {
+  const metadata = isRecord(draft.metadata) ? draft.metadata : {};
   return {
     content: draft.content,
-    ...(draft.description ? { description: draft.description } : {}),
+    ...(draft.description !== undefined ? { description: draft.description } : {}),
     ...(draft.type === 'codeBlock' ? { type: 'codeBlock' as const, codeLanguage: draft.codeLanguage } : {}),
     ...(draft.checkbox ? { checkbox: true, done: draft.done === true } : {}),
+    ...(Array.isArray(metadata.pasteTags) ? { tags: metadata.pasteTags.filter((tag): tag is string => typeof tag === 'string') } : {}),
+    ...(Array.isArray(metadata.pasteFields) ? {
+      fields: metadata.pasteFields.filter((field): field is { name: string; value: string } => (
+        isRecord(field) && typeof field.name === 'string' && typeof field.value === 'string'
+      )).map((field) => ({ name: field.name, value: field.value })),
+    } : {}),
     children: draft.children.map(toCoreTree),
   };
 }

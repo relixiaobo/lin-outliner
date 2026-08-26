@@ -167,12 +167,7 @@ export class OutlineDocumentService {
         if (!this.snapshot) throw new Error('Outline Runtime Projection is not initialized.');
         update = { kind: 'full', revision: settlement.revision, projection: this.snapshot.projection };
       } else {
-        try {
-          const event = await this.waitForOperation(settlement.operationId);
-          update = projectionUpdateFromOutlineEvent<NodeProjection>(event) ?? await this.resyncUpdate();
-        } catch {
-          update = await this.resyncUpdate();
-        }
+        update = await this.updateFromOwnOperation(settlement.operationId);
       }
       return {
         update,
@@ -386,6 +381,15 @@ export class OutlineDocumentService {
   private invalidateRequestClient(): void {
     this.requestClient?.close();
     this.requestClient = null;
+  }
+
+  private async updateFromOwnOperation(operationId: string): Promise<ProjectionUpdate> {
+    try {
+      const event = await this.waitForOperation(operationId);
+      return projectionUpdateFromOutlineEvent<NodeProjection>(event) ?? await this.resyncUpdate();
+    } catch {
+      return this.resyncUpdate();
+    }
   }
 
   private waitForOperation(operationId: string): Promise<OutlineEvent> {

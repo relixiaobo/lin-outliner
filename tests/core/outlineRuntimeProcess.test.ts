@@ -408,7 +408,7 @@ describe('Outline Runtime process boundary', () => {
     nowMs += 2 * 86_400_000;
     const restarted = await OutlineRuntimeServer.start({
       root,
-      idleTimeoutMs: 60_000,
+      idleTimeoutMs: 25,
       workspaceOptions: { ...workspaceOptions, instanceId: 'runtime:startup-new' },
     });
     expect(restarted).not.toBeNull();
@@ -417,6 +417,7 @@ describe('Outline Runtime process boundary', () => {
     const iterator = client.watch()[Symbol.asyncIterator]();
     try {
       expect(restarted.workspace.eventBaselineSequence).toBe(baseline);
+      await waitFor(async () => (await restarted.workspace.store.eventsAfter(baseline)).length > 0, 2_000);
       const [persisted] = await restarted.workspace.store.eventsAfter(baseline);
       expect(persisted).toMatchObject({
         type: 'operation.recovery-expired',
@@ -425,7 +426,7 @@ describe('Outline Runtime process boundary', () => {
       });
 
       expect((await iterator.next()).value?.type).toBe('hello');
-      const replayed = (await iterator.next()).value;
+      const replayed = (await withTimeout(iterator.next(), 2_000, 'Runtime did not publish startup maintenance event')).value;
       expect(replayed?.type).toBe('event');
       expect(replayed?.type === 'event' ? replayed.event : undefined).toMatchObject({
         type: 'operation.recovery-expired',
@@ -619,6 +620,34 @@ describe('Outline Runtime process boundary', () => {
 
     expect(await readdir(runtime.workspace.store.recoveryDirectory)).toEqual([]);
     await waitFor(async () => (await readOutlineRuntimeDescriptor(root)) === null, 2_000);
+  });
+
+  test('runs foreground-idle storage maintenance while a watch stream holds the Runtime alive', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({
+      root,
+      idleTimeoutMs: 25,
+    });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const watchClient = new OutlineClient(runtime.descriptor);
+    const requestClient = new OutlineClient(runtime.descriptor);
+    const iterator = watchClient.watch()[Symbol.asyncIterator]();
+    try {
+      expect((await withTimeout(iterator.next(), 2_000, 'Runtime watch did not start')).value?.type).toBe('hello');
+      const orphan = path.join(runtime.workspace.store.recoveryDirectory, `${'e'.repeat(64)}.json`);
+      await writeFile(orphan, '{}', { mode: 0o600 });
+      expect((await requestClient.request('status', {})).ok).toBe(true);
+
+      await waitFor(async () => (await readdir(runtime.workspace.store.recoveryDirectory)).length === 0, 2_000);
+      expect((await readOutlineRuntimeDescriptor(root))?.instanceId).toBe(runtime.descriptor.instanceId);
+      expect((await requestClient.request('status', {})).ok).toBe(true);
+    } finally {
+      await iterator.return?.();
+      watchClient.close();
+      requestClient.close();
+      await runtime.stop();
+    }
   });
 
   test('does not let an old idle drain stop a watch admitted during onIdle', async () => {

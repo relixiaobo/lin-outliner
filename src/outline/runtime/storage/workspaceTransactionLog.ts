@@ -1235,9 +1235,9 @@ function jsonlRecordBytes(record: LogRecord): number {
 
 function applyTransactionRecord(state: LoadedState, record: TransactionRecordBody & { checksum: string }, eventRetention: number) {
   const operation = clone(record.operation);
-  if (operation.revertsOperationId) {
-    const reverted = state.operationById.get(operation.revertsOperationId);
-    if (!reverted) throw new Error(`Revert references a missing Operation: ${operation.revertsOperationId}`);
+  for (const operationId of operationRevertTargetIds(operation)) {
+    const reverted = state.operationById.get(operationId);
+    if (!reverted) throw new Error(`Revert references a missing Operation: ${operationId}`);
     replaceOperation(state, {
       ...clone(reverted),
       recovery: { ...clone(reverted.recovery), state: 'reverted' },
@@ -1490,8 +1490,10 @@ function assertReplayedRecord(record: LogRecord, state: LoadedState): void {
   if (state.operationById.has(record.operation.operationId)) {
     throw new Error(`Duplicate committed outline Operation: ${record.operation.operationId}`);
   }
-  if (record.operation.revertsOperationId && !state.operationById.has(record.operation.revertsOperationId)) {
-    throw new Error(`Committed revert references a missing Operation: ${record.operation.revertsOperationId}`);
+  for (const operationId of operationRevertTargetIds(record.operation)) {
+    if (!state.operationById.has(operationId)) {
+      throw new Error(`Committed revert references a missing Operation: ${operationId}`);
+    }
   }
   if (record.operation.recovery.recoveryPatchId !== record.recovery.recoveryPatchId) {
     throw new Error(`Committed Operation recovery identity mismatch: ${record.operation.operationId}`);
@@ -1542,7 +1544,12 @@ function assertTransactionInput(input: WorkspaceTransactionInput): void {
     || input.event.revision !== input.operation.revisionAfter) {
     throw new Error('Outline transaction components do not describe one Operation');
   }
-  const expectedEventType = input.operation.revertsOperationId
+  if (input.operation.revertsOperationId
+    && input.operation.revertsOperationIds
+    && !input.operation.revertsOperationIds.includes(input.operation.revertsOperationId)) {
+    throw new Error('Outline transaction plural revert targets must include the primary revert target');
+  }
+  const expectedEventType = operationRevertsAny(input.operation)
     ? 'operation.reverted'
     : 'operation.committed';
   if (input.event.type !== expectedEventType) {
@@ -1554,6 +1561,15 @@ function assertTransactionInput(input: WorkspaceTransactionInput): void {
   if (input.idempotency && !isIdempotencyRecord(input.idempotency)) {
     throw new Error('Invalid outline transaction idempotency record');
   }
+}
+
+function operationRevertsAny(operation: Operation): boolean {
+  return operationRevertTargetIds(operation).length > 0;
+}
+
+function operationRevertTargetIds(operation: Operation): readonly string[] {
+  if (operation.revertsOperationIds && operation.revertsOperationIds.length > 0) return operation.revertsOperationIds;
+  return operation.revertsOperationId ? [operation.revertsOperationId] : [];
 }
 
 function assertEventSequence(event: OutlineEvent, state: LoadedState): void {

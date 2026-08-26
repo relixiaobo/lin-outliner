@@ -327,6 +327,11 @@ const NodeDraftMetadataSchema = Type.Object({
   alt: Type.Optional(Type.Union([Type.String({ maxLength: 4_096 }), Type.Null()])),
   capture: Type.Optional(CaptureProvenanceSchema),
   query: Type.Optional(QueryExpressionSchema),
+  pasteTags: Type.Optional(Type.Array(Type.String({ maxLength: 1_024 }), { maxItems: 1_024 })),
+  pasteFields: Type.Optional(Type.Array(Type.Object({
+    name: Type.String({ maxLength: 1_024 }),
+    value: Type.String({ maxLength: 4_194_304 }),
+  }, closed), { maxItems: 1_024 })),
 }, closed);
 
 export const NodeDraftSchema = Type.Cyclic({
@@ -447,7 +452,7 @@ const FieldSlotMutationSchema = Type.Union([
   }, closed),
   Type.Object({
     action: Type.Literal('append-field'),
-    name: Type.String({ minLength: 1, maxLength: 1_024 }),
+    name: Type.String({ maxLength: 1_024 }),
     fieldType: FieldTypeSchema,
     id: Type.Optional(Identifier),
     ...FieldSlotCommon,
@@ -483,7 +488,7 @@ const FieldInstructionSchema = Type.Union([
   Type.Object({
     kind: Type.Literal('field'),
     action: Type.Literal('define'),
-    name: Type.String({ minLength: 1, maxLength: 1_024 }),
+    name: Type.String({ maxLength: 1_024 }),
     fieldType: FieldTypeSchema,
     index: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Null()])),
     value: Type.Optional(ScalarValueSchema),
@@ -906,6 +911,12 @@ export const NoChangeResultSchema = Type.Object({
   result: Type.Optional(Type.Array(ProjectionResultSchema, { maxItems: 32 })),
 }, { ...closed, $id: 'NoChangeResult' });
 
+export const OperationUndoGroupSchema = Type.Object({
+  groupId: Identifier,
+  kind: Type.Literal('text-edit'),
+  nodeId: Type.Optional(Identifier),
+}, { ...closed, $id: 'OperationUndoGroup' });
+
 export const OperationSchema = Type.Object({
   protocolVersion: Type.Literal(OUTLINE_PROTOCOL_VERSION),
   kind: Type.Literal('outline.operation'),
@@ -935,7 +946,9 @@ export const OperationSchema = Type.Object({
     ]),
     retainedUntilAtLeast: Timestamp,
   }, closed),
+  undoGroup: Type.Optional(OperationUndoGroupSchema),
   revertsOperationId: Type.Optional(Identifier),
+  revertsOperationIds: Type.Optional(Type.Array(Identifier, { minItems: 1, maxItems: 1_000, uniqueItems: true })),
   result: Type.Optional(Type.Array(ProjectionResultSchema, { maxItems: 32 })),
 }, { ...closed, $id: 'Operation' });
 
@@ -1338,6 +1351,7 @@ export type Change = Static<typeof ChangeSchema>;
 export type ChangeSet = Static<typeof ChangeSetSchema>;
 export type Diff = Static<typeof DiffSchema>;
 export type NoChangeResult = Static<typeof NoChangeResultSchema>;
+export type OperationUndoGroup = Static<typeof OperationUndoGroupSchema>;
 export type Operation = Static<typeof OperationSchema>;
 export type OperationLogPage = Static<typeof OperationLogPageSchema>;
 export type ImportOptions = Static<typeof ImportOptionsSchema>;

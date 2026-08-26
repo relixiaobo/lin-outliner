@@ -33,7 +33,9 @@ export interface OutlineRuntimeMutationRequest {
   readonly summary: string;
   readonly idempotencyKey?: string;
   readonly idempotencyPayloadHash?: string;
+  readonly undoGroup?: Operation['undoGroup'];
   readonly revertsOperationId?: string;
+  readonly revertsOperationIds?: readonly string[];
   readonly protectedAssetRecordIds?: readonly string[];
   readonly assetDelta?: OutlineAssetDelta;
   readonly assetLeases?: Readonly<Record<string, string>>;
@@ -120,7 +122,6 @@ export class OutlineRuntimeWorkspace {
       loaded.latestEventSequence,
       options.now,
     );
-    await workspace.maintain({ compactIfNeeded: true }).catch(() => undefined);
     return workspace;
   }
 
@@ -245,14 +246,16 @@ export class OutlineRuntimeWorkspace {
       const admission = await this.prepareMutation(options);
       if (admission.existingOperation) return admission.existingOperation;
       const operations = await this.store.operations();
-      const operationId = operationHistory(
+      const target = operationHistory(
         filterHistoryOperations(operations, options.selectionOrigin ?? options.origin),
       ).undo.at(-1);
-      if (!operationId) {
+      if (!target) {
         throw new OutlineContractError(outlineError('not_found', 'selection', 'No recoverable Operation is available to undo.'));
       }
-      assertExpectedHistoryOperation('undo', operationId, options.expectOperationId);
-      return this.revertInsideQueue(operationId, options, admission);
+      assertExpectedHistoryOperation('undo', target.stackOperationId, options.expectOperationId);
+      return target.operationIds.length === 1
+        ? this.revertInsideQueue(target.operationIds[0]!, options, admission)
+        : this.revertGroupInsideQueue(target.operationIds, options, admission);
     });
   }
 
@@ -263,14 +266,16 @@ export class OutlineRuntimeWorkspace {
       const admission = await this.prepareMutation(options);
       if (admission.existingOperation) return admission.existingOperation;
       const operations = await this.store.operations();
-      const operationId = operationHistory(
+      const target = operationHistory(
         filterHistoryOperations(operations, options.selectionOrigin ?? options.origin),
       ).redo.at(-1);
-      if (!operationId) {
+      if (!target) {
         throw new OutlineContractError(outlineError('not_found', 'selection', 'No recoverable revert Operation is available to redo.'));
       }
-      assertExpectedHistoryOperation('redo', operationId, options.expectOperationId);
-      return this.revertInsideQueue(operationId, options, admission);
+      assertExpectedHistoryOperation('redo', target.stackOperationId, options.expectOperationId);
+      return target.operationIds.length === 1
+        ? this.revertInsideQueue(target.operationIds[0]!, options, admission)
+        : this.revertGroupInsideQueue(target.operationIds, options, admission);
     });
   }
 
@@ -299,11 +304,55 @@ export class OutlineRuntimeWorkspace {
     }, admission);
   }
 
+  private async revertGroupInsideQueue(
+    operationIds: readonly string[],
+    options: Pick<OutlineRuntimeMutationRequest, 'origin' | 'causation' | 'idempotencyKey' | 'idempotencyPayloadHash'>,
+    admission: WorkspaceMutationAdmission,
+  ): Promise<Operation> {
+    const orderedOperationIds = [...operationIds];
+    const recoveries = await Promise.all(orderedOperationIds.map((operationId) => this.store.recoveryPatch(operationId)));
+    const revertOrder = [...recoveries].reverse();
+    const latestOperationId = orderedOperationIds.at(-1)!;
+    const changeSetHash = canonicalSha256({ kind: 'outline.revert-group', operationIds: orderedOperationIds });
+    const diffHash = canonicalSha256({
+      kind: 'outline.revert-group-diff',
+      operationIds: orderedOperationIds,
+      recoveries: recoveries.map((recovery) => ({
+        operationId: recovery.operationId,
+        afterStateHash: recovery.afterStateHash,
+        beforeStateHash: recovery.beforeStateHash,
+      })),
+    });
+    return this.applyRequiredMutation({
+      ...options,
+      changeSetHash,
+      diffHash,
+      summary: `Reverted ${orderedOperationIds.length} grouped Operations ending at ${latestOperationId}.`,
+      revertsOperationId: latestOperationId,
+      revertsOperationIds: orderedOperationIds,
+      protectedAssetRecordIds: recoveries.flatMap((recovery) => recovery.protectedAssetRecordIds),
+      execute: (candidate) => {
+        for (const recovery of revertOrder) {
+          this.assertRecoveryPreconditionsOnCore(candidate, recovery.operationId, recovery);
+          candidate.applyRecoveryPatch(recoveryPatchToCorePatch(recovery));
+        }
+      },
+    }, admission);
+  }
+
   private assertRecoveryPreconditions(
     operationId: string,
     recovery: Awaited<ReturnType<WorkspaceTransactionLog['recoveryPatch']>>,
   ): void {
-    const nodes = this.core.state().nodes;
+    this.assertRecoveryPreconditionsOnCore(this.core, operationId, recovery);
+  }
+
+  private assertRecoveryPreconditionsOnCore(
+    core: Core,
+    operationId: string,
+    recovery: Awaited<ReturnType<WorkspaceTransactionLog['recoveryPatch']>>,
+  ): void {
+    const nodes = core.state().nodes;
     const changedPreconditions: RevertConflictDiff['changedPreconditions'] = recovery.nodes.flatMap((entry) => {
       const current = nodes[entry.id];
       const actualDigest = current ? canonicalSha256(current) : null;
@@ -478,14 +527,16 @@ export class OutlineRuntimeWorkspace {
         state: 'available',
         retainedUntilAtLeast: recoveryPatch.retainedUntilAtLeast,
       },
+      ...(request.undoGroup ? { undoGroup: request.undoGroup } : {}),
       ...(request.revertsOperationId ? { revertsOperationId: request.revertsOperationId } : {}),
+      ...(request.revertsOperationIds ? { revertsOperationIds: [...request.revertsOperationIds] } : {}),
       ...(result ? { result } : {}),
     };
     const eventSequence = admission.latestEventSequence + 1;
     const event: OutlineEvent = {
       protocolVersion: OUTLINE_PROTOCOL_VERSION,
       kind: 'outline.event',
-      type: request.revertsOperationId ? 'operation.reverted' : 'operation.committed',
+      type: operationRevertsAny(operation) ? 'operation.reverted' : 'operation.committed',
       instanceId: this.instanceId,
       sequence: eventSequence,
       revision: operation.revisionAfter,
@@ -538,7 +589,6 @@ export class OutlineRuntimeWorkspace {
       this.core = candidate;
       this.publishEvents(appended.maintenanceEvents);
       this.publishEvents([appended.event]);
-      await this.runMaintenance(true).catch(() => undefined);
     }
     return appended.operation;
   }
@@ -599,41 +649,84 @@ function assetRecordIdsInNodes(nodes: readonly Node[]): Set<string> {
   return result;
 }
 
+interface HistoryStackItem {
+  readonly operationIds: readonly string[];
+  readonly stackOperationId: string;
+  readonly undoGroupId?: string;
+}
+
 function operationHistory(operations: readonly Operation[]): {
-  readonly undo: readonly string[];
-  readonly redo: readonly string[];
+  readonly undo: readonly HistoryStackItem[];
+  readonly redo: readonly HistoryStackItem[];
 } {
-  const undo: string[] = [];
-  const redo: string[] = [];
+  const undo: HistoryStackItem[] = [];
+  const redo: HistoryStackItem[] = [];
   for (const operation of operations) {
-    const target = operation.revertsOperationId;
-    if (!target) {
-      undo.push(operation.operationId);
+    const targets = operationRevertTargetIds(operation);
+    if (targets.length === 0) {
+      pushHistoryOperation(undo, operation);
       redo.length = 0;
       continue;
     }
-    if (undo.at(-1) === target) {
+    if (historyItemMatchesTargets(undo.at(-1), targets)) {
       undo.pop();
-      redo.push(operation.operationId);
+      redo.push(historyItemForOperation(operation));
       continue;
     }
-    if (redo.at(-1) === target) {
+    if (historyItemMatchesTargets(redo.at(-1), targets)) {
       redo.pop();
-      undo.push(operation.operationId);
+      undo.push(historyItemForOperation(operation));
       continue;
     }
-    removeOperationId(undo, target);
-    removeOperationId(redo, target);
-    undo.push(operation.operationId);
+    removeOperationTargets(undo, targets);
+    removeOperationTargets(redo, targets);
+    pushHistoryOperation(undo, operation);
     redo.length = 0;
   }
   const available = new Set(operations
     .filter((operation) => operation.recovery.state === 'available')
     .map((operation) => operation.operationId));
   return {
-    undo: undo.filter((operationId) => available.has(operationId)),
-    redo: redo.filter((operationId) => available.has(operationId)),
+    undo: undo.filter((item) => item.operationIds.every((operationId) => available.has(operationId))),
+    redo: redo.filter((item) => item.operationIds.every((operationId) => available.has(operationId))),
   };
+}
+
+function pushHistoryOperation(stack: HistoryStackItem[], operation: Operation): void {
+  const groupId = operation.undoGroup?.groupId;
+  const last = stack.at(-1);
+  if (groupId && last?.undoGroupId === groupId) {
+    stack[stack.length - 1] = {
+      operationIds: [...last.operationIds, operation.operationId],
+      stackOperationId: operation.operationId,
+      undoGroupId: groupId,
+    };
+    return;
+  }
+  stack.push(historyItemForOperation(operation));
+}
+
+function historyItemForOperation(operation: Operation): HistoryStackItem {
+  return {
+    operationIds: [operation.operationId],
+    stackOperationId: operation.operationId,
+    ...(operation.undoGroup?.groupId ? { undoGroupId: operation.undoGroup.groupId } : {}),
+  };
+}
+
+function historyItemMatchesTargets(item: HistoryStackItem | undefined, targets: readonly string[]): boolean {
+  return Boolean(item)
+    && item!.operationIds.length === targets.length
+    && item!.operationIds.every((operationId, index) => operationId === targets[index]);
+}
+
+function removeOperationTargets(stack: HistoryStackItem[], targets: readonly string[]): void {
+  const targetSet = new Set(targets);
+  for (let index = stack.length - 1; index >= 0; index -= 1) {
+    if (stack[index]!.operationIds.some((operationId) => targetSet.has(operationId))) {
+      stack.splice(index, 1);
+    }
+  }
 }
 
 function filterHistoryOperations(
@@ -651,10 +744,12 @@ function rootOperationOrigin(
 ): Operation['origin'] | undefined {
   let current = operation;
   const visited = new Set<string>();
-  while (current.revertsOperationId) {
+  while (operationRevertsAny(current)) {
     if (visited.has(current.operationId)) return undefined;
     visited.add(current.operationId);
-    const target = byId.get(current.revertsOperationId);
+    const targetId = current.revertsOperationId ?? current.revertsOperationIds?.at(-1);
+    if (!targetId) return undefined;
+    const target = byId.get(targetId);
     if (!target) return undefined;
     current = target;
   }
@@ -675,7 +770,11 @@ function assertExpectedHistoryOperation(
   ));
 }
 
-function removeOperationId(stack: string[], operationId: string): void {
-  const index = stack.lastIndexOf(operationId);
-  if (index >= 0) stack.splice(index, 1);
+function operationRevertsAny(operation: Operation): boolean {
+  return operationRevertTargetIds(operation).length > 0;
+}
+
+function operationRevertTargetIds(operation: Operation): readonly string[] {
+  if (operation.revertsOperationIds && operation.revertsOperationIds.length > 0) return operation.revertsOperationIds;
+  return operation.revertsOperationId ? [operation.revertsOperationId] : [];
 }

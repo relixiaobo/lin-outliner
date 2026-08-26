@@ -10,6 +10,7 @@ import {
   ImportVerifyResultSchema,
   WatchRequestSchema,
   OperationSchema,
+  OperationUndoGroupSchema,
   NoChangeResultSchema,
   OutlineBatchCountResultSchema,
   OutlineCountResultSchema,
@@ -90,7 +91,10 @@ const MutationInput = Type.Object({
   acknowledgeDestructive: Type.Optional(Type.Boolean()),
 }, closed);
 const MutationResult = Type.Union([DiffSchema, OperationSchema, NoChangeResultSchema]);
-const CommitInput = Type.Object({ changeSet: ChangeSetSchema }, closed);
+const CommitInput = Type.Object({
+  changeSet: ChangeSetSchema,
+  undoGroup: Type.Optional(OperationUndoGroupSchema),
+}, closed);
 
 function option(
   name: string,

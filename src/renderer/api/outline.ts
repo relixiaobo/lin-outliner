@@ -62,6 +62,7 @@ export type DesktopFocusHint = FocusHint | ((
 export interface DesktopMutationOptions {
   readonly acknowledgeDestructive?: boolean;
   readonly requiresDiff?: boolean;
+  readonly undoGroup?: Operation['undoGroup'];
 }
 
 let desktopMutationTail = Promise.resolve();
@@ -97,18 +98,16 @@ export function runDesktopMutation(
             diff,
             ...(options.acknowledgeDestructive ? { acknowledgeDestructive: true } : {}),
           })
-        : await requestOutline<Operation | NoChangeResult>('commit', { changeSet });
+        : await requestOutline<Operation | NoChangeResult>('commit', {
+            changeSet,
+            ...(options.undoGroup ? { undoGroup: options.undoGroup } : {}),
+          });
       source.noteRevision(settlement.kind === 'outline.no-change' ? settlement.revision : settlement.revisionAfter);
       let update: ProjectionUpdate;
       if (settlement.kind === 'outline.no-change') {
         update = await fullProjectionUpdate();
       } else {
-        try {
-          const event = await source.waitForOperation(settlement.operationId);
-          update = projectionUpdateFromOutlineEvent<NodeProjection>(event) ?? await fullProjectionUpdate();
-        } catch {
-          update = await fullProjectionUpdate();
-        }
+        update = await updateFromOwnOperation(source, settlement.operationId);
       }
       return {
         update,
@@ -166,12 +165,7 @@ export function runDesktopHistory(command: 'undo' | 'redo'): Promise<CommandResu
     try {
       const operation = await requestOutline<Operation>(command, { idempotencyKey });
       source.noteRevision(operation.revisionAfter);
-      try {
-        const event = await source.waitForOperation(operation.operationId);
-        return { update: projectionUpdateFromOutlineEvent<NodeProjection>(event) ?? await fullProjectionUpdate() };
-      } catch {
-        return { update: await fullProjectionUpdate() };
-      }
+      return { update: await updateFromOwnOperation(source, operation.operationId) };
     } finally {
       releaseEvents();
     }
@@ -181,6 +175,18 @@ export function runDesktopHistory(command: 'undo' | 'redo'): Promise<CommandResu
 }
 
 export { projectionUpdateFromOutlineEvent };
+
+async function updateFromOwnOperation(
+  source: DesktopOutlineEventSource,
+  operationId: string,
+): Promise<ProjectionUpdate> {
+  try {
+    const event = await source.waitForOperation(operationId);
+    return projectionUpdateFromOutlineEvent<NodeProjection>(event) ?? await fullProjectionUpdate();
+  } catch {
+    return fullProjectionUpdate();
+  }
+}
 
 export interface DesktopOutlineEventSubscription {
   readonly ready: Promise<void>;

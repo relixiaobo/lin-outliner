@@ -354,8 +354,9 @@ The explicit traceability manifest is:
     commit, and a lifecycle selection containing ancestors and descendants shall
     mutate each covered subtree once without stranding descendants.
   - **AC-79:** Undo and redo shall default to the authenticated caller's origin,
-    support explicit origin scope and expected-Operation guards, and write
-    nothing when the visible stack head changed.
+    support explicit origin scope, expected-Operation guards, and consecutive
+    text-edit user-action groups, and write nothing when the visible stack head
+    changed.
 - **FR-16:** Agent collaboration evidence preserves user, Host, and peer
   authority across delivery and restart.
   - **AC-85:** Background notifications and peer messages shall start with empty
@@ -687,9 +688,12 @@ The stable top-level change vocabulary is:
 
 `NodeDraft` is a public, typed tree shape covering plain and rich content, code,
 references, field entries, saved searches, images, attachments, descriptions,
-children, tags, fields, done state, and capture provenance. Runtime maps it to
-existing Core types after validation. It does not expose renderer drafts or
-Core-only focus hints.
+children, tags, fields, done state, and closed metadata. Capture metadata uses
+the shared provenance schema, query metadata uses the public query grammar, and
+paste metadata may carry `pasteTags` plus `pasteFields` so structured paste and
+slash-trigger trees preserve semantic tags/fields through field-slot append
+paths. Runtime maps it to existing Core types after validation. It does not
+expose renderer drafts or Core-only focus hints.
 
 `UpdateChange.changes` is an ordered discriminated union. It covers content and
 description replacement/patching; code language; checkbox and done state; tag
@@ -800,7 +804,9 @@ interface Operation {
     state: 'available' | 'conflicted' | 'reverted' | 'expired';
     retainedUntilAtLeast: string;
   };
+  undoGroup?: { groupId: string; kind: 'text-edit'; nodeId?: string };
   revertsOperationId?: string;
+  revertsOperationIds?: readonly string[];
   result?: readonly ProjectionResult[];
 }
 ```
@@ -890,6 +896,8 @@ Apply settlement is ordered as follows:
    checksummed transaction record, and fsync the log.
 5. Only after the log commit point, finalize in-memory Core/index state, publish
    the Event, acknowledge the desktop/CLI client, and admit the next mutation.
+   Post-commit cleanup, asset garbage collection, and compaction are scheduled
+   maintenance work; they are not part of this acknowledgement path.
 
 If blob or log durability fails, Core rolls back and no Operation is visible. If
 the process exits after log fsync but before client acknowledgement, replay
@@ -918,6 +926,14 @@ Operation with its own transaction-log record, recovery patch, audit entry, and
 revert provides exact redo semantics; desktop Undo/Redo and `outline undo` /
 `outline redo` are convenience selection over these Operation-addressed rules,
 not wrappers around a process-local stack.
+
+`revert OPERATION_ID` always targets exactly that one Operation. Undo/redo may
+select a consecutive group of available Operations with the same text-edit
+`undoGroup.groupId`; the group recovery Operation records the visible stack head
+in `revertsOperationId` and the complete covered ordered set in
+`revertsOperationIds`. This preserves low-latency incremental editor commits
+without regressing the user-facing rule that undoing a half-typed materialized
+row removes the whole row.
 
 Purge and Empty Trash recovery patches include every deleted subtree Node, every
 reference or template link changed by healing, structural parents, and asset
@@ -956,12 +972,14 @@ protected, it returns `recovery_capacity_exceeded` before changing document
 state. The policy and error are identical for every caller, including purge and
 Empty Trash.
 
-Recovery pruning runs at startup, after successful settlement, after revert,
-and during Runtime idle maintenance. It is derived from committed log/index and
-blob reachability, not an in-memory checklist. Runtime resolves the new instance
-identity before startup reconciliation can compact or expire recovery. Any maintenance
-Event emitted by that compaction uses the new identity and remains after the workspace's
-pre-compaction replay baseline for watch delivery.
+Recovery pruning runs during mutation admission when needed for recovery-budget
+decisions, and otherwise during scheduled maintenance after startup, after
+foreground request quiescence, and before idle shutdown. It is derived from
+committed log/index and blob reachability, not an in-memory checklist. Runtime
+resolves the new instance identity before startup reconciliation can compact
+or expire recovery. Any maintenance Event emitted after startup uses the new
+identity and remains after the workspace's pre-maintenance replay baseline for
+watch delivery.
 
 ### Asset staging, retention, and garbage collection
 
@@ -1103,9 +1121,11 @@ removes a client lease. Electron's single-instance lock continues to govern UI
 windows and is unrelated to document authority.
 
 Runtime exits after five minutes with no client leases, watch streams, active
-transaction, pending log/blob maintenance, or unflushed storage. It closes the
-socket, removes only its own descriptor/lock identity, and exits. A desktop
-connection or active watch holds a lease. Each admitted request advances a drain
+transaction, foreground-idle maintenance drain, or unflushed storage. It closes
+the socket, removes only its own descriptor/lock identity, and exits. A desktop
+connection or active watch holds a lifecycle lease. Watch streams do not count
+as foreground work, so they do not prevent storage maintenance while the
+desktop event stream is open. Each admitted foreground request advances a drain
 generation; idle maintenance and the optional idle hook recheck that generation
 and active requests before shutdown, so work admitted during an old drain
 cancels that shutdown.

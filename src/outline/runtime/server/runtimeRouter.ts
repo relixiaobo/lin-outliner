@@ -245,7 +245,8 @@ export class OutlineRuntimeRouter {
       return diffOutlineChangeSet(this.workspace, (input as { changeSet: ChangeSet }).changeSet);
     }
     if (command === 'commit') {
-      return commitOutlineChangeSet(this.workspace, (input as { changeSet: ChangeSet }).changeSet, context);
+      const value = input as { changeSet: ChangeSet; undoGroup?: Operation['undoGroup'] };
+      return commitOutlineChangeSet(this.workspace, value.changeSet, context, { undoGroup: value.undoGroup });
     }
     if (command === 'apply') {
       const value = input as { diff: Diff; acknowledgeDestructive?: boolean };

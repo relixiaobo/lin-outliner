@@ -1550,11 +1550,23 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     };
     const applyPasteMetadata = (
       nodeId: string,
-      metadata: { tags?: string[]; fields?: Array<{ name: string; value: string }> },
+      metadata: {
+        tags?: string[];
+        fields?: Array<{ name: string; value: string }>;
+        metadata?: { pasteTags?: string[]; pasteFields?: Array<{ name: string; value: string }> };
+      },
     ) => {
       const owner = nodes.get(nodeId);
       if (!owner) return;
-      for (const rawName of metadata.tags ?? []) {
+      const tagNames = [
+        ...(metadata.tags ?? []),
+        ...(metadata.metadata?.pasteTags ?? []),
+      ];
+      const fields = [
+        ...(metadata.fields ?? []),
+        ...(metadata.metadata?.pasteFields ?? []),
+      ];
+      for (const rawName of tagNames) {
         const name = rawName.trim();
         if (!name) continue;
         const existing = [...nodes.values()].find((node) => (
@@ -1563,7 +1575,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         const tagId = existing?.id ?? createTag(name).focus?.nodeId;
         if (tagId && !owner.tags.includes(tagId)) owner.tags.push(tagId);
       }
-      for (const field of metadata.fields ?? []) {
+      for (const field of fields) {
         const name = field.name.trim();
         const value = field.value.trim();
         if (!name || !value) continue;
@@ -2692,6 +2704,17 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           createMockDraft(entryId, null, value);
         }
       }
+      applyPasteMetadata(nodeId, {
+        metadata: {
+          pasteTags: Array.isArray(metadata.pasteTags) ? metadata.pasteTags.map(String) : undefined,
+          pasteFields: Array.isArray(metadata.pasteFields)
+            ? (metadata.pasteFields as Array<Record<string, unknown>>).map((field) => ({
+                name: String(field.name ?? ''),
+                value: String(field.value ?? ''),
+              }))
+            : undefined,
+        },
+      });
       for (const child of Array.isArray(draft.children) ? draft.children as Array<Record<string, unknown>> : []) {
         createMockDraft(nodeId, null, child);
       }

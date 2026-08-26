@@ -149,6 +149,7 @@ keyboard or pointer change should be checked against this matrix.
 | Interaction | Expected behavior |
 | --- | --- |
 | Printable text on empty trailing row | Create an eager child at the draft's current visual position and keep editing that node. If the draft was relocated after a sibling, the fresh trailing draft stays after the newly materialized node. |
+| Undo after eager trailing-row typing | The materializing create and its immediately following text patches share one text-edit undo group, so one document undo removes the half-typed row instead of first replaying the initial seed text. |
 | `Enter` with text | Create content at the draft's current visual position, then create/focus a new empty row immediately after it in the same parent. |
 | Empty `Enter` | Create/focus an empty child at the draft's current visual position and keep the next trailing draft immediately after it. |
 | `Mod+Enter` | On a body trailing draft, materialize a real node at the draft's current visual position (including when empty), then cycle it from no checkbox to an undone checkbox. If materialization is rejected, keep the draft and its original error without issuing the checkbox command. On an empty field-value trailing draft, do nothing. |
