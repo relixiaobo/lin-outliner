@@ -9,9 +9,14 @@ import {
   WORKSPACE_ID,
   type DocumentProjection,
   type NodeProjection,
+  type ReferenceTarget,
 } from '../../../core/types';
-import { formatNamedNodeReference } from '../../../core/referenceMarkup';
+import {
+  formatNamedNodeReference,
+  referenceDisplayFallback,
+} from '../../../core/referenceMarkup';
 import { richTextToMarkdownReferenceMarkup } from '../../../core/markdownRichText';
+import { escapeSemanticText } from '../../../core/semanticIngest/inlineScanner';
 import { formatTag } from '../../../core/textSyntax';
 import { projectFieldConfig, nodeIsDone, nodeShowsCheckbox } from '../../../core/configProjection';
 import { isInternalConfigNode } from '../../../core/configSchema';
@@ -192,12 +197,67 @@ export function breadcrumb(index: ProjectionIndex, nodeId: string): NodeRef[] {
 export function referenceText(index: ProjectionIndex, node: NodeProjection): string | null {
   if (node.type !== 'reference' || !node.targetId) return null;
   const target = index.nodes.get(node.targetId);
-  const display = target ? nodeTitle(index, target, { suffix: ':' }) : node.targetId;
+  const display = target ? referenceDisplayTitle(index, target) : node.targetId;
   return formatNamedNodeReference(
     node.targetId,
     display,
     { unavailable: 'display' },
   );
+}
+
+function referenceDisplayTitle(
+  index: ProjectionIndex,
+  node: NodeProjection,
+  seen: ReadonlySet<string> = new Set(),
+): string {
+  if (seen.has(node.id)) return '(untitled)';
+  const nextSeen = new Set(seen).add(node.id);
+  if (node.type === 'reference' && node.targetId) {
+    const target = index.nodes.get(node.targetId);
+    if (target) return referenceDisplayTitle(index, target, nextSeen);
+  }
+  if (node.content.inlineRefs.length === 0) {
+    return nodeTitle(index, node, { suffix: ':' });
+  }
+
+  const text = node.content.text;
+  const refs = [...node.content.inlineRefs].sort((left, right) => left.offset - right.offset);
+  let cursor = 0;
+  let display = '';
+  for (const ref of refs) {
+    const offset = Math.min(Math.max(0, Math.trunc(ref.offset)), text.length);
+    if (offset < cursor) continue;
+    display += text.slice(cursor, offset);
+    const storedDisplay = singleLine(ref.displayName);
+    display += resolvedInlineReferenceDisplay(index, ref.target, storedDisplay);
+    cursor = storedDisplay && text.slice(offset, offset + storedDisplay.length) === storedDisplay
+      ? offset + storedDisplay.length
+      : offset;
+  }
+  display += text.slice(cursor);
+  return escapeSemanticText(display, { suffix: ':' }) || '(untitled)';
+}
+
+function resolvedInlineReferenceDisplay(
+  index: ProjectionIndex,
+  target: ReferenceTarget,
+  storedDisplay: string,
+): string {
+  if (target.kind === 'node') {
+    let node = index.nodes.get(target.nodeId);
+    const seen = new Set<string>();
+    while (node?.type === 'reference' && node.targetId && !seen.has(node.id)) {
+      seen.add(node.id);
+      node = index.nodes.get(node.targetId);
+    }
+    const currentTitle = singleLine(node?.content.text);
+    if (currentTitle) return currentTitle;
+  }
+  return storedDisplay || referenceDisplayFallback(target);
+}
+
+function singleLine(value: string | undefined): string {
+  return value?.replace(/[\r\n]+/gu, ' ').replace(/\s+/gu, ' ').trim() ?? '';
 }
 
 export function fieldName(index: ProjectionIndex, fieldEntry: NodeProjection): string {

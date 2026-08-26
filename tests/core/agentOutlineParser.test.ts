@@ -54,6 +54,19 @@ describe('agent outline parser', () => {
     ]);
   });
 
+  test('does not promote mixed file and Node inline references to a tree reference', () => {
+    const parsed = parseLinOutline(
+      '- Compare [[file:///tmp/left.txt]]: [[node://11111111-1111-4111-8111-111111111111]]',
+    );
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const root = parsed.document.roots[0]!;
+    expect(root.referenceTargetId).toBeUndefined();
+    expect(root.title)
+      .toBe('Compare [[file:///tmp/left.txt]]: [[node://11111111-1111-4111-8111-111111111111]]');
+  });
+
   test('does not extract tags from reference URI paths', () => {
     const parsed = parseLinOutline([
       `- Task: ${NODE_ALPHA_MARKER}`,

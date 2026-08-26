@@ -22,7 +22,7 @@ import {
 } from '../../src/core/types';
 import { createNodeTools, visibleOutlineUndoStack, type OutlinerToolHost } from '../../src/main/agent/capabilities/agentNodeTools';
 import { validateSearchNodes } from '../../src/main/agent/capabilities/agentNodeToolSearch';
-import { fieldReads, indexProjection } from '../../src/main/agent/capabilities/agentNodeToolProjection';
+import { fieldReads, indexProjection, referenceText } from '../../src/main/agent/capabilities/agentNodeToolProjection';
 import { DocumentReadModel } from '../../src/main/documentReadModel';
 import type { OperationHistoryData } from '../../src/main/agent/capabilities/agentNodeToolTypes';
 import type { ToolEnvelope } from '../../src/main/agent/capabilities/agentToolEnvelope';
@@ -1708,11 +1708,16 @@ describe('agent node tools', () => {
       inlineRefs: [{
         offset: 4,
         target: { kind: 'node', nodeId: nestedTargetId },
-        displayName: 'Nested target',
+        displayName: 'Stale target',
       }],
     }));
     const referenceId = mustFocus(core.addReference(today, outerTargetId, null));
     const destinationId = mustFocus(core.createNode(today, null, 'Destination'));
+    const projection = core.projection();
+    const index = indexProjection(projection);
+
+    expect(referenceText(index, index.nodes.get(referenceId)!))
+      .toBe(`See Nested target: ${formatNodeReferenceMarker(outerTargetId)}`);
 
     const duplicated = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
       parent_id: destinationId,
@@ -1725,6 +1730,46 @@ describe('agent node tools', () => {
       type: 'reference',
       targetId: outerTargetId,
     });
+  });
+
+  test('node_create duplicate_id keeps ordinary colon-separated inline references as rich text', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const targets = mustFocus(core.createNode(today, null, 'Targets'));
+    const leftTargetId = mustFocus(core.createNode(targets, null, 'Left'));
+    const rightTargetId = mustFocus(core.createNode(targets, null, 'Right'));
+    const sourceId = mustFocus(core.createRichTextContentNode(today, null, {
+      text: 'Compare Left: Right',
+      marks: [],
+      inlineRefs: [
+        {
+          offset: 8,
+          target: { kind: 'node', nodeId: leftTargetId },
+          displayName: 'Left',
+        },
+        {
+          offset: 14,
+          target: { kind: 'node', nodeId: rightTargetId },
+          displayName: 'Right',
+        },
+      ],
+    }));
+
+    const duplicated = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      duplicate_id: sourceId,
+    });
+
+    expect(duplicated.ok).toBe(true);
+    const clone = core.state().nodes[duplicated.data!.createdRootIds[0]!]!;
+    expect(clone.type).not.toBe('reference');
+    expect(clone).not.toHaveProperty('targetId');
+    expect(clone.content.inlineRefs.map((ref) => ref.target)).toEqual([
+      { kind: 'node', nodeId: leftTargetId },
+      { kind: 'node', nodeId: rightTargetId },
+    ]);
+    expect(richTextToMarkdownReferenceMarkup(clone.content))
+      .toBe(richTextToMarkdownReferenceMarkup(core.state().nodes[sourceId]!.content));
   });
 
   test('node_create rejects references to trashed targets before mutation', async () => {
