@@ -47,8 +47,10 @@ contract for implementation and verification.
   unreferenced bytes are removed only by recovery-aware garbage collection.
 - No compatibility alias for `tenon`, `tenon-import`, the six native tool names,
   Import Pack writes, or old Runtime endpoints after cutover.
-- No migration reader or dual-write period. Pre-release dev data may be wiped
-  when the persisted recovery or operation format changes.
+- No migration reader, dual-write period, or automatic startup deletion.
+  Before cutover verification, stop Tenon and manually reset both the installed
+  app's local userData and clone-scoped development userData; the Runtime starts
+  only from its clean persisted format.
 - No in-process document authority in Electron main after cutover and no
   renderer-only mutation contract parallel to ChangeSet.
 - No second document engine in the CLI, Skill scripts, transport adapter, or
@@ -68,13 +70,14 @@ Existing code is migration evidence, not design authority. Core behavior and
 native-Daily import fixtures identify capabilities that must survive; the
 current import socket proves local transport is feasible; current persistence
 and operation history reveal failure cases to test. None justifies an Electron
-process dependency, a second desktop mutation protocol, or a two-store commit
-protocol in the target architecture.
+process dependency, a second desktop mutation protocol, or an
+Outliner-specific physical blob root in the target architecture.
 
 The hard target constraints are one serialized Runtime writer, Core-command
 mutation below the public domain model, context-isolated renderer security,
-atomic ChangeSets, one durable transaction commit point, user-private local
-transport, and actor-neutral recovery admission.
+atomic ChangeSets, one durable document transaction commit point, user-private
+local transport, actor-neutral recovery admission, and a multi-process-safe
+neutral ContentStore for physical asset bytes.
 
 The explicit traceability manifest is:
 
@@ -87,7 +90,7 @@ The explicit traceability manifest is:
   `AC-9`, `AC-10`, `AC-11`, `AC-12`, `AC-13`, `AC-14`, `AC-15`, `AC-16`,
   `AC-17`, `AC-18`, `AC-19`, `AC-20`, `AC-21`, `AC-22`, `AC-23`, `AC-24`,
   `AC-25`, `AC-26`, `AC-27`, `AC-28`, `AC-29`, `AC-30`, `AC-31`, `AC-32`,
-  `AC-33`, `AC-34`, `AC-35`, `AC-36`, `AC-37`.
+  `AC-33`, `AC-34`, `AC-35`, `AC-36`, `AC-37`, `AC-38`.
 
 ### Completion contract
 
@@ -164,6 +167,11 @@ The explicit traceability manifest is:
     command shall start the standalone process within the documented timeout;
     `--no-start` shall instead return the stable unavailable result without
     starting it.
+  - **AC-38:** With all Tenon processes stopped, the documented one-time manual
+    reset shall remove installed and clone-scoped pre-cutover stores. The first
+    subsequent packaged and development launches shall create only the new
+    Runtime and ContentStore layout, while source and dependency guards find no
+    migration reader, dual write, or automatic startup deletion path.
 - **FR-11:** UI/session state is isolated from the document contract.
   - **AC-22:** Document CLI contracts shall not encode selection, focus,
     expansion, pane position, or sidebar pin state.
@@ -203,7 +211,8 @@ outline CLI ------------------------------------+-> authenticated protocol -> Ou
 outline Skill -------- invokes CLI -------------+                              |
 outline-import Skill - invokes CLI -------------+                              +-> Core
                                                                                 +-> transaction log
-                                                                                +-> asset blob store
+                                                                                +-> Outline AssetRecords
+                                                                                `-> captured revisions + anchors
 ```
 
 The standalone Runtime process owns Core and the only writable workspace store.
@@ -242,21 +251,26 @@ The following invariants are release blockers:
    directly.
 8. Scenario code may transform source data and verify results, but no scenario
    receives a private selector, write endpoint, transaction, or permission path.
-9. Assets remain while referenced by live Nodes, unexpired staging leases, or
-   retained recovery patches. Only internal mark-and-sweep GC unlinks bytes.
+9. Outline AssetRecords remain while referenced by live Nodes, unexpired Outline
+   leases, or retained recovery patches. Each surviving AssetRecord references a
+   captured revision through an opaque ContentStore retention anchor. Physical
+   bytes remain while any central admission lease or retention anchor exists; no
+   client or Runtime transaction names a raw digest as authority. The anchor is
+   a liveness mechanism, not asset ownership or identity.
 10. A parity guard derived from artifacts on disk must report no unclassified
     persisted Outliner capability and no live legacy write surface.
 
-### Module and ownership boundaries
+### Module and authority boundaries
 
-The implementation uses five layers so process boundaries and domain ownership
+The implementation uses six layers so process and responsibility boundaries
 are obvious:
 
-| Layer | Proposed ownership | Responsibility | Forbidden dependencies |
+| Layer | Proposed authority | Responsibility | Forbidden dependencies |
 | --- | --- | --- | --- |
+| Shared content kernel | `src/content/` | captured-revision admission, opaque retention anchors, verification, multi-process publication/deletion state, physical GC | Electron, renderer, Core, Outline/Agent domain code, CLI argv, Skill code |
 | Public contract | `src/outline/contract/` | DTOs, TypeBox/JSON Schemas, canonical JSON/hash rules, errors, capability registry | Electron, filesystem, Core, renderer, Agent runtime |
 | Runtime domain | `src/outline/runtime/` | selection, projection, normalization, preview, execution, Operation ledger, recovery, events, asset reachability | Electron, renderer DOM, CLI argv, Skill/source formats |
-| Runtime storage/process | `src/outline/runtime/storage/` and `src/outline/runtime/server/` | transactional log, snapshots, blob store, user-private socket, descriptor, authentication, lifecycle | CLI presentation, renderer state, Agent policy |
+| Runtime storage/process | `src/outline/runtime/storage/` and `src/outline/runtime/server/` | transactional log, snapshots, Outline AssetRecords and captured-revision integration, user-private socket, descriptor, authentication, lifecycle | CLI presentation, renderer state, Agent policy |
 | Shared client | `src/outline/client/` | discovery/start, protocol negotiation, request/stream client | Core, workspace files, renderer, Agent services |
 | Client adapters | `src/outline/cli/` and `src/main/outlineClient/` | CLI argv/rendering/porcelain; Electron supervision and preload-safe forwarding | document business rules, direct persistence |
 
@@ -550,9 +564,9 @@ interface Diff {
 ```
 
 The `diffHash` covers the full canonical Diff except itself. Diff creates no
-document revision, Operation, durable recovery patch, or staged asset
-ownership. It may use a disposable Core copy and temporary spool files that are
-removed after the response.
+document revision, Operation, durable recovery patch, AssetRecord, or captured-
+revision retention. It may use a disposable Core copy and temporary spool files
+that are removed after the response.
 
 `outline apply` consumes a Diff artifact, not an unreviewed private mutation
 format. Runtime verifies protocol, hashes, base revision, targeted Node digests,
@@ -738,14 +752,28 @@ blob reachability, not an in-memory checklist.
 
 ### Asset staging, retention, and garbage collection
 
-Runtime owns a content-addressed asset blob store. A logical `AssetRecord`
-contains user-facing metadata and a SHA-256 blob reference; many records may
-deduplicate to one immutable byte blob. Nodes reference AssetRecord IDs rather
-than paths or mutable sidecars.
+Runtime is authoritative for Outline `AssetRecord` identity, metadata, leases,
+document reference deltas, and recovery roots. The neutral `ContentStore` under
+`src/content/` stores captured revisions, admission leases, opaque retention
+anchors, integrity state, and physical collection under `{userData}/content/`.
+A logical `AssetRecord` contains user-facing metadata and a Host-private
+`CapturedRevisionReference`; many Outline records, and later Agent references,
+may retain the same captured revision through distinct anchors. Nodes reference
+AssetRecord IDs rather than anchor IDs, blob digests, paths, or mutable sidecars.
+Neither the AssetRecord nor its anchor claims ownership or continuing identity
+of an original live file.
+
+Public `AssetMetadata`, `AssetLease`, CLI JSON, renderer DTOs, ChangeSets, and
+Operations omit the physical digest and anchor ID. Runtime resolves an
+AssetRecord through its captured-revision handle and ContentStore verifies the
+anchor's record coordinate before serving bytes. MIME type, original filename,
+dimensions, duration, and preview metadata remain Outline reference metadata
+rather than physical integrity fields.
 
 `outline asset ingest PATH|-` streams bytes to Runtime, hashes and validates
-them, fsyncs the content-addressed blob, appends an asset-stage record to the
-same Runtime log, and returns an `AssetLease`:
+them through ContentStore, fsyncs the captured revision, creates a durable opaque
+retention anchor for the future AssetRecord, appends the asset-stage record to
+the Runtime log, and returns an `AssetLease`:
 
 ```ts
 interface AssetLease {
@@ -758,28 +786,56 @@ interface AssetLease {
 ```
 
 The default lease is 24 hours. A media/attachment/icon/banner ChangeSet consumes
-the lease in its atomic transaction record; clients cannot smuggle an arbitrary
-path into a ChangeSet. Successful apply replaces lease protection with live-Node
-and recovery-patch protection. Failed or abandoned apply leaves the lease until
-expiry, so retries do not race eager deletion. A blob written before its
-asset-stage record is an unreferenced orphan and is safely collectible.
+the Outline lease in its atomic transaction record; clients cannot smuggle an
+arbitrary path, digest, anchor, or ContentStore coordinate into a ChangeSet.
+Successful apply changes only which live Nodes and recovery patches reference
+the same AssetRecord. Failed or abandoned apply leaves the Outline lease until
+expiry, so retries do not race AssetRecord collection.
+
+Capture settlement is anchor-first across the ContentStore/Runtime-log boundary.
+Runtime holds its namespace mutation/reconciliation barrier from before anchor
+creation through AssetRecord stage commit or failed-commit release. If the
+AssetRecord stage commit fails, Runtime releases the anchor best-effort before
+leaving the barrier; a crash may leak the anchor but cannot lose a captured
+revision required by a committed AssetRecord. Runtime reconciliation takes the
+same barrier, enumerates verified `(assetId, anchorId)` pairs, and releases only
+orphan Outline anchors after a successful enumeration. An unavailable or corrupt
+Runtime store releases none.
 
 `outline asset show` inspects metadata and `outline asset export` streams
 verified bytes. There is no `outline asset delete`. Remove renderer/public
 `delete_asset`; deleting or changing a document Node only changes references.
 
-An internal mark-and-sweep collector derives its protected set from:
+The Outline record collector derives its protected set from:
 
 1. all asset and thumbnail IDs referenced by the live document;
-2. all AssetRecord/blob IDs named by retained recovery patches; and
+2. all AssetRecord IDs named by retained recovery patches; and
 3. all unexpired staging leases.
 
-Only an AssetRecord and blob absent from all three sets may be collected. GC
-runs after lease/recovery expiry and during safe idle windows, never inside the
-document transaction. A failed unlink is retryable maintenance and cannot turn
-a successful document operation into failure. Integrity corruption is reported
-and quarantined rather than silently deleted. The old random-file/sidecar format
-is deleted with dev userData rather than carried into the new store.
+Only an AssetRecord absent from all three sets may be collected by the Runtime.
+After the Runtime commit removes it, Runtime releases its retention anchor. A
+crash between those actions leaks an anchor until reconciliation.
+
+Physical GC does not enumerate or cache digest snapshots from domain databases.
+In one central SQLite transaction it selects only blobs with no admission lease
+and no retention anchor and marks them `deleting`; concurrent admission or
+anchor cloning cannot attach to that state. It then unlinks the blob and settles
+the deletion journal. Startup finishes or rolls back interrupted deletions.
+Agent main and Outliner Runtime use the same WAL/busy-retry and per-digest
+publication protocol, so atomic rename alone is never treated as multi-process
+exclusion.
+
+Physical corruption and domain-record corruption remain separate. A digest or
+length mismatch against ContentStore metadata quarantines the physical blob for
+all references to that captured revision. Invalid Outline metadata
+quarantines/degrades only that AssetRecord and cannot move valid shared bytes
+retained by another reference. GC and integrity maintenance run outside document
+settlement; their failures are retryable and cannot change a committed
+Operation. The old random-file/sidecar
+format is deleted by the PM-ratified 2026-08-26 manual reset of
+`~/Library/Application Support/Tenon/` and clone-scoped `~/.lin-outliner-*`
+userData after all Tenon processes stop. No migration, legacy reader, or
+automatic deletion path is carried into the new store.
 
 ### Runtime transport and lifecycle
 
@@ -1123,9 +1179,10 @@ The CLI bundle includes only public contract, shared client, argv/parser,
 discovery/start, formatters, and porcelain builders. It cannot import Core,
 Loro, storage, Electron main, Agent runtime, or source adapters. The Runtime
 bundle includes contract, Runtime domain, Core, query/projection engine,
-transaction log, and blob stores; it cannot import Electron, renderer, Agent
-provider/runtime, CLI argv, or Skill code. Bundle dependency guards enforce both
-directions.
+transaction log, Outline AssetRecord storage, and the neutral `src/content/`
+kernel;
+it cannot import Electron, renderer, Agent provider/runtime, CLI argv, or Skill
+code. Bundle dependency guards enforce both directions.
 
 Both built-in Skills invoke the one packaged `outline` launcher and contain no
 private executable wrapper. Replace `tenonImportRuntime`,
@@ -1138,6 +1195,8 @@ The packaged DMG smoke test verifies:
 - `outline version`, `schema`, and `capabilities` run without Runtime;
 - a document command starts standalone Runtime with isolated userData and no
   Electron import;
+- Runtime receives explicit Runtime and ContentStore roots derived from the same
+  userData authority, never from `cwd` or `dirname(runtimeRoot)`;
 - desktop and CLI concurrently attach to the same Runtime and observe one
   document/event sequence;
 - quitting/reopening desktop does not move document authority or start a second
@@ -1153,10 +1212,14 @@ path and an optional user-created symlink command without performing it.
 
 New files are expected under:
 
+- `src/content/` for the domain-neutral multi-process captured-revision store,
+  private retention-anchor types, admission/integrity/GC state, and focused
+  tests;
 - `src/outline/contract/` for public contracts, schemas, canonical hashing,
   errors, and the target capability registry;
 - `src/outline/runtime/` for Runtime domain, process/server, transaction log,
-  snapshots, recovery, events, projection index, and asset/blob storage;
+  snapshots, recovery, events, projection index, Outline AssetRecord storage,
+  and captured-revision/retention-anchor integration;
 - `src/outline/client/` for shared discovery, supervision, negotiation,
   requests, and streams;
 - `src/outline/cli/` for the thin client entry, formatting, and porcelain;
@@ -1178,8 +1241,9 @@ Current main-owned `DocumentService` behavior is decomposed/re-homed behind
 Runtime. `OperationJournal` becomes the transaction-log Operation index;
 `WorkspaceSaver` is removed; `WorkspacePersistenceStore` is replaced by the
 checksummed `WorkspaceTransactionLog` and snapshot compactor; `AssetService` is
-replaced by logical AssetRecords over the content-addressed blob store. Electron
-main retains no imports of those authorities after cutover.
+replaced by logical Outline AssetRecords referencing neutral captured revisions.
+Electron main retains no imports of Outline domain authorities after cutover;
+its later Agent services may import only the neutral content kernel.
 
 The feature deletes the live import-only files and `tenon-import` Skill/resource
 tree after its reusable adapter fixtures move to `outline-import`. It deletes
@@ -1217,6 +1281,22 @@ inside the Draft PR settles pure contracts and transaction hooks for review;
 it is not merged as separately released groundwork. Later commits build only on
 that settled shape.
 
+The active `agent-result-and-file-lifecycle` plan is the governing physical
+content model. This Runtime PR is the first consumer and therefore establishes
+the neutral `src/content/` ContentStore and `{userData}/content/` root as part of
+the complete Runtime feature. Outline AssetRecords reference captured revisions
+through mechanical retention anchors; neither records nor anchors own physical
+bytes. This PR must not land an Outline-specific physical blob root that a later
+Agent PR replaces. Raw digests and anchor IDs are absent from public CLI,
+renderer, ChangeSet, Operation, and model authority; every asset
+read/export/preview path resolves through an Outline AssetRecord and explicit
+use intent.
+
+This PR does not add Agent resource-reference records or change current Agent
+binary-resource handling. The later Agent lifecycle PR consumes the
+already-neutral captured-revision kernel. #587 rebases after this PR and treats
+its existing managed-resource handle opaquely until that cutover.
+
 Before claiming the work, the dev reruns `gh pr list`, scans `docs/TASKS.md`, and
 compares every intended file area with open Draft-PR scope lines. Any real
 overlap on protocol, main lifecycle, persistence, assets, Agent tools, or built-in
@@ -1232,8 +1312,8 @@ line claims those areas explicitly. The dev does not edit `docs/TASKS.md` or
 | ChangeSet normalization (`FR-3`, `FR-4`, `FR-12`) | Property/golden tests showing porcelain/direct equivalence, stable canonical hashes, fixed IDs/bindings, non-mutating Diff, 100-date one-diff/one-apply, and bounded returned Projection |
 | Atomicity and concurrency (`FR-5`, `FR-6`) | Tests `rolls back every chunk after a late Change failure`, `rejects a stale Diff without writes`, `does not retry a stale mutation`, and `requires Diff-bound destructive acknowledgement` |
 | Durable recovery (`FR-5`, `FR-12`) | Restart tests for ordinary edits, create/delete, purge, Empty Trash, revert conflict, revert-of-revert, crash before log append, crash after log fsync/before acknowledgement, truncated tail, orphan blob, corrupt referenced blob, idempotency, retention, and capacity |
-| Asset safety (`FR-5`, `FR-12`) | Fixtures proving live, leased, and recovery-only AssetRecords/blobs survive GC; expired unreferenced bytes are eventually removed; purge recovery restores media; `delete_asset` is absent |
-| Runtime lifecycle (`FR-10`) | Process tests for CLI start, desktop start, `--no-start`, stale descriptor/lock, simultaneous desktop/CLI startup, shared attachment, independent desktop restart, idle drain, unavailable timeout, private permissions, and no client persistence import |
+| Asset safety (`FR-5`, `FR-12`) | Fixtures proving live, leased, and recovery-only AssetRecords retain captured revisions through opaque anchors; anchor-first crash points leak rather than lose; the Runtime barrier prevents reconciliation from releasing an in-flight anchor; successful reconciliation releases only orphan Outline anchors; central GC cannot race concurrent anchor creation; physical corruption differs from corrupt AssetRecord metadata; purge recovery restores media; `delete_asset`, public digests, and public anchor IDs are absent |
+| Runtime lifecycle (`FR-10`) | Process tests for CLI start, desktop start, `--no-start`, stale descriptor/lock, simultaneous desktop/CLI startup, shared attachment, independent desktop restart, idle drain, unavailable timeout, private permissions, no client persistence import, one-time manual installed/dev reset, fresh physical layout, and no migration/automatic-deletion path |
 | Desktop cutover (`FR-3`, `FR-5`, `FR-11`) | Renderer/preload/E2E proof that every persisted desktop action produces Runtime Operation/Event, optimistic drafts reconcile once, conflict keeps draft, Undo/Redo uses guarded revert, and dependency guard finds no document authority in Electron main |
 | Agent authority (`FR-8`, `FR-9`) | Registry equality test for local-user and built-in-Agent schemas; valid/missing/expired attestation tests; immutable Thread/Turn/Item audit; full purge/revert coverage; no Memory projection filtering |
 | Import composition (`FR-7`, `FR-12`) | No-clean and cleaned source fixtures, complete coverage gate, changed-input/Diff mismatch, 100+ Daily Notes, mixed parents, failed verification with Operation ID, exact revert, and no scenario Runtime endpoint |
@@ -1279,9 +1359,11 @@ The final branch runs:
   state. Enforce the 30-day/1,000-operation floor, 2 GiB admission budget, and
   fail before mutation rather than evict protected recovery.
 - **Asset loss or leaks:** Direct unlink can destroy revert data, while never
-  deleting grows storage forever. Remove public delete and use logical records,
-  content-addressed blobs, and live/recovery/lease mark-and-sweep with expiry
-  tests.
+  deleting grows storage forever. Remove public delete, use logical AssetRecords
+  over central captured revisions, bias cross-store crashes toward leaked
+  anchors, reconcile
+  only under the Runtime mutation barrier, and let ContentStore GC atomically
+  select only unanchored/unleased revisions.
 - **Runtime startup races:** Desktop and CLI can start the server concurrently.
   Use one Runtime-specific atomic lock/descriptor identity, make losers attach,
   and keep Electron's UI single-instance lock unrelated.
@@ -1294,7 +1376,7 @@ The final branch runs:
   through the common supervisor, and resumes from verified revision/cursor.
 - **Transaction-log corruption:** One log removes split settlement but raises
   the importance of its codec. Use checksummed records, verified snapshots,
-  incomplete-tail handling, content-addressed blobs, replay/property tests, and
+  incomplete-tail handling, verified app-level blobs, replay/property tests, and
   fail-closed mutation admission at decode boundaries.
 - **CLI business-logic growth:** Porcelain and route handlers can duplicate
   Runtime semantics. Generate them from the registry and require every mutation
@@ -1352,7 +1434,7 @@ implementation.
   deterministic desktop/CLI discovery/start. Prove the server imports no
   Electron/renderer/Agent provider code and clients import no persistence. Covers
   `FR-2`, `FR-10`, `FR-11`; acceptance `AC-3` through
-  `AC-5`, `AC-20` through `AC-22`, `AC-37`.
+  `AC-5`, `AC-20` through `AC-22`, `AC-37`, `AC-38`.
 - [ ] **5. Implement the shared Selector/Projection/ChangeSet kernel.** Move
   reusable Outliner parser/read logic out of Agent capability modules; add
   deterministic selectors, cardinality, bindings, fixed IDs, preview Core,
@@ -1372,13 +1454,16 @@ implementation.
   registry mapping for every persisted Outliner capability. The generated
   unsupported-capability report must be empty. Covers `FR-1` through `FR-6`,
   `FR-10` through `FR-12`; acceptance `AC-1` through `AC-13`, `AC-20` through
-  `AC-22`, `AC-24` through `AC-29`, `AC-32` through `AC-35`, `AC-37`.
-- [ ] **8. Make assets transactional and recovery-aware.** Add logical
-  AssetRecords, content-addressed blobs, staged leases and CLI ingest/show/
-  export, include asset references and size reservations in recovery patches,
-  implement live/recovery/lease mark-and-sweep, remove public `delete_asset`, and prove
-  purge/revert/expiry/GC behavior. Covers `FR-5`, `FR-12`; acceptance `AC-11`,
-  `AC-34` through `AC-36`.
+  `AC-22`, `AC-24` through `AC-29`, `AC-32` through `AC-35`, `AC-37`,
+  `AC-38`.
+- [ ] **8. Make assets transactional and recovery-aware.** Add the neutral
+  multi-process ContentStore, opaque retention anchors, and logical AssetRecords;
+  add staged leases and CLI ingest/show/export; include asset references and size
+  reservations in recovery patches; implement anchor-first capture settlement,
+  Runtime-barrier reconciliation, central anchor/lease GC, and distinct physical
+  versus record corruption; remove public `delete_asset`, digest, and anchor
+  authority; and prove purge/revert/expiry/concurrency/crash behavior. Covers
+  `FR-5`, `FR-12`; acceptance `AC-11`, `AC-34` through `AC-36`.
 - [ ] **9. Add both Skills and absorb import.** Add the schema-light `outline`
   Skill; replace `tenon-import` with `outline-import`; retain source inspection,
   optional cleaning, coverage, adapters, and verification; generate only generic
