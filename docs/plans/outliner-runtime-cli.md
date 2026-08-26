@@ -212,7 +212,7 @@ outline Skill -------- invokes CLI -------------+                              |
 outline-import Skill - invokes CLI -------------+                              +-> Core
                                                                                 +-> transaction log
                                                                                 +-> Outline AssetRecords
-                                                                                `-> captured revisions + anchors
+                                                                                `-> exact revisions + anchors
 ```
 
 The standalone Runtime process owns Core and the only writable workspace store.
@@ -253,7 +253,7 @@ The following invariants are release blockers:
    receives a private selector, write endpoint, transaction, or permission path.
 9. Outline AssetRecords remain while referenced by live Nodes, unexpired Outline
    leases, or retained recovery patches. Each surviving AssetRecord references a
-   captured revision through an opaque ContentStore retention anchor. Physical
+   exact revision through an opaque ContentStore retention anchor. Physical
    bytes remain while any central admission lease or retention anchor exists; no
    client or Runtime transaction names a raw digest as authority. The anchor is
    a liveness mechanism, not asset ownership or identity.
@@ -267,10 +267,10 @@ are obvious:
 
 | Layer | Proposed authority | Responsibility | Forbidden dependencies |
 | --- | --- | --- | --- |
-| Shared content kernel | `src/content/` | captured-revision admission, opaque retention anchors, verification, multi-process publication/deletion state, physical GC | Electron, renderer, Core, Outline/Agent domain code, CLI argv, Skill code |
+| Shared content kernel | `src/content/` | exact-revision admission, opaque retention anchors, verification, multi-process publication/deletion state, physical GC | Electron, renderer, Core, Outline/Agent domain code, CLI argv, Skill code |
 | Public contract | `src/outline/contract/` | DTOs, TypeBox/JSON Schemas, canonical JSON/hash rules, errors, capability registry | Electron, filesystem, Core, renderer, Agent runtime |
 | Runtime domain | `src/outline/runtime/` | selection, projection, normalization, preview, execution, Operation ledger, recovery, events, asset reachability | Electron, renderer DOM, CLI argv, Skill/source formats |
-| Runtime storage/process | `src/outline/runtime/storage/` and `src/outline/runtime/server/` | transactional log, snapshots, Outline AssetRecords and captured-revision integration, user-private socket, descriptor, authentication, lifecycle | CLI presentation, renderer state, Agent policy |
+| Runtime storage/process | `src/outline/runtime/storage/` and `src/outline/runtime/server/` | transactional log, snapshots, Outline AssetRecords and exact-revision integration, user-private socket, descriptor, authentication, lifecycle | CLI presentation, renderer state, Agent policy |
 | Shared client | `src/outline/client/` | discovery/start, protocol negotiation, request/stream client | Core, workspace files, renderer, Agent services |
 | Client adapters | `src/outline/cli/` and `src/main/outlineClient/` | CLI argv/rendering/porcelain; Electron supervision and preload-safe forwarding | document business rules, direct persistence |
 
@@ -564,7 +564,7 @@ interface Diff {
 ```
 
 The `diffHash` covers the full canonical Diff except itself. Diff creates no
-document revision, Operation, durable recovery patch, AssetRecord, or captured-
+document revision, Operation, durable recovery patch, AssetRecord, or exact-
 revision retention. It may use a disposable Core copy and temporary spool files
 that are removed after the response.
 
@@ -754,24 +754,24 @@ blob reachability, not an in-memory checklist.
 
 Runtime is authoritative for Outline `AssetRecord` identity, metadata, leases,
 document reference deltas, and recovery roots. The neutral `ContentStore` under
-`src/content/` stores captured revisions, admission leases, opaque retention
+`src/content/` stores exact revisions, admission leases, opaque retention
 anchors, integrity state, and physical collection under `{userData}/content/`.
 A logical `AssetRecord` contains user-facing metadata and a Host-private
-`CapturedRevisionReference`; many Outline records, and later Agent references,
-may retain the same captured revision through distinct anchors. Nodes reference
+`ExactRevisionReference`; many Outline records, and later Agent references,
+may retain the same exact revision through distinct anchors. Nodes reference
 AssetRecord IDs rather than anchor IDs, blob digests, paths, or mutable sidecars.
 Neither the AssetRecord nor its anchor claims ownership or continuing identity
 of an original live file.
 
 Public `AssetMetadata`, `AssetLease`, CLI JSON, renderer DTOs, ChangeSets, and
 Operations omit the physical digest and anchor ID. Runtime resolves an
-AssetRecord through its captured-revision handle and ContentStore verifies the
+AssetRecord through its exact-revision handle and ContentStore verifies the
 anchor's record coordinate before serving bytes. MIME type, original filename,
 dimensions, duration, and preview metadata remain Outline reference metadata
 rather than physical integrity fields.
 
 `outline asset ingest PATH|-` streams bytes to Runtime, hashes and validates
-them through ContentStore, fsyncs the captured revision, creates a durable opaque
+them through ContentStore, fsyncs the exact revision, creates a durable opaque
 retention anchor for the future AssetRecord, appends the asset-stage record to
 the Runtime log, and returns an `AssetLease`:
 
@@ -796,7 +796,7 @@ Capture settlement is anchor-first across the ContentStore/Runtime-log boundary.
 Runtime holds its namespace mutation/reconciliation barrier from before anchor
 creation through AssetRecord stage commit or failed-commit release. If the
 AssetRecord stage commit fails, Runtime releases the anchor best-effort before
-leaving the barrier; a crash may leak the anchor but cannot lose a captured
+leaving the barrier; a crash may leak the anchor but cannot lose an exact
 revision required by a committed AssetRecord. Runtime reconciliation takes the
 same barrier, enumerates verified `(assetId, anchorId)` pairs, and releases only
 orphan Outline anchors after a successful enumeration. An unavailable or corrupt
@@ -827,7 +827,7 @@ exclusion.
 
 Physical corruption and domain-record corruption remain separate. A digest or
 length mismatch against ContentStore metadata quarantines the physical blob for
-all references to that captured revision. Invalid Outline metadata
+all references to that exact revision. Invalid Outline metadata
 quarantines/degrades only that AssetRecord and cannot move valid shared bytes
 retained by another reference. GC and integrity maintenance run outside document
 settlement; their failures are retryable and cannot change a committed
@@ -1212,14 +1212,14 @@ path and an optional user-created symlink command without performing it.
 
 New files are expected under:
 
-- `src/content/` for the domain-neutral multi-process captured-revision store,
+- `src/content/` for the domain-neutral multi-process exact-revision store,
   private retention-anchor types, admission/integrity/GC state, and focused
   tests;
 - `src/outline/contract/` for public contracts, schemas, canonical hashing,
   errors, and the target capability registry;
 - `src/outline/runtime/` for Runtime domain, process/server, transaction log,
   snapshots, recovery, events, projection index, Outline AssetRecord storage,
-  and captured-revision/retention-anchor integration;
+  and exact-revision/retention-anchor integration;
 - `src/outline/client/` for shared discovery, supervision, negotiation,
   requests, and streams;
 - `src/outline/cli/` for the thin client entry, formatting, and porcelain;
@@ -1241,7 +1241,7 @@ Current main-owned `DocumentService` behavior is decomposed/re-homed behind
 Runtime. `OperationJournal` becomes the transaction-log Operation index;
 `WorkspaceSaver` is removed; `WorkspacePersistenceStore` is replaced by the
 checksummed `WorkspaceTransactionLog` and snapshot compactor; `AssetService` is
-replaced by logical Outline AssetRecords referencing neutral captured revisions.
+replaced by logical Outline AssetRecords referencing neutral exact revisions.
 Electron main retains no imports of Outline domain authorities after cutover;
 its later Agent services may import only the neutral content kernel.
 
@@ -1281,10 +1281,16 @@ inside the Draft PR settles pure contracts and transaction hooks for review;
 it is not merged as separately released groundwork. Later commits build only on
 that settled shape.
 
+`reference-uri-unification` is a prerequisite. This PR rebases after that
+complete cutover and preserves canonical `[[node://...]]` and
+`[[file:///...]]` references through Runtime, CLI, Agent, import, export, and
+Skill paths. It must not restore the retired `kind:label^value` or `file:^path`
+grammar while replacing those consumers.
+
 The active `agent-result-and-file-lifecycle` plan is the governing physical
 content model. This Runtime PR is the first consumer and therefore establishes
 the neutral `src/content/` ContentStore and `{userData}/content/` root as part of
-the complete Runtime feature. Outline AssetRecords reference captured revisions
+the complete Runtime feature. Outline AssetRecords reference exact revisions
 through mechanical retention anchors; neither records nor anchors own physical
 bytes. This PR must not land an Outline-specific physical blob root that a later
 Agent PR replaces. Raw digests and anchor IDs are absent from public CLI,
@@ -1294,7 +1300,7 @@ use intent.
 
 This PR does not add Agent resource-reference records or change current Agent
 binary-resource handling. The later Agent lifecycle PR consumes the
-already-neutral captured-revision kernel. #587 rebases after this PR and treats
+already-neutral exact-revision kernel. #587 rebases after this PR and treats
 its existing managed-resource handle opaquely until that cutover.
 
 Before claiming the work, the dev reruns `gh pr list`, scans `docs/TASKS.md`, and
@@ -1312,7 +1318,7 @@ line claims those areas explicitly. The dev does not edit `docs/TASKS.md` or
 | ChangeSet normalization (`FR-3`, `FR-4`, `FR-12`) | Property/golden tests showing porcelain/direct equivalence, stable canonical hashes, fixed IDs/bindings, non-mutating Diff, 100-date one-diff/one-apply, and bounded returned Projection |
 | Atomicity and concurrency (`FR-5`, `FR-6`) | Tests `rolls back every chunk after a late Change failure`, `rejects a stale Diff without writes`, `does not retry a stale mutation`, and `requires Diff-bound destructive acknowledgement` |
 | Durable recovery (`FR-5`, `FR-12`) | Restart tests for ordinary edits, create/delete, purge, Empty Trash, revert conflict, revert-of-revert, crash before log append, crash after log fsync/before acknowledgement, truncated tail, orphan blob, corrupt referenced blob, idempotency, retention, and capacity |
-| Asset safety (`FR-5`, `FR-12`) | Fixtures proving live, leased, and recovery-only AssetRecords retain captured revisions through opaque anchors; anchor-first crash points leak rather than lose; the Runtime barrier prevents reconciliation from releasing an in-flight anchor; successful reconciliation releases only orphan Outline anchors; central GC cannot race concurrent anchor creation; physical corruption differs from corrupt AssetRecord metadata; purge recovery restores media; `delete_asset`, public digests, and public anchor IDs are absent |
+| Asset safety (`FR-5`, `FR-12`) | Fixtures proving Node-referenced, leased, and recovery-only AssetRecords retain exact revisions through opaque anchors; anchor-first crash points leak rather than lose; the Runtime barrier prevents reconciliation from releasing an in-flight anchor; successful reconciliation releases only orphan Outline anchors; central GC cannot race concurrent anchor creation; physical corruption differs from corrupt AssetRecord metadata; purge recovery restores media; `delete_asset`, public digests, and public anchor IDs are absent |
 | Runtime lifecycle (`FR-10`) | Process tests for CLI start, desktop start, `--no-start`, stale descriptor/lock, simultaneous desktop/CLI startup, shared attachment, independent desktop restart, idle drain, unavailable timeout, private permissions, no client persistence import, one-time manual installed/dev reset, fresh physical layout, and no migration/automatic-deletion path |
 | Desktop cutover (`FR-3`, `FR-5`, `FR-11`) | Renderer/preload/E2E proof that every persisted desktop action produces Runtime Operation/Event, optimistic drafts reconcile once, conflict keeps draft, Undo/Redo uses guarded revert, and dependency guard finds no document authority in Electron main |
 | Agent authority (`FR-8`, `FR-9`) | Registry equality test for local-user and built-in-Agent schemas; valid/missing/expired attestation tests; immutable Thread/Turn/Item audit; full purge/revert coverage; no Memory projection filtering |
@@ -1360,7 +1366,7 @@ The final branch runs:
   fail before mutation rather than evict protected recovery.
 - **Asset loss or leaks:** Direct unlink can destroy revert data, while never
   deleting grows storage forever. Remove public delete, use logical AssetRecords
-  over central captured revisions, bias cross-store crashes toward leaked
+  over central exact revisions, bias cross-store crashes toward leaked
   anchors, reconcile
   only under the Runtime mutation barrier, and let ContentStore GC atomically
   select only unanchored/unleased revisions.

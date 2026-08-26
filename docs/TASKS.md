@@ -35,17 +35,19 @@ The flagship (`unified-command-surface`) shipped and the 2026-08-09 audit re-anc
 every stale entry, so the frontier is a set of parallel lanes (detail lives in each item's
 theme-section entry below; this list is the ordering, not a second record):
 
-- **Lane 0 — standalone Outliner Runtime and `outline` CLI**: the PM-ratified
-  [`outliner-runtime-cli`](plans/outliner-runtime-cli.md) plan is the immediate
-  P0 and implementation PR #584 is active in the `codex` clone. Its current
-  asset model is superseded; before continuing it must return to Draft and rebase
-  this shared-content authority. It remains one complete feature: standalone
-  Runtime authority, desktop/CLI protocol cutover, transactional recovery,
-  neutral captured-revision ContentStore plus Outline AssetRecords and retention
-  anchors, full Agent authority, both Skills, import convergence, and complete
-  legacy deletion. Do not split or merge an intermediate state; its shared file
-  surface pauses conflicting startup, Core/persistence, asset,
-  Agent-tool, and built-in-Skill work while claimed.
+- **Lane 0 — reference URI foundation, then standalone Outliner Runtime**: first
+  ship [`reference-uri-unification`](plans/reference-uri-unification.md) so every
+  Node/file consumer uses `[[node://...]]` / `[[file:///...]]` without serialized
+  labels or a legacy reader. Then rebase the PM-ratified
+  [`outliner-runtime-cli`](plans/outliner-runtime-cli.md) implementation PR #584
+  in the `codex` clone. Its current marker and asset models are superseded; it
+  must return to Draft and wait for that foundation. It remains one complete
+  feature: standalone Runtime authority, desktop/CLI protocol cutover,
+  transactional recovery, neutral exact-revision ContentStore plus Outline
+  AssetRecords and retention anchors, full Agent authority, both Skills, import
+  convergence, and complete legacy deletion. Do not split or merge an
+  intermediate state; its shared file surface pauses conflicting startup,
+  Core/persistence, asset, Agent-tool, and built-in-Skill work while claimed.
 - **Lane A — build-ready quick wins** (fast-track, parallelize freely; small items
   don't count against the review-queue cap): `floating-toolbar-polish` (**unblocked
   2026-08-10** — its `core/types.ts` dependency landed with #510; rebase and go),
@@ -117,17 +119,30 @@ live in `agent-data-model`, `agent-memory-foundations`, and `agent-conversation-
 (authorities). The remaining agent work is the small active/deferred set under **Agent
 capabilities** below — feature-completion tails and standalone items, not a milestone push.
 
+### Shared Reference Foundation
+
+- **[reference-uri-unification](plans/reference-uri-unification.md)** (`draft`,
+  PM-ratified 2026-08-26; plan PR #589; one complete refactor PR) — replace the custom
+  `kind:label^value` and `file:^path` text protocols with canonical URI-only
+  markers: `[[node://<uuid>]]`, explicit system-Node keys such as
+  `[[node://library]]`, and standard `[[file:///absolute/path]]` first, with
+  `thread://` reserved for the later cross-Thread feature. Structured
+  references remain canonical; renderers resolve names; provider/tool text may
+  place readable names beside unchanged URIs. The codec admits schemes per
+  consumer and grants no authority. Implement before #584/#587 continue; both
+  branches then rebase and must not restore the retired grammar.
+
 ### Outliner Runtime And Automation
 
 - **[outliner-runtime-cli](plans/outliner-runtime-cli.md)** (P0, `in-progress`,
-  PM-ratified 2026-08-23; implementation PR #584, codex; shared-content rebase
-  required before further work) — replace every persisted Outliner access path
+  PM-ratified 2026-08-23; implementation PR #584, codex; reference-URI and
+  shared-content rebase required before further work) — replace every persisted Outliner access path
   with one standalone local TypeScript Runtime and one versioned contract; make
   desktop and `outline` CLI equal clients; commit document update,
   Operation, recovery patch, Outline asset delta, idempotency result, and Event
   sequence at one transaction-log boundary; store physical asset bytes through
   the neutral multi-process ContentStore while Outliner stores AssetRecords that
-  reference captured revisions through mechanical retention anchors; give Agents
+  reference exact revisions through mechanical retention anchors; give Agents
   the complete caller-neutral Outliner schema with trusted causation; compose
   import through generic ChangeSets; then delete the renderer document
   authority, six native Node tools,
@@ -191,17 +206,25 @@ before any directional/security-sensitive build.
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/reference/agent-program.md`.
 - **[agent-result-and-file-lifecycle](plans/agent-result-and-file-lifecycle.md)**
-  (`draft`; plan PR #588; one complete feature PR) — make final Agent results
-  plain text with explicit file citations; represent content through canonical Agent/Outline
-  resource references, resolve each use by context and intent, and retain exact
-  captured revisions through the neutral ContentStore; give root conversations
-  isolated managed filesystem scopes; and
+  (`draft`; plan PR #588 + architecture follow-up #589; one complete feature PR) — make final Agent results
+  plain text with explicit `[[file:///...]]` citations; represent content through
+  canonical Agent/Outline resource references, resolve each use by profile
+  context and intent, and retain exact revisions through the neutral
+  ContentStore; give root conversations isolated managed filesystem scopes; and
   budget only the child-output projection injected into a parent's context.
   The PM-ratified pre-release cut manually resets installed and clone-scoped
   stores; no migration, legacy reader, or automatic deletion path ships.
-  Sequence is fixed: merge this architecture authority, rebase/land #584, then
-  rebase/land #587, then start this implementation. Scope is rechecked after
-  both dependencies land.
+  Sequence is fixed: ship reference-URI unification, rebase/land #584, then
+  rebase/land #587, then start this implementation. Scope is rechecked after all
+  dependencies land.
+- **[agent-cross-thread-reference](plans/agent-cross-thread-reference.md)**
+  (`draft`; plan PR #589; one complete feature PR after the file lifecycle) — let users mention
+  prior conversations through `[[thread://<uuidv7>]]` and let Agents search/read
+  bounded same-profile history without resuming, forking, messaging, or copying
+  transcripts. Historical content is lazy and untrusted. Historical file reuse
+  selects only canonical citations and delegates source/exact-revision access to
+  the lifecycle resolver; no Thread-wide file grant, workspace scan, or hidden
+  retention is introduced.
 - **[subagent-task-outcome-contract](plans/archive/subagent-task-outcome-contract.md)**
   (P1, `done` 2026-08-21; plan PR #569, implementation PR #573, codex-3) —
   delegated execution now records factual generation outcomes instead of task
@@ -596,7 +619,7 @@ Standalone agent items (not part of the program):
   Design folded into the Agent runtime, Thread rendering, and design-system specs.
 - **[agent-composer-input-history](plans/agent-composer-input-history.md)**
   (`in-progress`, ratified 2026-08-25; plan PR #585, Draft implementation PR
-  #587, codex-3; gated on #584) — every editable Agent composer
+  #587, codex-3; gated on reference-URI unification and #584) — every editable Agent composer
   recalls reader-authored structured inputs from its exact Thread through
   visual-boundary Up/Down navigation while preserving scratch, selection,
   references, attachments, and reference liveness.
@@ -604,11 +627,12 @@ Standalone agent items (not part of the program):
   trust; the PM-ratified pre-release clean cut manually resets installed and
   clone-scoped stores before validation, so every persisted Item uses the strict
   required-author schema with no `unknown` variant or compatibility reader. The
-  one complete implementation PR must rebase after #584, preserve attachment
-  history through a narrow opaque current-resource adapter without byte copies
-  or digest interpretation, and rerun the collision check before finishing
-  shared Agent files. Agent resource-reference records and the intent-aware
-  resolver land later in `agent-result-and-file-lifecycle`, not in #587.
+  one complete implementation PR must rebase after the URI cutover and #584,
+  preserve structured Node/file references plus attachment history through a
+  narrow opaque current-resource adapter without byte copies or digest
+  interpretation, and rerun the collision check before finishing shared Agent
+  files. Agent resource-reference records and the intent-aware resolver land
+  later in `agent-result-and-file-lifecycle`, not in #587.
 - **agent-dream-followups** — **REMOVED 2026-08-03.** Seven polish items for a subsystem
   that no longer exists: `dream-channel-and-memory-retire` retired Dream in full (#324, #328,
   #329) and `rg -i dream src/` is empty. It survived the retirement because nothing links a

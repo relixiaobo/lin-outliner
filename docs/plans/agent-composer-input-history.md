@@ -85,16 +85,20 @@ reader.
   or automatically delete the authorless pre-cutover format.
 - **CON-6:** `agent-result-and-file-lifecycle` is the governing target for
   durable Agent content: canonical consumers link domain resource-reference
-  records, while one neutral ContentStore retains captured revisions through
+  records, while one neutral ContentStore retains exact revisions through
   mechanical anchors. This feature must not entrench the existing per-Thread
   binary layout and must keep attachment history behind a replaceable opaque
   resource-reference boundary.
-- **CON-7:** #584 establishes the neutral `src/content/` captured-revision
+- **CON-7:** #584 establishes the neutral `src/content/` exact-revision
   foundation and Outline AssetRecords that reference it through retention
   anchors, but deliberately does not cut Agent resources over. This feature
   rebases after #584, continues to treat the current managed-resource reference
   as an opaque handle, and does not interpret its digest-shaped implementation
   ID.
+- **CON-8:** `reference-uri-unification` lands before #584 and this feature.
+  Composer history preserves structured Node/file atoms and emits only canonical
+  `[[node://...]]` / `[[file:///...]]` projections; it must not retain or restore
+  the retired `kind:label^value` text grammar.
 
 A binary `reader | runtime` field is rejected as the minimum patch. It filters
 history, but it permanently collapses delegating Agents, peer Agents, host
@@ -436,7 +440,7 @@ navigation cannot create duplicate generated names by rewinding UI state.
 
 Submitting recalled content follows the ordinary `threadContentFromDraft`
 route. It reuses the existing canonical resource reference. In the target model,
-that is an Agent resource-reference record whose captured representation resolves
+that is an Agent resource-reference record whose exact-revision representation resolves
 through ContentStore; in this PR it is necessarily the current managed-resource
 handle behind a narrow opaque adapter because the Agent cutover lands later.
 History compares and retains the whole handle as an identity value but never
@@ -575,7 +579,7 @@ removal behavior; it is no longer an open collision. `gh pr list` shows one
 other open claim, #584. Its current diff overlaps this future implementation on
 `src/main/agent/ThreadService.ts`, `docs/spec/agent-core.md`,
 `docs/spec/agent-model-runtime.md`, and `docs/spec/agent-thread-rendering.md`;
-it also establishes the neutral captured-revision ContentStore and Outline
+it also establishes the neutral exact-revision ContentStore and Outline
 references that this plan must not contradict. Pause overlapping work, rebase on
 `origin/main` after #584
 lands, and rerun the file-scope check because #584 retires substantial Agent
