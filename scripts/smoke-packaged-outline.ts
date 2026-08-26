@@ -17,8 +17,11 @@ const outlineRoot = path.join(resourcesRoot, 'outline');
 const outlineLauncher = path.join(outlineRoot, 'bin', 'outline');
 const cliBundle = path.join(outlineRoot, 'outline.mjs');
 const runtimeBundle = path.join(outlineRoot, 'outline-runtime.mjs');
-const skillPaths = [
-  path.join(resourcesRoot, 'built-in-skills', 'outline', 'SKILL.md'),
+const packagedSkills = [
+  {
+    path: path.join(resourcesRoot, 'built-in-skills', 'outline', 'SKILL.md'),
+    execution: 'inline',
+  },
 ] as const;
 const userData = mkdtempSync(path.join(tmpdir(), 'outline-packaged-lifecycle-'));
 const runtimeRoot = path.join(userData, 'outline-runtime');
@@ -155,9 +158,9 @@ try {
       reopenedPid: secondMain.pid,
       sharedMutationOperationId: operation.operationId,
     },
-    skills: skillPaths.map((skillPath) => ({
-      name: path.basename(path.dirname(skillPath)),
-      execution: 'isolated',
+    skills: packagedSkills.map((skill) => ({
+      name: path.basename(path.dirname(skill.path)),
+      execution: skill.execution,
       cliLauncher: outlineLauncher,
     })),
   };
@@ -179,7 +182,7 @@ async function verifyPackagedResources(): Promise<void> {
     stat(appExecutable),
     stat(cliBundle),
     stat(runtimeBundle),
-    ...skillPaths.map((skillPath) => readFile(skillPath, 'utf8')),
+    ...packagedSkills.map((skill) => readFile(skill.path, 'utf8')),
   ]);
   for (const [label, value] of [
     ['launcher', launcherStat],
@@ -193,11 +196,14 @@ async function verifyPackagedResources(): Promise<void> {
     throw new Error('Packaged outline launcher is not executable.');
   }
   for (const [index, source] of skills.entries()) {
-    if (!/^execution:\s*isolated\s*$/m.test(source)) {
-      throw new Error(`${skillPaths[index]} does not declare execution: isolated.`);
+    const skill = packagedSkills[index];
+    if (!skill) throw new Error('Packaged Skill verification metadata is incomplete.');
+    const declaredExecution = /^execution:\s*(inline|isolated)\s*$/m.exec(source)?.[1] ?? 'inline';
+    if (declaredExecution !== skill.execution) {
+      throw new Error(`${skill.path} uses execution: ${declaredExecution}; expected ${skill.execution}.`);
     }
     if (!/\boutline(?:\s|`)/.test(source)) {
-      throw new Error(`${skillPaths[index]} does not invoke the shared outline command.`);
+      throw new Error(`${skill.path} does not invoke the shared outline command.`);
     }
   }
   const [cliSource, runtimeSource] = await Promise.all([

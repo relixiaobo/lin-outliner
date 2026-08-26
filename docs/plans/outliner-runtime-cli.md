@@ -207,7 +207,10 @@ The explicit traceability manifest is:
   - **AC-68:** Every attach shall compare the exact bundled capability-contract
     digest with both the private Runtime descriptor and live status response.
     A same-major mismatch shall fail closed with `protocol_incompatible` before
-    command execution.
+    command execution. With automatic start enabled, a descriptor/live/lock-
+    authenticated older bundled Runtime may be retired and replaced within the
+    startup deadline; `status`, `--no-start`, unowned descriptors, and
+    unverifiable identities shall not change process state.
   - **AC-69:** `SIGINT` and `SIGTERM` shall abort startup, ordinary reads,
     ordinary writes, uploads, assets, and streams, with shell-standard exit
     codes and unknown-settlement recovery for a dispatched mutation.
@@ -466,9 +469,12 @@ Protocol major version `1` is explicit in every public artifact, response, and
 stream record. While CLI and Runtime ship as one product, every attach also
 compares the exact SHA-256 digest of the canonical capability manifest. A
 same-major digest mismatch fails closed with `protocol_incompatible` before the
-requested command runs. Minor-version negotiation is deferred until CLI and
-Runtime can be distributed independently; there is no permissive same-major
-fallback in the bundled product.
+requested command runs. Automatic start may first retire an authenticated older
+bundled Runtime whose private descriptor and writer-lock owner identify the same
+live instance; this is lifecycle replacement, not permissive command fallback.
+Minor-version negotiation is deferred until CLI and Runtime can be distributed
+independently; there is no permissive same-major command fallback in the bundled
+product.
 
 A non-stream machine response writes exactly one JSON value to stdout:
 
@@ -1100,9 +1106,15 @@ CLI discovery rules are deterministic:
    `ELECTRON_USER_DATA_DIR` for isolated development and tests.
 2. Read and validate the descriptor, compare its exact contract digest, connect,
    authenticate, and compare the live status digest under a bounded attach probe.
-3. If the descriptor is absent or stale, start the standalone Runtime unless
-   `--no-start` is present.
-4. Wait up to the global `--startup-timeout` value, 10 seconds by default, then
+3. If automatic start finds an older authenticated bundled Runtime, require its
+   descriptor to match the private writer-lock owner, retire that exact instance,
+   and wait for its descriptor release. Current Runtimes use a private lifecycle
+   route; legacy Runtimes receive `SIGTERM` only after the same checks. An atomic
+   private retirement claim selects one signaler and recovers if its owner dies.
+4. If the descriptor is absent or the authenticated old instance retired, start
+   the standalone Runtime unless `--no-start` is present. Concurrent starters
+   converge through the writer lock.
+5. Wait up to the global `--startup-timeout` value, 10 seconds by default, then
    return `runtime_unavailable` with no persistence fallback.
 
 Every finite Runtime call has a separate `--timeout` deadline, 60 seconds by

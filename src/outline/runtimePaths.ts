@@ -7,6 +7,7 @@ export interface OutlineRuntimePaths {
   readonly descriptorPath: string;
   readonly socketPath: string;
   readonly lockPath: string;
+  readonly retirementPath: string;
   readonly workspacePath: string;
 }
 
@@ -26,6 +27,7 @@ export function resolveOutlineRuntimePaths(root: string): OutlineRuntimePaths {
     descriptorPath: path.join(resolved, 'runtime.json'),
     socketPath,
     lockPath: path.join(resolved, 'writer.lock'),
+    retirementPath: path.join(resolved, 'retirement.lock'),
     workspacePath: path.join(resolved, 'workspace'),
   };
 }

@@ -28,6 +28,11 @@ import {
 const MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
 type OutlineSuccessResponse = Extract<OutlineResponse, { ok: true }>;
 
+export interface OutlineRuntimeIdentity {
+  readonly instanceId: string;
+  readonly contractDigest: string;
+}
+
 export class OutlineClient {
   // A watch owns one long-lived socket. Requests and asset transfers must still
   // settle through this shared client while that stream remains open.
@@ -72,6 +77,78 @@ export class OutlineClient {
         throw protocolError('Outline Runtime response identity does not match the request.');
       }
       return value;
+    } catch (error) {
+      throw normalizeRequestError(error, lifetime);
+    } finally {
+      lifetime.cleanup();
+    }
+  }
+
+  async probeRuntimeIdentity(signal?: AbortSignal): Promise<OutlineRuntimeIdentity> {
+    const lifetime = createRequestLifetime(signal, this.requestTimeoutMs);
+    const request: OutlineRequest = {
+      protocolVersion: OUTLINE_PROTOCOL_VERSION,
+      requestId: `identity:${crypto.randomUUID()}`,
+      command: 'status',
+      input: {},
+    };
+    try {
+      const value = await this.jsonRequest('/v1/request', request, lifetime.signal);
+      const runtime = isRecord(value)
+        && value.ok === true
+        && value.requestId === request.requestId
+        && value.command === request.command
+        && isRecord(value.data)
+        && value.data.running === true
+        && isRecord(value.data.runtime)
+        ? value.data.runtime
+        : undefined;
+      if (!runtime
+        || typeof runtime.instanceId !== 'string'
+        || typeof runtime.contractDigest !== 'string'
+        || !/^[a-f0-9]{64}$/.test(runtime.contractDigest)) {
+        throw protocolError('Outline Runtime returned an invalid private identity probe.');
+      }
+      return {
+        instanceId: runtime.instanceId,
+        contractDigest: runtime.contractDigest,
+      };
+    } catch (error) {
+      throw normalizeRequestError(error, lifetime);
+    } finally {
+      lifetime.cleanup();
+    }
+  }
+
+  async requestRuntimeRetirement(
+    instanceId: string,
+    replacementContractDigest: string,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    const lifetime = createRequestLifetime(signal, this.requestTimeoutMs);
+    const body = JSON.stringify({ instanceId, replacementContractDigest });
+    try {
+      const response = await this.openRequest({
+        method: 'POST',
+        path: '/v1/runtime/retire',
+        headers: {
+          'content-type': 'application/json',
+          'content-length': Buffer.byteLength(body),
+        },
+        body,
+        signal: lifetime.signal,
+      });
+      const value = await readResponseJson(response);
+      if (response.statusCode === 404) return false;
+      if (response.statusCode !== 200) {
+        throwDecodedHttpError(value, response.statusCode, 'retirement request');
+      }
+      if (!isRecord(value)
+        || value.retiring !== true
+        || value.instanceId !== instanceId) {
+        throw protocolError('Outline Runtime returned an invalid retirement response.');
+      }
+      return true;
     } catch (error) {
       throw normalizeRequestError(error, lifetime);
     } finally {

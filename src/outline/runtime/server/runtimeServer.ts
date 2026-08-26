@@ -174,6 +174,24 @@ export class OutlineRuntimeServer {
         return;
       }
       const url = new URL(request.url ?? '/', 'http://outline.runtime');
+      if (request.method === 'POST' && url.pathname === '/v1/runtime/retire') {
+        const body = await readJsonBody(request);
+        if (!isRecord(body)
+          || body.instanceId !== this.descriptor.instanceId
+          || typeof body.replacementContractDigest !== 'string'
+          || !/^[a-f0-9]{64}$/.test(body.replacementContractDigest)
+          || body.replacementContractDigest === this.descriptor.contractDigest) {
+          throw new Error('Invalid Outline Runtime retirement request.');
+        }
+        response.once('finish', () => {
+          void this.stop();
+        });
+        writeJson(response, 200, {
+          retiring: true,
+          instanceId: this.descriptor.instanceId,
+        });
+        return;
+      }
       if (request.method === 'POST' && url.pathname === '/v1/assets/ingest') {
         const requestId = requiredHeader(request, 'x-outline-request-id');
         const filename = optionalBase64UrlHeader(request, 'x-outline-filename');

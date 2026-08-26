@@ -197,7 +197,13 @@ change with the bundled product. `outline schema` therefore does not publish
 CLI and Runtime currently ship together. The Runtime descriptor and live status
 both carry the SHA-256 digest of the canonical capability manifest. Every attach
 compares both values with the bundled CLI digest, including ordinary commands;
-same-major drift fails closed with `protocol_incompatible`. Minor-version
+same-major drift fails closed before any public command executes. When automatic
+start is enabled, an authenticated Runtime whose private descriptor and writer
+lock prove the same process identity is retired within the startup deadline and
+replaced by the bundled Runtime. A legacy Runtime without the private retirement
+route receives `SIGTERM` only after those checks. `status`, `--no-start`, an
+unowned descriptor, or an unverifiable live identity remains
+`protocol_incompatible` and never changes process state. Minor-version
 negotiation is deferred until CLI and Runtime can be distributed independently.
 
 Startup discovery uses `--startup-timeout`, defaulting to 10 seconds. Every

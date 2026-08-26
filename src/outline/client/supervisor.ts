@@ -4,8 +4,12 @@ import { OutlineContractError, outlineError } from '../contract/errors';
 import { OUTLINE_DEFAULT_STARTUP_TIMEOUT_MS } from '../contract/version';
 import { outlineCapabilityContractDigest } from '../contract/capabilities';
 import { OutlineClient } from './client';
-import { readOutlineRuntimeDescriptor } from './descriptor';
-import type { RuntimeStatus } from '../contract/schemas';
+import {
+  descriptorHasMatchingRuntimeOwner,
+  readOutlineRuntimeDescriptor,
+} from './descriptor';
+import type { RuntimeDescriptor, RuntimeStatus } from '../contract/schemas';
+import { acquireOutlineRuntimeRetirementClaim } from './retirement';
 
 export interface OutlineRuntimeLaunch {
   readonly command: string;
@@ -31,7 +35,15 @@ export class OutlineClientSupervisor {
     outlineCapabilityContractDigest();
     const timeoutMs = Math.max(1, this.options.startupTimeoutMs ?? OUTLINE_DEFAULT_STARTUP_TIMEOUT_MS);
     const deadline = Date.now() + timeoutMs;
-    const existing = await this.tryConnectBefore(deadline, signal);
+    let existing: OutlineClient | null;
+    try {
+      existing = await this.tryConnectBefore(deadline, signal);
+    } catch (error) {
+      if (this.options.noStart
+        || !isProtocolIncompatible(error)
+        || !await this.retireIncompatibleRuntime(deadline, signal)) throw error;
+      existing = await this.tryConnectBefore(deadline, signal);
+    }
     if (existing) return existing;
     if (this.options.noStart) throw runtimeUnavailable('Outline Runtime is not running and automatic start is disabled.');
     this.launchRuntime();
@@ -124,6 +136,91 @@ export class OutlineClientSupervisor {
     }
   }
 
+  private async retireIncompatibleRuntime(deadline: number, signal?: AbortSignal): Promise<boolean> {
+    const descriptor = await readOutlineRuntimeDescriptor(this.options.root);
+    if (!descriptor) return true;
+    const expectedDigest = outlineCapabilityContractDigest();
+    if (descriptor.contractDigest === expectedDigest) return false;
+    if (!await descriptorHasMatchingRuntimeOwner(this.options.root, descriptor)) return false;
+
+    const probe = deadlineSignal(signal, Math.max(1, deadline - Date.now()));
+    const client = new OutlineClient(descriptor);
+    try {
+      const identity = await client.probeRuntimeIdentity(probe.signal);
+      if (identity.instanceId !== descriptor.instanceId
+        || identity.contractDigest !== descriptor.contractDigest
+        || !await this.descriptorStillOwned(descriptor)) return false;
+
+      const claim = await acquireOutlineRuntimeRetirementClaim(this.options.root, descriptor.instanceId);
+      try {
+        if (claim.owned) await this.requestRuntimeRetirement(client, descriptor, expectedDigest, probe.signal);
+        await this.waitForRuntimeRelease(descriptor, deadline, probe.signal);
+        return true;
+      } finally {
+        await claim.release();
+      }
+    } catch (error) {
+      if (probe.timedOut() && !signal?.aborted) {
+        throw runtimeUnavailable('Outline Runtime replacement exceeded the startup timeout.', error);
+      }
+      throw error;
+    } finally {
+      probe.cleanup();
+      client.close();
+    }
+  }
+
+  private async requestRuntimeRetirement(
+    client: OutlineClient,
+    descriptor: RuntimeDescriptor,
+    expectedDigest: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    let retirementRequested = false;
+    try {
+      retirementRequested = await client.requestRuntimeRetirement(
+        descriptor.instanceId,
+        expectedDigest,
+        signal,
+      );
+    } catch (error) {
+      if (!isUnavailableConnection(error)) throw error;
+    }
+    if (!retirementRequested && await this.descriptorStillOwned(descriptor)) {
+      try {
+        process.kill(descriptor.pid, 'SIGTERM');
+      } catch (error) {
+        if (!isMissingProcess(error)) throw error;
+      }
+    }
+  }
+
+  private async waitForRuntimeRelease(
+    descriptor: RuntimeDescriptor,
+    deadline: number,
+    signal: AbortSignal,
+  ): Promise<void> {
+    while (Date.now() < deadline) {
+      const [current, ownerStillMatches] = await Promise.all([
+        readOutlineRuntimeDescriptor(this.options.root),
+        descriptorHasMatchingRuntimeOwner(this.options.root, descriptor),
+      ]);
+      if ((!current || current.instanceId !== descriptor.instanceId) && !ownerStillMatches) return;
+      await delay(Math.min(25, Math.max(1, deadline - Date.now())), signal);
+    }
+    throw runtimeUnavailable(
+      'The incompatible Outline Runtime did not retire before the startup timeout.',
+      JSON.stringify({ pid: descriptor.pid, instanceId: descriptor.instanceId }),
+    );
+  }
+
+  private async descriptorStillOwned(descriptor: RuntimeDescriptor): Promise<boolean> {
+    const current = await readOutlineRuntimeDescriptor(this.options.root);
+    return current !== null
+      && sameRuntimeDescriptor(current, descriptor)
+      && await descriptorHasMatchingRuntimeOwner(this.options.root, descriptor);
+  }
+
   private launchRuntime(): void {
     const launch = this.options.launch ?? defaultLaunch(this.options.root);
     const child = spawn(launch.command, [...launch.args], {
@@ -190,6 +287,24 @@ function isUnavailableConnection(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
   const code = (error as { code?: unknown }).code;
   return code === 'ENOENT' || code === 'ECONNREFUSED' || code === 'ECONNRESET' || code === 'EPIPE';
+}
+
+function isProtocolIncompatible(error: unknown): boolean {
+  return error instanceof OutlineContractError
+    && error.outlineError.code === 'protocol_incompatible';
+}
+
+function isMissingProcess(error: unknown): boolean {
+  return isRecord(error) && error.code === 'ESRCH';
+}
+
+function sameRuntimeDescriptor(left: RuntimeDescriptor, right: RuntimeDescriptor): boolean {
+  return left.pid === right.pid
+    && left.instanceId === right.instanceId
+    && left.createdAt === right.createdAt
+    && left.socketPath === right.socketPath
+    && left.bearerToken === right.bearerToken
+    && left.contractDigest === right.contractDigest;
 }
 
 function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {

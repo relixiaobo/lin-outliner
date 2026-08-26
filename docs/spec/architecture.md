@@ -265,8 +265,18 @@ The Runtime process is discovered through a user-private descriptor and local
 authenticated transport. The descriptor and socket/token paths are derived by
 `src/outline/runtimePaths.ts`, shared by client and server without making the
 client depend on Runtime implementation. An ordinary desktop or CLI request may
-start the bundled Runtime; `--no-start` returns a stable unavailable error. The
-Runtime imports neither Electron nor renderer code.
+start the bundled Runtime; `--no-start` returns a stable unavailable error. If
+automatic start finds an older bundled contract, the client first authenticates
+the private Runtime identity and requires the descriptor to match the private
+writer-lock owner exactly. A current Runtime then retires through its private
+lifecycle route; a legacy Runtime that predates that route receives `SIGTERM`
+only after the same identity and ownership checks. The client waits for that
+exact instance to release its descriptor before launching one replacement, so
+an atomic private retirement claim makes simultaneous desktop and CLI starts
+converge on one signaler and one writer; a claim whose owner died is recovered.
+Unowned, unverifiable, or live-status drift remains `protocol_incompatible`;
+inspection through `status` and `--no-start` never retires or starts a process.
+The Runtime imports neither Electron nor renderer code.
 
 These are local persistence contracts only. Tenon currently starts no account,
 network transport, outbox, retry loop, Cloudflare resource, or sync UI. Future

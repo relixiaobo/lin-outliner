@@ -7,6 +7,7 @@ import type { ChangeSet, Diff, Operation, OutlineEvent, ProjectionResult, Runtim
 import { OutlineClient, OutlineClientSupervisor, readOutlineRuntimeDescriptor } from '../../src/outline/client';
 import { OutlineRuntimeServer, resolveOutlineRuntimePaths } from '../../src/outline/runtime/server';
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { spawn, type ChildProcess } from 'node:child_process';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -14,6 +15,7 @@ import path from 'node:path';
 
 const roots: string[] = [];
 const runtimeEntry = fileURLToPath(new URL('../../src/outline/runtime/server/entry.ts', import.meta.url));
+const legacyRuntimeEntry = fileURLToPath(new URL('../fixtures/outlineLegacyRuntime.ts', import.meta.url));
 
 afterAll(async () => {
   await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
@@ -720,6 +722,115 @@ describe('Outline Runtime process boundary', () => {
     });
   });
 
+  test('retires the current private Runtime through its authenticated lifecycle route', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const client = new OutlineClient(runtime.descriptor);
+    try {
+      expect(await client.requestRuntimeRetirement(
+        runtime.descriptor.instanceId,
+        'f'.repeat(64),
+      )).toBe(true);
+      await waitFor(async () => (await readOutlineRuntimeDescriptor(root)) === null, 3_000);
+    } finally {
+      client.close();
+      await runtime.stop();
+    }
+  });
+
+  test('keeps status and no-start observational when a live Runtime contract differs', async () => {
+    const root = await makeRoot();
+    const legacy = startLegacyRuntime(root);
+    await waitForDescriptor(root);
+    const supervisor = new OutlineClientSupervisor({ root, noStart: true, startupTimeoutMs: 500 });
+    try {
+      await expect(supervisor.status()).rejects.toMatchObject({
+        outlineError: { code: 'protocol_incompatible' },
+      });
+      await expect(supervisor.connect()).rejects.toMatchObject({
+        outlineError: { code: 'protocol_incompatible' },
+      });
+      expect(legacy.exitCode).toBeNull();
+      expect(legacy.signalCode).toBeNull();
+    } finally {
+      await stopChild(legacy);
+    }
+  });
+
+  test('atomically replaces one authenticated legacy Runtime for simultaneous supervisors', async () => {
+    const root = await makeRoot();
+    const legacy = startLegacyRuntime(root);
+    const oldDescriptor = await waitForDescriptor(root);
+    await writeFile(resolveOutlineRuntimePaths(root).retirementPath, JSON.stringify({
+      pid: 2_147_483_647,
+      claimId: 'retirement:dead-claimant',
+      instanceId: oldDescriptor.instanceId,
+      createdAt: '2000-01-01T00:00:00.000Z',
+    }), { mode: 0o600 });
+    const launch = {
+      command: process.execPath,
+      args: [runtimeEntry, '--root', root],
+      env: { TENON_OUTLINE_RUNTIME_IDLE_MS: '60000' },
+      detached: false,
+    };
+    const supervisors = [
+      new OutlineClientSupervisor({ root, launch, startupTimeoutMs: 5_000 }),
+      new OutlineClientSupervisor({ root, launch, startupTimeoutMs: 5_000 }),
+    ];
+    const clients: OutlineClient[] = [];
+    try {
+      clients.push(...await Promise.all(supervisors.map((supervisor) => supervisor.connect())));
+      expect(new Set(clients.map((client) => client.descriptor.instanceId)).size).toBe(1);
+      expect(clients[0]?.descriptor).toMatchObject({
+        contractDigest: outlineCapabilityContractDigest(),
+      });
+      expect(clients[0]?.descriptor.instanceId).not.toBe(oldDescriptor.instanceId);
+      await waitFor(() => legacy.exitCode !== null || legacy.signalCode !== null, 3_000);
+    } finally {
+      clients.forEach((client) => client.close());
+      await stopChild(legacy);
+      await stopRuntimeProcess(root);
+    }
+  });
+
+  test('does not signal a mismatched Runtime whose private lock owner changed', async () => {
+    const root = await makeRoot();
+    const legacy = startLegacyRuntime(root);
+    const descriptor = await waitForDescriptor(root);
+    const paths = resolveOutlineRuntimePaths(root);
+    const ownerPath = path.join(paths.lockPath, 'owner.json');
+    await writeFile(ownerPath, JSON.stringify({
+      pid: descriptor.pid,
+      instanceId: 'runtime:different-owner',
+      createdAt: descriptor.createdAt,
+    }), { mode: 0o600 });
+    const supervisor = new OutlineClientSupervisor({
+      root,
+      launch: {
+        command: process.execPath,
+        args: [runtimeEntry, '--root', root],
+        detached: false,
+      },
+      startupTimeoutMs: 500,
+    });
+    try {
+      await expect(supervisor.connect()).rejects.toMatchObject({
+        outlineError: { code: 'protocol_incompatible' },
+      });
+      expect(legacy.exitCode).toBeNull();
+      expect(legacy.signalCode).toBeNull();
+    } finally {
+      await writeFile(ownerPath, JSON.stringify({
+        pid: descriptor.pid,
+        instanceId: descriptor.instanceId,
+        createdAt: descriptor.createdAt,
+      }), { mode: 0o600 });
+      await stopChild(legacy);
+    }
+  });
+
   test('bounds a command response after a successful attach probe', async () => {
     const root = await makeRoot();
     const paths = resolveOutlineRuntimePaths(root);
@@ -999,6 +1110,33 @@ async function stopRuntimeProcess(root: string): Promise<void> {
     return;
   }
   await waitFor(async () => (await readOutlineRuntimeDescriptor(root)) === null, 3_000);
+}
+
+function startLegacyRuntime(root: string): ChildProcess {
+  return spawn(process.execPath, [
+    legacyRuntimeEntry,
+    '--root', root,
+    '--contract-digest', 'f'.repeat(64),
+  ], {
+    detached: false,
+    stdio: 'ignore',
+  });
+}
+
+async function waitForDescriptor(root: string): Promise<RuntimeDescriptor> {
+  let descriptor: RuntimeDescriptor | null = null;
+  await waitFor(async () => {
+    descriptor = await readOutlineRuntimeDescriptor(root);
+    return descriptor !== null;
+  }, 3_000);
+  if (!descriptor) throw new Error('Legacy Runtime did not publish its descriptor.');
+  return descriptor;
+}
+
+async function stopChild(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill('SIGTERM');
+  await waitFor(() => child.exitCode !== null || child.signalCode !== null, 3_000);
 }
 
 async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs: number): Promise<void> {
