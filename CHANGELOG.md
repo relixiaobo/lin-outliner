@@ -54,6 +54,18 @@ Entries reference the pull request that introduced them when one exists.
   the comparison retained one unrelated 1/5 workspace-layout signal on this
   renderer-free diff under the repository's non-gating E2E policy.
 
+### Internal
+
+- **Agent results and file handling now share one reference-based architecture
+  (PR #588, main)** — the governing plan keeps terminal results as plain text,
+  models live locations and captured revisions as independent representations,
+  resolves use through access context and intent, and limits the neutral
+  ContentStore to captured bytes, retention anchors, integrity, and garbage
+  collection. The
+  Outliner Runtime and Composer History plans now consume that authority without
+  introducing physical ownership, a managed artifact directory, structured
+  Agent results, or compatibility storage paths.
+
 ## [0.7.0] - 2026-08-23
 
 **Agents you can recognize, inspect, and trust.** Every conversation participant
