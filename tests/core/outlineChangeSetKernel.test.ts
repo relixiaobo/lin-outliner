@@ -8,6 +8,7 @@ import { DiffSchema, type ChangeSet, type NodeDraft, type Projection } from '../
 import {
   OutlineRuntimeWorkspace,
   applyOutlineDiff,
+  commitOutlineChangeSet,
   createSelectionIndex,
   diffOutlineChangeSet,
   projectOutline,
@@ -21,6 +22,99 @@ afterAll(async () => {
 });
 
 describe('outline ChangeSet kernel', () => {
+  test('commits a non-destructive ChangeSet directly without reviewed Diff preview', async () => {
+    const workspace = await makeWorkspace();
+    const beforeRevision = workspace.revision();
+    const changeSet: ChangeSet = {
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      idempotencyKey: 'test:direct-commit',
+      operations: [{
+        op: 'create',
+        placement: { kind: 'last', parent: oneAlias('today') },
+        nodes: [draft('Direct commit row')],
+      }],
+    };
+
+    const operation = await commitOutlineChangeSet(workspace, changeSet, { origin: 'desktop' });
+
+    expect(operation.kind).toBe('outline.operation');
+    if (operation.kind !== 'outline.operation') throw new Error('Expected direct commit to produce an Operation.');
+    expect(operation.origin).toBe('desktop');
+    expect(operation.revisionBefore).toBe(beforeRevision);
+    expect(operation.revisionAfter).toBe(beforeRevision + 1);
+    expect(workspace.projection().nodes.some((node) => node.content.text === 'Direct commit row')).toBe(true);
+    expect(await commitOutlineChangeSet(workspace, changeSet, { origin: 'desktop' })).toEqual(operation);
+  });
+
+  test('normalizes a direct commit inside the mutation queue before executing', async () => {
+    const workspace = await makeWorkspace();
+    const revision = workspace.revision();
+    const createAtRevision = (text: string, idempotencyKey: string): ChangeSet => ({
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      base: { revision },
+      idempotencyKey,
+      operations: [{
+        op: 'create',
+        placement: { kind: 'last', parent: oneAlias('today') },
+        nodes: [draft(text)],
+      }],
+    });
+
+    const results = await Promise.allSettled([
+      commitOutlineChangeSet(workspace, createAtRevision('Queued direct commit A', 'test:queued-direct-a'), { origin: 'desktop' }),
+      commitOutlineChangeSet(workspace, createAtRevision('Queued direct commit B', 'test:queued-direct-b'), { origin: 'desktop' }),
+    ]);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    expect(results.find((result) => result.status === 'rejected')).toMatchObject({
+      reason: { outlineError: { code: 'stale_revision' } },
+    });
+    expect(workspace.revision()).toBe(revision + 1);
+  });
+
+  test('rejects destructive ChangeSets on the direct commit path', async () => {
+    const workspace = await makeWorkspace();
+    const targetId = await createExisting(workspace, 'Reviewed replacement target');
+    const destructive: ChangeSet[] = [
+      {
+        protocolVersion: 1,
+        kind: 'outline.changeset',
+        idempotencyKey: 'test:direct-replace',
+        operations: [{
+          op: 'update',
+          targets: oneId(targetId),
+          changes: [{
+            kind: 'text-patch',
+            field: 'content',
+            patch: { ops: [{ type: 'replace_all', content: { text: 'replacement', marks: [], inlineRefs: [] } }] },
+            review: { destructive: 'replace' },
+          }],
+        }],
+      },
+      {
+        protocolVersion: 1,
+        kind: 'outline.changeset',
+        idempotencyKey: 'test:direct-purge',
+        operations: [{ op: 'lifecycle', action: 'purge', targets: oneId(targetId) }],
+      },
+      {
+        protocolVersion: 1,
+        kind: 'outline.changeset',
+        idempotencyKey: 'test:direct-merge',
+        operations: [{ op: 'merge', sources: oneId(targetId), target: oneAlias('today') }],
+      },
+    ];
+
+    for (const changeSet of destructive) {
+      await expect(commitOutlineChangeSet(workspace, changeSet, { origin: 'desktop' })).rejects.toMatchObject({
+        outlineError: { code: 'confirmation_required' },
+      });
+    }
+  });
+
   test('previews without mutation and applies the exact fixed-ID result as one Operation', async () => {
     const workspace = await makeWorkspace();
     const beforeRevision = workspace.revision();

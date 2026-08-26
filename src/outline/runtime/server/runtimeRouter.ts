@@ -26,7 +26,7 @@ import {
   OUTLINE_STORAGE_VERSION,
 } from '../../contract/version';
 import type { OutlineHistoryMutationOptions, OutlineRuntimeWorkspace } from '../runtimeWorkspace';
-import { applyOutlineDiff, diffOutlineChangeSet } from '../changeSet';
+import { applyOutlineDiff, commitOutlineChangeSet, diffOutlineChangeSet } from '../changeSet';
 import { projectOutline } from '../projection';
 import { countQueryMatches, countSavedSearchMatches, createSelectionIndex } from '../selector';
 import { decodeOperationLogCursor, encodeOperationLogCursor } from '../operationLogCursor';
@@ -244,6 +244,9 @@ export class OutlineRuntimeRouter {
     if (command === 'diff') {
       return diffOutlineChangeSet(this.workspace, (input as { changeSet: ChangeSet }).changeSet);
     }
+    if (command === 'commit') {
+      return commitOutlineChangeSet(this.workspace, (input as { changeSet: ChangeSet }).changeSet, context);
+    }
     if (command === 'apply') {
       const value = input as { diff: Diff; acknowledgeDestructive?: boolean };
       return applyOutlineDiff(this.workspace, value.diff, context, value.acknowledgeDestructive === true);
@@ -268,9 +271,10 @@ export class OutlineRuntimeRouter {
         expectDiff?: string;
         acknowledgeDestructive?: boolean;
       };
+      if (!value.preview && !value.expectDiff) return commitOutlineChangeSet(this.workspace, value.changeSet, context);
       const diff = await diffOutlineChangeSet(this.workspace, value.changeSet);
       if (value.preview) return diff;
-      if (value.expectDiff && value.expectDiff !== diff.diffHash) {
+      if (value.expectDiff !== diff.diffHash) {
         throw new OutlineContractError(outlineError(
           'diff_mismatch',
           'conflict',

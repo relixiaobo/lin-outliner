@@ -131,14 +131,14 @@ React interaction
   -> desktop intent builds a public ChangeSet
   -> preload forwards a versioned Runtime request
   -> Electron main authenticates and forwards without document logic
-  -> Runtime diff + apply
+  -> Runtime direct commit for ordinary non-destructive writes, or reviewed Diff apply
   -> one durable Operation and ordered projection Event
   -> renderer folds the Event delta into its projection index
 
 terminal or Agent intent
   -> registry-derived outline parser/help/schema contract
   -> one complete-resource porcelain command, or one dependent ChangeSet
-  -> authenticated Runtime diff + apply
+  -> authenticated Runtime direct commit, preview, or exact reviewed Diff apply
   -> one durable Operation with bounded returned Projection
 ```
 

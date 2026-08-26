@@ -829,7 +829,7 @@ describe('outline CLI', () => {
     }
   });
 
-  test('runs read, Diff, apply, and streaming export through the public CLI grammar', async () => {
+  test('runs read, direct commit, Diff, apply, and streaming export through the public CLI grammar', async () => {
     const root = await makeRoot();
     const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
@@ -852,6 +852,16 @@ describe('outline CLI', () => {
       const operation = JSON.parse(applied.stdout).data;
       expect(operation).toMatchObject({ kind: 'outline.operation', origin: 'local-user' });
 
+      const committed = captureIo(JSON.stringify(createTodayChangeSet('CLI committed result')));
+      expect(await runOutlineCli(['--json', '--no-start', 'commit', '--input', '-'], {
+        runtimeRoot: root,
+        io: committed.io,
+      })).toBe(0);
+      expect(JSON.parse(committed.stdout).data).toMatchObject({
+        kind: 'outline.operation',
+        origin: 'local-user',
+      });
+
       const jsonFind = captureIo();
       expect(await runOutlineCli(['--json', '--no-start', 'find', 'CLI searchable result'], {
         runtimeRoot: root,
@@ -859,6 +869,14 @@ describe('outline CLI', () => {
       })).toBe(0);
       const foundNodes = JSON.parse(jsonFind.stdout).data.nodes;
       expect(foundNodes).toContainEqual(expect.objectContaining({ text: 'CLI searchable result' }));
+
+      const committedFind = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'find', 'CLI committed result'], {
+        runtimeRoot: root,
+        io: committedFind.io,
+      })).toBe(0);
+      expect(JSON.parse(committedFind.stdout).data.nodes)
+        .toContainEqual(expect.objectContaining({ text: 'CLI committed result' }));
 
       const humanFind = captureIo();
       expect(await runOutlineCli(['--human', '--no-start', 'find', 'CLI searchable result'], {

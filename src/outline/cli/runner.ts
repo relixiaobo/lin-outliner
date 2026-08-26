@@ -14,6 +14,7 @@ import {
   OUTLINE_PUBLIC_SCHEMAS,
   OUTLINE_STORAGE_VERSION,
   DiffSchema,
+  ChangeSetSchema,
   OutlineContractError,
   outlineCapability,
   outlineCapabilityManifest,
@@ -337,6 +338,7 @@ async function runtimeInput(
   if (invocation.command === 'revert' || invocation.command === 'undo' || invocation.command === 'redo') {
     return parseHistoryMutationInput(invocation.command, invocation.args);
   }
+  if (invocation.command === 'commit') return commitInput(invocation, io, signal);
   if (invocation.command !== 'apply') {
     return buildPorcelainRequest(invocation.command, invocation.args, {
       read: (source) => readStructuredSource(source, io, signal),
@@ -389,6 +391,34 @@ async function runtimeInput(
     throw usageError('apply requires a Diff with an idempotency key; create it with outline diff.');
   }
   return { diff: value, ...(parsed.yes ? { acknowledgeDestructive: true } : {}) };
+}
+
+async function commitInput(
+  invocation: ParsedInvocation,
+  io: OutlineCliIo,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  const parsed = parseInputOptions(invocation.args);
+  if (!parsed.input) throw usageError('commit requires --input FILE|-.');
+  if (parsed.inputFormat !== 'json') throw usageError('commit accepts only --input-format json.');
+  if (parsed.output) throw usageError('--output is only valid for diff.');
+  if (parsed.yes) throw usageError('--yes is only valid for apply.');
+  if (parsed.rest.length > 0) throw usageError(`Unexpected commit argument: ${parsed.rest[0]}`);
+  const raw = parsed.input === '-' ? await io.readStdin(signal) : await readFile(parsed.input, 'utf8');
+  const value = parseJsonInput(raw);
+  if (!checkOutlineSchema(ChangeSetSchema, value) || !isRecord(value)) {
+    throw schemaUsageError('Input does not match the public ChangeSet schema.', ChangeSetSchema, value);
+  }
+  const existingKey = typeof value.idempotencyKey === 'string' ? value.idempotencyKey : undefined;
+  if (parsed.idempotencyKey && existingKey && parsed.idempotencyKey !== existingKey) {
+    throw usageError('--idempotency-key conflicts with the key already present in the ChangeSet.');
+  }
+  return {
+    changeSet: {
+      ...value,
+      idempotencyKey: existingKey ?? parsed.idempotencyKey ?? newCliIdempotencyKey(),
+    },
+  };
 }
 
 async function executeDiffInvocation(

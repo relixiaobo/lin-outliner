@@ -26,6 +26,23 @@ afterEach(() => {
 });
 
 describe('renderer Outline intents', () => {
+  test('uses direct commit for ordinary non-destructive desktop edits', async () => {
+    const harness = await createHarness([
+      node('root', { children: ['target'] }),
+      node('target', { parentId: 'root' }),
+    ]);
+
+    await outlineDocumentApi.createNode('root', 1, '');
+    await outlineDocumentApi.applyNodeTextPatch('target', {
+      ops: [{ type: 'replace', from: 0, to: 0, content: rich('typed') }],
+    });
+
+    expect(harness.commitInputs).toHaveLength(2);
+    expect(harness.applyInputs).toHaveLength(0);
+    expect(harness.commitInputs[0]!.operations[0]).toMatchObject({ op: 'create' });
+    expect(firstUpdate(harness.commitInputs[1]!)).toMatchObject({ kind: 'text-patch' });
+  });
+
   test('builds pasted metadata and trees through same-ChangeSet bindings', async () => {
     const harness = await createHarness([
       node('root', { children: ['parent'] }),
@@ -310,8 +327,8 @@ describe('renderer Outline intents', () => {
     await outlineDocumentApi.deleteNode('source');
     await outlineDocumentApi.mergeNodeInto('source', 'target');
 
+    expect(harness.commitInputs).toHaveLength(1);
     expect(harness.applyInputs.map((input) => input.acknowledgeDestructive)).toEqual([
-      undefined,
       true,
       true,
     ]);
@@ -340,7 +357,8 @@ describe('renderer Outline intents', () => {
         }],
       },
     });
-    expect(harness.applyInputs[0]?.acknowledgeDestructive).toBeUndefined();
+    expect(harness.commitInputs).toHaveLength(1);
+    expect(harness.applyInputs).toHaveLength(0);
   });
 
   test('preserves image alt text in the typed NodeDraft metadata', async () => {
@@ -365,6 +383,7 @@ describe('renderer Outline intents', () => {
 
 interface IntentHarness {
   readonly changeSets: ChangeSet[];
+  readonly commitInputs: ChangeSet[];
   readonly applyInputs: Array<{ diff: Diff; acknowledgeDestructive?: boolean }>;
 }
 
@@ -377,6 +396,7 @@ async function createHarness(
   const projection = documentProjection(nodes);
   const byId = new Map(nodes.map((entry) => [entry.id, entry]));
   const changeSets: ChangeSet[] = [];
+  const commitInputs: ChangeSet[] = [];
   const applyInputs: Array<{ diff: Diff; acknowledgeDestructive?: boolean }> = [];
   let stream: ((record: OutlineStreamRecord) => void) | undefined;
   let revision = 7;
@@ -392,6 +412,16 @@ async function createHarness(
         const changeSet = (request.input as { changeSet: ChangeSet }).changeSet;
         changeSets.push(changeSet);
         return success(request, diffFor(changeSet, revision));
+      }
+      if (request.command === 'commit') {
+        const changeSet = (request.input as { changeSet: ChangeSet }).changeSet;
+        changeSets.push(changeSet);
+        commitInputs.push(changeSet);
+        revision += 1;
+        operationSequence += 1;
+        const operation = operationFor(revision, operationSequence);
+        stream?.(eventFor(operation, operationSequence));
+        return success(request, operation);
       }
       if (request.command === 'apply') {
         const input = request.input as { diff: Diff; acknowledgeDestructive?: boolean };
@@ -424,7 +454,7 @@ async function createHarness(
   const subscription = subscribeDesktopProjection(() => undefined, () => undefined);
   subscriptions.push(uninstallReader, subscription.unsubscribe);
   await subscription.ready;
-  return { changeSets, applyInputs };
+  return { changeSets, commitInputs, applyInputs };
 }
 
 function documentProjection(nodes: NodeProjection[]): DocumentProjection {

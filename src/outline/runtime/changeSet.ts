@@ -1,6 +1,6 @@
 import type { Core, CoreTransactionNodePatch, ResolvedContentTree } from '../../core/core';
 import { isClientNodeId } from '../../shared/nodeId';
-import type { BatchMoveNodeInput, FieldSlotMutation } from '../../core/types';
+import type { BatchMoveNodeInput, DocumentProjection, FieldSlotMutation } from '../../core/types';
 import {
   TRASH_ID,
   plainText,
@@ -70,6 +70,63 @@ export async function diffOutlineChangeSet(
     execution = await executeOutlineChangeSet(candidate, normalized, assetLeases);
   }, { operationId: `preview:${changeSetHash}`, command: 'outline_diff' });
   return diffFromPatch(normalized, changeSetHash, execution.bindings, execution.reviewedReplaceTargetIds, patch.nodes);
+}
+
+export async function commitOutlineChangeSet(
+  workspace: OutlineRuntimeWorkspace,
+  input: ChangeSet,
+  context: OutlineRuntimeRequestContext,
+): Promise<Operation | NoChangeResult> {
+  const directPayloadHash = directCommitPayloadHash(input);
+  return workspace.commitPrepared({
+    idempotencyKey: input.idempotencyKey,
+    ...(input.idempotencyKey ? { idempotencyPayloadHash: directPayloadHash } : {}),
+  }, async () => {
+    const normalized = normalizeOutlineChangeSetFromProjection(
+      workspace.revision(),
+      workspace.projection(),
+      input,
+    );
+    assertDirectCommitIsNonDestructive(normalized);
+    const changeSetHash = canonicalChangeSetHash(normalized);
+    const commitHash = directCommitHash(changeSetHash);
+    const assetLeases = await resolveChangeSetAssetLeases(workspace, normalized);
+    let execution: ExecuteResult = { bindings: {}, reviewedReplaceTargetIds: [] };
+    return {
+      origin: context.origin,
+      causation: context.causation,
+      source: normalized.source,
+      changeSetHash,
+      diffHash: commitHash,
+      summary: summarizeChangeSet(normalized),
+      idempotencyKey: normalized.idempotencyKey,
+      ...(normalized.idempotencyKey ? { idempotencyPayloadHash: directPayloadHash } : {}),
+      idFactory: createDeterministicCoreIdFactory(changeSetHash),
+      assetLeases: Object.fromEntries(Object.entries(assetLeases).map(([leaseId, lease]) => [leaseId, lease.assetId])),
+      execute: async (candidate) => {
+        execution = await executeOutlineChangeSet(candidate, normalized, assetLeases);
+      },
+      ...(normalized.return ? {
+        result: (candidate: Core) => normalized.return!.map((projection) => (
+          projectOutline(candidate, projection, execution.bindings)
+        )),
+      } : {}),
+      noChangeResult: (candidate: Core) => ({
+        protocolVersion: OUTLINE_PROTOCOL_VERSION,
+        kind: 'outline.no-change',
+        changeSetHash,
+        diffHash: commitHash,
+        revision: workspace.revision(),
+        affectedNodeCount: 0,
+        recovery: { state: 'not-required' },
+        ...(normalized.return ? {
+          result: normalized.return.map((projection) => (
+            projectOutline(candidate, projection, execution.bindings)
+          )),
+        } : {}),
+      }),
+    };
+  });
 }
 
 export async function applyOutlineDiff(
@@ -145,6 +202,14 @@ export async function applyOutlineDiff(
 }
 
 export function normalizeOutlineChangeSet(core: Core, input: ChangeSet): ChangeSet {
+  return normalizeOutlineChangeSetFromProjection(core.revision(), core.projection(), input);
+}
+
+export function normalizeOutlineChangeSetFromProjection(
+  revision: number,
+  projection: DocumentProjection,
+  input: ChangeSet,
+): ChangeSet {
   if (!checkOutlineSchema(ChangeSetSchema, input)) {
     throw new OutlineContractError(outlineError(
       'invalid_input',
@@ -153,11 +218,11 @@ export function normalizeOutlineChangeSet(core: Core, input: ChangeSet): ChangeS
       { details: { validation: outlineSchemaValidationDetails(ChangeSetSchema, input) } },
     ));
   }
-  if (input.base?.revision !== undefined && input.base.revision !== core.revision()) {
+  if (input.base?.revision !== undefined && input.base.revision !== revision) {
     throw new OutlineContractError(outlineError(
       'stale_revision',
       'conflict',
-      `ChangeSet revision ${input.base.revision} does not match Runtime revision ${core.revision()}.`,
+      `ChangeSet revision ${input.base.revision} does not match Runtime revision ${revision}.`,
     ));
   }
   const normalized = clone(input);
@@ -186,7 +251,7 @@ export function normalizeOutlineChangeSet(core: Core, input: ChangeSet): ChangeS
     };
   });
 
-  const index = createSelectionIndex(core.projection());
+  const index = createSelectionIndex(projection);
   const expected = new Map<string, string>();
   for (const [nodeId, digest] of Object.entries(input.base?.nodes ?? {})) {
     const node = index.byId.get(nodeId);
@@ -222,7 +287,7 @@ export function normalizeOutlineChangeSet(core: Core, input: ChangeSet): ChangeS
     }
   }
   normalized.base = {
-    revision: core.revision(),
+    revision,
     nodes: Object.fromEntries([...expected].sort(([left], [right]) => compareText(left, right))),
   };
   return normalized;
@@ -1261,6 +1326,38 @@ function resolveViewField(
 
 function isReviewedTextReplaceInstruction(instruction: UpdateInstruction): boolean {
   return instruction.kind === 'text-patch' && instruction.review?.destructive === 'replace';
+}
+
+function directCommitHash(changeSetHash: string): string {
+  return canonicalSha256({
+    protocolVersion: OUTLINE_PROTOCOL_VERSION,
+    kind: 'outline.direct-commit',
+    changeSetHash,
+  });
+}
+
+function directCommitPayloadHash(input: ChangeSet): string {
+  return canonicalSha256({
+    protocolVersion: OUTLINE_PROTOCOL_VERSION,
+    kind: 'outline.direct-commit-payload',
+    changeSet: input,
+  });
+}
+
+function assertDirectCommitIsNonDestructive(changeSet: ChangeSet): void {
+  const destructive = changeSet.operations.flatMap((change) => {
+    if (change.op === 'lifecycle' && change.action === 'purge') return [change.contents ? 'empty-trash' : 'purge'];
+    if (change.op === 'merge') return ['merge'];
+    if (change.op === 'update' && change.changes.some(isReviewedTextReplaceInstruction)) return ['replace'];
+    return [];
+  });
+  if (destructive.length === 0) return;
+  throw new OutlineContractError(outlineError(
+    'confirmation_required',
+    'confirmation',
+    'Destructive ChangeSets must be previewed with outline diff and applied as an exact reviewed Diff.',
+    { details: { destructive } },
+  ));
 }
 
 function diffFromPatch(

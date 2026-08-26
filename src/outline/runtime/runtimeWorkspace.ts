@@ -2,7 +2,7 @@ import { Core } from '../../core/core';
 import type { CoreTransactionMetadata } from '../../core/core';
 import { canonicalSha256 } from '../contract/canonical';
 import { OutlineContractError, outlineError } from '../contract/errors';
-import type { Operation, OutlineEvent, RevertConflictDiff } from '../contract/schemas';
+import type { Operation, OutlineEvent, RevertConflictDiff, NoChangeResult } from '../contract/schemas';
 import type { Node } from '../../core/types';
 import { projectNode } from '../../core/projection';
 import { OUTLINE_PROTOCOL_VERSION } from '../contract/version';
@@ -40,6 +40,7 @@ export interface OutlineRuntimeMutationRequest {
   readonly idFactory?: (prefix: string) => string;
   readonly execute: (candidate: Core) => void | Operation['result'] | Promise<void | Operation['result']>;
   readonly result?: (candidate: Core) => Operation['result'];
+  readonly noChangeResult?: (candidate: Core) => NoChangeResult;
 }
 
 export interface OutlineHistoryMutationOptions extends Pick<
@@ -162,7 +163,22 @@ export class OutlineRuntimeWorkspace {
   }
 
   async mutate(request: OutlineRuntimeMutationRequest): Promise<Operation> {
+    return this.enqueueMutation(() => this.applyRequiredMutation(request));
+  }
+
+  async commit(request: OutlineRuntimeMutationRequest): Promise<Operation | NoChangeResult> {
     return this.enqueueMutation(() => this.applyMutation(request));
+  }
+
+  async commitPrepared(
+    admissionRequest: Pick<OutlineRuntimeMutationRequest, 'idempotencyKey' | 'idempotencyPayloadHash'>,
+    prepare: () => OutlineRuntimeMutationRequest | Promise<OutlineRuntimeMutationRequest>,
+  ): Promise<Operation | NoChangeResult> {
+    return this.enqueueMutation(async () => {
+      const admission = await this.prepareMutation(admissionRequest);
+      if (admission.existingOperation) return admission.existingOperation;
+      return this.applyMutation(await prepare(), admission);
+    });
   }
 
   async settledOperation(idempotencyKey: string, payloadHash: string): Promise<Operation | undefined> {
@@ -208,7 +224,7 @@ export class OutlineRuntimeWorkspace {
         beforeStateHash: recovery.beforeStateHash,
       });
       this.assertRecoveryPreconditions(operationId, recovery);
-      return this.applyMutation({
+      return this.applyRequiredMutation({
         ...options,
         changeSetHash,
         diffHash,
@@ -265,7 +281,7 @@ export class OutlineRuntimeWorkspace {
   ): Promise<Operation> {
     const recovery = await this.store.recoveryPatch(operationId);
     this.assertRecoveryPreconditions(operationId, recovery);
-    return this.applyMutation({
+    return this.applyRequiredMutation({
       ...options,
       changeSetHash: canonicalSha256({ kind: 'outline.revert', operationId }),
       diffHash: canonicalSha256({
@@ -345,7 +361,7 @@ export class OutlineRuntimeWorkspace {
   private async applyMutation(
     request: OutlineRuntimeMutationRequest,
     preparedAdmission?: WorkspaceMutationAdmission,
-  ): Promise<Operation> {
+  ): Promise<Operation | NoChangeResult> {
     const admission = preparedAdmission ?? await this.prepareMutation(request);
     if (admission.existingOperation) return admission.existingOperation;
 
@@ -365,6 +381,8 @@ export class OutlineRuntimeWorkspace {
       metadata,
     );
     if (patch.nodes.length === 0 && !patch.systemChanged) {
+      const noChange = request.noChangeResult?.(candidate);
+      if (noChange) return noChange;
       throw new OutlineContractError(outlineError(
         'precondition_failed',
         'conflict',
@@ -523,6 +541,21 @@ export class OutlineRuntimeWorkspace {
       await this.runMaintenance(true).catch(() => undefined);
     }
     return appended.operation;
+  }
+
+  private async applyRequiredMutation(
+    request: OutlineRuntimeMutationRequest,
+    preparedAdmission?: WorkspaceMutationAdmission,
+  ): Promise<Operation> {
+    const result = await this.applyMutation(request, preparedAdmission);
+    if (result.kind === 'outline.no-change') {
+      throw new OutlineContractError(outlineError(
+        'precondition_failed',
+        'conflict',
+        'The mutation produced no document changes.',
+      ));
+    }
+    return result;
   }
 
   private async runMaintenance(compactIfNeeded: boolean): Promise<void> {

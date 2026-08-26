@@ -40,10 +40,10 @@ owned. Missing and duplicate owners both fail the guard.
 | Local metadata | `version`, `status`, `capabilities`, `schema` | Runs without document access; `status` never starts Runtime. |
 | Read | `find`, `show`, `export` | Resolves deterministic selectors and returns bounded Projections. |
 | Observe | `watch` | Streams ordered resumable Events as JSONL. |
-| Mutation kernel | `diff`, `apply` | Previews one ChangeSet, then atomically applies that exact Diff. |
+| Mutation kernel | `diff`, `commit`, `apply` | Previews one ChangeSet, directly commits a non-destructive ChangeSet, or atomically applies one exact reviewed Diff. |
 | History | `log`, `revert`, `undo`, `redo` | Reads durable Operations or records a guarded reversal as another Operation. |
 | Asset | `asset ingest`, `asset show`, `asset export` | Stages verified bytes, reads metadata, or streams verified bytes. |
-| Porcelain mutation | `add`, `set`, `text replace`, `move`, `duplicate`, `merge`, `indent`, `outdent`, `done set`, `done cycle`, `tag add`, `tag remove`, `field define`, `field set`, `field clear`, `field remove`, `field reuse`, `field select`, `definition create`, `definition configure`, `definition merge`, `reference add`, `reference set`, `reference replace`, `reference inline`, `reference restore`, `view set`, `view group set`, `view sort add`, `view sort set`, `view sort remove`, `view sort clear`, `view filter add`, `view filter set`, `view filter remove`, `view filter clear`, `view display add`, `view display set`, `view display remove`, `search create`, `search ensure-tag`, `search set`, `search refresh`, `template apply`, `daily ensure`, `capture add`, `media add`, `media set`, `trash`, `restore`, `purge` | Lowers one intent into the public ChangeSet contract. `--preview` returns its Diff; apply returns its Operation. |
+| Porcelain mutation | `add`, `set`, `text replace`, `move`, `duplicate`, `merge`, `indent`, `outdent`, `done set`, `done cycle`, `tag add`, `tag remove`, `field define`, `field set`, `field clear`, `field remove`, `field reuse`, `field select`, `definition create`, `definition configure`, `definition merge`, `reference add`, `reference set`, `reference replace`, `reference inline`, `reference restore`, `view set`, `view group set`, `view sort add`, `view sort set`, `view sort remove`, `view sort clear`, `view filter add`, `view filter set`, `view filter remove`, `view filter clear`, `view display add`, `view display set`, `view display remove`, `search create`, `search ensure-tag`, `search set`, `search refresh`, `template apply`, `daily ensure`, `capture add`, `media add`, `media set`, `trash`, `restore`, `purge` | Lowers one intent into the public ChangeSet contract. `--preview` returns its Diff; destructive or review-bound writes apply an exact Diff, while ordinary non-destructive writes may commit directly. |
 
 `capabilities` is executable authority rather than a hand-maintained help list.
 `outline --help`, family help, exact command help, shell completion metadata,
@@ -318,12 +318,20 @@ and validates records incrementally. Runtime removes the spool file on success
 or failure. An idempotency key supplied by the CLI is checked or injected only
 after the trailer digest authenticates the uploaded ChangeSet.
 
-## Diff, Apply, And Operations
+## Diff, Commit, Apply, And Operations
 
 `diff` normalizes a ChangeSet and returns an `outline.diff` containing its
 canonical normalized ChangeSet, hashes, base revision, bindings, affected
 before/after digests, destructive summary, warnings, and size estimate. It does
 not advance document revision, create an Operation, or retain staged assets.
+
+`commit` accepts the same ChangeSet contract and uses the same normalization,
+selector, binding, asset-lease, idempotency, transaction-log, recovery, and
+Operation semantics as `diff` followed by `apply`, but skips constructing a
+reviewed Diff artifact. It is only valid for non-destructive writes. Runtime
+rejects purge, empty-Trash purge, merge, and explicitly reviewed destructive text
+replacement on this path with `confirmation_required`; those calls must use
+`diff` followed by `apply`.
 
 `apply` accepts the reviewed Diff, not an unreviewed private mutation. Runtime
 rechecks its hashes, base revision, target digests, asset leases, and destructive
@@ -331,10 +339,13 @@ acknowledgement before executing. Node/definition merge, purge, and empty-Trash
 flows require a Diff-bound explicit acknowledgement; acknowledgement alone is
 insufficient.
 
-After Diff hash and key validation, Runtime resolves an existing idempotency
-receipt before base-revision and Node-precondition checks. The same key and
-canonical Diff payload returns the original Operation even when its base is now
-historical; the same key with another payload remains an idempotency conflict.
+After payload hash and key validation, Runtime resolves an existing idempotency
+receipt before base-revision and Node-precondition checks. Reviewed apply binds
+the key to the canonical Diff payload. Direct commit binds the key to the
+original submitted ChangeSet payload, then records the normalized ChangeSet hash
+on the Operation. The same key and canonical payload returns the original
+Operation even when its base is now historical; the same key with another payload
+remains an idempotency conflict.
 
 Human destructive porcelain on a TTY first prints the exact Runtime-produced
 Diff and asks for confirmation. Acceptance submits that same artifact to
@@ -384,10 +395,10 @@ reported explicitly rather than returning an incomplete affected set.
 
 Idempotency keys are scoped to workspace and protocol major. Reuse with the same
 canonical payload returns the settled Operation; reuse with another payload is a
-conflict. `revert`, `undo`, and `redo` also carry durable CLI-generated keys.
-`apply` rejects an unkeyed Diff instead of modifying reviewed content. Clients
-never automatically retry after an unknown settlement. A timeout, disconnect,
-`SIGINT`, or `SIGTERM` after mutation dispatch returns
+conflict. `commit`, `revert`, `undo`, and `redo` also carry durable CLI-generated
+keys. `apply` rejects an unkeyed Diff instead of modifying reviewed content.
+Clients never automatically retry after an unknown settlement. A timeout,
+disconnect, `SIGINT`, or `SIGTERM` after mutation dispatch returns
 `operation_settlement_unknown`, includes the exact key, and names the precise
 next command: `outline log --idempotency-key KEY`.
 
@@ -455,7 +466,9 @@ Outliner except by acting as an ordinary authenticated Runtime client.
 ## Invariants
 
 - Every persisted mutation from desktop, CLI, built-in Agent, import, or
-  external automation follows the same ChangeSet -> Diff -> Operation path.
+  external automation follows the same public ChangeSet routing: direct
+  non-destructive commit, or reviewed Diff apply when review/destructive
+  semantics require it.
 - Agent causation changes immutable attribution, not public capability or
   projection shape. Only host attestation can record built-in Agent causation.
 - Runtime is the only process importing Core, Loro document state, transaction

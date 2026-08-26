@@ -228,7 +228,7 @@ function pasteNodesIntoNode(
   }, (_operation, diff) => {
     const created = diff.affected.filter((entry) => entry.effect === 'create').at(-1)?.id;
     return created ? focus(created) : focus(nodeId);
-  });
+  }, { requiresDiff: true });
 }
 
 function splitNode(
@@ -259,7 +259,7 @@ function splitNode(
         })],
       },
     ];
-  }, () => focus(createdId, targetParentId, options.focusPlacement ?? { kind: 'start' }));
+  }, () => focus(createdId, targetParentId, options.focusPlacement ?? { kind: 'start' }), { requiresDiff: false });
 }
 
 function applyNodeTextPatch(nodeId: string, patch: RichTextPatch): Promise<CommandResult> {
@@ -632,7 +632,7 @@ function batchDuplicateNodes(nodeIds: string[]): Promise<CommandResult> {
   }, (_operation, diff) => {
     const created = diff.affected.find((entry) => entry.effect === 'create')?.id;
     return created ? focus(created) : undefined;
-  });
+  }, { requiresDiff: true });
 }
 
 function batchMoveNodesUp(nodeIds: string[]): Promise<CommandResult> {
@@ -674,7 +674,7 @@ function cycleDoneState(nodeId: string): Promise<CommandResult> {
 function createTag(name: string): Promise<CommandResult> {
   return mutate(() => [{
     op: 'ensure', resource: 'definition', definitionType: 'tag', name, bind: 'tag',
-  }], bindingFocus('tag'));
+  }], bindingFocus('tag'), { requiresDiff: true });
 }
 
 async function previewTagTemplateBackfill(tagId: string): Promise<TagTemplateBackfillPreview> {
@@ -704,7 +704,7 @@ function setFieldConfig(fieldId: string, patch: FieldConfigPatch): Promise<Comma
 
 function createFieldDef(tagId: string, name: string, fieldType: FieldType): Promise<CommandResult> {
   return update(tagId, [{ kind: 'field', action: 'define', name, fieldType }],
-    createdFocus(undefined, { kind: 'all' }, 'field-name'));
+    createdFocus(undefined, { kind: 'all' }, 'field-name'), { requiresDiff: true });
 }
 
 function createInlineFieldAfterNode(afterNodeId: string, name: string, fieldType: FieldType): Promise<CommandResult> {
@@ -724,7 +724,7 @@ function createInlineField(
     : { kind: 'field', action: 'define', name, fieldType, index };
   return update(parentId, [instruction], targetDefId
     ? createdFocus(parentId, undefined, 'trailing')
-    : createdFocus(undefined, { kind: 'all' }, 'field-name'));
+    : createdFocus(undefined, { kind: 'all' }, 'field-name'), { requiresDiff: true });
 }
 
 function updateFieldSlot(
@@ -738,7 +738,9 @@ function updateFieldSlot(
         ? focus(mutation.id, undefined, { kind: 'all' }, 'field-name')
         : createdFocus(ownerId, { kind: 'all' }, 'field-name'))
     : fieldEntryFocus(ownerId, fieldDefId);
-  return update(ownerId, [{ kind: 'field-slot', field: oneId(fieldDefId), mutation: lowered }], focusHint);
+  return update(ownerId, [{ kind: 'field-slot', field: oneId(fieldDefId), mutation: lowered }], focusHint, {
+    requiresDiff: mutation.kind === 'appendField' && !('id' in mutation && mutation.id),
+  });
 }
 
 function reuseFieldDefinition(entryId: string, targetDefId: string): Promise<CommandResult> {
@@ -862,18 +864,18 @@ function replaceNodeWithInlineReference(nodeId: string, targetId: string): Promi
 function convertReferenceToInlineNode(referenceId: string): Promise<CommandResult> {
   return update(referenceId, [{
     kind: 'reference', action: 'inline', target: oneId(requiredReferenceTarget(referenceId)),
-  }], createdFocus(undefined, { kind: 'text-offset', offset: 0, inlineRefBias: 'after' }));
+  }], createdFocus(undefined, { kind: 'text-offset', offset: 0, inlineRefBias: 'after' }), { requiresDiff: true });
 }
 
 function restoreInlineReferenceNodeToReference(nodeId: string, targetId: string): Promise<CommandResult> {
   return update(nodeId, [{
     kind: 'reference', action: 'restore', target: oneId(targetId),
-  }], createdFocus(undefined));
+  }], createdFocus(undefined), { requiresDiff: true });
 }
 
 function ensureDateNode(year: number, month: number, day: number): Promise<CommandResult> {
   const date = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  return mutate(() => [{ op: 'ensure', resource: 'date', date, bind: 'date' }], bindingFocus('date'));
+  return mutate(() => [{ op: 'ensure', resource: 'date', date, bind: 'date' }], bindingFocus('date'), { requiresDiff: true });
 }
 
 async function searchNodes(query: string): Promise<SearchHit[]> {
@@ -896,7 +898,7 @@ async function searchNodes(query: string): Promise<SearchHit[]> {
 function ensureTagSearch(tagId: string): Promise<CommandResult> {
   return mutate(() => [{
     op: 'ensure', resource: 'tag-search', tag: oneId(tagId), bind: 'search',
-  }], bindingFocus('search'));
+  }], bindingFocus('search'), { requiresDiff: true });
 }
 
 function setSearchQueryOutline(nodeId: string, queryOutline: string): Promise<CommandResult> {
@@ -934,7 +936,7 @@ async function backlinks(targetId: string): Promise<Backlink[]> {
 function mutate(
   build: () => readonly Change[],
   focusHint?: DesktopFocusHint,
-  options?: { readonly acknowledgeDestructive?: boolean },
+  options?: { readonly acknowledgeDestructive?: boolean; readonly requiresDiff?: boolean },
 ): Promise<CommandResult> {
   return runDesktopMutation((revision) => ({
     protocolVersion: 1,
@@ -953,8 +955,13 @@ function preview(build: () => readonly Change[]): Promise<Diff> {
   }));
 }
 
-function update(nodeId: string, changes: UpdateInstruction[], focusHint?: DesktopFocusHint): Promise<CommandResult> {
-  return mutate(() => [updateChange(nodeId, changes)], focusHint);
+function update(
+  nodeId: string,
+  changes: UpdateInstruction[],
+  focusHint?: DesktopFocusHint,
+  options?: { readonly acknowledgeDestructive?: boolean; readonly requiresDiff?: boolean },
+): Promise<CommandResult> {
+  return mutate(() => [updateChange(nodeId, changes)], focusHint, options);
 }
 
 function updateChange(nodeId: string, changes: UpdateInstruction[]): Change {
@@ -991,7 +998,7 @@ function replaceNode(
       { op: 'create', placement: { kind: 'index', parent: oneId(parentId), index }, nodes: [replacement] },
       { op: 'lifecycle', action: 'trash', targets: oneId(nodeId) },
     ];
-  }, () => focus(replacementId, parentId, placement));
+  }, () => focus(replacementId, parentId, placement), { requiresDiff: false });
 }
 
 function oneId(id: string): TargetRef {

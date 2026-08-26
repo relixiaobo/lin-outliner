@@ -61,6 +61,7 @@ export type DesktopFocusHint = FocusHint | ((
 
 export interface DesktopMutationOptions {
   readonly acknowledgeDestructive?: boolean;
+  readonly requiresDiff?: boolean;
 }
 
 let desktopMutationTail = Promise.resolve();
@@ -83,13 +84,20 @@ export function runDesktopMutation(
       base: { ...input.base, revision },
       idempotencyKey: input.idempotencyKey ?? idempotencyKey,
     };
-    const diff = await requestOutline<Diff>('diff', { changeSet });
     const releaseEvents = source.holdEvents();
     try {
-      const settlement = await requestOutline<Operation | NoChangeResult>('apply', {
-        diff,
-        ...(options.acknowledgeDestructive ? { acknowledgeDestructive: true } : {}),
-      });
+      const needsReviewedDiff = options.acknowledgeDestructive === true
+        || options.requiresDiff === true
+        || (typeof focus === 'function' && options.requiresDiff !== false);
+      const diff = needsReviewedDiff
+        ? await requestOutline<Diff>('diff', { changeSet })
+        : null;
+      const settlement = diff
+        ? await requestOutline<Operation | NoChangeResult>('apply', {
+            diff,
+            ...(options.acknowledgeDestructive ? { acknowledgeDestructive: true } : {}),
+          })
+        : await requestOutline<Operation | NoChangeResult>('commit', { changeSet });
       source.noteRevision(settlement.kind === 'outline.no-change' ? settlement.revision : settlement.revisionAfter);
       let update: ProjectionUpdate;
       if (settlement.kind === 'outline.no-change') {
@@ -104,7 +112,11 @@ export function runDesktopMutation(
       }
       return {
         update,
-        ...(focus ? { focus: typeof focus === 'function' ? focus(settlement, diff, update) : focus } : {}),
+        ...(focus ? {
+          focus: typeof focus === 'function'
+            ? focus(settlement, diff ?? directCommitFocusDiff(changeSet, revision), update)
+            : focus,
+        } : {}),
       };
     } finally {
       releaseEvents();
@@ -112,6 +124,22 @@ export function runDesktopMutation(
   });
   desktopMutationTail = result.then(() => undefined, () => undefined);
   return result;
+}
+
+function directCommitFocusDiff(changeSet: ChangeSet, revision: number): Diff {
+  return {
+    protocolVersion: 1,
+    kind: 'outline.diff',
+    diffHash: '0'.repeat(64),
+    changeSetHash: '0'.repeat(64),
+    baseRevision: revision,
+    normalizedChangeSet: changeSet,
+    bindings: {},
+    affected: [],
+    destructive: [],
+    warnings: [],
+    resultEstimate: { nodeCount: 0, encodedBytes: 0 },
+  };
 }
 
 export function previewDesktopMutation(build: (revision: number) => ChangeSet): Promise<Diff> {

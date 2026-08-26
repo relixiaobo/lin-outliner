@@ -752,13 +752,20 @@ document revision, Operation, durable recovery patch, AssetRecord, or exact-
 revision retention. It may use a disposable Core copy and temporary spool files
 that are removed after the response.
 
+`outline commit` consumes a non-destructive ChangeSet directly. Runtime verifies
+the same public ChangeSet shape, selectors, bindings, staging leases, and
+idempotency key as the reviewed path, then commits through the same transaction
+log and Operation machinery without materializing a Diff artifact. It rejects
+purge, empty-Trash purge, merge, and explicitly reviewed destructive text
+replacement with `confirmation_required`.
+
 `outline apply` consumes a Diff artifact, not an unreviewed private mutation
 format. Runtime verifies protocol, hashes, base revision, targeted Node digests,
 staging leases, and destructive acknowledgement before executing the embedded
-normalized ChangeSet. Non-destructive porcelain may perform the same
-diff-and-apply sequence inside one Runtime request; `--preview` returns its Diff
-without writing, and the same idempotency key plus `--expect-diff HASH` binds a
-later invocation to the reviewed result.
+normalized ChangeSet. Non-destructive porcelain without `--preview` or
+`--expect-diff` may route to `commit`; `--preview` returns a Diff without writing,
+and the same idempotency key plus `--expect-diff HASH` binds a later invocation
+to the reviewed result.
 
 Interactive destructive porcelain shows the Diff and asks for confirmation on
 a TTY. Non-interactive destructive calls require both `--yes` and either a Diff
@@ -766,7 +773,8 @@ artifact or the preview's idempotency key plus `--expect-diff HASH`. `--yes`
 alone is rejected. The confirmation is bound to the exact Diff, so a concurrent
 change requires review again.
 
-Apply returns one `Operation` and any requested bounded post-commit Projection:
+Commit and apply return one `Operation` and any requested bounded post-commit
+Projection:
 
 ```ts
 interface Operation {
@@ -812,11 +820,13 @@ encoded Diff merely to calculate a hash; canonical serialization and hashing
 advance together.
 
 Idempotency keys are scoped to the workspace and protocol major. The CLI injects
-`cli:<uuid>` when porcelain, direct `diff`, `revert`, `undo`, or `redo` does not
-receive an explicit key. Direct `diff` fixes that key into the reviewed Diff;
-desktop and Electron-main mutation, preview, undo, and redo paths generate
-`desktop:<uuid>`. `apply` rejects a Diff without a key rather than changing
-reviewed content. Runtime checks a matching key and canonical payload before
+`cli:<uuid>` when porcelain, direct `diff`, direct `commit`, `revert`, `undo`, or
+`redo` does not receive an explicit key. Direct `diff` fixes that key into the
+reviewed Diff; direct `commit` binds the key to the submitted ChangeSet payload
+and records the normalized ChangeSet hash on the Operation. Desktop and
+Electron-main mutation, preview, undo, and redo paths generate `desktop:<uuid>`.
+`apply` rejects a Diff without a key rather than changing reviewed content.
+Runtime checks a matching key and canonical payload before
 base-revision and Node-precondition validation, so replay returns the original
 Operation even after the workspace advances; a different payload returns
 `idempotency_conflict`. A client disconnect never causes automatic mutation
@@ -1164,6 +1174,7 @@ The stable command surface is:
 | `outline export SELECTOR` | Bounded/streaming JSON, JSONL, Markdown, or OPML to stdout or `--output` |
 | `outline watch` | Ordered JSONL projection/Operation events from `--cursor`, with explicit resync |
 | `outline diff --input FILE|-` | Normalize and preview one ChangeSet without mutation |
+| `outline commit --input FILE|-` | Apply one non-destructive ChangeSet directly and return one Operation |
 | `outline apply --input DIFF_FILE|-` | Apply one exact Diff and return one Operation |
 | `outline log` | Paginated Operation history; filters for origin, causation, affected Node, or Operation ID |
 | `outline revert OPERATION_ID` | Guarded exact revert; conflict is a non-writing Diff |
@@ -1358,11 +1369,14 @@ end or transport reconnect.
 
 Every renderer action that changes persisted Outliner state constructs the same
 public ChangeSet used by CLI. Shared intent builders may provide typed desktop
-porcelain, but they return contract objects and contain no Core calls. Existing
-renderer command names are a migration inventory, not a preserved transport.
-Once parity passes, the old document-command IPC dispatcher is deleted. Native
-file pickers, external URL opening, window actions, and other OS/UI effects stay
-in Electron main because they are explicitly outside the Outliner Runtime.
+porcelain, but they return contract objects and contain no Core calls. Ordinary
+non-destructive editing uses direct commit; destructive operations and commands
+whose focus/result logic depends on Diff bindings or affected rows use the
+reviewed Diff path. Existing renderer command names are a migration inventory,
+not a preserved transport. Once parity passes, the old document-command IPC
+dispatcher is deleted. Native file pickers, external URL opening, window
+actions, and other OS/UI effects stay in Electron main because they are
+explicitly outside the Outliner Runtime.
 
 The editor remains perceptually local: keystrokes update an optimistic
 renderer-owned draft, and a bounded debounce/blur/explicit-command boundary

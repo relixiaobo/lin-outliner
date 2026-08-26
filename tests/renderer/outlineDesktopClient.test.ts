@@ -120,12 +120,12 @@ describe('renderer Outline client', () => {
     installOutlineBridge({
       request: async (request) => {
         if (request.command === 'show') return success('show', projectionPage(2));
-        if (request.command === 'diff') {
+        if (request.command === 'commit') {
           submittedChangeSet = (request.input as { changeSet: unknown }).changeSet;
-          return success('diff', { kind: 'outline.diff' });
+          stream?.(streamEvent(8, 'cursor:8', operation(8)));
+          return success('commit', operation(8));
         }
-        stream?.(streamEvent(8, 'cursor:8', operation(8)));
-        return success('apply', operation(8));
+        throw new Error(`Unexpected command: ${request.command}`);
       },
       subscribe: (_subscription, listener) => {
         stream = listener;
@@ -165,8 +165,8 @@ describe('renderer Outline client', () => {
       request: async (request) => {
         commands.push(request.command);
         if (request.command === 'show') return success('show', projectionPage(2));
-        if (request.command === 'diff') return success('diff', { kind: 'outline.diff' });
-        return success('apply', {
+        if (request.command !== 'commit') throw new Error(`Unexpected command: ${request.command}`);
+        return success('commit', {
           protocolVersion: 1,
           kind: 'outline.no-change',
           changeSetHash: 'a'.repeat(64),
@@ -194,7 +194,7 @@ describe('renderer Outline client', () => {
     }));
 
     expect(result.update).toMatchObject({ kind: 'full', revision: 7 });
-    expect(commands).toEqual(['diff', 'apply', 'show']);
+    expect(commands).toEqual(['commit', 'show']);
     expect(stream).toBeDefined();
     subscription.unsubscribe();
   });

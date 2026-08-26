@@ -126,6 +126,7 @@ Root commands cover discovery, direct Node operations, ChangeSets, history, and 
 | `outline export` | read-only stream; idempotent | Export bounded targets as JSON, JSONL, Markdown, or OPML. | `outline export [SELECTOR] [PROJECTION OPTIONS] [--output FILE\|-]` |
 | `outline watch` | read-only stream; idempotent | Stream ordered, resumable Runtime events. | `outline watch [--cursor CURSOR] [--filter FILE\|-] [--projection FILE\|-]` |
 | `outline diff` | preview; idempotent | Normalize and preview one complete ChangeSet without writing. | `outline diff --input FILE\|- [--input-format json\|jsonl] [--output FILE\|-] [--idempotency-key KEY]` |
+| `outline commit` | direct apply; idempotent | Apply one non-destructive ChangeSet directly without reviewed Diff preview. | `outline commit --input FILE\|- [--idempotency-key KEY]` |
 | `outline apply` | exact apply; idempotent | Apply one exact reviewed Diff atomically. | `outline apply --input DIFF_FILE\|- [--yes]` |
 | `outline log` | read-only; idempotent | Read paginated durable Operation history. | `outline log [FILTER OPTIONS]` |
 | `outline revert` | recovery mutation; idempotent | Guard and exactly revert one retained Operation. | `outline revert OPERATION_ID [--idempotency-key KEY]` |
