@@ -129,6 +129,7 @@ interface RichTextEditorProps {
   linkifyPastedUrl?: boolean;
   onInlineReferenceClick?: (target: ReferenceTarget, options?: NavigateRootOptions) => void;
   resolveInlineReferenceColor?: (targetNodeId: string) => string | undefined;
+  resolveInlineReferenceDisplayName?: (targetNodeId: string) => string | undefined;
   focusTarget?: FocusTarget;
   focusRequest?: FocusRequest | null;
   pendingInput?: PendingInputChar | null;
@@ -173,6 +174,19 @@ function focusEditorDom(view: EditorView) {
 
 function isEditableSurface(props: RichTextEditorProps) {
   return !props.readOnly || Boolean(props.readOnlyCaret);
+}
+
+function applyInlineReferencePresentation(view: EditorView, nextDoc: PMNode): void {
+  let transaction = view.state.tr;
+  nextDoc.descendants((nextNode, position) => {
+    if (nextNode.type.name !== 'inlineReference') return;
+    const currentNode = view.state.doc.nodeAt(position);
+    if (!currentNode || currentNode.type !== nextNode.type || currentNode.sameMarkup(nextNode)) return;
+    transaction = transaction.setNodeMarkup(position, undefined, nextNode.attrs, nextNode.marks);
+  });
+  if (!transaction.docChanged) return;
+  transaction.setMeta('addToHistory', false);
+  view.updateState(view.state.apply(transaction));
 }
 
 function selectedInlineReferencePosition(view: EditorView): number | null {
@@ -332,7 +346,12 @@ export function RichTextEditor(props: RichTextEditorProps) {
   };
 
   const initialState = useMemo(() => {
-    const doc = richTextToDoc(props.content, pmSchema, props.resolveInlineReferenceColor);
+    const doc = richTextToDoc(
+      props.content,
+      pmSchema,
+      props.resolveInlineReferenceColor,
+      props.resolveInlineReferenceDisplayName,
+    );
     const initialSelection = props.focusTarget
       && props.focusRequest
       && focusTargetMatches(props.focusRequest.target, props.focusTarget)
@@ -426,7 +445,12 @@ export function RichTextEditor(props: RichTextEditorProps) {
   // the composition handoff (which preempts that parked sync).
   const applyExternalContent = (view: EditorView) => {
     const content = propsRef.current.content;
-    const nextDoc = richTextToDoc(content, pmSchema, propsRef.current.resolveInlineReferenceColor);
+    const nextDoc = richTextToDoc(
+      content,
+      pmSchema,
+      propsRef.current.resolveInlineReferenceColor,
+      propsRef.current.resolveInlineReferenceDisplayName,
+    );
     const nextState = EditorState.create({ doc: nextDoc, schema: pmSchema });
     view.updateState(nextState);
     setEditorIsEmpty(isEmptyRichText(content));
@@ -655,6 +679,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
               nextContent,
               pmSchema,
               propsRef.current.resolveInlineReferenceColor,
+              propsRef.current.resolveInlineReferenceDisplayName,
             );
             viewInstance.updateState(EditorState.create({ doc: nextDoc, schema: pmSchema }));
             lastExternalContentRef.current = nextContent;
@@ -1091,7 +1116,18 @@ export function RichTextEditor(props: RichTextEditorProps) {
 
   useEffect(() => {
     const view = viewRef.current;
-    if (!view || props.content === lastExternalContentRef.current) return;
+    if (!view) return;
+    if (props.content === lastExternalContentRef.current) {
+      if (view.hasFocus() || composingRef.current || view.composing) return;
+      const nextDoc = richTextToDoc(
+        props.content,
+        pmSchema,
+        props.resolveInlineReferenceColor,
+        props.resolveInlineReferenceDisplayName,
+      );
+      applyInlineReferencePresentation(view, nextDoc);
+      return;
+    }
     const contentRevision = props.contentRevision ?? 0;
     const contentRevisionChanged = contentRevision !== lastContentRevisionRef.current;
     lastContentRevisionRef.current = contentRevision;
@@ -1107,7 +1143,12 @@ export function RichTextEditor(props: RichTextEditorProps) {
       return;
     }
     if (view.hasFocus() && !contentRevisionChanged) return;
-    const nextDoc = richTextToDoc(props.content, pmSchema, props.resolveInlineReferenceColor);
+    const nextDoc = richTextToDoc(
+      props.content,
+      pmSchema,
+      props.resolveInlineReferenceColor,
+      props.resolveInlineReferenceDisplayName,
+    );
     if (nextDoc.eq(view.state.doc)) return;
     const nextState = EditorState.create({ doc: nextDoc, schema: pmSchema });
     view.updateState(nextState);
@@ -1121,7 +1162,12 @@ export function RichTextEditor(props: RichTextEditorProps) {
     fieldTriggerFiredRef.current = false;
     codeFenceFiredRef.current = false;
     if (!composingRef.current && !view.composing) updateTrigger(view);
-  }, [props.content, props.contentRevision, props.resolveInlineReferenceColor]);
+  }, [
+    props.content,
+    props.contentRevision,
+    props.resolveInlineReferenceColor,
+    props.resolveInlineReferenceDisplayName,
+  ]);
 
   useEffect(() => {
     const view = viewRef.current;

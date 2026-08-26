@@ -75,7 +75,7 @@ import {
   threadNodeReferenceStyle,
   type ThreadNodeReferenceOpenHandler,
 } from '../../threadReferences';
-import { basenameForPath, splitReferenceMarkers } from '../../../../core/referenceMarkup';
+import { basenameForPath, referenceDisplayFallback, splitReferenceMarkers } from '../../../../core/referenceMarkup';
 import {
   boundedToolArgumentsForDisplay,
   modelCallArgumentSource,
@@ -2166,7 +2166,7 @@ function markdownTokenText(tokens: readonly Token[]): string {
 
 function compactReasoningText(text: string): string {
   return splitReferenceMarkers(text)
-    .map((segment) => segment.type === 'text' ? segment.text : segment.label)
+    .map((segment) => segment.type === 'text' ? segment.text : referenceDisplayFallback(segment.target))
     .join('')
     .replace(/\s+/g, ' ')
     .trim();

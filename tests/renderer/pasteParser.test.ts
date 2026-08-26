@@ -9,6 +9,11 @@ import {
   parseOutlinerPaste,
 } from '../../src/renderer/ui/interactions/pasteParser';
 
+const NODE_A_ID = 'node:11111111-1111-4111-8111-111111111111';
+const NODE_A_MARKER = '[[node://11111111-1111-4111-8111-111111111111]]';
+const LINKED_NODE_MARKER = '[[node://22222222-2222-4222-8222-222222222222]]';
+const CODE_NODE_MARKER = '[[node://33333333-3333-4333-8333-333333333333]]';
+
 describe('parseInlineMarkdown', () => {
   test('maps every supported inline syntax to our mark kinds', () => {
     expect(parseInlineMarkdown('**bold**')).toEqual({
@@ -256,15 +261,15 @@ describe('parseMarkdownBlocks', () => {
   });
 
   test('materializes inline references in plain pasted rows', () => {
-    expect(parseMarkdownBlocks('See [[node:Alpha^node-a]]')).toEqual([
+    expect(parseMarkdownBlocks(`See ${NODE_A_MARKER}`)).toEqual([
       {
         content: {
           text: 'See ',
           marks: [],
           inlineRefs: [{
             offset: 4,
-            target: { kind: 'node', nodeId: 'node-a' },
-            displayName: 'Alpha',
+            target: { kind: 'node', nodeId: NODE_A_ID },
+            displayName: '11111111',
           }],
         },
         children: [],
@@ -317,9 +322,9 @@ describe('HTML paste semantics', () => {
         'See Alpha\n- [x] Task\nLinked Code',
         [
           '<!doctype html><html><body>',
-          '<p>See [[node:Alpha^node-a]]</p>',
+          `<p>See ${NODE_A_MARKER}</p>`,
           '<p>- [x] <strong>Task</strong></p>',
-          '<p><a href="https://example.com">[[node:Linked^node-link]]</a> <code>[[node:Code^node-code]]</code></p>',
+          `<p><a href="https://example.com">${LINKED_NODE_MARKER}</a> <code>${CODE_NODE_MARKER}</code></p>`,
           '</body></html>',
         ].join(''),
       );
@@ -330,8 +335,8 @@ describe('HTML paste semantics', () => {
           marks: [],
           inlineRefs: [{
             offset: 4,
-            target: { kind: 'node', nodeId: 'node-a' },
-            displayName: 'Alpha',
+            target: { kind: 'node', nodeId: NODE_A_ID },
+            displayName: '11111111',
           }],
         },
         children: [],
@@ -347,10 +352,14 @@ describe('HTML paste semantics', () => {
         done: true,
       });
       expect(trees[2]?.content).toEqual({
-        text: '[[node:Linked^node-link]] [[node:Code^node-code]]',
+        text: `${LINKED_NODE_MARKER} ${CODE_NODE_MARKER}`,
         marks: [
-          { start: 0, end: 25, type: 'link', attrs: { href: 'https://example.com' } },
-          { start: 26, end: 49, type: 'code' },
+          { start: 0, end: LINKED_NODE_MARKER.length, type: 'link', attrs: { href: 'https://example.com' } },
+          {
+            start: LINKED_NODE_MARKER.length + 1,
+            end: LINKED_NODE_MARKER.length + 1 + CODE_NODE_MARKER.length,
+            type: 'code',
+          },
         ],
         inlineRefs: [],
       });

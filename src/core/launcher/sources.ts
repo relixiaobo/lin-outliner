@@ -10,7 +10,7 @@
 //
 // Calibrated to landed code (PR #80): local-file identity is the canonical path
 // (ReferenceTarget local-file shape), NOT a `FileReferenceValue`/`fileRefId`,
-// which does not exist. Markers are `[[file:<label>^<path>]]`.
+// which does not exist. Markers wrap canonical absolute `file:` URLs.
 //
 // Plan: docs/plans/unified-command-surface.md (surface + capture loop);
 // the shipped behavior is docs/spec/launcher.md.

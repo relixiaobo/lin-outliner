@@ -22,12 +22,12 @@ The model-facing outline is a serialization of this tree:
 - %%search%% Open work
   - AND
     - HAS_TAG
-      - tag:: [[node:#task^node_task_tag]]
+      - tag:: tag:11111111-1111-4111-8111-111111111111
     - FIELD_IS
-      - field:: [[node:Status^node_status_field]]
+      - field:: field:22222222-2222-4222-8222-222222222222
       - value:: Open
     - LT
-      - field:: [[node:Due^node_due_field]]
+      - field:: field:33333333-3333-4333-8333-333333333333
       - value:: 2026-05-20
 ```
 
@@ -39,7 +39,10 @@ Rules:
 - `AND`, `OR`, and `NOT` are group nodes and may be nested.
 - QueryOp names are rule nodes.
 - Rule operands use `field::`, `tag::`, `target::`, `value::`, or `operand::`.
-- `field::`, `tag::`, and `target::` must be exact node references or node ids.
+- `field::` and `tag::` use their exact typed internal IDs and are never wrapped
+  as public Node reference markers. `target::` accepts an exact Node ID or a
+  canonical public `[[node://UUID]]` marker; marker display text is resolved
+  separately and never serialized into the URI.
 - `value::` and `operand::` bodies are literal query data. Tag-shaped text such
   as `value:: #project`, field-shaped text, checkbox markers, and search/view
   directives are not applied as document metadata or node controls.

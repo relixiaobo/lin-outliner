@@ -14,7 +14,7 @@ import {
   transformMarkdownReferenceTextNodes,
   type MarkdownReferenceAstNode,
 } from '../../../core/markdownReferenceAst';
-import { basenameForPath, splitReferenceMarkers } from '../../../core/referenceMarkup';
+import { basenameForPath, parseReferenceMarkers, referenceDisplayFallback } from '../../../core/referenceMarkup';
 import type { DocumentIndex } from '../../state/document';
 import { useT } from '../../i18n/I18nProvider';
 import { InlineFileReference } from '../../ui/editor/InlineFileReference';
@@ -78,30 +78,62 @@ export function ThreadMarkdown({
 }
 
 function remarkThreadReferences() {
-  return (tree: MarkdownReferenceAstNode) => {
-    transformMarkdownReferenceTextNodes(tree, referenceMarkdownNodes);
+  return (tree: MarkdownReferenceAstNode, file: { value?: unknown }) => {
+    const markdown = typeof file.value === 'string' ? file.value : '';
+    transformMarkdownReferenceTextNodes(tree, (value, node) => referenceMarkdownNodes(value, node, markdown));
   };
 }
 
-function referenceMarkdownNodes(text: string): MarkdownReferenceAstNode[] {
-  return splitReferenceMarkers(text).map((segment) => {
-    if (segment.type === 'text') return { type: 'text', value: segment.text };
-    if (segment.target.kind === 'local-file') {
-      const label = segment.label || basenameForPath(segment.target.path) || segment.target.path;
-      return {
+function referenceMarkdownNodes(
+  text: string,
+  node: MarkdownReferenceAstNode,
+  markdown: string,
+): MarkdownReferenceAstNode[] {
+  const markers = parseReferenceMarkers(text, undefined, { includeEscaped: true });
+  if (markers.length === 0) return [{ type: 'text', value: text }];
+  const source = markdownSourceForNode(markdown, node);
+  const nodes: MarkdownReferenceAstNode[] = [];
+  let cursor = 0;
+  let sourceCursor = 0;
+  for (const marker of markers) {
+    if (marker.start > cursor) nodes.push({ type: 'text', value: text.slice(cursor, marker.start) });
+    const sourceMatch = source.indexOf(marker.raw, sourceCursor);
+    const escaped = sourceMatch >= 0 && isEscapedAt(source, sourceMatch);
+    if (sourceMatch >= 0) sourceCursor = sourceMatch + marker.raw.length;
+    if (escaped) {
+      nodes.push({ type: 'text', value: marker.raw });
+    } else if (marker.target.kind === 'local-file') {
+      const label = basenameForPath(marker.target.path) || marker.target.path;
+      nodes.push({
         children: [{ type: 'text', value: label }],
-        title: segment.target.entryKind,
+        title: marker.target.entryKind,
         type: 'link',
-        url: localFileReferenceHref(segment.target.path, segment.target.entryKind),
-      };
+        url: localFileReferenceHref(marker.target.path, marker.target.entryKind),
+      });
+    } else {
+      nodes.push({
+        children: [{ type: 'text', value: referenceDisplayFallback(marker.target) }],
+        title: null,
+        type: 'link',
+        url: threadNodeReferenceHref(marker.target.nodeId),
+      });
     }
-    return {
-      children: [{ type: 'text', value: segment.label }],
-      title: null,
-      type: 'link',
-      url: threadNodeReferenceHref(segment.target.nodeId),
-    };
-  });
+    cursor = marker.end;
+  }
+  if (cursor < text.length) nodes.push({ type: 'text', value: text.slice(cursor) });
+  return nodes;
+}
+
+function markdownSourceForNode(markdown: string, node: MarkdownReferenceAstNode): string {
+  const start = node.position?.start?.offset;
+  const end = node.position?.end?.offset;
+  return typeof start === 'number' && typeof end === 'number' ? markdown.slice(start, end) : '';
+}
+
+function isEscapedAt(text: string, offset: number): boolean {
+  let slashes = 0;
+  for (let index = offset - 1; index >= 0 && text[index] === '\\'; index -= 1) slashes += 1;
+  return slashes % 2 === 1;
 }
 
 function useMarkdownComponents(

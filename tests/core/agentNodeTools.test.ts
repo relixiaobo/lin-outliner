@@ -181,8 +181,8 @@ function fieldSlotMutationArg(args: Record<string, unknown>): FieldSlotMutation 
   throw new Error(`unsupported field slot mutation: ${String(args.kind)}`);
 }
 
-function nodeRef(core: Core, nodeId: string, label?: string): string {
-  return formatNodeReferenceMarker(label ?? core.state().nodes[nodeId]?.content.text ?? nodeId, nodeId);
+function nodeRef(_core: Core, nodeId: string, _label?: string): string {
+  return formatNodeReferenceMarker(nodeId);
 }
 
 function fieldEntryByName(core: Core, ownerId: string, name: string): string {
@@ -349,7 +349,7 @@ describe('agent node tools', () => {
     expect(nodeSearch.description).toContain('DONE_LAST_DAYS value:: 7');
     expect(nodeSearch.description).toContain('Use node_search for temporary lookup');
     expect(nodeSearch.description).toContain('common_query');
-    expect(nodeSearch.description).toContain('[[node:^exact-id]]');
+    expect(nodeSearch.description).toContain('[[node://uuid]]');
     expect(nodeSearch.description).toContain('Do not express done state as FIELD_IS');
     expect(nodeSearch.description).toContain('Use DATE_OVERLAPS only for values stored in a date field');
     expect(nodeSearch.description).toContain('IS_TYPE value:: node|tag|field|search|day|week|year|image|attachment|code');
@@ -381,7 +381,7 @@ describe('agent node tools', () => {
 
     expect(catalog).toContain('Successful creation results include fresh %%node:id%% edit handles');
     expect(catalog).toContain('never show %%node:id%% edit handles');
-    expect(catalog).toContain('[[node:^exact-id]]');
+    expect(catalog).toContain('[[node://UUID]]');
   });
 
   test('node_read uses the document read model without rebuilding a projection index', async () => {
@@ -606,7 +606,7 @@ describe('agent node tools', () => {
       ],
       inlineRefs: [{
         offset: 20,
-        displayName: 'Target',
+        displayName: target.slice('node:'.length, 'node:'.length + 8),
         target: { kind: 'node', nodeId: target },
       }],
     });
@@ -1007,14 +1007,14 @@ describe('agent node tools', () => {
 
       const first = await executeTool(core, 'node_create', {
         parent_id: record,
-        outline: `- Attachments:: ${formatFileReferenceMarker('a.txt', firstPath)}`,
+        outline: `- Attachments:: ${formatFileReferenceMarker(firstPath)}`,
       }, { localFileRoot: localRoot });
       expect(first.ok).toBe(true);
       const firstValueId = core.state().nodes[entry]!.children[0]!;
 
       const second = await executeTool(core, 'node_create', {
         parent_id: record,
-        outline: `- Attachments:: ${formatFileReferenceMarker('b.txt', secondPath)}`,
+        outline: `- Attachments:: ${formatFileReferenceMarker(secondPath)}`,
       }, { localFileRoot: localRoot });
       expect(second.ok).toBe(true);
 
@@ -1074,7 +1074,7 @@ describe('agent node tools', () => {
       const seed = mustFocus(core.createNode(today, null, 'Seed'));
       mustFocus(core.createInlineField(seed, null, 'Score', 'number'));
       const record = mustFocus(core.createNode(today, null, 'Record'));
-      const marker = formatFileReferenceMarker('score.txt', path.join(localRoot, 'score.txt'));
+      const marker = formatFileReferenceMarker(path.join(localRoot, 'score.txt'));
 
       const result = await executeTool(core, 'node_create', {
         parent_id: record,
@@ -1606,7 +1606,7 @@ describe('agent node tools', () => {
       const core = Core.new();
       const today = core.projection().todayId;
       const outsidePath = path.join(sourceRoot, 'id_rsa');
-      const marker = formatFileReferenceMarker('id_rsa', outsidePath);
+      const marker = formatFileReferenceMarker(outsidePath);
 
       const result = await executeRawTool(core, 'node_create', {
         parent_id: today,
@@ -1671,7 +1671,7 @@ describe('agent node tools', () => {
 
     const outline = await executeTool(core, 'node_create', {
       parent_id: today,
-      outline: `- ${formatNodeReferenceMarker('Archived target', targetId)}`,
+      outline: `- ${formatNodeReferenceMarker(targetId)}`,
     });
     expect(outline.ok).toBe(false);
     expect(outline.error?.code).toBe('node_in_trash');
@@ -2999,8 +2999,8 @@ describe('agent node tools', () => {
     const today = core.projection().todayId;
     const rootFile = { kind: 'local-file', path: '/tmp/brief.pdf', entryKind: 'file' } as const;
     const valueFile = { kind: 'local-file', path: '/tmp/source.txt', entryKind: 'file' } as const;
-    const rootMarker = formatFileReferenceMarker('brief.pdf', rootFile.path);
-    const valueMarker = formatFileReferenceMarker('source.txt', valueFile.path);
+    const rootMarker = formatFileReferenceMarker(rootFile.path);
+    const valueMarker = formatFileReferenceMarker(valueFile.path);
     const root = mustFocus(core.createRichTextContentNode(today, null, {
       text: 'Task ',
       marks: [{ start: 0, end: 4, type: 'bold' }],
@@ -3112,7 +3112,7 @@ describe('agent node tools', () => {
       const today = core.projection().todayId;
       const root = mustFocus(core.createNode(today, null, 'Task'));
       const outsidePath = path.join(sourceRoot, 'id_rsa');
-      const marker = formatFileReferenceMarker('id_rsa', outsidePath);
+      const marker = formatFileReferenceMarker(outsidePath);
 
       const result = await executeRawTool(core, 'node_edit', {
         node_id: root,
@@ -3904,7 +3904,7 @@ describe('agent node tools', () => {
       data?: { outline?: string };
     }>(result.contentText);
 
-    const marker = formatFileReferenceMarker('report.pdf', filePath);
+    const marker = formatFileReferenceMarker(filePath);
     expect(result.details.data!.items[0]!.title).toBe(`Review ${marker} soon`);
     expect(visible.data!.outline).toBe(`- %%node:${nodeId}%% Review ${marker} soon`);
   });
@@ -3945,8 +3945,8 @@ describe('agent node tools', () => {
         .find((segment) => segment.type === 'file');
 
       expect(marker?.path).toBe(filePath);
-      expect(result.details.data!.items[0]!.title).toBe(`Review ${formatFileReferenceMarker('report.pdf', filePath)} soon`);
-      expect(visible.data!.outline).toBe(`- %%node:${nodeId}%% Review ${formatFileReferenceMarker('report.pdf', filePath)} soon`);
+      expect(result.details.data!.items[0]!.title).toBe(`Review ${formatFileReferenceMarker(filePath)} soon`);
+      expect(visible.data!.outline).toBe(`- %%node:${nodeId}%% Review ${formatFileReferenceMarker(filePath)} soon`);
     } finally {
       await Promise.all([
         rm(localRoot, { recursive: true, force: true }),
@@ -4595,7 +4595,7 @@ describe('agent node tools', () => {
     expect(dateTextField.ok).toBe(false);
     expect(dateTextField.error?.code).toBe('invalid_search_condition');
     expect(dateTextField.instructions).toContain('DATE_OVERLAPS searches date field values');
-    expect(dateTextField.instructions).toContain('field definition node id');
+    expect(dateTextField.instructions).toContain('field:: field:<exact-uuid>');
     expect(dateTextField.instructions).toContain('DONE_LAST_DAYS');
   });
 

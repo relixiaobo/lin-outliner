@@ -5,7 +5,7 @@ import type {
 } from '../../../core/agent/protocol';
 import { nodeIsDone, nodeShowsCheckbox } from '../../../core/configProjection';
 import {
-  formatNodeReferenceMarker,
+  formatNamedNodeReference,
   richTextToReferenceMarkup,
 } from '../../../core/referenceMarkup';
 import { formatTag } from '../../../core/textSyntax';
@@ -163,7 +163,7 @@ function referenceText(
 ): string | null {
   if (node.type !== 'reference' || !node.targetId) return null;
   const target = byId.get(node.targetId);
-  return formatNodeReferenceMarker(target ? nodeTitle(target) : node.targetId, node.targetId);
+  return formatNamedNodeReference(node.targetId, target ? nodeTitle(target) : undefined);
 }
 
 function panelSnapshot(

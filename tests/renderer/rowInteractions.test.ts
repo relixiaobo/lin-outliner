@@ -735,9 +735,9 @@ describe('row interaction resolvers', () => {
     expect(searchQueryOutlineText({ byId, projection: {} } as any, 'search', enMessages)).toBe([
       '- AND',
       '  - HAS_TAG',
-      '    - tag:: [[node:#card^tag-card]]',
+      '    - tag:: tag-card',
       '  - FIELD_IS',
-      '    - field:: [[node:Status^field-status]]',
+      '    - field:: field-status',
       '    - value:: Backlog',
     ].join('\n'));
   });

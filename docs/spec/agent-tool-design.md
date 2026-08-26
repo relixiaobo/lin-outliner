@@ -112,14 +112,14 @@ query rules:
     - field:: sys:updatedAt
     - direction:: desc
   - %%view-filter%%
-    - field:: [[node:Status^field-definition-id]]
+    - field:: field:11111111-1111-4111-8111-111111111111
     - operator:: is
     - logic:: any
     - value:: Active
   - %%view-group%%
-    - field:: [[node:Status^field-definition-id]]
+    - field:: field:11111111-1111-4111-8111-111111111111
   - %%view-display%%
-    - field:: [[node:Status^field-definition-id]]
+    - field:: field:11111111-1111-4111-8111-111111111111
     - label:: State
     - width:: 180
     - visible:: true
@@ -132,7 +132,7 @@ query rules:
 `%%view-group%%` supplies its `field::`; and each `%%view-display%%` supplies a
 field plus optional view-local label, width, visibility, and order. Width is a
 whole number from 112 through 520, and order is a non-negative
-whole number. Custom fields use field-definition Node references or an active
+whole number. Custom fields use exact typed field-definition IDs or an active
 field-entry id obtained from an annotated `Field::` line; supported system fields
 are `sys:name`, `sys:createdAt`, `sys:updatedAt`, `sys:day`, `sys:done`,
 `sys:doneAt`, `sys:tags`, `sys:refCount`, and `sys:owner`. A configuration header accepts only its
@@ -172,7 +172,9 @@ text inside code blocks; small inline enumerations remain ordinary lists.
 
 `node_edit` uses expected revisions for optimistic conflict detection. Results
 return stable Node edit handles for subsequent tool calls; final user text uses
-normal Node references rather than internal edit syntax.
+normal `[[node://UUID]]` references rather than internal edit syntax. Public
+reference markers contain only identity; provider-facing text may put a resolved
+title before the marker, while typed field/tag/view IDs stay unwrapped.
 
 `outline_undo_stack` is an explicit world-state operation. Thread forking never
 invokes it.

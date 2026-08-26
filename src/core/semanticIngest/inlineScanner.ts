@@ -1,5 +1,5 @@
 import { Lexer } from 'marked';
-import { parseReferenceMarkers } from '../referenceMarkup';
+import { parseReferenceMarkers, referenceDisplayFallback } from '../referenceMarkup';
 import {
   matchTagTokens,
   parseTagTokenMatch,
@@ -351,7 +351,7 @@ function materializeReferenceMarkers(content: RichText, escapedOffsets: Readonly
   const removals: Range[] = [];
   let removedLength = 0;
   for (const marker of markers) {
-    const displayName = marker.label || referenceDisplayFallback(marker.target);
+    const displayName = referenceDisplayFallback(marker.target);
     inlineRefs.push({
       offset: marker.start - removedLength,
       target: marker.target,
@@ -720,10 +720,4 @@ function mappedRemovalStarts(removals: readonly Range[]): Set<number> {
     removedLength += range.end - range.start;
   }
   return offsets;
-}
-
-function referenceDisplayFallback(target: ReferenceTarget): string {
-  if (target.kind === 'node') return target.nodeId;
-  if (target.kind === 'local-file') return target.path.split('/').filter(Boolean).at(-1) ?? target.path;
-  return 'Referenced source';
 }

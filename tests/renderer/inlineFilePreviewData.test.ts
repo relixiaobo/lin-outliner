@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'bun:test';
-import { formatLocalFileReferenceUrl } from '../../src/core/referenceMarkup';
+import { formatFileReferenceUri } from '../../src/core/referenceMarkup';
 import {
   LOCAL_FILE_REFERENCE_LINK_PREFIX,
   localFileReferenceFromHref,
   localFileReferenceHref,
 } from '../../src/renderer/ui/editor/inlineFilePreviewData';
 
-// This href pair is the bridge an agent-emitted `[[file:Label^/path]]` marker
+// This href pair is the bridge an agent-emitted `[[file:///path]]` marker
 // crosses to become a clickable inline file chip: the markdown transform encodes
 // the path as a `#lin-file:` href, and the `<a>` override decodes it back to open
 // the file through the trusted-local-file gate. A drift here silently breaks the
@@ -32,9 +32,9 @@ describe('localFileReferenceHref ⇄ localFileReferenceFromHref', () => {
     expect(localFileReferenceFromHref(localFileReferenceHref(path))).toEqual({ entryKind: 'file', path });
   });
 
-  test('a model-visible file:^ target parses as a local file reference', () => {
+  test('a model-visible standard file URL parses as a local file reference', () => {
     const path = '/scratch/agent-attachments/turn/image-0.png';
-    expect(localFileReferenceFromHref(formatLocalFileReferenceUrl(path))).toEqual({ entryKind: 'file', path });
+    expect(localFileReferenceFromHref(formatFileReferenceUri(path) ?? '')).toEqual({ entryKind: 'file', path });
   });
 
   test('a non-local-file href is not a file reference', () => {

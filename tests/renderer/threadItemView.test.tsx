@@ -231,21 +231,21 @@ describe('ThreadItemView reasoning presentation', () => {
   });
 
   test('keeps a leading reasoning line that carries a Node reference openable', async () => {
-    // The label survives flattening; the reference target and its open
-    // affordance do not, so this block stays in the body too.
+    // The reference target and its open affordance do not survive flattening,
+    // so this block stays in the body too.
     const rendered = renderItem(reasoningItem({
-      summary: [`Rereading ${formatNodeReferenceMarker('Weekly notes', 'node-1')} before deciding.`],
+      summary: [`Rereading ${formatNodeReferenceMarker('library')} before deciding.`],
       content: ['The plan is already written down there.'],
     }));
     await flush();
 
     const toggle = rendered.document.querySelector<HTMLButtonElement>('.thread-reasoning-toggle');
-    expect(toggle?.textContent).toContain('Rereading Weekly notes before deciding.');
+    expect(toggle?.textContent).toContain('Rereading library before deciding.');
     act(() => toggle?.click());
     await flush();
 
     const body = rendered.document.querySelector('.thread-reasoning-body');
-    expect(body?.querySelector('a')?.getAttribute('href')).toBe('#lin-node:node-1');
+    expect(body?.querySelector('a')?.getAttribute('href')).toBe('#lin-node:library');
     expect(body?.textContent).toContain('The plan is already written down there.');
   });
 

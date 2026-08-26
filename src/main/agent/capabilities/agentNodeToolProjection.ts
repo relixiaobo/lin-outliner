@@ -10,7 +10,7 @@ import {
   type DocumentProjection,
   type NodeProjection,
 } from '../../../core/types';
-import { formatNodeReferenceMarker } from '../../../core/referenceMarkup';
+import { formatNamedNodeReference } from '../../../core/referenceMarkup';
 import { richTextToMarkdownReferenceMarkup } from '../../../core/markdownRichText';
 import { formatTag } from '../../../core/textSyntax';
 import { projectFieldConfig, nodeIsDone, nodeShowsCheckbox } from '../../../core/configProjection';
@@ -189,7 +189,7 @@ export function referenceText(index: ProjectionIndex, node: NodeProjection): str
   if (node.type !== 'reference' || !node.targetId) return null;
   const target = index.nodes.get(node.targetId);
   const display = target ? nodeTitle(index, target) : node.targetId;
-  return formatNodeReferenceMarker(display, node.targetId);
+  return formatNamedNodeReference(node.targetId, display);
 }
 
 export function fieldName(index: ProjectionIndex, fieldEntry: NodeProjection): string {

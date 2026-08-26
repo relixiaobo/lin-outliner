@@ -12,7 +12,6 @@ import { createPortal } from 'react-dom';
 import { Fragment, Schema, Slice, type Node as PMNode } from 'prosemirror-model';
 import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
-import { sanitizeFileReferenceRef } from '../../../core/referenceMarkup';
 import type { AgentSlashCommandView, NodeId } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import {
@@ -1108,7 +1107,7 @@ function docToDraft(doc: PMNode): ThreadComposerDraft {
       const attachmentId = String(child.attrs.attachmentId ?? '');
       const name = String(child.attrs.name ?? '') || 'file';
       const path = String(child.attrs.path ?? '');
-      const ref = sanitizeFileReferenceRef(String(child.attrs.ref ?? '') || name);
+      const ref = normalizeFileReferenceName(String(child.attrs.ref ?? '') || name);
       const mimeType = String(child.attrs.mimeType ?? '');
       const iconDataUrl = String(child.attrs.iconDataUrl ?? '');
       const sizeBytes = Number(child.attrs.sizeBytes ?? 0);
@@ -1151,6 +1150,10 @@ function docToDraft(doc: PMNode): ThreadComposerDraft {
     pendingFileRefs,
     text,
   };
+}
+
+function normalizeFileReferenceName(value: string): string {
+  return value.replace(/[\r\n]+/gu, ' ').replace(/\s+/gu, ' ').trim() || 'attachment';
 }
 
 function fileReferenceIdsInSlice(slice: Slice): string[] {

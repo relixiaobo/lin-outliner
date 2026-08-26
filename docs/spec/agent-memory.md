@@ -301,7 +301,7 @@ Search results, implicitly returned descendants, ordinary Nodes, failed reads,
 and extension/MCP tools with a coincidental name do not count. Reads deduplicate
 within the Turn and the tracked read set is bounded to eight Nodes. A read is
 recorded as citation usage only when the completed final response also contains
-that exact Node as an inline `[[node:^id]]` reference which the Markdown surface
+that exact ordinary Node as an inline `[[node://UUID]]` reference which the Markdown surface
 materializes as a Node-link affordance. Literal markers in fenced code, inline
 code, image metadata, or an existing Markdown link do not count as citation
 usage. Display and attribution share the same remark AST traversal, including

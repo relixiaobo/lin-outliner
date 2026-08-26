@@ -1,4 +1,3 @@
-import { formatNodeReferenceMarker } from '../../../core/referenceMarkup';
 import { escapeSemanticText } from '../../../core/semanticIngest/inlineScanner';
 import { NAME_FIELD, SYSTEM_FIELD_CHOICES } from '../../../core/systemFields';
 import type {
@@ -53,7 +52,7 @@ export const VIEW_CONFIG_OUTLINE_GUIDANCE = [
   'Use %%view-filter%% with field::, operator::, logic:: any|all, and zero or more value:: lines.',
   'Use at most one %%view-group%% with field::.',
   'Use %%view-display%% with field:: plus optional label::, width:: 112-520, visible:: true|false, and non-negative whole-number order::.',
-  'Custom fields use [[node:Field name^field-definition-id]]; when only an annotated Field:: line is available, use its field-entry id as the field:: value without the %%node:...%% wrapper.',
+  'Custom fields use their exact field:<uuid> definition id; when only an annotated Field:: line is available, use its field-entry id as the field:: value without the %%node:...%% wrapper.',
   `Supported system fields use ${VIEW_SYSTEM_FIELD_IDS.join(', ')}.`,
 ].join(' ');
 
@@ -471,7 +470,7 @@ function serializedFieldReference(index: ProjectionIndex, fieldRef: ViewFieldRef
   if (VIEW_SYSTEM_FIELDS.has(fieldRef)) return fieldRef;
   const field = index.nodes.get(fieldRef);
   if (!field || field.type !== 'fieldDef' || isInTrash(index, fieldRef)) return null;
-  return formatNodeReferenceMarker(nodeTitle(index, field), fieldRef);
+  return fieldRef;
 }
 
 function configHeader(directive: string, level: number, nodeId?: string): string {

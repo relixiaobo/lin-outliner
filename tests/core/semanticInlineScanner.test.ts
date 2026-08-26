@@ -4,6 +4,12 @@ import {
   scanRichTextInline,
 } from '../../src/core/semanticIngest/inlineScanner';
 
+const NODE_ONE_ID = 'node:11111111-1111-4111-8111-111111111111';
+const NODE_TWO_ID = 'node:22222222-2222-4222-8222-222222222222';
+const NODE_CODE_MARKER = '[[node://33333333-3333-4333-8333-333333333333]]';
+const NODE_ONE_MARKER = '[[node://11111111-1111-4111-8111-111111111111]]';
+const NODE_TWO_MARKER = '[[node://22222222-2222-4222-8222-222222222222]]';
+
 describe('semantic inline scanner', () => {
   test('keeps non-canonical Markdown delimiters as literal text', () => {
     expect(scanMarkdownInline(
@@ -146,13 +152,13 @@ describe('semantic inline scanner', () => {
 
   test('protects rich-text references and escaped tokens while remapping metadata', () => {
     const scanned = scanRichTextInline({
-      text: String.raw`See \#escaped [[node:Label #literal^node-a]] #work`,
+      text: String.raw`See \#escaped [[file:///tmp/%23literal.txt]] #work`,
       marks: [],
       inlineRefs: [],
     }, { metadata: 'tags-and-fields', linkifyBareUrls: true });
 
     expect(scanned.content).toEqual({
-      text: 'See #escaped [[node:Label #literal^node-a]]',
+      text: 'See #escaped [[file:///tmp/%23literal.txt]]',
       marks: [],
       inlineRefs: [],
     });
@@ -162,16 +168,16 @@ describe('semantic inline scanner', () => {
 
   test('does not materialize references inside code and remaps multiple reference offsets', () => {
     const scanned = scanMarkdownInline(
-      '`[[node:Code^node-code]]` [[node:One^node-one]] / [[node:Two^node-two]]',
+      `\`${NODE_CODE_MARKER}\` ${NODE_ONE_MARKER} / ${NODE_TWO_MARKER}`,
       { metadata: 'tags', linkifyBareUrls: true, references: true },
     );
 
     expect(scanned.content).toEqual({
-      text: '[[node:Code^node-code]]  / ',
-      marks: [{ start: 0, end: 23, type: 'code' }],
+      text: `${NODE_CODE_MARKER}  / `,
+      marks: [{ start: 0, end: NODE_CODE_MARKER.length, type: 'code' }],
       inlineRefs: [
-        { offset: 24, target: { kind: 'node', nodeId: 'node-one' }, displayName: 'One' },
-        { offset: 27, target: { kind: 'node', nodeId: 'node-two' }, displayName: 'Two' },
+        { offset: NODE_CODE_MARKER.length + 1, target: { kind: 'node', nodeId: NODE_ONE_ID }, displayName: '11111111' },
+        { offset: NODE_CODE_MARKER.length + 4, target: { kind: 'node', nodeId: NODE_TWO_ID }, displayName: '22222222' },
       ],
     });
   });
@@ -213,12 +219,12 @@ describe('semantic inline scanner', () => {
 
   test('merges equivalent marks after materializing inline references', () => {
     expect(scanMarkdownInline(
-      '**a[[node:Alpha^node-alpha]]b**',
+      `**a${NODE_ONE_MARKER}b**`,
       { metadata: 'none', linkifyBareUrls: true, references: true },
     ).content).toEqual({
       text: 'ab',
       marks: [{ start: 0, end: 2, type: 'bold' }],
-      inlineRefs: [{ offset: 1, target: { kind: 'node', nodeId: 'node-alpha' }, displayName: 'Alpha' }],
+      inlineRefs: [{ offset: 1, target: { kind: 'node', nodeId: NODE_ONE_ID }, displayName: '11111111' }],
     });
   });
 
@@ -298,7 +304,7 @@ describe('semantic inline scanner', () => {
   });
 
   test('materializes rich-text references while preserving existing refs and protected marks', () => {
-    const marker = '[[node:One^node-one]]';
+    const marker = NODE_ONE_MARKER;
     const text = `${marker} tail`;
     const scanned = scanRichTextInline({
       text,
@@ -326,13 +332,13 @@ describe('semantic inline scanner', () => {
       marks: [],
       inlineRefs: [
         { offset: 0, target: { kind: 'node', nodeId: 'node-prefix' }, displayName: 'Prefix' },
-        { offset: 0, target: { kind: 'node', nodeId: 'node-one' }, displayName: 'One' },
+        { offset: 0, target: { kind: 'node', nodeId: NODE_ONE_ID }, displayName: '11111111' },
         { offset: 5, target: { kind: 'node', nodeId: 'node-existing' }, displayName: 'Existing' },
       ],
     });
 
-    const linked = '[[node:Linked^node-linked]]';
-    const code = '[[node:Code^node-code]]';
+    const linked = NODE_ONE_MARKER;
+    const code = NODE_TWO_MARKER;
     const protectedText = `${linked} ${code}`;
     expect(scanRichTextInline({
       text: protectedText,

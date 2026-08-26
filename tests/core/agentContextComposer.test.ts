@@ -140,8 +140,8 @@ describe('stable agent prompt composition', () => {
     expect(prompt.text).toContain('Background finish notification is delivered automatically');
     expect(prompt.text).toContain('# Skills');
     expect(prompt.text).toContain('the latest invocation is authoritative');
-    expect(prompt.text).toContain('[[file:Display name^/absolute/path]]');
-    expect(prompt.text).toContain('Percent-decode the path before passing it to file_read or file_glob.');
+    expect(prompt.text).toContain('[[file:///absolute/path]]');
+    expect(prompt.text).toContain('standard percent-encoded file URLs');
     expect(prompt.text).toContain('#d-memory, #d-episode, and #d-belief');
     expect(prompt.text).toContain('install or enable it through the ordinary task environment');
   });
@@ -581,7 +581,7 @@ describe('canonical context projection', () => {
     ]);
 
     const text = messageText(messages[0]!);
-    expect(text).toContain('file_reference=[[file:Quarterly report^%2Fscratch%2Fprovider-thread%2Freport.pdf]]');
+    expect(text).toContain('file_reference=Quarterly report: [[file:///scratch/provider-thread/report.pdf]]');
     expect(text).toContain('readable_path=/scratch/provider-thread/report.pdf');
   });
 

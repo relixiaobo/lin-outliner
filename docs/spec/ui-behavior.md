@@ -733,6 +733,21 @@ hierarchy and its inline marks. The first pasted block merges into the target
 row; the rest become siblings/children. Behavior parity target is nodex
 (`html-to-nodes.ts` / `applyParsedPasteMetadata`).
 
+Canonical plain-text references wrap exactly one URI in `[[...]]`.
+Ordinary Nodes use `node://UUID` (mapping to internal `node:UUID`), and the only
+public system authorities are `workspace`, `daily-notes`, `library`, `schema`,
+and `searches`. Absolute local paths use standard percent-encoded `file:` URLs;
+an empty authority is required and a trailing slash carries directory intent.
+Credentials, query, fragments, relative/remote files, malformed encoding,
+unknown schemes, and every private or typed structural Node ID remain literal.
+The URI never stores a label. Node atoms resolve the current document title at
+render time, file atoms use the decoded basename, and stored display metadata is
+only an unavailable fallback. Renaming changes presentation without changing
+the structured `ReferenceTarget`, copied URI, or equality. URI syntax grants no
+authority: Core still preflights Node existence/Trash state, and file actions
+still apply their working-set and Host security checks. A backslash-escaped
+marker remains literal at boundaries that support semantic escaping.
+
 | Interaction | Expected behavior |
 | --- | --- |
 | Paste multi-line plain text | One row per line. In the agent composer (single-paragraph schema) the lines are kept as `hardBreak`s within the row. |
@@ -747,7 +762,7 @@ row; the rest become siblings/children. Behavior parity target is nodex
 | `name:: value` on a Markdown/plain line | Harvested as a field; unknown fields auto-created as `plain`, existing `options` fields smart-select the option. Guard: a double colon **followed by whitespace** (`name:: value`), so `std::cout`, `http://…`, `foo::bar` never match. Field values stop before the next field or shared tag token; bare CSS hex colors do not terminate the field. |
 | `#tag` / `name::` inside a link label, URL, `` `code` `` span, reference marker, or backslash-escaped token | Left literal. Protected ranges are excluded before metadata extraction, and removing surrounding metadata remaps marks and inline-reference offsets. |
 | Metadata on the HTML paste path | Harvested through the same scanner as plain text after DOM structure and marks are converted. Existing `<a>` and `<code>` ranges stay literal; metadata outside those ranges is applied to the row. |
-| `[[node:Label^node-id]]` in plain-text or HTML paste | Materialized as an inline node reference, then preflighted by Core before any row or metadata write. Every referenced node must exist outside Trash; one missing or trashed target rejects the entire paste atomically, including first-row merge, descendants, trailing siblings, and yielding bulk paste. The renderer applies its local draft only after that command succeeds, so rejection leaves the edited row unchanged. Local-file and chat-source references keep their own validation rules. |
+| `[[node://UUID]]` in plain-text or HTML paste | Materialized as an inline node reference, then preflighted by Core before any row or metadata write. Every referenced node must exist outside Trash; one missing or trashed target rejects the entire paste atomically, including first-row merge, descendants, trailing siblings, and yielding bulk paste. The renderer applies its local draft only after that command succeeds, so rejection leaves the edited row unchanged. Canonical `[[file:///absolute/path]]` references and chat-source references keep their own validation rules. |
 | Single-line or metadata-only semantic paste | Uses structured paste whenever parsing adds a link, tag, field, checkbox, reference, node type, or other semantic state. A metadata-only row can update the target row or materialize at a pristine trailing position; only a truly literal unmarked line delegates to native paste. |
 
 While a structured paste command is pending, its target editor is temporarily

@@ -369,9 +369,14 @@ function stripNodeMarker(text: string): { nodeId?: string; text: string } {
 }
 
 function parseReference(text: string): { display: string; targetId: string; full: boolean } | null {
-  const marker = parseNodeReferenceMarkers(text)[0];
-  if (!marker || marker.start !== 0 || marker.end !== text.length) return null;
-  return { display: marker.label || marker.nodeId, targetId: marker.nodeId, full: true };
+  const markers = parseNodeReferenceMarkers(text);
+  if (markers.length !== 1) return null;
+  const marker = markers[0]!;
+  const before = text.slice(0, marker.start).trim();
+  const after = text.slice(marker.end).trim();
+  if (after || (before && !before.endsWith(':'))) return null;
+  const display = before ? decodeSemanticEscapes(before.slice(0, -1).trim()) : marker.nodeId;
+  return { display: display || marker.nodeId, targetId: marker.nodeId, full: true };
 }
 
 function splitDescription(text: string): [string, string?] {

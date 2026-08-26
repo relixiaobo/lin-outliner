@@ -664,6 +664,7 @@ export function NodePanel(props: NodePanelProps) {
                   }}
                   onModEnter={(content) => void handleTitleModEnter(content)}
                   resolveInlineReferenceColor={(targetId) => inlineReferenceTextColor(targetId, props.index)}
+                  resolveInlineReferenceDisplayName={(targetId) => props.index.byId.get(targetId)?.content.text.trim() || undefined}
                   onInlineReferenceClick={(target, options) => {
                     if (target.kind === 'node') {
                       props.onRoot(target.nodeId, {

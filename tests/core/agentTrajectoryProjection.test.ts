@@ -17,6 +17,8 @@ import { ThreadTrajectoryProjection } from '../../src/main/agent/thread/ThreadTr
 
 const THREAD_ID = '01910000-0000-7000-8000-000000000011';
 const TURN_ID = '01910000-0000-7000-8000-000000000012';
+const REFERENCE_NODE_ID = 'node:11111111-1111-4111-8111-111111111111';
+const REFERENCE_NODE_MARKER = '[[node://11111111-1111-4111-8111-111111111111]]';
 const DIAGNOSTICS_REF: TurnDiagnosticsPayloadReference = {
   id: 'a'.repeat(64),
   mimeType: 'application/vnd.tenon.agent-turn-diagnostics+json',
@@ -448,11 +450,11 @@ describe('ThreadTrajectoryProjection', () => {
     const messageId = '7'.repeat(64);
     const imageDigest = '8'.repeat(64);
     const narrative = [
-      '[[file:brief.txt^%2Fworkspace%2Fbrief.txt]]',
+      'brief.txt: [[file:///workspace/brief.txt]]',
       ' Extract the attachment, inspect ',
-      '[[node:Plan^node-1]]',
+      `Plan: ${REFERENCE_NODE_MARKER}`,
       ', and compare ',
-      '[[file:diagram.png^%2Fworkspace%2Fdiagram.png]]',
+      'diagram.png: [[file:///workspace/diagram.png]]',
       '.',
     ].join('');
     const attachmentText = [
@@ -472,7 +474,7 @@ describe('ThreadTrajectoryProjection', () => {
     const nodeContext = [
       '<system-reminder>',
       '<context-evidence kind="referencedResources" authority="untrusted" purpose="observation">',
-      'node_id=node-1',
+      `node_id=${REFERENCE_NODE_ID}`,
       'snapshot_content:\nRelease plan body',
       '</context-evidence>',
       '</system-reminder>',
@@ -561,7 +563,7 @@ describe('ThreadTrajectoryProjection', () => {
             source: { kind: 'localFile', path: '/workspace/brief.txt' },
           },
           { type: 'text', text: 'Extract the attachment and compare the references.' },
-          { type: 'nodeReference', nodeId: 'node-1', note: 'Plan' },
+          { type: 'nodeReference', nodeId: REFERENCE_NODE_ID, note: 'Plan' },
           {
             type: 'attachment',
             id: 'attachment-image',
@@ -598,7 +600,7 @@ describe('ThreadTrajectoryProjection', () => {
     const input = response.records.find((record) => record.kind === 'input');
     const context = response.records.find((record) => record.primaryEvidence.type === 'preparedContextPart');
 
-    expect(input?.preview).toContain('[[file:brief.txt^%2Fworkspace%2Fbrief.txt]]');
+    expect(input?.preview).toContain('brief.txt: [[file:///workspace/brief.txt]]');
     expect(input?.preview).not.toContain('brief.txt Extract the attachment and compare the references. Plan diagram.png');
     expect(context?.label).toEqual({ type: 'context', kinds: ['referencedResources'] });
     if (!input || !context) throw new Error('Expected input and referenced-resource Context records');
@@ -614,9 +616,9 @@ describe('ThreadTrajectoryProjection', () => {
       'text',
       'image',
     ]);
-    expect(inputText).toContain('[[file:brief.txt^%2Fworkspace%2Fbrief.txt]]');
-    expect(inputText).toContain('[[node:Plan^node-1]]');
-    expect(inputText).toContain('[[file:diagram.png^%2Fworkspace%2Fdiagram.png]]');
+    expect(inputText).toContain('brief.txt: [[file:///workspace/brief.txt]]');
+    expect(inputText).toContain(`Plan: ${REFERENCE_NODE_MARKER}`);
+    expect(inputText).toContain('diagram.png: [[file:///workspace/diagram.png]]');
     expect(inputText).toContain('Readable path: /workspace/brief.txt');
     expect(inputText).toContain('Readable path: /workspace/diagram.png');
     expect(inputText).toContain('Use file_read with this path to inspect the attachment.');

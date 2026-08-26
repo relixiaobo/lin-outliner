@@ -76,6 +76,8 @@ const ONE_PIXEL_PNG_BYTES = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lP1j0wAAAABJRU5ErkJggg==',
   'base64',
 );
+const REFERENCE_NODE_ID = 'node:11111111-1111-4111-8111-111111111111';
+const REFERENCE_NODE_MARKER = '[[node://11111111-1111-4111-8111-111111111111]]';
 
 describe('PiTurnExecutor event normalization', () => {
   test('serializes stream events and records authoritative message and command Items', async () => {
@@ -735,7 +737,7 @@ describe('PiTurnExecutor event normalization', () => {
       { type: 'text', text: 'Please review the attached files.' },
       {
         type: 'text',
-        text: '[[file:report.pdf^%2Fworkspace%2Fagent-attachments%2Freport.pdf]]',
+        text: 'report.pdf: [[file:///workspace/agent-attachments/report.pdf]]',
       },
       {
         type: 'text',
@@ -769,7 +771,7 @@ describe('PiTurnExecutor event normalization', () => {
       { type: 'text', text: 'Please review the attached files.' },
       {
         type: 'text',
-        text: '[[file:report.pdf^%2Fscratch%2Fagent-attachments%2Fturn%2Freport.pdf]]',
+        text: 'report.pdf: [[file:///scratch/agent-attachments/turn/report.pdf]]',
       },
       {
         type: 'text',
@@ -810,7 +812,7 @@ describe('PiTurnExecutor event normalization', () => {
       { type: 'text', text: 'Please review the attached images.' },
       {
         type: 'text',
-        text: '[[file:source.png^%2Foutside%2Fsource.png]]',
+        text: 'source.png: [[file:///outside/source.png]]',
       },
       {
         type: 'text',
@@ -951,7 +953,7 @@ describe('PiTurnExecutor event normalization', () => {
           },
         ),
       },
-      { type: 'nodeReference', nodeId: 'node-1' },
+      { type: 'nodeReference', nodeId: REFERENCE_NODE_ID },
     ], {
       readResource: async () => ONE_PIXEL_PNG_BYTES,
       resolveResourceObservationPath: async () => null,
@@ -966,7 +968,7 @@ describe('PiTurnExecutor event normalization', () => {
     });
     expect(content.filter((part) => part.type === 'text').map((part) => part.text)).toEqual([
       'Please review the attached files, attached images and referenced Outliner Nodes.',
-      '[[file:report.pdf^%2Fworkspace%2Freport.pdf]][[file:diagram.png^%2Fworkspace%2Fdiagram.png]][[node:node-1^node-1]]',
+      `report.pdf: [[file:///workspace/report.pdf]]diagram.png: [[file:///workspace/diagram.png]]${REFERENCE_NODE_MARKER}`,
       '[Attachment: report.pdf, application/pdf, 10 bytes]\nReadable path: /workspace/report.pdf\nUse file_read with this path to inspect the attachment.',
       expect.stringContaining('[Attachment image: diagram.png, image/png, 8 bytes]\nArtifact: '),
     ]);
@@ -976,7 +978,7 @@ describe('PiTurnExecutor event normalization', () => {
   test('preserves file and Node marker positions in mixed user content', async () => {
     const content = await serializeUserContent([
       { type: 'text', text: 'Compare ' },
-      { type: 'nodeReference', nodeId: 'node-1', note: 'Plan' },
+      { type: 'nodeReference', nodeId: REFERENCE_NODE_ID, note: 'Plan' },
       { type: 'text', text: ' with ' },
       {
         type: 'attachment',
@@ -992,7 +994,7 @@ describe('PiTurnExecutor event normalization', () => {
     expect(content).toEqual([
       {
         type: 'text',
-        text: 'Compare [[node:Plan^node-1]] with [[file:report.pdf^%2Fworkspace%2Freport.pdf]] before deciding.',
+        text: `Compare Plan: ${REFERENCE_NODE_MARKER} with report.pdf: [[file:///workspace/report.pdf]] before deciding.`,
       },
       {
         type: 'text',

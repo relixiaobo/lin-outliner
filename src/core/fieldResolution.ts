@@ -156,7 +156,7 @@ export function validateFieldValuesForType(
     return {
       ok: false,
       error: `Field "${label}" is an options-from-supertag field and requires node reference values.`,
-      instructions: 'Use [[node:Display^id]] values that point to nodes carrying the configured source supertag.',
+      instructions: 'Use [[node://uuid]] values that point to nodes carrying the configured source supertag. Strip the internal node: prefix from the UUID in the URI.',
     };
   }
   if (fieldType !== 'plain' && fieldType !== 'options' && nonEmpty.some((value) => value.targetId)) {

@@ -2097,7 +2097,7 @@ function createNodeSearchTool(host: OutlinerToolHost, options: NodeToolsOptions)
         !search.hasExecutableRules
       ) {
         return nodeErrorResult(errorEnvelope('node_search', 'empty_search', 'Search has no executable terms.', {
-          instructions: 'Add at least one executable rule such as STRING_MATCH value:: text, HAS_TAG tag:: [[node:#tag^...]], DONE, or DONE_LAST_DAYS value:: 7.',
+          instructions: 'Add at least one executable rule such as STRING_MATCH value:: text, HAS_TAG tag:: tag:<exact-uuid>, DONE, or DONE_LAST_DAYS value:: 7.',
           metrics: { durationMs: elapsed(started) },
         }));
       }
@@ -4501,7 +4501,7 @@ async function materializeFieldValuesForDefinition(
       });
     }
   } else if (fieldType === 'options_from_supertag') {
-    if (!first.targetId) throw new Error('Options-from-supertag field values must use [[node:Display^id]].');
+    if (!first.targetId) throw new Error('Options-from-supertag field values must use [[node://uuid]].');
     await handleMutation(host, collector, 'update_field_slot', {
       ownerId: parentId,
       fieldDefId,
@@ -4775,7 +4775,7 @@ async function appendFieldValue(
     return appendedChildIds(host, collector, fieldEntryId, before);
   }
   if (fieldType === 'options_from_supertag') {
-    if (!value.targetId) throw new Error('Options-from-supertag field values must use [[node:Display^id]].');
+    if (!value.targetId) throw new Error('Options-from-supertag field values must use [[node://uuid]].');
     await handleMutation(host, collector, 'select_field_option', { fieldEntryId, optionNodeId: value.targetId });
     return appendedChildIds(host, collector, fieldEntryId, before);
   }

@@ -42,7 +42,8 @@ or provider-encoded tool whose local name resembles a built-in never enables bui
 filesystem, Outliner, Memory, Skill, or Agent-orchestration guidance.
 
 The stable modules retain the established operational contract: renderer-safe
-deliverables use `[[file:Display name^/absolute/path]]`; Memory lookup searches and
+deliverables use canonical `[[file:///absolute/path]]` markers with a readable
+filename placed before the unchanged marker when useful; Memory lookup searches and
 reads the `#d-memory`/`#d-episode`/`#d-belief` family; a Skill's declared dependency
 is verified and installed or enabled before an approximation is considered; and Agents
 explicitly account for shared files, processes, ports, credentials, application state,
@@ -262,10 +263,16 @@ text, the provider serializer adds one deterministic request to review the attac
 files, attached images, and/or referenced Outliner Nodes. That text is derived only at
 the provider boundary; canonical user content continues to record exactly what the user
 submitted.
-Every attachment projects as a `[[file:<label>^<provider-readable-path>]]` marker at the
-same structured position where the user placed its composer atom. Every Node reference
-projects as `[[node:<label>^<node-id>]]` at its original position. The serializer joins
-those markers with the surrounding text into one user narrative, preserving whitespace
+Every attachment projects as a standard percent-encoded
+`[[file:///provider-readable-path]]` marker at the same structured position where
+the user placed its composer atom. Every public ordinary Node reference projects
+as `[[node://UUID]]`, with the internal `node:` prefix removed, at its original
+position. The five public system Nodes use `workspace`, `daily-notes`, `library`,
+`schema`, or `searches` as the URI authority. A readable current/snapshot name is
+placed immediately before a marker when provider context needs it, but the name is
+not part of reference identity. Typed structural IDs such as `field:*`, `tag:*`,
+and `sys:*` remain exact unwrapped protocol operands. The serializer joins those
+values with the surrounding text into one user narrative, preserving whitespace
 and position. It then appends one independent attachment block per file in attachment
 order: name, MIME type, source byte length, readable path, file/directory tool guidance,
 and any bounded extracted text. An image attachment block reports its stable artifact
