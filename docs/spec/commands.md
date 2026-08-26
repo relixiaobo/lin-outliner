@@ -174,8 +174,11 @@ the selection. Planning reads one bounded Projection and writes its revision int
 the ChangeSet base, so an intervening mutation invalidates exact apply. The
 transform preserves marks and inline references outside replacement ranges and
 rejects a range that would consume an inline reference. It lowers to ordinary
-text-patch updates, requires destructive Diff review, creates one Operation, and
-returns semantic no-change when repeated after convergence.
+text-patch updates carrying an explicit reviewed-replace marker, requires
+destructive Diff review, creates one Operation, and returns semantic no-change
+when repeated after convergence. Unmarked text-patch updates, including
+`replace_all` patches produced by normal rich-text editor synchronization, are
+ordinary reversible edits and do not require destructive acknowledgement.
 
 `status` never starts Runtime. Absence is exactly `{ running: false }`. A live
 result includes the Runtime instance, exact contract digest, runtime and storage

@@ -54,6 +54,7 @@ import { searchNodeToQueryExpr } from '../../core/searchEngine';
 
 interface ExecuteResult {
   readonly bindings: Readonly<Record<string, readonly string[]>>;
+  readonly reviewedReplaceTargetIds: readonly string[];
 }
 
 export async function diffOutlineChangeSet(
@@ -64,11 +65,11 @@ export async function diffOutlineChangeSet(
   const changeSetHash = canonicalChangeSetHash(normalized);
   const assetLeases = await resolveChangeSetAssetLeases(workspace, normalized);
   const candidate = workspace.forkCore({ idFactory: createDeterministicCoreIdFactory(changeSetHash) });
-  let execution: ExecuteResult = { bindings: {} };
+  let execution: ExecuteResult = { bindings: {}, reviewedReplaceTargetIds: [] };
   const { patch } = await candidate.transactionWithPatch('user', async () => {
     execution = await executeOutlineChangeSet(candidate, normalized, assetLeases);
   }, { operationId: `preview:${changeSetHash}`, command: 'outline_diff' });
-  return diffFromPatch(normalized, changeSetHash, execution.bindings, patch.nodes);
+  return diffFromPatch(normalized, changeSetHash, execution.bindings, execution.reviewedReplaceTargetIds, patch.nodes);
 }
 
 export async function applyOutlineDiff(
@@ -119,7 +120,7 @@ export async function applyOutlineDiff(
     };
   }
 
-  let execution: ExecuteResult = { bindings: {} };
+  let execution: ExecuteResult = { bindings: {}, reviewedReplaceTargetIds: [] };
   return workspace.mutate({
     origin: context.origin,
     causation: context.causation,
@@ -234,9 +235,13 @@ export async function executeOutlineChangeSet(
 ): Promise<ExecuteResult> {
   const baseIndex = createSelectionIndex(core.projection());
   const bindings: Record<string, readonly string[]> = {};
+  const reviewedReplaceTargetIds = new Set<string>();
   for (const [operationIndex, change] of changeSet.operations.entries()) {
     try {
       const result = await executeChange(core, baseIndex, bindings, change, operationIndex, assetLeases);
+      if (change.op === 'update' && change.changes.some(isReviewedTextReplaceInstruction)) {
+        for (const targetId of result) reviewedReplaceTargetIds.add(targetId);
+      }
       const binding = changeBinding(change);
       if (binding) bindings[binding] = Object.freeze([...result]);
     } catch (error) {
@@ -249,7 +254,10 @@ export async function executeOutlineChangeSet(
       ));
     }
   }
-  return { bindings: Object.freeze({ ...bindings }) };
+  return {
+    bindings: Object.freeze({ ...bindings }),
+    reviewedReplaceTargetIds: Object.freeze([...reviewedReplaceTargetIds]),
+  };
 }
 
 function assertBaseState(core: Core, changeSet: ChangeSet): void {
@@ -1251,10 +1259,15 @@ function resolveViewField(
   return exactlyOne(resolveTargetRef(baseIndex, field, bindings), 'view field');
 }
 
+function isReviewedTextReplaceInstruction(instruction: UpdateInstruction): boolean {
+  return instruction.kind === 'text-patch' && instruction.review?.destructive === 'replace';
+}
+
 function diffFromPatch(
   changeSet: ChangeSet,
   changeSetHash: string,
   bindings: Readonly<Record<string, readonly string[]>>,
+  reviewedReplaceTargetIds: readonly string[],
   patch: readonly CoreTransactionNodePatch[],
 ): Diff {
   const affected = patch.map((entry) => ({
@@ -1270,15 +1283,12 @@ function diffFromPatch(
     }
     if (change.op === 'merge') destructive.push({ kind: 'merge', targetCount: affected.length });
   }
-  const replacesText = changeSet.operations.some((change) => (
-    change.op === 'update' && change.changes.some((instruction) => (
-      instruction.kind === 'text-patch'
-      && (instruction.field === 'description'
-        || instruction.patch.ops.some((operation) => operation.type === 'replace_all'))
-    ))
-  ));
-  if (replacesText) {
-    destructive.push({ kind: 'replace', targetCount: affected.filter((entry) => entry.effect === 'update').length });
+  const reviewedReplaceTargets = new Set(reviewedReplaceTargetIds);
+  const reviewedReplaceCount = affected.filter((entry) => (
+    entry.effect === 'update' && reviewedReplaceTargets.has(entry.id)
+  )).length;
+  if (reviewedReplaceCount > 0) {
+    destructive.push({ kind: 'replace', targetCount: reviewedReplaceCount });
   }
   const withoutHash = {
     protocolVersion: OUTLINE_PROTOCOL_VERSION,

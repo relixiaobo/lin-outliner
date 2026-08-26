@@ -607,6 +607,7 @@ async function planTextReplacement(
           kind: 'text-patch',
           field: 'content',
           patch: { ops: [{ type: 'replace_all', content: transformedRichText(content, ranges, replacement, id) }] },
+          review: { destructive: 'replace' },
         });
       }
     }
@@ -619,6 +620,7 @@ async function planTextReplacement(
         const transformed = transformedPlainText(description, ranges, replacement);
         instructions.push({
           kind: 'text-patch', field: 'description', from: 0, to: description.length, value: transformed,
+          review: { destructive: 'replace' },
         });
       }
     }

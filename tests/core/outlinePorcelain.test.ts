@@ -177,6 +177,8 @@ describe('outline porcelain CLI', () => {
         'text', 'replace', repeatedId, '--find', 'x', '--replace', 'y', '--preview',
       ]);
       expect(preview.code).toBe(0);
+      expect((preview.data as Diff).destructive).toEqual([{ kind: 'replace', targetCount: 1 }]);
+      expect(JSON.stringify((preview.data as Diff).normalizedChangeSet.operations)).toContain('"review":{"destructive":"replace"}');
       expect((await jsonCommand(root, ['add', '@library', 'Concurrent write'])).code).toBe(0);
       const stale = await jsonCommand(root, [
         'text', 'replace', repeatedId, '--find', 'x', '--replace', 'y',

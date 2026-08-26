@@ -1248,9 +1248,12 @@ STRING_MATCH selection with mandatory `many + max`, plus a separate total
 replacement bound. It computes a text-patch ChangeSet from one bounded
 Projection, binds the ChangeSet to that Projection revision, preserves marks and
 inline references outside replacement ranges, and rejects a match that would
-consume an inline reference. It is destructive porcelain: preview and exact
-Diff acknowledgement are required for non-interactive apply. A repeated settled
-transform with no remaining match is semantic no-change.
+consume an inline reference. The generated text-patch instructions carry an
+explicit reviewed-replace marker; Runtime does not infer destructive intent from
+the `replace_all` patch shape because normal editor synchronization also uses
+that shape. It is destructive porcelain: preview and exact Diff acknowledgement
+are required for non-interactive apply. A repeated settled transform with no
+remaining match is semantic no-change.
 
 Common discovery does not require repeated reads. `show ID...` preserves ordered
 exact IDs; direct and CLI reads infer bounded `many` cardinality for `ids`,

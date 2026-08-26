@@ -317,6 +317,32 @@ describe('renderer Outline intents', () => {
     ]);
   });
 
+  test('keeps renderer rich-text replace-all patches non-reviewed and non-acknowledged', async () => {
+    const harness = await createHarness([
+      node('root', { children: ['target'] }),
+      node('target', { parentId: 'root' }),
+    ]);
+
+    await outlineDocumentApi.applyNodeTextPatch('target', {
+      ops: [{
+        type: 'replace_all',
+        content: { text: 'IME or inline-reference sync', marks: [], inlineRefs: [] },
+      }],
+    });
+
+    expect(firstUpdate(harness.changeSets[0]!)).toEqual({
+      kind: 'text-patch',
+      field: 'content',
+      patch: {
+        ops: [{
+          type: 'replace_all',
+          content: { text: 'IME or inline-reference sync', marks: [], inlineRefs: [] },
+        }],
+      },
+    });
+    expect(harness.applyInputs[0]?.acknowledgeDestructive).toBeUndefined();
+  });
+
   test('preserves image alt text in the typed NodeDraft metadata', async () => {
     const harness = await createHarness([node('root')]);
 

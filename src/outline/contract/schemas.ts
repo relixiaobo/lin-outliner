@@ -207,6 +207,10 @@ export const RichTextPatchSchema = Type.Object({
   ops: Type.Array(RichTextPatchOpSchema, { minItems: 1, maxItems: 100_000 }),
 }, { ...closed, $id: 'RichTextPatch' });
 
+const TextPatchReviewSchema = Type.Object({
+  destructive: Type.Literal('replace'),
+}, closed);
+
 const ContextProviderIdSchema = Type.Union([
   Type.Literal('generic-webpage'), Type.Literal('youtube'), Type.Literal('x-twitter'),
   Type.Literal('gmail'), Type.Literal('superhuman'), Type.Literal('apple-mail'),
@@ -392,6 +396,7 @@ const TextPatchSchema = Type.Union([
     kind: Type.Literal('text-patch'),
     field: Type.Literal('content'),
     patch: RichTextPatchSchema,
+    review: Type.Optional(TextPatchReviewSchema),
   }, closed),
   Type.Object({
     kind: Type.Literal('text-patch'),
@@ -399,6 +404,7 @@ const TextPatchSchema = Type.Union([
     from: Type.Integer({ minimum: 0 }),
     to: Type.Integer({ minimum: 0 }),
     value: Type.String({ maxLength: 4_194_304 }),
+    review: Type.Optional(TextPatchReviewSchema),
   }, closed),
 ]);
 

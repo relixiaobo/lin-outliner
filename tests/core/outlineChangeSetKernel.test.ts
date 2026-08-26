@@ -454,6 +454,75 @@ describe('outline ChangeSet kernel', () => {
     expect(resolveSelector(index, { by: 'query', query, includeTrash: true, limit: 10 })).toContain(nodeId);
   });
 
+  test('treats ordinary rich-text replacement patches as non-destructive editor sync', async () => {
+    const workspace = await makeWorkspace();
+    const nodeId = await createExisting(workspace, 'Draft before sync');
+    const richText = {
+      text: 'Draft after sync',
+      marks: [{ start: 0, end: 5, type: 'bold' as const }],
+      inlineRefs: [],
+    };
+    const contentDiff = await diffKeyed(workspace, {
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      operations: [{
+        op: 'update',
+        targets: oneId(nodeId),
+        changes: [{
+          kind: 'text-patch',
+          field: 'content',
+          patch: { ops: [{ type: 'replace_all', content: richText }] },
+        }],
+      }],
+    });
+    expect(contentDiff.destructive).toEqual([]);
+
+    await applyOutlineDiff(workspace, contentDiff, { origin: 'local-user' });
+    expect(workspace.documentState().nodes[nodeId]?.content).toEqual(richText);
+
+    const descriptionDiff = await diffKeyed(workspace, {
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      operations: [{
+        op: 'update',
+        targets: oneId(nodeId),
+        changes: [{ kind: 'text-patch', field: 'description', from: 0, to: 0, value: 'Plain description sync' }],
+      }],
+    });
+    expect(descriptionDiff.destructive).toEqual([]);
+
+    await applyOutlineDiff(workspace, descriptionDiff, { origin: 'local-user' });
+    expect(workspace.documentState().nodes[nodeId]?.description).toBe('Plain description sync');
+  });
+
+  test('requires acknowledgement only for explicitly reviewed text replacement patches', async () => {
+    const workspace = await makeWorkspace();
+    const nodeId = await createExisting(workspace, 'Reviewed before replace');
+    const diff = await diffKeyed(workspace, {
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      operations: [{
+        op: 'update',
+        targets: oneId(nodeId),
+        changes: [{
+          kind: 'text-patch',
+          field: 'content',
+          patch: { ops: [{ type: 'replace_all', content: { text: 'Reviewed after replace', marks: [], inlineRefs: [] } }] },
+          review: { destructive: 'replace' },
+        }],
+      }],
+    });
+    expect(diff.destructive).toEqual([{ kind: 'replace', targetCount: 1 }]);
+
+    await expect(applyOutlineDiff(workspace, diff, { origin: 'local-user' })).rejects.toMatchObject({
+      outlineError: { code: 'confirmation_required' },
+    });
+    expect(workspace.documentState().nodes[nodeId]?.content.text).toBe('Reviewed before replace');
+
+    await applyOutlineDiff(workspace, diff, { origin: 'local-user' }, true);
+    expect(workspace.documentState().nodes[nodeId]?.content.text).toBe('Reviewed after replace');
+  });
+
   test('requires Diff-bound acknowledgement for purge and preserves exact recovery', async () => {
     const workspace = await makeWorkspace();
     const targetId = await createExisting(workspace, 'Purge me');
