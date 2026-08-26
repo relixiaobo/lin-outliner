@@ -4,6 +4,7 @@ import { normalizeCodeLanguage } from '../../../core/codeLanguages';
 import { canonicalMarkdownProtectedRanges } from '../../../core/semanticIngest/canonicalMarkdown';
 import {
   decodeSemanticEscapes,
+  isEscapedSemanticAt,
   markdownInlineProtectedRanges,
   scanMarkdownInline,
 } from '../../../core/semanticIngest/inlineScanner';
@@ -370,6 +371,30 @@ function stripNodeMarker(text: string): { nodeId?: string; text: string } {
 }
 
 function parseReference(text: string): { display: string; targetId: string; full: boolean } | null {
+  const shape = terminalNodeReferenceShape(text);
+  if (!shape) return null;
+  if (shape.delimiterIndex !== null && isEscapedSemanticAt(text, shape.delimiterIndex)) return null;
+  const display = shape.displaySource
+    ? decodeSemanticEscapes(shape.displaySource)
+    : shape.targetId;
+  return { display: display || shape.targetId, targetId: shape.targetId, full: true };
+}
+
+export function escapeOrdinaryOutlineReferenceShape(text: string): string {
+  const shape = terminalNodeReferenceShape(text);
+  if (
+    !shape
+    || shape.delimiterIndex === null
+    || isEscapedSemanticAt(text, shape.delimiterIndex)
+  ) return text;
+  return `${text.slice(0, shape.delimiterIndex)}\\${text.slice(shape.delimiterIndex)}`;
+}
+
+function terminalNodeReferenceShape(text: string): {
+  delimiterIndex: number | null;
+  displaySource: string;
+  targetId: string;
+} | null {
   const protectedRanges = canonicalMarkdownProtectedRanges(text);
   const markers = parseReferenceMarkers(text).filter((marker) => (
     !protectedRanges.some((range) => marker.start < range.end && range.start < marker.end)
@@ -377,11 +402,19 @@ function parseReference(text: string): { display: string; targetId: string; full
   if (markers.length !== 1) return null;
   const marker = markers[0]!;
   if (marker.target.kind !== 'node') return null;
-  const before = text.slice(0, marker.start).trim();
   const after = text.slice(marker.end).trim();
-  if (after || (before && !before.endsWith(':'))) return null;
-  const display = before ? decodeSemanticEscapes(before.slice(0, -1).trim()) : marker.target.nodeId;
-  return { display: display || marker.target.nodeId, targetId: marker.target.nodeId, full: true };
+  if (after) return null;
+  const before = text.slice(0, marker.start).trimEnd();
+  if (!before) {
+    return { delimiterIndex: null, displaySource: '', targetId: marker.target.nodeId };
+  }
+  const delimiterIndex = before.length - 1;
+  if (text[delimiterIndex] !== ':') return null;
+  return {
+    delimiterIndex,
+    displaySource: text.slice(0, delimiterIndex).trim(),
+    targetId: marker.target.nodeId,
+  };
 }
 
 function splitDescription(text: string): [string, string?] {

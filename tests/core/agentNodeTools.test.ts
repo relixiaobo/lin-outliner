@@ -1842,6 +1842,57 @@ describe('agent node tools', () => {
       .toBe(richTextToMarkdownReferenceMarkup(core.state().nodes[sourceId]!.content));
   });
 
+  test('node_create duplicate_id escapes an ordinary terminal inline Node reference in titles and field values', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const targetId = mustFocus(core.createNode(today, null, 'Right'));
+    const terminalInlineReference = {
+      text: 'Compare: ',
+      marks: [],
+      inlineRefs: [{
+        offset: 9,
+        target: { kind: 'node' as const, nodeId: targetId },
+        displayName: 'Right',
+      }],
+    };
+    const sourceId = mustFocus(core.createRichTextContentNode(today, null, terminalInlineReference));
+    const fieldEntryId = mustFocus(core.createInlineField(sourceId, null, 'Notes', 'plain'));
+    mustFocus(core.createRichTextContentNode(fieldEntryId, null, terminalInlineReference));
+
+    const read = await executeTool<{ items: Array<{ outline?: string }> }>(core, 'node_read', {
+      node_id: sourceId,
+      depth: 0,
+    });
+    expect(read.data!.items[0]!.outline).toBe([
+      `- Compare\\: ${formatNodeReferenceMarker(targetId)}`,
+      `  - Notes:: Compare\\: ${formatNodeReferenceMarker(targetId)}`,
+    ].join('\n'));
+
+    const duplicated = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      duplicate_id: sourceId,
+    });
+
+    expect(duplicated.ok).toBe(true);
+    const cloneId = duplicated.data!.createdRootIds[0]!;
+    const clone = core.state().nodes[cloneId]!;
+    expect(clone.type).not.toBe('reference');
+    expect(clone).not.toHaveProperty('targetId');
+    expect(clone.content.text).toBe('Compare: ');
+    expect(clone.content.inlineRefs.map((ref) => ref.target)).toEqual([
+      { kind: 'node', nodeId: targetId },
+    ]);
+
+    const clonedFieldEntryId = fieldEntryByName(core, cloneId, 'Notes');
+    const clonedValue = core.state().nodes[core.state().nodes[clonedFieldEntryId]!.children[0]!]!;
+    expect(clonedValue.type).not.toBe('reference');
+    expect(clonedValue).not.toHaveProperty('targetId');
+    expect(clonedValue.content.text).toBe('Compare: ');
+    expect(clonedValue.content.inlineRefs.map((ref) => ref.target)).toEqual([
+      { kind: 'node', nodeId: targetId },
+    ]);
+  });
+
   test('node_create rejects references to trashed targets before mutation', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
