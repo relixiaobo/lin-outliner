@@ -96,6 +96,38 @@ describe('markdown rich text outline bridge', () => {
       },
       serialized: 'Prefix \\- hidden suffix',
       title: 'Prefix \\- hidden suffix',
+    }, {
+      content: {
+        text: 'Prefix  suffix',
+        marks: [],
+        inlineRefs: [{
+          offset: 7,
+          target: { kind: 'node' as const, nodeId: 'date:first-private' },
+          displayName: ':',
+        }, {
+          offset: 7,
+          target: { kind: 'node' as const, nodeId: 'date:second-private' },
+          displayName: ':',
+        }],
+      },
+      serialized: 'Prefix \\:\\: suffix',
+      title: 'Prefix \\:\\: suffix',
+    }, {
+      content: {
+        text: 'Prefix : suffix',
+        marks: [],
+        inlineRefs: [{
+          offset: 7,
+          target: { kind: 'node' as const, nodeId: 'date:first-private' },
+          displayName: ':',
+        }, {
+          offset: 8,
+          target: { kind: 'node' as const, nodeId: 'date:second-private' },
+          displayName: ':',
+        }],
+      },
+      serialized: 'Prefix \\:\\: suffix',
+      title: 'Prefix \\:\\: suffix',
     }];
 
     for (const { content, serialized, title } of cases) {

@@ -42,6 +42,14 @@ describe('Thread Markdown references', () => {
     expect(document.body.textContent).toContain(NODE_MARKER);
   });
 
+  test.each([512, 513])('renders a reference after %i normalized entities', (entityCount) => {
+    const markdown = `${'&amp;'.repeat(entityCount)}${NODE_MARKER}`;
+
+    expect(renderedMarkdownNodeReferenceIds(markdown)).toEqual([NODE_ID]);
+    const document = renderThreadMarkdown(markdown);
+    expect(document.querySelector(`[data-inline-ref="${NODE_ID}"]`)).not.toBeNull();
+  });
+
   test('preserves document definitions when rendering reference-style links in blocks', () => {
     const markdown = [
       `[Existing ${NODE_MARKER}][reference-link]`,

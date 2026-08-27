@@ -30,6 +30,11 @@ export interface MarkdownReferenceOccurrence {
   readonly marker: ParsedReferenceMarker;
 }
 
+export interface MarkdownReferenceOccurrenceResult {
+  readonly indeterminate: boolean;
+  readonly occurrences: readonly MarkdownReferenceOccurrence[];
+}
+
 interface MarkdownSourceAlignmentStep {
   readonly advancesSource: boolean;
   readonly next: MarkdownSourceAlignment;
@@ -45,7 +50,6 @@ interface PendingMarkdownSourceAlignmentStep {
 
 const MARKDOWN_SOURCE_ALIGNMENT_END = Symbol('markdown-source-alignment-end');
 type MarkdownSourceAlignment = MarkdownSourceAlignmentStep | typeof MARKDOWN_SOURCE_ALIGNMENT_END;
-const MAX_ALIGNED_MARKDOWN_ENTITIES = 512;
 
 export function transformMarkdownReferenceTextNodes(
   node: MarkdownReferenceAstNode,
@@ -69,27 +73,34 @@ export function markdownReferenceOccurrences(
   value: string,
   node: MarkdownReferenceAstNode,
   admittedSchemes?: readonly ReferenceUriScheme[],
-): readonly MarkdownReferenceOccurrence[] {
+): MarkdownReferenceOccurrenceResult {
   const markers = parseReferenceMarkers(value, admittedSchemes, { includeEscaped: true });
-  if (markers.length === 0) return [];
+  if (markers.length === 0) return { occurrences: [], indeterminate: false };
   const start = node.position?.start?.offset;
   const end = node.position?.end?.offset;
-  if (typeof start !== 'number' || typeof end !== 'number') return [];
+  if (typeof start !== 'number' || typeof end !== 'number') {
+    return { occurrences: [], indeterminate: true };
+  }
   const source = markdown.slice(start, end);
-  const sourceOffsets = normalizedMarkdownSourceOffsets(source, value);
-  if (!sourceOffsets) return [];
-  return markers.map((marker) => {
-    const sourceOffset = sourceOffsets[marker.start];
+  try {
+    const sourceOffsets = normalizedMarkdownSourceOffsets(source, value);
+    if (!sourceOffsets) return { occurrences: [], indeterminate: true };
     return {
-      marker,
-      escaped: sourceOffset === undefined || isEscapedAt(source, sourceOffset),
+      indeterminate: false,
+      occurrences: markers.map((marker) => {
+        const sourceOffset = sourceOffsets[marker.start];
+        return {
+          marker,
+          escaped: sourceOffset === undefined || isEscapedAt(source, sourceOffset),
+        };
+      }),
     };
-  });
+  } catch {
+    return { occurrences: [], indeterminate: true };
+  }
 }
 
 function normalizedMarkdownSourceOffsets(source: string, value: string): readonly number[] | null {
-  const entityCount = source.match(/&(?:#[xX][0-9A-Fa-f]+|#[0-9]+|[A-Za-z][A-Za-z0-9]+);/gu)?.length ?? 0;
-  if (entityCount > MAX_ALIGNED_MARKDOWN_ENTITIES) return null;
   const memo = new Map<string, MarkdownSourceAlignment | null>();
   const alignment = alignNormalizedMarkdownSource(source, value, 0, 0, memo);
   if (!alignment) return null;

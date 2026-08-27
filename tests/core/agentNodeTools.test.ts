@@ -2007,25 +2007,51 @@ describe('agent node tools', () => {
     const today = core.projection().todayId;
     const cases = [{
       text: 'Field: tail',
-      offset: 6,
-      displayName: ': value',
+      inlineRefs: [{
+        offset: 6,
+        target: { kind: 'node' as const, nodeId: today },
+        displayName: ': value',
+      }],
       expected: 'Field:: value tail',
     }, {
       text: 'Prefix  suffix',
-      offset: 7,
-      displayName: '- hidden',
+      inlineRefs: [{
+        offset: 7,
+        target: { kind: 'node' as const, nodeId: today },
+        displayName: '- hidden',
+      }],
       expected: 'Prefix - hidden suffix',
+    }, {
+      text: 'Prefix  suffix',
+      inlineRefs: [{
+        offset: 7,
+        target: { kind: 'node' as const, nodeId: today },
+        displayName: ':',
+      }, {
+        offset: 7,
+        target: { kind: 'node' as const, nodeId: today },
+        displayName: ':',
+      }],
+      expected: 'Prefix :: suffix',
+    }, {
+      text: 'Prefix : suffix',
+      inlineRefs: [{
+        offset: 7,
+        target: { kind: 'node' as const, nodeId: today },
+        displayName: ':',
+      }, {
+        offset: 8,
+        target: { kind: 'node' as const, nodeId: today },
+        displayName: ':',
+      }],
+      expected: 'Prefix :: suffix',
     }];
 
     for (const entry of cases) {
       const sourceId = mustFocus(core.createRichTextContentNode(today, null, {
         text: entry.text,
         marks: [],
-        inlineRefs: [{
-          offset: entry.offset,
-          target: { kind: 'node', nodeId: today },
-          displayName: entry.displayName,
-        }],
+        inlineRefs: entry.inlineRefs,
       }));
       const duplicated = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
         parent_id: today,

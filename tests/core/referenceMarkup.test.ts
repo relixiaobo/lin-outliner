@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { renderedMarkdownNodeReferenceIds } from '../../src/core/markdownNodeReferences';
+import {
+  renderedMarkdownHasReference,
+  renderedMarkdownNodeReferenceIds,
+} from '../../src/core/markdownNodeReferences';
 import { PUBLIC_REFERENCE_NODE_IDS } from '../../src/core/nodeId';
 import {
   formatFileReferenceMarker,
@@ -176,6 +179,13 @@ describe('reference URI markup', () => {
     expect(renderedMarkdownNodeReferenceIds(`\\\\\\${marker}`)).toEqual([]);
     expect(renderedMarkdownNodeReferenceIds(`&#91;${marker.slice(1)} / \\${marker}`)).toEqual([NODE_ID]);
     expect(renderedMarkdownNodeReferenceIds(`&acE; ${marker}`)).toEqual([NODE_ID]);
+  });
+
+  test.each([512, 513])('aligns a Node reference after %i normalized entities', (entityCount) => {
+    const markdown = `${'&amp;'.repeat(entityCount)}[[node://${NODE_UUID}]]`;
+
+    expect(renderedMarkdownNodeReferenceIds(markdown)).toEqual([NODE_ID]);
+    expect(renderedMarkdownHasReference(markdown)).toBe(true);
   });
 
   test('derives display fallback independently from marker identity', () => {

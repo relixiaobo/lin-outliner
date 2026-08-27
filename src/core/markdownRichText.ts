@@ -34,13 +34,15 @@ export function richTextToMarkdownReferenceMarkup(
     if (content.text.slice(start, start + displayName.length) !== displayName) return [];
     return [{ start, end: start + displayName.length }];
   });
-  for (const ref of refs) {
-    const offset = Math.min(Math.max(0, Math.trunc(ref.offset)), content.text.length);
-    const skipped = skippedRanges.find((range) => range.start === offset);
-    add(offset, inlineRefMarker(ref, {
-      prefix: `${context.prefix ?? ''}${content.text.slice(0, offset)}`,
-      suffix: `${content.text.slice(skipped?.end ?? offset)}${context.suffix ?? ''}`,
-    }), 10);
+  const referenceInsertions = markdownReferenceInsertions(content, refs, skippedRanges);
+  for (const insertion of referenceInsertions) {
+    const text = insertion.escapeRange
+      ? escapeSemanticText(insertion.text, {
+        prefix: `${context.prefix ?? ''}${insertion.semanticText.slice(0, insertion.escapeRange.start)}`,
+        suffix: `${insertion.semanticText.slice(insertion.escapeRange.end)}${context.suffix ?? ''}`,
+      })
+      : insertion.text;
+    add(insertion.offset, text, 10);
   }
   const serializableMarks = mergeEquivalentTextMarks(marksOutsideSkippedRanges(
     markdownSerializableMarks(content.marks),
@@ -85,17 +87,56 @@ export function richTextToMarkdownReferenceMarkup(
   return out;
 }
 
-function inlineRefMarker(
+interface MarkdownReferenceInsertion {
+  readonly escapeRange: { readonly end: number; readonly start: number } | null;
+  readonly offset: number;
+  readonly semanticText: string;
+  readonly text: string;
+}
+
+function markdownReferenceInsertions(
+  content: RichText,
+  refs: readonly RichText['inlineRefs'][number][],
+  skippedRanges: ReadonlyArray<{ start: number; end: number }>,
+): readonly MarkdownReferenceInsertion[] {
+  const byOffset = new Map<number, Array<{ escape: boolean; text: string }>>();
+  for (const ref of refs) {
+    const offset = Math.min(Math.max(0, Math.trunc(ref.offset)), content.text.length);
+    byOffset.set(offset, [...(byOffset.get(offset) ?? []), inlineRefText(ref)]);
+  }
+
+  let semanticText = '';
+  const pending: Array<Omit<MarkdownReferenceInsertion, 'semanticText'>> = [];
+  for (let index = 0; index <= content.text.length; index += 1) {
+    for (const insertion of byOffset.get(index) ?? []) {
+      const start = semanticText.length;
+      semanticText += insertion.text;
+      pending.push({
+        escapeRange: insertion.escape ? { start, end: semanticText.length } : null,
+        offset: index,
+        text: insertion.text,
+      });
+    }
+    const skipped = skippedRanges.find((range) => range.start === index);
+    if (skipped) {
+      index = skipped.end - 1;
+      continue;
+    }
+    if (index < content.text.length) semanticText += content.text[index];
+  }
+  return pending.map((insertion) => ({ ...insertion, semanticText }));
+}
+
+function inlineRefText(
   ref: RichText['inlineRefs'][number],
-  context: Pick<SemanticEscapeOptions, 'prefix' | 'suffix'>,
-): string {
+): { readonly escape: boolean; readonly text: string } {
   const uri = ref.target.kind === 'node'
     ? formatNodeReferenceUri(ref.target.nodeId)
     : formatFileReferenceUri(ref.target.path, ref.target.entryKind);
-  if (uri) return `[[${uri}]]`;
+  if (uri) return { escape: false, text: `[[${uri}]]` };
   const display = ref.displayName?.replace(/[\r\n]+/gu, ' ').replace(/\s+/gu, ' ').trim()
     || referenceDisplayFallback(ref.target);
-  return escapeSemanticText(display, context);
+  return { escape: true, text: display };
 }
 
 function markdownSerializableMarks(marks: readonly TextMark[]): TextMark[] {

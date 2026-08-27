@@ -267,6 +267,28 @@ describe('ThreadItemView reasoning presentation', () => {
     expect(body?.textContent).toContain('The source remains part of the detailed reasoning.');
   });
 
+  test.each([512, 513])(
+    'keeps a leading reasoning reference reachable after %i normalized entities',
+    async (entityCount) => {
+      const nodeId = 'node:11111111-1111-4111-8111-111111111111';
+      const marker = '[[node://11111111-1111-4111-8111-111111111111]]';
+      const rendered = renderItem(reasoningItem({
+        summary: [`${'&amp;'.repeat(entityCount)}${marker}`],
+        content: ['The source remains part of the detailed reasoning.'],
+      }));
+      await flush();
+
+      const toggle = rendered.document.querySelector<HTMLButtonElement>('.thread-reasoning-toggle');
+      expect(toggle).not.toBeNull();
+      act(() => toggle?.click());
+      await flush();
+
+      const body = rendered.document.querySelector('.thread-reasoning-body');
+      expect(body?.querySelector(`[data-inline-ref="${nodeId}"]`)).not.toBeNull();
+      expect(body?.textContent).toContain('The source remains part of the detailed reasoning.');
+    },
+  );
+
   test('measures a long single line that mounts with an expanded disclosure override', async () => {
     const text = 'A long reasoning line that exceeds the available compact timeline width';
     const rendered = renderItem(reasoningItem({ summary: [text], content: [] }), {

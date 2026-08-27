@@ -90,7 +90,9 @@ function referenceMarkdownNodes(
   node: MarkdownReferenceAstNode,
   markdown: string,
 ): MarkdownReferenceAstNode[] {
-  const occurrences = markdownReferenceOccurrences(markdown, text, node);
+  const result = markdownReferenceOccurrences(markdown, text, node);
+  if (result.indeterminate) return [{ type: 'text', value: text }];
+  const { occurrences } = result;
   if (occurrences.length === 0) return [{ type: 'text', value: text }];
   const nodes: MarkdownReferenceAstNode[] = [];
   let cursor = 0;
