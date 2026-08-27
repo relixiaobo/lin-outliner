@@ -258,6 +258,10 @@ authority.
 `ThreadService` resolves user content at admission before it records the
 `userMessage` Item. The same normalized content is persisted and passed to the
 provider for initial input, steering, and later history reconstruction.
+`userMessage` is the provider-facing user role, not a speaker claim. Its canonical
+`ThreadInputAuthor` controls trust, transcript presentation, and reader recall but does
+not change provider-role serialization. Author, Item provenance, and Turn trigger never
+enter provider prose as inferred identity metadata.
 When structured input contains attachments or Node references but no non-empty user
 text, the provider serializer adds one deterministic request to review the attached
 files, attached images, and/or referenced Outliner Nodes. That text is derived only at
@@ -603,6 +607,16 @@ authorization handshake.
 The executor registers one steering handler. Input accepted before registration
 is queued and delivered in order. Steering is added to provider input without
 rewriting persisted prior Items.
+
+Renderer start and steer admission mint `reader` author only after renderer request
+decoding. Every privileged producer supplies its non-reader author explicitly:
+delegated briefs and Agent messages name their source Thread; child terminal delivery
+names the child; host-only envelopes and budget notices use `host`; and Automation,
+Goal continuation, Memory, and other feature prompts use `feature` with their existing
+stable reference when one exists. Retry and fork preserve the author already recorded
+on each source Item. A direct Skill invocation remains reader-authored because its
+structured input came from the renderer; `request_user_input` remains a control-plane
+record rather than a synthetic `userMessage`.
 
 Every delegated execution generation feeds a live in-flight tally from
 `PiEventNormalizer.completeAssistant`, immediately after the normalizer

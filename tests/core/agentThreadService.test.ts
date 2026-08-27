@@ -98,6 +98,7 @@ import {
 } from '../../src/main/agent/worktree/AgentWorktree';
 import { uuidV7 } from '../../src/main/agent/uuid';
 import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
+import { resolveUserDataDir } from '../../src/main/userDataPath';
 import { replayableModelCall, toolAdmissionEvent } from '../fixtures/agentToolCallHistory';
 
 const roots: string[] = [];
@@ -1083,6 +1084,56 @@ describe('ThreadService', () => {
     expect(loggedErrors).toHaveLength(1);
     expect(loggedErrors[0]?.[0]).toBe('[agent] transient notification listener failed');
     await fixture.service.close();
+  });
+
+  test('writes only required-author Items on fresh development and packaged roots', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-strict-author-first-launch-'));
+    roots.push(root);
+    let now = 1_720_000_000_000;
+    const modes = [
+      { isPackaged: false, label: 'development' },
+      { isPackaged: true, label: 'packaged' },
+    ] as const;
+
+    for (const mode of modes) {
+      const userData = resolveUserDataDir({
+        envOverride: undefined,
+        isPackaged: mode.isPackaged,
+        home: join(root, mode.label, 'home'),
+        appData: join(root, mode.label, 'app-data'),
+        appName: 'Tenon',
+      });
+      await mkdir(userData, { recursive: true });
+      const executor = new ControlledExecutor();
+      const opened = await openFixture(userData, executor, () => ++now);
+      await opened.service.initialize();
+      const thread = (await opened.service.startThread({
+        source: 'app',
+        threadSource: 'user',
+        modelProvider: 'openai',
+        cwd: root,
+      })).thread;
+      await opened.service.startRendererTurn({
+        threadId: thread.id,
+        input: [{ type: 'text', text: `${mode.label} first input` }],
+      });
+      await executor.waitUntilWaiting(0);
+      executor.finish(0);
+      await opened.service.waitForIdle(thread.id);
+      await opened.service.close();
+
+      const rollout = await readFile(
+        join(userData, 'agent', 'rollouts', `${thread.id}.jsonl`),
+        'utf8',
+      );
+      const authors = rollout.trimEnd().split('\n').flatMap((line) => (
+        userMessageAuthors(JSON.parse(line))
+      ));
+      expect(authors.length).toBeGreaterThan(0);
+      expect(authors.every((author) => (
+        JSON.stringify(author) === JSON.stringify({ kind: 'reader' })
+      ))).toBe(true);
+    }
   });
 
   test('quarantines authorless persisted history under the strict schema, and starts anyway', async () => {
@@ -14829,6 +14880,16 @@ function serializedConsoleCalls(calls: readonly (readonly unknown[])[]): string 
     if (typeof value === 'string') return value;
     return JSON.stringify(value);
   }).join(' ')).join('\n');
+}
+
+function userMessageAuthors(value: unknown): unknown[] {
+  if (!value || typeof value !== 'object') return [];
+  if (Array.isArray(value)) return value.flatMap(userMessageAuthors);
+  const record = value as Record<string, unknown>;
+  return [
+    ...(record.type === 'userMessage' ? [record.author] : []),
+    ...Object.values(record).flatMap(userMessageAuthors),
+  ];
 }
 
 function stripUserMessageAuthors(jsonl: string): string {

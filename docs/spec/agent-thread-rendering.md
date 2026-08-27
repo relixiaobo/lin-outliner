@@ -131,6 +131,14 @@ identity signal in the stream, and Tenon has no user profile to draw a face
 from — so `I asked this` stays a matter of position, and `main asked this` a
 matter of the name above it. Neither is ever left to a hover.
 
+That position comes from each `userMessage` Item's canonical author, never from its
+provider role, Turn position, trigger, provenance, or client ID. Only `reader` uses the
+reader bubble and may expose Edit. `agent(threadId)` resolves that source Thread's
+identity and opens a speaker run. `host`, `feature`, and an Agent whose identity cannot
+be resolved use the neutral Agent-event presentation and never borrow either the reader
+or the transcript's own Agent identity. Mixed reader and machine steering inside one
+Turn is classified Item by Item.
+
 A participant is named by its PERSONA everywhere it SPEAKS — in the
 conversation and inside its own pushed view alike — with the Agent TYPE beside
 it in a quieter register: who it is, then what it is. The persona comes from
@@ -1435,6 +1443,44 @@ the click (self-focusing popovers, dialogs, the inline message editor).
 Keyboard-activated clicks are never intercepted, and an active
 `request_user_input` suspends the hand-back entirely.
 
+The same terminal model governs input history. A focused composer offers plain Up at
+its first visual line and plain Down at its last visual line as semantic history
+actions, but only for a collapsed text selection. Shift/Control/Option/Command arrows,
+ordinary movement inside wrapped or multi-line content, and arrows owned by an open
+slash/mention menu or IME keep their established behavior. The editor consumes an
+offered arrow only when history reports `performed`; a declined action falls through to
+ProseMirror and the browser.
+
+History is derived lazily from canonical `reader`-authored `userMessage` Items in the
+exact Thread, preserving Turn and within-Turn Item order. The first eligible Up captures
+the complete unsent scratch bundle, selects the newest entry, creates an editable draft
+copy, and places the caret at its end. Up selects older entries, Down selects newer
+entries, Down past the newest restores the exact scratch document and selection, and Up
+past the oldest is a handled no-op. Each visited slot retains its working edits for that
+navigation session. If a selected canonical Item disappears, the next arrow is consumed
+by one deterministic re-anchor: the entry at its prior chronological index, otherwise
+the newest predecessor, otherwise scratch and idle.
+
+A bundle contains the ProseMirror document and selection, ordered structured text/Node/
+file atoms, settled attachments, and renderer-only preview/source/excerpt metadata.
+History never reparses marker text: Node and file atoms continue through recall, resend,
+transcript reload, and provider projection as structured values, producing only
+`[[node://...]]` and `[[file:///...]]`. A recalled submission uses the ordinary
+admission/send path with fresh draft attachment identities. Missing or unreadable
+managed content produces the established recoverable composer error and restores the
+complete draft rather than crashing navigation or dropping one part.
+
+Picker, paste, drop, browser-file, mention, and generated-paste admissions remain in the
+single serialized queue and never move into a history slot. While any such admission is
+queued or running, history declines Up and Down until it settles, cancels, or fails.
+Hidden scratch and working slots retain complete current managed-resource handles plus
+renderer-only UI metadata in a session registry. Attachment limits count only the
+visible slot and pending admissions. Navigation creates no storage, copies no bytes,
+and never interprets the current handle's digest-shaped field. Session cleanup asks the
+existing main-process resource authority to discard only when no visible or hidden
+session link remains; canonical Thread links are checked independently by that authority,
+so releasing one slot cannot invalidate a surviving Item or another slot.
+
 Typing `/` opens the established composer command menu. It keeps `/compact` as
 the default entry, followed by `/clear` and `/new`, then appends the current
 user-invocable Skill catalog. Runtime names are reserved case-insensitively, so
@@ -1497,9 +1543,10 @@ reference markup into text. Edit replaces only the message text while preserving
 the complete original structured input. An attachment-only or Node-reference-only
 Turn can add text through Edit without losing its structured content.
 
-Only the latest user message in a terminal Turn exposes Edit; earlier messages
-remain copyable, and an active Turn cannot be edited while its response is
-running. Editing autofocuses the existing edit field. Escape cancels and
+Only the latest reader-authored user message in a terminal Turn exposes Edit; earlier
+messages and every Agent-, host-, or feature-authored provider input remain copyable but
+not editable, and an active Turn cannot be edited while its response is running.
+Editing autofocuses the existing edit field. Escape cancels and
 Cmd/Ctrl+Enter saves. Saving appends a `thread/rollback` marker for the final
 Turn, then resubmits the original structured content with only its text replaced
 as a fresh Turn in the same Thread. It does not mutate the sealed source Turn or
