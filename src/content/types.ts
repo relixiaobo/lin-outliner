@@ -29,7 +29,9 @@ export interface ContentGarbageCollectionResult {
 export interface ContentStoreHooks {
   readonly afterPublicationClaim?: () => void | Promise<void>;
   readonly afterPublicationRename?: () => void | Promise<void>;
+  readonly afterStagingUnlink?: () => void | Promise<void>;
   readonly afterDeletionMarked?: () => void | Promise<void>;
+  readonly afterDeletionUnlink?: () => void | Promise<void>;
 }
 
 export interface ContentStoreOptions {

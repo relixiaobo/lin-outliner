@@ -90,19 +90,22 @@ releases none.
 Before creating or writing an admission staging file, ContentStore persists its
 stage ID, writer PID, opaque owner token, and timestamps. A publication claim
 atomically transfers that staging ownership into the per-digest publication
-journal. Normal cleanup unlinks the staging file before removing its ownership
-row. Startup preserves staging owned by a live process and reclaims a file only
-after its recorded writer is proven dead, so concurrent stores cannot delete an
-active stream and a crash before publication cannot leak untracked bytes. The
-same dead-writer repair runs during central GC, so cleanup does not depend on all
-surviving Host processes restarting.
+journal. Normal cleanup unlinks the staging file and fsyncs the staging directory
+before removing its ownership row. Publication rename fsyncs both the destination
+and staging directories before clearing its journal. Startup preserves staging
+owned by a live process and reclaims a file only after its recorded writer is
+proven dead, so concurrent stores cannot delete an active stream and a crash
+before publication cannot leak untracked bytes. The same dead-writer repair runs
+during central GC, so cleanup does not depend on all surviving Host processes
+restarting.
 
 Record deletion uses the opposite order: Runtime durably removes an unreachable
 AssetRecord, then releases its anchor. ContentStore GC selects only published
 revisions with no active admission lease and no anchor in one SQLite transaction,
-marks them `deleting`, unlinks them, and settles the deletion journal. Admission
-and anchor cloning cannot attach to a deleting revision. Startup repairs
-interrupted admission staging, publication, and deletion states.
+marks them `deleting`, unlinks them, fsyncs the containing directory, and only
+then settles the deletion journal. Admission and anchor cloning cannot attach to
+a deleting revision. Startup repairs interrupted admission staging, publication,
+and deletion states.
 
 Recovery policy remains Runtime-owned, but physical accounting remains neutral:
 Runtime supplies the exact-revision handles for live and recovery-protected

@@ -62,7 +62,7 @@ describe('ContentStore', () => {
     expect(layout).not.toContain('revisions');
   });
 
-  test('retains live pre-claim staging and reclaims it after the writer is killed', async () => {
+  test('retains live pre-claim staging and durably reclaims it after the writer is killed', async () => {
     const root = await makeRoot();
     const byteLength = 1024 * 1024;
     const worker = spawn(process.execPath, [
@@ -83,16 +83,23 @@ describe('ContentStore', () => {
       expect(staged).toMatch(/^admit-[0-9a-f-]+\.tmp$/u);
       expect((await stat(path.join(stagingRoot, staged!))).size).toBe(byteLength);
 
-      concurrent = await ContentStore.open(root);
+      concurrent = await ContentStore.open(root, {
+        hooks: { afterStagingUnlink: () => { throw new Error('interrupt staging durability'); } },
+      });
       expect(await readdir(stagingRoot)).toEqual([staged!]);
 
       const exited = once(worker, 'exit');
       worker.kill('SIGKILL');
       await exited;
 
-      expect(await concurrent.collectGarbage()).toEqual({ revisionCount: 0, byteLength: 0 });
+      await expect(concurrent.collectGarbage()).rejects.toThrow('interrupt staging durability');
       expect(await readdir(stagingRoot)).toEqual([]);
       concurrent.close();
+
+      const interruptedDatabase = new Database(path.join(root, 'state.sqlite'));
+      expect(interruptedDatabase.query('SELECT COUNT(*) AS count FROM admission_staging').get())
+        .toEqual({ count: 1 });
+      interruptedDatabase.close();
 
       const recovered = await ContentStore.open(root);
       expect(await readdir(stagingRoot)).toEqual([]);
@@ -109,6 +116,32 @@ describe('ContentStore', () => {
       }
       concurrent?.close();
     }
+  });
+
+  test('retains live cleanup ownership until the staging unlink is durable', async () => {
+    const root = await makeRoot();
+    const store = await ContentStore.open(root, {
+      hooks: { afterStagingUnlink: () => { throw new Error('interrupt live cleanup durability'); } },
+    });
+    await expect(store.admit((async function* () {
+      yield Buffer.from('partial bytes');
+      throw new Error('source failed');
+    })())).rejects.toThrow('source failed');
+    expect(await readdir(path.join(root, 'staging'))).toEqual([]);
+    store.close();
+
+    const interruptedDatabase = new Database(path.join(root, 'state.sqlite'));
+    expect(interruptedDatabase.query('SELECT COUNT(*) AS count FROM admission_staging').get())
+      .toEqual({ count: 1 });
+    interruptedDatabase.query('UPDATE admission_staging SET owner_pid = ?').run(2_147_483_647);
+    interruptedDatabase.close();
+
+    const recovered = await ContentStore.open(root);
+    const recoveredDatabase = new Database(recovered.databasePath);
+    expect(recoveredDatabase.query('SELECT COUNT(*) AS count FROM admission_staging').get())
+      .toEqual({ count: 0 });
+    recoveredDatabase.close();
+    recovered.close();
   });
 
   test('repairs publication interrupted after rename without fabricating an admission lease', async () => {
@@ -217,6 +250,34 @@ describe('ContentStore', () => {
     const readmitted = await repaired.admitBytes(Buffer.from('delete me'));
     expect(readmitted.byteLength).toBe(lease.byteLength);
     repaired.close();
+  });
+
+  test('retains the deletion journal until the revision unlink is durable', async () => {
+    const root = await makeRoot();
+    const store = await ContentStore.open(root, {
+      hooks: { afterDeletionUnlink: () => { throw new Error('interrupt deletion durability'); } },
+    });
+    const lease = await store.admitBytes(Buffer.from('durable deletion'));
+    expect(await store.releaseAdmissionLease(lease.leaseId)).toBe(true);
+    await expect(store.collectGarbage()).rejects.toThrow('interrupt deletion durability');
+    expect(await revisionFiles(root)).toEqual([]);
+    store.close();
+
+    const interruptedDatabase = new Database(path.join(root, 'state.sqlite'));
+    expect(interruptedDatabase.query('SELECT state FROM exact_revisions').get())
+      .toEqual({ state: 'deleting' });
+    expect(interruptedDatabase.query('SELECT COUNT(*) AS count FROM deletion_journal').get())
+      .toEqual({ count: 1 });
+    interruptedDatabase.close();
+
+    const recovered = await ContentStore.open(root);
+    const recoveredDatabase = new Database(recovered.databasePath);
+    expect(recoveredDatabase.query('SELECT COUNT(*) AS count FROM exact_revisions').get())
+      .toEqual({ count: 0 });
+    expect(recoveredDatabase.query('SELECT COUNT(*) AS count FROM deletion_journal').get())
+      .toEqual({ count: 0 });
+    recoveredDatabase.close();
+    recovered.close();
   });
 
   test('quarantines physical corruption for every reference without changing anchor identity', async () => {

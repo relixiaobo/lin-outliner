@@ -597,15 +597,17 @@ export class ContentStore {
     if (existing) {
       const actual = await fileDigest(finalPath).catch(() => null);
       if (!actual || actual.digest !== reference.digest || actual.byteLength !== reference.byteLength) {
+        await this.unlinkStagingFileDurably(tempPath);
         await this.quarantine(reference);
         throw new ContentIntegrityError('Published exact revision collides with invalid bytes.');
       }
-      await rm(tempPath, { force: true });
+      await this.unlinkStagingFileDurably(tempPath);
     } else {
       await rename(tempPath, finalPath);
+      await this.options.hooks?.afterPublicationRename?.();
       await syncDirectory(path.dirname(finalPath));
+      await syncDirectory(this.stagingRoot);
     }
-    await this.options.hooks?.afterPublicationRename?.();
     await this.immediateTransaction(() => {
       const row = this.database.prepare(`
         SELECT * FROM exact_revisions WHERE digest = ? AND state = 'publishing' AND owner_token = ?
@@ -721,7 +723,7 @@ export class ContentStore {
   }
 
   private async cleanupAdmissionStage(stage: AdmissionStage): Promise<void> {
-    await rm(stage.tempPath, { force: true });
+    await this.unlinkStagingFileDurably(stage.tempPath);
     await this.forgetAdmissionStage(stage);
   }
 
@@ -740,7 +742,7 @@ export class ContentStore {
       tempPath: this.admissionStagePath(row.stage_id),
     };
     if (processIsAlive(row.owner_pid)) return;
-    await rm(stage.tempPath, { force: true });
+    await this.unlinkStagingFileDurably(stage.tempPath);
     await this.immediateTransaction(() => {
       this.database.prepare(`
         DELETE FROM admission_staging WHERE stage_id = ? AND owner_pid = ? AND owner_token = ?
@@ -767,8 +769,9 @@ export class ContentStore {
     const finalPath = this.revisionPath(row.digest);
     const final = await fileDigest(finalPath).catch(() => null);
     if (final?.digest === row.digest && final.byteLength === row.byte_length) {
+      await this.unlinkStagingFileDurably(row.temp_path);
+      await syncDirectory(path.dirname(finalPath));
       await this.settleRepairedPublication(adopted);
-      await rm(row.temp_path, { force: true }).catch(() => undefined);
       return;
     }
     const staged = await fileDigest(row.temp_path).catch(() => null);
@@ -776,16 +779,17 @@ export class ContentStore {
       await ensurePrivateDirectory(path.dirname(finalPath));
       await rename(row.temp_path, finalPath);
       await syncDirectory(path.dirname(finalPath));
+      await syncDirectory(this.stagingRoot);
       await this.settleRepairedPublication(adopted);
       return;
     }
+    await this.unlinkStagingFileDurably(row.temp_path);
     await this.immediateTransaction(() => {
       this.database.prepare(`
         DELETE FROM exact_revisions
         WHERE digest = ? AND state = 'publishing' AND owner_token = ?
       `).run(adopted.digest, adopted.owner_token);
     });
-    await rm(row.temp_path, { force: true }).catch(() => undefined);
   }
 
   private async adoptPublicationRepair(row: PublicationRow): Promise<PublicationRow | undefined> {
@@ -821,7 +825,8 @@ export class ContentStore {
   private async finishDeletion(reference: PhysicalRevisionReference): Promise<void> {
     const finalPath = this.revisionPath(reference.digest);
     await rm(finalPath, { force: true });
-    await syncDirectory(path.dirname(finalPath)).catch(() => undefined);
+    await this.options.hooks?.afterDeletionUnlink?.();
+    await syncDirectory(path.dirname(finalPath));
     await this.immediateTransaction(() => {
       const row = this.revision(reference.digest);
       if (row?.state === 'deleting') {
@@ -830,6 +835,13 @@ export class ContentStore {
         this.database.prepare('DELETE FROM deletion_journal WHERE digest = ?').run(reference.digest);
       }
     });
+  }
+
+  private async unlinkStagingFileDurably(tempPath: string): Promise<void> {
+    this.assertPublicationTempPath(tempPath);
+    await rm(tempPath, { force: true });
+    await this.options.hooks?.afterStagingUnlink?.();
+    await syncDirectory(this.stagingRoot);
   }
 
   private revision(digest: string): RevisionRow | undefined {
