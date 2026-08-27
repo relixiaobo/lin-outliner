@@ -1,10 +1,11 @@
 # Agent Result And Resource Reference Lifecycle
 
 **Shape:** (a) ONE complete feature in one PR after the reference URI foundation
-(shipped in #590), #584, and #587 land. The Agent resource-reference
+and neutral ContentStore/Outline consumer (shipped in #590 and #584), and #587
+lands. The Agent resource-reference
 cutover, conversation workspace and final-citation contract, and delegated-
 handoff projection are foundation-first build stages in that PR. #584 separately
-establishes the shared exact-revision store as part of its complete Outliner
+established the shared exact-revision store as part of its complete Outliner
 Runtime feature; #587 remains a complete composer-history feature over an opaque
 current resource handle.
 
@@ -162,7 +163,7 @@ version and availability semantics?
 - **CON-3:** Ordinary renderer-created conversations do not ask the user for a
   working directory. Explicit project/automation bindings remain supported.
 - **CON-4:** Read-only delegated roles must complete without filesystem writes.
-- **CON-5:** #584 is the first production consumer of the exact-revision
+- **CON-5:** #584 shipped as the first production consumer of the exact-revision
   kernel; #587 must not wait for the later Agent reference cutover.
 - **CON-6:** Tenon currently has one local user profile. A future multi-profile,
   shared-machine, or remote-user product must introduce its own principal
@@ -435,7 +436,7 @@ registry.
 
 #### Build Stage 1: Agent Resource-Reference Cutover
 
-After #584 and #587 land, reuse `src/content/` as the exact-revision store. Add
+After #587 lands, reuse the #584 `src/content/` exact-revision store. Add
 the Agent resource-reference store and resolver; replace binary-resource methods
 in `ToolPayloadStore`,
 `ThreadResourceOps`, and `ToolArtifactSink`; and cut over Composer admissions,
@@ -579,16 +580,17 @@ The dependency order is fixed:
 1. merge this architecture plan;
 2. use the reference URI foundation shipped in #590; its cutover deleted the
    retired marker grammar;
-3. #584 rebases and implements neutral exact revisions plus Outline
-   AssetRecord references and retention anchors;
-4. after #584 merges, #587 rebases and finishes Composer history over the
+3. #584 shipped neutral exact revisions plus Outline AssetRecord references and
+   retention anchors;
+4. #587 rebases on current `main` and finishes Composer history over the
    current opaque resource handle without inventing the later store; and
 5. after both are on `main`, implement this plan's three internal stages in one
    complete PR; and
 6. implement `agent-cross-thread-reference` only after this plan's resolver,
    working-set, and canonical citation contracts are on `main`.
 
-#584 must not implement Agent resource records, final citations, or handoff.
+#584 deliberately did not implement Agent resource records, final citations, or
+handoff.
 #587 must not create a new physical store, inspect its digest-shaped handle, or
 add physical copies for history navigation.
 
@@ -695,10 +697,10 @@ decision.
 
 ## Implementation Checklist
 
-- [ ] Implement the neutral exact-revision/retention-anchor kernel in #584
+- [x] Implement the neutral exact-revision/retention-anchor kernel in #584
   and align Outline AssetRecords without public physical authority.
-- [ ] Rebase #587 after #584 and preserve current Agent handles opaquely with no
-  navigation-time byte copy or later-store implementation.
+- [ ] Rebase #587 on the #584 foundation and preserve current Agent handles
+  opaquely with no navigation-time byte copy or later-store implementation.
 - [ ] Add Agent resource-reference records, canonical links, resolver intents,
   exact capture, materialization, reconciliation, and focused crash/concurrency
   tests; delete per-Thread binary storage and digest-bearing public handles.

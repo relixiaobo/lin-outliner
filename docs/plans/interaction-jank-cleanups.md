@@ -42,16 +42,18 @@ Verified items (2026-08-11 audit):
    scroll event on a long article, with no rAF/throttle between scroll and
    scan. (The request side is properly batched and capped; the geometry scan is
    the cost.)
-6. **`ActionInvocationService.actionProjection`** cache compares
-   `this.host.projection()` by identity, but `liveProjection()` returns a new
-   object every call — the cache can never hit, and it is invoked inside the
-   per-hit map of a launcher query (up to 8 full projection + `byId` builds per
-   query). `rankedMoveToCandidates` re-walks `projection.nodes` the same way.
-7. **`nodeRetrievalService` / `searchNodeText`**: every `search_nodes` and
-   launcher retrieval rebuilds the search-document index
-   (`new Map(allNodes.map(...))` + trash-descendant set + a defensive clone in
-   `prepareSearchQueryEvaluation`) — the unshipped P3-11/12 items from the perf
-   program, folded in here.
+6. **`ActionInvocationService.actionProjection`** caches by projection identity.
+   `OutlineDocumentService.liveProjection()` returns its current snapshot's
+   stable projection object until a Runtime Event installs the next revision, so
+   the invalidation key is sound. The remaining candidate is only the repeated
+   cache lookup inside per-hit mapping and the separate `projection.nodes` walk
+   in `rankedMoveToCandidates`; measure before changing either.
+7. **Runtime selector indexing**: every `find` request forks the current Core
+   projection and constructs a new `OutlineSelectionIndex`. Its text index is
+   lazy, so startup pays nothing, but the first textual selector in every request
+   runs `buildTextSearchIndex` again. Repeated launcher and Agent searches thus
+   rebuild an O(document) index at the same Runtime revision — the current form
+   of the former P3-11/12/13 search-reuse work.
 8. **`useWorkspaceKeyboard`** re-subscribes the window `keydown` listener per
    projection delta (effect deps include `index`/`ui` that the handler already
    reads through `latestStateRef`).
@@ -94,24 +96,26 @@ Per item, the smallest fix that removes the cost:
    remove), and preemption of an in-flight batch when the viewport moves away —
    all behaviors the current full-scan approach gets for free and the
    replacement must not lose.
-6. Key `actionProjection` on the document revision token (exposed by
-   `DocumentService`) instead of object identity, and hoist the call out of the
-   per-hit map.
-7. Cache the prepared search index on the same revision token. The defensive
-   clone in `prepareSearchQueryEvaluation` cannot become a frozen Map — the
-   preparation step **mutates** the map, injecting virtual condition/operand
-   nodes for compiled rules. The correct structure is a composite `ReadonlyMap`:
-   the immutable cached base plus a small per-query overlay holding only the
-   virtual nodes (lookups consult the overlay first). The base is shared across
-   queries at the same revision; the overlay is per-evaluation and tiny.
+6. Preserve the stable projection-identity key supplied by
+   `OutlineDocumentService`; hoist the cached projection out of repeated mapping
+   only if the probe shows meaningful overhead. A regression test holds one
+   Runtime revision constant across calls and proves the whole-document `byId`
+   build occurs once, then proves the next delivered revision invalidates it.
+7. Give the Runtime workspace one revision-keyed `OutlineSelectionIndex` reused
+   across read requests. Its immutable projection map, document order, Trash
+   ancestry facts, and lazy text index remain valid only for that exact revision;
+   a committed Event swaps the cached index rather than mutating one observed by
+   an in-flight request. Query-specific virtual condition/operand nodes stay in a
+   small per-evaluation overlay so shared base maps remain immutable.
 8. Drop the unnecessary effect deps; the handler already reads live state
    through `latestStateRef`.
 
 ## Verification
 
 - Unit where the fix is a cache: revision-keyed hit/miss tests (items 4, 6, 7);
-  for item 7, a query with rule conditions resolves virtual nodes through the
-  overlay while the shared base is unmutated (identity check).
+  for item 7, repeated Runtime reads at one revision share the selection/text
+  index, the next revision replaces it, and a query with rule conditions resolves
+  virtual nodes through an overlay while the shared base is unmutated.
 - PR-3: translation behavior parity tests — far scrollbar jump translates the
   landing viewport, inserted blocks get observed, moving away preempts the
   in-flight batch; plus the geometry-scan counter bound (rect reads per scroll

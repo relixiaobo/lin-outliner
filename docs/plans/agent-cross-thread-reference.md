@@ -131,7 +131,7 @@ The clean model is a lazy canonical reference:
   the current unbounded `includeTurns` read.
 - **CON-2:** `ThreadHistoryProjectionStore` already provides a rebuildable local
   projection, while canonical Thread and Item stores remain the read authority.
-- **CON-3:** The implementation follows #584, #587, and
+- **CON-3:** #584 shipped; the implementation follows #587 and
   `agent-result-and-file-lifecycle`; it consumes their exact-revision, resource-
   link, working-set, and Composer-history contracts without duplicating them.
 
@@ -404,18 +404,19 @@ codec without silently making Thread references valid Outline inline refs. It
 must also preserve structured Thread atoms through the complete Composer History
 round trip introduced by #587.
 
-Collision check on 2026-08-26: PR #584 overlaps Agent runtime/specification
-surfaces and establishes ContentStore; PR #587 overlaps Composer protocol,
-codec, editor, history, and specifications. This feature starts only after both
-and `agent-result-and-file-lifecycle` merge, then reruns `gh pr list`, the board
-scan, and exact file-scope comparison before implementation.
+Collision check refreshed 2026-08-27: PR #584 shipped the ContentStore and
+retired overlapping Agent runtime/specification surfaces. PR #587 still overlaps
+Composer protocol, codec, editor, history, and specifications. This feature
+starts only after #587 and `agent-result-and-file-lifecycle` merge, then reruns
+`gh pr list`, the board scan, and exact file-scope comparison before
+implementation.
 
 ### 8. Sequencing And Verification
 
 The dependency order is fixed:
 
 1. PR #590 shipped the shared URI codec and Node/file cutover.
-2. #584 ships the neutral exact-revision ContentStore and Outline references.
+2. #584 shipped the neutral exact-revision ContentStore and Outline references.
 3. #587 rebases and ships exact-Thread Composer input history.
 4. `agent-result-and-file-lifecycle` ships Agent resource references, the
    resolver, working sets, final citations, and delegated projection.

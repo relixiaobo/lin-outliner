@@ -12,6 +12,30 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **The Outliner now runs behind one standalone Runtime and public `outline` CLI
+  (PR #584, codex)** — desktop and CLI are equal versioned clients of the same
+  Selector, Projection, ChangeSet, Diff, Operation, Event, recovery, and
+  idempotency contracts. Every accepted mutation settles its document update,
+  Operation, recovery patch, asset delta, idempotency receipt, and Event sequence
+  in one fsynced `WorkspaceTransactionLog` record; verified replay, snapshot
+  compaction, exact revert, bounded streams, private authenticated discovery,
+  and unknown-settlement lookup cover restart and interruption. A neutral
+  multi-process ContentStore now retains exact revisions through mechanical
+  anchors while Runtime-owned AssetRecords track document and thumbnail edges,
+  recovery protection, logical collection, and central physical garbage
+  collection. The built-in `outline` Skill and import adapter converge Agent and
+  Tana workflows on the CLI instead of owning another document path. The former
+  main-process document authority, six native Node tools, Import Pack API and
+  writer, `tenon-import`, and old asset/persistence paths are removed. Ultra gate
+  review found two cleanup-durability defects: interrupted staging could lose its
+  ownership record, and successful unlink could be acknowledged before its
+  parent directory was fsynced. `0819a9a0` and `5a280cbb` fixed both with
+  journal-first staging, recoverable cleanup ownership, unlink plus parent-
+  directory fsync settlement, and retained retry state on fsync failure.
+  Verified with typecheck, `docs:check`, generated contract guards, 2,557 passing Core tests
+  with 6 skipped, 11 focused ContentStore tests, whitespace checks, and all five
+  GitHub E2E samples plus baseline subtraction.
+
 - **Node and file references now use one canonical URI contract (PR #590,
   codex-4)** — every current producer and consumer emits `[[node://...]]` or
   `[[file:///...]]`, keeps display names outside identity, resolves Node titles

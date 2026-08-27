@@ -13,6 +13,20 @@ UI-refactor round), **A11** (batch work resumable by construction), **A12**
 append-into-the-existing-category changelog rule (the 21-duplicate-section
 untangle of 2026-08-03).
 
+## Cleanup ownership and deletion durability are separate commits
+
+PR #584 exposed both halves of durable file cleanup. Creating staging bytes
+before recording who must remove them left a process-kill window with no
+recoverable owner. Removing a file and then deleting its journal row without
+fsyncing the parent directory could report durable cleanup even though a crash
+could restore the directory entry with no retry state.
+
+**Persist cleanup ownership before creating files. When settling deletion,
+unlink the file, fsync its parent directory, and only then remove the ownership
+or journal record. If directory fsync fails, retain that record for retry.** Test
+both process termination between boundaries and injected failures at each
+filesystem step; an orderly restart test alone cannot prove crash durability.
+
 ## Bidirectional text protocols need a collision matrix, not example pairs
 
 PR #590 repeatedly fixed one valid reference shape while leaving its textual

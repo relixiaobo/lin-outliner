@@ -89,12 +89,12 @@ reader.
   mechanical anchors. This feature must not entrench the existing per-Thread
   binary layout and must keep attachment history behind a replaceable opaque
   resource-reference boundary.
-- **CON-7:** #584 establishes the neutral `src/content/` exact-revision
+- **CON-7:** #584 shipped the neutral `src/content/` exact-revision
   foundation and Outline AssetRecords that reference it through retention
   anchors, but deliberately does not cut Agent resources over. This feature
-  rebases after #584, continues to treat the current managed-resource reference
-  as an opaque handle, and does not interpret its digest-shaped implementation
-  ID.
+  rebases on that foundation, continues to treat the current managed-resource
+  reference as an opaque handle, and does not interpret its digest-shaped
+  implementation ID.
 - **CON-8:** The reference URI foundation shipped in #590 before #584 and this feature.
   Composer history preserves structured Node/file atoms and emits only canonical
   `[[node://...]]` / `[[file:///...]]` projections; it must not retain or restore
@@ -573,18 +573,14 @@ and canonical fixtures; add
 command, preload API, dependency, build, new CSS, or tray-component change is
 intended.
 
-PR #586 has merged. This plan is reconciled with its pending paste atom, unified
-attachment tray, expanded budgets, renderer-only excerpt metadata, and linked
-removal behavior; it is no longer an open collision. `gh pr list` shows one
-other open claim, #584. Its current diff overlaps this future implementation on
-`src/main/agent/ThreadService.ts`, `docs/spec/agent-core.md`,
-`docs/spec/agent-model-runtime.md`, and `docs/spec/agent-thread-rendering.md`;
-it also establishes the neutral exact-revision ContentStore and Outline
-references that this plan must not contradict. Pause overlapping work, rebase on
-`origin/main` after #584
-lands, and rerun the file-scope check because #584 retires substantial Agent
-surface. After that rebase, keep attachment history behind the narrow current-
-resource adapter: #584 does not provide Agent resource-reference records, and this
+PRs #586 and #584 have merged. This plan is reconciled with the pending paste
+atom, unified attachment tray, expanded budgets, renderer-only excerpt
+metadata, and linked removal behavior. #584 is no longer an open collision; it
+established the neutral exact-revision ContentStore, Outline references, and
+substantial Agent surface retirement. Rebase PR #587 on current `origin/main`
+and rerun the file-scope check before marking it Ready. After that rebase, keep attachment
+history behind the narrow current-resource adapter: #584 does not provide Agent
+resource-reference records, and this
 feature must neither invent them nor add physical copy behavior. The PM has
 selected one complete implementation PR despite the shared author field:
 foundation-first is the internal build order, not a separately shipped

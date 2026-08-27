@@ -1,7 +1,7 @@
 # Performance Optimization Program
 
-Scope: the document data flow across the `core → IPC → renderer` seam, the
-outliner render path, Thread Item streaming, and main-process
+Scope: the document data flow across the `Runtime → main → IPC → renderer`
+seam, the outliner render path, Thread Item streaming, and Runtime
 persistence/IO. This is a **catalog + roadmap**, not a single change: it grades
 every known performance finding by priority so the items can be sequenced into
 separate PRs (the keystone, P1, is large enough to grow its own detailed plan).
@@ -97,12 +97,13 @@ probe confirms the writer still exists.
 
 ### P1 — Incremental projection protocol (the keystone)
 
-**Problem.** Every committed mutation rebuilds and ships the **entire**
-projection over IPC, and the renderer re-derives the change set from scratch:
+**Original problem.** Every committed mutation rebuilt and shipped the
+**entire** projection over IPC, and the renderer re-derived the change set from
+scratch:
 
-- `assembleProjection` rebuilds the full `nodes` array — `projection.ts`,
-  via `core.projection()` `core.ts`, emitted on every mutation at
-  `documentService.ts` → `webContents.send` `main.ts`. The whole array
+- `assembleProjection` rebuilt the full `nodes` array — `projection.ts`,
+  via `core.projection()` `core.ts`, emitted on every mutation by the former
+  main-process document authority. The whole array
   is structure-cloned across the process boundary. **O(N) CPU + O(N) clone per
   edit.** **(3×)**
 - Renderer rebuilds the whole `byId` Map (`document.ts`), then
@@ -115,14 +116,14 @@ O(N) to rediscover — `revisionDelta().changedNodeIds` (`core.ts`),
 backed by the per-node projection cache (`core.ts`,
 `projectionNodesFor`).
 
-**Design direction.**
+**Current authority.** The shipped delta design now crosses two process seams:
 
-1. Define a delta projection envelope on the protocol surface (this is the
-   coordinated change — `src/core/types.ts`, `projection.ts`, the IPC document
-   event): `{ revision, changedNodes: NodeProjection[], removedIds: NodeId[] }`.
-   The full projection remains for init / restore / full rebuild only.
-2. `documentService.emitProjectionChanged` sends the delta built from
-   `changedNodeIds` (+ removed) instead of `core.projection()`.
+1. Runtime commits an ordered `outline.event` containing changed and removed
+   Node projections from the transaction's sparse facts. The full projection
+   remains for initialization, reconnect gaps, and whole-tree rebuilds.
+2. `OutlineDocumentService` watches those Runtime Events and converts them into
+   the desktop `ProjectionUpdate` union before main sends the existing renderer
+   notification.
 3. Renderer `useRenderIndex` (`document.ts`) applies the delta in place:
    patch `byId` for changed/removed ids, **preserve references for unchanged
    nodes**, and bump `renderRev` directly from the delta's changed set + the
@@ -213,24 +214,20 @@ revision.
 
 - Severity: high (streaming UX) · Effort: medium-large · Risk: low-medium.
 
-#### P2-3 — Debounce/coalesce structural-mutation saves
+#### P2-3 — Transaction-log persistence boundary
 
-Text edits are already debounced into a 700 ms undo group before save
-(`documentService.ts`), but **structural** mutations
-(create/move/indent/toggle/tag/field) each call `saveCore` immediately
-(`documentService.ts`), and `serializeState` exports the **whole Loro
-snapshot incl. history** → base64 → stringify each time (`core.ts`,
-`loroDocument.ts`). A burst of structural edits writes once per edit.
+The former `saveCore` / `WorkspaceSaver` path no longer exists. The standalone
+Runtime serializes every accepted ChangeSet and fsyncs one
+`WorkspaceTransactionLog` record containing the document update, Operation,
+recovery patch, idempotency receipt, asset delta, and Events before acknowledging
+the mutation. Verified snapshot compaction runs as maintenance outside successful
+mutation acknowledgement, and the desktop quit coordinator drains accepted
+Runtime mutations rather than flushing an in-process document writer.
 
-- Implementation: coalesce/debounce `saveCore` for structural mutations with the
-  existing 700 ms text-save window, and flush it before text materialization,
-  explicit transactions, undo/redo, history work, and app shutdown. Loro
-  incremental `export({ mode: 'update' })` plus periodic snapshot compaction is
-  left out of P2 because it changes the persistence format/compaction contract;
-  keep it as a measured storage redesign option if whole-snapshot export remains
-  hot after write coalescing.
-- Severity: medium-high · Effort: medium · Risk: medium (durability/crash-safety
-  — keep the mutation queue + before-quit flush; tune the debounce window).
+Any future persistence optimization must measure transaction-record encoding,
+fsync latency, replay, and compaction against that durability contract. It may
+batch maintenance, but must not debounce or delay an acknowledged Operation's
+transaction-log commit.
 
 ---
 
@@ -268,7 +265,7 @@ across keystrokes); they are listed so nothing is lost, but should be revisited
 |----|---------|----------|------|
 | P3-11 | Structured search rebuilds a full-doc node `Map` per call **and** clones it again | structured base/overlay construction in `searchEngine.ts` | designed in `interaction-jank-cleanups` PR-4 (revision-keyed cache, base + virtual-node overlay) |
 | P3-12 | Search candidate filtering does two ancestor walks + fresh `Set` per candidate | `searchEngine.ts` | designed in `interaction-jank-cleanups` PR-4 |
-| P3-13 | Incremental text-search refresh clones the whole node `Map` | `documentService.ts` | designed in `typing-hot-path` PR-B (immutable structural sharing, O(changed) per patch) |
+| P3-13 | Runtime builds a fresh lazy text index for each selection index/request at one unchanged revision | `outline/runtime/selector.ts` (`createSelectionIndex`) | consolidate with `interaction-jank-cleanups` PR-4: cache immutable `OutlineSelectionIndex` state by Runtime revision; replace it atomically on commit |
 | P3-22 | `materializeSearchNodeResultsDirect` inner `.find` over a node's children when reordering result refs | `core.ts` | bounded to one search node's children on explicit refresh; index children by id if it shows up. Low |
 
 #### Main-process IO / bundle
@@ -276,7 +273,7 @@ across keystrokes); they are listed so nothing is lost, but should be revisited
 | ID | Finding | Location | Note |
 |----|---------|----------|------|
 | P3-17 | Local file-search fallback spawns `rg --files --hidden` over the **entire home dir** | `main.ts` (`rgFileNameMatches`) | fires only when Spotlight misses; debounce + limit roots + cache (Codex #11) |
-| P3-18 | Asset lookup `readdir`s the dir to find a file; serve `readFile`s the whole file | `assetService.ts` | `assetId→filename` metadata map; stream/range for large media (Codex #10) |
+| P3-18 | Asset lookup and serving must avoid directory scans and whole-file buffering | `outlineDesktopAssetService.ts`, Runtime asset routes | current AssetRecords provide direct metadata lookup and `serveAsset` supports range streaming; preserve those contracts and reopen only with a new measurement |
 | P3-19 | Shiki statically imports the full `bundledLanguages` registry (~235 **lazy** import thunks — grammars are already code-split, loaded on demand) | `shikiHighlighter.ts` | cost is registry wiring/parse + bundle size, **not** eager grammar load; `shiki/core` + explicit ~23-language set trims that. Benefit is bundle/init, modest. Highlighter is already a cached singleton — good |
 | P3-20 | Tokenizer double-normalizes (`normalizeSearchText` re-run after analyze) | `textSearchAnalyzer.ts` | accept a pre-normalized flag (low) |
 
@@ -288,8 +285,10 @@ across keystrokes); they are listed so nothing is lost, but should be revisited
   `renderRev` + `rowUiState`); untouched rows correctly skip re-render.
 - Core apply path is incremental: Loro state cache, projection cache, and the
   bounded operation journal with affected Node IDs.
-- Inverted text-search index (BM25, incremental upsert/remove); module-level
-  cached regexes/segmenter. Probe confirms incremental search is fine.
+- Text-search analysis and ranking remain sound, with module-level cached
+  regexes/segmenter. Runtime now builds an index lazily per
+  `OutlineSelectionIndex`; cross-request reuse is tracked above rather than
+  assumed verified-good.
 - ProseMirror editors are created once and reused; the Shiki highlighter is a
   cached singleton with lazy per-language loading.
 - No `ipcRenderer.sendSync` on the renderer hot path; only
@@ -297,9 +296,10 @@ across keystrokes); they are listed so nothing is lost, but should be revisited
   in `src/preload/index.ts`, added by #110 for the language bootstrap —
   one-time, not hot.)
 - ~~Startup does not block on the large workspace file (window paints first)~~ —
-  **no longer true** (2026-08-11 audit): `createWindow()` now runs only after
-  workspace init (including the full BM25 index build), thread service, memory
-  worker, and automations have all initialized in series. Tracked in
+  **no longer true**: `createWindow()` runs only after provider reconciliation,
+  Runtime attach/start plus transaction-log replay and projection transfer,
+  Thread service, memory worker, automations, and node-access load. Runtime text
+  indexing is lazy and is not part of startup. Tracked in
   `startup-window-first.md`.
 
 **Acknowledged and deliberately deferred** (confirmed, judged not worth a change

@@ -5,12 +5,13 @@
 ## Goal
 
 First paint must not wait for the world. Today `app.whenReady` awaits, in
-series, provider-config reconciliation → `documentService.initWorkspace()`
-(workspace read + Loro import + `materializeState` + a **full BM25 text-index
-build** + possibly a full `saveCore()`) → `threadService.initialize()` → the
-memory worker → `automationService.start()` → the node-access store → the
-import API server — and only then calls `createWindow()`. On a large document
-the user stares at nothing while the main process builds a search index.
+series, provider-config reconciliation → `OutlineDocumentService.init()`
+(standalone Runtime discovery/start, verified snapshot plus
+`WorkspaceTransactionLog` replay, and initial projection transfer) →
+`threadService.initialize()` → the memory worker →
+`automationService.start()` → the node-access store — and only then calls
+`createWindow()`. On a large or recovery-heavy document the user stares at
+nothing while the Runtime and Agent services initialize.
 
 This also falsifies the perf program's "Verified-good: startup does not block
 on the large workspace file (window paints first)" claim — corrected in
@@ -34,19 +35,17 @@ plan.
   `createWindow()` runs before service initialization. The renderer's existing
   async `init_workspace` round trip already tolerates a pending document — it
   shows its loading state until the reply arrives; that contract stays.
-- **Document init becomes single-flight.** `initWorkspace` currently guards
-  with a completion boolean only, and the renderer calls `initWorkspace` on
-  mount — window-first makes main's init and the renderer's call concurrent,
-  so two `loadCore` runs could race. Replace the boolean with one shared
-  readiness **promise** (first caller starts the work, everyone else awaits the
-  same promise), with unified failure propagation: a failed init rejects every
-  waiter identically and is retryable, never half-initialized.
+- **Keep document init single-flight.** `OutlineDocumentService.init()` already
+  stores one shared promise while Runtime connection, projection read, and watch
+  establishment are in flight; concurrent callers await the same work, and a
+  failure clears the promise for retry. Window-first relies on and regression-
+  tests that contract instead of introducing another readiness authority.
 - **Gate IPC on readiness, not the window on services.** Document and agent
   IPC handlers await their service's readiness promise so an early renderer
   request parks briefly instead of racing an uninitialized service. The gating
   set includes the **node-access store** — search ranking reads it
-  synchronously via the transient-search-options provider, and today it loads
-  before the window exists; with window-first, search waits for it too.
+  synchronously for personal ranking, and today it loads before the window
+  exists; with window-first, affected searches wait for it too.
 - **DAG-ordered bring-up — NOT free-for-all parallelism.** Blind
   parallelization is unsafe: `ThreadService.initialize()` performs
   turn-admission prepare work, `MemoryExtension.startWorker()` calls the same
@@ -57,19 +56,18 @@ plan.
   then the memory worker ∥ automations (their prerequisite is the thread
   service, not each other). As part of this PR, `prepareForTurnAdmission`
   becomes single-flight (a stored promise, not a post-await boolean) so
-  concurrent callers coalesce instead of double-running. The import API server
-  and node-access store load have no agent dependency and start alongside the
-  document read.
-- **Move the BM25 build off the critical path — without freezing main later.**
-  Deferring the build does not help if the deferred build still runs
-  `rebuildTextSearchIndex` synchronously; the build itself becomes chunked
-  (cooperative slices on the main loop) or runs in a worker. Installation is
-  **revisioned**: the build records the document revision it started from, and
-  on completion either replays the deltas that arrived meanwhile before
-  installing, or discards and rebuilds — a stale index is never installed. A
-  search issued before the first install awaits the build's promise.
-- The startup `saveCore()` (when `initWorkspace` decides one is needed) joins
-  the normal coalesced save path instead of blocking init.
+  concurrent callers coalesce instead of double-running. The node-access store
+  has no Agent dependency and loads alongside document readiness.
+- **Keep search indexing out of startup.** Runtime's `OutlineSelectionIndex`
+  builds its text index only when a textual selector first needs it. Window-first
+  preserves that lazy boundary; repeated-request index reuse belongs to
+  `interaction-jank-cleanups`, not this startup PR.
+- **Measure the current persistence boundary.** There is no `saveCore()` or
+  `WorkspaceSaver`. Runtime verifies and replays its snapshot/transaction log,
+  performs required initial reconciliation before serving, and schedules
+  maintenance/compaction after startup. Window creation may precede Runtime
+  readiness, while projection-dependent IPC continues to await the same
+  `OutlineDocumentService.init()` promise.
 - **A persistent startup-failure surface.** The renderer shell currently has no
   startup-failure channel, and `ActionNotice` auto-dismisses after seconds —
   unacceptable for "the document failed to load". Window-first adds a minimal
@@ -83,21 +81,15 @@ plan.
   document, before/after, numbers in the PR body.
 - e2e: the existing boot smoke stays green; a new assertion that the window is
   visible before `init_workspace` resolves on a delayed-document fixture.
-- Unit: concurrent `initWorkspace` calls (main + renderer) run `loadCore` once
-  (single-flight counter); a failed init rejects all waiters and a retry
-  succeeds cleanly.
+- Unit: concurrent `OutlineDocumentService.init()` calls connect/read/watch once;
+  a failed init rejects all waiters and a retry succeeds cleanly.
 - Unit: concurrent `prepareForTurnAdmission` callers coalesce (counter).
-- Unit: an early `search` request issued before the index build completes
-  returns the same results as one issued after (awaits the build); an index
-  built across interleaved mutations installs only after replaying them
-  (revision check), or rebuilds.
+- Unit: an early projection-dependent request waits for Runtime readiness; an
+  early personal-ranked search also waits for node-access readiness.
 - Manual: kill the workspace file → persistent failure surface with working
   Retry.
 
 ## Open questions
 
-- Whether the text index builds chunked-on-main or in a worker — the dev
-  decides with the probe; the bound is that neither first paint nor later
-  interaction waits on an O(document) synchronous build.
 - Failure-surface copy and placement are PM-ratified at the one-pager (it is
   the plan's only new user-visible UI).

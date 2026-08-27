@@ -35,20 +35,15 @@ The flagship (`unified-command-surface`) shipped and the 2026-08-09 audit re-anc
 every stale entry, so the frontier is a set of parallel lanes (detail lives in each item's
 theme-section entry below; this list is the ordering, not a second record):
 
-- **Lane 0 — standalone Outliner Runtime after the shipped reference foundation**:
+- **Lane 0 — standalone Outliner Runtime shipped**:
   [`reference-uri-unification`](plans/archive/reference-uri-unification.md)
-  shipped in #590, so every Node/file consumer now uses `[[node://...]]` /
-  `[[file:///...]]` without serialized labels or a legacy reader. Next, rebase the PM-ratified
-  [`outliner-runtime-cli`](plans/outliner-runtime-cli.md) implementation PR #584
-  in the `codex` clone. Its current marker and asset models predate that
-  foundation; the rebase must remove the retired grammar before further review.
-  It remains one complete
-  feature: standalone Runtime authority, desktop/CLI protocol cutover,
-  transactional recovery, neutral exact-revision ContentStore plus Outline
-  AssetRecords and retention anchors, full Agent authority, both Skills, import
-  convergence, and complete legacy deletion. Do not split or merge an
-  intermediate state; its shared file surface pauses conflicting startup,
-  Core/persistence, asset, Agent-tool, and built-in-Skill work while claimed.
+  shipped in #590, then [`outliner-runtime-cli`](plans/archive/outliner-runtime-cli.md)
+  shipped in #584. The standalone Runtime now owns document state, transactional
+  recovery, persistence, events, and Outline AssetRecords over the neutral
+  ContentStore; desktop and the `outline` CLI are equal versioned clients, and
+  the old main-process authority, native Node tools, import writer, and asset
+  paths are retired. The shared-file claim is released. Next, #587 rebases on
+  current `main`; `agent-result-and-file-lifecycle` follows after it.
 - **Lane A — build-ready quick wins** (fast-track, parallelize freely; small items
   don't count against the review-queue cap): `floating-toolbar-polish` (**unblocked
   2026-08-10** — its `core/types.ts` dependency landed with #510; rebase and go),
@@ -120,25 +115,6 @@ live in `agent-data-model`, `agent-memory-foundations`, and `agent-conversation-
 (authorities). The remaining agent work is the small active/deferred set under **Agent
 capabilities** below — feature-completion tails and standalone items, not a milestone push.
 
-### Outliner Runtime And Automation
-
-- **[outliner-runtime-cli](plans/outliner-runtime-cli.md)** (P0, `in-progress`,
-  PM-ratified 2026-08-23; implementation PR #584, codex; reference-URI foundation
-  shipped #590, shared-content rebase required before further review) — replace every persisted Outliner access path
-  with one standalone local TypeScript Runtime and one versioned contract; make
-  desktop and `outline` CLI equal clients; commit document update,
-  Operation, recovery patch, Outline asset delta, idempotency result, and Event
-  sequence at one transaction-log boundary; store physical asset bytes through
-  the neutral multi-process ContentStore while Outliner stores AssetRecords that
-  reference exact revisions through mechanical retention anchors; give Agents
-  the complete caller-neutral Outliner schema with trusted causation; compose
-  import through generic ChangeSets; then delete the renderer document
-  authority, six native Node tools,
-  Import Pack writer/API, and `tenon-import`. Shape (a): one complete feature,
-  one dev owner, one Draft PR, no partial merge. The claiming dev reruns the
-  collision check and names protocol, startup, persistence, asset, Agent-tool,
-  built-in-Skill, packaging, and spec scope in the PR's first body line.
-
 ### Command surface & capture
 
 The cmd+k / launcher convergence and the capture pipeline behind it. The
@@ -202,9 +178,9 @@ before any directional/security-sensitive build.
   budget only the child-output projection injected into a parent's context.
   The PM-ratified pre-release cut manually resets installed and clone-scoped
   stores; no migration, legacy reader, or automatic deletion path ships.
-  Sequence is fixed: reference-URI unification shipped #590; rebase/land #584, then
-  rebase/land #587, then start this implementation. Scope is rechecked after all
-  dependencies land.
+  Sequence is fixed: reference-URI unification shipped #590 and the neutral
+  ContentStore/Outline consumer shipped #584; rebase/land #587, then start this
+  implementation. Scope is rechecked after the remaining dependency lands.
 - **[agent-cross-thread-reference](plans/agent-cross-thread-reference.md)**
   (`draft`; plan PR #589; one complete feature PR after the file lifecycle) — let users mention
   prior conversations through `[[thread://<uuidv7>]]` and let Agents search/read
@@ -607,7 +583,8 @@ Standalone agent items (not part of the program):
   Design folded into the Agent runtime, Thread rendering, and design-system specs.
 - **[agent-composer-input-history](plans/agent-composer-input-history.md)**
   (`in-progress`, ratified 2026-08-25; plan PR #585, Draft implementation PR
-  #587, codex-3; reference-URI foundation shipped #590, gated on #584) — every editable Agent composer
+  #587, codex-3; reference-URI foundation shipped #590 and #584 shipped; rebase
+  on current `main` before Ready) — every editable Agent composer
   recalls reader-authored structured inputs from its exact Thread through
   visual-boundary Up/Down navigation while preserving scratch, selection,
   references, attachments, and reference liveness.
@@ -615,7 +592,7 @@ Standalone agent items (not part of the program):
   trust; the PM-ratified pre-release clean cut manually resets installed and
   clone-scoped stores before validation, so every persisted Item uses the strict
   required-author schema with no `unknown` variant or compatibility reader. The
-  one complete implementation PR must rebase onto the URI cutover and after #584,
+  one complete implementation PR must rebase onto current `main`,
   preserve structured Node/file references plus attachment history through a
   narrow opaque current-resource adapter without byte copies or digest
   interpretation, and rerun the collision check before finishing shared Agent
@@ -662,14 +639,12 @@ archived `done` (see Recently completed). Remaining active work:
   Office path; and the static URL reader is essentially built
   (`agentWebFetchContent.ts`, Defuddle extraction) — rescope that section to exposing
   the existing extractor as a preview presentation.
-- **asset-gc** (P2, *no plan file*, **rescoped 2026-08-09**: the `index.json` half is
-  obsolete — no index exists, authoritative `<id>.meta.json` sidecars carry metadata
-  (`assetService.ts`) — and drag-from-Finder ingest shipped
-  (`OutlinerItem.tsx`)) — remaining: an **orphan-asset sweep** that must walk both
-  node→asset fields (`bannerAssetId`, image/attachment `assetId`, `thumbnailAssetId`)
-  **and** asset→asset edges (PDF thumbnail derivation) — distinct from #490's
-  Thread-payload retention, which is a different store with no shared sweeper — plus
-  **inline alt-text editing** (`mediaAlt` is writable only at node creation today).
+- **inline-media-alt-text** (P3, *fast-track, no plan file*) — allow editing
+  `mediaAlt` after node creation. The former `asset-gc` work is closed by #584:
+  Runtime derives live AssetRecord IDs from document fields, expands thumbnail
+  edges, protects recovery references, durably removes unprotected records, then
+  releases ContentStore anchors and runs central physical GC.
+
 ### Outliner & UI polish
 
 - **tag-schema-projection** (P1, `done` 2026-08-18, **PM-ratified 2026-08-13**) —
@@ -816,9 +791,11 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   for renderer/system/search reference-summary scans and stops building recursive panel row models on
   the default flat outliner path. #413 makes Core mutation finalization, history/journal metadata,
   replication import, and yielding field/tag-heavy import proportional to touched nodes where sparse
-  evidence is available. #414 keeps a main-side read model fresh from projection deltas so Agent
-  `node_read`/`node_search` reuse a maintained `ProjectionIndex`, and `node_edit replace_outline`
-  uses transaction-local sparse mutation facts on `DocumentService` hosts. #415 makes ordinary
+  evidence is available. #414 kept the former main-side read model fresh from
+  projection deltas so the retired native Agent Node tools reused a maintained
+  `ProjectionIndex`; #584 subsequently moved document reads and mutations behind
+  the standalone Runtime and `OutlineDocumentService` client projection. #415
+  makes ordinary
   focused rich-text edits patch-first in the renderer, keeps row/title mirrors in refs for ordinary
   patches, bounds long-row trigger detection, and lets Core/Loro apply ordinary rich-text patches
   from caller metadata without full rich-text decode. #416 extends the read-model route to ordinary
@@ -841,14 +818,17 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   same index while preserving matching, ranking, creation, existing-tag, and Trash behavior.
   **Remaining P3:** additional localized O(N) cleanups still listed in the plan; the ordinary renderer
   projection delta path no longer rebuilds `new Map(prev.byId)` or the whole render-revision map.
-  **Ownership transfer 2026-08-11:** P3-2/5/13/21 and the `@`-picker half of P3-3 moved to
-  `typing-hot-path`; P3-11/12 to `interaction-jank-cleanups`; P3-3's field-picker half already
+  **Ownership transfer 2026-08-11:** P3-2/5/21 and the `@`-picker half of P3-3 moved to
+  `typing-hot-path`; the retired P3-13 main-process refresh and P3-11/12's
+  current Runtime selector-index cost are reconciled in
+  `interaction-jank-cleanups`; P3-3's field-picker half already
   shipped with #426. The catalog rows now cross-reference the owning plan (design voice, per the
   no-status-in-plans rule) — claim these units only through those plans' items, never from the
   catalog. (2026-08-17 audit: the plan's own roll-up section still lists the full P3
   set as one execution unit — it predates the transfer; the rows still unclaimed by
-  any plan are P3-4, P3-7–P3-10, P3-17–P3-20, P3-22, P3-23, and IDs P3-6/14/15/16
-  are numbering gaps, not lost rows.)
+  any plan are P3-4, P3-7–P3-10, P3-17, P3-19–P3-20, P3-22, and P3-23. #584
+  retired P3-18 through direct AssetRecord lookup plus range-capable Runtime
+  serving; IDs P3-6/14/15/16 are numbering gaps, not lost rows.)
 - **typing-hot-path** (P0, `done` 2026-08-15) — every keystroke pays O(document)
   several times over. Main: the memory extension's two hooks (`guardMutation`'s
   eagerly-built projection + `memoryGraphMayChange`'s ~4 full-document passes
@@ -866,11 +846,13 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   **PR-A shipped 2026-08-11 (#530, codex-3):** incremental `MemoryMutationIndex`
   + transaction-aware observer; guard `0.436 ms` → `0.000295 ms` on a 5,009-node
   document, zero projection reads after a 3.6 ms bootstrap.
-  **PR-B shipped 2026-08-13 (#533, codex-3):** persistence moved off the mutation
-  queue onto an append-only update log (`WorkspaceSaver` + `workspace.loro.updates.jsonl`,
-  700 ms idle / 5 s max wait) with a two-phase quit durability barrier; ~183 B in
-  ~0.623 ms per incremental update vs ~669 KB in ~32.6 ms per snapshot on a
-  536-node document. Text-search patches stopped cloning the node map.
+  **PR-B shipped 2026-08-13 (#533, codex-3):** the former persistence path moved
+  off the mutation queue onto an append-only update log with a two-phase quit
+  durability barrier; ~183 B in ~0.623 ms per incremental update vs ~669 KB in
+  ~32.6 ms per snapshot on a 536-node document. #584 later retired that path:
+  the standalone Runtime now commits document updates and settlement metadata in
+  `WorkspaceTransactionLog` and compacts verified snapshots. Text-search patches
+  stopped cloning the node map before the same cutover retired that main index.
   **PR-C shipped 2026-08-15 (#541, codex-3):** renderer commit cost — incremental
   reference summaries, a queryable `@`-candidate posting index (suffix-array ranks
   over shared labels, rebuilt cooperatively off the commit path behind an idle
@@ -925,33 +907,28 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   scroll, the `actionProjection` identity-compare cache (2026-08-17 audit: it
   lives in main-process `actionInvocationService.ts`, not the launcher, and its
   per-revision identity key looks correct by contract — the "never hits" claim
-  needs a measurement before any work), search-index reuse (2026-08-17 audit:
-  **largely shipped** — `ensureTextSearchIndex` now refreshes incrementally from
-  core deltas with dependency maps, #545-tested; the remaining narrow spot is
-  the unconditional full `buildTextSearchIndex` under an active transaction
-  store),
+  needs a measurement before any work), search-index reuse (post-#584 audit:
+  Runtime constructs an `OutlineSelectionIndex` per projection request and
+  builds its text index lazily on first textual selector use; repeated requests
+  therefore rebuild the index even though startup no longer does),
   keyboard listener resubscription per delta. Four independent PRs (reshaped
   2026-08-11 after plan review: translation geometry and search-index reuse are
   mechanism changes, not bundle-able cleanups). Design:
   [`interaction-jank-cleanups`](plans/interaction-jank-cleanups.md).
 - **startup-window-first** (P2, `draft` 2026-08-11) — `createWindow()` currently
-  runs only after workspace init (including the full BM25 text-index build),
-  thread service, memory worker, and automations complete in series; first
-  paint waits on all of it. Window first, single-flight document init,
-  readiness-gated IPC (incl. node-access store), DAG-ordered service bring-up
-  (thread service before memory worker ∥ automations — blind parallelism races
-  `prepareForTurnAdmission`), chunked/worker BM25 with revisioned install, and
-  a persistent startup-failure surface. The audit falsified the perf program's
-  verified-good startup claim (corrected there in the same change). One PR.
+  runs only after provider reconciliation, standalone Runtime launch/replay via
+  `OutlineDocumentService.init()`, Thread initialization, the memory worker,
+  automations, and node-access loading complete in series; first paint waits on
+  all of it. Window first, readiness-gated IPC (including node access),
+  DAG-ordered service bring-up, single-flight `prepareForTurnAdmission`, and a
+  persistent startup-failure surface. `OutlineDocumentService.init()` is already
+  retryable single-flight, and Runtime search indexing is lazy rather than a
+  startup phase. One PR.
   Design: [`startup-window-first`](plans/startup-window-first.md).
-  **#533 gate sweep 2026-08-13:** the plan's startup cost model predates the
-  append-only update log. `initWorkspace` now also reads and replays
-  `workspace.loro.updates.jsonl` — validating the snapshot digest, replica
-  identity, revision continuity, and each record's Loro version frontier — so
-  startup got a new O(log) phase ahead of first paint, and the plan's
-  `saveCore()` references now name a method that delegates to `WorkspaceSaver`
-  rather than writing a snapshot. Re-measure against the current path before
-  building.
+  **#584 retirement sweep 2026-08-27:** the old workspace snapshot/update-log,
+  import-server, eager BM25, `saveCore()`, and `WorkspaceSaver` premises are gone.
+  Re-measure against Runtime descriptor attach/start, verified snapshot plus
+  `WorkspaceTransactionLog` replay, and initial projection transfer before build.
 
 ### Distribution & updates
 
@@ -1191,6 +1168,12 @@ CHANGELOG entry and any merged PR, distilled rules in [`lessons.md`](lessons.md)
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **[outliner-runtime-cli](plans/archive/outliner-runtime-cli.md)** (codex, PR
+  #584, merged 2026-08-27) — one standalone Runtime now owns document state,
+  transactional Operation/Event recovery, persistence, and Outline AssetRecords
+  over the neutral ContentStore; desktop and `outline` CLI are equal clients,
+  Agent access converges on the built-in Skill, and the old document, import,
+  asset, persistence, and native-tool paths are retired.
 - **[reference-uri-unification](plans/archive/reference-uri-unification.md)**
   (codex-4, PR #590, merged 2026-08-27) — Node and file references now share one
   canonical URI-only codec across rich text, Markdown, Agent outlines, context,
