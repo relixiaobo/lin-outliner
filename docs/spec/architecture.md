@@ -233,11 +233,20 @@ No client uses a shell mutation loop or intermediate created-ID query to replace
 ChangeSet composition.
 
 Desktop mutation admission is serialized around the latest projected revision.
-Ordinary non-destructive edits use direct commit; destructive or review-bound
-work applies an exact Diff. The adapter then waits for the matching Operation
-Event. A missing or discontinuous Event triggers a bounded full Projection
-resync. Quit freezes new desktop admissions and drains accepted requests;
-Runtime durability is already complete before each response.
+Ordinary non-destructive edits commit their ChangeSet directly; destructive,
+review-bound, or Diff-result-dependent work previews and applies the exact
+reviewed artifact. Both paths wait for the matching Operation Event. A missing
+or discontinuous Event triggers a bounded full Projection resync. Quit freezes
+new desktop admissions and drains accepted requests; Runtime durability is
+already complete before each settlement response.
+
+Renderer structure presentation does not wait for that durable boundary. Direct
+editing intents may render a pending created row or hide a pending removal while
+the Runtime request is in flight, but they never mutate the renderer Projection
+or invent a revision. Created rows use the exact Node ID submitted in the
+ChangeSet, so the pending and committed forms share one component identity. The
+successful Projection fold and pending-state removal happen in one synchronous
+renderer commit; rejection rolls the presentation back.
 
 ## Workspace Persistence And Replication Boundary
 
@@ -266,6 +275,14 @@ document state. Runtime replays the verified prefix at startup, discards only a
 provably torn final record, and fails closed on corruption that could admit an
 unknown state. Snapshot compaction never removes retained recovery or asset
 reachability information. Pre-release formats have no compatibility reader.
+
+Each mutation executes against an isolated candidate Core. Candidate creation
+uses Loro's native document fork and copies the incremental node, projection,
+pending-update, persistence-metadata, and Operation-journal containers. It must
+not serialize and re-import the complete workspace on the foreground mutation
+path. The live Core remains unchanged until the transaction record fsyncs; a
+failed admission or append discards the candidate, so this optimization does not
+weaken rollback or durability boundaries.
 
 Core startup reconciliation can create durable system state, such as the current
 local-date Daily Note. When `requiresInitialPersist()` reports that condition,
@@ -331,7 +348,11 @@ client depend on Runtime implementation. An ordinary desktop or CLI request may
 start the bundled Runtime; `--no-start` returns a stable unavailable error. If
 automatic start finds an older bundled contract, the client first authenticates
 the private Runtime identity and requires the descriptor to match the private
-writer-lock owner exactly. A current Runtime then retires through its private
+writer-lock owner exactly. Development desktop sessions also publish one private
+session identity and replace a same-contract Runtime left by an earlier dev app
+process, so restarting Electron cannot continue executing stale source. Packaged
+clients publish no development identity and retain the normal shared-Runtime
+lifecycle. A current Runtime then retires through its private
 lifecycle route; a legacy Runtime that predates that route receives `SIGTERM`
 only after the same identity and ownership checks. The client waits for that
 exact instance to release its descriptor before launching one replacement, so

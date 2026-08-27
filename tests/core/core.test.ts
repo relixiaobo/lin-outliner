@@ -3341,7 +3341,8 @@ describe('Core', () => {
 
     expect(core.state().nodes[nestedReference].targetId).toBe(target);
 
-    const inlineNode = mustFocus(core.convertReferenceToInlineNode(reference));
+    const inlineNode = 'node:00000000-0000-4000-8000-000000000001';
+    expect(mustFocus(core.convertReferenceToInlineNode(reference, inlineNode))).toBe(inlineNode);
     let state = core.state();
     expect(state.nodes[reference]).toBeUndefined();
     expect(state.nodes[inlineNode].parentId).toBe(today);
@@ -3351,7 +3352,12 @@ describe('Core', () => {
       inlineRefs: [{ offset: 0, target: { kind: 'node', nodeId: target }, displayName: 'Target' }],
     });
 
-    const restoredReference = mustFocus(core.restoreInlineReferenceNodeToReference(inlineNode, target));
+    const restoredReference = 'node:00000000-0000-4000-8000-000000000002';
+    expect(mustFocus(core.restoreInlineReferenceNodeToReference(
+      inlineNode,
+      target,
+      restoredReference,
+    ))).toBe(restoredReference);
     state = core.state();
     expect(state.nodes[inlineNode]).toBeUndefined();
     expect(state.nodes[restoredReference].type).toBe('reference');

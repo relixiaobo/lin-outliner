@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../../api/client';
+import { freshNodeId } from '../../../core/nodeId';
 import type { NodeId } from '../../api/types';
-import type { DocumentIndex } from '../../state/document';
+import type { DocumentIndex, UiState } from '../../state/document';
 import { AddIcon, ICON_SIZE } from '../icons';
 import {
   commonTagIdsForTargets,
@@ -18,11 +19,19 @@ import { clampTagSelectorIndex, tagSelectorItemLabel, tagSelectorItems } from '.
 import type { CommandRunner } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
 import { useT } from '../../i18n/I18nProvider';
+import { usePopoverSelection } from './usePopoverSelection';
+import {
+  optimisticTagPatch,
+  startOptimisticNodePatchBatch,
+} from './optimisticNodePatch';
+import type { Dispatch, SetStateAction } from 'react';
 
 interface BatchTagSelectorProps {
   open: boolean;
   selectedIds: Set<NodeId>;
   index: DocumentIndex;
+  ui: UiState;
+  setUi: Dispatch<SetStateAction<UiState>>;
   run: CommandRunner;
   close: () => void;
   clearSelection: () => void;
@@ -32,7 +41,6 @@ export function BatchTagSelector(props: BatchTagSelectorProps) {
   const t = useT();
   const tc = t.outliner.contextMenu;
   const [query, setQuery] = useState('');
-  const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const selectedRowIds = useMemo(
@@ -65,43 +73,61 @@ export function BatchTagSelector(props: BatchTagSelectorProps) {
     }),
     [existingTagIds, props.index, query],
   );
+  const [selectedIndex, setSelectedIndex] = usePopoverSelection({
+    itemCount: items.length,
+    listRef,
+    mode: 'clamp',
+    open: props.open,
+    selectionKey: items.map((item) => item.type === 'existing' ? item.tag.id : `create:${item.name}`).join('|'),
+  });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!props.open) return;
     setQuery('');
     setSelectedIndex(0);
-    window.requestAnimationFrame(() => inputRef.current?.focus());
+    inputRef.current?.focus();
   }, [props.open]);
-
-  useEffect(() => {
-    setSelectedIndex((current) => clampTagSelectorIndex(current, items.length));
-  }, [items.length]);
-
-  useEffect(() => {
-    if (!listRef.current) return;
-    listRef.current
-      .querySelector('[data-selected="true"]')
-      ?.scrollIntoView({ block: 'nearest' });
-  }, [selectedIndex]);
 
   if (!props.open || targetIds.length === 0) return null;
 
   const applyTag = (tagId: NodeId) => {
     props.close();
-    void props.run(() => api.batchApplyTag(targetIds, tagId)).then((result) => {
-      if (result) props.clearSelection();
-    });
+    void startTagPatches(tagId, () => api.batchApplyTag(targetIds, tagId));
   };
 
   const createAndApplyTag = (name: string) => {
     props.close();
-    void props.run(async () => {
-      const created = await api.createTag(name);
-      const tagId = created.focus?.nodeId;
-      if (!tagId) return created;
-      return api.batchApplyTag(targetIds, tagId);
-    }).then((result) => {
-      if (result) props.clearSelection();
+    const tagId = freshNodeId();
+    void startTagPatches(
+      tagId,
+      () => api.createTagAndBatchApply(targetIds, name, tagId),
+      name,
+    );
+  };
+
+  const startTagPatches = (
+    tagId: NodeId,
+    command: () => ReturnType<typeof api.batchApplyTag>,
+    pendingTagName?: string,
+  ) => {
+    const patches = targetIds.flatMap((nodeId) => {
+      const node = props.index.byId.get(nodeId);
+      return node ? [optimisticTagPatch({
+        node,
+        ui: props.ui,
+        tagId,
+        action: 'add',
+        pendingTagName,
+      })] : [];
+    });
+    return startOptimisticNodePatchBatch({
+      currentUi: props.ui,
+      setUi: props.setUi,
+      patches,
+      command: () => props.run(command, { applyFocus: false }),
+    }).then((settled) => {
+      if (settled) props.clearSelection();
+      return settled;
     });
   };
 

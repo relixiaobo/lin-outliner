@@ -170,17 +170,7 @@ export class LoroOutlinerDocument {
   constructor(init: LoroDocumentInit = {}) {
     this.doc = new LoroDoc();
     if (init.peerId) this.doc.setPeerId(init.peerId as `${number}`);
-    this.doc.setChangeMergeInterval(0);
-    this.doc.configTextStyle({
-      bold: { expand: 'after' },
-      italic: { expand: 'after' },
-      strike: { expand: 'after' },
-      code: { expand: 'after' },
-      highlight: { expand: 'after' },
-      headingMark: { expand: 'after' },
-      link: { expand: 'none' },
-      [INLINE_REF_MARK]: { expand: 'none' },
-    });
+    this.configureDocument();
     this.tree = this.doc.getTree(LORO_TREE_NAME);
     if (init.shared?.snapshot) this.doc.import(decodeBase64(init.shared.snapshot));
     if (init.replayedUpdates?.length) {
@@ -200,6 +190,49 @@ export class LoroOutlinerDocument {
     this.undoManager = this.createUndoManager('all', UNDO_EXCLUDED_ORIGIN_PREFIXES);
     this.aiUndoManager = this.createUndoManager('agent', AGENT_UNDO_EXCLUDED_ORIGIN_PREFIXES);
     this.userUndoManager = this.createUndoManager('user', USER_UNDO_EXCLUDED_ORIGIN_PREFIXES);
+  }
+
+  /**
+   * Fork an isolated Runtime transaction candidate without exporting and
+   * re-importing the complete document. Loro owns the mutable CRDT state; the
+   * surrounding maps are copied so candidate cache patches cannot leak into the
+   * live document before durable settlement publishes the candidate.
+   */
+  forkForRuntime(): LoroOutlinerDocument {
+    const fork = Object.create(LoroOutlinerDocument.prototype) as LoroOutlinerDocument;
+    fork.doc = this.doc.fork();
+    fork.configureDocument();
+    fork.tree = fork.doc.getTree(LORO_TREE_NAME);
+    fork.nodeIdToTreeId = new Map(this.nodeIdToTreeId);
+    fork.touchedNodeIds = new Set(this.touchedNodeIds);
+    fork.pendingUndoValue = undefined;
+    fork.undoGroupActive = false;
+    fork.undoStackMirrors = new Map();
+    fork.mappingsDirty = this.mappingsDirty;
+    fork.stateCacheNodes = this.stateCacheNodes ? { ...this.stateCacheNodes } : null;
+    fork.statePatch = new Set(this.statePatch);
+    fork.stateDirtyFull = this.stateDirtyFull;
+    fork.pendingUpdates = new Map(
+      [...this.pendingUpdates].map(([encoded, update]) => [encoded, update.slice()]),
+    );
+    fork.undoManager = fork.createUndoManager('all', UNDO_EXCLUDED_ORIGIN_PREFIXES);
+    fork.aiUndoManager = fork.createUndoManager('agent', AGENT_UNDO_EXCLUDED_ORIGIN_PREFIXES);
+    fork.userUndoManager = fork.createUndoManager('user', USER_UNDO_EXCLUDED_ORIGIN_PREFIXES);
+    return fork;
+  }
+
+  private configureDocument(): void {
+    this.doc.setChangeMergeInterval(0);
+    this.doc.configTextStyle({
+      bold: { expand: 'after' },
+      italic: { expand: 'after' },
+      strike: { expand: 'after' },
+      code: { expand: 'after' },
+      highlight: { expand: 'after' },
+      headingMark: { expand: 'after' },
+      link: { expand: 'none' },
+      [INLINE_REF_MARK]: { expand: 'none' },
+    });
   }
 
   isEmpty() {

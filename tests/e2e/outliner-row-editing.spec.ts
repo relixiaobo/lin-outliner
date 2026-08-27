@@ -4,6 +4,7 @@ import {
   commandCalls,
   e2eProjection,
   emitDocumentEvent,
+  holdOutlineMutation,
   ids,
   nodeById,
   openMockedApp,
@@ -129,18 +130,27 @@ async function pasteIntoFocusedEditor(page: Page, text: string) {
 
 async function delayTextPatchCommands(page: Page, delayMs = 80) {
   await page.evaluate((delay) => {
-    const win = window as unknown as {
-      lin?: {
-        invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
-      };
-    };
-    const originalInvoke = win.lin?.invoke;
-    if (!win.lin || !originalInvoke) return;
-    win.lin.invoke = async <T,>(cmd: string, args: Record<string, unknown> = {}) => {
-      if (cmd === 'apply_node_text_patch') {
+    const bridge = window.lin?.outline;
+    if (!bridge) throw new Error('Missing Outline bridge');
+    const originalRequest = bridge.request;
+    bridge.request = async (request) => {
+      const input = request.input && typeof request.input === 'object'
+        ? request.input as Record<string, unknown>
+        : {};
+      const changeSet = input.changeSet && typeof input.changeSet === 'object'
+        ? input.changeSet as { operations?: Array<Record<string, unknown>> }
+        : undefined;
+      const isTextPatch = request.command === 'commit' && changeSet?.operations?.some((operation) => (
+        operation.op === 'update'
+        && Array.isArray(operation.changes)
+        && operation.changes.some((change) => (
+          change && typeof change === 'object' && (change as { kind?: unknown }).kind === 'text-patch'
+        ))
+      ));
+      if (isTextPatch) {
         await new Promise((resolve) => window.setTimeout(resolve, delay));
       }
-      return originalInvoke<T>(cmd, args);
+      return originalRequest(request);
     };
   }, delayMs);
 }
@@ -266,14 +276,48 @@ test.describe('outliner row editing parity', () => {
 
   test('Enter at the end of a row creates an empty sibling and focuses it', async ({ page }) => {
     await placeCursor(page, ids.alpha, 'end');
+    const originalTrailingEditor = trailingEditor(page);
+    await expect(originalTrailingEditor).toHaveCount(1);
+    await originalTrailingEditor.evaluate((element) => {
+      (window as Window & { __originalTrailingEditor?: Element }).__originalTrailingEditor = element;
+    });
+    const releaseMutation = await holdOutlineMutation(page, { op: 'create' });
     await page.keyboard.press('Enter');
 
+    const pendingEditor = page.locator('.row.node-pending-structure .ProseMirror:focus');
+    await expect(pendingEditor).toHaveCount(1);
+    await expect(page.locator('.row.node-draft')).toHaveCount(1);
+    await expect(page.locator('.row.node-pending-structure')).toHaveCount(1);
+    expect(await trailingEditor(page).evaluate((element) => (
+      (window as Window & { __originalTrailingEditor?: Element }).__originalTrailingEditor === element
+    ))).toBe(true);
+    const pendingColors = await page.evaluate((alphaId) => {
+      const pendingBullet = document.querySelector('.row.node-pending-structure .row-bullet-shape.content');
+      const trailingBullet = document.querySelector('.row.node-draft .row-bullet-shape.content');
+      const alphaBullet = document.querySelector(`[data-node-id="${alphaId}"] .row-bullet-shape.content`);
+      if (!pendingBullet || !trailingBullet || !alphaBullet) throw new Error('missing optimistic bullet');
+      return {
+        alpha: getComputedStyle(alphaBullet).color,
+        pending: getComputedStyle(pendingBullet).color,
+        trailing: getComputedStyle(trailingBullet).color,
+      };
+    }, ids.alpha);
+    expect(pendingColors.pending).toBe(pendingColors.alpha);
+    expect(pendingColors.pending).not.toBe(pendingColors.trailing);
+    expect(await todayChildren(page)).toEqual([ids.alpha, ids.beta, ids.gamma]);
+
+    await releaseMutation();
     await expect.poll(async () => (await todayChildren(page)).length).toBe(4);
     const children = await todayChildren(page);
     const createdId = children[1];
     expect(createdId).toBeTruthy();
     expect((await nodeById(page, createdId))?.content.text).toBe('');
     await expect(rowEditor(page, createdId)).toBeFocused();
+    await expect(page.locator('.row.node-draft')).toHaveCount(1);
+    await expect(page.locator('.row.node-pending-structure')).toHaveCount(0);
+    expect(await trailingEditor(page).evaluate((element) => (
+      (window as Window & { __originalTrailingEditor?: Element }).__originalTrailingEditor === element
+    ))).toBe(true);
 
     const placeholderStyle = await row(page, createdId).locator('.row-editor').first().evaluate((element) => {
       const style = getComputedStyle(element, '::before');
@@ -284,6 +328,53 @@ test.describe('outliner row editing parity', () => {
     });
     expect(placeholderStyle.display).not.toBe('none');
     expect(placeholderStyle.opacity).toBe(0);
+  });
+
+  test('Enter in the middle immediately shows the split head and keeps it after settlement', async ({ page }) => {
+    await placeCursorAtTextOffset(page, ids.alpha, 2);
+    const releaseMutation = await holdOutlineMutation(page, { op: 'create' });
+    await page.keyboard.press('Enter');
+
+    expect(await rowEditor(page, ids.alpha).textContent()).toBe('Al');
+    expect((await nodeById(page, ids.alpha))?.content.text).toBe('Alpha');
+    const pendingEditor = page.locator('.row.node-pending-structure .ProseMirror').filter({ hasText: 'pha' });
+    await expect(pendingEditor).toHaveCount(1);
+    await expect(pendingEditor).toBeFocused();
+    await releaseMutation();
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.text).toBe('Al');
+    const children = await todayChildren(page);
+    const splitId = children[children.indexOf(ids.alpha) + 1];
+    expect((await nodeById(page, splitId))?.content.text).toBe('pha');
+    await expect(rowEditor(page, ids.alpha)).toHaveText('Al');
+    await expect(rowEditor(page, splitId)).toBeFocused();
+  });
+
+  test('typing into a pending split row survives settlement without remounting the editor', async ({ page }) => {
+    await placeCursorAtTextOffset(page, ids.alpha, 2);
+    const releaseMutation = await holdOutlineMutation(page, { op: 'create' });
+    await page.keyboard.press('Enter');
+
+    const pendingEditor = page.locator('.row.node-pending-structure .ProseMirror').filter({ hasText: 'pha' });
+    await expect(pendingEditor).toBeFocused();
+    await pendingEditor.evaluate((element) => {
+      (window as Window & { __pendingSplitEditor?: Element }).__pendingSplitEditor = element;
+    });
+    await page.keyboard.type('x');
+
+    await expect(pendingEditor).toHaveText('xpha');
+    expect((await nodeById(page, ids.alpha))?.content.text).toBe('Alpha');
+
+    await releaseMutation();
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(4);
+    const children = await todayChildren(page);
+    const splitId = children[children.indexOf(ids.alpha) + 1];
+    const settledEditor = rowEditor(page, splitId);
+    await expect(settledEditor).toHaveText('xpha');
+    await expect(settledEditor).toBeFocused();
+    expect(await settledEditor.evaluate((element) => (
+      (window as Window & { __pendingSplitEditor?: Element }).__pendingSplitEditor === element
+    ))).toBe(true);
+    await expect.poll(async () => (await nodeById(page, splitId))?.content.text).toBe('xpha');
   });
 
   test('Enter-created empty sibling uses the real node bullet immediately', async ({ page }) => {
@@ -339,7 +430,9 @@ test.describe('outliner row editing parity', () => {
     });
 
     await expect(rowEditor(page, childId)).toBeFocused();
-    await expect(row(page, firstValueId).locator(':scope > .indent-guide')).toHaveCount(1);
+    await expect(page.locator(
+      `.outliner-flat-guides .indent-guide[data-guide-node-id="${firstValueId}"]`,
+    )).toHaveCount(1);
 
     await chevron.click({ force: true });
     await expect(row(page, childId)).toHaveCount(0);
@@ -404,8 +497,23 @@ test.describe('outliner row editing parity', () => {
     const valueDraft = trailingEditor(page, entryId);
     await expect(valueDraft).toBeFocused();
     await valueDraft.type('Buffered child');
+    await valueDraft.evaluate((element) => {
+      (window as Window & { __bufferedFieldEditor?: Element }).__bufferedFieldEditor = element;
+    });
+    const releaseMutation = await holdOutlineMutation(page);
     await page.keyboard.press('Tab');
 
+    const optimisticChildEditor = page.locator(
+      `[data-parent-id="${secondValueId}"] .ProseMirror`,
+    ).filter({ hasText: 'Buffered child' });
+    expect(await optimisticChildEditor.count()).toBe(1);
+    expect(await optimisticChildEditor.evaluate((element) => element === document.activeElement)).toBe(true);
+    expect(await optimisticChildEditor.evaluate((element) => (
+      (window as Window & { __bufferedFieldEditor?: Element }).__bufferedFieldEditor === element
+    ))).toBe(true);
+    expect((await nodeById(page, secondValueId))?.children).toEqual([]);
+
+    await releaseMutation();
     let childId = '';
     await expect.poll(async () => {
       const secondValue = await nodeById(page, secondValueId);
@@ -416,6 +524,9 @@ test.describe('outliner row editing parity', () => {
       content: { text: 'Buffered child' },
     });
     await expect(rowEditor(page, childId)).toBeFocused();
+    expect(await rowEditor(page, childId).evaluate((element) => (
+      (window as Window & { __bufferedFieldEditor?: Element }).__bufferedFieldEditor === element
+    ))).toBe(true);
   });
 
   test('reference field values expand the referenced node children', async ({ page }) => {
@@ -657,6 +768,41 @@ test.describe('outliner row editing parity', () => {
     await expectNoRowTextReplay(page);
   });
 
+  test('Cmd+Enter updates checkbox state on the first frame without remounting the editor', async ({ page }) => {
+    await placeCursor(page, ids.alpha, 'end');
+    const editor = rowEditor(page, ids.alpha);
+    await editor.evaluate((element) => {
+      (window as Window & { __doneEditor?: Element }).__doneEditor = element;
+    });
+
+    const releaseDone = await holdOutlineMutation(page, { op: 'update' });
+    await page.keyboard.press('Meta+Enter');
+
+    const checkbox = row(page, ids.alpha).locator('.done-checkbox');
+    await expect(checkbox).toHaveAttribute('aria-checked', 'true');
+    expect((await nodeById(page, ids.alpha))?.completedAt).toBe(0);
+    await expect(editor).toBeFocused();
+    expect(await editor.evaluate((element) => (
+      (window as Window & { __doneEditor?: Element }).__doneEditor === element
+    ))).toBe(true);
+
+    await releaseDone();
+    await expect.poll(async () => Boolean((await nodeById(page, ids.alpha))?.completedAt)).toBe(true);
+    await expect(checkbox).toHaveAttribute('aria-checked', 'true');
+
+    const releaseHidden = await holdOutlineMutation(page, { op: 'update' });
+    await page.keyboard.press('Meta+Enter');
+
+    await expect(checkbox).toHaveCount(0);
+    expect(Boolean((await nodeById(page, ids.alpha))?.completedAt)).toBe(true);
+    await releaseHidden();
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.showCheckbox).toBe(false);
+    await expect(editor).toBeFocused();
+    expect(await editor.evaluate((element) => (
+      (window as Window & { __doneEditor?: Element }).__doneEditor === element
+    ))).toBe(true);
+  });
+
   test('Backspace at the start of an empty row deletes it and returns focus upward', async ({ page }) => {
     await placeCursor(page, ids.alpha, 'end');
     await page.keyboard.press('Enter');
@@ -664,10 +810,42 @@ test.describe('outliner row editing parity', () => {
     const createdId = (await todayChildren(page))[1];
     await expect(rowEditor(page, createdId)).toBeFocused();
 
+    const releaseRemoval = await holdOutlineMutation(page, { op: 'lifecycle' });
     await page.keyboard.press('Backspace');
 
     await expect(row(page, createdId)).toHaveCount(0);
+    expect((await nodeById(page, createdId))?.parentId).toBe(ids.today);
     await expect(rowEditor(page, ids.alpha)).toBeFocused();
+    await releaseRemoval();
+    await expect.poll(async () => (await nodeById(page, createdId))?.parentId).toBe(ids.trash);
+  });
+
+  test('Backspace merge updates the target on the first frame and preserves its editor identity', async ({ page }) => {
+    await placeCursor(page, ids.beta, 'start');
+    const alphaEditor = rowEditor(page, ids.alpha);
+    await alphaEditor.evaluate((element) => {
+      (window as Window & { __mergeTargetEditor?: Element }).__mergeTargetEditor = element;
+    });
+    const releaseMerge = await holdOutlineMutation(page, { op: 'merge' });
+
+    await page.keyboard.press('Backspace');
+
+    expect(await row(page, ids.beta).count()).toBe(0);
+    expect(await alphaEditor.textContent()).toBe('AlphaBeta');
+    expect(await alphaEditor.evaluate((element) => element === document.activeElement)).toBe(true);
+    expect(await alphaEditor.evaluate((element) => (
+      (window as Window & { __mergeTargetEditor?: Element }).__mergeTargetEditor === element
+    ))).toBe(true);
+    expect((await nodeById(page, ids.alpha))?.content.text).toBe('Alpha');
+    expect((await nodeById(page, ids.beta))?.parentId).toBe(ids.today);
+
+    await releaseMerge();
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.text).toBe('AlphaBeta');
+    await expect.poll(async () => await nodeById(page, ids.beta)).toBeUndefined();
+    await expect(alphaEditor).toBeFocused();
+    expect(await alphaEditor.evaluate((element) => (
+      (window as Window & { __mergeTargetEditor?: Element }).__mergeTargetEditor === element
+    ))).toBe(true);
   });
 
   test('Backspace at the only empty row keeps focus on the trailing draft', async ({ page }) => {
@@ -684,8 +862,20 @@ test.describe('outliner row editing parity', () => {
 
   test('Tab and Shift+Tab while editing move the current row without losing focus', async ({ page }) => {
     await placeCursor(page, ids.beta, 'end');
+    const betaEditor = rowEditor(page, ids.beta);
+    await betaEditor.evaluate((element) => {
+      (window as Window & { __movingEditor?: Element }).__movingEditor = element;
+    });
+    const releaseRelocation = await holdOutlineMutation(page, { op: 'move' });
     await page.keyboard.press('Tab');
 
+    expect((await nodeById(page, ids.beta))?.parentId).toBe(ids.today);
+    await expect(betaEditor).toBeFocused();
+    expect(await rowEditor(page, ids.beta).evaluate((element) => (
+      (window as Window & { __movingEditor?: Element }).__movingEditor === element
+    ))).toBe(true);
+
+    await releaseRelocation();
     await waitForRowMoveAnimation(page, ids.beta);
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.alpha);
     await expect(rowEditor(page, ids.beta)).toBeFocused();

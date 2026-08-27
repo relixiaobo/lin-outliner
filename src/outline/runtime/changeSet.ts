@@ -817,7 +817,9 @@ function executeUpdate(
     else if (instruction.action === 'retarget') core.setReferenceTarget(targetId, referenceTargetId);
     else if (instruction.action === 'replace') core.replaceNodeWithReference(targetId, referenceTargetId);
     else if (instruction.action === 'inline') {
-      if (current?.type === 'reference') core.convertReferenceToInlineNode(targetId);
+      if (current?.type === 'reference') {
+        core.convertReferenceToInlineNode(targetId, instruction.replacementId);
+      }
       else {
         if (referenceTargetId === targetId) {
           throw usageError('reference inline requires REFERENCE when TARGET is a content Node.');
@@ -825,7 +827,13 @@ function executeUpdate(
         core.replaceNodeWithInlineReference(targetId, referenceTargetId);
       }
     }
-    else core.restoreInlineReferenceNodeToReference(targetId, referenceTargetId);
+    else if (instruction.action === 'restore') {
+      core.restoreInlineReferenceNodeToReference(
+        targetId,
+        referenceTargetId,
+        instruction.replacementId,
+      );
+    }
   } else if (instruction.kind === 'view') {
     executeViewUpdate(core, baseIndex, bindings, targetId, instruction);
   } else if (instruction.kind === 'search') {

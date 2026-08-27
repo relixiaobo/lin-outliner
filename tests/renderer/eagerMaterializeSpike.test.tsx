@@ -1,15 +1,16 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { Fragment, useEffect, useRef } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef } from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import { RichTextEditor } from '../../src/renderer/ui/editor/RichTextEditor';
 import { EMPTY_RICH_TEXT } from '../../src/renderer/api/types';
 import type { RichText } from '../../src/renderer/api/types';
+import type { FocusRequest, FocusTarget } from '../../src/renderer/state/document';
 
 // R1 spike: the Tana eager-materialization model hinges on the trailing draft
 // row keeping its React identity when it becomes a real node, so the editor
-// (and its imperative ProseMirror EditorView, created in a mount-only effect)
+// (and its imperative ProseMirror EditorView, created once per component)
 // is NOT torn down — which is what keeps an in-flight IME composition alive.
 //
 // This pins the *mechanism*: a row whose `key` is stable across a draft->real
@@ -171,4 +172,80 @@ describe('R1 (real editor): ProseMirror EditorView survives the materialize cont
     // torn down and recreated; only its document was synced.
     expect(after).toBe(before);
   });
+
+  test('a focus-targeted editor mounts before the parent layout phase', () => {
+    const { document, root } = setupDom();
+    (globalThis.window.HTMLElement.prototype as { focus?: () => void }).focus = () => {};
+    mounted.push({ root, document, cleanup: () => act(() => root.unmount()) });
+    const target: FocusTarget = {
+      nodeId: 'node:focused',
+      parentId: 'node:parent',
+      panelId: 'panel:1',
+      surface: 'row',
+    };
+    const request: FocusRequest = { target, placement: { kind: 'end' } };
+    const layoutSnapshots: boolean[] = [];
+
+    act(() => root.render(
+      <EditorMountTimingProbe
+        focusRequest={request}
+        focusTarget={target}
+        onLayout={(mountedBeforePaint) => layoutSnapshots.push(mountedBeforePaint)}
+      />,
+    ));
+
+    expect(layoutSnapshots).toEqual([true]);
+    expect(document.querySelector('.ProseMirror')).not.toBeNull();
+  });
+
+  test('an untargeted editor stays off the initial layout critical path', () => {
+    const { document, root } = setupDom();
+    (globalThis.window.HTMLElement.prototype as { focus?: () => void }).focus = () => {};
+    mounted.push({ root, document, cleanup: () => act(() => root.unmount()) });
+    const layoutSnapshots: boolean[] = [];
+
+    act(() => root.render(
+      <EditorMountTimingProbe onLayout={(mountedBeforePaint) => layoutSnapshots.push(mountedBeforePaint)} />,
+    ));
+
+    expect(layoutSnapshots).toEqual([false]);
+    expect(document.querySelector('.ProseMirror')).not.toBeNull();
+  });
 });
+
+function EditorMountTimingProbe(props: {
+  focusRequest?: FocusRequest;
+  focusTarget?: FocusTarget;
+  onLayout: (mountedBeforePaint: boolean) => void;
+}) {
+  return (
+    <>
+      <RichTextEditor
+        nodeId={props.focusTarget?.nodeId ?? 'node:passive'}
+        content={EMPTY_RICH_TEXT}
+        focusRequest={props.focusRequest}
+        focusTarget={props.focusTarget}
+        onFocus={noop}
+        onChange={noop}
+        onPatch={noop}
+        onCommit={noop}
+        onEnter={noop}
+        onBackspaceAtStart={noop}
+        onTab={noop}
+        onArrowUpAtStart={noop}
+        onArrowDownAtEnd={noop}
+        onModEnter={noop}
+        onEscape={noop}
+        onTriggerChange={noop}
+      />
+      <LayoutSnapshot onLayout={props.onLayout} />
+    </>
+  );
+}
+
+function LayoutSnapshot({ onLayout }: { onLayout: (mountedBeforePaint: boolean) => void }) {
+  useLayoutEffect(() => {
+    onLayout(Boolean(document.querySelector('.ProseMirror')));
+  }, [onLayout]);
+  return null;
+}

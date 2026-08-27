@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import { DIALOG_NESTED_OVERLAY_SELECTOR, isDialogNestedOverlayTarget } from './dialogNestedOverlay';
 import { focusableElements } from './focusable';
@@ -32,13 +32,10 @@ export function Dialog({
   const initialFocusRef = useRef(initialFocus);
   const restoreFocusRef = useRef(restoreFocus);
   const focusKeyMountedRef = useRef(false);
+  initialFocusRef.current = initialFocus;
+  restoreFocusRef.current = restoreFocus;
 
-  useEffect(() => {
-    initialFocusRef.current = initialFocus;
-    restoreFocusRef.current = restoreFocus;
-  }, [initialFocus, restoreFocus]);
-
-  useEffect(() => {
+  useLayoutEffect(() => {
     const fallbackRestoreTarget = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const target = initialFocusRef.current?.() ?? surfaceRef.current;
     target?.focus({ preventScroll: true });

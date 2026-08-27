@@ -55,6 +55,7 @@ export interface OutlineRuntimeServerOptions {
   readonly root: string;
   readonly contentRoot: string;
   readonly idleTimeoutMs?: number;
+  readonly developmentSessionId?: string;
   readonly workspaceOptions?: OutlineRuntimeWorkspaceOptions;
   readonly onIdle?: () => void | Promise<void>;
 }
@@ -103,6 +104,7 @@ export class OutlineRuntimeServer {
   }
 
   static async start(options: OutlineRuntimeServerOptions): Promise<OutlineRuntimeServer | null> {
+    assertDevelopmentSessionId(options.developmentSessionId);
     const paths = resolveOutlineRuntimePaths(options.root);
     const instanceId = options.workspaceOptions?.instanceId ?? `runtime:${crypto.randomUUID()}`;
     const owner = { pid: process.pid, instanceId, createdAt: new Date().toISOString() };
@@ -128,6 +130,7 @@ export class OutlineRuntimeServer {
         protocolMajors: [OUTLINE_PROTOCOL_VERSION],
         contractDigest: outlineCapabilityContractDigest(),
         runtimeVersion: OUTLINE_CLI_VERSION,
+        ...(options.developmentSessionId ? { developmentSessionId: options.developmentSessionId } : {}),
         storageVersion: OUTLINE_STORAGE_VERSION,
         createdAt: owner.createdAt,
       };
@@ -215,7 +218,11 @@ export class OutlineRuntimeServer {
           || body.instanceId !== this.descriptor.instanceId
           || typeof body.replacementContractDigest !== 'string'
           || !/^[a-f0-9]{64}$/.test(body.replacementContractDigest)
-          || body.replacementContractDigest === this.descriptor.contractDigest) {
+          || (body.replacementDevelopmentSessionId !== undefined
+            && !validDevelopmentSessionId(body.replacementDevelopmentSessionId))
+          || (body.replacementContractDigest === this.descriptor.contractDigest
+            && (typeof body.replacementDevelopmentSessionId !== 'string'
+              || body.replacementDevelopmentSessionId === this.descriptor.developmentSessionId))) {
           throw new Error('Invalid Outline Runtime retirement request.');
         }
         response.once('finish', () => {
@@ -641,6 +648,16 @@ function serverError(error: unknown) {
     'Outline Runtime request could not be decoded.',
     { details: error instanceof Error ? error.message : String(error) },
   );
+}
+
+function assertDevelopmentSessionId(value: string | undefined): void {
+  if (value !== undefined && !validDevelopmentSessionId(value)) {
+    throw new RangeError('Outline Runtime development session ID must contain between 1 and 128 characters.');
+  }
+}
+
+function validDevelopmentSessionId(value: unknown): value is string {
+  return typeof value === 'string' && value.length >= 1 && value.length <= 128;
 }
 
 class AgentAttestationRegistry {

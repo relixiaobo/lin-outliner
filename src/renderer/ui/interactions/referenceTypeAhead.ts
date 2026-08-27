@@ -1,79 +1,96 @@
 import type { Dispatch, SetStateAction } from 'react';
+import { freshNodeId } from '../../../core/nodeId';
 import { api } from '../../api/client';
-import type { NodeId } from '../../api/types';
-import { nodeFromProjectionUpdate, type UiState } from '../../state/document';
-import { clearFocusState, cursorOffset, requestFocusState, rowFocusTarget } from '../focus/focusModel';
+import { nodeReferenceTarget, type NodeId, type RichText } from '../../api/types';
+import type { UiState } from '../../state/document';
+import { richTextEquals } from '../editor/richTextCodec';
+import { clearFocusState, cursorOffset } from '../focus/focusModel';
+import { makeDraftNode } from '../outliner/draftRow';
+import {
+  addOptimisticRemovals,
+  clearOptimisticRemovals,
+  optimisticReplacementAnchors,
+  startOptimisticStructuralEdit,
+} from '../outliner/optimisticStructuralEdit';
 import type { CommandRunner } from '../shared';
 
 export function armReferenceTypeAhead(params: {
   referenceId: NodeId;
   parentId: NodeId;
   targetId: NodeId;
-  panelId: string | null;
+  targetDisplayName?: string;
+  siblingIds: readonly NodeId[];
+  panelId: string;
   selectionRootId: NodeId;
   initialText?: string;
   run: CommandRunner;
   setUi: Dispatch<SetStateAction<UiState>>;
 }) {
-  if (document.activeElement instanceof HTMLElement) {
-    document.activeElement.blur();
-  }
-
-  params.setUi((prev) => ({
-    ...clearFocusState(prev),
-    selectedId: params.referenceId,
-    selectedIds: new Set([params.referenceId]),
-    selectionAnchorId: params.referenceId,
-    selectionRootId: params.selectionRootId,
-    selectionSource: 'ref-click',
-    pendingReferenceConversion: null,
-    pendingReferenceTypeAhead: {
-      nodeId: params.referenceId,
-      parentId: params.parentId,
-      targetId: params.targetId,
-    },
-  }));
-
-  void params.run(
-    () => api.convertReferenceToInlineNode(params.referenceId),
-    { applyFocus: false },
-  ).then(async (result) => {
-    if (!result || !('focus' in result)) return;
-    const inlineNodeId = result.focus?.nodeId;
-    const inlineParentId = result.focus?.parentId ?? params.parentId;
-    if (!inlineNodeId) return;
-
-    let cursorTextLength = 0;
-    const initialText = params.initialText ?? '';
-    if (initialText) {
-      const convertedNode = nodeFromProjectionUpdate(result.update, inlineNodeId);
-      if (convertedNode) {
-        cursorTextLength = initialText.length;
-        await params.run(() => api.replaceNodeText(inlineNodeId, {
-          ...convertedNode.content,
-          marks: [],
-          text: initialText,
-        }), { applyFocus: false });
-      }
-    }
-
-    window.requestAnimationFrame(() => {
-      params.setUi((prev) => {
-        const target = rowFocusTarget(inlineNodeId, inlineParentId, params.panelId);
-        return {
-          ...requestFocusState(
-            prev,
-            target,
-            cursorOffset(cursorTextLength, 'after'),
-          ),
-          pendingReferenceConversion: {
-            nodeId: inlineNodeId,
-            parentId: inlineParentId,
-            targetId: params.targetId,
-          },
-          pendingReferenceTypeAhead: null,
-        };
-      });
+  const replacementId = freshNodeId();
+  const initialContent: RichText = {
+    text: params.initialText ?? '',
+    marks: [],
+    inlineRefs: [{
+      offset: 0,
+      target: nodeReferenceTarget(params.targetId),
+      ...(params.targetDisplayName ? { displayName: params.targetDisplayName } : {}),
+    }],
+  };
+  const anchors = optimisticReplacementAnchors(params.siblingIds, params.referenceId);
+  const restoreSourceSelection = () => {
+    params.setUi((previous) => {
+      const restored = clearOptimisticRemovals(previous, [params.referenceId]);
+      return {
+        ...clearFocusState(restored),
+        selectedId: params.referenceId,
+        selectedIds: new Set([params.referenceId]),
+        selectionAnchorId: params.referenceId,
+        selectionRootId: params.selectionRootId,
+        selectionSource: 'ref-click',
+        pendingReferenceConversion: restored.pendingReferenceConversion?.nodeId === replacementId
+          ? null
+          : restored.pendingReferenceConversion,
+      };
     });
+  };
+
+  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+
+  return startOptimisticStructuralEdit({
+    panelId: params.panelId,
+    setUi: params.setUi,
+    input: {
+      id: replacementId,
+      parentId: params.parentId,
+      ...anchors,
+      content: initialContent,
+      nodeOverride: makeDraftNode(replacementId, params.parentId, initialContent),
+      placement: cursorOffset(initialContent.text.length, 'after'),
+      updateUi: (previous) => ({
+        ...addOptimisticRemovals(previous, [params.referenceId]),
+        pendingReferenceConversion: {
+          nodeId: replacementId,
+          parentId: params.parentId,
+          targetId: params.targetId,
+        },
+      }),
+    },
+    command: () => params.run(
+      () => api.convertReferenceToInlineNode(params.referenceId, replacementId),
+      { applyFocus: false },
+    ),
+    reconcile: async (_result, change) => {
+      if (!richTextEquals(change.latestContent.current, initialContent)) {
+        const reconciled = await params.run(
+          () => api.replaceNodeText(change.id, change.latestContent.current),
+          { applyFocus: false },
+        );
+        if (reconciled === null) return false;
+      }
+      params.setUi((previous) => clearOptimisticRemovals(previous, [params.referenceId]));
+      return true;
+    },
+    onRejected: restoreSourceSelection,
+    onFailed: restoreSourceSelection,
   });
 }

@@ -843,7 +843,43 @@ describe('Outline Runtime process boundary', () => {
     try {
       expect(await client.requestRuntimeRetirement(
         runtime.descriptor.instanceId,
-        'f'.repeat(64),
+        { contractDigest: 'f'.repeat(64) },
+      )).toBe(true);
+      await waitFor(async () => (await readOutlineRuntimeDescriptor(root)) === null, 3_000);
+    } finally {
+      client.close();
+      await runtime.stop();
+    }
+  });
+
+  test('retires only when the replacement development session differs', async () => {
+    const root = await makeRoot();
+    const currentDevelopmentSessionId = `desktop:${crypto.randomUUID()}`;
+    const runtime = await OutlineRuntimeServer.start({
+      root,
+      contentRoot: `${root}-content`,
+      developmentSessionId: currentDevelopmentSessionId,
+      idleTimeoutMs: 60_000,
+    });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const client = new OutlineClient(runtime.descriptor);
+    try {
+      await expect(client.requestRuntimeRetirement(
+        runtime.descriptor.instanceId,
+        {
+          contractDigest: outlineCapabilityContractDigest(),
+          developmentSessionId: currentDevelopmentSessionId,
+        },
+      )).rejects.toMatchObject({ outlineError: { code: 'invalid_input' } });
+      expect((await readOutlineRuntimeDescriptor(root))?.instanceId).toBe(runtime.descriptor.instanceId);
+
+      expect(await client.requestRuntimeRetirement(
+        runtime.descriptor.instanceId,
+        {
+          contractDigest: outlineCapabilityContractDigest(),
+          developmentSessionId: `desktop:${crypto.randomUUID()}`,
+        },
       )).toBe(true);
       await waitFor(async () => (await readOutlineRuntimeDescriptor(root)) === null, 3_000);
     } finally {
@@ -868,6 +904,84 @@ describe('Outline Runtime process boundary', () => {
       expect(legacy.signalCode).toBeNull();
     } finally {
       await stopChild(legacy);
+    }
+  });
+
+  test('replaces a same-contract Runtime left by a previous development session', async () => {
+    const root = await makeRoot();
+    const previous = startLegacyRuntime(root, outlineCapabilityContractDigest());
+    const previousDescriptor = await waitForDescriptor(root);
+    const developmentSessionId = `desktop:${crypto.randomUUID()}`;
+    const supervisor = new OutlineClientSupervisor({
+      root,
+      contentRoot: `${root}-content`,
+      expectedDevelopmentSessionId: developmentSessionId,
+      launch: {
+        command: process.execPath,
+        args: [runtimeEntry, '--root', root],
+        env: { TENON_OUTLINE_RUNTIME_IDLE_MS: '60000' },
+        detached: false,
+      },
+      startupTimeoutMs: 5_000,
+    });
+    let client: OutlineClient | undefined;
+    try {
+      client = await supervisor.connect();
+      expect(client.descriptor).toMatchObject({
+        contractDigest: outlineCapabilityContractDigest(),
+        developmentSessionId,
+      });
+      expect(client.descriptor.instanceId).not.toBe(previousDescriptor.instanceId);
+      await waitFor(() => previous.exitCode !== null || previous.signalCode !== null, 3_000);
+    } finally {
+      client?.close();
+      await stopChild(previous);
+      await stopRuntimeProcess(root);
+    }
+  });
+
+  test('reuses a Runtime from the same development session', async () => {
+    const root = await makeRoot();
+    const developmentSessionId = `desktop:${crypto.randomUUID()}`;
+    const runtime = await OutlineRuntimeServer.start({
+      root,
+      contentRoot: `${root}-content`,
+      developmentSessionId,
+      idleTimeoutMs: 60_000,
+    });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const supervisor = new OutlineClientSupervisor({
+      root,
+      noStart: true,
+      expectedDevelopmentSessionId: developmentSessionId,
+    });
+    try {
+      const client = await supervisor.connect();
+      expect(client.descriptor.instanceId).toBe(runtime.descriptor.instanceId);
+      client.close();
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('does not replace a development Runtime when no session is expected', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({
+      root,
+      contentRoot: `${root}-content`,
+      developmentSessionId: `desktop:${crypto.randomUUID()}`,
+      idleTimeoutMs: 60_000,
+    });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const supervisor = new OutlineClientSupervisor({ root, noStart: true });
+    try {
+      const client = await supervisor.connect();
+      expect(client.descriptor.instanceId).toBe(runtime.descriptor.instanceId);
+      client.close();
+    } finally {
+      await runtime.stop();
     }
   });
 
@@ -1248,11 +1362,11 @@ async function stopRuntimeProcess(root: string): Promise<void> {
   await waitFor(async () => (await readOutlineRuntimeDescriptor(root)) === null, 3_000);
 }
 
-function startLegacyRuntime(root: string): ChildProcess {
+function startLegacyRuntime(root: string, contractDigest = 'f'.repeat(64)): ChildProcess {
   return spawn(process.execPath, [
     legacyRuntimeEntry,
     '--root', root,
-    '--contract-digest', 'f'.repeat(64),
+    '--contract-digest', contractDigest,
   ], {
     detached: false,
     stdio: 'ignore',

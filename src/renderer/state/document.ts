@@ -8,6 +8,7 @@ import type {
   NodeProjection,
   ProjectionSnapshot,
   ProjectionUpdate,
+  RichText,
 } from '../api/types';
 import {
   buildReverseEdges,
@@ -627,8 +628,10 @@ export interface UiState {
   focusRequest: FocusRequest | null;
   pendingInputChar: PendingInputChar | null;
   pendingReferenceConversion: PendingReferenceConversion | null;
-  pendingReferenceTypeAhead: PendingReferenceTypeAhead | null;
   trailingDraftPlacement: TrailingDraftPlacement | null;
+  pendingStructuralChanges: PendingStructuralChange[];
+  pendingNodePatches: Map<NodeId, PendingNodePatch>;
+  pendingRemovalIds: Set<NodeId>;
   expanded: Set<NodeId>;
   expandedHiddenFields: Set<string>;
   editingDescriptionId: NodeId | null;
@@ -659,16 +662,43 @@ export interface PendingReferenceConversion {
   targetId: NodeId;
 }
 
-export interface PendingReferenceTypeAhead {
-  nodeId: NodeId;
-  parentId: NodeId;
-  targetId: NodeId;
-}
-
 export interface TrailingDraftPlacement {
   parentId: NodeId;
   afterId: NodeId | null;
   panelId: string | null;
+}
+
+export type PendingStructuralPresentation = 'content' | 'field' | 'codeBlock';
+
+export interface PendingStructuralChange {
+  id: NodeId;
+  parentId: NodeId;
+  sourceParentId?: NodeId;
+  panelId: string;
+  beforeId: NodeId | null;
+  afterId: NodeId | null;
+  presentation: PendingStructuralPresentation;
+  phase: 'submitting' | 'failed';
+  initialContent: RichText;
+  latestContent: { current: RichText };
+  nodeOverride?: { current: NodeProjection };
+  stableRenderKey: { current: string | null };
+  latestFieldName?: { current: string };
+  resolvedFieldDefId?: { current: NodeId | null };
+  settlement: {
+    current: Promise<boolean>;
+    bind: (settlement: Promise<boolean>) => void;
+  };
+}
+
+export interface PendingNodePatch {
+  nodeId: NodeId;
+  content?: RichText;
+  tags?: NodeId[];
+  pendingTagNames?: Readonly<Record<NodeId, string>>;
+  // `null` means delete the optional property; omission means leave it alone.
+  completedAt?: number | null;
+  settlement: Promise<boolean>;
 }
 
 export type ToolbarDropdownSection = 'sort' | 'filter' | 'group' | 'display';
@@ -686,7 +716,6 @@ export const CLEARED_FOCUS_STATE = {
   focusSurface: null,
   focusRequest: null,
   pendingInputChar: null,
-  pendingReferenceTypeAhead: null,
   trailingDraftPlacement: null,
 } satisfies Pick<
   UiState,
@@ -696,7 +725,6 @@ export const CLEARED_FOCUS_STATE = {
   | 'focusSurface'
   | 'focusRequest'
   | 'pendingInputChar'
-  | 'pendingReferenceTypeAhead'
   | 'trailingDraftPlacement'
 >;
 
@@ -714,8 +742,10 @@ export function useUiState() {
     focusRequest: null,
     pendingInputChar: null,
     pendingReferenceConversion: null,
-    pendingReferenceTypeAhead: null,
     trailingDraftPlacement: null,
+    pendingStructuralChanges: [],
+    pendingNodePatches: new Map<NodeId, PendingNodePatch>(),
+    pendingRemovalIds: new Set<NodeId>(),
     expanded: new Set<NodeId>(),
     expandedHiddenFields: new Set<string>(),
     editingDescriptionId: null,
@@ -742,6 +772,7 @@ function reduceUiStateForProjectionRemovals(
   const selectedIds = withoutRemovedIds(state.selectedIds, removedIds);
   const expanded = withoutRemovedIds(state.expanded, removedIds);
   const expandedHiddenFields = withoutRemovedIds(state.expandedHiddenFields, removedHiddenFieldKeys);
+  const pendingNodePatches = withoutRemovedMapKeys(state.pendingNodePatches, removedIds);
   const focusStateRemoved = nodeIdRemoved(state.focusedId, removedIds)
     || nodeIdRemoved(state.focusedParentId, removedIds);
   const focusRequestRemoved = state.focusRequest !== null
@@ -750,8 +781,6 @@ function reduceUiStateForProjectionRemovals(
     && focusTargetReferencesRemovedNode(state.pendingInputChar.target, removedIds);
   const pendingReferenceConversionRemoved = state.pendingReferenceConversion !== null
     && referenceRequestReferencesRemovedNode(state.pendingReferenceConversion, removedIds);
-  const pendingReferenceTypeAheadRemoved = state.pendingReferenceTypeAhead !== null
-    && referenceRequestReferencesRemovedNode(state.pendingReferenceTypeAhead, removedIds);
   const trailingDraftPlacementRemoved = state.trailingDraftPlacement !== null
     && (
       removedIds.has(state.trailingDraftPlacement.parentId)
@@ -768,11 +797,11 @@ function reduceUiStateForProjectionRemovals(
     selectedIds === state.selectedIds
     && expanded === state.expanded
     && expandedHiddenFields === state.expandedHiddenFields
+    && pendingNodePatches === state.pendingNodePatches
     && !focusStateRemoved
     && !focusRequestRemoved
     && !pendingInputRemoved
     && !pendingReferenceConversionRemoved
-    && !pendingReferenceTypeAheadRemoved
     && !trailingDraftPlacementRemoved
     && !selectedIdRemoved
     && !selectionAnchorRemoved
@@ -788,9 +817,6 @@ function reduceUiStateForProjectionRemovals(
     : {
         focusRequest: focusRequestRemoved ? null : state.focusRequest,
         pendingInputChar: pendingInputRemoved ? null : state.pendingInputChar,
-        pendingReferenceTypeAhead: pendingReferenceTypeAheadRemoved
-          ? null
-          : state.pendingReferenceTypeAhead,
         trailingDraftPlacement: trailingDraftPlacementRemoved
           ? null
           : state.trailingDraftPlacement,
@@ -806,12 +832,24 @@ function reduceUiStateForProjectionRemovals(
     pendingReferenceConversion: pendingReferenceConversionRemoved
       ? null
       : state.pendingReferenceConversion,
+    pendingNodePatches,
     expanded,
     expandedHiddenFields,
     editingDescriptionId: editingDescriptionRemoved ? null : state.editingDescriptionId,
     batchTagSelectorOpen: selectionEmptied ? false : state.batchTagSelectorOpen,
     toolbarDropdownRequest: toolbarDropdownRemoved ? null : state.toolbarDropdownRequest,
   };
+}
+
+function withoutRemovedMapKeys<K, V>(current: Map<K, V>, removed: ReadonlySet<K>): Map<K, V> {
+  if (current.size === 0 || removed.size === 0) return current;
+  let next: Map<K, V> | null = null;
+  for (const key of current.keys()) {
+    if (!removed.has(key)) continue;
+    next ??= new Map(current);
+    next.delete(key);
+  }
+  return next ?? current;
 }
 
 interface ProjectionRemovals {
@@ -900,9 +938,6 @@ function invalidUiFieldSlotIds(
   inspect(state.pendingReferenceConversion?.nodeId);
   inspect(state.pendingReferenceConversion?.parentId);
   inspect(state.pendingReferenceConversion?.targetId);
-  inspect(state.pendingReferenceTypeAhead?.nodeId);
-  inspect(state.pendingReferenceTypeAhead?.parentId);
-  inspect(state.pendingReferenceTypeAhead?.targetId);
   inspect(state.trailingDraftPlacement?.parentId);
   inspect(state.trailingDraftPlacement?.afterId);
   inspect(state.toolbarDropdownRequest?.nodeId);
@@ -921,7 +956,7 @@ function focusTargetReferencesRemovedNode(
 }
 
 function referenceRequestReferencesRemovedNode(
-  request: PendingReferenceConversion | PendingReferenceTypeAhead,
+  request: PendingReferenceConversion,
   removedIds: ReadonlySet<NodeId>,
 ): boolean {
   return removedIds.has(request.nodeId)

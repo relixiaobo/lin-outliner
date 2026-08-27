@@ -596,6 +596,7 @@ export function App() {
     onNavigateBack: navigateActivePanelBack,
     onNavigateForward: navigateActivePanelForward,
     onOpenPanel: openActiveRootInPanel,
+    panelId: activeOutlinerPanel?.id ?? null,
     requestEditFocus,
     rootId,
     run,
@@ -775,6 +776,8 @@ export function App() {
         open={ui.batchTagSelectorOpen}
         selectedIds={ui.selectedIds}
         index={index}
+        ui={ui}
+        setUi={setUi}
         run={run}
         close={() => setUi((prev) => ({ ...prev, batchTagSelectorOpen: false }))}
         clearSelection={() => setUi((prev) => ({

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useLayoutEffect, useRef, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import type { NodeId, NodeProjection } from '../../api/types';
 import { projectFieldConfig } from '../../../core/configProjection';
@@ -12,6 +12,7 @@ import {
   PopoverListItem,
 } from './PopoverList';
 import { useT } from '../../i18n/I18nProvider';
+import { usePopoverSelection } from './usePopoverSelection';
 
 interface TrailingOptionsPopoverProps {
   anchorRef: RefObject<HTMLElement | null>;
@@ -44,7 +45,6 @@ export function TrailingOptionsPopover(props: TrailingOptionsPopoverProps) {
     && !allOptions.some((option) => option.label.toLowerCase() === trimmedQuery.toLowerCase());
   const optionCount = filteredOptions.length + (canCreateOption ? 1 : 0);
 
-  const [activeIndex, setActiveIndex] = useState(0);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const menuStyle = useAnchoredOverlay(menuRef, {
     anchorRef: props.anchorRef,
@@ -54,12 +54,12 @@ export function TrailingOptionsPopover(props: TrailingOptionsPopoverProps) {
     placement: 'bottom-start',
     width: 280,
   });
-
-  // Reset the highlight to the top whenever the query or option count shifts the
-  // list under the cursor.
-  useEffect(() => {
-    setActiveIndex(0);
-  }, [props.query, optionCount]);
+  const [activeIndex, setActiveIndex] = usePopoverSelection({
+    itemCount: optionCount,
+    listRef: menuRef,
+    open: props.open,
+    selectionKey: `${props.query}:${filteredOptions.map((option) => option.id).join('|')}:${canCreateOption ? 'create' : ''}`,
+  });
 
   const stateRef = useRef({
     open: props.open,
@@ -68,6 +68,9 @@ export function TrailingOptionsPopover(props: TrailingOptionsPopoverProps) {
     canCreateOption,
     trimmedQuery,
     activeIndex,
+    onOpenChange: props.onOpenChange,
+    onSelect: props.onSelect,
+    onCreate: props.onCreate,
   });
   stateRef.current = {
     open: props.open,
@@ -76,9 +79,12 @@ export function TrailingOptionsPopover(props: TrailingOptionsPopoverProps) {
     canCreateOption,
     trimmedQuery,
     activeIndex,
+    onOpenChange: props.onOpenChange,
+    onSelect: props.onSelect,
+    onCreate: props.onCreate,
   };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!props.open) return;
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (isImeComposingEvent(event)) return;
@@ -87,7 +93,7 @@ export function TrailingOptionsPopover(props: TrailingOptionsPopoverProps) {
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopPropagation();
-        props.onOpenChange(false);
+        state.onOpenChange(false);
         return;
       }
       if (event.key === 'ArrowDown') {
@@ -111,8 +117,8 @@ export function TrailingOptionsPopover(props: TrailingOptionsPopoverProps) {
       event.stopPropagation();
       if (state.optionCount === 0) return;
       const option = state.filteredOptions[state.activeIndex];
-      if (option) props.onSelect(option.id);
-      else if (state.canCreateOption) props.onCreate(state.trimmedQuery);
+      if (option) state.onSelect(option.id);
+      else if (state.canCreateOption) state.onCreate(state.trimmedQuery);
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);

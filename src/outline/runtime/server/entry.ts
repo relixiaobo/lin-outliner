@@ -11,6 +11,7 @@ if (!root || !contentRoot) {
     root,
     contentRoot,
     idleTimeoutMs: positiveInteger(process.env.TENON_OUTLINE_RUNTIME_IDLE_MS),
+    developmentSessionId: process.env.TENON_OUTLINE_RUNTIME_DEVELOPMENT_SESSION_ID,
     onIdle: () => { process.exitCode = 0; },
   });
   if (!runtime) {

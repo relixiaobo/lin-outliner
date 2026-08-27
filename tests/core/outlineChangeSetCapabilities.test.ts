@@ -127,20 +127,35 @@ describe('outline ChangeSet capability coverage', () => {
       changes: [{ kind: 'reference', action: 'retarget', target: oneId(referenceB!) }],
     }]);
     expect(workspace.documentState().nodes[referenceId]?.targetId).toBe(referenceB);
+    const inlineId = 'node:00000000-0000-4000-8000-000000000011';
     const inlined = await settle(workspace, [{
       op: 'update',
       targets: oneId(referenceId),
-      changes: [{ kind: 'reference', action: 'inline', target: oneId(referenceB!) }],
+      changes: [{
+        kind: 'reference',
+        action: 'inline',
+        target: oneId(referenceB!),
+        replacementId: inlineId,
+      }],
     }]);
-    const inlineId = inlined.diff.affected.find((entry) => entry.effect === 'create')!.id;
+    expect(inlined.diff.affected).toContainEqual(expect.objectContaining({ id: inlineId, effect: 'create' }));
     expect(workspace.documentState().nodes[referenceId]).toBeUndefined();
     expect(workspace.documentState().nodes[inlineId]?.type).toBeUndefined();
+    const restoredReferenceId = 'node:00000000-0000-4000-8000-000000000012';
     const restored = await settle(workspace, [{
       op: 'update',
       targets: oneId(inlineId),
-      changes: [{ kind: 'reference', action: 'restore', target: oneId(referenceB!) }],
+      changes: [{
+        kind: 'reference',
+        action: 'restore',
+        target: oneId(referenceB!),
+        replacementId: restoredReferenceId,
+      }],
     }]);
-    const restoredReferenceId = restored.diff.affected.find((entry) => entry.effect === 'create')!.id;
+    expect(restored.diff.affected).toContainEqual(expect.objectContaining({
+      id: restoredReferenceId,
+      effect: 'create',
+    }));
     expect(workspace.documentState().nodes[restoredReferenceId]).toMatchObject({ type: 'reference', targetId: referenceB });
 
     await settle(workspace, [{

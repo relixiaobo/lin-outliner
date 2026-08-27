@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEventHandler } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEventHandler } from 'react';
 import { addLocalDays, isoLocalDate, parseIsoLocalDate } from '../../api/types';
 import { useI18n, useT } from '../../i18n/I18nProvider';
 import { ChevronLeftIcon, ChevronRightIcon } from '../icons';
@@ -83,7 +83,7 @@ export function CalendarMonthGrid({
     ? focusIso
     : defaultRovingIso;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!pendingFocus.current) return;
     pendingFocus.current = false;
     const grid = gridRef.current;

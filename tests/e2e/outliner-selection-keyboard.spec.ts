@@ -7,6 +7,7 @@ import {
   e2eNodeInlineRef,
   e2eProjection,
   emitDocumentEvent,
+  holdOutlineMutation,
   ids,
   multiSelect,
   nodeById,
@@ -577,25 +578,47 @@ test.describe('outliner selection keyboard parity', () => {
 
   test('ArrowRight converts a selected reference row to an unchanged inline reference and blur restores it', async ({ page }) => {
     const { referenceId, targetId } = await createReferenceFixture(page);
+    const beforeChildren = await todayChildren(page);
 
     await rowBody(page, referenceId).click();
     await expect(rowBody(page, referenceId)).toHaveClass(/ref-click-selected/);
     await expect(rowEditor(page, referenceId)).not.toBeFocused();
 
+    const releaseInline = await holdOutlineMutation(page, { op: 'update', instructionKind: 'reference' });
     let inlineId = '';
     await page.keyboard.press('ArrowRight');
+    await expect(row(page, referenceId)).toHaveCount(0);
+    const pendingInline = page.locator('[data-node-id]').filter({
+      has: page.locator('.inline-ref', { hasText: 'Reference Alpha' }),
+    }).first();
+    inlineId = await pendingInline.getAttribute('data-node-id') ?? '';
+    expect(inlineId).not.toBe('');
+    await expect(rowEditor(page, inlineId)).toBeFocused();
+    expect(await todayChildren(page)).toEqual(beforeChildren);
+
+    await releaseInline();
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
-      inlineId = projection.nodes.find((node) => (
+      return projection.nodes.find((node) => (
         node.id !== referenceId
         && !node.type
         && node.content.inlineRefs.some((ref) => e2eInlineRefNodeId(ref) === targetId)
       ))?.id ?? '';
-      return inlineId;
-    }).not.toBe('');
+    }).toBe(inlineId);
     await expect(rowEditor(page, inlineId)).toBeFocused();
 
+    const releaseRestore = await holdOutlineMutation(page, { op: 'update', instructionKind: 'reference' });
     await rowBody(page, ids.beta).click();
+    await expect(row(page, inlineId)).toHaveCount(0);
+    const pendingReference = page.locator('[data-node-id]').filter({
+      has: page.locator('.row.reference-row'),
+      hasText: 'Reference Alpha',
+    }).first();
+    const restoredReferenceId = await pendingReference.getAttribute('data-node-id') ?? '';
+    expect(restoredReferenceId).not.toBe('');
+    expect(await todayChildren(page)).toEqual(beforeChildren.map((id) => id === referenceId ? inlineId : id));
+
+    await releaseRestore();
 
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
@@ -603,8 +626,8 @@ test.describe('outliner selection keyboard parity', () => {
     }).toBe(false);
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
-      return projection.nodes.some((node) => node.type === 'reference' && node.targetId === targetId);
-    }).toBe(true);
+      return projection.nodes.find((node) => node.type === 'reference' && node.targetId === targetId)?.id;
+    }).toBe(restoredReferenceId);
   });
 
   test('double-clicking a reference row edits the target node in place', async ({ page }) => {
@@ -750,8 +773,10 @@ test.describe('outliner selection keyboard parity', () => {
 
   test('IME typing after a selected reference continues in the real inline editor', async ({ page }) => {
     const { targetId, referenceId } = await createReferenceFixture(page);
+    const beforeChildren = await todayChildren(page);
 
     await row(page, referenceId).click();
+    const releaseInline = await holdOutlineMutation(page, { op: 'update', instructionKind: 'reference' });
     await page.evaluate(() => {
       window.dispatchEvent(new KeyboardEvent('keydown', {
         bubbles: true,
@@ -762,17 +787,18 @@ test.describe('outliner selection keyboard parity', () => {
       }));
     });
 
-    let inlineRowId = '';
-    await expect.poll(async () => {
-      const projection = await e2eProjection(page);
-      inlineRowId = projection.nodes.find((node) => (
-        !node.type
-        && node.content.inlineRefs.some((ref) => e2eInlineRefNodeId(ref) === targetId)
-      ))?.id ?? '';
-      return inlineRowId;
-    }).not.toBe('');
+    await expect(row(page, referenceId)).toHaveCount(0);
+    const pendingInline = page.locator('[data-node-id]').filter({
+      has: page.locator('.inline-ref', { hasText: 'Reference Alpha' }),
+    }).first();
+    const inlineRowId = await pendingInline.getAttribute('data-node-id') ?? '';
+    expect(inlineRowId).not.toBe('');
     await expect(rowEditor(page, inlineRowId)).toBeFocused();
     await page.keyboard.insertText('你好');
+    await expect(rowEditor(page, inlineRowId)).toContainText('你好');
+    expect(await todayChildren(page)).toEqual(beforeChildren);
+
+    await releaseInline();
     await expect.poll(async () => nodeById(page, inlineRowId)).toMatchObject({
       content: {
         text: '你好',

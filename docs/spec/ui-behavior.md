@@ -36,12 +36,13 @@ keyboard or pointer change should be checked against this matrix.
   result row.
 - Rows use a compact bullet/chevron leading control, restrained hover/focus
   states, and no right inspector.
-- The main outliner renders through the flat row producer by default. Small
+- The main outliner and editable field-value outlines render through the flat
+  row producer exclusively. Small
   outlines render the full flat list in normal flow; large outlines window the
   visible rows with overscan, while focused and draft rows stay force-mounted so
-  keyboard navigation and trailing inputs still work. The old recursive renderer
-  remains a reload-scoped diagnostic fallback via
-  `localStorage('lin:recursive-outliner') === '1'`.
+  keyboard navigation and trailing inputs still work. Table subtrees and system
+  reference values reuse that renderer in embedded-flow mode; there is no second
+  recursive editing implementation or renderer-state/local-storage switch.
 - Expanding or collapsing a row keeps the clicked disclosure control visually
   anchored in the panel viewport, even while virtualized row measurements settle.
   Immediate user scroll input releases that temporary anchor; delayed measurement
@@ -82,7 +83,7 @@ keyboard or pointer change should be checked against this matrix.
   stable so unrelated rows do not re-render.
 - `selectedId` and `selectedIds` mean row selection mode.
 - `selectionRootId` is the panel-level selection scope. Field values still render
-  inside a nested value-column `OutlinerView`, but their selection root is the
+  inside a nested value-column `OutlinerFlatView`, but their selection root is the
   outer panel root so a single range can span body rows, field entries, and field
   value rows.
 - `expanded` controls visible children and trailing child inputs.
@@ -135,6 +136,41 @@ keyboard or pointer change should be checked against this matrix.
   visible primitive/editor-control needs (for example active triggers, option
   picker query text, or replace-all slow boundaries), not for every ordinary
   large `RichText` object.
+- Body rows, field names and values, Table cells, code blocks, descriptions,
+  checkbox controls, and file keyboard anchors consume matching focus requests
+  and pending printable input in the layout phase. External draft reconciliation
+  also completes before paint, except while the local editor owns a newer focused
+  draft or a live IME composition. No editable surface may use a timer, animation
+  frame, or passive effect to hand off focus or the first character.
+- A `RichTextEditor` targeted by focus or pending input constructs its
+  `EditorView` synchronously in the layout phase. Untargeted visible editors keep
+  passive construction so opening a large outline does not put every ProseMirror
+  instance on the initial critical path. One component identity constructs one
+  `EditorView`; draft materialization and authoritative settlement reuse it.
+- Trailing drafts are keyed by semantic ownership, not a transient backing
+  entry. A field-value draft uses the owner/field-definition slot identity, so
+  materializing a previously virtual field entry remaps the parent without
+  remounting the draft editor or losing pending input.
+- Middle-row Enter first settles already-queued text patches, then replaces the
+  row's local draft mirror with the split head before submitting the atomic
+  split. The Operation Event confirms and clears that mirror; a rejected split
+  restores the complete pre-split draft. A pre-split mirror must never suppress
+  the canonical split-head Event and leave duplicated tail text on screen.
+- Ordinary create, split, and empty-row removal update the visible row structure
+  in the initiating renderer turn. Create and split mint the real Node ID before
+  submission and render one pending row with that ID and its final React key;
+  settlement upgrades the same editor in place while the authoritative
+  Projection remains unchanged until Runtime commits. Text typed into a pending
+  split row is retained and reconciled after creation. Removal hides the pending
+  row without deleting it from the Projection. An existing trailing draft stays
+  mounted after a pending created row from the first optimistic frame onward; it
+  is never removed and re-added at settlement. The projection apply and pending
+  presentation cleanup share one synchronous render commit; command rejection
+  removes the pending presentation and restores source content and focus.
+- Body, field-value, and Table-hosted node editing all delegate create, split,
+  remove, merge, relocate, done-state, and semantic row conversion to the same
+  optimistic structural transaction. A nested renderer may choose layout and
+  navigation policy, but it may not implement a second settlement or focus path.
 - Trigger detection in the focused editor uses the current mirror and a bounded
   caret window for long text. Full-text trigger parsing is retained only for
   short rows where slash/bare-trigger semantics require exact whole-row context.
@@ -170,6 +206,13 @@ Tag suggestions include only active tag definitions: a `tagDef` in Trash remains
 visible on rows that already carry it as a deleted badge, but it is not offered
 for new tagging. Typing the same label creates a new active tag definition
 instead of reusing the trashed one.
+
+Suggestion list identity includes the query and the ordered result identities.
+When either changes, the active suggestion resets or clamps in the layout phase
+and the active row scrolls into view before paint. A newly rendered result set
+must never show the previous result set's highlight for one frame. Asynchronous
+candidate validation may disable or annotate results, but it must not overwrite
+an Arrow-key selection the user made while validation was pending.
 
 ## Field Row Matrix
 
@@ -296,7 +339,8 @@ content Nodes and the explicit public system-Node allowlist can create a Node
 reference. Date shortcuts and image/attachment Node identities are omitted
 because they have no public `node://` URI; Composer local-file results remain
 separately referenceable through canonical `file:` URIs. Cycle status is
-evaluated only for shortlisted nodes from a cached reverse-reachability set. Posting keys
+evaluated only for shortlisted nodes from a cached reverse-reachability set;
+candidate availability is not a ranking input. Posting keys
 share their normalized label storage through offsets, and an overflow edit
 overlay is compacted outside the projection commit by a cooperatively yielding
 rebuild. The idle timer follows input, while an independent maximum-age timer
@@ -305,9 +349,10 @@ rebuild or grow the overlay indefinitely. Deltas accepted during a rebuild stay
 queryable in the overlay and are cooperatively rebased before the new base is
 committed. A cold or invalidated reachability set is built cooperatively after
 the picker opens, never inside the typing event. Node choices remain disabled
-until that set resolves; resolution updates candidate order and resets keyboard
-selection together, so Enter cannot act on a row that moved underneath the
-highlight. Breadcrumbs are derived only for the final visible results.
+until that set resolves; resolution only updates availability and annotations.
+It does not reorder candidates or replace the user's selected candidate, so
+Enter cannot act on a different row after asynchronous validation. Breadcrumbs
+are derived only for the final visible results.
 
 For `options_from_supertag` fields, the source supertag must be an active tag
 definition. If the source tag is moved to Trash, the field's value picker no

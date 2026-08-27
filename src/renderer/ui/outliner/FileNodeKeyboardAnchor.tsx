@@ -1,5 +1,5 @@
 import {
-  useEffect,
+  useLayoutEffect,
   useRef,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
@@ -50,7 +50,7 @@ export function FileNodeKeyboardAnchor(props: FileNodeKeyboardAnchorProps) {
   // Consume a focus request aimed at this row (e.g. arrow-nav into it, or right
   // after the file node is created). Mirrors the old BlockNodeRow handshake: a
   // live IME composition parks the request and relays it at compositionend.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = ref.current;
     const request = props.focusRequest;
     const target = props.focusTarget;

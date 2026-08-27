@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { toggleMark } from 'prosemirror-commands';
 import type { Node as PMNode } from 'prosemirror-model';
 import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
@@ -500,7 +500,8 @@ export function RichTextEditor(props: RichTextEditorProps) {
     updateToolbar(view);
   };
 
-  useEffect(() => {
+  const mountEditor = () => {
+    if (viewRef.current) return;
     const mount = mountRef.current;
     if (!mount) return;
 
@@ -827,7 +828,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
           propsRef.current.onCommit(docToRichText(view.state.doc));
           applyPendingInlineReferencePresentation(view);
           propsRef.current.onTriggerChange(null);
-          window.setTimeout(() => updateToolbar(view), 0);
+          updateToolbar(view);
           return false;
         },
         compositionstart(viewInstance) {
@@ -1109,30 +1110,49 @@ export function RichTextEditor(props: RichTextEditorProps) {
 
     viewRef.current = view;
     imeTrace('editor:mount', propsRef.current.nodeId);
+  };
 
-    return () => {
-      imeTrace('editor:unmount', propsRef.current.nodeId,
-        'composing:', composingRef.current || pendingHandoffRef.current,
-        'buffered:', compositionDocChangedRef.current);
-      propsRef.current.onTriggerChange(null);
-      // A view dying mid-composition must release the gate, and re-issue a
-      // request parked behind it (the composed text dies with the view).
-      const wasComposing = composingRef.current || pendingHandoffRef.current;
-      composingRef.current = false;
-      pendingHandoffRef.current = false;
-      endComposition(compositionToken);
-      if (wasComposing) {
-        const request = propsRef.current.focusRequest;
-        if (request && request !== compositionStartFocusRequestRef.current) {
-          propsRef.current.onCompositionHandoff?.('');
-        }
+  const destroyEditor = () => {
+    const view = viewRef.current;
+    if (!view) return;
+    imeTrace('editor:unmount', propsRef.current.nodeId,
+      'composing:', composingRef.current || pendingHandoffRef.current,
+      'buffered:', compositionDocChangedRef.current);
+    propsRef.current.onTriggerChange(null);
+    // A view dying mid-composition must release the gate, and re-issue a
+    // request parked behind it (the composed text dies with the view).
+    const wasComposing = composingRef.current || pendingHandoffRef.current;
+    composingRef.current = false;
+    pendingHandoffRef.current = false;
+    endComposition(compositionToken);
+    if (wasComposing) {
+      const request = propsRef.current.focusRequest;
+      if (request && request !== compositionStartFocusRequestRef.current) {
+        propsRef.current.onCompositionHandoff?.('');
       }
-      view.destroy();
-      viewRef.current = null;
-    };
-  }, [initialState]);
+    }
+    view.destroy();
+    viewRef.current = null;
+  };
+
+  // A newly-created or newly-targeted editor must exist before the first paint
+  // so focus and pending input land atomically. Ordinary visible rows keep their
+  // passive mount, avoiding a large document paying every EditorView constructor
+  // on the initial render's critical path.
+  useLayoutEffect(() => {
+    if (focusPending) mountEditor();
+    // `mountEditor` is intentionally the current render's closure; `initialState`
+    // is immutable for this component identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusPending]);
 
   useEffect(() => {
+    mountEditor();
+    return destroyEditor;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialState]);
+
+  useLayoutEffect(() => {
     const view = viewRef.current;
     if (!view) return;
     if (props.content === lastExternalContentRef.current) {
@@ -1202,7 +1222,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
     props.resolveInlineReferenceDisplayName,
   ]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const view = viewRef.current;
     if (!view) return;
     view.setProps({
@@ -1213,7 +1233,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
   // The inline tag slot appears/disappears (node <-> null) when tags are added or
   // removed — events that don't dispatch a transaction to THIS editor. Force a
   // redraw so the `decorations` prop is recomputed and the widget added/removed.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const view = viewRef.current;
     if (!view) return;
     view.setProps({});
@@ -1227,7 +1247,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
   // that re-entrancy looped (applyCursorPlacement -> updateTrigger ->
   // onTriggerChange -> setTrigger -> render -> effect again) until React's
   // update-depth limit tripped.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const view = viewRef.current;
     const request = props.focusRequest;
     const target = propsRef.current.focusTarget;
@@ -1246,7 +1266,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
     applyFocusRequest(view, request);
   }, [props.focusRequest]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const view = viewRef.current;
     const input = props.pendingInput;
     const target = propsRef.current.focusTarget;

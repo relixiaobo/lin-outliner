@@ -81,6 +81,18 @@ describe('buildVisualRows body/reference parity with flattenVisibleRows', () => 
     expect(flat).toEqual(['a', 'b']);
   });
 
+  test('omits pending removals and their visible descendants without changing the projection', () => {
+    const byId = fixture();
+    const rows = buildVisualRows('lib', byId, {
+      expanded: new Set(['a']),
+      pendingRemovalIds: new Set(['a']),
+    });
+
+    expect(visualRowNodeIds(rows)).toEqual(['b']);
+    expect(byId.get('lib')?.children).toEqual(['a', 'b']);
+    expect(byId.has('a')).toBe(true);
+  });
+
   test('field values stay in selectable order but render inside their field row', () => {
     const byId = byIdOf([
       node('root', { children: ['before', 'entry', 'after'] }),
@@ -111,10 +123,10 @@ describe('buildVisualRows depth and extras', () => {
     const byId = fixture();
     const rows = buildVisualRows('lib', byId, { expanded: new Set(['a', 'b', 'refA']) });
     const depthOf = (key: string) => rows.find((r) => r.key === key)?.depth;
-    expect(depthOf('lib>a')).toBe(0);
-    expect(depthOf('lib>a>a1')).toBe(1);
-    expect(depthOf('lib>b')).toBe(0);
-    expect(depthOf('lib>b>refA')).toBe(1);
+    expect(depthOf('a')).toBe(0);
+    expect(depthOf('a1')).toBe(1);
+    expect(depthOf('b')).toBe(0);
+    expect(depthOf('refA')).toBe(1);
     // Transcluded children sit one level below the reference row; the key is the
     // chain of rendered row ids (the reference row), not the resolved target.
     expect(depthOf('lib>b>refA>a1')).toBe(2);
@@ -182,6 +194,36 @@ describe('buildVisualRows depth and extras', () => {
     });
     const realRow = after.find((r) => (r.kind === 'content') && r.nodeId === draftId);
     expect(realRow?.key).toBe(draftRow.key);
+  });
+
+  test('owned row keys stay stable across reparenting', () => {
+    const beforeById = byIdOf([
+      node('lib', { children: ['a', 'b'] }),
+      node('a', { parentId: 'lib' }),
+      node('b', { parentId: 'lib' }),
+    ]);
+    const before = buildVisualRows('lib', beforeById, { expanded: new Set() });
+    const afterById = byIdOf([
+      node('lib', { children: ['b'] }),
+      node('a', { parentId: 'b' }),
+      node('b', { parentId: 'lib', children: ['a'] }),
+    ]);
+    const after = buildVisualRows('lib', afterById, { expanded: new Set(['b']) });
+
+    expect(before.find((row) => row.kind === 'content' && row.nodeId === 'a')?.key).toBe('a');
+    expect(after.find((row) => row.kind === 'content' && row.nodeId === 'a')?.key).toBe('a');
+  });
+
+  test('transcluded row keys remain path-qualified and unique', () => {
+    const rows = buildVisualRows('lib', fixture(), {
+      expanded: new Set(['a', 'b', 'refA']),
+    });
+    const a1Keys = rows
+      .filter((row) => row.kind === 'content' && row.nodeId === 'a1')
+      .map((row) => row.key);
+
+    expect(a1Keys).toEqual(['a1', 'lib>b>refA>a1']);
+    expect(new Set(a1Keys).size).toBe(2);
   });
 
   test('places a relocated trailing draft after the anchored child subtree', () => {

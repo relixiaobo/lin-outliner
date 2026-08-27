@@ -1,7 +1,9 @@
 import { useRef } from 'react';
-import type { NodeId, NodeProjection } from '../../api/types';
+import type { NodeId, NodeProjection, RichText } from '../../api/types';
 import { EMPTY_RICH_TEXT } from '../../api/types';
 import { freshNodeId } from '../../../core/nodeId';
+
+export type PendingDraftPolicy = 'advance' | 'retain';
 
 // A renderer-only trailing "draft" row is an `OutlinerItem` whose node does not
 // exist in the projection yet. To make eager materialization seamless, the draft
@@ -15,13 +17,17 @@ import { freshNodeId } from '../../../core/nodeId';
  * JSX position before and after materialization), but contributes nothing to
  * the projection, search, or agent context until the user types.
  */
-export function makeDraftNode(id: NodeId, parentId: NodeId): NodeProjection {
+export function makeDraftNode(
+  id: NodeId,
+  parentId: NodeId,
+  content: RichText = EMPTY_RICH_TEXT,
+): NodeProjection {
   const now = Date.now();
   return {
     id,
     parentId,
     children: [],
-    content: EMPTY_RICH_TEXT,
+    content,
     tags: [],
     createdAt: now,
     updatedAt: now,
@@ -36,12 +42,35 @@ export function makeDraftNode(id: NodeId, parentId: NodeId): NodeProjection {
  * materializes — its id then belongs to a real node in `byId`, so the next draft
  * needs a fresh id. Also resets when the owning parent changes.
  */
-export function useTrailingDraftId(parentId: NodeId, byId: Map<NodeId, NodeProjection>): NodeId {
+export function useTrailingDraftId(
+  ownerKey: NodeId,
+  byId: Map<NodeId, NodeProjection>,
+  reservedIds?: ReadonlySet<NodeId>,
+  pendingPolicy: PendingDraftPolicy = 'advance',
+): NodeId {
   const idRef = useRef<NodeId | null>(null);
-  const parentRef = useRef<NodeId>(parentId);
-  if (idRef.current === null || parentRef.current !== parentId || byId.has(idRef.current)) {
+  const ownerRef = useRef<NodeId>(ownerKey);
+  if (
+    idRef.current === null
+    || ownerRef.current !== ownerKey
+    || shouldMintNextDraftId(
+      idRef.current,
+      byId,
+      reservedIds?.has(idRef.current) === true,
+      pendingPolicy,
+    )
+  ) {
     idRef.current = freshNodeId();
-    parentRef.current = parentId;
+    ownerRef.current = ownerKey;
   }
   return idRef.current;
+}
+
+export function shouldMintNextDraftId(
+  id: NodeId,
+  byId: ReadonlyMap<NodeId, NodeProjection>,
+  reserved: boolean,
+  pendingPolicy: PendingDraftPolicy,
+): boolean {
+  return byId.has(id) || (pendingPolicy === 'advance' && reserved);
 }

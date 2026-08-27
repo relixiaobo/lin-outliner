@@ -7,7 +7,7 @@ import {
   systemReferenceTargets,
 } from '../../state/systemReferenceRows';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
-import { OutlinerView } from './OutlinerView';
+import { OutlinerFlatView } from './OutlinerFlatView';
 
 export { isNodeReferenceSystemField };
 
@@ -194,7 +194,7 @@ export function SystemReferenceValues(props: SystemReferenceValuesProps) {
 
   // Reuse the exact value-column container the editable field values use
   // (`field-value-outliner` + `field-value-node-preview`): `.field-value-cell` is
-  // a flex row, so the OutlinerView MUST sit inside this single full-width block
+  // a flex row, so the flat outliner MUST sit inside this single full-width block
   // child (`.field-value-cell > .field-value-outliner { flex: 1 1 auto }`) for its
   // rows to stack top-to-bottom like every other outline. Dropping the rows
   // straight into the flex cell makes each one a horizontal flex item (squished
@@ -203,13 +203,12 @@ export function SystemReferenceValues(props: SystemReferenceValuesProps) {
   return (
     <div className="field-value-cell">
       <div className="field-value-outliner field-value-node-preview" data-field-value aria-readonly="true">
-        <OutlinerView
+        <OutlinerFlatView
           panelId={props.panelId}
           parentId={props.entryId}
           rootId={props.entryId}
           selectionRootId={props.selectionRootId}
           onRoot={props.onRoot}
-          depth={0}
           index={index}
           isNodePinned={props.isNodePinned}
           ui={props.ui}
@@ -224,6 +223,7 @@ export function SystemReferenceValues(props: SystemReferenceValuesProps) {
           referencePath={[props.entryId]}
           trailingDraft="none"
           showViewToolbar={false}
+          embeddedFlow
         />
       </div>
     </div>

@@ -735,14 +735,21 @@ export const UpdateInstructionSchema = Type.Union([
     mutation: FieldSlotMutationSchema,
   }, closed),
   DefinitionInstructionSchema,
-  Type.Object({
-    kind: Type.Literal('reference'),
-    action: Type.Union([
-      Type.Literal('add'), Type.Literal('retarget'), Type.Literal('replace'),
-      Type.Literal('inline'), Type.Literal('restore'),
-    ]),
-    target: TargetRefSchema,
-  }, closed),
+  Type.Union([
+    Type.Object({
+      kind: Type.Literal('reference'),
+      action: Type.Union([
+        Type.Literal('add'), Type.Literal('retarget'), Type.Literal('replace'),
+      ]),
+      target: TargetRefSchema,
+    }, closed),
+    Type.Object({
+      kind: Type.Literal('reference'),
+      action: Type.Union([Type.Literal('inline'), Type.Literal('restore')]),
+      target: TargetRefSchema,
+      replacementId: Type.Optional(Identifier),
+    }, closed),
+  ]),
   ViewInstructionSchema,
   SearchInstructionSchema,
   Type.Object({ kind: Type.Literal('icon'), value: Type.Union([Type.String({ maxLength: 4_096 }), Type.Null()]), iconKind: Type.Optional(Type.String({ maxLength: 128 })) }, closed),
@@ -1074,6 +1081,7 @@ export const RuntimeDescriptorSchema = Type.Object({
   protocolMajors: Type.Tuple([Type.Literal(OUTLINE_PROTOCOL_VERSION)]),
   contractDigest: Digest,
   runtimeVersion: Type.String({ minLength: 1, maxLength: 128 }),
+  developmentSessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
   storageVersion: Type.Literal(OUTLINE_STORAGE_VERSION),
   createdAt: Timestamp,
 }, { ...closed, $id: 'RuntimeDescriptor' });

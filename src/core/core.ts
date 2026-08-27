@@ -1,4 +1,5 @@
 import { autoInitStrategiesForFieldType } from './autoInit';
+import { applyCompletedAtTransition } from './doneState';
 import { CoreError } from './errors';
 import {
   LoroOutlinerDocument,
@@ -356,6 +357,10 @@ interface CoreInitialState {
   replayedMetadataSequence?: number;
 }
 
+interface CoreRuntimeForkState {
+  runtimeFork: Core;
+}
+
 interface PersistenceMetadataChange {
   sequence: number;
   operationHistoryUpsert?: OperationHistoryEntry;
@@ -487,7 +492,39 @@ export class Core {
   // `parent not found` when the user adds the first row to today's note.
   private initialPersistRequired = false;
 
-  private constructor(initial: CoreInitialState = {}, options: CorePersistenceOptions = {}) {
+  private constructor(
+    initial: CoreInitialState | CoreRuntimeForkState = {},
+    options: CorePersistenceOptions = {},
+  ) {
+    if ('runtimeFork' in initial) {
+      const source = initial.runtimeFork;
+      this.idFactory = options.idFactory ?? freshId;
+      this.installationIdValue = source.installationIdValue;
+      this.workspaceIdValue = source.workspaceIdValue;
+      this.documentIdValue = source.documentIdValue;
+      this.replicaIdValue = source.replicaIdValue;
+      this.loro = source.loro.forkForRuntime();
+      this.stateValue = {
+        ...source.stateValue,
+        nodes: { ...source.stateValue.nodes },
+      };
+      this.history = new OperationJournal(clone(source.history.entriesForSerialization(500)));
+      this.projectionNodes = new Map(source.projectionNodes);
+      this.projectionOrder = [...source.projectionOrder];
+      this.projectionReady = source.projectionReady;
+      this.revisionValue = source.revisionValue;
+      this.persistenceRevisionValue = source.persistenceRevisionValue;
+      this.persistenceMetadataSequenceValue = source.persistenceMetadataSequenceValue;
+      this.persistenceMetadataChanges = clone(source.persistenceMetadataChanges);
+      this.loadedPersistenceVersionValue = source.loadedPersistenceVersionValue.slice();
+      this.lastRevisionDelta = {
+        ...source.lastRevisionDelta,
+        changedNodeIds: [...source.lastRevisionDelta.changedNodeIds],
+      };
+      this.initialPersistRequired = source.initialPersistRequired;
+      return;
+    }
+
     this.idFactory = options.idFactory ?? freshId;
     const installationId = options.installationId ?? initial.local?.installationId ?? createPersistenceId();
     if (!isPersistenceId(installationId)) throw CoreError.invalidOperation('invalid installation identity');
@@ -604,11 +641,13 @@ export class Core {
   }
 
   forkForRuntime(options: Pick<CorePersistenceOptions, 'idFactory'> = {}): Core {
-    return Core.fromState(Core.deserializeState(this.serializeState()), {
-      installationId: this.installationIdValue,
-      revision: this.revisionValue,
-      ...options,
-    });
+    this.assertReplicationIdle();
+    // Preserve the old persistence-fork boundary: close any harmless pending
+    // serializer operations before cloning, then copy the settled incremental
+    // state instead of round-tripping the complete workspace through JSON/Loro.
+    this.loro.commit(SYSTEM_COMMIT_ORIGIN);
+    this.refreshStateFromLoro();
+    return new Core({ runtimeFork: this }, options);
   }
 
   state() {
@@ -2045,7 +2084,9 @@ export class Core {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureNodeEditable(state, nodeId);
-      this.writeDoneStateDirect(state, nodeId, toggleNodeDone);
+      this.writeDoneStateDirect(state, nodeId, (node, tagDriven) => {
+        applyCompletedAtTransition(node, { tagDriven, transition: 'toggle' });
+      });
       return focus(nodeId);
     });
   }
@@ -2054,7 +2095,9 @@ export class Core {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureNodeEditable(state, nodeId);
-      this.writeDoneStateDirect(state, nodeId, cycleNodeDoneState);
+      this.writeDoneStateDirect(state, nodeId, (node, tagDriven) => {
+        applyCompletedAtTransition(node, { tagDriven, transition: 'cycle' });
+      });
       return focus(nodeId);
     });
   }
@@ -2114,7 +2157,9 @@ export class Core {
         const state = this.snapshot();
         if (!state.nodes[nodeId]) continue;
         ensureNodeEditable(state, nodeId);
-        this.writeDoneStateDirect(state, nodeId, toggleNodeDone);
+        this.writeDoneStateDirect(state, nodeId, (node, tagDriven) => {
+          applyCompletedAtTransition(node, { tagDriven, transition: 'toggle' });
+        });
       }
       return undefined;
     });
@@ -2126,7 +2171,9 @@ export class Core {
         const state = this.snapshot();
         if (!state.nodes[nodeId]) continue;
         ensureNodeEditable(state, nodeId);
-        this.writeDoneStateDirect(state, nodeId, cycleNodeDoneState);
+        this.writeDoneStateDirect(state, nodeId, (node, tagDriven) => {
+          applyCompletedAtTransition(node, { tagDriven, transition: 'cycle' });
+        });
       }
       return undefined;
     });
@@ -3309,7 +3356,7 @@ export class Core {
     });
   }
 
-  convertReferenceToInlineNode(referenceId: string): CommandOutcome {
+  convertReferenceToInlineNode(referenceId: string, replacementId?: string): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureNodeMovable(state, referenceId);
@@ -3322,7 +3369,13 @@ export class Core {
       if (!parentId) throw CoreError.noParent();
       ensureParentMutable(state, parentId);
       const index = childIndex(state, parentId, referenceId) ?? 0;
-      const inlineNodeId = this.createInlineReferenceNodeDirect(state, parentId, index, targetId);
+      const inlineNodeId = this.createInlineReferenceNodeDirect(
+        state,
+        parentId,
+        index,
+        targetId,
+        replacementId,
+      );
       this.removeSubtreeDirect(referenceId);
       return focus(inlineNodeId, {
         parentId,
@@ -3331,7 +3384,11 @@ export class Core {
     });
   }
 
-  restoreInlineReferenceNodeToReference(nodeId: string, targetId: string): CommandOutcome {
+  restoreInlineReferenceNodeToReference(
+    nodeId: string,
+    targetId: string,
+    replacementId?: string,
+  ): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureNodeMovable(state, nodeId);
@@ -3346,7 +3403,7 @@ export class Core {
       if (wouldCreateReferenceCycle(state, parentId, resolvedTargetId)) throw CoreError.referenceCycle();
       ensureParentCanContainChildInstance(state, parentId, resolvedTargetId, nodeId);
       const index = childIndex(state, parentId, nodeId) ?? 0;
-      const referenceId = this.freshId('ref');
+      const referenceId = this.resolveRuntimeNodeId(state, replacementId, 'ref');
       this.loro.createNodeWithId<ReferenceNode>(referenceId, parentId, index, 'reference', (reference) => {
         reference.targetId = resolvedTargetId;
       });
@@ -4486,9 +4543,12 @@ export class Core {
     parentId: string,
     index: number | null | undefined,
     targetId: string,
+    replacementId?: string,
   ) {
     const target = requiredNode(state, targetId);
-    return this.createRichTextNodeDirect(parentId, index, {
+    const inlineNodeId = this.resolveRuntimeNodeId(state, replacementId, 'node');
+    this.loro.createNodeWithId(inlineNodeId, parentId, index, undefined, (node) => {
+      node.content = {
       text: '',
       marks: [],
       inlineRefs: [{
@@ -4496,7 +4556,9 @@ export class Core {
         target: nodeReferenceTarget(targetId),
         displayName: target.content.text || undefined,
       }],
+      };
     });
+    return inlineNodeId;
   }
 
   private createTagDefDirect(name: string, proposedId?: string) {
@@ -5691,32 +5753,6 @@ function focus(nodeId: string, options: FocusOptions = {}): FocusHint {
 
 function nowMs() {
   return Date.now();
-}
-
-// Checkbox click (nodex `resolveCheckboxClick`): toggle undone ↔ done, never
-// removing the checkbox. Tag-driven nodes keep their checkbox via the tag, so
-// undone clears the timestamp entirely; manual nodes fall back to the undone
-// sentinel (0) to keep the box visible.
-function toggleNodeDone(node: Node, tagDriven: boolean) {
-  if (nodeIsDone(node)) {
-    if (tagDriven) delete node.completedAt;
-    else node.completedAt = 0;
-  } else {
-    node.completedAt = nowMs();
-  }
-}
-
-// Cmd+Enter cycle (nodex `resolveCmdEnterCycle`): tag-driven nodes are a 2-state
-// toggle (undone ↔ done); manual nodes cycle no-checkbox → undone → done → none.
-function cycleNodeDoneState(node: Node, tagDriven: boolean) {
-  if (tagDriven) {
-    if (nodeIsDone(node)) delete node.completedAt;
-    else node.completedAt = nowMs();
-    return;
-  }
-  if (node.completedAt === undefined) node.completedAt = 0;
-  else if (node.completedAt === 0) node.completedAt = nowMs();
-  else delete node.completedAt;
 }
 
 function freshId(prefix: string): string {

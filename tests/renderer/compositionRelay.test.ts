@@ -82,7 +82,6 @@ function baseUiState(): UiState {
     focusRequest: null,
     pendingInputChar: null,
     pendingReferenceConversion: null,
-    pendingReferenceTypeAhead: null,
     expanded: new Set(),
     expandedHiddenFields: new Set(),
     editingDescriptionId: null,

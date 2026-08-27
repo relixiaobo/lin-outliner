@@ -14,6 +14,16 @@ export function triggerOwnsWholeText(text: string, trigger: Pick<EditorTrigger, 
   return text.slice(0, trigger.from).trim() === '' && text.slice(trigger.to).trim() === '';
 }
 
+export function referenceTriggerFromSlash(trigger: EditorTrigger): EditorTrigger {
+  return {
+    kind: '@',
+    query: '',
+    from: trigger.from,
+    to: trigger.from + 1,
+    anchor: trigger.anchor,
+  };
+}
+
 function isEmptyFieldNameError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.includes('field name cannot be empty');
@@ -59,13 +69,29 @@ export async function createPlaceholderInlineField(
   parentId: NodeId,
   index: number | null,
   fieldType: FieldType,
+  id?: NodeId,
 ): Promise<CommandResult> {
   try {
-    return await api.createInlineField(parentId, index, '', fieldType);
+    return await api.createInlineField(parentId, index, '', fieldType, undefined, id);
   } catch (error) {
     if (!isEmptyFieldNameError(error)) throw error;
     return clearFallbackFieldName(
-      await api.createInlineField(parentId, index, LEGACY_EMPTY_FIELD_FALLBACK_NAME, fieldType),
+      await api.createInlineField(
+        parentId,
+        index,
+        LEGACY_EMPTY_FIELD_FALLBACK_NAME,
+        fieldType,
+        undefined,
+        id,
+      ),
     );
   }
+}
+
+export function fieldDefinitionIdFromInlineFieldOutcome(
+  outcome: CommandResult,
+  entryId: NodeId,
+): NodeId | null {
+  const entry = nodeFromProjectionUpdate(outcome.update, entryId);
+  return entry?.type === 'fieldEntry' && entry.fieldDefId ? entry.fieldDefId : null;
 }

@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 describe('ReferenceSelector reachability transition', () => {
-  test('keeps cold candidates inert and resets selection before cycle sorting changes', async () => {
+  test('keeps cold candidates inert without reordering or replacing the selected candidate', async () => {
     const index = buildIndex(referenceProjection());
     let closeCalls = 0;
     let runCalls = 0;
@@ -52,12 +52,12 @@ describe('ReferenceSelector reachability transition', () => {
 
     const resolvedNodes = candidateButtons(rendered.document);
     expect(resolvedNodes.map(candidateLabel)).toEqual([
-      'Candidate safe',
       'Candidate beta',
+      'Candidate safe',
     ]);
-    expect(resolvedNodes[0]!.getAttribute('aria-disabled')).toBeNull();
-    expect(resolvedNodes[1]!.getAttribute('aria-disabled')).toBe('true');
-    expect(resolvedNodes[1]!.textContent).toContain('Would create a display cycle');
+    expect(resolvedNodes[0]!.getAttribute('aria-disabled')).toBe('true');
+    expect(resolvedNodes[1]!.getAttribute('aria-disabled')).toBeNull();
+    expect(resolvedNodes[0]!.textContent).toContain('Would create a display cycle');
     expect(rendered.document.querySelector('[data-selected="true"]')?.textContent)
       .toContain('Candidate safe');
   });

@@ -3032,7 +3032,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           if (!node.parentId) return;
           const parent = nodes.get(node.parentId);
           const index = parent?.children.indexOf(node.id) ?? -1;
-          const inlineId = createNode(node.parentId, index < 0 ? null : index, '', { showCheckbox: false });
+          const inlineId = createNode(
+            node.parentId,
+            index < 0 ? null : index,
+            '',
+            { showCheckbox: false },
+            typeof instruction.replacementId === 'string' ? instruction.replacementId : undefined,
+          );
           const inline = nodes.get(inlineId)!;
           inline.content = {
             text: '', marks: [],
@@ -3045,7 +3051,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const index = parent?.children.indexOf(node.id) ?? -1;
           createNode(node.parentId, index < 0 ? null : index, referenceTarget?.content.text ?? '', {
             type: 'reference', targetId: referenceTarget?.id ?? referenceTargetId, showCheckbox: false,
-          });
+          }, typeof instruction.replacementId === 'string' ? instruction.replacementId : undefined);
           removeNode(node.id);
         }
       } else if (instruction.kind === 'view') {
@@ -3535,6 +3541,17 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             request.requestId,
             request.command,
             applyMockDiff(input.diff as MockDiff, input.acknowledgeDestructive === true),
+          );
+        }
+        if (request.command === 'commit') {
+          const diff = previewMockChangeSet(input.changeSet as MockChangeSet);
+          if (diff.destructive.length > 0) {
+            throw new Error('Direct commit does not accept destructive ChangeSets.');
+          }
+          return outlineSuccess(
+            request.requestId,
+            request.command,
+            applyMockDiff(diff, false),
           );
         }
         if (request.command === 'undo' || request.command === 'redo') {
@@ -6664,6 +6681,76 @@ export async function appliedOutlineOperations(page: Page, fromCall = 0): Promis
     if (call.cmd === 'outline/commit') return input.changeSet?.operations ?? [];
     return [];
   });
+}
+
+export interface OutlineMutationMatch {
+  instructionKind?: string;
+  op?: string;
+}
+
+/**
+ * Holds the first matching renderer mutation before it reaches the mock
+ * Runtime. Tests can assert the complete optimistic frame, then release the
+ * exact request and verify authoritative settlement without timing windows.
+ */
+export async function holdOutlineMutation(
+  page: Page,
+  match: OutlineMutationMatch = {},
+): Promise<() => Promise<void>> {
+  const gateId = `outline-mutation-${Date.now()}-${Math.random()}`;
+  await page.evaluate(({ gateId, match }) => {
+    const win = window as E2EWindow & {
+      __outlineMutationGates?: Record<string, () => void>;
+    };
+    const outline = win.lin?.outline;
+    if (!outline) throw new Error('Missing Outline bridge');
+    const originalRequest = outline.request;
+    let releaseGate = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    win.__outlineMutationGates ??= {};
+    win.__outlineMutationGates[gateId] = releaseGate;
+    let held = false;
+
+    outline.request = async (request) => {
+      const input = request.input as {
+        changeSet?: { operations?: Array<Record<string, unknown>> };
+        diff?: { normalizedChangeSet?: { operations?: Array<Record<string, unknown>> } };
+      };
+      const operations = request.command === 'commit'
+        ? input.changeSet?.operations ?? []
+        : input.diff?.normalizedChangeSet?.operations ?? [];
+      const matches = !held
+        && (request.command === 'apply' || request.command === 'commit')
+        && operations.some((operation) => (
+          (!match.op || operation.op === match.op)
+          && (!match.instructionKind || (
+            Array.isArray(operation.changes)
+            && operation.changes.some((change) => (
+              typeof change === 'object'
+              && change !== null
+              && (change as Record<string, unknown>).kind === match.instructionKind
+            ))
+          ))
+        ));
+      if (matches) {
+        held = true;
+        await gate;
+      }
+      return originalRequest(request);
+    };
+  }, { gateId, match });
+
+  return async () => {
+    await page.evaluate((id) => {
+      const win = window as E2EWindow & {
+        __outlineMutationGates?: Record<string, () => void>;
+      };
+      win.__outlineMutationGates?.[id]?.();
+      if (win.__outlineMutationGates) delete win.__outlineMutationGates[id];
+    }, gateId);
+  };
 }
 
 export async function clipboardText(page: Page) {

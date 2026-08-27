@@ -230,6 +230,88 @@ describe('renderer Outline intents', () => {
     expect(firstUpdate(harness.changeSets[2]!)).toEqual({ kind: 'checkbox', visible: false });
   });
 
+  test('creates and converts unchecked checkbox rows atomically', async () => {
+    const harness = await createHarness([
+      node('root', { children: ['target'] }),
+      node('target', { parentId: 'root', content: rich('/checkbox') }),
+    ]);
+
+    await outlineDocumentApi.createCheckboxNode('root', 1, rich('Created'), 'created-checkbox');
+    await outlineDocumentApi.convertNodeToCheckbox('target', rich('Converted'));
+
+    expect(harness.changeSets[0]!.operations).toEqual([{
+      op: 'create',
+      placement: { kind: 'index', parent: oneId('root'), index: 1 },
+      nodes: [{
+        id: 'created-checkbox',
+        content: rich('Created'),
+        children: [],
+        checkbox: true,
+        done: false,
+      }],
+    }]);
+    expect(harness.changeSets[1]!.operations).toEqual([{
+      op: 'update',
+      targets: oneId('target'),
+      changes: [
+        { kind: 'content', value: rich('Converted') },
+        { kind: 'checkbox', visible: true },
+      ],
+    }]);
+  });
+
+  test('replaces tag trigger content and applies an existing tag atomically', async () => {
+    const harness = await createHarness([
+      node('root', { children: ['target'] }),
+      node('target', { parentId: 'root', content: rich('Task #project') }),
+      node('tag:project', { type: 'tagDef', content: rich('project') }),
+    ]);
+
+    await outlineDocumentApi.applyTagWithContent('target', 'tag:project', rich('Task '));
+
+    expect(harness.changeSets[0]!.operations).toEqual([{
+      op: 'update',
+      targets: oneId('target'),
+      changes: [
+        { kind: 'content', value: rich('Task ') },
+        { kind: 'tag', action: 'add', tag: oneId('tag:project') },
+      ],
+    }]);
+  });
+
+  test('ensures a renderer-reserved tag and applies it with trigger content in one ChangeSet', async () => {
+    const harness = await createHarness([
+      node('root', { children: ['target'] }),
+      node('target', { parentId: 'root', content: rich('#new') }),
+    ]);
+
+    await outlineDocumentApi.createTagAndApplyWithContent(
+      'target',
+      'new',
+      rich(''),
+      'node:reserved-tag',
+    );
+
+    expect(harness.changeSets[0]!.operations).toEqual([
+      {
+        op: 'ensure',
+        resource: 'definition',
+        definitionType: 'tag',
+        id: 'node:reserved-tag',
+        name: 'new',
+        bind: 'tag',
+      },
+      {
+        op: 'update',
+        targets: oneId('target'),
+        changes: [
+          { kind: 'content', value: rich('') },
+          { kind: 'tag', action: 'add', tag: { binding: 'tag' } },
+        ],
+      },
+    ]);
+  });
+
   test('reads desktop backlinks from the dedicated Projection collection', async () => {
     await createHarness([node('target')], [{
       targetId: 'target', sourceId: 'source', referenceId: 'reference', kind: 'tree',

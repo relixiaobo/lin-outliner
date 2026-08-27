@@ -1,6 +1,101 @@
 import type { NodeId, NodeProjection } from '../api/types';
-import type { TrailingDraftPlacement } from './document';
+import type { PendingStructuralChange, TrailingDraftPlacement } from './document';
 import type { OutlinerRowItem } from './outlinerRows';
+
+export interface PendingRowPlacement {
+  kind: 'insert' | 'replace';
+  index: number;
+  referenceIndex: number | null;
+}
+
+export function resolvePendingRowPlacement<Row>(params: {
+  rows: readonly Row[];
+  change: Pick<PendingStructuralChange, 'id' | 'parentId' | 'beforeId' | 'afterId'>;
+  matches: (row: Row, id: NodeId, parentId: NodeId) => boolean;
+  fallbackIndex: (rows: readonly Row[], parentId: NodeId) => number | null;
+  afterAnchorIndex?: (rows: readonly Row[], anchorIndex: number) => number;
+}): PendingRowPlacement | null {
+  const { rows, change, matches } = params;
+  const existingIndex = rows.findIndex((row) => matches(row, change.id, change.parentId));
+  if (existingIndex >= 0) {
+    return { kind: 'replace', index: existingIndex, referenceIndex: existingIndex };
+  }
+  if (change.beforeId) {
+    const anchorIndex = rows.findIndex((row) => matches(row, change.beforeId!, change.parentId));
+    if (anchorIndex >= 0) {
+      return { kind: 'insert', index: anchorIndex, referenceIndex: anchorIndex };
+    }
+  }
+  if (change.afterId) {
+    const anchorIndex = rows.findIndex((row) => matches(row, change.afterId!, change.parentId));
+    if (anchorIndex >= 0) {
+      return {
+        kind: 'insert',
+        index: params.afterAnchorIndex?.(rows, anchorIndex) ?? anchorIndex + 1,
+        referenceIndex: anchorIndex,
+      };
+    }
+  }
+  const fallbackIndex = params.fallbackIndex(rows, change.parentId);
+  return fallbackIndex === null
+    ? null
+    : { kind: 'insert', index: fallbackIndex, referenceIndex: fallbackIndex < rows.length ? fallbackIndex : null };
+}
+
+export function applyPendingRowPlacement<Row>(
+  rows: readonly Row[],
+  row: Row,
+  placement: PendingRowPlacement,
+): Row[] {
+  return applyPendingRowsPlacement(rows, [row], placement);
+}
+
+export function applyPendingRowsPlacement<Row>(
+  rows: readonly Row[],
+  pendingRows: readonly Row[],
+  placement: PendingRowPlacement,
+): Row[] {
+  return placement.kind === 'replace'
+    ? [...rows.slice(0, placement.index), ...pendingRows, ...rows.slice(placement.index + 1)]
+    : [...rows.slice(0, placement.index), ...pendingRows, ...rows.slice(placement.index)];
+}
+
+export function pendingStructuralProjectionSuppressions(
+  changes: readonly Pick<PendingStructuralChange, 'id' | 'parentId' | 'sourceParentId'>[],
+  parentId: NodeId,
+  pendingRemovalIds: ReadonlySet<NodeId>,
+): ReadonlySet<NodeId> {
+  const sourceIds = changes
+    .filter((change) => change.sourceParentId === parentId)
+    .map((change) => change.id);
+  if (sourceIds.length === 0) return pendingRemovalIds;
+  return new Set([...pendingRemovalIds, ...sourceIds]);
+}
+
+export function pendingStructuralRow(
+  change: PendingStructuralChange,
+  existsInProjection: boolean,
+): OutlinerRowItem {
+  if (change.presentation === 'field') {
+    return {
+      id: change.id,
+      type: 'field',
+      slot: {
+        id: change.id,
+        fieldDefId: change.resolvedFieldDefId?.current ?? `pending-field-def:${change.id}`,
+        source: 'own',
+        entryId: change.id,
+      },
+    };
+  }
+  return {
+    id: change.id,
+    type: 'content',
+    ...(!existsInProjection ? { draft: true } : {}),
+    beforeId: change.beforeId,
+    afterId: change.afterId,
+  };
+}
 
 export function trailingDraftPlacementMatches(params: {
   placement: TrailingDraftPlacement | null | undefined;
@@ -40,6 +135,29 @@ export function insertTrailingDraftRow(
   const index = rows.findIndex((row) => row.id === afterId);
   if (index < 0) return [...rows, draftRow];
   return [...rows.slice(0, index + 1), draftRow, ...rows.slice(index + 1)];
+}
+
+export function insertPendingStructuralRow(
+  rows: readonly OutlinerRowItem[],
+  pendingRow: OutlinerRowItem,
+  beforeId: NodeId | null,
+  afterId: NodeId | null,
+): OutlinerRowItem[] {
+  const placement = resolvePendingRowPlacement({
+    rows,
+    change: {
+      id: pendingRow.id,
+      parentId: '',
+      beforeId,
+      afterId,
+    },
+    matches: (row, id) => row.id === id,
+    fallbackIndex: (currentRows) => {
+      const trailingIndex = currentRows.findIndex((row) => row.type === 'content' && row.draft);
+      return trailingIndex >= 0 ? trailingIndex : currentRows.length;
+    },
+  });
+  return placement ? applyPendingRowPlacement(rows, pendingRow, placement) : [...rows];
 }
 
 export function draftCreateIndex(parent: NodeProjection | undefined, afterId: NodeId | null): number | null {

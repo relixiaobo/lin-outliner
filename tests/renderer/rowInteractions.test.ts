@@ -43,6 +43,7 @@ import {
   previousVisibleRowId,
 } from '../../src/renderer/ui/interactions/outlinerStructure';
 import {
+  optimisticBatchMovePlacements,
   resolveOutlinerDropAnchor,
   resolveOutlinerDropBatchMove,
   resolveOutlinerDropMove,
@@ -1477,7 +1478,7 @@ describe('row interaction resolvers', () => {
     const children = new Map([
       ['parent', ['a', 'b', 'c', 'd']],
     ]);
-    expect(resolveOutlinerDropBatchMove({
+    const moveLater = resolveOutlinerDropBatchMove({
       dragNodeIds: ['a', 'b'],
       targetNodeId: 'd',
       targetParentId: 'parent',
@@ -1487,9 +1488,18 @@ describe('row interaction resolvers', () => {
       targetIsExpanded: false,
       parentIdForNode: (id) => parents.get(id),
       childrenForParent: (id) => children.get(id) ?? [],
-    })?.moves).toEqual([
+    });
+    expect(moveLater?.moves).toEqual([
       { nodeId: 'b', parentId: 'parent', index: 2 },
       { nodeId: 'a', parentId: 'parent', index: 1 },
+    ]);
+    expect(optimisticBatchMovePlacements({
+      moves: moveLater?.moves ?? [],
+      parentIdForNode: (id) => parents.get(id),
+      childrenForParent: (id) => children.get(id) ?? [],
+    })).toEqual([
+      { id: 'a', sourceParentId: 'parent', targetParentId: 'parent', afterId: 'c' },
+      { id: 'b', sourceParentId: 'parent', targetParentId: 'parent', afterId: 'a' },
     ]);
 
     expect(resolveOutlinerDropBatchMove({

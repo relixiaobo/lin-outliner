@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom';
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import {
   dateFieldEndpointDate,
   dateFieldEndpointHasTime,
@@ -124,7 +124,7 @@ export function DateValuePicker({
     width: 256,
   });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const next = dateDraftFromValue(value);
     setIncludeEnd(next.includeEnd);
     setStartDraft(allowTime ? next.start : dateFieldEndpointDate(next.start));
@@ -139,7 +139,7 @@ export function DateValuePicker({
   }, [allowRecurrence, allowTime, value]);
 
   // Re-centre the calendar on the value's month each time the popover opens.
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return;
     const date = parseIsoLocalDate(dateFieldEndpointDate(startDraft || today));
     if (!date) return;

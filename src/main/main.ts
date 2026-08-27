@@ -447,10 +447,12 @@ const APP_ICON_PNG_PATH = app.isPackaged
   : join(__dirname, '../../build/icon.png');
 const outlineRuntimeRoot = join(resolvedUserDataDir, 'outline-runtime');
 const outlineContentRoot = join(resolvedUserDataDir, 'content');
+const outlineDevelopmentSessionId = app.isPackaged ? undefined : `desktop:${randomUUID()}`;
 const outlineClientSupervisor = new OutlineClientSupervisor({
   root: outlineRuntimeRoot,
   contentRoot: outlineContentRoot,
   launch: desktopOutlineRuntimeLaunch(outlineRuntimeRoot, outlineContentRoot),
+  ...(outlineDevelopmentSessionId ? { expectedDevelopmentSessionId: outlineDevelopmentSessionId } : {}),
   origin: 'desktop',
 });
 const desktopOutlineClient = new DesktopOutlineClient({

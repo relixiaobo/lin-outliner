@@ -122,11 +122,20 @@ export class OutlineClient {
 
   async requestRuntimeRetirement(
     instanceId: string,
-    replacementContractDigest: string,
+    replacement: {
+      readonly contractDigest: string;
+      readonly developmentSessionId?: string;
+    },
     signal?: AbortSignal,
   ): Promise<boolean> {
     const lifetime = createRequestLifetime(signal, this.requestTimeoutMs);
-    const body = JSON.stringify({ instanceId, replacementContractDigest });
+    const body = JSON.stringify({
+      instanceId,
+      replacementContractDigest: replacement.contractDigest,
+      ...(replacement.developmentSessionId ? {
+        replacementDevelopmentSessionId: replacement.developmentSessionId,
+      } : {}),
+    });
     try {
       const response = await this.openRequest({
         method: 'POST',
