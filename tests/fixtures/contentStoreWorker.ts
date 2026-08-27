@@ -9,6 +9,16 @@ try {
   if (action === 'admit') {
     const lease = await store.admitBytes(Buffer.from(value ?? '', 'utf8'));
     process.stdout.write(`${JSON.stringify(lease)}\n`);
+  } else if (action === 'hold-before-claim') {
+    const byteLength = Number(value);
+    if (!Number.isSafeInteger(byteLength) || byteLength < 1) {
+      throw new Error('hold-before-claim requires a positive byte length.');
+    }
+    await store.admit((async function* () {
+      yield Buffer.alloc(byteLength, 0x61);
+      process.stdout.write(`${JSON.stringify({ ready: true, byteLength })}\n`);
+      await new Promise<never>(() => undefined);
+    })());
   } else if (action === 'retain') {
     if (!namespace || !anchorId) throw new Error('retain requires namespace and anchor id.');
     const lease = await store.admitBytes(Buffer.from(value ?? '', 'utf8'));

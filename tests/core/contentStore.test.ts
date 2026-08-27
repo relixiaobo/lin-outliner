@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -58,6 +60,55 @@ describe('ContentStore', () => {
     expect(layout).toEqual(expect.arrayContaining(['blobs', 'quarantine', 'staging', 'state.sqlite']));
     expect(layout).not.toContain('content.sqlite');
     expect(layout).not.toContain('revisions');
+  });
+
+  test('retains live pre-claim staging and reclaims it after the writer is killed', async () => {
+    const root = await makeRoot();
+    const byteLength = 1024 * 1024;
+    const worker = spawn(process.execPath, [
+      path.join(import.meta.dir, '..', 'fixtures', 'contentStoreWorker.ts'),
+      'hold-before-claim',
+      root,
+      String(byteLength),
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    let concurrent: ContentStore | undefined;
+    worker.stderr.setEncoding('utf8');
+    worker.stderr.on('data', (chunk: string) => { stderr += chunk; });
+
+    try {
+      expect(await waitForWorkerReady(worker, () => stderr)).toEqual({ ready: true, byteLength });
+      const stagingRoot = path.join(root, 'staging');
+      const [staged] = await readdir(stagingRoot);
+      expect(staged).toMatch(/^admit-[0-9a-f-]+\.tmp$/u);
+      expect((await stat(path.join(stagingRoot, staged!))).size).toBe(byteLength);
+
+      concurrent = await ContentStore.open(root);
+      expect(await readdir(stagingRoot)).toEqual([staged!]);
+
+      const exited = once(worker, 'exit');
+      worker.kill('SIGKILL');
+      await exited;
+
+      expect(await concurrent.collectGarbage()).toEqual({ revisionCount: 0, byteLength: 0 });
+      expect(await readdir(stagingRoot)).toEqual([]);
+      concurrent.close();
+
+      const recovered = await ContentStore.open(root);
+      expect(await readdir(stagingRoot)).toEqual([]);
+      expect(await recovered.collectGarbage()).toEqual({ revisionCount: 0, byteLength: 0 });
+      const database = new Database(recovered.databasePath);
+      expect(database.query('SELECT COUNT(*) AS count FROM admission_staging').get()).toEqual({ count: 0 });
+      database.close();
+      recovered.close();
+    } finally {
+      if (worker.exitCode === null && worker.signalCode === null) {
+        const exited = once(worker, 'exit');
+        worker.kill('SIGKILL');
+        await exited;
+      }
+      concurrent?.close();
+    }
   });
 
   test('repairs publication interrupted after rename without fabricating an admission lease', async () => {
@@ -241,4 +292,39 @@ async function revisionFiles(root: string): Promise<readonly string[]> {
     for (const entry of await readdir(path.join(revisionsRoot, prefix))) result.push(`${prefix}/${entry}`);
   }
   return result.sort();
+}
+
+async function waitForWorkerReady(
+  worker: ReturnType<typeof spawn>,
+  stderr: () => string,
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let stdout = '';
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`ContentStore staging worker did not become ready: ${stderr()}`));
+    }, 5_000);
+    const onData = (chunk: Buffer | string) => {
+      stdout += chunk.toString();
+      const newline = stdout.indexOf('\n');
+      if (newline < 0) return;
+      cleanup();
+      try {
+        resolve(JSON.parse(stdout.slice(0, newline)));
+      } catch (error) {
+        reject(error);
+      }
+    };
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      cleanup();
+      reject(new Error(`ContentStore staging worker exited before ready (${code ?? signal}): ${stderr()}`));
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      worker.stdout?.off('data', onData);
+      worker.off('exit', onExit);
+    };
+    worker.stdout?.on('data', onData);
+    worker.once('exit', onExit);
+  });
 }

@@ -54,6 +54,20 @@ interface PublicationRow extends RevisionRow {
   readonly temp_path: string;
 }
 
+interface AdmissionStageRow {
+  readonly stage_id: string;
+  readonly owner_pid: number;
+  readonly owner_token: string;
+  readonly created_at: number;
+  readonly updated_at: number;
+}
+
+interface AdmissionStage {
+  readonly stageId: string;
+  readonly ownerToken: string;
+  readonly tempPath: string;
+}
+
 interface AnchorRow {
   readonly anchor_id: string;
   readonly namespace: string;
@@ -135,8 +149,14 @@ export class ContentStore {
     options: { readonly leaseId?: string; readonly leaseMs?: number } = {},
   ): Promise<ContentAdmissionLease> {
     this.assertOpen();
-    const staged = path.join(this.stagingRoot, `admit-${crypto.randomUUID()}.tmp`);
-    const handle = await open(staged, 'wx', 0o600);
+    const stage = await this.beginAdmissionStage();
+    let handle: FileHandle;
+    try {
+      handle = await open(stage.tempPath, 'wx', 0o600);
+    } catch (error) {
+      await this.forgetAdmissionStage(stage).catch(() => undefined);
+      throw error;
+    }
     const hash = createHash('sha256');
     let byteLength = 0;
     try {
@@ -149,9 +169,10 @@ export class ContentStore {
       }
       await handle.sync();
       await handle.close();
+      await this.touchAdmissionStage(stage);
     } catch (error) {
       await handle.close().catch(() => undefined);
-      await rm(staged, { force: true }).catch(() => undefined);
+      await this.cleanupAdmissionStage(stage).catch(() => undefined);
       throw error;
     }
 
@@ -161,16 +182,16 @@ export class ContentStore {
     try {
       for (let attempt = 0; attempt < PUBLICATION_WAIT_ATTEMPTS; attempt += 1) {
         const token = crypto.randomUUID();
-        const claim = await this.claimPublication(reference, staged, token);
+        const claim = await this.claimPublication(reference, stage, token);
         if (claim === 'owned') {
           await this.options.hooks?.afterPublicationClaim?.();
-          await this.publishOwned(reference, staged, token, leaseId, expiresAt);
+          await this.publishOwned(reference, stage.tempPath, token, leaseId, expiresAt);
           return { leaseId, byteLength, expiresAt: expiresAt.toISOString() };
         }
         if (claim === 'published') {
           await this.insertAdmissionLease(leaseId, reference, expiresAt);
           await this.verifyReference(reference);
-          await rm(staged, { force: true });
+          await this.cleanupAdmissionStage(stage).catch(() => undefined);
           return { leaseId, byteLength, expiresAt: expiresAt.toISOString() };
         }
         await this.repairStalePublication(reference.digest);
@@ -178,7 +199,7 @@ export class ContentStore {
       }
       throw new ContentStateError('Content publication did not settle.', 'unavailable');
     } catch (error) {
-      await rm(staged, { force: true }).catch(() => undefined);
+      await this.cleanupAdmissionStage(stage).catch(() => undefined);
       throw error;
     }
   }
@@ -404,6 +425,7 @@ export class ContentStore {
   }
 
   async collectGarbage(): Promise<ContentGarbageCollectionResult> {
+    await this.repairAdmissionStages();
     const now = this.now().getTime();
     const selected = await this.immediateTransaction(() => {
       this.database.prepare('DELETE FROM admission_leases WHERE expires_at <= ?').run(now);
@@ -476,6 +498,13 @@ export class ContentStore {
         owner_token TEXT,
         updated_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS admission_staging(
+        stage_id TEXT PRIMARY KEY,
+        owner_pid INTEGER NOT NULL,
+        owner_token TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS publication_journal(
         digest TEXT PRIMARY KEY REFERENCES exact_revisions(digest) ON DELETE CASCADE,
         byte_length INTEGER NOT NULL,
@@ -522,7 +551,7 @@ export class ContentStore {
 
   private async claimPublication(
     reference: PhysicalRevisionReference,
-    tempPath: string,
+    stage: AdmissionStage,
     token: string,
   ): Promise<'owned' | 'published' | 'waiting'> {
     return this.immediateTransaction(() => {
@@ -544,7 +573,13 @@ export class ContentStore {
       this.database.prepare(`
         INSERT INTO publication_journal(digest, byte_length, owner_pid, owner_token, temp_path, claimed_at)
         VALUES (?, ?, ?, ?, ?, ?)
-      `).run(reference.digest, reference.byteLength, process.pid, token, tempPath, now);
+      `).run(reference.digest, reference.byteLength, process.pid, token, stage.tempPath, now);
+      const transferred = this.database.prepare(`
+        DELETE FROM admission_staging WHERE stage_id = ? AND owner_token = ?
+      `).run(stage.stageId, stage.ownerToken).changes;
+      if (transferred !== 1) {
+        throw new ContentStateError('Content admission staging ownership changed.', 'unavailable');
+      }
       return 'owned';
     });
   }
@@ -631,6 +666,8 @@ export class ContentStore {
   }
 
   private async repairInterruptedState(): Promise<void> {
+    await this.repairAdmissionStages();
+
     const publications = await this.readTransaction(() => this.database.prepare(`
       SELECT r.digest, r.byte_length, r.state, r.owner_pid, r.owner_token, r.updated_at, p.temp_path
       FROM exact_revisions r JOIN publication_journal p ON p.digest = r.digest
@@ -644,6 +681,71 @@ export class ContentStore {
     for (const row of deletions) {
       await this.finishDeletion({ digest: row.digest, byteLength: row.byte_length });
     }
+  }
+
+  private async repairAdmissionStages(): Promise<void> {
+    const admissionStages = await this.readTransaction(() => this.database.prepare(`
+      SELECT stage_id, owner_pid, owner_token, created_at, updated_at
+      FROM admission_staging ORDER BY stage_id
+    `).all<AdmissionStageRow>());
+    for (const row of admissionStages) await this.repairAdmissionStage(row);
+  }
+
+  private async beginAdmissionStage(): Promise<AdmissionStage> {
+    const stageId = crypto.randomUUID();
+    const ownerToken = crypto.randomUUID();
+    const now = this.now().getTime();
+    await this.immediateTransaction(() => {
+      this.database.prepare(`
+        INSERT INTO admission_staging(stage_id, owner_pid, owner_token, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(stageId, process.pid, ownerToken, now, now);
+    });
+    return {
+      stageId,
+      ownerToken,
+      tempPath: this.admissionStagePath(stageId),
+    };
+  }
+
+  private async touchAdmissionStage(stage: AdmissionStage): Promise<void> {
+    await this.immediateTransaction(() => {
+      const changed = this.database.prepare(`
+        UPDATE admission_staging SET updated_at = ?
+        WHERE stage_id = ? AND owner_pid = ? AND owner_token = ?
+      `).run(this.now().getTime(), stage.stageId, process.pid, stage.ownerToken).changes;
+      if (changed !== 1) {
+        throw new ContentStateError('Content admission staging ownership changed.', 'unavailable');
+      }
+    });
+  }
+
+  private async cleanupAdmissionStage(stage: AdmissionStage): Promise<void> {
+    await rm(stage.tempPath, { force: true });
+    await this.forgetAdmissionStage(stage);
+  }
+
+  private async forgetAdmissionStage(stage: AdmissionStage): Promise<void> {
+    await this.immediateTransaction(() => {
+      this.database.prepare(`
+        DELETE FROM admission_staging WHERE stage_id = ? AND owner_token = ?
+      `).run(stage.stageId, stage.ownerToken);
+    });
+  }
+
+  private async repairAdmissionStage(row: AdmissionStageRow): Promise<void> {
+    const stage: AdmissionStage = {
+      stageId: row.stage_id,
+      ownerToken: row.owner_token,
+      tempPath: this.admissionStagePath(row.stage_id),
+    };
+    if (processIsAlive(row.owner_pid)) return;
+    await rm(stage.tempPath, { force: true });
+    await this.immediateTransaction(() => {
+      this.database.prepare(`
+        DELETE FROM admission_staging WHERE stage_id = ? AND owner_pid = ? AND owner_token = ?
+      `).run(stage.stageId, row.owner_pid, stage.ownerToken);
+    });
   }
 
   private async repairStalePublication(digest: string): Promise<void> {
@@ -747,6 +849,11 @@ export class ContentStore {
     return path.join(this.revisionsRoot, digest.slice(0, 2), `${digest}.blob`);
   }
 
+  private admissionStagePath(stageId: string): string {
+    assertUuid(stageId, 'admission stage');
+    return path.join(this.stagingRoot, `admit-${stageId}.tmp`);
+  }
+
   private assertPublicationTempPath(tempPath: string): void {
     const resolved = path.resolve(tempPath);
     if (resolved !== tempPath
@@ -816,6 +923,12 @@ function assertExactRevisionReference(reference: ExactRevisionReference): void {
 
 function assertDigest(digest: string): void {
   if (!/^[a-f0-9]{64}$/u.test(digest)) throw new Error('Invalid exact revision digest.');
+}
+
+function assertUuid(value: string, kind: string): void {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(value)) {
+    throw new Error(`Invalid ContentStore ${kind} id.`);
+  }
 }
 
 function assertOpaqueId(value: string, kind: string): void {

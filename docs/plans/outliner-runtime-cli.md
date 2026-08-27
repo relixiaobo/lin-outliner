@@ -1023,6 +1023,16 @@ Successful apply changes only which live Nodes and recovery patches reference
 the same AssetRecord. Failed or abandoned apply leaves the Outline lease until
 expiry, so retries do not race AssetRecord collection.
 
+ContentStore persists admission-staging ownership before creating or writing
+the temporary file. The row records a stage ID, writer PID, opaque owner token,
+and timestamps; the file path is derived internally from the stage ID. Claiming
+publication transfers ownership from that row to the per-digest publication
+journal in the same SQLite transaction. Cleanup unlinks before deleting the row.
+On startup, a live writer's staging file is retained, while staging whose writer
+is proven dead is unlinked and settled. Central GC performs the same
+dead-writer-only repair so a surviving Host need not restart after another Host
+dies. No untracked pre-claim file or staging directory sweep is part of recovery.
+
 Capture settlement is anchor-first across the ContentStore/Runtime-log boundary.
 Runtime holds its namespace mutation/reconciliation barrier from before anchor
 creation through AssetRecord stage commit or failed-commit release. If the

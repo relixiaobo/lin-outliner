@@ -43,7 +43,8 @@ asset IDs on `image` / `attachment` Nodes. Runtime owns Outline `AssetRecord`
 metadata, staging leases, live-Node and recovery-patch reachability, and the
 transaction that changes those facts. The neutral `ContentStore` stores immutable
 exact revisions, admission leases, opaque mechanical retention anchors,
-publication/deletion journals, physical-integrity quarantine, and physical GC
+admission-staging/publication/deletion journals, physical-integrity quarantine,
+and physical GC
 under the explicit `{userData}/content/` root. It does not know Outline or Agent
 identity, filenames, MIME presentation, document reachability, or recovery
 policy.
@@ -86,12 +87,22 @@ enumeration against the stored namespace/record coordinate, then releases only
 absent Outline anchors; unavailable, corrupt, missing, or mismatched state
 releases none.
 
+Before creating or writing an admission staging file, ContentStore persists its
+stage ID, writer PID, opaque owner token, and timestamps. A publication claim
+atomically transfers that staging ownership into the per-digest publication
+journal. Normal cleanup unlinks the staging file before removing its ownership
+row. Startup preserves staging owned by a live process and reclaims a file only
+after its recorded writer is proven dead, so concurrent stores cannot delete an
+active stream and a crash before publication cannot leak untracked bytes. The
+same dead-writer repair runs during central GC, so cleanup does not depend on all
+surviving Host processes restarting.
+
 Record deletion uses the opposite order: Runtime durably removes an unreachable
 AssetRecord, then releases its anchor. ContentStore GC selects only published
 revisions with no active admission lease and no anchor in one SQLite transaction,
 marks them `deleting`, unlinks them, and settles the deletion journal. Admission
 and anchor cloning cannot attach to a deleting revision. Startup repairs
-interrupted publication and deletion states.
+interrupted admission staging, publication, and deletion states.
 
 Recovery policy remains Runtime-owned, but physical accounting remains neutral:
 Runtime supplies the exact-revision handles for live and recovery-protected
