@@ -8,6 +8,7 @@ export type ThreadComposerHistoryDirection = 'older' | 'newer';
 
 export type ThreadComposerHistoryState =
   | { readonly kind: 'idle' }
+  | { readonly kind: 'scratch' }
   | {
       readonly kind: 'browsing';
       readonly selectedItemId: string;
@@ -26,6 +27,7 @@ export type ThreadComposerHistoryTransition<Entry extends { readonly id: string 
   | { readonly kind: 'restoreScratch'; readonly state: ThreadComposerHistoryState };
 
 export const IDLE_THREAD_COMPOSER_HISTORY_STATE: ThreadComposerHistoryState = Object.freeze({ kind: 'idle' });
+const SCRATCH_THREAD_COMPOSER_HISTORY_STATE: ThreadComposerHistoryState = Object.freeze({ kind: 'scratch' });
 
 export function selectReaderComposerHistoryEntries(
   turns: readonly Turn[],
@@ -38,7 +40,7 @@ export function navigateThreadComposerHistory<Entry extends { readonly id: strin
   entries: readonly Entry[],
   direction: ThreadComposerHistoryDirection,
 ): ThreadComposerHistoryTransition<Entry> {
-  if (state.kind === 'idle') {
+  if (state.kind === 'idle' || state.kind === 'scratch') {
     if (direction === 'newer' || entries.length === 0) return { kind: 'declined', state };
     return select(entries, entries.length - 1, false);
   }
@@ -62,7 +64,7 @@ export function navigateThreadComposerHistory<Entry extends { readonly id: strin
   }
 
   if (selectedIndex === entries.length - 1) {
-    return { kind: 'restoreScratch', state: IDLE_THREAD_COMPOSER_HISTORY_STATE };
+    return { kind: 'restoreScratch', state: SCRATCH_THREAD_COMPOSER_HISTORY_STATE };
   }
   return select(entries, selectedIndex + 1, false);
 }

@@ -1455,11 +1455,15 @@ History is derived lazily from canonical `reader`-authored `userMessage` Items i
 exact Thread, preserving Turn and within-Turn Item order. The first eligible Up captures
 the complete unsent scratch bundle, selects the newest entry, creates an editable draft
 copy, and places the caret at its end. Up selects older entries, Down selects newer
-entries, Down past the newest restores the exact scratch document and selection, and Up
-past the oldest is a handled no-op. Each visited slot retains its working edits for that
-navigation session. If a selected canonical Item disappears, the next arrow is consumed
-by one deterministic re-anchor: the entry at its prior chronological index, otherwise
-the newest predecessor, otherwise scratch and idle.
+entries, Down past the newest restores the current scratch working document and selection,
+and Up past the oldest is a handled no-op. Scratch remains part of the active navigation
+session: a subsequent Up restores the newest entry's edited working copy, and leaving
+scratch again first preserves any edits made there. Each visited slot retains its working
+edits for that navigation session. The session ends on submit, established clear,
+Thread-view unmount, or a removed selected Item with no surviving history. If a selected
+canonical Item disappears, the next arrow is consumed by one deterministic re-anchor:
+the entry at its prior chronological index, otherwise the newest predecessor, otherwise
+scratch and idle.
 
 A bundle contains the ProseMirror document and selection, ordered structured text/Node/
 file atoms, settled attachments, and renderer-only preview/source/excerpt metadata.

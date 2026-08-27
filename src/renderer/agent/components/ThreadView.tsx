@@ -2278,10 +2278,13 @@ export function ThreadView({
         state: IDLE_THREAD_COMPOSER_HISTORY_STATE,
       };
       composerHistorySessionRef.current = session;
-    } else if (session.state.kind === 'browsing') {
+    } else if (session.state.kind === 'browsing' || session.state.kind === 'scratch') {
       const current = captureVisibleComposerBundle();
       if (!current) return 'declined';
-      session.resources.set(composerHistoryItemSlot(session.state.selectedItemId), current);
+      const currentSlot = session.state.kind === 'browsing'
+        ? composerHistoryItemSlot(session.state.selectedItemId)
+        : COMPOSER_HISTORY_SCRATCH_SLOT;
+      session.resources.set(currentSlot, current);
     }
     if (!session) return 'declined';
 
@@ -2293,8 +2296,11 @@ export function ThreadView({
         session.resources.set(COMPOSER_HISTORY_SCRATCH_SLOT, scratch);
         return 'declined';
       }
-      composerHistorySessionRef.current = null;
-      releaseComposerHistoryUiState(session.resources.releaseAll(mountedScratch.attachments));
+      session.state = transition.state;
+      if (transition.state.kind === 'idle') {
+        composerHistorySessionRef.current = null;
+        releaseComposerHistoryUiState(session.resources.releaseAll(mountedScratch.attachments));
+      }
       return 'performed';
     }
 

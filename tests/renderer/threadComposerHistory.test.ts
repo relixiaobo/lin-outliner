@@ -43,8 +43,11 @@ describe('Agent composer input history', () => {
     const newer = navigateThreadComposerHistory(state, entries, 'newer');
     expect(newer).toMatchObject({ kind: 'select', entry: { id: 'second' } });
     state = navigateThreadComposerHistory(newer.state, entries, 'newer').state;
-    expect(navigateThreadComposerHistory(state, entries, 'newer'))
-      .toMatchObject({ kind: 'restoreScratch', state: { kind: 'idle' } });
+    const scratch = navigateThreadComposerHistory(state, entries, 'newer');
+    expect(scratch).toMatchObject({ kind: 'restoreScratch', state: { kind: 'scratch' } });
+    expect(navigateThreadComposerHistory(scratch.state, entries, 'older'))
+      .toMatchObject({ kind: 'select', entry: { id: 'third' } });
+    expect(navigateThreadComposerHistory(scratch.state, entries, 'newer').kind).toBe('declined');
   });
 
   test('keeps an ID anchor stable when newer accepted inputs arrive', () => {

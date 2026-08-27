@@ -1342,6 +1342,16 @@ test.describe('canonical agent Thread surface', () => {
     await composer.press('ArrowDown');
     await expect(composer).toHaveText('scratch draft');
     expect(await composer.evaluate(() => window.getSelection()?.anchorOffset)).toBe(4);
+    await composer.press('ArrowUp');
+    await expect(composer).toHaveText('Second request edited');
+    await composer.press('ArrowDown');
+    await expect(composer).toHaveText('scratch draft');
+    expect(await composer.evaluate(() => window.getSelection()?.anchorOffset)).toBe(4);
+    await composer.fill('scratch draft edited');
+    await composer.press('ArrowUp');
+    await expect(composer).toHaveText('Second request edited');
+    await composer.press('ArrowDown');
+    await expect(composer).toHaveText('scratch draft edited');
 
     const wrappedDraft = Array.from({ length: 80 }, () => 'soft wrap').join(' ');
     await composer.fill(wrappedDraft);
@@ -1537,6 +1547,15 @@ test.describe('canonical agent Thread surface', () => {
     await composer.focus();
     await composer.press('ArrowUp');
 
+    await expect(thumbnail).toBeVisible();
+    await expect(thumbnail).toHaveAttribute('src', admittedPreviewUrl!);
+    await composer.pressSequentially(' edited');
+    await composer.press('ArrowDown');
+    await expect(composer).toHaveText('');
+    await expect(thumbnail).toHaveCount(0);
+    await composer.press('ArrowUp');
+    await expect(composer).toContainText('Remember this image');
+    await expect(composer).toContainText(' edited');
     await expect(thumbnail).toBeVisible();
     await expect(thumbnail).toHaveAttribute('src', admittedPreviewUrl!);
     expect((await commandCalls(page)).filter((call) => call.cmd.startsWith('attachment-upload/')))
