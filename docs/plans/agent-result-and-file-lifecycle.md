@@ -1,7 +1,7 @@
 # Agent Result And Resource Reference Lifecycle
 
-**Shape:** (a) ONE complete feature in one PR after
-`reference-uri-unification`, #584, and #587 land. The Agent resource-reference
+**Shape:** (a) ONE complete feature in one PR after the reference URI foundation
+(shipped in #590), #584, and #587 land. The Agent resource-reference
 cutover, conversation workspace and final-citation contract, and delegated-
 handoff projection are foundation-first build stages in that PR. #584 separately
 establishes the shared exact-revision store as part of its complete Outliner
@@ -577,7 +577,8 @@ exhausted-settlement degradation.
 The dependency order is fixed:
 
 1. merge this architecture plan;
-2. implement `reference-uri-unification` and delete the retired marker grammar;
+2. use the reference URI foundation shipped in #590; its cutover deleted the
+   retired marker grammar;
 3. #584 rebases and implements neutral exact revisions plus Outline
    AssetRecord references and retention anchors;
 4. after #584 merges, #587 rebases and finishes Composer history over the

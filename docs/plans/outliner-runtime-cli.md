@@ -1281,8 +1281,8 @@ inside the Draft PR settles pure contracts and transaction hooks for review;
 it is not merged as separately released groundwork. Later commits build only on
 that settled shape.
 
-`reference-uri-unification` is a prerequisite. This PR rebases after that
-complete cutover and preserves canonical `[[node://...]]` and
+The reference URI foundation shipped in #590. This PR rebases onto that complete
+cutover and preserves canonical `[[node://...]]` and
 `[[file:///...]]` references through Runtime, CLI, Agent, import, export, and
 Skill paths. It must not restore the retired `kind:label^value` or `file:^path`
 grammar while replacing those consumers.

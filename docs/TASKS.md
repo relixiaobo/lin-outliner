@@ -35,13 +35,14 @@ The flagship (`unified-command-surface`) shipped and the 2026-08-09 audit re-anc
 every stale entry, so the frontier is a set of parallel lanes (detail lives in each item's
 theme-section entry below; this list is the ordering, not a second record):
 
-- **Lane 0 — reference URI foundation, then standalone Outliner Runtime**: first
-  ship [`reference-uri-unification`](plans/reference-uri-unification.md) so every
-  Node/file consumer uses `[[node://...]]` / `[[file:///...]]` without serialized
-  labels or a legacy reader. Then rebase the PM-ratified
+- **Lane 0 — standalone Outliner Runtime after the shipped reference foundation**:
+  [`reference-uri-unification`](plans/archive/reference-uri-unification.md)
+  shipped in #590, so every Node/file consumer now uses `[[node://...]]` /
+  `[[file:///...]]` without serialized labels or a legacy reader. Next, rebase the PM-ratified
   [`outliner-runtime-cli`](plans/outliner-runtime-cli.md) implementation PR #584
-  in the `codex` clone. Its current marker and asset models are superseded; it
-  must return to Draft and wait for that foundation. It remains one complete
+  in the `codex` clone. Its current marker and asset models predate that
+  foundation; the rebase must remove the retired grammar before further review.
+  It remains one complete
   feature: standalone Runtime authority, desktop/CLI protocol cutover,
   transactional recovery, neutral exact-revision ContentStore plus Outline
   AssetRecords and retention anchors, full Agent authority, both Skills, import
@@ -119,24 +120,11 @@ live in `agent-data-model`, `agent-memory-foundations`, and `agent-conversation-
 (authorities). The remaining agent work is the small active/deferred set under **Agent
 capabilities** below — feature-completion tails and standalone items, not a milestone push.
 
-### Shared Reference Foundation
-
-- **[reference-uri-unification](plans/reference-uri-unification.md)** (`draft`,
-  PM-ratified 2026-08-26; plan PR #589; one complete refactor PR) — replace the custom
-  `kind:label^value` and `file:^path` text protocols with canonical URI-only
-  markers: `[[node://<uuid>]]`, explicit system-Node keys such as
-  `[[node://library]]`, and standard `[[file:///absolute/path]]` first, with
-  `thread://` reserved for the later cross-Thread feature. Structured
-  references remain canonical; renderers resolve names; provider/tool text may
-  place readable names beside unchanged URIs. The codec admits schemes per
-  consumer and grants no authority. Implement before #584/#587 continue; both
-  branches then rebase and must not restore the retired grammar.
-
 ### Outliner Runtime And Automation
 
 - **[outliner-runtime-cli](plans/outliner-runtime-cli.md)** (P0, `in-progress`,
-  PM-ratified 2026-08-23; implementation PR #584, codex; reference-URI and
-  shared-content rebase required before further work) — replace every persisted Outliner access path
+  PM-ratified 2026-08-23; implementation PR #584, codex; reference-URI foundation
+  shipped #590, shared-content rebase required before further review) — replace every persisted Outliner access path
   with one standalone local TypeScript Runtime and one versioned contract; make
   desktop and `outline` CLI equal clients; commit document update,
   Operation, recovery patch, Outline asset delta, idempotency result, and Event
@@ -214,7 +202,7 @@ before any directional/security-sensitive build.
   budget only the child-output projection injected into a parent's context.
   The PM-ratified pre-release cut manually resets installed and clone-scoped
   stores; no migration, legacy reader, or automatic deletion path ships.
-  Sequence is fixed: ship reference-URI unification, rebase/land #584, then
+  Sequence is fixed: reference-URI unification shipped #590; rebase/land #584, then
   rebase/land #587, then start this implementation. Scope is rechecked after all
   dependencies land.
 - **[agent-cross-thread-reference](plans/agent-cross-thread-reference.md)**
@@ -619,7 +607,7 @@ Standalone agent items (not part of the program):
   Design folded into the Agent runtime, Thread rendering, and design-system specs.
 - **[agent-composer-input-history](plans/agent-composer-input-history.md)**
   (`in-progress`, ratified 2026-08-25; plan PR #585, Draft implementation PR
-  #587, codex-3; gated on reference-URI unification and #584) — every editable Agent composer
+  #587, codex-3; reference-URI foundation shipped #590, gated on #584) — every editable Agent composer
   recalls reader-authored structured inputs from its exact Thread through
   visual-boundary Up/Down navigation while preserving scratch, selection,
   references, attachments, and reference liveness.
@@ -627,7 +615,7 @@ Standalone agent items (not part of the program):
   trust; the PM-ratified pre-release clean cut manually resets installed and
   clone-scoped stores before validation, so every persisted Item uses the strict
   required-author schema with no `unknown` variant or compatibility reader. The
-  one complete implementation PR must rebase after the URI cutover and #584,
+  one complete implementation PR must rebase onto the URI cutover and after #584,
   preserve structured Node/file references plus attachment history through a
   narrow opaque current-resource adapter without byte copies or digest
   interpretation, and rerun the collision check before finishing shared Agent
@@ -1203,6 +1191,12 @@ CHANGELOG entry and any merged PR, distilled rules in [`lessons.md`](lessons.md)
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **[reference-uri-unification](plans/archive/reference-uri-unification.md)**
+  (codex-4, PR #590, merged 2026-08-27) — Node and file references now share one
+  canonical URI-only codec across rich text, Markdown, Agent outlines, context,
+  search, paste, and Thread rendering; private or malformed identities degrade
+  without entering the public protocol. Repeated deep review closed every
+  reported boundary finding, and the final adversarial matrix found no new issue.
 - **[native-daily-import](plans/archive/native-daily-import.md)** (codex, PR
   #583, merged 2026-08-23) — exact Tana journal dates now import directly into
   canonical Daily Notes while non-date content retains one staging root; preview,

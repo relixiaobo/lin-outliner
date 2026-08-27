@@ -414,7 +414,7 @@ scan, and exact file-scope comparison before implementation.
 
 The dependency order is fixed:
 
-1. `reference-uri-unification` ships the shared URI codec and Node/file cutover.
+1. PR #590 shipped the shared URI codec and Node/file cutover.
 2. #584 ships the neutral exact-revision ContentStore and Outline references.
 3. #587 rebases and ships exact-Thread Composer input history.
 4. `agent-result-and-file-lifecycle` ships Agent resource references, the

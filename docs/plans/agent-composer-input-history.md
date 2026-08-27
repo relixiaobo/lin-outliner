@@ -95,7 +95,7 @@ reader.
   rebases after #584, continues to treat the current managed-resource reference
   as an opaque handle, and does not interpret its digest-shaped implementation
   ID.
-- **CON-8:** `reference-uri-unification` lands before #584 and this feature.
+- **CON-8:** The reference URI foundation shipped in #590 before #584 and this feature.
   Composer history preserves structured Node/file atoms and emits only canonical
   `[[node://...]]` / `[[file:///...]]` projections; it must not retain or restore
   the retired `kind:label^value` text grammar.

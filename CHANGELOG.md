@@ -12,6 +12,25 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Node and file references now use one canonical URI contract (PR #590,
+  codex-4)** — every current producer and consumer emits `[[node://...]]` or
+  `[[file:///...]]`, keeps display names outside identity, resolves Node titles
+  live, and admits only UUIDv4 Nodes plus the explicit public system-Node set.
+  Private, malformed, unsupported, and consumer-disallowed references degrade
+  without exposing internal IDs or aborting the surrounding user action. The
+  shared codec preserves identity across rich text, Markdown entities and
+  escapes, Agent outline round trips, context projection, search, paste, and
+  Thread rendering, while a cutover guard keeps the retired marker grammars out
+  of product authority. Repeated deep review exercised public/private candidate
+  admission, semantic punctuation, nested and duplicate markers, protected
+  literals, display normalization, entity/source alignment, focused-editor
+  refresh, and reasoning reachability; every reported finding was fixed and the
+  final adversarial matrix found no reportable issue. Verified with typecheck,
+  `docs:check`, 2,667 passing Core tests with 6 skipped, 1,382 renderer tests,
+  467 additional cross-surface checks, 155 review-only assertions, 14 affected
+  E2E tests, whitespace checks, and all five GitHub E2E samples plus baseline
+  subtraction.
+
 - **Large pastes now become linked composer attachments (PR #586, codex-4)** —
   pasting at least 4 KiB of plain text creates a managed `Pasted.txt`,
   `Pasted-2.txt`, and so on instead of flooding the editor; smaller pastes stay

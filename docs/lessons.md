@@ -13,6 +13,25 @@ UI-refactor round), **A11** (batch work resumable by construction), **A12**
 append-into-the-existing-category changelog rule (the 21-duplicate-section
 untangle of 2026-08-03).
 
+## Bidirectional text protocols need a collision matrix, not example pairs
+
+PR #590 repeatedly fixed one valid reference shape while leaving its textual
+twin on the opposite side of the grammar broken: a tree reference collided with
+ordinary inline references, a protected URI literal counted as an active marker,
+normalized display text was reused as a raw source span, independently escaped
+fallbacks formed syntax only after composition, and an alignment budget reported
+"no reference" when it really meant "unknown." Each narrow regression was green
+because it proved only the intended example, not the competing interpretation.
+
+**For any text protocol that must survive parse, render, edit, and reparse, list
+the ambiguous equivalence classes and test their cross-product through the real
+production round trip.** Include active versus literal syntax, one versus many
+markers, same-offset and neighboring insertions, raw versus normalized spans,
+public versus private identities, and both sides of every safety budget. A
+bounded parser must represent indeterminate separately from absent. The matrix
+belongs at the shared codec boundary; consumer-specific happy paths cannot prove
+that two byte-similar meanings remain distinct.
+
 ## Inspection projections need separate structure, coverage, and payload bounds
 
 PR #575 exposed the same category error at several layers of a large inspection
