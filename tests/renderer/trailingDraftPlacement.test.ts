@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   applyPendingRowPlacement,
+  pendingStructuralRowIsDraft,
   pendingStructuralProjectionSuppressions,
   resolvePendingRowPlacement,
 } from '../../src/renderer/state/trailingDraftPlacement';
@@ -60,6 +61,12 @@ describe('pending row placement', () => {
       index: 3,
       referenceIndex: null,
     });
+  });
+
+  test('keeps a materializing trailing row identifiable after an optimistic override projects it', () => {
+    expect(pendingStructuralRowIsDraft({ originatesFromDraft: true }, false)).toBe(true);
+    expect(pendingStructuralRowIsDraft({}, false)).toBe(false);
+    expect(pendingStructuralRowIsDraft({}, true)).toBe(true);
   });
 
   test('suppresses relocation sources for both cross-parent and same-parent moves', () => {

@@ -91,10 +91,17 @@ export function pendingStructuralRow(
   return {
     id: change.id,
     type: 'content',
-    ...(!existsInProjection ? { draft: true } : {}),
+    ...(pendingStructuralRowIsDraft(change, !existsInProjection) ? { draft: true } : {}),
     beforeId: change.beforeId,
     afterId: change.afterId,
   };
+}
+
+export function pendingStructuralRowIsDraft(
+  change: Pick<PendingStructuralChange, 'originatesFromDraft'>,
+  fallbackDraft: boolean,
+): boolean {
+  return change.originatesFromDraft === true || fallbackDraft;
 }
 
 export function trailingDraftPlacementMatches(params: {

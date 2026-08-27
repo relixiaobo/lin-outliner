@@ -7,10 +7,12 @@ import {
   e2eNodeInlineRef,
   e2eProjection,
   emitDocumentEvent,
+  expectRowMoveAnimationObserved,
   holdOutlineMutation,
   ids,
   multiSelect,
   nodeById,
+  observeNextRowMoveAnimation,
   openMockedApp,
   row,
   rowBody,
@@ -30,12 +32,6 @@ async function emitCurrentProjection(page: import('@playwright/test').Page) {
 async function todayChildren(page: import('@playwright/test').Page) {
   const projection = await e2eProjection(page);
   return projection.nodes.find((node) => node.id === ids.today)?.children ?? [];
-}
-
-async function waitForRowMoveAnimation(page: import('@playwright/test').Page, id: string) {
-  await expect.poll(async () => rowBody(page, id).evaluate((element) => (
-    element.classList.contains('row-move-animating')
-  )), { timeout: 1000 }).toBe(true);
 }
 
 async function createReferenceFixture(page: import('@playwright/test').Page) {
@@ -422,9 +418,10 @@ test.describe('outliner selection keyboard parity', () => {
   test('Tab indents selected rows under the previous sibling and keeps them selected', async ({ page }) => {
     await multiSelect(page, [ids.beta]);
 
+    await observeNextRowMoveAnimation(page, ids.beta);
     await page.keyboard.press('Tab');
 
-    await waitForRowMoveAnimation(page, ids.beta);
+    await expectRowMoveAnimationObserved(page, ids.beta);
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.alpha);
     await expect(row(page, ids.beta)).toBeVisible();
     await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
@@ -460,16 +457,19 @@ test.describe('outliner selection keyboard parity', () => {
 
   test('Shift+Tab outdents selected rows back to the parent scope and keeps them selected', async ({ page }) => {
     await multiSelect(page, [ids.beta]);
+    await observeNextRowMoveAnimation(page, ids.beta);
     await page.keyboard.press('Tab');
+    await expectRowMoveAnimationObserved(page, ids.beta);
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.alpha);
     await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
     await expect.poll(async () => rowBody(page, ids.beta).evaluate((element) => (
       element.classList.contains('row-move-animating')
     ))).toBe(false);
 
+    await observeNextRowMoveAnimation(page, ids.beta);
     await page.keyboard.press('Shift+Tab');
 
-    await waitForRowMoveAnimation(page, ids.beta);
+    await expectRowMoveAnimationObserved(page, ids.beta);
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.today);
     await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
     await expect(rowEditor(page, ids.beta)).not.toBeFocused();

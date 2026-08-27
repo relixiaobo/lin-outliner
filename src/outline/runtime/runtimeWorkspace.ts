@@ -3,11 +3,12 @@ import {
   type CoreTransactionMetadata,
   type CoreTransactionPatch,
 } from '../../core/core';
+import { runTransientSearchExpr } from '../../core/searchEngine';
 import { ContentStore, type ContentStoreOptions } from '../../content';
 import { canonicalSha256 } from '../contract/canonical';
 import { OutlineContractError, outlineError } from '../contract/errors';
-import type { Operation, OutlineEvent, RevertConflictDiff, NoChangeResult } from '../contract/schemas';
-import type { DocumentState, Node, ProjectionUpdate } from '../../core/types';
+import type { Diff, Operation, OutlineEvent, RevertConflictDiff, NoChangeResult } from '../contract/schemas';
+import type { DocumentState, Node, ProjectionUpdate, SearchHit } from '../../core/types';
 import { projectNode } from '../../core/projection';
 import { OUTLINE_PROTOCOL_VERSION } from '../contract/version';
 import {
@@ -18,6 +19,7 @@ import {
   type OutlineAssetStoreOptions,
   type OutlineAssetDelta,
   type WorkspaceMutationAdmission,
+  type WorkspaceTransactionInput,
   type WorkspaceTransactionAppendResult,
   type WorkspaceTransactionLogOptions,
 } from './storage';
@@ -25,6 +27,9 @@ import { semanticPatchDigest } from './semanticDigest';
 import { encodeEventCursor } from './eventCursor';
 import { encodeOperationLogCursor } from './operationLogCursor';
 import { DocumentReadModel } from './documentReadModel';
+import type { Projection, ProjectionResult } from '../contract/schemas';
+import { createSelectionIndex } from './selector';
+import { projectOutlineFromSelectionIndex } from './projection';
 
 const MAX_AFFECTED_NODE_ID_SAMPLE = 1_000;
 
@@ -38,9 +43,38 @@ interface AppendedMutationSettlement {
 interface NoChangeMutationSettlement {
   readonly kind: 'no-change';
   readonly result: NoChangeResult;
+  readonly patch: CoreTransactionPatch;
 }
 
-type MutationSettlement = AppendedMutationSettlement | NoChangeMutationSettlement;
+type MutationSettlement = AppendedMutationSettlement | NoChangeMutationSettlement | DeferredMutationSettlement;
+
+type DeferredTransactionInput = Omit<WorkspaceTransactionInput, 'event'>;
+
+interface DeferredMutationSettlement {
+  readonly kind: 'deferred';
+  readonly input: DeferredTransactionInput;
+  readonly projectionUpdate: ProjectionUpdate;
+  readonly assetReferenceCounts: Map<string, number>;
+  readonly patch: CoreTransactionPatch;
+}
+
+interface PendingDurability {
+  readonly input: DeferredTransactionInput;
+  readonly projectionUpdate: ProjectionUpdate;
+}
+
+export interface OutlineAcceptedMutation {
+  readonly settlement: Operation | NoChangeResult;
+  readonly update: ProjectionUpdate;
+  readonly patch?: CoreTransactionPatch;
+  readonly diff?: Diff;
+}
+
+export interface OutlineDurabilityStatus {
+  readonly acceptedRevision: number;
+  readonly durableRevision: number;
+  readonly admissionFrozen: boolean;
+}
 
 class ExistingOperationSettlement extends Error {
   constructor(readonly operation: Operation) {
@@ -67,6 +101,7 @@ export interface OutlineRuntimeMutationRequest {
   readonly execute: (candidate: Core) => void | Operation['result'] | Promise<void | Operation['result']>;
   readonly result?: (candidate: Core) => Operation['result'];
   readonly noChangeResult?: (candidate: Core) => NoChangeResult;
+  readonly acceptedDiff?: (patch: CoreTransactionPatch) => Diff;
 }
 
 export interface OutlineHistoryMutationOptions extends Pick<
@@ -97,6 +132,16 @@ export class OutlineRuntimeWorkspace {
   private readonly readModel: DocumentReadModel;
   private assetReferenceCounts: Map<string, number>;
   private pendingPublicationPatch?: CoreTransactionPatch;
+  private readonly pendingDurability: PendingDurability[] = [];
+  private readonly acceptedByIdempotencyKey = new Map<string, {
+    readonly payloadHash: string;
+    readonly result?: OutlineAcceptedMutation;
+  }>();
+  private durabilityRun?: Promise<void>;
+  private durabilityFailure?: unknown;
+  private durableRevisionValue: number;
+  private mutationAdmissionFrozen = false;
+  private mutationAdmissionCommitted = false;
 
   private constructor(
     private core: Core,
@@ -109,6 +154,7 @@ export class OutlineRuntimeWorkspace {
     this.now = now ?? (() => new Date());
     this.readModel = DocumentReadModel.fromProjection(core.revision(), core.projection());
     this.assetReferenceCounts = countAssetReferences(Object.values(core.state().nodes));
+    this.durableRevisionValue = core.revision();
   }
 
   static async open(root: string, options: OutlineRuntimeWorkspaceOptions = {}): Promise<OutlineRuntimeWorkspace> {
@@ -153,7 +199,7 @@ export class OutlineRuntimeWorkspace {
     });
     try {
       await assets.reconcileAnchors();
-      return new OutlineRuntimeWorkspace(
+      const workspace = new OutlineRuntimeWorkspace(
         core,
         store,
         assets,
@@ -161,6 +207,12 @@ export class OutlineRuntimeWorkspace {
         loaded.latestEventSequence,
         options.now,
       );
+      for (const idempotency of loaded.idempotency) {
+        workspace.acceptedByIdempotencyKey.set(idempotency.key, {
+          payloadHash: idempotency.payloadHash,
+        });
+      }
+      return workspace;
     } catch (error) {
       if (!options.contentStore) contentStore.close();
       throw error;
@@ -169,6 +221,48 @@ export class OutlineRuntimeWorkspace {
 
   revision(): number {
     return this.readModel.revision;
+  }
+
+  durableRevision(): number {
+    return this.durableRevisionValue;
+  }
+
+  async freezeMutationAdmission(): Promise<number> {
+    this.mutationAdmissionFrozen = true;
+    return this.enqueueMutation(async () => this.revision());
+  }
+
+  unfreezeMutationAdmission(): void {
+    if (!this.mutationAdmissionCommitted) this.mutationAdmissionFrozen = false;
+  }
+
+  commitMutationAdmissionFreeze(): void {
+    this.mutationAdmissionFrozen = true;
+    this.mutationAdmissionCommitted = true;
+  }
+
+  durabilityStatus(): OutlineDurabilityStatus {
+    return {
+      acceptedRevision: this.revision(),
+      durableRevision: this.durableRevisionValue,
+      admissionFrozen: this.mutationAdmissionFrozen,
+    };
+  }
+
+  async drainDurability(targetRevision = this.revision()): Promise<void> {
+    if (targetRevision > this.revision()) {
+      throw new Error(`Cannot drain unaccepted Outline revision ${targetRevision}.`);
+    }
+    if (this.durableRevisionValue >= targetRevision) return;
+    if (this.durabilityFailure) {
+      this.durabilityFailure = undefined;
+      this.startDurabilityRun();
+    }
+    this.startDurabilityRun();
+    await this.durabilityRun;
+    if (this.durableRevisionValue >= targetRevision) return;
+    if (this.durabilityFailure) throw this.durabilityFailure;
+    throw new Error(`Outline durability stopped before revision ${targetRevision}.`);
   }
 
   close(): void {
@@ -186,6 +280,36 @@ export class OutlineRuntimeWorkspace {
 
   projection() {
     return this.readModel.projection;
+  }
+
+  searchText(query: string, limit: number): SearchHit[] {
+    const text = query.trim();
+    if (!text) return [];
+    const result = runTransientSearchExpr(
+      this.readModel.projection,
+      { kind: 'rule', op: 'STRING_MATCH', text },
+      { limit, textIndex: this.readModel.textIndex },
+    );
+    return result.ok ? result.hits : [];
+  }
+
+  selectionIndex() {
+    return createSelectionIndex(this.readModel.projection, {
+      nodesById: this.readModel.nodes,
+      textIndex: this.readModel.textIndex,
+    });
+  }
+
+  project(
+    projection: Projection,
+    bindings: Readonly<Record<string, readonly string[]>> = {},
+  ): ProjectionResult {
+    return projectOutlineFromSelectionIndex(
+      this.revision(),
+      this.selectionIndex(),
+      projection,
+      bindings,
+    );
   }
 
   documentState() {
@@ -209,11 +333,17 @@ export class OutlineRuntimeWorkspace {
   }
 
   collectAssetGarbage(): Promise<readonly string[]> {
-    return this.enqueueMutation(() => this.assets.collectGarbage([...this.assetReferenceCounts.keys()]));
+    return this.enqueueMutation(async () => {
+      await this.drainDurability();
+      return this.assets.collectGarbage([...this.assetReferenceCounts.keys()]);
+    });
   }
 
   maintain(options: { readonly compactIfNeeded?: boolean } = {}): Promise<void> {
-    return this.enqueueMutation(() => this.runMaintenance(options.compactIfNeeded === true));
+    return this.enqueueMutation(async () => {
+      await this.drainDurability();
+      return this.runMaintenance(options.compactIfNeeded === true);
+    });
   }
 
   async mutate(request: OutlineRuntimeMutationRequest): Promise<Operation> {
@@ -229,9 +359,59 @@ export class OutlineRuntimeWorkspace {
     prepare: () => OutlineRuntimeMutationRequest | Promise<OutlineRuntimeMutationRequest>,
   ): Promise<Operation | NoChangeResult> {
     return this.enqueueMutation(async () => {
+      this.assertMutationAdmission();
       const admission = await this.prepareMutation(admissionRequest);
       if (admission.existingOperation) return admission.existingOperation;
       return this.applyMutation(await prepare(), admission);
+    });
+  }
+
+  async commitAcceptedPrepared(
+    admissionRequest: Pick<OutlineRuntimeMutationRequest, 'idempotencyKey' | 'idempotencyPayloadHash'>,
+    prepare: () => OutlineRuntimeMutationRequest | Promise<OutlineRuntimeMutationRequest>,
+  ): Promise<OutlineAcceptedMutation> {
+    return this.enqueueMutation(async () => {
+      this.assertMutationAdmission();
+      const idempotencyKey = admissionRequest.idempotencyKey;
+      const payloadHash = admissionRequest.idempotencyPayloadHash;
+      if (!idempotencyKey || !payloadHash) {
+        throw new OutlineContractError(outlineError(
+          'invalid_input',
+          'usage',
+          'Accepted desktop mutations require an idempotency key and payload hash.',
+        ));
+      }
+      const existing = this.acceptedByIdempotencyKey.get(idempotencyKey);
+      if (existing) {
+        if (existing.payloadHash !== payloadHash) {
+          throw new OutlineContractError(outlineError(
+            'idempotency_conflict',
+            'conflict',
+            `Idempotency key was already used with different input: ${idempotencyKey}`,
+          ));
+        }
+        if (existing.result) return existing.result;
+        const persisted = await this.store.idempotencySettlement(idempotencyKey, payloadHash);
+        if (persisted?.accepted) {
+          return {
+            settlement: persisted.operation,
+            update: persisted.accepted.update,
+            diff: persisted.accepted.diff,
+          };
+        }
+        throw new OutlineContractError(outlineError(
+          'idempotency_conflict',
+          'conflict',
+          `Idempotency key is already bound to a non-desktop settlement: ${idempotencyKey}`,
+        ));
+      }
+      const result = await this.applyAcceptedMutation(await prepare());
+      this.acceptedByIdempotencyKey.set(idempotencyKey, {
+        payloadHash,
+        ...((result.settlement.kind === 'outline.no-change'
+          || result.settlement.revisionAfter > this.durableRevisionValue) ? { result } : {}),
+      });
+      return result;
     });
   }
 
@@ -434,6 +614,8 @@ export class OutlineRuntimeWorkspace {
   private async prepareMutation(
     request: Pick<OutlineRuntimeMutationRequest, 'idempotencyKey' | 'idempotencyPayloadHash'>,
   ): Promise<WorkspaceMutationAdmission> {
+    this.assertMutationAdmission();
+    await this.drainDurability();
     if (this.settlementUnknown) {
       throw new OutlineContractError(outlineError(
         'operation_settlement_unknown',
@@ -464,8 +646,25 @@ export class OutlineRuntimeWorkspace {
     request: OutlineRuntimeMutationRequest,
     preparedAdmission?: WorkspaceMutationAdmission,
   ): Promise<Operation | NoChangeResult> {
-    const admission = preparedAdmission ?? await this.prepareMutation(request);
-    if (admission.existingOperation) return admission.existingOperation;
+    const result = await this.applyMutationWithSettlement(request, preparedAdmission, false);
+    if ('settlement' in result) return result.settlement;
+    return result;
+  }
+
+  private applyAcceptedMutation(request: OutlineRuntimeMutationRequest): Promise<OutlineAcceptedMutation> {
+    return this.applyMutationWithSettlement(request, undefined, true) as Promise<OutlineAcceptedMutation>;
+  }
+
+  private async applyMutationWithSettlement(
+    request: OutlineRuntimeMutationRequest,
+    preparedAdmission: WorkspaceMutationAdmission | undefined,
+    deferDurability: boolean,
+  ): Promise<Operation | NoChangeResult | OutlineAcceptedMutation> {
+    this.assertMutationAdmission();
+    const admission = deferDurability
+      ? undefined
+      : preparedAdmission ?? await this.prepareMutation(request);
+    if (admission?.existingOperation) return admission.existingOperation;
 
     const fromVersion = this.core.replicationVersionVector();
     const afterMetadataSequence = this.core.persistenceMetadataSequence();
@@ -483,7 +682,7 @@ export class OutlineRuntimeWorkspace {
         async ({ result: transactionResult, patch }): Promise<MutationSettlement> => {
           if (patch.nodes.length === 0 && !patch.systemChanged) {
             const noChange = request.noChangeResult?.(this.core);
-            if (noChange) return { kind: 'no-change', result: noChange };
+            if (noChange) return { kind: 'no-change', result: noChange, patch };
             throw new OutlineContractError(outlineError(
               'precondition_failed',
               'conflict',
@@ -593,7 +792,6 @@ export class OutlineRuntimeWorkspace {
             ...(request.revertsOperationIds ? { revertsOperationIds: [...request.revertsOperationIds] } : {}),
             ...(result ? { result } : {}),
           };
-          const eventSequence = admission.latestEventSequence + 1;
           const projectionUpdate: ProjectionUpdate = {
             kind: 'delta',
             revision: operation.revisionAfter,
@@ -601,43 +799,50 @@ export class OutlineRuntimeWorkspace {
             changedNodes: patch.nodes.flatMap((entry) => entry.after ? [projectNode(entry.after)] : []),
             removedIds: patch.nodes.flatMap((entry) => entry.after ? [] : [entry.id]),
           };
-          const event: OutlineEvent = {
-            protocolVersion: OUTLINE_PROTOCOL_VERSION,
-            kind: 'outline.event',
-            type: operationRevertsAny(operation) ? 'operation.reverted' : 'operation.committed',
-            instanceId: this.instanceId,
-            sequence: eventSequence,
-            revision: operation.revisionAfter,
-            cursor: encodeEventCursor({
-              instanceId: this.instanceId,
-              sequence: eventSequence,
-              revision: operation.revisionAfter,
-            }),
+          const acceptedDiff = deferDurability ? request.acceptedDiff?.(patch) : undefined;
+          const deferredInput: DeferredTransactionInput = {
+            persistence,
             operation,
-            changes: {
-              todayId: projectionUpdate.todayId,
-              changedNodes: projectionUpdate.changedNodes,
-              removedIds: projectionUpdate.removedIds,
-            },
+            recoveryPatch,
+            ...(request.idempotencyKey ? {
+              idempotency: {
+                key: request.idempotencyKey,
+                payloadHash: request.idempotencyPayloadHash!,
+                operationId,
+                ...(acceptedDiff ? {
+                  accepted: {
+                    update: projectionUpdate,
+                    diff: acceptedDiff,
+                  },
+                } : {}),
+              },
+            } : {}),
+            assetDelta,
+            measureExactRevisionBytes: (coordinates, excluding) => (
+              this.assets.measureExactRevisionBytes(coordinates, excluding)
+            ),
           };
+          if (deferDurability) {
+            return {
+              kind: 'deferred',
+              input: deferredInput,
+              projectionUpdate,
+              assetReferenceCounts: nextAssetReferenceCounts,
+              patch,
+            };
+          }
+          if (!admission) throw new Error('Durable Outline mutation is missing admission state.');
+          const event = operationEvent(
+            this.instanceId,
+            admission.latestEventSequence + 1,
+            operation,
+            projectionUpdate,
+          );
           let appended: WorkspaceTransactionAppendResult;
           try {
             appended = await this.store.append({
-              persistence,
-              operation,
-              recoveryPatch,
+              ...deferredInput,
               event,
-              ...(request.idempotencyKey ? {
-                idempotency: {
-                  key: request.idempotencyKey,
-                  payloadHash: request.idempotencyPayloadHash!,
-                  operationId,
-                },
-              } : {}),
-              assetDelta,
-              measureExactRevisionBytes: (coordinates, excluding) => (
-                this.assets.measureExactRevisionBytes(coordinates, excluding)
-              ),
             });
           } catch (error) {
             if (error instanceof OutlineContractError
@@ -668,13 +873,55 @@ export class OutlineRuntimeWorkspace {
         { idFactory: request.idFactory },
       );
 
-      if (settlement.kind === 'no-change') return settlement.result;
+      if (settlement.kind === 'no-change') {
+        if (!deferDurability) return settlement.result;
+        return {
+          settlement: settlement.result,
+          update: {
+            kind: 'delta',
+            revision: settlement.result.revision,
+            todayId: this.core.todayId(),
+            changedNodes: [],
+            removedIds: [],
+          },
+          patch: settlement.patch,
+          ...(request.acceptedDiff ? { diff: request.acceptedDiff(settlement.patch) } : {}),
+        };
+      }
       this.assetReferenceCounts = settlement.assetReferenceCounts;
-      if (!this.readModel.applyUpdate(settlement.projectionUpdate)) {
+      const readModelApplied = request.source?.kind === 'import'
+        ? await this.readModel.applyUpdateYielding(settlement.projectionUpdate, { yieldEveryNodes: 250 })
+        : this.readModel.applyUpdate(settlement.projectionUpdate);
+      if (!readModelApplied) {
         this.readModel.reseed(this.core.revision(), this.core.projection());
       }
+      if (settlement.kind === 'deferred') {
+        const result: OutlineAcceptedMutation = {
+          settlement: settlement.input.operation,
+          update: settlement.projectionUpdate,
+          patch: settlement.patch,
+          ...(settlement.input.idempotency?.accepted
+            ? { diff: settlement.input.idempotency.accepted.diff }
+            : {}),
+        };
+        this.pendingDurability.push({
+          input: settlement.input,
+          projectionUpdate: settlement.projectionUpdate,
+        });
+        this.startDurabilityRun();
+        return result;
+      }
+      this.durableRevisionValue = Math.max(
+        this.durableRevisionValue,
+        settlement.appended.operation.revisionAfter,
+      );
       this.publishEvents(settlement.appended.maintenanceEvents);
       this.publishEvents([settlement.appended.event]);
+      if (request.idempotencyKey) {
+        this.acceptedByIdempotencyKey.set(request.idempotencyKey, {
+          payloadHash: request.idempotencyPayloadHash!,
+        });
+      }
       return settlement.appended.operation;
     } catch (error) {
       if (error instanceof ExistingOperationSettlement) return error.operation;
@@ -720,11 +967,116 @@ export class OutlineRuntimeWorkspace {
     }
   }
 
+  private startDurabilityRun(): void {
+    if (this.durabilityRun || this.durabilityFailure || this.pendingDurability.length === 0) return;
+    const run = this.flushDurability();
+    const wrapped = run.catch((error: unknown) => {
+      this.durabilityFailure = error;
+    }).finally(() => {
+      if (this.durabilityRun !== wrapped) return;
+      this.durabilityRun = undefined;
+      if (!this.durabilityFailure && this.pendingDurability.length > 0) this.startDurabilityRun();
+    });
+    this.durabilityRun = wrapped;
+  }
+
+  private async flushDurability(): Promise<void> {
+    while (this.pendingDurability.length > 0) {
+      const pending = this.pendingDurability[0]!;
+      const operation = pending.input.operation;
+      const admission = await this.store.prepareMutation(
+        pending.input.idempotency ? {
+          key: pending.input.idempotency.key,
+          payloadHash: pending.input.idempotency.payloadHash,
+        } : undefined,
+        { instanceId: this.instanceId, revision: operation.revisionBefore },
+      );
+      this.publishEvents(admission.maintenanceEvents);
+      const appended = await this.store.append({
+        ...pending.input,
+        event: operationEvent(
+          this.instanceId,
+          admission.latestEventSequence + 1,
+          operation,
+          pending.projectionUpdate,
+        ),
+      });
+      if (appended.operation.operationId !== operation.operationId) {
+        throw new OutlineContractError(outlineError(
+          'idempotency_conflict',
+          'conflict',
+          `Accepted Operation settled to a different idempotent result: ${operation.operationId}`,
+        ));
+      }
+      this.pendingDurability.shift();
+      this.durableRevisionValue = Math.max(this.durableRevisionValue, operation.revisionAfter);
+      if (pending.input.idempotency) {
+        this.acceptedByIdempotencyKey.set(pending.input.idempotency.key, {
+          payloadHash: pending.input.idempotency.payloadHash,
+        });
+      }
+      this.core.acknowledgePersistenceMetadata(pending.input.persistence.metadataSequence);
+      this.publishEvents(appended.maintenanceEvents);
+      this.publishEvents([appended.event]);
+    }
+  }
+
+  private assertMutationAdmission(): void {
+    if (this.mutationAdmissionFrozen) {
+      throw new OutlineContractError(outlineError(
+        'runtime_unavailable',
+        'unavailable',
+        'Outline mutation admission is frozen.',
+        { retryable: true },
+      ));
+    }
+    if (this.durabilityFailure) {
+      throw new OutlineContractError(outlineError(
+        'durability_failed',
+        'durability',
+        'A previously accepted Outline mutation is not durable; drain or restart before writing again.',
+        {
+          retryable: true,
+          details: this.durabilityFailure instanceof Error
+            ? this.durabilityFailure.message
+            : String(this.durabilityFailure),
+        },
+      ));
+    }
+  }
+
   private enqueueMutation<TResult>(task: () => Promise<TResult>): Promise<TResult> {
     const next = this.mutationChain.then(task, task);
     this.mutationChain = next.then(() => undefined, () => undefined);
     return next;
   }
+}
+
+function operationEvent(
+  instanceId: string,
+  sequence: number,
+  operation: Operation,
+  update: ProjectionUpdate,
+): OutlineEvent {
+  return {
+    protocolVersion: OUTLINE_PROTOCOL_VERSION,
+    kind: 'outline.event',
+    type: operationRevertsAny(operation) ? 'operation.reverted' : 'operation.committed',
+    instanceId,
+    sequence,
+    revision: operation.revisionAfter,
+    cursor: encodeEventCursor({
+      instanceId,
+      sequence,
+      revision: operation.revisionAfter,
+    }),
+    operation,
+    changes: {
+      todayId: update.kind === 'delta' ? update.todayId : update.projection.todayId,
+      changedNodes: update.kind === 'delta' ? update.changedNodes : update.projection.nodes,
+      removedIds: update.kind === 'delta' ? update.removedIds : [],
+    },
+  };
 }
 
 function assetRecordIdsInNodes(nodes: readonly Node[]): Set<string> {

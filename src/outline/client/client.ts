@@ -5,12 +5,17 @@ import { OutlineContractError, outlineError } from '../contract/errors';
 import { checkOutlineSchema } from '../contract/validation';
 import {
   OutlineErrorSchema,
+  AcceptedDesktopChangeSetMutationSchema,
   AssetLeaseSchema,
+  ChangeSetSchema,
   OutlineResponseSchema,
   OutlineStreamRecordSchema,
+  type ChangeSet,
+  type AcceptedDesktopChangeSetMutation,
   type OutlineRequest,
   type OutlineResponse,
   type OutlineStreamRecord,
+  type OperationUndoGroup,
   type RuntimeDescriptor,
   type AssetLease,
   type WatchRequest,
@@ -31,6 +36,24 @@ type OutlineSuccessResponse = Extract<OutlineResponse, { ok: true }>;
 export interface OutlineRuntimeIdentity {
   readonly instanceId: string;
   readonly contractDigest: string;
+}
+
+export type DesktopRuntimeLifecycleAction =
+  | 'status'
+  | 'freeze'
+  | 'unfreeze'
+  | 'commit-freeze'
+  | 'drain';
+
+export interface DesktopRuntimeDurabilityStatus {
+  readonly acceptedRevision: number;
+  readonly durableRevision: number;
+  readonly admissionFrozen: boolean;
+}
+
+export interface DesktopTextSearchHit {
+  readonly nodeId: string;
+  readonly score: number;
 }
 
 export class OutlineClient {
@@ -77,6 +100,108 @@ export class OutlineClient {
         throw protocolError('Outline Runtime response identity does not match the request.');
       }
       return value;
+    } catch (error) {
+      throw normalizeRequestError(error, lifetime);
+    } finally {
+      lifetime.cleanup();
+    }
+  }
+
+  async commitDesktopChangeSet(
+    changeSet: ChangeSet,
+    undoGroup?: OperationUndoGroup,
+    signal?: AbortSignal,
+  ): Promise<AcceptedDesktopChangeSetMutation> {
+    if (!checkOutlineSchema(ChangeSetSchema, changeSet)) {
+      throw protocolError('Desktop Outline commit received an invalid ChangeSet.');
+    }
+    const lifetime = createRequestLifetime(signal, this.requestTimeoutMs);
+    const requestId = `desktop:${crypto.randomUUID()}`;
+    try {
+      const value = await this.jsonRequest('/v1/desktop/commit', {
+        protocolVersion: OUTLINE_PROTOCOL_VERSION,
+        requestId,
+        changeSet,
+        ...(undoGroup ? { undoGroup } : {}),
+      }, lifetime.signal);
+      if (!isRecord(value)
+        || value.protocolVersion !== OUTLINE_PROTOCOL_VERSION
+        || value.requestId !== requestId
+        || !Number.isSafeInteger(value.revision)
+        || !isAcceptedDesktopChangeSetMutation(value.data)) {
+        throw protocolError('Outline Runtime returned an invalid desktop accepted-mutation response.');
+      }
+      return value.data;
+    } catch (error) {
+      throw normalizeRequestError(error, lifetime);
+    } finally {
+      lifetime.cleanup();
+    }
+  }
+
+  async searchDesktopNodes(
+    query: string,
+    limit: number,
+    signal?: AbortSignal,
+  ): Promise<DesktopTextSearchHit[]> {
+    if (typeof query !== 'string'
+      || query.length > 10_000
+      || !Number.isSafeInteger(limit)
+      || limit < 1
+      || limit > 10_000) {
+      throw protocolError('Desktop ranked search requires bounded query text and result count.');
+    }
+    const lifetime = createRequestLifetime(signal, this.requestTimeoutMs);
+    const requestId = `desktop-search:${crypto.randomUUID()}`;
+    try {
+      const value = await this.jsonRequest('/v1/desktop/search', {
+        protocolVersion: OUTLINE_PROTOCOL_VERSION,
+        requestId,
+        query,
+        limit,
+      }, lifetime.signal);
+      if (!isRecord(value)
+        || value.protocolVersion !== OUTLINE_PROTOCOL_VERSION
+        || value.requestId !== requestId
+        || !Number.isSafeInteger(value.revision)
+        || !isRecord(value.data)
+        || !Array.isArray(value.data.hits)
+        || !value.data.hits.every(isDesktopTextSearchHit)) {
+        throw protocolError('Outline Runtime returned an invalid desktop ranked-search response.');
+      }
+      return value.data.hits;
+    } catch (error) {
+      throw normalizeRequestError(error, lifetime);
+    } finally {
+      lifetime.cleanup();
+    }
+  }
+
+  async manageDesktopRuntime(
+    action: DesktopRuntimeLifecycleAction,
+    targetRevision?: number,
+    signal?: AbortSignal,
+  ): Promise<DesktopRuntimeDurabilityStatus> {
+    if ((action === 'drain') !== (targetRevision !== undefined)
+      || (targetRevision !== undefined && (!Number.isSafeInteger(targetRevision) || targetRevision < 0))) {
+      throw protocolError('Desktop Runtime drain requires one non-negative target revision.');
+    }
+    const lifetime = createRequestLifetime(signal, this.requestTimeoutMs);
+    const requestId = `desktop-lifecycle:${crypto.randomUUID()}`;
+    try {
+      const value = await this.jsonRequest('/v1/desktop/lifecycle', {
+        protocolVersion: OUTLINE_PROTOCOL_VERSION,
+        requestId,
+        action,
+        ...(targetRevision !== undefined ? { targetRevision } : {}),
+      }, lifetime.signal);
+      if (!isRecord(value)
+        || value.protocolVersion !== OUTLINE_PROTOCOL_VERSION
+        || value.requestId !== requestId
+        || !isDesktopRuntimeDurabilityStatus(value.data)) {
+        throw protocolError('Outline Runtime returned an invalid desktop lifecycle response.');
+      }
+      return value.data;
     } catch (error) {
       throw normalizeRequestError(error, lifetime);
     } finally {
@@ -669,6 +794,28 @@ function protocolError(message: string): OutlineContractError {
     message,
     { retryable: false },
   ));
+}
+
+function isAcceptedDesktopChangeSetMutation(value: unknown): value is AcceptedDesktopChangeSetMutation {
+  return checkOutlineSchema(AcceptedDesktopChangeSetMutationSchema, value);
+}
+
+function isDesktopRuntimeDurabilityStatus(value: unknown): value is DesktopRuntimeDurabilityStatus {
+  return isRecord(value)
+    && Number.isSafeInteger(value.acceptedRevision)
+    && (value.acceptedRevision as number) >= 0
+    && Number.isSafeInteger(value.durableRevision)
+    && (value.durableRevision as number) >= 0
+    && (value.durableRevision as number) <= (value.acceptedRevision as number)
+    && typeof value.admissionFrozen === 'boolean';
+}
+
+function isDesktopTextSearchHit(value: unknown): value is DesktopTextSearchHit {
+  return isRecord(value)
+    && typeof value.nodeId === 'string'
+    && value.nodeId.length > 0
+    && typeof value.score === 'number'
+    && Number.isFinite(value.score);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

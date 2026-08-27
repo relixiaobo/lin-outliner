@@ -959,6 +959,25 @@ export const OperationSchema = Type.Object({
   result: Type.Optional(Type.Array(ProjectionResultSchema, { maxItems: 32 })),
 }, { ...closed, $id: 'Operation' });
 
+export const AcceptedDesktopChangeSetMutationSchema = Type.Object({
+  settlement: Type.Union([OperationSchema, NoChangeResultSchema]),
+  update: Type.Union([
+    Type.Object({
+      kind: Type.Literal('delta'),
+      revision: Type.Integer({ minimum: 0 }),
+      todayId: Identifier,
+      changedNodes: Type.Array(JsonValue, { maxItems: 100_000 }),
+      removedIds: Type.Array(Identifier, { maxItems: 100_000 }),
+    }, closed),
+    Type.Object({
+      kind: Type.Literal('full'),
+      revision: Type.Integer({ minimum: 0 }),
+      projection: JsonValue,
+    }, closed),
+  ]),
+  diff: DiffSchema,
+}, closed);
+
 export const OperationLogPageSchema = Type.Object({
   operations: Type.Array(OperationSchema, { maxItems: 1_000 }),
   affectedNodeIds: Type.Optional(Type.Object({
@@ -1360,6 +1379,7 @@ export type Diff = Static<typeof DiffSchema>;
 export type NoChangeResult = Static<typeof NoChangeResultSchema>;
 export type OperationUndoGroup = Static<typeof OperationUndoGroupSchema>;
 export type Operation = Static<typeof OperationSchema>;
+export type AcceptedDesktopChangeSetMutation = Static<typeof AcceptedDesktopChangeSetMutationSchema>;
 export type OperationLogPage = Static<typeof OperationLogPageSchema>;
 export type ImportOptions = Static<typeof ImportOptionsSchema>;
 export type ImportStats = Static<typeof ImportStatsSchema>;

@@ -34,6 +34,28 @@ describe('desktop Outline client', () => {
     expect(() => decodeOutlineDesktopId('request/1')).toThrow('Invalid desktop Outline request identifier');
   });
 
+  test('limits generic renderer requests to desktop-safe Outline capabilities', () => {
+    expect(decodeOutlineDesktopRequest({
+      requestId: 'request:bytes',
+      command: 'asset ingest',
+      input: { source: 'bytes', data: 'YQ==' },
+    })).toMatchObject({ command: 'asset ingest', input: { source: 'bytes' } });
+
+    for (const request of [
+      { command: 'asset ingest', input: { source: 'path', path: '/private/data' } },
+      { command: 'asset ingest', input: { source: 'stdin' } },
+      { command: 'asset export', input: { assetId: 'asset:private' } },
+      { command: 'export', input: { selector: { by: 'alias', alias: 'today' } } },
+      { command: 'log', input: {} },
+      { command: 'status', input: {} },
+    ]) {
+      expect(() => decodeOutlineDesktopRequest({
+        requestId: 'request:blocked',
+        ...request,
+      })).toThrow(/unavailable to the desktop renderer|only from bytes/);
+    }
+  });
+
   test('shares one transport across an open watch and concurrent requests', async () => {
     let connectCount = 0;
     const transport = new FakeTransport();

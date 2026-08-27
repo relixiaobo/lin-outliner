@@ -423,6 +423,34 @@ describe('Core', () => {
     expect(core.revision()).toBe(revision);
   });
 
+  test('yielding resolved content trees roll back every committed chunk after a late failure', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const before = core.state();
+    const ids = Array.from({ length: 8 }, () => `node:${crypto.randomUUID()}`);
+    let yields = 0;
+
+    await expect(core.transactionWithPatch('system', () => (
+      core.tryCreateResolvedContentTreesYielding(today, null, ids.map((id, index) => ({
+        id,
+        content: plainText(`Resolved transient ${index}`),
+        children: [],
+      })), {
+        yieldEveryNodes: 1,
+        commitEveryNodes: 1,
+        yield: async () => {
+          yields += 1;
+          if (yields === 11) throw new Error('injected resolved-tree failure');
+        },
+      })
+    ), { operationId: 'op:resolved-tree-failure', command: 'outline_apply' }))
+      .rejects.toThrow('injected resolved-tree failure');
+
+    expect(yields).toBe(11);
+    expect(core.state()).toEqual(before);
+    expect(ids.every((id) => core.state().nodes[id] === undefined)).toBe(true);
+  });
+
   test('yielding tree materialization gives large creates cooperative breaks', async () => {
     const core = Core.new();
     const today = core.projection().todayId;

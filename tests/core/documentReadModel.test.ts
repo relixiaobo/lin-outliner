@@ -55,6 +55,14 @@ function fakeProjection(nodes: NodeProjection[]): DocumentProjection {
   };
 }
 
+function searchIds(model: DocumentReadModel, query: string): string[] {
+  return model.textIndex.search(query).map((hit) => hit.id);
+}
+
+function applyCoreDelta(model: DocumentReadModel, core: Core): void {
+  expect(model.applyUpdate(deltaFromCore(core))).toBe(true);
+}
+
 describe('DocumentReadModel', () => {
   test('builds an index-compatible view from a projection', () => {
     const core = Core.new();
@@ -89,6 +97,113 @@ describe('DocumentReadModel', () => {
     expect(model.node(createdId)?.content.text).toBe('Renamed');
     expect(model.node(createdId)).not.toBe(createdBefore);
     expect(model.node(WORKSPACE_ID)).toBe(unchangedBefore);
+  });
+
+  test('updates text search in place without rebuilding the Node map or index', () => {
+    const core = Core.new();
+    const model = DocumentReadModel.fromProjection(core.revision(), core.projection());
+    const nodes = model.nodes;
+    const index = model.textIndex;
+    const nodeId = mustFocus(core.createNode(model.projection.todayId, null, 'Alpha project'));
+
+    applyCoreDelta(model, core);
+    expect(model.nodes).toBe(nodes);
+    expect(model.textIndex).toBe(index);
+    expect(searchIds(model, 'alpha')).toContain(nodeId);
+
+    core.applyNodeTextPatch(nodeId, replaceAllRichTextPatch(plainText('Gamma project')));
+    applyCoreDelta(model, core);
+    expect(model.nodes).toBe(nodes);
+    expect(model.textIndex).toBe(index);
+    expect(searchIds(model, 'gamma')).toContain(nodeId);
+    expect(searchIds(model, 'alpha')).not.toContain(nodeId);
+  });
+
+  test('refreshes tag, field, and reference dependents when their labels change', () => {
+    const core = Core.new();
+    const model = DocumentReadModel.fromProjection(core.revision(), core.projection());
+    const ownerId = mustFocus(core.createNode(model.projection.todayId, null, 'Dependency owner'));
+    applyCoreDelta(model, core);
+
+    const tagId = mustFocus(core.createTag('Original tag label'));
+    applyCoreDelta(model, core);
+    core.applyTag(ownerId, tagId);
+    applyCoreDelta(model, core);
+
+    const fieldEntryId = mustFocus(core.createInlineField(ownerId, null, 'Original field label', 'plain'));
+    applyCoreDelta(model, core);
+    const fieldDefId = model.node(fieldEntryId)?.fieldDefId;
+    expect(fieldDefId).toBeDefined();
+
+    const referenceTargetId = mustFocus(core.createNode(model.projection.todayId, null, 'Original reference label'));
+    applyCoreDelta(model, core);
+    core.addReference(fieldEntryId, referenceTargetId, null);
+    applyCoreDelta(model, core);
+
+    core.applyNodeTextPatch(tagId, replaceAllRichTextPatch(plainText('Renamed tag label')));
+    applyCoreDelta(model, core);
+    core.applyNodeTextPatch(fieldDefId!, replaceAllRichTextPatch(plainText('Renamed field label')));
+    applyCoreDelta(model, core);
+    core.applyNodeTextPatch(referenceTargetId, replaceAllRichTextPatch(plainText('Renamed reference label')));
+    applyCoreDelta(model, core);
+
+    expect(searchIds(model, 'renamed tag label')).toContain(ownerId);
+    expect(searchIds(model, 'renamed field label')).toContain(ownerId);
+    expect(searchIds(model, 'renamed reference label')).toContain(ownerId);
+    expect(searchIds(model, 'original tag label')).not.toContain(ownerId);
+    expect(searchIds(model, 'original field label')).not.toContain(ownerId);
+    expect(searchIds(model, 'original reference label')).not.toContain(ownerId);
+  });
+
+  test('removes and restores every searchable descendant when a subtree crosses Trash', () => {
+    const core = Core.new();
+    const model = DocumentReadModel.fromProjection(core.revision(), core.projection());
+    const parentId = mustFocus(core.createNode(model.projection.todayId, null, 'Trash parent needle'));
+    applyCoreDelta(model, core);
+    const childId = mustFocus(core.createNode(parentId, null, 'Trash child needle'));
+    applyCoreDelta(model, core);
+
+    core.trashNode(parentId);
+    applyCoreDelta(model, core);
+    expect(searchIds(model, 'trash parent needle')).not.toContain(parentId);
+    expect(searchIds(model, 'trash child needle')).not.toContain(childId);
+
+    core.restoreNode(parentId);
+    applyCoreDelta(model, core);
+    expect(searchIds(model, 'trash parent needle')).toContain(parentId);
+    expect(searchIds(model, 'trash child needle')).toContain(childId);
+  });
+
+  test('publishes one complete generation after a yielding bulk refresh', async () => {
+    const core = Core.new();
+    const model = DocumentReadModel.fromProjection(core.revision(), core.projection());
+    const revisionBefore = model.revision;
+    const index = model.textIndex;
+    const createdIds: string[] = [];
+    await core.transaction('agent', () => {
+      for (let item = 0; item < 300; item += 1) {
+        createdIds.push(mustFocus(core.createNode(
+          model.projection.todayId,
+          null,
+          `Cooperative index needle ${item}`,
+        )));
+      }
+    });
+    let yields = 0;
+
+    expect(await model.applyUpdateYielding(deltaFromCore(core), {
+      yieldEveryNodes: 25,
+      yield: async () => {
+        yields += 1;
+        expect(model.revision).toBe(revisionBefore);
+        expect(searchIds(model, 'cooperative index needle 299')).not.toContain(createdIds.at(-1)!);
+      },
+    })).toBe(true);
+
+    expect(yields).toBeGreaterThan(0);
+    expect(model.revision).toBe(core.revision());
+    expect(model.textIndex).toBe(index);
+    expect(searchIds(model, 'cooperative index needle 299')).toContain(createdIds.at(-1)!);
   });
 
   test('keeps delta-added nodes in full-projection id order', () => {

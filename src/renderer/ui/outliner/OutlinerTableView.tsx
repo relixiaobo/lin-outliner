@@ -453,13 +453,19 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     [parent, props.index.byId],
   );
   const columns = useMemo(() => visibleDisplayFields(view), [view]);
-  const panelPendingChanges = props.ui.pendingStructuralChanges.filter((change) => (
-    change.panelId === props.panelId && !props.ui.pendingRemovalIds.has(change.id)
-  ));
-  const projectedSuppressionIds = pendingStructuralProjectionSuppressions(
-    panelPendingChanges,
-    props.parentId,
-    props.ui.pendingRemovalIds,
+  const panelPendingChanges = useMemo(
+    () => props.ui.pendingStructuralChanges.filter((change) => (
+      change.panelId === props.panelId && !props.ui.pendingRemovalIds.has(change.id)
+    )),
+    [props.panelId, props.ui.pendingRemovalIds, props.ui.pendingStructuralChanges],
+  );
+  const projectedSuppressionIds = useMemo(
+    () => pendingStructuralProjectionSuppressions(
+      panelPendingChanges,
+      props.parentId,
+      props.ui.pendingRemovalIds,
+    ),
+    [panelPendingChanges, props.parentId, props.ui.pendingRemovalIds],
   );
   const builtRows = useMemo(() => buildOutlinerRows(parent, props.index.byId, {
     expandedHiddenFields: props.ui.expandedHiddenFields,
@@ -473,10 +479,14 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     props.ui.expandedHiddenFields,
     projectedSuppressionIds,
   ]);
-  const pendingChanges = panelPendingChanges.filter((change) => (
-    change.parentId === props.parentId
-  ));
-  const pendingChangeIds = new Set(pendingChanges.map((change) => change.id));
+  const pendingChanges = useMemo(
+    () => panelPendingChanges.filter((change) => change.parentId === props.parentId),
+    [panelPendingChanges, props.parentId],
+  );
+  const pendingChangeIds = useMemo(
+    () => new Set(pendingChanges.map((change) => change.id)),
+    [pendingChanges],
+  );
   const rowsWithPendingFields = useMemo(
     () => pendingChanges
       .filter((change) => change.presentation === 'field')
@@ -492,7 +502,10 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     () => rowsWithPendingFields.filter((row) => row.type === 'field' || row.type === 'hiddenField'),
     [rowsWithPendingFields],
   );
-  const optimisticChangesById = new Map(pendingChanges.map((change) => [change.id, change]));
+  const optimisticChangesById = useMemo(
+    () => new Map(pendingChanges.map((change) => [change.id, change])),
+    [pendingChanges],
+  );
   const draftId = useTrailingDraftId(props.parentId, props.index.byId, pendingChangeIds);
   const trailingMode = props.trailingDraft ?? 'none';
   const realContentCount = useMemo(() => builtRows.reduce((count, row) => {

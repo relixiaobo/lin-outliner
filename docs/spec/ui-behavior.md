@@ -153,20 +153,23 @@ keyboard or pointer change should be checked against this matrix.
   remounting the draft editor or losing pending input.
 - Middle-row Enter first settles already-queued text patches, then replaces the
   row's local draft mirror with the split head before submitting the atomic
-  split. The Operation Event confirms and clears that mirror; a rejected split
-  restores the complete pre-split draft. A pre-split mirror must never suppress
-  the canonical split-head Event and leave duplicated tail text on screen.
+  split. The accepted projection delta confirms the split and clears that mirror
+  in the same render commit; the later durable Operation Event is deduplicated.
+  A rejected split restores the complete pre-split draft. A pre-split mirror
+  must never suppress the accepted split-head replacement and leave duplicated
+  tail text on screen.
 - Ordinary create, split, and empty-row removal update the visible row structure
   in the initiating renderer turn. Create and split mint the real Node ID before
   submission and render one pending row with that ID and its final React key;
-  settlement upgrades the same editor in place while the authoritative
-  Projection remains unchanged until Runtime commits. Text typed into a pending
-  split row is retained and reconciled after creation. Removal hides the pending
-  row without deleting it from the Projection. An existing trailing draft stays
-  mounted after a pending created row from the first optimistic frame onward; it
-  is never removed and re-added at settlement. The projection apply and pending
-  presentation cleanup share one synchronous render commit; command rejection
-  removes the pending presentation and restores source content and focus.
+  accepted settlement upgrades the same editor in place and folds the Runtime's
+  authoritative Projection delta without waiting for durability. Text typed into
+  a pending split row is retained and reconciled after creation. Removal hides
+  the pending row without deleting it from the Projection. An existing trailing
+  draft stays mounted after a pending created row from the first optimistic frame
+  onward; it is never removed and re-added at settlement. The accepted projection
+  apply and pending presentation cleanup share one synchronous render commit;
+  command rejection removes the pending presentation and restores source content
+  and focus.
 - Body, field-value, and Table-hosted node editing all delegate create, split,
   remove, merge, relocate, done-state, and semantic row conversion to the same
   optimistic structural transaction. A nested renderer may choose layout and

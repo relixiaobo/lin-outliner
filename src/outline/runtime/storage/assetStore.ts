@@ -110,6 +110,7 @@ export class OutlineAssetStore {
   }
 
   async resolveLeases(leaseIds: readonly string[]): Promise<ReadonlyMap<string, AssetLease>> {
+    if (leaseIds.length === 0) return new Map();
     return this.transactions.resolveAssetLeases(leaseIds, this.now());
   }
 

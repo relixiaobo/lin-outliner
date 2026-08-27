@@ -35,7 +35,9 @@ const OPERATION_EVENT_CACHE_LIMIT = 256;
 export interface OutlineMutationOptions {
   readonly acknowledgeDestructive?: boolean;
   readonly idempotencyKey?: string;
+  readonly settlement?: 'accepted' | 'durable';
   readonly source?: ChangeSet['source'];
+  readonly undoGroup?: Operation['undoGroup'];
   readonly focus?: FocusHint | ((settlement: Operation | NoChangeResult, diff: Diff, update: ProjectionUpdate) => FocusHint | undefined);
 }
 
@@ -58,6 +60,7 @@ export class OutlineDocumentService {
   private watchCursor: string | undefined;
   private reconnectDelayMs = EVENT_RECONNECT_MIN_DELAY_MS;
   private snapshot: ProjectionSnapshot | null = null;
+  private readonly nodesById = new Map<string, NodeProjection>();
   private readonly bufferedEvents: OutlineEvent[] = [];
   private readonly listeners = new Set<ProjectionListener>();
   private readonly operationEvents = new Map<string, OutlineEvent>();
@@ -68,8 +71,6 @@ export class OutlineDocumentService {
   }>>();
   private initPromise: Promise<ProjectionSnapshot> | null = null;
   private mutationTail = Promise.resolve();
-  private acceptedSequence = 0;
-  private settledSequence = 0;
   private admissionFrozen = false;
   private admissionCommitted = false;
   private closed = false;
@@ -101,8 +102,11 @@ export class OutlineDocumentService {
   }
 
   projectionNodesByIds(nodeIds: readonly string[]) {
-    const requested = new Set(nodeIds);
-    return this.getProjection().nodes.filter((node) => requested.has(node.id));
+    if (!this.snapshot) throw new Error('Outline Runtime Projection is not initialized.');
+    return nodeIds.flatMap((nodeId) => {
+      const node = this.nodesById.get(nodeId);
+      return node ? [node] : [];
+    });
   }
 
   onProjectionChanged(listener: ProjectionListener): () => void {
@@ -112,23 +116,13 @@ export class OutlineDocumentService {
 
   async searchNodeHits(query: string, limit: number): Promise<SearchHit[]> {
     const boundedLimit = Math.max(1, Math.min(10_000, Math.floor(limit)));
-    const result = await this.request<ProjectionResult>('find', {
-      target: {
-        selector: {
-          by: 'query',
-          query: { kind: 'rule', op: 'STRING_MATCH', text: query },
-          includeTrash: false,
-          order: 'document',
-          limit: boundedLimit,
-        },
-        cardinality: 'many',
-        max: boundedLimit,
-      },
-    });
-    return result.nodes.map((node, index) => ({
-      nodeId: String((node as { id: string }).id),
-      score: Math.max(1, boundedLimit - index),
-    }));
+    try {
+      return await (await this.connectRequestClient()).searchDesktopNodes(query, boundedLimit);
+    } catch (error) {
+      if (!shouldReconnectRequestClient(error)) throw error;
+      this.invalidateRequestClient();
+      return (await this.connectRequestClient()).searchDesktopNodes(query, boundedLimit);
+    }
   }
 
   runChanges(changes: readonly Change[], options: OutlineMutationOptions = {}): Promise<CommandResult> {
@@ -147,7 +141,6 @@ export class OutlineDocumentService {
     options: OutlineMutationOptions = {},
   ): Promise<CommandResult> {
     if (this.admissionFrozen) return Promise.reject(new Error('Outline mutation admission is frozen.'));
-    const acceptedSequence = ++this.acceptedSequence;
     const idempotencyKey = options.idempotencyKey ?? `desktop:${crypto.randomUUID()}`;
     const result = this.mutationTail.then(async () => {
       const revision = this.revision();
@@ -157,18 +150,19 @@ export class OutlineDocumentService {
         base: { ...input.base, revision },
         idempotencyKey: input.idempotencyKey ?? idempotencyKey,
       };
-      const diff = await this.request<Diff>('diff', { changeSet });
-      const settlement = await this.request<Operation | NoChangeResult>('apply', {
+      const acceptedReceipt = options.acknowledgeDestructive || options.settlement === 'durable'
+        ? null
+        : await (await this.connectRequestClient()).commitDesktopChangeSet(changeSet, options.undoGroup);
+      const accepted = acceptedReceipt as (typeof acceptedReceipt & { readonly update: ProjectionUpdate });
+      const diff = accepted?.diff ?? await this.request<Diff>('diff', { changeSet });
+      const settlement = accepted?.settlement ?? await this.request<Operation | NoChangeResult>('apply', {
         diff,
         ...(options.acknowledgeDestructive ? { acknowledgeDestructive: true } : {}),
       });
-      let update: ProjectionUpdate;
-      if (settlement.kind === 'outline.no-change') {
-        if (!this.snapshot) throw new Error('Outline Runtime Projection is not initialized.');
-        update = { kind: 'full', revision: settlement.revision, projection: this.snapshot.projection };
-      } else {
-        update = await this.updateFromOwnOperation(settlement.operationId);
-      }
+      const update = accepted?.update ?? (settlement.kind === 'outline.no-change'
+        ? await this.currentFullUpdate(settlement.revision)
+        : await this.updateFromOwnOperation(settlement.operationId));
+      if (accepted) this.acceptOwnUpdate(settlement, update);
       return {
         update,
         ...(options.focus ? {
@@ -178,11 +172,43 @@ export class OutlineDocumentService {
         } : {}),
       };
     });
-    this.mutationTail = result.then(
-      () => { this.settledSequence = Math.max(this.settledSequence, acceptedSequence); },
-      () => { this.settledSequence = Math.max(this.settledSequence, acceptedSequence); },
-    );
+    this.mutationTail = result.then(() => undefined, () => undefined);
     return result;
+  }
+
+  private currentFullUpdate(revision: number): ProjectionUpdate {
+    if (!this.snapshot) throw new Error('Outline Runtime Projection is not initialized.');
+    return { kind: 'full', revision, projection: this.snapshot.projection };
+  }
+
+  private acceptOwnUpdate(settlement: Operation | NoChangeResult, update: ProjectionUpdate): void {
+    if (!this.snapshot || update.revision <= this.snapshot.revision) return;
+    this.snapshot = {
+      revision: update.revision,
+      projection: applyProjectionUpdate(this.snapshot.projection, update),
+    };
+    this.applyNodeUpdate(update);
+    const operation = settlement.kind === 'outline.operation' ? settlement : undefined;
+    this.emit({
+      event: {
+        protocolVersion: OUTLINE_PROTOCOL_VERSION,
+        kind: 'outline.event',
+        type: operation?.revertsOperationId ? 'operation.reverted' : 'operation.committed',
+        instanceId: 'desktop:accepted',
+        sequence: 0,
+        revision: update.revision,
+        cursor: `desktop:accepted:${update.revision}`,
+        ...(operation ? { operation } : {}),
+        ...(update.kind === 'delta' ? {
+          changes: {
+            todayId: update.todayId,
+            changedNodes: update.changedNodes,
+            removedIds: update.removedIds,
+          },
+        } : {}),
+      },
+      update,
+    });
   }
 
   async log(input: {
@@ -197,28 +223,29 @@ export class OutlineDocumentService {
     this.admissionFrozen = true;
   }
 
-  unfreezeMutationAdmission(): void {
-    if (!this.admissionCommitted) this.admissionFrozen = false;
+  async unfreezeMutationAdmission(): Promise<void> {
+    if (this.admissionCommitted) return;
+    const status = await this.manageRuntime('unfreeze');
+    if (!status.admissionFrozen) this.admissionFrozen = false;
   }
 
-  commitMutationAdmissionFreeze(): void {
+  async commitMutationAdmissionFreeze(): Promise<void> {
+    await this.manageRuntime('commit-freeze');
     this.admissionFrozen = true;
     this.admissionCommitted = true;
   }
 
-  latestAcceptedMutationSequence(): number {
-    return this.acceptedSequence;
+  async latestAcceptedRevision(): Promise<number> {
+    const status = await this.manageRuntime('freeze');
+    return status.acceptedRevision;
   }
 
-  settledMutationSequence(): number {
-    return this.settledSequence;
+  async durableRevision(): Promise<number> {
+    return (await this.manageRuntime('status')).durableRevision;
   }
 
-  async drainMutations(target = this.acceptedSequence): Promise<void> {
-    await this.mutationTail;
-    if (this.settledSequence < target) {
-      throw new Error(`Outline mutation drain stopped before sequence ${target}.`);
-    }
+  async drainToRevision(target: number): Promise<void> {
+    await this.manageRuntime('drain', target);
   }
 
   close(): void {
@@ -244,6 +271,7 @@ export class OutlineDocumentService {
     await this.watchReadyPromise;
     const snapshot = await this.readProjection();
     this.snapshot = snapshot;
+    this.reseedNodeIndex(snapshot.projection);
     const pending = this.bufferedEvents.splice(0).sort((left, right) => left.sequence - right.sequence);
     for (const event of pending) await this.acceptEvent(event);
     return this.snapshot;
@@ -321,6 +349,7 @@ export class OutlineDocumentService {
       revision: update.revision,
       projection: applyProjectionUpdate(this.snapshot.projection, update),
     };
+    this.applyNodeUpdate(update);
     this.emit({ event, update });
   }
 
@@ -334,6 +363,7 @@ export class OutlineDocumentService {
       snapshot = await this.readProjection();
     }
     this.snapshot = snapshot;
+    this.reseedNodeIndex(snapshot.projection);
     const update: ProjectionUpdate = { kind: 'full', ...snapshot };
     const event: OutlineEvent = {
       protocolVersion: OUTLINE_PROTOCOL_VERSION,
@@ -365,6 +395,19 @@ export class OutlineDocumentService {
     }
   }
 
+  private async manageRuntime(
+    action: Parameters<OutlineClient['manageDesktopRuntime']>[0],
+    targetRevision?: number,
+  ) {
+    try {
+      return await (await this.connectRequestClient()).manageDesktopRuntime(action, targetRevision);
+    } catch (error) {
+      if (!shouldReconnectRequestClient(error)) throw error;
+      this.invalidateRequestClient();
+      return (await this.connectRequestClient()).manageDesktopRuntime(action, targetRevision);
+    }
+  }
+
   private async connectRequestClient(): Promise<OutlineClient> {
     if (this.requestClient) return this.requestClient;
     if (!this.requestClientConnecting) {
@@ -381,6 +424,20 @@ export class OutlineDocumentService {
   private invalidateRequestClient(): void {
     this.requestClient?.close();
     this.requestClient = null;
+  }
+
+  private applyNodeUpdate(update: ProjectionUpdate): void {
+    if (update.kind === 'full') {
+      this.reseedNodeIndex(update.projection);
+      return;
+    }
+    for (const nodeId of update.removedIds) this.nodesById.delete(nodeId);
+    for (const node of update.changedNodes) this.nodesById.set(node.id, node);
+  }
+
+  private reseedNodeIndex(projection: DocumentProjection): void {
+    this.nodesById.clear();
+    for (const node of projection.nodes) this.nodesById.set(node.id, node);
   }
 
   private async updateFromOwnOperation(operationId: string): Promise<ProjectionUpdate> {

@@ -146,6 +146,11 @@ type E2EWindow = Window & {
     onAutomationNotification: (listener: (notification: unknown) => void) => () => void;
     onDocumentEvent: (listener: (event: unknown) => void) => () => void;
     outline: {
+      commit: (request: {
+        requestId: string;
+        changeSet: MockChangeSet;
+        undoGroup?: Record<string, unknown>;
+      }) => Promise<unknown>;
       request: (request: { requestId: string; command: string; input: unknown }) => Promise<{
         protocolVersion: 1;
         requestId: string;
@@ -3698,6 +3703,42 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       initialTranslationLanguage: translationLanguage,
       initialUrlPageTranslationPreferences: clone(translationPreferences),
       outline: {
+        commit: async (request) => {
+          const before = projection();
+          const diff = previewMockChangeSet(request.changeSet);
+          const response = await win.lin!.outline.request({
+            requestId: request.requestId,
+            command: 'commit',
+            input: {
+              changeSet: request.changeSet,
+              ...(request.undoGroup ? { undoGroup: request.undoGroup } : {}),
+            },
+          });
+          if (!response.ok) {
+            const error = response.error && typeof response.error === 'object'
+              ? response.error as { message?: unknown }
+              : undefined;
+            throw new Error(typeof error?.message === 'string' ? error.message : 'Mock Outline commit failed.');
+          }
+          const after = projection();
+          const beforeById = new Map(before.nodes.map((node) => [node.id, node]));
+          const afterById = new Map(after.nodes.map((node) => [node.id, node]));
+          return clone({
+            settlement: response.data,
+            update: {
+              kind: 'delta',
+              revision,
+              todayId: after.todayId,
+              changedNodes: after.nodes.filter((node) => (
+                JSON.stringify(beforeById.get(node.id)) !== JSON.stringify(node)
+              )),
+              removedIds: before.nodes
+                .filter((node) => !afterById.has(node.id))
+                .map((node) => node.id),
+            },
+            diff,
+          });
+        },
         request: requestMockOutline,
         cancel: () => undefined,
         subscribe: (subscription, listener) => {
@@ -6751,6 +6792,54 @@ export async function holdOutlineMutation(
       if (win.__outlineMutationGates) delete win.__outlineMutationGates[id];
     }, gateId);
   };
+}
+
+export async function observeNextRowMoveAnimation(page: Page, nodeId: string): Promise<void> {
+  await page.evaluate((targetNodeId) => {
+    type RowMoveObservation = {
+      nodeId: string;
+      observed: boolean;
+      observer: MutationObserver;
+    };
+    const win = window as Window & {
+      __rowMoveAnimationObservation?: RowMoveObservation;
+    };
+    win.__rowMoveAnimationObservation?.observer.disconnect();
+
+    let observation: RowMoveObservation;
+    const inspect = () => {
+      const animated = [...document.querySelectorAll<HTMLElement>('[data-node-id][data-parent-id] > .row')]
+        .some((row) => (
+          row.parentElement?.dataset.nodeId === targetNodeId
+          && row.classList.contains('row-move-animating')
+        ));
+      if (!animated) return;
+      observation.observed = true;
+      observation.observer.disconnect();
+    };
+    observation = {
+      nodeId: targetNodeId,
+      observed: false,
+      observer: new MutationObserver(inspect),
+    };
+    win.__rowMoveAnimationObservation = observation;
+    observation.observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class'],
+      childList: true,
+      subtree: true,
+    });
+    inspect();
+  }, nodeId);
+}
+
+export async function expectRowMoveAnimationObserved(page: Page, nodeId: string): Promise<void> {
+  await expect.poll(() => page.evaluate((targetNodeId) => {
+    const observation = (window as Window & {
+      __rowMoveAnimationObservation?: { nodeId: string; observed: boolean };
+    }).__rowMoveAnimationObservation;
+    return observation?.nodeId === targetNodeId && observation.observed;
+  }, nodeId), { timeout: 1000 }).toBe(true);
 }
 
 export async function clipboardText(page: Page) {

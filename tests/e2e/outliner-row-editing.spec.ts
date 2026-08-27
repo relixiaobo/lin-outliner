@@ -4,10 +4,12 @@ import {
   commandCalls,
   e2eProjection,
   emitDocumentEvent,
+  expectRowMoveAnimationObserved,
   holdOutlineMutation,
   ids,
   nodeById,
   openMockedApp,
+  observeNextRowMoveAnimation,
   row,
   rowBody,
   rowEditor,
@@ -59,12 +61,6 @@ async function placeCursor(page: Page, nodeId: string, placement: 'start' | 'end
     selection?.addRange(range);
   }, placement);
   await page.waitForTimeout(25);
-}
-
-async function waitForRowMoveAnimation(page: Page, id: string) {
-  await expect.poll(async () => rowBody(page, id).evaluate((element) => (
-    element.classList.contains('row-move-animating')
-  )), { timeout: 1000 }).toBe(true);
 }
 
 async function waitForRowMoveAnimationToSettle(page: Page, id: string) {
@@ -875,15 +871,17 @@ test.describe('outliner row editing parity', () => {
       (window as Window & { __movingEditor?: Element }).__movingEditor === element
     ))).toBe(true);
 
+    await observeNextRowMoveAnimation(page, ids.beta);
     await releaseRelocation();
-    await waitForRowMoveAnimation(page, ids.beta);
+    await expectRowMoveAnimationObserved(page, ids.beta);
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.alpha);
     await expect(rowEditor(page, ids.beta)).toBeFocused();
     await waitForRowMoveAnimationToSettle(page, ids.beta);
 
+    await observeNextRowMoveAnimation(page, ids.beta);
     await page.keyboard.press('Shift+Tab');
 
-    await waitForRowMoveAnimation(page, ids.beta);
+    await expectRowMoveAnimationObserved(page, ids.beta);
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.today);
     await expect(rowEditor(page, ids.beta)).toBeFocused();
   });

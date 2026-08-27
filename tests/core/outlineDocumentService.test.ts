@@ -35,11 +35,12 @@ describe('OutlineDocumentService', () => {
         nodes: [{ content: richText('Desktop mutation'), children: [] }],
         bind: 'created',
       }]);
-      expect(document.latestAcceptedMutationSequence()).toBe(1);
       const result = await mutation;
       expect(result.update).toMatchObject({ kind: 'delta', revision: 1 });
-      await document.drainMutations(1);
-      expect(document.settledMutationSequence()).toBe(1);
+      expect(await document.latestAcceptedRevision()).toBe(1);
+      await document.drainToRevision(1);
+      expect(await document.durableRevision()).toBe(1);
+      await document.unfreezeMutationAdmission();
       expect(document.getProjection().nodes.some((node) => node.content.text === 'Desktop mutation')).toBe(true);
 
       document.freezeMutationAdmission();
@@ -48,7 +49,7 @@ describe('OutlineDocumentService', () => {
         placement: { kind: 'last', parent: oneToday() },
         nodes: [{ content: richText('Rejected during quit'), children: [] }],
       }])).rejects.toThrow('admission is frozen');
-      document.unfreezeMutationAdmission();
+      await document.unfreezeMutationAdmission();
 
       await runtime.stop();
       runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
@@ -84,6 +85,7 @@ describe('OutlineDocumentService', () => {
       await timeline.ensureTagDefinitions();
 
       expect(await document.log({ limit: 10 })).toHaveLength(1);
+      expect(await document.durableRevision()).toBe(document.revision());
     } finally {
       document.close();
       await runtime.stop();
@@ -112,7 +114,13 @@ describe('OutlineDocumentService', () => {
       await document.runChanges(ensure);
       const revision = document.revision();
       const noChange = await document.runChanges(ensure);
-      expect(noChange.update).toMatchObject({ kind: 'full', revision });
+      expect(noChange.update).toEqual({
+        kind: 'delta',
+        revision,
+        todayId: document.getProjection().todayId,
+        changedNodes: [],
+        removedIds: [],
+      });
       expect(Number.isFinite(document.revision())).toBe(true);
 
       const next = await document.runChanges([{
@@ -124,6 +132,92 @@ describe('OutlineDocumentService', () => {
     } finally {
       document.close();
       await runtime.stop();
+    }
+  });
+
+  test('keeps durable settlement separate from destructive acknowledgement', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const document = new OutlineDocumentService(new OutlineClientSupervisor({
+      root,
+      noStart: true,
+      origin: 'desktop',
+    }));
+    try {
+      await document.init();
+      await document.runChanges([{
+        op: 'create',
+        placement: { kind: 'last', parent: oneToday() },
+        nodes: [{ content: richText('Durable purge'), children: [] }],
+      }]);
+      const nodeId = document.getProjection().nodes.find((node) => node.content.text === 'Durable purge')!.id;
+
+      const purge = [{
+        op: 'lifecycle' as const,
+        action: 'purge' as const,
+        targets: {
+          target: { selector: { by: 'id' as const, id: nodeId }, cardinality: 'one' as const },
+        },
+      }];
+      await expect(document.runChanges(purge, { settlement: 'durable' })).rejects.toMatchObject({
+        outlineError: { code: 'confirmation_required' },
+      });
+      expect(document.getProjection().nodes.some((node) => node.id === nodeId)).toBe(true);
+
+      await document.runChanges(purge, {
+        settlement: 'durable',
+        acknowledgeDestructive: true,
+      });
+      expect(document.getProjection().nodes.some((node) => node.id === nodeId)).toBe(false);
+    } finally {
+      document.close();
+      await runtime.stop();
+    }
+  });
+
+  test('uses Runtime-ranked search and keeps sparse Node reads fresh in input order', async () => {
+    const root = await makeRoot();
+    let runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const document = new OutlineDocumentService(new OutlineClientSupervisor({
+      root,
+      noStart: true,
+      origin: 'desktop',
+    }));
+    try {
+      await document.init();
+      await document.runChanges([{
+        op: 'create',
+        placement: { kind: 'last', parent: oneToday() },
+        nodes: [{ content: richText('Ranked needle exact'), children: [] }],
+      }]);
+      await document.runChanges([{
+        op: 'create',
+        placement: { kind: 'last', parent: oneToday() },
+        nodes: [{ content: richText('Prefix ranked needle extra'), children: [] }],
+      }]);
+      const first = document.getProjection().nodes.find((node) => node.content.text === 'Ranked needle exact')!;
+      const second = document.getProjection().nodes.find((node) => node.content.text === 'Prefix ranked needle extra')!;
+
+      const hits = await document.searchNodeHits('ranked needle', 10);
+      expect(hits).toEqual(runtime.workspace.searchText('ranked needle', 10));
+      expect(hits.map((hit) => hit.nodeId)).toEqual(expect.arrayContaining([first.id, second.id]));
+      expect(document.projectionNodesByIds([second.id, 'node:missing', first.id]))
+        .toEqual([second, first]);
+
+      await runtime.stop();
+      runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+      expect(runtime).not.toBeNull();
+      if (!runtime) return;
+      expect(await document.searchNodeHits('ranked needle', 10)).toEqual(
+        runtime.workspace.searchText('ranked needle', 10),
+      );
+    } finally {
+      document.close();
+      await runtime?.stop();
     }
   });
 });

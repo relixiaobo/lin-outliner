@@ -108,6 +108,7 @@ export class TimelineMemoryStore {
         name: definition.name,
         bind: `memoryTag${index + 1}`,
       })), {
+        settlement: 'durable',
         source: { kind: 'automation', label: 'Ensure Memory tag definitions' },
       });
     });
@@ -293,6 +294,7 @@ export class TimelineMemoryStore {
   ): Promise<void> {
     await this.document.runChanges(changes, {
       idempotencyKey: operationId,
+      settlement: 'durable',
       source: {
         kind: 'automation',
         label: `Memory publication generation ${generation}`,

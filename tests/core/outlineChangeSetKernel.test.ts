@@ -9,6 +9,7 @@ import {
   OutlineRuntimeWorkspace,
   applyOutlineDiff,
   commitOutlineChangeSet,
+  commitOutlineChangeSetAccepted,
   createSelectionIndex,
   diffOutlineChangeSet,
   projectOutline,
@@ -45,6 +46,97 @@ describe('outline ChangeSet kernel', () => {
     expect(operation.revisionAfter).toBe(beforeRevision + 1);
     expect(workspace.projection().nodes.some((node) => node.content.text === 'Direct commit row')).toBe(true);
     expect(await commitOutlineChangeSet(workspace, changeSet, { origin: 'desktop' })).toEqual(operation);
+  });
+
+  test('keeps accepted desktop commits off the full Core Projection path', async () => {
+    const workspace = await makeWorkspace();
+    const liveCore = (workspace as unknown as { core: { projection: () => unknown } }).core;
+    const originalProjection = liveCore.projection;
+    const projectionCallStacks: string[] = [];
+    liveCore.projection = () => {
+      projectionCallStacks.push(new Error('Unexpected full Core Projection').stack ?? 'missing stack');
+      return originalProjection.call(liveCore);
+    };
+    try {
+      const accepted = await commitOutlineChangeSetAccepted(workspace, {
+        ...createTodayChangeSet('Projection-free accepted row'),
+        idempotencyKey: 'test:projection-free-accepted',
+      }, { origin: 'desktop' });
+
+      expect(accepted.update).toMatchObject({ kind: 'delta', revision: 1 });
+      const runtimeProjectionCalls = projectionCallStacks.filter((stack) => !stack.includes('verifyCaches'));
+      expect(runtimeProjectionCalls).toEqual([]);
+      expect(projectionCallStacks).toHaveLength(process.env.LIN_VERIFY_CACHE === '1' ? 1 : 0);
+    } finally {
+      liveCore.projection = originalProjection;
+    }
+  });
+
+  test('converts a newly bound desktop draft into a field in the same accepted ChangeSet', async () => {
+    const workspace = await makeWorkspace();
+    const fieldEntryId = `node:${crypto.randomUUID()}`;
+
+    const accepted = await commitOutlineChangeSetAccepted(workspace, {
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      idempotencyKey: 'test:accepted-inline-field-binding',
+      operations: [
+        {
+          op: 'create',
+          placement: { kind: 'last', parent: oneAlias('today') },
+          nodes: [draft('', { id: fieldEntryId })],
+          bind: 'field-entry',
+        },
+        {
+          op: 'update',
+          targets: { binding: 'field-entry' },
+          changes: [{ kind: 'field', action: 'convert', name: '', fieldType: 'plain' }],
+        },
+      ],
+    }, { origin: 'desktop' });
+
+    expect(accepted.diff.bindings['field-entry']).toEqual([fieldEntryId]);
+    expect(accepted.update.changedNodes.find((node) => node.id === fieldEntryId)).toMatchObject({
+      id: fieldEntryId,
+      type: 'fieldEntry',
+      parentId: workspace.projection().todayId,
+    });
+    const entry = workspace.documentState().nodes[fieldEntryId];
+    expect(entry).toMatchObject({ id: fieldEntryId, type: 'fieldEntry' });
+    expect(entry?.type === 'fieldEntry' && workspace.documentState().nodes[entry.fieldDefId]).toMatchObject({
+      type: 'fieldDef',
+      content: { text: '' },
+    });
+  });
+
+  test('replays the exact accepted desktop receipt after compaction and Runtime restart', async () => {
+    const root = await makeRoot();
+    const firstRuntime = await openWorkspace(root, {
+      instanceId: 'runtime:accepted-receipt-first',
+      storeOptions: { compactionRecords: 1 },
+    });
+    const changeSet: ChangeSet = {
+      ...createTodayChangeSet('Accepted receipt row'),
+      idempotencyKey: 'test:accepted-receipt-restart',
+    };
+
+    const first = await commitOutlineChangeSetAccepted(firstRuntime, changeSet, { origin: 'desktop' });
+    const sameRuntimeRetry = await commitOutlineChangeSetAccepted(firstRuntime, changeSet, { origin: 'desktop' });
+
+    expect(sameRuntimeRetry).toEqual(first);
+    expect(first.diff.bindings.created).toHaveLength(1);
+    await firstRuntime.drainDurability(first.update.revision);
+    expect(await firstRuntime.store.operations()).toHaveLength(1);
+    await firstRuntime.maintain({ compactIfNeeded: true });
+    firstRuntime.close();
+
+    const restarted = await openWorkspace(root, { instanceId: 'runtime:accepted-receipt-second' });
+    const restartRetry = await commitOutlineChangeSetAccepted(restarted, changeSet, { origin: 'desktop' });
+
+    expect(restartRetry).toEqual(first);
+    expect(restartRetry.diff.bindings).toEqual(first.diff.bindings);
+    expect(restarted.projection().nodes.filter((node) => node.content.text === 'Accepted receipt row')).toHaveLength(1);
+    expect(await restarted.store.operations()).toHaveLength(1);
   });
 
   test('normalizes a direct commit inside the mutation queue before executing', async () => {
@@ -866,6 +958,47 @@ describe('outline ChangeSet kernel', () => {
     expect(await workspace.store.operations()).toHaveLength(1);
     expect(workspace.projection().nodes.filter((node) => node.content.text.startsWith('Imported 2028-')).length).toBe(100);
   });
+
+  test('yields a large import while preserving one searchable and undoable Operation', async () => {
+    const workspace = await makeWorkspace();
+    const children = Array.from({ length: 600 }, (_, index) => draft(`Cooperative import needle ${index}`));
+    let eventLoopProgressed = false;
+    const timer = setTimeout(() => { eventLoopProgressed = true; }, 0);
+    const settlement = await commitOutlineChangeSet(workspace, {
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      idempotencyKey: 'test:cooperative-import',
+      source: { kind: 'import', label: 'Cooperative import fixture' },
+      operations: [{
+        op: 'create',
+        placement: { kind: 'last', parent: oneAlias('today') },
+        nodes: [draft('Cooperative import root', { children })],
+        bind: 'imported',
+      }],
+    }, { origin: 'external-client' });
+    clearTimeout(timer);
+
+    expect(settlement.kind).toBe('outline.operation');
+    if (settlement.kind !== 'outline.operation') throw new Error('Expected import Operation.');
+    expect(eventLoopProgressed).toBe(true);
+    expect(settlement.revisionBefore).toBe(0);
+    expect(settlement.revisionAfter).toBe(1);
+    expect(await workspace.store.operations()).toHaveLength(1);
+    const lastImportedId = workspace.projection().nodes.find((node) => (
+      node.content.text === 'Cooperative import needle 599'
+    ))!.id;
+    expect(workspace.searchText('cooperative import needle 599', 50).map((hit) => hit.nodeId))
+      .toContain(lastImportedId);
+
+    const undo = await workspace.undo({
+      origin: 'local-user',
+      selectionOrigin: 'external-client',
+      expectOperationId: settlement.operationId,
+    });
+    expect(undo.revertsOperationId).toBe(settlement.operationId);
+    expect(workspace.searchText('cooperative import needle 599', 10)).toEqual([]);
+    expect(workspace.projection().nodes.some((node) => node.content.text === 'Cooperative import root')).toBe(false);
+  }, 15_000);
 
   test('settles thousands of leaf mutations with one bounded Operation summary', async () => {
     const workspace = await makeWorkspace();

@@ -370,6 +370,46 @@ describe('renderer Outline intents', () => {
     });
   });
 
+  test('binds a newly materialized draft before converting it into an inline field', async () => {
+    const harness = await createHarness([
+      node('root', { children: [] }),
+    ]);
+
+    const result = await outlineDocumentApi.createInlineField(
+      'root',
+      0,
+      '',
+      'plain',
+      undefined,
+      'node:field-entry',
+    );
+
+    expect(harness.changeSets[0]!.operations).toEqual([
+      {
+        op: 'create',
+        placement: { kind: 'index', parent: oneId('root'), index: 0 },
+        nodes: [{
+          id: 'node:field-entry',
+          content: { text: '', marks: [], inlineRefs: [] },
+          children: [],
+        }],
+        bind: 'field-entry',
+      },
+      {
+        op: 'update',
+        targets: { binding: 'field-entry' },
+        changes: [{ kind: 'field', action: 'convert', name: '', fieldType: 'plain' }],
+      },
+    ]);
+    expect(result.focus).toEqual({
+      nodeId: 'node:field-entry',
+      parentId: 'root',
+      surface: 'field-name',
+      placement: { kind: 'all' },
+      selectAll: true,
+    });
+  });
+
   test('stores reference conversion content without leaking the internal text sentinel', async () => {
     const harness = await createHarness([
       node('root', { children: ['target'] }),
@@ -555,6 +595,26 @@ async function createHarness(
   let operationSequence = 0;
 
   const outline: NonNullable<LinApi['outline']> = {
+    commit: async (input) => {
+      const changeSet = input.changeSet;
+      changeSets.push(changeSet);
+      commitInputs.push(changeSet);
+      commitRequests.push(input);
+      revision += 1;
+      operationSequence += 1;
+      const operation = operationFor(revision, operationSequence);
+      return {
+        settlement: operation,
+        update: {
+          kind: 'delta',
+          revision,
+          todayId: projection.todayId,
+          changedNodes: [],
+          removedIds: [],
+        },
+        diff: diffFor(changeSet, revision - 1),
+      };
+    },
     request: async (request) => {
       if (request.command === 'show') {
         return success(request, {
@@ -566,18 +626,6 @@ async function createHarness(
         const changeSet = (request.input as { changeSet: ChangeSet }).changeSet;
         changeSets.push(changeSet);
         return success(request, diffFor(changeSet, revision));
-      }
-      if (request.command === 'commit') {
-        const input = request.input as { changeSet: ChangeSet; undoGroup?: OperationUndoGroup };
-        const changeSet = input.changeSet;
-        changeSets.push(changeSet);
-        commitInputs.push(changeSet);
-        commitRequests.push(input);
-        revision += 1;
-        operationSequence += 1;
-        const operation = operationFor(revision, operationSequence);
-        stream?.(eventFor(operation, operationSequence));
-        return success(request, operation);
       }
       if (request.command === 'apply') {
         const input = request.input as { diff: Diff; acknowledgeDestructive?: boolean };

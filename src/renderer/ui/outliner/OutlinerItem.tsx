@@ -339,9 +339,12 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // A non-image file renders as a lightweight row (file-icon bullet + read-only
   // filename, expand → inline preview); an image keeps its inline-image presentation.
   const nonImageFileRow = fileNodeRow && fileNodeRow.type !== 'image' ? fileNodeRow : null;
-  const ordinaryTrailingDraft = props.draft === true
+  const trailingDraftOrigin = props.draft === true
     && !realNode
-    && !props.optimisticChange;
+    && (!props.optimisticChange || props.optimisticChange.originatesFromDraft === true);
+  const exposesTrailingDraftMarker = trailingDraftOrigin
+    && (!props.optimisticChange || props.optimisticChange.retainsTrailingDraftMarker === true);
+  const ordinaryTrailingDraft = trailingDraftOrigin && !props.optimisticChange;
   const row = useOutlinerRowInteraction({
     rowId: props.nodeId,
     parentId: props.parentId,
@@ -359,8 +362,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     locked: node?.locked ?? true,
     dragId: props.dragId,
     setDragId: props.setDragId,
-    // Tag a not-yet-materialized draft wrap with data-trailing-parent-id so the
-    // trailing editor is findable the way the legacy TrailingInput row was.
     draft: ordinaryTrailingDraft,
     draftAfterId: props.draftAfterId,
   });
@@ -873,6 +874,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       input: {
         id: props.nodeId,
         parentId: props.parentId,
+        originatesFromDraft: true,
+        retainsTrailingDraftMarker: !fieldValue,
         afterId: props.draftAfterId,
         content: seed,
         placement: cursorEnd(),
@@ -1395,6 +1398,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       input: {
         id: props.nodeId,
         parentId: props.parentId,
+        originatesFromDraft: true,
         afterId: props.draftAfterId,
         content: params.content,
         nodeOverride: params.nodeOverride ?? {
@@ -1480,8 +1484,10 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     if (!trigger || !displayed) return null;
     const previousContent = draftContentRef.current;
     const pendingBeforeReplacement = pendingTextPatchRef.current;
-    const content = deleteRichTextRange(previousContent, trigger.from, trigger.to);
-    replaceLocalDraftContent(content);
+    const content = fileNodeRow
+      ? previousContent
+      : deleteRichTextRange(previousContent, trigger.from, trigger.to);
+    if (!fileNodeRow) replaceLocalDraftContent(content);
     void startOptimisticNodePatch({
       currentUi: props.uiRef.current,
       setUi: props.setUi,
@@ -1490,15 +1496,19 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         ui: props.uiRef.current,
         tagId: tag.id,
         action: 'add',
-        content,
+        ...(!fileNodeRow ? { content } : {}),
       }),
       command: async () => {
         await pendingBeforeReplacement;
-        return props.run(() => api.applyTagWithContent(targetEditId, tag.id, content), {
+        return props.run(() => (
+          fileNodeRow
+            ? api.applyTag(targetEditId, tag.id)
+            : api.applyTagWithContent(targetEditId, tag.id, content)
+        ), {
           applyFocus: false,
         });
       },
-      onRejected: () => replaceLocalDraftContent(previousContent),
+      onRejected: !fileNodeRow ? () => replaceLocalDraftContent(previousContent) : undefined,
     });
     return commandRunnerNoop();
   };
@@ -1508,9 +1518,11 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     if (!trigger || !displayed) return null;
     const previousContent = draftContentRef.current;
     const pendingBeforeReplacement = pendingTextPatchRef.current;
-    const content = deleteRichTextRange(previousContent, trigger.from, trigger.to);
+    const content = fileNodeRow
+      ? previousContent
+      : deleteRichTextRange(previousContent, trigger.from, trigger.to);
     const tagId = freshNodeId();
-    replaceLocalDraftContent(content);
+    if (!fileNodeRow) replaceLocalDraftContent(content);
     void startOptimisticNodePatch({
       currentUi: props.uiRef.current,
       setUi: props.setUi,
@@ -1519,17 +1531,19 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         ui: props.uiRef.current,
         tagId,
         action: 'add',
-        content,
+        ...(!fileNodeRow ? { content } : {}),
         pendingTagName: name,
       }),
       command: async () => {
         await pendingBeforeReplacement;
         return props.run(
-          () => api.createTagAndApplyWithContent(targetEditId, name, content, tagId),
+          () => fileNodeRow
+            ? api.createTagAndBatchApply([targetEditId], name, tagId)
+            : api.createTagAndApplyWithContent(targetEditId, name, content, tagId),
           { applyFocus: false },
         );
       },
-      onRejected: () => replaceLocalDraftContent(previousContent),
+      onRejected: !fileNodeRow ? () => replaceLocalDraftContent(previousContent) : undefined,
     });
     return commandRunnerNoop();
   };
@@ -2135,6 +2149,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       input: {
         id: props.nodeId,
         parentId: props.parentId,
+        originatesFromDraft: !hadProjectedNode || priorChange?.originatesFromDraft === true,
         beforeId: priorChange?.beforeId,
         afterId: priorChange?.afterId ?? props.draftAfterId,
         presentation: 'field',
@@ -2205,6 +2220,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       input: {
         id: props.nodeId,
         parentId: props.parentId,
+        originatesFromDraft: !hadProjectedNode || priorChange?.originatesFromDraft === true,
         beforeId: priorChange?.beforeId,
         afterId: priorChange?.afterId ?? props.draftAfterId,
         presentation: params.presentation,
@@ -3299,6 +3315,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   ) : null;
   const outlinerWrapProps = {
     ...row.wrapProps,
+    ...(exposesTrailingDraftMarker ? { 'data-trailing-parent-id': props.parentId } : {}),
     onDragOver: (event: DragEvent<HTMLDivElement>) => {
       if (hasFileTransfer(event.dataTransfer)) {
         handleExternalFileDragOver(event);

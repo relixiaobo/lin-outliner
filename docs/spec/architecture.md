@@ -182,11 +182,12 @@ materialization; the renderer never receives a ContentStore path.
 ```txt
 React interaction
   -> desktop intent builds a public ChangeSet
-  -> preload forwards a versioned Runtime request
+  -> preload forwards a versioned private desktop request
   -> Electron main authenticates and forwards without document logic
-  -> Runtime direct commit for ordinary non-destructive writes, or reviewed Diff apply
-  -> one durable Operation and ordered projection Event
-  -> renderer folds the Event delta into its projection index
+  -> Runtime commits ordinary non-destructive writes against its live Core
+  -> accepted receipt returns the exact projection delta and focus result
+  -> renderer folds that delta before clearing its optimistic mirror
+  -> background durability publishes one ordered Operation Event
 
 terminal or Agent intent
   -> registry-derived outline parser/help/schema contract
@@ -217,11 +218,15 @@ right-click / summon
 A renderer may NAME an action; it may never author one. Effect plans travel
 main -> renderer only.
 
-The Runtime publishes no successful mutation before one fsynced transaction-log
-commit contains the document update, Operation metadata, recovery patch,
-idempotency result, asset-reference delta, and Event sequence. A client timeout
-or disconnect never retries a mutation automatically; it resolves unknown
-settlement through the idempotency key or Operation log.
+Public CLI mutations, trusted cross-store writes, and reviewed destructive
+applies publish success only after one fsynced transaction-log commit contains
+the document update, Operation metadata, recovery patch, idempotency result,
+asset-reference delta, and Event sequence. The private desktop route may return
+an accepted receipt first for an ordinary non-destructive edit. That receipt
+contains the exact in-memory projection delta; it is not a durability claim.
+A client timeout or disconnect never retries a mutation automatically; it
+resolves unknown durable settlement through the idempotency key or Operation
+log.
 
 The CLI is a formal client boundary, not a thin exposure of the Runtime's generic
 MutationInput. One resource uses one porcelain command; complex state for that
@@ -235,10 +240,13 @@ ChangeSet composition.
 Desktop mutation admission is serialized around the latest projected revision.
 Ordinary non-destructive edits commit their ChangeSet directly; destructive,
 review-bound, or Diff-result-dependent work previews and applies the exact
-reviewed artifact. Both paths wait for the matching Operation Event. A missing
-or discontinuous Event triggers a bounded full Projection resync. Quit freezes
-new desktop admissions and drains accepted requests; Runtime durability is
-already complete before each settlement response.
+reviewed artifact. The direct private path returns its accepted delta without
+waiting for fsync or the matching Operation Event. The initiating renderer folds
+that delta first; the later durable Event is deduplicated there and propagates
+the revision to other windows. A missing or discontinuous Event triggers a
+bounded full Projection resync. Public, trusted cross-store, and reviewed paths
+continue to wait for durable settlement. Quit freezes Runtime mutation admission
+and drains the latest accepted revision to the durable frontier before teardown.
 
 Renderer structure presentation does not wait for that durable boundary. Direct
 editing intents may render a pending created row or hide a pending removal while
@@ -269,20 +277,24 @@ interface WorkspaceTransactionRecord {
 }
 ```
 
-Apply keeps Core's rollback frontier live until this record is encoded, written,
-and fsynced. A write, encode, or recovery-capacity failure therefore admits no
-document state. Runtime replays the verified prefix at startup, discards only a
-provably torn final record, and fails closed on corruption that could admit an
-unknown state. Snapshot compaction never removes retained recovery or asset
-reachability information. Pre-release formats have no compatibility reader.
+Runtime owns one live Core. Its transaction keeps the Core rollback frontier
+live while validation, execution, projection-delta construction, recovery
+capture, and persistence-input capture run. Failure before acceptance rolls the
+transaction back. Ordinary private desktop edits then publish the accepted
+delta and enqueue that captured input for ordered durability. Append failure
+cannot retract an accepted UI edit; it freezes further mutation admission and
+must be resolved by drain/retry or an explicit Quit Anyway decision. Public,
+trusted cross-store, and reviewed durable paths keep the same rollback frontier
+until the transaction record is encoded, written, and fsynced, so their failed
+append admits no document state.
 
-Each mutation executes against an isolated candidate Core. Candidate creation
-uses Loro's native document fork and copies the incremental node, projection,
-pending-update, persistence-metadata, and Operation-journal containers. It must
-not serialize and re-import the complete workspace on the foreground mutation
-path. The live Core remains unchanged until the transaction record fsyncs; a
-failed admission or append discards the candidate, so this optimization does not
-weaken rollback or durability boundaries.
+Runtime replays the verified prefix at startup, discards only a provably torn
+final record, and fails closed on corruption that could admit an unknown state.
+Snapshot compaction never removes retained recovery or asset reachability
+information. Pre-release formats have no compatibility reader. Core forks are
+reserved for preview, reviewed-Diff planning, revert validation, and other
+deterministic inspection; ordinary direct commits never fork, serialize, or
+re-import the complete workspace.
 
 Core startup reconciliation can create durable system state, such as the current
 local-date Daily Note. When `requiresInitialPersist()` reports that condition,
@@ -309,18 +321,28 @@ Cleanup or compaction failure cannot reverse an already acknowledged Operation.
 A failed compaction invalidates the process-local log cache so the next write
 reloads the authoritative snapshot/log boundary before admission.
 
-Every successful mutation, including desktop editing and history reversal,
-creates one durable `Operation`. A revert is a new guarded Operation and never
-erases its target. Recovery patches retain the complete affected state even when
-the public Operation returns only a bounded ID sample. Purged subtrees,
-dependent references, and referenced asset records remain recoverable until the
-retention boundary expires.
+Every changed mutation, including desktop editing and history reversal, becomes
+one durable `Operation`. A private desktop Operation may be visible at accepted
+before that durable frontier advances. Semantic no-change creates neither an
+Operation nor an Event. A revert is a new guarded Operation and never erases its
+target. Recovery patches retain the complete affected state even when the public
+Operation returns only a bounded ID sample. Purged subtrees, dependent
+references, and referenced asset records remain recoverable until the retention
+boundary expires.
 
 The Loro document remains Runtime-internal. It uses a fresh peer for new
 operations, supports compact snapshots and full updates for deep trees, and
 materializes and deletes with explicit work stacks rather than recursive JS
 traversal. Neither its snapshot bytes nor Core commands cross the public
 protocol.
+
+A long-lived `DocumentReadModel` folds each accepted Core delta once and owns the
+incremental projection and text-search generations. Sparse Node reads delegate
+to Core's ID projection, while launcher, Agent, Saved Search, Trash, restore, and
+dependency refreshes reuse the read model and update only affected search-index
+entries. Large ChangeSet/import and search-refresh work yields cooperatively on
+bounded batches without splitting its transaction, revision, Operation, or undo
+intent.
 
 Asset ingest admits one exact revision, settles its anchor and logical
 AssetRecord in anchor-first order, and returns a staged Outline lease before a

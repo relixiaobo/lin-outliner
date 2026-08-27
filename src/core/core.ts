@@ -1404,6 +1404,78 @@ export class Core {
     return created;
   }
 
+  async tryCreateResolvedContentTreesYielding(
+    parentId: string,
+    index: number | null | undefined,
+    trees: readonly ResolvedContentTree[],
+    options: { yieldEveryNodes?: number; commitEveryNodes?: number; yield?: () => Promise<void> } = {},
+  ): Promise<boolean> {
+    let created = false;
+    await this.mutateAsyncFocus(async () => {
+      const state = this.snapshot();
+      ensureParentMutable(state, parentId);
+      const ids = new Set<NodeId>();
+      const yieldEveryNodes = Math.max(1, options.yieldEveryNodes ?? 250);
+      const yieldOperation = options.yield ?? yieldToEventLoop;
+      let processed = 0;
+      const yieldIfNeeded = async () => {
+        processed += 1;
+        if (processed % yieldEveryNodes === 0) await yieldOperation();
+      };
+      const preflight = async (tree: ResolvedContentTree): Promise<boolean> => {
+        if (!isClientNodeId(tree.id) || ids.has(tree.id) || state.nodes[tree.id]) return false;
+        ids.add(tree.id);
+        for (const tagId of tree.tagIds ?? []) ensureTagDefinition(state, tagId);
+        await yieldIfNeeded();
+        for (const child of tree.children) {
+          if (!await preflight(child)) return false;
+        }
+        return true;
+      };
+      for (const tree of trees) {
+        if (!await preflight(tree)) return undefined;
+      }
+
+      processed = 0;
+      const total = countResolvedContentTrees(trees);
+      const commitEveryNodes = options.commitEveryNodes
+        ? Math.max(1, options.commitEveryNodes)
+        : undefined;
+      const insert = async (
+        parent: string,
+        tree: ResolvedContentTree,
+        targetIndex: number | null | undefined,
+      ): Promise<void> => {
+        const type = tree.type === 'codeBlock' ? 'codeBlock' : undefined;
+        this.loro.createNodeWithId(tree.id, parent, targetIndex, type, (node) => {
+          node.content = clone(tree.content);
+          const description = normalizeOptionalText(tree.description);
+          if (description !== undefined) node.description = description;
+          if (type === 'codeBlock') {
+            (node as CodeBlockNode).codeLanguage = normalizeCodeLanguage(tree.codeLanguage) || undefined;
+          }
+          if (tree.done) node.completedAt = nowMs();
+          else if (tree.checkbox) node.completedAt = 0;
+        });
+        this.applyChildTagsDirect(parent, tree.id);
+        for (const tagId of tree.tagIds ?? []) this.applyTagNoHistoryDirect(tree.id, tagId);
+        processed += 1;
+        if (commitEveryNodes && processed % commitEveryNodes === 0 && processed < total) {
+          this.commitActiveTransactionChunk();
+        }
+        if (processed % yieldEveryNodes === 0) await yieldOperation();
+        for (const child of tree.children) await insert(tree.id, child, undefined);
+      };
+      for (const [treeIndex, tree] of trees.entries()) {
+        await insert(parentId, tree, index === undefined || index === null ? index : index + treeIndex);
+      }
+      created = true;
+      const last = trees.at(-1);
+      return last ? focus(last.id, { parentId, placement: { kind: 'end' } }) : undefined;
+    });
+    return created;
+  }
+
   async createNodesFromTreeYielding(
     parentId: string,
     nodes: CreateNodeTree[],
@@ -5760,6 +5832,17 @@ function freshId(prefix: string): string {
 }
 
 function countCreateNodeTrees(nodes: readonly CreateNodeTree[]): number {
+  let count = 0;
+  const stack = [...nodes];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    count += 1;
+    stack.push(...node.children);
+  }
+  return count;
+}
+
+function countResolvedContentTrees(nodes: readonly ResolvedContentTree[]): number {
   let count = 0;
   const stack = [...nodes];
   while (stack.length > 0) {

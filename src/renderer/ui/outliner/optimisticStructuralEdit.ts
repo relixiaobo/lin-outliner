@@ -85,6 +85,8 @@ export interface BeginOptimisticStructuralEditInput {
   id?: NodeId;
   parentId: NodeId;
   sourceParentId?: NodeId;
+  originatesFromDraft?: boolean;
+  retainsTrailingDraftMarker?: boolean;
   beforeId?: NodeId | null;
   afterId?: NodeId | null;
   presentation?: PendingStructuralPresentation;
@@ -105,6 +107,8 @@ function createPendingStructuralChange(
     id: input.id ?? freshNodeId(),
     parentId: input.parentId,
     ...(input.sourceParentId ? { sourceParentId: input.sourceParentId } : {}),
+    ...(input.originatesFromDraft ? { originatesFromDraft: true } : {}),
+    ...(input.retainsTrailingDraftMarker ? { retainsTrailingDraftMarker: true } : {}),
     panelId,
     beforeId: input.beforeId ?? null,
     afterId: input.afterId ?? null,
@@ -138,7 +142,9 @@ function applyPendingStructuralChange(
     : {
         ...selectFocusState(updated, target),
         focusRequest: { target, placement: input.placement },
-        trailingDraftPlacement: null,
+        trailingDraftPlacement: input.originatesFromDraft
+          ? { parentId: change.parentId, afterId: change.id, panelId: change.panelId }
+          : null,
       };
   return {
     ...withFocus,

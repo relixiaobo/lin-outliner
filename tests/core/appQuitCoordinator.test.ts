@@ -174,6 +174,7 @@ describe('AppQuitCoordinator', () => {
     const first = coordinator.requestQuit();
     const second = coordinator.requestQuit();
     expect(first).toBe(second);
+    await Promise.resolve();
     releaseDrain();
     await first;
 
@@ -191,6 +192,22 @@ describe('AppQuitCoordinator', () => {
     const coordinator = new AppQuitCoordinator(host, { drainTimeoutMs: 50 });
 
     await expect(coordinator.requestQuit()).rejects.toThrow('dialog unavailable');
+    expect(coordinator.phase()).toBe('idle');
+    expect(host.frozen).toBe(false);
+    expect(host.teardownCount).toBe(0);
+    expect(host.exitCount).toBe(0);
+  });
+
+  test('routes an asynchronous barrier status failure through the reversible decision path', async () => {
+    const host = new FakeQuitHost();
+    host.durableRevision = async () => {
+      throw new Error('Runtime status unavailable');
+    };
+    host.decisions = ['cancel'];
+    const coordinator = new AppQuitCoordinator(host, { drainTimeoutMs: 50 });
+
+    await coordinator.requestQuit();
+
     expect(coordinator.phase()).toBe('idle');
     expect(host.frozen).toBe(false);
     expect(host.teardownCount).toBe(0);
@@ -246,6 +263,24 @@ describe('AppQuitCoordinator', () => {
 
     expect(coordinator.phase()).toBe('done');
     expect(host.frozen).toBe(true);
+    expect(host.exitCount).toBe(1);
+  });
+
+  test('phase two still tears down and exits when the Runtime freeze commit rejects', async () => {
+    const host = new FakeQuitHost();
+    host.durable = host.accepted;
+    host.commitAdmissionFreeze = async () => {
+      host.commitFreezeCount += 1;
+      throw new Error('Runtime freeze acknowledgement failed');
+    };
+    const coordinator = new AppQuitCoordinator(host, { drainTimeoutMs: 50 });
+
+    await expect(coordinator.requestQuit()).rejects.toThrow('Runtime freeze acknowledgement failed');
+
+    expect(coordinator.phase()).toBe('done');
+    expect(host.frozen).toBe(true);
+    expect(host.commitFreezeCount).toBe(1);
+    expect(host.teardownCount).toBe(1);
     expect(host.exitCount).toBe(1);
   });
 });

@@ -10,12 +10,16 @@ import { canonicalJsonChunks } from '../../contract/canonical';
 import { OutlineContractError, outlineError } from '../../contract/errors';
 import { checkOutlineSchema } from '../../contract/validation';
 import {
+  ChangeSetSchema,
   OutlineRequestSchema,
+  OperationUndoGroupSchema,
   RuntimeDescriptorSchema,
   WatchRequestSchema,
   type EventFilter,
+  type ChangeSet,
   type OutlineEvent,
   type OutlineRequest,
+  type OperationUndoGroup,
   type OutlineStreamRecord,
   type Projection,
   type RuntimeDescriptor,
@@ -31,7 +35,6 @@ import {
 import { OutlineRuntimeWorkspace, type OutlineRuntimeWorkspaceOptions } from '../runtimeWorkspace';
 import { decodeEventCursor, encodeEventCursor } from '../eventCursor';
 import { formatOutlineExport } from '../export';
-import { projectOutline } from '../projection';
 import { OutlineRuntimeRouter } from './runtimeRouter';
 import { requestCanMutate } from './runtimeRouter';
 import {
@@ -48,6 +51,7 @@ import {
   type OutlineRuntimePaths,
 } from './runtimePaths';
 import { readChangeSetUpload } from './changeSetSpool';
+import { commitOutlineChangeSetAccepted } from '../changeSet';
 
 const MAX_REQUEST_BYTES = 64 * 1024 * 1024;
 
@@ -77,6 +81,7 @@ export class OutlineRuntimeServer {
   private activeForegroundRequests = 0;
   private idleDrainActive = false;
   private stopping = false;
+  private stopPromise?: Promise<void>;
   private readonly agentAttestations = new AgentAttestationRegistry();
 
   private constructor(
@@ -152,9 +157,30 @@ export class OutlineRuntimeServer {
   }
 
   async stop(): Promise<void> {
-    if (this.stopping) return;
+    if (this.stopPromise) return this.stopPromise;
+    const stopping = this.stopInternal();
+    this.stopPromise = stopping;
+    try {
+      await stopping;
+    } catch (error) {
+      if (this.stopPromise === stopping) this.stopPromise = undefined;
+      throw error;
+    }
+  }
+
+  private async stopInternal(): Promise<void> {
     this.stopping = true;
     this.clearIdleTimer();
+    try {
+      const targetRevision = await this.workspace.freezeMutationAdmission();
+      await this.workspace.drainDurability(targetRevision);
+      this.workspace.commitMutationAdmissionFreeze();
+    } catch (error) {
+      this.workspace.unfreezeMutationAdmission();
+      this.stopping = false;
+      this.scheduleIdle();
+      throw error;
+    }
     for (const connection of this.connections) connection.destroy();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
     await this.removeOwnedDescriptor();
@@ -231,6 +257,107 @@ export class OutlineRuntimeServer {
         writeJson(response, 200, {
           retiring: true,
           instanceId: this.descriptor.instanceId,
+        });
+        return;
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/desktop/commit') {
+        if (optionalHeader(request, OUTLINE_ORIGIN_HEADER) !== 'desktop') {
+          throw new OutlineContractError(outlineError(
+            'unauthorized',
+            'protocol',
+            'The accepted mutation route is available only to the desktop host.',
+          ));
+        }
+        const body = await readJsonBody(request);
+        if (!isRecord(body)
+          || body.protocolVersion !== OUTLINE_PROTOCOL_VERSION
+          || typeof body.requestId !== 'string'
+          || !/^[A-Za-z0-9:._-]{1,256}$/.test(body.requestId)
+          || !checkOutlineSchema(ChangeSetSchema, body.changeSet)
+          || (body.undoGroup !== undefined
+            && !checkOutlineSchema(OperationUndoGroupSchema, body.undoGroup))) {
+          throw new Error('Invalid desktop accepted-mutation request.');
+        }
+        const accepted = await commitOutlineChangeSetAccepted(
+          this.workspace,
+          body.changeSet as ChangeSet,
+          { origin: 'desktop' },
+          body.undoGroup ? { undoGroup: body.undoGroup as OperationUndoGroup } : {},
+        );
+        writeJson(response, 200, {
+          protocolVersion: OUTLINE_PROTOCOL_VERSION,
+          requestId: body.requestId,
+          revision: this.workspace.revision(),
+          data: {
+            settlement: accepted.settlement,
+            update: accepted.update,
+            diff: accepted.diff,
+          },
+        });
+        return;
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/desktop/search') {
+        if (optionalHeader(request, OUTLINE_ORIGIN_HEADER) !== 'desktop') {
+          throw new OutlineContractError(outlineError(
+            'unauthorized',
+            'protocol',
+            'The ranked search route is available only to the desktop host.',
+          ));
+        }
+        const body = await readJsonBody(request);
+        if (!isRecord(body)
+          || body.protocolVersion !== OUTLINE_PROTOCOL_VERSION
+          || typeof body.requestId !== 'string'
+          || !/^[A-Za-z0-9:._-]{1,256}$/.test(body.requestId)
+          || typeof body.query !== 'string'
+          || body.query.length > 10_000
+          || !Number.isSafeInteger(body.limit)
+          || (body.limit as number) < 1
+          || (body.limit as number) > 10_000) {
+          throw new Error('Invalid desktop ranked-search request.');
+        }
+        writeJson(response, 200, {
+          protocolVersion: OUTLINE_PROTOCOL_VERSION,
+          requestId: body.requestId,
+          revision: this.workspace.revision(),
+          data: {
+            hits: this.workspace.searchText(body.query, body.limit as number),
+          },
+        });
+        return;
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/desktop/lifecycle') {
+        if (optionalHeader(request, OUTLINE_ORIGIN_HEADER) !== 'desktop') {
+          throw new OutlineContractError(outlineError(
+            'unauthorized',
+            'protocol',
+            'The Runtime lifecycle route is available only to the desktop host.',
+          ));
+        }
+        const body = await readJsonBody(request);
+        if (!isDesktopLifecycleRequest(body)) {
+          throw new Error('Invalid desktop Runtime lifecycle request.');
+        }
+        switch (body.action) {
+          case 'freeze':
+            await this.workspace.freezeMutationAdmission();
+            break;
+          case 'unfreeze':
+            this.workspace.unfreezeMutationAdmission();
+            break;
+          case 'commit-freeze':
+            this.workspace.commitMutationAdmissionFreeze();
+            break;
+          case 'drain':
+            await this.workspace.drainDurability(body.targetRevision);
+            break;
+          case 'status':
+            break;
+        }
+        writeJson(response, 200, {
+          protocolVersion: OUTLINE_PROTOCOL_VERSION,
+          requestId: body.requestId,
+          data: this.workspace.durabilityStatus(),
         });
         return;
       }
@@ -699,6 +826,30 @@ function isOperation(value: unknown): boolean {
   return isRecord(value) && value.kind === 'outline.operation';
 }
 
+type DesktopLifecycleRequest = {
+  readonly protocolVersion: number;
+  readonly requestId: string;
+  readonly action: 'status' | 'freeze' | 'unfreeze' | 'commit-freeze';
+} | {
+  readonly protocolVersion: number;
+  readonly requestId: string;
+  readonly action: 'drain';
+  readonly targetRevision: number;
+};
+
+function isDesktopLifecycleRequest(value: unknown): value is DesktopLifecycleRequest {
+  if (!isRecord(value)
+    || value.protocolVersion !== OUTLINE_PROTOCOL_VERSION
+    || typeof value.requestId !== 'string'
+    || !/^[A-Za-z0-9:._-]{1,256}$/.test(value.requestId)
+    || typeof value.action !== 'string') return false;
+  if (value.action === 'drain') {
+    return Number.isSafeInteger(value.targetRevision) && (value.targetRevision as number) >= 0;
+  }
+  return value.targetRevision === undefined
+    && ['status', 'freeze', 'unfreeze', 'commit-freeze'].includes(value.action);
+}
+
 function requiredHeader(request: http.IncomingMessage, name: string): string {
   const value = optionalHeader(request, name);
   if (!value) throw new Error(`Missing required Runtime header: ${name}`);
@@ -774,7 +925,7 @@ function eventForWatch(
   return {
     ...event,
     cursor,
-    ...(projection ? { projection: projectOutline(workspace.forkCore(), projection) } : {}),
+    ...(projection ? { projection: workspace.project(projection) } : {}),
   };
 }
 

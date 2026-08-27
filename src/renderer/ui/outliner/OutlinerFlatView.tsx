@@ -29,6 +29,7 @@ import {
 import {
   applyPendingRowPlacement,
   applyPendingRowsPlacement,
+  pendingStructuralRowIsDraft,
   resolvePendingRowPlacement,
 } from '../../state/trailingDraftPlacement';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
@@ -166,25 +167,56 @@ function insertPendingStructuralChange(
     : {
         kind: 'content',
         ...common,
-        ...(placement.kind === 'insert' || (anchor.kind === 'content' && anchor.draft)
+        ...(pendingStructuralRowIsDraft(
+          change,
+          placement.kind === 'insert' || (anchor.kind === 'content' && anchor.draft === true),
+        )
           ? { draft: true }
           : {}),
         afterId: change.afterId,
       };
-  if (sourceRows.length <= 1) {
-    return applyPendingRowPlacement(placementRows, pendingRow, placement);
-  }
-  const sourceRoot = sourceRows[0]!;
-  const depthDelta = pendingRow.depth - sourceRoot.depth;
-  const relocatedDescendants = sourceRows.slice(1).map((row) => ({
-    ...row,
-    depth: row.depth + depthDelta,
-  }));
-  return applyPendingRowsPlacement(
-    placementRows,
-    [pendingRow, ...relocatedDescendants],
-    placement,
-  );
+  const placedRows = sourceRows.length <= 1
+    ? applyPendingRowPlacement(placementRows, pendingRow, placement)
+    : (() => {
+        const sourceRoot = sourceRows[0]!;
+        const depthDelta = pendingRow.depth - sourceRoot.depth;
+        const relocatedDescendants = sourceRows.slice(1).map((row) => ({
+          ...row,
+          depth: row.depth + depthDelta,
+        }));
+        return applyPendingRowsPlacement(
+          placementRows,
+          [pendingRow, ...relocatedDescendants],
+          placement,
+        );
+      })();
+  if (!change.originatesFromDraft) return placedRows;
+
+  const nextDraftIndex = placedRows.findIndex((row) => (
+    row.kind === 'content'
+    && row.draft
+    && row.parentId === change.parentId
+    && row.nodeId !== change.id
+  ));
+  if (nextDraftIndex < 0) return placedRows;
+  const nextDraft = placedRows[nextDraftIndex]!;
+  if (nextDraft.kind !== 'content') return placedRows;
+  const withoutNextDraft = [
+    ...placedRows.slice(0, nextDraftIndex),
+    ...placedRows.slice(nextDraftIndex + 1),
+  ];
+  const pendingIndex = withoutNextDraft.findIndex((row) => (
+    (row.kind === 'content' || row.kind === 'field')
+    && row.nodeId === change.id
+    && row.parentId === change.parentId
+  ));
+  if (pendingIndex < 0) return placedRows;
+  const nextDraftPlacement = descendantEndIndexFor(withoutNextDraft, pendingIndex);
+  return [
+    ...withoutNextDraft.slice(0, nextDraftPlacement),
+    { ...nextDraft, afterId: change.id },
+    ...withoutNextDraft.slice(nextDraftPlacement),
+  ];
 }
 
 function rowCanAnchorGuide(row: VisualRow): row is Extract<VisualRow, { kind: 'content' | 'field' }> {
@@ -395,9 +427,12 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
   const byId = index.byId;
   const parent = byId.get(props.parentId);
   const selectionRootId = props.selectionRootId ?? props.rootId;
-  const pendingChanges = ui.pendingStructuralChanges.filter((change) => (
-    change.panelId === props.panelId && !ui.pendingRemovalIds.has(change.id)
-  ));
+  const pendingChanges = useMemo(
+    () => ui.pendingStructuralChanges.filter((change) => (
+      change.panelId === props.panelId && !ui.pendingRemovalIds.has(change.id)
+    )),
+    [props.panelId, ui.pendingRemovalIds, ui.pendingStructuralChanges],
+  );
   const optimisticIndex = useMemo(() => {
     const overrides = pendingChanges.flatMap((change) => (
       change.nodeOverride ? [change.nodeOverride.current] : []
@@ -476,7 +511,10 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
     () => pendingChanges.reduce(insertPendingStructuralChange, projectedRows),
     [pendingChanges, projectedRows],
   );
-  const optimisticChangesById = new Map(pendingChanges.map((change) => [change.id, change]));
+  const optimisticChangesById = useMemo(
+    () => new Map(pendingChanges.map((change) => [change.id, change])),
+    [pendingChanges],
+  );
 
   const virtualize = !props.embeddedFlow && rows.length > VIRTUALIZE_MIN_ROWS;
   const rootChildCount = useMemo(

@@ -4967,9 +4967,9 @@ if (!app.requestSingleInstanceLock()) {
     freezeAdmission: () => outlineDocumentService.freezeMutationAdmission(),
     unfreezeAdmission: () => outlineDocumentService.unfreezeMutationAdmission(),
     commitAdmissionFreeze: () => outlineDocumentService.commitMutationAdmissionFreeze(),
-    latestAcceptedRevision: () => outlineDocumentService.latestAcceptedMutationSequence(),
-    durableRevision: () => outlineDocumentService.settledMutationSequence(),
-    drainToRevision: (revision) => outlineDocumentService.drainMutations(revision),
+    latestAcceptedRevision: () => outlineDocumentService.latestAcceptedRevision(),
+    durableRevision: () => outlineDocumentService.durableRevision(),
+    drainToRevision: (revision) => outlineDocumentService.drainToRevision(revision),
     showDrainFailure: async (error, outcome): Promise<QuitDecision> => {
       const strings = getMessages(effectiveLocale()).dialog;
       const parent = liveWindow(mainWindow);
@@ -5096,7 +5096,7 @@ if (!app.requestSingleInstanceLock()) {
       });
       // Phase 2 is irreversible. A teardown rejection still calls app.exit and
       // must not reopen document admission after services have started closing.
-      if (quitCoordinator.phase() === 'idle') outlineDocumentService.unfreezeMutationAdmission();
+      if (quitCoordinator.phase() === 'idle') void outlineDocumentService.unfreezeMutationAdmission();
     });
   });
 }

@@ -1511,6 +1511,7 @@ describe('Codex Memory contracts', () => {
     });
     expect(store.preparedPublications()).toHaveLength(1);
     expect(timelineState.calls).toHaveLength(1);
+    expect(timelineState.calls[0]?.options?.settlement).toBe('durable');
 
     const pipeline = new MemoryPipeline(
       store,

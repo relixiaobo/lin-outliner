@@ -674,6 +674,8 @@ export interface PendingStructuralChange {
   id: NodeId;
   parentId: NodeId;
   sourceParentId?: NodeId;
+  originatesFromDraft?: boolean;
+  retainsTrailingDraftMarker?: boolean;
   panelId: string;
   beforeId: NodeId | null;
   afterId: NodeId | null;

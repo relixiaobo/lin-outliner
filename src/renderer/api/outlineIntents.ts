@@ -902,10 +902,11 @@ function createInlineField(
         op: 'create',
         placement: structuralPlacement(oneId(parentId), index),
         nodes: [draft({ text: '', marks: [], inlineRefs: [] }, id)],
+        bind: 'field-entry',
       },
       {
         op: 'update',
-        targets: oneId(id),
+        targets: binding('field-entry'),
         changes: [{ kind: 'field', action: 'convert', name, fieldType }],
       },
     ], focus(id, parentId, { kind: 'all' }, 'field-name'), { requiresDiff: true });

@@ -12,6 +12,7 @@ import type { FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { Value } from 'typebox/value';
 import type { ContentAnchorCoordinate } from '../../../content';
+import type { ProjectionUpdate } from '../../../core/types';
 import type {
   CorePersistenceCapture,
   WorkspacePersistenceEnvelopeV3,
@@ -23,12 +24,14 @@ import { isOperationHistoryEntry } from '../../../core/operationJournal';
 import { canonicalJson, canonicalSha256 } from '../../contract/canonical';
 import { OutlineContractError, outlineError } from '../../contract/errors';
 import {
+  AcceptedDesktopChangeSetMutationSchema,
   EventSchema,
   OperationSchema,
   AssetLeaseSchema,
   AssetRecordSchema,
   type AssetLease,
   type AssetRecord,
+  type Diff,
   type Operation,
   type OutlineEvent,
 } from '../../contract/schemas';
@@ -83,6 +86,10 @@ export interface OutlineIdempotencyRecord {
   readonly key: string;
   readonly payloadHash: string;
   readonly operationId: string;
+  readonly accepted?: {
+    readonly update: ProjectionUpdate;
+    readonly diff: Diff;
+  };
 }
 
 export interface WorkspaceTransactionInput {
@@ -107,6 +114,11 @@ export interface WorkspaceMutationAdmission {
   readonly latestEventSequence: number;
   readonly existingOperation?: Operation;
   readonly maintenanceEvents: readonly OutlineEvent[];
+}
+
+export interface WorkspaceIdempotencySettlement {
+  readonly operation: Operation;
+  readonly accepted?: NonNullable<OutlineIdempotencyRecord['accepted']>;
 }
 
 export interface WorkspaceMaintenanceContext {
@@ -142,6 +154,7 @@ export interface WorkspaceTransactionLoad {
   readonly snapshot: WorkspacePersistenceEnvelopeV3 | null;
   readonly replay: readonly WorkspacePersistenceReplayEntry[];
   readonly operations: readonly Operation[];
+  readonly idempotency: readonly OutlineIdempotencyRecord[];
   readonly events: readonly OutlineEvent[];
   readonly latestSequence: number;
   readonly latestEventSequence: number;
@@ -379,6 +392,7 @@ export class WorkspaceTransactionLog {
           snapshot: null,
           replay: [],
           operations: [],
+          idempotency: [],
           events: [],
           latestSequence: 0,
           latestEventSequence: 0,
@@ -571,6 +585,23 @@ export class WorkspaceTransactionLog {
       const operation = state.operationById.get(idempotency.operationId);
       if (!operation) throw new Error(`Idempotency index references a missing Operation: ${key}`);
       return clone(operation);
+    });
+  }
+
+  async idempotencySettlement(
+    key: string,
+    payloadHash: string,
+  ): Promise<WorkspaceIdempotencySettlement | undefined> {
+    return this.enqueueWrite(async () => {
+      const state = await this.ensureState();
+      const operation = this.resolveIdempotency(state, { key, payloadHash });
+      if (!operation) return undefined;
+      const record = state.idempotencyByKey.get(key);
+      if (!record) throw new Error(`Idempotency index disappeared during settlement lookup: ${key}`);
+      return {
+        operation: clone(operation),
+        ...(record.accepted ? { accepted: clone(record.accepted) } : {}),
+      };
     });
   }
 
@@ -904,6 +935,7 @@ export class WorkspaceTransactionLog {
       snapshot: clone(state.snapshot.document),
       replay: state.replay.map(cloneReplayEntry),
       operations: clone(state.operations),
+      idempotency: clone([...state.idempotencyByKey.values()]),
       events: clone(state.events),
       latestSequence: state.latestSequence,
       latestEventSequence: state.latestEventSequence,
@@ -1515,9 +1547,11 @@ function assertSnapshotEnvelope(value: unknown): asserts value is SnapshotEnvelo
     }
   }
   for (const entry of value.idempotency) {
-    if (!operations.has(entry.operationId)) {
+    const operation = operations.get(entry.operationId);
+    if (!operation) {
       throw new Error(`Snapshot idempotency index references a missing Operation: ${entry.operationId}`);
     }
+    assertAcceptedIdempotencyMatchesOperation(entry, operation);
   }
   const assetIds = new Set<string>();
   const assetAnchorIds = new Set<string>();
@@ -1664,6 +1698,7 @@ function assertReplayedRecord(record: LogRecord, state: LoadedState): void {
       || state.idempotencyByKey.has(record.idempotency.key)) {
       throw new Error(`Duplicate or inconsistent idempotency record: ${record.idempotency.key}`);
     }
+    assertAcceptedIdempotencyMatchesOperation(record.idempotency, record.operation);
   }
   const previousPersistenceRevision = state.replay.at(-1)?.persistenceRevision
     ?? state.snapshot.document.persistenceRevision;
@@ -1713,6 +1748,7 @@ function assertTransactionInput(input: WorkspaceTransactionInput): void {
   if (input.idempotency && !isIdempotencyRecord(input.idempotency)) {
     throw new Error('Invalid outline transaction idempotency record');
   }
+  if (input.idempotency) assertAcceptedIdempotencyMatchesOperation(input.idempotency, input.operation);
 }
 
 function operationRevertsAny(operation: Operation): boolean {
@@ -1819,7 +1855,24 @@ function isIdempotencyRecord(value: unknown): value is OutlineIdempotencyRecord 
     && value.key.length > 0
     && typeof value.payloadHash === 'string'
     && /^[a-f0-9]{64}$/.test(value.payloadHash)
-    && typeof value.operationId === 'string';
+    && typeof value.operationId === 'string'
+    && (value.accepted === undefined
+      || (isRecord(value.accepted)
+        && Value.Check(AcceptedDesktopChangeSetMutationSchema.properties.update, value.accepted.update)
+        && Value.Check(AcceptedDesktopChangeSetMutationSchema.properties.diff, value.accepted.diff)));
+}
+
+function assertAcceptedIdempotencyMatchesOperation(
+  idempotency: OutlineIdempotencyRecord,
+  operation: Operation,
+): void {
+  const accepted = idempotency.accepted;
+  if (!accepted) return;
+  if (accepted.update.revision !== operation.revisionAfter
+    || accepted.diff.changeSetHash !== operation.changeSetHash
+    || accepted.diff.normalizedChangeSet.idempotencyKey !== idempotency.key) {
+    throw new Error(`Accepted idempotency receipt does not match Operation: ${operation.operationId}`);
+  }
 }
 
 function isStringArray(value: unknown): value is string[] {

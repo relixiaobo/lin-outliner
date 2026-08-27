@@ -13,6 +13,7 @@ import {
   resolveOutlineRuntimeRoot,
 } from '../../src/outline/client';
 import { OutlineRuntimeServer, resolveOutlineRuntimePaths } from '../../src/outline/runtime/server';
+import { WorkspaceTransactionLog } from '../../src/outline/runtime/storage';
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { spawn, type ChildProcess } from 'node:child_process';
 import http from 'node:http';
@@ -249,6 +250,152 @@ describe('Outline Runtime process boundary', () => {
       ))).toContainEqual(expect.objectContaining({ id: nodeId }));
     } finally {
       client.close();
+      await runtime.stop();
+    }
+  });
+
+  test('returns a desktop accepted response before acknowledgement and drains it before stop', async () => {
+    const root = await makeRoot();
+    let releaseAcknowledgement!: () => void;
+    const acknowledgementBlocked = new Promise<void>((resolve) => { releaseAcknowledgement = resolve; });
+    let acknowledgementEntered!: () => void;
+    const entered = new Promise<void>((resolve) => { acknowledgementEntered = resolve; });
+    const runtime = await OutlineRuntimeServer.start({
+      root,
+      contentRoot: `${root}-content`,
+      idleTimeoutMs: 60_000,
+      workspaceOptions: {
+        storeOptions: {
+          afterTransactionFsync: async () => {
+            acknowledgementEntered();
+            await acknowledgementBlocked;
+          },
+        },
+      },
+    });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const client = new OutlineClient(runtime.descriptor, { origin: 'desktop' });
+    let restarted: OutlineRuntimeServer | null = null;
+    try {
+      const acceptedPromise = client.commitDesktopChangeSet(createTodayChangeSet('Accepted over HTTP'));
+      await withTimeout(entered, 2_000, 'Deferred transaction acknowledgement was not reached');
+      const accepted = await withTimeout(
+        acceptedPromise,
+        250,
+        'Desktop accepted response waited for transaction acknowledgement',
+      );
+
+      expect(accepted.update).toMatchObject({ kind: 'delta', revision: 1 });
+      expect(runtime.workspace.durableRevision()).toBe(0);
+
+      let stopped = false;
+      const stopping = runtime.stop().then(() => { stopped = true; });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(stopped).toBe(false);
+
+      releaseAcknowledgement();
+      await stopping;
+
+      restarted = await OutlineRuntimeServer.start({
+        root,
+        contentRoot: `${root}-content`,
+        idleTimeoutMs: 60_000,
+      });
+      expect(restarted).not.toBeNull();
+      expect(restarted?.workspace.projection().nodes.some((node) => (
+        node.content.text === 'Accepted over HTTP'
+      ))).toBe(true);
+    } finally {
+      releaseAcknowledgement();
+      client.close();
+      await runtime.stop();
+      await restarted?.stop();
+    }
+  });
+
+  test('unfreezes after a failed stop drain and retries the accepted Operation without re-executing', async () => {
+    const root = await makeRoot();
+    let failAcknowledgement = true;
+    const runtime = await OutlineRuntimeServer.start({
+      root,
+      contentRoot: `${root}-content`,
+      idleTimeoutMs: 60_000,
+      workspaceOptions: {
+        storeOptions: {
+          afterTransactionFsync: () => {
+            if (!failAcknowledgement) return;
+            failAcknowledgement = false;
+            throw new Error('injected stop drain acknowledgement failure');
+          },
+        },
+      },
+    });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const client = new OutlineClient(runtime.descriptor, { origin: 'desktop' });
+    try {
+      const accepted = await client.commitDesktopChangeSet(createTodayChangeSet('Retry stop drain'));
+
+      await expect(runtime.stop()).rejects.toThrow('injected stop drain acknowledgement failure');
+      expect(runtime.workspace.durabilityStatus()).toMatchObject({
+        acceptedRevision: accepted.update.revision,
+        durableRevision: 0,
+        admissionFrozen: false,
+      });
+
+      await runtime.stop();
+      const loaded = await new WorkspaceTransactionLog(resolveOutlineRuntimePaths(root).workspacePath).load();
+      expect(loaded.operations).toHaveLength(1);
+      expect(loaded.operations[0]?.operationId).toBe(
+        accepted.settlement.kind === 'outline.operation' ? accepted.settlement.operationId : undefined,
+      );
+    } finally {
+      client.close();
+      await runtime.stop();
+    }
+  });
+
+  test('restricts lifecycle control to desktop and freezes every Runtime mutation origin', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({
+      root,
+      contentRoot: `${root}-content`,
+      idleTimeoutMs: 60_000,
+    });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const external = new OutlineClient(runtime.descriptor, { origin: 'external-client' });
+    const desktop = new OutlineClient(runtime.descriptor, { origin: 'desktop' });
+    try {
+      await expect(external.manageDesktopRuntime('status')).rejects.toMatchObject({
+        outlineError: { code: 'unauthorized' },
+      });
+      await expect(external.searchDesktopNodes('private search', 10)).rejects.toMatchObject({
+        outlineError: { code: 'unauthorized' },
+      });
+      await expect(desktop.searchDesktopNodes('private search', 10)).resolves.toEqual([]);
+
+      const frozen = await desktop.manageDesktopRuntime('freeze');
+      expect(frozen).toMatchObject({
+        acceptedRevision: 0,
+        durableRevision: 0,
+        admissionFrozen: true,
+      });
+      await expect(runtime.workspace.mutate(createRequest('Rejected globally'))).rejects.toMatchObject({
+        outlineError: { code: 'runtime_unavailable' },
+      });
+
+      expect(await desktop.manageDesktopRuntime('unfreeze')).toMatchObject({ admissionFrozen: false });
+      await runtime.workspace.mutate(createRequest('Accepted after cancel'));
+      expect(runtime.workspace.revision()).toBe(1);
+
+      await desktop.manageDesktopRuntime('freeze');
+      expect(await desktop.manageDesktopRuntime('commit-freeze')).toMatchObject({ admissionFrozen: true });
+      expect(await desktop.manageDesktopRuntime('unfreeze')).toMatchObject({ admissionFrozen: true });
+    } finally {
+      external.close();
+      desktop.close();
       await runtime.stop();
     }
   });
