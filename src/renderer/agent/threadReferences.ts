@@ -55,8 +55,6 @@ export function threadNodeReferenceDisplayLabel(
   index: DocumentIndex | undefined,
   fallback: string,
 ): string {
-  const explicit = label.trim();
-  if (explicit) return explicit;
   const title = index?.byId.get(nodeId)?.content.text.trim();
-  return title || fallback;
+  return title || label.trim() || fallback;
 }

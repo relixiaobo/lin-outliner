@@ -6,7 +6,7 @@ import {
 } from '../../src/main/agent/capabilities/agentImageGenerationTool';
 import type { ToolEnvelope } from '../../src/main/agent/capabilities/agentToolEnvelope';
 import { MAX_TOOL_PAYLOAD_IMAGE_BYTES } from '../../src/main/agent/persistence/ToolPayloadStore';
-import { formatLocalFileReferenceUrl } from '../../src/core/referenceMarkup';
+import { formatFileReferenceUri } from '../../src/core/referenceMarkup';
 import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
 
 const ONE_PIXEL_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lP1j0wAAAABJRU5ErkJggg==';
@@ -447,7 +447,7 @@ describe('generate_image tool', () => {
 
     const tool = createGenerateImageTool(runtime);
     const missingTarget = '/missing/input.png';
-    const missingPath = `![Missing](${formatLocalFileReferenceUrl(missingTarget)})`;
+    const missingPath = `![Missing](${formatFileReferenceUri(missingTarget)})`;
     const result = await tool.execute('call-missing-input', {
       prompt: 'Edit this image',
       image_paths: [missingPath],

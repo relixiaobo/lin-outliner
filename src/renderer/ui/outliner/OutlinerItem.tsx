@@ -2419,6 +2419,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         return true;
       } : undefined}
       resolveInlineReferenceColor={(targetId) => inlineReferenceTextColor(targetId, props.index)}
+      resolveInlineReferenceDisplayName={(targetId) => props.index.byId.get(targetId)?.content.text.trim() || undefined}
       onFieldTriggerFire={suppressTextTriggers ? undefined : () => {
         props.setTrigger(null);
         if (virtualFieldValueDraft && props.fieldValue) {
@@ -3171,6 +3172,18 @@ function outlinerItemFileRenderKey(props: OutlinerItemProps): string {
   ].join('\u001f');
 }
 
+function inlineReferencePresentationKey(props: OutlinerItemProps): string {
+  const openId = outlinerItemOpenId(props);
+  const displayed = props.index.byId.get(openId) ?? props.index.byId.get(props.nodeId);
+  return (displayed?.content.inlineRefs ?? []).map((ref) => {
+    const targetId = inlineRefNodeId(ref);
+    if (!targetId) return '';
+    const title = props.index.byId.get(targetId)?.content.text.trim() ?? '';
+    const color = inlineReferenceTextColor(targetId, props.index) ?? '';
+    return `${targetId}\u001f${title}\u001f${color}`;
+  }).join('\u001e');
+}
+
 function textRenderRevision(text: string): number {
   let hash = 2166136261;
   for (let i = 0; i < text.length; i += 1) {
@@ -3210,6 +3223,7 @@ function outlinerItemPropsEqual(prev: OutlinerItemProps, next: OutlinerItemProps
   const nextRev = next.index.renderRev?.get(next.nodeId);
   if (prevRev === undefined || nextRev === undefined || prevRev !== nextRev) return false;
   if (outlinerItemFileRenderKey(prev) !== outlinerItemFileRenderKey(next)) return false;
+  if (inlineReferencePresentationKey(prev) !== inlineReferencePresentationKey(next)) return false;
   if (outlinerItemPinned(prev) !== outlinerItemPinned(next)) return false;
   if (!referencePathEqual(prev.referencePath, next.referencePath)) return false;
   // Propagate a focus/pending-input request down to a nested target (see above).

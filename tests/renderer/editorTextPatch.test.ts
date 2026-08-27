@@ -83,6 +83,29 @@ describe('editor text patch', () => {
     expect(docToRichText(richTextToDoc(content))).toEqual(content);
   });
 
+  test('resolves the current Node title without changing reference identity', () => {
+    const content = {
+      text: 'See ',
+      marks: [],
+      inlineRefs: [{
+        offset: 4,
+        target: nodeReferenceTarget('node:11111111-1111-4111-8111-111111111111'),
+        displayName: 'Stored title',
+      }],
+    };
+
+    expect(docToRichText(richTextToDoc(
+      content,
+      pmSchema,
+      undefined,
+      () => 'Current title',
+    )).inlineRefs).toEqual([{
+      offset: 4,
+      target: nodeReferenceTarget('node:11111111-1111-4111-8111-111111111111'),
+      displayName: 'Current title',
+    }]);
+  });
+
   test('preserves visible text for inline reference atoms without a target', () => {
     const doc = pmSchema.nodes.doc.create(null, pmSchema.nodes.paragraph.create(null, [
       pmSchema.nodes.inlineReference.create({

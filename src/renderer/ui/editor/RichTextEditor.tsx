@@ -129,6 +129,7 @@ interface RichTextEditorProps {
   linkifyPastedUrl?: boolean;
   onInlineReferenceClick?: (target: ReferenceTarget, options?: NavigateRootOptions) => void;
   resolveInlineReferenceColor?: (targetNodeId: string) => string | undefined;
+  resolveInlineReferenceDisplayName?: (targetNodeId: string) => string | undefined;
   focusTarget?: FocusTarget;
   focusRequest?: FocusRequest | null;
   pendingInput?: PendingInputChar | null;
@@ -173,6 +174,19 @@ function focusEditorDom(view: EditorView) {
 
 function isEditableSurface(props: RichTextEditorProps) {
   return !props.readOnly || Boolean(props.readOnlyCaret);
+}
+
+function applyInlineReferencePresentation(view: EditorView, nextDoc: PMNode): void {
+  let transaction = view.state.tr;
+  nextDoc.descendants((nextNode, position) => {
+    if (nextNode.type.name !== 'inlineReference') return;
+    const currentNode = view.state.doc.nodeAt(position);
+    if (!currentNode || currentNode.type !== nextNode.type || currentNode.sameMarkup(nextNode)) return;
+    transaction = transaction.setNodeMarkup(position, undefined, nextNode.attrs, nextNode.marks);
+  });
+  if (!transaction.docChanged) return;
+  transaction.setMeta('addToHistory', false);
+  view.updateState(view.state.apply(transaction));
 }
 
 function selectedInlineReferencePosition(view: EditorView): number | null {
@@ -293,6 +307,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
   const selectAllRowsReadyRef = useRef(false);
   const composingRef = useRef(false);
   const compositionDocChangedRef = useRef(false);
+  const presentationRefreshPendingRef = useRef(false);
   const structuredPastePendingRef = useRef(false);
   // Cross-editor composition gate state (issue #176): this editor's gate token,
   // the focusRequest snapshot at composition start (a request that PREDATES the
@@ -332,7 +347,12 @@ export function RichTextEditor(props: RichTextEditorProps) {
   };
 
   const initialState = useMemo(() => {
-    const doc = richTextToDoc(props.content, pmSchema, props.resolveInlineReferenceColor);
+    const doc = richTextToDoc(
+      props.content,
+      pmSchema,
+      props.resolveInlineReferenceColor,
+      props.resolveInlineReferenceDisplayName,
+    );
     const initialSelection = props.focusTarget
       && props.focusRequest
       && focusTargetMatches(props.focusRequest.target, props.focusTarget)
@@ -396,6 +416,19 @@ export function RichTextEditor(props: RichTextEditorProps) {
     propsRef.current.onPatch(replaceAllRichTextPatch(nextContent));
   };
 
+  const applyPendingInlineReferencePresentation = (view: EditorView) => {
+    if (!presentationRefreshPendingRef.current) return;
+    presentationRefreshPendingRef.current = false;
+    const currentContent = docToRichText(view.state.doc);
+    const nextDoc = richTextToDoc(
+      currentContent,
+      pmSchema,
+      propsRef.current.resolveInlineReferenceColor,
+      propsRef.current.resolveInlineReferenceDisplayName,
+    );
+    applyInlineReferencePresentation(view, nextDoc);
+  };
+
   const clearMatchingPendingInput = () => {
     const input = propsRef.current.pendingInput;
     const target = propsRef.current.focusTarget;
@@ -426,11 +459,17 @@ export function RichTextEditor(props: RichTextEditorProps) {
   // the composition handoff (which preempts that parked sync).
   const applyExternalContent = (view: EditorView) => {
     const content = propsRef.current.content;
-    const nextDoc = richTextToDoc(content, pmSchema, propsRef.current.resolveInlineReferenceColor);
+    const nextDoc = richTextToDoc(
+      content,
+      pmSchema,
+      propsRef.current.resolveInlineReferenceColor,
+      propsRef.current.resolveInlineReferenceDisplayName,
+    );
     const nextState = EditorState.create({ doc: nextDoc, schema: pmSchema });
     view.updateState(nextState);
     setEditorIsEmpty(isEmptyRichText(content));
     lastExternalContentRef.current = content;
+    presentationRefreshPendingRef.current = false;
     fieldTriggerFiredRef.current = false;
     codeFenceFiredRef.current = false;
   };
@@ -655,6 +694,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
               nextContent,
               pmSchema,
               propsRef.current.resolveInlineReferenceColor,
+              propsRef.current.resolveInlineReferenceDisplayName,
             );
             viewInstance.updateState(EditorState.create({ doc: nextDoc, schema: pmSchema }));
             lastExternalContentRef.current = nextContent;
@@ -785,6 +825,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
           endComposition(compositionToken);
           flushCompositionChanges(view);
           propsRef.current.onCommit(docToRichText(view.state.doc));
+          applyPendingInlineReferencePresentation(view);
           propsRef.current.onTriggerChange(null);
           window.setTimeout(() => updateToolbar(view), 0);
           return false;
@@ -822,6 +863,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
                 flushCompositionChanges(viewInstance);
                 updateTrigger(viewInstance);
                 handleContentUpdateAction(lastExternalContentRef.current);
+                applyPendingInlineReferencePresentation(viewInstance);
                 applyFocusRequest(viewInstance, parkedRequest);
                 return;
               }
@@ -831,6 +873,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
             flushCompositionChanges(viewInstance);
             updateTrigger(viewInstance);
             handleContentUpdateAction(lastExternalContentRef.current);
+            applyPendingInlineReferencePresentation(viewInstance);
           });
           return false;
         },
@@ -1091,11 +1134,29 @@ export function RichTextEditor(props: RichTextEditorProps) {
 
   useEffect(() => {
     const view = viewRef.current;
-    if (!view || props.content === lastExternalContentRef.current) return;
+    if (!view) return;
+    if (props.content === lastExternalContentRef.current) {
+      if (view.hasFocus() || composingRef.current || view.composing) {
+        presentationRefreshPendingRef.current = true;
+        return;
+      }
+      const nextDoc = richTextToDoc(
+        props.content,
+        pmSchema,
+        props.resolveInlineReferenceColor,
+        props.resolveInlineReferenceDisplayName,
+      );
+      applyInlineReferencePresentation(view, nextDoc);
+      presentationRefreshPendingRef.current = false;
+      return;
+    }
     const contentRevision = props.contentRevision ?? 0;
     const contentRevisionChanged = contentRevision !== lastContentRevisionRef.current;
     lastContentRevisionRef.current = contentRevision;
-    if (view.hasFocus() && (composingRef.current || view.composing)) return;
+    if (view.hasFocus() && (composingRef.current || view.composing)) {
+      presentationRefreshPendingRef.current = true;
+      return;
+    }
     if (composingRef.current || view.composing) {
       // The dangerous fallthrough: composing but not DOM-focused — the replace
       // below force-commits a live IME session.
@@ -1104,13 +1165,26 @@ export function RichTextEditor(props: RichTextEditorProps) {
     const currentContent = lastExternalContentRef.current;
     if (view.hasFocus() && richTextEquals(props.content, currentContent)) {
       lastExternalContentRef.current = props.content;
+      presentationRefreshPendingRef.current = true;
       return;
     }
-    if (view.hasFocus() && !contentRevisionChanged) return;
-    const nextDoc = richTextToDoc(props.content, pmSchema, props.resolveInlineReferenceColor);
-    if (nextDoc.eq(view.state.doc)) return;
+    if (view.hasFocus() && !contentRevisionChanged) {
+      presentationRefreshPendingRef.current = true;
+      return;
+    }
+    const nextDoc = richTextToDoc(
+      props.content,
+      pmSchema,
+      props.resolveInlineReferenceColor,
+      props.resolveInlineReferenceDisplayName,
+    );
+    if (nextDoc.eq(view.state.doc)) {
+      presentationRefreshPendingRef.current = false;
+      return;
+    }
     const nextState = EditorState.create({ doc: nextDoc, schema: pmSchema });
     view.updateState(nextState);
+    presentationRefreshPendingRef.current = false;
     setEditorIsEmpty(isEmptyRichText(props.content));
     lastExternalContentRef.current = props.content;
     // A programmatic content replace (e.g. clearing the trailing draft after an
@@ -1121,7 +1195,12 @@ export function RichTextEditor(props: RichTextEditorProps) {
     fieldTriggerFiredRef.current = false;
     codeFenceFiredRef.current = false;
     if (!composingRef.current && !view.composing) updateTrigger(view);
-  }, [props.content, props.contentRevision, props.resolveInlineReferenceColor]);
+  }, [
+    props.content,
+    props.contentRevision,
+    props.resolveInlineReferenceColor,
+    props.resolveInlineReferenceDisplayName,
+  ]);
 
   useEffect(() => {
     const view = viewRef.current;

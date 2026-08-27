@@ -916,8 +916,9 @@ latest isolated probe); the no-dollar `snake_case` and `w*h` fixture is about
 also stays on the linear path. Stable completed blocks are memoized, and every
 block keeps the same memoized React component identity as the final streaming
 block seals.
-Node and local-file
-reference markers render through the same inline reference and preview surfaces
+Canonical Node (`[[node://UUID]]`) and absolute local-file
+(`[[file:///absolute/path]]`) reference markers render through the same inline
+reference and preview surfaces
 as the outliner; Cmd/Ctrl-click preserves new-pane navigation, and HTTP links use
 the app preview route. User messages retain Copy and, for the latest terminal
 Turn only, Edit; final agent messages retain Copy, Continue in new chat, and
@@ -931,7 +932,7 @@ attachment in one message is collected in canonical image order into one leading
 gallery. Every attachment, including each gallery image, also retains its inline
 file reference in the following narrative at its canonical position. The reference
 is not duplicate decoration: it exposes the same attachment identity and readable
-path represented by the provider-facing `[[file:...]]` marker, while the gallery is
+path represented by the provider-facing canonical file-URI marker, while the gallery is
 only a visual preview. Text, Node references, directories, and file references form
 one narrative bubble in their original relative order. Structured user messages use
 the same block inline flow, whitespace preservation, and overflow wrapping as the
@@ -972,6 +973,11 @@ Node subjects in tool activity. A relevant rename or derived tag-color change
 refreshes the reference chip, tool subject, and process header; unrelated
 document deltas do not render the Turn. Copy resolves Node names from the current
 document index at click time rather than from the last rendered snapshot.
+Serialized markers carry identity only: Node titles and file basenames are
+presentation, never URI fields. Escaped markers, markers inside code, and markers
+already owned by a Markdown link remain literal/non-interactive. Unknown schemes
+are not promoted, and a syntactically valid marker never bypasses document or
+filesystem authority checks.
 
 A terminal response owns one action row directly below its visible content.
 Every terminal response exposes Copy, Continue in new chat, and Open Trajectory as

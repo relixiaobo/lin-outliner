@@ -6,6 +6,8 @@ import { renderedMarkdownNodeReferenceIds } from '../../src/core/markdownNodeRef
 import { ThreadMarkdown } from '../../src/renderer/agent/components/ThreadMarkdown';
 
 const cleanups: Array<() => void> = [];
+const NODE_ID = 'node:11111111-1111-4111-8111-111111111111';
+const NODE_MARKER = '[[node://11111111-1111-4111-8111-111111111111]]';
 
 afterEach(() => {
   while (cleanups.length > 0) cleanups.pop()?.();
@@ -14,28 +16,49 @@ afterEach(() => {
 describe('Thread Markdown references', () => {
   test('renders escaped and entity-normalized markers through the shared AST transform', () => {
     const document = renderThreadMarkdown([
-      '\\[[node:^escaped-node]]',
-      '&#91;[node:^entity-node]]',
-      '`[[node:^inline-code-node]]`',
-      '[Existing [[node:^link-label-node]]](https://example.test)',
+      `\\${NODE_MARKER}`,
+      `\\\\${NODE_MARKER}`,
+      `\\\\\\${NODE_MARKER}`,
+      '&#91;[node://11111111-1111-4111-8111-111111111111]]',
+      `\`${NODE_MARKER}\``,
+      `[Existing ${NODE_MARKER}](https://example.test)`,
     ].join('\n\n'));
 
     expect([...document.querySelectorAll('[data-inline-ref]')]
       .map((element) => element.getAttribute('data-inline-ref'))).toEqual([
-      'escaped-node',
-      'entity-node',
+      NODE_ID,
+      NODE_ID,
     ]);
+  });
+
+  test('maps an entity-normalized marker before an escaped duplicate to its own source occurrence', () => {
+    const markdown = `&#91;${NODE_MARKER.slice(1)} / \\${NODE_MARKER}`;
+
+    expect(renderedMarkdownNodeReferenceIds(markdown)).toEqual([NODE_ID]);
+    const document = renderThreadMarkdown(markdown);
+    const references = [...document.querySelectorAll<HTMLElement>('[data-inline-ref]')];
+    expect(references).toHaveLength(1);
+    expect(references[0]!.dataset.inlineRef).toBe(NODE_ID);
+    expect(document.body.textContent).toContain(NODE_MARKER);
+  });
+
+  test.each([512, 513])('renders a reference after %i normalized entities', (entityCount) => {
+    const markdown = `${'&amp;'.repeat(entityCount)}${NODE_MARKER}`;
+
+    expect(renderedMarkdownNodeReferenceIds(markdown)).toEqual([NODE_ID]);
+    const document = renderThreadMarkdown(markdown);
+    expect(document.querySelector(`[data-inline-ref="${NODE_ID}"]`)).not.toBeNull();
   });
 
   test('preserves document definitions when rendering reference-style links in blocks', () => {
     const markdown = [
-      '[Existing [[node:^memory-id]]][reference-link]',
+      `[Existing ${NODE_MARKER}][reference-link]`,
       '[reference-link]: https://example.test',
     ].join('\n\n');
 
     expect(renderedMarkdownNodeReferenceIds(markdown)).toEqual([]);
     const document = renderThreadMarkdown(markdown);
-    expect(document.querySelector('[data-inline-ref="memory-id"]')).toBeNull();
+    expect(document.querySelector(`[data-inline-ref="${NODE_ID}"]`)).toBeNull();
     expect(document.querySelector('a')?.getAttribute('href')).toBe('https://example.test');
   });
 });

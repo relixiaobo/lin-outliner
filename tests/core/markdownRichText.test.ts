@@ -2,18 +2,22 @@ import { describe, expect, test } from 'bun:test';
 import { formatNodeReferenceMarker } from '../../src/core/referenceMarkup';
 import { markdownReferenceMarkupToRichText, richTextToMarkdownReferenceMarkup } from '../../src/core/markdownRichText';
 import type { RichText, TextMark, TextMarkKind } from '../../src/core/types';
+import { parseLinOutline } from '../../src/main/agent/capabilities/agentOutlineParser';
+
+const NODE_ID = 'node:11111111-1111-4111-8111-111111111111';
+const NODE_MARKER = '[[node://11111111-1111-4111-8111-111111111111]]';
 
 describe('markdown rich text outline bridge', () => {
   test('parses inline markdown marks while preserving node reference markers', () => {
-    const marker = formatNodeReferenceMarker('Alpha', 'node-alpha');
+    const marker = formatNodeReferenceMarker(NODE_ID);
 
     expect(markdownReferenceMarkupToRichText(`See **bold** and ${marker}`)).toEqual({
       text: 'See bold and ',
       marks: [{ start: 4, end: 8, type: 'bold' }],
       inlineRefs: [{
         offset: 13,
-        target: { kind: 'node', nodeId: 'node-alpha' },
-        displayName: 'Alpha',
+        target: { kind: 'node', nodeId: NODE_ID },
+        displayName: '11111111',
       }],
     });
   });
@@ -24,10 +28,10 @@ describe('markdown rich text outline bridge', () => {
       marks: [{ start: 4, end: 8, type: 'bold' }],
       inlineRefs: [{
         offset: 13,
-        target: { kind: 'node', nodeId: 'node-alpha' },
+        target: { kind: 'node', nodeId: NODE_ID },
         displayName: 'Alpha',
       }],
-    })).toBe(`See **bold** and ${formatNodeReferenceMarker('Alpha', 'node-alpha')}`);
+    })).toBe(`See **bold** and ${NODE_MARKER}`);
   });
 
   test('does not duplicate stored inline reference display text', () => {
@@ -36,35 +40,131 @@ describe('markdown rich text outline bridge', () => {
       marks: [],
       inlineRefs: [{
         offset: 4,
-        target: { kind: 'node', nodeId: 'node-alpha' },
+        target: { kind: 'node', nodeId: NODE_ID },
         displayName: 'Alpha',
       }],
-    })).toBe(`See ${formatNodeReferenceMarker('Alpha', 'node-alpha')}`);
+    })).toBe(`See ${NODE_MARKER}`);
+  });
+
+  test('degrades private Node families to safe plain display text at the Markdown boundary', () => {
+    for (const [nodeId, displayName] of [
+      ['date:11111111-1111-4111-8111-111111111111', 'Today'],
+      ['image:22222222-2222-4222-8222-222222222222', 'Diagram'],
+      ['attachment:33333333-3333-4333-8333-333333333333', 'Brief.pdf'],
+    ]) {
+      const serialized = richTextToMarkdownReferenceMarkup({
+        text: '',
+        marks: [],
+        inlineRefs: [{
+          offset: 0,
+          target: { kind: 'node', nodeId },
+          displayName,
+        }],
+      });
+      expect(serialized).toBe(displayName);
+      expect(serialized).not.toContain(nodeId);
+      expect(markdownReferenceMarkupToRichText(serialized)).toEqual({
+        text: displayName,
+        marks: [],
+        inlineRefs: [],
+      });
+    }
+  });
+
+  test('escapes private reference fallbacks against both insertion boundaries', () => {
+    const cases = [{
+      content: {
+        text: 'Field: tail',
+        marks: [],
+        inlineRefs: [{
+          offset: 6,
+          target: { kind: 'node' as const, nodeId: 'date:private' },
+          displayName: ': value',
+        }],
+      },
+      serialized: 'Field:\\: value tail',
+      title: 'Field:\\: value tail',
+    }, {
+      content: {
+        text: 'Prefix  suffix',
+        marks: [],
+        inlineRefs: [{
+          offset: 7,
+          target: { kind: 'node' as const, nodeId: 'date:private' },
+          displayName: '- hidden',
+        }],
+      },
+      serialized: 'Prefix \\- hidden suffix',
+      title: 'Prefix \\- hidden suffix',
+    }, {
+      content: {
+        text: 'Prefix  suffix',
+        marks: [],
+        inlineRefs: [{
+          offset: 7,
+          target: { kind: 'node' as const, nodeId: 'date:first-private' },
+          displayName: ':',
+        }, {
+          offset: 7,
+          target: { kind: 'node' as const, nodeId: 'date:second-private' },
+          displayName: ':',
+        }],
+      },
+      serialized: 'Prefix \\:\\: suffix',
+      title: 'Prefix \\:\\: suffix',
+    }, {
+      content: {
+        text: 'Prefix : suffix',
+        marks: [],
+        inlineRefs: [{
+          offset: 7,
+          target: { kind: 'node' as const, nodeId: 'date:first-private' },
+          displayName: ':',
+        }, {
+          offset: 8,
+          target: { kind: 'node' as const, nodeId: 'date:second-private' },
+          displayName: ':',
+        }],
+      },
+      serialized: 'Prefix \\:\\: suffix',
+      title: 'Prefix \\:\\: suffix',
+    }];
+
+    for (const { content, serialized, title } of cases) {
+      expect(richTextToMarkdownReferenceMarkup(content)).toBe(serialized);
+      const parsed = parseLinOutline(`- ${serialized}`);
+      expect(parsed.ok).toBe(true);
+      if (!parsed.ok) continue;
+      expect(parsed.document.fields).toEqual([]);
+      expect(parsed.document.roots).toHaveLength(1);
+      expect(parsed.document.roots[0]).toMatchObject({ title, fields: [] });
+      expect(parsed.document.roots[0]!.description).toBeNull();
+    }
   });
 
   test('drops marks that only cover stored inline reference display text', () => {
-    const marker = formatNodeReferenceMarker('Alpha', 'node-alpha');
+    const marker = NODE_MARKER;
 
     expect(richTextToMarkdownReferenceMarkup({
       text: 'See Alpha',
       marks: [{ start: 4, end: 9, type: 'bold' }],
       inlineRefs: [{
         offset: 4,
-        target: { kind: 'node', nodeId: 'node-alpha' },
+        target: { kind: 'node', nodeId: NODE_ID },
         displayName: 'Alpha',
       }],
     })).toBe(`See ${marker}`);
   });
 
   test('clips marks around skipped inline reference display text', () => {
-    const marker = formatNodeReferenceMarker('Alpha', 'node-alpha');
+    const marker = NODE_MARKER;
 
     expect(richTextToMarkdownReferenceMarkup({
       text: 'See Alpha today',
       marks: [{ start: 0, end: 15, type: 'bold' }],
       inlineRefs: [{
         offset: 4,
-        target: { kind: 'node', nodeId: 'node-alpha' },
+        target: { kind: 'node', nodeId: NODE_ID },
         displayName: 'Alpha',
       }],
     })).toBe(`**See **${marker}** today**`);
@@ -72,7 +172,7 @@ describe('markdown rich text outline bridge', () => {
 
   test('round-trips grammar-significant literal text without creating semantics', () => {
     const content = {
-      text: String.raw`Literal #tag Status:: value [x] %%search%% **stars** [[node:fake^id]] C:\path https://example.com www.example.com`,
+      text: String.raw`Literal #tag Status:: value [x] %%search%% **stars** [[node://not-a-uuid]] C:\path https://example.com www.example.com`,
       marks: [],
       inlineRefs: [],
     };
@@ -132,7 +232,7 @@ describe('markdown rich text outline bridge', () => {
   });
 
   test('round-trips escaped backticks adjacent to canonical code spans', () => {
-    const marker = '[[node:Alpha^node-alpha]]';
+    const marker = NODE_MARKER;
     const cases: RichText[] = [
       { text: '`a', marks: [{ start: 1, end: 2, type: 'code' }], inlineRefs: [] },
       { text: 'a`', marks: [{ start: 0, end: 1, type: 'code' }], inlineRefs: [] },

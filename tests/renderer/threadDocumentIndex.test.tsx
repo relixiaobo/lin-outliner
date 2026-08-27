@@ -3,7 +3,7 @@ import { act, Profiler, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import type { ThreadItem, Turn } from '../../src/core/agent/protocol';
-import { formatNodeReferenceIdMarker, formatNodeReferenceMarker } from '../../src/core/referenceMarkup';
+import { formatNodeReferenceMarker } from '../../src/core/referenceMarkup';
 import type { DocumentProjection, NodeProjection } from '../../src/core/types';
 import {
   ThreadView,
@@ -46,18 +46,20 @@ afterEach(() => {
 
 describe('Thread document subscriptions', () => {
   test('collects every index-derived Node id in a Turn', () => {
+    const markerNodeId = 'node:11111111-1111-4111-8111-111111111111';
+    const reasoningNodeId = 'node:22222222-2222-4222-8222-222222222222';
     const items: ThreadItem[] = [
       userMessage([{ type: 'nodeReference', nodeId: 'node-a' }]),
-      agentMessage(`Read ${formatNodeReferenceIdMarker('node-b')}`),
-      reasoning(formatNodeReferenceMarker('Named', 'node-c')),
+      agentMessage(`Read ${formatNodeReferenceMarker(markerNodeId)}`),
+      reasoning(formatNodeReferenceMarker(reasoningNodeId)),
       dynamicNodeTool('node_read', { node_id: 'node-d', node_ids: ['node-e', 'node-d'] }),
       dynamicNodeTool('node_search', { query: 'node-not-a-subject' }),
     ];
 
     expect(threadDocumentNodeIds(completedTurn(items))).toEqual([
       'node-a',
-      'node-b',
-      'node-c',
+      markerNodeId,
+      reasoningNodeId,
       'node-d',
       'node-e',
     ]);

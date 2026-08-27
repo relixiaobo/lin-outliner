@@ -28,6 +28,7 @@ import type {
 import { asRecord, clampInteger, compactOutline } from './agentNodeToolUtils';
 import { viewModeOf } from './agentNodeToolView';
 import { viewConfigOutlineLines } from './agentNodeToolViewConfig';
+import { disambiguateOrdinaryOutlineReferenceShape } from './agentOutlineParser';
 
 export function normalizeReadParams(rawParams: unknown): NormalizedReadParams {
   const input = asRecord(rawParams);
@@ -197,7 +198,7 @@ function serializeAnnotatedOutlineNode(
     lines.push(`${fieldIndent}- ${marker}${escapeSemanticText(field.name, { suffix: '::' })}::`);
     for (const value of field.values) {
       const marker = value.valueNodeId ? nodeMarker(value.valueNodeId) : '';
-      lines.push(`${fieldIndent}  - ${marker}${value.text}`);
+      lines.push(`${fieldIndent}  - ${marker}${outlineFieldValueText(value)}`);
     }
   }
   if (node.type === 'search') {
@@ -255,10 +256,10 @@ function serializeOutlineNode(
     if (field.values.length === 0) {
       lines.push(`${fieldIndent}- ${escapeSemanticText(field.name, { suffix: '::' })}::`);
     } else if (field.values.length === 1) {
-      lines.push(`${fieldIndent}- ${escapeSemanticText(field.name, { suffix: '::' })}:: ${field.values[0]!.text}`);
+      lines.push(`${fieldIndent}- ${escapeSemanticText(field.name, { suffix: '::' })}:: ${outlineFieldValueText(field.values[0]!)}`);
     } else {
       lines.push(`${fieldIndent}- ${escapeSemanticText(field.name, { suffix: '::' })}::`);
-      for (const value of field.values) lines.push(`${fieldIndent}  - ${value.text}`);
+      for (const value of field.values) lines.push(`${fieldIndent}  - ${outlineFieldValueText(value)}`);
     }
   }
   if (node.type === 'search') {
@@ -283,13 +284,22 @@ function outlineNodeText(index: ProjectionIndex, node: NodeProjection): string {
   else if (nodeShowsCheckbox(index.nodes, node)) parts.push('[ ]');
   const tags = tagLabels(index, node);
   const titleSuffix = node.description ? ' - ' : tags.length > 0 ? ' ' : '';
+  const reference = referenceText(index, node);
   parts.push((
-    referenceText(index, node)
-    ?? richTextToMarkdownReferenceMarkup(node.content, { suffix: titleSuffix })
+    reference
+    ?? disambiguateOrdinaryOutlineReferenceShape(
+      richTextToMarkdownReferenceMarkup(node.content, { suffix: titleSuffix }),
+    )
   ) || '(untitled)');
   if (node.description) parts.push(`- ${escapeSemanticText(node.description)}`);
   parts.push(...tags);
   return parts.join(' ').trim();
+}
+
+function outlineFieldValueText(value: { text: string; targetId?: string }): string {
+  return value.targetId
+    ? value.text
+    : disambiguateOrdinaryOutlineReferenceShape(value.text);
 }
 
 function serializeCodeBlockOutlineNode(node: NodeProjection, indent: string, marker = ''): string[] {

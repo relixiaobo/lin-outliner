@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
+import { Core } from '../../src/core/core';
 import type { RendererUserViewHints } from '../../src/core/agent/protocol';
-import type { DocumentProjection, NodeProjection } from '../../src/core/types';
+import { LIBRARY_ID, type DocumentProjection, type NodeProjection } from '../../src/core/types';
 import { buildUserViewPayload, outlineText } from '../../src/main/agent/context/userView';
 
 describe('main-owned Agent user view', () => {
@@ -53,6 +54,40 @@ describe('main-owned Agent user view', () => {
 
     expect(outlineText(byId.get('root')!, byId)).toBe('%%view:table%% Projects');
     expect(outlineText(byId.get('plain')!, byId)).toBe('Notes');
+  });
+
+  test('projects a private date reference through its title without exposing the internal id', () => {
+    const core = Core.new();
+    const todayId = core.projection().todayId;
+    const referenceId = core.addReference(LIBRARY_ID, todayId, null).focus?.nodeId;
+    if (!referenceId) throw new Error('Expected a date reference');
+    const current = core.projection();
+    const todayTitle = current.nodes.find((entry) => entry.id === todayId)?.content.text;
+    const hints: RendererUserViewHints = {
+      activePanelId: 'library-panel',
+      focusedPanelId: 'library-panel',
+      focusSurface: 'row',
+      focusedNodeId: referenceId,
+      selectedNodeIds: [referenceId],
+      panels: [{
+        panelId: 'library-panel',
+        rootNodeId: LIBRARY_ID,
+        order: 0,
+        active: true,
+        focused: true,
+        visibleNodes: [{ nodeId: referenceId, depth: 1, expanded: false }],
+        visibleOutlineTruncated: false,
+      }],
+      truncated: false,
+    };
+
+    const payload = buildUserViewPayload(hints, current, []);
+
+    expect(todayTitle).toBeTruthy();
+    expect(payload?.focusedNode?.title).toBe(todayTitle);
+    expect(payload?.selectedNodes[0]?.title).toBe(todayTitle);
+    expect(payload?.panels[0]?.visibleOutline[0]?.title).toBe(todayTitle);
+    expect(JSON.stringify(payload)).not.toContain(todayId);
   });
 });
 

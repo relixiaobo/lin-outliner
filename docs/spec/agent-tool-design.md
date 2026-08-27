@@ -85,6 +85,15 @@ semantics. Undo and redo accept an optional `operation_id` stack-top guard. A
 guard mismatch performs no mutation, so a caller requesting an exact reversal
 must not fall back to an unguarded stack operation.
 
+Direct reference mutations (`node_create.target_id` and
+`node_edit.replace_with_reference_to`) admit only existing, non-Trash targets
+that have a public canonical `node:` URI. Private date, image, attachment, and
+structural IDs remain valid exact search operands but cannot become tree
+references through these mutation shortcuts. Agent outline admission parses
+local-file markers with the same case-insensitive scheme rules as the canonical
+URI codec and checks every persisted marker against the configured local-file
+root before mutation; a spelling such as `FILE:` cannot bypass that boundary.
+
 Node outline text represents an owner's effective non-list view mode with
 `%%view:<mode>%%` on that owner's line. `node_read` and user-view context emit
 the same directive for ordinary and saved-search owners; `node_create` and
@@ -112,14 +121,14 @@ query rules:
     - field:: sys:updatedAt
     - direction:: desc
   - %%view-filter%%
-    - field:: [[node:Status^field-definition-id]]
+    - field:: field:11111111-1111-4111-8111-111111111111
     - operator:: is
     - logic:: any
     - value:: Active
   - %%view-group%%
-    - field:: [[node:Status^field-definition-id]]
+    - field:: field:11111111-1111-4111-8111-111111111111
   - %%view-display%%
-    - field:: [[node:Status^field-definition-id]]
+    - field:: field:11111111-1111-4111-8111-111111111111
     - label:: State
     - width:: 180
     - visible:: true
@@ -132,7 +141,7 @@ query rules:
 `%%view-group%%` supplies its `field::`; and each `%%view-display%%` supplies a
 field plus optional view-local label, width, visibility, and order. Width is a
 whole number from 112 through 520, and order is a non-negative
-whole number. Custom fields use field-definition Node references or an active
+whole number. Custom fields use exact typed field-definition IDs or an active
 field-entry id obtained from an annotated `Field::` line; supported system fields
 are `sys:name`, `sys:createdAt`, `sys:updatedAt`, `sys:day`, `sys:done`,
 `sys:doneAt`, `sys:tags`, `sys:refCount`, and `sys:owner`. A configuration header accepts only its
@@ -172,7 +181,27 @@ text inside code blocks; small inline enumerations remain ordinary lists.
 
 `node_edit` uses expected revisions for optimistic conflict detection. Results
 return stable Node edit handles for subsequent tool calls; final user text uses
-normal Node references rather than internal edit syntax.
+normal `[[node://UUID]]` references rather than internal edit syntax. Public
+reference markers contain only identity; provider-facing text may put a resolved
+title before the marker, while typed field/tag/view IDs stay unwrapped. Titles
+placed beside markers in Lin outline output use the same semantic escaping as
+ordinary outline text, including the trailing `:` marker boundary, so a title
+cannot become a tag, checkbox, field header, search directive, or view directive
+when the outline is parsed again. A tree-reference display title flattens its
+inline references to their readable current/snapshot names before appending the
+single identity marker. A named tree reference uses an unescaped terminal `:` before
+exactly one unprotected canonical Node marker; marker-shaped literals inside Markdown
+code or links do not participate. Ordinary title and field-value serializers escape
+that colon when normal rich text would otherwise have the same terminal shape. A
+marker-only ordinary inline reference uses the reserved
+`%%inline-reference%% [[node://UUID]]` outline form; the parser removes the directive
+only when it guards exactly that bare-marker shape. The parser admits only the
+unescaped named delimiter or an undiscriminated bare marker as a tree reference, so
+ordinary inline-reference content cannot be promoted during read/edit, create, or
+duplicate round trips. When a private structured reference must degrade to its
+display fallback at a text boundary, semantic escaping considers the complete
+insertion prefix and suffix; punctuation split across the insertion cannot turn
+ordinary content into a field, description, or other outline structure.
 
 `outline_undo_stack` is an explicit world-state operation. Thread forking never
 invokes it.

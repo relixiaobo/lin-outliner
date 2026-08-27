@@ -92,6 +92,34 @@ describe('referenced resource admission', () => {
     ]);
   });
 
+  test('resolves a private target title without exposing its id through a referenced resource', async () => {
+    const privateTargetId = 'date:550e8400-e29b-41d4-a716-446655440000';
+    const referenceNodeId = 'node:11111111-1111-4111-8111-111111111111';
+    const doc = projection([
+      node({ id: 'root', type: 'outline', content: plainText('Root'), children: [referenceNodeId] }),
+      node({
+        id: referenceNodeId,
+        type: 'reference',
+        parentId: 'root',
+        targetId: privateTargetId,
+      }),
+      node({ id: privateTargetId, type: 'text', content: plainText('2026-08-26') }),
+    ]);
+
+    const result = await admitReferencedResources({
+      projection: doc,
+      references: [{ nodeId: referenceNodeId }],
+      writeResource: async () => { throw new Error('unexpected write'); },
+    });
+
+    expect(result?.payload.resources[0]).toMatchObject({
+      nodeId: referenceNodeId,
+      title: '2026-08-26',
+      content: '2026-08-26',
+    });
+    expect(JSON.stringify(result?.payload)).not.toContain(privateTargetId);
+  });
+
   test('copies explicitly referenced asset bytes into a managed resource and inlines supported images', async () => {
     const root = await mkdtemp(join(tmpdir(), 'tenon-referenced-resource-'));
     roots.push(root);

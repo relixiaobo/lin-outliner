@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useState, type KeyboardEvent } from 'react';
-import { formatNodeReferenceMarker } from '../../../core/referenceMarkup';
+import { formatNamedNodeReference } from '../../../core/referenceMarkup';
 import type { Messages } from '../../../core/i18n';
 import { SEARCH_QUERY_COMPLEXITY_LIMITS } from '../../../core/searchQueryCompiler';
 import { api } from '../../api/client';
@@ -357,7 +357,7 @@ function nodeTitle(index: DocumentIndex, nodeId: NodeId, t: Messages): string {
 }
 
 function nodeReference(index: DocumentIndex, nodeId: NodeId, t: Messages, label?: string): string {
-  return formatNodeReferenceMarker(label ?? nodeTitle(index, nodeId, t), nodeId);
+  return formatNamedNodeReference(nodeId, label ?? nodeTitle(index, nodeId, t));
 }
 
 function tagName(index: DocumentIndex, tagId: NodeId, t: Messages): string {

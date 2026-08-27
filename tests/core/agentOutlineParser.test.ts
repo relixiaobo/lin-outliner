@@ -3,6 +3,11 @@ import { markdownReferenceMarkupToRichText, richTextToMarkdownReferenceMarkup } 
 import { escapeSemanticText } from '../../src/core/semanticIngest/inlineScanner';
 import { parseLinOutline } from '../../src/main/agent/capabilities/agentOutlineParser';
 
+const NODE_ALPHA_ID = 'node:11111111-1111-4111-8111-111111111111';
+const NODE_ALPHA_MARKER = '[[node://11111111-1111-4111-8111-111111111111]]';
+const NODE_BETA_ID = 'node:22222222-2222-4222-8222-222222222222';
+const NODE_BETA_MARKER = '[[node://22222222-2222-4222-8222-222222222222]]';
+
 describe('agent outline parser', () => {
   test('parses top-level field lines as document fields', () => {
     const parsed = parseLinOutline([
@@ -29,41 +34,78 @@ describe('agent outline parser', () => {
     ]);
   });
 
-  test('parses full-line node references with and without display names', () => {
+  test('parses full-line Node references with adjacent or resolved display names', () => {
     const parsed = parseLinOutline([
-      '- [[node:Alpha^node-alpha]]',
-      '- [[node:^node-beta]]',
+      `- Alpha: ${NODE_ALPHA_MARKER}`,
+      `- ${NODE_BETA_MARKER}`,
     ].join('\n'));
 
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     expect(parsed.document.roots).toEqual([
       expect.objectContaining({
-        referenceTargetId: 'node-alpha',
+        referenceTargetId: NODE_ALPHA_ID,
         title: 'Alpha',
       }),
       expect.objectContaining({
-        referenceTargetId: 'node-beta',
-        title: 'node-beta',
+        referenceTargetId: NODE_BETA_ID,
+        title: NODE_BETA_ID,
       }),
     ]);
   });
 
-  test('does not extract tags from reference marker labels', () => {
+  test('uses the inline-reference directive only for bare ordinary Node markers', () => {
     const parsed = parseLinOutline([
-      '- [[node:#task^tag-node]]',
-      '- Work [[node:#project^project-node]] #todo',
+      `- %%inline-reference%% ${NODE_ALPHA_MARKER} - Details`,
+      `  - Notes:: %%inline-reference%% ${NODE_BETA_MARKER}`,
+      `- %%inline-reference%% Label: ${NODE_BETA_MARKER}`,
     ].join('\n'));
 
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     expect(parsed.document.roots[0]).toMatchObject({
-      referenceTargetId: 'tag-node',
-      title: '#task',
+      title: NODE_ALPHA_MARKER,
+      description: 'Details',
+      fields: [{
+        name: 'Notes',
+        values: [{ text: '', outlineSource: NODE_BETA_MARKER }],
+      }],
+    });
+    expect(parsed.document.roots[0]).not.toHaveProperty('referenceTargetId');
+    expect(parsed.document.roots[1]).toMatchObject({
+      title: `%%inline-reference%% Label: ${NODE_BETA_MARKER}`,
+    });
+    expect(parsed.document.roots[1]).not.toHaveProperty('referenceTargetId');
+  });
+
+  test('does not promote mixed file and Node inline references to a tree reference', () => {
+    const parsed = parseLinOutline(
+      '- Compare [[file:///tmp/left.txt]]: [[node://11111111-1111-4111-8111-111111111111]]',
+    );
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const root = parsed.document.roots[0]!;
+    expect(root.referenceTargetId).toBeUndefined();
+    expect(root.title)
+      .toBe('Compare [[file:///tmp/left.txt]]: [[node://11111111-1111-4111-8111-111111111111]]');
+  });
+
+  test('does not extract tags from reference URI paths', () => {
+    const parsed = parseLinOutline([
+      `- Task: ${NODE_ALPHA_MARKER}`,
+      `- Work ${NODE_BETA_MARKER} #todo`,
+    ].join('\n'));
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.document.roots[0]).toMatchObject({
+      referenceTargetId: NODE_ALPHA_ID,
+      title: 'Task',
       tags: [],
     });
     expect(parsed.document.roots[1]).toMatchObject({
-      title: 'Work [[node:#project^project-node]]',
+      title: `Work ${NODE_BETA_MARKER}`,
       tags: ['todo'],
     });
   });
@@ -121,7 +163,7 @@ describe('agent outline parser', () => {
       '- `Status:: open`',
       '- `%%search%% %%view:table%%`',
       `- ${linked}`,
-      '- [[node:Foo:: Bar^node-a]]',
+      `- ${NODE_ALPHA_MARKER}`,
     ].join('\n'));
 
     expect(parsed.ok).toBe(true);
@@ -144,8 +186,8 @@ describe('agent outline parser', () => {
       view: undefined,
     });
     expect(parsed.document.roots[3]).toMatchObject({
-      title: 'Foo:: Bar',
-      referenceTargetId: 'node-a',
+      title: NODE_ALPHA_ID,
+      referenceTargetId: NODE_ALPHA_ID,
     });
   });
 
@@ -172,14 +214,14 @@ describe('agent outline parser', () => {
       '    - field:: sys:updatedAt',
       '    - direction:: desc',
       '  - %%view-filter%%',
-      '    - field:: [[node:Status^field-status]]',
+      '    - field:: field:11111111-1111-4111-8111-111111111111',
       '    - operator:: is',
       '    - logic:: any',
       '    - value:: Active',
       '  - %%view-group%%',
-      '    - field:: [[node:Status^field-status]]',
+      '    - field:: field:11111111-1111-4111-8111-111111111111',
       '  - %%node:display-a%% %%view-display%%',
-      '    - field:: [[node:Status^field-status]]',
+      '    - field:: field:11111111-1111-4111-8111-111111111111',
       '    - label:: State',
       '    - width:: 180',
       '    - visible:: true',
@@ -192,7 +234,7 @@ describe('agent outline parser', () => {
     const filterConfig = parsed.document.roots[0]!.viewConfig!
       .find((config) => config.kind === 'filter');
     expect(filterConfig?.fields).toEqual([
-      expect.objectContaining({ name: 'field', values: [expect.objectContaining({ targetId: 'field-status' })] }),
+      expect.objectContaining({ name: 'field', values: [{ text: 'field:11111111-1111-4111-8111-111111111111' }] }),
       expect.objectContaining({ name: 'operator', values: [{ text: 'is' }] }),
       expect.objectContaining({ name: 'logic', values: [{ text: 'any' }] }),
       expect.objectContaining({ name: 'value', values: [{ text: 'Active' }] }),

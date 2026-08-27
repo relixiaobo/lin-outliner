@@ -231,23 +231,63 @@ describe('ThreadItemView reasoning presentation', () => {
   });
 
   test('keeps a leading reasoning line that carries a Node reference openable', async () => {
-    // The label survives flattening; the reference target and its open
-    // affordance do not, so this block stays in the body too.
+    // The reference target and its open affordance do not survive flattening,
+    // so this block stays in the body too.
     const rendered = renderItem(reasoningItem({
-      summary: [`Rereading ${formatNodeReferenceMarker('Weekly notes', 'node-1')} before deciding.`],
+      summary: [`Rereading ${formatNodeReferenceMarker('library')} before deciding.`],
       content: ['The plan is already written down there.'],
     }));
     await flush();
 
     const toggle = rendered.document.querySelector<HTMLButtonElement>('.thread-reasoning-toggle');
-    expect(toggle?.textContent).toContain('Rereading Weekly notes before deciding.');
+    expect(toggle?.textContent).toContain('Rereading library before deciding.');
     act(() => toggle?.click());
     await flush();
 
     const body = rendered.document.querySelector('.thread-reasoning-body');
-    expect(body?.querySelector('a')?.getAttribute('href')).toBe('#lin-node:node-1');
+    expect(body?.querySelector('a')?.getAttribute('href')).toBe('#lin-node:library');
     expect(body?.textContent).toContain('The plan is already written down there.');
   });
+
+  test('keeps an entity-encoded leading reasoning reference openable', async () => {
+    const nodeId = 'node:11111111-1111-4111-8111-111111111111';
+    const rendered = renderItem(reasoningItem({
+      summary: ['Rereading &#91;[node://11111111-1111-4111-8111-111111111111]] before deciding.'],
+      content: ['The source remains part of the detailed reasoning.'],
+    }));
+    await flush();
+
+    const toggle = rendered.document.querySelector<HTMLButtonElement>('.thread-reasoning-toggle');
+    expect(toggle).not.toBeNull();
+    act(() => toggle?.click());
+    await flush();
+
+    const body = rendered.document.querySelector('.thread-reasoning-body');
+    expect(body?.querySelector(`[data-inline-ref="${nodeId}"]`)).not.toBeNull();
+    expect(body?.textContent).toContain('The source remains part of the detailed reasoning.');
+  });
+
+  test.each([512, 513])(
+    'keeps a leading reasoning reference reachable after %i normalized entities',
+    async (entityCount) => {
+      const nodeId = 'node:11111111-1111-4111-8111-111111111111';
+      const marker = '[[node://11111111-1111-4111-8111-111111111111]]';
+      const rendered = renderItem(reasoningItem({
+        summary: [`${'&amp;'.repeat(entityCount)}${marker}`],
+        content: ['The source remains part of the detailed reasoning.'],
+      }));
+      await flush();
+
+      const toggle = rendered.document.querySelector<HTMLButtonElement>('.thread-reasoning-toggle');
+      expect(toggle).not.toBeNull();
+      act(() => toggle?.click());
+      await flush();
+
+      const body = rendered.document.querySelector('.thread-reasoning-body');
+      expect(body?.querySelector(`[data-inline-ref="${nodeId}"]`)).not.toBeNull();
+      expect(body?.textContent).toContain('The source remains part of the detailed reasoning.');
+    },
+  );
 
   test('measures a long single line that mounts with an expanded disclosure override', async () => {
     const text = 'A long reasoning line that exceeds the available compact timeline width';

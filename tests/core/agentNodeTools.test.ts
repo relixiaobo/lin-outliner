@@ -22,7 +22,7 @@ import {
 } from '../../src/core/types';
 import { createNodeTools, visibleOutlineUndoStack, type OutlinerToolHost } from '../../src/main/agent/capabilities/agentNodeTools';
 import { validateSearchNodes } from '../../src/main/agent/capabilities/agentNodeToolSearch';
-import { fieldReads, indexProjection } from '../../src/main/agent/capabilities/agentNodeToolProjection';
+import { fieldReads, indexProjection, referenceText } from '../../src/main/agent/capabilities/agentNodeToolProjection';
 import { DocumentReadModel } from '../../src/main/documentReadModel';
 import type { OperationHistoryData } from '../../src/main/agent/capabilities/agentNodeToolTypes';
 import type { ToolEnvelope } from '../../src/main/agent/capabilities/agentToolEnvelope';
@@ -181,8 +181,8 @@ function fieldSlotMutationArg(args: Record<string, unknown>): FieldSlotMutation 
   throw new Error(`unsupported field slot mutation: ${String(args.kind)}`);
 }
 
-function nodeRef(core: Core, nodeId: string, label?: string): string {
-  return formatNodeReferenceMarker(label ?? core.state().nodes[nodeId]?.content.text ?? nodeId, nodeId);
+function nodeRef(_core: Core, nodeId: string, _label?: string): string {
+  return formatNodeReferenceMarker(nodeId);
 }
 
 function fieldEntryByName(core: Core, ownerId: string, name: string): string {
@@ -349,7 +349,7 @@ describe('agent node tools', () => {
     expect(nodeSearch.description).toContain('DONE_LAST_DAYS value:: 7');
     expect(nodeSearch.description).toContain('Use node_search for temporary lookup');
     expect(nodeSearch.description).toContain('common_query');
-    expect(nodeSearch.description).toContain('[[node:^exact-id]]');
+    expect(nodeSearch.description).toContain('[[node://uuid]]');
     expect(nodeSearch.description).toContain('Do not express done state as FIELD_IS');
     expect(nodeSearch.description).toContain('Use DATE_OVERLAPS only for values stored in a date field');
     expect(nodeSearch.description).toContain('IS_TYPE value:: node|tag|field|search|day|week|year|image|attachment|code');
@@ -381,7 +381,7 @@ describe('agent node tools', () => {
 
     expect(catalog).toContain('Successful creation results include fresh %%node:id%% edit handles');
     expect(catalog).toContain('never show %%node:id%% edit handles');
-    expect(catalog).toContain('[[node:^exact-id]]');
+    expect(catalog).toContain('[[node://UUID]]');
   });
 
   test('node_read uses the document read model without rebuilding a projection index', async () => {
@@ -606,7 +606,7 @@ describe('agent node tools', () => {
       ],
       inlineRefs: [{
         offset: 20,
-        displayName: 'Target',
+        displayName: target.slice('node:'.length, 'node:'.length + 8),
         target: { kind: 'node', nodeId: target },
       }],
     });
@@ -1007,14 +1007,14 @@ describe('agent node tools', () => {
 
       const first = await executeTool(core, 'node_create', {
         parent_id: record,
-        outline: `- Attachments:: ${formatFileReferenceMarker('a.txt', firstPath)}`,
+        outline: `- Attachments:: ${formatFileReferenceMarker(firstPath)}`,
       }, { localFileRoot: localRoot });
       expect(first.ok).toBe(true);
       const firstValueId = core.state().nodes[entry]!.children[0]!;
 
       const second = await executeTool(core, 'node_create', {
         parent_id: record,
-        outline: `- Attachments:: ${formatFileReferenceMarker('b.txt', secondPath)}`,
+        outline: `- Attachments:: ${formatFileReferenceMarker(secondPath)}`,
       }, { localFileRoot: localRoot });
       expect(second.ok).toBe(true);
 
@@ -1074,7 +1074,7 @@ describe('agent node tools', () => {
       const seed = mustFocus(core.createNode(today, null, 'Seed'));
       mustFocus(core.createInlineField(seed, null, 'Score', 'number'));
       const record = mustFocus(core.createNode(today, null, 'Record'));
-      const marker = formatFileReferenceMarker('score.txt', path.join(localRoot, 'score.txt'));
+      const marker = formatFileReferenceMarker(path.join(localRoot, 'score.txt'));
 
       const result = await executeTool(core, 'node_create', {
         parent_id: record,
@@ -1599,23 +1599,37 @@ describe('agent node tools', () => {
     expect(envelope.error?.code).toBe('invalid_annotation');
   });
 
-  test('node_create rejects out-of-root local-file markers from agent outlines', async () => {
+  test('node_create rejects mixed-case out-of-root local-file markers across outline text positions', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-node-root-'));
     const sourceRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-node-source-'));
     try {
-      const core = Core.new();
-      const today = core.projection().todayId;
       const outsidePath = path.join(sourceRoot, 'id_rsa');
-      const marker = formatFileReferenceMarker('id_rsa', outsidePath);
+      const marker = formatFileReferenceMarker(outsidePath).replace('file:', 'FiLe:');
+      for (const outline of [
+        `- Read ${marker}`,
+        `- Task - Read ${marker}`,
+        `- ${marker}:: value`,
+        `- Notes:: ${marker}`,
+        `- Root\n  - ${marker}:: value`,
+        `- Root\n  - Notes:: ${marker}`,
+        [
+          '- %%view:table%% Root',
+          '  - %%view-display%%',
+          '    - field:: sys:name',
+          `    - label:: ${marker}`,
+        ].join('\n'),
+      ]) {
+        const core = Core.new();
+        const today = core.projection().todayId;
+        const result = await executeRawTool(core, 'node_create', {
+          parent_id: today,
+          outline,
+        }, { localFileRoot: localRoot });
 
-      const result = await executeRawTool(core, 'node_create', {
-        parent_id: today,
-        outline: `- Read ${marker}`,
-      }, { localFileRoot: localRoot });
-
-      expect(result.details.ok).toBe(false);
-      expect(result.details.error?.code).toBe('invalid_file_reference');
-      expect(core.state().nodes[today]!.children).toHaveLength(0);
+        expect(result.details.ok).toBe(false);
+        expect(result.details.error?.code).toBe('invalid_file_reference');
+        expect(core.state().nodes[today]!.children).toHaveLength(0);
+      }
     } finally {
       await Promise.all([
         rm(localRoot, { recursive: true, force: true }),
@@ -1659,6 +1673,401 @@ describe('agent node tools', () => {
     expect(core.state().nodes[today]!.children).toEqual([targetParentId, afterId, refId]);
   });
 
+  test('direct reference mutations reject private Node ids that have no canonical URI', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const source = mustFocus(core.createNode(today, null, 'Source'));
+
+    const create = await executeTool(core, 'node_create', {
+      parent_id: source,
+      target_id: today,
+    });
+    expect(create.ok).toBe(false);
+    expect(create.error?.code).toBe('invalid_reference');
+
+    const edit = await executeTool(core, 'node_edit', {
+      node_id: source,
+      replace_with_reference_to: today,
+    });
+    expect(edit.ok).toBe(false);
+    expect(edit.error?.code).toBe('invalid_reference');
+    expect(core.state().nodes[source]!.type).not.toBe('reference');
+  });
+
+  test('node_read and node_edit round-trip semantic reference titles without creating directives', async () => {
+    for (const title of [
+      '#project',
+      'Status:: Open',
+      '[x] Task',
+      '%%search%% Notes',
+      'Trailing:',
+    ]) {
+      const core = Core.new();
+      const today = core.projection().todayId;
+      const targetParentId = mustFocus(core.createNode(today, null, 'Targets'));
+      const targetId = mustFocus(core.createNode(targetParentId, null, title));
+      const referenceId = mustFocus(core.addReference(today, targetId, null));
+      const read = await executeRawTool<{
+        items: Array<{ revision: string }>;
+      }>(core, 'node_read', { node_id: referenceId, depth: 0 });
+      const visible = parseVisibleToolResult<{
+        data?: { outline?: string };
+      }>(read.contentText);
+      const outline = visible.data?.outline;
+
+      expect(typeof outline).toBe('string');
+      const edit = await executeTool(core, 'node_edit', {
+        node_id: referenceId,
+        old_string: '*',
+        new_string: outline,
+        expected_revision: read.details.data!.items[0]!.revision,
+      });
+
+      expect(edit.ok).toBe(true);
+      expect(core.state().nodes[referenceId]).toMatchObject({
+        type: 'reference',
+        targetId,
+        tags: [],
+      });
+    }
+  });
+
+  test('node_create duplicate_id preserves a tree reference whose target title contains an inline reference', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const targets = mustFocus(core.createNode(today, null, 'Targets'));
+    const nestedTargetId = mustFocus(core.createNode(targets, null, 'Nested target'));
+    const outerTargetId = mustFocus(core.createRichTextContentNode(targets, null, {
+      text: 'See ',
+      marks: [],
+      inlineRefs: [{
+        offset: 4,
+        target: { kind: 'node', nodeId: nestedTargetId },
+        displayName: 'Stale target',
+      }],
+    }));
+    const referenceId = mustFocus(core.addReference(today, outerTargetId, null));
+    const destinationId = mustFocus(core.createNode(today, null, 'Destination'));
+    const projection = core.projection();
+    const index = indexProjection(projection);
+
+    expect(referenceText(index, index.nodes.get(referenceId)!))
+      .toBe(`See Nested target: ${formatNodeReferenceMarker(outerTargetId)}`);
+
+    const duplicated = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: destinationId,
+      duplicate_id: referenceId,
+    });
+
+    expect(duplicated.ok).toBe(true);
+    const cloneId = duplicated.data!.createdRootIds[0]!;
+    expect(core.state().nodes[cloneId]).toMatchObject({
+      type: 'reference',
+      targetId: outerTargetId,
+    });
+  });
+
+  test('node_create duplicate_id preserves a tree reference whose target title contains a code-marked URI literal', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const targets = mustFocus(core.createNode(today, null, 'Targets'));
+    const literal = '[[file:///tmp/a.txt]]';
+    const outerTargetId = mustFocus(core.createRichTextContentNode(targets, null, {
+      text: `See ${literal}`,
+      marks: [{ start: 4, end: 4 + literal.length, type: 'code' }],
+      inlineRefs: [],
+    }));
+    const referenceId = mustFocus(core.addReference(today, outerTargetId, null));
+    const destinationId = mustFocus(core.createNode(today, null, 'Destination'));
+    const index = indexProjection(core.projection());
+
+    expect(referenceText(index, index.nodes.get(referenceId)!))
+      .toBe(`See \`${literal}\`: ${formatNodeReferenceMarker(outerTargetId)}`);
+
+    const duplicated = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: destinationId,
+      duplicate_id: referenceId,
+    });
+
+    expect(duplicated.ok).toBe(true);
+    expect(core.state().nodes[duplicated.data!.createdRootIds[0]!]).toMatchObject({
+      type: 'reference',
+      targetId: outerTargetId,
+    });
+  });
+
+  test('tree reference projection consumes raw inline-reference display snapshots before normalizing replacements', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const targets = mustFocus(core.createNode(today, null, 'Targets'));
+    const spacedTargetId = mustFocus(core.createNode(targets, null, 'Old   Name'));
+    const multilineTargetId = mustFocus(core.createNode(targets, null, 'Line\nBreak'));
+    const outerTargetId = mustFocus(core.createRichTextContentNode(targets, null, {
+      text: 'See Old   Name and Line\nBreak',
+      marks: [],
+      inlineRefs: [
+        {
+          offset: 4,
+          target: { kind: 'node', nodeId: spacedTargetId },
+          displayName: 'Old   Name',
+        },
+        {
+          offset: 19,
+          target: { kind: 'node', nodeId: multilineTargetId },
+          displayName: 'Line\nBreak',
+        },
+      ],
+    }));
+    const referenceId = mustFocus(core.addReference(today, outerTargetId, null));
+    const destinationId = mustFocus(core.createNode(today, null, 'Destination'));
+    const index = indexProjection(core.projection());
+
+    expect(referenceText(index, index.nodes.get(referenceId)!))
+      .toBe(`See Old Name and Line Break: ${formatNodeReferenceMarker(outerTargetId)}`);
+
+    const duplicated = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: destinationId,
+      duplicate_id: referenceId,
+    });
+
+    expect(duplicated.ok).toBe(true);
+    expect(core.state().nodes[duplicated.data!.createdRootIds[0]!]).toMatchObject({
+      type: 'reference',
+      targetId: outerTargetId,
+    });
+  });
+
+  test('node_create duplicate_id keeps ordinary colon-separated inline references as rich text', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const targets = mustFocus(core.createNode(today, null, 'Targets'));
+    const leftTargetId = mustFocus(core.createNode(targets, null, 'Left'));
+    const rightTargetId = mustFocus(core.createNode(targets, null, 'Right'));
+    const sourceId = mustFocus(core.createRichTextContentNode(today, null, {
+      text: 'Compare Left: Right',
+      marks: [],
+      inlineRefs: [
+        {
+          offset: 8,
+          target: { kind: 'node', nodeId: leftTargetId },
+          displayName: 'Left',
+        },
+        {
+          offset: 14,
+          target: { kind: 'node', nodeId: rightTargetId },
+          displayName: 'Right',
+        },
+      ],
+    }));
+
+    const duplicated = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      duplicate_id: sourceId,
+    });
+
+    expect(duplicated.ok).toBe(true);
+    const clone = core.state().nodes[duplicated.data!.createdRootIds[0]!]!;
+    expect(clone.type).not.toBe('reference');
+    expect(clone).not.toHaveProperty('targetId');
+    expect(clone.content.inlineRefs.map((ref) => ref.target)).toEqual([
+      { kind: 'node', nodeId: leftTargetId },
+      { kind: 'node', nodeId: rightTargetId },
+    ]);
+    expect(richTextToMarkdownReferenceMarkup(clone.content))
+      .toBe(richTextToMarkdownReferenceMarkup(core.state().nodes[sourceId]!.content));
+  });
+
+  test('node_create duplicate_id escapes an ordinary terminal inline Node reference in titles and field values', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const targetId = mustFocus(core.createNode(today, null, 'Right'));
+    const terminalInlineReference = {
+      text: 'Compare: ',
+      marks: [],
+      inlineRefs: [{
+        offset: 9,
+        target: { kind: 'node' as const, nodeId: targetId },
+        displayName: 'Right',
+      }],
+    };
+    const sourceId = mustFocus(core.createRichTextContentNode(today, null, terminalInlineReference));
+    const fieldEntryId = mustFocus(core.createInlineField(sourceId, null, 'Notes', 'plain'));
+    mustFocus(core.createRichTextContentNode(fieldEntryId, null, terminalInlineReference));
+
+    const read = await executeTool<{ items: Array<{ outline?: string }> }>(core, 'node_read', {
+      node_id: sourceId,
+      depth: 0,
+    });
+    expect(read.data!.items[0]!.outline).toBe([
+      `- Compare\\: ${formatNodeReferenceMarker(targetId)}`,
+      `  - Notes:: Compare\\: ${formatNodeReferenceMarker(targetId)}`,
+    ].join('\n'));
+
+    const duplicated = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      duplicate_id: sourceId,
+    });
+
+    expect(duplicated.ok).toBe(true);
+    const cloneId = duplicated.data!.createdRootIds[0]!;
+    const clone = core.state().nodes[cloneId]!;
+    expect(clone.type).not.toBe('reference');
+    expect(clone).not.toHaveProperty('targetId');
+    expect(clone.content.text).toBe('Compare: ');
+    expect(clone.content.inlineRefs.map((ref) => ref.target)).toEqual([
+      { kind: 'node', nodeId: targetId },
+    ]);
+
+    const clonedFieldEntryId = fieldEntryByName(core, cloneId, 'Notes');
+    const clonedValue = core.state().nodes[core.state().nodes[clonedFieldEntryId]!.children[0]!]!;
+    expect(clonedValue.type).not.toBe('reference');
+    expect(clonedValue).not.toHaveProperty('targetId');
+    expect(clonedValue.content.text).toBe('Compare: ');
+    expect(clonedValue.content.inlineRefs.map((ref) => ref.target)).toEqual([
+      { kind: 'node', nodeId: targetId },
+    ]);
+  });
+
+  test('node_edit and duplicate_id preserve marker-only ordinary inline references in titles and field values', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const targetId = mustFocus(core.createNode(today, null, 'Target'));
+    const draftId = mustFocus(core.createNode(today, null, ''));
+    const sourceId = mustFocus(core.replaceNodeWithInlineReference(draftId, targetId));
+    const pureInlineReference = core.state().nodes[sourceId]!.content;
+    const fieldEntryId = mustFocus(core.createInlineField(sourceId, null, 'Notes', 'plain'));
+    mustFocus(core.createRichTextContentNode(fieldEntryId, null, pureInlineReference));
+    const destinationId = mustFocus(core.createNode(today, null, 'Destination'));
+
+    const read = await executeRawTool<{
+      items: Array<{ outline?: string; revision: string }>;
+    }>(core, 'node_read', { node_id: sourceId, depth: 0 });
+    const visibleRead = parseVisibleToolResult<{
+      data?: { outline?: string };
+    }>(read.contentText);
+    const outline = read.details.data!.items[0]!.outline;
+    expect(outline).toBe([
+      `- %%inline-reference%% ${formatNodeReferenceMarker(targetId)}`,
+      `  - Notes:: %%inline-reference%% ${formatNodeReferenceMarker(targetId)}`,
+    ].join('\n'));
+    expect(visibleRead.data!.outline).toContain(`%%inline-reference%% ${formatNodeReferenceMarker(targetId)}`);
+
+    const edit = await executeTool(core, 'node_edit', {
+      node_id: sourceId,
+      old_string: '*',
+      new_string: visibleRead.data!.outline,
+      expected_revision: read.details.data!.items[0]!.revision,
+    });
+
+    expect(edit.ok).toBe(true);
+    const edited = core.state().nodes[sourceId]!;
+    expect(edited.type).not.toBe('reference');
+    expect(edited).not.toHaveProperty('targetId');
+    expect(edited.content).toEqual(pureInlineReference);
+    const editedFieldEntryId = fieldEntryByName(core, sourceId, 'Notes');
+    const editedValue = core.state().nodes[core.state().nodes[editedFieldEntryId]!.children[0]!]!;
+    expect(editedValue.type).not.toBe('reference');
+    expect(editedValue).not.toHaveProperty('targetId');
+    expect(editedValue.content).toEqual(pureInlineReference);
+
+    const duplicated = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: destinationId,
+      duplicate_id: sourceId,
+    });
+
+    expect(duplicated.ok).toBe(true);
+    const cloneId = duplicated.data!.createdRootIds[0]!;
+    const clone = core.state().nodes[cloneId]!;
+    expect(clone.type).not.toBe('reference');
+    expect(clone).not.toHaveProperty('targetId');
+    expect(clone.content).toMatchObject({
+      text: '',
+      marks: [],
+      inlineRefs: [{
+        offset: 0,
+        target: { kind: 'node', nodeId: targetId },
+      }],
+    });
+    const clonedFieldEntryId = fieldEntryByName(core, cloneId, 'Notes');
+    const clonedValue = core.state().nodes[core.state().nodes[clonedFieldEntryId]!.children[0]!]!;
+    expect(clonedValue.type).not.toBe('reference');
+    expect(clonedValue).not.toHaveProperty('targetId');
+    expect(clonedValue.content).toMatchObject({
+      text: '',
+      marks: [],
+      inlineRefs: [{
+        offset: 0,
+        target: { kind: 'node', nodeId: targetId },
+      }],
+    });
+  });
+
+  test('node_create duplicate_id keeps private inline reference fallbacks as ordinary content', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const cases = [{
+      text: 'Field: tail',
+      inlineRefs: [{
+        offset: 6,
+        target: { kind: 'node' as const, nodeId: today },
+        displayName: ': value',
+      }],
+      expected: 'Field:: value tail',
+    }, {
+      text: 'Prefix  suffix',
+      inlineRefs: [{
+        offset: 7,
+        target: { kind: 'node' as const, nodeId: today },
+        displayName: '- hidden',
+      }],
+      expected: 'Prefix - hidden suffix',
+    }, {
+      text: 'Prefix  suffix',
+      inlineRefs: [{
+        offset: 7,
+        target: { kind: 'node' as const, nodeId: today },
+        displayName: ':',
+      }, {
+        offset: 7,
+        target: { kind: 'node' as const, nodeId: today },
+        displayName: ':',
+      }],
+      expected: 'Prefix :: suffix',
+    }, {
+      text: 'Prefix : suffix',
+      inlineRefs: [{
+        offset: 7,
+        target: { kind: 'node' as const, nodeId: today },
+        displayName: ':',
+      }, {
+        offset: 8,
+        target: { kind: 'node' as const, nodeId: today },
+        displayName: ':',
+      }],
+      expected: 'Prefix :: suffix',
+    }];
+
+    for (const entry of cases) {
+      const sourceId = mustFocus(core.createRichTextContentNode(today, null, {
+        text: entry.text,
+        marks: [],
+        inlineRefs: entry.inlineRefs,
+      }));
+      const duplicated = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+        parent_id: today,
+        duplicate_id: sourceId,
+      });
+
+      expect(duplicated.ok).toBe(true);
+      const clone = core.state().nodes[duplicated.data!.createdRootIds[0]!]!;
+      expect(clone.type).not.toBe('reference');
+      expect(clone).not.toHaveProperty('targetId');
+      expect(clone).not.toHaveProperty('description');
+      expect(clone.content).toEqual({ text: entry.expected, marks: [], inlineRefs: [] });
+      expect(clone.children).toEqual([]);
+    }
+  });
+
   test('node_create rejects references to trashed targets before mutation', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
@@ -1671,7 +2080,7 @@ describe('agent node tools', () => {
 
     const outline = await executeTool(core, 'node_create', {
       parent_id: today,
-      outline: `- ${formatNodeReferenceMarker('Archived target', targetId)}`,
+      outline: `- ${formatNodeReferenceMarker(targetId)}`,
     });
     expect(outline.ok).toBe(false);
     expect(outline.error?.code).toBe('node_in_trash');
@@ -2999,8 +3408,8 @@ describe('agent node tools', () => {
     const today = core.projection().todayId;
     const rootFile = { kind: 'local-file', path: '/tmp/brief.pdf', entryKind: 'file' } as const;
     const valueFile = { kind: 'local-file', path: '/tmp/source.txt', entryKind: 'file' } as const;
-    const rootMarker = formatFileReferenceMarker('brief.pdf', rootFile.path);
-    const valueMarker = formatFileReferenceMarker('source.txt', valueFile.path);
+    const rootMarker = formatFileReferenceMarker(rootFile.path);
+    const valueMarker = formatFileReferenceMarker(valueFile.path);
     const root = mustFocus(core.createRichTextContentNode(today, null, {
       text: 'Task ',
       marks: [{ start: 0, end: 4, type: 'bold' }],
@@ -3112,7 +3521,7 @@ describe('agent node tools', () => {
       const today = core.projection().todayId;
       const root = mustFocus(core.createNode(today, null, 'Task'));
       const outsidePath = path.join(sourceRoot, 'id_rsa');
-      const marker = formatFileReferenceMarker('id_rsa', outsidePath);
+      const marker = formatFileReferenceMarker(outsidePath);
 
       const result = await executeRawTool(core, 'node_edit', {
         node_id: root,
@@ -3904,7 +4313,7 @@ describe('agent node tools', () => {
       data?: { outline?: string };
     }>(result.contentText);
 
-    const marker = formatFileReferenceMarker('report.pdf', filePath);
+    const marker = formatFileReferenceMarker(filePath);
     expect(result.details.data!.items[0]!.title).toBe(`Review ${marker} soon`);
     expect(visible.data!.outline).toBe(`- %%node:${nodeId}%% Review ${marker} soon`);
   });
@@ -3945,8 +4354,8 @@ describe('agent node tools', () => {
         .find((segment) => segment.type === 'file');
 
       expect(marker?.path).toBe(filePath);
-      expect(result.details.data!.items[0]!.title).toBe(`Review ${formatFileReferenceMarker('report.pdf', filePath)} soon`);
-      expect(visible.data!.outline).toBe(`- %%node:${nodeId}%% Review ${formatFileReferenceMarker('report.pdf', filePath)} soon`);
+      expect(result.details.data!.items[0]!.title).toBe(`Review ${formatFileReferenceMarker(filePath)} soon`);
+      expect(visible.data!.outline).toBe(`- %%node:${nodeId}%% Review ${formatFileReferenceMarker(filePath)} soon`);
     } finally {
       await Promise.all([
         rm(localRoot, { recursive: true, force: true }),
@@ -4595,7 +5004,7 @@ describe('agent node tools', () => {
     expect(dateTextField.ok).toBe(false);
     expect(dateTextField.error?.code).toBe('invalid_search_condition');
     expect(dateTextField.instructions).toContain('DATE_OVERLAPS searches date field values');
-    expect(dateTextField.instructions).toContain('field definition node id');
+    expect(dateTextField.instructions).toContain('field:: field:<exact-uuid>');
     expect(dateTextField.instructions).toContain('DONE_LAST_DAYS');
   });
 

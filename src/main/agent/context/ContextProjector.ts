@@ -37,8 +37,8 @@ import type {
 import { modelCallArgumentSource } from '../../../core/agent/modelCallHistory';
 import { escapeXml } from '../../../core/reminderXml';
 import {
-  formatFileReferenceMarker,
-  formatNodeReferenceMarker,
+  formatNamedFileReference,
+  formatNamedNodeReference,
 } from '../../../core/referenceMarkup';
 import { assertContextPayloadDependencies, outputReferenceKey } from './contextDependencies';
 import { selectEffectiveContext } from './ContextEpoch';
@@ -847,10 +847,10 @@ export class CanonicalContextProjector {
         `title=${resource.title}`,
         `breadcrumb=${resource.breadcrumb.map((node) => `${node.title} (${node.nodeId})`).join(' / ') || 'none'}`,
         path && resource.resourceRef
-          ? `file_reference=${formatFileReferenceMarker(
-              resource.title || resource.resourceRef.fileName,
+          ? `file_reference=${formatNamedFileReference(
               path,
               resource.resourceRef.mimeType === 'inode/directory' ? 'directory' : 'file',
+              resource.title || resource.resourceRef.fileName,
             )}`
           : null,
         resource.content ? `snapshot_content:\n${resource.content}` : null,
@@ -898,7 +898,11 @@ export async function serializeUserContent(
         narrative.push(part.text);
         break;
       case 'nodeReference':
-        narrative.push(formatNodeReferenceMarker(part.note ?? part.nodeId, part.nodeId));
+        narrative.push(formatNamedNodeReference(
+          part.nodeId,
+          part.note,
+          { unavailable: 'display' },
+        ));
         break;
       case 'attachment': {
         const location = part.artifactRef
@@ -916,10 +920,10 @@ export async function serializeUserContent(
             : `[Attachment unavailable: ${part.name}]`);
           if (!part.artifactRef) break;
         } else {
-          narrative.push(formatFileReferenceMarker(
-            part.name,
+          narrative.push(formatNamedFileReference(
             location,
             part.mimeType === 'inode/directory' ? 'directory' : 'file',
+            part.name,
           ));
         }
         attachments.push({ part, location });

@@ -8,7 +8,11 @@ import type {
   ThreadResourceReference,
 } from '../../../core/agent/protocol';
 import type { AssetMetadata, DocumentProjection, NodeProjection } from '../../../core/types';
-import { nodeBreadcrumb, nodeTitle, outlineText } from '../context/userView';
+import {
+  nodeBreadcrumb,
+  outlineText,
+  resolvedNodeTitle,
+} from '../context/userView';
 
 const MAX_RESOURCE_CONTENT_CHARS = 16_000;
 const MAX_INLINE_IMAGES = 8;
@@ -55,7 +59,7 @@ export async function admitReferencedResources(input: {
     const base = {
       nodeId: node.id,
       nodeType: node.type ?? 'outline',
-      title: nodeTitle(node),
+      title: resolvedNodeTitle(node, byId),
       breadcrumb: nodeBreadcrumb(node, byId),
       content: content.text,
       contentTruncated: content.truncated,

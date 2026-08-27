@@ -3,6 +3,7 @@ import {
   rankTextSearchLabel,
   textSearchLabelWordStarts,
 } from '../../core/textSearchAnalyzer';
+import { isPublicReferenceNodeId } from '../../core/nodeId';
 import type { NodeId, NodeProjection } from '../api/types';
 import { SparseProjectionMap } from './sparseProjectionMap';
 
@@ -221,6 +222,7 @@ export function queryReferenceCandidateIndex(params: {
   readonly untitledLabel: string;
   readonly includeFileNodes: boolean;
   readonly limit: number;
+  readonly publicNodeIdsOnly?: boolean;
   readonly stats?: ReferenceCandidateQueryStats;
 }): readonly ReferenceCandidateIndexEntry[] {
   const normalizedQuery = normalizeSearchText(params.query);
@@ -229,11 +231,23 @@ export function queryReferenceCandidateIndex(params: {
     : [params.index.content];
   const overlayScores = [...params.index.pending.values()]
     .flatMap((record) => {
-      if (!record || (!params.includeFileNodes && record.entry.kind === 'file')) return [];
+      if (
+        !record
+        || (!params.includeFileNodes && record.entry.kind === 'file')
+        || (params.publicNodeIdsOnly && !isPublicReferenceNodeId(record.entry.id))
+      ) return [];
       const label = record.entry.untitled ? params.untitledLabel : record.entry.label;
       const match = rankTextSearchLabel(label, normalizedQuery);
       return match ? [{ rank: match.rank, score: record.entry }] : [];
     });
+  const excludedBaseIds = params.publicNodeIdsOnly
+    ? {
+        has: (nodeId: NodeId) => (
+          params.index.pending.has(nodeId)
+          || !isPublicReferenceNodeId(nodeId)
+        ),
+      }
+    : params.index.pending;
   const scoresForRank = (rank: number, baseScores: readonly PostingScore[]) => mergeTop([
     baseScores,
     overlayScores
@@ -260,9 +274,9 @@ export function queryReferenceCandidateIndex(params: {
           forest.labels,
           0,
           forest.labels.entries.length,
-          params.index.pending,
+          excludedBaseIds,
         ),
-        scoresExcluding(forest.untitled, params.index.pending),
+        scoresExcluding(forest.untitled, excludedBaseIds),
       ]),
     ));
     for (const score of scores) visit(score, 0);
@@ -275,18 +289,18 @@ export function queryReferenceCandidateIndex(params: {
     return mergeTop(forests.map((forest) => postingPrefixTop(
       forest[field],
       normalizedQuery,
-      params.index.pending,
+      excludedBaseIds,
     )));
   };
   const untitledScores = untitledRank === null
     ? []
     : mergeTop(forests.map((forest) => scoresExcluding(
         forest.untitled,
-        params.index.pending,
+        excludedBaseIds,
       )));
   const exactScores = mergeTop(forests.map((forest) => scoresExcluding(
     forest.exactLabels.get(normalizedQuery) ?? [],
-    params.index.pending,
+    excludedBaseIds,
   )));
 
   for (let rank = 0; rank <= 3 && selected.length < params.limit; rank += 1) {
@@ -617,7 +631,7 @@ function* stableSortSteps<T>(
 function postingPrefixTop(
   index: PostingRangeIndex,
   prefix: string,
-  excludedIds: ReadonlyMap<NodeId, unknown>,
+  excludedIds: Pick<ReadonlySet<NodeId>, 'has'>,
 ): readonly PostingScore[] {
   const start = postingPrefixBoundary(index.entries, prefix, false);
   const end = postingPrefixBoundary(index.entries, prefix, true);
@@ -644,7 +658,7 @@ function postingIntervalTop(
   index: PostingRangeIndex,
   start: number,
   end: number,
-  excludedIds: ReadonlyMap<NodeId, unknown>,
+  excludedIds: Pick<ReadonlySet<NodeId>, 'has'>,
 ): readonly PostingScore[] {
   if (start >= end) return [];
   const firstFullBlock = Math.ceil(start / POSTING_BLOCK_SIZE);
@@ -688,7 +702,7 @@ function postingBlockTreeNodes(
 function postingTreeNodeTop(
   index: PostingRangeIndex,
   treeNode: number,
-  excludedIds: ReadonlyMap<NodeId, unknown>,
+  excludedIds: Pick<ReadonlySet<NodeId>, 'has'>,
 ): readonly PostingScore[] {
   const summary = index.blockTree[treeNode] ?? [];
   const filtered = scoresExcluding(summary, excludedIds);
@@ -715,7 +729,7 @@ function postingEntryRangeTop(
   entries: readonly PostingEntry[],
   start: number,
   end: number,
-  excludedIds: ReadonlyMap<NodeId, unknown>,
+  excludedIds: Pick<ReadonlySet<NodeId>, 'has'>,
 ): readonly PostingScore[] {
   const scores: PostingScore[] = [];
   for (let index = start; index < end; index += 1) {
@@ -727,7 +741,7 @@ function postingEntryRangeTop(
 
 function scoresExcluding(
   scores: readonly PostingScore[],
-  excludedIds: ReadonlyMap<NodeId, unknown>,
+  excludedIds: Pick<ReadonlySet<NodeId>, 'has'>,
 ): PostingScore[] {
   const result: PostingScore[] = [];
   for (const score of scores) {

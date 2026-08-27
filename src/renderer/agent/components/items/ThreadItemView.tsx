@@ -75,7 +75,8 @@ import {
   threadNodeReferenceStyle,
   type ThreadNodeReferenceOpenHandler,
 } from '../../threadReferences';
-import { basenameForPath, splitReferenceMarkers } from '../../../../core/referenceMarkup';
+import { basenameForPath, referenceDisplayFallback, splitReferenceMarkers } from '../../../../core/referenceMarkup';
+import { renderedMarkdownHasReference } from '../../../../core/markdownNodeReferences';
 import {
   boundedToolArgumentsForDisplay,
   modelCallArgumentSource,
@@ -2113,7 +2114,7 @@ function isVisibleMarkdownToken(token: Token): boolean {
  */
 function isSummarizedInFull(token: Token): boolean {
   if (token.type !== 'paragraph' && token.type !== 'heading') return false;
-  if (splitReferenceMarkers(token.raw).some((segment) => segment.type !== 'text')) return false;
+  if (renderedMarkdownHasReference(token.raw)) return false;
   return carriesNoTarget(token);
 }
 
@@ -2166,7 +2167,7 @@ function markdownTokenText(tokens: readonly Token[]): string {
 
 function compactReasoningText(text: string): string {
   return splitReferenceMarkers(text)
-    .map((segment) => segment.type === 'text' ? segment.text : segment.label)
+    .map((segment) => segment.type === 'text' ? segment.text : referenceDisplayFallback(segment.target))
     .join('')
     .replace(/\s+/g, ' ')
     .trim();

@@ -1,8 +1,10 @@
 import { parseCheckboxMarker } from '../../../core/textSyntax';
-import { parseNodeReferenceMarkers } from '../../../core/referenceMarkup';
+import { parseReferenceMarkers } from '../../../core/referenceMarkup';
 import { normalizeCodeLanguage } from '../../../core/codeLanguages';
+import { canonicalMarkdownProtectedRanges } from '../../../core/semanticIngest/canonicalMarkdown';
 import {
   decodeSemanticEscapes,
+  isEscapedSemanticAt,
   markdownInlineProtectedRanges,
   scanMarkdownInline,
 } from '../../../core/semanticIngest/inlineScanner';
@@ -88,6 +90,7 @@ type StackFrame =
   | { kind: 'field'; level: number; field: OutlineField };
 
 const FENCE_START_RE = /^(`{3,}|~{3,})[ \t]*([^\n]*?)[ \t]*$/u;
+const ORDINARY_INLINE_REFERENCE_DIRECTIVE = '%%inline-reference%%';
 
 export function parseLinOutline(
   input: string,
@@ -297,7 +300,8 @@ function parseOutlineNode(input: string, nodeId?: string): OutlineNode {
   const tags = scanned.tags.map((tag) => tag.name);
   text = scanned.source.trim();
 
-  const reference = parseReference(text);
+  const hasOrdinaryReferenceDirective = text.startsWith(ORDINARY_INLINE_REFERENCE_DIRECTIVE);
+  const reference = hasOrdinaryReferenceDirective ? null : parseReference(text);
   if (reference && reference.full) {
     return {
       ...(nodeId ? { nodeId } : {}),
@@ -313,7 +317,9 @@ function parseOutlineNode(input: string, nodeId?: string): OutlineNode {
     };
   }
 
-  const [titlePart, descriptionPart] = splitDescription(text);
+  const [wireTitlePart, descriptionPart] = splitDescription(text);
+  const ordinaryReferenceSource = stripOrdinaryInlineReferenceDirective(wireTitlePart.trim());
+  const titlePart = ordinaryReferenceSource ?? wireTitlePart;
   return {
     ...(nodeId ? { nodeId } : {}),
     title: titlePart.trim() || '(untitled)',
@@ -338,8 +344,10 @@ function parseFieldHeader(text: string): { name: string; value: string } | null 
 function parseOutlineValue(text: string, lineNodeId?: string): OutlineValue {
   const annotated = stripNodeMarker(text.trim());
   const nodeId = lineNodeId ?? annotated.nodeId;
-  const source = annotated.text.trim();
-  const reference = parseReference(source);
+  const wireSource = annotated.text.trim();
+  const ordinaryReferenceSource = stripOrdinaryInlineReferenceDirective(wireSource);
+  const source = ordinaryReferenceSource ?? wireSource;
+  const reference = ordinaryReferenceSource === null ? parseReference(source) : null;
   if (reference?.full) {
     return {
       ...(nodeId ? { nodeId } : {}),
@@ -369,9 +377,55 @@ function stripNodeMarker(text: string): { nodeId?: string; text: string } {
 }
 
 function parseReference(text: string): { display: string; targetId: string; full: boolean } | null {
-  const marker = parseNodeReferenceMarkers(text)[0];
-  if (!marker || marker.start !== 0 || marker.end !== text.length) return null;
-  return { display: marker.label || marker.nodeId, targetId: marker.nodeId, full: true };
+  const shape = terminalNodeReferenceShape(text);
+  if (!shape) return null;
+  if (shape.delimiterIndex !== null && isEscapedSemanticAt(text, shape.delimiterIndex)) return null;
+  const display = shape.displaySource
+    ? decodeSemanticEscapes(shape.displaySource)
+    : shape.targetId;
+  return { display: display || shape.targetId, targetId: shape.targetId, full: true };
+}
+
+export function disambiguateOrdinaryOutlineReferenceShape(text: string): string {
+  const shape = terminalNodeReferenceShape(text);
+  if (!shape) return text;
+  if (shape.delimiterIndex === null) return `${ORDINARY_INLINE_REFERENCE_DIRECTIVE} ${text}`;
+  if (isEscapedSemanticAt(text, shape.delimiterIndex)) return text;
+  return `${text.slice(0, shape.delimiterIndex)}\\${text.slice(shape.delimiterIndex)}`;
+}
+
+function stripOrdinaryInlineReferenceDirective(text: string): string | null {
+  if (!text.startsWith(`${ORDINARY_INLINE_REFERENCE_DIRECTIVE} `)) return null;
+  const source = text.slice(ORDINARY_INLINE_REFERENCE_DIRECTIVE.length).trimStart();
+  const shape = terminalNodeReferenceShape(source);
+  return shape?.delimiterIndex === null ? source : null;
+}
+
+function terminalNodeReferenceShape(text: string): {
+  delimiterIndex: number | null;
+  displaySource: string;
+  targetId: string;
+} | null {
+  const protectedRanges = canonicalMarkdownProtectedRanges(text);
+  const markers = parseReferenceMarkers(text).filter((marker) => (
+    !protectedRanges.some((range) => marker.start < range.end && range.start < marker.end)
+  ));
+  if (markers.length !== 1) return null;
+  const marker = markers[0]!;
+  if (marker.target.kind !== 'node') return null;
+  const after = text.slice(marker.end).trim();
+  if (after) return null;
+  const before = text.slice(0, marker.start).trimEnd();
+  if (!before) {
+    return { delimiterIndex: null, displaySource: '', targetId: marker.target.nodeId };
+  }
+  const delimiterIndex = before.length - 1;
+  if (text[delimiterIndex] !== ':') return null;
+  return {
+    delimiterIndex,
+    displaySource: text.slice(0, delimiterIndex).trim(),
+    targetId: marker.target.nodeId,
+  };
 }
 
 function splitDescription(text: string): [string, string?] {

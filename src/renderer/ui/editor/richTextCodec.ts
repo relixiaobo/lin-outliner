@@ -67,6 +67,7 @@ export function richTextToDoc(
   content: RichText,
   schema = pmSchema,
   resolveInlineReferenceColor?: (targetNodeId: string) => string | undefined,
+  resolveInlineReferenceDisplayName?: (targetNodeId: string) => string | undefined,
 ): PMNode {
   const paragraphChildren: PMNode[] = [];
   const text = content.text ?? '';
@@ -91,7 +92,9 @@ export function richTextToDoc(
       const nodeId = inlineRefNodeId(ref);
       paragraphChildren.push(schema.nodes.inlineReference.create({
         ...inlineRefTargetAttrs(ref.target),
-        displayName: ref.displayName ?? '',
+        displayName: nodeId
+          ? resolveInlineReferenceDisplayName?.(nodeId) ?? ref.displayName ?? ''
+          : ref.displayName ?? '',
         mimeType: ref.mimeType ?? '',
         sizeBytes: ref.sizeBytes ?? null,
         color: nodeId ? resolveInlineReferenceColor?.(nodeId) ?? '' : '',

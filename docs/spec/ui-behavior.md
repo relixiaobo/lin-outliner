@@ -138,6 +138,11 @@ keyboard or pointer change should be checked against this matrix.
 - Trigger detection in the focused editor uses the current mirror and a bounded
   caret window for long text. Full-text trigger parsing is retained only for
   short rows where slash/bare-trigger semantics require exact whole-row context.
+- Inline-reference title and color changes update presentation immediately when
+  the editor is idle. While it is focused or composing, the editor records a
+  pending presentation refresh and applies it on blur or composition end from
+  the current ProseMirror document, so a target rename never overwrites local
+  semantic edits and does not wait for an unrelated parent render.
 
 ## Trailing Input Matrix
 
@@ -284,8 +289,13 @@ semantics at every query length, including one- and two-character queries,
 single CJK characters, and mid-word matches. Retrieval is complete by text-rank
 tier: no excluded node has a better text rank than an included node, while the
 disabled, untitled, context, length, recency, and label tie-breaks apply within
-the retrieved set. Empty queries use recency order. Cycle status is evaluated
-only for shortlisted nodes from a cached reverse-reachability set. Posting keys
+the retrieved set. Empty queries use recency order. Before the shortlist limit,
+candidate admission applies the canonical public-Node-ID predicate: only UUIDv4
+content Nodes and the explicit public system-Node allowlist can create a Node
+reference. Date shortcuts and image/attachment Node identities are omitted
+because they have no public `node://` URI; Composer local-file results remain
+separately referenceable through canonical `file:` URIs. Cycle status is
+evaluated only for shortlisted nodes from a cached reverse-reachability set. Posting keys
 share their normalized label storage through offsets, and an overflow edit
 overlay is compacted outside the projection commit by a cooperatively yielding
 rebuild. The idle timer follows input, while an independent maximum-age timer
@@ -733,6 +743,27 @@ hierarchy and its inline marks. The first pasted block merges into the target
 row; the rest become siblings/children. Behavior parity target is nodex
 (`html-to-nodes.ts` / `applyParsedPasteMetadata`).
 
+Canonical plain-text references wrap exactly one URI in `[[...]]`.
+Ordinary Nodes use `node://UUID` (mapping to internal `node:UUID`), and the only
+public system authorities are `workspace`, `daily-notes`, `library`, `schema`,
+and `searches`. Absolute local paths use standard percent-encoded `file:` URLs;
+an empty authority is required and a trailing slash carries directory intent.
+Credentials, query, fragments, relative/remote files, malformed encoding,
+unknown schemes, and every private or typed structural Node ID remain literal.
+The URI never stores a label. Node atoms resolve the current document title at
+render time, file atoms use the decoded basename, and stored display metadata is
+only an unavailable fallback. Renaming changes presentation without changing
+the structured `ReferenceTarget`, copied URI, or equality. URI syntax grants no
+authority: Core still preflights Node existence/Trash state, and file actions
+still apply their working-set and Host security checks. A backslash-escaped
+marker remains literal at boundaries that support semantic escaping.
+Thread Markdown maps normalized AST text back through each text node's source
+position before classifying escapes. Numeric or named entities may therefore
+form an active reference without stealing the source occurrence of a later,
+byte-identical escaped marker. Rendering, referenced-Node extraction, and
+reasoning-summary target detection use that same mapping; a leading
+entity-encoded reference remains available in the expanded reasoning body.
+
 | Interaction | Expected behavior |
 | --- | --- |
 | Paste multi-line plain text | One row per line. In the agent composer (single-paragraph schema) the lines are kept as `hardBreak`s within the row. |
@@ -747,7 +778,7 @@ row; the rest become siblings/children. Behavior parity target is nodex
 | `name:: value` on a Markdown/plain line | Harvested as a field; unknown fields auto-created as `plain`, existing `options` fields smart-select the option. Guard: a double colon **followed by whitespace** (`name:: value`), so `std::cout`, `http://…`, `foo::bar` never match. Field values stop before the next field or shared tag token; bare CSS hex colors do not terminate the field. |
 | `#tag` / `name::` inside a link label, URL, `` `code` `` span, reference marker, or backslash-escaped token | Left literal. Protected ranges are excluded before metadata extraction, and removing surrounding metadata remaps marks and inline-reference offsets. |
 | Metadata on the HTML paste path | Harvested through the same scanner as plain text after DOM structure and marks are converted. Existing `<a>` and `<code>` ranges stay literal; metadata outside those ranges is applied to the row. |
-| `[[node:Label^node-id]]` in plain-text or HTML paste | Materialized as an inline node reference, then preflighted by Core before any row or metadata write. Every referenced node must exist outside Trash; one missing or trashed target rejects the entire paste atomically, including first-row merge, descendants, trailing siblings, and yielding bulk paste. The renderer applies its local draft only after that command succeeds, so rejection leaves the edited row unchanged. Local-file and chat-source references keep their own validation rules. |
+| `[[node://UUID]]` in plain-text or HTML paste | Materialized as an inline node reference, then preflighted by Core before any row or metadata write. Every referenced node must exist outside Trash; one missing or trashed target rejects the entire paste atomically, including first-row merge, descendants, trailing siblings, and yielding bulk paste. The renderer applies its local draft only after that command succeeds, so rejection leaves the edited row unchanged. Canonical `[[file:///absolute/path]]` references and chat-source references keep their own validation rules. |
 | Single-line or metadata-only semantic paste | Uses structured paste whenever parsing adds a link, tag, field, checkbox, reference, node type, or other semantic state. A metadata-only row can update the target row or materialize at a pristine trailing position; only a truly literal unmarked line delegates to native paste. |
 
 While a structured paste command is pending, its target editor is temporarily

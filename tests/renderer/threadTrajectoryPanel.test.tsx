@@ -744,7 +744,7 @@ describe('ThreadTrajectoryPanel', () => {
       lane: 'input',
       stepIndex: 0,
       label: { type: 'input', source: 'initial' },
-      preview: '[[file:brief.txt^%2Fworkspace%2Fbrief.txt]] Inspect the attachment.',
+      preview: 'brief.txt: [[file:///workspace/brief.txt]] Inspect the attachment.',
       primaryEvidence: {
         type: 'threadItem',
         threadId: THREAD_ID,
@@ -791,7 +791,7 @@ describe('ThreadTrajectoryPanel', () => {
     rendered.render();
     await flush();
     expect(recordRow(rendered.document, INPUT_ID).textContent)
-      .toContain('User[[file:brief.txt^%2Fworkspace%2Fbrief.txt]] Inspect the attachment.');
+      .toContain('Userbrief.txt: [[file:///workspace/brief.txt]] Inspect the attachment.');
     expect(recordRow(rendered.document, context.id).textContent).toContain('ContextTurn Environment');
 
     clickRecord(rendered.document, INPUT_ID);
@@ -807,7 +807,7 @@ describe('ThreadTrajectoryPanel', () => {
       'thread-trajectory-part-image',
     ]);
     expect(inputParts[0]?.textContent)
-      .toBe('[[file:brief.txt^%2Fworkspace%2Fbrief.txt]] Inspect the attachment.');
+      .toBe('brief.txt: [[file:///workspace/brief.txt]] Inspect the attachment.');
     expect(inputParts[0]?.querySelector('a')).toBeNull();
     expect(inputParts[1]?.textContent).toContain('Readable path: /workspace/brief.txt');
     expect(inspector?.textContent).toContain('Use file_read with this path to inspect the attachment.');
@@ -1731,7 +1731,7 @@ function inputDetailResponse(input: ThreadTrajectoryRecordSummary): ThreadTrajec
       kind: 'input',
       turn: turnEvidence(),
       modelInputParts: [
-        { type: 'text', text: '[[file:brief.txt^%2Fworkspace%2Fbrief.txt]] Inspect the attachment.' },
+        { type: 'text', text: 'brief.txt: [[file:///workspace/brief.txt]] Inspect the attachment.' },
         {
           type: 'text',
           text: '[Attachment: brief.txt, text/plain, 64 bytes]\nReadable path: /workspace/brief.txt\nUse file_read with this path to inspect the attachment.',

@@ -9,6 +9,8 @@ import { ReferenceSelector } from '../../src/renderer/ui/outliner/ReferenceSelec
 import type { CommandRunner } from '../../src/renderer/ui/shared';
 
 const cleanups: Array<() => void> = [];
+const BLOCKED_ID = 'node:11111111-1111-4111-8111-111111111111';
+const SAFE_ID = 'node:22222222-2222-4222-8222-222222222222';
 
 afterEach(() => {
   while (cleanups.length > 0) cleanups.pop()?.();
@@ -126,10 +128,10 @@ function referenceProjection(): DocumentProjection {
     trashId: 'trash',
     todayId: 'root',
     nodes: [
-      node('root', 'Root', { children: ['parent', 'blocked', 'safe', 'trash'] }),
+      node('root', 'Root', { children: ['parent', BLOCKED_ID, SAFE_ID, 'trash'] }),
       node('parent', 'Parent', { parentId: 'root', children: ['current'] }),
       node('current', 'Editing', { parentId: 'parent' }),
-      node('blocked', 'Candidate beta', {
+      node(BLOCKED_ID, 'Candidate beta', {
         parentId: 'root',
         children: ['to-parent'],
         updatedAt: 100,
@@ -139,7 +141,7 @@ function referenceProjection(): DocumentProjection {
         parentId: 'blocked',
         targetId: 'parent',
       }),
-      node('safe', 'Candidate safe', { parentId: 'root', updatedAt: 90 }),
+      node(SAFE_ID, 'Candidate safe', { parentId: 'root', updatedAt: 90 }),
       node('trash', 'Trash', { parentId: 'root' }),
     ],
   };

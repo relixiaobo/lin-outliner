@@ -192,7 +192,7 @@ test.describe('paste format support', () => {
 
   test('materializes an inline reference from plain pasted text', async ({ page }) => {
     await selectEditorContents(page, ids.alpha);
-    await pasteRich(page, { plain: `See [[node:Beta^${ids.beta}]]` });
+    await pasteRich(page, { plain: `See [[node://${ids.beta.slice('node:'.length)}]]` });
 
     await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.inlineRefs.length).toBe(1);
     const alpha = await nodeById(page, ids.alpha);
@@ -202,7 +202,7 @@ test.describe('paste format support', () => {
       inlineRefs: [{
         offset: 4,
         target: { kind: 'node', nodeId: ids.beta },
-        displayName: 'Beta',
+        displayName: '22222222',
       }],
     });
   });
@@ -211,7 +211,7 @@ test.describe('paste format support', () => {
     await selectEditorContents(page, ids.alpha);
     await pasteRich(page, {
       plain: `See Beta\n- [x] Task`,
-      html: `<p>See [[node:Beta^${ids.beta}]]</p><p>- [x] <strong>Task</strong></p>`,
+      html: `<p>See [[node://${ids.beta.slice('node:'.length)}]]</p><p>- [x] <strong>Task</strong></p>`,
     });
 
     await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.inlineRefs.length).toBe(1);
@@ -219,7 +219,7 @@ test.describe('paste format support', () => {
     expect(alpha?.content.inlineRefs).toEqual([{
       offset: 4,
       target: { kind: 'node', nodeId: ids.beta },
-      displayName: 'Beta',
+      displayName: '22222222',
     }]);
     await expect.poll(async () => (await siblingNodeAfter(page, ids.alpha))?.content.text).toBe('Task');
     const task = await siblingNodeAfter(page, ids.alpha);

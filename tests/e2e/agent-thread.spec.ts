@@ -694,7 +694,7 @@ test.describe('canonical agent Thread surface', () => {
               id: answerId,
               type: 'agentMessage',
               provenance: itemProvenance(answerId),
-              text: `I kept the response concise based on [[node:Saved preference^${memoryNodeId}]].`,
+              text: `I kept the response concise based on [[node://${memoryNodeId}]].`,
               phase: 'final_answer',
               memoryCitation: null,
             },
@@ -723,12 +723,12 @@ test.describe('canonical agent Thread surface', () => {
         },
       });
       return { turnId };
-    }, { memoryNodeId: ids.today });
+    }, { memoryNodeId: ids.library });
 
     const turn = page.locator(`[data-thread-turn-row="${fixture.turnId}"]`);
     const answer = turn.locator('.thread-agent-message-final_answer');
     await expect(answer).toBeVisible();
-    await expect(answer.getByRole('link', { name: 'Saved preference' })).toBeVisible();
+    await expect(answer.getByRole('link', { name: 'Library' })).toBeVisible();
     await expect(turn.locator('.thread-memory-citations')).toHaveCount(0);
     await expect(turn.getByText('Used memory')).toHaveCount(0);
     const process = turn.locator('.thread-speaker');
@@ -739,7 +739,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(process).not.toContainText('node_read');
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.mouse.move(0, 0);
-    await expect(answer.getByRole('link', { name: 'Saved preference' })).toBeVisible();
+    await expect(answer.getByRole('link', { name: 'Library' })).toBeVisible();
   });
 
   test('projects live and settled Turn process before the final response', async ({ page }) => {
@@ -4455,7 +4455,7 @@ test.describe('canonical agent Thread surface', () => {
   test('renders reasoning and grouped tool Items with disclosure and copy interactions', async ({ page }) => {
     await createNewThread(page);
     await seedOverflowingTranscript(page);
-    await page.evaluate(async () => {
+    await page.evaluate(async (nodeId) => {
       const e2eWindow = window as Window & {
         lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
         __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
@@ -4507,14 +4507,14 @@ test.describe('canonical agent Thread surface', () => {
             provenance: provenance(toolId),
             namespace: 'node',
             tool: 'read',
-            arguments: { node_id: 'node-alpha', file_path: 'notes with spaces.md' },
+            arguments: { node_id: nodeId, file_path: 'notes with spaces.md' },
             modelCall: {
               disposition: 'replayable',
               identity: { namespace: 'node', name: 'read' },
               providerName: 'node__read',
               arguments: {
                 storage: 'inline',
-                value: { node_id: 'node-alpha', file_path: 'notes with spaces.md' },
+                value: { node_id: nodeId, file_path: 'notes with spaces.md' },
               },
               schemaDigest: '0'.repeat(64),
             },
@@ -4553,7 +4553,7 @@ test.describe('canonical agent Thread surface', () => {
         turnId,
         turn,
       });
-    });
+    }, ids.alpha);
 
     const process = page.getByRole('button', { name: 'Worked for <1s' });
     await expect(process).toHaveAttribute('aria-expanded', 'false');
@@ -4707,7 +4707,7 @@ test.describe('canonical agent Thread surface', () => {
       '```',
       '',
       '```tool node.read',
-      JSON.stringify({ node_id: 'node-alpha', file_path: 'notes with spaces.md' }, null, 2),
+      JSON.stringify({ node_id: ids.alpha, file_path: 'notes with spaces.md' }, null, 2),
       '```',
       '',
       '```tool-result',
@@ -6006,7 +6006,7 @@ test.describe('canonical agent Thread surface', () => {
           id: answerId,
           type: 'agentMessage',
           provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: answerId },
-          text: `Review [[node:Alpha^${nodeId}]] and [[file:notes.md^%2Fmock%2Fnotes.md]].`,
+          text: `Review [[node://${nodeId.slice('node:'.length)}]] and [[file:///mock/notes.md]].`,
           phase: 'final_answer',
           memoryCitation: null,
         }],
@@ -6030,7 +6030,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(message).not.toContainText('[[node:');
     const nodeRef = message.locator(`[data-inline-ref="${ids.alpha}"]`);
     await expect(nodeRef).toHaveText('Alpha');
-    await expect(nodeRef).toHaveAttribute('href', new RegExp(`lin-node:${ids.alpha}`));
+    await expect(nodeRef).toHaveAttribute('href', `#lin-node:${encodeURIComponent(ids.alpha)}`);
 
     const fileRef = message.locator('[data-inline-ref-kind="local-file"]');
     await expect(fileRef).toHaveText('notes.md');

@@ -34,9 +34,9 @@ export const ids = {
   searchResult: 'search-result-reference',
   searchStatusEntry: 'search-status-entry',
   searchStatusValue: 'search-status-value',
-  alpha: 'node-alpha',
-  beta: 'node-beta',
-  gamma: 'node-gamma',
+  alpha: 'node:11111111-1111-4111-8111-111111111111',
+  beta: 'node:22222222-2222-4222-8222-222222222222',
+  gamma: 'node:33333333-3333-4333-8333-333333333333',
 } as const;
 
 interface MockFixtureOptions {

@@ -11,10 +11,11 @@ import { Lexer, type Token } from 'marked';
 import Markdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
+  markdownReferenceOccurrences,
   transformMarkdownReferenceTextNodes,
   type MarkdownReferenceAstNode,
 } from '../../../core/markdownReferenceAst';
-import { basenameForPath, splitReferenceMarkers } from '../../../core/referenceMarkup';
+import { basenameForPath, referenceDisplayFallback } from '../../../core/referenceMarkup';
 import type { DocumentIndex } from '../../state/document';
 import { useT } from '../../i18n/I18nProvider';
 import { InlineFileReference } from '../../ui/editor/InlineFileReference';
@@ -78,30 +79,47 @@ export function ThreadMarkdown({
 }
 
 function remarkThreadReferences() {
-  return (tree: MarkdownReferenceAstNode) => {
-    transformMarkdownReferenceTextNodes(tree, referenceMarkdownNodes);
+  return (tree: MarkdownReferenceAstNode, file: { value?: unknown }) => {
+    const markdown = typeof file.value === 'string' ? file.value : '';
+    transformMarkdownReferenceTextNodes(tree, (value, node) => referenceMarkdownNodes(value, node, markdown));
   };
 }
 
-function referenceMarkdownNodes(text: string): MarkdownReferenceAstNode[] {
-  return splitReferenceMarkers(text).map((segment) => {
-    if (segment.type === 'text') return { type: 'text', value: segment.text };
-    if (segment.target.kind === 'local-file') {
-      const label = segment.label || basenameForPath(segment.target.path) || segment.target.path;
-      return {
+function referenceMarkdownNodes(
+  text: string,
+  node: MarkdownReferenceAstNode,
+  markdown: string,
+): MarkdownReferenceAstNode[] {
+  const result = markdownReferenceOccurrences(markdown, text, node);
+  if (result.indeterminate) return [{ type: 'text', value: text }];
+  const { occurrences } = result;
+  if (occurrences.length === 0) return [{ type: 'text', value: text }];
+  const nodes: MarkdownReferenceAstNode[] = [];
+  let cursor = 0;
+  for (const { escaped, marker } of occurrences) {
+    if (marker.start > cursor) nodes.push({ type: 'text', value: text.slice(cursor, marker.start) });
+    if (escaped) {
+      nodes.push({ type: 'text', value: marker.raw });
+    } else if (marker.target.kind === 'local-file') {
+      const label = basenameForPath(marker.target.path) || marker.target.path;
+      nodes.push({
         children: [{ type: 'text', value: label }],
-        title: segment.target.entryKind,
+        title: marker.target.entryKind,
         type: 'link',
-        url: localFileReferenceHref(segment.target.path, segment.target.entryKind),
-      };
+        url: localFileReferenceHref(marker.target.path, marker.target.entryKind),
+      });
+    } else {
+      nodes.push({
+        children: [{ type: 'text', value: referenceDisplayFallback(marker.target) }],
+        title: null,
+        type: 'link',
+        url: threadNodeReferenceHref(marker.target.nodeId),
+      });
     }
-    return {
-      children: [{ type: 'text', value: segment.label }],
-      title: null,
-      type: 'link',
-      url: threadNodeReferenceHref(segment.target.nodeId),
-    };
-  });
+    cursor = marker.end;
+  }
+  if (cursor < text.length) nodes.push({ type: 'text', value: text.slice(cursor) });
+  return nodes;
 }
 
 function useMarkdownComponents(

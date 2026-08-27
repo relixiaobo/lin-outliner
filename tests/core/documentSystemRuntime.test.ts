@@ -274,7 +274,7 @@ describe('Document system runtime', () => {
     });
 
     await instance.handle('create_node', {
-      id: `node:${uuidV7()}`,
+      id: `node:${crypto.randomUUID()}`,
       parentId: LIBRARY_ID,
       index: null,
       text: 'Coordinated mutation',

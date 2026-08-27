@@ -1,46 +1,68 @@
+import {
+  nodeIdFromPublicReferenceKey,
+  publicReferenceNodeKey,
+} from './nodeId';
 import type { ReferenceTarget, RichText } from './types';
+
+export type ReferenceUriScheme = 'file' | 'node';
+
+export type ReferenceUri =
+  | { readonly scheme: 'node'; readonly nodeId: string }
+  | {
+    readonly scheme: 'file';
+    readonly path: string;
+    readonly entryKind: 'file' | 'directory';
+  };
 
 export interface ParsedReferenceMarker {
   end: number;
-  label: string;
   raw: string;
   start: number;
   target: ReferenceTarget;
+  uri: string;
 }
 
 export type ReferenceTextSegment =
   | { text: string; type: 'text' }
   | {
-    label: string;
     raw: string;
     target: ReferenceTarget;
     type: 'reference';
+    uri: string;
   };
 
 export interface ParsedNodeReferenceMarker {
   end: number;
-  label: string;
   nodeId: string;
   raw: string;
   start: number;
+  uri: string;
+}
+
+export interface ParseReferenceMarkerOptions {
+  includeEscaped?: boolean;
+}
+
+export interface FormatNamedNodeReferenceOptions {
+  unavailable?: 'display' | 'identity';
 }
 
 export type NodeReferenceTextSegment =
   | { text: string; type: 'text' }
   | {
-    label: string;
     nodeId: string;
     raw: string;
     type: 'nodeReference';
+    uri: string;
   };
 
 export interface FileReferenceSegment {
   type: 'file';
   raw: string;
   ref: string;
-  label: string;
   path: string;
   entryKind: 'file' | 'directory';
+  uri: string;
 }
 
 export type FileReferenceTextSegment =
@@ -48,95 +70,153 @@ export type FileReferenceTextSegment =
   | FileReferenceSegment;
 
 const REFERENCE_PATTERN = /\[\[([^\[\]\r\n]*?)\]\]/gu;
+const ALL_REFERENCE_SCHEMES: readonly ReferenceUriScheme[] = ['node', 'file'];
+const ENCODED_PATH_SEPARATOR_PATTERN = /%2f/iu;
 
-export function formatNodeReferenceMarker(label: string, nodeId: string): string {
-  const safeNodeId = nodeId.trim();
-  return formatReferenceMarker(sanitizeReferenceLabel(label) || safeNodeId, { kind: 'node', nodeId: safeNodeId });
+export function formatNodeReferenceUri(nodeId: string): string | null {
+  const key = publicReferenceNodeKey(nodeId);
+  return key ? `node://${key}` : null;
 }
 
-export function formatNodeReferenceIdMarker(nodeId: string): string {
-  const safeNodeId = nodeId.trim();
-  return formatReferenceMarker('', { kind: 'node', nodeId: safeNodeId });
+export function formatNodeReferenceMarker(nodeId: string): string {
+  const uri = formatNodeReferenceUri(nodeId);
+  return uri ? `[[${uri}]]` : nodeId.trim();
 }
 
-export function formatFileReferenceMarker(label: string, path = label, entryKind: 'file' | 'directory' = 'file'): string {
-  const safePath = path || 'attachment';
-  return formatReferenceMarker(sanitizeReferenceLabel(label) || basenameForPath(safePath) || safePath, {
-    kind: 'local-file',
-    path: safePath,
-    entryKind,
-  });
-}
-
-export function formatLocalFileReferenceUrl(path: string, entryKind: 'file' | 'directory' = 'file'): string {
-  const safePath = path || 'attachment';
-  const kindPrefix = entryKind === 'directory' ? 'directory' : '';
-  return `file:${kindPrefix}^${encodeReferenceValue(safePath)}`;
-}
-
-export function parseLocalFileReferenceUrl(
-  value: string | undefined,
-): { entryKind: 'file' | 'directory'; path: string } | null {
-  const normalized = value?.trim();
-  if (!normalized?.startsWith('file:')) return null;
-  const body = normalized.slice('file:'.length);
-  const separator = fileReferenceUrlSeparator(body);
-  if (!separator) return null;
-  const rawEntryKind = body.slice(0, separator.start);
-  if (rawEntryKind !== '' && rawEntryKind !== 'file' && rawEntryKind !== 'directory') return null;
-  const path = decodeReferenceValue(body.slice(separator.start + separator.length));
-  if (!path) return null;
-  return {
-    entryKind: rawEntryKind === 'directory' ? 'directory' : 'file',
-    path,
-  };
-}
-
-function fileReferenceUrlSeparator(body: string): { start: number; length: number } | null {
-  const raw = body.indexOf('^');
-  const encoded = body.toLowerCase().indexOf('%5e');
-  if (raw < 0 && encoded < 0) return null;
-  if (raw >= 0 && (encoded < 0 || raw < encoded)) return { start: raw, length: 1 };
-  return { start: encoded, length: 3 };
-}
-
-export function sanitizeFileReferenceRef(ref: string): string {
-  return sanitizeReferenceLabel(ref) || 'attachment';
-}
-
-export function formatReferenceMarker(label: string, target: ReferenceTarget): string {
-  const safeLabel = sanitizeReferenceLabel(label);
-  if (target.kind === 'node') {
-    const nodeId = target.nodeId.trim();
-    return `[[node:${safeLabel}^${encodeReferenceValue(nodeId)}]]`;
+export function formatNamedNodeReference(
+  nodeId: string,
+  displayName?: string,
+  options: FormatNamedNodeReferenceOptions = {},
+): string {
+  const display = singleLineDisplayName(displayName);
+  const uri = formatNodeReferenceUri(nodeId);
+  if (!uri) {
+    return options.unavailable === 'display'
+      ? display || referenceDisplayFallback({ kind: 'node', nodeId })
+      : nodeId.trim();
   }
-  const path = target.path;
-  const encodedPath = encodeReferenceValue(path);
-  const kindSuffix = target.entryKind === 'directory' ? '^directory' : '';
-  return `[[file:${safeLabel}^${encodedPath}${kindSuffix}]]`;
+  const marker = `[[${uri}]]`;
+  return display && display !== nodeId ? `${display}: ${marker}` : marker;
 }
 
-export function parseReferenceMarkers(text: string): ParsedReferenceMarker[] {
+export function formatFileReferenceUri(
+  path: string,
+  entryKind: 'file' | 'directory' = 'file',
+): string | null {
+  if (!isAbsolutePosixPath(path)) return null;
+  const directory = entryKind === 'directory' || path.endsWith('/');
+  const normalizedPath = directory && path !== '/' ? `${path.replace(/\/+$/u, '')}/` : path;
+  const encodedPath = encodeFilePath(normalizedPath);
+  return encodedPath === null ? null : `file://${encodedPath}`;
+}
+
+export function formatFileReferenceMarker(
+  path: string,
+  entryKind: 'file' | 'directory' = 'file',
+): string {
+  const uri = formatFileReferenceUri(path, entryKind);
+  return uri ? `[[${uri}]]` : path;
+}
+
+export function formatNamedFileReference(
+  path: string,
+  entryKind: 'file' | 'directory' = 'file',
+  displayName?: string,
+): string {
+  const marker = formatFileReferenceMarker(path, entryKind);
+  if (!marker.startsWith('[[')) return marker;
+  const display = singleLineDisplayName(displayName) || basenameForPath(path);
+  return display && display !== path ? `${display}: ${marker}` : marker;
+}
+
+export function formatReferenceMarker(target: ReferenceTarget): string {
+  if (target.kind === 'node') return formatNodeReferenceMarker(target.nodeId);
+  return formatFileReferenceMarker(target.path, target.entryKind);
+}
+
+export function parseReferenceUri(
+  value: string,
+  admittedSchemes: readonly ReferenceUriScheme[] = ALL_REFERENCE_SCHEMES,
+): ReferenceUri | null {
+  const admitted = new Set(admittedSchemes);
+  if (/^node:\/\//iu.test(value)) {
+    if (!admitted.has('node')) return null;
+    return parseNodeReferenceUri(value);
+  }
+  if (/^file:/iu.test(value)) {
+    if (!admitted.has('file')) return null;
+    return parseFileReferenceUri(value);
+  }
+  return null;
+}
+
+export function parseFileReferenceUri(
+  value: string | undefined,
+): Extract<ReferenceUri, { scheme: 'file' }> | null {
+  if (!value || !/^file:\/\/\//iu.test(value)) return null;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (
+    url.protocol !== 'file:'
+    || url.host !== ''
+    || url.username !== ''
+    || url.password !== ''
+    || url.search !== ''
+    || url.hash !== ''
+    || !url.pathname.startsWith('/')
+    || ENCODED_PATH_SEPARATOR_PATTERN.test(url.pathname)
+  ) return null;
+
+  let decodedPath: string;
+  try {
+    decodedPath = decodeURIComponent(url.pathname);
+  } catch {
+    return null;
+  }
+  if (!isAbsolutePosixPath(decodedPath)) return null;
+  const entryKind = decodedPath.endsWith('/') ? 'directory' : 'file';
+  const path = entryKind === 'directory' && decodedPath !== '/'
+    ? decodedPath.replace(/\/+$/u, '')
+    : decodedPath;
+  return { scheme: 'file', path, entryKind };
+}
+
+export function parseReferenceMarkers(
+  text: string,
+  admittedSchemes: readonly ReferenceUriScheme[] = ALL_REFERENCE_SCHEMES,
+  options: ParseReferenceMarkerOptions = {},
+): ParsedReferenceMarker[] {
   const markers: ParsedReferenceMarker[] = [];
   for (const match of text.matchAll(REFERENCE_PATTERN)) {
     const raw = match[0] ?? '';
     const inner = match[1] ?? '';
     const start = match.index ?? 0;
-    const parsed = parseReferenceInner(inner);
-    if (!raw || !parsed) continue;
+    if (!raw || (!options.includeEscaped && isEscapedAt(text, start))) continue;
+    const parsed = parseReferenceUri(inner, admittedSchemes);
+    if (!parsed) continue;
+    const target = referenceTargetFromUri(parsed);
+    const uri = formatReferenceUri(parsed);
+    if (!uri) continue;
     markers.push({
       end: start + raw.length,
-      label: parsed.label,
       raw,
       start,
-      target: parsed.target,
+      target,
+      uri,
     });
   }
   return markers;
 }
 
-export function splitReferenceMarkers(text: string): ReferenceTextSegment[] {
-  const markers = parseReferenceMarkers(text);
+export function splitReferenceMarkers(
+  text: string,
+  admittedSchemes: readonly ReferenceUriScheme[] = ALL_REFERENCE_SCHEMES,
+): ReferenceTextSegment[] {
+  const markers = parseReferenceMarkers(text, admittedSchemes);
   if (markers.length === 0) return [{ text, type: 'text' }];
 
   const segments: ReferenceTextSegment[] = [];
@@ -146,10 +226,10 @@ export function splitReferenceMarkers(text: string): ReferenceTextSegment[] {
       segments.push({ text: text.slice(cursor, marker.start), type: 'text' });
     }
     segments.push({
-      label: marker.label,
       raw: marker.raw,
       target: marker.target,
       type: 'reference',
+      uri: marker.uri,
     });
     cursor = marker.end;
   }
@@ -160,42 +240,41 @@ export function splitReferenceMarkers(text: string): ReferenceTextSegment[] {
 }
 
 export function parseNodeReferenceMarkers(text: string): ParsedNodeReferenceMarker[] {
-  return parseReferenceMarkers(text)
+  return parseReferenceMarkers(text, ['node'])
     .filter((marker): marker is ParsedReferenceMarker & { target: Extract<ReferenceTarget, { kind: 'node' }> } =>
       marker.target.kind === 'node')
     .map((marker) => ({
       end: marker.end,
-      label: marker.label,
       nodeId: marker.target.nodeId,
       raw: marker.raw,
       start: marker.start,
+      uri: marker.uri,
     }));
 }
 
 export function splitNodeReferenceMarkers(text: string): NodeReferenceTextSegment[] {
-  return splitReferenceMarkers(text).map((segment): NodeReferenceTextSegment => {
+  return splitReferenceMarkers(text, ['node']).map((segment): NodeReferenceTextSegment => {
     if (segment.type === 'text') return segment;
-    if (segment.target.kind !== 'node') return { text: segment.raw, type: 'text' };
     return {
-      label: segment.label,
-      nodeId: segment.target.nodeId,
+      nodeId: (segment.target as Extract<ReferenceTarget, { kind: 'node' }>).nodeId,
       raw: segment.raw,
       type: 'nodeReference',
+      uri: segment.uri,
     };
   });
 }
 
 export function splitFileReferenceMarkers(text: string): FileReferenceTextSegment[] {
-  return splitReferenceMarkers(text).map((segment): FileReferenceTextSegment => {
+  return splitReferenceMarkers(text, ['file']).map((segment): FileReferenceTextSegment => {
     if (segment.type === 'text') return segment;
-    if (segment.target.kind !== 'local-file') return { text: segment.raw, type: 'text' };
+    const target = segment.target as Extract<ReferenceTarget, { kind: 'local-file' }>;
     return {
       type: 'file',
       raw: segment.raw,
-      ref: segment.label || basenameForPath(segment.target.path) || segment.target.path,
-      label: segment.label,
-      path: segment.target.path,
-      entryKind: segment.target.entryKind,
+      ref: basenameForPath(target.path) || target.path,
+      path: target.path,
+      entryKind: target.entryKind,
+      uri: segment.uri,
     };
   });
 }
@@ -207,7 +286,7 @@ export function rewriteFileReferenceMarkerPaths(text: string, paths: ReadonlyMap
       if (segment.type === 'text') return segment.text;
       const nextPath = paths.get(segment.path);
       if (!nextPath || nextPath === segment.path) return segment.raw;
-      return formatFileReferenceMarker(segment.label || segment.ref, nextPath, segment.entryKind);
+      return formatFileReferenceMarker(nextPath, segment.entryKind);
     })
     .join('');
 }
@@ -220,11 +299,9 @@ export function referenceMarkupToRichText(text: string): RichText {
   let out = '';
   for (const marker of markers) {
     out += text.slice(cursor, marker.start);
-    const displayName = marker.label || referenceDisplayFallback(marker.target);
     inlineRefs.push({
       offset: out.length,
       target: marker.target,
-      ...(displayName ? { displayName } : {}),
     });
     cursor = marker.end;
   }
@@ -242,7 +319,13 @@ export function richTextToReferenceMarkup(content: Pick<RichText, 'text' | 'inli
     const offset = clampReferenceOffset(ref.offset, text.length);
     if (offset < cursor) continue;
     out += text.slice(cursor, offset);
-    out += inlineRefMarker(ref);
+    const marker = referenceMarker(ref.target);
+    if (marker) {
+      out += marker;
+    } else {
+      const display = singleLineDisplayName(ref.displayName) || referenceDisplayFallback(ref.target);
+      if (text.slice(offset, offset + display.length) !== display) out += display;
+    }
     cursor = offset;
   }
   return out + text.slice(cursor);
@@ -250,20 +333,53 @@ export function richTextToReferenceMarkup(content: Pick<RichText, 'text' | 'inli
 
 export function nodeReferenceMarkersToText(text: string): string {
   return splitReferenceMarkers(text)
-    .map((segment) => {
-      if (segment.type === 'text') return segment.text;
-      return segment.label;
-    })
+    .map((segment) => segment.type === 'text' ? segment.text : referenceDisplayFallback(segment.target))
     .join('');
 }
 
-function inlineRefMarker(ref: RichText['inlineRefs'][number]): string {
-  const displayName = ref.displayName?.trim();
-  if (ref.target.kind === 'node') {
-    return formatNodeReferenceMarker(displayName || ref.target.nodeId, ref.target.nodeId);
+export function referenceDisplayFallback(target: ReferenceTarget): string {
+  if (target.kind === 'node') {
+    const key = publicReferenceNodeKey(target.nodeId);
+    return key && key.includes('-') ? key.slice(0, 8) : key ?? 'Referenced node';
   }
-  const path = ref.target.path;
-  return formatFileReferenceMarker(displayName || basenameForPath(path) || path, path, ref.target.entryKind);
+  return basenameForPath(target.path) || target.path;
+}
+
+function parseNodeReferenceUri(value: string): Extract<ReferenceUri, { scheme: 'node' }> | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (
+    url.protocol !== 'node:'
+    || url.username !== ''
+    || url.password !== ''
+    || url.port !== ''
+    || url.pathname !== ''
+    || url.search !== ''
+    || url.hash !== ''
+  ) return null;
+  const nodeId = nodeIdFromPublicReferenceKey(url.host);
+  return nodeId ? { scheme: 'node', nodeId } : null;
+}
+
+function referenceTargetFromUri(uri: ReferenceUri): ReferenceTarget {
+  if (uri.scheme === 'node') return { kind: 'node', nodeId: uri.nodeId };
+  return { kind: 'local-file', path: uri.path, entryKind: uri.entryKind };
+}
+
+function referenceMarker(target: ReferenceTarget): string | null {
+  const uri = target.kind === 'node'
+    ? formatNodeReferenceUri(target.nodeId)
+    : formatFileReferenceUri(target.path, target.entryKind);
+  return uri ? `[[${uri}]]` : null;
+}
+
+function formatReferenceUri(uri: ReferenceUri): string | null {
+  if (uri.scheme === 'node') return formatNodeReferenceUri(uri.nodeId);
+  return formatFileReferenceUri(uri.path, uri.entryKind);
 }
 
 function clampReferenceOffset(offset: number, length: number): number {
@@ -271,57 +387,26 @@ function clampReferenceOffset(offset: number, length: number): number {
   return Math.min(Math.max(0, Math.trunc(offset)), length);
 }
 
-function parseReferenceInner(inner: string): { label: string; target: ReferenceTarget } | null {
-  const prefixEnd = inner.indexOf(':');
-  if (prefixEnd <= 0) return null;
-  const prefix = inner.slice(0, prefixEnd);
-  if (prefix !== 'node' && prefix !== 'file') return null;
-
-  const body = inner.slice(prefixEnd + 1);
-  const caret = body.indexOf('^');
-  if (caret < 0) return null;
-  const label = sanitizeReferenceLabel(body.slice(0, caret));
-  let rawValue = body.slice(caret + 1);
-  let entryKind: 'file' | 'directory' = 'file';
-  if (prefix === 'file') {
-    const kindCaret = rawValue.lastIndexOf('^');
-    if (kindCaret >= 0) {
-      const rawEntryKind = rawValue.slice(kindCaret + 1);
-      if (rawEntryKind === 'file' || rawEntryKind === 'directory') {
-        entryKind = rawEntryKind;
-        rawValue = rawValue.slice(0, kindCaret);
-      }
-    }
-  }
-  if (!rawValue) return null;
-  const value = decodeReferenceValue(rawValue);
-  if (!value) return null;
-  if (prefix === 'node') return { label, target: { kind: 'node', nodeId: value } };
-  return { label, target: { kind: 'local-file', path: value, entryKind } };
+function isEscapedAt(text: string, offset: number): boolean {
+  let slashes = 0;
+  for (let index = offset - 1; index >= 0 && text[index] === '\\'; index -= 1) slashes += 1;
+  return slashes % 2 === 1;
 }
 
-function referenceDisplayFallback(target: ReferenceTarget): string {
-  if (target.kind === 'node') return target.nodeId;
-  return basenameForPath(target.path) || target.path;
+function isAbsolutePosixPath(path: string): boolean {
+  return path.startsWith('/') && !path.includes('\0') && !path.includes('\r') && !path.includes('\n');
 }
 
-function sanitizeReferenceLabel(label: string): string {
-  return label
-    .replace(/[\[\]\^\r\n]+/gu, ' ')
-    .replace(/\s+/gu, ' ')
-    .trim();
-}
-
-function encodeReferenceValue(value: string): string {
-  return encodeURIComponent(value).replace(/~/gu, '%7E');
-}
-
-function decodeReferenceValue(value: string): string {
+function encodeFilePath(path: string): string | null {
   try {
-    return decodeURIComponent(value);
+    return path.split('/').map((part) => encodeURIComponent(part)).join('/');
   } catch {
-    return value;
+    return null;
   }
+}
+
+function singleLineDisplayName(value: string | undefined): string {
+  return value?.replace(/[\r\n]+/gu, ' ').replace(/\s+/gu, ' ').trim() ?? '';
 }
 
 export function basenameForPath(path: string): string {

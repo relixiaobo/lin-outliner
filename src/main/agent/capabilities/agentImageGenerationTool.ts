@@ -13,7 +13,7 @@ import {
 } from './agentToolEnvelope';
 import { readAgentImageDimensions } from './agentLocalTools';
 import {
-  parseLocalFileReferenceUrl,
+  parseFileReferenceUri,
   splitFileReferenceMarkers,
   type FileReferenceSegment,
 } from '../../../core/referenceMarkup';
@@ -150,8 +150,8 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
         image_paths: {
           type: 'array',
           maxItems: MAX_IMAGE_PATHS,
-          description: 'Optional local image paths for edits or transformations. Use path values returned by earlier tool results, absolute paths, workspace-relative paths, file:^ targets, or [[file:...]] markers. Omit for text-to-image.',
-          items: { type: 'string', minLength: 1, description: 'Readable local image path, file:^... target, or [[file:...]] marker to use as an edit/reference input.' },
+          description: 'Optional local image paths for edits or transformations. Use path values returned by earlier tool results, absolute paths, workspace-relative paths, standard file: URLs, or [[file:///...]] markers. Omit for text-to-image.',
+          items: { type: 'string', minLength: 1, description: 'Readable local image path, standard file: URL, or [[file:///...]] marker to use as an edit/reference input.' },
         },
         count: {
           type: 'integer',
@@ -526,7 +526,7 @@ function modelVisibleGenerateImageData(data: GenerateImageData) {
 }
 
 function normalizeImagePathValue(value: string): string {
-  const fileUrl = parseLocalFileReferenceUrl(value);
+  const fileUrl = parseFileReferenceUri(value);
   if (fileUrl?.entryKind === 'file') return fileUrl.path;
   const segments = splitFileReferenceMarkers(value);
   const files = segments.filter((segment): segment is FileReferenceSegment => segment.type === 'file');
