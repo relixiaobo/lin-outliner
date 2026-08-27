@@ -115,13 +115,7 @@ export function decodeThreadSource(value: unknown, path = 'threadSource'): Threa
   return isReservedThreadSource(source) ? source : threadFeatureSource(source);
 }
 
-type ThreadItemDecodeMode = 'strict' | 'persisted';
-
 export function decodeThread(value: unknown): Thread {
-  return decodeThreadWithMode(value, 'strict');
-}
-
-function decodeThreadWithMode(value: unknown, mode: ThreadItemDecodeMode): Thread {
   const record = recordValue(value, 'thread');
   exactKeys(record, [
     'id',
@@ -165,7 +159,7 @@ function decodeThreadWithMode(value: unknown, mode: ThreadItemDecodeMode): Threa
     historyMode: THREAD_HISTORY_MODE,
     ...(record.turns === undefined
       ? {}
-      : { turns: arrayValue(record.turns, 'thread.turns').map((turn) => decodeTurnWithMode(turn, mode)) }),
+      : { turns: arrayValue(record.turns, 'thread.turns').map(decodeTurn) }),
   };
   if (result.parentThreadId && result.forkedFromId) {
     fail('thread', 'parentThreadId and forkedFromId are mutually exclusive lineage edges');
@@ -183,10 +177,6 @@ export function decodeThreadJson(encoded: string): Thread {
 }
 
 export function decodeTurn(value: unknown): Turn {
-  return decodeTurnWithMode(value, 'strict');
-}
-
-function decodeTurnWithMode(value: unknown, mode: ThreadItemDecodeMode): Turn {
   const record = recordValue(value, 'turn');
   exactKeys(record, [
     'id',
@@ -203,7 +193,7 @@ function decodeTurnWithMode(value: unknown, mode: ThreadItemDecodeMode): Turn {
   const status = enumValue(record.status, ['inProgress', 'completed', 'interrupted', 'failed'], 'turn.status');
   const result: Turn = {
     id: uuidV7(record.id, 'turn.id'),
-    items: arrayValue(record.items, 'turn.items').map((item) => decodeThreadItemWithMode(item, mode)),
+    items: arrayValue(record.items, 'turn.items').map(decodeThreadItem),
     itemsView: enumValue(record.itemsView, ['notLoaded', 'summary', 'full'], 'turn.itemsView'),
     provenance: decodeTurnProvenance(record.provenance),
     status,
@@ -237,20 +227,48 @@ export function decodeTurnJson(encoded: string): Turn {
 }
 
 export function decodeThreadItem(value: unknown): ThreadItem {
-  return decodeThreadItemWithMode(value, 'strict');
-}
+  const record = recordValue(value, 'item');
+  const type = enumValue(record.type, THREAD_ITEM_TYPES, 'item.type');
+  const base = {
+    id: stringValue(record.id, 'item.id'),
+    provenance: decodeItemProvenance(record.provenance),
+  };
 
-export function decodePersistedThreadItem(value: unknown): ThreadItem {
-  return decodeThreadItemWithMode(value, 'persisted');
+  let result: ThreadItem;
+  switch (type) {
+    case 'userMessage':
+      exactKeys(record, ['type', 'id', 'provenance', 'author', 'clientId', 'content', 'acceptedAt'], 'item');
+      result = {
+        ...base,
+        type,
+        author: decodeThreadInputAuthor(record.author),
+        clientId: nullableString(record.clientId, 'item.clientId'),
+        content: arrayValue(record.content, 'item.content').map(decodeUserContent),
+        acceptedAt: nonNegativeNumber(record.acceptedAt, 'item.acceptedAt'),
+      };
+      break;
+    case 'agentMessage':
+      exactKeys(record, ['type', 'id', 'provenance', 'text', 'phase', 'memoryCitation'], 'item');
+      result = {
+        ...base,
+        type,
+        text: stringValue(record.text, 'item.text', true),
+        phase: nullableEnum(record.phase, ['commentary', 'final_answer', 'interrupted'], 'item.phase'),
+        memoryCitation: decodeMemoryCitation(record.memoryCitation),
+      };
+      break;
+    default:
+      return decodeNonMessageThreadItem(record, type, base);
+  }
+  return deepFreeze(result);
 }
 
 function decodeThreadInputAuthor(value: unknown, path = 'item.author'): ThreadInputAuthor {
   const record = recordValue(value, path);
-  const kind = enumValue(record.kind, ['reader', 'agent', 'host', 'feature', 'unknown'], `${path}.kind`);
+  const kind = enumValue(record.kind, ['reader', 'agent', 'host', 'feature'], `${path}.kind`);
   switch (kind) {
     case 'reader':
     case 'host':
-    case 'unknown':
       exactKeys(record, ['kind'], path);
       return { kind };
     case 'agent':
@@ -270,49 +288,19 @@ function decodeThreadInputAuthor(value: unknown, path = 'item.author'): ThreadIn
 
 function decodePrivilegedThreadInputAuthor(value: unknown, path: string): PrivilegedThreadInputAuthor {
   const author = decodeThreadInputAuthor(value, path);
-  if (author.kind === 'reader' || author.kind === 'unknown') {
-    fail(path, 'privileged input requires an explicit known non-reader author');
+  if (author.kind === 'reader') {
+    fail(path, 'privileged input requires an explicit non-reader author');
   }
   return author;
 }
 
-function decodeThreadItemWithMode(value: unknown, mode: ThreadItemDecodeMode): ThreadItem {
-  const record = recordValue(value, 'item');
-  const type = enumValue(record.type, THREAD_ITEM_TYPES, 'item.type');
-  const base = {
-    id: stringValue(record.id, 'item.id'),
-    provenance: decodeItemProvenance(record.provenance),
-  };
-
+function decodeNonMessageThreadItem(
+  record: Record<string, unknown>,
+  type: Exclude<ThreadItem['type'], 'userMessage' | 'agentMessage'>,
+  base: Pick<ThreadItem, 'id' | 'provenance'>,
+): ThreadItem {
   let result: ThreadItem;
   switch (type) {
-    case 'userMessage':
-      if (mode === 'persisted' && record.author === undefined) {
-        exactKeys(record, ['type', 'id', 'provenance', 'clientId', 'content', 'acceptedAt'], 'item');
-      } else {
-        exactKeys(record, ['type', 'id', 'provenance', 'author', 'clientId', 'content', 'acceptedAt'], 'item');
-      }
-      result = {
-        ...base,
-        type,
-        author: mode === 'persisted' && record.author === undefined
-          ? { kind: 'unknown' }
-          : decodeThreadInputAuthor(record.author),
-        clientId: nullableString(record.clientId, 'item.clientId'),
-        content: arrayValue(record.content, 'item.content').map(decodeUserContent),
-        acceptedAt: nonNegativeNumber(record.acceptedAt, 'item.acceptedAt'),
-      };
-      break;
-    case 'agentMessage':
-      exactKeys(record, ['type', 'id', 'provenance', 'text', 'phase', 'memoryCitation'], 'item');
-      result = {
-        ...base,
-        type,
-        text: stringValue(record.text, 'item.text', true),
-        phase: nullableEnum(record.phase, ['commentary', 'final_answer', 'interrupted'], 'item.phase'),
-        memoryCitation: decodeMemoryCitation(record.memoryCitation),
-      };
-      break;
     case 'reasoning':
       exactKeys(record, ['type', 'id', 'provenance', 'summary', 'content'], 'item');
       result = {
@@ -651,7 +639,8 @@ export function decodePrivilegedTurnStartRequest(value: unknown): PrivilegedTurn
 export function decodePrivilegedTurnSteerRequest(value: unknown): PrivilegedTurnSteerRequest {
   const record = recordValue(value, 'privilegedTurnSteer');
   exactKeys(record, [
-    'threadId', 'expectedTurnId', 'input', 'clientUserMessageId', 'additionalContext', 'userView', 'author',
+    'threadId', 'expectedTurnId', 'input', 'clientUserMessageId', 'additionalContext', 'additionalContextSource',
+    'userView', 'author',
   ], 'privilegedTurnSteer');
   return deepFreeze({
     threadId: uuidV7(record.threadId, 'privilegedTurnSteer.threadId'),
@@ -663,6 +652,15 @@ export function decodePrivilegedTurnSteerRequest(value: unknown): PrivilegedTurn
     ...(record.additionalContext === undefined
       ? {}
       : { additionalContext: decodeAdditionalContext(record.additionalContext, true) }),
+    ...(record.additionalContextSource === undefined
+      ? {}
+      : {
+          additionalContextSource: stringValue(
+            record.additionalContextSource,
+            'privilegedTurnSteer.additionalContextSource',
+            true,
+          ),
+        }),
     ...(record.userView === undefined ? {} : { userView: decodeRendererUserViewHints(record.userView) }),
     author: decodePrivilegedThreadInputAuthor(record.author, 'privilegedTurnSteer.author'),
   });
@@ -763,13 +761,6 @@ export function decodeAdditionalContext(value: unknown, allowApplication: boolea
 }
 
 export function decodeAgentCoreNotification(value: unknown): AgentCoreNotification {
-  return decodeAgentCoreNotificationWithMode(value, 'strict');
-}
-
-function decodeAgentCoreNotificationWithMode(
-  value: unknown,
-  mode: ThreadItemDecodeMode,
-): AgentCoreNotification {
   const record = recordValue(value, 'notification');
   const type = enumValue(record.type, [
     'thread/started',
@@ -793,7 +784,7 @@ function decodeAgentCoreNotificationWithMode(
   switch (type) {
     case 'thread/started': {
       exactKeys(record, ['type', 'threadId', 'thread'], 'notification');
-      const thread = decodeThreadWithMode(record.thread, mode);
+      const thread = decodeThread(record.thread);
       const threadId = uuidV7(record.threadId, 'notification.threadId');
       if (thread.id !== threadId) fail('notification.threadId', 'must match thread.id');
       result = { type, threadId, thread };
@@ -828,7 +819,7 @@ function decodeAgentCoreNotificationWithMode(
           : ['type', 'threadId', 'turnId', 'turn'],
         'notification',
       );
-      const turn = decodeTurnWithMode(record.turn, mode);
+      const turn = decodeTurn(record.turn);
       const turnId = uuidV7(record.turnId, 'notification.turnId');
       if (turn.id !== turnId) fail('notification.turnId', 'must match turn.id');
       if (type === 'turn/started' && turn.status !== 'inProgress') {
@@ -905,7 +896,7 @@ function decodeAgentCoreNotificationWithMode(
     case 'item/completed': {
       const timeKey = type === 'item/started' ? 'startedAt' : 'completedAt';
       exactKeys(record, ['type', 'threadId', 'turnId', 'itemId', 'item', timeKey], 'notification');
-      const item = decodeThreadItemWithMode(record.item, mode);
+      const item = decodeThreadItem(record.item);
       const itemId = stringValue(record.itemId, 'notification.itemId');
       if (item.id !== itemId) fail('notification.itemId', 'must match item.id');
       const executionStatus = executionStatusOf(item);
@@ -929,7 +920,7 @@ function decodeAgentCoreNotificationWithMode(
     case 'items/completed': {
       exactKeys(record, ['type', 'threadId', 'turnId', 'items', 'completedAt'], 'notification');
       const items = arrayValue(record.items, 'notification.items').map((item, index) => {
-        const decoded = decodeThreadItemWithMode(item, mode);
+        const decoded = decodeThreadItem(item);
         if (executionStatusOf(decoded) === 'inProgress') {
           fail(`notification.items[${index}]`, 'items/completed requires terminal executable Items');
         }
@@ -1037,18 +1028,7 @@ function decodeSubagentTurnAdmission(value: unknown): import('./protocol').Subag
 }
 
 export function decodeAgentCoreRecordedNotification(value: unknown): AgentCoreRecordedNotification {
-  return decodeAgentCoreRecordedNotificationWithMode(value, 'strict');
-}
-
-export function decodePersistedAgentCoreRecordedNotification(value: unknown): AgentCoreRecordedNotification {
-  return decodeAgentCoreRecordedNotificationWithMode(value, 'persisted');
-}
-
-function decodeAgentCoreRecordedNotificationWithMode(
-  value: unknown,
-  mode: ThreadItemDecodeMode,
-): AgentCoreRecordedNotification {
-  const notification = decodeAgentCoreNotificationWithMode(value, mode);
+  const notification = decodeAgentCoreNotification(value);
   switch (notification.type) {
     case 'thread/name/updated':
     case 'turn/providerRetry/changed':

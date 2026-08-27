@@ -1085,11 +1085,9 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
-  test('quarantines a Thread whose recorded history the protocol can no longer read, and starts anyway', async () => {
-    // The shape a retired Item type or narrowed tool enum leaves in a userData
-    // directory that is never wiped: history is append-only, so the row is never
-    // rewritten and the decode fails on every launch. Startup must cost that one
-    // Thread, not the launch — including on the extension fan-out, which reads
+  test('quarantines authorless persisted history under the strict schema, and starts anyway', async () => {
+    // A missing required author is malformed new-store data. Startup must cost
+    // that one Thread, not the launch, including on extension fan-out that reads
     // every root Thread's Turns inside `initialize` with no per-Thread guard.
     const root = await mkdtemp(join(tmpdir(), 'tenon-unreadable-thread-'));
     roots.push(root);
@@ -1119,17 +1117,16 @@ describe('ThreadService', () => {
     const [readableId, unreadableId] = threadIds as [string, string];
     await first.service.close();
 
-    // Retire an Item type out from under the recorded history. Both stores carry
-    // it, exactly as a shipped rename does: the rollout is the source of truth
-    // and the projection was built from it.
+    // Remove the required author from both persisted authorities. No reader may
+    // infer it from the renderer client id, Turn trigger, or surrounding Items.
     const rolloutPath = join(root, 'agent', 'rollouts', `${unreadableId}.jsonl`);
     await writeFile(
       rolloutPath,
-      (await readFile(rolloutPath, 'utf8')).replaceAll('"type":"userMessage"', '"type":"retiredItemKind"'),
+      stripUserMessageAuthors(await readFile(rolloutPath, 'utf8')),
     );
     const historyDb = database(join(root, 'agent', 'thread_history.sqlite'));
     historyDb.prepare(
-      `UPDATE thread_items SET item_json = replace(item_json, '"type":"userMessage"', '"type":"retiredItemKind"')
+      `UPDATE thread_items SET item_json = json_remove(item_json, '$.author')
        WHERE thread_id = ?`,
     ).run(unreadableId);
     historyDb.close();
@@ -1841,6 +1838,7 @@ describe('ThreadService', () => {
       { source: { kind: 'localFile', path: join(fixture.root, 'resolved', 'start.pdf') } },
       { source: { kind: 'localFile', path: join(fixture.root, 'resolved', 'steer.txt') } },
     ]);
+    expect(userItems.map((item) => item.author)).toEqual([{ kind: 'reader' }, { kind: 'reader' }]);
     expect(resolvedPaths).toHaveLength(2);
     await fixture.service.close();
   });
@@ -5144,6 +5142,7 @@ describe('ThreadService', () => {
     });
     expect(retried.turn.provenance.trigger).toEqual(trigger);
     expect(retried.turn.items.find((item) => item.type === 'userMessage')).toMatchObject({
+      author: { kind: 'host' },
       clientId: 'agent-notification-stable-id',
       content: [{ type: 'text', text: '[Agent finished] Canonical host notice' }],
     });
@@ -14830,4 +14829,22 @@ function serializedConsoleCalls(calls: readonly (readonly unknown[])[]): string 
     if (typeof value === 'string') return value;
     return JSON.stringify(value);
   }).join(' ')).join('\n');
+}
+
+function stripUserMessageAuthors(jsonl: string): string {
+  const strip = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return;
+    if (Array.isArray(value)) {
+      for (const entry of value) strip(entry);
+      return;
+    }
+    const record = value as Record<string, unknown>;
+    if (record.type === 'userMessage') delete record.author;
+    for (const entry of Object.values(record)) strip(entry);
+  };
+  return `${jsonl.trimEnd().split('\n').map((line) => {
+    const record = JSON.parse(line) as unknown;
+    strip(record);
+    return JSON.stringify(record);
+  }).join('\n')}\n`;
 }

@@ -1,9 +1,6 @@
 import { mkdir, open, readFile, rename, rm, stat, truncate, type FileHandle } from 'node:fs/promises';
 import { join } from 'node:path';
-import {
-  decodeAgentCoreRecordedNotification,
-  decodePersistedAgentCoreRecordedNotification,
-} from '../../../core/agent/codec';
+import { decodeAgentCoreRecordedNotification } from '../../../core/agent/codec';
 import {
   createThreadHistoryRollbackContext,
   type ThreadHistoryRollbackContext,
@@ -45,8 +42,6 @@ interface RolloutEnvelope {
   readonly recordedAt: number;
   readonly event: unknown;
 }
-
-type RolloutDecodeMode = 'strict' | 'persisted';
 
 const UUID_V7_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ROLLOUT_GROUP_COMMIT_DELAY_MS = 150;
@@ -138,7 +133,7 @@ export class RolloutStore {
     recordedAt: number,
   ): Promise<RolloutEntry> {
     assertThreadId(threadId);
-    const event = decodeRolloutEvent(eventInput, 'strict');
+    const event = decodeRolloutEvent(eventInput);
     if (event.threadId !== threadId) throw new Error('Rollout event Thread does not match its file owner');
     return this.serialized(threadId, async () => {
       await mkdir(this.rootPath, { recursive: true });
@@ -487,19 +482,16 @@ function decodeEnvelope(encoded: string, byteOffset: number, byteLength: number)
   return {
     ordinal: value.ordinal as number,
     recordedAt: value.recordedAt,
-    event: decodeRolloutEvent(value.event, 'persisted'),
+    event: decodeRolloutEvent(value.event),
     byteOffset,
     byteLength,
   };
 }
 
-function decodeRolloutEvent(value: unknown, mode: RolloutDecodeMode): RolloutEvent {
-  const decodeNotification = mode === 'persisted'
-    ? decodePersistedAgentCoreRecordedNotification
-    : decodeAgentCoreRecordedNotification;
-  if (!isRecord(value)) return decodeNotification(value);
-  if (value.type === 'history/retry') return decodeHistoryRetryMarker(value, mode);
-  if (value.type !== 'history/rollback') return decodeNotification(value);
+function decodeRolloutEvent(value: unknown): RolloutEvent {
+  if (!isRecord(value)) return decodeAgentCoreRecordedNotification(value);
+  if (value.type === 'history/retry') return decodeHistoryRetryMarker(value);
+  if (value.type !== 'history/rollback') return decodeAgentCoreRecordedNotification(value);
   const keys = Object.keys(value).sort();
   if (keys.join(',') !== 'afterProjectionVersion,beforeProjectionVersion,omittedTurnIds,rollbackId,threadId,type') {
     throw new Error('Invalid history rollback marker fields');
@@ -517,10 +509,7 @@ function decodeRolloutEvent(value: unknown, mode: RolloutDecodeMode): RolloutEve
   return Object.freeze({ type: 'history/rollback', ...context });
 }
 
-function decodeHistoryRetryMarker(
-  value: Record<string, unknown>,
-  mode: RolloutDecodeMode,
-): ThreadHistoryRetryMarker {
+function decodeHistoryRetryMarker(value: Record<string, unknown>): ThreadHistoryRetryMarker {
   const keys = Object.keys(value).sort();
   if (
     keys.join(',')
@@ -540,9 +529,7 @@ function decodeHistoryRetryMarker(
     Number(value.beforeProjectionVersion),
     Number(value.afterProjectionVersion),
   );
-  const replacement = mode === 'persisted'
-    ? decodePersistedAgentCoreRecordedNotification(value.replacement)
-    : decodeAgentCoreRecordedNotification(value.replacement);
+  const replacement = decodeAgentCoreRecordedNotification(value.replacement);
   if (replacement.type !== 'turn/started') throw new Error('History retry replacement must start a Turn');
   if (replacement.threadId !== context.threadId) {
     throw new Error('History retry replacement Thread does not match its rollback');

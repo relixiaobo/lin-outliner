@@ -976,11 +976,9 @@ export type ThreadInputAuthor =
       readonly kind: 'feature';
       readonly feature: string;
       readonly ref?: string;
-    }
-  | { readonly kind: 'unknown' };
+    };
 
-export type KnownThreadInputAuthor = Exclude<ThreadInputAuthor, { readonly kind: 'unknown' }>;
-export type PrivilegedThreadInputAuthor = Exclude<KnownThreadInputAuthor, { readonly kind: 'reader' }>;
+export type PrivilegedThreadInputAuthor = Exclude<ThreadInputAuthor, { readonly kind: 'reader' }>;
 
 export interface AgentMessageThreadItem extends ThreadItemBase {
   readonly type: 'agentMessage';

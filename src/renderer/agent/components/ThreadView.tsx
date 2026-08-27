@@ -169,6 +169,10 @@ import {
   selectReaderComposerHistoryEntries,
   type ThreadComposerHistoryState,
 } from '../threadComposerHistory';
+import {
+  ComposerHistoryResourceRegistry,
+  currentThreadResourceAdapter,
+} from '../composerHistoryResourceRegistry';
 
 /**
  * The speaker id for a host notice the renderer could not attribute. Distinct
@@ -313,11 +317,19 @@ type ComposerHistoryBundle =
       readonly snapshot: null;
     };
 
+type ComposerHistoryResources = ComposerHistoryResourceRegistry<
+  string,
+  ComposerHistoryBundle,
+  ThreadAttachmentContent,
+  ThreadResourceReference
+>;
+
 interface ComposerHistorySession {
-  readonly scratch: ComposerHistoryBundle;
-  readonly workingByItemId: Map<string, ComposerHistoryBundle>;
+  readonly resources: ComposerHistoryResources;
   state: ThreadComposerHistoryState;
 }
+
+const COMPOSER_HISTORY_SCRATCH_SLOT = 'scratch';
 
 type NewThreadValidation = 'providerRequired' | 'structuredContent' | null;
 
@@ -2069,7 +2081,7 @@ export function ThreadView({
       const historySession = composerHistorySessionRef.current;
       if (historySession) {
         composerHistorySessionRef.current = null;
-        releaseComposerHistoryBundles(allComposerHistoryBundles(historySession), attachmentsRef.current);
+        releaseComposerHistoryUiState(historySession.resources.releaseAll(attachmentsRef.current));
       }
       for (const attachment of attachmentsRef.current) discardManagedAttachment(threadId, attachment);
       for (const request of pendingPasteRequestsRef.current.values()) {
@@ -2191,53 +2203,38 @@ export function ThreadView({
     }
   }
 
-  function releaseComposerHistoryBundles(
-    bundles: readonly ComposerHistoryBundle[],
-    retained: readonly ThreadAttachmentContent[],
-  ): void {
-    const retainedIds = new Set(retained.map((attachment) => attachment.id));
+  function releaseComposerHistoryUiState(released: readonly ThreadAttachmentContent[]): void {
     const releasedIds = new Set<string>();
-    const releasedResources: ThreadAttachmentContent[] = [];
-    for (const bundle of bundles) {
-      for (const attachment of bundle.attachments) {
-        if (retainedIds.has(attachment.id) || releasedIds.has(attachment.id)) continue;
-        releasedIds.add(attachment.id);
-        if (
-          !retained.some((candidate) => sameManagedResource(candidate, attachment))
-          && !releasedResources.some((candidate) => sameManagedResource(candidate, attachment))
-        ) {
-          discardManagedAttachment(threadId, attachment);
-          releasedResources.push(attachment);
-        }
-        releaseAttachmentUiState(
-          attachment.id,
-          attachmentPreviewUrlsRef.current,
-          attachmentSourceKeysRef.current,
-          attachmentTextExcerptsRef.current,
-        );
-      }
+    for (const attachment of released) {
+      if (releasedIds.has(attachment.id)) continue;
+      releasedIds.add(attachment.id);
+      releaseAttachmentUiState(
+        attachment.id,
+        attachmentPreviewUrlsRef.current,
+        attachmentSourceKeysRef.current,
+        attachmentTextExcerptsRef.current,
+      );
     }
   }
 
-  function allComposerHistoryBundles(session: ComposerHistorySession): ComposerHistoryBundle[] {
-    return [session.scratch, ...session.workingByItemId.values()];
+  function createComposerHistoryResources(): ComposerHistoryResources {
+    return new ComposerHistoryResourceRegistry<string, ComposerHistoryBundle, ThreadAttachmentContent, ThreadResourceReference>(
+      currentThreadResourceAdapter({
+        requestDiscardIfUnlinked: (handle) => discardManagedResourceHandle(threadId, handle),
+      }),
+      (bundle: ComposerHistoryBundle) => bundle.attachments,
+    );
   }
 
   function hiddenComposerHistoryAttachments(): ThreadAttachmentContent[] {
-    const session = composerHistorySessionRef.current;
-    if (!session) return [];
-    const visibleItemId = session.state.kind === 'browsing' ? session.state.selectedItemId : null;
-    return allComposerHistoryBundles(session).flatMap((bundle) => {
-      if (visibleItemId !== null && session.workingByItemId.get(visibleItemId) === bundle) return [];
-      return [...bundle.attachments];
-    });
+    return composerHistorySessionRef.current?.resources.attachments() ?? [];
   }
 
   function endComposerHistorySession(): void {
     const session = composerHistorySessionRef.current;
     if (!session) return;
     composerHistorySessionRef.current = null;
-    releaseComposerHistoryBundles(allComposerHistoryBundles(session), attachmentsRef.current);
+    releaseComposerHistoryUiState(session.resources.releaseAll(attachmentsRef.current));
   }
 
   function handleComposerHistoryAction(
@@ -2266,47 +2263,52 @@ export function ThreadView({
     if (!session) {
       const scratch = captureVisibleComposerBundle();
       if (!scratch || transition.kind !== 'select') return 'declined';
+      const resources = createComposerHistoryResources();
+      resources.set(COMPOSER_HISTORY_SCRATCH_SLOT, scratch);
       session = {
-        scratch,
+        resources,
         state: IDLE_THREAD_COMPOSER_HISTORY_STATE,
-        workingByItemId: new Map(),
       };
       composerHistorySessionRef.current = session;
     } else if (session.state.kind === 'browsing') {
       const current = captureVisibleComposerBundle();
       if (!current) return 'declined';
-      session.workingByItemId.set(session.state.selectedItemId, current);
+      session.resources.set(composerHistoryItemSlot(session.state.selectedItemId), current);
     }
+    if (!session) return 'declined';
 
     if (transition.kind === 'restoreScratch') {
-      const mountedScratch = mountComposerBundle(session.scratch);
-      if (!mountedScratch) return 'declined';
-      const bundles = allComposerHistoryBundles(session);
+      const scratch = session.resources.take(COMPOSER_HISTORY_SCRATCH_SLOT);
+      if (!scratch) return 'declined';
+      const mountedScratch = mountComposerBundle(scratch);
+      if (!mountedScratch) {
+        session.resources.set(COMPOSER_HISTORY_SCRATCH_SLOT, scratch);
+        return 'declined';
+      }
       composerHistorySessionRef.current = null;
-      releaseComposerHistoryBundles(bundles, mountedScratch.attachments);
+      releaseComposerHistoryUiState(session.resources.releaseAll(mountedScratch.attachments));
       return 'performed';
     }
 
     const departedItemId = session.state.kind === 'browsing'
       ? session.state.selectedItemId
       : null;
-    const target = session.workingByItemId.get(transition.entry.id)
+    const targetSlot = composerHistoryItemSlot(transition.entry.id);
+    const retainedTarget = session.resources.take(targetSlot);
+    const target = retainedTarget
       ?? composerHistoryBundleFromContent(transition.entry.content, indexStore.getCurrent());
     const mounted = mountComposerBundle(target);
-    if (!mounted) return 'declined';
+    if (!mounted) {
+      if (retainedTarget) session.resources.set(targetSlot, retainedTarget);
+      return 'declined';
+    }
     session.state = transition.state;
-    session.workingByItemId.set(transition.entry.id, mounted);
 
     if (transition.reanchored && departedItemId !== null && departedItemId !== transition.entry.id) {
-      const orphan = session.workingByItemId.get(departedItemId);
-      session.workingByItemId.delete(departedItemId);
-      if (orphan) {
-        const retained = [
-          ...attachmentsRef.current,
-          ...allComposerHistoryBundles(session).flatMap((bundle) => bundle.attachments),
-        ];
-        releaseComposerHistoryBundles([orphan], retained);
-      }
+      releaseComposerHistoryUiState(session.resources.release(
+        composerHistoryItemSlot(departedItemId),
+        attachmentsRef.current,
+      ));
     }
     return 'performed';
   }
@@ -2624,15 +2626,17 @@ export function ThreadView({
     if (request.replacedAttachments.length === 0) return;
     const retained = [
       ...attachmentsRef.current,
-      ...hiddenComposerHistoryAttachments(),
       ...Array.from(pendingPasteRequestsRef.current.values())
         .filter((candidate) => candidate !== request)
         .flatMap((candidate) => candidate.replacedAttachments),
     ];
+    const historyResources = composerHistorySessionRef.current?.resources;
     const releasedResources: ThreadAttachmentContent[] = [];
     for (const attachment of request.replacedAttachments) {
       if (retained.some((candidate) => candidate.id === attachment.id)) continue;
-      if (
+      if (historyResources) {
+        historyResources.releaseUnlinked([attachment], retained);
+      } else if (
         !retained.some((candidate) => sameManagedResource(candidate, attachment))
         && !releasedResources.some((candidate) => sameManagedResource(candidate, attachment))
       ) {
@@ -2939,6 +2943,7 @@ export function ThreadView({
     const heldAttachmentIds = new Set(Array.from(pendingPasteRequestsRef.current.values())
       .flatMap((request) => request.replacedAttachments.map((attachment) => attachment.id)));
     const hiddenHistoryAttachments = hiddenComposerHistoryAttachments();
+    const historyResources = composerHistorySessionRef.current?.resources;
     const current = attachmentsRef.current;
     const retained = current.filter((attachment) => referencedIds.has(attachment.id));
     if (retained.length === current.length) return;
@@ -2946,9 +2951,10 @@ export function ThreadView({
       if (!referencedIds.has(attachment.id)) {
         if (heldAttachmentIds.has(attachment.id)) continue;
         if (hiddenHistoryAttachments.some((candidate) => candidate.id === attachment.id)) continue;
-        if (
+        if (historyResources) {
+          historyResources.releaseUnlinked([attachment], retained);
+        } else if (
           !retained.some((candidate) => sameManagedResource(candidate, attachment))
-          && !hiddenHistoryAttachments.some((candidate) => sameManagedResource(candidate, attachment))
         ) {
           discardManagedAttachment(threadId, attachment);
         }
@@ -4956,8 +4962,13 @@ function sameManagedResource(
 }
 
 function discardManagedAttachment(threadId: string, attachment: ThreadAttachmentContent): void {
-  if (attachment.source.kind !== 'threadPayload' || !window.lin?.discardAttachmentResource) return;
-  void window.lin.discardAttachmentResource({ threadId, ref: attachment.source.ref }).catch(() => undefined);
+  if (attachment.source.kind !== 'threadPayload') return;
+  discardManagedResourceHandle(threadId, attachment.source.ref);
+}
+
+function discardManagedResourceHandle(threadId: string, handle: ThreadResourceReference): void {
+  if (!window.lin?.discardAttachmentResource) return;
+  void window.lin.discardAttachmentResource({ threadId, ref: handle }).catch(() => undefined);
 }
 
 function discardPreparedAttachment(threadId: string, attachment: PreparedComposerAttachment): void {
@@ -5063,6 +5074,10 @@ function composerHistoryBundleFromContent(
     };
   });
   return { attachments, content: draftContent, snapshot: null };
+}
+
+function composerHistoryItemSlot(itemId: string): string {
+  return `item:${itemId}`;
 }
 
 function threadContentFromDraft(

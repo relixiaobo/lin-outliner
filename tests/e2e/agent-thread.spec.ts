@@ -1400,7 +1400,6 @@ test.describe('canonical agent Thread surface', () => {
       const authors = [
         { author: { kind: 'feature', feature: 'automation', ref: 'run-1' }, text: 'Automation input' },
         { author: { kind: 'host' }, text: 'Host input' },
-        { author: { kind: 'unknown' }, text: 'Historical unknown input' },
         {
           author: { kind: 'agent', threadId: '01910000-0000-7000-8000-00000000c199' },
           text: 'Agent input',
@@ -1444,7 +1443,7 @@ test.describe('canonical agent Thread surface', () => {
     });
 
     const turn = page.locator(`[data-thread-turn-row="${fixture.turnId}"]`);
-    await expect(turn.locator('.thread-user-message.thread-host-event')).toHaveCount(4);
+    await expect(turn.locator('.thread-user-message.thread-host-event')).toHaveCount(3);
     await expect(turn.locator('.thread-user-message:not(.thread-host-event)')).toHaveText('Reader input');
     const hostEvent = turn.locator('.thread-user-message.thread-host-event').last();
     await hostEvent.hover();
@@ -1477,10 +1476,13 @@ test.describe('canonical agent Thread surface', () => {
     const firstSubmit = (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').at(-1);
     const firstAttachment = (firstSubmit?.args.input as Array<{
       id?: string;
-      source?: { kind?: string; ref?: { id?: string } };
+      source?: { kind?: string; ref?: Record<string, unknown> };
       type?: string;
     }>).find((part) => part.type === 'attachment');
     expect(firstAttachment?.id).toBeTruthy();
+    const attachmentOperationsBeforeRecall = (await commandCalls(page)).filter((call) => (
+      call.cmd.startsWith('attachment-upload/')
+    )).length;
 
     await composer.focus();
     await composer.press('ArrowUp');
@@ -1497,14 +1499,16 @@ test.describe('canonical agent Thread surface', () => {
     const secondInput = submits[1]?.args.input as Array<{
       id?: string;
       nodeId?: string;
-      source?: { kind?: string; ref?: { id?: string } };
+      source?: { kind?: string; ref?: Record<string, unknown> };
       type?: string;
     }>;
     const secondAttachment = secondInput.find((part) => part.type === 'attachment');
     expect(secondInput.map((part) => part.type)).toEqual(['text', 'nodeReference', 'text', 'attachment']);
     expect(secondInput.find((part) => part.type === 'nodeReference')?.nodeId).toBe(ids.alpha);
     expect(secondAttachment?.id).not.toBe(firstAttachment?.id);
-    expect(secondAttachment?.source?.ref?.id).toBe(firstAttachment?.source?.ref?.id);
+    expect(secondAttachment?.source?.ref).toEqual(firstAttachment?.source?.ref);
+    expect((await commandCalls(page)).filter((call) => call.cmd.startsWith('attachment-upload/')))
+      .toHaveLength(attachmentOperationsBeforeRecall);
     expect((await commandCalls(page)).filter((call) => call.cmd === 'thread/rollback')).toHaveLength(0);
   });
 

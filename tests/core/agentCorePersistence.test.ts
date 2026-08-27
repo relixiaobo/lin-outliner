@@ -345,10 +345,10 @@ describe('Agent Core persistence', () => {
     expect((await store.read(threadId)).map((entry) => entry.ordinal)).toEqual([0, 1, 2]);
   });
 
-  test('upgrades exact pre-author rollout and projection records without weakening live writes', async () => {
+  test('rejects authorless rollout, restoration, retry, and projection records', async () => {
     const root = await tempRoot();
     const threadId = uuidV7(1_050);
-    const rollout = trackedRolloutStore(join(root, 'pre-author-rollouts'));
+    const rollout = trackedRolloutStore(join(root, 'strict-author-rollouts'));
     const original = lifecycle(threadId, 5_000);
     const replacement = lifecycle(threadId, 5_100)[0];
     if (replacement?.type !== 'turn/started') throw new Error('Missing retry replacement fixture');
@@ -357,6 +357,13 @@ describe('Agent Core persistence', () => {
       threadId,
       withoutUserMessageAuthors(original[0]!) as AgentCoreNotification,
     )).rejects.toThrow('item.author');
+
+    const restoredRollout = trackedRolloutStore(join(root, 'strict-author-restored-rollouts'));
+    await expect(restoredRollout.restoreMissing(threadId, [{
+      event: withoutUserMessageAuthors(original[0]!) as AgentCoreNotification,
+      recordedAt: 5_000,
+    }])).rejects.toThrow('item.author');
+
     for (const notification of original) await rollout.append(threadId, notification);
     await rollout.appendHistoryRetry(createThreadHistoryRollbackContext(
       uuidV7(5_200),
@@ -368,7 +375,7 @@ describe('Agent Core persistence', () => {
     await rollout.flush();
 
     const strictEntries = await rollout.read(threadId);
-    const projectionPath = join(root, 'pre-author-history.sqlite');
+    const projectionPath = join(root, 'strict-author-history.sqlite');
     const projection = new ThreadHistoryProjectionStore(projectionPath, testDatabase(projectionPath));
     projection.rebuildThread(threadId, strictEntries);
     projection.close();
@@ -392,44 +399,16 @@ describe('Agent Core persistence', () => {
       projectionPath,
       testDatabase(projectionPath),
     );
-    expect(collectUserMessageAuthors(reopenedProjection.listItems({ threadId })))
-      .toEqual([{ kind: 'unknown' }]);
-
-    const restoredRollout = trackedRolloutStore(join(root, 'restored-rollouts'));
-    await restoredRollout.restoreMissing(threadId, reopenedProjection.rolloutSnapshot(threadId));
-    expect(collectUserMessageAuthors(await restoredRollout.read(threadId)))
-      .toEqual([{ kind: 'unknown' }]);
+    expect(() => reopenedProjection.listItems({ threadId })).toThrow('item.author');
+    expect(() => reopenedProjection.rolloutSnapshot(threadId)).toThrow('item.author');
     reopenedProjection.close();
 
     const rolloutPath = rollout.pathFor(threadId);
-    const legacyLines = (await readFile(rolloutPath, 'utf8')).trimEnd().split('\n').map((line) => (
+    const authorlessLines = (await readFile(rolloutPath, 'utf8')).trimEnd().split('\n').map((line) => (
       JSON.stringify(withoutUserMessageAuthors(JSON.parse(line)))
     ));
-    await writeFile(rolloutPath, `${legacyLines.join('\n')}\n`, 'utf8');
-
-    const upgradedEntries = await rollout.read(threadId);
-    expect(collectUserMessageAuthors(upgradedEntries).every((author) => author.kind === 'unknown')).toBe(true);
-    const retry = upgradedEntries.find((entry) => entry.event.type === 'history/retry');
-    expect(retry?.event.type === 'history/retry'
-      ? collectUserMessageAuthors(retry.event.replacement)
-      : []).toEqual([{ kind: 'unknown' }]);
-
-    const rebuiltPath = join(root, 'pre-author-rebuilt.sqlite');
-    const rebuilt = new ThreadHistoryProjectionStore(rebuiltPath, testDatabase(rebuiltPath));
-    rebuilt.rebuildThread(threadId, upgradedEntries);
-    expect(collectUserMessageAuthors(rebuilt.listItems({ threadId })))
-      .toEqual([{ kind: 'unknown' }]);
-    rebuilt.close();
-
-    const malformedLines = legacyLines.map((line, index) => {
-      if (index !== 0) return line;
-      const envelope = JSON.parse(line) as Record<string, unknown>;
-      const event = envelope.event as { turn: { items: Array<Record<string, unknown>> } };
-      event.turn.items[0]!.unexpected = true;
-      return JSON.stringify(envelope);
-    });
-    await writeFile(rolloutPath, `${malformedLines.join('\n')}\n`, 'utf8');
-    await expect(rollout.read(threadId)).rejects.toThrow('unknown fields');
+    await writeFile(rolloutPath, `${authorlessLines.join('\n')}\n`, 'utf8');
+    await expect(rollout.read(threadId)).rejects.toThrow('item.author');
   });
 
   test('group-commits streamed rollout writes and syncs lifecycle barriers', async () => {
@@ -1443,27 +1422,4 @@ function withoutUserMessageAuthors<T>(value: T): T {
   };
   visit(clone);
   return clone;
-}
-
-function collectUserMessageAuthors(value: unknown): Array<{ readonly kind: string }> {
-  const authors: Array<{ readonly kind: string }> = [];
-  const visit = (candidate: unknown): void => {
-    if (typeof candidate !== 'object' || candidate === null) return;
-    if (Array.isArray(candidate)) {
-      for (const entry of candidate) visit(entry);
-      return;
-    }
-    const record = candidate as Record<string, unknown>;
-    if (
-      record.type === 'userMessage'
-      && typeof record.author === 'object'
-      && record.author !== null
-      && typeof (record.author as Record<string, unknown>).kind === 'string'
-    ) {
-      authors.push(record.author as { readonly kind: string });
-    }
-    for (const entry of Object.values(record)) visit(entry);
-  };
-  visit(value);
-  return authors;
 }

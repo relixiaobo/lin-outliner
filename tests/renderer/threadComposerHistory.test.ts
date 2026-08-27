@@ -6,12 +6,16 @@ import {
   selectReaderComposerHistoryEntries,
   type ThreadComposerHistoryState,
 } from '../../src/renderer/agent/threadComposerHistory';
+import {
+  ComposerHistoryResourceRegistry,
+  type OpaqueCurrentResourceAdapter,
+} from '../../src/renderer/agent/composerHistoryResourceRegistry';
 
 describe('Agent composer input history', () => {
   test('selects only reader-authored user Items in canonical chronological order', () => {
     const turns = [
       turn('turn-1', [userItem('reader-1', 'reader'), userItem('feature-1', 'feature')]),
-      turn('turn-2', [userItem('unknown-1', 'unknown'), userItem('reader-2', 'reader')]),
+      turn('turn-2', [userItem('host-1', 'host'), userItem('reader-2', 'reader')]),
       turn('turn-3', [userItem('agent-1', 'agent'), userItem('reader-3', 'reader')]),
     ];
 
@@ -84,6 +88,63 @@ describe('Agent composer input history', () => {
     });
     expect(navigateThreadComposerHistory(selectedMiddle, [], 'older').kind).toBe('restoreScratch');
   });
+
+  test('retains whole opaque handles across hidden slots without observing or copying them', () => {
+    type Attachment = { readonly handle: object; readonly label: string };
+    type Bundle = { readonly attachments: readonly Attachment[] };
+    const discarded: object[] = [];
+    const opaque = new Proxy({}, {
+      get: () => { throw new Error('Opaque handle fields must not be observed'); },
+    });
+    const adapter: OpaqueCurrentResourceAdapter<Attachment, object> = {
+      handleOf: (attachment) => attachment.handle,
+      sameHandle: Object.is,
+      requestDiscardIfUnlinked: (handle) => discarded.push(handle),
+    };
+    const registry = new ComposerHistoryResourceRegistry<string, Bundle, Attachment, object>(
+      adapter,
+      (bundle) => bundle.attachments,
+    );
+    const scratch = { attachments: [{ handle: opaque, label: 'scratch' }] };
+    const working = { attachments: [{ handle: opaque, label: 'working' }] };
+
+    registry.set('scratch', scratch);
+    registry.set('working', working);
+    expect(registry.take('working')).toBe(working);
+    expect(registry.release('scratch', working.attachments)).toEqual(scratch.attachments);
+    expect(discarded).toEqual([]);
+
+    registry.set('working', working);
+    expect(registry.releaseAll([])).toEqual(working.attachments);
+    expect(discarded).toEqual([opaque]);
+  });
+
+  test('keeps navigation behavior independent from the replaceable resource adapter', () => {
+    const navigateWith = (adapter: OpaqueCurrentResourceAdapter<{ handle: symbol }, symbol>) => {
+      const registry = new ComposerHistoryResourceRegistry<
+        string,
+        { attachments: readonly { handle: symbol }[] },
+        { handle: symbol },
+        symbol
+      >(adapter, (bundle) => bundle.attachments);
+      const handle = Symbol('resource');
+      registry.set('scratch', { attachments: [{ handle }] });
+      const selected = navigateThreadComposerHistory(
+        IDLE_THREAD_COMPOSER_HISTORY_STATE,
+        [{ id: 'first' }, { id: 'second' }],
+        'older',
+      );
+      registry.take('scratch');
+      return selected;
+    };
+    const fakeAdapter = (): OpaqueCurrentResourceAdapter<{ handle: symbol }, symbol> => ({
+      handleOf: (attachment) => attachment.handle,
+      sameHandle: Object.is,
+      requestDiscardIfUnlinked: () => undefined,
+    });
+
+    expect(navigateWith(fakeAdapter())).toEqual(navigateWith(fakeAdapter()));
+  });
 });
 
 function turn(id: string, items: readonly ThreadItem[]): Turn {
@@ -113,7 +174,7 @@ function turn(id: string, items: readonly ThreadItem[]): Turn {
 
 function userItem(
   id: string,
-  authorKind: 'reader' | 'agent' | 'feature' | 'unknown',
+  authorKind: 'reader' | 'agent' | 'feature' | 'host',
 ): Extract<ThreadItem, { readonly type: 'userMessage' }> {
   const author = authorKind === 'agent'
     ? { kind: 'agent' as const, threadId: '01910000-0000-7000-8000-000000000002' }
