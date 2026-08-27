@@ -1,7 +1,8 @@
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { Core } from '../../src/core/core';
 import { canonicalSha256 } from '../../src/outline/contract/canonical';
 import type { ProjectionResult, Selector } from '../../src/outline/contract/schemas';
 import { decodeEventCursor, OutlineRuntimeWorkspace } from '../../src/outline/runtime';
@@ -15,6 +16,19 @@ afterAll(async () => {
 });
 
 describe('OutlineRuntimeWorkspace', () => {
+  test('commits ordinary mutations against the live Core without forking the document', async () => {
+    const root = await makeRoot();
+    const workspace = await openWorkspace(root);
+    const fork = spyOn(Core.prototype, 'forkForRuntime');
+
+    try {
+      await workspace.mutate(createRequest('Live Core mutation'));
+      expect(fork).not.toHaveBeenCalled();
+    } finally {
+      fork.mockRestore();
+    }
+  });
+
   test('publishes a candidate only after the transaction record fsyncs', async () => {
     const root = await makeRoot();
     let workspace: OutlineRuntimeWorkspace | undefined;

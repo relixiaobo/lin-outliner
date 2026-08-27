@@ -244,6 +244,7 @@ export interface EnsureDateNodesYieldingOptions {
 interface CoreTransaction {
   origin: string;
   metadata: CoreTransactionMetadata;
+  idFactory?: (prefix: string) => string;
   chunkedCommits: number;
   affectedNodeIds: Set<NodeId>;
   originalNodes: Map<NodeId, Node | undefined>;
@@ -270,6 +271,14 @@ export interface CoreTransactionPatch {
 export interface CoreTransactionResult<T> {
   readonly result: T;
   readonly patch: CoreTransactionPatch;
+}
+
+export interface CoreTransactionSettlementResult<T, Settlement> extends CoreTransactionResult<T> {
+  readonly settlement: Settlement;
+}
+
+export interface CoreTransactionExecutionOptions {
+  readonly idFactory?: (prefix: string) => string;
 }
 
 interface TouchedMutationPatch {
@@ -979,9 +988,21 @@ export class Core {
     origin: CommitOrigin,
     fn: () => T | Promise<T>,
     metadata: CoreTransactionMetadata = {},
+    options: CoreTransactionExecutionOptions = {},
   ): Promise<CoreTransactionResult<T>> {
     if (this.activeTransaction) throw CoreError.invalidOperation('nested patch transactions are not supported');
-    return this.transactionWithResolvedOriginAndPatch(commitOriginFor(origin), fn, metadata);
+    return this.transactionWithResolvedOriginAndPatch(commitOriginFor(origin), fn, metadata, options);
+  }
+
+  async transactionWithPatchSettlement<T, Settlement>(
+    origin: CommitOrigin,
+    fn: () => T | Promise<T>,
+    settle: (transaction: CoreTransactionResult<T>) => Settlement | Promise<Settlement>,
+    metadata: CoreTransactionMetadata = {},
+    options: CoreTransactionExecutionOptions = {},
+  ): Promise<CoreTransactionSettlementResult<T, Settlement>> {
+    if (this.activeTransaction) throw CoreError.invalidOperation('nested patch transactions are not supported');
+    return this.transactionWithResolvedOriginAndPatch(commitOriginFor(origin), fn, metadata, options, settle);
   }
 
   private async transactionWithResolvedOrigin<T>(
@@ -992,18 +1013,44 @@ export class Core {
     return (await this.transactionWithResolvedOriginAndPatch(origin, fn, metadata)).result;
   }
 
-  private async transactionWithResolvedOriginAndPatch<T>(
+  private transactionWithResolvedOriginAndPatch<T>(
     resolvedOrigin: string,
     fn: () => T | Promise<T>,
     metadata: CoreTransactionMetadata,
-  ): Promise<CoreTransactionResult<T>> {
+    options?: CoreTransactionExecutionOptions,
+  ): Promise<CoreTransactionResult<T>>;
+
+  private transactionWithResolvedOriginAndPatch<T, Settlement>(
+    resolvedOrigin: string,
+    fn: () => T | Promise<T>,
+    metadata: CoreTransactionMetadata,
+    options: CoreTransactionExecutionOptions,
+    settle: (transaction: CoreTransactionResult<T>) => Settlement | Promise<Settlement>,
+  ): Promise<CoreTransactionSettlementResult<T, Settlement>>;
+
+  private async transactionWithResolvedOriginAndPatch<T, Settlement = never>(
+    resolvedOrigin: string,
+    fn: () => T | Promise<T>,
+    metadata: CoreTransactionMetadata,
+    options: CoreTransactionExecutionOptions = {},
+    settle?: (transaction: CoreTransactionResult<T>) => Settlement | Promise<Settlement>,
+  ): Promise<CoreTransactionResult<T> | CoreTransactionSettlementResult<T, Settlement>> {
     const rollbackFrontiers = this.loro.frontiers();
     const revisionBefore = this.revisionValue;
     const persistenceRevisionBefore = this.persistenceRevisionValue;
+    const persistenceMetadataSequenceBefore = this.persistenceMetadataSequenceValue;
+    const persistenceMetadataChangesBefore = this.persistenceMetadataChanges.map((change) => clone(change));
+    const operationHistoryBefore = this.history.entriesForSerialization(500).map((entry) => clone(entry));
+    const revisionDeltaBefore: CoreRevisionDelta = {
+      revision: this.lastRevisionDelta.revision,
+      changedNodeIds: [...this.lastRevisionDelta.changedNodeIds],
+      requiresFullSearchRebuild: this.lastRevisionDelta.requiresFullSearchRebuild,
+    };
     this.loro.clearTouchedNodeIds();
     this.activeTransaction = {
       origin: resolvedOrigin,
       metadata,
+      idFactory: options.idFactory,
       chunkedCommits: 0,
       affectedNodeIds: new Set(),
       originalNodes: new Map(),
@@ -1017,7 +1064,7 @@ export class Core {
       const finalized = this.finalizeActiveTransaction(transaction);
       this.activeTransaction = undefined;
       this.verifyCaches();
-      return {
+      const completed: CoreTransactionResult<T> = {
         result,
         patch: freezeCoreTransactionPatch({
           revisionBefore,
@@ -1028,10 +1075,21 @@ export class Core {
           nodes: finalized.nodes,
         }),
       };
+      if (!settle) return completed;
+      return {
+        ...completed,
+        settlement: await settle(completed),
+      };
     } catch (error) {
       this.loro.revertTo(rollbackFrontiers, SYSTEM_COMMIT_ORIGIN);
       this.loro.clearTouchedNodeIds();
       this.activeTransaction = undefined;
+      this.revisionValue = revisionBefore;
+      this.persistenceRevisionValue = persistenceRevisionBefore;
+      this.persistenceMetadataSequenceValue = persistenceMetadataSequenceBefore;
+      this.persistenceMetadataChanges = persistenceMetadataChangesBefore;
+      this.history = new OperationJournal(operationHistoryBefore);
+      this.lastRevisionDelta = revisionDeltaBefore;
       // The revert rewrites the tree wholesale; drop the projection cache so the
       // next read rebuilds it from the rolled-back state.
       this.invalidateProjectionCache();
@@ -4403,7 +4461,7 @@ export class Core {
   }
 
   private freshId(prefix: string): string {
-    return this.idFactory(prefix);
+    return (this.activeTransaction?.idFactory ?? this.idFactory)(prefix);
   }
 
   private resolveRuntimeNodeId(state: DocumentState, id: string | undefined, prefix: string): string {

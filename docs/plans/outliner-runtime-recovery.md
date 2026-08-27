@@ -46,6 +46,16 @@ transactional assets, and the initial desktop transport. The next commit,
 incremental read model, accepted/durable saver, command settlement path, and
 cooperative import wiring.
 
+`d36dc81b` is a separate lost-work source, not the pre-rebase equivalent of
+`ea2bb5e1`. Its parent is pre-rebase `519bfd3b`, while `ea2bb5e1` starts directly
+from post-rebase `dba9b0cb`; their patch IDs differ. The later commits recovered
+the ContentStore portion only. The remaining `d36dc81b` patch contains the
+coalesced text queue, optimistic structural and Node patches, flat outliner,
+field settlement changes, popover/input fixes, and the E2E/unit tests that prove
+first-frame split, merge, move, checkbox, and field behavior. That patch is an
+explicit recovery source, reconciled file by file with the canonical reference
+URI and ContentStore changes that followed it.
+
 The recovery treats these pre-cutover behaviors as invariants:
 
 | Responsibility | Required recovered behavior |
@@ -200,7 +210,7 @@ test suite is not evidence that the responsibility became unnecessary.
 | `6effedc5` | `380e4df2` | Keep reviewed text-replacement classification. |
 | `f123c5a3` | `35ddc00d` | Replace the compensating direct path with the recovered live-Core command service. |
 | `519bfd3b` | `dba9b0cb` | Replace the compensating renderer path with historical editor settlement and explicit tests. |
-| `d36dc81b` | `ea2bb5e1`, `0819a9a0`, `5a280cbb` | Keep canonical #590-era ContentStore integration, abandoned staging recovery, and durable cleanup on the recovered service. |
+| `d36dc81b` | no complete rebased equivalent | Recover the omitted optimistic editor, field, flat-projection, coalescing, interaction, Core, and test changes; retain the separately reimplemented ContentStore subset from `ea2bb5e1`, `0819a9a0`, and `5a280cbb`, then reconcile #590 reference URI behavior. |
 
 ### Implementation surface
 

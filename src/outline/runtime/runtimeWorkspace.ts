@@ -1,10 +1,13 @@
-import { Core } from '../../core/core';
+import {
+  Core,
+  type CoreTransactionMetadata,
+  type CoreTransactionPatch,
+} from '../../core/core';
 import { ContentStore, type ContentStoreOptions } from '../../content';
-import type { CoreTransactionMetadata } from '../../core/core';
 import { canonicalSha256 } from '../contract/canonical';
 import { OutlineContractError, outlineError } from '../contract/errors';
 import type { Operation, OutlineEvent, RevertConflictDiff, NoChangeResult } from '../contract/schemas';
-import type { Node } from '../../core/types';
+import type { DocumentState, Node, ProjectionUpdate } from '../../core/types';
 import { projectNode } from '../../core/projection';
 import { OUTLINE_PROTOCOL_VERSION } from '../contract/version';
 import {
@@ -21,8 +24,29 @@ import {
 import { semanticPatchDigest } from './semanticDigest';
 import { encodeEventCursor } from './eventCursor';
 import { encodeOperationLogCursor } from './operationLogCursor';
+import { DocumentReadModel } from './documentReadModel';
 
 const MAX_AFFECTED_NODE_ID_SAMPLE = 1_000;
+
+interface AppendedMutationSettlement {
+  readonly kind: 'appended';
+  readonly appended: WorkspaceTransactionAppendResult;
+  readonly projectionUpdate: ProjectionUpdate;
+  readonly assetReferenceCounts: Map<string, number>;
+}
+
+interface NoChangeMutationSettlement {
+  readonly kind: 'no-change';
+  readonly result: NoChangeResult;
+}
+
+type MutationSettlement = AppendedMutationSettlement | NoChangeMutationSettlement;
+
+class ExistingOperationSettlement extends Error {
+  constructor(readonly operation: Operation) {
+    super(`Operation settled idempotently: ${operation.operationId}`);
+  }
+}
 
 export interface OutlineRuntimeMutationRequest {
   readonly origin: Operation['origin'];
@@ -70,6 +94,9 @@ export class OutlineRuntimeWorkspace {
   private settlementUnknown = false;
   private eventListeners = new Set<(event: OutlineEvent) => void>();
   private readonly now: () => Date;
+  private readonly readModel: DocumentReadModel;
+  private assetReferenceCounts: Map<string, number>;
+  private pendingPublicationPatch?: CoreTransactionPatch;
 
   private constructor(
     private core: Core,
@@ -80,6 +107,8 @@ export class OutlineRuntimeWorkspace {
     now?: () => Date,
   ) {
     this.now = now ?? (() => new Date());
+    this.readModel = DocumentReadModel.fromProjection(core.revision(), core.projection());
+    this.assetReferenceCounts = countAssetReferences(Object.values(core.state().nodes));
   }
 
   static async open(root: string, options: OutlineRuntimeWorkspaceOptions = {}): Promise<OutlineRuntimeWorkspace> {
@@ -139,7 +168,7 @@ export class OutlineRuntimeWorkspace {
   }
 
   revision(): number {
-    return this.core.revision();
+    return this.readModel.revision;
   }
 
   close(): void {
@@ -156,11 +185,18 @@ export class OutlineRuntimeWorkspace {
   }
 
   projection() {
-    return this.core.projection();
+    return this.readModel.projection;
   }
 
   documentState() {
-    return this.core.state();
+    const state = this.core.state();
+    const patch = this.pendingPublicationPatch;
+    if (!patch) return state;
+    for (const entry of patch.nodes) {
+      if (entry.before) state.nodes[entry.id] = cloneNode(entry.before);
+      else delete state.nodes[entry.id];
+    }
+    return state;
   }
 
   forkCore(options: { idFactory?: (prefix: string) => string } = {}): Core {
@@ -173,9 +209,7 @@ export class OutlineRuntimeWorkspace {
   }
 
   collectAssetGarbage(): Promise<readonly string[]> {
-    return this.enqueueMutation(() => this.assets.collectGarbage([
-      ...assetRecordIdsInNodes(Object.values(this.core.state().nodes)),
-    ]));
+    return this.enqueueMutation(() => this.assets.collectGarbage([...this.assetReferenceCounts.keys()]));
   }
 
   maintain(options: { readonly compactIfNeeded?: boolean } = {}): Promise<void> {
@@ -433,9 +467,8 @@ export class OutlineRuntimeWorkspace {
     const admission = preparedAdmission ?? await this.prepareMutation(request);
     if (admission.existingOperation) return admission.existingOperation;
 
-    const candidate = this.core.forkForRuntime({ idFactory: request.idFactory });
-    const fromVersion = candidate.replicationVersionVector();
-    const afterMetadataSequence = candidate.persistenceMetadataSequence();
+    const fromVersion = this.core.replicationVersionVector();
+    const afterMetadataSequence = this.core.persistenceMetadataSequence();
     const operationId = `operation:${crypto.randomUUID()}`;
     const metadata: CoreTransactionMetadata = {
       operationId,
@@ -443,174 +476,212 @@ export class OutlineRuntimeWorkspace {
       summary: request.summary,
       ...(request.causation ? { causation: request.causation } : {}),
     };
-    const { result: transactionResult, patch } = await candidate.transactionWithPatch(
-      'system',
-      () => request.execute(candidate),
-      metadata,
-    );
-    if (patch.nodes.length === 0 && !patch.systemChanged) {
-      const noChange = request.noChangeResult?.(candidate);
-      if (noChange) return noChange;
-      throw new OutlineContractError(outlineError(
-        'precondition_failed',
-        'conflict',
-        'The mutation produced no document changes.',
-      ));
-    }
-    const resolvedLeases = await this.assets.resolveLeases(Object.keys(request.assetLeases ?? {}));
-    for (const [leaseId, expectedAssetId] of Object.entries(request.assetLeases ?? {})) {
-      if (resolvedLeases.get(leaseId)?.assetId !== expectedAssetId) {
-        throw new OutlineContractError(outlineError(
-          'precondition_failed',
-          'conflict',
-          `Asset lease resolution changed before settlement: ${leaseId}`,
-        ));
-      }
-    }
-    const beforeLiveAssetIds = assetRecordIdsInNodes(Object.values(this.core.state().nodes));
-    const afterLiveAssetIds = assetRecordIdsInNodes(Object.values(candidate.state().nodes));
-    for (const assetId of Object.values(request.assetLeases ?? {})) {
-      if (!afterLiveAssetIds.has(assetId)) {
-        throw new OutlineContractError(outlineError(
-          'precondition_failed',
-          'conflict',
-          `Consumed asset lease is not referenced by the settled document: ${assetId}`,
-        ));
-      }
-    }
-    const patchAssetIds = assetRecordIdsInNodes(patch.nodes.flatMap((entry) => (
-      [entry.before, entry.after].filter((node): node is Node => node !== null)
-    )));
-    const protectedAssetRecordIds = await this.assets.expandAssetIds([
-      ...patchAssetIds,
-      ...request.protectedAssetRecordIds ?? [],
-    ]);
-    const assetDelta: OutlineAssetDelta = {
-      consumedLeaseIds: Object.keys(request.assetLeases ?? {}).sort(),
-      liveAddedAssetRecordIds: [...afterLiveAssetIds].filter((assetId) => !beforeLiveAssetIds.has(assetId)).sort(),
-      liveRemovedAssetRecordIds: [...beforeLiveAssetIds].filter((assetId) => !afterLiveAssetIds.has(assetId)).sort(),
-    };
-    const patchHash = semanticPatchDigest(patch.nodes);
-    if (request.expectedPatchHash && request.expectedPatchHash !== patchHash) {
-      throw new OutlineContractError(outlineError(
-        'diff_mismatch',
-        'conflict',
-        'The applied Node patch does not match the reviewed Diff.',
-        { details: { expected: request.expectedPatchHash, actual: patchHash } },
-      ));
-    }
-    const persistence = candidate.capturePersistenceUpdate(fromVersion, afterMetadataSequence);
-    const result = request.result?.(candidate) ?? transactionResult;
-    const createdAt = this.now().toISOString();
-    const recoveryPatch = createOutlineRecoveryPatch({
-      operationId,
-      origin: request.origin,
-      causation: request.causation,
-      changeSetHash: request.changeSetHash,
-      diffHash: request.diffHash,
-      corePatch: patch,
-      protectedAssetRecordIds,
-      createdAt,
-    });
-    const affectedNodeIds = patch.nodes.map((entry) => entry.id);
-    const affectedNodeIdsSample = affectedNodeIds.slice(0, MAX_AFFECTED_NODE_ID_SAMPLE);
-    const operation: Operation = {
-      protocolVersion: OUTLINE_PROTOCOL_VERSION,
-      kind: 'outline.operation',
-      operationId,
-      changeSetHash: request.changeSetHash,
-      diffHash: request.diffHash,
-      origin: request.origin,
-      ...(request.causation ? { causation: request.causation } : {}),
-      ...(request.source ? { source: request.source } : {}),
-      summary: request.summary,
-      affectedNodeIds: affectedNodeIdsSample,
-      affectedNodeCount: affectedNodeIds.length,
-      affectedNodeIdsHash: canonicalSha256(affectedNodeIds),
-      ...(affectedNodeIds.length > MAX_AFFECTED_NODE_ID_SAMPLE ? {
-        affectedNodeIdsTruncated: true,
-        affectedNodeIdsCursor: encodeOperationLogCursor({
-          kind: 'affected',
-          filterHash: canonicalSha256({ operationId }),
-          operationId,
-          offset: MAX_AFFECTED_NODE_ID_SAMPLE,
-        }),
-      } : {}),
-      revisionBefore: patch.revisionBefore,
-      revisionAfter: patch.revisionAfter,
-      createdAt,
-      recovery: {
-        recoveryPatchId: recoveryPatch.recoveryPatchId,
-        state: 'available',
-        retainedUntilAtLeast: recoveryPatch.retainedUntilAtLeast,
-      },
-      ...(request.undoGroup ? { undoGroup: request.undoGroup } : {}),
-      ...(request.revertsOperationId ? { revertsOperationId: request.revertsOperationId } : {}),
-      ...(request.revertsOperationIds ? { revertsOperationIds: [...request.revertsOperationIds] } : {}),
-      ...(result ? { result } : {}),
-    };
-    const eventSequence = admission.latestEventSequence + 1;
-    const event: OutlineEvent = {
-      protocolVersion: OUTLINE_PROTOCOL_VERSION,
-      kind: 'outline.event',
-      type: operationRevertsAny(operation) ? 'operation.reverted' : 'operation.committed',
-      instanceId: this.instanceId,
-      sequence: eventSequence,
-      revision: operation.revisionAfter,
-      cursor: encodeEventCursor({
-        instanceId: this.instanceId,
-        sequence: eventSequence,
-        revision: operation.revisionAfter,
-      }),
-      operation,
-      changes: {
-        todayId: candidate.todayId(),
-        changedNodes: patch.nodes.flatMap((entry) => entry.after ? [projectNode(entry.after)] : []),
-        removedIds: patch.nodes.flatMap((entry) => entry.after ? [] : [entry.id]),
-      },
-    };
-    let appended: WorkspaceTransactionAppendResult;
     try {
-      appended = await this.store.append({
-        persistence,
-        operation,
-        recoveryPatch,
-        event,
-        ...(request.idempotencyKey ? {
-          idempotency: {
-            key: request.idempotencyKey,
-            payloadHash: request.idempotencyPayloadHash!,
+      const { settlement } = await this.core.transactionWithPatchSettlement(
+        'system',
+        () => request.execute(this.core),
+        async ({ result: transactionResult, patch }): Promise<MutationSettlement> => {
+          if (patch.nodes.length === 0 && !patch.systemChanged) {
+            const noChange = request.noChangeResult?.(this.core);
+            if (noChange) return { kind: 'no-change', result: noChange };
+            throw new OutlineContractError(outlineError(
+              'precondition_failed',
+              'conflict',
+              'The mutation produced no document changes.',
+            ));
+          }
+
+          this.pendingPublicationPatch = patch;
+          const resolvedLeases = await this.assets.resolveLeases(Object.keys(request.assetLeases ?? {}));
+          for (const [leaseId, expectedAssetId] of Object.entries(request.assetLeases ?? {})) {
+            if (resolvedLeases.get(leaseId)?.assetId !== expectedAssetId) {
+              throw new OutlineContractError(outlineError(
+                'precondition_failed',
+                'conflict',
+                `Asset lease resolution changed before settlement: ${leaseId}`,
+              ));
+            }
+          }
+
+          const nextAssetReferenceCounts = applyAssetReferencePatch(this.assetReferenceCounts, patch);
+          for (const assetId of Object.values(request.assetLeases ?? {})) {
+            if ((nextAssetReferenceCounts.get(assetId) ?? 0) === 0) {
+              throw new OutlineContractError(outlineError(
+                'precondition_failed',
+                'conflict',
+                `Consumed asset lease is not referenced by the settled document: ${assetId}`,
+              ));
+            }
+          }
+          const patchAssetIds = assetRecordIdsInNodes(patch.nodes.flatMap((entry) => (
+            [entry.before, entry.after].filter((node): node is Node => node !== null)
+          )));
+          const protectedAssetRecordIds = await this.assets.expandAssetIds([
+            ...patchAssetIds,
+            ...request.protectedAssetRecordIds ?? [],
+          ]);
+          const assetDelta: OutlineAssetDelta = {
+            consumedLeaseIds: Object.keys(request.assetLeases ?? {}).sort(),
+            liveAddedAssetRecordIds: changedAssetIds(
+              this.assetReferenceCounts,
+              nextAssetReferenceCounts,
+              (before, after) => before === 0 && after > 0,
+            ),
+            liveRemovedAssetRecordIds: changedAssetIds(
+              this.assetReferenceCounts,
+              nextAssetReferenceCounts,
+              (before, after) => before > 0 && after === 0,
+            ),
+          };
+          const patchHash = semanticPatchDigest(patch.nodes);
+          if (request.expectedPatchHash && request.expectedPatchHash !== patchHash) {
+            throw new OutlineContractError(outlineError(
+              'diff_mismatch',
+              'conflict',
+              'The applied Node patch does not match the reviewed Diff.',
+              { details: { expected: request.expectedPatchHash, actual: patchHash } },
+            ));
+          }
+
+          const persistence = this.core.capturePersistenceUpdate(fromVersion, afterMetadataSequence);
+          const result = request.result?.(this.core) ?? transactionResult;
+          const createdAt = this.now().toISOString();
+          const recoveryPatch = createOutlineRecoveryPatch({
             operationId,
-          },
-        } : {}),
-        assetDelta,
-        measureExactRevisionBytes: (coordinates, excluding) => (
-          this.assets.measureExactRevisionBytes(coordinates, excluding)
-        ),
-      });
-    } catch (error) {
-      if (error instanceof OutlineContractError
-        && error.outlineError.code !== 'durability_failed') throw error;
-      this.settlementUnknown = true;
-      throw new OutlineContractError(outlineError(
-        'operation_settlement_unknown',
-        'durability',
-        'The mutation may have committed, but acknowledgement was not completed.',
-        {
-          retryable: true,
-          details: {
-            ...(request.idempotencyKey ? { idempotencyKey: request.idempotencyKey } : {}),
-            cause: error instanceof Error ? error.message : String(error),
-          },
+            origin: request.origin,
+            causation: request.causation,
+            changeSetHash: request.changeSetHash,
+            diffHash: request.diffHash,
+            corePatch: patch,
+            protectedAssetRecordIds,
+            createdAt,
+          });
+          const affectedNodeIds = patch.nodes.map((entry) => entry.id);
+          const affectedNodeIdsSample = affectedNodeIds.slice(0, MAX_AFFECTED_NODE_ID_SAMPLE);
+          const operation: Operation = {
+            protocolVersion: OUTLINE_PROTOCOL_VERSION,
+            kind: 'outline.operation',
+            operationId,
+            changeSetHash: request.changeSetHash,
+            diffHash: request.diffHash,
+            origin: request.origin,
+            ...(request.causation ? { causation: request.causation } : {}),
+            ...(request.source ? { source: request.source } : {}),
+            summary: request.summary,
+            affectedNodeIds: affectedNodeIdsSample,
+            affectedNodeCount: affectedNodeIds.length,
+            affectedNodeIdsHash: canonicalSha256(affectedNodeIds),
+            ...(affectedNodeIds.length > MAX_AFFECTED_NODE_ID_SAMPLE ? {
+              affectedNodeIdsTruncated: true,
+              affectedNodeIdsCursor: encodeOperationLogCursor({
+                kind: 'affected',
+                filterHash: canonicalSha256({ operationId }),
+                operationId,
+                offset: MAX_AFFECTED_NODE_ID_SAMPLE,
+              }),
+            } : {}),
+            revisionBefore: patch.revisionBefore,
+            revisionAfter: patch.revisionAfter,
+            createdAt,
+            recovery: {
+              recoveryPatchId: recoveryPatch.recoveryPatchId,
+              state: 'available',
+              retainedUntilAtLeast: recoveryPatch.retainedUntilAtLeast,
+            },
+            ...(request.undoGroup ? { undoGroup: request.undoGroup } : {}),
+            ...(request.revertsOperationId ? { revertsOperationId: request.revertsOperationId } : {}),
+            ...(request.revertsOperationIds ? { revertsOperationIds: [...request.revertsOperationIds] } : {}),
+            ...(result ? { result } : {}),
+          };
+          const eventSequence = admission.latestEventSequence + 1;
+          const projectionUpdate: ProjectionUpdate = {
+            kind: 'delta',
+            revision: operation.revisionAfter,
+            todayId: this.core.todayId(),
+            changedNodes: patch.nodes.flatMap((entry) => entry.after ? [projectNode(entry.after)] : []),
+            removedIds: patch.nodes.flatMap((entry) => entry.after ? [] : [entry.id]),
+          };
+          const event: OutlineEvent = {
+            protocolVersion: OUTLINE_PROTOCOL_VERSION,
+            kind: 'outline.event',
+            type: operationRevertsAny(operation) ? 'operation.reverted' : 'operation.committed',
+            instanceId: this.instanceId,
+            sequence: eventSequence,
+            revision: operation.revisionAfter,
+            cursor: encodeEventCursor({
+              instanceId: this.instanceId,
+              sequence: eventSequence,
+              revision: operation.revisionAfter,
+            }),
+            operation,
+            changes: {
+              todayId: projectionUpdate.todayId,
+              changedNodes: projectionUpdate.changedNodes,
+              removedIds: projectionUpdate.removedIds,
+            },
+          };
+          let appended: WorkspaceTransactionAppendResult;
+          try {
+            appended = await this.store.append({
+              persistence,
+              operation,
+              recoveryPatch,
+              event,
+              ...(request.idempotencyKey ? {
+                idempotency: {
+                  key: request.idempotencyKey,
+                  payloadHash: request.idempotencyPayloadHash!,
+                  operationId,
+                },
+              } : {}),
+              assetDelta,
+              measureExactRevisionBytes: (coordinates, excluding) => (
+                this.assets.measureExactRevisionBytes(coordinates, excluding)
+              ),
+            });
+          } catch (error) {
+            if (error instanceof OutlineContractError
+              && error.outlineError.code !== 'durability_failed') throw error;
+            this.settlementUnknown = true;
+            throw new OutlineContractError(outlineError(
+              'operation_settlement_unknown',
+              'durability',
+              'The mutation may have committed, but acknowledgement was not completed.',
+              {
+                retryable: true,
+                details: {
+                  ...(request.idempotencyKey ? { idempotencyKey: request.idempotencyKey } : {}),
+                  cause: error instanceof Error ? error.message : String(error),
+                },
+              },
+            ));
+          }
+          if (appended.idempotent) throw new ExistingOperationSettlement(appended.operation);
+          return {
+            kind: 'appended',
+            appended,
+            projectionUpdate,
+            assetReferenceCounts: nextAssetReferenceCounts,
+          };
         },
-      ));
+        metadata,
+        { idFactory: request.idFactory },
+      );
+
+      if (settlement.kind === 'no-change') return settlement.result;
+      this.assetReferenceCounts = settlement.assetReferenceCounts;
+      if (!this.readModel.applyUpdate(settlement.projectionUpdate)) {
+        this.readModel.reseed(this.core.revision(), this.core.projection());
+      }
+      this.publishEvents(settlement.appended.maintenanceEvents);
+      this.publishEvents([settlement.appended.event]);
+      return settlement.appended.operation;
+    } catch (error) {
+      if (error instanceof ExistingOperationSettlement) return error.operation;
+      throw error;
+    } finally {
+      this.pendingPublicationPatch = undefined;
     }
-    if (!appended.idempotent) {
-      this.core = candidate;
-      this.publishEvents(appended.maintenanceEvents);
-      this.publishEvents([appended.event]);
-    }
-    return appended.operation;
   }
 
   private async applyRequiredMutation(
@@ -631,9 +702,7 @@ export class OutlineRuntimeWorkspace {
   private async runMaintenance(compactIfNeeded: boolean): Promise<void> {
     const context = { instanceId: this.instanceId, revision: this.revision() };
     this.publishEvents(await this.store.maintain(context));
-    await this.assets.collectGarbage([
-      ...assetRecordIdsInNodes(Object.values(this.core.state().nodes)),
-    ]);
+    await this.assets.collectGarbage([...this.assetReferenceCounts.keys()]);
     if (compactIfNeeded && await this.store.needsCompaction()) {
       this.publishEvents(await this.store.compact(this.core.serializeState(), context));
     }
@@ -667,6 +736,52 @@ function assetRecordIdsInNodes(nodes: readonly Node[]): Set<string> {
     if (node.type === 'attachment' && node.thumbnailAssetId) result.add(node.thumbnailAssetId);
   }
   return result;
+}
+
+function countAssetReferences(nodes: readonly Node[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const node of nodes) {
+    for (const assetId of assetRecordIdsInNodes([node])) {
+      counts.set(assetId, (counts.get(assetId) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
+function applyAssetReferencePatch(
+  current: ReadonlyMap<string, number>,
+  patch: CoreTransactionPatch,
+): Map<string, number> {
+  const next = new Map(current);
+  for (const entry of patch.nodes) {
+    if (entry.before) {
+      for (const assetId of assetRecordIdsInNodes([entry.before as Node])) {
+        const count = (next.get(assetId) ?? 0) - 1;
+        if (count > 0) next.set(assetId, count);
+        else next.delete(assetId);
+      }
+    }
+    if (entry.after) {
+      for (const assetId of assetRecordIdsInNodes([entry.after as Node])) {
+        next.set(assetId, (next.get(assetId) ?? 0) + 1);
+      }
+    }
+  }
+  return next;
+}
+
+function changedAssetIds(
+  before: ReadonlyMap<string, number>,
+  after: ReadonlyMap<string, number>,
+  matches: (beforeCount: number, afterCount: number) => boolean,
+): string[] {
+  return [...new Set([...before.keys(), ...after.keys()])]
+    .filter((assetId) => matches(before.get(assetId) ?? 0, after.get(assetId) ?? 0))
+    .sort();
+}
+
+function cloneNode(node: Readonly<Node>): Node {
+  return JSON.parse(JSON.stringify(node)) as Node;
 }
 
 interface HistoryStackItem {
