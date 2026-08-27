@@ -1512,6 +1512,63 @@ test.describe('canonical agent Thread surface', () => {
     expect((await commandCalls(page)).filter((call) => call.cmd === 'thread/rollback')).toHaveLength(0);
   });
 
+  test('retains a session-known image preview when attachment history is recalled', async ({ page }) => {
+    await openMockedApp(page);
+    await createNewThread(page);
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.fill('Remember this image');
+    await page.locator('.thread-composer-file-input').setInputFiles({
+      name: 'history.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+        'base64',
+      ),
+    });
+    const thumbnail = page.locator('.thread-composer-attachment-thumbnail');
+    await expect(thumbnail).toBeVisible();
+    const admittedPreviewUrl = await thumbnail.getAttribute('src');
+    expect(admittedPreviewUrl).toMatch(/^blob:/u);
+
+    await page.getByRole('button', { name: 'Send' }).click();
+    const attachmentOperationsBeforeRecall = (await commandCalls(page)).filter((call) => (
+      call.cmd.startsWith('attachment-upload/')
+    )).length;
+    await composer.focus();
+    await composer.press('ArrowUp');
+
+    await expect(thumbnail).toBeVisible();
+    await expect(thumbnail).toHaveAttribute('src', admittedPreviewUrl!);
+    expect((await commandCalls(page)).filter((call) => call.cmd.startsWith('attachment-upload/')))
+      .toHaveLength(attachmentOperationsBeforeRecall);
+  });
+
+  test('moves past an attachment-bearing recalled entry with one further Up press', async ({ page }) => {
+    await page.setViewportSize({ width: 1_120, height: 820 });
+    await openMockedApp(page);
+    await createNewThread(page);
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.fill('Older request');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await composer.fill('Newest image request');
+    await page.locator('.thread-composer-file-input').setInputFiles({
+      name: 'history.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+        'base64',
+      ),
+    });
+    await page.getByRole('button', { name: 'Send' }).click();
+
+    await composer.focus();
+    await composer.press('ArrowUp');
+    await expect(composer).toContainText('Newest image request');
+    await expect(page.locator('.thread-composer-attachment-thumbnail')).toBeVisible();
+    await composer.press('ArrowUp');
+    await expect(composer).toHaveText('Older request');
+  });
+
   test('leaves arrows native during attachment admission and retains the hidden scratch resource', async ({ page }) => {
     await openMockedApp(page, { attachmentUploadDelayMs: 200 });
     await createNewThread(page);

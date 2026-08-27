@@ -173,6 +173,10 @@ import {
   ComposerHistoryResourceRegistry,
   currentThreadResourceAdapter,
 } from '../composerHistoryResourceRegistry';
+import {
+  ComposerAttachmentUiStateRegistry,
+  type ComposerAttachmentUiState,
+} from '../composerAttachmentUiStateRegistry';
 
 /**
  * The speaker id for a host notice the renderer could not attribute. Distinct
@@ -310,11 +314,13 @@ type ComposerHistoryBundle =
       readonly attachments: readonly ThreadAttachmentContent[];
       readonly content: null;
       readonly snapshot: ThreadComposerEditorSnapshot;
+      readonly uiState: readonly ComposerAttachmentUiState[];
     }
   | {
       readonly attachments: readonly ThreadAttachmentContent[];
       readonly content: readonly ThreadComposerDraftContent[];
       readonly snapshot: null;
+      readonly uiState: readonly ComposerAttachmentUiState[];
     };
 
 type ComposerHistoryResources = ComposerHistoryResourceRegistry<
@@ -786,9 +792,13 @@ export function ThreadView({
   const attachmentOperationTailRef = useRef<Promise<void>>(Promise.resolve());
   const attachmentOperationActivityRef = useRef(0);
   const attachmentLifecycleControllerRef = useRef<AbortController | null>(null);
-  const attachmentPreviewUrlsRef = useRef(new Map<string, string>());
-  const attachmentSourceKeysRef = useRef(new Map<string, string>());
-  const attachmentTextExcerptsRef = useRef(new Map<string, string>());
+  const attachmentUiStateRef = useRef<ComposerAttachmentUiStateRegistry | null>(null);
+  if (attachmentUiStateRef.current === null) {
+    attachmentUiStateRef.current = new ComposerAttachmentUiStateRegistry((previewUrl) => {
+      URL.revokeObjectURL(previewUrl);
+    });
+  }
+  const attachmentUiState = attachmentUiStateRef.current;
   const pendingPasteRequestsRef = useRef(new Map<string, PendingComposerPasteRequest>());
   const pastedTextOrdinalRef = useRef(0);
   const attachmentAdmissionEnabledRef = useRef(false);
@@ -2090,13 +2100,14 @@ export function ThreadView({
         releaseReplacedPasteAttachments(request);
       }
       pendingPasteRequestsRef.current.clear();
-      for (const previewUrl of attachmentPreviewUrlsRef.current.values()) URL.revokeObjectURL(previewUrl);
-      attachmentPreviewUrlsRef.current.clear();
-      attachmentSourceKeysRef.current.clear();
-      attachmentTextExcerptsRef.current.clear();
+      attachmentUiState.clear();
       pastedTextOrdinalRef.current = 0;
     };
-  }, [threadId]);
+  }, [attachmentUiState, threadId]);
+
+  useEffect(() => {
+    attachmentUiState.reconcileCanonical(canonicalThreadAttachmentIds(turns));
+  }, [attachmentUiState, turns]);
 
   useEffect(() => {
     if (!error) return undefined;
@@ -2181,6 +2192,7 @@ export function ThreadView({
       attachments: [...attachmentsRef.current],
       content: null,
       snapshot,
+      uiState: attachmentUiState.capture(attachmentsRef.current.map((attachment) => attachment.id)),
     };
   }
 
@@ -2192,6 +2204,7 @@ export function ThreadView({
     try {
       flushSync(() => {
         const nextAttachments = [...bundle.attachments];
+        attachmentUiState.mount(bundle.uiState);
         attachmentsRef.current = nextAttachments;
         setAttachments(nextAttachments);
         if (bundle.snapshot) editor.restore(bundle.snapshot);
@@ -2208,12 +2221,7 @@ export function ThreadView({
     for (const attachment of released) {
       if (releasedIds.has(attachment.id)) continue;
       releasedIds.add(attachment.id);
-      releaseAttachmentUiState(
-        attachment.id,
-        attachmentPreviewUrlsRef.current,
-        attachmentSourceKeysRef.current,
-        attachmentTextExcerptsRef.current,
-      );
+      attachmentUiState.releaseDraft(attachment.id);
     }
   }
 
@@ -2296,7 +2304,11 @@ export function ThreadView({
     const targetSlot = composerHistoryItemSlot(transition.entry.id);
     const retainedTarget = session.resources.take(targetSlot);
     const target = retainedTarget
-      ?? composerHistoryBundleFromContent(transition.entry.content, indexStore.getCurrent());
+      ?? composerHistoryBundleFromContent(
+        transition.entry.content,
+        indexStore.getCurrent(),
+        (attachmentId) => attachmentUiState.canonicalPreviewFor(attachmentId),
+      );
     const mounted = mountComposerBundle(target);
     if (!mounted) {
       if (retainedTarget) session.resources.set(targetSlot, retainedTarget);
@@ -2425,6 +2437,9 @@ export function ThreadView({
     updateAttachments((current) => current.filter((attachment) => !submittedAttachmentIds.has(attachment.id)));
     try {
       const acceptedTurn = await onSend(submittedContent, pendingSend.clientMessageId);
+      const acceptedAttachmentIds = acceptedTurn
+        ? canonicalThreadAttachmentIds([acceptedTurn])
+        : new Set<string>();
       const ourThread = pendingSend.threadId === threadId;
       if (acceptedTurn && ourThread) {
         // Which Turn the host made of this send. Usually the anchor has already
@@ -2448,12 +2463,13 @@ export function ThreadView({
           scheduleBottomPin();
         }
       }
-      for (const attachmentId of submittedAttachmentIds) releaseAttachmentUiState(
-        attachmentId,
-        attachmentPreviewUrlsRef.current,
-        attachmentSourceKeysRef.current,
-        attachmentTextExcerptsRef.current,
-      );
+      for (const attachmentId of submittedAttachmentIds) {
+        if (acceptedAttachmentIds.has(attachmentId)) {
+          attachmentUiState.rememberCanonicalPreview(attachmentId);
+        } else {
+          attachmentUiState.releaseDraft(attachmentId);
+        }
+      }
       pastedTextOrdinalRef.current = 0;
     } catch (sendError) {
       if (pendingSendScrollRef.current === pendingSend) {
@@ -2577,14 +2593,14 @@ export function ThreadView({
         discardPreparedAttachment(threadId, prepared);
         return;
       }
-      attachmentTextExcerptsRef.current.set(prepared.content.id, request.excerpt);
+      attachmentUiState.patch(prepared.content.id, { textExcerpt: request.excerpt });
       commitPreparedAttachments([prepared], { insertReferences: false });
       request.settling = true;
       if (!composerRef.current.settlePendingFileReference(requestId, prepared.reference)) {
         request.settling = false;
         updateAttachments((current) => current.filter((attachment) => attachment.id !== prepared.content.id));
-        attachmentTextExcerptsRef.current.delete(prepared.content.id);
-        discardPreparedAttachment(threadId, prepared);
+        attachmentUiState.releaseDraft(prepared.content.id);
+        discardManagedAttachment(threadId, prepared.content);
       }
     } catch {
       if (!controller.signal.aborted && composerRef.current?.hasPendingFileReference(requestId)) {
@@ -2643,12 +2659,7 @@ export function ThreadView({
         discardManagedAttachment(threadId, attachment);
         releasedResources.push(attachment);
       }
-      releaseAttachmentUiState(
-        attachment.id,
-        attachmentPreviewUrlsRef.current,
-        attachmentSourceKeysRef.current,
-        attachmentTextExcerptsRef.current,
-      );
+      attachmentUiState.releaseDraft(attachment.id);
     }
     request.replacedAttachments = [];
   }
@@ -2682,7 +2693,7 @@ export function ThreadView({
         if (signal.aborted) return;
         if (!result.canceled) {
           const next: PreparedComposerAttachment[] = [];
-          const existingKeys = currentAttachmentSourceKeys(attachmentsRef.current, attachmentSourceKeysRef.current);
+          const existingKeys = currentAttachmentSourceKeys(attachmentsRef.current, attachmentUiState.sourceKeys);
           let skippedDuplicates = 0;
           let skippedOverflow = result.skippedCount ?? 0;
           let skippedImageOverflow = 0;
@@ -2758,7 +2769,7 @@ export function ThreadView({
     }
     setError(null);
     const next: PreparedComposerAttachment[] = [];
-    const existingKeys = currentAttachmentSourceKeys(attachmentsRef.current, attachmentSourceKeysRef.current);
+    const existingKeys = currentAttachmentSourceKeys(attachmentsRef.current, attachmentUiState.sourceKeys);
     let skippedDuplicates = 0;
     let skippedOverflow = 0;
     let skippedImageOverflow = 0;
@@ -2853,8 +2864,10 @@ export function ThreadView({
   ) {
     if (incoming.length === 0) return;
     for (const attachment of incoming) {
-      attachmentSourceKeysRef.current.set(attachment.content.id, attachment.sourceKey);
-      if (attachment.previewUrl) attachmentPreviewUrlsRef.current.set(attachment.content.id, attachment.previewUrl);
+      attachmentUiState.patch(attachment.content.id, {
+        ...(attachment.previewUrl ? { previewUrl: attachment.previewUrl } : {}),
+        sourceKey: attachment.sourceKey,
+      });
     }
     updateAttachments((current) => [...current, ...incoming.map((attachment) => attachment.content)]);
     if (options.insertReferences !== false) {
@@ -2907,7 +2920,7 @@ export function ThreadView({
         thumbnailDataUrl: prepared.file.thumbnailDataUrl ?? file.thumbnailDataUrl,
       });
       if (signal.aborted) return null;
-      const existingKeys = currentAttachmentSourceKeys(attachmentsRef.current, attachmentSourceKeysRef.current);
+      const existingKeys = currentAttachmentSourceKeys(attachmentsRef.current, attachmentUiState.sourceKeys);
       if (existingKeys.has(attachment.sourceKey)) {
         setError(t.agent.composer.skippedDuplicates({ count: 1 }));
         return null;
@@ -2958,12 +2971,7 @@ export function ThreadView({
         ) {
           discardManagedAttachment(threadId, attachment);
         }
-        releaseAttachmentUiState(
-          attachment.id,
-          attachmentPreviewUrlsRef.current,
-          attachmentSourceKeysRef.current,
-          attachmentTextExcerptsRef.current,
-        );
+        attachmentUiState.releaseDraft(attachment.id);
       }
     }
     updateAttachments(() => retained);
@@ -3212,8 +3220,8 @@ export function ThreadView({
                 onRemoveAttachment={(attachmentId) => composerRef.current?.removeFileReferences([attachmentId])}
                 onRemovePending={(requestId) => composerRef.current?.removePendingFileReferences([requestId])}
                 pending={pendingPastes}
-                previewUrls={attachmentPreviewUrlsRef.current}
-                textExcerpts={attachmentTextExcerptsRef.current}
+                previewUrls={attachmentUiState.previewUrls}
+                textExcerpts={attachmentUiState.textExcerpts}
                 threadId={threadId}
               />
               <ThreadComposerEditor
@@ -4807,6 +4815,7 @@ function attachmentFromPickedFile(file: {
   };
   return {
     content,
+    ...(file.thumbnailDataUrl ? { previewUrl: file.thumbnailDataUrl } : {}),
     reference: attachmentToComposerReference(content, file),
     sourceKey: `path:${file.path}`,
   };
@@ -4976,19 +4985,6 @@ function discardPreparedAttachment(threadId: string, attachment: PreparedCompose
   if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
 }
 
-function releaseAttachmentUiState(
-  attachmentId: string,
-  previewUrls: Map<string, string>,
-  sourceKeys: Map<string, string>,
-  textExcerpts: Map<string, string>,
-): void {
-  const previewUrl = previewUrls.get(attachmentId);
-  if (previewUrl) URL.revokeObjectURL(previewUrl);
-  previewUrls.delete(attachmentId);
-  sourceKeys.delete(attachmentId);
-  textExcerpts.delete(attachmentId);
-}
-
 function duplicateAttachmentMessage(count: number, labels: Messages['agent']['composer']): string | null {
   return count > 0 ? labels.skippedDuplicates({ count }) : null;
 }
@@ -5052,8 +5048,10 @@ function pastedTextExcerpt(text: string): string {
 function composerHistoryBundleFromContent(
   content: readonly ThreadUserContent[],
   index: DocumentIndex,
+  canonicalPreviewFor: (attachmentId: string) => string | undefined,
 ): ComposerHistoryBundle {
   const attachments: ThreadAttachmentContent[] = [];
+  const uiState: ComposerAttachmentUiState[] = [];
   const draftContent = content.map((part): ThreadComposerDraftContent => {
     if (part.type === 'text') return { type: 'text', text: part.text };
     if (part.type === 'nodeReference') {
@@ -5066,14 +5064,33 @@ function composerHistoryBundleFromContent(
         },
       };
     }
+    const canonicalAttachmentId = part.id;
     const attachment: ThreadAttachmentContent = { ...part, id: crypto.randomUUID() };
+    const previewUrl = canonicalPreviewFor(canonicalAttachmentId);
     attachments.push(attachment);
+    if (previewUrl) uiState.push({ attachmentId: attachment.id, previewUrl });
     return {
       type: 'fileReference',
-      reference: attachmentToComposerReference(attachment),
+      reference: attachmentToComposerReference(
+        attachment,
+        previewUrl ? { thumbnailDataUrl: previewUrl } : undefined,
+      ),
     };
   });
-  return { attachments, content: draftContent, snapshot: null };
+  return { attachments, content: draftContent, snapshot: null, uiState };
+}
+
+function canonicalThreadAttachmentIds(turns: readonly Turn[]): Set<string> {
+  const attachmentIds = new Set<string>();
+  for (const turn of turns) {
+    for (const item of turn.items) {
+      if (item.type !== 'userMessage') continue;
+      for (const content of item.content) {
+        if (content.type === 'attachment') attachmentIds.add(content.id);
+      }
+    }
+  }
+  return attachmentIds;
 }
 
 function composerHistoryItemSlot(itemId: string): string {

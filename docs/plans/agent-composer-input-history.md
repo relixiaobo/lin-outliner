@@ -426,9 +426,11 @@ Preserve the exact ordered `ThreadUserContent[]` shape:
 - attachments retain canonical source and artifact metadata but receive fresh
   composer attachment IDs, so a recalled copy never aliases the original
   message-part identity; and
-- recalled attachment atoms and tray cards use the established generic
-  name/type/size presentation when renderer-only thumbnail or pasted-text
-  excerpt data is unavailable.
+- a successful send retains any already-admitted image preview as renderer-only
+  canonical-session UI state, so a recalled copy aliases that preview lease
+  under its fresh attachment ID without reading or copying source bytes. When
+  thumbnail or pasted-text excerpt data is unavailable, recalled atoms and tray
+  cards use the established generic name/type/size presentation.
 
 Canonical history does not persist renderer-only pasted-text excerpts. A
 recalled `Pasted*.txt` therefore degrades to the ordinary text/file tray card
@@ -477,6 +479,10 @@ visible-slot-only and are never moved into the retention registry. While a slot
 remains recoverable, preserve its renderer-only object URLs, source keys, and
 pasted-text excerpts. The tray's removal preview is interaction state rather
 than draft state and is cleared on every history swap instead of being restored.
+An accepted canonical attachment retains only its already-known preview lease
+for the lifetime of the mounted Thread view. Fresh recalled IDs share that lease;
+removing the canonical Item or the last draft alias revokes it, and navigation
+never invokes file preview or materialization code.
 
 When the session ends, release every inactive slot. Revoke its renderer-only UI
 state and request discard for managed content references with no surviving

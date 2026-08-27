@@ -1469,6 +1469,10 @@ transcript reload, and provider projection as structured values, producing only
 admission/send path with fresh draft attachment identities. Missing or unreadable
 managed content produces the established recoverable composer error and restores the
 complete draft rather than crashing navigation or dropping one part.
+When the mounted renderer already admitted an image preview, a successful send retains
+that preview lease against the accepted canonical attachment. Recall aliases the same
+lease under the fresh draft identity without rereading or copying source bytes; an
+attachment whose thumbnail is unavailable keeps the generic name/type/size card.
 
 Picker, paste, drop, browser-file, mention, and generated-paste admissions remain in the
 single serialized queue and never move into a history slot. While any such admission is
@@ -1479,7 +1483,9 @@ visible slot and pending admissions. Navigation creates no storage, copies no by
 and never interprets the current handle's digest-shaped field. Session cleanup asks the
 existing main-process resource authority to discard only when no visible or hidden
 session link remains; canonical Thread links are checked independently by that authority,
-so releasing one slot cannot invalidate a surviving Item or another slot.
+so releasing one slot cannot invalidate a surviving Item or another slot. Renderer-only
+preview leases are revoked separately when neither a canonical attachment nor any draft
+slot retains them.
 
 Typing `/` opens the established composer command menu. It keeps `/compact` as
 the default entry, followed by `/clear` and `/new`, then appends the current
