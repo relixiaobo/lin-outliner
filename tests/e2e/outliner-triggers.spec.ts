@@ -23,6 +23,29 @@ async function todayChildren(page: import('@playwright/test').Page) {
   return projection.nodes.find((node) => node.id === ids.today)?.children ?? [];
 }
 
+async function appliedOperations(page: import('@playwright/test').Page, fromCall = 0) {
+  const calls = (await commandCalls(page)).slice(fromCall);
+  return calls.flatMap((call) => {
+    const input = call.args as {
+      diff?: { normalizedChangeSet?: { operations?: Array<Record<string, unknown>> } };
+      changeSet?: { operations?: Array<Record<string, unknown>> };
+    };
+    if (call.cmd === 'outline/apply') return input.diff?.normalizedChangeSet?.operations ?? [];
+    if (call.cmd === 'outline/commit') return input.changeSet?.operations ?? [];
+    return [];
+  });
+}
+
+async function appliedInstructions(page: import('@playwright/test').Page, fromCall = 0) {
+  return (await appliedOperations(page, fromCall)).flatMap((operation) => (
+    Array.isArray(operation.changes) ? operation.changes as Array<Record<string, unknown>> : []
+  ));
+}
+
+async function appliedTextPatchCount(page: import('@playwright/test').Page) {
+  return (await appliedInstructions(page)).filter((instruction) => instruction.kind === 'text-patch').length;
+}
+
 async function fieldSeparatorOpacity(
   page: import('@playwright/test').Page,
   fieldId: string,
@@ -193,44 +216,43 @@ async function pasteClipboardFile(
   }, file);
 }
 
-async function delayMockCommands(
+async function delayMockApply(
   page: import('@playwright/test').Page,
-  delayedCommands: string[],
+  matches: { op: string; instructionKind?: string },
   delayMs = 160,
 ) {
-  await page.evaluate(({ delayedCommands, delayMs }) => {
+  await page.evaluate(({ matches, delayMs }) => {
     const win = window as unknown as {
-      lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+      lin?: { outline?: { request: <T>(request: { command: string; input: unknown }) => Promise<T> } };
     };
-    const originalInvoke = win.lin?.invoke;
-    if (!win.lin || !originalInvoke) return;
-    const delayed = new Set(delayedCommands);
-    win.lin.invoke = async <T,>(cmd: string, args?: Record<string, unknown>) => {
-      if (delayed.has(cmd)) {
+    const outline = win.lin?.outline;
+    const originalRequest = outline?.request;
+    if (!outline || !originalRequest) return;
+    outline.request = async <T,>(request: { command: string; input: unknown }) => {
+      const input = request.input as {
+        diff?: { normalizedChangeSet?: { operations?: Array<Record<string, unknown>> } };
+        changeSet?: { operations?: Array<Record<string, unknown>> };
+      };
+      const operations = request.command === 'apply'
+        ? input.diff?.normalizedChangeSet?.operations ?? []
+        : request.command === 'commit' ? input.changeSet?.operations ?? [] : [];
+      const matched = operations.some((operation) => (
+        operation.op === matches.op
+        && (!matches.instructionKind || (
+          Array.isArray(operation.changes)
+          && operation.changes.some((change) => (
+            typeof change === 'object'
+            && change !== null
+            && (change as Record<string, unknown>).kind === matches.instructionKind
+          ))
+        ))
+      ));
+      if (matched) {
         await new Promise((resolve) => window.setTimeout(resolve, delayMs));
       }
-      return originalInvoke<T>(cmd, args);
+      return originalRequest<T>(request);
     };
-  }, { delayedCommands, delayMs });
-}
-
-async function rejectEmptyInlineFieldNames(page: import('@playwright/test').Page) {
-  await page.evaluate(() => {
-    const win = window as unknown as {
-      lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
-    };
-    const originalInvoke = win.lin?.invoke;
-    if (!win.lin || !originalInvoke) return;
-    win.lin.invoke = async <T,>(cmd: string, args?: Record<string, unknown>) => {
-      if (
-        (cmd === 'create_inline_field' || cmd === 'create_inline_field_after_node')
-        && !String(args?.name ?? '').trim()
-      ) {
-        throw new Error("Error invoking remote method 'lin:invoke': CoreError: invalid operation: field name cannot be empty");
-      }
-      return originalInvoke<T>(cmd, args);
-    };
-  });
+  }, { matches, delayMs });
 }
 
 test.describe('outliner trigger parity', () => {
@@ -267,10 +289,12 @@ test.describe('outliner trigger parity', () => {
     await expect.poll(async () => (await nodeById(page, createdRowId!))?.content.text).toBe('Task');
     await expect(page.locator(`[data-trailing-parent-id="${ids.today}"]`)).toBeVisible();
     expect(await todayChildren(page)).toEqual([...beforeChildren, createdRowId]);
-    const calls = (await commandCalls(page)).slice(beforeCalls);
-    expect(calls.map((call) => call.cmd)).toContain('create_tagged_node');
-    expect(calls.map((call) => call.cmd)).not.toContain('create_node');
-    expect(calls.map((call) => call.cmd)).not.toContain('apply_tag');
+    const operations = await appliedOperations(page, beforeCalls);
+    expect(operations.filter((operation) => operation.op === 'create')).toHaveLength(1);
+    expect(operations[0]).toMatchObject({
+      op: 'create',
+      nodes: [expect.objectContaining({ tags: [ids.projectTag] })],
+    });
   });
 
   test('# in trailing input can create and apply a new tag atomically', async ({ page }) => {
@@ -291,12 +315,12 @@ test.describe('outliner trigger parity', () => {
     expect(createdRowId).toBeTruthy();
     await expect(row(page, createdRowId!).locator('.tag-badge-label')).toContainText('brand-new-tag');
     await expect(rowEditor(page, createdRowId!)).toBeFocused();
-    const calls = (await commandCalls(page)).slice(beforeCalls);
-    expect(calls.map((call) => call.cmd)).toEqual(['create_tag_and_tagged_node']);
+    expect((await appliedOperations(page, beforeCalls)).map((operation) => operation.op))
+      .toEqual(['ensure', 'create', 'update']);
   });
 
   test('# in trailing input keeps the draft visible until the tagged node materializes', async ({ page }) => {
-    await delayMockCommands(page, ['create_tagged_node'], 800);
+    await delayMockApply(page, { op: 'create' }, 800);
     const beforeChildren = await todayChildren(page);
 
     await trailingEditor(page).click();
@@ -380,24 +404,28 @@ test.describe('outliner trigger parity', () => {
       textDecorationLine: 'none',
     });
 
-    let calls = (await commandCalls(page)).slice(beforeCalls).map((call) => call.cmd);
-    expect(calls).toContain('create_node');
-    expect(calls).toContain('add_reference_conversion');
-    expect(calls).not.toContain('add_reference');
-    expect(calls).not.toContain('convert_reference_to_inline_node');
-    expect(calls).not.toContain('create_rich_text_node');
+    let referenceCreates = (await appliedOperations(page, beforeCalls)).filter((operation) => (
+      operation.op === 'create'
+      && (operation.nodes as Array<{ content?: { inlineRefs?: unknown[] } }> | undefined)
+        ?.some((draft) => (draft.content?.inlineRefs?.length ?? 0) === 1)
+    ));
+    expect(referenceCreates).toHaveLength(1);
 
     await page.keyboard.type('!');
     await expect.poll(async () => nodeById(page, createdRowId!)).toMatchObject({
       content: {
         text: '!',
-        inlineRefs: [e2eNodeInlineRef(0, zetaId, 'Zeta')],
+        inlineRefs: [e2eNodeInlineRef(0, zetaId)],
       },
     });
     await expect(rowEditor(page, createdRowId!)).toBeFocused();
 
-    calls = (await commandCalls(page)).slice(beforeCalls).map((call) => call.cmd);
-    expect(calls.filter((cmd) => cmd === 'add_reference_conversion')).toHaveLength(1);
+    referenceCreates = (await appliedOperations(page, beforeCalls)).filter((operation) => (
+      operation.op === 'create'
+      && (operation.nodes as Array<{ content?: { inlineRefs?: unknown[] } }> | undefined)
+        ?.some((draft) => (draft.content?.inlineRefs?.length ?? 0) === 1)
+    ));
+    expect(referenceCreates).toHaveLength(1);
   });
 
   test('@ suggestions exclude nodes moved to Trash', async ({ page }) => {
@@ -470,8 +498,10 @@ test.describe('outliner trigger parity', () => {
     await expect(rowBody(page, restoredReferenceId)).toHaveClass(/ref-click-selected/);
     await expect(rowBody(page, restoredReferenceId)).not.toHaveClass(/ref-converting/);
     await expect(rowEditor(page, restoredReferenceId)).not.toBeFocused();
-    const calls = (await commandCalls(page)).slice(beforeCalls).map((call) => call.cmd);
-    expect(calls).toContain('restore_inline_reference_node_to_reference');
+    expect(await appliedInstructions(page, beforeCalls)).toContainEqual(expect.objectContaining({
+      kind: 'reference',
+      action: 'restore',
+    }));
   });
 
   test('@ in trailing input keeps the draft visible until the conversion row materializes', async ({ page }) => {
@@ -480,7 +510,7 @@ test.describe('outliner trigger parity', () => {
       index: null,
       text: 'RemoteTarget',
     });
-    await delayMockCommands(page, ['add_reference_conversion'], 800);
+    await delayMockApply(page, { op: 'create' }, 800);
     const beforeChildren = await todayChildren(page);
     const beforeCalls = (await commandCalls(page)).length;
 
@@ -514,11 +544,8 @@ test.describe('outliner trigger parity', () => {
     await expect(rowEditor(page, createdRowId!)).toBeFocused();
     await expect(row(page, createdRowId!)).toContainText('RemoteTarget');
 
-    const calls = (await commandCalls(page)).slice(beforeCalls).map((call) => call.cmd);
-    expect(calls).toContain('add_reference_conversion');
-    expect(calls).not.toContain('add_reference');
-    expect(calls).not.toContain('convert_reference_to_inline_node');
-    expect(calls).not.toContain('create_rich_text_node');
+    expect((await appliedOperations(page, beforeCalls)).filter((operation) => operation.op === 'create'))
+      .toHaveLength(1);
   });
 
   test('@ existing different-parent reference in trailing input can continue as inline text', async ({ page }) => {
@@ -542,7 +569,7 @@ test.describe('outliner trigger parity', () => {
     await expect.poll(async () => nodeById(page, createdRowId!)).toMatchObject({
       content: {
         text: 'test',
-        inlineRefs: [e2eNodeInlineRef(0, targetId!, 'RemoteTarget')],
+        inlineRefs: [e2eNodeInlineRef(0, targetId!)],
       },
     });
     await expect.poll(async () => (await nodeById(page, createdRowId!))?.type ?? null).toBe(null);
@@ -619,11 +646,12 @@ test.describe('outliner trigger parity', () => {
     await expect(rowBody(page, inlineRowId)).toHaveClass(/ref-converting/);
     await expect(row(page, inlineRowId).locator('.row-bullet-shape.reference')).toHaveCount(1);
 
-    let calls = await commandCalls(page);
-    expect(calls.map((call) => call.cmd)).toContain('replace_node_with_reference_conversion');
-    expect(calls.map((call) => call.cmd)).not.toContain('replace_node_with_reference');
-    expect(calls.map((call) => call.cmd)).not.toContain('convert_reference_to_inline_node');
-    expect(calls.map((call) => call.cmd)).not.toContain('replace_node_with_inline_reference');
+    let replacementCreates = (await appliedOperations(page)).filter((operation) => (
+      operation.op === 'create'
+      && (operation.nodes as Array<{ content?: { inlineRefs?: unknown[] } }> | undefined)
+        ?.some((draft) => (draft.content?.inlineRefs?.length ?? 0) === 1)
+    ));
+    expect(replacementCreates).toHaveLength(1);
 
     await page.keyboard.type('!');
     await expect(rowEditor(page, inlineRowId)).toBeFocused();
@@ -636,14 +664,15 @@ test.describe('outliner trigger parity', () => {
       return node?.content;
     }).toMatchObject({
       text: '!',
-      inlineRefs: [e2eNodeInlineRef(0, zetaId, 'Zeta')],
+      inlineRefs: [e2eNodeInlineRef(0, zetaId)],
     });
 
-    calls = await commandCalls(page);
-    expect(calls.map((call) => call.cmd)).toContain('replace_node_with_reference_conversion');
-    expect(calls.map((call) => call.cmd)).not.toContain('replace_node_with_reference');
-    expect(calls.map((call) => call.cmd)).not.toContain('convert_reference_to_inline_node');
-    expect(calls.map((call) => call.cmd)).not.toContain('replace_node_with_inline_reference');
+    replacementCreates = (await appliedOperations(page)).filter((operation) => (
+      operation.op === 'create'
+      && (operation.nodes as Array<{ content?: { inlineRefs?: unknown[] } }> | undefined)
+        ?.some((draft) => (draft.content?.inlineRefs?.length ?? 0) === 1)
+    ));
+    expect(replacementCreates).toHaveLength(1);
   });
 
   test('@ reference conversion restores the reference node when continued text is deleted', async ({ page }) => {
@@ -679,7 +708,7 @@ test.describe('outliner trigger parity', () => {
     await expect.poll(async () => nodeById(page, inlineRowId)).toMatchObject({
       content: {
         text: '',
-        inlineRefs: [e2eNodeInlineRef(0, targetId!, 'RemoteTarget')],
+        inlineRefs: [e2eNodeInlineRef(0, targetId!)],
       },
     });
     await expect(rowEditor(page, inlineRowId)).toBeFocused();
@@ -704,13 +733,11 @@ test.describe('outliner trigger parity', () => {
     await expect(rowBody(page, restoredReferenceId)).not.toHaveClass(/ref-converting/);
     await expect(rowEditor(page, restoredReferenceId)).not.toBeFocused();
 
-    const calls = (await commandCalls(page)).slice(beforeCalls).map((call) => call.cmd);
-    expect(calls).toContain('add_reference_conversion');
-    expect(calls).not.toContain('add_reference');
-    expect(calls).not.toContain('convert_reference_to_inline_node');
-    expect(calls).not.toContain('create_rich_text_node');
-    expect(calls).toContain('restore_inline_reference_node_to_reference');
-    expect(calls.filter((cmd) => cmd === 'restore_inline_reference_node_to_reference')).toHaveLength(1);
+    expect((await appliedOperations(page, beforeCalls)).filter((operation) => operation.op === 'create'))
+      .toHaveLength(1);
+    expect((await appliedInstructions(page, beforeCalls)).filter((instruction) => (
+      instruction.kind === 'reference' && instruction.action === 'restore'
+    ))).toHaveLength(1);
   });
 
   test('@ existing different-parent reference keeps continued typing on the inline conversion row', async ({ page }) => {
@@ -748,7 +775,7 @@ test.describe('outliner trigger parity', () => {
     await expect.poll(async () => nodeById(page, inlineRowId)).toMatchObject({
       content: {
         text: 'test',
-        inlineRefs: [e2eNodeInlineRef(0, targetId!, 'RemoteTarget')],
+        inlineRefs: [e2eNodeInlineRef(0, targetId!)],
       },
     });
     await expect(rowEditor(page, inlineRowId)).toBeFocused();
@@ -763,7 +790,7 @@ test.describe('outliner trigger parity', () => {
     const projectionWithTarget = await e2eProjection(page);
     const targetId = projectionWithTarget.nodes.find((node) => node.content.text === 'RemoteTarget')?.id;
     expect(targetId).toBeTruthy();
-    await delayMockCommands(page, ['add_reference_conversion'], 220);
+    await delayMockApply(page, { op: 'create' }, 220);
 
     await trailingEditor(page).click();
     await page.keyboard.type('@RemoteTarget');
@@ -781,18 +808,16 @@ test.describe('outliner trigger parity', () => {
     await expect(rowEditor(page, inlineRowId)).toBeFocused();
 
     const editor = rowEditor(page, inlineRowId);
-    const patchCountBeforeComposition = (await commandCalls(page))
-      .filter((call) => call.cmd === 'apply_node_text_patch').length;
+    const patchCountBeforeComposition = await appliedTextPatchCount(page);
     await dispatchCompositionEvent(editor, 'compositionstart');
     await page.keyboard.insertText('嗯么');
-    await expect.poll(async () => (await commandCalls(page))
-      .filter((call) => call.cmd === 'apply_node_text_patch').length).toBe(patchCountBeforeComposition);
+    await expect.poll(() => appliedTextPatchCount(page)).toBe(patchCountBeforeComposition);
     await dispatchCompositionEvent(editor, 'compositionend', '嗯么');
 
     await expect.poll(async () => nodeById(page, inlineRowId)).toMatchObject({
       content: {
         text: '嗯么',
-        inlineRefs: [e2eNodeInlineRef(0, targetId!, 'RemoteTarget')],
+        inlineRefs: [e2eNodeInlineRef(0, targetId!)],
       },
     });
     await expect(rowEditor(page, inlineRowId)).toBeFocused();
@@ -823,10 +848,9 @@ test.describe('outliner trigger parity', () => {
     });
     await expect(rowEditor(page, emptyRowId!)).toBeFocused();
 
-    const calls = await commandCalls(page);
-    expect(calls.map((call) => call.cmd)).not.toContain('replace_node_with_reference');
-    expect(calls.map((call) => call.cmd)).not.toContain('replace_node_with_inline_reference');
-    expect(calls.map((call) => call.cmd)).not.toContain('convert_reference_to_inline_node');
+    expect((await appliedInstructions(page)).some((instruction) => (
+      instruction.kind === 'reference' && instruction.action === 'inline'
+    ))).toBe(false);
   });
 
   test('@ same-parent reference keeps IME text after the inline reference', async ({ page }) => {
@@ -844,12 +868,10 @@ test.describe('outliner trigger parity', () => {
     await chooseSelectedReferenceSuggestion(page);
     await expect(editor).toBeFocused();
 
-    const patchCountBeforeComposition = (await commandCalls(page))
-      .filter((call) => call.cmd === 'apply_node_text_patch').length;
+    const patchCountBeforeComposition = await appliedTextPatchCount(page);
     await dispatchCompositionEvent(editor, 'compositionstart');
     await page.keyboard.insertText('你好');
-    await expect.poll(async () => (await commandCalls(page))
-      .filter((call) => call.cmd === 'apply_node_text_patch').length).toBe(patchCountBeforeComposition);
+    await expect.poll(() => appliedTextPatchCount(page)).toBe(patchCountBeforeComposition);
     await dispatchCompositionEvent(editor, 'compositionend', '你好');
 
     await expect.poll(async () => nodeById(page, ids.alpha)).toMatchObject({
@@ -901,10 +923,9 @@ test.describe('outliner trigger parity', () => {
 
     await page.keyboard.press('Enter');
 
-    await expect.poll(async () => {
-      const calls = await commandCalls(page);
-      return calls.some((call) => call.cmd === 'create_inline_field');
-    }).toBe(true);
+    await expect.poll(async () => (await appliedInstructions(page)).some((instruction) => (
+      instruction.kind === 'field' && instruction.action === 'define'
+    ))).toBe(true);
     await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
   });
 
@@ -1019,10 +1040,9 @@ test.describe('outliner trigger parity', () => {
     await trailingEditor(page).click();
     await page.keyboard.type('>');
 
-    await expect.poll(async () => {
-      const calls = await commandCalls(page);
-      return calls.some((call) => call.cmd === 'create_inline_field');
-    }).toBe(true);
+    await expect.poll(async () => (await appliedInstructions(page)).some((instruction) => (
+      instruction.kind === 'field' && instruction.action === 'define'
+    ))).toBe(true);
     const fieldId = await lastTodayChildId(page);
     expect(fieldId).toBeTruthy();
     await expect.poll(async () => {
@@ -1460,41 +1480,6 @@ test.describe('outliner trigger parity', () => {
     await expect(row(page, nestedFieldId).locator('.field-name-input')).toBeFocused();
   });
 
-  test('> in field value falls back cleanly when the backend still rejects empty field names', async ({ page }) => {
-    await rejectEmptyInlineFieldNames(page);
-
-    await trailingEditor(page).click();
-    await page.keyboard.type('>');
-
-    const fieldId = await lastTodayChildId(page);
-    if (!fieldId) throw new Error('missing created field');
-    const valueEditor = trailingEditor(page, fieldId);
-    await expect(valueEditor).toBeVisible();
-    await valueEditor.click();
-    await page.keyboard.type('>');
-
-    let nestedFieldId: string | undefined;
-    await expect.poll(async () => {
-      const projection = await e2eProjection(page);
-      const fieldEntry = projection.nodes.find((node) => node.id === fieldId);
-      nestedFieldId = fieldEntry?.children.at(-1);
-      const nestedField = projection.nodes.find((node) => node.id === nestedFieldId);
-      const nestedFieldDef = projection.nodes.find((node) => node.id === nestedField?.fieldDefId);
-      return {
-        fieldDefName: nestedFieldDef?.content.text,
-        nestedParentId: nestedField?.parentId,
-        nestedType: nestedField?.type,
-      };
-    }).toEqual({
-      fieldDefName: '',
-      nestedParentId: fieldId,
-      nestedType: 'fieldEntry',
-    });
-    if (!nestedFieldId) throw new Error('missing nested field');
-    await expect(row(page, nestedFieldId).locator('.field-name-input')).toBeFocused();
-    await expect(page.locator('.action-notice')).toHaveCount(0);
-  });
-
   test('> in an existing field value row converts that value row into a nested field', async ({ page }) => {
     await trailingEditor(page).click();
     await page.keyboard.type('>');
@@ -1884,17 +1869,19 @@ test.describe('outliner plain field reference values', () => {
       };
     }).toEqual({ children: 1, type: 'reference', targetId: ids.alpha });
 
-    const calls = await commandCalls(page);
-    expect(calls.filter((call) => (
-      call.cmd === 'update_field_slot'
-      && call.args.ownerId === ids.today
-      && call.args.fieldDefId === ids.referencesField
-      && call.args.entryId === ids.referencesEntry
-      && call.args.kind === 'appendReference'
-      && call.args.targetId === ids.alpha
-    ))).toHaveLength(1);
-    expect(calls.some((call) => call.cmd === 'add_reference_conversion')).toBe(false);
-    expect(calls.some((call) => call.cmd === 'restore_inline_reference_node_to_reference')).toBe(false);
+    const slotInstructions = (await appliedInstructions(page)).filter((instruction) => (
+      instruction.kind === 'field-slot'
+      && (instruction.mutation as Record<string, unknown> | undefined)?.action === 'append-reference'
+    ));
+    expect(slotInstructions).toHaveLength(1);
+    expect(slotInstructions[0]).toMatchObject({
+      field: { target: { selector: { by: 'id', id: ids.referencesField } } },
+      mutation: {
+        action: 'append-reference',
+        entryId: ids.referencesEntry,
+        target: { target: { selector: { by: 'id', id: ids.alpha } } },
+      },
+    });
   });
 
   test('plain field stores an inline reference inside text', async ({ page }) => {
@@ -1904,18 +1891,20 @@ test.describe('outliner plain field reference values', () => {
     await expect(listbox).toBeVisible();
     await listbox.getByRole('option', { name: 'Beta', exact: true }).click();
 
-    await expect.poll(async () => (await commandCalls(page)).filter((call) => (
-      call.cmd === 'update_field_slot'
-      && call.args.ownerId === ids.today
-      && call.args.fieldDefId === ids.referencesField
-    )).map((call) => ({
-      entryId: call.args.entryId,
-      kind: call.args.kind,
-      nodes: call.args.nodes,
-    }))).toEqual([
+    await expect.poll(async () => (await appliedInstructions(page)).filter((instruction) => (
+      instruction.kind === 'field-slot'
+      && (instruction.mutation as Record<string, unknown> | undefined)?.action === 'append-nodes'
+    )).map((instruction) => {
+      const mutation = instruction.mutation as Record<string, unknown>;
+      return {
+        entryId: mutation.entryId,
+        kind: mutation.action,
+        nodes: mutation.nodes,
+      };
+    })).toEqual([
       {
         entryId: ids.referencesEntry,
-        kind: 'appendNodes',
+        kind: 'append-nodes',
         nodes: [{
           children: [],
           content: {
@@ -1929,7 +1918,6 @@ test.describe('outliner plain field reference values', () => {
           },
         }],
       },
-      { entryId: ids.referencesEntry, kind: 'commit', nodes: undefined },
     ]);
 
     await expect.poll(async () => {
@@ -2131,11 +2119,17 @@ test.describe('tag-projected field slot interactions', () => {
       codeId = code?.id ?? '';
       return codeId;
     }).not.toBe('');
+    const codeMutation = (await appliedInstructions(page)).find((instruction) => (
+      instruction.kind === 'field-slot'
+      && (instruction.mutation as Record<string, unknown> | undefined)?.action === 'append-nodes'
+      && (instruction.mutation as Record<string, unknown> | undefined)?.id === codeId
+    ));
+    expect(codeMutation).toBeTruthy();
     await expect(row(page, codeId).locator('.code-block-textarea')).toBeFocused();
 
-    const calls = await commandCalls(page);
-    expect(calls.filter((call) => call.cmd === 'update_field_slot').map((call) => call.args.kind))
-      .toEqual(expect.arrayContaining(['appendField', 'appendNodes']));
+    expect((await appliedInstructions(page)).filter((instruction) => instruction.kind === 'field-slot')
+      .map((instruction) => (instruction.mutation as Record<string, unknown>).action))
+      .toEqual(expect.arrayContaining(['append-field', 'append-nodes']));
   });
 
   test('reference and option picks focus the trailing draft under the materialized entry', async ({ page }) => {
@@ -2151,15 +2145,17 @@ test.describe('tag-projected field slot interactions', () => {
       statusEntryId = await storedFieldEntryId(page, ids.alpha, ids.statusField) ?? '';
       return statusEntryId;
     }).not.toBe('');
-    expect(await commandCalls(page)).toContainEqual(expect.objectContaining({
-      cmd: 'update_field_slot',
-      args: expect.objectContaining({
-        fieldDefId: ids.statusField,
-        kind: 'appendReference',
-        ownerId: ids.alpha,
-        targetId: ids.beta,
-      }),
-    }));
+    expect((await appliedInstructions(page)).some((instruction) => {
+      const field = instruction.field as { target?: { selector?: { id?: string } } } | undefined;
+      const mutation = instruction.mutation as {
+        action?: string;
+        target?: { target?: { selector?: { id?: string } } };
+      } | undefined;
+      return instruction.kind === 'field-slot'
+        && field?.target?.selector?.id === ids.statusField
+        && mutation?.action === 'append-reference'
+        && mutation.target?.target?.selector?.id === ids.beta;
+    })).toBe(true);
     await expect(trailingEditor(page, statusEntryId)).toBeFocused();
 
     const betaSlot = await projectFieldFromTag(page, ids.beta, ids.priorityField, 'options');
@@ -2186,10 +2182,24 @@ test.describe('tag-projected field slot interactions', () => {
       text: 'mock png bytes',
     });
 
+    let alphaEntryId = '';
     await expect.poll(async () => {
-      const entryId = await storedFieldEntryId(page, ids.alpha, ids.statusField);
+      alphaEntryId = await storedFieldEntryId(page, ids.alpha, ids.statusField) ?? '';
+      return alphaEntryId;
+    }).not.toBe('');
+    await expect.poll(async () => (await appliedOperations(page)).filter((operation) => (
+      operation.op === 'create'
+      && (operation.placement as { parent?: { target?: { selector?: { by?: string; id?: string } } } } | undefined)
+        ?.parent?.target?.selector?.by === 'id'
+      && (operation.placement as { parent?: { target?: { selector?: { id?: string } } } } | undefined)
+        ?.parent?.target?.selector?.id === alphaEntryId
+      && (operation.nodes as Array<Record<string, unknown>> | undefined)
+        ?.some((draft) => draft.type === 'image')
+    )).length).toBe(1);
+
+    await expect.poll(async () => {
       const projection = await e2eProjection(page);
-      const entry = projection.nodes.find((node) => node.id === entryId);
+      const entry = projection.nodes.find((node) => node.id === alphaEntryId);
       return (entry?.children ?? []).map((childId) => {
         const child = projection.nodes.find((node) => node.id === childId);
         return { text: child?.content.text, type: child?.type ?? 'content' };
@@ -2208,10 +2218,24 @@ test.describe('tag-projected field slot interactions', () => {
       text: '%PDF mock report',
     });
 
+    let betaEntryId = '';
     await expect.poll(async () => {
-      const entryId = await storedFieldEntryId(page, ids.beta, ids.statusField);
+      betaEntryId = await storedFieldEntryId(page, ids.beta, ids.statusField) ?? '';
+      return betaEntryId;
+    }).not.toBe('');
+    await expect.poll(async () => (await appliedOperations(page)).filter((operation) => (
+      operation.op === 'create'
+      && (operation.placement as { parent?: { target?: { selector?: { by?: string; id?: string } } } } | undefined)
+        ?.parent?.target?.selector?.by === 'id'
+      && (operation.placement as { parent?: { target?: { selector?: { id?: string } } } } | undefined)
+        ?.parent?.target?.selector?.id === betaEntryId
+      && (operation.nodes as Array<Record<string, unknown>> | undefined)
+        ?.some((draft) => draft.type === 'attachment')
+    )).length).toBe(1);
+
+    await expect.poll(async () => {
       const projection = await e2eProjection(page);
-      const entry = projection.nodes.find((node) => node.id === entryId);
+      const entry = projection.nodes.find((node) => node.id === betaEntryId);
       return (entry?.children ?? []).map((childId) => {
         const child = projection.nodes.find((node) => node.id === childId);
         return { text: child?.content.text, type: child?.type ?? 'content' };

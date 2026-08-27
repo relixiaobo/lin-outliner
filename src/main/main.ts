@@ -7,9 +7,17 @@ import { mkdir, open, readdir, readFile, realpath, stat, writeFile } from 'node:
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pathToFileURL } from 'node:url';
-import { DocumentService } from './documentService';
+import { OutlineClientSupervisor, type OutlineRuntimeLaunch } from '../outline/client';
+import { DesktopOutlineClient, registerDesktopOutlineIpc } from './outlineClient';
+import { OutlineDocumentService } from './outlineDocumentService';
+import { runOutlineActionCommand } from './outlineActionCommands';
 import { AppQuitCoordinator, type QuitDecision } from './appQuitCoordinator';
-import { AssetService, mimeTypeForFilename, sniffMimeType } from './assetService';
+import {
+  mimeTypeForAssetFilename as mimeTypeForFilename,
+  sniffAssetMimeType as sniffMimeType,
+} from '../core/assetMetadata';
+import { OutlineDesktopAssetService } from './outlineDesktopAssetService';
+import { configureOutlineCliRuntime } from './outlineRuntime';
 import { ThreadService } from './agent/ThreadService';
 import { resolveRendererThreadStartDefaults } from './agent/rendererThreadStartDefaults';
 import { gitOutput } from './agent/context/AgentStartupContext';
@@ -40,6 +48,7 @@ import { Mutex } from './agent/Mutex';
 import {
   AgentSkillRuntime,
   expandSkillDirectory,
+  isolatedSkillShellContext,
   resolvePreloadedSkillInvocations,
   resolveUserSkillInvocation,
 } from './agent/capabilities/agentSkills';
@@ -103,10 +112,7 @@ import { ManagedSkillStore } from './managedSkillStore';
 import { DEFAULT_MANAGED_SKILLS } from './managedSkillDefaults';
 import { BROWSER_PILOT_MANAGED_SKILL_ID, BrowserPilotHost } from './browserPilotHost';
 import { ManagedSkillShellEnvironmentRegistry } from './managedSkillShellEnvironment';
-import { AgentImportService } from './agent/capabilities/agentImportService';
-import { AgentImportApiServer } from './agent/capabilities/agentImportApi';
-import { configureTenonImportRuntime } from './tenonImportRuntime';
-import { createTenonImportShellEnvironmentProvider } from './tenonImportShellEnvironment';
+import { createOutlineAgentShellEnvironmentProvider } from './outlineAgentShellEnvironment';
 import { isRendererPermissionAllowed } from './rendererPermissions';
 import {
   clearUrlPreviewSessionData,
@@ -161,7 +167,6 @@ import { setBoundedMapEntry } from './boundedMap';
 import { LocalFilePreviewStreamRegistry } from './localFilePreviewStream';
 import {
   LIN_AGENT_OAUTH_EVENT_CHANNEL,
-  LIN_DOCUMENT_EVENT_CHANNEL,
   DAILY_NOTES_ID,
   TRASH_ID,
   type AgentCapabilityCatalog,
@@ -169,7 +174,6 @@ import {
   type AgentProfileDraft,
   type AgentRoleDraft,
   type AssetIngestInput,
-  type CommandResult,
   type NodeProjection,
   type ProjectionUpdate,
 } from '../core/types';
@@ -215,11 +219,9 @@ import {
 import {
   isAgentCommand,
   isAssetCommand,
-  isDocumentCommand,
   isPreviewCommand,
   type AgentCommand,
   type AssetCommand,
-  type DocumentCommand,
   type PreviewCommand,
 } from '../core/commands';
 import { oauthLoginManager } from './agent/capabilities/agentOAuthManager';
@@ -443,10 +445,50 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const APP_ICON_PNG_PATH = app.isPackaged
   ? join(process.resourcesPath, 'icon.png')
   : join(__dirname, '../../build/icon.png');
-const documentService = new DocumentService();
+const outlineRuntimeRoot = join(resolvedUserDataDir, 'outline-runtime');
+const outlineContentRoot = join(resolvedUserDataDir, 'content');
+const outlineClientSupervisor = new OutlineClientSupervisor({
+  root: outlineRuntimeRoot,
+  contentRoot: outlineContentRoot,
+  launch: desktopOutlineRuntimeLaunch(outlineRuntimeRoot, outlineContentRoot),
+  origin: 'desktop',
+});
+const desktopOutlineClient = new DesktopOutlineClient({
+  connect: () => outlineClientSupervisor.connect(),
+});
+const outlineDocumentService = new OutlineDocumentService(outlineClientSupervisor);
+configureOutlineCliRuntime({
+  isPackaged: app.isPackaged,
+  moduleDir: __dirname,
+  resourcesPath: process.resourcesPath,
+  processExecPath: process.execPath,
+});
+
+function desktopOutlineRuntimeLaunch(root: string, contentRoot: string): OutlineRuntimeLaunch {
+  const configuredEntry = process.env.TENON_OUTLINE_RUNTIME_ENTRY;
+  if (configuredEntry) {
+    return {
+      command: process.env.TENON_OUTLINE_RUNTIME_COMMAND ?? process.execPath,
+      args: [configuredEntry, '--root', root, '--content-root', contentRoot],
+    };
+  }
+  if (app.isPackaged) {
+    return {
+      command: process.execPath,
+      args: [join(process.resourcesPath, 'outline', 'outline-runtime.mjs'), '--root', root, '--content-root', contentRoot],
+    };
+  }
+  const npmExecutable = process.env.npm_execpath;
+  const bunExecutable = npmExecutable && basename(npmExecutable) === 'bun' ? npmExecutable : 'bun';
+  return {
+    command: bunExecutable,
+    args: [resolve(__dirname, '../../src/outline/runtime/server/entry.ts'), '--root', root, '--content-root', contentRoot],
+  };
+}
+
 const extensionRegistry = new ExtensionRegistry();
 const memoryControlStore = new MemoryControlStore(join(app.getPath('userData'), 'agent', 'memories.sqlite'));
-const timelineMemoryStore = new TimelineMemoryStore(documentService);
+const timelineMemoryStore = new TimelineMemoryStore(outlineDocumentService);
 const memoryExtension = new MemoryExtension(memoryControlStore, timelineMemoryStore, {
   onError: (error, operation) => reportError({
     domain: 'memory',
@@ -456,15 +498,6 @@ const memoryExtension = new MemoryExtension(memoryControlStore, timelineMemorySt
     context: { operation },
     error,
   }),
-});
-const importService = new AgentImportService(documentService, { toolName: 'tenon-import' });
-const importApiServer = new AgentImportApiServer(importService, { userDataDir: app.getPath('userData') });
-configureTenonImportRuntime({
-  isPackaged: app.isPackaged,
-  moduleDir: __dirname,
-  resourcesPath: process.resourcesPath,
-  processExecPath: process.execPath,
-  descriptorPath: importApiServer.descriptorPath,
 });
 const nodeAccessStore = new NodeAccessStore(join(app.getPath('userData'), 'node-access-stats.json'), {
   onError: (error, operation) => reportError({
@@ -476,8 +509,8 @@ const nodeAccessStore = new NodeAccessStore(join(app.getPath('userData'), 'node-
     error,
   }),
 });
-const assetRoot = () => join(app.getPath('userData'), 'assets');
-const assetService = new AssetService(assetRoot);
+const outlineAssetExportRoot = join(app.getPath('userData'), 'outline-asset-exports');
+const assetService = new OutlineDesktopAssetService(outlineClientSupervisor, outlineAssetExportRoot);
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
 let providerConfigWindow: BrowserWindow | null = null;
@@ -831,8 +864,7 @@ threadService = ThreadService.open(
         );
       }
     },
-    getDocumentProjection: () => documentService.getProjection(),
-    getRecentDocumentOperations: (limit) => documentService.recentOperationsForInspection(limit),
+    getDocumentProjection: () => outlineDocumentService.getProjection(),
     resolveReferencedAsset: async (assetId) => {
       const [path, metadata] = await Promise.all([
         assetService.pathFor(assetId),
@@ -869,9 +901,16 @@ threadService = ThreadService.open(
           localRoot: thread.cwd,
           scratchRoot: agentScratchRoot,
           signal,
-          processEnvironment: (shell) => (
-            managedSkillShellEnvironment!.processEnvironment(thread.id, turnId, shell)
-          ),
+          processEnvironment: createOutlineAgentShellEnvironmentProvider({
+            threadId: thread.id,
+            turnId,
+            runtimeRoot: outlineRuntimeRoot,
+            contentRoot: outlineContentRoot,
+            supervisor: outlineClientSupervisor,
+            baseEnvironment: (shell) => (
+              managedSkillShellEnvironment!.processEnvironment(thread.id, turnId, shell)
+            ),
+          }),
           writeBoundary: agentWriteBoundaryForThread(thread.id),
           subagentPolicy: threadService.subagentExecution(thread.id)?.toolPolicy,
         }),
@@ -900,31 +939,6 @@ threadService = ThreadService.open(
 );
 memoryExtension.bindHost(threadService);
 extensionRegistry.register(memoryExtension);
-documentService.setMutationGuard((command, args, meta, projection) => {
-  return { affectsMemory: memoryExtension.authorizeMutation(command, args, meta, projection) };
-});
-documentService.setMutationObserver(memoryExtension);
-documentService.setMutationObserverErrorHandler((error, phase) => reportError({
-  domain: 'memory',
-  severity: 'error',
-  code: `memory-document-observer-${phase}-failed`,
-  message: `Memory document observer failed during ${phase}.`,
-  context: { operation: phase },
-  error,
-}));
-documentService.setMutationCoordinator((meta, operation) => (
-  meta.origin === 'system' && meta.operationId?.startsWith('memory:')
-    ? operation()
-    : timelineMemoryStore.withWriteGate(operation)
-));
-documentService.setPersistenceErrorHandler((error, revision) => reportError({
-  domain: 'document',
-  severity: 'error',
-  code: 'workspace-save-failed',
-  message: `Workspace save failed at revision ${revision}.`,
-  context: { operation: 'workspace-save', revision },
-  error,
-}));
 function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0]): AgentSkillRuntime {
   const existing = turnSkillRuntimes.get(context.turn.id);
   if (existing) return existing;
@@ -938,34 +952,51 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
     assertManagedSkillInvocable: (skillId, expectedContentHash) => (
       managedSkillService.assertInvocable(skillId, expectedContentHash)
     ),
-    executeSkillShell: ({ skill, command, signal }) => executeAgentSkillShellCommand({
+    executeSkillShell: ({ skill, command, argumentBindings, signal }) => executeAgentSkillShellCommand({
       skill,
       command,
+      argumentBindings,
       localRoot: context.thread.cwd,
       scratchRoot: agentScratchRoot,
       signal,
-      processEnvironment: (shell) => managedSkillShellEnvironment!.processEnvironment(
-        context.thread.id,
-        context.turn.id,
-        shell,
-      ),
+      processEnvironment: createOutlineAgentShellEnvironmentProvider({
+        threadId: context.thread.id,
+        turnId: context.turn.id,
+        runtimeRoot: outlineRuntimeRoot,
+        contentRoot: outlineContentRoot,
+        supervisor: outlineClientSupervisor,
+        baseEnvironment: (shell) => managedSkillShellEnvironment!.processEnvironment(
+          context.thread.id,
+          context.turn.id,
+          shell,
+        ),
+      }),
       writeBoundary: agentWriteBoundaryForThread(context.thread.id),
       subagentPolicy: threadService.subagentExecution(context.thread.id)?.toolPolicy,
       artifactSink: createToolArtifactSink(context),
     }),
     executeIsolatedSkill: async ({
       skill,
-      renderedContent,
+      renderedInstructions,
+      shellObservations,
+      args,
       parentToolCallId,
     }) => {
       if (!parentToolCallId) throw new Error('An isolated Skill requires its parent dynamic-tool Item identity.');
+      const shellContext = isolatedSkillShellContext(shellObservations);
       const spawned = await threadService.spawnIsolatedSkillThread({
         parentThreadId: context.thread.id,
         parentTurnId: context.turn.id,
         parentItemId: parentToolCallId,
         skillName: skill.name,
-        prompt: renderedContent,
+        skillInstructions: renderedInstructions,
+        prompt: args.trim() || `Execute the ${skill.name} Skill. No additional invocation task was supplied.`,
         allowedTools: skill.allowedTools,
+        ...(shellContext.additionalContext === undefined ? {} : {
+          additionalContext: shellContext.additionalContext,
+          additionalContextSource: `skill:${skill.name}:shell`,
+          additionalContextResourceRefs: shellContext.resourceRefs,
+        }),
         ...(skill.model === undefined ? {} : { model: skill.model }),
         ...(skill.effort === undefined ? {} : { reasoningEffort: parseSkillReasoningEffort(skill.effort) }),
       });
@@ -1047,15 +1078,17 @@ function parseSkillReasoningEffort(value: string): ReasoningEffort {
 }
 
 function localWorkspaceForTurn(context: Parameters<ToolRuntime['createTools']>[0]): AgentLocalWorkspaceContext {
-  const processEnvironment = createTenonImportShellEnvironmentProvider({
+  const processEnvironment = createOutlineAgentShellEnvironmentProvider({
     threadId: context.thread.id,
     turnId: context.turn.id,
+    runtimeRoot: outlineRuntimeRoot,
+    contentRoot: outlineContentRoot,
+    supervisor: outlineClientSupervisor,
     baseEnvironment: (shell) => managedSkillShellEnvironment!.processEnvironment(
       context.thread.id,
       context.turn.id,
       shell,
     ),
-    issueCausationToken: (causation) => importApiServer.issueCausationToken(causation),
   });
   return createAgentLocalWorkspaceContext(
     context.thread.cwd,
@@ -1128,8 +1161,6 @@ automationService = new AutomationService({
 const wakeAutomationsOnResume = () => automationService.wake();
 
 toolRuntime = new ToolRuntime(threadService, {
-  outliner: documentService,
-  outlinerProjectionFilter: memoryExtension,
   localWorkspace: localWorkspaceForTurn,
   imageNormalizer: async ({ filePath, signal }) => {
     return prepareBoundedAgentImage(filePath, basename(filePath), signal);
@@ -1323,29 +1354,29 @@ const pageTranslationService = new PageTranslationService({
 const localFilePreviewStreams = new LocalFilePreviewStreamRegistry(() => [
   agentLocalFileRoot,
   agentScratchRoot,
-  assetRoot(),
+  outlineAssetExportRoot,
 ]);
 
-documentService.onProjectionChanged(({ event, sourceWebContentsId }) => {
-  const target = liveWindow(mainWindow)?.webContents;
-  if (target && target.id !== sourceWebContentsId) {
-    target.send(LIN_DOCUMENT_EVENT_CHANNEL, event);
+outlineDocumentService.onProjectionChanged(({ event, update }) => {
+  pruneNodeAccessForProjectionUpdate(update);
+  try {
+    memoryExtension.projectionChanged({ update, ...(event.operation ? { operation: event.operation } : {}) });
+  } catch (error) {
+    reportError({
+      domain: 'memory',
+      severity: 'error',
+      code: 'memory-runtime-projection-observer-failed',
+      message: 'Memory Runtime projection observer failed.',
+      context: { operation: 'runtime-projection-observer' },
+      error,
+    });
   }
-  pruneNodeAccessForProjectionUpdate(event.update);
 });
-
-documentService.setTransientSearchOptionsProvider(() => ({
-  personalAccessRanking: {
-    getNodeAccessStats: (nodeId) => nodeAccessStore.get(nodeId),
-    now: Date.now(),
-  },
-}));
-documentService.setNodeAccessRecorder((nodeIds, source) => recordDocumentNodeAccess(nodeIds, source));
 
 async function recordDocumentNodeAccess(nodeIds: readonly string[], source: NodeAccessSource): Promise<void> {
   const uniqueIds = [...new Set(nodeIds.filter((nodeId) => typeof nodeId === 'string' && nodeId.length > 0))];
   if (uniqueIds.length === 0) return;
-  const existingIds = new Set(documentService.projectionNodesByIds(uniqueIds).map((node) => node.id));
+  const existingIds = new Set(outlineDocumentService.projectionNodesByIds(uniqueIds).map((node) => node.id));
   const validIds = uniqueIds.filter((nodeId) => existingIds.has(nodeId));
   if (validIds.length === 0) return;
   await nodeAccessStore.recordMany(validIds, source);
@@ -1361,7 +1392,7 @@ function pruneNodeAccessForProjectionUpdate(update: ProjectionUpdate): void {
     .map((node) => node.id);
   const staleIds = new Set([...update.removedIds, ...trashedIds]);
   if (trashedIds.length > 0) {
-    for (const descendantId of descendantProjectionIds(trashedIds, documentService.getProjection().nodes)) {
+    for (const descendantId of descendantProjectionIds(trashedIds, outlineDocumentService.getProjection().nodes)) {
       staleIds.add(descendantId);
     }
   }
@@ -1885,6 +1916,8 @@ function createWindow() {
   }
 
   registerRendererCapabilities(mainWindow.webContents, APP_RENDERER_CAPABILITIES);
+  const outlineOwnerId = mainWindow.webContents.id;
+  mainWindow.webContents.once('destroyed', () => desktopOutlineClient.releaseOwner(outlineOwnerId));
 
   mainWindow.on('closed', () => {
     pageTranslationService.dispose();
@@ -2560,16 +2593,9 @@ async function routeActionRendererStep(
 }
 
 const actionInvocationService = new ActionInvocationService({
-  projection: () => documentService.liveProjection(),
-  // Deliberately NO `sourceWebContentsId`: the renderer no longer applies the
-  // command result itself, so it must receive the projection-changed event
-  // rather than have it suppressed as its own echo.
-  runCommand: (command, args) => documentService.handle(
-    command as DocumentCommand,
-    args,
-    { origin: 'user', command },
-  ),
-  searchNodes: (query, limit) => documentService.searchNodeHits(query, limit),
+  projection: () => outlineDocumentService.liveProjection(),
+  runCommand: (command, args) => runOutlineActionCommand(outlineDocumentService, command, args),
+  searchNodes: (query, limit) => outlineDocumentService.searchNodeHits(query, limit),
   executeRendererStep: routeActionRendererStep,
   activateAppSurface: async (surface) => {
     if (surface === 'settings') {
@@ -2621,6 +2647,16 @@ const actionInvocationService = new ActionInvocationService({
 });
 
 function registerIpc() {
+  registerDesktopOutlineIpc({
+    ipcMain,
+    client: desktopOutlineClient,
+    authorize: (event) => {
+      if (!mainWindow || event.sender !== mainWindow.webContents) {
+        throw new Error('Outline Runtime is available only to the main application window.');
+      }
+    },
+  });
+
   ipcMain.handle(LIN_APP_UPDATE_GET_CHANNEL, (event): Promise<AppUpdateView> => {
     assertSettingsRenderer(event, 'App update status');
     return appUpdateService.view();
@@ -2838,9 +2874,6 @@ function registerIpc() {
           },
           localFileReferencePreview,
         });
-      }
-      if (isDocumentCommand(command)) {
-        return documentService.handle(command, args, { sourceWebContentsId: event.sender.id });
       }
       throw new Error(`Unknown command: ${command}`);
     };
@@ -3253,9 +3286,22 @@ async function handleMemoryCommand(command: string, args: Record<string, unknown
       );
     case 'memory_open':
       {
-        const outcome = await documentService.handle('ensure_tag_search', {
-          tagId: memoryTagId('memory'),
-        }) as CommandResult;
+        const outcome = await outlineDocumentService.runChanges([{
+          op: 'ensure',
+          resource: 'tag-search',
+          tag: {
+            target: {
+              selector: { by: 'id', id: memoryTagId('memory') },
+              cardinality: 'one',
+            },
+          },
+          bind: 'search',
+        }], {
+          focus: (_operation, diff) => {
+            const nodeId = diff.bindings.search?.[0];
+            return nodeId ? { nodeId, selectAll: false } : undefined;
+          },
+        });
         navigateMainToNode(outcome.focus?.nodeId ?? DAILY_NOTES_ID);
       }
       return memoryExtension.settings();
@@ -3454,8 +3500,6 @@ async function handleAssetCommand(
     }
     case 'lookup_asset':
       return assetService.lookup(String(args.id));
-    case 'delete_asset':
-      return assetService.delete(String(args.id));
     case 'pick_image_files': {
       const window = BrowserWindow.getFocusedWindow() ?? mainWindow;
       const dialogStrings = getMessages(effectiveLocale()).window;
@@ -4908,21 +4952,22 @@ if (!app.requestSingleInstanceLock()) {
       Promise.allSettled([
         nodeAccessStore.flushNow(),
         previewTranslationCache.flushNow(),
-        importApiServer.stop(),
         closeAgentServices(memoryExtension, threadService, automationService),
         diagnosticLog.flushNow({ reason: 'before-quit' }),
         flushUrlPreviewSession(urlPreviewSession),
       ]),
       new Promise((resolve) => setTimeout(resolve, 2_500)),
     ]);
+    desktopOutlineClient.close();
+    outlineDocumentService.close();
   };
   quitCoordinator = new AppQuitCoordinator({
-    freezeAdmission: () => documentService.freezeMutationAdmission(),
-    unfreezeAdmission: () => documentService.unfreezeMutationAdmission(),
-    commitAdmissionFreeze: () => documentService.commitMutationAdmissionFreeze(),
-    latestAcceptedRevision: () => documentService.latestAcceptedPersistenceRevision(),
-    durableRevision: () => documentService.durablePersistenceRevision(),
-    drainToRevision: () => documentService.drainPersistenceForQuit(),
+    freezeAdmission: () => outlineDocumentService.freezeMutationAdmission(),
+    unfreezeAdmission: () => outlineDocumentService.unfreezeMutationAdmission(),
+    commitAdmissionFreeze: () => outlineDocumentService.commitMutationAdmissionFreeze(),
+    latestAcceptedRevision: () => outlineDocumentService.latestAcceptedMutationSequence(),
+    durableRevision: () => outlineDocumentService.settledMutationSequence(),
+    drainToRevision: (revision) => outlineDocumentService.drainMutations(revision),
     showDrainFailure: async (error, outcome): Promise<QuitDecision> => {
       const strings = getMessages(effectiveLocale()).dialog;
       const parent = liveWindow(mainWindow);
@@ -4949,8 +4994,8 @@ if (!app.requestSingleInstanceLock()) {
     // neither local catalog corruption nor cleanup failure may block app startup.
     const providerReconcile = await reconcileProviderConfig().catch(() => null);
     if (providerReconcile?.activeProviderChanged) clearLastAgentThreadConfiguration();
-    await documentService.initWorkspace();
-    memoryExtension.initializeMutationIndex(documentService.liveProjection());
+    await outlineDocumentService.init();
+    memoryExtension.initializeMutationIndex(outlineDocumentService.liveProjection());
     await threadService.initialize();
     await memoryExtension.startWorker();
     await automationService.start();
@@ -4962,16 +5007,6 @@ if (!app.requestSingleInstanceLock()) {
         code: 'node-access-startup-load',
         message: 'Node access store startup load failed',
         context: { operation: 'startup-load' },
-        error,
-      });
-    });
-    await importApiServer.start().catch((error) => {
-      reportError({
-        domain: 'agent',
-        severity: 'warn',
-        code: 'tenon-import-api-startup',
-        message: 'Tenon import API startup failed',
-        context: { operation: 'startup' },
         error,
       });
     });
@@ -5059,7 +5094,7 @@ if (!app.requestSingleInstanceLock()) {
       });
       // Phase 2 is irreversible. A teardown rejection still calls app.exit and
       // must not reopen document admission after services have started closing.
-      if (quitCoordinator.phase() === 'idle') documentService.unfreezeMutationAdmission();
+      if (quitCoordinator.phase() === 'idle') outlineDocumentService.unfreezeMutationAdmission();
     });
   });
 }

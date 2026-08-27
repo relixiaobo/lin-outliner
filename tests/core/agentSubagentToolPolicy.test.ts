@@ -16,28 +16,25 @@ const foreground = {
   kind: 'general-purpose' as const,
   runInBackground: false,
   worktree: false,
+  readOnly: false,
   allowNesting: true,
 };
 
 describe('Subagent tool policy', () => {
-  test('removes root-only controls and undo from every Agent pool', () => {
+  test('removes root-only controls from every Agent pool', () => {
     const keys = filterSubagentToolContracts(MODEL_TOOL_CATALOG, foreground).map(toolKey);
     expect(keys).not.toContain('request_user_input');
     expect(keys).not.toContain('automation_update');
-    expect(keys).not.toContain('outline_undo_stack');
   });
 
-  test('keeps general foreground mutations but contains live outline state in worktrees', () => {
+  test('keeps the ordinary tool catalog stable across worktree isolation', () => {
     const regular = filterSubagentToolContracts(MODEL_TOOL_CATALOG, foreground).map(toolKey);
     const worktree = filterSubagentToolContracts(MODEL_TOOL_CATALOG, {
       ...foreground,
       worktree: true,
     }).map(toolKey);
-    expect(regular).toEqual(expect.arrayContaining(['node_create', 'node_edit', 'node_delete']));
-    for (const forbidden of ['node_create', 'node_edit', 'node_delete']) {
-      expect(worktree).not.toContain(forbidden);
-    }
-    expect(worktree).toEqual(expect.arrayContaining(['node_read', 'node_search']));
+    expect(regular).toEqual(expect.arrayContaining(['file_read', 'file_write', 'bash', 'skill']));
+    expect(worktree).toEqual(regular);
   });
 
   test('removes repository mutation and nesting from explore and plan pools', () => {
@@ -48,16 +45,13 @@ describe('Subagent tool policy', () => {
       }).map(toolKey);
       const forbidden = [
         'agent',
-        'node_create',
-        'node_edit',
-        'node_delete',
         'file_edit',
         'file_write',
         'file_delete',
         'generate_image',
       ];
       for (const key of forbidden) expect(keys).not.toContain(key);
-      expect(keys).toEqual(expect.arrayContaining(['node_read', 'file_read', 'bash', 'web_fetch', 'skill']));
+      expect(keys).toEqual(expect.arrayContaining(['file_read', 'bash', 'web_fetch', 'skill']));
     }
   });
 
@@ -73,6 +67,19 @@ describe('Subagent tool policy', () => {
     expect(subagentBashExecutionAllowed(foreground, ['file.edit.local_path'])).toBe(true);
     expect(subagentBashExecutionAllowed({ ...foreground, worktree: true }, ['outline.edit'])).toBe(false);
     expect(subagentBashExecutionAllowed({ ...foreground, worktree: true }, ['shell.local_code_execution'])).toBe(true);
+  });
+
+  test('fails closed on unclassified read-only actions while preserving inspection and host control', () => {
+    const policy = { ...foreground, readOnly: true };
+    const keys = filterSubagentToolContracts(MODEL_TOOL_CATALOG, policy).map(toolKey);
+    expect(keys).toEqual(expect.arrayContaining(['file_read', 'file_glob', 'bash', 'agent', 'skill']));
+    expect(keys).not.toEqual(expect.arrayContaining(['file_edit', 'file_write', 'file_delete']));
+    expect(subagentBashExecutionAllowed(policy, [])).toBe(false);
+    expect(subagentBashExecutionAllowed(policy, ['shell.read_search'])).toBe(true);
+    expect(subagentBashExecutionAllowed(policy, ['shell.unknown'])).toBe(false);
+    expect(subagentToolExecutionAllowed(policy, [])).toBe(false);
+    expect(subagentToolExecutionAllowed(policy, ['web.fetch'])).toBe(true);
+    expect(subagentToolExecutionAllowed(policy, ['external.message.send'])).toBe(false);
   });
 
   test('keeps extension tools visible while enforcing specialized mutation actions at execution', () => {
@@ -108,20 +115,20 @@ describe('Subagent tool policy', () => {
     for (const forbidden of ['update_plan', 'get_goal', 'generate_image']) {
       expect(keys).not.toContain(forbidden);
     }
-    expect(keys).toEqual(expect.arrayContaining(['node_read', 'file_write', 'bash', 'web_fetch', 'skill', 'docs.lookup']));
+    expect(keys).toEqual(expect.arrayContaining(['file_read', 'file_write', 'bash', 'web_fetch', 'skill', 'docs.lookup']));
   });
 
   test('filters canonical keys through the same contract classifier and drops unknown entries', () => {
     const keys = filterSubagentToolKeys([
-      'node_read',
-      'outline_undo_stack',
+      'file_read',
+      'retired_tool',
       'agent',
       'missing_tool',
     ], {
       ...foreground,
       allowNesting: false,
     });
-    expect(keys).toEqual(['node_read']);
+    expect(keys).toEqual(['file_read']);
   });
 
   test('treats a Role wildcard as the resolved parent tool ceiling', () => {

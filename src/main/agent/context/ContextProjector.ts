@@ -727,7 +727,7 @@ export class CanonicalContextProjector {
         ];
       }
       case 'additionalContext':
-        return this.projectAdditionalContext(payload);
+        return this.projectAdditionalContext(payload, item.resourceRefs);
       case 'referencedResources':
         return this.projectReferencedResources(payload);
       case 'skillCatalog':
@@ -758,9 +758,10 @@ export class CanonicalContextProjector {
     }
   }
 
-  private projectAdditionalContext(
+  private async projectAdditionalContext(
     payload: Extract<ThreadContextPayload, { readonly kind: 'additionalContext' }>,
-  ): ProjectedContextBlock[] {
+    resourceRefs: readonly ThreadResourceReference[],
+  ): Promise<ProjectedContextBlock[]> {
     const content = payload.turnEntries.map((entry) => contextBlock(
       payload.kind,
       entry.text,
@@ -768,9 +769,24 @@ export class CanonicalContextProjector {
       entry.purpose,
       [`key=${entry.key}`, `source=${entry.source}`, 'lifetime=turn'],
     ));
-    if (payload.threadState === null) return content;
-
-    content.push(...this.projectAdditionalThreadState(payload.threadState));
+    if (payload.threadState !== null) {
+      content.push(...this.projectAdditionalThreadState(payload.threadState));
+    }
+    for (const ref of uniqueResourceReferences(resourceRefs)) {
+      const readablePath = await this.resources.resolveResourceObservationPath(ref).catch(() => null);
+      content.push(contextBlock(
+        payload.kind,
+        [
+          `resource=${ref.id}`,
+          `file_name=${ref.fileName}`,
+          `mime_type=${ref.mimeType}`,
+          readablePath ? `readable_path=${readablePath}` : 'availability=missing',
+        ].join('\n'),
+        'untrusted',
+        'observation',
+        ['field=resource', 'source=additional-context'],
+      ));
+    }
     return content;
   }
 
@@ -1017,6 +1033,12 @@ function contextBlock(
     body,
     metadata,
   };
+}
+
+function uniqueResourceReferences(
+  refs: readonly ThreadResourceReference[],
+): readonly ThreadResourceReference[] {
+  return [...new Map(refs.map((ref) => [`${ref.id}\0${ref.fileName}`, ref])).values()];
 }
 
 function contextBundle(blocks: readonly ProjectedContextBlock[]): TextContent {

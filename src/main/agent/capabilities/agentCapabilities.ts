@@ -4,6 +4,7 @@ import {
   isReadOnlyModelToolActionKind,
   modelToolActionKinds,
 } from '../../../core/agent/tools';
+import { OUTLINE_CAPABILITIES, type OutlineCapability } from '../../../outline/contract/capabilities';
 import {
   matchingBlockForDescriptor,
   parseAgentCapabilitySettings,
@@ -13,7 +14,6 @@ import {
   type ToolActionDescriptor,
 } from './agentCapabilityRules';
 import { canonicalPathPreservingSuffix } from './agentAttachmentMaterialization';
-import { parseTenonImportShellSegments } from '../../tenonImportProtocol';
 
 export type {
   AgentToolActionKind,
@@ -152,13 +152,6 @@ function descriptorForKnownTool(toolName: string, args: unknown): ToolActionDesc
   if (toolName === 'web_fetch') return simpleDescriptor(toolName, args, 'web.fetch', 'web fetch', 'Fetch an external web resource.', 'external_system');
   if (toolName === 'generate_image') return simpleDescriptor(toolName, args, 'agent.image.generate', 'image generation', 'Generate an image with an enabled provider.', 'external_system');
   if (toolName === 'request_user_input') return simpleDescriptor(toolName, args, 'agent.user_input.request', 'user input', 'Request missing product input.');
-  if (toolName === 'node_read' || toolName === 'node_search') return simpleDescriptor(toolName, args, 'outline.read', 'outline read', 'Read local outline content.', 'local_system');
-  if (toolName === 'node_create' || toolName === 'node_edit') return simpleDescriptor(toolName, args, 'outline.edit', 'outline edit', 'Change local outline content.', 'local_system');
-  if (toolName === 'node_delete') return simpleDescriptor(toolName, args, 'outline.delete', 'outline delete', 'Delete local outline content.', 'local_system');
-  if (toolName === 'outline_undo_stack') {
-    const actionKind = firstActionKindForTool(toolName, args, 'outline.read') ?? 'outline.read';
-    return simpleDescriptor(toolName, args, actionKind, 'outline history', 'Inspect or apply local outline history.', 'local_system');
-  }
   if (toolName === 'skill') return simpleDescriptor(toolName, args, 'agent.skill.invoke', 'skill invocation', 'Invoke installed skill instructions.');
   const catalogAction = firstActionKindForTool(toolName, args, null);
   if (catalogAction) return simpleDescriptor(toolName, args, catalogAction, catalogAction, `Execute ${catalogAction}.`);
@@ -218,23 +211,8 @@ function deriveBashActionDescriptors(
   args: unknown,
 ): ToolActionDescriptor[] {
   if (!command) return [unknownShellDescriptor('', 'Missing shell command.')];
-  const descriptors = parseTenonImportShellSegments(command)
-    .flatMap((segment) => {
-      const genericDescriptor = classifyShellSegment(segment.text, command);
-      if (!segment.isCommit) return [genericDescriptor];
-      const importDescriptor = descriptor('bash', 'outline.edit', {
-        accessScope: 'local_system',
-        // electron-vite 5's ESM shim scanner misreads this title as a static
-        // import when the words are one literal, corrupting the packaged chunk.
-        title: ['outline', 'import'].join(' '),
-        summary: segment.text,
-        consequence: segment.text,
-        command,
-      });
-      return genericDescriptor.actionKind === 'shell.unknown'
-        ? [importDescriptor]
-        : [importDescriptor, genericDescriptor];
-    });
+  const descriptors = splitShellSegments(command)
+    .flatMap((segment) => classifyShellSegment(segment, command));
   if (getBooleanArg(args, 'run_in_background')) {
     descriptors.push(descriptor('bash', 'shell.background_process', {
       accessScope: 'local_system',
@@ -247,7 +225,7 @@ function deriveBashActionDescriptors(
   return descriptors.length > 0 ? descriptors : [unknownShellDescriptor(command, 'Unclassified shell syntax.')];
 }
 
-function classifyShellSegment(segmentInput: string, fullCommand: string): ToolActionDescriptor {
+function classifyShellSegment(segmentInput: string, fullCommand: string): ToolActionDescriptor[] {
   const segment = segmentInput.trim();
   const words = parseShellWords(segment);
   const head = words[0]?.toLowerCase() ?? '';
@@ -261,39 +239,93 @@ function classifyShellSegment(segmentInput: string, fullCommand: string): ToolAc
     consequence: summary,
     command: fullCommand,
   });
-  if (!head) return unknownShellDescriptor(fullCommand, 'Empty shell segment.');
+  if (!head) return [unknownShellDescriptor(fullCommand, 'Empty shell segment.')];
+  const outlineActions = classifyOutlineActions(words);
+  if (outlineActions) {
+    return outlineActions.map((actionKind) => values(
+      actionKind,
+      actionKind === 'outline.read' ? 'outline read' : actionKind === 'outline.delete' ? 'outline delete' : 'outline edit',
+      segment,
+    ));
+  }
   if (/\bgit\s+(?:push|send-email)\b/i.test(segment) || /\bgh\s+(?:pr\s+(?:create|merge|close|reopen|comment|review)|release\s+create)\b/i.test(segment)) {
-    return values('git.publish_remote', 'remote repository write', segment);
+    return [values('git.publish_remote', 'remote repository write', segment)];
   }
   if (/\b(?:vercel|wrangler|firebase|fly|netlify)\s+(?:deploy|publish)\b|\bkubectl\s+(?:apply|create|delete|patch|replace|rollout)\b/i.test(segment)) {
-    return values('deploy.publish_remote', 'deployment', segment);
+    return [values('deploy.publish_remote', 'deployment', segment)];
   }
-  if (looksLikeNetworkWrite(segment)) return values('shell.network_write', 'network write', segment);
+  if (looksLikeNetworkWrite(segment)) return [values('shell.network_write', 'network write', segment)];
   if (/\b(?:npm|pnpm|yarn|bun)\s+(?:add|install|i|remove|uninstall|update)\b|\b(?:pip|pip3)\s+install\b|\bbrew\s+(?:install|uninstall|upgrade)\b/i.test(segment)) {
-    return values('shell.dependency_install', 'dependency change', segment);
+    return [values('shell.dependency_install', 'dependency change', segment)];
   }
   if (/\brm\s+[^;&|]*-[^\s]*r/i.test(segment) || findAction === 'destructive') {
-    return values('shell.destructive_cleanup', 'local cleanup', segment);
+    return [values('shell.destructive_cleanup', 'local cleanup', segment)];
   }
   if (findAction === 'execute') {
-    return values('shell.local_code_execution', 'local code execution', segment);
+    return [values('shell.local_code_execution', 'local code execution', segment)];
   }
   if (findAction === 'write') {
-    return values('file.edit.local_path', 'shell file edit', segment);
+    return [values('file.edit.local_path', 'shell file edit', segment)];
   }
   if (/\b(?:npm|pnpm|yarn|bun)\s+(?:run|test|build|dev|lint|check)\b/i.test(segment)) {
-    return values('shell.project_script', 'project script', segment);
+    return [values('shell.project_script', 'project script', segment)];
   }
   if (/\b(?:python(?:3)?|node|deno|bun|ruby|perl|php|osascript|bash|sh|zsh)\b(?:\s|$)/i.test(segment)) {
-    return values('shell.local_code_execution', 'local code execution', segment);
+    return [values('shell.local_code_execution', 'local code execution', segment)];
   }
   if (containsShellWriteOperator(segment) || /\b(?:sed|perl|ruby)\s+-[^\s]*i\b/i.test(segment)) {
-    return values('file.edit.local_path', 'shell file edit', segment);
+    return [values('file.edit.local_path', 'shell file edit', segment)];
   }
   if (/\b(?:ls|find|fd|rg|grep|cat|head|tail|sed|awk|wc|stat|git\s+(?:status|diff|log|show|branch))\b/i.test(segment)) {
-    return values('shell.read_search', 'local inspection', segment);
+    return [values('shell.read_search', 'local inspection', segment)];
   }
-  return unknownShellDescriptor(fullCommand, 'Unclassified shell syntax.');
+  return [unknownShellDescriptor(fullCommand, 'Unclassified shell syntax.')];
+}
+
+const OUTLINE_GLOBAL_OPTIONS_WITH_VALUE = new Set(['--protocol', '--startup-timeout']);
+
+function classifyOutlineActions(words: readonly string[]): readonly AgentToolActionKind[] | null {
+  let index = shellExecutableIndex(words);
+  const executable = words[index];
+  if (!executable || path.basename(executable).toLowerCase() !== 'outline') return null;
+  index += 1;
+  while (index < words.length && words[index]?.startsWith('-')) {
+    if (OUTLINE_GLOBAL_OPTIONS_WITH_VALUE.has(words[index]!)) index += 1;
+    index += 1;
+  }
+  const capability = longestOutlineCapability(words.slice(index));
+  if (!capability) return null;
+  if (capability.name === 'diff' || capability.kind === 'local' || capability.kind === 'read' || capability.kind === 'observe') {
+    return ['outline.read'];
+  }
+  if (capability.name === 'apply' || capability.name === 'revert' || capability.destructive) {
+    return ['outline.edit', 'outline.delete'];
+  }
+  return ['outline.edit'];
+}
+
+function shellExecutableIndex(words: readonly string[]): number {
+  let index = 0;
+  while (isShellAssignment(words[index])) index += 1;
+  if (words[index]?.toLowerCase() === 'env') {
+    index += 1;
+    while (words[index]?.startsWith('-') || isShellAssignment(words[index])) index += 1;
+  }
+  if (words[index]?.toLowerCase() === 'command') {
+    index += 1;
+    while (words[index]?.startsWith('-')) index += 1;
+  }
+  return index;
+}
+
+function isShellAssignment(word: string | undefined): boolean {
+  return Boolean(word && /^[A-Za-z_][A-Za-z0-9_]*=/.test(word));
+}
+
+function longestOutlineCapability(words: readonly string[]): OutlineCapability | undefined {
+  return OUTLINE_CAPABILITIES
+    .filter((entry) => words.slice(0, entry.name.split(' ').length).join(' ') === entry.name)
+    .sort((left, right) => right.name.split(' ').length - left.name.split(' ').length)[0];
 }
 
 export function toolPathArgumentName(toolNameInput: string): string | null {
@@ -393,6 +425,56 @@ function containsShellWriteOperator(command: string): boolean {
     if (char === '>') return true;
   }
   return false;
+}
+
+function splitShellSegments(command: string): string[] {
+  const segments: string[] = [];
+  let heredocEnd: string | null = null;
+  for (const line of command.split(/\r?\n/)) {
+    if (heredocEnd) {
+      if (line.trim() === heredocEnd) heredocEnd = null;
+      continue;
+    }
+    const heredoc = /<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?/.exec(line);
+    if (heredoc?.[1]) heredocEnd = heredoc[1];
+    segments.push(...splitShellLine(line));
+  }
+  return segments;
+}
+
+function splitShellLine(line: string): string[] {
+  const segments: string[] = [];
+  let current = '';
+  let quote: '"' | "'" | null = null;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index]!;
+    const next = line[index + 1];
+    if (quote) {
+      current += char;
+      if (char === '\\' && quote === '"' && next) {
+        current += next;
+        index += 1;
+      } else if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      current += char;
+      continue;
+    }
+    if (char === '#' && (index === 0 || /\s|[;&|]/.test(line[index - 1]!))) break;
+    if (char === ';' || char === '|' || char === '&') {
+      if (current.trim()) segments.push(current.trim());
+      current = '';
+      if (next === char) index += 1;
+      continue;
+    }
+    current += char;
+  }
+  if (current.trim()) segments.push(current.trim());
+  return segments;
 }
 
 const FIND_SINGLE_ARGUMENT_PREDICATES = new Set([

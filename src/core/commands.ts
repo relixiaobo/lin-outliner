@@ -92,12 +92,8 @@ export const DOCUMENT_COMMANDS = [
   'redo',
 ] as const;
 
-// Trusted main-process services use this separate surface inside a
-// DocumentService transaction. These commands never enter LinCommand or public
-// renderer/model dispatch.
-export const HOST_DOCUMENT_COMMANDS = [
-  'put_document_system_receipt',
-  'ensure_document_system_tag_definition',
+export const RUNTIME_DOCUMENT_COMMANDS = [
+  'apply_recovery_patch',
 ] as const;
 
 export const AGENT_COMMANDS = [
@@ -153,7 +149,6 @@ export const ASSET_COMMANDS = [
   'ingest_local_file',
   'ingest_thread_resource',
   'lookup_asset',
-  'delete_asset',
   'pick_image_files',
   'pick_attachment_files',
   'open_asset',
@@ -170,24 +165,19 @@ export const PREVIEW_COMMANDS = [
 ] as const;
 
 export type DocumentCommand = typeof DOCUMENT_COMMANDS[number];
-export type HostDocumentCommand = typeof HOST_DOCUMENT_COMMANDS[number];
+export type RuntimeDocumentCommand = typeof RUNTIME_DOCUMENT_COMMANDS[number];
 export type AgentCommand = typeof AGENT_COMMANDS[number];
 export type AssetCommand = typeof ASSET_COMMANDS[number];
 export type PreviewCommand = typeof PREVIEW_COMMANDS[number];
 export type LinCommand = DocumentCommand | AgentCommand | AssetCommand | PreviewCommand;
 
 const documentCommands = new Set<string>(DOCUMENT_COMMANDS);
-const hostDocumentCommands = new Set<string>(HOST_DOCUMENT_COMMANDS);
 const agentCommands = new Set<string>(AGENT_COMMANDS);
 const assetCommands = new Set<string>(ASSET_COMMANDS);
 const previewCommands = new Set<string>(PREVIEW_COMMANDS);
 
 export function isDocumentCommand(command: string): command is DocumentCommand {
   return documentCommands.has(command);
-}
-
-export function isHostDocumentCommand(command: string): command is HostDocumentCommand {
-  return hostDocumentCommands.has(command);
 }
 
 export function isAgentCommand(command: string): command is AgentCommand {

@@ -108,9 +108,9 @@ export type RendererStepAck =
 
 export interface ActionInvocationHost {
   projection(): DocumentProjection;
-  /** `documentService.handle`, with the invoking renderer recorded as source. */
+  /** Execute a public Outline ChangeSet intent for the invoking surface. */
   runCommand(command: string, args: Record<string, unknown>): Promise<unknown>;
-  searchNodes(query: string, limit: number): SearchHit[];
+  searchNodes(query: string, limit: number): Promise<SearchHit[]>;
   /** Route a renderer step to the MAIN renderer and wait for its ack. */
   executeRendererStep(step: EffectStep, invocationRef: InvocationRef): Promise<RendererStepAck>;
   activateAppSurface(surface: AppSurface): Promise<void>;
@@ -425,7 +425,7 @@ export class ActionInvocationService {
    * every old result and draft ref. Fresh objects are installed only if the
    * captured generation is still current.
    */
-  queryObjects(request: ObjectQueryRequest, senderId: number): ObjectQueryResult {
+  async queryObjects(request: ObjectQueryRequest, senderId: number): Promise<ObjectQueryResult> {
     const record = this.liveRecord(request.invocationRef, senderId);
     const superseded = {
       status: 'superseded' as const,
@@ -439,18 +439,19 @@ export class ActionInvocationService {
     // `draftText` is admitted SYNCHRONOUSLY: it is payload, not selection, and
     // type-then-immediate-Enter must see the latest text.
     //
-    // Retrieval is synchronous today, so the generation is replaced ONCE,
-    // atomically. The two-phase pending/ready swap the contract describes is
-    // for an async retrieval path; writing it here produced a `pending` state
-    // nothing could observe and a staleness recheck that could never fire.
-    // Reinstate both the day this awaits.
     const query = request.query.slice(0, 512);
     const generation = ++record.generation;
+    this.replaceResultGeneration(record, {
+      generation,
+      requestId: request.requestId,
+      state: 'pending',
+      objects: [],
+    }, query);
     const mint = () => mintRef<ObjectRef>();
     let nodeObjects: SurfaceObject[] = [];
     try {
       nodeObjects = query.trim()
-        ? this.host.searchNodes(query.trim(), LAUNCHER_RESULT_LIMIT)
+        ? (await this.host.searchNodes(query.trim(), LAUNCHER_RESULT_LIMIT))
           .map((hit) => nodeObjectForRow(hit.nodeId, this.actionProjection().byId, mint))
         : [];
     } catch {
@@ -458,6 +459,7 @@ export class ActionInvocationService {
       // generation's rows, which this transition has already invalidated.
       nodeObjects = [];
     }
+    if (record.generation !== generation) return { ...superseded, generation: record.generation };
     const resultObjects = orderedResultObjects({ query, nodeObjects, mintRef: mint });
 
     for (const object of resultObjects) record.objects.set(object.objectRef, object);
@@ -677,10 +679,10 @@ export class ActionInvocationService {
    * then installs fresh objects only if its private generation is still
    * current.
    */
-  queryParameterObjects(
+  async queryParameterObjects(
     request: ParameterObjectQueryRequest,
     senderId: number,
-  ): ParameterObjectQueryResult {
+  ): Promise<ParameterObjectQueryResult> {
     const record = this.liveRecord(request.invocationRef, senderId);
     const superseded = {
       status: 'superseded' as const,
@@ -704,7 +706,7 @@ export class ActionInvocationService {
     });
 
     const context = this.contextFor(record);
-    const built = this.buildParameterCandidates(context, record, request, subject);
+    const built = await this.buildParameterCandidates(context, record, request, subject);
     if (record.generation !== generation) return { ...superseded, generation: record.generation };
 
     this.replaceArgumentGeneration(record, {
@@ -740,12 +742,12 @@ export class ActionInvocationService {
     return resolveFamily(context, slot.actionId, subject).length > 0;
   }
 
-  private buildParameterCandidates(
+  private async buildParameterCandidates(
     context: ActionResolveContext,
     record: Record_,
     request: ParameterObjectQueryRequest,
     subject: SurfaceObject,
-  ): { objects: SurfaceObject[]; items: ObjectPresentation[] } {
+  ): Promise<{ objects: SurfaceObject[]; items: ObjectPresentation[] }> {
     const objects: SurfaceObject[] = [];
     const items: ObjectPresentation[] = [];
     const mint = () => mintRef<ObjectRef>();
@@ -755,7 +757,7 @@ export class ActionInvocationService {
       const moving = eligibleMoveToIds(context, subject);
       const { byId, trashId } = context.projection;
       const candidateIds = query
-        ? this.rankedMoveToCandidates(query, moving, context)
+        ? await this.rankedMoveToCandidates(query, moving, context)
         : moveToEmptyQueryOrder({
           nodes: this.host.projection().nodes,
           moving,
@@ -843,14 +845,14 @@ export class ActionInvocationService {
    * kernel supplies ORDER over the nodes it has an opinion about; the rest keep
    * document order behind them.
    */
-  private rankedMoveToCandidates(
+  private async rankedMoveToCandidates(
     query: string,
     moving: readonly NodeId[],
     context: ActionResolveContext,
-  ): NodeId[] {
+  ): Promise<NodeId[]> {
     const { byId, trashId } = context.projection;
     const rank = new Map<NodeId, number>();
-    this.host.searchNodes(query, CANDIDATE_FETCH_LIMIT).forEach((hit: SearchHit, index) => {
+    (await this.host.searchNodes(query, CANDIDATE_FETCH_LIMIT)).forEach((hit: SearchHit, index) => {
       if (!rank.has(hit.nodeId)) rank.set(hit.nodeId, index);
     });
     const normalized = query.toLowerCase();

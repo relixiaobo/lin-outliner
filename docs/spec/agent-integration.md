@@ -19,13 +19,26 @@ Agent Core. It is a contract checklist, not project status.
 ## Tool Contract
 
 - Register one collision-free canonical identity and complete schema.
+- Reach persisted Outliner state only through `bash` and the public `outline`
+  CLI; do not add a document-native model tool or private import endpoint.
+- Classify Outline shell calls from the executable capability registry and
+  require host attestation for built-in Agent mutations.
+- Route one complete resource to one porcelain invocation, complex state for
+  that resource to the same command's `--input`, and dependent/cross-date/bulk
+  work to one ChangeSet with bindings; never use shell mutation loops or
+  intermediate created-ID discovery.
+- Discover exact syntax and semantics through root/family/command help and
+  `outline schema COMMAND`; preserve patch omission, explicit replacement,
+  selector cardinality, destructive Diff binding, and idempotent
+  set/configure/ensure behavior.
 - Keep the Agent orchestration surface to `agent`, `agent_message`, and unified
   `task_stop`; do not add a roster, inbox, follow-up, wait, or polling alias.
 - Declare Core scope and action kinds.
 - Apply effective configuration and parent capability ceilings.
 - Return native structured unavailable or failure results.
 - Emit one started and one terminal Item.
-- Attach Thread/Turn/Item causation to document mutations.
+- Attach Thread/Turn/Item causation to the Runtime Operation, not to a parallel
+  Agent document schema.
 - Keep visible output bounded without discarding durable details.
 - Start every new Agent from fresh context; reuse its own history only when the
   same stable ID is resumed.
@@ -38,7 +51,8 @@ Agent Core. It is a contract checklist, not project status.
 - Use host or per-Thread barriers for configuration changes.
 - Reconcile orphan extension state on startup.
 - Contribute context or terminal Items through typed hooks.
-- Use trusted document transactions for atomic Node plus receipt publication.
+- Use one idempotent Runtime ChangeSet for atomic Node plus receipt publication;
+  settle the feature store from the durable Operation.
 
 ## Renderer Contract
 
@@ -54,6 +68,13 @@ Agent Core. It is a contract checklist, not project status.
 ## Persistence Contract
 
 - Add no alternate history ledger.
+- Keep document Operation history, recovery patches, and asset reachability in
+  the standalone Runtime; Agent stores retain only feature control state.
+- Keep immutable exact revisions, admission leases, opaque retention anchors,
+  integrity quarantine, and physical GC in neutral `src/content/`. Outline
+  AssetRecords retain those revisions through Host-private coordinates; Agent
+  resource-reference records and resolution remain future work rather than an
+  alternate store in this feature.
 - Keep rollout JSONL append-only and projections rebuildable.
 - Keep feature stores explicitly owned and keyed by canonical IDs.
 - Persist Agent identity, recorded configuration, stop provenance, retained
@@ -71,5 +92,13 @@ Agent Core. It is a contract checklist, not project status.
 - Add renderer tests for each visible canonical state.
 - Add E2E coverage for the user workflow.
 - Keep the active repository residue guard clean.
+- Verify every Core document command has exactly one public capability owner and
+  no retired document/import authority remains live.
+- Verify help, completion metadata, parser options, and exact command schemas
+  derive from one registry and cover root, family, create, leaf-view, and
+  destructive help goldens without starting Runtime.
+- Verify complete-resource and dependent-resource CLI goldens assert final
+  document state, mutation invocation count, Operation count, visible Operation
+  ID/affected/recovery data, and guarded exact revert.
 - Run typecheck, Core tests, renderer tests, E2E, docs check, and diff check
   before the PR is ready.

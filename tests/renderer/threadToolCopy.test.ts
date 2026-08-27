@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 import type { AgentTaskToolName, ItemExecutionStatus, ThreadItem } from '../../src/core/agent/protocol';
-import type { NodeProjection } from '../../src/core/types';
 import { en } from '../../src/core/i18n';
 import {
   summarizeThreadToolActivity,
@@ -9,7 +8,6 @@ import {
   type ThreadToolItem,
 } from '../../src/renderer/agent/components/items/ThreadItemView';
 import { buildTurnCopyText } from '../../src/renderer/agent/components/ThreadView';
-import type { DocumentIndex } from '../../src/renderer/state/document';
 import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
 /**
@@ -115,27 +113,6 @@ function changes(...paths: readonly string[]): ThreadToolItem {
   };
 }
 
-function nodeIndex(): DocumentIndex {
-  const nodes = [titled('node-a', 'Chapter Three'), titled('node-b', 'Appendix')];
-  return {
-    projection: { nodes } as never,
-    byId: new Map(nodes.map((entry) => [entry.id, entry])),
-  } as DocumentIndex;
-}
-
-function titled(id: string, text: string): NodeProjection {
-  return {
-    id,
-    children: [],
-    content: { text, marks: [], inlineRefs: [] },
-    tags: [],
-    createdAt: 0,
-    updatedAt: 0,
-    locked: false,
-    autoCollected: false,
-  } as NodeProjection;
-}
-
 describe('every built-in tool says what it did, not which API was called', () => {
   const cases: ReadonlyArray<readonly [string, ThreadToolItem, string]> = [
     ['file_write', dynamic('file_write', { file_path: '/w/src/out.md' }), 'Created out.md'],
@@ -145,11 +122,6 @@ describe('every built-in tool says what it did, not which API was called', () =>
     ['file_read via path', dynamic('file_read', { path: '/w/notes.md' }), 'Read notes.md'],
     ['file_glob', dynamic('file_glob', { pattern: '**/*.epub' }), 'Searched for "**/*.epub"'],
     ['file_grep', dynamic('file_grep', { pattern: 'TODO' }), 'Searched for "TODO"'],
-    ['node_edit', dynamic('node_edit', { node_id: 'node-a' }), 'Edited "node-a"'],
-    ['node_delete', dynamic('node_delete', { node_id: 'node-a' }), 'Deleted "node-a"'],
-    ['node_delete restore', dynamic('node_delete', { node_id: 'node-a', restore: true }), 'Restored "node-a"'],
-    ['node_read', dynamic('node_read', { node_id: 'node-a' }), 'Read "node-a"'],
-    ['node_search', dynamic('node_search', { query: 'epub' }), 'Searched for "epub"'],
     ['web_search', dynamic('web_search', { query: 'epub parser' }), 'Searched the web for "epub parser"'],
     // The Item's own fallback for a query the model omitted is the empty
     // string; quoting it would name nothing.
@@ -163,7 +135,6 @@ describe('every built-in tool says what it did, not which API was called', () =>
     ['web_fetch', dynamic('web_fetch', { url: 'https://example.com/a' }), 'Fetched https://example.com/a'],
     ['skill', dynamic('skill', { skill: 'dataviz' }), 'Used the dataviz skill'],
     ['request_user_input', dynamic('request_user_input', { question: 'which?' }), 'Asked a question'],
-    ['outline_undo_stack', dynamic('outline_undo_stack', {}), 'Checked history'],
     ['update_plan', dynamic('update_plan', { plan: [] }), 'Updated the plan'],
     ['command', shell('npm test'), 'Ran "npm test"'],
     ['file change', changes('/w/a.ts'), 'Changed a.ts'],
@@ -199,8 +170,6 @@ describe('a tool with no usable argument degrades to an honest generic', () => {
     ['file_write', dynamic('file_write', {}), 'Created a file'],
     ['file_read', dynamic('file_read', {}), 'Read a file'],
     ['file_grep', dynamic('file_grep', {}), 'Searched files'],
-    ['node_create names no parent', dynamic('node_create', { parent_id: 'node-a' }), 'Created a node'],
-    ['node_read', dynamic('node_read', {}), 'Read a node'],
     ['skill', dynamic('skill', {}), 'Used a skill'],
   ];
   for (const [name, item, expected] of cases) {
@@ -267,18 +236,6 @@ describe('status is one idiom across every tool kind', () => {
       expect(summarizeThreadToolItem(make('interrupted'), labels)).toBe(`${past} · interrupted`);
     });
   }
-});
-
-describe('node subjects prefer the title over the id', () => {
-  test('resolves through the document index, falling back to the id', () => {
-    const index = nodeIndex();
-    expect(summarizeThreadToolItem(dynamic('node_read', { node_id: 'node-a' }), labels, index))
-      .toBe('Read "Chapter Three"');
-    expect(summarizeThreadToolItem(dynamic('node_edit', { node_ids: ['node-a', 'node-b'] }), labels, index))
-      .toBe('Edited "Chapter Three", "Appendix"');
-    expect(summarizeThreadToolItem(dynamic('node_read', { node_id: 'node-missing' }), labels, index))
-      .toBe('Read "node-missing"');
-  });
 });
 
 describe('review regressions — each of these shipped broken once', () => {
@@ -401,22 +358,6 @@ describe('review regressions — each of these shipped broken once', () => {
     expect(copied).not.toContain('/w/presentation-only.ts');
   });
 
-  test('a search query is never resolved as if it were a node id', () => {
-    // `'nodeSearch'.startsWith('node')` sent queries through title resolution,
-    // so a query equal to a node uuid rendered as that node's title.
-    const index = nodeIndex();
-    expect(summarizeThreadToolItem(dynamic('node_search', { query: 'node-a' }), labels, index))
-      .toBe('Searched for "node-a"');
-  });
-
-  test('a repeated subject is counted once, single row and group alike', () => {
-    // The bucket Set deduped; the single-row path did not.
-    expect(summarizeThreadToolItem(dynamic('node_read', { node_id: 'a', node_ids: ['a'] }), labels))
-      .toBe('Read "a"');
-    expect(summarizeThreadToolItem(dynamic('node_read', { node_ids: ['a', 'a', 'b'] }), labels))
-      .toBe('Read "a", "b"');
-  });
-
   test('a root working directory does not delete every slash in the command', () => {
     expect(summarizeThreadToolItem(shell('ls /usr/local/bin && cat /etc/hosts', 'completed', 'c', null, '/'), labels))
       .toBe('Ran "ls /usr/local/bin && cat /etc/hosts"');
@@ -483,9 +424,9 @@ describe('group summaries name up to two subjects, then elide', () => {
       'Read a.md, b.md and 1 more · 1 failed'],
     ['mixed kinds', [
       read('/w/a.md'),
-      dynamic('node_edit', { node_id: 'node-a' }, 'completed', { id: 'n-1' }),
+      dynamic('file_edit', { file_path: '/w/node-a.md' }, 'completed', { id: 'n-1' }),
       dynamic('skill', { skill: 'dataviz' }, 'completed', { id: 's-1' }),
-    ], 'Read a.md · edited "node-a" · used the dataviz skill'],
+    ], 'Edited node-a.md · read a.md · used the dataviz skill'],
     ['two skills fall back to a count', [
       dynamic('skill', { skill: 'dataviz' }, 'completed', { id: 's-1' }),
       dynamic('skill', { skill: 'run' }, 'completed', { id: 's-2' }),

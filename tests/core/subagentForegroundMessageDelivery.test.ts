@@ -2700,6 +2700,8 @@ describe('foreground Agent main-message delivery', () => {
     const started: Array<{
       readonly threadId: string;
       readonly input: readonly { readonly type: string; readonly text: string }[];
+      readonly additionalContext?: import('../../src/core/agent/protocol').AdditionalContext;
+      readonly additionalContextSource?: string;
       readonly clientUserMessageId?: string;
     }> = [];
     const collaboration = new SubagentCollaboration(
@@ -2747,8 +2749,7 @@ describe('foreground Agent main-message delivery', () => {
     const queued = ledger.pendingParentMessages(PARENT_ID);
     expect(queued).toHaveLength(1);
     expect(queued[0]?.deliveryMode).toBe('background');
-    expect(queued[0]?.content).toStartWith('Another Agent sent a message:\n');
-    expect(queued[0]?.content).not.toContain('agentId from the immediately preceding agent tool result');
+    expect(queued[0]?.content).toBe('Nested result is ready.');
 
     await seam.deliverParentMessages(PARENT_ID);
     expect(started).toEqual([]);
@@ -2762,7 +2763,17 @@ describe('foreground Agent main-message delivery', () => {
 
     expect(started).toHaveLength(1);
     expect(started[0]?.threadId).toBe(PARENT_ID);
-    expect(started[0]?.input[0]?.text).toBe(queued[0]?.content);
+    expect(started[0]?.input).toEqual([]);
+    expect(started[0]?.additionalContextSource).toBe(`subagent:${SECOND_AGENT_ID}`);
+    expect(started[0]?.additionalContext?.['subagent.peer-message']).toEqual({
+      kind: 'untrusted',
+      purpose: 'observation',
+      value: 'Nested result is ready.',
+    });
+    expect(started[0]?.additionalContext?.['subagent.peer-message-handling']).toMatchObject({
+      kind: 'application',
+      purpose: 'instruction',
+    });
     expect(started[0]?.clientUserMessageId).toBe(queued[0]?.id);
     expect(ledger.pendingParentMessages(PARENT_ID)).toEqual([]);
     database.close();

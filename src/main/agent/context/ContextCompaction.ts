@@ -267,12 +267,9 @@ async function reduceActiveObservations(
         : null;
       const invalidation = observationInvalidation(item, resolvedArguments);
       for (const invalidated of invalidation.keys) active.delete(invalidated);
-      if (invalidation.clearNodeObservations || invalidation.clearFileObservations) {
+      if (invalidation.clearFileObservations) {
         for (const key of active.keys()) {
-          if (
-            (invalidation.clearNodeObservations && key.startsWith('node:'))
-            || (invalidation.clearFileObservations && key.startsWith('file:'))
-          ) active.delete(key);
+          if (key.startsWith('file:')) active.delete(key);
         }
       }
       if (!isHistoryTool(item) || !item.outputRef || !resolvedArguments) continue;
@@ -561,23 +558,11 @@ function observationIdentities(
     const path = stringArgument(args, ['file_path', 'path']);
     return path ? [{ key: `file:${path}`, tool, subject: path }] : [];
   }
-  if (tool === 'node_read') {
-    const nodeIds = uniqueStrings([
-      ...stringArguments(args, ['node_ids', 'nodeIds']),
-      ...singleStringArguments(args, ['node_id', 'nodeId', 'id']),
-    ]);
-    return nodeIds.map((nodeId) => ({
-      key: `node:${nodeId}`,
-      tool,
-      subject: nodeId,
-    }));
-  }
   return [];
 }
 
 interface ObservationInvalidation {
   readonly keys: readonly string[];
-  readonly clearNodeObservations: boolean;
   readonly clearFileObservations: boolean;
 }
 
@@ -593,7 +578,6 @@ function observationInvalidation(
             ...(change.movedTo ? [`file:${change.movedTo}`] : []),
           ])
         : [],
-      clearNodeObservations: false,
       clearFileObservations: false,
     };
   }
@@ -607,18 +591,8 @@ function observationInvalidation(
     const path = args ? stringArgument(args, ['file_path', 'path']) : null;
     return {
       keys: path ? [`file:${path}`] : [],
-      clearNodeObservations: false,
       clearFileObservations: path === null,
     };
-  }
-  if (isNodeMutation(tool) && args?.preview_only !== true) {
-    return { keys: [], clearNodeObservations: true, clearFileObservations: false };
-  }
-  if (
-    tool === 'outline_undo_stack'
-    && (!args || args.action === 'undo' || args.action === 'redo')
-  ) {
-    return { keys: [], clearNodeObservations: true, clearFileObservations: false };
   }
   return noObservationInvalidation();
 }
@@ -762,22 +736,15 @@ function isFileMutation(tool: string): boolean {
   return tool === 'file_write' || tool === 'file_edit' || tool === 'file_delete' || tool === 'file_move';
 }
 
-function isNodeMutation(tool: string): boolean {
-  return tool === 'node_create' || tool === 'node_edit' || tool === 'node_delete';
-}
-
 function needsObservationArguments(item: ThreadItem): item is HistoryToolItem {
   if (item.type !== 'dynamicToolCall' || item.modelCall.identity?.namespace !== null) return false;
   const tool = item.modelCall.identity.name;
   return tool === 'file_read'
-    || tool === 'node_read'
-    || tool === 'outline_undo_stack'
-    || isFileMutation(tool)
-    || isNodeMutation(tool);
+    || isFileMutation(tool);
 }
 
 function noObservationInvalidation(): ObservationInvalidation {
-  return { keys: [], clearNodeObservations: false, clearFileObservations: false };
+  return { keys: [], clearFileObservations: false };
 }
 
 function catalogCheckpoint(

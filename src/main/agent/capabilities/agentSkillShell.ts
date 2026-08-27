@@ -2,7 +2,10 @@ import type { ToolCall } from '../runtime/kernel/types';
 import { randomUUID } from 'node:crypto';
 import type { ThreadResourceReference } from '../../../core/agent/protocol';
 import type { SkillDefinition } from '../../../core/types';
-import type { SkillShellArtifactObservation } from './agentSkills';
+import type {
+  SkillShellArgumentBindings,
+  SkillShellArtifactObservation,
+} from './agentSkills';
 import type { ToolArtifactSink } from '../runtime/ToolArtifactSink';
 import {
   evaluateAgentToolCapability,
@@ -27,6 +30,7 @@ import {
 
 export interface AgentSkillShellCommandInput {
   command: string;
+  argumentBindings?: SkillShellArgumentBindings;
   localRoot?: string;
   scratchRoot?: string;
   capabilityConfig?: AgentCapabilityConfig;
@@ -63,17 +67,18 @@ export class AgentSkillShellError extends Error {
 export async function executeAgentSkillShellCommand(
   input: AgentSkillShellCommandInput,
 ): Promise<AgentSkillShellCommandResult> {
+  const prepared = prepareSkillShellCommand(input.command, input.argumentBindings);
   const toolCall: ToolCall = {
     type: 'toolCall',
     id: input.toolCallId ?? `skill-shell-${randomUUID()}`,
     name: 'bash',
-    arguments: { command: input.command },
+    arguments: { command: prepared.command },
   };
   const requestId = `capability-${randomUUID()}`;
   const capabilityConfig = input.capabilityConfig ?? await loadAgentCapabilityConfig();
   const decision = evaluateAgentToolCapability({
     toolName: 'bash',
-    args: { command: input.command },
+    args: { command: prepared.command },
     policy: {
       workspaceRoot: input.localRoot,
       capabilityConfig,
@@ -111,13 +116,17 @@ export async function executeAgentSkillShellCommand(
 
   const shellEnvironment = await resolveSkillShellEnvironment(input.processEnvironment, {
     toolCallId: toolCall.id,
-    command: input.command,
+    command: prepared.command,
   });
   const declaredRoots = input.skill?.source === 'managed'
     ? (shellEnvironment?.declaredOutputRoots ?? []).filter((root) => root.skillId === input.skill!.name)
     : [];
-  const scopedShellEnvironment = shellEnvironment
-    ? { ...shellEnvironment, declaredOutputRoots: declaredRoots }
+  const scopedShellEnvironment = shellEnvironment || Object.keys(prepared.environment).length > 0
+    ? {
+        ...shellEnvironment,
+        env: { ...shellEnvironment?.env, ...prepared.environment },
+        declaredOutputRoots: declaredRoots,
+      }
     : undefined;
 
   let result: LocalBashRunResult;
@@ -125,7 +134,7 @@ export async function executeAgentSkillShellCommand(
     result = await runLocalBashCommand({
       localRoot: input.localRoot,
       scratchRoot: input.scratchRoot,
-      command: input.command,
+      command: prepared.command,
       signal: input.signal,
       toolCallId: toolCall.id,
       processEnvironment: scopedShellEnvironment ? async () => scopedShellEnvironment : undefined,
@@ -216,6 +225,55 @@ async function resolveSkillShellEnvironment(
     console.warn('[agent] managed Skill shell environment failed; continuing without it', error);
     return undefined;
   }
+}
+
+function prepareSkillShellCommand(
+  command: string,
+  bindings: SkillShellArgumentBindings | undefined,
+): { readonly command: string; readonly environment: NodeJS.ProcessEnv } {
+  if (!bindings) return { command, environment: {} };
+  assertSkillShellArgumentBytes(bindings);
+  const environment: NodeJS.ProcessEnv = {
+    TENON_SKILL_ARGUMENTS: bindings.aggregate,
+  };
+  let prepared = command;
+  for (const binding of bindings.named) {
+    const variable = `TENON_SKILL_NAMED_ARGUMENT_${binding.index}`;
+    environment[variable] = binding.value;
+    prepared = prepared.replace(
+      new RegExp(`\\$${escapeRegExp(binding.name)}(?![\\[\\w])`, 'g'),
+      () => `\${${variable}}`,
+    );
+  }
+  prepared = prepared.replace(/\$ARGUMENTS\[(\d+)\]/g, (_match, rawIndex: string) => {
+    const index = Number(rawIndex);
+    const variable = `TENON_SKILL_POSITIONAL_ARGUMENT_${index}`;
+    environment[variable] = bindings.positional[index] ?? '';
+    return `\${${variable}}`;
+  });
+  prepared = prepared.replace(/\$(\d+)(?!\w)/g, (_match, rawIndex: string) => {
+    const index = Number(rawIndex);
+    const variable = `TENON_SKILL_POSITIONAL_ARGUMENT_${index}`;
+    environment[variable] = bindings.positional[index] ?? '';
+    return `\${${variable}}`;
+  });
+  prepared = prepared.replaceAll('$ARGUMENTS', '${TENON_SKILL_ARGUMENTS}');
+  return { command: prepared, environment };
+}
+
+function assertSkillShellArgumentBytes(bindings: SkillShellArgumentBindings): void {
+  const values = [
+    bindings.aggregate,
+    ...bindings.positional,
+    ...bindings.named.map((binding) => binding.value),
+  ];
+  if (values.some((value) => value.includes('\0'))) {
+    throw new AgentSkillShellError('command_failed', 'Skill shell arguments cannot contain NUL bytes.');
+  }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function stableSkillShellText(

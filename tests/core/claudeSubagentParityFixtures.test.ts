@@ -17,11 +17,11 @@ import { SubagentBudgetExhaustedError } from '../../src/main/agent/SubagentBudge
 import type { AgentTool } from '../../src/main/agent/runtime/kernel/types';
 import { agentProviderPayload } from '../../src/main/agent/runtime/agentProviderPayload';
 import {
-  agentMessageToMainText,
+  agentMessageContext,
   backgroundLaunchText,
   foregroundUsageText,
   scanSubagentOutput,
-  taskNotificationText,
+  taskNotificationContext,
 } from '../../src/main/agent/thread/subagentOutput';
 import type {
   SubagentExecutionRecord,
@@ -120,7 +120,7 @@ describe('Claude Code 2.1.227 Subagent parity fixtures', () => {
     );
   });
 
-  test('matches production contracts to the independently normalized expected bytes', () => {
+  test('extends the normalized Agent contract with a host-enforced read-only ceiling', () => {
     const productionCatalog = [
       {
         name: 'agent',
@@ -138,7 +138,8 @@ describe('Claude Code 2.1.227 Subagent parity fixtures', () => {
         input_schema: TASK_STOP_INPUT_SCHEMA,
       },
     ];
-    expect(JSON.stringify(productionCatalog)).toBe(JSON.stringify(DEFAULT_NORMALIZED));
+    const expected = DEFAULT_NORMALIZED as Array<Record<string, unknown>>;
+    expect(productionCatalog.slice(1)).toEqual(expected.slice(1));
     expect(Object.keys(productionCatalog[0]!.input_schema as object)).toEqual([
       '$schema',
       'type',
@@ -152,8 +153,12 @@ describe('Claude Code 2.1.227 Subagent parity fixtures', () => {
       'subagent_type',
       'model',
       'run_in_background',
+      'execution',
       'isolation',
     ]);
+    expect((productionCatalog[0]!.input_schema as Record<string, any>).properties.execution)
+      .toMatchObject({ type: 'string', enum: ['read-only'] });
+    expect(productionCatalog[0]!.description).toContain('host-enforced action ceiling');
     expect(Object.keys((productionCatalog[1]!.input_schema as Record<string, unknown>).properties as object)).toEqual([
       'to',
       'summary',
@@ -214,15 +219,10 @@ describe('Claude Code 2.1.227 Subagent parity fixtures', () => {
       .toBe(JSON.stringify(OUTPUT_HELPERS_NORMALIZED));
   });
 
-  test('keeps production output helpers byte-aligned with the normalized capture', () => {
+  test('keeps launch helpers byte-aligned while lowering child output to typed context', () => {
     const expected = OUTPUT_HELPERS_NORMALIZED as {
       readonly backgroundLaunch: { readonly text: string };
       readonly foregroundGeneral: { readonly content: readonly [string, string] };
-      readonly backgroundNotification: { readonly text: string };
-      readonly foregroundSendMain: readonly {
-        readonly agentType: string;
-        readonly text: string;
-      }[];
     };
     expect(backgroundLaunchText({
       agentId: '<agent-id>',
@@ -233,15 +233,31 @@ describe('Claude Code 2.1.227 Subagent parity fixtures', () => {
       'CHILD_MARKER',
       foregroundUsageText({ agentId: '<agent-id>', turn: foreground, worktree: null }),
     ]).toEqual(expected.foregroundGeneral.content);
-    expect(normalizeBudgetNotification(taskNotificationText({
+    const notification = taskNotificationContext({
       execution: completedExecution(),
       notification: completedNotification(),
       turn: completedTurn('CHILD_MARKER', 1),
       outputFile: '/tmp/tenon-budget-output',
-    }))).toBe(expected.backgroundNotification.text);
-    for (const row of expected.foregroundSendMain) {
-      expect(agentMessageToMainText(row.agentType, 'INTERMEDIATE_MARKER', true)).toBe(row.text);
-    }
+    });
+    expect(notification['subagent.output']).toEqual({
+      kind: 'untrusted',
+      purpose: 'observation',
+      value: 'CHILD_MARKER',
+    });
+    expect(notification['subagent.notification']).toMatchObject({
+      kind: 'application',
+      purpose: 'observation',
+    });
+    expect(notification['subagent.notification-handling']).toMatchObject({
+      kind: 'application',
+      purpose: 'instruction',
+    });
+    const peer = agentMessageContext('general-purpose', 'INTERMEDIATE_MARKER', true);
+    expect(peer['subagent.peer-message']).toEqual({
+      kind: 'untrusted',
+      purpose: 'observation',
+      value: 'INTERMEDIATE_MARKER',
+    });
   });
 
   test('applies the production scanner to every frozen Tenon-local safety row', () => {
@@ -317,12 +333,18 @@ describe('Claude Code 2.1.227 Subagent parity fixtures', () => {
       outputFile: '/tmp/tenon-budget-output',
     };
 
-    expect(normalizeBudgetNotification(taskNotificationText({ ...input, turn: withPartialResult })))
-      .toBe(BUDGET_BREAKER_EXPECTED.notificationWithPartialResult);
-    expect(normalizeBudgetNotification(taskNotificationText({ ...input, turn: withoutPartialResult })))
-      .toBe(BUDGET_BREAKER_EXPECTED.notificationWithoutPartialResult);
-    expect(BUDGET_BREAKER_EXPECTED.notificationWithPartialResult).not.toContain('<remaining>');
-    expect(BUDGET_BREAKER_EXPECTED.notificationWithPartialResult).not.toContain('<total>');
+    const withPartial = taskNotificationContext({ ...input, turn: withPartialResult });
+    const withoutPartial = taskNotificationContext({ ...input, turn: withoutPartialResult });
+    expect(withPartial['subagent.output']).toMatchObject({
+      kind: 'untrusted',
+      purpose: 'observation',
+    });
+    const partialOutput = withPartial['subagent.output']?.value;
+    expect(typeof partialOutput).toBe('string');
+    if (typeof partialOutput !== 'string') throw new Error('Expected partial Subagent output text.');
+    expect(partialOutput).toContain('PARTIAL_MARKER');
+    expect(partialOutput).toContain('untrusted task output');
+    expect(withoutPartial).not.toHaveProperty('subagent.output');
 
     const refusal = new SubagentBudgetExhaustedError(10, 10).message;
     expect(refusal).toBe(BUDGET_BREAKER_EXPECTED.spawnRefusal);
@@ -420,6 +442,7 @@ function budgetExecution(): SubagentExecutionRecord {
       kind: 'general-purpose',
       runInBackground: true,
       worktree: false,
+      readOnly: false,
       allowNesting: true,
       requestedTools: null,
     },
@@ -441,13 +464,6 @@ function budgetNotification(): SubagentPendingNotification {
     createdAt: 23,
     deliveredAt: null,
   };
-}
-
-function normalizeBudgetNotification(value: string): string {
-  return value
-    .replaceAll('agent-budget-fixture', '<agent-id>')
-    .replaceAll('tool-budget-fixture', '<tool-use-id>')
-    .replaceAll('/tmp/tenon-budget-output', '<output-file>');
 }
 
 function fixture(relativePath: string): unknown {

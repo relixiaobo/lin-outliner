@@ -145,6 +145,22 @@ type E2EWindow = Window & {
     onAgentCoreNotification: (listener: (notification: unknown) => void) => () => void;
     onAutomationNotification: (listener: (notification: unknown) => void) => () => void;
     onDocumentEvent: (listener: (event: unknown) => void) => () => void;
+    outline: {
+      request: (request: { requestId: string; command: string; input: unknown }) => Promise<{
+        protocolVersion: 1;
+        requestId: string;
+        command: string;
+        ok: boolean;
+        revision?: number;
+        data?: unknown;
+        error?: unknown;
+      }>;
+      cancel: (requestId: string) => void;
+      subscribe: (
+        subscription: { subscriptionId: string; input: Record<string, unknown> },
+        listener: (record: Record<string, unknown>) => void,
+      ) => () => void;
+    };
     onAgentOAuthEvent?: (listener: (envelope: unknown) => void) => () => void;
     onTranslationLanguageChanged?: (listener: (language: TranslationLanguage) => void) => () => void;
     onUrlPageTranslationPreferencesChanged?: (listener: (preferences: UrlPageTranslationPreferences) => void) => () => void;
@@ -389,6 +405,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	      displayPlacement?: string;
 	      queryLogic?: string;
 	      queryOp?: string;
+	      queryTagDefId?: string;
+	      queryFieldDefId?: string;
+	      queryTargetId?: string;
 	      targetId?: string;
 	      codeLanguage?: string;
 	      assetId?: string;
@@ -428,8 +447,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     // a `full` ProjectionUpdate (the renderer rebuilds from it). Revision advances
     // monotonically to mirror the real emit chain; the delta path is unit-tested
     // separately (reduceProjection.test.ts).
-    let revision = 0;
-    let clipboardText = '';
+	    let revision = 0;
+    let outlineEventSequence = 0;
+    let initialOutlineShowPending = true;
+	    let clipboardText = '';
     const assets = new Map<string, {
       id: string;
       mimeType: string;
@@ -457,6 +478,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const agentCoreListeners: Array<(notification: unknown) => void> = [];
     const automationListeners: Array<(notification: unknown) => void> = [];
     const documentListeners: Array<(event: unknown) => void> = [];
+    const outlineSubscriptions = new Map<
+      string,
+      { input: Record<string, unknown>; listener: (record: Record<string, unknown>) => void }
+    >();
     const oauthListeners: Array<(envelope: unknown) => void> = [];
     const settingsChangedListeners: Array<() => void> = [];
     const appUpdateListeners: Array<(view: AppUpdateView) => void> = [];
@@ -913,6 +938,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       reasoningEffort: string;
     }>();
     const nextCanonicalId = () => `01910000-0000-7000-8000-${(++sequence).toString(16).padStart(12, '0')}`;
+    const nextCanonicalNodeId = () => `node:00000000-0000-4000-8000-${(++sequence).toString(16).padStart(12, '0')}`;
     const threadById = (threadId: string) => {
       const thread = mockThreads.find((candidate) => candidate.id === threadId);
       if (!thread) throw new Error(`Thread not found: ${threadId}`);
@@ -1391,8 +1417,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         nodes: [...emitted, ...sink.values()],
       };
     };
-    const projectionSnapshot = () => ({ revision: ++revision, projection: projection() });
-    const fullUpdate = () => ({ kind: 'full' as const, revision: ++revision, projection: projection() });
+	    const projectionSnapshot = () => ({ revision: ++revision, projection: projection() });
+	    const fullUpdate = () => ({ kind: 'full' as const, revision: ++revision, projection: projection() });
     const outcome = (focus?: {
       nodeId: string;
       selectAll: boolean;
@@ -1414,7 +1440,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       // contract): the renderer mints the trailing draft row's stable id and
       // expects the created node to adopt it, so the row reconciles into a single
       // real node instead of leaving an orphan beside the still-buffering draft.
-      const nodeId = id ?? `node-${++sequence}`;
+      const nodeId = id ?? nextCanonicalNodeId();
       makeNode(nodeId, text, { parentId, showCheckbox: true, ...overrides });
       appendChild(parentId, nodeId, index);
       return nodeId;
@@ -1525,11 +1551,23 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     };
     const applyPasteMetadata = (
       nodeId: string,
-      metadata: { tags?: string[]; fields?: Array<{ name: string; value: string }> },
+      metadata: {
+        tags?: string[];
+        fields?: Array<{ name: string; value: string }>;
+        metadata?: { pasteTags?: string[]; pasteFields?: Array<{ name: string; value: string }> };
+      },
     ) => {
       const owner = nodes.get(nodeId);
       if (!owner) return;
-      for (const rawName of metadata.tags ?? []) {
+      const tagNames = [
+        ...(metadata.tags ?? []),
+        ...(metadata.metadata?.pasteTags ?? []),
+      ];
+      const fields = [
+        ...(metadata.fields ?? []),
+        ...(metadata.metadata?.pasteFields ?? []),
+      ];
+      for (const rawName of tagNames) {
         const name = rawName.trim();
         if (!name) continue;
         const existing = [...nodes.values()].find((node) => (
@@ -1538,7 +1576,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         const tagId = existing?.id ?? createTag(name).focus?.nodeId;
         if (tagId && !owner.tags.includes(tagId)) owner.tags.push(tagId);
       }
-      for (const field of metadata.fields ?? []) {
+      for (const field of fields) {
         const name = field.name.trim();
         const value = field.value.trim();
         if (!name || !value) continue;
@@ -2326,6 +2364,1216 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       for (const listener of documentListeners) {
         listener(clone(normalized));
       }
+      if (normalized && typeof normalized === 'object') {
+        const eventRecord = normalized as Record<string, unknown>;
+        const update = eventRecord.update as Record<string, unknown> | undefined;
+        if (eventRecord.type === 'projection_changed' && update) {
+          const eventRevision = typeof update.revision === 'number' ? update.revision : ++revision;
+          revision = Math.max(revision, eventRevision);
+          const fullProjection = update.projection as { todayId?: unknown; nodes?: unknown } | undefined;
+          const changedNodes = Array.isArray(fullProjection?.nodes) ? fullProjection.nodes : projection().nodes;
+          const changedNodeIds = new Set(changedNodes.flatMap((node) => (
+            node && typeof node === 'object' && typeof (node as { id?: unknown }).id === 'string'
+              ? [(node as { id: string }).id]
+              : []
+          )));
+          const eventSequence = ++outlineEventSequence;
+          const cursor = `cursor:${eventSequence}`;
+          emitOutlineEvent({
+            protocolVersion: 1,
+            kind: 'outline.event',
+            type: 'projection.changed',
+            instanceId: 'runtime:e2e',
+            sequence: eventSequence,
+            revision: eventRevision,
+            cursor,
+            changes: update.kind === 'delta'
+              ? {
+                  todayId: String(update.todayId ?? ids.today),
+                  changedNodes: Array.isArray(update.changedNodes) ? update.changedNodes : [],
+                  removedIds: Array.isArray(update.removedIds) ? update.removedIds : [],
+                }
+              : {
+                  todayId: String(fullProjection?.todayId ?? ids.today),
+                  changedNodes,
+                  removedIds: projection().nodes
+                    .map((node) => node.id)
+                    .filter((id) => !changedNodeIds.has(id)),
+                },
+          });
+        }
+      }
+    };
+
+    const emitOutlineEvent = (event: Record<string, unknown>) => {
+      const cursor = String(event.cursor);
+      for (const [subscriptionId, subscription] of outlineSubscriptions) {
+        const types = (subscription.input.filter as { types?: unknown } | undefined)?.types;
+        if (Array.isArray(types) && !types.includes(event.type)) continue;
+        subscription.listener(clone({
+          protocolVersion: 1,
+          requestId: `desktop:${subscriptionId}`,
+          sequence: event.sequence,
+          type: 'event',
+          cursor,
+          event,
+        }));
+      }
+    };
+
+    type MockTargetRef =
+      | { binding: string }
+      | { target: { selector: Record<string, unknown>; cardinality: string; max?: number } };
+    type MockPlacement =
+      | { kind: 'first' | 'last'; parent: MockTargetRef }
+      | { kind: 'index'; parent: MockTargetRef; index: number }
+      | { kind: 'before' | 'after'; sibling: MockTargetRef }
+      | { kind: 'previous' | 'next' };
+    type MockChangeSet = {
+      protocolVersion: 1;
+      kind: 'outline.changeset';
+      base?: { revision?: number };
+      operations: Array<Record<string, unknown>>;
+      source?: Record<string, unknown>;
+    };
+    type MockDiff = {
+      protocolVersion: 1;
+      kind: 'outline.diff';
+      diffHash: string;
+      changeSetHash: string;
+      baseRevision: number;
+      normalizedChangeSet: MockChangeSet;
+      bindings: Record<string, string[]>;
+      affected: Array<{
+        id: string;
+        effect: 'create' | 'update' | 'move' | 'trash' | 'restore' | 'purge';
+        beforeDigest: string | null;
+        afterDigest: string | null;
+      }>;
+      destructive: Array<{ kind: 'purge' | 'empty-trash' | 'replace' | 'merge'; targetCount: number }>;
+      warnings: unknown[];
+      resultEstimate: { nodeCount: number; encodedBytes: number };
+    };
+    type MockRuntimeSnapshot = {
+      nodes: Array<[string, MockNode]>;
+      sequence: number;
+      now: number;
+      revision: number;
+    };
+
+    const outlineSnapshot = (): MockRuntimeSnapshot => ({
+      nodes: clone([...nodes.entries()]),
+      sequence,
+      now,
+      revision,
+    });
+    const restoreOutlineSnapshot = (snapshot: MockRuntimeSnapshot) => {
+      nodes.clear();
+      for (const [id, node] of clone(snapshot.nodes)) nodes.set(id, node);
+      sequence = snapshot.sequence;
+      now = snapshot.now;
+      revision = snapshot.revision;
+    };
+    const mockDigest = (value: unknown) => {
+      const text = JSON.stringify(value);
+      let hash = 2166136261;
+      for (let index = 0; index < text.length; index += 1) {
+        hash ^= text.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+      }
+      return (hash >>> 0).toString(16).padStart(8, '0').repeat(8);
+    };
+    const outlineAliases: Record<string, string> = {
+      home: ids.root,
+      inbox: ids.library,
+      library: ids.library,
+      schema: ids.schema,
+      trash: ids.trash,
+      'daily-notes': ids.daily,
+      'saved-searches': ids.searches,
+      today: ids.today,
+    };
+    const queryMatches = (node: MockNode, query: Record<string, unknown>): boolean => {
+      if (query.kind === 'group') {
+        const children = Array.isArray(query.children) ? query.children as Array<Record<string, unknown>> : [];
+        if (query.logic === 'OR') return children.some((child) => queryMatches(node, child));
+        if (query.logic === 'NOT') return children.every((child) => !queryMatches(node, child));
+        return children.every((child) => queryMatches(node, child));
+      }
+      if (query.op === 'STRING_MATCH') {
+        return node.content.text.toLocaleLowerCase().includes(String(query.text ?? '').toLocaleLowerCase());
+      }
+      if (query.op === 'HAS_TAG') return node.tags.includes(String(query.tagDefId ?? ''));
+      if (query.op === 'DONE') return (node.completedAt ?? 0) > 0;
+      if (query.op === 'NOT_DONE') return (node.completedAt ?? 0) <= 0;
+      if (query.op === 'HAS_IMAGE') return node.type === 'image';
+      if (query.op === 'HAS_MEDIA') return node.type === 'image' || node.type === 'attachment';
+      if (query.op === 'IS_TYPE') return node.type === String(query.text ?? 'plain');
+      return true;
+    };
+    const resolveMockSelector = (selector: Record<string, unknown>): string[] => {
+      if (selector.by === 'id') return nodes.has(String(selector.id)) ? [String(selector.id)] : [];
+      if (selector.by === 'ids') {
+        const selectedIds = Array.isArray(selector.ids) ? selector.ids.map(String) : [];
+        const missingIds = selectedIds.filter((nodeId) => !nodes.has(nodeId));
+        if (missingIds.length > 0) throw new Error(`Outline targets do not exist: ${missingIds.join(', ')}`);
+        return selectedIds;
+      }
+      if (selector.by === 'alias') {
+        const id = outlineAliases[String(selector.alias)];
+        return id && nodes.has(id) ? [id] : [];
+      }
+      if (selector.by === 'date') {
+        const date = String(selector.date);
+        return [...nodes.values()]
+          .filter((node) => node.parentId === ids.daily && node.content.text === date)
+          .map((node) => node.id);
+      }
+      if (selector.by === 'query') {
+        const limit = typeof selector.limit === 'number' ? selector.limit : 1_000;
+        return [...nodes.values()]
+          .filter((node) => selector.includeTrash === true || !isInTrash(node.id))
+          .filter((node) => queryMatches(node, selector.query as Record<string, unknown>))
+          .slice(0, limit)
+          .map((node) => node.id);
+      }
+      return [];
+    };
+    const resolveMockTarget = (reference: MockTargetRef, bindings: Record<string, string[]>): string[] => {
+      if ('binding' in reference) return [...bindings[reference.binding] ?? []];
+      const resolved = resolveMockSelector(reference.target.selector);
+      if (reference.target.cardinality === 'one' && resolved.length !== 1) {
+        throw new Error(`Expected one Outline target; found ${resolved.length}.`);
+      }
+      if (reference.target.cardinality === 'zero-or-one' && resolved.length > 1) {
+        throw new Error(`Expected at most one Outline target; found ${resolved.length}.`);
+      }
+      return resolved.slice(0, reference.target.max ?? resolved.length);
+    };
+    const oneMockTarget = (reference: MockTargetRef, bindings: Record<string, string[]>) => {
+      const resolved = resolveMockTarget(reference, bindings);
+      if (resolved.length !== 1) throw new Error(`Expected one Outline target; found ${resolved.length}.`);
+      return resolved[0]!;
+    };
+    const resolveMockDestinations = (
+      placement: Exclude<MockPlacement, { kind: 'previous' | 'next' }>,
+      bindings: Record<string, string[]>,
+    ): Array<{ parentId: string; index: number | null }> => {
+      if (placement.kind === 'first' || placement.kind === 'last' || placement.kind === 'index') {
+        return resolveMockTarget(placement.parent, bindings).map((parentId) => ({
+          parentId,
+          index: placement.kind === 'first' ? 0 : placement.kind === 'index' ? placement.index : null,
+        }));
+      }
+      const siblingId = oneMockTarget(placement.sibling, bindings);
+      const sibling = nodes.get(siblingId);
+      const parent = sibling?.parentId ? nodes.get(sibling.parentId) : undefined;
+      if (!sibling?.parentId || !parent) throw new Error(`Placement sibling has no parent: ${siblingId}`);
+      const siblingIndex = parent.children.indexOf(siblingId);
+      if (siblingIndex < 0) throw new Error(`Placement sibling is absent from its parent: ${siblingId}`);
+      return [{
+        parentId: sibling.parentId,
+        index: siblingIndex + (placement.kind === 'after' ? 1 : 0),
+      }];
+    };
+    const moveMockTargetBlock = (
+      targetIds: string[],
+      destination: { parentId: string; index: number | null },
+    ) => {
+      const parent = nodes.get(destination.parentId);
+      if (!parent) throw new Error(`Move destination does not exist: ${destination.parentId}`);
+      const selected = new Set(targetIds);
+      const anchorId = destination.index === null
+        ? undefined
+        : parent.children.slice(destination.index).find((childId) => !selected.has(childId));
+      for (const targetId of targetIds) {
+        removeFromParent(targetId);
+        const destinationParent = nodes.get(destination.parentId);
+        if (!destinationParent) throw new Error(`Move destination does not exist: ${destination.parentId}`);
+        const anchorIndex = anchorId ? destinationParent.children.indexOf(anchorId) : -1;
+        moveNode(targetId, destination.parentId, anchorIndex >= 0 ? anchorIndex : null);
+      }
+    };
+    const oneMockFieldTarget = (reference: MockTargetRef, bindings: Record<string, string[]>) => {
+      if (
+        'target' in reference
+        && reference.target.selector.by === 'id'
+        && String(reference.target.selector.id).startsWith('sys:')
+      ) {
+        return String(reference.target.selector.id);
+      }
+      return oneMockTarget(reference, bindings);
+    };
+    const mockViewField = (field: unknown, bindings: Record<string, string[]>): string | null => {
+      if (field === null) return null;
+      if (typeof field === 'string') return field;
+      return oneMockTarget(field as MockTargetRef, bindings);
+    };
+    const createMockQueryCondition = (parentId: string, query: Record<string, unknown>) => {
+      const conditionId = `condition-${++sequence}`;
+      if (query.kind === 'group') {
+        makeNode(conditionId, String(query.logic), {
+          type: 'queryCondition',
+          parentId,
+          queryLogic: String(query.logic),
+        });
+        appendChild(parentId, conditionId);
+        for (const child of query.children as Array<Record<string, unknown>>) {
+          createMockQueryCondition(conditionId, child);
+        }
+        return conditionId;
+      }
+      makeNode(conditionId, String(query.text ?? query.op ?? ''), {
+        type: 'queryCondition',
+        parentId,
+        queryOp: String(query.op),
+        queryFieldDefId: typeof query.fieldDefId === 'string' ? query.fieldDefId : undefined,
+        queryTagDefId: typeof query.tagDefId === 'string' ? query.tagDefId : undefined,
+        queryTargetId: typeof query.targetId === 'string' ? query.targetId : undefined,
+      });
+      appendChild(parentId, conditionId);
+      for (const operand of Array.isArray(query.operands) ? query.operands as Array<Record<string, unknown>> : []) {
+        const targetId = typeof operand.targetId === 'string' ? operand.targetId : undefined;
+        const operandId = `${targetId ? 'ref' : 'operand'}-${++sequence}`;
+        makeNode(operandId, String(operand.text ?? ''), {
+          parentId: conditionId,
+          ...(targetId ? { type: 'reference', targetId } : {}),
+        });
+        appendChild(conditionId, operandId);
+      }
+      return conditionId;
+    };
+    const setMockSearch = (nodeId: string, title: string, query: Record<string, unknown>) => {
+      const search = nodes.get(nodeId);
+      if (!search) return;
+      search.type = 'search';
+      search.content = rich(title);
+      for (const childId of [...search.children]) {
+        if (nodes.get(childId)?.type === 'queryCondition') removeNode(childId);
+      }
+      createMockQueryCondition(nodeId, query);
+      search.updatedAt = ++now;
+    };
+    const createMockDraft = (
+      parentId: string,
+      index: number | null,
+      draft: Record<string, unknown>,
+    ): string => {
+      const nodeId = typeof draft.id === 'string' ? draft.id : nextCanonicalNodeId();
+      const content = clone(draft.content as RichText);
+      const metadata = draft.metadata && typeof draft.metadata === 'object'
+        ? draft.metadata as Record<string, unknown>
+        : {};
+      const type = typeof draft.type === 'string' ? draft.type : undefined;
+      const asset = typeof draft.assetLeaseId === 'string' ? assets.get(draft.assetLeaseId) : undefined;
+      const overrides: Partial<MockNode> = {
+        type,
+        showCheckbox: draft.checkbox === true,
+        completedAt: draft.done === true ? ++now : draft.checkbox === true ? 0 : undefined,
+      };
+      if (type === 'reference') {
+        overrides.targetId = String(draft.referenceTargetId ?? '');
+      } else if (type === 'image') {
+        overrides.assetId = asset?.id ?? (typeof draft.assetLeaseId === 'string' ? draft.assetLeaseId : undefined);
+        overrides.mediaUrl = typeof draft.mediaUrl === 'string' ? draft.mediaUrl : undefined;
+        overrides.imageWidth = typeof metadata.width === 'number' ? metadata.width : asset?.imageWidth;
+        overrides.imageHeight = typeof metadata.height === 'number' ? metadata.height : asset?.imageHeight;
+        overrides.mediaAlt = typeof metadata.alt === 'string' ? metadata.alt : undefined;
+      } else if (type === 'attachment') {
+        overrides.assetId = asset?.id ?? String(draft.assetLeaseId ?? '');
+        overrides.mimeType = asset?.mimeType ?? 'application/octet-stream';
+        overrides.originalFilename = asset?.originalFilename ?? content.text;
+        overrides.fileSize = asset?.byteSize ?? 0;
+        overrides.thumbnailAssetId = asset?.thumbnailAssetId;
+        overrides.pdfPageCount = asset?.pdfPageCount;
+        overrides.audioDurationMs = asset?.audioDurationMs;
+        overrides.videoDurationMs = asset?.videoDurationMs;
+      } else if (type === 'codeBlock') {
+        overrides.codeLanguage = typeof draft.codeLanguage === 'string' ? draft.codeLanguage : undefined;
+      }
+      createNode(parentId, index, content.text, overrides, nodeId);
+      const node = nodes.get(nodeId)!;
+      node.content = content;
+      if (typeof draft.description === 'string' && draft.description.trim()) node.description = draft.description;
+      for (const tagId of Array.isArray(draft.tags) ? draft.tags.map(String) : []) {
+        if (!node.tags.includes(tagId)) node.tags.push(tagId);
+        for (const templateNodeId of tagTemplateContentNodeIds(tagId)) cloneTemplateContentNode(nodeId, templateNodeId);
+      }
+      for (const field of Array.isArray(draft.fields) ? draft.fields as Array<Record<string, unknown>> : []) {
+        const entryId = inlineField(nodeId, null, '', 'plain', String(field.fieldDefId));
+        for (const value of Array.isArray(field.values) ? field.values as Array<Record<string, unknown>> : []) {
+          createMockDraft(entryId, null, value);
+        }
+      }
+      applyPasteMetadata(nodeId, {
+        metadata: {
+          pasteTags: Array.isArray(metadata.pasteTags) ? metadata.pasteTags.map(String) : undefined,
+          pasteFields: Array.isArray(metadata.pasteFields)
+            ? (metadata.pasteFields as Array<Record<string, unknown>>).map((field) => ({
+                name: String(field.name ?? ''),
+                value: String(field.value ?? ''),
+              }))
+            : undefined,
+        },
+      });
+      for (const child of Array.isArray(draft.children) ? draft.children as Array<Record<string, unknown>> : []) {
+        createMockDraft(nodeId, null, child);
+      }
+      if (type === 'search' && metadata.query && typeof metadata.query === 'object') {
+        setMockSearch(nodeId, content.text, metadata.query as Record<string, unknown>);
+      }
+      return nodeId;
+    };
+    const mockFieldEntry = (ownerId: string, fieldDefId: string) => nodes.get(ownerId)?.children
+      .map((childId) => nodes.get(childId))
+      .find((child) => child?.type === 'fieldEntry' && child.fieldDefId === fieldDefId);
+    const applyMockFieldInstruction = (
+      ownerId: string,
+      instruction: Record<string, unknown>,
+      bindings: Record<string, string[]>,
+    ) => {
+      if (instruction.action === 'register-option') {
+        registerOption(ownerId, String(instruction.name));
+        return;
+      }
+      if (instruction.action === 'convert') {
+        convertNodeToInlineField(ownerId, String(instruction.name), String(instruction.fieldType));
+        return;
+      }
+      if (instruction.action === 'define') {
+        inlineField(
+          ownerId,
+          typeof instruction.index === 'number' ? instruction.index : null,
+          String(instruction.name),
+          String(instruction.fieldType),
+        );
+        return;
+      }
+      const fieldDefId = oneMockFieldTarget(instruction.field as MockTargetRef, bindings);
+      if (instruction.action === 'attach') {
+        inlineField(ownerId, typeof instruction.index === 'number' ? instruction.index : null, '', 'plain', fieldDefId);
+        return;
+      }
+      const entry = mockFieldEntry(ownerId, fieldDefId);
+      if (instruction.action === 'clear') {
+        if (entry) clearFieldValue(entry.id);
+      } else if (instruction.action === 'remove') {
+        if (entry) removeNode(entry.id);
+      } else if (instruction.action === 'reuse') {
+        const sourceFieldId = oneMockFieldTarget(instruction.sourceField as MockTargetRef, bindings);
+        const sourceEntry = mockFieldEntry(ownerId, sourceFieldId);
+        if (sourceEntry) reuseFieldDefinition(sourceEntry.id, fieldDefId);
+      } else if (instruction.action === 'select') {
+        const optionId = oneMockTarget(instruction.option as MockTargetRef, bindings);
+        if (entry) selectOption(entry.id, optionId);
+      } else if (instruction.action === 'set') {
+        if (entry) clearFieldValue(entry.id);
+        const nextEntry = mockFieldEntry(ownerId, fieldDefId) ?? ensureFieldSlotEntry(ownerId, fieldDefId);
+        createNode(nextEntry.id, null, instruction.value == null ? '' : String(instruction.value));
+      }
+    };
+    const applyMockFieldSlot = (
+      ownerId: string,
+      instruction: Record<string, unknown>,
+      bindings: Record<string, string[]>,
+    ) => {
+      const fieldDefId = oneMockTarget(instruction.field as MockTargetRef, bindings);
+      const mutation = instruction.mutation as Record<string, unknown>;
+      if (mutation.action === 'remove-value') {
+        removeFieldValue(oneMockTarget(mutation.value as MockTargetRef, bindings));
+        return;
+      }
+      const actionKinds: Record<string, string> = {
+        'accept-default': 'acceptDefault',
+        'append-text': 'appendText',
+        'append-reference': 'appendReference',
+        'select-option': 'selectOption',
+        'append-nodes': 'appendNodes',
+        'append-field': 'appendField',
+        'append-image': 'appendImage',
+        'append-attachment': 'appendAttachment',
+        commit: 'commit',
+      };
+      const args: Record<string, unknown> = {
+        ownerId,
+        fieldDefId,
+        kind: actionKinds[String(mutation.action)],
+        ...(typeof mutation.entryId === 'string' ? { entryId: mutation.entryId } : {}),
+        ...(typeof mutation.id === 'string' ? { id: mutation.id } : {}),
+      };
+      if (mutation.action === 'append-text') Object.assign(args, { text: mutation.text, collect: mutation.collect });
+      if (mutation.action === 'append-reference') {
+        args.targetId = oneMockTarget(mutation.target as MockTargetRef, bindings);
+      }
+      if (mutation.action === 'select-option') {
+        args.optionNodeId = oneMockTarget(mutation.option as MockTargetRef, bindings);
+      }
+      if (mutation.action === 'append-nodes') {
+        args.nodes = mutation.nodes;
+        args.firstTagIds = Array.isArray(mutation.firstTags)
+          ? (mutation.firstTags as MockTargetRef[]).flatMap((target) => resolveMockTarget(target, bindings))
+          : [];
+      }
+      if (mutation.action === 'append-field') Object.assign(args, { name: mutation.name, fieldType: mutation.fieldType });
+      if (mutation.action === 'append-image') {
+        const asset = typeof mutation.assetLeaseId === 'string' ? assets.get(mutation.assetLeaseId) : undefined;
+        Object.assign(args, {
+          assetId: asset?.id ?? mutation.assetLeaseId,
+          mediaUrl: mutation.mediaUrl,
+          width: mutation.width,
+          height: mutation.height,
+          alt: mutation.alt,
+          name: mutation.name,
+        });
+      }
+      if (mutation.action === 'append-attachment') {
+        const asset = assets.get(String(mutation.assetLeaseId));
+        Object.assign(args, {
+          assetId: asset?.id ?? mutation.assetLeaseId,
+          mimeType: asset?.mimeType,
+          originalFilename: asset?.originalFilename,
+          fileSize: asset?.byteSize,
+          thumbnailAssetId: asset?.thumbnailAssetId,
+          pdfPageCount: asset?.pdfPageCount,
+          audioDurationMs: asset?.audioDurationMs,
+          videoDurationMs: asset?.videoDurationMs,
+        });
+      }
+      updateFieldSlot(args);
+    };
+    const applyMockViewInstruction = (
+      targetId: string,
+      instruction: Record<string, unknown>,
+      bindings: Record<string, string[]>,
+    ) => {
+      if (instruction.property === 'mode') {
+        const view = ensureViewDef(targetId);
+        const previous = view.viewMode ?? 'list';
+        view.viewMode = String(instruction.mode);
+        if (previous !== 'table' && instruction.mode === 'table') addMissingTableDisplayFields(targetId, view);
+        return;
+      }
+      if (instruction.property === 'toolbar') {
+        ensureViewDef(targetId).toolbarVisible = instruction.visible === true;
+        return;
+      }
+      if (instruction.property === 'group') {
+        const view = ensureViewDef(targetId);
+        const field = mockViewField(instruction.field, bindings);
+        if (field) view.groupField = field;
+        else delete view.groupField;
+        return;
+      }
+      const target = nodes.get(targetId);
+      const parent = target?.parentId ? nodes.get(target.parentId) : undefined;
+      const ownerView = target?.type === 'viewDef'
+        ? target
+        : parent?.type === 'viewDef'
+          ? parent
+          : ensureViewDef(targetId);
+      if (instruction.property === 'sort') {
+        if (instruction.action === 'add') {
+          const id = `sort-${++sequence}`;
+          makeNode(id, '', {
+            type: 'sortRule', parentId: ownerView.id,
+            sortField: mockViewField(instruction.field, bindings) ?? 'sys:name',
+            sortDirection: String(instruction.direction),
+          });
+          appendChild(ownerView.id, id);
+        } else if (instruction.action === 'set') {
+          const rule = nodes.get(String(instruction.ruleId));
+          if (rule) {
+            rule.sortField = mockViewField(instruction.field, bindings) ?? 'sys:name';
+            rule.sortDirection = String(instruction.direction);
+          }
+        } else if (instruction.action === 'remove') removeNode(String(instruction.ruleId));
+        else for (const rule of directChildrenOfType(ownerView.id, 'sortRule')) removeNode(rule.id);
+        return;
+      }
+      if (instruction.property === 'filter') {
+        if (instruction.action === 'add') {
+          const id = `filter-${++sequence}`;
+          makeNode(id, '', {
+            type: 'filterRule', parentId: ownerView.id,
+            filterField: mockViewField(instruction.field, bindings) ?? 'sys:name',
+            filterOperator: String(instruction.operator),
+            filterValueLogic: String(instruction.valueLogic),
+            filterValues: Array.isArray(instruction.values) ? instruction.values.map(String) : [],
+          });
+          appendChild(ownerView.id, id);
+        } else if (instruction.action === 'set') {
+          const rule = nodes.get(String(instruction.ruleId));
+          if (rule) {
+            if (instruction.field !== undefined) rule.filterField = mockViewField(instruction.field, bindings) ?? undefined;
+            if (instruction.operator != null) rule.filterOperator = String(instruction.operator);
+            if (instruction.valueLogic != null) rule.filterValueLogic = String(instruction.valueLogic);
+            if (Array.isArray(instruction.values)) rule.filterValues = instruction.values.map(String);
+          }
+        } else if (instruction.action === 'remove') removeNode(String(instruction.ruleId));
+        else for (const rule of directChildrenOfType(ownerView.id, 'filterRule')) removeNode(rule.id);
+        return;
+      }
+      if (instruction.action === 'add') {
+        const field = mockViewField(instruction.field, bindings) ?? 'sys:name';
+        const existing = directChildrenOfType(ownerView.id, 'displayField').find((node) => node.displayField === field);
+        if (existing) existing.displayVisible = true;
+        else {
+          const id = `display-${++sequence}`;
+          makeNode(id, '', {
+            type: 'displayField', parentId: ownerView.id, displayField: field,
+            displayVisible: true, displayOrder: directChildrenOfType(ownerView.id, 'displayField').length,
+          });
+          appendChild(ownerView.id, id);
+        }
+      } else if (instruction.action === 'remove') removeNode(String(instruction.displayFieldId));
+      else {
+        const display = nodes.get(String(instruction.displayFieldId));
+        if (!display) return;
+        if (instruction.field !== undefined) display.displayField = mockViewField(instruction.field, bindings) ?? undefined;
+        if (instruction.visible !== undefined && instruction.visible !== null) display.displayVisible = instruction.visible === true;
+        if (instruction.width !== undefined) setOptionalNumber(display, 'displayWidth', instruction.width);
+        if (instruction.order !== undefined) setOptionalNumber(display, 'displayOrder', instruction.order);
+        if (instruction.label !== undefined) setOptionalText(display, 'displayLabel', instruction.label);
+        if (instruction.placement !== undefined) setOptionalText(display, 'displayPlacement', instruction.placement);
+        if (instruction.move === 'left' || instruction.move === 'right') {
+          const siblings = directChildrenOfType(ownerView.id, 'displayField')
+            .sort((left, right) => (left.displayOrder ?? 0) - (right.displayOrder ?? 0));
+          const current = siblings.findIndex((node) => node.id === display.id);
+          const direction = instruction.move === 'left' ? -1 : 1;
+          let next = current + direction;
+          while (next >= 0 && next < siblings.length && siblings[next]?.displayVisible === false) {
+            next += direction;
+          }
+          if (current >= 0 && next >= 0 && next < siblings.length) {
+            [siblings[current], siblings[next]] = [siblings[next]!, siblings[current]!];
+            siblings.forEach((node, order) => { node.displayOrder = order; });
+          }
+        }
+      }
+    };
+    const applyMockUpdate = (
+      targetId: string,
+      instruction: Record<string, unknown>,
+      bindings: Record<string, string[]>,
+    ) => {
+      const node = nodes.get(targetId);
+      if (!node) return;
+      if (instruction.kind === 'content') {
+        node.content = clone(instruction.value as RichText);
+      } else if (instruction.kind === 'description') {
+        if (typeof instruction.value === 'string' && instruction.value.trim()) node.description = instruction.value;
+        else delete node.description;
+      } else if (instruction.kind === 'text-patch') {
+        if (instruction.field === 'content') node.content = applyRichTextPatch(node.content, instruction.patch as RichTextPatch);
+        else {
+          const current = node.description ?? '';
+          const from = Number(instruction.from);
+          const to = Number(instruction.to);
+          node.description = `${current.slice(0, from)}${String(instruction.value ?? '')}${current.slice(to)}`;
+        }
+      } else if (instruction.kind === 'code') {
+        node.type = 'codeBlock';
+        const language = String(instruction.language ?? '').trim().toLocaleLowerCase();
+        if (language) node.codeLanguage = language;
+        else delete node.codeLanguage;
+      } else if (instruction.kind === 'checkbox') {
+        if (instruction.visible === true && node.completedAt === undefined) node.completedAt = 0;
+        if (instruction.visible === false) delete node.completedAt;
+      } else if (instruction.kind === 'done') {
+        node.completedAt = instruction.value === true ? ++now : 0;
+      } else if (instruction.kind === 'tag') {
+        const tagId = oneMockTarget(instruction.tag as MockTargetRef, bindings);
+        if (instruction.action === 'add') {
+          if (!node.tags.includes(tagId)) node.tags.push(tagId);
+          for (const templateNodeId of tagTemplateContentNodeIds(tagId)) cloneTemplateContentNode(targetId, templateNodeId);
+        } else node.tags = node.tags.filter((id) => id !== tagId);
+      } else if (instruction.kind === 'field') {
+        applyMockFieldInstruction(targetId, instruction, bindings);
+      } else if (instruction.kind === 'field-slot') {
+        applyMockFieldSlot(targetId, instruction, bindings);
+      } else if (instruction.kind === 'definition') {
+        const patch = instruction.patch as Record<string, unknown>;
+        if (instruction.definitionType === 'tag') {
+          if ('color' in patch) setOptionalText(node, 'color', patch.color);
+          if ('extends' in patch) setOptionalText(node, 'extends', patch.extends);
+          if ('childSupertag' in patch) setOptionalText(node, 'childSupertag', patch.childSupertag);
+          if ('showCheckbox' in patch) node.showCheckbox = patch.showCheckbox === true;
+          if ('doneStateEnabled' in patch) node.doneStateEnabled = patch.doneStateEnabled === true;
+        } else {
+          if ('fieldType' in patch) {
+            setOptionalText(node, 'fieldType', patch.fieldType);
+            if (node.fieldType !== 'number') {
+              delete node.minValue;
+              delete node.maxValue;
+            }
+            if (node.fieldType !== 'options') node.autocollectOptions = false;
+            if (node.fieldType !== 'options_from_supertag') delete node.sourceSupertag;
+          }
+          if ('sourceSupertag' in patch) setOptionalText(node, 'sourceSupertag', patch.sourceSupertag);
+          if ('nullable' in patch) node.nullable = patch.nullable === null ? undefined : patch.nullable === true;
+          if ('hideField' in patch) setOptionalText(node, 'hideField', patch.hideField);
+          if ('autoInitialize' in patch) setOptionalText(node, 'autoInitialize', patch.autoInitialize);
+          if ('autocollectOptions' in patch) node.autocollectOptions = patch.autocollectOptions === true;
+          if ('minValue' in patch) setOptionalNumber(node, 'minValue', patch.minValue);
+          if ('maxValue' in patch) setOptionalNumber(node, 'maxValue', patch.maxValue);
+        }
+      } else if (instruction.kind === 'reference') {
+        const referenceTargetId = oneMockTarget(instruction.target as MockTargetRef, bindings);
+        const referenceTarget = nodes.get(resolveReferenceTargetId(referenceTargetId) ?? referenceTargetId);
+        if (instruction.action === 'add') {
+          createNode(targetId, null, referenceTarget?.content.text ?? '', {
+            type: 'reference', targetId: referenceTarget?.id ?? referenceTargetId, showCheckbox: false,
+          });
+        } else if (instruction.action === 'retarget') {
+          node.type = 'reference';
+          node.targetId = referenceTarget?.id ?? referenceTargetId;
+          if (referenceTarget) node.content = clone(referenceTarget.content);
+        } else if (instruction.action === 'inline') {
+          if (!node.parentId) return;
+          const parent = nodes.get(node.parentId);
+          const index = parent?.children.indexOf(node.id) ?? -1;
+          const inlineId = createNode(node.parentId, index < 0 ? null : index, '', { showCheckbox: false });
+          const inline = nodes.get(inlineId)!;
+          inline.content = {
+            text: '', marks: [],
+            inlineRefs: [nodeInlineRef(0, referenceTarget?.id ?? referenceTargetId, referenceTarget?.content.text)],
+          };
+          removeNode(node.id);
+        } else {
+          if (!node.parentId) return;
+          const parent = nodes.get(node.parentId);
+          const index = parent?.children.indexOf(node.id) ?? -1;
+          createNode(node.parentId, index < 0 ? null : index, referenceTarget?.content.text ?? '', {
+            type: 'reference', targetId: referenceTarget?.id ?? referenceTargetId, showCheckbox: false,
+          });
+          removeNode(node.id);
+        }
+      } else if (instruction.kind === 'view') {
+        applyMockViewInstruction(targetId, instruction, bindings);
+      } else if (instruction.kind === 'search') {
+        if (instruction.action === 'set') {
+          setMockSearch(targetId, String(instruction.title), instruction.query as Record<string, unknown>);
+        }
+      } else if (instruction.kind === 'icon') {
+        setOptionalText(node, 'icon', instruction.value);
+        if (instruction.iconKind != null) node.iconKind = String(instruction.iconKind);
+        else delete node.iconKind;
+      } else if (instruction.kind === 'banner') {
+        setOptionalText(node, 'bannerAssetId', instruction.assetLeaseId);
+        const position = instruction.position as Record<string, unknown> | undefined;
+        if (position?.x != null) setOptionalNumber(node, 'bannerPositionX', position.x);
+        if (position?.y != null) setOptionalNumber(node, 'bannerPositionY', position.y);
+      } else if (instruction.kind === 'image') {
+        node.type = 'image';
+        if (typeof instruction.assetLeaseId === 'string') node.assetId = instruction.assetLeaseId;
+        if (typeof instruction.mediaUrl === 'string') node.mediaUrl = instruction.mediaUrl;
+        if (typeof instruction.width === 'number') node.imageWidth = instruction.width;
+        if (typeof instruction.height === 'number') node.imageHeight = instruction.height;
+      }
+      if (nodes.has(targetId)) nodes.get(targetId)!.updatedAt = ++now;
+    };
+    const executeMockChangeSet = (changeSet: MockChangeSet) => {
+      const bindings: Record<string, string[]> = {};
+      for (const change of changeSet.operations) {
+        let result: string[] = [];
+        if (change.op === 'resolve') {
+          result = resolveMockSelector(change.target as Record<string, unknown>);
+        } else if (change.op === 'ensure') {
+          if (change.resource === 'date') {
+            const date = String(change.date);
+            const existing = [...nodes.values()].find((node) => node.parentId === ids.daily && node.content.text === date);
+            result = [existing?.id ?? createNode(ids.daily, null, date, { tags: [ids.dayTag], showCheckbox: false })];
+          } else if (change.resource === 'tag-search') {
+            const tagId = oneMockTarget(change.tag as MockTargetRef, bindings);
+            const existing = [...nodes.values()].find((node) => node.type === 'search' && node.queryTagDefId === tagId);
+            if (existing) result = [existing.id];
+            else {
+              const tag = nodes.get(tagId);
+              const searchId = createNode(ids.searches, null, tag?.content.text ?? 'Search', {
+                type: 'search', queryTagDefId: tagId, showCheckbox: false,
+              });
+              setMockSearch(searchId, tag?.content.text ?? 'Search', { kind: 'rule', op: 'HAS_TAG', tagDefId: tagId });
+              result = [searchId];
+            }
+          } else {
+            const type = change.definitionType === 'tag' ? 'tagDef' : 'fieldDef';
+            const name = String(change.name).trim();
+            const existing = [...nodes.values()].find((node) => (
+              node.type === type && node.content.text.trim().toLocaleLowerCase() === name.toLocaleLowerCase()
+            ));
+            if (existing) result = [existing.id];
+            else if (type === 'tagDef') result = [createTag(name).focus!.nodeId];
+            else {
+              const fieldId = `field-def-${++sequence}`;
+              makeNode(fieldId, name, {
+                type: 'fieldDef', parentId: ids.schema,
+                fieldType: String(change.fieldType ?? 'plain'), nullable: true,
+              });
+              appendChild(ids.schema, fieldId);
+              result = [fieldId];
+            }
+          }
+        } else if (change.op === 'create') {
+          const destinations = resolveMockDestinations(change.placement as Exclude<MockPlacement, { kind: 'previous' | 'next' }>, bindings);
+          for (const [parentIndex, destination] of destinations.entries()) {
+            for (const [draftIndex, draft] of (change.nodes as Array<Record<string, unknown>>).entries()) {
+              const copy = parentIndex === 0 ? draft : {
+                ...clone(draft), id: `${String(draft.id ?? 'node')}:copy:${parentIndex}:${draftIndex}`,
+              };
+              result.push(createMockDraft(
+                destination.parentId,
+                destination.index === null ? null : destination.index + draftIndex,
+                copy,
+              ));
+            }
+          }
+        } else if (change.op === 'update') {
+          result = resolveMockTarget(change.targets as MockTargetRef, bindings);
+          for (const targetId of result) {
+            for (const instruction of change.changes as Array<Record<string, unknown>>) {
+              applyMockUpdate(targetId, instruction, bindings);
+            }
+          }
+        } else if (change.op === 'move') {
+          result = resolveMockTarget(change.targets as MockTargetRef, bindings);
+          const placement = change.placement as MockPlacement;
+          if (placement.kind === 'previous' || placement.kind === 'next') {
+            siblingMove(result, placement.kind === 'previous' ? 'up' : 'down');
+          } else {
+            const destinations = resolveMockDestinations(placement, bindings);
+            if (destinations.length !== 1) throw new Error('Move destination must resolve to exactly one parent.');
+            moveMockTargetBlock(result, destinations[0]!);
+          }
+        } else if (change.op === 'duplicate') {
+          const placement = change.placement as MockPlacement;
+          const destinations = placement.kind === 'previous' || placement.kind === 'next'
+            ? []
+            : resolveMockDestinations(placement, bindings);
+          if (destinations.length > 1) throw new Error('Duplicate destination must resolve to exactly one parent.');
+          const destination = destinations[0] ?? null;
+          for (const [index, targetId] of resolveMockTarget(change.targets as MockTargetRef, bindings).entries()) {
+            const duplicateId = duplicateNode(targetId);
+            if (!duplicateId) continue;
+            if (placement.kind === 'previous') {
+              const source = nodes.get(targetId);
+              const parent = source?.parentId ? nodes.get(source.parentId) : undefined;
+              if (!source?.parentId || !parent) throw new Error(`Duplicate source has no parent: ${targetId}`);
+              moveNode(duplicateId, source.parentId, parent.children.indexOf(targetId));
+            } else if (placement.kind !== 'next') {
+              if (!destination) throw new Error('Duplicate destination must resolve to exactly one parent.');
+              moveNode(
+                duplicateId,
+                destination.parentId,
+                destination.index === null ? null : destination.index + index,
+              );
+            }
+            result.push(duplicateId);
+          }
+        } else if (change.op === 'merge') {
+          const targetId = oneMockTarget(change.target as MockTargetRef, bindings);
+          const target = nodes.get(targetId);
+          for (const sourceId of resolveMockTarget(change.sources as MockTargetRef, bindings)) {
+            const source = nodes.get(sourceId);
+            if (!source || !target) continue;
+            target.content = rich(`${target.content.text}${source.content.text}`);
+            for (const childId of [...source.children]) moveNode(childId, targetId);
+            removeNode(sourceId);
+          }
+          result = [targetId];
+        } else if (change.op === 'template') {
+          const tagId = oneMockTarget(change.tag as MockTargetRef, bindings);
+          const plan = tagTemplateBackfillPlan(tagId);
+          for (const target of plan.targets) {
+            for (const templateNodeId of target.templateNodeIds) cloneTemplateContentNode(target.nodeId, templateNodeId);
+          }
+          result = [tagId];
+        } else if (change.op === 'lifecycle') {
+          result = resolveMockTarget(change.targets as MockTargetRef, bindings);
+          if (change.action === 'purge' && change.contents === true && result.includes(ids.trash)) {
+            result = [...nodes.get(ids.trash)?.children ?? []];
+          }
+          for (const targetId of result) {
+            if (change.action === 'trash') moveNode(targetId, ids.trash);
+            else if (change.action === 'restore') moveNode(targetId, ids.today);
+            else removeNode(targetId);
+          }
+        }
+        if (typeof change.bind === 'string') bindings[change.bind] = [...result];
+      }
+      return bindings;
+    };
+    const diffAffectedNodes = (
+      before: Array<[string, MockNode]>,
+      after: Array<[string, MockNode]>,
+    ): MockDiff['affected'] => {
+      const beforeById = new Map(before);
+      const afterById = new Map(after);
+      const idsToCompare = new Set([...beforeById.keys(), ...afterById.keys()]);
+      return [...idsToCompare].flatMap((id): MockDiff['affected'] => {
+        const oldNode = beforeById.get(id);
+        const newNode = afterById.get(id);
+        if (!oldNode && newNode) return [{ id, effect: 'create', beforeDigest: null, afterDigest: mockDigest(newNode) }];
+        if (oldNode && !newNode) return [{ id, effect: 'purge', beforeDigest: mockDigest(oldNode), afterDigest: null }];
+        if (JSON.stringify(oldNode) !== JSON.stringify(newNode)) {
+          const effect = oldNode?.parentId === ids.trash && newNode?.parentId !== ids.trash
+            ? 'restore'
+            : oldNode?.parentId !== ids.trash && newNode?.parentId === ids.trash
+              ? 'trash'
+              : oldNode?.parentId !== newNode?.parentId ? 'move' : 'update';
+          return [{ id, effect, beforeDigest: mockDigest(oldNode), afterDigest: mockDigest(newNode) }];
+        }
+        return [];
+      });
+    };
+    const previewMockChangeSet = (input: MockChangeSet): MockDiff => {
+      if (input.base?.revision !== undefined && input.base.revision !== revision) {
+        throw new Error(`Stale Runtime revision ${input.base.revision}; expected ${revision}.`);
+      }
+      const normalizedChangeSet = clone({
+        ...input,
+        base: { ...input.base, revision },
+      });
+      const before = outlineSnapshot();
+      let bindings: Record<string, string[]>;
+      let after: MockRuntimeSnapshot;
+      try {
+        bindings = executeMockChangeSet(normalizedChangeSet);
+        after = outlineSnapshot();
+      } finally {
+        restoreOutlineSnapshot(before);
+      }
+      const affected = diffAffectedNodes(before.nodes, after!.nodes);
+      const destructive = normalizedChangeSet.operations.flatMap((change) => {
+        if (change.op === 'merge') {
+          return [{ kind: 'merge' as const, targetCount: resolveMockTarget(change.sources as MockTargetRef, bindings).length }];
+        }
+        if (change.op === 'lifecycle' && change.action === 'purge') {
+          return [{
+            kind: change.contents === true ? 'empty-trash' as const : 'purge' as const,
+            targetCount: affected.filter((entry) => entry.effect === 'purge').length,
+          }];
+        }
+        return [];
+      });
+      const changeSetHash = mockDigest(normalizedChangeSet);
+      return {
+        protocolVersion: 1,
+        kind: 'outline.diff',
+        diffHash: mockDigest({ changeSetHash, bindings, affected, destructive }),
+        changeSetHash,
+        baseRevision: revision,
+        normalizedChangeSet,
+        bindings,
+        affected,
+        destructive,
+        warnings: [],
+        resultEstimate: { nodeCount: affected.length, encodedBytes: JSON.stringify(affected).length },
+      };
+    };
+    const outlineHistory: Array<{ before: MockRuntimeSnapshot; after: MockRuntimeSnapshot; operationId: string }> = [];
+    const outlineRedoHistory: Array<{ before: MockRuntimeSnapshot; after: MockRuntimeSnapshot; operationId: string }> = [];
+    const mockAnchors = () => ({
+      workspaceId: ids.workspace,
+      rootId: ids.root,
+      libraryId: ids.library,
+      dailyNotesId: ids.daily,
+      schemaId: ids.schema,
+      searchesId: ids.searches,
+      recentsId: ids.recents,
+      trashId: ids.trash,
+      todayId: ids.today,
+    });
+    const mockBacklinks = (targetId: string) => {
+      const result: Array<Record<string, unknown>> = [];
+      for (const node of nodes.values()) {
+        if (isInTrash(node.id)) continue;
+        if (node.type === 'reference' && node.targetId === targetId) {
+          const parent = node.parentId ? nodes.get(node.parentId) : undefined;
+          const fieldEntry = parent?.type === 'fieldEntry' ? parent : undefined;
+          result.push({
+            targetId,
+            sourceId: fieldEntry?.parentId ?? node.id,
+            referenceId: node.id,
+            kind: fieldEntry ? 'field' : 'tree',
+            ...(fieldEntry ? { fieldEntryId: fieldEntry.id, fieldDefId: fieldEntry.fieldDefId } : {}),
+          });
+        }
+        for (const inlineRef of node.content.inlineRefs) {
+          if (inlineRef.target.kind === 'node' && inlineRef.target.nodeId === targetId) {
+            result.push({
+              targetId,
+              sourceId: node.id,
+              referenceId: node.id,
+              kind: 'inline',
+              inlineDisplayName: inlineRef.displayName,
+            });
+          }
+        }
+      }
+      return result;
+    };
+    const mockProjectionResult = (
+      projectionSpec: Record<string, unknown>,
+      selectedIds?: string[],
+    ) => {
+      let projected: unknown[];
+      if (projectionSpec.kind === 'backlinks') {
+        const targetRef = projectionSpec.targets as MockTargetRef;
+        projected = resolveMockTarget(targetRef, {}).flatMap(mockBacklinks);
+      } else {
+        const full = projection().nodes;
+        projected = selectedIds ? full.filter((node) => selectedIds.includes(node.id)) : full;
+      }
+      const page = projectionSpec.page as { limit?: number; cursor?: string } | undefined;
+      const limit = page?.limit ?? 100;
+      const cursorParts = page?.cursor?.split(':') ?? [];
+      const offset = cursorParts.length === 3 && Number(cursorParts[1]) === revision
+        ? Number(cursorParts[2])
+        : 0;
+      const pageNodes = projected.slice(offset, offset + limit);
+      const nextOffset = offset + pageNodes.length;
+      return {
+        projection: clone(projectionSpec),
+        revision,
+        anchors: mockAnchors(),
+        nodes: clone(pageNodes),
+        ...(nextOffset < projected.length ? {
+          truncated: true,
+          cursor: `mock:${revision}:${nextOffset}`,
+        } : {}),
+      };
+    };
+    const mockOperation = (
+      diff: MockDiff,
+      revisionBefore: number,
+      revertsOperationId?: string,
+    ) => {
+      const operationId = `operation-${++sequence}`;
+      const affectedNodeIds = diff.affected.map((entry) => entry.id);
+      return {
+        protocolVersion: 1,
+        kind: 'outline.operation',
+        operationId,
+        changeSetHash: diff.changeSetHash,
+        diffHash: diff.diffHash,
+        origin: 'desktop',
+        ...(diff.normalizedChangeSet.source ? { source: diff.normalizedChangeSet.source } : {}),
+        summary: `Applied ${diff.normalizedChangeSet.operations.length} ChangeSet operation(s).`,
+        affectedNodeIds,
+        affectedNodeCount: affectedNodeIds.length,
+        affectedNodeIdsHash: mockDigest(affectedNodeIds),
+        revisionBefore,
+        revisionAfter: revision,
+        createdAt: new Date(++now).toISOString(),
+        recovery: {
+          recoveryPatchId: `recovery-${operationId}`,
+          state: 'available',
+          retainedUntilAtLeast: new Date(now + 86_400_000).toISOString(),
+        },
+        ...(revertsOperationId ? { revertsOperationId } : {}),
+      };
+    };
+    const publishMockOperation = (
+      operation: Record<string, unknown>,
+      removedIds: string[],
+      type: 'operation.committed' | 'operation.reverted' = 'operation.committed',
+    ) => {
+      const eventSequence = ++outlineEventSequence;
+      const cursor = `cursor:${eventSequence}`;
+      emitOutlineEvent({
+        protocolVersion: 1,
+        kind: 'outline.event',
+        type,
+        instanceId: 'runtime:e2e',
+        sequence: eventSequence,
+        revision,
+        cursor,
+        operation,
+        changes: {
+          todayId: ids.today,
+          changedNodes: projection().nodes,
+          removedIds,
+        },
+      });
+    };
+    const applyMockDiff = (diff: MockDiff, acknowledgeDestructive: boolean) => {
+      if (diff.baseRevision !== revision || diff.normalizedChangeSet.base?.revision !== revision) {
+        throw new Error('The Runtime revision changed after this Diff was created.');
+      }
+      if (diff.destructive.length > 0 && !acknowledgeDestructive) {
+        throw new Error('Destructive ChangeSet requires explicit acknowledgement.');
+      }
+      const before = outlineSnapshot();
+      try {
+        executeMockChangeSet(diff.normalizedChangeSet);
+      } catch (error) {
+        restoreOutlineSnapshot(before);
+        throw error;
+      }
+      const previousIds = new Set(before.nodes.map(([id]) => id));
+      revision = before.revision + 1;
+      const after = outlineSnapshot();
+      const operation = mockOperation(diff, before.revision);
+      outlineHistory.push({ before, after, operationId: String(operation.operationId) });
+      outlineRedoHistory.length = 0;
+      publishMockOperation(
+        operation,
+        [...previousIds].filter((id) => !nodes.has(id)),
+      );
+      return operation;
+    };
+    const commitMockChangeSet = (changeSet: MockChangeSet) => {
+      const diff = previewMockChangeSet(changeSet);
+      if (diff.destructive.length > 0) {
+        throw new Error('Direct commit accepts only non-destructive ChangeSets.');
+      }
+      return applyMockDiff(diff, false);
+    };
+    const applyMockHistory = (direction: 'undo' | 'redo') => {
+      const source = direction === 'undo' ? outlineHistory : outlineRedoHistory;
+      const destination = direction === 'undo' ? outlineRedoHistory : outlineHistory;
+      const entry = source.pop();
+      if (!entry) {
+        const emptyDiff = previewMockChangeSet({
+          protocolVersion: 1,
+          kind: 'outline.changeset',
+          base: { revision },
+          operations: [{ op: 'update', targets: { target: { selector: { by: 'id', id: ids.today }, cardinality: 'one' } }, changes: [{ kind: 'description', value: nodes.get(ids.today)?.description ?? null }] }],
+        });
+        const beforeRevision = revision;
+        revision += 1;
+        const operation = mockOperation(emptyDiff, beforeRevision);
+        publishMockOperation(operation, [], direction === 'undo' ? 'operation.reverted' : 'operation.committed');
+        return operation;
+      }
+      const previousIds = new Set(nodes.keys());
+      const target = direction === 'undo' ? entry.before : entry.after;
+      const currentRevision = revision;
+      restoreOutlineSnapshot(target);
+      revision = currentRevision + 1;
+      const diff = previewMockChangeSet({
+        protocolVersion: 1,
+        kind: 'outline.changeset',
+        base: { revision },
+        operations: [{ op: 'update', targets: { target: { selector: { by: 'id', id: ids.today }, cardinality: 'one' } }, changes: [{ kind: 'description', value: nodes.get(ids.today)?.description ?? null }] }],
+      });
+      const operation = mockOperation(diff, currentRevision, direction === 'undo' ? entry.operationId : undefined);
+      destination.push(entry);
+      publishMockOperation(
+        operation,
+        [...previousIds].filter((id) => !nodes.has(id)),
+        direction === 'undo' ? 'operation.reverted' : 'operation.committed',
+      );
+      return operation;
+    };
+    const outlineSuccess = (requestId: string, command: string, data: unknown) => ({
+      protocolVersion: 1 as const,
+      requestId,
+      command,
+      ok: true,
+      revision,
+      data: clone(data),
+    });
+    const outlineFailure = (requestId: string, command: string, error: unknown) => ({
+      protocolVersion: 1 as const,
+      requestId,
+      command,
+      ok: false,
+      error: {
+        code: 'invalid_input',
+        category: 'usage',
+        message: error instanceof Error ? error.message : String(error),
+        retryable: false,
+      },
+    });
+    const requestMockOutline = async (request: { requestId: string; command: string; input: unknown }) => {
+      const input = request.input && typeof request.input === 'object'
+        ? request.input as Record<string, unknown>
+        : {};
+      calls.push({ cmd: `outline/${request.command}`, args: clone(input) });
+      try {
+        if (request.command === 'show') {
+          if (initialOutlineShowPending) {
+            initialOutlineShowPending = false;
+            if (options.initWorkspaceDelayMs) await delay(options.initWorkspaceDelayMs);
+          }
+          const projectionSpec = input.projection as Record<string, unknown>;
+          return outlineSuccess(request.requestId, request.command, mockProjectionResult(projectionSpec));
+        }
+        if (request.command === 'find') {
+          const target = input.target as { selector: Record<string, unknown> };
+          const selectedIds = resolveMockSelector(target.selector);
+          const projectionSpec = input.projection && typeof input.projection === 'object'
+            ? input.projection as Record<string, unknown>
+            : {
+                kind: 'summary',
+                targets: { target: input.target },
+                page: { limit: 10_000 },
+              };
+          return outlineSuccess(
+            request.requestId,
+            request.command,
+            mockProjectionResult(projectionSpec, selectedIds),
+          );
+        }
+        if (request.command === 'diff') {
+          return outlineSuccess(
+            request.requestId,
+            request.command,
+            previewMockChangeSet(input.changeSet as MockChangeSet),
+          );
+        }
+        if (request.command === 'commit') {
+          return outlineSuccess(
+            request.requestId,
+            request.command,
+            commitMockChangeSet(input.changeSet as MockChangeSet),
+          );
+        }
+        if (request.command === 'apply') {
+          return outlineSuccess(
+            request.requestId,
+            request.command,
+            applyMockDiff(input.diff as MockDiff, input.acknowledgeDestructive === true),
+          );
+        }
+        if (request.command === 'undo' || request.command === 'redo') {
+          return outlineSuccess(
+            request.requestId,
+            request.command,
+            applyMockHistory(request.command),
+          );
+        }
+        if (request.command === 'asset ingest') {
+          const encoded = typeof input.data === 'string' ? input.data : '';
+          const byteSize = encoded ? Math.floor(encoded.length * 0.75) : 0;
+          const asset = createAsset({
+            mimeType: typeof input.mimeType === 'string' ? input.mimeType : undefined,
+            originalFilename: typeof input.originalFilename === 'string' ? input.originalFilename : undefined,
+            byteSize,
+          });
+          return outlineSuccess(request.requestId, request.command, {
+            protocolVersion: 1,
+            leaseId: asset.id,
+            assetId: asset.id,
+            metadata: {
+              mimeType: asset.mimeType,
+              byteSize: asset.byteSize,
+              originalFilename: asset.originalFilename,
+              imageWidth: asset.imageWidth,
+              imageHeight: asset.imageHeight,
+              thumbnailAssetId: asset.thumbnailAssetId,
+              pdfPageCount: asset.pdfPageCount,
+              audioDurationMs: asset.audioDurationMs,
+              videoDurationMs: asset.videoDurationMs,
+            },
+            expiresAt: new Date(now + 86_400_000).toISOString(),
+          });
+        }
+        throw new Error(`Unhandled mock Outline request: ${request.command}`);
+      } catch (error) {
+        return outlineFailure(request.requestId, request.command, error);
+      }
     };
 
     const emitOAuthEvent = (envelope: unknown) => {
@@ -2432,6 +3680,29 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     win.lin = {
       initialTranslationLanguage: translationLanguage,
       initialUrlPageTranslationPreferences: clone(translationPreferences),
+      outline: {
+        request: requestMockOutline,
+        cancel: () => undefined,
+        subscribe: (subscription, listener) => {
+          const record = {
+            protocolVersion: 1,
+            requestId: `desktop:${subscription.subscriptionId}`,
+            sequence: outlineEventSequence,
+            type: 'hello',
+            cursor: `cursor:${outlineEventSequence}`,
+          };
+          outlineSubscriptions.set(subscription.subscriptionId, {
+            input: clone(subscription.input),
+            listener,
+          });
+          queueMicrotask(() => {
+            if (outlineSubscriptions.has(subscription.subscriptionId)) listener(clone(record));
+          });
+          return () => {
+            outlineSubscriptions.delete(subscription.subscriptionId);
+          };
+        },
+      },
       appInfo: async () => ({
         name: 'Tenon',
         version: '0.1.0',
@@ -2900,9 +4171,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           ));
           const providerTool = {
             type: 'function',
-            name: 'node_read',
-            description: 'Read a Node',
-            parameters: { type: 'object', properties: { nodeId: { type: 'string' } } },
+            name: 'file_read',
+            description: 'Read a file',
+            parameters: { type: 'object', properties: { file_path: { type: 'string' } } },
           };
           const diagnostics = {
             schemaVersion: 1,
@@ -2913,7 +4184,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               developerInstructions: [],
               model: turn.execution.model,
               reasoningEffort: turn.execution.reasoningEffort,
-              tools: ['node_read'],
+              tools: ['file_read'],
               skills: [],
               plugins: [],
               mcpServers: [],
@@ -2933,9 +4204,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               },
             },
             toolSchemas: [{
-              name: 'node_read',
-              description: 'Read a Node',
-              parameters: { type: 'object', properties: { nodeId: { type: 'string' } } },
+              name: 'file_read',
+              description: 'Read a file',
+              parameters: { type: 'object', properties: { file_path: { type: 'string' } } },
             }],
             runtime: {
               provider: turn.execution.modelProvider,
@@ -2968,7 +4239,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               requestedAt: turn.startedAt,
               preparedContext: {
                 systemPromptFragmentId: instructionFragmentId,
-                toolNames: ['node_read'],
+                toolNames: ['file_read'],
                 messageIds: [messageId],
                 messagePartProvenance: [messagePartProvenance],
               },
@@ -4241,10 +5512,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           })) as T;
         }
         if (cmd === 'lookup_asset') return clone(assets.get(String(args.id)) ?? null) as T;
-        if (cmd === 'delete_asset') {
-          assets.delete(String(args.id));
-          return clone(undefined) as T;
-        }
         if (cmd === 'pick_image_files') {
           return clone([createAsset({ mimeType: 'image/png', originalFilename: 'picked-image.png', byteSize: 24 })]) as T;
         }
@@ -5383,6 +6650,19 @@ export async function commandCalls(page: Page) {
   return page.evaluate(() => {
     const win = window as E2EWindow;
     return win.__LIN_E2E__?.calls ?? [];
+  });
+}
+
+export async function appliedOutlineOperations(page: Page, fromCall = 0): Promise<Array<Record<string, unknown>>> {
+  const calls = (await commandCalls(page)).slice(fromCall);
+  return calls.flatMap((call) => {
+    const input = call.args as {
+      diff?: { normalizedChangeSet?: { operations?: Array<Record<string, unknown>> } };
+      changeSet?: { operations?: Array<Record<string, unknown>> };
+    };
+    if (call.cmd === 'outline/apply') return input.diff?.normalizedChangeSet?.operations ?? [];
+    if (call.cmd === 'outline/commit') return input.changeSet?.operations ?? [];
+    return [];
   });
 }
 

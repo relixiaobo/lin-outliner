@@ -16,6 +16,38 @@ Reference sources:
 - `/Users/lixiaobo/Documents/Coding/nodex/src/components/outliner/BulletChevron.tsx`
 - `/Users/lixiaobo/Documents/Coding/nodex/src/lib/ime-keyboard.ts`
 
+## Public Capability Parity
+
+Every persisted behavior below has one actor-neutral Runtime path. Desktop
+intents, CLI porcelain, built-in Agent workflows, and external automation lower
+to the same public Change union; only presentation and causation differ.
+
+| Behavior domain | Public contract | Porcelain / capability | Evidence |
+| --- | --- | --- | --- |
+| Deterministic read and discovery | exact ID/ID-list/query/live-search `Selector`, `TargetSpec`, bounded `Projection` | `find`, `show`, `export`; exact and named batch counts; backlinks include | Revisioned `ProjectionResult`, count results, and resumable export records |
+| Tree and content creation | `ensure`, `create`, typed `NodeDraft`, `update` | `add`, `set`, `daily ensure`, `capture add`, `media add` | Reviewed `Diff`; one durable `Operation` |
+| Structure and batch order | placement-based `create`, `move`, `duplicate`, and `merge` | first/last/index/before/after plus move/duplicate previous/next | Affected before/after digests, one Operation, exact revert, and projection Event |
+| Done, tags, fields, and definitions | typed `update`, `create`, `merge`, `template` instructions | `done *`, `tag *`, `field *`, `definition *`, `template apply` | Schema validation plus atomic Operation |
+| References, views, and searches | typed reference/view/search update instructions and exact executable query-rule union | distinct `reference set`, `reference replace`, and `reference inline`; `view *`; `search *` | Same Diff semantics as desktop intent; registry/schema/executor parity |
+| Trash and permanent removal | `lifecycle` | `trash`, `restore`, `purge` | Destructive Diff binding; retained recovery patch |
+| History and exact recovery | Operation ID and recovery state | `log`, `revert`, `undo`, `redo` | Reversal is another linked Operation |
+| Asset-backed media | `AssetLease` plus media `NodeDraft` | `asset ingest`, `asset show`, `asset export`, `media add`, `media set` | Host-verified exact revisions behind opaque anchors; live/lease/recovery reachability |
+| Bulk import | ordinary bindings plus `ensure`/`create`/`update` | `import inspect`, `import plan`, exact `apply`, and `import verify` | Coverage evidence, ChangeSet hash, Diff hash, Operation ID |
+| Complete single resource | typed `NodeDraft` or resource-specific create/update union | one porcelain invocation; complex state uses that command's `--input` | Final-state golden, one mutation invocation, one Operation, returned IDs, exact revert |
+| Dependent or bounded bulk resources | one ChangeSet with bindings and `many + max` | one `diff` and one `apply`; no shell loop or intermediate ID lookup | Golden ChangeSet/Diff/Operation counts and exact revert |
+| Bounded literal text transform | bounded Projection plus ordinary text-patch updates at one base revision | `text replace` with exact target or query `many + max`, replacement bound, and reviewed Diff | Rich marks/reference preservation, stale-plan rejection, convergence, one Operation, exact revert |
+| CLI discovery | per-command capability schema plus help/completion metadata | root, family, exact command help and `schema COMMAND` | Parser/help/completion drift guard and five help goldens |
+
+`src/outline/contract/capabilities.ts` owns the executable mapping from every
+persisted Core command to one public capability and each command's exact CLI
+schema, help, completion metadata, mutation semantics, and examples. Guard tests
+fail on a missing or duplicate owner, parser/help/schema drift, a parallel
+document authority, or a retired Agent/import write surface. Workflow goldens
+also cover complete Search/table/definition/date/capture/media creation, bounded
+query mutation, binding cross-reference, template backfill, merge/purge/Empty
+Trash review, bounded literal replacement, idempotent convergence, visible
+Operation settlement, and revert.
+
 ## State Model
 
 | State | Meaning | Current owner |
@@ -87,7 +119,7 @@ replace or reinterpret the panel-level block-selection model.
 
 | Event | Tenon rule | Test coverage |
 | --- | --- | --- |
-| Visible mode selector / View as > Table / Outline | Persist `table` / `list` on the owner's view definition; never copy or reparent children. Search and ordinary toolbars reuse one two-option mode component; the context submenu is a secondary text entry point. On any real non-Table-to-Table transition, refresh Search results with the live text index, then append missing columns for current-record custom fields in Schema order while preserving hidden configuration and existing finite order and never defaulting system fields. An unevaluable Search keeps its last results but still changes mode. A saved group rule is ignored in Table and restored in Outline. | `search-query-builder.spec.ts`, `table-view.spec.ts`, `core.test.ts`, `documentServiceTextSearchIndex.test.ts`, `rowInteractions.test.ts` |
+| Visible mode selector / View as > Table / Outline | Persist `table` / `list` on the owner's view definition; never copy or reparent children. Search and ordinary toolbars reuse one two-option mode component; the context submenu is a secondary text entry point. On any real non-Table-to-Table transition, refresh Search results with the shared query evaluator, then append missing columns for current-record custom fields in Schema order while preserving hidden configuration and existing finite order and never defaulting system fields. An unevaluable Search keeps its last results but still changes mode. A saved group rule is ignored in Table and restored in Outline. | `search-query-builder.spec.ts`, `table-view.spec.ts`, `core.test.ts`, `searchQueryOutline.test.ts`, `rowInteractions.test.ts` |
 | Arrow keys on inactive cell | Move within the logical row/column matrix and clamp at edges. | `tableNavigation.test.ts`, `table-view.spec.ts` |
 | Home / End | Move to the first/last cell in the row; Cmd/Ctrl adds first/last row. | `tableNavigation.test.ts` |
 | Tab / Shift+Tab | Move through logical cells. Inside an editor, blur commits before movement and outline indent/outdent is suppressed. Native Tab leaves at the first/last boundary. | `tableNavigation.test.ts`, `table-view.spec.ts` |

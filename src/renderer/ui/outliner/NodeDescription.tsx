@@ -110,7 +110,7 @@ export function NodeDescription({
   const persistDraft = (value = inputRef.current?.value ?? draft) => {
     const next = value.trim();
     if (next === (node.description ?? '')) return Promise.resolve(null);
-    return run(() => api.updateNodeDescription(targetId, next || null));
+    return run(() => api.updateNodeDescription(targetId, next || null), { applyFocus: false });
   };
 
   const commit = () => {

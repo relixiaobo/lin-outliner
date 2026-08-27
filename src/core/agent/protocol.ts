@@ -1283,6 +1283,7 @@ export type AdditionalContextKind = 'untrusted' | 'application';
 export interface AdditionalContextEntry {
   readonly value: string;
   readonly kind: AdditionalContextKind;
+  readonly purpose?: ContextPurpose;
 }
 
 export type AdditionalContext = Readonly<Record<string, AdditionalContextEntry>>;
@@ -1943,7 +1944,10 @@ export interface TurnInputRequest {
 }
 
 export interface RendererTurnStartRequest extends TurnInputRequest {
-  readonly additionalContext?: Readonly<Record<string, AdditionalContextEntry & { readonly kind: 'untrusted' }>>;
+  readonly additionalContext?: Readonly<Record<string, AdditionalContextEntry & {
+    readonly kind: 'untrusted';
+    readonly purpose?: 'observation';
+  }>>;
 }
 
 export interface RendererTurnSubmitRequest extends Omit<RendererTurnStartRequest, 'clientUserMessageId'> {
@@ -1952,6 +1956,7 @@ export interface RendererTurnSubmitRequest extends Omit<RendererTurnStartRequest
 
 export interface PrivilegedTurnStartRequest extends TurnInputRequest {
   readonly turnId?: TurnId;
+  readonly additionalContextSource?: string;
   readonly trigger: TurnTrigger;
 }
 
@@ -1963,10 +1968,14 @@ export interface TurnStartResponse {
 
 export interface TurnSteerRequest extends TurnInputRequest {
   readonly expectedTurnId: TurnId;
+  readonly additionalContextSource?: string;
 }
 
-export interface RendererTurnSteerRequest extends Omit<TurnSteerRequest, 'additionalContext'> {
-  readonly additionalContext?: Readonly<Record<string, AdditionalContextEntry & { readonly kind: 'untrusted' }>>;
+export interface RendererTurnSteerRequest extends Omit<TurnSteerRequest, 'additionalContext' | 'additionalContextSource'> {
+  readonly additionalContext?: Readonly<Record<string, AdditionalContextEntry & {
+    readonly kind: 'untrusted';
+    readonly purpose?: 'observation';
+  }>>;
 }
 
 export interface TurnSteerResponse {

@@ -14,6 +14,7 @@ import {
 } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { api } from '../../api/client';
+import type { OperationUndoGroup } from '../../../outline/contract';
 import type {
   AssetMetadata,
   CommandResult,
@@ -144,6 +145,8 @@ import {
 import { noteOutlinerItemRender } from './renderProbe';
 import { useT } from '../../i18n/I18nProvider';
 
+const TEXT_EDIT_UNDO_GROUP_FLUSH_MS = 700;
+
 interface OutlinerItemProps {
   panelId: string;
   nodeId: NodeId;
@@ -232,6 +235,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const materializeStartedRef = useRef(false);
   const materializePromiseRef = useRef<Promise<boolean> | null>(null);
   const materializedFieldParentIdRef = useRef<NodeId | null>(null);
+  const materializedTextUndoGroupRef = useRef<OperationUndoGroup | null>(null);
+  const materializedTextUndoGroupFlushRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Synchronous mirror of the active trigger, set by onTriggerChange *before* the
   // patch callback runs in the same editor transaction (props.trigger is React
   // state and lags one render). applyTextPatch reads it to decide whether a body
@@ -241,6 +246,25 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const restoredReferenceConversionNodeRef = useRef<NodeId | null>(null);
   const descriptionReturnPlacementRef = useRef<CursorPlacement>(cursorEnd());
   const optionAnchorRef = useRef<HTMLDivElement | null>(null);
+  const clearMaterializedTextUndoGroup = () => {
+    if (materializedTextUndoGroupFlushRef.current) {
+      clearTimeout(materializedTextUndoGroupFlushRef.current);
+      materializedTextUndoGroupFlushRef.current = null;
+    }
+    materializedTextUndoGroupRef.current = null;
+  };
+  const scheduleMaterializedTextUndoGroupFlush = () => {
+    if (!materializedTextUndoGroupRef.current) return;
+    if (materializedTextUndoGroupFlushRef.current) clearTimeout(materializedTextUndoGroupFlushRef.current);
+    materializedTextUndoGroupFlushRef.current = setTimeout(() => {
+      materializedTextUndoGroupFlushRef.current = null;
+      materializedTextUndoGroupRef.current = null;
+    }, TEXT_EDIT_UNDO_GROUP_FLUSH_MS);
+  };
+  const materializedTextUndoGroupFor = (nodeId: NodeId): OperationUndoGroup | undefined => {
+    const group = materializedTextUndoGroupRef.current;
+    return group?.nodeId === nodeId ? group : undefined;
+  };
   const referenceTargetId = node?.type === 'reference' && node.targetId
     ? resolveReferenceTargetId(node.targetId, props.index.byId)
     : null;
@@ -329,6 +353,13 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     draftContentRef.current = nextContent;
     setDraftContent(nextContent);
   }, [displayed?.id, displayed?.content, displayed?.type === 'reference' ? displayed.targetId : undefined, rowEditorFocused]);
+
+  useEffect(() => () => {
+    if (materializedTextUndoGroupFlushRef.current) {
+      clearTimeout(materializedTextUndoGroupFlushRef.current);
+      materializedTextUndoGroupFlushRef.current = null;
+    }
+  }, []);
 
   if (!node || !displayed) return null;
 
@@ -635,7 +666,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   };
   // Materialization: turn the draft into a real node under its stable id on
   // commit. Runs once; the create and the text patches that follow share one undo
-  // group (see DocumentService). Keystrokes that land during the IPC round-trip
+  // group. Keystrokes that land during the Runtime round-trip
   // stay in the buffer and are reconciled when the node arrives, then focus moves
   // from the parent's trailing surface to this row's own id (without re-focusing,
   // so the caret is undisturbed) — that frees the trailing signal for the freshly
@@ -659,13 +690,20 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     }
     materializeStartedRef.current = true;
     const createIndex = currentDraftCreateIndex();
+    const undoGroup: OperationUndoGroup | undefined = fieldValue
+      ? undefined
+      : { groupId: `undo-group:${crypto.randomUUID()}`, kind: 'text-edit', nodeId: props.nodeId };
+    if (undoGroup) {
+      clearMaterializedTextUndoGroup();
+      materializedTextUndoGroupRef.current = undoGroup;
+    }
     const runCreate = fieldValue
       ? () => props.run(
         () => fieldValue.materializeValue(props.nodeId, seed.text),
         { applyFocus: false },
       )
       : () => props.run(
-        () => api.materializeDraftNode(props.parentId, createIndex, seed.text, props.nodeId),
+        () => api.materializeDraftNode(props.parentId, createIndex, seed.text, props.nodeId, undoGroup),
         {
           applyFocus: false,
           beforeApply: () => {
@@ -684,15 +722,27 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         if (fieldValue) {
           rememberMaterializedFieldEntry(result);
         }
+        if (undoGroup && materializedTextUndoGroupRef.current?.groupId === undoGroup.groupId) {
+          scheduleMaterializedTextUndoGroupFlush();
+        }
         const latest = draftContentRef.current;
         const needsReconcile = latest.text !== seed.text
           || latest.marks.length > 0
           || latest.inlineRefs.length > 0;
         if (needsReconcile) {
           return props.run(
-            () => api.applyNodeTextPatch(props.nodeId, replaceAllRichTextPatch(latest)),
+            () => api.applyNodeTextPatch(
+              props.nodeId,
+              replaceAllRichTextPatch(latest),
+              undoGroup ? { undoGroup } : undefined,
+            ),
             { applyFocus: false },
-          ).then(() => true);
+          ).then(() => {
+            if (undoGroup && materializedTextUndoGroupRef.current?.groupId === undoGroup.groupId) {
+              scheduleMaterializedTextUndoGroupFlush();
+            }
+            return true;
+          });
         }
         return true;
       })
@@ -703,6 +753,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       .catch((error) => {
         materializeStartedRef.current = false;
         materializePromiseRef.current = null;
+        if (undoGroup && materializedTextUndoGroupRef.current?.groupId === undoGroup.groupId) {
+          clearMaterializedTextUndoGroup();
+        }
         throw error;
       });
     materializePromiseRef.current = materializePromise;
@@ -761,9 +814,17 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     }
     pendingTextPatchCountRef.current += 1;
     pendingTextPatchRef.current = pendingTextPatchRef.current
-      .then(() => props.run(() => api.applyNodeTextPatch(targetEditId, patch), {
-        applyFocus: false,
-      }))
+      .then(() => {
+        const undoGroup = materializedTextUndoGroupFor(targetEditId);
+        if (undoGroup) scheduleMaterializedTextUndoGroupFlush();
+        return props.run(() => api.applyNodeTextPatch(
+          targetEditId,
+          patch,
+          undoGroup ? { undoGroup } : undefined,
+        ), {
+          applyFocus: false,
+        });
+      })
       .finally(() => {
         pendingTextPatchCountRef.current -= 1;
       });
@@ -1247,8 +1308,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       // inline-conversion row (add_reference_conversion); a real (empty) row
       // converts itself in place (replace_node_with_reference_conversion).
       const outcome = onDraftTrigger
-        ? await api.addReferenceConversion(props.parentId, target.id)
-        : await api.replaceNodeWithReferenceConversion(props.nodeId, target.id);
+        ? await api.addReferenceConversion(props.parentId, target.id, null, textOf(target))
+        : await api.replaceNodeWithReferenceConversion(props.nodeId, target.id, textOf(target));
       if (onDraftTrigger) replaceLocalDraftContent(EMPTY_RICH_TEXT);
       const inlineNodeId = outcome.focus?.nodeId;
       if (!inlineNodeId) {

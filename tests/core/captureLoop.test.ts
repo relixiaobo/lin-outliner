@@ -159,7 +159,7 @@ describe('capture(page)', () => {
   test('the typed text becomes the capture note without ever being a subject', async () => {
     const { h, opened, chip } = withPage();
     // Typing admits payload; it does not select anything.
-    h.service.queryObjects({
+    await h.service.queryObjects({
       invocationRef: opened.invocationRef,
       openSeq: 1,
       requestId: 'r1' as RequestId,
@@ -206,7 +206,7 @@ describe('capture(page)', () => {
       subjectRef: chip.object.objectRef,
       parameterId: 'tag',
     };
-    const candidates = h.service.queryParameterObjects({
+    const candidates = await h.service.queryParameterObjects({
       invocationRef: opened.invocationRef,
       openSeq: 1,
       slot,

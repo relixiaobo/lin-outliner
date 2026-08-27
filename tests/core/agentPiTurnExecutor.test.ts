@@ -3884,7 +3884,7 @@ describe('PiTurnExecutor provider payload', () => {
       '$schema', 'type', 'properties', 'required', 'additionalProperties',
     ]);
     expect(Object.keys((restoredTools[0]!.input_schema as Record<string, any>).properties)).toEqual([
-      'description', 'prompt', 'subagent_type', 'model', 'run_in_background', 'isolation',
+      'description', 'prompt', 'subagent_type', 'model', 'run_in_background', 'execution', 'isolation',
     ]);
     expect(Object.keys(restoredTools[2]!.input_schema as object)).toEqual([
       '$schema', 'type', 'properties', 'additionalProperties',

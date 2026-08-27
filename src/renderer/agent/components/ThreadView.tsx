@@ -99,7 +99,6 @@ import {
   ThreadItemView,
   ThreadMessageCopyButton,
   ThreadToolActivityGroup,
-  threadToolReferencedNodeIds,
   type ThreadDisclosureState,
   type ThreadToolItem,
 } from './items/ThreadItemView';
@@ -3583,8 +3582,6 @@ function threadItemDocumentNodeIds(item: ThreadItem): readonly NodeId[] {
   } else if (item.type === 'reasoning') {
     for (const part of item.summary) addMarkdownReferences(part);
     for (const part of item.content) addMarkdownReferences(part);
-  } else if (isThreadToolItem(item)) {
-    for (const nodeId of threadToolReferencedNodeIds(item)) nodeIds.add(nodeId);
   }
   const result = [...nodeIds];
   threadItemDocumentNodeIdsCache.set(item, result);

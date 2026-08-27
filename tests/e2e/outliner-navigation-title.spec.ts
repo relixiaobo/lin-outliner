@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import {
+  appliedOutlineOperations,
   commandCalls,
   ids,
   nodeById,
@@ -280,11 +281,16 @@ test.describe('outliner navigation and page title parity', () => {
     });
     await row(page, ids.beta).click({ modifiers: ['Meta'] });
     await page.keyboard.press('Escape');
+    const beforeCall = (await commandCalls(page)).length;
 
     await page.keyboard.press('Meta+Shift+D');
 
     await expect(page.locator('.panel-title-editor').first()).toContainText(todayLabel);
-    expect((await commandCalls(page)).map((call) => call.cmd)).toContain('ensure_date_node');
+    expect(await appliedOutlineOperations(page, beforeCall)).toContainEqual(expect.objectContaining({
+      op: 'ensure',
+      resource: 'date',
+      date: todayLabel,
+    }));
   });
 
   test('sidebar Today ensures the current date before navigating', async ({ page }) => {
@@ -297,18 +303,16 @@ test.describe('outliner navigation and page title parity', () => {
     });
     await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
     await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
+    const beforeCall = (await commandCalls(page)).length;
 
     await page.locator('.sidebar-primary-nav .sidebar-nav-item').filter({ hasText: 'Today' }).click();
 
     await expect(page.locator('.panel-title-editor').first()).toContainText(todayLabel);
-    const calls = await commandCalls(page);
-    expect(calls.map((call) => call.cmd)).toContain('ensure_date_node');
-    const ensureCall = calls.find((call) => call.cmd === 'ensure_date_node');
-    expect(ensureCall?.args).toMatchObject({
-      year: Number(todayLabel.slice(0, 4)),
-      month: Number(todayLabel.slice(5, 7)),
-      day: Number(todayLabel.slice(8, 10)),
-    });
+    expect(await appliedOutlineOperations(page, beforeCall)).toContainEqual(expect.objectContaining({
+      op: 'ensure',
+      resource: 'date',
+      date: todayLabel,
+    }));
   });
 
   test('sticky breadcrumb absorbs the current page title while the panel scrolls', async ({ page }) => {

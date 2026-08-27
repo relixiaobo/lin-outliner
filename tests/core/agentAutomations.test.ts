@@ -806,7 +806,7 @@ describe('Automation Thread dispatch', () => {
     const standaloneHost = threadHost();
     const inheritedStandaloneConfiguration = {
       ...defaultEffectiveThreadConfiguration(),
-      tools: ['node_read'],
+      tools: ['file_read'],
       skills: ['research'],
       plugins: ['memory'],
       mcpServers: ['docs'],
@@ -842,7 +842,7 @@ describe('Automation Thread dispatch', () => {
     const existingRun = store.claimNow(existing, null, now + 4);
     const inheritedThreadConfiguration = {
       ...defaultEffectiveThreadConfiguration(),
-      tools: ['node_search'],
+      tools: ['file_grep'],
       skills: ['planning'],
       plugins: [],
       mcpServers: ['project-docs'],

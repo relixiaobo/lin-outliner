@@ -409,7 +409,6 @@
   overflow-y: clip;
   overscroll-behavior-x: contain;
   padding-left: var(--table-title-disclosure-gutter);
-  scrollbar-gutter: stable;
 }
 
 .outliner-table-header,

@@ -609,7 +609,7 @@ describe('kernel retry policy', () => {
     const streamFn = createPolicyStreamFn((() => {
       attempts += 1;
       const source = createAssistantMessageEventStream();
-      const toolCall = fauxToolCall('node_create', { parent_id: 'node:root', outline: '- Done' });
+      const toolCall = fauxToolCall('file_write', { file_path: 'done.md', content: 'Done' });
       const message = normalizeAssistant(fauxAssistantMessage([toolCall], {
         stopReason: 'error',
         errorMessage: 'OpenAI API error (524): 524 status code (no body)',
@@ -969,7 +969,7 @@ describe('kernel retry policy', () => {
     const source = createAssistantMessageEventStream();
     const abortCtrl = new AbortController();
     const wrapped = wrapStreamWithAbortSettling(source, { abortCtrl, model: CUSTOM_RESPONSES_MODEL });
-    const toolCall = fauxToolCall('node_create', { parent_id: 'node:root', outline: '- Done' });
+    const toolCall = fauxToolCall('file_write', { file_path: 'done.md', content: 'Done' });
     const message = normalizeAssistant(
       fauxAssistantMessage([
         fauxText('I will update the node.'),
@@ -1028,7 +1028,7 @@ describe('kernel retry policy', () => {
     const wrapped = wrapStreamWithAbortSettling(source, { abortCtrl, model: MODEL });
     const message = normalizeAssistant(
       fauxAssistantMessage([
-        fauxToolCall('node_create', { parent_id: 'node:root', outline: '- Done' }),
+        fauxToolCall('file_write', { file_path: 'done.md', content: 'Done' }),
       ], { stopReason: 'error', errorMessage: 'terminated' }),
     );
     const iterator = wrapped[Symbol.asyncIterator]();

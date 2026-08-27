@@ -118,7 +118,7 @@ describe('provider cache topology', () => {
         },
         { type: 'text', text: prompt.text, cache_control: cacheControl() },
       ],
-      tools: [{ name: 'node_read', cache_control: cacheControl() }],
+      tools: [{ name: 'file_read', cache_control: cacheControl() }],
       messages: [{
         role: 'user',
         content: [{ type: 'text', text: 'Read it', cache_control: cacheControl() }],

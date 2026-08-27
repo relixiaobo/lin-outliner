@@ -98,12 +98,12 @@ describe('the launcher opening', () => {
 });
 
 describe('the main-list query generation', () => {
-  test('a matched object suppresses the draft', () => {
+  test('a matched object suppresses the draft', async () => {
     const h = harness();
     const today = h.core.projection().todayId;
     h.core.createNode(today, null, 'Roadmap review');
     const opened = h.service.openLauncher({ openSeq: 1, consumerId: LAUNCHER });
-    const result = h.service.queryObjects({
+    const result = await h.service.queryObjects({
       invocationRef: opened.invocationRef,
       openSeq: 1,
       requestId: 'r1' as RequestId,
@@ -124,7 +124,7 @@ describe('the main-list query generation', () => {
       fileSize: 2_048,
     }).focus!.nodeId;
     const opened = h.service.openLauncher({ openSeq: 1, consumerId: LAUNCHER });
-    const result = h.service.queryObjects({
+    const result = await h.service.queryObjects({
       invocationRef: opened.invocationRef,
       openSeq: 1,
       requestId: 'r1' as RequestId,
@@ -158,10 +158,10 @@ describe('the main-list query generation', () => {
     }]);
   });
 
-  test('a zero-match query yields EXACTLY one node-purpose draft', () => {
+  test('a zero-match query yields EXACTLY one node-purpose draft', async () => {
     const h = harness();
     const opened = h.service.openLauncher({ openSeq: 1, consumerId: LAUNCHER });
-    const result = h.service.queryObjects({
+    const result = await h.service.queryObjects({
       invocationRef: opened.invocationRef,
       openSeq: 1,
       requestId: 'r1' as RequestId,
@@ -178,11 +178,11 @@ describe('the main-list query generation', () => {
     expect(draft.primaryAction?.names.en).toBe('Create node');
   });
 
-  test('a superseded generation invalidates its refs', () => {
+  test('a superseded generation invalidates its refs', async () => {
     const h = harness();
     const opened = h.service.openLauncher({ openSeq: 1, consumerId: LAUNCHER });
     const staleRef = opened.resultItems[0]!.object.objectRef;
-    const result = h.service.queryObjects({
+    const result = await h.service.queryObjects({
       invocationRef: opened.invocationRef,
       openSeq: 1,
       requestId: 'r1' as RequestId,
@@ -190,20 +190,19 @@ describe('the main-list query generation', () => {
     }, LAUNCHER);
     expect(result.status).toBe('ready');
     // The old Today ref belonged to the replaced generation and is dead.
-    return h.service.request({
+    const executed = await h.service.request({
       actionId: 'open',
       invocationRef: opened.invocationRef,
       subjectRef: staleRef,
       arguments: {},
-    }, LAUNCHER).then((executed) => {
-      expect(executed).toEqual({ status: 'stale', reason: 'subject' });
-    });
+    }, LAUNCHER);
+    expect(executed).toEqual({ status: 'stale', reason: 'subject' });
   });
 
-  test('a query for the wrong opening is superseded', () => {
+  test('a query for the wrong opening is superseded', async () => {
     const h = harness();
     const opened = h.service.openLauncher({ openSeq: 1, consumerId: LAUNCHER });
-    const result = h.service.queryObjects({
+    const result = await h.service.queryObjects({
       invocationRef: opened.invocationRef,
       openSeq: 2,
       requestId: 'r1' as RequestId,
@@ -212,10 +211,10 @@ describe('the main-list query generation', () => {
     expect(result.status).toBe('superseded');
   });
 
-  test('a query from another renderer is refused', () => {
+  test('a query from another renderer is refused', async () => {
     const h = harness();
     const opened = h.service.openLauncher({ openSeq: 1, consumerId: LAUNCHER });
-    const result = h.service.queryObjects({
+    const result = await h.service.queryObjects({
       invocationRef: opened.invocationRef,
       openSeq: 1,
       requestId: 'r1' as RequestId,

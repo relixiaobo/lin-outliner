@@ -14,83 +14,6 @@ import { uuidV7 } from '../../src/main/agent/uuid';
 import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
 describe('context compaction reducer', () => {
-  test('invalidates Node observations after successful document mutations and undo', async () => {
-    const store = createPayloadStore();
-    const nodes = observation(
-      store,
-      'node-read-ab',
-      'node_read',
-      { node_ids: ['node-a', 'node-b'] },
-      'Node snapshots A and B',
-    );
-    const file = observation(
-      store,
-      'file-read',
-      'file_read',
-      { file_path: '/workspace/notes.md' },
-      'File snapshot',
-    );
-    const nodeAfterEdit = observation(
-      store,
-      'node-read-c',
-      'node_read',
-      { node_id: 'node-c' },
-      'Node snapshot C',
-    );
-    const turns = [
-      turn(1, [...nodes.items, ...file.items]),
-      turn(2, [toolItem('node-edit', 'node_edit', { operation: 'replace_outline', node_id: 'node-a' })]),
-      turn(3, nodeAfterEdit.items),
-      turn(4, [toolItem('undo', 'outline_undo_stack', { action: 'undo' })]),
-    ];
-
-    const plan = await planContextCompaction({ turns, readContext: store.read });
-
-    expect(plan?.restoredState.activeObservations).toEqual([{
-      key: 'file:/workspace/notes.md',
-      tool: 'file_read',
-      subject: '/workspace/notes.md',
-      outputRef: file.outputRef,
-      projectionRef: file.projectionRef,
-    }]);
-  });
-
-  test('does not invalidate Node observations for previews or failed mutations', async () => {
-    const store = createPayloadStore();
-    const node = observation(
-      store,
-      'node-read',
-      'node_read',
-      { node_id: 'node-a' },
-      'Node snapshot A',
-    );
-    const turns = [
-      turn(1, node.items),
-      turn(2, [toolItem(
-        'node-preview',
-        'node_edit',
-        { operation: 'replace_outline', node_id: 'node-a', preview_only: true },
-      )]),
-      turn(3, [toolItem(
-        'node-failed',
-        'node_delete',
-        { node_id: 'node-a' },
-        { success: false, status: 'failed' },
-      )]),
-      turn(4, [toolItem('undo-list', 'outline_undo_stack', { action: 'list' })]),
-    ];
-
-    const plan = await planContextCompaction({ turns, readContext: store.read });
-
-    expect(plan?.restoredState.activeObservations).toEqual([{
-      key: 'node:node-a',
-      tool: 'node_read',
-      subject: 'node-a',
-      outputRef: node.outputRef,
-      projectionRef: node.projectionRef,
-    }]);
-  });
-
   test('uses structured evidence summaries to invalidate the affected file observation', async () => {
     const store = createPayloadStore();
     const edited = observation(
@@ -135,13 +58,6 @@ describe('context compaction reducer', () => {
 
   test('conservatively clears observations when successful mutation arguments are unavailable', async () => {
     const store = createPayloadStore();
-    const node = observation(
-      store,
-      'stale-node-read',
-      'node_read',
-      { node_id: 'node-a' },
-      'Stale node snapshot',
-    );
     const file = observation(
       store,
       'stale-file-read',
@@ -149,26 +65,18 @@ describe('context compaction reducer', () => {
       { file_path: '/workspace/stale.md' },
       'Stale file snapshot',
     );
-    const nodeArgumentsRef = store.put({
-      schemaVersion: 1,
-      kind: 'toolCallArguments',
-      value: { operation: 'replace_outline', node_id: 'node-a' },
-    });
     const fileArgumentsRef = store.put({
       schemaVersion: 1,
       kind: 'toolCallArguments',
       value: { file_path: '/workspace/stale.md', content: 'updated' },
     });
-    store.remove(nodeArgumentsRef);
     store.remove(fileArgumentsRef);
-    const nodeMutation = payloadBackedToolItem('missing-node-arguments', 'node_edit', nodeArgumentsRef);
     const fileMutation = payloadBackedToolItem('missing-file-arguments', 'file_write', fileArgumentsRef);
 
     const plan = await planContextCompaction({
       turns: [
-        turn(1, [...node.items, ...file.items]),
-        turn(2, [nodeMutation]),
-        turn(3, [fileMutation]),
+        turn(1, file.items),
+        turn(2, [fileMutation]),
       ],
       readContext: store.read,
     });
@@ -844,7 +752,7 @@ function skillInvocation(seed: string, instructions: string) {
 function observation(
   store: ReturnType<typeof createPayloadStore>,
   id: string,
-  tool: 'file_read' | 'node_read',
+  tool: 'file_read',
   args: JsonValue,
   text: string,
   outputRefOverride?: ThreadItemOutputReference,

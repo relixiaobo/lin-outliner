@@ -84,7 +84,7 @@ describe('parseMarkdownBlocks', () => {
   });
 
   test('treats a multi-word info string as a fence and uses the first token as the language', () => {
-    expect(parseMarkdownBlocks('```tool node_create\n{\n  "ok": true\n}\n```')).toEqual([
+    expect(parseMarkdownBlocks('```tool file_write\n{\n  "ok": true\n}\n```')).toEqual([
       {
         content: { text: '{\n  "ok": true\n}', marks: [], inlineRefs: [] },
         children: [],
@@ -96,7 +96,7 @@ describe('parseMarkdownBlocks', () => {
 
   test('keeps consecutive multi-word fences paired so prose between them stays prose', () => {
     const pasted = [
-      '```tool node_create',
+      '```tool file_write',
       '{ "outline": "- A" }',
       '```',
       '',

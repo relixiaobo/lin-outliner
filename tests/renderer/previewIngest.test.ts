@@ -18,7 +18,6 @@ const asset: AssetMetadata = {
   id: 'asset-1',
   mimeType: resourceRef.mimeType,
   byteSize: resourceRef.byteLength,
-  sha256: resourceRef.id,
   originalFilename: resourceRef.fileName,
   createdAt: 1,
 };

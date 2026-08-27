@@ -183,12 +183,8 @@ export class MemoryPipeline {
   }
 
   private async recoverPublications(): Promise<void> {
-    const receipt = await this.timeline.receipt();
     for (const record of this.control.preparedPublications()) {
-      const matches = Boolean(receipt
-        && receipt.operationId === record.id
-        && receipt.generation === record.generation
-        && receipt.digest === record.digest);
+      const matches = await this.timeline.hasPublication(record.id, record.digest);
       if (matches) {
         if (record.kind === 'stage1') await this.phase1.recoverPrepared(record, true);
         else if (record.kind === 'stage2') await this.phase2.recoverPrepared(record, true);

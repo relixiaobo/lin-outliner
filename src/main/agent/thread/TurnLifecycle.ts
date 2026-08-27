@@ -1,7 +1,7 @@
 import { decodePrivilegedTurnStartRequest,decodeThread,decodeThreadItem,decodeTurn } from '../../../core/agent/codec';
 import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import { createHostRootTurnAdmissionBarrierSnapshot,createThreadAdmissionBarrierSnapshot } from '../../../core/agent/extensions';
-import { RUNTIME_FAILURE_ERROR_CODE,SUBAGENT_DELIVERY_ADMISSION_ERROR_CODE,normalizeTurnErrorCode,type AdditionalContext,type ContextCompactionThreadItem,type ContextCursor,type ContextEvidenceKind,type ContextEvidenceThreadItem,type PrivilegedTurnStartRequest,type RendererTurnStartRequest,type RequestUserInputRequest,type RequestUserInputResponse,type RoleCatalogContextPayload,type SubagentTurnAdmission,type Thread,type ThreadContextPayload,type ThreadContextPayloadReference,type ThreadId,type ThreadItem,type ThreadResourceReference,type ThreadStatus,type ThreadUserContent,type Turn,type TurnDiagnosticsPayload,type TurnError,type TurnErrorCode,type TurnId,type TurnStartResponse,type TurnStatus,type TurnSteerRequest,type TurnSteerResponse } from '../../../core/agent/protocol';
+import { RUNTIME_FAILURE_ERROR_CODE,SUBAGENT_DELIVERY_ADMISSION_ERROR_CODE,normalizeTurnErrorCode,type AdditionalContext,type AdditionalContextPayload,type ContextCompactionThreadItem,type ContextCursor,type ContextEvidenceKind,type ContextEvidenceThreadItem,type PrivilegedTurnStartRequest,type RendererTurnStartRequest,type RequestUserInputRequest,type RequestUserInputResponse,type RoleCatalogContextPayload,type SubagentTurnAdmission,type Thread,type ThreadContextPayload,type ThreadContextPayloadReference,type ThreadId,type ThreadItem,type ThreadResourceReference,type ThreadStatus,type ThreadUserContent,type Turn,type TurnDiagnosticsPayload,type TurnError,type TurnErrorCode,type TurnId,type TurnStartResponse,type TurnStatus,type TurnSteerRequest,type TurnSteerResponse } from '../../../core/agent/protocol';
 import { threadPreviewFromContent } from '../../../core/agent/threadPreview';
 import { normalizeRequestUserInputToolInput } from '../../../core/agent/tools';
 import { MAX_PROMPT_IMAGE_BYTES,MAX_PROMPT_IMAGE_DIMENSION } from '../../../core/agentAttachmentLimits';
@@ -67,6 +67,8 @@ export type ExplicitSubagentAdmissionPreparer = (input: {
 }) => Promise<ExplicitSubagentAdmissionPreparation>;
 type InternalTurnStartRequest = PrivilegedTurnStartRequest & {
   readonly stagedContextEvidence?: readonly StagedContextEvidence[];
+  readonly additionalContextResourceRefs?: readonly ThreadResourceReference[];
+  readonly additionalContextSource?: string;
   readonly reuseStagedContextEvidenceOnly?: boolean;
   readonly retryReplacementTarget?: Turn;
   readonly retryInputBatches?: readonly CanonicalTurnRetryInputBatch[];
@@ -99,7 +101,11 @@ interface TurnLifecycleCollaboration {
   flushPendingSubagentActivities(threadId: ThreadId, turnId: TurnId): Promise<readonly PendingSubagentActivity[]>; prepareChildTerminalSettlement(thread: Thread, turn: Turn, failureOrigin?: 'providerFailure' | 'contextFailure' | 'hostFailure'): void; queueChildTurnActivity(thread: Thread, turn: Turn): void; threadBecameIdle(threadId: ThreadId): void;
   startupContextForTurn(threadId: ThreadId, turnId: TurnId): import('../context/AgentStartupContext').AgentStartupContextSnapshot | null;
   commitInitialAdmission(threadId: ThreadId, turnId: TurnId): Error | null;
-  commitDeliveryAdmission(threadId: ThreadId, turnId: TurnId, admission: SubagentTurnAdmission): Error | null;
+  commitDeliveryAdmission(
+    threadId: ThreadId,
+    turnId: TurnId,
+    admission: SubagentTurnAdmission,
+  ): Promise<Error | null>;
   detachCarryForwardSidecarForOverflow(
     threadId: ThreadId,
     turnId: TurnId,
@@ -646,6 +652,7 @@ export class TurnLifecycle {
             // is composing an edit and tell it not to revert changes it is itself
             // being asked to make.
             additionalContext: request.additionalContext,
+            additionalContextSource: request.additionalContextSource,
             extensionContext,
             skillCatalog,
             roleCatalog,
@@ -1100,6 +1107,8 @@ export class TurnLifecycle {
         content: input,
         userView: request.userView,
         additionalContext: { ...request.additionalContext, ...drift.context },
+        additionalContextResourceRefs: request.additionalContextResourceRefs,
+        additionalContextSource: request.additionalContextSource,
         extensionContext,
         skillCatalog,
         roleCatalog,
@@ -1170,13 +1179,25 @@ export class TurnLifecycle {
         ) throw new Error('Explicit Subagent sidecar exceeds its planned capacity');
         subagentAdmission = prepared.admission;
         if (prepared.sidecarText) {
-          const sidecarItem = userMessage(
-            request.threadId,
-            turnId,
-            [{ type: 'text', text: prepared.sidecarText }],
-            null,
-            startedAt,
-            reservedSidecarItemId,
+          const sidecarPayload: AdditionalContextPayload = {
+            schemaVersion: 1,
+            kind: 'additionalContext',
+            turnEntries: [{
+              key: 'subagent.settlement',
+              source: `subagent-settlement:${prepared.admission.batchId}`,
+              authority: 'untrusted',
+              purpose: 'observation',
+              text: prepared.sidecarText,
+            }],
+            threadState: null,
+          };
+          const sidecarRef = await this.core.payloads.writeContext(request.threadId, sidecarPayload);
+          const sidecarItem = contextEvidenceItem(
+            { thread: record.thread, turnId, createItemId: () => reservedSidecarItemId },
+            'additionalContext',
+            sidecarRef,
+            'Subagent settlement observation',
+            [],
           );
           initialItems = [...initialItems, sidecarItem];
           turn = decodeTurn({ ...provisionalTurn, items: initialItems });
@@ -1249,7 +1270,7 @@ export class TurnLifecycle {
       // escape through spawn and strand an accepted Turn without a launch tail.
       this.activeTurns.set(request.threadId, active);
       const deliveryAdmissionError = subagentAdmission
-        ? this.collaboration.commitDeliveryAdmission(request.threadId, turnId, subagentAdmission)
+        ? await this.collaboration.commitDeliveryAdmission(request.threadId, turnId, subagentAdmission)
         : null;
       // `turn/started` is the cross-store commit point for a fresh delegated
       // child. Flip its prepared execution intent before provider launch can

@@ -19,41 +19,49 @@ test.describe('outliner checkbox row wrapping', () => {
     await page.evaluate(async ({ parentId, text }) => {
       const win = window as unknown as {
         lin?: {
-          invoke: (cmd: string, args?: Record<string, unknown>) =>
-            Promise<{ focus?: { nodeId: string }; update?: { projection?: unknown } }>;
+          outline: {
+            request: (request: { requestId: string; command: string; input: unknown }) => Promise<{
+              ok: boolean;
+              data?: unknown;
+              error?: { message?: string };
+            }>;
+          };
         };
-        __LIN_E2E__?: { emitDocumentEvent: (event: unknown) => void };
       };
-      const emit = (projection: unknown) => {
-        if (!projection) return;
-        win.__LIN_E2E__?.emitDocumentEvent({
-          type: 'projection_changed',
-          origin: 'user',
-          projection,
-          timestamp: Date.now(),
+      const request = async (command: string, input: unknown) => {
+        const response = await win.lin!.outline.request({
+          requestId: `checkbox-wrap-${command}`,
+          command,
+          input,
         });
+        if (!response.ok) throw new Error(response.error?.message ?? `Outline ${command} failed`);
+        return response.data;
       };
-      const created = await win.lin!.invoke('create_node', {
-        parentId,
-        index: null,
-        text,
-        id: 'cbx-long',
+      const diff = await request('diff', {
+        changeSet: {
+          protocolVersion: 1,
+          kind: 'outline.changeset',
+          operations: [{
+            op: 'create',
+            placement: {
+              kind: 'last',
+              parent: {
+                target: { selector: { by: 'id', id: parentId }, cardinality: 'one' },
+              },
+            },
+            nodes: [{
+              id: 'cbx-long',
+              content: { text, marks: [], inlineRefs: [] },
+              checkbox: true,
+              children: [],
+            }],
+          }],
+        },
       });
-      emit(created.update?.projection);
-      // Attach the built-in Done system field so the node's own row shows a
-      // checkbox (derived from the same completedAt the field reads).
-      const field = await win.lin!.invoke('create_inline_field', {
-        parentId: 'cbx-long',
-        index: null,
-        name: 'Done',
-        fieldType: 'plain',
+      await request('apply', {
+        diff,
+        acknowledgeDestructive: false,
       });
-      const entryId = field.focus!.nodeId;
-      const reused = await win.lin!.invoke('reuse_field_definition', {
-        entryId,
-        targetDefId: 'sys:done',
-      });
-      emit(reused.update?.projection ?? field.update?.projection);
     }, { parentId: ids.today, text: longText });
 
     const body = rowBody(page, 'cbx-long');

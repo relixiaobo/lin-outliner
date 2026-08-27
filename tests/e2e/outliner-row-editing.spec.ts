@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import {
+  appliedOutlineOperations,
   commandCalls,
   e2eProjection,
   emitDocumentEvent,
@@ -704,8 +705,7 @@ test.describe('outliner row editing parity', () => {
     await page.keyboard.press('Shift+Tab');
 
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.today);
-    const calls = (await commandCalls(page)).slice(beforeCalls).map((call) => call.cmd);
-    expect(calls).not.toContain('outdent_node');
+    expect((await appliedOutlineOperations(page, beforeCalls)).filter((operation) => operation.op === 'move')).toHaveLength(0);
     await expect(rowEditor(page, ids.beta)).toBeFocused();
   });
 

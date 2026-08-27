@@ -575,8 +575,8 @@ reach it.
   and identity static while a live status phrase uses `WorkingText`; that
   mounted child status owns motion instead of the parent tool summary
 - Memory used by an answer renders through the ordinary inline Node-reference
-  affordance next to the supported claim; `node_search` and `node_read` remain
-  in the process and Trajectory, with no separate Memory Item or disclosure
+  affordance next to the supported claim; `outline` shell calls remain in the
+  process and Trajectory, with no separate Memory Item or disclosure
 - context evidence stays hidden from the ordinary transcript; `contextReset` and
   `contextCompaction` render dedicated `Context cleared.` and compaction boundary rows
   at their exact canonical positions. A completed standalone `/clear` or `/compact`
@@ -616,8 +616,8 @@ ANCHOR in it at the point where it happened:
 - a **resume chip** at each later `agent_message`, referencing the same Agent;
 - a **report** at the head of the Turn the host started to deliver a result: the
   Agent's own terminal answer, rendered as a MESSAGE from that Agent. It stands
-  exactly where the raw task-notification text would be and replaces it, because
-  that text is host framing addressed to the model and never a message to the
+  exactly where the model-facing notification context would be and replaces it,
+  because that context is host framing addressed to the model and never a message to the
   reader. Position is identity here too (above): the report is one more speaker
   in the stream — its own avatar, its own name, its own elapsed on that header
   line. Its body

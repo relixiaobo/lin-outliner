@@ -3,6 +3,8 @@ import type { CSSProperties } from 'react';
 import type { RendererUserViewHints } from '../../core/agent/protocol';
 import type { PreviewTarget } from '../../core/preview';
 import { api } from '../api/client';
+import { readDesktopProjection, subscribeDesktopProjection } from '../api/outline';
+import { installDesktopProjectionReader } from '../api/outlineIntents';
 import { parseIsoLocalDate, todayIsoLocalDate, type AssetMetadata, type FocusHint, type NodeId } from '../api/types';
 import { flattenVisibleRows, useProjectionStore, useUiState } from '../state/document';
 import { selectableRowForId } from '../state/selectableRows';
@@ -69,7 +71,7 @@ const EMPTY_AGENT_USER_VIEW: RendererUserViewHints = {
 export function App() {
   const t = useT();
   const [ui, setUi] = useUiState();
-  const { index, indexStore, applyProjectionUpdate } = useProjectionStore(api.getProjection, setUi);
+  const { index, indexStore, applyProjectionUpdate } = useProjectionStore(readDesktopProjection, setUi);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   // Agent rail is a 3-state model: collapsed seed (bare icon) -> hover glass chip
   // (CSS-only, no React state) -> open full panel. We persist only the binary
@@ -90,6 +92,9 @@ export function App() {
   const [trigger, setTrigger] = useState<TriggerState>(null);
   const [dragId, setDragId] = useState<NodeId | null>(null);
   const indexRef = useRef(index);
+  indexRef.current = index;
+  const indexStoreRef = useRef(indexStore);
+  indexStoreRef.current = indexStore;
   const uiStateRef = useRef(ui);
   uiStateRef.current = ui;
   const run = useCommandRunner(applyProjectionUpdate, setPendingFocus, setError);
@@ -280,9 +285,10 @@ export function App() {
 
   useDragSelection({ rootId, index, ui, setUi });
 
-  useEffect(() => {
-    indexRef.current = index;
-  }, [index]);
+  useEffect(() => installDesktopProjectionReader(() => {
+    const current = indexStoreRef.current?.getCurrent() ?? indexRef.current;
+    return current ? { projection: current.projection, byId: current.byId } : null;
+  }), []);
 
   useEffect(() => {
     if (!index) return;
@@ -291,8 +297,12 @@ export function App() {
   }, [focusNode, index, repairInvalidPanelViews]);
 
   useEffect(() => {
-    void run(async () => {
-      const initial = await api.initWorkspace();
+    let active = true;
+    const subscription = subscribeDesktopProjection(applyProjectionUpdate, (error) => {
+      if (active) setError(error.message);
+    });
+    void subscription.ready.then((initial) => {
+      if (!active) return;
       const initialLayout = initializeLayout(initial.projection);
       const initialById = new Map(initial.projection.nodes.map((node) => [node.id, node]));
       setUi((prev) => {
@@ -315,9 +325,14 @@ export function App() {
           expandedHiddenFields: restored.expandedHiddenFields,
         };
       });
-      return initial;
+    }).catch((error: unknown) => {
+      if (active) setError(error instanceof Error ? error.message : String(error));
     });
-  }, [initializeLayout, run, setUi]);
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, [applyProjectionUpdate, initializeLayout, setError, setUi]);
 
   useEffect(() => {
     const currentIndex = indexRef.current;
@@ -335,16 +350,6 @@ export function App() {
       });
     }
   }, [panels, ui.expanded, ui.expandedHiddenFields]);
-
-  useEffect(() => {
-    const unlisten = window.lin?.onDocumentEvent((event) => {
-      if (event.type !== 'projection_changed') return;
-      applyProjectionUpdate(event.update);
-    });
-    return () => {
-      unlisten?.();
-    };
-  }, []);
 
   // Desaturate the chrome while the window is inactive (the macOS
   // inactive-window convention). The main process forwards OS focus/blur; we

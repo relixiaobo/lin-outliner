@@ -46,12 +46,6 @@ import {
   InfoIcon,
   LoaderIcon,
   McpToolIcon,
-  NodeCreateToolIcon,
-  NodeDeleteToolIcon,
-  NodeEditToolIcon,
-  NodeReadToolIcon,
-  NodeSearchToolIcon,
-  OutlineUndoStackToolIcon,
   PencilIcon,
   PlanToolIcon,
   QuestionToolIcon,
@@ -1385,19 +1379,12 @@ function dynamicToolIcon(item: Extract<ThreadToolItem, { type: 'dynamicToolCall'
         : identity === 'file_read' ? FileReadToolIcon
           : identity === 'file_glob' ? FileGlobToolIcon
             : identity === 'file_grep' ? FileGrepToolIcon
-              : identity === 'node_create' ? NodeCreateToolIcon
-                : identity === 'node_edit' ? NodeEditToolIcon
-                  : identity === 'node_delete'
-                    ? dynamicToolArgument(item, 'restore') === true ? RestoreIcon : NodeDeleteToolIcon
-                    : identity === 'node_read' ? NodeReadToolIcon
-                      : identity === 'node_search' ? NodeSearchToolIcon
-                        : identity === 'web_search' ? WebSearchToolIcon
+              : identity === 'web_search' ? WebSearchToolIcon
                           : identity === 'web_fetch' ? WebFetchToolIcon
                             : identity === 'update_plan' ? PlanToolIcon
                               : identity === 'skill' ? SkillIcon
                                 : identity === 'request_user_input' ? QuestionToolIcon
-                                  : identity === 'outline_undo_stack' ? OutlineUndoStackToolIcon
-                                    : GenericToolIcon;
+                                  : GenericToolIcon;
   return <Icon size={ICON_SIZE.menu} />;
 }
 
@@ -1432,19 +1419,12 @@ type ToolActivityKind =
   | 'fileDelete'
   | 'fileRead'
   | 'fileSearch'
-  | 'nodeCreate'
-  | 'nodeEdit'
-  | 'nodeDelete'
-  | 'nodeRestore'
-  | 'nodeRead'
-  | 'nodeSearch'
   | 'plan'
   | 'web'
   | 'webFetch'
   | 'collaboration'
   | 'skill'
   | 'question'
-  | 'history'
   | 'tool';
 
 const TOOL_ACTIVITY_ORDER: readonly ToolActivityKind[] = [
@@ -1454,19 +1434,12 @@ const TOOL_ACTIVITY_ORDER: readonly ToolActivityKind[] = [
   'fileDelete',
   'fileRead',
   'fileSearch',
-  'nodeCreate',
-  'nodeEdit',
-  'nodeDelete',
-  'nodeRestore',
-  'nodeRead',
-  'nodeSearch',
   'plan',
   'web',
   'webFetch',
   'collaboration',
   'skill',
   'question',
-  'history',
   'tool',
 ];
 
@@ -1615,12 +1588,6 @@ const SUBJECT_VERBS: Partial<Record<
   fileDelete: { past: 'deletedNamed', present: 'deletingNamed' },
   fileRead: { past: 'readNamed', present: 'readingNamed' },
   fileSearch: { past: 'searchedNamed', present: 'searchingNamed' },
-  nodeCreate: { past: 'createdNamed', present: 'creatingNamed' },
-  nodeEdit: { past: 'editedNamed', present: 'editingNamed' },
-  nodeDelete: { past: 'deletedNamed', present: 'deletingNamed' },
-  nodeRestore: { past: 'restoredNamed', present: 'restoringNamed' },
-  nodeRead: { past: 'readNamed', present: 'readingNamed' },
-  nodeSearch: { past: 'searchedNamed', present: 'searchingNamed' },
   webFetch: { past: 'fetchedNamed', present: 'fetchingNamed' },
   skill: { past: 'usedSkillNamed', present: 'usingSkillNamed' },
 };
@@ -1656,19 +1623,12 @@ function toolActivityPhrase(
     case 'fileDelete': return running ? labels.deletingFiles({ count }) : labels.deletedFiles({ count });
     case 'fileRead': return running ? labels.readingFiles({ count }) : labels.readFiles({ count });
     case 'fileSearch': return running ? labels.searchingFiles : labels.searchedFiles;
-    case 'nodeCreate': return running ? labels.creatingNodes({ count }) : labels.createdNodes({ count });
-    case 'nodeEdit': return running ? labels.editingNodes({ count }) : labels.editedNodes({ count });
-    case 'nodeDelete': return running ? labels.deletingNodes({ count }) : labels.deletedNodes({ count });
-    case 'nodeRestore': return running ? labels.restoringNodes({ count }) : labels.restoredNodes({ count });
-    case 'nodeRead': return running ? labels.readingNodes({ count }) : labels.readNodes({ count });
-    case 'nodeSearch': return running ? labels.searchingNodes : labels.searchedNodes;
     case 'plan': return running ? labels.updatingPlan : labels.updatedPlan({ count });
     case 'web': return running ? labels.searchingWebActivity : labels.searchedWebActivity;
     case 'webFetch': return running ? labels.fetchingPages({ count }) : labels.fetchedPages({ count });
     case 'collaboration': return running ? labels.collaborating({ count }) : labels.collaborated({ count });
     case 'skill': return running ? labels.usingSkills({ count }) : labels.usedSkills({ count });
     case 'question': return running ? labels.askingQuestions({ count }) : labels.askedQuestions({ count });
-    case 'history': return running ? labels.checkingHistory : labels.checkedHistory;
     case 'tool': return running ? labels.usingTools({ count }) : labels.usedTools({ count });
     default: return assertNever(kind);
   }
@@ -1718,17 +1678,11 @@ function dynamicToolActivityKind(item: Extract<ThreadToolItem, { type: 'dynamicT
     case 'file_read': return 'fileRead';
     case 'file_glob':
     case 'file_grep': return 'fileSearch';
-    case 'node_create': return 'nodeCreate';
-    case 'node_edit': return 'nodeEdit';
-    case 'node_delete': return dynamicToolArgument(item, 'restore') === true ? 'nodeRestore' : 'nodeDelete';
-    case 'node_read': return 'nodeRead';
-    case 'node_search': return 'nodeSearch';
     case 'web_fetch': return 'webFetch';
     case 'web_search': return 'web';
     case 'update_plan': return 'plan';
     case 'skill': return 'skill';
     case 'request_user_input': return 'question';
-    case 'outline_undo_stack': return 'history';
     default: return 'tool';
   }
 }
@@ -1750,12 +1704,6 @@ const SUBJECT_ARGUMENT_KEYS: Partial<Record<ToolActivityKind, readonly string[]>
   fileDelete: ['file_path', 'path'],
   fileRead: ['file_path', 'path'],
   fileSearch: ['pattern'],
-  nodeCreate: ['node_id', 'node_ids'],
-  nodeEdit: ['node_id', 'node_ids'],
-  nodeDelete: ['node_id', 'node_ids'],
-  nodeRestore: ['node_id', 'node_ids'],
-  nodeRead: ['node_id', 'node_ids'],
-  nodeSearch: ['query'],
   web: ['query'],
   webFetch: ['url'],
   skill: ['skill', 'name'],
@@ -1787,33 +1735,13 @@ function dynamicToolSubjectValues(
   return [...new Set(values)];
 }
 
-export function threadToolReferencedNodeIds(item: ThreadToolItem): readonly string[] {
-  if (item.type !== 'dynamicToolCall') return [];
-  const kind = dynamicToolActivityKind(item);
-  if (
-    kind !== 'nodeCreate'
-    && kind !== 'nodeEdit'
-    && kind !== 'nodeDelete'
-    && kind !== 'nodeRestore'
-    && kind !== 'nodeRead'
-  ) return [];
-  return dynamicToolSubjectValues(item, kind);
-}
-
 function subjectDisplayName(
   kind: ToolActivityKind,
   value: string,
   index: DocumentIndex | undefined,
 ): string {
-  // Search kinds first: `nodeSearch` starts with "node" but its subject is a
-  // query string, not an id — resolving it as a Node would rename the query.
-  if (kind === 'fileSearch' || kind === 'nodeSearch' || kind === 'web') return quoteSubject(value);
+  if (kind === 'fileSearch' || kind === 'web') return quoteSubject(value);
   if (kind === 'webFetch') return quoteSubject(value);
-  if (kind.startsWith('node')) {
-    // The same title resolution user-message Node references use, so the
-    // transcript never shows a raw id where it can show a title.
-    return quoteSubject(threadNodeReferenceDisplayLabel('', value, index, value));
-  }
   return basenameForPath(value) || value;
 }
 

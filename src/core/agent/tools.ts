@@ -73,12 +73,6 @@ export const AGENT_TASK_TOOL_NAMES = [
 ] as const satisfies readonly AgentTaskToolName[];
 
 export const RETAINED_CAPABILITY_TOOL_NAMES = [
-  'node_search',
-  'node_read',
-  'node_create',
-  'node_edit',
-  'node_delete',
-  'outline_undo_stack',
   'file_read',
   'file_glob',
   'file_grep',
@@ -156,6 +150,7 @@ export interface AgentToolInput {
   readonly subagent_type: string;
   readonly model?: string;
   readonly run_in_background: boolean;
+  readonly execution?: 'read-only';
   readonly isolation?: 'worktree';
 }
 
@@ -286,10 +281,8 @@ const automationMutableProperties = {
 // The root stays a flat object with no union keyword. OpenAI rejects a function
 // schema whose ROOT carries oneOf/anyOf/allOf/enum/not ("schema must have type
 // 'object' and not have ... at the top level"), which is the same rule that
-// keeps `node_search` and `node_edit` from expressing their mutually exclusive
-// argument groups in the schema — see the note at the top of
-// `src/main/agent/capabilities/agentNodeToolSchemas.ts`. Per-mode exactness
-// therefore lives in `decodeAutomationToolInput`, which refuses a wrong-shaped
+// keeps tools from expressing mutually exclusive argument groups in the schema.
+// Per-mode exactness therefore lives in `decodeAutomationToolInput`, which refuses a wrong-shaped
 // call before anything is written; the price is that a wrong shape costs one
 // round trip. Nested unions inside a property subschema are fine.
 const automationUpdateToolSchema: ObjectJsonSchema = objectSchema({
@@ -336,6 +329,7 @@ Reach for this when the task matches an available agent type, when you have inde
 - The agent's final report is not shown to the user — relay what matters.
 - Use agent_message with the agent's ID to continue a previously spawned agent with its context intact; a new agent call starts fresh.
 - Each agent type's model, reasoning effort, and tools come from its Tenon Role.
+- \`execution: "read-only"\` applies a host-enforced action ceiling. It permits inspection but rejects file, Outline, process, network, and other external mutations; descendants inherit the ceiling.
 - \`isolation: "worktree"\` gives the agent its own git worktree (auto-cleaned if unchanged).
 - Subagents run in the background by default; you'll be notified when one finishes or stops. Pass \`run_in_background: false\` only when your very next action depends on the result and nothing else could usefully happen while it runs — otherwise background it so the user can interject. Never fabricate or predict a pending agent's results — the notification is never something you write yourself; if the user asks before it arrives, say it's still running.`;
 
@@ -395,6 +389,11 @@ export function agentInputSchema(modelIds: readonly string[]): ObjectJsonSchema 
       run_in_background: {
         description: "Agents run in the background by default; you will be notified when one finishes or stops. Set to false only when your very next action depends on this agent's result and nothing else could usefully happen while it runs — otherwise leave it in the background so the user can hand you other work.",
         type: 'boolean',
+      },
+      execution: {
+        description: 'Optional host-enforced execution ceiling. "read-only" permits inspection but rejects external mutations and is inherited by descendants.',
+        type: 'string',
+        enum: ['read-only'],
       },
       isolation: {
         description: 'Isolation mode. "worktree" creates a temporary git worktree so the agent works on an isolated copy of the repo.',
@@ -535,12 +534,6 @@ const coreControlToolContracts: readonly StaticModelToolContract[] = [
 ];
 
 const CAPABILITY_ACTION_KINDS = {
-  node_search: ['outline.read'],
-  node_read: ['outline.read'],
-  node_create: ['outline.edit'],
-  node_edit: ['outline.edit'],
-  node_delete: ['outline.delete'],
-  outline_undo_stack: ['outline.read', 'outline.edit'],
   file_read: ['file.read.local_path', 'file.read.sensitive_local_path'],
   file_glob: ['file.read.local_path', 'file.read.sensitive_local_path'],
   file_grep: ['file.read.local_path', 'file.read.sensitive_local_path'],
@@ -713,13 +706,10 @@ export function decodeProviderToolName(
 
 export function modelToolActionKinds(
   identity: ModelToolIdentity | string,
-  args?: unknown,
+  _args?: unknown,
 ): readonly ModelToolActionKind[] | null {
   const contract = modelToolContract(identity);
-  if (!contract) return null;
-  if (canonicalModelToolKey(contract.identity) !== 'outline_undo_stack') return contract.actionKinds;
-  const action = isRecord(args) && typeof args.action === 'string' ? args.action.trim().toLowerCase() : 'list';
-  return action === 'undo' || action === 'redo' ? ['outline.edit'] : ['outline.read'];
+  return contract?.actionKinds ?? null;
 }
 
 export function isReadOnlyModelToolActionKind(kind: ModelToolActionKind): boolean {
@@ -805,9 +795,12 @@ export function normalizeAgentToolInput(value: unknown): AgentToolInput {
   if (!isRecord(value)) throw new Error('agent input must be an object');
   exactInputKeys(
     value,
-    ['description', 'prompt', 'subagent_type', 'model', 'run_in_background', 'isolation'],
+    ['description', 'prompt', 'subagent_type', 'model', 'run_in_background', 'execution', 'isolation'],
     'agent',
   );
+  if (value.execution !== undefined && value.execution !== 'read-only') {
+    throw new Error('agent.execution must be "read-only" when provided');
+  }
   return Object.freeze({
     ...value,
     subagent_type: value.subagent_type === undefined ? 'general-purpose' : value.subagent_type,

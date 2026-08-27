@@ -14,9 +14,9 @@ import type { CreateCaptureInput } from '../launcher/sources';
 import type { NodeId, ViewMode } from '../types';
 
 /**
- * Argument shapes for exactly the commands the registry emits. `documentService`
- * accepts `Record<string, unknown>`, so there is no existing correlation to
- * inherit — it is created here, as a type-level map over EXISTING command names.
+ * Argument shapes for exactly the commands the registry emits. The action host
+ * accepts `Record<string, unknown>`, so the correlation is created here as a
+ * type-level map over existing command names.
  * `src/core/commands.ts` is untouched by this plan.
  */
 export interface CommandArgs {
@@ -43,8 +43,40 @@ export interface CommandArgs {
 
 export type CommandName = keyof CommandArgs;
 
+export const ACTION_COMMANDS = [
+  'batch_apply_tag',
+  'batch_duplicate_nodes',
+  'batch_indent_nodes',
+  'batch_outdent_nodes',
+  'batch_move_nodes_down',
+  'batch_move_nodes_up',
+  'batch_toggle_done',
+  'batch_trash_nodes',
+  'create_capture',
+  'create_tag',
+  'delete_node',
+  'ensure_date_node',
+  'apply_tag',
+  'move_node',
+  'remove_field_value',
+  'restore_node',
+  'set_view_mode',
+  'set_view_toolbar_visible',
+  'toggle_done',
+] as const satisfies readonly CommandName[];
+
+type MissingActionCommand = Exclude<CommandName, typeof ACTION_COMMANDS[number]>;
+const _assertCompleteActionCommands: MissingActionCommand extends never ? true : never = true;
+void _assertCompleteActionCommands;
+
+const actionCommands = new Set<string>(ACTION_COMMANDS);
+
+export function isActionCommand(command: string): command is CommandName {
+  return actionCommands.has(command);
+}
+
 // Every modelled name really is a document command. A typo or a rename in
-// `commands.ts` fails here rather than at runtime inside `documentService`.
+// `commands.ts` fails here rather than at runtime inside the action host.
 type AssertCommandNames = CommandName extends DocumentCommand ? true : never;
 const _assertCommandNames: AssertCommandNames = true;
 void _assertCommandNames;

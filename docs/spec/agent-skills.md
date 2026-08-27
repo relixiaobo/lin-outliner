@@ -55,6 +55,14 @@ file-tool authoring and runtime loading both reject an inline declaration or bod
 containing any execution override. Invalid content fails instead of silently changing
 mode or partially applying metadata.
 
+Invocation arguments are task input, not a second instruction source. Inline Skills
+substitute values only at placeholders explicitly authored in the Skill body; arguments
+are never appended implicitly when no placeholder exists because the canonical user
+message already carries the task. Isolated Skill instructions never interpolate
+argument values. Their placeholders refer to the separate child user message that
+carries the exact invocation task, so model-authored arguments cannot acquire developer
+authority merely by appearing after the Skill body.
+
 ## Discovery And Invocation
 
 Every ordinary start or steering admission refreshes the current Skill registry and
@@ -90,11 +98,16 @@ evidence before instructions can affect the model. Direct invocation evidence is
 admitted before the unchanged canonical `userMessage`; model invocation evidence is
 durable after the complete Skill tool Item and before the next provider request.
 
-An invocation snapshots canonical identity, content hash, exact rendered instructions,
-arguments, source, execution mode, resource root, constraints, invocation source, and
-time. Inline instructions project as application guidance; isolated instructions remain
-child-only while the parent receives identity, constraints, and the tool result for
-audit. There is no prompt overlay, private steering queue, or text parser. Restart
+An invocation snapshots canonical identity, content hash, exact rendered authored
+instructions, arguments, source, execution mode, resource root, constraints, invocation
+source, and time. Inline instructions project as application guidance; isolated authored
+instructions remain child-only developer instructions, while the invocation task is the
+child's canonical user message. Dynamic embedded-shell results are excluded from the
+instruction snapshot and admitted separately as untrusted child observations. The parent
+receives identity, constraints, and the tool result for audit. The model-facing `skill`
+tool requires the parent to preserve the user's task and
+explicit constraints in arguments without inventing an implementation plan or
+overriding the Skill workflow. There is no prompt overlay, private steering queue, or text parser. Restart
 replays the same payload bytes from canonical Items. A later invocation of the same
 canonical name is authoritative from that point forward without deleting or rebinding
 older evidence.
@@ -118,12 +131,16 @@ after an earlier miss.
 Only isolated Skill metadata may select tools or execution settings, and it cannot
 widen the effective parent catalog. Isolated execution intersects its declared tools
 with the parent ceiling. Plugins and MCP servers obey the same parent ceiling through
-child configuration. Generic `execution: isolated` remains; there is no dedicated
-read-only isolated execution partition.
+child configuration. Generic `execution: isolated` remains; a Skill has no separate
+read-only mode of its own, but an isolated child inherits an enclosing Agent's durable
+`readOnly` ceiling and cannot reset it with `allowed-tools`.
 
 Embedded shell snippets are valid only in isolated Skills and execute from the already
 recorded canonical `skill` tool Item through the standard shell capability and its Full
-Access capability evaluation. A Skill never bypasses explicit blocks.
+Access capability evaluation. Invocation values for `$ARGUMENTS`, `$ARGUMENTS[n]`,
+`$0`/`$1`, and named placeholders travel through host-controlled environment bindings;
+argument bytes are never interpolated into the authored command source. A Skill never
+bypasses explicit blocks.
 
 ## Compaction Restore
 
@@ -150,6 +167,17 @@ of re-reading mutable Skill files.
 
 Isolated child output is not restored as reusable Skill guidance. A future call
 starts a new child Turn under current configuration.
+
+An isolated child receives the loaded Skill body as host-owned developer instructions
+and the invocation task as a separate user message. The developer block explicitly
+defines the user message as task input rather than workflow authority. An invocation
+with no task receives only a neutral execute-without-additional-input message; the host
+never manufactures task content from the parent conversation. Embedded shell syntax is
+replaced in that developer block by a stable observation marker. Each command result is
+persisted as an `untrusted` / `observation` additional-context entry, never as developer
+or system guidance. Related retained resources are copied into the child Thread before
+admission, and projection resolves their current readable paths from stable resource
+references so transient paths are not frozen into canonical history.
 
 Every isolated Skill catalog entry appends a host-derived execution constraint.
 The constraint states that invocation runs once in a single isolated child Thread
@@ -264,31 +292,87 @@ legacy installations, or update the CLI independently of the active Skill.
 
 ## Built-In Floor
 
-The packaged platform floor contains `tenon-import`, Tenon's external-data
-cleanup and import workflow. Development registration also provides the
-authoring workflow used by the runtime. Packaged resource staging
-is explicit; arbitrary optional Skills are not copied into the application
-bundle. The packaged import wrapper is required: the macOS packaging hook
-restores its executable mode and fails the build when the resource is absent.
+The packaged platform floor contains one built-in Outliner Skill:
 
-Import is CLI/API-only rather than a default model tool. The Skill creates and
-previews Import Pack v1 through `tenon-import`; `AgentImportService` remains an
-internal writer. Tana adapters map only exact `journalPart` records with valid
-`YYYY-MM-DD` local dates to native date sections. Preview defaults those packs
-to `native_daily`, reports existing/new canonical days and the affected range,
-and binds its ID to the pack, destination, and mode. Commit appends date-section
-rows directly below canonical Daily Notes while retaining non-date sections
-under one staging root; `--mode stage` explicitly keeps every section in one
-staging tree. Native re-import is append-only and never deduplicates or
-synchronizes earlier content.
+- `outline` teaches all persisted Outliner reads, edits, history, and recovery
+  through the public `outline` CLI, including complete-resource routing and
+  bounded reviewed literal text transforms. Its import workflow teaches source
+  inspection, optional cleanup, deterministic normalization, coverage
+  accounting, one reviewed Diff/apply, and independent verification. Tana
+  guidance maps only deterministic source structures and treats unsupported
+  coverage as an explicit fidelity limit, not proof of a lossless migration.
 
-A commit verification mismatch exits non-zero with preserved
-`staged_with_errors` or `imported_daily_with_errors` data for exactly one import
-operation. The Skill stops without retrying or manually deleting created
-content and reports its roots, Daily Note targets, `operationId`, and
-`mismatches` to the parent Agent. Exact reversal uses that operation ID as the
-`outline_undo_stack` stack-top guard; a newer operation causes refusal rather
-than undoing unrelated work.
+It uses inline execution because document work depends on the current user's exact
+request, visible document context, research, and follow-up corrections. Loading the
+workflow into the parent Turn avoids a lossy model-authored task handoff and does not
+widen the parent's effective tool catalog. Packaged resource staging is explicit;
+arbitrary optional Skills are not copied into the application bundle. The packaged
+`outline` launcher and internal read-only source-adapter worker are required resources:
+the packaging hook restores executable mode where needed and fails the build when a
+resource is absent.
+
+The Skill owns no document logic. `outline` discovers current capabilities,
+root/family/exact command help, completion metadata, and command-specific schemas
+from the executable registry. It routes one complete resource to one porcelain
+invocation, complex state for that resource to the same command's `--input`, and
+dependent, cross-date, or bounded bulk work to one ChangeSet with bindings. It
+never uses a shell mutation loop or intermediate created-ID lookup. For ordinary
+document work it also avoids ad hoc Python, Node, or shell programs for schema
+discovery, CLI-output transformation, or ChangeSet assembly; public
+command-specific schemas, supplied fixtures, and direct `--input` artifacts are
+the execution path. Bundled source adapters remain reserved for the documented
+external import workflow.
+
+The Skill distinguishes explicit create/add from convergent set/configure/ensure,
+omitted patch properties from explicit replacement, and common STRING_MATCH
+shorthand from canonical structured queries. It teaches stable aliases including
+`@library` and `@saved-searches`, bounded selector cardinality, complete-resource
+creation, one-Operation settlement, exact Diff review, and guarded revert. It
+does not copy schemas or parser tables into Skill text. The executable query
+operator inventory and operand formats are generated from the public query
+registry into `references/commands.md` and remain available exactly through
+`outline schema QueryExpression`.
+
+Three frequent modeling rules remain in the entrypoint because they change
+ordinary task decisions. A document table is one owner with table view state,
+direct child row Nodes, field-backed cells, and explicit display/group/sort
+configuration; it is not Markdown or aligned text. Date field values use
+`YYYY-MM-DD`, `YYYY-MM-DDTHH:mm`, or `start/end`, and local Daily Note dates are
+not timezone-converted. Final Agent answers reference an ordinary persisted
+`node:UUID` as `[[node://UUID]]`, removing the internal `node:` prefix, so the
+client resolves current titles.
+
+`references/changesets.md` includes a complete field-backed Daily Note table
+pattern backed by `fixtures/table-view-changeset.json`. The mandatory CLI golden
+flow executes that same fixture through one Diff, one apply, and exact revert.
+This makes the non-obvious field-definition, row-value, sort, display, and
+`viewMode: table` bindings executable guidance rather than prose that a model
+must rediscover with a local script.
+
+Its Agent-facing information architecture has four layers. `SKILL.md` teaches
+the inspect/choose/review/execute/verify/recover loop. A generated
+`references/commands.md` gives one compact complete command-family and command
+inventory. `references/changesets.md` and `references/import.md` are loaded only
+for their advanced paths. Exact options, defaults, examples, schemas, and parser
+admission remain registry-owned through command help and `schema COMMAND`; a
+drift test byte-compares the generated command map with the registry renderer.
+
+The Skill routes import requests to its import workflow. Bundled or
+Agent-authored source adapters only read source data and emit normalized data
+plus coverage; they have no Runtime write client. Public `import inspect`,
+`import plan`, and `import verify` own the bounded profile, generic
+ChangeSet/Diff planning, evidence binding, and post-Operation verification. An
+Agent-authored task-local adapter must emit public `NormalizedImport`.
+Valid Tana `journalPart` records with canonical local dates lower to native
+Daily Note `ensure` bindings in the same ChangeSet, while non-date sections may
+remain under a staging root. Import is append-only and never implies
+deduplication or synchronization.
+
+The Skill stops before mutation when coverage, selectors, evidence binding, or
+Diff review is unresolved. After apply it reports the ordinary Operation ID,
+affected set, dates, warnings, and verification result. A mismatch is never
+retried or manually deleted; authorized recovery names that exact Operation in
+`outline revert`.
 
 ## Settings
 

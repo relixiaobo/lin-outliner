@@ -12,7 +12,6 @@ import {
   type ToolArtifactSink,
 } from '../../src/main/agent/runtime/ToolArtifactSink';
 import type { SubagentToolPolicy } from '../../src/main/agent/capabilities/subagentToolPolicy';
-import { isTenonImportCommitCommand } from '../../src/main/tenonImportProtocol';
 
 const roots: string[] = [];
 
@@ -75,7 +74,7 @@ describe('agent capabilities', () => {
     const cases = [
       ['git push origin main', 'git.publish_remote'],
       ['npm install', 'shell.dependency_install'],
-      ['tenon-import commit pack.json --preview-id preview:1', 'outline.edit'],
+      ['bun run typecheck', 'shell.project_script'],
       ['unknown-tool --flag', 'shell.unknown'],
     ] as const;
     for (const [command, actionKind] of cases) {
@@ -84,70 +83,39 @@ describe('agent capabilities', () => {
     }
   });
 
-  test('recognizes executable tenon-import commit segments without matching quoted text', async () => {
-    for (const command of [
-      'tenon-import commit pack.json --preview-id preview:1',
-      'set -e; /app/bin/tenon-import commit pack.json --preview-id preview:1',
-      'TENON_MODE=stage env -i HOME=/tmp tenon-import commit pack.json --preview-id preview:1',
-      'command tenon-import commit pack.json --preview-id preview:1',
-    ]) {
-      expect(isTenonImportCommitCommand(command), command).toBe(true);
-    }
-    for (const command of [
-      'echo "tenon-import commit pack.json"',
-      "printf '%s' 'tenon-import commit pack.json'",
-      '# tenon-import commit pack.json',
-      "cat <<'EOF'\ntenon-import commit pack.json\nEOF",
-    ]) {
-      expect(isTenonImportCommitCommand(command), command).toBe(false);
-    }
-
+  test('classifies outline shell commands from the public capability registry', async () => {
     const { workspace } = await workspaceFixture();
-    expect(evaluateAgentToolCapability({
-      toolName: 'bash',
-      args: { command: 'echo "tenon-import commit pack.json"' },
-      policy: { workspaceRoot: workspace },
-    }).descriptors.some((descriptor) => descriptor.actionKind === 'outline.edit')).toBe(false);
-
-    for (const command of [
-      'tenon-import commit pack.json --preview-id preview:1 npm install',
-      'tenon-import commit pack.json --preview-id preview:1 & npm install',
-      'tenon-import commit pack.json --preview-id preview:1 "$(npm install)"',
-    ]) {
+    const cases = [
+      ['outline --json show @today', ['outline.read']],
+      ['TENON_TEST=1 command outline diff --file changes.json', ['outline.read']],
+      ['/Applications/Tenon.app/Contents/Resources/outline apply --file diff.json', ['outline.edit', 'outline.delete']],
+      ['outline daily ensure --date 2026-08-24', ['outline.edit']],
+      ['outline purge @trash --yes', ['outline.edit', 'outline.delete']],
+    ] as const;
+    for (const [command, actionKinds] of cases) {
       const decision = evaluateAgentToolCapability({
         toolName: 'bash',
         args: { command },
         policy: { workspaceRoot: workspace },
       });
-      expect(isTenonImportCommitCommand(command), command).toBe(true);
-      expect(decision.descriptors.map((descriptor) => descriptor.actionKind), command).toEqual([
-        'outline.edit',
-        'shell.dependency_install',
-      ]);
+      expect(decision.descriptors.map((descriptor) => descriptor.actionKind), command).toEqual(actionKinds);
+    }
+  });
+
+  test('applies outline Action blocks to shell commands', async () => {
+    const { workspace } = await workspaceFixture();
+    for (const [actionKind, command] of [
+      ['outline.edit', 'outline add --parent @today --text Note'],
+      ['outline.delete', 'outline apply --file diff.json'],
+    ] as const) {
       expect(evaluateAgentToolCapability({
         toolName: 'bash',
         args: { command },
         policy: {
           workspaceRoot: workspace,
-          capabilityConfig: { blocks: ['Action(outline.edit)'] },
+          capabilityConfig: { blocks: [`Action(${actionKind})`] },
         },
-      }), command).toMatchObject({
-        behavior: 'unavailable',
-        code: 'user_blocked',
-        descriptor: { actionKind: 'outline.edit' },
-      });
-      expect(evaluateAgentToolCapability({
-        toolName: 'bash',
-        args: { command },
-        policy: {
-          workspaceRoot: workspace,
-          capabilityConfig: { blocks: ['Action(shell.dependency_install)'] },
-        },
-      }), command).toMatchObject({
-        behavior: 'unavailable',
-        code: 'user_blocked',
-        descriptor: { actionKind: 'shell.dependency_install' },
-      });
+      })).toMatchObject({ behavior: 'unavailable', code: 'user_blocked' });
     }
   });
 
@@ -268,7 +236,26 @@ describe('agent capabilities', () => {
         subagentPolicy: policy(kind),
       })).resolves.toMatchObject({ output: expect.any(String), resourceRefs: [] });
       await expect(executeAgentSkillShellCommand({
+        command: 'outline --no-start status',
+        localRoot: workspace,
+        capabilityConfig: parseAgentCapabilitySettings({ blocks: [] }),
+        subagentPolicy: policy(kind),
+        processEnvironment: async () => ({
+          env: {
+            PATH: `${path.resolve('src/outline/bin')}:${process.env.PATH ?? ''}`,
+            TENON_OUTLINE_CLI_RUNTIME: process.execPath,
+            TENON_OUTLINE_CLI_ENTRY: path.resolve('src/outline/cli/entry.ts'),
+          },
+        }),
+      })).resolves.toMatchObject({ output: expect.stringContaining('"running":false'), resourceRefs: [] });
+      await expect(executeAgentSkillShellCommand({
         command: 'printf changed > tracked.txt',
+        localRoot: workspace,
+        capabilityConfig: parseAgentCapabilitySettings({ blocks: [] }),
+        subagentPolicy: policy(kind),
+      })).rejects.toMatchObject({ code: 'operation_unavailable' });
+      await expect(executeAgentSkillShellCommand({
+        command: 'outline add --parent @today --text changed',
         localRoot: workspace,
         capabilityConfig: parseAgentCapabilitySettings({ blocks: [] }),
         subagentPolicy: policy(kind),
@@ -365,6 +352,38 @@ describe('agent capabilities', () => {
     expect(result.output).toContain('it is not a regular file');
     expect(result.output).toContain('exceeds the artifact byte limit');
     expect(result.output).toContain('were skipped after 16 artifacts');
+  });
+
+  test('transports embedded Skill shell arguments through controlled environment bindings', async () => {
+    const { workspace } = await workspaceFixture();
+    const injectionMarker = path.join(workspace, 'argument-injection-ran');
+    const payload = `$(touch ${injectionMarker}); literal * value`;
+    const aggregate = `"target with spaces" "${payload}"`;
+    const result = await executeAgentSkillShellCommand({
+      command: [
+        'printf \'aggregate=<%s>\\npositional=<%s>\\nzero=<%s>\\nnamed=<%s>\\npayload=<%s>\\nbase=<%s>\\n\'',
+        '"$ARGUMENTS" "$ARGUMENTS[1]" "$0" "$target" "$payload" "$BASE_MARKER"',
+      ].join(' '),
+      argumentBindings: {
+        aggregate,
+        positional: ['target with spaces', payload],
+        named: [
+          { name: 'target', value: 'target with spaces', index: 0 },
+          { name: 'payload', value: payload, index: 1 },
+        ],
+      },
+      localRoot: workspace,
+      capabilityConfig: parseAgentCapabilitySettings({ blocks: [] }),
+      processEnvironment: async () => ({ env: { BASE_MARKER: 'base environment retained' } }),
+    });
+
+    expect(result.output).toContain(`aggregate=<${aggregate}>`);
+    expect(result.output).toContain(`positional=<${payload}>`);
+    expect(result.output).toContain('zero=<target with spaces>');
+    expect(result.output).toContain('named=<target with spaces>');
+    expect(result.output).toContain(`payload=<${payload}>`);
+    expect(result.output).toContain('base=<base environment retained>');
+    expect(await readFile(injectionMarker, 'utf8').catch(() => null)).toBeNull();
   });
 
   test('keeps admitted managed Skill artifacts when the embedded command fails', async () => {

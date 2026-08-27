@@ -6,7 +6,6 @@ import {
   MEMORY_TAG_DEFINITIONS,
 } from '../../src/core/agent/memory';
 import type { Thread, ThreadItem, Turn } from '../../src/core/agent/protocol';
-import type { DocumentSystemReceipt } from '../../src/core/documentSystem';
 import { createTextSearchIndex } from '../../src/core/textSearchIndex';
 import {
   MemoryControlStore,
@@ -38,17 +37,21 @@ import {
   type ProjectionUpdate,
 } from '../../src/core/types';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
-import type { ProjectionChangedDelivery } from '../../src/main/documentService';
+import {
+  OutlineContractError,
+  outlineError,
+  type Change,
+  type Operation,
+  type TargetRef,
+} from '../../src/outline/contract';
 import { closeAgentServices } from '../../src/main/agent/closeAgentServices';
 import { replayableModelCall } from '../fixtures/agentToolCallHistory';
-import { formatNodeReferenceMarker } from '../../src/core/referenceMarkup';
 
 const THREAD_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abc';
 const TURN_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abd';
 const ITEM_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abe';
-const MEMORY_NODE_ID = 'node:018f0f24-7b2e-4a3f-8a4b-123456789abf';
-const EPISODE_NODE_ID = 'node:018f0f24-7b2e-4a3f-8a4b-123456789ac0';
-const BELIEF_NODE_ID = 'node:018f0f24-7b2e-4a3f-8a4b-123456789ac1';
+const MEMORY_NODE_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abf';
+const EPISODE_NODE_ID = '018f0f24-7b2e-7a3f-8a4b-123456789ac0';
 
 const stores: MemoryControlStore[] = [];
 
@@ -232,403 +235,12 @@ describe('Codex Memory contracts', () => {
     const projection = memoryProjection();
     const graph = canonicalMemoryGraph(projection);
     expect(graph.containers.map((entry) => entry.node.id)).toEqual([MEMORY_NODE_ID]);
-    expect(graph.nodes.map((entry) => entry.node.id)).toEqual([MEMORY_NODE_ID, EPISODE_NODE_ID, BELIEF_NODE_ID]);
+    expect(graph.nodes.map((entry) => entry.node.id)).toEqual([MEMORY_NODE_ID, EPISODE_NODE_ID, 'belief:1']);
     expect(graph.strayTaggedNodeIds).toEqual(['stray:1']);
 
     const store = memoryStore();
     const extension = new MemoryExtension(store, new TimelineMemoryStore(readOnlyTimelineHost(projection)));
     expect(extension.settings().status.strayTaggedNodeCount).toBe(1);
-  });
-
-  test('filters rollback-invalidated generated Memory but preserves explicit references', () => {
-    const store = memoryStore();
-    const projection = memoryProjection();
-    const timeline = new TimelineMemoryStore(readOnlyTimelineHost(projection));
-    const thread = rootThread([userTurn('remember this decision')]);
-    const extension = new MemoryExtension(store, timeline);
-    extension.bindHost(memoryThreadHost(thread));
-    extension.contributeTurnAdmission(admissionContext(thread, thread.turns![0]!));
-    expect(store.claimOrigin(ITEM_ID, THREAD_ID, TURN_ID, '2026-07-24', 'hash')).toBe(true);
-    store.replaceGeneratedNodes(THREAD_ID, [generatedNode()], [{
-      nodeId: MEMORY_NODE_ID,
-      threadId: THREAD_ID,
-      turnId: TURN_ID,
-      originItemId: ITEM_ID,
-    }]);
-    store.prepareRollback({
-      rollbackId: 'rollback:filter',
-      threadId: THREAD_ID,
-      omittedTurnIds: [TURN_ID],
-      beforeVersion: 1,
-      afterVersion: 2,
-      suppressedNodeIds: [MEMORY_NODE_ID],
-      suppressAllGenerated: false,
-    });
-    const filtered = extension.filterProjection(projection, {
-      threadId: THREAD_ID,
-      turnId: TURN_ID,
-      itemId: ITEM_ID,
-    });
-    expect(filtered.nodes.some((node) => node.id === MEMORY_NODE_ID)).toBe(false);
-
-    const referenced = rootThread([userTurn('read this', MEMORY_NODE_ID)]);
-    const referencedExtension = new MemoryExtension(store, timeline);
-    referencedExtension.bindHost(memoryThreadHost(referenced));
-    const explicit = referencedExtension.filterProjection(projection, {
-      threadId: THREAD_ID,
-      turnId: TURN_ID,
-      itemId: ITEM_ID,
-    });
-    expect(explicit.nodes.some((node) => node.id === MEMORY_NODE_ID)).toBe(true);
-
-    store.markNodeUserAuthoritative(MEMORY_NODE_ID);
-    const authoritative = extension.filterProjection(projection, {
-      threadId: THREAD_ID,
-      turnId: TURN_ID,
-      itemId: ITEM_ID,
-    });
-    expect(authoritative.nodes.some((node) => node.id === MEMORY_NODE_ID)).toBe(true);
-  });
-
-  test('caches projection filtering metadata and one targeted Turn read', () => {
-    const store = memoryStore();
-    const projection = memoryProjection();
-    const timeline = new TimelineMemoryStore(readOnlyTimelineHost(projection));
-    const originalGraph = timeline.graph.bind(timeline);
-    let fullGraphReads = 0;
-    Object.assign(timeline, {
-      graph: (override?: DocumentProjection) => {
-        fullGraphReads += 1;
-        return originalGraph(override);
-      },
-    });
-    const thread = rootThread([userTurn('read this', MEMORY_NODE_ID)]);
-    const includeTurnsRequests: Array<boolean | undefined> = [];
-    const turnReads: Array<{ threadId: ThreadId; turnId: TurnId }> = [];
-    const extension = new MemoryExtension(store, timeline);
-    extension.bindHost({
-      ...memoryThreadHost(thread),
-      readThread: (input) => {
-        includeTurnsRequests.push(input.includeTurns);
-        return { thread };
-      },
-      readTurnForHost: (threadId, turnId) => {
-        turnReads.push({ threadId, turnId });
-        return thread.turns?.find((turn) => turn.id === turnId) ?? null;
-      },
-    });
-
-    const filtered = extension.filterProjection(projection, {
-      threadId: THREAD_ID,
-      turnId: TURN_ID,
-      itemId: ITEM_ID,
-    });
-    const filteredAgain = extension.filterProjection(projection, {
-      threadId: THREAD_ID,
-      turnId: TURN_ID,
-      itemId: 'item:second-tool',
-    });
-
-    expect(filtered.nodes.some((node) => node.id === MEMORY_NODE_ID)).toBe(true);
-    expect(filteredAgain).toEqual(filtered);
-    expect(includeTurnsRequests).toEqual([undefined]);
-    expect(turnReads).toEqual([{ threadId: THREAD_ID, turnId: TURN_ID }]);
-    expect(extension.mutationIndexFullRebuildCount()).toBe(1);
-    expect(fullGraphReads).toBe(0);
-  });
-
-  test('retries a targeted Turn read after a transient miss', () => {
-    const store = memoryStore();
-    const projection = memoryProjection();
-    const timeline = new TimelineMemoryStore(readOnlyTimelineHost(projection));
-    const turn = userTurn('read this', MEMORY_NODE_ID);
-    const thread = rootThread([turn]);
-    let readableTurn: Turn | null = null;
-    let turnReads = 0;
-    const extension = new MemoryExtension(store, timeline);
-    extension.bindHost({
-      ...memoryThreadHost(thread),
-      readTurnForHost: () => {
-        turnReads += 1;
-        return readableTurn;
-      },
-    });
-    const causation = { threadId: THREAD_ID, turnId: TURN_ID, itemId: ITEM_ID };
-
-    const before = extension.filterProjection(projection, causation);
-    expect(before.nodes.some((entry) => entry.id === MEMORY_NODE_ID)).toBe(false);
-
-    readableTurn = turn;
-    const after = extension.filterProjection(projection, causation);
-    const afterAgain = extension.filterProjection(projection, causation);
-    expect(after.nodes.some((entry) => entry.id === MEMORY_NODE_ID)).toBe(true);
-    expect(afterAgain).toBe(after);
-    expect(turnReads).toBe(2);
-  });
-
-  test('updates cached explicit references when a user Item is appended', () => {
-    const store = memoryStore();
-    const projection = memoryProjection();
-    const timeline = new TimelineMemoryStore(readOnlyTimelineHost(projection));
-    const turn = {
-      ...userTurn('Start without a reference'),
-      status: 'inProgress' as const,
-      completedAt: null,
-      durationMs: null,
-    };
-    const thread = {
-      ...rootThread([turn]),
-      status: { type: 'active' as const, activeFlags: [] },
-    };
-    const extension = new MemoryExtension(store, timeline);
-    extension.bindHost(memoryThreadHost(thread));
-    extension.contributeTurnAdmission(admissionContext(thread, turn));
-    seedGeneratedGraph(store, timeline);
-    store.prepareRollback({
-      rollbackId: 'rollback:item-cache',
-      threadId: THREAD_ID,
-      omittedTurnIds: ['turn:omitted'],
-      beforeVersion: 1,
-      afterVersion: 2,
-      suppressedNodeIds: [MEMORY_NODE_ID, EPISODE_NODE_ID, BELIEF_NODE_ID],
-      suppressAllGenerated: false,
-    });
-    extension.onNotification({ type: 'turn/started', threadId: THREAD_ID, turnId: TURN_ID, turn });
-
-    const before = extension.filterProjection(projection, {
-      threadId: THREAD_ID,
-      turnId: TURN_ID,
-      itemId: ITEM_ID,
-    });
-    expect(before.nodes.some((entry) => entry.id === MEMORY_NODE_ID)).toBe(false);
-
-    const steered = userTurn(
-      'Read this',
-      MEMORY_NODE_ID,
-      { kind: 'user' },
-      TURN_ID,
-      'item:steered',
-    ).items[0]!;
-    extension.onNotification({
-      type: 'items/completed',
-      threadId: THREAD_ID,
-      turnId: TURN_ID,
-      items: [steered],
-      completedAt: Date.now(),
-    });
-    const after = extension.filterProjection(projection, {
-      threadId: THREAD_ID,
-      turnId: TURN_ID,
-      itemId: 'item:after-steer',
-    });
-    expect(after.nodes.some((entry) => entry.id === MEMORY_NODE_ID)).toBe(true);
-  });
-
-  test('recovers canonical references after ignoring Item notifications without active filter state', () => {
-    const projection = memoryProjection();
-    const turn = userTurn(
-      'Read this',
-      MEMORY_NODE_ID,
-      { kind: 'user' },
-      'turn:orphan',
-      'item:orphan',
-    );
-    const extension = new MemoryExtension(
-      memoryStore(),
-      new TimelineMemoryStore(readOnlyTimelineHost(projection)),
-    );
-    extension.bindHost(memoryThreadHost(rootThread([turn])));
-
-    extension.onNotification({
-      type: 'items/completed',
-      threadId: THREAD_ID,
-      turnId: 'turn:orphan',
-      items: [turn.items[0]!],
-      completedAt: Date.now(),
-    });
-
-    const states = (extension as unknown as {
-      turnProjectionFilters: ReadonlyMap<string, unknown>;
-    }).turnProjectionFilters;
-    expect(states.size).toBe(0);
-
-    const recovered = extension.filterProjection(projection, {
-      threadId: THREAD_ID,
-      turnId: 'turn:orphan',
-      itemId: 'item:recovery-read',
-    });
-    expect(recovered.nodes.some((entry) => entry.id === MEMORY_NODE_ID)).toBe(true);
-    expect(states.size).toBe(1);
-  });
-
-  test('reuses filtered read views until a visibility write invalidates them', () => {
-    const store = memoryStore();
-    const projection = memoryProjection();
-    const timeline = new TimelineMemoryStore(readOnlyTimelineHost(projection));
-    const thread = rootThread([userTurn('Use relevant Memory')]);
-    const extension = new MemoryExtension(store, timeline);
-    extension.bindHost(memoryThreadHost(thread));
-    extension.contributeTurnAdmission(admissionContext(thread, thread.turns![0]!));
-    seedGeneratedGraph(store, timeline);
-    store.prepareRollback({
-      rollbackId: 'rollback:filtered-views',
-      threadId: THREAD_ID,
-      omittedTurnIds: ['turn:omitted'],
-      beforeVersion: 1,
-      afterVersion: 2,
-      suppressedNodeIds: [MEMORY_NODE_ID, EPISODE_NODE_ID, BELIEF_NODE_ID],
-      suppressAllGenerated: false,
-    });
-    const causation = { threadId: THREAD_ID, turnId: TURN_ID, itemId: ITEM_ID };
-    const nodes = new Map(projection.nodes.map((entry) => [entry.id, entry]));
-    const sourceTextIndex = createTextSearchIndex([
-      {
-        id: BELIEF_NODE_ID,
-        kind: 'text',
-        fields: [{ key: 'title', text: 'Durable probe belief' }],
-      },
-      {
-        id: 'ordinary:1',
-        kind: 'text',
-        fields: [{ key: 'title', text: 'Ordinary note' }],
-      },
-    ]);
-
-    const firstProjection = extension.filterProjection(projection, causation);
-    const secondProjection = extension.filterProjection(projection, causation);
-    const firstReadModel = extension.filterProjectionIndex({ projection, nodes }, causation);
-    const secondReadModel = extension.filterProjectionIndex({ projection, nodes }, causation);
-    const firstTextIndex = extension.filterTextSearchIndex(sourceTextIndex, causation);
-    const secondTextIndex = extension.filterTextSearchIndex(sourceTextIndex, causation);
-    expect(secondProjection).toBe(firstProjection);
-    expect(secondReadModel).toBe(firstReadModel);
-    expect(secondTextIndex).toBe(firstTextIndex);
-    expect(firstReadModel.nodes.has(BELIEF_NODE_ID)).toBe(false);
-    expect(firstTextIndex.search('durable probe')).toEqual([]);
-
-    const filterStates = (extension as unknown as {
-      turnProjectionFilters: ReadonlyMap<string, {
-        projectionCache?: { mutationRevision: number };
-        projectionIndexCache?: { mutationRevision: number };
-      }>;
-    }).turnProjectionFilters;
-    const firstMutationRevision = filterStates.get(TURN_ID)?.projectionIndexCache?.mutationRevision;
-    if (firstMutationRevision === undefined) throw new Error('Expected a cached projection mutation revision');
-
-    const ordinaryIndex = projection.nodes.findIndex((entry) => entry.id === 'ordinary:1');
-    if (ordinaryIndex < 0) throw new Error('Expected ordinary fixture Node');
-    const updatedOrdinary = patchProjectionNode(projection, 'ordinary:1', {
-      content: { text: 'Updated ordinary note', spans: [] },
-      updatedAt: 2,
-    });
-    projection.nodes.splice(ordinaryIndex, 1, updatedOrdinary);
-    nodes.set(updatedOrdinary.id, updatedOrdinary);
-    extension.projectionChanged(memoryProjectionDelivery({
-      kind: 'delta',
-      revision: 1,
-      todayId: projection.todayId,
-      changedNodes: [updatedOrdinary],
-      removedIds: [],
-    }, false));
-
-    const updatedProjection = extension.filterProjection(projection, causation);
-    const updatedReadModel = extension.filterProjectionIndex({ projection, nodes }, causation);
-    const updatedTextIndex = extension.filterTextSearchIndex(sourceTextIndex, causation);
-    expect(updatedProjection).not.toBe(firstProjection);
-    expect(updatedReadModel).not.toBe(firstReadModel);
-    expect(updatedTextIndex).not.toBe(firstTextIndex);
-    expect(updatedReadModel.nodes.get('ordinary:1')?.content.text).toBe('Updated ordinary note');
-    expect(filterStates.get(TURN_ID)?.projectionCache?.mutationRevision)
-      .toBeGreaterThan(firstMutationRevision);
-    expect(filterStates.get(TURN_ID)?.projectionIndexCache?.mutationRevision)
-      .toBeGreaterThan(firstMutationRevision);
-
-    store.markNodeUserAuthoritative(BELIEF_NODE_ID);
-    const refreshedReadModel = extension.filterProjectionIndex({ projection, nodes }, causation);
-    const refreshedTextIndex = extension.filterTextSearchIndex(sourceTextIndex, causation);
-    expect(refreshedReadModel).not.toBe(updatedReadModel);
-    expect(refreshedTextIndex).not.toBe(updatedTextIndex);
-    expect(refreshedReadModel.nodes.get(BELIEF_NODE_ID)?.parentId).toBeUndefined();
-    expect(refreshedTextIndex.search('durable probe').map((entry) => entry.id)).toEqual([BELIEF_NODE_ID]);
-  });
-
-  test('keeps Memory projection root-only even when a child explicitly references a Memory Node', () => {
-    const store = memoryStore();
-    const projection = memoryProjection();
-    const timeline = new TimelineMemoryStore(readOnlyTimelineHost(projection));
-    const child = {
-      ...rootThread([userTurn('read this', MEMORY_NODE_ID)]),
-      parentThreadId: 'thread:parent',
-      threadSource: 'subagent' as const,
-    };
-    const extension = new MemoryExtension(store, timeline);
-    extension.bindHost(memoryThreadHost(child));
-
-    const filtered = extension.filterProjection(projection, {
-      threadId: THREAD_ID,
-      turnId: TURN_ID,
-      itemId: ITEM_ID,
-    });
-    expect(filtered.nodes.some((node) => node.id === MEMORY_NODE_ID)).toBe(false);
-    expect(filtered.nodes.some((node) => node.id === EPISODE_NODE_ID)).toBe(false);
-  });
-
-  test('routes Memory lookup without injecting prose and counts only an inline citation of an exact read', () => {
-    const { extension, store, targetThread, activeTurn } = memoryUsageHarness();
-    const context = extension.contributeThreadContext(targetThread);
-    expect(context?.additionalContext?.memory?.value).toContain('use node_search');
-    expect(context?.additionalContext?.memory?.value).toContain('[[node://UUID]]');
-    expect(context?.additionalContext?.memory?.value).not.toContain('Daily memory');
-    expect(context?.additionalContext?.memory?.value).not.toContain('Belief');
-
-    completeNodeRead(extension, targetThread, activeTurn, [MEMORY_NODE_ID]);
-    completeMemoryTurn(
-      extension,
-      targetThread,
-      completedResponseTurn(activeTurn, `Used the saved preference ${formatNodeReferenceMarker(MEMORY_NODE_ID)}.`),
-    );
-    expect(store.usageForNode(MEMORY_NODE_ID).count).toBe(1);
-  });
-
-  test('does not count ordinary Nodes, failed reads, or uncited Memory reads', () => {
-    const { extension, store, targetThread, activeTurn } = memoryUsageHarness();
-    extension.contributeThreadContext(targetThread);
-    completeNodeRead(extension, targetThread, activeTurn, ['ordinary:1']);
-    completeNodeRead(extension, targetThread, activeTurn, [MEMORY_NODE_ID], false);
-    completeNodeRead(extension, targetThread, activeTurn, [MEMORY_NODE_ID]);
-
-    completeMemoryTurn(extension, targetThread, completedResponseTurn(activeTurn));
-    expect(store.usageForNode(MEMORY_NODE_ID).count).toBe(0);
-  });
-
-  test('does not count literal Memory markers in code or existing Markdown links', () => {
-    const { extension, store, targetThread, activeTurn } = memoryUsageHarness();
-    extension.contributeThreadContext(targetThread);
-    completeNodeRead(extension, targetThread, activeTurn, [MEMORY_NODE_ID]);
-    const marker = formatNodeReferenceMarker(MEMORY_NODE_ID);
-    const response = [
-      `Inline code: \`${marker}\``,
-      `\`\`\`text\n${marker}\n\`\`\``,
-      `[Existing link](https://example.test/${marker} "${marker}")`,
-    ].join('\n\n');
-
-    completeMemoryTurn(extension, targetThread, completedResponseTurn(activeTurn, response));
-    expect(store.usageForNode(MEMORY_NODE_ID).count).toBe(0);
-  });
-
-  test('deduplicates actually read Memory Nodes and bounds inline citation accounting', () => {
-    const { extension, store, targetThread, activeTurn, projection } = memoryUsageHarness(memoryProjection(10));
-    const memoryNodeIds = canonicalMemoryGraph(projection).nodes.map((entry) => entry.node.id);
-    extension.contributeThreadContext(targetThread);
-    completeNodeRead(extension, targetThread, activeTurn, memoryNodeIds);
-    completeNodeRead(extension, targetThread, activeTurn, memoryNodeIds);
-
-    const inlineCitations = memoryNodeIds.map(formatNodeReferenceMarker).join(' ');
-    completeMemoryTurn(extension, targetThread, completedResponseTurn(activeTurn, inlineCitations));
-    expect(memoryNodeIds.map((nodeId) => store.usageForNode(nodeId).count > 0)).toEqual([
-      ...Array.from({ length: 8 }, () => true),
-      ...Array.from({ length: memoryNodeIds.length - 8 }, () => false),
-    ]);
   });
 
   test('admits only local non-Automation evidence and reuses the claimed source date', () => {
@@ -799,326 +411,6 @@ describe('Codex Memory contracts', () => {
     expect(store.admission(threadDisabledTurn.id)?.eligibleAtAdmission).toBe(false);
   });
 
-  test('allows explicit eligible foreground Memory writes and rejects Automation causation', () => {
-    const store = memoryStore();
-    const projection = memoryProjection();
-    const thread = rootThread([userTurn('remember this preference')]);
-    const extension = new MemoryExtension(store, new TimelineMemoryStore(readOnlyTimelineHost(projection)));
-    extension.bindHost(memoryThreadHost(thread));
-    extension.contributeTurnAdmission(admissionContext(thread, thread.turns![0]!));
-    expect(extension.authorizeMutation('apply_tag', {
-      nodeId: 'ordinary:1',
-      tagId: 'tag:d-memory',
-    }, {}, projection)).toBe(true);
-    expect(extension.authorizeMutation('apply_tag', {
-      nodeId: 'ordinary:1',
-      tagId: 'tag:d-memory',
-    }, {
-      origin: 'agent',
-      causation: { threadId: THREAD_ID, turnId: TURN_ID, itemId: ITEM_ID },
-    }, projection)).toBe(true);
-
-    const automation = rootThread([userTurn(
-      'remember this preference',
-      undefined,
-      { kind: 'feature', feature: 'automation' },
-      'turn:auto',
-      'item:auto',
-    )]);
-    const denied = new MemoryExtension(store, new TimelineMemoryStore(readOnlyTimelineHost(projection)));
-    denied.bindHost(memoryThreadHost(automation));
-    denied.contributeTurnAdmission(admissionContext(automation, automation.turns![0]!));
-    expect(store.admission('turn:auto')?.eligibleAtAdmission).toBe(false);
-    expect(() => denied.authorizeMutation('apply_tag', {
-      nodeId: 'ordinary:1',
-      tagId: 'tag:d-memory',
-    }, {
-      origin: 'agent',
-      causation: { threadId: THREAD_ID, turnId: 'turn:auto', itemId: 'item:auto' },
-    }, projection)).toThrow('not authorized');
-  });
-
-  test('resolves reserved Memory tag names only from structured tag fields', () => {
-    const projection = memoryProjection();
-    const extension = new MemoryExtension(
-      memoryStore(),
-      new TimelineMemoryStore(readOnlyTimelineHost(projection)),
-    );
-    const richText = (text: string) => ({ text, marks: [], inlineRefs: [] });
-    const tree = (tags: string[] = [], children: unknown[] = []) => ({
-      content: richText('Tree node'),
-      tags,
-      children,
-    });
-
-    expect(extension.authorizeMutation('create_tag_and_tagged_node', {
-      parentId: 'ordinary:1',
-      content: richText('Named tag'),
-      name: ' D-MEMORY ',
-    }, {}, projection)).toBe(true);
-    expect(extension.authorizeMutation('create_nodes_from_tree', {
-      parentId: 'ordinary:1',
-      nodes: [tree([], [tree(['d-belief'])])],
-    }, {}, projection)).toBe(true);
-
-    const pasteCases = [
-      { firstMeta: { tags: ['d-question'] }, children: [], siblingsAfter: [] },
-      { firstMeta: {}, children: [tree([], [tree(['d-guidance'])])], siblingsAfter: [] },
-      { firstMeta: {}, children: [], siblingsAfter: [tree(['d-episode'])] },
-    ];
-    for (const args of pasteCases) {
-      expect(extension.authorizeMutation('paste_nodes_into_node', {
-        nodeId: 'ordinary:1',
-        content: richText('Paste'),
-        ...args,
-      }, {}, projection)).toBe(true);
-    }
-
-    expect(extension.authorizeMutation('create_node', {
-      parentId: 'ordinary:1',
-      text: 'Ordinary text mentioning tag:d-memory and d-memory',
-    }, {}, projection)).toBe(false);
-    expect(extension.authorizeMutation('create_tag_and_tagged_node', {
-      parentId: 'ordinary:1',
-      content: richText('d-memory appears only in content'),
-      name: 'ordinary-tag',
-    }, {}, projection)).toBe(false);
-  });
-
-  test('rejects feature Turns that would move stray tagged content into the canonical graph', () => {
-    const store = memoryStore();
-    const projection = memoryProjection();
-    const removedIds = new Set([MEMORY_NODE_ID, EPISODE_NODE_ID, BELIEF_NODE_ID]);
-    projection.nodes = projection.nodes
-      .filter((entry) => !removedIds.has(entry.id))
-      .map((entry) => entry.id === 'day'
-        ? { ...entry, children: [] }
-        : entry.id === 'ordinary:1'
-          ? { ...entry, children: ['stray:1', 'stray:memory'] }
-          : entry);
-    projection.nodes.push(node('stray:memory', 'ordinary:1', [], ['tag:d-memory'], 'Stray memory'));
-    expect(canonicalMemoryGraph(projection).containers).toEqual([]);
-
-    const automation = rootThread([userTurn(
-      'Move the tagged node',
-      undefined,
-      { kind: 'feature', feature: 'automation' },
-      'turn:auto-canonicalize',
-      'item:auto-canonicalize',
-    )]);
-    const extension = new MemoryExtension(store, new TimelineMemoryStore(readOnlyTimelineHost(projection)));
-    extension.bindHost(memoryThreadHost(automation));
-    extension.contributeTurnAdmission(admissionContext(automation, automation.turns![0]!));
-    const meta = {
-      origin: 'agent' as const,
-      causation: {
-        threadId: THREAD_ID,
-        turnId: 'turn:auto-canonicalize',
-        itemId: 'item:auto-canonicalize',
-      },
-    };
-
-    expect(() => extension.authorizeMutation('move_node', {
-      nodeId: 'stray:memory',
-      parentId: 'day',
-      index: null,
-    }, meta, projection)).toThrow('not authorized');
-    expect(() => extension.authorizeMutation('apply_node_text_patch', {
-      nodeId: 'ordinary:1',
-      patch: { ops: [] },
-    }, meta, projection)).toThrow('not authorized');
-    expect(() => extension.authorizeMutation('apply_node_text_patch', {
-      nodeId: 'stray:memory',
-      patch: { ops: [] },
-    }, meta, projection)).not.toThrow();
-  });
-
-  test('classifies Memory mutations by command targets instead of Daily Note ancestors', () => {
-    const store = memoryStore();
-    const projection = memoryProjection();
-    projection.nodes.find((entry) => entry.id === WORKSPACE_ID)!.children.push('ordinary:2');
-    projection.nodes.push(node('ordinary:2', WORKSPACE_ID, [], [], 'Ordinary outline node'));
-    const automation = rootThread([userTurn(
-      'Maintain the daily note',
-      undefined,
-      { kind: 'feature', feature: 'automation' },
-      'turn:automation-targets',
-      'item:automation-targets',
-    )]);
-    const extension = new MemoryExtension(store, new TimelineMemoryStore(readOnlyTimelineHost(projection)));
-    extension.bindHost(memoryThreadHost(automation));
-    extension.contributeTurnAdmission(admissionContext(automation, automation.turns![0]!));
-    const meta = {
-      origin: 'agent' as const,
-      causation: {
-        threadId: THREAD_ID,
-        turnId: 'turn:automation-targets',
-        itemId: 'item:automation-targets',
-      },
-    };
-
-    expect(extension.authorizeMutation('create_node', {
-      id: 'node:018f0f24-7b2e-7a3f-8a4b-123456789a01',
-      parentId: 'day',
-      index: null,
-      text: 'Ordinary Daily Note sibling',
-    }, meta, projection)).toBe(false);
-    expect(() => extension.authorizeMutation('create_node', {
-      id: 'node:018f0f24-7b2e-7a3f-8a4b-123456789a02',
-      parentId: MEMORY_NODE_ID,
-      index: null,
-      text: 'Memory descendant',
-    }, meta, projection)).toThrow('not authorized');
-    expect(() => extension.authorizeMutation('move_node', {
-      nodeId: 'day',
-      parentId: DAILY_NOTES_ID,
-      index: null,
-    }, meta, projection)).toThrow('not authorized');
-    expect(() => extension.authorizeMutation('undo', {
-      historyOrigin: 'agent',
-      steps: 1,
-      historyMutation: {
-        status: 'known',
-        targets: [{
-          operationId: 'op:ordinary',
-          affectedNodeIds: ['ordinary:2'],
-          affectedNodeCount: 1,
-          affectsMemory: false,
-        }],
-      },
-    }, meta, projection)).not.toThrow();
-    expect(() => extension.authorizeMutation('undo', {
-      historyOrigin: 'agent',
-      steps: 1,
-      historyMutation: {
-        status: 'known',
-        targets: [{
-          operationId: 'op:memory',
-          affectedNodeIds: [MEMORY_NODE_ID],
-          affectedNodeCount: 1,
-          affectsMemory: true,
-        }],
-      },
-    }, meta, projection)).toThrow('not authorized');
-    expect(() => extension.authorizeMutation('undo', {
-      historyOrigin: 'agent',
-      steps: 1,
-    }, meta, projection)).toThrow('not authorized');
-    expect(() => extension.authorizeMutation('undo', {
-      historyOrigin: 'all',
-      steps: 1,
-      historyMutation: { status: 'unknown', targets: [] },
-    }, meta, projection)).toThrow('not authorized');
-    expect(() => extension.authorizeMutation('undo', {
-      historyOrigin: 'agent',
-      steps: 1,
-      historyMutation: {
-        status: 'known',
-        targets: [{
-          operationId: 'op:legacy',
-          affectedNodeIds: ['ordinary:2'],
-          affectedNodeCount: 1,
-        }],
-      },
-    }, meta, projection)).toThrow('not authorized');
-    expect(() => extension.authorizeMutation('redo', {
-      historyOrigin: 'agent',
-      steps: 1,
-      historyMutation: {
-        status: 'known',
-        targets: [{
-          operationId: 'op:truncated',
-          affectedNodeIds: ['ordinary:2'],
-          affectedNodeCount: 2,
-          affectedNodeIdsTruncated: true,
-          affectsMemory: false,
-        }],
-      },
-    }, meta, projection)).toThrow('not authorized');
-  });
-
-  test('uses persisted history semantics after Memory is no longer canonical', () => {
-    const store = memoryStore();
-    const projection = memoryProjection();
-    const removedIds = new Set([EPISODE_NODE_ID, BELIEF_NODE_ID]);
-    projection.nodes = projection.nodes
-      .filter((entry) => !removedIds.has(entry.id))
-      .map((entry) => entry.id === MEMORY_NODE_ID
-        ? { ...entry, children: [], tags: [] }
-        : entry);
-    expect(canonicalMemoryGraph(projection).containers).toEqual([]);
-
-    const automation = rootThread([userTurn(
-      'Undo an ordinary outline change',
-      undefined,
-      { kind: 'feature', feature: 'automation' },
-      'turn:automation-history',
-      'item:automation-history',
-    )]);
-    const extension = new MemoryExtension(store, new TimelineMemoryStore(readOnlyTimelineHost(projection)));
-    extension.bindHost(memoryThreadHost(automation));
-    extension.contributeTurnAdmission(admissionContext(automation, automation.turns![0]!));
-
-    expect(() => extension.authorizeMutation('undo', {
-      historyOrigin: 'user',
-      steps: 1,
-      historyMutation: {
-        status: 'known',
-        targets: [{
-          operationId: 'op:removed-memory-tag',
-          affectedNodeIds: [MEMORY_NODE_ID],
-          affectedNodeCount: 1,
-          affectsMemory: true,
-        }],
-      },
-    }, {
-      origin: 'agent',
-      causation: {
-        threadId: THREAD_ID,
-        turnId: 'turn:automation-history',
-        itemId: 'item:automation-history',
-      },
-    }, projection)).toThrow('not authorized');
-  });
-
-  test('protects the day tag only when it can change canonical Memory identity', () => {
-    const store = memoryStore();
-    const projection = memoryProjection();
-    projection.nodes.find((entry) => entry.id === WORKSPACE_ID)!.children.push('ordinary:2');
-    projection.nodes.push(node('ordinary:2', WORKSPACE_ID, [], [], 'Ordinary outline node'));
-    const automation = rootThread([userTurn(
-      'Maintain Daily Notes',
-      undefined,
-      { kind: 'feature', feature: 'automation' },
-      'turn:automation-day-tag',
-      'item:automation-day-tag',
-    )]);
-    const extension = new MemoryExtension(store, new TimelineMemoryStore(readOnlyTimelineHost(projection)));
-    extension.bindHost(memoryThreadHost(automation));
-    extension.contributeTurnAdmission(admissionContext(automation, automation.turns![0]!));
-    const meta = {
-      origin: 'agent' as const,
-      causation: {
-        threadId: THREAD_ID,
-        turnId: 'turn:automation-day-tag',
-        itemId: 'item:automation-day-tag',
-      },
-    };
-
-    expect(() => extension.authorizeMutation('remove_tag', {
-      nodeId: 'day',
-      tagId: TAG_DAY_ID,
-    }, meta, projection)).toThrow('not authorized');
-    expect(() => extension.authorizeMutation('apply_tag', {
-      nodeId: 'ordinary:1',
-      tagId: TAG_DAY_ID,
-    }, meta, projection)).toThrow('not authorized');
-    expect(() => extension.authorizeMutation('apply_tag', {
-      nodeId: 'ordinary:2',
-      tagId: TAG_DAY_ID,
-    }, meta, projection)).not.toThrow();
-  });
-
   test('keeps incremental mutation membership equivalent to a full projection scan', () => {
     const projection = memoryProjection();
     const index = new MemoryMutationIndex(projection);
@@ -1146,84 +438,24 @@ describe('Codex Memory contracts', () => {
     expect(index.fullRebuildCount()).toBe(1);
   });
 
-  test('reads transaction membership through the overlay and restores it exactly on rollback', () => {
-    const projection = memoryProjection();
-    const index = new MemoryMutationIndex(projection);
-    const initial = index.debugSnapshot();
-    const untaggedContainer = patchProjectionNode(projection, MEMORY_NODE_ID, { tags: [] });
-
-    expect(index.mayChangeMemory('apply_node_text_patch', { nodeId: BELIEF_NODE_ID }, new Set())).toBe(true);
-    index.beginTransaction();
-    index.applyTransactionChanges({ changedNodes: [untaggedContainer], removedIds: [] });
-    index.applyTransactionChanges({
-      changedNodes: [patchProjectionNode(projection, 'day', { content: { text: '2026-08-01', spans: [] } })],
-      removedIds: [],
-    });
-    expect(index.mayChangeMemory('apply_node_text_patch', { nodeId: BELIEF_NODE_ID }, new Set())).toBe(false);
-    index.rollbackTransaction();
-    expect(index.debugSnapshot()).toEqual(initial);
-    expect(index.mayChangeMemory('apply_node_text_patch', { nodeId: BELIEF_NODE_ID }, new Set())).toBe(true);
-
-    index.beginTransaction();
-    index.applyTransactionChanges({ changedNodes: [untaggedContainer], removedIds: [] });
-    index.commitTransaction();
-    expect(index.mayChangeMemory('apply_node_text_patch', { nodeId: BELIEF_NODE_ID }, new Set())).toBe(false);
-  });
-
-  test('classifies field slot writes by mutated nodes rather than reference targets', () => {
-    const index = new MemoryMutationIndex(memoryProjection());
-
-    expect(index.mayChangeMemory('update_field_slot', {
-      ownerId: 'ordinary:1',
-      fieldDefId: 'field:ordinary',
-      kind: 'appendReference',
-      targetId: BELIEF_NODE_ID,
-    }, new Set())).toBe(false);
-    expect(index.mayChangeMemory('update_field_slot', {
-      ownerId: BELIEF_NODE_ID,
-      fieldDefId: 'field:ordinary',
-      kind: 'appendReference',
-      targetId: 'ordinary:1',
-    }, new Set())).toBe(true);
-  });
-
   test('degrades cyclic ancestor state without hanging canonical classification', () => {
     const projection = memoryProjection();
     const index = new MemoryMutationIndex(projection);
-    const cyclicEpisode = patchProjectionNode(projection, EPISODE_NODE_ID, { parentId: BELIEF_NODE_ID });
+    const cyclicEpisode = patchProjectionNode(projection, EPISODE_NODE_ID, { parentId: 'belief:1' });
 
-    expect(() => index.applyTransactionChanges({
+    expect(() => index.applyProjectionUpdate({
+      kind: 'delta',
+      revision: 1,
+      todayId: projection.todayId,
       changedNodes: [cyclicEpisode],
       removedIds: [],
     })).not.toThrow();
     replaceProjectionNodes(projection, [cyclicEpisode]);
 
     expect(index.canonicalNodesInGraphOrder().map((entry) => entry.node.id)).toEqual([MEMORY_NODE_ID]);
-    expect(index.mayChangeMemory('apply_node_text_patch', { nodeId: BELIEF_NODE_ID }, new Set())).toBe(true);
   });
 
-  test('updates by-name tag classification from every sparse delta', () => {
-    const projection = memoryProjection();
-    const index = new MemoryMutationIndex(projection);
-    const definition = projection.nodes.find((entry) => entry.id === 'tag:d-memory')!;
-    expect(index.mayChangeMemory('create_tag_and_tagged_node', { name: ' D-MEMORY ' }, new Set())).toBe(true);
-
-    const renamed = { ...definition, content: { text: 'renamed-memory-tag', spans: [] } } as NodeProjection;
-    index.applyTransactionChanges({
-      changedNodes: [renamed],
-      removedIds: [],
-    });
-    expect(index.mayChangeMemory('create_tag_and_tagged_node', { name: 'd-memory' }, new Set())).toBe(false);
-    expect(index.mayChangeMemory('create_tag_and_tagged_node', { name: 'renamed-memory-tag' }, new Set())).toBe(true);
-
-    index.applyTransactionChanges({
-      changedNodes: [{ ...renamed, parentId: TRASH_ID } as NodeProjection],
-      removedIds: [],
-    });
-    expect(index.mayChangeMemory('create_tag_and_tagged_node', { name: 'renamed-memory-tag' }, new Set())).toBe(false);
-  });
-
-  test('keeps plain typing projection-free and reconciles ancestor-derived generated edits synchronously', async () => {
+  test('reconciles Runtime projection events without full graph scans', async () => {
     const store = memoryStore();
     const projection = memoryProjection();
     projection.nodes.find((entry) => entry.id === WORKSPACE_ID)!.children.push('ordinary:2');
@@ -1248,24 +480,6 @@ describe('Codex Memory contracts', () => {
         close: async () => undefined,
       },
     });
-    let projectionReads = 0;
-
-    expect(extension.authorizeMutation('apply_node_text_patch', {
-      nodeId: 'ordinary:2',
-      patch: { ops: [] },
-    }, {}, () => {
-      projectionReads += 1;
-      return projection;
-    })).toBe(false);
-    expect(extension.authorizeMutation('apply_node_text_patch', {
-      nodeId: BELIEF_NODE_ID,
-      patch: { ops: [] },
-    }, {}, () => {
-      projectionReads += 1;
-      return projection;
-    })).toBe(true);
-    expect(projectionReads).toBe(0);
-
     const renamedDay = patchProjectionNode(projection, 'day', {
       content: { text: '2026-07-25', spans: [] },
     });
@@ -1283,7 +497,7 @@ describe('Codex Memory contracts', () => {
     const firstGraphTimer = (extension as unknown as { graphChangeTimer?: ReturnType<typeof setTimeout> })
       .graphChangeTimer;
 
-    const renamedBelief = patchProjectionNode(projection, BELIEF_NODE_ID, {
+    const renamedBelief = patchProjectionNode(projection, 'belief:1', {
       content: { text: 'Edited belief', spans: [] },
     });
     replaceProjectionNodes(projection, [renamedBelief]);
@@ -1322,7 +536,7 @@ describe('Codex Memory contracts', () => {
         close: () => closing,
       },
     });
-    const renamedBelief = patchProjectionNode(projection, BELIEF_NODE_ID, {
+    const renamedBelief = patchProjectionNode(projection, 'belief:1', {
       content: { text: 'Changed before stop', spans: [] },
     });
     replaceProjectionNodes(projection, [renamedBelief]);
@@ -1339,7 +553,7 @@ describe('Codex Memory contracts', () => {
     expect((extension as unknown as { graphChangeTimer?: ReturnType<typeof setTimeout> }).graphChangeTimer)
       .toBeUndefined();
 
-    const renamedAgain = patchProjectionNode(projection, BELIEF_NODE_ID, {
+    const renamedAgain = patchProjectionNode(projection, 'belief:1', {
       content: { text: 'Changed during stop', spans: [] },
     });
     replaceProjectionNodes(projection, [renamedAgain]);
@@ -1405,13 +619,13 @@ describe('Codex Memory contracts', () => {
       {
         name: 'id-only deletion',
         mutate: (projection) => {
-          replaceProjectionNodes(projection, [], [BELIEF_NODE_ID]);
+          replaceProjectionNodes(projection, [], ['belief:1']);
           return {
             kind: 'delta',
             revision: 1,
             todayId: projection.todayId,
             changedNodes: [],
-            removedIds: [BELIEF_NODE_ID],
+            removedIds: ['belief:1'],
           };
         },
         remainingNodeIds: [MEMORY_NODE_ID, EPISODE_NODE_ID].sort(),
@@ -1501,7 +715,6 @@ describe('Codex Memory contracts', () => {
     const timeline = new TimelineMemoryStore(readOnlyTimelineHost(projection));
     const extension = new MemoryExtension(store, timeline);
     extension.initializeMutationIndex(projection);
-    extension.documentChanged();
     const wakes: string[] = [];
     Object.assign(extension as unknown as Record<string, unknown>, {
       initialized: true,
@@ -1623,7 +836,7 @@ describe('Codex Memory contracts', () => {
     const movedStore = memoryStore();
     const movedProjection = memoryProjection();
     const movedTimeline = new TimelineMemoryStore(readOnlyTimelineHost(movedProjection));
-    const movedEntry = canonicalMemoryGraph(movedProjection).nodes.find((entry) => entry.node.id === BELIEF_NODE_ID)!;
+    const movedEntry = canonicalMemoryGraph(movedProjection).nodes.find((entry) => entry.node.id === 'belief:1')!;
     movedStore.replaceGeneratedNodes(THREAD_ID, [{
       nodeId: movedEntry.node.id,
       category: movedEntry.category,
@@ -1634,29 +847,46 @@ describe('Codex Memory contracts', () => {
     }], []);
     const movedExtension = new MemoryExtension(movedStore, movedTimeline);
     movedExtension.bindHost(memoryThreadHost(rootThread([])));
-    const movedBelief = movedProjection.nodes.find((entry) => entry.id === BELIEF_NODE_ID)!;
+    movedExtension.initializeMutationIndex(movedProjection);
+    const movedBelief = movedProjection.nodes.find((entry) => entry.id === 'belief:1')!;
     movedBelief.content = { text: 'System publication text', spans: [] };
-    movedExtension.documentChanged('memory:stage2:test');
+    movedExtension.projectionChanged({
+      update: {
+        kind: 'delta', revision: 1, todayId: movedProjection.todayId,
+        changedNodes: [movedBelief], removedIds: [],
+      },
+      operation: memoryPublicationOperation(),
+    });
     expect(movedStore.generatedNodes()[0]?.userAuthoritative).toBe(false);
     movedBelief.content = { text: 'Belief', spans: [] };
-    movedExtension.documentChanged();
+    movedExtension.projectionChanged({
+      update: {
+        kind: 'delta', revision: 2, todayId: movedProjection.todayId,
+        changedNodes: [movedBelief], removedIds: [],
+      },
+    });
     expect(movedStore.generatedNodes()[0]?.userAuthoritative).toBe(false);
 
-    const secondEpisode = node('episode:2', MEMORY_NODE_ID, [BELIEF_NODE_ID], ['tag:d-episode'], 'Second episode');
+    const secondEpisode = node('episode:2', MEMORY_NODE_ID, ['belief:1'], ['tag:d-episode'], 'Second episode');
     movedProjection.nodes.push(secondEpisode);
     const container = movedProjection.nodes.find((entry) => entry.id === MEMORY_NODE_ID)!;
     container.children = [EPISODE_NODE_ID, secondEpisode.id];
     const firstEpisode = movedProjection.nodes.find((entry) => entry.id === EPISODE_NODE_ID)!;
     firstEpisode.children = [];
-    const belief = movedProjection.nodes.find((entry) => entry.id === BELIEF_NODE_ID)!;
+    const belief = movedProjection.nodes.find((entry) => entry.id === 'belief:1')!;
     belief.parentId = secondEpisode.id;
-    movedExtension.documentChanged();
+    movedExtension.projectionChanged({
+      update: {
+        kind: 'delta', revision: 3, todayId: movedProjection.todayId,
+        changedNodes: [secondEpisode, container, firstEpisode, belief], removedIds: [],
+      },
+    });
     expect(movedStore.generatedNodes()[0]?.userAuthoritative).toBe(true);
 
     const taggedStore = memoryStore();
     const taggedProjection = memoryProjection();
     const taggedTimeline = new TimelineMemoryStore(readOnlyTimelineHost(taggedProjection));
-    const taggedEntry = canonicalMemoryGraph(taggedProjection).nodes.find((entry) => entry.node.id === BELIEF_NODE_ID)!;
+    const taggedEntry = canonicalMemoryGraph(taggedProjection).nodes.find((entry) => entry.node.id === 'belief:1')!;
     taggedStore.replaceGeneratedNodes(THREAD_ID, [{
       nodeId: taggedEntry.node.id,
       category: taggedEntry.category,
@@ -1667,8 +897,15 @@ describe('Codex Memory contracts', () => {
     }], []);
     const taggedExtension = new MemoryExtension(taggedStore, taggedTimeline);
     taggedExtension.bindHost(memoryThreadHost(rootThread([])));
-    taggedProjection.nodes.find((entry) => entry.id === BELIEF_NODE_ID)!.tags.push('tag:personal');
-    taggedExtension.documentChanged();
+    taggedExtension.initializeMutationIndex(taggedProjection);
+    const taggedBelief = taggedProjection.nodes.find((entry) => entry.id === 'belief:1')!;
+    taggedBelief.tags.push('tag:personal');
+    taggedExtension.projectionChanged({
+      update: {
+        kind: 'delta', revision: 1, todayId: taggedProjection.todayId,
+        changedNodes: [taggedBelief], removedIds: [],
+      },
+    });
     expect(taggedStore.generatedNodes()[0]?.userAuthoritative).toBe(true);
   });
 
@@ -1685,7 +922,7 @@ describe('Codex Memory contracts', () => {
           parentId: EPISODE_NODE_ID,
           category: 'question',
           text: 'Which deployment constraint remains unresolved?',
-          sourceNodeIds: [BELIEF_NODE_ID],
+          sourceNodeIds: ['belief:1'],
         }],
       }),
     }, () => rootThread([]));
@@ -1731,10 +968,10 @@ describe('Codex Memory contracts', () => {
       run: async () => JSON.stringify({
         changes: [
           {
-            nodeId: BELIEF_NODE_ID,
+            nodeId: 'belief:1',
             action: 'update',
             text: 'Merged belief',
-            sourceNodeIds: [BELIEF_NODE_ID, questionId],
+            sourceNodeIds: ['belief:1', questionId],
           },
           { nodeId: questionId, action: 'delete' },
         ],
@@ -1742,8 +979,8 @@ describe('Codex Memory contracts', () => {
     }, () => rootThread([]));
 
     await expect(phase.run(new AbortController().signal)).resolves.toBe('published');
-    expect(timeline.graph().nodes.find((entry) => entry.node.id === BELIEF_NODE_ID)?.node.content.text).toBe('Merged belief');
-    expect(store.lineageForNode(BELIEF_NODE_ID).map((entry) => entry.originItemId)).toEqual([ITEM_ID, secondItemId]);
+    expect(timeline.graph().nodes.find((entry) => entry.node.id === 'belief:1')?.node.content.text).toBe('Merged belief');
+    expect(store.lineageForNode('belief:1').map((entry) => entry.originItemId)).toEqual([ITEM_ID, secondItemId]);
     expect(store.generatedNodes().some((entry) => entry.nodeId === questionId)).toBe(false);
   });
 
@@ -1757,7 +994,7 @@ describe('Codex Memory contracts', () => {
         changes: [
           { nodeId: MEMORY_NODE_ID, action: 'delete' },
           { nodeId: EPISODE_NODE_ID, action: 'delete' },
-          { nodeId: BELIEF_NODE_ID, action: 'delete' },
+          { nodeId: 'belief:1', action: 'delete' },
         ],
       }),
     }, () => rootThread([]));
@@ -1776,7 +1013,7 @@ describe('Codex Memory contracts', () => {
         changes: [
           { nodeId: MEMORY_NODE_ID, action: 'delete' },
           { nodeId: EPISODE_NODE_ID, action: 'delete' },
-          { nodeId: BELIEF_NODE_ID, action: 'delete' },
+          { nodeId: 'belief:1', action: 'delete' },
         ],
       }),
     }, () => rootThread([]));
@@ -1879,42 +1116,6 @@ describe('Codex Memory contracts', () => {
     expect(store.nextJob(20)).toBeNull();
   });
 
-  test('rejects Memory Node mutation from a Turn that was active across Reset', async () => {
-    const store = memoryStore();
-    const timelineState = mutableTimelineHost(memoryProjection());
-    const timeline = new TimelineMemoryStore(timelineState.host);
-    const activeTurn: Turn = {
-      ...userTurn('Remember this after the reset'),
-      status: 'inProgress',
-      completedAt: null,
-      durationMs: null,
-    };
-    const thread: Thread = {
-      ...rootThread([activeTurn]),
-      status: { type: 'active', activeFlags: [] },
-    };
-    const extension = new MemoryExtension(store, timeline);
-    extension.bindHost({
-      ...memoryThreadHost(thread),
-      activeRootUserTurns: () => [{ threadId: thread.id, turnId: activeTurn.id }],
-    });
-    extension.contributeTurnAdmission(admissionContext(thread, activeTurn));
-
-    await extension.reset();
-
-    expect(store.isTurnExcluded(activeTurn.id)).toBe(true);
-    expect(store.status().resetEpoch).toBe(1);
-    expect(timelineState.projection().nodes.some((entry) => entry.id === MEMORY_NODE_ID)).toBe(false);
-    expect(timelineState.projection().nodes.some((entry) => entry.id === 'stray:1')).toBe(true);
-    expect(() => extension.authorizeMutation('apply_tag', {
-      nodeId: 'ordinary:1',
-      tagId: 'tag:d-memory',
-    }, {
-      origin: 'agent',
-      causation: { threadId: thread.id, turnId: activeTurn.id, itemId: ITEM_ID },
-    }, timelineState.projection())).toThrow('not authorized');
-  });
-
   test('rejects a Phase 1 result when Thread Memory is disabled during model work', async () => {
     const store = memoryStore();
     const thread = rootThread([userTurn(
@@ -1977,7 +1178,7 @@ describe('Codex Memory contracts', () => {
     const phase = new Phase1(store, timeline, { run: () => modelOutput }, () => true);
 
     const run = phase.run({ thread, turns: thread.turns ?? [] }, new AbortController().signal);
-    timelineState.projection().nodes.find((entry) => entry.id === BELIEF_NODE_ID)!.content = {
+    timelineState.projection().nodes.find((entry) => entry.id === 'belief:1')!.content = {
       text: 'User authoritative edit',
       spans: [],
     };
@@ -1993,9 +1194,9 @@ describe('Codex Memory contracts', () => {
     }));
 
     await expect(run).resolves.toBe('published');
-    expect(timelineState.projection().nodes.find((entry) => entry.id === BELIEF_NODE_ID)?.content.text)
+    expect(timelineState.projection().nodes.find((entry) => entry.id === 'belief:1')?.content.text)
       .toBe('User authoritative edit');
-    expect(store.generatedNodes().find((entry) => entry.nodeId === BELIEF_NODE_ID)?.userAuthoritative).toBe(true);
+    expect(store.generatedNodes().find((entry) => entry.nodeId === 'belief:1')?.userAuthoritative).toBe(true);
     expect(timeline.graph().nodes.some((entry) => (
       entry.category === 'belief' && entry.node.content.text === 'Generated replacement belief'
     ))).toBe(true);
@@ -2070,7 +1271,7 @@ describe('Codex Memory contracts', () => {
     }, () => true);
     const run = phase.run({ thread, turns: thread.turns ?? [] }, new AbortController().signal);
     await started;
-    timelineState.projection().nodes.find((entry) => entry.id === BELIEF_NODE_ID)!.content = {
+    timelineState.projection().nodes.find((entry) => entry.id === 'belief:1')!.content = {
       text: 'Concurrent edit before preparation',
       spans: [],
     };
@@ -2078,9 +1279,9 @@ describe('Codex Memory contracts', () => {
     await gate;
 
     await expect(run).resolves.toBe('published');
-    expect(timelineState.projection().nodes.find((entry) => entry.id === BELIEF_NODE_ID)?.content.text)
+    expect(timelineState.projection().nodes.find((entry) => entry.id === 'belief:1')?.content.text)
       .toBe('Concurrent edit before preparation');
-    expect(store.generatedNodes().find((entry) => entry.nodeId === BELIEF_NODE_ID)?.userAuthoritative).toBe(true);
+    expect(store.generatedNodes().find((entry) => entry.nodeId === 'belief:1')?.userAuthoritative).toBe(true);
     expect(timeline.graph().nodes.some((entry) => (
       entry.category === 'belief' && entry.node.content.text === 'Generated replacement belief'
     ))).toBe(true);
@@ -2108,7 +1309,7 @@ describe('Codex Memory contracts', () => {
           changes: [
             { nodeId: MEMORY_NODE_ID, action: 'delete' },
             { nodeId: EPISODE_NODE_ID, action: 'delete' },
-            { nodeId: BELIEF_NODE_ID, action: 'delete' },
+            { nodeId: 'belief:1', action: 'delete' },
           ],
         });
       },
@@ -2116,8 +1317,8 @@ describe('Codex Memory contracts', () => {
     const run = phase.run(new AbortController().signal);
     await started;
     const projection = timelineState.projection();
-    projection.nodes.push(node('ordinary:late-child', BELIEF_NODE_ID, [], [], 'Late user note'));
-    projection.nodes.find((entry) => entry.id === BELIEF_NODE_ID)!.children.push('ordinary:late-child');
+    projection.nodes.push(node('ordinary:late-child', 'belief:1', [], [], 'Late user note'));
+    projection.nodes.find((entry) => entry.id === 'belief:1')!.children.push('ordinary:late-child');
     releaseGate();
     await gate;
 
@@ -2283,6 +1484,47 @@ describe('Codex Memory contracts', () => {
     await pipeline.close();
     expect(timelineState.deletedNodeIds).toEqual([MEMORY_NODE_ID]);
     expect(store.publication(resetPublication.id)?.status).toBe('finalized');
+  });
+
+  test('finalizes an unknown-settlement publication from its idempotency receipt without writing twice', async () => {
+    const store = memoryStore();
+    const timelineState = mutableTimelineHost(memoryProjection(), { failAfterCommitOnce: true });
+    const timeline = new TimelineMemoryStore(timelineState.host);
+    const turn = userTurn('Remember the recovery contract.');
+    const thread = rootThread([turn]);
+    store.writeAdmission(admissionSnapshot(turn));
+    const phase1 = new Phase1(store, timeline, {
+      run: async () => JSON.stringify({
+        dates: [{
+          sourceDate: '2026-07-24',
+          headline: statement('Recovery contract'),
+          episode: statement('The Runtime receipt resolves unknown settlement.'),
+          beliefs: [statement('Memory publication is idempotent.')],
+          questions: [],
+          guidance: [],
+        }],
+      }),
+    }, () => true);
+
+    await expect(phase1.run({ thread, turns: [turn] }, new AbortController().signal)).rejects.toMatchObject({
+      outlineError: { code: 'operation_settlement_unknown' },
+    });
+    expect(store.preparedPublications()).toHaveLength(1);
+    expect(timelineState.calls).toHaveLength(1);
+
+    const pipeline = new MemoryPipeline(
+      store,
+      timeline,
+      phase1,
+      {} as Phase2,
+      { persistentRootThreads: () => [], readSource: () => null },
+    );
+    await pipeline.recover();
+    await pipeline.close();
+
+    expect(store.preparedPublications()).toEqual([]);
+    expect(store.source(THREAD_ID)?.sourceVersion).toBeDefined();
+    expect(timelineState.calls).toHaveLength(1);
   });
 });
 
@@ -2453,17 +1695,19 @@ function admissionContext(thread: Thread, turn: Turn) {
 
 function memoryProjectionDelivery(
   update: ProjectionUpdate,
-  affectsMemory: boolean,
-): ProjectionChangedDelivery {
+  _affectsMemory: boolean,
+): { readonly update: ProjectionUpdate } {
+  return { update };
+}
+
+function memoryPublicationOperation(): Operation {
   return {
-    event: {
-      type: 'projection_changed',
-      origin: 'user',
-      update,
-      timestamp: Date.now(),
+    source: {
+      kind: 'automation',
+      label: 'Memory publication generation 1',
+      fingerprint: 'digest',
     },
-    affectsMemory,
-  };
+  } as unknown as Operation;
 }
 
 function patchProjectionNode(
@@ -2497,26 +1741,18 @@ function applyMemoryIndexDelta(
   changedNodes: readonly NodeProjection[],
   removedIds: readonly string[] = [],
 ): void {
-  index.applyTransactionChanges({ changedNodes, removedIds });
+  index.applyProjectionUpdate({
+    kind: 'delta',
+    revision: index.revision() + 1,
+    todayId: projection.todayId,
+    changedNodes,
+    removedIds,
+  });
   replaceProjectionNodes(projection, changedNodes, removedIds);
 }
 
 function fullScanMemoryMutationSnapshot(projection: DocumentProjection) {
   const nodes = new Map(projection.nodes.map((entry) => [entry.id, entry]));
-  const reservedTagIds = new Set(MEMORY_TAG_DEFINITIONS.map((entry) => entry.tagId));
-  const reservedTagged = projection.nodes.filter((entry) => entry.tags.some((tagId) => reservedTagIds.has(tagId)));
-  const protectedAncestors = new Set<string>();
-  const collectAncestors = (nodeId: string) => {
-    const visited = new Set<string>();
-    let current = nodes.get(nodeId);
-    while (current?.parentId && !visited.has(current.parentId)) {
-      protectedAncestors.add(current.parentId);
-      visited.add(current.parentId);
-      current = nodes.get(current.parentId);
-    }
-  };
-  for (const entry of reservedTagged) collectAncestors(entry.id);
-
   const graph = canonicalMemoryGraph(projection);
   const owned = new Set<string>();
   for (const container of graph.containers) {
@@ -2527,12 +1763,9 @@ function fullScanMemoryMutationSnapshot(projection: DocumentProjection) {
       owned.add(nodeId);
       pending.push(...(nodes.get(nodeId)?.children ?? []));
     }
-    collectAncestors(container.node.id);
   }
   return {
     owned: [...owned].sort(),
-    protectedAncestors: [...protectedAncestors].sort(),
-    reservedTagged: reservedTagged.map((entry) => entry.id).sort(),
     canonical: graph.nodes.map((entry) => entry.node.id).sort(),
     canonicalFingerprints: graph.nodes
       .map((entry) => [entry.node.id, timelineNodeFingerprint(entry)] as const)
@@ -2542,11 +1775,8 @@ function fullScanMemoryMutationSnapshot(projection: DocumentProjection) {
 
 function memoryProjection(extraBeliefs = 0): DocumentProjection {
   const beliefIds = [
-    BELIEF_NODE_ID,
-    ...Array.from(
-      { length: extraBeliefs },
-      (_, index) => `node:40000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
-    ),
+    'belief:1',
+    ...Array.from({ length: extraBeliefs }, (_, index) => `belief:extra:${index}`),
   ];
   const nodes = [
     node(WORKSPACE_ID, undefined, [DAILY_NOTES_ID, 'ordinary:1']),
@@ -2556,7 +1786,7 @@ function memoryProjection(extraBeliefs = 0): DocumentProjection {
     node('day', 'week', [MEMORY_NODE_ID], [TAG_DAY_ID], '2026-07-24'),
     node(MEMORY_NODE_ID, 'day', [EPISODE_NODE_ID], ['tag:d-memory'], 'Daily memory'),
     node(EPISODE_NODE_ID, MEMORY_NODE_ID, beliefIds, ['tag:d-episode'], 'Episode'),
-    node(BELIEF_NODE_ID, EPISODE_NODE_ID, [], ['tag:d-belief'], 'Belief'),
+    node('belief:1', EPISODE_NODE_ID, [], ['tag:d-belief'], 'Belief'),
     ...beliefIds.slice(1).map((nodeId, index) => (
       node(nodeId, EPISODE_NODE_ID, [], ['tag:d-belief'], `Belief ${index + 2}`)
     )),
@@ -2604,83 +1834,150 @@ function node(
 function readOnlyTimelineHost(projection: DocumentProjection): TimelineMemoryHost {
   return {
     getProjection: () => projection,
-    transaction: async () => { throw new Error('not used'); },
-    readDocumentSystemReceipt: async () => null,
-    readDocumentSystemTagDefinition: async () => null,
+    runChanges: async () => undefined,
+    log: async () => [],
   };
 }
 
-function mutableTimelineHost(initial: DocumentProjection) {
+function mutableTimelineHost(
+  initial: DocumentProjection,
+  behavior: { failAfterCommitOnce?: boolean } = {},
+) {
   let projection = initial;
-  let receipt: DocumentSystemReceipt | null = null;
+  let failAfterCommit = behavior.failAfterCommitOnce === true;
   const deletedNodeIds: string[] = [];
+  const calls: Array<{
+    readonly changes: readonly Change[];
+    readonly options: Parameters<TimelineMemoryHost['runChanges']>[1];
+  }> = [];
+  const operationByIdempotencyKey = new Map<string, Operation>();
   const host: TimelineMemoryHost = {
     getProjection: () => projection,
-    transaction: async (_context, operation) => operation({
-      executeDocumentCommand: async (command, args) => {
-        if (command === 'ensure_date_node') return { focus: { nodeId: 'day' } };
-        const nodeId = String(args.nodeId ?? args.id ?? '');
-        if (command === 'create_node') {
-          const parentId = String(args.parentId);
-          const created = node(nodeId, parentId, [], [], String(args.text ?? ''));
-          projection = {
-            ...projection,
-            nodes: [
-              ...projection.nodes.map((entry) => entry.id === parentId
-                ? { ...entry, children: [...entry.children, nodeId] }
-                : entry),
-              created,
-            ],
-          };
-          return { focus: { nodeId } };
-        }
-        if (command === 'apply_tag') {
-          projection = {
-            ...projection,
-            nodes: projection.nodes.map((entry) => entry.id === nodeId
-              ? { ...entry, tags: [...new Set([...entry.tags, String(args.tagId)])] }
-              : entry),
-          };
-          return {};
-        }
-        if (command === 'apply_node_text_patch') {
-          const patch = args.patch as { ops?: Array<{ type?: string; content?: { text?: string } }> };
-          const text = patch.ops?.find((op) => op.type === 'replace_all')?.content?.text ?? '';
-          projection = {
-            ...projection,
-            nodes: projection.nodes.map((entry) => entry.id === nodeId
-              ? { ...entry, content: { text, spans: [] } }
-              : entry),
-          };
-          return {};
-        }
-        if (command !== 'delete_node') throw new Error(`Unexpected test command: ${command}`);
-        deletedNodeIds.push(nodeId);
-        const index = new Map(projection.nodes.map((entry) => [entry.id, entry]));
-        const removed = new Set<string>();
-        const stack = [nodeId];
-        while (stack.length > 0) {
-          const current = stack.pop()!;
-          if (removed.has(current)) continue;
-          removed.add(current);
-          stack.push(...(index.get(current)?.children ?? []));
-        }
-        projection = {
-          ...projection,
-          nodes: projection.nodes
-            .filter((entry) => !removed.has(entry.id))
-            .map((entry) => ({ ...entry, children: entry.children.filter((childId) => !removed.has(childId)) })),
-        };
-        return {};
-      },
-      executeHostCommand: async (command, args) => {
-        if (command === 'put_document_system_receipt') receipt = args.receipt;
-      },
-    }),
-    readDocumentSystemReceipt: async () => receipt,
-    readDocumentSystemTagDefinition: async () => null,
+    runChanges: async (changes, options) => {
+      calls.push({ changes, options });
+      const idempotencyKey = options?.idempotencyKey;
+      if (idempotencyKey && operationByIdempotencyKey.has(idempotencyKey)) return undefined;
+      const bindings = new Map<string, string>();
+      for (const change of changes) {
+        applyMemoryTestChange(change, bindings);
+      }
+      if (idempotencyKey) {
+        operationByIdempotencyKey.set(idempotencyKey, {
+          source: options?.source,
+        } as unknown as Operation);
+      }
+      if (failAfterCommit) {
+        failAfterCommit = false;
+        throw new OutlineContractError(outlineError(
+          'operation_settlement_unknown',
+          'durability',
+          'The Memory publication committed but acknowledgement was lost.',
+          { retryable: true },
+        ));
+      }
+      return undefined;
+    },
+    log: async ({ idempotencyKey }) => {
+      const operation = idempotencyKey ? operationByIdempotencyKey.get(idempotencyKey) : undefined;
+      return operation ? [operation] : [];
+    },
   };
-  return { host, deletedNodeIds, projection: () => projection };
+
+  function applyMemoryTestChange(change: Change, bindings: Map<string, string>): void {
+    if (change.op === 'ensure') {
+      if (change.resource === 'definition') {
+        const definitionId = change.id;
+        if (!projection.nodes.some((entry) => entry.id === definitionId)) {
+          projection.nodes.push(node(definitionId, SCHEMA_ID, [], [], change.name, 'tagDef'));
+        }
+        bindings.set(change.bind, definitionId);
+        return;
+      }
+      const existing = projection.nodes.find((entry) => (
+        entry.tags.includes(TAG_DAY_ID) && entry.content.text === change.date
+      ));
+      if (!existing) throw new Error(`Missing test Daily Note: ${change.date}`);
+      bindings.set(change.bind, existing.id);
+      return;
+    }
+    if (change.op === 'create' && 'placement' in change) {
+      if (!('parent' in change.placement)) {
+        throw new Error('Memory test create requires a parent placement');
+      }
+      const parentId = resolveMemoryTestTarget(change.placement.parent, bindings);
+      for (const input of change.nodes) {
+        if (!input.id) throw new Error('Memory test create requires a stable Node ID');
+        const created = node(
+          input.id,
+          parentId,
+          input.children.map((child) => child.id).filter((id): id is string => Boolean(id)),
+          [...(input.tags ?? [])],
+          input.content?.text ?? '',
+        );
+        projection.nodes = [
+          ...projection.nodes.map((entry) => entry.id === parentId
+            ? { ...entry, children: [...entry.children, created.id] }
+            : entry),
+          created,
+        ];
+        if (change.bind) bindings.set(change.bind, created.id);
+      }
+      return;
+    }
+    if (change.op === 'update') {
+      const nodeId = resolveMemoryTestTarget(change.targets, bindings);
+      projection.nodes = projection.nodes.map((entry) => {
+        if (entry.id !== nodeId) return entry;
+        let updated = entry;
+        for (const instruction of change.changes) {
+          if (instruction.kind === 'content') updated = { ...updated, content: instruction.value };
+          if (instruction.kind === 'tag') {
+            const tagId = resolveMemoryTestTarget(instruction.tag, bindings);
+            updated = {
+              ...updated,
+              tags: instruction.action === 'add'
+                ? [...new Set([...updated.tags, tagId])]
+                : updated.tags.filter((candidate) => candidate !== tagId),
+            };
+          }
+        }
+        return updated;
+      });
+      return;
+    }
+    if (change.op !== 'lifecycle' || change.action !== 'purge') {
+      throw new Error(`Unsupported Memory test Change: ${change.op}`);
+    }
+    const nodeId = resolveMemoryTestTarget(change.targets, bindings);
+    deletedNodeIds.push(nodeId);
+    const index = new Map(projection.nodes.map((entry) => [entry.id, entry]));
+    const removed = new Set<string>();
+    const stack = [nodeId];
+    while (stack.length > 0) {
+      const current = stack.pop()!;
+      if (removed.has(current)) continue;
+      removed.add(current);
+      stack.push(...(index.get(current)?.children ?? []));
+    }
+    projection = {
+      ...projection,
+      nodes: projection.nodes
+        .filter((entry) => !removed.has(entry.id))
+        .map((entry) => ({ ...entry, children: entry.children.filter((childId) => !removed.has(childId)) })),
+    };
+  }
+
+  return { host, calls, deletedNodeIds, projection: () => projection };
+}
+
+function resolveMemoryTestTarget(target: TargetRef, bindings: ReadonlyMap<string, string>): string {
+  if ('binding' in target) {
+    const nodeId = bindings.get(target.binding);
+    if (!nodeId) throw new Error(`Missing Memory test binding: ${target.binding}`);
+    return nodeId;
+  }
+  if (target.target.selector.by !== 'id') throw new Error('Memory test host supports only ID selectors');
+  return target.target.selector.id;
 }
 
 function memoryThreadHost(thread: Thread): MemoryThreadHost {
@@ -2697,86 +1994,5 @@ function memoryThreadHost(thread: Thread): MemoryThreadHost {
     tryStartTurnIfIdle: async () => null,
     withThreadAdmissionBarrier: async (_threadId, operation) => operation({ kind: 'thread', threadId: THREAD_ID, generation: 0 }),
     withHostRootTurnAdmissionBarrier: async (operation) => operation({ kind: 'hostRootTurns', generation: 0 }),
-  };
-}
-
-function memoryUsageHarness(projection = memoryProjection()) {
-  const store = memoryStore();
-  const timeline = new TimelineMemoryStore(readOnlyTimelineHost(projection));
-  seedGeneratedGraph(store, timeline);
-  const targetThreadId = 'thread:target';
-  const targetTurnId = 'turn:target';
-  const activeTurn: Turn = {
-    ...userTurn('Use relevant Memory', undefined, { kind: 'user' }, targetTurnId, 'item:target', targetThreadId),
-    status: 'inProgress',
-    completedAt: null,
-    durationMs: null,
-  };
-  const targetThread: Thread = {
-    ...rootThread([activeTurn]),
-    id: targetThreadId,
-    sessionId: targetThreadId,
-    status: { type: 'active', activeFlags: [] },
-  };
-  const extension = new MemoryExtension(store, timeline);
-  extension.bindHost({
-    ...memoryThreadHost(targetThread),
-    persistentRootThreads: () => [targetThread],
-  });
-  extension.contributeTurnAdmission(admissionContext(targetThread, activeTurn));
-  return { activeTurn, extension, projection, store, targetThread };
-}
-
-function completeNodeRead(
-  extension: MemoryExtension,
-  thread: Thread,
-  turn: Turn,
-  nodeIds: readonly string[],
-  ok = true,
-): void {
-  extension.onToolCompleted({
-    threadId: thread.id,
-    turnId: turn.id,
-    itemId: `item:read:${nodeIds.join(':')}`,
-    identity: { namespace: null, name: 'node_read' },
-    arguments: nodeIds.length === 1 ? { node_id: nodeIds[0]! } : { node_ids: [...nodeIds] },
-    result: ok
-      ? { ok: true, data: { items: nodeIds.map((nodeId) => ({ nodeId })) } }
-      : { ok: false, error: { code: 'node_not_found', message: 'Missing' } },
-    error: null,
-  });
-}
-
-function completeMemoryTurn(extension: MemoryExtension, thread: Thread, turn: Turn): void {
-  extension.onNotification({
-    type: 'turn/completed',
-    threadId: thread.id,
-    turnId: turn.id,
-    turn,
-  });
-}
-
-function completedResponseTurn(activeTurn: Turn, text = 'Completed response'): Turn {
-  const answerId = `item:answer:${activeTurn.id}`;
-  return {
-    ...activeTurn,
-    status: 'completed',
-    items: [
-      ...activeTurn.items,
-      {
-        type: 'agentMessage',
-        id: answerId,
-        provenance: {
-          originThreadId: activeTurn.provenance.originThreadId,
-          originTurnId: activeTurn.id,
-          originItemId: answerId,
-        },
-        text,
-        phase: 'final_answer',
-        memoryCitation: null,
-      },
-    ],
-    completedAt: 2,
-    durationMs: 1,
   };
 }

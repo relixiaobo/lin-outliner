@@ -62,161 +62,79 @@ contribute tools through this seam rather than adding domain logic to runtime.
 
 ### Outline
 
-- `node_search`: query visible Nodes with bounded structured filters
-- `node_read`: read exact Nodes, descendants, fields, tags, and references
-- `node_create`: create ordinary Nodes, outlines, definitions, and references
-- `node_edit`: patch text, metadata, structure, definitions, and field values
-- `node_delete`: move selected Nodes to Trash
-- `outline_undo_stack`: inspect and explicitly undo or redo document operations
+The Agent catalog has no document-native model tools. A model reaches the
+Outliner through `bash` and the public `outline` executable. The built-in
+`outline` Skill teaches deterministic selection, bounded reads, ChangeSet
+composition, complete-resource porcelain, Diff review, Operation inspection,
+and guarded recovery. Public schemas and exact root/family/command help come from
+the executable registry; the Skill does not reimplement parsing, selection,
+projection, validation, mutation, or command schemas.
 
-Node writes always use document commands. Tool helpers never mutate Loro or a
-projection directly. Read and write scopes are explicit; an empty scope denies
-all access. Definition resolution is deterministic and rejects ambiguous names.
-When an Agent write materializes the first stored value for an existing field
-definition, it writes the complete parsed `RichText` through the slot boundary;
-later reconciliation uses that same rich-text identity, including marks, link
-destinations, and inline-reference targets. Reconciliation consumes stored
-values by occurrence, so intentional duplicate values retain their multiplicity.
-All Node catalog tools except `outline_undo_stack` execute inside one document
-transaction; if they return an `ok:false` `ToolEnvelope`, document writes from
-that transaction roll back while the original model-visible error is preserved.
-`outline_undo_stack` is excluded because it owns explicit undo and redo
-semantics. Undo and redo accept an optional `operation_id` stack-top guard. A
-guard mismatch performs no mutation, so a caller requesting an exact reversal
-must not fall back to an unguarded stack operation.
+`SKILL.md` is the Agent operating loop rather than a compressed command manual.
+Its generated `references/commands.md` provides the complete family/command map
+from the same registry; `references/changesets.md` and `references/import.md`
+carry only the two advanced workflows. Selecting a command leads to exact
+runtime help and `schema COMMAND`, so the Agent can learn the whole surface
+without creating a second hand-maintained CLI contract.
 
-Direct reference mutations (`node_create.target_id` and
-`node_edit.replace_with_reference_to`) admit only existing, non-Trash targets
-that have a public canonical `node:` URI. Private date, image, attachment, and
-structural IDs remain valid exact search operands but cannot become tree
-references through these mutation shortcuts. Agent outline admission parses
-local-file markers with the same case-insensitive scheme rules as the canonical
-URI codec and checks every persisted marker against the configured local-file
-root before mutation; a spelling such as `FILE:` cannot bypass that boundary.
+The executable has the same capability registry for a user shell, built-in
+Agent, external Agent, and desktop adapter. Agent execution does not receive a
+reduced Selector, Projection, or Change union. Host capability policy classifies
+the shell segment as `outline.read`, `outline.edit`, or `outline.delete`; ordinary
+shell admission and explicit blocks still apply.
 
-Node outline text represents an owner's effective non-list view mode with
-`%%view:<mode>%%` on that owner's line. `node_read` and user-view context emit
-the same directive for ordinary and saved-search owners; `node_create` and
-`node_edit` persist it through `set_view_mode`. Omitting the directive from a
-directive-capable complete root outline in `node_edit` means `list`; code-block
-outline syntax cannot carry this directive and preserves its current mode.
-Applying the effective mode again is a no-op and does not create a `viewDef` for
-a list owner. The agent-settable vocabulary is the renderer's shared
-renderable-mode list (`list` and `table` today). Requesting a core-known but
-unrendered mode fails as `view_mode_not_available`, while preserving the same
-already-stored mode on the edited root is allowed so unrelated edits can
-proceed. An unknown mode fails as `invalid_view_mode` and names the allowed set.
+An Agent spawned with `execution: "read-only"` retains the same discoverable
+public schemas but receives a Host-enforced action ceiling. Direct mutation
+tools are removed, dynamically classified Bash/extension actions are checked at
+execution, and every nested Agent or isolated Skill inherits the ceiling.
+Outline reads remain available while `outline.edit` and `outline.delete` are
+rejected before process launch. This is an orchestration policy, not a reduced
+Runtime schema or a model-authored request convention.
 
-Persisted view configuration serializes directly under each requested read root
-at every requested depth, including depth 0. Configuration for descendant owners
-is omitted from a recursive read to keep the bounded content traversal from
-multiplying view metadata; reading a descendant as a root exposes its config.
-The typed outline lines share the saved-search rule/operand shape but use a
-view-specific namespace so they cannot be mistaken for document children or
-query rules:
+For a built-in Agent shell call, main injects a short-lived attestation bound to
+the Runtime descriptor and exact Thread, Turn, and tool-call Item. Runtime
+validates it before a mutation and records immutable `built-in-agent` causation
+on the Operation. Request-body causation is untrusted. A declared built-in Agent
+mutation without valid attestation is rejected rather than downgraded to an
+unattributed local-user write.
 
-```text
-- %%view:table%% Work
-  - %%view-sort%%
-    - field:: sys:updatedAt
-    - direction:: desc
-  - %%view-filter%%
-    - field:: field:11111111-1111-4111-8111-111111111111
-    - operator:: is
-    - logic:: any
-    - value:: Active
-  - %%view-group%%
-    - field:: field:11111111-1111-4111-8111-111111111111
-  - %%view-display%%
-    - field:: field:11111111-1111-4111-8111-111111111111
-    - label:: State
-    - width:: 180
-    - visible:: true
-    - order:: 0
-```
+Reads use `outline find`, `outline show`, and `outline export`. The Agent routes
+writes by resource boundary: one complete resource uses one porcelain invocation;
+complex state for that resource uses the same command's `--input FILE|-`; multiple
+resources, dependencies, cross-date work, or bounded bulk changes use one
+ChangeSet with bindings. It never substitutes a shell mutation loop or an
+intermediate created-ID query.
 
-`%%view-sort%%` accepts `field::` plus `direction:: asc|desc`;
-`%%view-filter%%` accepts `field::`, an existing filter `operator::`,
-`logic:: any|all`, and repeated `value::` lines; at most one
-`%%view-group%%` supplies its `field::`; and each `%%view-display%%` supplies a
-field plus optional view-local label, width, visibility, and order. Width is a
-whole number from 112 through 520, and order is a non-negative
-whole number. Custom fields use exact typed field-definition IDs or an active
-field-entry id obtained from an annotated `Field::` line; supported system fields
-are `sys:name`, `sys:createdAt`, `sys:updatedAt`, `sys:day`, `sys:done`,
-`sys:doneAt`, `sys:tags`, `sys:refCount`, and `sys:owner`. A configuration header accepts only its
-typed directive and the optional Node annotation emitted by `node_read`; tags,
-checkbox state, descriptions, and other Node directives fail validation rather
-than being discarded. Annotated `node_read` output puts the stored
-sort/filter/display Node id on its typed line; group has no id because it is a
-`viewDef` property.
+The Skill distinguishes explicit create/add from convergent set/configure/ensure,
+patch omission from explicit `replace`, and common STRING_MATCH shorthand from
+canonical structured query input. It uses `@library`, `@saved-searches`, and
+other stable aliases instead of discovering internal system IDs. It consults
+exact command help for selector/cardinality and ownership boundaries:
+`definition create` creates reusable definitions, `field define` attaches or
+creates a target field with an optional initial value, `tag add` applies an
+existing tag, root `set` patches generic Node state, and media/search set forms
+own their resource-specific state.
 
-Only ordinary nodes and saved searches own view configuration; code blocks and
-references reject it before mutation. `node_create` applies typed configuration after creating the owner and before
-entering its requested mode. `node_edit` treats the configuration present in a
-complete editable outline as the desired config and reconciles it through the
-existing add/update/remove/clear commands. Partial string replacements retain
-untouched lines naturally; a whole-outline replacement must retain any config
-that should survive. Semantic no-ops preserve the existing config Nodes, and
-annotated sort/filter/display lines reserve their matching Nodes before
-positional reconciliation. Sort/filter identity survives same-order edits when
-the stored order permits it; display identity also survives insertion because
-explicit display order can change independently. Display reconciliation
-preserves placement metadata that this outline grammar does not expose, and a
-new display field retains the order assigned by Core when `order::` is omitted.
-Unknown directives, unsupported operands, invalid field references, and
-ambiguous duplicates fail before mutation as `invalid_view_config` with the
-recovery grammar. Inspection skips malformed persisted config entries rather
-than failing the read; a later complete edit can heal them.
+For a common literal replacement, the model uses `text replace` rather than
+inventing a shell loop or query language. One exact target needs no query; a
+bulk transform uses STRING_MATCH or the canonical query with `many + max`, plus
+the independent total replacement bound. The model previews and reviews the
+affected set, applies the exact Diff, and relies on the base revision, rich-text
+reference guard, semantic no-change, and exact revert supplied by the ordinary
+ChangeSet path.
 
-Tabular document content uses a parent with `%%view:table%%`, direct child
-records as rows, `Field::` names as column identities, and their values as
-cells. Fields present when an owner enters table mode initialize its visible
-columns. Adding a field while the owner remains in table mode preserves the
-configured columns; the Agent adds a `%%view-display%%` line for a new visible
-column. Hiding a column uses `visible:: false` rather than removing its display
-line, preserving the view-local label, width, order, and values for restoration.
-The Agent does not simulate a document table with space-aligned or Markdown
-text inside code blocks; small inline enumerations remain ordinary lists.
+The model reviews a Diff, applies that exact artifact, records the returned
+Operation ID/affected count/recovery state, and verifies consequential writes
+with an independent read. Destructive porcelain uses preview plus the same
+command's `--expect-diff HASH --yes`; `--yes` alone is invalid. Recovery names
+the exact Operation with `outline revert`; it never guesses from renderer undo
+state or issues an unrelated compensating edit.
 
-`node_edit` uses expected revisions for optimistic conflict detection. Results
-return stable Node edit handles for subsequent tool calls; final user text uses
-normal `[[node://UUID]]` references rather than internal edit syntax. Public
-reference markers contain only identity; provider-facing text may put a resolved
-title before the marker, while typed field/tag/view IDs stay unwrapped. Titles
-placed beside markers in Lin outline output use the same semantic escaping as
-ordinary outline text, including the trailing `:` marker boundary, so a title
-cannot become a tag, checkbox, field header, search directive, or view directive
-when the outline is parsed again. A tree-reference display title flattens its
-inline references to their readable current/snapshot names before appending the
-single identity marker. A named tree reference uses an unescaped terminal `:` before
-exactly one unprotected canonical Node marker; marker-shaped literals inside Markdown
-code or links do not participate. Ordinary title and field-value serializers escape
-that colon when normal rich text would otherwise have the same terminal shape. A
-marker-only ordinary inline reference uses the reserved
-`%%inline-reference%% [[node://UUID]]` outline form; the parser removes the directive
-only when it guards exactly that bare-marker shape. The parser admits only the
-unescaped named delimiter or an undiscriminated bare marker as a tree reference, so
-ordinary inline-reference content cannot be promoted during read/edit, create, or
-duplicate round trips. When a private structured reference must degrade to its
-display fallback at a text boundary, semantic escaping considers the complete
-insertion prefix and suffix; punctuation split across the insertion cannot turn
-ordinary content into a field, description, or other outline structure.
-
-`outline_undo_stack` is an explicit world-state operation. Thread forking never
-invokes it.
-
-Memory adds no parallel model tools. Eligible root-user Turns use the same Node
-catalog for explicit remember, update, and forget requests. Implicit
-`node_search` and `node_read` projections filter canonical Daily Timeline Memory
-through the admission-pinned visibility view; explicit user-supplied Node
-references remain ordinary input. `ToolRuntime` applies that visibility view to
-the full projection, maintained projection index, and maintained text-search
-index under the executing Item's causation. Hidden IDs leave the text index
-before candidate selection, BM25 statistics, scoring, or limits; filtered and
-unfiltered Threads therefore share the indexed `node_search` scorer, while
-`node_edit` keeps sparse mutation effects. Memory graph writes are
-causation-checked as specified in [`agent-memory.md`](agent-memory.md).
+Memory adds no parallel tools and no Agent-specific document projection filter.
+Eligible root Turns receive compact routing context for ordinary CLI reads.
+Runtime mutation observation uses trusted Operation causation, while Memory
+publication and control-store settlement use idempotency receipts as specified
+in [`agent-memory.md`](agent-memory.md).
 
 ### Local Files And Commands
 
@@ -439,53 +357,36 @@ diagnose scaling mistakes. The image artifact layer does not inspect, validate, 
 or rewrite later tool arguments. Any additional coordinate semantics belong to the tool
 that consumes them.
 
-### Import CLI And API
+### Import Workflow
 
-Bulk import is not a canonical model tool. The built-in `tenon-import` Skill
-coordinates inspection, deterministic conversion, validation, preview, and
-commit through the CLI. Preview uses the running app's local API without write
-authority. `AgentImportService` remains the internal document writer; it is not
-exposed directly to the model.
+Bulk import is not a canonical model tool or private write API. The built-in
+`outline` Skill's import workflow coordinates bounded source inspection,
+optional cleanup, deterministic conversion, coverage accounting, Diff review,
+one apply, and independent verification through the public `outline` CLI.
 
-The host recognizes only a directly executable `tenon-import commit` shell
-segment, after optional environment assignments and `env`, `command`, or `exec`
-wrappers. Quoted examples, comments, and heredoc bodies do not qualify. After
-ordinary tool and Agent-policy admission, the host issues a short-lived,
-single-use causation token bound to the current Thread, Turn, and Bash Item and
-injects it only into that process environment. The CLI forwards it in a private
-header. The API consumes an authenticated commit token before decoding or
-validating the body, rejects missing, expired, evicted, or reused tokens, and
-rejects request-body causation fields. Preview does not need a causation token.
-Capability classification and token issuance consume the same parsed shell
-segments. A recognized commit segment always contributes `outline.edit` before
-generic shell classification without suppressing other recognized actions in
-that segment, and the CLI rejects unexpected positional arguments plus unknown,
-missing-value, or duplicate commit options before reading the pack or calling
-the API.
+Bundled or Agent-authored source adapters may read source files and emit only
+public `NormalizedImport` plus coverage. They have no Runtime client and cannot
+mutate the document. Public `import plan` validates normalized data, generates
+the generic ChangeSet, binds evidence, and writes the reviewed Diff. Every
+source record must be mapped, intentionally skipped, merged, empty, or blocked;
+unaccounted coverage prevents Diff review. Input that already matches the
+normalized source shape bypasses cleaning.
 
-Import Pack preview validation rejects tags duplicated after trimmed,
-case-insensitive normalization and fields duplicated after canonical field-name
-normalization. Multiple values in one field entry remain valid.
+Tana is the first deterministic adapter. Valid journal dates lower to `ensure`
+bindings and native Daily Note targets in the same ChangeSet; non-date content
+can share the same Operation under a staging root. Import is append-only and
+does not imply deduplication or synchronization.
 
-Materialization executes as one public document transaction even when yielding
-and committing internal chunks. Any materialization exception rolls back its
-projection, operation history, and all document writes. A successful commit
-returns `status: "staged"`, one staging root, and the transaction's stable
-`operationId`.
+The Skill creates exactly one Diff artifact, verifies its ChangeSet hash and
+affected set against evidence, then applies that exact artifact once. A
+successful apply returns one ordinary Operation. Verification failure preserves
+the committed content for inspection and reports the Operation ID; authorized
+recovery uses guarded `outline revert OPERATION_ID`, never a shell mutation loop
+or manual subtree deletion.
 
-Post-write verification is different from a materialization failure. A count
-mismatch preserves the single written staging subtree and returns an `ok:false`
-API response whose data has `status: "staged_with_errors"`, `stagingRootId`,
-`operationId`, `mismatches`, and `retryAllowed: false`. The CLI preserves that
-data while exiting non-zero. The Skill must stop, avoid retrying or manually
-deleting the subtree, and report those values to its parent Agent. An exact
-reversal uses `outline_undo_stack` with the returned `operation_id`; the
-stack-top guard refuses rather than undoing a newer operation.
-
-Worktree-isolated Agents may run read-only import inspection and preview. A
-shell command classified as a live-outline mutation, including
-`tenon-import commit`, is rejected before process launch, so the host issues no
-causation token and the local commit API cannot be used as a write bypass.
+Worktree-isolated Agents may inspect source data and run read-only Outline
+commands. Any shell command classified as `outline.edit` or `outline.delete` is
+rejected before process launch, so the public CLI cannot bypass worktree policy.
 
 ### Core Control
 
@@ -531,6 +432,13 @@ standing authorization are specified in
 These are top-level tools. There is no model-managed roster, inbox, follow-up,
 wait, or polling tool. Child completion is pushed by the host as specified in
 [`agent-subagent-threads.md`](agent-subagent-threads.md).
+
+Background notifications, peer messages, and exhausted nested settlement are
+Host-started Turns with empty user input. Their metadata and handling rules use
+application additional-context entries, while Agent-authored text uses an
+untrusted observation entry. Projection records these entries as
+`systemContext`, so no Agent-generated instruction, completion event, or
+delivery retry can become user provenance or user approval.
 
 `agent` is exposed, and the Agent-type catalog is published, only when the
 current Thread can actually spawn. A root Thread requires `agent` in its
@@ -723,7 +631,8 @@ Role preload cannot bypass that gate.
 An isolated Skill persists a foreground execution policy before its child Turn
 starts. Its `allowed-tools` list is normalized into the durable requested-tool
 ceiling, while Agent kind, worktree restriction, and nesting permission inherit
-from the parent. The child source is `agent.skill`; its result returns only
+from the parent. A parent `readOnly` ceiling is inherited as well and cannot be
+widened by the Skill's declared tools. The child source is `agent.skill`; its result returns only
 through the owning `skill` call, and neither `agent_message` nor `task_stop` can
 use its Thread ID as a collaboration address.
 

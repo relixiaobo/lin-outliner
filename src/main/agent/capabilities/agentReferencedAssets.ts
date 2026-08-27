@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { basename } from 'node:path';
@@ -116,10 +115,7 @@ export async function admitReferencedResources(input: {
           resources.push({ ...base, resourceRef: null, inlineImage: false, unavailableReason: 'quotaExceeded' });
           continue;
         }
-        if (resolved.metadata && (
-          bytes.byteLength !== resolved.metadata.byteSize
-          || createHash('sha256').update(bytes).digest('hex') !== resolved.metadata.sha256
-        )) {
+        if (resolved.metadata && bytes.byteLength !== resolved.metadata.byteSize) {
           resources.push({ ...base, resourceRef: null, inlineImage: false, unavailableReason: 'corrupt' });
           continue;
         }

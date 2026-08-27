@@ -1,6 +1,5 @@
 import type { AgentTool, AgentToolResult } from './kernel/types';
 import type { TSchema } from 'typebox';
-import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   assembleModelToolRegistry,
   canonicalModelToolKey,
@@ -14,7 +13,7 @@ import {
   type ModelToolIdentity,
   type ModelToolSchemaContribution,
 } from '../../../core/agent/tools';
-import type { AgentMutationCausation, JsonValue } from '../../../core/agent/protocol';
+import type { JsonValue } from '../../../core/agent/protocol';
 import type { AgentImageGenerationRuntime } from '../capabilities/agentImageGenerationTool';
 import {
   hasBackgroundShellTask,
@@ -22,8 +21,6 @@ import {
   type AgentFileReadImageNormalizer,
   type AgentLocalWorkspaceContext,
 } from '../capabilities/agentLocalTools';
-import type { OutlinerToolHost } from '../capabilities/agentNodeTools';
-import type { OutlinerProjectionFilter } from '../capabilities/agentNodeToolTypes';
 import type { AgentSkillRuntime } from '../capabilities/agentSkills';
 import { evaluateAgentToolCapability } from '../capabilities/agentCapabilities';
 import {
@@ -41,7 +38,6 @@ import { compileToolParameters } from './kernel/exactToolArguments';
 import { createToolArtifactSink, type ToolArtifactSink } from './ToolArtifactSink';
 
 export interface ToolRuntimeOptions {
-  readonly outliner?: OutlinerToolHost;
   readonly localWorkspace?: AgentLocalWorkspaceContext | ((context: TurnExecutionContext) => AgentLocalWorkspaceContext);
   readonly imageNormalizer?: AgentFileReadImageNormalizer;
   readonly skillRuntime?: AgentSkillRuntime | (
@@ -50,32 +46,20 @@ export interface ToolRuntimeOptions {
   readonly imageGeneration?: AgentImageGenerationRuntime | ((context: TurnExecutionContext) => AgentImageGenerationRuntime);
   readonly capabilityTools?: (
     context: TurnExecutionContext,
-    outliner: OutlinerToolHost | undefined,
   ) => readonly AgentTool[];
   /** Test/custom host seam; production always assembles the canonical registry. */
   readonly assembleRegistry?: boolean;
   readonly dynamicTools?: (context: TurnExecutionContext) => readonly AgentTool[] | Promise<readonly AgentTool[]>;
   readonly capabilityConfig?: AgentCapabilityConfig | (() => AgentCapabilityConfig | Promise<AgentCapabilityConfig>);
-  readonly outlinerProjectionFilter?: OutlinerProjectionFilter;
 }
 
 export class ToolRuntime {
-  private readonly mutationCausation = new AsyncLocalStorage<AgentMutationCausation>();
   private readonly reportedUnavailableToolSchemas = new Set<string>();
-  private readonly outliner: OutlinerToolHost | undefined;
 
   constructor(
     private readonly service: ThreadService,
     private readonly options: ToolRuntimeOptions = {},
-  ) {
-    this.outliner = options.outliner
-      ? outlinerWithCausation(
-          options.outliner,
-          () => this.mutationCausation.getStore(),
-          options.outlinerProjectionFilter,
-        )
-      : undefined;
-  }
+  ) {}
 
   async createTools(context: TurnExecutionContext): Promise<readonly AgentTool[]> {
     const artifactSink = createToolArtifactSink(context);
@@ -88,8 +72,8 @@ export class ToolRuntime {
       ? this.options.imageGeneration(context)
       : this.options.imageGeneration;
     const capabilityTools = this.options.capabilityTools
-      ? this.options.capabilityTools(context, this.outliner)
-      : (await import('../capabilities/agentTools')).createAgentTools(this.outliner, {
+      ? this.options.capabilityTools(context)
+      : (await import('../capabilities/agentTools')).createAgentTools({
           localFileRoot: context.thread.cwd,
           ...(workspace === undefined ? {} : { localWorkspace: workspace }),
           ...(this.options.imageNormalizer === undefined ? {} : { imageNormalizer: this.options.imageNormalizer }),
@@ -415,33 +399,40 @@ export class ToolRuntime {
           }
           activeSubagentPolicy = persistedPolicy;
         }
-        const specializedBashBlocked = canonicalIdentity === 'bash'
+        const bashPolicyBlocked = canonicalIdentity === 'bash'
           && !subagentBashExecutionAllowed(
             activeSubagentPolicy,
             capability.descriptors.map((descriptor) => descriptor.actionKind),
           );
-        const worktreeBashOutlineBlocked = specializedBashBlocked
+        const worktreeBashOutlineBlocked = bashPolicyBlocked
           && activeSubagentPolicy.worktree
           && capability.descriptors.some((descriptor) => (
             descriptor.actionKind === 'outline.edit' || descriptor.actionKind === 'outline.delete'
           ));
-        const specializedMutationBlocked = contract.schemaOwner === 'extension'
+        const extensionPolicyBlocked = contract.schemaOwner === 'extension'
           && !subagentToolExecutionAllowed(
             activeSubagentPolicy,
             capability.descriptors.map((descriptor) => descriptor.actionKind),
           );
-        const specializedPolicyBlocked = specializedBashBlocked || specializedMutationBlocked;
-        if (capability.behavior === 'unavailable' || specializedPolicyBlocked) {
+        const subagentPolicyBlocked = bashPolicyBlocked || extensionPolicyBlocked;
+        if (capability.behavior === 'unavailable' || subagentPolicyBlocked) {
           const reason = capability.behavior === 'unavailable'
             ? capability.reason
-            : specializedBashBlocked
-              ? worktreeBashOutlineBlocked
-                ? 'Worktree Agents cannot mutate the live outline through Bash.'
-                : 'Explore and Plan Agents may use Bash only for repository inspection.'
-              : 'Explore and Plan Agents cannot execute repository mutations.';
-          const code = capability.behavior === 'unavailable'
-            ? capability.code
-            : 'subagent_repository_mutation_restricted';
+            : bashPolicyBlocked
+              ? activeSubagentPolicy.readOnly
+                ? 'Read-only Agents may use Bash only for inspection commands.'
+                : worktreeBashOutlineBlocked
+                  ? 'Worktree Agents cannot mutate the live outline through Bash.'
+                  : 'Explore and Plan Agents may use Bash only for repository inspection.'
+              : activeSubagentPolicy.readOnly
+                ? 'Read-only Agents cannot execute mutating extension tools.'
+                : 'Explore and Plan Agents cannot execute repository mutations.';
+          const policyCode = capability.behavior === 'unavailable'
+            ? null
+            : activeSubagentPolicy.readOnly
+              ? 'subagent_read_only_restricted'
+              : 'subagent_repository_mutation_restricted';
+          const code = capability.behavior === 'unavailable' ? capability.code : policyCode!;
           const result = toolResult({
             ok: false,
             tool: canonicalIdentity,
@@ -453,7 +444,7 @@ export class ToolRuntime {
               details: { reason: code },
             },
             instructions: 'This operation is unavailable in the current context. Continue with another available approach.',
-            capabilityAudit: capabilityAudit(capability, specializedPolicyBlocked),
+            capabilityAudit: capabilityAudit(capability, policyCode),
           });
           await this.service.notifyToolCompleted(
             context.thread.id,
@@ -467,11 +458,7 @@ export class ToolRuntime {
           return result;
         }
         try {
-          const rawResult = await this.mutationCausation.run({
-            threadId: context.thread.id,
-            turnId: context.turn.id,
-            itemId,
-          }, () => tool.execute(itemId, params, signal, onUpdate));
+          const rawResult = await tool.execute(itemId, params, signal, onUpdate);
           const result = withCapabilityAudit(rawResult, capabilityAudit(capability));
           await this.service.notifyToolCompleted(
             context.thread.id,
@@ -531,82 +518,26 @@ export class ToolRuntime {
   }
 }
 
-function outlinerWithCausation(
-  host: OutlinerToolHost,
-  causation: () => AgentMutationCausation | undefined,
-  projectionFilter?: OutlinerProjectionFilter,
-): OutlinerToolHost {
-  const mutationMeta = (meta: Parameters<OutlinerToolHost['handle']>[2]) => ({
-    ...meta,
-    ...(causation() ? { causation: causation() } : {}),
-  });
-  return {
-    getProjection: () => {
-      const current = causation();
-      const projection = host.getProjection();
-      return current && projectionFilter
-        ? projectionFilter.filterProjection(projection, current)
-        : projection;
-    },
-    getDocumentReadModel: host.getDocumentReadModel ? () => {
-      const current = causation();
-      const readModel = host.getDocumentReadModel!();
-      if (!current || !projectionFilter) return readModel;
-      return {
-        asProjectionIndex: () => projectionFilter.filterProjectionIndex(readModel.asProjectionIndex(), current),
-      };
-    } : undefined,
-    drainTransactionProjectionChanges: host.drainTransactionProjectionChanges
-      ? () => host.drainTransactionProjectionChanges!()
-      : undefined,
-    getTextSearchIndex: host.getTextSearchIndex ? () => {
-      const current = causation();
-      const index = host.getTextSearchIndex!();
-      return current && projectionFilter
-        ? projectionFilter.filterTextSearchIndex(index, current)
-        : index;
-    } : undefined,
-    getTransientSearchOptions: host.getTransientSearchOptions ? () => host.getTransientSearchOptions!() : undefined,
-    recordNodeAccess: host.recordNodeAccess
-      ? (nodeIds, source) => host.recordNodeAccess!(nodeIds, source)
-      : undefined,
-    handle: (command, args, meta) => host.handle(command, args, mutationMeta(meta)),
-    transaction: host.transaction
-      ? (meta, operation) => host.transaction!(mutationMeta(meta), operation)
-      : undefined,
-    createNodesFromTreeYielding: host.createNodesFromTreeYielding
-      ? (parentId, nodes, meta, options) => host.createNodesFromTreeYielding!(
-          parentId,
-          nodes,
-          mutationMeta(meta),
-          options,
-        )
-      : undefined,
-    operationHistory: host.operationHistory
-      ? (query, meta) => host.operationHistory!(query, mutationMeta(meta))
-      : undefined,
-  };
-}
-
 const ROOT_SUBAGENT_POLICY: PersistedSubagentToolPolicy = {
   kind: 'general-purpose',
   runInBackground: false,
   worktree: false,
+  readOnly: false,
   allowNesting: true,
   requestedTools: null,
 };
 
 function capabilityAudit(
   capability: ReturnType<typeof evaluateAgentToolCapability>,
-  specializedPolicyBlocked = false,
+  policyCode: 'subagent_read_only_restricted' | 'subagent_repository_mutation_restricted' | null = null,
 ): JsonValue {
   return jsonValue({
-    behavior: specializedPolicyBlocked ? 'unavailable' : capability.behavior,
+    behavior: policyCode === null ? capability.behavior : 'unavailable',
     access: capability.access,
-    source: specializedPolicyBlocked ? 'subagent_policy' : capability.source,
+    source: policyCode === null ? capability.source : 'subagent_policy',
     descriptors: capability.descriptors,
-    ...(specializedPolicyBlocked
-      ? { code: 'subagent_repository_mutation_restricted' }
+    ...(policyCode !== null
+      ? { code: policyCode }
       : capability.behavior === 'unavailable'
         ? { code: capability.code }
         : {}),

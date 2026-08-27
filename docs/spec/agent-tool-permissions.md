@@ -63,6 +63,27 @@ Selection controls availability, not host-account authority. A tool that survive
 selection runs directly; a tool that does not survive is absent or returns its
 owner's structured unavailable result.
 
+### Read-only delegated execution
+
+`agent.execution: "read-only"` adds a Host-enforced action ceiling to one
+delegated Agent. It is narrower than Full Access, is persisted in the Agent
+execution policy, and is inherited by nested Agents and isolated Skills. A
+descendant cannot clear it by selecting another Agent type, Role, tool list,
+worktree mode, or Skill execution mode. Historical execution policies that
+predate the field decode as mutable rather than being retroactively narrowed.
+
+Static catalog selection removes direct file mutation and other tools whose
+declared action kinds are not read-only. Read tools and narrowly scoped Host
+coordination controls may remain visible so the Agent can inspect, report,
+delegate under the same ceiling, and invoke a Skill without laundering
+authority. At execution time, extension/MCP calls and dynamically classified
+`bash` calls must consist entirely of read-only action kinds. File writes and
+deletes, Outline mutations, local code or project-script execution, dependency
+installation, background processes, network writes, publishing, destructive
+cleanup, and unknown shell behavior return structured unavailability before
+the underlying action starts. The ceiling does not rewrite commands or infer
+safety from the Agent's stated intent.
+
 ## Admission Is Not Permission
 
 Full Access authorizes a valid operation exposed in the Thread; it does not make an
@@ -95,18 +116,19 @@ Blocks operate on normalized action descriptors such as outline read/write,
 local file read/write/delete, shell execution classes, web access, publishing,
 external messaging, Goal control, Agent orchestration, Skill invocation, image
 generation. Import is not a separate model-tool action: a directly executable
-`tenon-import commit` Bash segment is additionally classified as
-`outline.edit`.
+`outline` Bash segment is classified from the executable public capability
+registry. Local metadata, reads, observe, and `diff` are `outline.read`;
+ordinary mutation porcelain is `outline.edit`; destructive capability, `apply`,
+and `revert` also carry `outline.delete`.
 
 Command matching normalizes whitespace outside quotes while preserving quoted
-content. Import-commit recognition ignores quoted examples, comments, and
-heredoc bodies. Unknown shell behavior is classified conservatively. Blocks do
-not silently rewrite a command into a safer variant. An inherited worktree
-policy rejects any Bash command classified as an outline mutation before the
-process starts. Import token issuance consumes the same parsed segment result as
-capability classification, and a recognized commit segment contributes
-`outline.edit` before generic shell action matching without suppressing other
-recognized actions in that segment.
+content and recognizes the executable after supported environment/wrapper
+prefixes. Quoted examples, comments, and heredoc bodies do not qualify. Unknown
+shell behavior is classified conservatively. Blocks do not silently rewrite a
+command into a safer variant. An inherited worktree policy rejects any Bash
+command classified as an Outline mutation before the process starts. For an
+admitted built-in Agent shell Item, host attestation supplies mutation causation;
+it does not override an explicit block or worktree denial.
 
 Capability configuration is local host state. It is not Thread history and does
 not travel through document synchronization.
@@ -168,7 +190,8 @@ Full Access does not imply unsafe coordination. Existing subsystem owners retain
 their serialization rules:
 
 - `ThreadService` serializes Turn acceptance per Thread.
-- `DocumentService` serializes document transactions.
+- the standalone Outline Runtime serializes document ChangeSets and settles one
+  durable Operation per accepted mutation.
 - file tools use optimistic preconditions where their contract provides them.
 - process handles identify exact live commands.
 - external services enforce their own idempotency and consistency contracts.

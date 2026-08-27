@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import {
+  appliedOutlineOperations,
   commandCalls,
   e2eProjection,
   emitDocumentEvent,
@@ -86,6 +87,7 @@ test.describe('outliner drag and drop', () => {
 
   test('dragging a selected block to the trailing draft appends the whole block', async ({ page }) => {
     await multiSelect(page, [ids.alpha, ids.beta]);
+    const beforeCall = (await commandCalls(page)).length;
 
     const trailingRow = page.locator(`[data-trailing-parent-id="${ids.today}"] > .row`).first();
     await dragBulletTo(page, ids.alpha, trailingRow);
@@ -97,21 +99,23 @@ test.describe('outliner drag and drop', () => {
     await expect(rowEditor(page, ids.alpha)).not.toBeFocused();
     await expect(rowEditor(page, ids.beta)).not.toBeFocused();
 
-    const moveCalls = (await commandCalls(page))
-      .filter((call) => call.cmd === 'batch_move_nodes')
-      .map((call) => call.args);
-    expect(moveCalls).toEqual([
-      {
-        moves: [
-          { nodeId: ids.beta, parentId: ids.today, index: 2 },
-          { nodeId: ids.alpha, parentId: ids.today, index: 1 },
-        ],
+    const moves = (await appliedOutlineOperations(page, beforeCall)).filter((operation) => operation.op === 'move');
+    expect(moves).toEqual([{
+      op: 'move',
+      targets: {
+        target: {
+          selector: { by: 'ids', ids: [ids.alpha, ids.beta] },
+          cardinality: 'many',
+          max: 2,
+        },
       },
-    ]);
+      placement: { kind: 'last', parent: { target: { selector: { by: 'id', id: ids.today }, cardinality: 'one' } } },
+    }]);
   });
 
   test('invalid drops on the selected block leave no guide line or stray focus', async ({ page }) => {
     await multiSelect(page, [ids.alpha, ids.beta]);
+    const beforeCall = (await commandCalls(page)).length;
 
     await dragBulletTo(page, ids.alpha, rowBody(page, ids.beta));
 
@@ -122,9 +126,7 @@ test.describe('outliner drag and drop', () => {
     await expect(rowEditor(page, ids.alpha)).not.toBeFocused();
     await expect(rowEditor(page, ids.beta)).not.toBeFocused();
 
-    const moveCalls = (await commandCalls(page))
-      .filter((call) => call.cmd === 'move_node' || call.cmd === 'batch_move_nodes');
-    expect(moveCalls).toHaveLength(0);
+    expect((await appliedOutlineOperations(page, beforeCall)).filter((operation) => operation.op === 'move')).toHaveLength(0);
   });
 
   test('nested drag hover keeps a single active guide line', async ({ page }) => {

@@ -205,22 +205,34 @@ test.describe('definition configuration parity', () => {
     await page.evaluate(() => {
       const win = window as typeof window & {
         __LIN_E2E_SORT_DELAY__?: { attempts: number; release: () => void };
-        lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+        lin?: { outline?: { request: <T>(request: { command: string; input: unknown }) => Promise<T> } };
       };
-      const originalInvoke = win.lin!.invoke.bind(win.lin);
+      const outline = win.lin!.outline!;
+      const originalRequest = outline.request.bind(outline);
       let releasePending: (() => void) | null = null;
       win.__LIN_E2E_SORT_DELAY__ = {
         attempts: 0,
         release: () => releasePending?.(),
       };
-      win.lin!.invoke = async <T,>(cmd: string, args?: Record<string, unknown>) => {
-        if (cmd === 'add_sort_rule') {
+      outline.request = async <T,>(request: { command: string; input: unknown }) => {
+        const input = request.input as {
+          diff?: { normalizedChangeSet?: { operations?: Array<{ changes?: Array<Record<string, unknown>> }> } };
+          changeSet?: { operations?: Array<{ changes?: Array<Record<string, unknown>> }> };
+        };
+        const operations = request.command === 'apply'
+          ? input.diff?.normalizedChangeSet?.operations ?? []
+          : request.command === 'commit' ? input.changeSet?.operations ?? [] : [];
+        const addsSort = operations
+          .some((operation) => (operation.changes ?? []).some((change) => (
+            change.kind === 'view' && change.property === 'sort' && change.action === 'add'
+          )));
+        if (addsSort) {
           win.__LIN_E2E_SORT_DELAY__!.attempts += 1;
           await new Promise<void>((resolve) => {
             releasePending = resolve;
           });
         }
-        return originalInvoke<T>(cmd, args);
+        return originalRequest<T>(request);
       };
     });
 

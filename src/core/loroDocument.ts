@@ -58,8 +58,6 @@ export interface LoroImportResult {
 }
 
 const LORO_TREE_NAME = 'nodes';
-const DOCUMENT_SYSTEM_RECEIPTS_MAP = 'documentSystemReceipts';
-const DOCUMENT_SYSTEM_TAGS_MAP = 'documentSystemTags';
 const MAX_SNAPSHOT_EXPORT_DEPTH = 1_024;
 const INLINE_REF_MARK = 'inlineRef';
 const INLINE_REF_PLACEHOLDER = '\uFFFC';
@@ -149,7 +147,6 @@ export class LoroOutlinerDocument {
   private userUndoManager: UndoManager;
   private nodeIdToTreeId = new Map<string, TreeID>();
   private touchedNodeIds = new Set<string>();
-  private systemDataChanged = false;
   private pendingUndoValue: Value | undefined;
   private undoGroupActive = false;
   private undoStackMirrors = new Map<LoroUndoScope, UndoStackMirror>();
@@ -466,44 +463,6 @@ export class LoroOutlinerDocument {
     return ids;
   }
 
-  clearSystemDataChanged() {
-    this.systemDataChanged = false;
-  }
-
-  drainSystemDataChanged() {
-    const changed = this.systemDataChanged;
-    this.systemDataChanged = false;
-    return changed;
-  }
-
-  readDocumentSystemReceipt(key: string): string | null {
-    return readString(this.doc.getMap(DOCUMENT_SYSTEM_RECEIPTS_MAP).get(key)) ?? null;
-  }
-
-  writeDocumentSystemReceipt(key: string, encoded: string): void {
-    const map = this.doc.getMap(DOCUMENT_SYSTEM_RECEIPTS_MAP);
-    if (readString(map.get(key)) === encoded) return;
-    map.set(key, encoded);
-    this.systemDataChanged = true;
-  }
-
-  readDocumentSystemTagClaim(tagId: string): string | null {
-    return readString(this.doc.getMap(DOCUMENT_SYSTEM_TAGS_MAP).get(tagId)) ?? null;
-  }
-
-  writeDocumentSystemTagClaim(tagId: string, encoded: string): void {
-    const map = this.doc.getMap(DOCUMENT_SYSTEM_TAGS_MAP);
-    if (readString(map.get(tagId)) === encoded) return;
-    map.set(tagId, encoded);
-    this.systemDataChanged = true;
-  }
-
-  documentSystemTagIds(): string[] {
-    return this.doc.getMap(DOCUMENT_SYSTEM_TAGS_MAP).keys()
-      .filter((key): key is string => typeof key === 'string')
-      .sort();
-  }
-
   hasNode(nodeId: string) {
     return this.treeNodeOrUndefined(nodeId) !== undefined;
   }
@@ -603,6 +562,63 @@ export class LoroOutlinerDocument {
     for (const id of removed) this.nodeIdToTreeId.delete(id);
   }
 
+  applyNodePatch(entries: readonly { id: string; node: Node | undefined }[]) {
+    const desired = new Map(entries.map((entry) => [entry.id, entry.node]));
+    const state = this.materializeState();
+    const deletedIds = new Set(entries.filter((entry) => !entry.node).map((entry) => entry.id));
+    const deletionRoots = [...deletedIds]
+      .filter((id) => {
+        const parentId = state.nodes[id]?.parentId;
+        return !parentId || !deletedIds.has(parentId);
+      })
+      .sort((left, right) => left.localeCompare(right));
+    for (const id of deletionRoots) {
+      if (this.hasNode(id)) this.deleteNode(id);
+    }
+
+    const pending = new Map(
+      entries
+        .filter((entry): entry is { id: string; node: Node } => Boolean(entry.node) && !this.hasNode(entry.id))
+        .map((entry) => [entry.id, entry.node]),
+    );
+    while (pending.size > 0) {
+      let created = 0;
+      for (const [id, node] of pending) {
+        if (node.parentId && !this.hasNode(node.parentId)) continue;
+        const parentTreeId = node.parentId ? this.requiredTreeNode(node.parentId).id : undefined;
+        const treeNode = this.tree.createNode(parentTreeId);
+        writeNodeData(treeNode.data, normalizeNode(node));
+        this.nodeIdToTreeId.set(id, treeNode.id);
+        this.touchNodeWithSnapshot(id, normalizeNode(node));
+        if (node.parentId) this.touchNode(node.parentId);
+        pending.delete(id);
+        created += 1;
+      }
+      if (created === 0) {
+        throw CoreError.invalidOperation(`recovery patch has unresolved parents: ${[...pending.keys()].sort().join(', ')}`);
+      }
+    }
+
+    for (const [id, node] of desired) {
+      if (!node || !this.hasNode(id)) continue;
+      this.writeNode(node);
+    }
+    const desiredParents = [...desired.values()]
+      .filter((node): node is Node => Boolean(node))
+      .sort((left, right) => left.id.localeCompare(right.id));
+    for (const parent of desiredParents) {
+      for (let index = 0; index < parent.children.length; index += 1) {
+        const childId = parent.children[index]!;
+        if (!this.hasNode(childId)) continue;
+        const child = this.requiredTreeNode(childId);
+        const parentTreeId = this.requiredTreeNode(parent.id).id;
+        this.tree.move(child.id, parentTreeId, index);
+        this.touchNode(childId);
+        this.touchNode(parent.id);
+      }
+    }
+  }
+
   materializeState(): DocumentState {
     this.reconcileStateCache();
     // Return a fresh container over the cached node objects: callers may add or
@@ -614,6 +630,19 @@ export class LoroOutlinerDocument {
       workspaceId: WORKSPACE_ID,
       rootId: WORKSPACE_ID,
       nodes: { ...this.stateCacheNodes },
+    };
+  }
+
+  materializeStateView(): DocumentState {
+    this.reconcileStateCache();
+    // Core's private transaction snapshot is read-only. Reusing this incremental
+    // node map avoids copying every Node before each command in a large batch;
+    // public state access continues through materializeState() and its fresh map.
+    return {
+      schemaVersion: 1,
+      workspaceId: WORKSPACE_ID,
+      rootId: WORKSPACE_ID,
+      nodes: this.stateCacheNodes!,
     };
   }
 

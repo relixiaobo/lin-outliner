@@ -1,0 +1,77 @@
+{
+  "currentWorkspaceId": "workspace-root",
+  "formatVersion": 1,
+  "docs": [
+    {
+      "id": "workspace-root",
+      "props": { "created": 1, "name": "Root node for file:real-shapes" },
+      "children": ["home", "daily", "week"]
+    },
+    {
+      "id": "home",
+      "props": { "created": 2, "name": "Home", "_docType": "home", "_ownerId": "workspace-root" },
+      "children": ["project"]
+    },
+    {
+      "id": "project",
+      "props": {
+        "created": 3,
+        "name": "Project row",
+        "description": "Imported from a deterministic source shape.",
+        "_done": 1,
+        "_metaNodeId": "project-meta",
+        "_ownerId": "home"
+      },
+      "children": ["status-tuple"]
+    },
+    {
+      "id": "project-meta",
+      "props": { "created": 3, "_docType": "metanode", "_ownerId": "project" },
+      "children": ["supertag-tuple"]
+    },
+    {
+      "id": "supertag-tuple",
+      "props": { "created": 3, "_docType": "tuple", "_ownerId": "project-meta" },
+      "children": ["supertag-attribute", "project-tag"]
+    },
+    {
+      "id": "supertag-attribute",
+      "props": { "created": 3, "name": "Node supertags(s)", "_ownerId": "supertag-tuple" }
+    },
+    {
+      "id": "project-tag",
+      "props": { "created": 3, "name": "Project", "_docType": "tagDef", "_ownerId": "supertag-tuple" }
+    },
+    {
+      "id": "status-tuple",
+      "props": { "created": 4, "_docType": "tuple", "_ownerId": "project" },
+      "children": ["status-field", "status-value"]
+    },
+    {
+      "id": "status-field",
+      "props": { "created": 4, "name": "Status", "_docType": "attrDef", "_ownerId": "status-tuple" }
+    },
+    {
+      "id": "status-value",
+      "props": { "created": 4, "name": "Active", "_ownerId": "status-tuple" }
+    },
+    {
+      "id": "daily",
+      "props": { "created": 5, "name": "2026-08-23 - Sunday", "_docType": "journalPart", "_ownerId": "workspace-root" },
+      "children": ["daily-note"]
+    },
+    {
+      "id": "daily-note",
+      "props": { "created": 6, "name": "Daily import row", "_ownerId": "daily" }
+    },
+    {
+      "id": "week",
+      "props": { "created": 7, "name": "Week 34", "_docType": "journalPart", "_ownerId": "workspace-root" },
+      "children": ["week-note"]
+    },
+    {
+      "id": "week-note",
+      "props": { "created": 8, "name": "Keep ambiguous headings as content", "_ownerId": "week" }
+    }
+  ]
+}

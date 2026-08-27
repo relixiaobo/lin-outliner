@@ -8,53 +8,119 @@ external behavior reference only.
 ## Runtime Boundaries
 
 - `src/core`: pure TypeScript outliner state machine.
-- `src/main`: Electron main process, persistence, IPC command bridge, and agent runtime.
+- `src/content`: neutral exact-revision admission, retention, verification, and
+  physical garbage collection shared by Host processes.
+- `src/outline/contract`: public Selector, Projection, ChangeSet, Diff,
+  Operation, Event, asset, envelope, and capability schemas.
+- `src/outline/runtime`: standalone document domain, transactional persistence,
+  recovery, events, and asset reachability.
+- `src/outline/client`: Runtime discovery, startup, protocol negotiation, and
+  authenticated request/stream client.
+- `src/main`: Electron native host, typed Runtime adapter, OS effects, and Agent
+  runtime. It does not own document state or workspace persistence.
 - `src/preload`: narrow Electron preload bridge exposed as `window.lin`.
 - `src/renderer`: React view and interaction layer.
 
 There is no Rust, Cargo, Tauri, or `src-tauri` product runtime in this repository.
-Document state, agent tools, parser logic, preview/validation, and persistence
-are all implemented in TypeScript.
+Document state, Agent integration, parser logic, preview/validation, and
+persistence are all implemented in TypeScript.
 
-The TypeScript core is the only document writer. React keeps UI-only state such
-as focus, expanded rows, selection, popovers, and transient editor drafts.
+The standalone Outliner Runtime is the sole live document authority. It owns one
+Core instance, one serialized writer, the transaction log, Operation history,
+recovery patches, ordered Events, and asset reachability. Electron main, the
+renderer, the CLI, Skills, and import helpers are clients; none imports Core or
+opens workspace files. React keeps UI-only state such as focus, expanded rows,
+selection, popovers, and transient editor drafts.
 
 Agent Memory keeps published content in ordinary Daily Notes Nodes. Electron
 main owns its local control database under `userData/agent/memories.sqlite` and
-uses trusted receipt-bearing document transactions to reconcile SQLite with the
-Loro document. The control database is not portable workspace content. See
+settles receipt-bearing Runtime mutations against that control state. The
+control database is not portable workspace content. See
 [`agent-memory.md`](agent-memory.md).
 
-Binary assets are outside the CRDT document. The document stores stable asset
-ids and derived metadata on `image` / `attachment` nodes; `src/main/assetService`
-owns bytes and sidecar metadata under the workspace asset directory. Renderer
-flows ingest files through asset commands, then mutate the document only through
-core commands such as `create_image_node`, `set_node_image`, and
-`create_attachment_node`.
+Binary assets are outside the CRDT document. The document stores stable logical
+asset IDs on `image` / `attachment` Nodes. Runtime owns Outline `AssetRecord`
+metadata, staging leases, live-Node and recovery-patch reachability, and the
+transaction that changes those facts. The neutral `ContentStore` stores immutable
+exact revisions, admission leases, opaque mechanical retention anchors,
+admission-staging/publication/deletion journals, physical-integrity quarantine,
+and physical GC
+under the explicit `{userData}/content/` root. It does not know Outline or Agent
+identity, filenames, MIME presentation, document reachability, or recovery
+policy.
 
-Every asset sidecar is a versioned `AssetMetadata` record carrying the stable
-logical `id`, exact `byteSize`, and lowercase SHA-256 digest. Buffer-backed and
-path-backed ingest share this contract, and generated PDF thumbnails receive the
-same integrity metadata. `AssetService.readVerified()` is the portable byte-read
-boundary: it returns the stored bytes only after both length and digest match,
-and reports corruption explicitly. Local `asset://` range serving remains
-streaming and does not pre-read an entire video merely to render it.
+An `AssetRecord` contains one Host-private
+`ExactRevisionReference { anchorId, byteLength }`. The ContentStore anchor binds
+that handle to one reconciliation namespace, one opaque domain record key, and
+one physical revision; a released anchor ID is permanently retired and can
+never be rebound. Public `AssetMetadata`, `AssetLease`, CLI JSON, renderer DTOs,
+ChangeSets, and Operations expose neither physical digests nor anchor IDs;
+clients name only logical asset and lease IDs. Many logical records may retain
+one deduplicated exact revision through independent anchors. A physical
+digest/length mismatch quarantines that revision for every reference, while
+invalid Outline metadata degrades only its AssetRecord and never moves shared
+valid bytes.
 
-Path-backed assets hash the final stored file through a read stream. Buffer
-ingest, derived thumbnails, and verified reads hash in bounded 1 MiB turns that
-yield to the event loop between chunks, keeping Electron main responsive for
-large assets. `bun run probe:asset-hashing` compiles the probe and runs it in
-Electron main, where it asserts and reports the Electron runtime version before
-measuring total hashing time and maximum event-loop stall for both paths;
-`ASSET_HASH_PROBE_MIB` overrides its 512 MiB fixture size.
+Logical AssetRecord collection pauses while any AssetRecord is degraded because
+its dependency edges, including thumbnail references, cannot be enumerated
+reliably. Healthy records remain readable and ordinary document work continues;
+the conservative pause prevents one damaged record from collecting another
+healthy logical record or releasing its anchor.
 
-Document-referenced source assets are portable. PDF thumbnails are derived
-outputs rather than portable source assets; their ids may appear in source
-metadata, but this integrity layer neither deletes nor rebuilds them. Future
-preview formats follow the same ownership rule only when they are reproducible.
-A digest never replaces `assetId`; it is an integrity and future object-store
-idempotency key, not user-visible identity. The pre-release v1 sidecar has no
-legacy reader.
+ContentStore persists `state.sqlite`, `blobs/`, `staging/`, and `quarantine/`.
+Runtime and ContentStore roots are derived independently from the same explicit
+userData authority; neither root is inferred from `cwd` or from the other root.
+Both Host processes use the same WAL/busy-retry and per-digest publication
+protocol. There is no workspace asset blob directory, sidecar reader, migration,
+dual write, or automatic startup deletion path. The shared-content-aligned
+Runtime workspace and ContentStore are storage version 2; earlier formats fail
+closed until the documented manual userData reset is completed.
+
+Asset admission publishes or verifies bytes under an admission lease. Runtime
+then holds its Outline namespace mutation/reconciliation barrier from before
+anchor creation through durable AssetRecord commit or failed-commit release.
+Creating the anchor atomically consumes the admission lease and returns only the
+Host-private exact-revision handle. Cross-store interruptions may leak an anchor
+but cannot leave a committed record whose revision was collected.
+Reconciliation first completes and validates the entire `(assetId, anchorId)`
+enumeration against the stored namespace/record coordinate, then releases only
+absent Outline anchors; unavailable, corrupt, missing, or mismatched state
+releases none.
+
+Before creating or writing an admission staging file, ContentStore persists its
+stage ID, writer PID, opaque owner token, and timestamps. A publication claim
+atomically transfers that staging ownership into the per-digest publication
+journal. Normal cleanup unlinks the staging file and fsyncs the staging directory
+before removing its ownership row. Publication rename fsyncs both the destination
+and staging directories before clearing its journal. Startup preserves staging
+owned by a live process and reclaims a file only after its recorded writer is
+proven dead, so concurrent stores cannot delete an active stream and a crash
+before publication cannot leak untracked bytes. The same dead-writer repair runs
+during central GC, so cleanup does not depend on all surviving Host processes
+restarting.
+
+Record deletion uses the opposite order: Runtime durably removes an unreachable
+AssetRecord, then releases its anchor. ContentStore GC selects only published
+revisions with no active admission lease and no anchor in one SQLite transaction,
+marks them `deleting`, unlinks them, fsyncs the containing directory, and only
+then settles the deletion journal. Admission and anchor cloning cannot attach to
+a deleting revision. Startup repairs interrupted admission staging, publication,
+and deletion states.
+
+Recovery policy remains Runtime-owned, but physical accounting remains neutral:
+Runtime supplies the exact-revision handles for live and recovery-protected
+AssetRecords, and ContentStore returns their distinct physical byte total
+without exposing its digest key. A revision shared by multiple recovery records
+is charged once, and a revision still retained by a live logical record is not
+charged as recovery-only storage.
+
+Renderer flows stage files through public asset capabilities and reference the
+returned lease in an ordinary ChangeSet. Native pickers, open, Reveal in Finder,
+copy, and external URL handling remain Electron-main OS effects rather than
+Runtime document capabilities. Local `asset://` range serving streams verified
+Runtime bytes and does not pre-read an entire video merely to render it. PDF
+thumbnails are separate logical AssetRecords over ordinary exact revisions; the
+parent relationship protects them through lease, live, recovery, and GC rules.
 
 Preview translation persistence is a separate local-derived-data boundary, not
 an asset or workspace fact. Electron main owns a bounded cache under `userData`;
@@ -105,25 +171,36 @@ after). `pdftoppm` is an **optional** system dependency — when it is missing o
 fails, ingest degrades gracefully and the attachment simply renders with its
 file-type icon instead of a thumbnail.
 
-The asset directory is treated as a local-file jail. Path-backed ingest resolves
-the source with `realpath` and accepts regular files only. Asset reads and system
-actions resolve the stored file with `realpath`, require the result to remain
-inside the asset root, and reject missing, non-file, or escaped paths before the
-renderer can serve, open, reveal, or copy the asset.
+Path-backed ingest resolves the source with `realpath` and accepts regular files
+only. Reads and exports resolve an AssetRecord through its Host-private anchor
+and exact-revision coordinate, then ContentStore verifies the bytes. Electron
+main system actions consume that verified stream through a private
+materialization; the renderer never receives a ContentStore path.
 
 ## Command Flow
 
 ```txt
 React interaction
-  -> preload IPC command
-  -> Electron main document service
-  -> TypeScript core mutation
-  -> ProjectionUpdate (delta | full) folded into the renderer index
-  -> background incremental persistence handoff
+  -> desktop intent builds a public ChangeSet
+  -> preload forwards a versioned Runtime request
+  -> Electron main authenticates and forwards without document logic
+  -> Runtime direct commit for ordinary non-destructive writes, or reviewed Diff apply
+  -> one durable Operation and ordered projection Event
+  -> renderer folds the Event delta into its projection index
+
+terminal or Agent intent
+  -> registry-derived outline parser/help/schema contract
+  -> one complete-resource porcelain command, or one dependent ChangeSet
+  -> authenticated Runtime direct commit, preview, or exact reviewed Diff apply
+  -> one durable Operation with bounded returned Projection
 ```
 
 No renderer module may directly mutate document state. UI changes that affect
-document content or tree structure must use commands.
+document content or tree structure must use a public ChangeSet. Desktop intent
+helpers preserve focus and interaction hints locally; those hints are not part
+of the persisted contract. Renderer text-edit undo groups may span adjacent
+direct-commit Operations for undo/redo selection, but recovery remains durable
+and Operation-addressed.
 
 Surfaces that act on a presented object go through the **action seam** rather
 than assembling commands themselves — see [`action-registry.md`](action-registry.md):
@@ -140,237 +217,157 @@ right-click / summon
 A renderer may NAME an action; it may never author one. Effect plans travel
 main -> renderer only.
 
-The document service keeps command application and projection emission
-synchronous from the renderer's point of view, while workspace persistence is a
-separate handoff. A changed command advances a monotonic persistence revision and
-returns at the **accepted** tier; the background `WorkspaceSaver` captures an
-incremental Loro update and appends it durably after a 700 ms idle window. A
-first-dirty max-wait of 5 seconds bounds the crash window during sustained
-typing. Structural edits, undo/redo, and the text-edit undo-group boundary use
-the same saver; they do not wait for a whole-document snapshot or file write on
-the mutation queue. Trusted document-system transactions are the explicit
-exception and await the **durable** acknowledgement before their control-plane
-commit is considered complete. Failed background writes remain dirty and retry
-with exponential backoff capped at 30 seconds; an explicit trusted-transaction,
-flush, or quit retry starts immediately.
+The Runtime publishes no successful mutation before one fsynced transaction-log
+commit contains the document update, Operation metadata, recovery patch,
+idempotency result, asset-reference delta, and Event sequence. A client timeout
+or disconnect never retries a mutation automatically; it resolves unknown
+settlement through the idempotency key or Operation log.
 
-`WorkspacePersistenceStore` owns two files under `userData`: the authoritative
-`workspace.loro.json` v3 snapshot and
-`workspace.loro.updates.jsonl`. Every log header carries the SHA-256 digest of
-the snapshot it extends. The snapshot records the persistence-revision and
-local-metadata-sequence baselines. Each append contains the update bytes,
-version vector, later persistence revision, and local operation-history delta;
-the record is written and fsynced before the saver acknowledges durability.
-After validating a log once, the store keeps its append handle and a cursor over
-the verified header, file size, identity, ordering frontier, and final-record
-digest. Ordinary appends therefore validate against O(1) state instead of
-reopening and decoding the previous update. An ambiguous write failure
-invalidates the cursor and forces one full log validation before retry. If the
-active log path is deleted, replaced, or changes size outside the store, the
-saver does not append from a potentially unrelated version frontier: it captures
-the current document once, atomically compacts that full snapshot, and resumes
-incremental appends from the replacement snapshot.
+The CLI is a formal client boundary, not a thin exposure of the Runtime's generic
+MutationInput. One resource uses one porcelain command; complex state for that
+resource uses the same command's exact `--input` schema; dependent, cross-date,
+or bounded bulk work uses one ChangeSet with bindings. Parser options, root and
+family help, exact command help, completion metadata, and command schemas share
+the executable capability registry. Help is local and cannot start Runtime.
+No client uses a shell mutation loop or intermediate created-ID query to replace
+ChangeSet composition.
 
-Compaction atomically writes a complete snapshot, fsyncs it and its parent
-directory, then replaces the log header. The snapshot raw bytes, revision,
-metadata sequence, and Loro version are captured as one frontier before I/O;
-mutations accepted while the write is in flight remain dirty against that
-frontier. Compaction is considered after 64 log records or 2 MiB (including the
-matching log loaded at startup), but the full snapshot capture waits for a real
-700 ms idle window rather than running at the sustained-typing max-wait
-checkpoint.
-
-On startup the store validates the header, replica identity, monotonic metadata,
-and the Loro version reached by each update before exposing records to Core. A
-missing newline with an incomplete final JSON record is a recoverable torn tail.
-Other log anomalies never make a readable snapshot unopenable: the original log
-is durably copied to an `*.unreadable-*` quarantine file, the verified prefix is
-kept, and the active log is rewritten without the unreadable suffix. After Core
-replays that prefix, `DocumentService` immediately compacts it into a new
-snapshot; recovery and any repair-write failure are reported through the
-persistence error channel. A log whose digest belongs to an older snapshot is
-discarded without quarantine only when every intact record has the same replica
-identity, lies at or behind the snapshot's revision baselines, and its version
-is contained by the snapshot. Otherwise it follows the same quarantine recovery.
-
-A snapshot that parses as a `tenon-workspace` envelope but carries **no**
-`persistenceRevision` field is a pre-update-log workspace (the pre-release
-no-migration policy: formats break, old readers are deleted). The store renames
-the snapshot and any co-resident log to `*.incompatible-*` set-aside files —
-never deleting them — syncs the directory, and reports a fresh-start load with
-the decode error in the recovery channel; `DocumentService` then creates a new
-workspace exactly as on first run. A **present but invalid**
-`persistenceRevision` means corrupt current-format data and stays fail-closed:
-only the provably older shape is set aside.
-
-Quit is a two-phase operation. Phase 1 freezes new mutation admission, queues
-later mutation requests, waits for all admissions that already passed the gate,
-closes any open text undo group, and drains to a linearizable durable-revision
-barrier. Retry keeps the queue frozen; Cancel resumes every queued request while
-leaving all services live. Only a successful barrier or explicit **Quit Anyway**
-choice rejects the still-unaccepted queue and enters Phase 2, which tears down
-auxiliary services and force-exits the process. The coordinator exists before
-workspace initialization so startup-time quits still run auxiliary teardown.
-Concurrent quit requests share one request and cannot bypass the drain or run
-teardown twice. There is no automatic total-attempt exit after a failed drain:
-the per-attempt deadline returns to the native Retry / Quit Anyway / Cancel
-decision, and the app remains in reversible Phase 1 until the user chooses a
-terminal outcome.
+Desktop mutation admission is serialized around the latest projected revision.
+Ordinary non-destructive edits use direct commit; destructive or review-bound
+work applies an exact Diff. The adapter then waits for the matching Operation
+Event. A missing or discontinuous Event triggers a bounded full Projection
+resync. Quit freezes new desktop admissions and drains accepted requests;
+Runtime durability is already complete before each response.
 
 ## Workspace Persistence And Replication Boundary
 
-`WorkspacePersistenceStore` atomically persists `workspace.loro.json` as a
-versioned v3 envelope. The envelope separates portable workspace facts from
-state owned by one local replica while keeping both sections in one atomic
-snapshot:
+The standalone Runtime owns the only writable workspace store. It persists a
+versioned snapshot plus an append-only transaction log beneath its private
+workspace root. A committed transaction record binds one Core update and the
+local metadata required to settle and recover the public Operation:
 
 ```ts
-interface WorkspacePersistenceEnvelopeV3 {
-  kind: 'tenon-workspace';
-  schemaVersion: 3;
-  persistenceRevision: number;
-  persistenceMetadataSequence: number;
-  shared: {
-    workspaceId: string;
-    documentId: string;
-    document: SharedLoroDocumentState;
-  };
-  local: {
-    installationId: string;
-    replicaId: string;
-    loroPendingUpdates: string[];
-    operationHistory: OperationHistoryEntry[];
-  };
+interface WorkspaceTransactionRecord {
+  sequence: number;
+  revisionBefore: number;
+  revisionAfter: number;
+  documentUpdate: string;
+  operation: Operation;
+  recoveryPatch: RecoveryPatch;
+  idempotency?: IdempotencyReceipt;
+  assetDelta: AssetReferenceDelta;
+  events: OutlineEvent[];
 }
 ```
 
-`installation.json` holds the stable identity of one Electron `userData`
-installation and is created with the private atomic JSON store. The local
-envelope section repeats that id as its ownership marker. It is not a hardware
-identity and can be duplicated with a complete `userData` copy. Loading the
-envelope under the same installation restores the document replica, operation
-journal, and unresolved Loro updates. Loading a copied envelope under a
-different installation keeps the shared workspace/document identities but
-mints a new replica and discards copied local history. A shared-state bootstrap
-always follows the same fresh-replica rule. The retired top-level Loro v2 format
-has no compatibility reader; pre-release development data must be reset after
-this format change.
+Apply keeps Core's rollback frontier live until this record is encoded, written,
+and fsynced. A write, encode, or recovery-capacity failure therefore admits no
+document state. Runtime replays the verified prefix at startup, discards only a
+provably torn final record, and fails closed on corruption that could admit an
+unknown state. Snapshot compaction never removes retained recovery or asset
+reachability information. Pre-release formats have no compatibility reader.
 
-Local undo/redo and local operation-history metadata are intentionally bounded.
-The Loro `UndoManager` instances for all, agent, and user scopes each retain the
-latest 100 steps. The JavaScript operation journal is metadata for listing and
-stack guards, not an unbounded audit log; Core restores, serves, and persists only
-the latest 500 entries for the owning installation. Each entry stores at most a
-bounded deterministic sample of affected node ids plus the total count and a
-diagnostic hash, so bulk operations do not pin every touched id in local history.
+Core startup reconciliation can create durable system state, such as the current
+local-date Daily Note. When `requiresInitialPersist()` reports that condition,
+Runtime atomically compacts the reconciled Core into the verified snapshot/log
+baseline before publishing its descriptor or accepting requests. Startup fails
+if that baseline cannot be persisted; no later transaction may depend on
+process-local reconciliation state. Runtime resolves its new instance identity before
+that compaction and supplies it to any recovery-expiry maintenance Event. The workspace
+keeps the pre-compaction Event sequence as its replay baseline, so a startup Event is
+visible to watches under the identity that will publish the descriptor.
 
-Every Core construction uses a fresh random Loro peer id for new operations;
-the active peer is never persisted. This remains safe when a complete
-`userData` directory is cloned or an older workspace snapshot is restored:
-neither process can reuse an already-synchronized `{peer, counter}` range.
-Historical peer ids remain intrinsic to operation ids in the snapshot. The
-trade-off is one version-vector peer per editing session.
+Storage maintenance derives all work from the committed log and indexes. It
+repairs a torn tail, expires eligible recovery, removes orphan recovery blobs,
+durably removes unprotected AssetRecords before releasing their anchors, invokes
+central ContentStore GC, and compacts a log after its record/byte threshold.
+Runtime schedules it after startup once the descriptor is serviceable, during
+foreground-idle windows, and before idle shutdown. A watch stream keeps Runtime
+alive but does not count as foreground work, so ordinary desktop sessions still
+receive maintenance while the live event stream is open. Successful mutation
+acknowledgement never waits for post-commit cleanup, asset garbage collection,
+or compaction. Recovery expiry that is required for admission may still run
+before a write; recovery expiry is durable and observable before blob unlink.
+Cleanup or compaction failure cannot reverse an already acknowledged Operation.
+A failed compaction invalidates the process-local log cache so the next write
+reloads the authoritative snapshot/log boundary before admission.
 
-The shared Loro record contains portable Loro bytes but no field designating the
-active local peer. Core exports a compact Loro snapshot by default. If the
-materialized outline is deeper than 1,024 rows, Core writes a full Loro update
-instead (`exportMode: "update"`), because Loro's snapshot/shallow-snapshot export
-path fails in wasm on very deep tree nesting while update export remains
-iterative enough for the same structure. Loro import accepts both encodings, so
-reload and replication bootstrap use the same shared-state path. Two converged
-replicas can therefore emit different byte encodings; convergence is the same
-materialized state and semantic version vector, not byte-identical snapshot
-encoding.
+Every successful mutation, including desktop editing and history reversal,
+creates one durable `Operation`. A revert is a new guarded Operation and never
+erases its target. Recovery patches retain the complete affected state even when
+the public Operation returns only a bounded ID sample. Purged subtrees,
+dependent references, and referenced asset records remain recoverable until the
+retention boundary expires.
 
-Core exposes provider-neutral replication primitives for a full shared
-snapshot, encoded version vectors, updates since a version vector, committed
-local-update subscription, and idempotent batch import. Imports accept
-out-of-order and duplicate Loro updates, never re-emit them as local updates,
-leave replica identity and the local operation journal untouched, and report
-accepted operations, unresolved dependencies, and persistence changes
-separately from materialized node changes. Newly accepted operations are
-durable even when conflict resolution leaves the visible state unchanged.
-For the common single-update path, Core derives candidate node ids from Loro's
-import event tree/map/text/list paths, materializes only those candidates, and
-compares them against the committed state before reporting `changedNodeIds`.
-Multi-update batches, dependency-pending updates that become applicable later,
-and accepted imports with no usable event candidates fall back to a full-state
-diff. Duplicate or still-pending imports do not invalidate materialized caches
-or clear redo.
+The Loro document remains Runtime-internal. It uses a fresh peer for new
+operations, supports compact snapshots and full updates for deep trees, and
+materializes and deletes with explicit work stacks rather than recursive JS
+traversal. Neither its snapshot bytes nor Core commands cross the public
+protocol.
 
-The Loro document wrapper materializes and deletes document trees with explicit
-work stacks rather than recursive JS traversal. Core's permanent-delete
-dependency collection uses the same iterative discipline, so valid deep outline
-chains do not fail from JavaScript call-stack depth in these paths.
-Yielding tree materialization honors `commitEveryNodes` even when called directly
-without an outer service transaction: Core opens an internal transaction and undo
-group so chunk commits are real Loro commits while undo still removes the import
-as one operation. Each chunk drains, materializes, and patches its touched nodes
-before committing, then Core records one revision and operation-history entry at
-the final transaction boundary. That keeps the public mutation atomic while
-avoiding one large end-of-import materialization stall. The tree-materialization
-context also caches active tag definitions, `childSupertag` config for inherited
-child tags, and field definition name/type resolution for pasted `field:: value`
-metadata, so importing many children under a tagged parent such as Today or a
-field-heavy import does not re-materialize the whole document for every inserted
-row or field. The agent import service chooses its `yieldEveryNodes` /
-`commitEveryNodes` chunk size from Import Pack stats: plain large outlines keep
-larger chunks, while field-heavy packs yield more often because each field
-materializes an entry plus a value/reference child.
+Asset ingest admits one exact revision, settles its anchor and logical
+AssetRecord in anchor-first order, and returns a staged Outline lease before a
+document mutation. Apply atomically consumes referenced leases into live asset
+reachability. Runtime recovery and lease policy decides when a logical record is
+unreachable; ContentStore alone decides when an unleased, unanchored revision is
+physically collectible. There is no public physical-delete capability.
 
-Native Daily Note import uses the same Core boundary across multiple parents.
-`DocumentService.createImportTreeBatchesYielding` resolves and ensures every
-canonical year/week/day target inside one Core transaction. Core materializes
-state once, indexes only the three canonical date-hierarchy levels, and yields
-between bounded date chunks before preflighting and materializing every date
-batch plus the optional non-date staging tree. Chunk commits retain one rollback
-frontier, one undo group, and one operation-history entry. A failure removes all
-imported roots and any date scaffolding created by that operation; existing day
-nodes and their prior children are untouched. Post-import verification traverses
-only the returned roots, so pre-existing Daily Note content cannot contaminate
-counts.
+`media add PATH|-` composes staging and media-Node creation as one common CLI
+intent while retaining the same internal lease boundary. `asset ingest` remains
+available when automation deliberately separates staging from reviewed document
+mutation. A failed media creation leaves the staged bytes governed by lease
+expiry; a successful Operation and its recovery patch protect the asset.
 
-Shared-state export, version-vector reads, incremental export, and remote
-import are available only at a committed Core boundary. They reject both an
-active explicit transaction and a standalone async mutation while it has
-yielded. Loro export can otherwise auto-commit pending operations, so this guard
-prevents a failed Core transaction from publishing data that its rollback later
-removes locally.
+Import is ordinary ChangeSet composition. The `outline` Skill's import helper
+inspects source data, accounts for coverage, and emits a ChangeSet plus evidence.
+It may use `ensure` bindings to create multiple canonical dates and attach all
+imported trees in one Diff and one apply. The helper never opens Core,
+persistence, or an import-only write endpoint.
 
-Loro snapshots omit updates whose causal dependencies are still missing. The
-local envelope therefore keeps only base64 update blobs whose end versions are
-not yet covered by the current oplog. Reload replays those blobs; they are
-removed once their operations enter the oplog. This list is CRDT dependency
-durability, not a network outbox, acknowledgement cursor, or retry queue.
-Loading an already-normalized snapshot reopens it only when reconciliation
-actually created a pending transaction, so normal reload performs one snapshot
-import while still preventing no-op reconciliation from becoming a hidden
-dependency of the first real local update.
+The Runtime process is discovered through a user-private descriptor and local
+authenticated transport. The descriptor and socket/token paths are derived by
+`src/outline/runtimePaths.ts`, shared by client and server without making the
+client depend on Runtime implementation. An ordinary desktop or CLI request may
+start the bundled Runtime; `--no-start` returns a stable unavailable error. If
+automatic start finds an older bundled contract, the client first authenticates
+the private Runtime identity and requires the descriptor to match the private
+writer-lock owner exactly. A current Runtime then retires through its private
+lifecycle route; a legacy Runtime that predates that route receives `SIGTERM`
+only after the same identity and ownership checks. The client waits for that
+exact instance to release its descriptor before launching one replacement, so
+an atomic private retirement claim makes simultaneous desktop and CLI starts
+converge on one signaler and one writer; a claim whose owner died is recovered.
+Unowned, unverifiable, or live-status drift remains `protocol_incompatible`;
+inspection through `status` and `--no-start` never retires or starts a process.
+The Runtime imports neither Electron nor renderer code.
 
 These are local persistence contracts only. Tenon currently starts no account,
-network transport, outbox, cursor, retry loop, Cloudflare resource, or sync UI.
-Future transport remains owned by Electron main and must not introduce
-Cloudflare SDK types into Core.
+network transport, outbox, retry loop, Cloudflare resource, or sync UI. Future
+replication must enter through the public Runtime contract rather than opening
+Core or workspace files from another process.
 
-## Projection Updates (incremental delta)
+## Runtime Events And Projection Updates
 
 The renderer holds its projection index across edits and folds **change sets**
 into it, instead of receiving and re-deriving the whole document each mutation.
 Per-edit cost scales with what changed, not document size.
 
-- **Wire type** (`src/core/types.ts`): `ProjectionUpdate` is a discriminated
+- **Desktop wire type** (`src/core/types.ts`): `ProjectionUpdate` is a discriminated
   union — `{ kind: 'full'; revision; projection }` for init / resync / whole-tree
   rewrites, or `{ kind: 'delta'; revision; todayId; changedNodes; removedIds }`
-  for normal mutations. Both renderer-facing payloads carry it: a command's
-  `CommandResult.update` and the `DocumentProjectionChangedEvent.update`.
-- **Main boundary builder** (`documentService.buildProjectionUpdate`): mirrors
-  the text-search delta logic. It reads core's `revisionDelta()` and emits a
-  `delta` (changed nodes via `projectionNodesFor`, with absent ids becoming
-  `removedIds`) for a clean `+1` revision step; any discontinuity, or core's
-  `requiresFullSearchRebuild` (undo/redo/import/load), falls back to `full`. Core
-  exposes this explicit projection-read surface; its internal `CommandOutcome`
-  carries only local interaction hints and does not force projection
-  materialization on the mutation path.
+  for normal mutations. It is a desktop adapter DTO, not a second mutation
+  protocol.
+- **Runtime event** (`src/outline/contract/schemas.ts`): every committed change
+  emits an ordered `outline.event` carrying its sequence, revision, Operation ID,
+  changed-node Projection records, and removed IDs. `watch` resumes from an
+  opaque cursor; a retention gap emits `resync.required`.
+- **Client adapter** (`src/outline/client/documentProjection.ts`): converts a
+  Runtime projection Event into the existing renderer delta and reads a bounded
+  complete Projection when initialization or resync requires `full`.
+- **Subscription lifetime** (`src/outline/client/client.ts`): public CLI streams
+  retain their finite command deadline. Desktop Event subscriptions use that
+  deadline only until the first validated `hello`, then remain open until caller
+  cancellation, transport closure, or a Runtime `end` record.
 - **Renderer reducer** (`reduceProjection` in `renderer/state/document.ts`): a
   `full` rebuilds the index; a `delta` creates a new immutable snapshot backed by
   a bucketed copy-on-write `byId` map and a lazy `projection.nodes` array view.
@@ -380,9 +377,7 @@ Per-edit cost scales with what changed, not document size.
   `changedNodes`). Every unchanged node keeps its object reference, and the
   snapshot objects still get fresh identities so existing React dependency keys
   update without requiring a component-level rewrite. A revision gap or a delta
-  with no base returns `null`, triggering the `get_projection` →
-  `ProjectionSnapshot` resync valve (belt-and-suspenders; in steady state the
-  single ordered channel never needs it).
+  with no base returns `null`, triggering a complete Runtime Projection resync.
 - **Re-render closure** (`renderer/state/renderRev.ts`): a per-node revision
   counter drives the memo. From the change set, `propagateDirty` walks a held
   reverse-edge index (`ReverseEdges`: target → referrers, for reference targets /
@@ -407,6 +402,8 @@ rebuildable projections. See [`agent-core.md`](agent-core.md).
 
 ## Type Boundary
 
-Protocol-shaped TypeScript types live in `src/core/types.ts` and are re-exported
-to the renderer through `src/renderer/api/types.ts`. The renderer API client
-keeps command names stable so UI code does not depend on Electron internals.
+Public cross-process schemas and DTOs live in `src/outline/contract/`. Desktop
+projection and focus adapter types remain in `src/core/types.ts` and are
+re-exported through `src/renderer/api/types.ts`; they do not expose the Core
+engine. Preload exposes a typed Outline request/stream bridge, never the socket,
+bearer token, filesystem, or Node APIs.

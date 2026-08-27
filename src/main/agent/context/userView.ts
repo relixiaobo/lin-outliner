@@ -10,10 +10,15 @@ import {
 } from '../../../core/referenceMarkup';
 import { formatTag } from '../../../core/textSyntax';
 import type { DocumentProjection, NodeProjection } from '../../../core/types';
-import { viewModeOf } from '../capabilities/agentNodeToolView';
+import { findViewDef } from '../../../core/viewConfig';
 
 const MAX_TITLE_CHARS = 160;
 const MAX_BREADCRUMB_NODES = 6;
+
+function viewModeOf(nodes: ReadonlyMap<string, NodeProjection>, owner: NodeProjection) {
+  const viewDef = findViewDef(nodes, owner);
+  return viewDef?.type === 'viewDef' ? viewDef.viewMode ?? 'list' : 'list';
+}
 
 export function buildUserViewPayload(
   hints: RendererUserViewHints | undefined,

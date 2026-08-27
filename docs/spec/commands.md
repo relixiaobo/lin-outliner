@@ -1,331 +1,498 @@
-# Command Protocol
+# Outline Command Protocol
 
-All document mutations and agent runtime calls are Electron IPC commands backed
-by the TypeScript core in `src/core` and the main process in `src/main`.
+All persisted Outliner reads and mutations use the versioned public contract in
+`src/outline/contract/`. The standalone Runtime owns document execution and
+durability. Electron main, the renderer, the `outline` CLI, built-in Skills, and
+external automation are clients of that same contract.
 
-## Source of Truth
+Agent Core remains a separate strict Thread/Turn/Item protocol. Native pickers,
+window state, focus, selection, clipboard, Reveal in Finder, file opening, and
+external URL opening are Electron or renderer effects and are not Outline
+Runtime capabilities.
 
-The authoritative list lives in [`src/core/commands.ts`](../../src/core/commands.ts):
+## Sources Of Truth
 
-- `DOCUMENT_COMMANDS` — document tree, rich text, fields, tags, references,
-  search nodes, view config, batch ops, undo/redo. Core mutation methods return
-  an internal `CommandOutcome` with only local interaction hints such as
-  `FocusHint`; the main-process boundary persists the workspace snapshot and
-  converts the core revision delta into the renderer-facing `CommandResult.update`
-  (`ProjectionUpdate`).
-- `AGENT_COMMANDS` — provider, capability, OAuth, and Skill-management settings.
-  Thread/Turn/Goal lifecycle uses the separate strict Agent Core transport below.
-- `ASSET_COMMANDS` — asset ingest, lookup, native pickers, safe system file
-  actions, and external URL opening. Asset commands never mutate document state;
-  renderer flows pair them with document commands when a picked/dropped file
-  should appear in the outline.
+- `src/outline/contract/schemas.ts` defines the exact QueryExpression, Selector,
+  TargetSpec, placement, Projection, ChangeSet, Diff, Operation, Event, asset,
+  response, and stream schemas. Runtime request and descriptor schemas remain
+  private transport implementation.
+- `src/outline/contract/queryOperators.ts` owns every executable public query
+  operator, its exact required and optional operands, value format, summary, and
+  canonical example. The generated QueryExpression schema excludes internal but
+  non-executable operators.
+- `src/outline/contract/capabilities.ts` is the executable public capability
+  registry. Each entry owns its name, exact CLI request and result schema,
+  command-family placement, help and completion metadata, parser options,
+  streaming/destructive flags, mutation semantics, audit category, summary,
+  examples, and coverage.
+- `src/core/commands.ts` remains the Runtime-internal mutation protocol. Public
+  Change variants lower to Core commands only inside Runtime.
 
-The renderer calls them through `window.lin.invoke(...)` via
-[`src/renderer/api/client.ts`](../../src/renderer/api/client.ts).
+The parity guard derives its queue from `DOCUMENT_COMMANDS` and `ASSET_COMMANDS`.
+Every persisted document command maps to exactly one public capability;
+`init_workspace` is Runtime initialization, and native OS/UI effects stay main
+owned. Missing and duplicate owners both fail the guard.
 
-## Categories
+## Public Capabilities
 
-### Document — tree and editing
-`init_workspace`, `get_projection`, `create_node`, `create_rich_text_node`,
-`create_tagged_node`, `create_tag_and_tagged_node`, `create_nodes_from_tree`,
-`create_capture`, `paste_nodes_into_node`, `split_node`, `apply_node_text_patch`,
-`update_node_description`, `merge_node_into`, `move_node`, `batch_move_nodes`,
-`indent_node`, `outdent_node`.
+| Kind | Capabilities | Contract |
+| --- | --- | --- |
+| Local metadata | `version`, `status`, `capabilities`, `schema` | Runs without document access; `status` never starts Runtime. |
+| Read | `find`, `show`, `export` | Resolves deterministic selectors and returns bounded Projections. |
+| Observe | `watch` | Streams ordered resumable Events as JSONL. |
+| Mutation kernel | `diff`, `commit`, `apply` | Previews one ChangeSet, directly commits a non-destructive ChangeSet, or atomically applies one exact reviewed Diff. |
+| History | `log`, `revert`, `undo`, `redo` | Reads durable Operations or records a guarded reversal as another Operation. |
+| Asset | `asset ingest`, `asset show`, `asset export` | Stages verified bytes, reads metadata, or streams verified bytes. |
+| Porcelain mutation | `add`, `set`, `text replace`, `move`, `duplicate`, `merge`, `indent`, `outdent`, `done set`, `done cycle`, `tag add`, `tag remove`, `field define`, `field set`, `field clear`, `field remove`, `field reuse`, `field select`, `definition create`, `definition configure`, `definition merge`, `reference add`, `reference set`, `reference replace`, `reference inline`, `reference restore`, `view set`, `view group set`, `view sort add`, `view sort set`, `view sort remove`, `view sort clear`, `view filter add`, `view filter set`, `view filter remove`, `view filter clear`, `view display add`, `view display set`, `view display remove`, `search create`, `search ensure-tag`, `search set`, `search refresh`, `template apply`, `daily ensure`, `capture add`, `media add`, `media set`, `trash`, `restore`, `purge` | Lowers one intent into the public ChangeSet contract. `--preview` returns its Diff; destructive or review-bound writes apply an exact Diff, while ordinary non-destructive writes may commit directly. |
 
-`create_nodes_from_tree` materializes a typed `CreateNodeTree` recursively,
-including content, optional descriptions, code block language, tags, fields, and
-task checkbox state. It is the bulk structural path for paste and import.
+`capabilities` is executable authority rather than a hand-maintained help list.
+`outline --help`, family help, exact command help, shell completion metadata,
+parser option admission, `outline schema COMMAND`, and the built-in Skill's
+generated `references/commands.md` derive from that registry.
+Porcelain command schemas describe their resource-specific input rather than the
+generic Runtime MutationInput. Drift tests compare the exact published options,
+schemas, positionals, completion data, and generated Agent command inventory.
+Capability kind and audit category drive host classification; execution context
+never removes a public schema field or document capability.
 
-`split_node` treats a same-parent split as continuation of the existing node: the
-new sibling carries the source tags, so their field slots project immediately
-without stored entries. Acquisition-time auto-initialization is the exception:
-each successfully resolved value is frozen in a stored entry, while unresolved
-strategies write nothing. A same-parent split does not clone static template
-field values or seed content. A cross-parent split does not carry the source
-tags; it applies the destination parent's configured child supertag as a new
-acquisition, including successfully resolved auto-initialization and one-shot
-freeform seed content.
+`outline schema COMMAND` returns only the compact request schema by default.
+`--part result` returns the result schema and `--part both` returns the explicit
+request/result pair. Named public schemas such as `ChangeSet` and
+`QueryExpression` retain their direct shape, reject `--part`, and use the same
+compaction. Schema compaction hoists reusable cyclic definitions into one root
+`$defs`; every published command request and named public schema is bounded to
+512 KiB and guarded against duplicated nested `$defs` expansion.
 
-`create_capture` atomically creates one launcher-capture node: a plain node
-carrying a hidden, typed `capture` provenance sidecar (`CaptureNodeMetadata` on
-`NodeBase.capture`) plus the source projected into native outline shape — a
-capture-kind tag (rolling up to `#capture`) and typed fields (URL / Author /
-Published) — in a single transaction so undo/redo stays coherent. The sidecar is
-system-owned JSON, hidden from outline rendering and default full-text search; the
-outline projection is the readable/searchable surface. The launcher invokes this
-through the `launcher:*` main-process IPC (not the renderer command client) so the
-renderer can't supply the source metadata. See [`launcher.md`](launcher.md).
+CLI and Runtime schema rejection returns bounded structured validation details.
+For a union, the validator follows the best matching discriminated branch before
+collecting issues, so errors identify useful JSON Pointer paths instead of
+exhausting the issue limit on unrelated alternatives. Details include path,
+schema path, keyword, and message, but never echo the rejected input value.
 
-### Document — batch operations on a row selection
-`batch_trash_nodes`, `batch_indent_nodes`, `batch_outdent_nodes`,
-`batch_toggle_done`, `batch_cycle_done_state`, `batch_duplicate_nodes`,
-`batch_move_nodes`, `batch_move_nodes_up`, `batch_move_nodes_down`,
-`batch_apply_tag`.
+Root help lists command families and direct commands. Family help lists its
+subcommands. Exact command `--help` and `-h` show syntax, positionals, options,
+defaults, selectors, cardinality, argv versus `--input FILE|-`, output,
+create/patch/replace/ensure/destructive and idempotency semantics, plus two or
+three canonical examples. Destructive help requires `--preview`, reviewed
+`--expect-diff`, and `--yes`, and states that `--yes` alone is invalid. Help is
+plain text even with `--json` or `--human` and runs without Runtime. Unknown
+paths/options and missing arguments provide the nearest command or exact help
+next step.
 
-### Document — done state and trash
-`toggle_done`, `cycle_done_state`, `trash_node`, `restore_node`, `delete_node`.
+Advanced query help and completion metadata use the same executable operator
+registry as `QueryExpressionSchema` and the generated Agent command reference.
+`outline schema QueryExpression` is the exact public grammar. Each rule is a
+closed operator-specific object: required field, tag, target, or value operands
+cannot be omitted, unrelated operands cannot be supplied, and an operator absent
+from that schema is not a supported CLI operator.
 
-`trash_node` / `batch_trash_nodes` move live nodes into Trash and preserve a
-restore location. `restore_node` moves one trashed node back to that remembered
-location when possible. `delete_node` is the permanent removal command: the UI
-exposes it only from Trash affordances such as **Delete forever** and **Empty
-Trash**, both guarded by confirmation.
+Non-TTY stdout defaults to one versioned JSON response envelope, or JSONL for a
+stream. `--human` forces human presentation and `--json` explicitly forces the
+machine form; combining them is invalid. Output mode never changes selection,
+mutation, or error semantics. `SIGINT` and `SIGTERM` abort every command path and
+use exit codes 130 and 143 respectively.
 
-### Document — node presentation
-`set_node_checkbox_visible`, `set_node_icon`, `set_node_banner`,
-`create_image_node`, `set_node_image`, `create_attachment_node`.
+### Porcelain intent routing
 
-`create_image_node(parentId, index, source)` creates a block image row from
-either a local `assetId` or an `http(s)` `mediaUrl` and persists optional image
-dimensions. `set_node_image(nodeId, source)` converts an existing plain content
-row into the same image node shape.
+The public product rule is:
 
-`create_attachment_node(parentId, index, metadata)` creates a block attachment
-row. It requires a local `assetId`, MIME type, original filename, and byte size;
-optional `thumbnailAssetId`, `pdfPageCount`, `audioDurationMs`, and
-`videoDurationMs` are copied from asset metadata. Image MIME types are rejected
-here because they use the image-node commands.
+- one complete resource intent uses one porcelain invocation;
+- complex state for that resource uses the same command with `--input FILE|-`;
+- multiple resources, dependencies, cross-date work, or bounded bulk edits use
+  one ChangeSet with bindings, one Diff, and one apply.
 
-### Document — view configuration
-`set_view_toolbar_visible`, `set_view_mode`, `add_sort_rule`, `update_sort_rule`,
-`remove_sort_rule`, `clear_sort_rules`, `add_filter_rule`, `update_filter_rule`,
-`remove_filter_rule`, `clear_filter_rules`, `set_group_field`,
-`add_display_field`, `update_display_field`, `remove_display_field`.
+No complete command intent requires a shell mutation loop, intermediate
+created-ID lookup, or several mutation Operations. Create and ensure results
+include created or bound IDs through the Operation result's bounded Projection.
+Common single-resource writes also return the smallest bounded Projection that
+identifies or verifies their primary target. The convenience Projection is not
+independent verification; callers still use `show`, `find`, or `log` when the
+workflow requires a separate observation. Ordinary focused editor typing may
+settle as several low-latency direct-commit Operations; when the renderer marks
+adjacent materialize/text-patch Operations with the same text-edit undo group,
+Runtime undo/redo selection treats them as one user action. Repeated `set`,
+`configure`, and `ensure` calls converge or return `outline.no-change` without
+creating another Operation. `create` and `add` remain explicit creation.
 
-`add_display_field` accepts either an existing field id or a new field name/type.
-The latter creates the field definition and display-field node in one mutation.
-Adding an already configured field reveals its existing display node rather than
-creating a duplicate. New display fields receive the next finite display order.
-`update_display_field` may move a column left or right; the move and sibling-order
-normalization are one mutation.
+`add` accepts a complete typed `NodeDraft` tree, including rich content,
+description, code, checkbox/done state, tags, fields, references, media, and
+children. Authored Node IDs use the canonical `node:<uuid>` form: a lowercase
+RFC 4122 variant v4 UUID matching the Core client-ID validator and every
+Runtime-generated public Node ID. `NodeDraft` metadata is closed: capture
+metadata uses the complete shared capture-provenance schema, query metadata uses
+the public query grammar, and paste metadata may carry `pasteTags` plus
+`pasteFields` so structured paste and slash-trigger trees preserve semantic
+tags/fields through field-slot append paths. Arbitrary JSON is not admitted, and
+invalid IDs, field types, or nested provenance are rejected at CLI and Runtime
+admission with no write. `definition create` owns complete reusable tag/field
+definitions and their type-specific configuration, templates/options, defaults,
+inheritance, and constraints. `field define` instead creates or reuses a field on
+one target and may set its initial value; an empty field name is valid only as an
+editor placeholder slot and is still recorded through the public schema rather
+than a renderer-only command. `tag add` applies an existing definition.
 
-### Document — knowledge model (tags and fields)
-`create_tag`, `preview_tag_template_backfill`, `apply_template_to_tagged_nodes`,
-`apply_tag`, `remove_tag`, `set_tag_config`, `set_field_config`,
-`create_field_def`, `create_inline_field`, `create_inline_field_after_node`,
-`update_field_slot`, `reuse_field_definition`, `register_collected_option`,
-`create_collected_field_option`, `select_field_option`,
-`set_field_free_text_value`, `clear_field_value`, `remove_field_value`,
-`merge_definitions`.
+`search create` accepts title, canonical query or `--match` STRING_MATCH
+shorthand, and initial mode, ordered sort, filters, group, display fields, and
+toolbar state. Its default parent is `@saved-searches`. `search set` atomically
+patches Search title/query/view state and refreshes materialized results. `view
+set` applies one complete declarative view patch; omitted properties preserve
+state and only its explicit `replace` object replaces sort/filter/display
+collections. The view leaf commands remain for small edits.
 
-`create_inline_field` may receive an existing `targetDefId`. That form validates
-the definition, rejects a duplicate field on the owner, and creates only the
-field entry in one mutation. It remains an explicit field-authoring path and
-therefore keeps the owner name-collision guard.
+A real table is represented by one owner Node with `viewMode: table`, direct
+child row Nodes, reusable field definitions, field-backed cell values, and an
+explicit display/sort/filter configuration. The built-in Skill's
+`fixtures/table-view-changeset.json` is the canonical executable example: the
+mandatory golden flow reads that fixture, creates the table below an ensured
+Daily Note through one Diff/apply, verifies its fields/view, and exactly reverts
+it. Markdown tables, aligned child text, and owner Nodes without a table
+`viewDef` do not satisfy a table request.
 
-User tag and field definitions are reusable only while they are active: the
-definition node must exist, have the expected `tagDef` / `fieldDef` type, and not
-live in the Trash subtree. Applying a tag, creating a tagged node, reusing a field
-definition, configuring definitions, and selecting `options_from_supertag` values
-all reject trashed definitions. Name-based creation ignores trashed same-name
-definitions and creates a fresh active definition under Schema.
+`capture add` accepts exactly one parent or local date, ensures the date when
+needed, preserves capture provenance, and creates its typed child tree in the
+same Operation. `media add` accepts a local path or stdin, stages the asset lease,
+and creates the image/attachment Node in one invocation. `asset ingest` remains
+the explicit primitive for automation that deliberately separates staging and
+review. Root `set` patches generic Node properties; `media set` owns media
+source/geometry; `search set` owns Search query/view configuration.
 
-Fields on an ordinary node are a read-time projection, not copies. The ordered
-`nodeFieldSlots` projection places tag-defined fields before own stored fields,
-uses applied-tag order, and walks each inheritance chain ancestor-first in
-template order. Field identity is the `fieldDefId`, not the normalized display
-name, so same-name definitions remain separate slots. The first stored entry for
-a projected definition fills that tag slot; concurrent duplicates remain honest
-own slots in child order.
+Create, move, and duplicate use a public placement union rather than loosely
+coupled parent/index fields. Destination placement is `first(parent)`,
+`last(parent)`, `index(parent, index)`, `before(sibling)`, or `after(sibling)`.
+Move and duplicate additionally accept `previous` and `next`; move shifts the
+selected sibling block, while duplicate places each copy immediately before or
+after its source. Porcelain exposes the same choices as `--first`, `--last`,
+`--index`, `--before`, `--after`, `--previous`, and `--next`.
 
-`apply_tag` therefore writes no ordinary field entries. It materializes only an
-`autoInitialize` value that resolves successfully at acquisition time, because
-date- and ancestor-dependent values must stay frozen to that moment and tree
-position. Static values stored on a tag template entry are not copied into the
-instance. An unmaterialized slot reads them as an inherited default unless the
-field has an `autoInitialize` strategy; accepting the default copies its value
-subtree into a new instance entry exactly once. A stored value always wins and
-never tracks a later template edit. Reapplying a tag remains idempotent.
-`remove_tag` removes the projected
-shape without deleting user data: an entry that already holds a value survives
-as an own field. Instance field entries carry no template provenance; tag and
-template provenance lives on the projected slot, while `templateId` remains only
-on one-shot freeform seed clones.
+Reference commands have non-overlapping semantics. `reference set` retargets an
+existing reference and rejects a content Node. `reference replace` inserts a tree
+reference at a content Node's position and moves the complete original subtree to
+Trash. `reference inline` converts a tree reference to inline form or replaces a
+content Node with an inline reference. The argv shorthand may omit `REFERENCE`
+only when `TARGET` is already a tree reference; content replacement and
+structured input require an explicit reference target. Each is one reversible
+Operation.
 
-Freeform template children remain one-shot seeds. The read-only
-`preview_tag_template_backfill(tagId)` command computes how many active, editable
-nodes are missing at least one seed and the total number of shallow clones that
-would be added. Targets include nodes carrying `tagId` directly and nodes whose
-applied tag extends `tagId`. `apply_template_to_tagged_nodes(tagId)` recomputes
-that plan and adds only the missing clones, preserving inherited ancestor-first
-template order and deduplicating each node by `templateId`. The whole fan-out is
-one mutation and therefore one undo step. Nodes in Trash, locked nodes, and
-protected document-system tag definitions are excluded from both counts and
-writes.
+`text replace` is a general bounded literal transform over Node content,
+description, or both. It accepts one exact target, STRING_MATCH `--matching`
+shorthand, or the canonical structured query. Query selection requires an
+explicit Node `max`; `max-replacements` independently bounds total matches across
+the selection. Planning reads one bounded Projection and writes its revision into
+the ChangeSet base, so an intervening mutation invalidates exact apply. The
+transform preserves marks and inline references outside replacement ranges and
+rejects a range that would consume an inline reference. It lowers to ordinary
+text-patch updates carrying an explicit reviewed-replace marker, requires
+destructive Diff review, creates one Operation, and returns semantic no-change
+when repeated after convergence. Unmarked text-patch updates, including
+`replace_all` patches produced by normal rich-text editor synchronization, are
+ordinary reversible edits and do not require destructive acknowledgement.
 
-`update_field_slot(ownerId, fieldDefId, mutation)` is the slot-aware value write
-boundary used by renderer, Table, and agent paths; paste enforces the same
-invariant inside its surrounding tree transaction. `appendText`,
-`appendReference`, `appendNodes`, and `selectOption` create a backing entry
-together with the first accepted value when needed; `appendNodes` preserves the
-complete rich-text and `CreateNodeTree` structure supplied by its callers.
-Failed or empty writes leave a virtual slot unmaterialized. `acceptDefault`
-materializes the current inherited static default and is a no-op once the slot
-has a stored entry. `commit` removes an
-empty tag-backed entry and returns the
-field to its virtual form. Empty own entries survive because their entry is the
-only record that the field exists. `clear_field_value` and removal of the final
-value enforce the same dematerialization rule. A mutation may carry the exact
-stored `entryId` so a concurrent duplicate own slot is updated independently;
-Core verifies that it belongs to the requested owner and definition. Forward
-done-state mapping also addresses its exact `fieldDefId`. Explicit field
-creation, reuse, and rename remain fail-closed on owner name collisions.
+`status` never starts Runtime. Absence is exactly `{ running: false }`. A live
+result includes the Runtime instance, exact contract digest, runtime and storage
+versions, document revision, transaction/snapshot/Event sequences, verified and
+total log bytes,
+torn/stale/inconsistent flags, pending-maintenance state, recovery lifecycle
+counts, retained recovery bytes and budget, and orphan-blob count. Log health is
+`healthy`, `degraded` while recoverable maintenance remains, or `blocked` when
+the verified prefix is readable but mutation admission is closed.
 
-`merge_definitions(targetId, sourceIds)` merges field definitions only when their
-types match, `options_from_supertag` sources match, and every stored source value
-is valid for the target type. A field-definition merge is document-wide: every
-active use of each named source definition is relinked to the target and option
-pools are combined.
+## CLI And Runtime Boundary
 
-A tag-definition merge instead follows template-child identity. It rewrites
-source-tag uses and moves direct template children into the target. A source
-field whose `fieldDefId` is absent from the target moves intact even when
-another target field has the same label. When both tags reuse the same
-`fieldDefId`, their template entries collapse: all source value children append
-to the target in source order, except an identical default already present is
-not appended twice. Scalar defaults compare by exact text; option defaults
-compare by option target node. Freeform seed clones whose `templateId` named the
-collapsed template entry are repointed to the survivor, and the source entry is
-removed. Tag merge never unifies
-field definitions by name and does not rewrite a third tag outside the requested
-tag merge.
+The supported integration boundary is the `outline` CLI plus its public domain
+schemas, response envelope, and stream records. The Unix socket, HTTP routes,
+descriptor, bearer token, and `OutlineRequest` envelope are private and may
+change with the bundled product. `outline schema` therefore does not publish
+`OutlineRequest` or `RuntimeDescriptor`.
 
-Field-entry collapse passes its survivor to the subtree-removal boundary. That
-boundary repoints every surviving `templateId` that named the removed entry;
-ordinary permanent deletion clears a removed template origin. Referential
-healing preserves survivor timestamps, including for entries already in Trash.
+CLI and Runtime currently ship together. The Runtime descriptor and live status
+both carry the SHA-256 digest of the canonical capability manifest. Every attach
+compares both values with the bundled CLI digest, including ordinary commands;
+same-major drift fails closed before any public command executes. When automatic
+start is enabled, an authenticated Runtime whose private descriptor and writer
+lock prove the same process identity is retired within the startup deadline and
+replaced by the bundled Runtime. A legacy Runtime without the private retirement
+route receives `SIGTERM` only after those checks. `status`, `--no-start`, an
+unowned descriptor, or an unverifiable live identity remains
+`protocol_incompatible` and never changes process state. Minor-version
+negotiation is deferred until CLI and Runtime can be distributed independently.
 
-`reuse_field_definition(entryId, targetDefId)` repoints a field entry at an
-existing definition instead of the throwaway draft `>` minted, dropping the now
--orphaned draft def. `targetDefId` is either a real `fieldDef` node (reuse a
-user field) or a `sys:*` id (a built-in system field with no backing node — value
-derived from the owner). When `targetDefId` is a system field, the entry's stored
-value children are also dropped (the value is computed, not stored). Most system
-fields render read-only; `sys:done` is the exception — a read-write checkbox that
-toggles the owner node's done state.
+Startup discovery uses `--startup-timeout`, defaulting to 10 seconds. Every
+request, response body, upload, asset transfer, and public CLI stream has a
+separate hard `--timeout`, defaulting to 60 seconds and capped at 300 seconds. A
+live process with an unresponsive socket therefore settles as unavailable
+instead of hanging. Both deadlines compose with the caller's `AbortSignal`.
+Desktop Event subscriptions use the command deadline only until the first
+validated `hello`; after that, cancellation, transport closure, or a Runtime
+`end` record owns their lifetime.
 
-### Document — references
-`add_reference`, `add_reference_conversion`, `set_reference_target`,
-`replace_node_with_reference`, `replace_node_with_reference_conversion`,
-`replace_node_with_inline_reference`, `convert_reference_to_inline_node`,
-`restore_inline_reference_node_to_reference`.
+## Selector And Projection
 
-The generic reference commands also operate under a plain field entry. A
-whole-row field value is therefore a normal `reference` child, not a separate
-field type or command surface.
+A `Selector` is independent of renderer state:
 
-### Document — search and dates
-`search_nodes`, `backlinks`, `ensure_date_node`, `ensure_tag_search`,
-`create_search_node`, `set_search_node`, `set_search_query_outline`,
-`refresh_search_node_results`.
+- `{ by: 'id', id }` selects one exact Node ID.
+- `{ by: 'ids', ids }` selects an ordered, unique list of exact Node IDs.
+- `{ by: 'alias', alias }` selects `home`, `inbox`, `schema`, `trash`,
+  `daily-notes`, `library`, `saved-searches`, or `today`.
+- `{ by: 'date', date }` selects one canonical local date.
+- `{ by: 'search', id, limit }` executes one Saved Search live and does not trust
+  or refresh its materialized reference children.
+- `{ by: 'query', query, within?, includeTrash?, order?, limit }` uses the shared
+  structured search grammar.
 
-### Document — composer references
+Query resolution evaluates the complete match set, removes Trash unless
+`includeTrash` is true, applies `within`, and applies the requested stable order
+before taking `limit`. The limit therefore bounds the final selector result, not
+an intermediate relevance-ranked candidate set.
 
-Sending an outliner node to the agent composer is a renderer-only draft action.
-It inserts the node as a structured composer reference, equivalent to an
-`@node` mention, and does not mutate the document or start a Turn. The composer
-remains the intent surface; a submitted draft starts or steers the selected
-Thread through Agent Core.
+`show ID...` lowers multiple exact IDs to one ordered `ids` selector. Runtime
+defaults lower `ids`, `query`, and `search` selectors to bounded `many` targets
+using the selector's exact list length or declared limit; exact IDs, aliases, and
+dates lower to `one`. `show` and `export` also accept a complete Projection with
+no redundant Selector. If both are supplied, they must declare the same Selector,
+and standalone read Projections cannot use ChangeSet bindings.
 
-### Document — history
-`undo`, `redo`.
+`find
+--count` returns an exact count without a Node payload; `find --input` can return
+several uniquely named counts with one optional `sharedQuery`, combined with each
+query using canonical `AND`. One request builds and reuses its text selection
+index. `find --search SEARCH_ID` executes a Saved Search live, including stale
+materialized searches, and can also return an exact count.
 
-### Assets
-`ingest_asset`, `ingest_local_file`, `ingest_thread_resource`, `lookup_asset`, `delete_asset`,
-`pick_image_files`, `pick_attachment_files`, `open_asset`, `reveal_asset`,
-`copy_asset_file`, `open_external_url`.
+`TargetSpec` adds `one`, `zero-or-one`, or bounded `many` cardinality. Mutation
+resolution never picks the first fuzzy match. Missing, ambiguous, over-limit,
+or cardinality-invalid targets fail before any write.
 
-`ingest_asset` stores bytes under the workspace asset directory and returns
-`AssetMetadata`. It derives image dimensions, PDF page count, audio/video
-duration when the format is locally parseable, and a best-effort first-page PDF
-thumbnail when the platform thumbnail tool is available. MIME type is resolved
-from file signatures or filename extension first, then from a renderer hint when
-present, falling back to `application/octet-stream`. The signature/extension
-table covers the common AAC, FLAC, Matroska, MPEG, Ogg/Opus, AVI, WMA, and WMV
-audio/video families used by media search; duration is derived only when the
-container has a local parser and never substitutes for MIME classification.
+A `Projection` chooses `summary`, `node`, `outline`, `backlinks`, `view`, or
+`export`; it declares targets, bounded depth, included fields, pagination, and
+format. Pagination cursors bind the Projection hash and revision. A Projection
+contains document facts only, never selection, focus, expansion, pane placement,
+sidebar pins, or Agent-specific filtering.
 
-`ingest_local_file` is the ingest bridge for agent-produced files (agent-file-model
-F4): it path-ingests a file into the asset store and returns `AssetMetadata`, but
-**only** when the path resolves inside the agent's trusted roots
-(workdir/scratch) via `resolveTrustedLocalFileReference` — the same gate that backs
-previewing those file chips. The renderer can thus only ingest a file it could
-already preview, so this does not reopen the arbitrary-local-file read primitive
-that `ingest_asset`'s buffer-only-over-IPC rule guards against. Directories and
-gone/out-of-root paths return `null`.
+`include` is an allow-list for optional Node metadata. In particular, `fields`
+admits field-definition linkage, `view` admits view/sort/filter/display/query
+metadata, `trash` admits the original-parent linkage used for restoration, and
+`backlinks` returns a separate bounded backlinks collection without replacing the
+selected Node result. Each Projection builds one reference summary and reuses it
+across every selected target and page slice; pagination never triggers one
+whole-document backlink scan per target. When one of these values is absent, its
+metadata is redacted from Node results.
 
-`ingest_thread_resource` is the main-renderer-only ingest bridge for managed Agent
-payloads. The renderer supplies only an owning Thread ID and an exact
-`ThreadResourceReference`; main verifies that the current Thread Item graph owns the
-reference, reads the verified managed bytes, and buffer-ingests them without exposing a
-path. The read is capped at 20 MiB and never truncates; oversized, missing, stale,
-forged, corrupt, or length-mismatched references return `null`.
+## ChangeSet
 
-`pick_image_files` and `pick_attachment_files` open native file pickers in the
-main process and ingest selected regular files before returning metadata to the
-renderer. The renderer decides whether each asset becomes an image node or an
-attachment node.
+One mutation request carries one `outline.changeset` with optional base revision
+and Node digests, idempotency key, source metadata, ordered operations, and
+bounded return Projections. The CLI generates `cli:<uuid>` before dispatch when
+porcelain or direct `diff` input does not provide a key; direct `diff` fixes the
+key into the reviewed artifact. Desktop and Electron-main mutations, previews,
+and history actions generate `desktop:<uuid>` keys. Operations use this stable
+top-level vocabulary:
 
-`open_asset`, `reveal_asset`, and `copy_asset_file` operate only on files whose
-resolved real path remains inside the asset directory. `open_asset` additionally
-uses the local-file open policy before handing the file to the OS. `reveal_asset`
-reveals the asset copy in Finder; `copy_asset_file` copies both a text path and,
-where supported, a native file URL/file-list flavor to the clipboard.
+| Change | Purpose |
+| --- | --- |
+| `resolve` | Resolve and bind an exact target set without changing state. |
+| `ensure` | Resolve or create a canonical date, tag search, tag definition, or field definition, then bind it. |
+| `create` | Create typed Node trees at one explicit destination placement and optionally bind their IDs. |
+| `update` | Apply ordered typed content, description, code, done, tag, field, reference, view, search, icon, banner, or image instructions. |
+| `move` | Reparent or reorder bounded targets through one explicit placement. |
+| `duplicate` | Copy bounded targets through one explicit placement and optionally bind the copies. |
+| `merge` | Merge Nodes or compatible definitions under Core invariants. |
+| `template` | Apply tag-template backfill to the Diff-computed affected set. |
+| `lifecycle` | Trash, restore, or purge bounded targets. |
 
-### Agent Core
+Bindings are unique within one ChangeSet, cannot be forward-referenced, and
+freeze their ordered target set. They let a later change consume a resolved,
+ensured, created, or duplicated result without another process round trip.
+`NodeDraft` and every update instruction are typed unions; the public contract
+does not accept a generic property bag, JSON Patch, or serialized Core command.
 
-The renderer sends one strict `agentCoreRequest(method, input)` request through
-preload and subscribes to `onAgentCoreNotification`. The canonical methods are:
+Normalization validates schema and limits, resolves all selectors at one base
+revision, assigns new IDs, records target and structural-parent preconditions,
+lowers porcelain, executes Core validation on a disposable frontier, and hashes
+canonical JSON. Invalid semantic keys, unresolved bindings, protected targets,
+or stale preconditions write nothing.
 
-- `thread/list`, `thread/read`, `thread/start`, `thread/resume`, `thread/fork`,
-  `thread/name/set`, `thread/archive`, `thread/unarchive`, and `thread/delete`
-- `thread/turns/list` and `thread/items/list`
-- `turn/submit`, `turn/start`, `turn/steer`, and `turn/interrupt`
-- `goal/get`, `goal/create`, and `goal/update`
-- `userInput/respond`
+Validation covers the complete semantic frontier before commit. Changing a field
+definition type validates every existing value against the proposed type.
+Lifecycle targeting collapses selected ancestors and descendants so Trash moves
+each covered subtree once and never strands descendants. These checks apply to
+desktop and CLI callers through the same ChangeSet executor.
 
-The main process owns `ThreadService`; the renderer never reads rollout or SQLite
-stores directly. Every request and notification passes the Agent Core codec.
-History reads are paginated, Turn operations require exact identity
-preconditions, and editing the latest terminal input appends a rollback marker
-before starting its replacement Turn in the same Thread. Continue in new chat is
-the explicit fork path. See [`agent-core.md`](agent-core.md).
+`diff --input-format jsonl` uploads a header, bounded operation records, and a
+count/SHA-256 trailer as a stream. After transport authentication, Runtime writes
+the upload to a `0700` private spool directory using a `0600` temporary file,
+checks the 64 MiB upload and 8 MiB record bounds while receiving it, then parses
+and validates records incrementally. Runtime removes the spool file on success
+or failure. An idempotency key supplied by the CLI is checked or injected only
+after the trailer digest authenticates the uploaded ChangeSet.
 
-### Agent — providers and runtime settings
-`agent_get_provider_settings`, `agent_update_runtime_settings`,
-`agent_upsert_provider_config`, `agent_delete_provider_config`,
-`agent_set_active_provider`, `agent_set_provider_api_key`,
-`agent_delete_provider_api_key`, `agent_get_provider_secret_status`.
+## Diff, Commit, Apply, And Operations
 
-## Conventions
+`diff` normalizes a ChangeSet and returns an `outline.diff` containing its
+canonical normalized ChangeSet, hashes, base revision, bindings, affected
+before/after digests, destructive summary, warnings, and size estimate. It does
+not advance document revision, create an Operation, or retain staged assets.
 
-- A renderer module never mutates document state directly. UI changes that
-  affect document content or tree structure must go through a command.
-- Every mutating command produces a renderer-facing `CommandResult.update`
-  (`ProjectionUpdate`) plus an optional `FocusHint` so the caller can update local
-  projection state and restore focus deterministically. Ordinary UI mutations
-  return after the document has been accepted at a monotonic persistence
-  revision; `WorkspaceSaver` later appends the incremental update and acknowledges
-  the durable tier. Trusted document-system transactions are the explicit
-  exception: they resolve only after their target revision is durable, preserving
-  the ordering between the workspace and the control-plane stores. Core's
-  internal `CommandOutcome` does not carry a full projection.
-- During reversible app-quit draining, new document mutations wait at the
-  admission boundary. Cancel readmits every queued request; entering irreversible
-  teardown rejects requests that never crossed that boundary. A repeated quit
-  request cannot silently bypass the durable revision barrier.
-- Origins are tagged on the underlying Loro transaction (`user:`, `agent:`,
-  `system:`) so the scoped `UndoManager` can separate user undo from agent
-  undo. The all/user/agent undo managers each retain the latest 100 steps. The
-  separate operation journal used for history listing and stack guards is bounded
-  to the latest 500 local entries, and each entry stores a bounded affected-node
-  id sample with total count/hash metadata instead of an unbounded id list. See
-  `src/core/loroDocument.ts` and `src/core/operationJournal.ts`.
-- `NodeType` is content-oriented. It does not include a work/execution node type;
-  Agent execution is owned by the Thread, Turn, Item, and Goal stores outside the
-  document model.
-- When adding or renaming a command, update `DOCUMENT_COMMANDS` or
-  `AGENT_COMMANDS` and the matching dispatcher in `src/main/documentService.ts`
-  or `src/main/main.ts`. Agent Core methods instead update its transport codecs
-  and `ThreadService`. Update this category list when adding a whole new category,
-  not for individual additions.
+`commit` accepts the same ChangeSet contract and uses the same normalization,
+selector, binding, asset-lease, idempotency, transaction-log, recovery, and
+Operation semantics as `diff` followed by `apply`, but skips constructing a
+reviewed Diff artifact. It is only valid for non-destructive writes. Runtime
+rejects purge, empty-Trash purge, merge, and explicitly reviewed destructive text
+replacement on this path with `confirmation_required`; those calls must use
+`diff` followed by `apply`.
+
+`apply` accepts the reviewed Diff, not an unreviewed private mutation. Runtime
+rechecks its hashes, base revision, target digests, asset leases, and destructive
+acknowledgement before executing. Node/definition merge, purge, and empty-Trash
+flows require a Diff-bound explicit acknowledgement; acknowledgement alone is
+insufficient.
+
+After payload hash and key validation, Runtime resolves an existing idempotency
+receipt before base-revision and Node-precondition checks. Reviewed apply binds
+the key to the canonical Diff payload. Direct commit binds the key to the
+original submitted ChangeSet payload, then records the normalized ChangeSet hash
+on the Operation. The same key and canonical payload returns the original
+Operation even when its base is now historical; the same key with another payload
+remains an idempotency conflict.
+
+Human destructive porcelain on a TTY first prints the exact Runtime-produced
+Diff and asks for confirmation. Acceptance submits that same artifact to
+`apply`; rejection writes nothing, and a revision change during review returns a
+stale conflict without recomputing or retrying. JSON and non-TTY callers must
+provide both `--yes` and either a reviewed Diff artifact or `--expect-diff`.
+Porcelain preview and apply invocations use the same `--idempotency-key`; a new
+key changes the normalized Diff and therefore its hash. `--yes` alone is
+rejected by the parser.
+
+Canonical Diff responses stream from Runtime while SHA-256 and byte count advance
+over the same chunks. Results up to 8 MiB may be collected into the single JSON
+envelope. Larger results require an atomic `--output` file or raw `--output -`;
+the client verifies response identity, length, and digest as the stream is
+consumed and never retains the whole encoded artifact merely to hash it.
+
+Apply is atomic. Runtime keeps Core rollback live until one fsynced transaction
+record contains the document update, Operation, recovery patch, idempotency
+receipt, asset-reference delta, and Event sequence. Only then does it return the
+`outline.operation`. Any validation, execution, encode, capacity, or durability
+failure leaves document state, projections, history, and asset reachability
+unchanged.
+
+An Operation records origin, optional trusted causation, source, summary,
+bounded affected IDs plus complete-set count/hash, before/after revisions,
+recovery state, optional text-edit undo-group metadata, and requested bounded
+result Projections. `revert` checks one retained recovery patch and current
+affected state; a conflict returns a typed
+`RevertConflictDiff` in `revert_conflict.error.details.conflictDiff` and writes
+nothing. The Diff identifies each changed Node precondition by its expected
+post-Operation and actual digest. A successful `revert OPERATION_ID` is a new
+Operation linked to that exact target through `revertsOperationId`.
+`undo` and `redo` are convenience selection over the same retained history and
+do not expose a separate stack authority. They default to the authenticated
+caller's origin, accept an explicit `--origin` scope, and can require the visible
+stack head with `--expect-operation`. Consecutive available Operations with the
+same text-edit `undoGroup.groupId` are selected together; the group recovery
+Operation links the visible stack head in `revertsOperationId` and the complete
+covered ordered set in `revertsOperationIds`. A mismatched guard returns a
+conflict and creates no Operation.
+
+Operation summaries aggregate ChangeSet operations by change kind, so their
+encoded size remains bounded even when one legal ChangeSet contains tens of
+thousands of leaf operations.
+
+`log` returns an `OperationLogPage` in newest-first order. Opaque cursors bind
+the origin, Thread/Turn/Item causation, affected-Node, Operation, and idempotency
+filters used to create the page. `log --operation OPERATION_ID` also pages the
+complete affected-Node IDs from retained recovery data; the bounded cursor on a
+truncated Operation resumes the same affected-ID sequence. Expired recovery is
+reported explicitly rather than returning an incomplete affected set.
+
+Idempotency keys are scoped to workspace and protocol major. Reuse with the same
+canonical payload returns the settled Operation; reuse with another payload is a
+conflict. `commit`, `revert`, `undo`, and `redo` also carry durable CLI-generated
+keys. `apply` rejects an unkeyed Diff instead of modifying reviewed content.
+Clients never automatically retry after an unknown settlement. A timeout,
+disconnect, `SIGINT`, or `SIGTERM` after mutation dispatch returns
+`operation_settlement_unknown`, includes the exact key, and names the precise
+next command: `outline log --idempotency-key KEY`.
+
+Semantic no-change returns `outline.no-change` at the current revision without
+creating an Operation or Operation Event. Desktop clients consume that result
+directly, refresh or reuse their current Projection as appropriate, and never
+wait for an Operation Event that cannot exist.
+
+## Events And Desktop Intents
+
+Every commit appends ordered `projection.changed`, `operation.committed`,
+`operation.reverted`, or recovery-lifecycle Events. `watch` resumes from an
+opaque cursor and emits `resync.required` when retained history cannot bridge a
+gap. Desktop adapters convert projection Events to the renderer's incremental
+`ProjectionUpdate`; revision gaps trigger a complete Projection read.
+
+A watch that requests an attached Projection may receive one only when Runtime
+can produce it at that Event's revision. If replay reaches a historical Event
+whose Projection cannot be reconstructed, Runtime emits one `resync.required`
+and closes instead of attaching the current workspace Projection to old history.
+
+Recovery expiry appends its maintenance record before removing unreferenced
+blobs and emits `operation.recovery-expired` with the expired Operation and patch
+IDs. Its cursor uses the active Runtime instance, current document revision, and
+durable Event sequence, so a live watcher can resume across maintenance.
+
+Renderer intent helpers in `src/renderer/api/outlineIntents.ts` map UI actions to
+public Changes. Main-side actions use `src/main/outlineActionCommands.ts` for the
+same purpose. These adapters may add local `FocusHint` behavior, but they contain
+no Core switch, persistence logic, selector implementation, or alternate write
+path.
+
+Composer Node references remain renderer draft state until submission. Sending
+one to Agent Core does not mutate the document. Launcher capture is a trusted
+main-owned intent that builds the same public capture ChangeSet.
+
+## Assets And Native Effects
+
+`asset ingest` accepts a path, stdin, or bounded bytes and returns a staged lease
+with logical asset/lease IDs, exact byte size, MIME type, filename, and derived
+metadata. Public results never expose a physical digest, anchor, or ContentStore
+path. The Runtime resolves the logical AssetRecord and ContentStore verifies its
+exact revision on reads and exports. A document ChangeSet that references the
+lease atomically makes the logical asset reachable.
+
+Runtime retains logical records while protected by a live Node, unexpired lease,
+or retained recovery patch. It durably removes an unreachable record before
+releasing its opaque anchor; central ContentStore GC then collects only revisions
+with no admission lease or retention anchor. There is no public asset-delete
+capability. File export reports only destination and byte count.
+
+Native file pickers, trusted Agent-file resolution, managed Thread-resource
+reads, local open policy, Finder reveal, clipboard file flavors, and external URL
+opening stay in Electron main. They may stage or export through the Runtime but
+never mutate document state directly.
+
+## Agent Core And Settings
+
+The renderer sends strict `agentCoreRequest(method, input)` requests through
+preload and subscribes to canonical notifications. Thread, Turn, Item, Goal,
+user-input, Automation, and Agent lifecycle methods remain owned by the Agent
+Core codecs and `ThreadService`; they are not added to the Outline capability
+registry.
+
+Provider, runtime, capability, OAuth, Skill-management, application Settings,
+and update commands remain Electron-main IPC. They cannot read or mutate the
+Outliner except by acting as an ordinary authenticated Runtime client.
+
+## Invariants
+
+- Every persisted mutation from desktop, CLI, built-in Agent, import, or
+  external automation follows the same public ChangeSet routing: direct
+  non-destructive commit, or reviewed Diff apply when review/destructive
+  semantics require it.
+- Agent causation changes immutable attribution, not public capability or
+  projection shape. Only host attestation can record built-in Agent causation.
+- Runtime is the only process importing Core, Loro document state, transaction
+  storage, recovery storage, or the asset index.
+- Public schema validation and conflict checks happen before write admission.
+  Process boundaries compile and cache validators from the exact registry
+  schema object; large recursive ChangeSets, Diffs, normalized imports, and
+  response envelopes do not fall back to interpretive union validation.
+- Renderer and Electron main never open workspace persistence directly.
+- Adding a Core document command requires exactly one capability owner; adding a
+  public capability requires schema, admission, CLI, audit, and parity coverage.

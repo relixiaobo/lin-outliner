@@ -63,6 +63,9 @@ describe('createNode with a client-proposed id (eager materialization support)',
 
   test('isClientNodeId accepts freshId-shaped node ids and rejects others', () => {
     expect(isClientNodeId(`node:${crypto.randomUUID()}`)).toBe(true);
+    expect(isClientNodeId('node:00000000-0000-1000-8000-000000000000')).toBe(false);
+    expect(isClientNodeId('node:00000000-0000-4000-0000-000000000000')).toBe(false);
+    expect(isClientNodeId('node:00000000-0000-4000-8000-00000000000A')).toBe(false);
     expect(isClientNodeId('node:abc')).toBe(false);
     expect(isClientNodeId('ref:' + crypto.randomUUID())).toBe(false);
     expect(isClientNodeId('trash')).toBe(false);

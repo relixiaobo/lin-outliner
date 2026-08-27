@@ -11,7 +11,6 @@ import type { AgentTool } from '../runtime/kernel/types';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import type { ToolArtifactSink } from '../runtime/ToolArtifactSink';
-import { createNodeTools, type NodeToolScope, type OutlinerToolHost } from './agentNodeTools';
 import {
   createLocalTools,
   type AgentFileReadImageNormalizer,
@@ -218,7 +217,6 @@ export interface AgentToolsOptions {
   imageGeneration?: AgentImageGenerationRuntime;
   allowedTools?: readonly string[];
   disallowedTools?: readonly string[];
-  nodeScope?: NodeToolScope;
   artifactSink?: ToolArtifactSink;
 }
 
@@ -227,23 +225,14 @@ interface AgentToolCatalogEntry {
   create: () => AgentTool<any>[];
 }
 
-export function createAgentTools(outliner?: OutlinerToolHost, options: AgentToolsOptions = {}): AgentTool<any>[] {
-  const tools = buildAgentToolCatalog(outliner, options)
+export function createAgentTools(options: AgentToolsOptions = {}): AgentTool<any>[] {
+  const tools = buildAgentToolCatalog(options)
     .flatMap((entry) => entry.precondition ? entry.create() : []);
   return filterAgentTools(tools, options.allowedTools, options.disallowedTools);
 }
 
-function buildAgentToolCatalog(
-  outliner: OutlinerToolHost | undefined,
-  options: AgentToolsOptions,
-): AgentToolCatalogEntry[] {
+function buildAgentToolCatalog(options: AgentToolsOptions): AgentToolCatalogEntry[] {
   return [{
-    precondition: !!outliner,
-    create: () => outliner ? createNodeTools(outliner, {
-      localFileRoot: options.localFileRoot,
-      nodeScope: options.nodeScope,
-    }) : [],
-  }, {
     precondition: true,
     create: () => createLocalTools({
       localRoot: options.localFileRoot,

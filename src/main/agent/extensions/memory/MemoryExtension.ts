@@ -1,10 +1,7 @@
-import type { DocumentCommand } from '../../../../core/commands';
-import { renderedMarkdownNodeReferenceIds } from '../../../../core/markdownNodeReferences';
 import type {
   AgentCoreExtension,
   ThreadHistoryRollbackContext,
   ThreadServiceExtensionHost,
-  ToolLifecycleResult,
   TurnAdmissionContext,
   TurnAdmissionContribution,
 } from '../../../../core/agent/extensions';
@@ -14,30 +11,14 @@ import {
   type MemorySettingsView,
   type ThreadMemoryMode,
 } from '../../../../core/agent/memory';
-import {
-  createFilteredTextSearchIndex,
-  type TextSearchIndex,
-} from '../../../../core/textSearchIndex';
 import type {
-  AgentCoreRecordedNotification,
-  AgentMutationCausation,
   Thread,
   ThreadId,
-  ThreadItem,
   Turn,
   TurnId,
 } from '../../../../core/agent/protocol';
-import type { DocumentProjection, NodeProjection, ProjectionUpdate } from '../../../../core/types';
-import type {
-  OutlinerProjectionFilter,
-  ProjectionIndex,
-} from '../../capabilities/agentNodeToolTypes';
-import type {
-  DocumentMutationMeta,
-  DocumentMutationObserver,
-  DocumentTransactionProjectionChanges,
-  ProjectionChangedDelivery,
-} from '../../../documentService';
+import type { DocumentProjection, ProjectionUpdate } from '../../../../core/types';
+import type { Operation } from '../../../../outline/contract';
 import { uuidV7 } from '../../uuid';
 import {
   MemoryControlStore,
@@ -63,7 +44,6 @@ import {
   type MemoryVisibilityView,
 } from './TimelineMemoryStore';
 
-const MAX_TRACKED_MEMORY_READS = 8;
 const EXPLICIT_MEMORY_INTENT = /\b(?:remember|forget)\b|\b(?:save|store|add|update|change|remove|delete)\b[^\n]{0,80}\bmemory\b|\bmemory\b[^\n]{0,80}\b(?:save|store|add|update|change|remove|delete)\b|记住|请记|帮我记|保存.{0,20}记忆|记忆.{0,20}(?:保存|添加|更新|修改|删除|移除)|忘掉|忘记/iu;
 
 interface ResetPublicationPayload {
@@ -79,7 +59,6 @@ export interface MemoryThreadHost extends ThreadServiceExtensionHost {
   activeRootUserTurns(): readonly { threadId: ThreadId; turnId: TurnId }[];
   interruptRootTurns(turns: readonly { threadId: ThreadId; turnId: TurnId }[]): Promise<void>;
   readThread(input: { threadId: ThreadId; includeTurns?: boolean }): { thread: Thread };
-  readTurnForHost(threadId: ThreadId, turnId: TurnId): Turn | null;
   isThreadNavigable(threadId: ThreadId): boolean;
   historyRollbackMarker(rollbackId: string): {
     readonly threadId: ThreadId;
@@ -96,59 +75,11 @@ export interface MemoryThreadHost extends ThreadServiceExtensionHost {
   }): Promise<string>;
 }
 
-export interface MemoryDocumentPolicy extends OutlinerProjectionFilter {
-  authorizeMutation(
-    command: DocumentCommand,
-    args: Readonly<Record<string, unknown>>,
-    meta: DocumentMutationMeta,
-    projection: DocumentProjection | (() => DocumentProjection),
-  ): boolean;
-  documentChanged(operationId?: string): void;
-}
-
-interface TurnMemoryUsage {
-  readonly nodeIds: Set<string>;
-  readonly threadId: ThreadId;
-}
-
-interface ProjectionFilterRevision {
-  readonly mutationRevision: number;
-  readonly controlRevision: number;
-  readonly explicitRevision: number;
-}
-
-interface HiddenNodesCache extends ProjectionFilterRevision {
-  readonly hiddenNodeIds: ReadonlySet<string>;
-}
-
-interface TurnProjectionFilterState {
-  readonly threadId: ThreadId;
-  readonly turnId: TurnId;
-  readonly explicitNodeIds: Set<string>;
-  rootUserThread?: boolean;
-  explicitReferencesComplete: boolean;
-  explicitRevision: number;
-  hiddenNodesCache?: HiddenNodesCache;
-  projectionCache?: ProjectionFilterRevision & {
-    readonly source: DocumentProjection;
-    readonly filtered: DocumentProjection;
-  };
-  projectionIndexCache?: ProjectionFilterRevision & {
-    readonly sourceProjection: DocumentProjection;
-    readonly sourceNodes: Map<string, NodeProjection>;
-    readonly filtered: ProjectionIndex;
-  };
-  textSearchIndexCache?: ProjectionFilterRevision & {
-    readonly source: TextSearchIndex;
-    readonly filtered: TextSearchIndex;
-  };
-}
-
 export interface MemoryExtensionOptions {
   readonly onError?: (error: unknown, operation: 'graph-digest' | 'graph-wake') => void;
 }
 
-export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy, DocumentMutationObserver {
+export class MemoryExtension implements AgentCoreExtension {
   readonly id = MEMORY_EXTENSION_ID;
   private host: MemoryThreadHost | null = null;
   private pipeline: MemoryPipeline | null = null;
@@ -158,11 +89,8 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
   private workerStopping = false;
   private workerStopPromise: Promise<void> | null = null;
   private storeClosed = false;
-  private readonly turnMemoryUsage = new Map<TurnId, TurnMemoryUsage>();
-  private readonly turnProjectionFilters = new Map<TurnId, TurnProjectionFilterState>();
   private lastGraphDigest = '';
   private mutationIndex: MemoryMutationIndex | null = null;
-  private transactionAffectedNodeIds: Set<string> | null = null;
   private graphChangeTimer?: ReturnType<typeof setTimeout>;
   private graphChangePending = false;
   private graphChangeForcesWake = false;
@@ -395,7 +323,6 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
   contributeThreadContext(thread: Thread) {
     const activeTurn = this.currentTurn(thread.id);
     if (!activeTurn) return null;
-    this.turnMemoryUsage.delete(activeTurn.id);
     const admission = this.control.admission(activeTurn.id);
     const explicitlyRequested = activeTurn.provenance.trigger.kind === 'user' && turnHasExplicitMemoryIntent(activeTurn);
     if (!admission?.eligibleAtAdmission || this.control.isTurnExcluded(activeTurn.id)) {
@@ -423,10 +350,6 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
         },
       } : null;
     }
-    this.turnMemoryUsage.set(activeTurn.id, {
-      nodeIds: new Set(),
-      threadId: thread.id,
-    });
     return {
       extensionId: this.id,
       additionalContext: {
@@ -436,85 +359,6 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
         },
       },
     };
-  }
-
-  onToolCompleted(context: ToolLifecycleResult): void {
-    const usage = this.turnMemoryUsage.get(context.turnId);
-    if (
-      !usage
-      || usage.threadId !== context.threadId
-      || context.identity.namespace !== null
-      || context.identity.name !== 'node_read'
-      || context.error !== null
-      || !successfulNodeRead(context.result)
-    ) return;
-
-    const requestedNodeIds = nodeReadRequestIds(context.arguments);
-    if (requestedNodeIds.length === 0) return;
-    const returnedNodeIds = nodeReadResultIds(context.result);
-    let visible: Map<string, CanonicalMemoryNode>;
-    try {
-      visible = new Map(this.visibleMemoryNodes().map((entry) => [entry.node.id, entry]));
-    } catch {
-      return;
-    }
-    for (const nodeId of requestedNodeIds) {
-      if (usage.nodeIds.size >= MAX_TRACKED_MEMORY_READS) break;
-      if (usage.nodeIds.has(nodeId) || !returnedNodeIds.has(nodeId)) continue;
-      const entry = visible.get(nodeId);
-      if (!entry) continue;
-      usage.nodeIds.add(nodeId);
-    }
-  }
-
-  onNotification(notification: AgentCoreRecordedNotification): void {
-    if (notification.type === 'turn/started') {
-      this.turnProjectionFilters.set(notification.turnId, {
-        threadId: notification.threadId,
-        turnId: notification.turnId,
-        explicitNodeIds: explicitNodeReferences(notification.turn.items),
-        explicitReferencesComplete: true,
-        explicitRevision: 1,
-      });
-      return;
-    }
-    if (notification.type === 'item/completed') {
-      this.recordExplicitNodeReferences(notification.threadId, notification.turnId, [notification.item]);
-      return;
-    }
-    if (notification.type === 'items/completed') {
-      this.recordExplicitNodeReferences(notification.threadId, notification.turnId, notification.items);
-      return;
-    }
-    if (notification.type !== 'turn/completed') return;
-    this.turnProjectionFilters.delete(notification.turnId);
-    const usage = this.turnMemoryUsage.get(notification.turnId);
-    this.turnMemoryUsage.delete(notification.turnId);
-    if (
-      !usage
-      || usage.threadId !== notification.threadId
-      || usage.nodeIds.size === 0
-      || notification.turn.status !== 'completed'
-    ) return;
-    for (const response of notification.turn.items) {
-      if (
-        response.type !== 'agentMessage'
-        || (response.phase !== 'final_answer' && response.phase !== null)
-        || !response.text.trim()
-      ) continue;
-      const citedNodeIds = new Set(renderedMarkdownNodeReferenceIds(response.text));
-      for (const nodeId of usage.nodeIds) {
-        if (!citedNodeIds.has(nodeId)) continue;
-        this.control.recordCitationUsage({
-          citationItemId: response.id,
-          citationTurnId: notification.turnId,
-          nodeId,
-          originItemIds: this.control.lineageForNode(nodeId)
-            .filter((edge) => this.control.isOriginClaimed(edge.originItemId))
-            .map((edge) => edge.originItemId),
-        });
-      }
-    }
   }
 
   onThreadIdle(thread: Thread): void {
@@ -548,158 +392,17 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
     }
   }
 
-  authorizeMutation(
-    command: DocumentCommand,
-    args: Readonly<Record<string, unknown>>,
-    meta: DocumentMutationMeta,
-    projection: DocumentProjection | (() => DocumentProjection),
-  ): boolean {
-    const index = this.requireMutationIndex(projection);
-    if (!index.mayChangeMemory(command, args, this.control.generatedNodeIds())) return false;
-    const origin = meta.origin ?? 'user';
-    if (origin === 'user' && !meta.causation) {
-      return true;
-    }
-    if (origin === 'system' && meta.operationId?.startsWith('memory:')) return true;
-    const causation = meta.causation;
-    if (!causation) throw new Error('Memory Nodes can be changed only by the user or an authorized foreground Turn');
-    const admission = this.control.admission(causation.turnId);
-    const status = this.control.status();
-    const turn = this.turn(causation.threadId, causation.turnId);
-    const thread = this.requireHost().readThread({ threadId: causation.threadId }).thread;
-    if (
-      !admission?.eligibleAtAdmission
-      || admission.resetEpoch !== status.resetEpoch
-      || admission.featureModeGeneration !== status.featureModeGeneration
-      || this.control.isTurnExcluded(causation.turnId)
-      || status.featureMode !== 'enabled'
-      || thread.parentThreadId !== null
-      || thread.threadSource !== 'user'
-      || turn?.provenance.trigger.kind !== 'user'
-      || !turnHasExplicitMemoryIntent(turn)
-    ) {
-      throw new Error('This Turn is not authorized to change Memory Nodes');
-    }
-    return true;
-  }
-
-  filterProjection(projection: DocumentProjection, causation: AgentMutationCausation): DocumentProjection {
-    const state = this.turnProjectionFilterState(causation);
-    const filter = this.hiddenNodeFilter(projection, state);
-    return this.filteredProjection(projection, filter, state);
-  }
-
-  filterProjectionIndex(index: ProjectionIndex, causation: AgentMutationCausation): ProjectionIndex {
-    const state = this.turnProjectionFilterState(causation);
-    const filter = this.hiddenNodeFilter(index.projection, state);
-    const { hiddenNodeIds } = filter;
-    if (hiddenNodeIds.size === 0) return index;
-    const cached = state.projectionIndexCache;
-    if (
-      cached?.sourceProjection === index.projection
-      && cached.sourceNodes === index.nodes
-      && sameFilterRevision(cached, filter)
-    ) return cached.filtered;
-    const projection = this.filteredProjection(index.projection, filter, state);
-    const filtered = {
-      projection,
-      nodes: new Map(projection.nodes.map((node) => [node.id, node])),
-    };
-    state.projectionIndexCache = {
-      sourceProjection: index.projection,
-      sourceNodes: index.nodes,
-      mutationRevision: filter.mutationRevision,
-      controlRevision: filter.controlRevision,
-      explicitRevision: filter.explicitRevision,
-      filtered,
-    };
-    return filtered;
-  }
-
-  filterTextSearchIndex(index: TextSearchIndex, causation: AgentMutationCausation): TextSearchIndex {
-    const state = this.turnProjectionFilterState(causation);
-    const projection = this.mutationIndex ? undefined : this.timeline.projection();
-    const filter = this.hiddenNodeFilter(projection, state);
-    const { hiddenNodeIds } = filter;
-    if (hiddenNodeIds.size === 0) return index;
-    const cached = state.textSearchIndexCache;
-    if (cached?.source === index && sameFilterRevision(cached, filter)) return cached.filtered;
-    const filtered = createFilteredTextSearchIndex(index, hiddenNodeIds);
-    state.textSearchIndexCache = {
-      source: index,
-      mutationRevision: filter.mutationRevision,
-      controlRevision: filter.controlRevision,
-      explicitRevision: filter.explicitRevision,
-      filtered,
-    };
-    return filtered;
-  }
-
-  beginTransaction(_meta: DocumentMutationMeta, projection: () => DocumentProjection): void {
-    const index = this.requireMutationIndex(projection);
-    index.beginTransaction();
-    this.transactionAffectedNodeIds = new Set();
-  }
-
-  applyTransactionChanges(changes: DocumentTransactionProjectionChanges): void {
-    const index = this.mutationIndex;
-    if (!index || !this.transactionAffectedNodeIds) return;
-    const update = index.applyTransactionChanges(changes);
-    for (const nodeId of update.affectedCanonicalNodeIds) this.transactionAffectedNodeIds.add(nodeId);
-  }
-
-  commitTransaction(meta: DocumentMutationMeta, affectsMemory: boolean | undefined): void {
-    const index = this.mutationIndex;
-    const affected = this.transactionAffectedNodeIds ?? new Set<string>();
-    this.transactionAffectedNodeIds = null;
-    index?.commitTransaction();
-    if (meta.operationId?.startsWith('memory:') || affected.size === 0) return;
-    const changed = this.reconcileGeneratedNodes(affected);
-    if (changed || affectsMemory !== false) this.scheduleDeferredGraphChange(changed);
-  }
-
-  rollbackTransaction(): void {
-    this.mutationIndex?.rollbackTransaction();
-    this.transactionAffectedNodeIds = null;
-  }
-
-  projectionChanged(delivery: ProjectionChangedDelivery): void {
-    if (delivery.transactionIndexed) return;
-    const update = delivery.event.update;
+  projectionChanged(delivery: { readonly update: ProjectionUpdate; readonly operation?: Operation }): void {
+    const update = delivery.update;
     if (update.kind === 'delta' && update.changedNodes.length === 0 && update.removedIds.length === 0) return;
     const indexUpdate = this.applyProjectionUpdate(update);
-    if (delivery.operationId?.startsWith('memory:')) return;
+    if (isMemoryPublication(delivery.operation)) return;
     const affected = new Set(indexUpdate.affectedCanonicalNodeIds);
     if (indexUpdate.fullRebuild) {
       for (const nodeId of this.control.generatedNodeIds()) affected.add(nodeId);
     }
     const changed = this.reconcileGeneratedNodes(affected);
-    if (changed || delivery.affectsMemory !== false) this.scheduleDeferredGraphChange(changed);
-  }
-
-  documentChanged(operationId?: string): void {
-    if (operationId?.startsWith('memory:')) return;
-    const projection = this.timeline.projection();
-    const update = this.applyProjectionUpdate({ kind: 'full', revision: 0, projection });
-    const affected = new Set([...update.affectedCanonicalNodeIds, ...this.control.generatedNodeIds()]);
-    const changed = this.reconcileGeneratedNodes(affected);
-    const digest = this.currentCanonicalGraphDigest();
-    this.graphDigestComputations += 1;
-    if (changed || digest !== this.lastGraphDigest) {
-      this.lastGraphDigest = digest;
-      if (this.initialized) this.requirePipeline().wakeGlobal('memory-graph-changed');
-    }
-  }
-
-  private requireMutationIndex(
-    projection: DocumentProjection | (() => DocumentProjection),
-  ): MemoryMutationIndex {
-    if (!this.mutationIndex) {
-      this.mutationIndex = new MemoryMutationIndex(
-        typeof projection === 'function' ? projection() : projection,
-      );
-    }
-    return this.mutationIndex;
+    this.scheduleDeferredGraphChange(changed);
   }
 
   private applyProjectionUpdate(update: ProjectionUpdate): MemoryMutationIndexUpdate {
@@ -824,133 +527,6 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
     return [...turns].reverse().find((turn) => turn.status === 'inProgress') ?? null;
   }
 
-  private turn(threadId: ThreadId, turnId: TurnId): Turn | null {
-    return this.requireHost().readTurnForHost(threadId, turnId);
-  }
-
-  private turnProjectionFilterState(causation: AgentMutationCausation): TurnProjectionFilterState {
-    let state = this.turnProjectionFilters.get(causation.turnId);
-    if (!state || state.threadId !== causation.threadId) {
-      state = {
-        threadId: causation.threadId,
-        turnId: causation.turnId,
-        explicitNodeIds: new Set(),
-        explicitReferencesComplete: false,
-        explicitRevision: 0,
-      };
-      this.turnProjectionFilters.set(causation.turnId, state);
-    }
-    if (this.isRootUserThread(state) && !state.explicitReferencesComplete) {
-      const turn = this.turn(causation.threadId, causation.turnId);
-      if (turn) {
-        for (const nodeId of explicitNodeReferences(turn.items)) state.explicitNodeIds.add(nodeId);
-        state.explicitReferencesComplete = true;
-        state.explicitRevision += 1;
-      }
-    }
-    return state;
-  }
-
-  private recordExplicitNodeReferences(
-    threadId: ThreadId,
-    turnId: TurnId,
-    items: readonly ThreadItem[],
-  ): void {
-    const state = this.turnProjectionFilters.get(turnId);
-    if (!state || state.threadId !== threadId) return;
-    const references = explicitNodeReferences(items);
-    if (references.size === 0) return;
-    let changed = false;
-    for (const nodeId of references) {
-      if (state.explicitNodeIds.has(nodeId)) continue;
-      state.explicitNodeIds.add(nodeId);
-      changed = true;
-    }
-    if (changed) state.explicitRevision += 1;
-  }
-
-  private isRootUserThread(state: TurnProjectionFilterState): boolean {
-    if (state.rootUserThread !== undefined) return state.rootUserThread;
-    const thread = this.requireHost().readThread({ threadId: state.threadId }).thread;
-    const rootUserThread = thread.parentThreadId === null && thread.threadSource === 'user';
-    state.rootUserThread = rootUserThread;
-    return rootUserThread;
-  }
-
-  private hiddenNodeFilter(
-    projection: DocumentProjection | undefined,
-    state: TurnProjectionFilterState,
-  ): HiddenNodesCache {
-    const mutationIndex = this.requireMutationIndex(() => projection ?? this.timeline.projection());
-    const mutationRevision = mutationIndex.revision();
-    const controlRevision = this.control.filteringRevision();
-    const cached = state.hiddenNodesCache;
-    if (
-      cached?.mutationRevision === mutationRevision
-      && cached.controlRevision === controlRevision
-      && cached.explicitRevision === state.explicitRevision
-    ) return cached;
-
-    const rootUserThread = this.isRootUserThread(state);
-    const explicitExpanded = rootUserThread
-      ? mutationIndex.expandReferences(state.explicitNodeIds)
-      : new Set<string>();
-    const canonicalNodeIds = mutationIndex.allCanonicalNodeIds();
-    const status = this.control.status();
-    const admission = this.control.admission(state.turnId);
-    const implicitEnabled = rootUserThread
-      && Boolean(admission?.eligibleAtAdmission)
-      && !this.control.isTurnExcluded(state.turnId)
-      && status.featureMode === 'enabled'
-      && admission?.featureModeGeneration === status.featureModeGeneration;
-    const hiddenNodeIds = new Set<string>();
-    if (!implicitEnabled) {
-      for (const nodeId of canonicalNodeIds) {
-        if (!explicitExpanded.has(nodeId)) hiddenNodeIds.add(nodeId);
-      }
-    } else {
-      const generatedNodeIds = new Set(this.control.generatedNodes()
-        .filter((entry) => !entry.userAuthoritative)
-        .map((entry) => entry.nodeId));
-      const view = this.visibilityView();
-      for (const nodeId of canonicalNodeIds) {
-        if (
-          generatedNodeIds.has(nodeId)
-          && (view.suppressAllGenerated || view.suppressedGeneratedNodeIds.has(nodeId))
-          && !explicitExpanded.has(nodeId)
-        ) hiddenNodeIds.add(nodeId);
-      }
-    }
-    const filter = {
-      mutationRevision,
-      controlRevision,
-      explicitRevision: state.explicitRevision,
-      hiddenNodeIds,
-    };
-    state.hiddenNodesCache = filter;
-    return filter;
-  }
-
-  private filteredProjection(
-    projection: DocumentProjection,
-    filter: HiddenNodesCache,
-    state: TurnProjectionFilterState,
-  ): DocumentProjection {
-    const { hiddenNodeIds } = filter;
-    if (hiddenNodeIds.size === 0) return projection;
-    const cached = state.projectionCache;
-    if (cached?.source === projection && sameFilterRevision(cached, filter)) return cached.filtered;
-    const filtered = filteredProjection(projection, hiddenNodeIds);
-    state.projectionCache = {
-      source: projection,
-      mutationRevision: filter.mutationRevision,
-      controlRevision: filter.controlRevision,
-      explicitRevision: filter.explicitRevision,
-      filtered,
-    };
-    return filtered;
-  }
-
   private reconcileRollbackHooks(host: MemoryThreadHost): void {
     for (const rollback of this.control.activeRollbacks()) {
       if (rollback.status !== 'prepared') continue;
@@ -996,33 +572,9 @@ function turnHasExplicitMemoryIntent(turn: Turn): boolean {
   )));
 }
 
-function explicitNodeReferences(items: readonly ThreadItem[]): Set<string> {
-  return new Set(items.flatMap((item) => item.type === 'userMessage'
-    ? item.content.flatMap((part) => part.type === 'nodeReference' ? [part.nodeId] : [])
-    : []));
-}
-
-function sameFilterRevision(
-  left: ProjectionFilterRevision | undefined,
-  right: ProjectionFilterRevision,
-): boolean {
-  if (!left) return false;
-  return left.mutationRevision === right.mutationRevision
-    && left.controlRevision === right.controlRevision
-    && left.explicitRevision === right.explicitRevision;
-}
-
-function filteredProjection(projection: DocumentProjection, hidden: ReadonlySet<string>): DocumentProjection {
-  return {
-    ...projection,
-    nodes: projection.nodes
-      .filter((node) => !hidden.has(node.id))
-      .map((node) => ({
-        ...node,
-        ...(node.parentId && hidden.has(node.parentId) ? { parentId: undefined } : {}),
-        children: node.children.filter((childId) => !hidden.has(childId)),
-      })),
-  };
+function isMemoryPublication(operation: Operation | undefined): boolean {
+  return operation?.source?.kind === 'automation'
+    && operation.source.label?.startsWith('Memory publication generation ') === true;
 }
 
 function canonicalGraphDigest(nodes: readonly CanonicalMemoryNode[]): string {
@@ -1051,30 +603,10 @@ function rollbackMatchesMarker(
 
 const MEMORY_OPERATION_CONTEXT = `Durable Memory is stored as ordinary editable Nodes under source-date Daily Notes.
 The canonical hierarchy is one direct #d-memory container under a Daily Note, direct #d-episode children, and optional #d-belief, #d-question, or #d-guidance descendants.
-When prior preferences, decisions, commitments, unresolved questions, or recurring workflow facts could materially improve the response, use node_search to find relevant Memory and read only the one or two most relevant results with node_read before relying on them. Skip Memory lookup for self-contained requests such as the current date or time, simple formatting or transformation, and questions fully answerable from the current Turn.
+When prior preferences, decisions, commitments, unresolved questions, or recurring workflow facts could materially improve the response, use outline find to locate relevant Memory and inspect only the one or two most relevant results with outline show before relying on them. Skip Memory lookup for self-contained requests such as the current date or time, simple formatting or transformation, and questions fully answerable from the current Turn.
 When a final answer relies on an ordinary Memory Node you read, cite it inline next to the relevant claim as [[node://UUID]], removing the internal node: prefix. Do not add a separate sources or used-memory section.
-Use the ordinary Node tools only when the user explicitly asks to remember, update, or forget durable information. Reuse a same-date canonical container when present, apply the fixed tag IDs tag:d-memory, tag:d-episode, tag:d-belief, tag:d-question, and tag:d-guidance, and keep the hierarchy valid.
+Use the public outline workflow only when the user explicitly asks to remember, update, or forget durable information. Reuse a same-date canonical container when present, apply the fixed tag IDs tag:d-memory, tag:d-episode, tag:d-belief, tag:d-question, and tag:d-guidance, and keep the hierarchy valid.
 Do not create unsolicited Memory, do not treat routine transcript narration as Memory, and do not modify stray reserved-tag Nodes outside the canonical hierarchy.`;
-
-function successfulNodeRead(value: unknown): boolean {
-  return isRecord(value) && value.ok === true;
-}
-
-function nodeReadRequestIds(value: unknown): readonly string[] {
-  if (!isRecord(value)) return [];
-  if (typeof value.node_id === 'string' && value.node_id.trim()) return [value.node_id.trim()];
-  if (!Array.isArray(value.node_ids)) return [];
-  return [...new Set(value.node_ids
-    .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
-    .map((entry) => entry.trim()))];
-}
-
-function nodeReadResultIds(value: unknown): ReadonlySet<string> {
-  if (!isRecord(value) || !isRecord(value.data) || !Array.isArray(value.data.items)) return new Set();
-  return new Set(value.data.items.flatMap((entry) => (
-    isRecord(entry) && typeof entry.nodeId === 'string' ? [entry.nodeId] : []
-  )));
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);

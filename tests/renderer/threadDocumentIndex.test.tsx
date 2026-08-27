@@ -22,7 +22,6 @@ import {
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 import { reduceProjection } from '../../src/renderer/state/document';
 import { DocumentIndexStore } from '../../src/renderer/state/documentIndexStore';
-import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
 const GLOBAL_KEYS = [
   'document',
@@ -52,16 +51,12 @@ describe('Thread document subscriptions', () => {
       userMessage([{ type: 'nodeReference', nodeId: 'node-a' }]),
       agentMessage(`Read ${formatNodeReferenceMarker(markerNodeId)}`),
       reasoning(formatNodeReferenceMarker(reasoningNodeId)),
-      dynamicNodeTool('node_read', { node_id: 'node-d', node_ids: ['node-e', 'node-d'] }),
-      dynamicNodeTool('node_search', { query: 'node-not-a-subject' }),
     ];
 
     expect(threadDocumentNodeIds(completedTurn(items))).toEqual([
       'node-a',
       markerNodeId,
       reasoningNodeId,
-      'node-d',
-      'node-e',
     ]);
   });
 
@@ -94,7 +89,7 @@ describe('Thread document subscriptions', () => {
     await act(async () => root.unmount());
   });
 
-  test('refreshes reference chips, tool subjects, process headers, and derived color', async () => {
+  test('refreshes reference chips and derived color', async () => {
     const { document, root } = installDom();
     const target = node('node-a', 'Alpha', { parentId: 'root', tags: ['tag-work'] });
     const tag = node('tag-work', 'Work', {
@@ -111,19 +106,12 @@ describe('Thread document subscriptions', () => {
     const colorValue = node('tag-work::cfg:color/value', 'red', { parentId: colorConfig.id });
     const state = fullState([target, tag, colorConfig, colorValue]);
     const store = new DocumentIndexStore(state.index);
-    const turn = completedTurn([
-      userMessage([{ type: 'nodeReference', nodeId: target.id }]),
-      dynamicNodeTool('node_read', { node_id: target.id }),
-    ]);
+    const turn = completedTurn([userMessage([{ type: 'nodeReference', nodeId: target.id }])]);
 
     await render(root, <ThreadTurnView {...turnProps(store)} anchors={emptyTurnAnchors(turn)} turn={turn} />);
     const chip = () => document.querySelector<HTMLElement>('.thread-message-inline-ref');
-    const tool = () => document.querySelector<HTMLElement>('.thread-tool-activity-summary, .thread-tool-label');
-    const process = () => document.querySelector<HTMLElement>('.thread-process-title');
     expect(chip()?.textContent).toBe('Alpha');
     expect(chip()?.getAttribute('style')).toContain('var(--identity-tint-0)');
-    expect(tool()?.textContent).toContain('Alpha');
-    expect(process()?.textContent).toContain('Alpha');
 
     const renamedTarget = { ...target, content: richText('Beta'), updatedAt: 2 };
     const renamed = patchState(state, [renamedTarget]);
@@ -132,8 +120,6 @@ describe('Thread document subscriptions', () => {
       await Promise.resolve();
     });
     expect(chip()?.textContent).toBe('Beta');
-    expect(tool()?.textContent).toContain('Beta');
-    expect(process()?.textContent).toContain('Beta');
 
     const recolored = patchState(renamed, [{ ...colorValue, content: richText('blue'), updatedAt: 3 }]);
     await act(async () => {
@@ -436,26 +422,6 @@ function reasoning(text: string): Extract<ThreadItem, { type: 'reasoning' }> {
     type: 'reasoning',
     summary: [text],
     content: [],
-  };
-}
-
-function dynamicNodeTool(
-  tool: string,
-  args: Record<string, unknown>,
-): Extract<ThreadItem, { type: 'dynamicToolCall' }> {
-  return {
-    id: `tool-${tool}`,
-    provenance: { originThreadId: 'thread', originTurnId: 'turn', originItemId: `tool-${tool}` },
-    type: 'dynamicToolCall',
-    status: 'completed',
-    outputRef: null,
-    namespace: null,
-    tool,
-    arguments: args as never,
-    contentItems: null,
-    success: true,
-    durationMs: 1,
-    modelCall: replayableModelCall(tool, args as never),
   };
 }
 

@@ -95,13 +95,17 @@ describe('Codex Agent Core model-tool contract', () => {
       'subagent_type',
       'model',
       'run_in_background',
+      'execution',
       'isolation',
     ]);
     expect(agent).toMatchObject({
       $schema: 'https://json-schema.org/draft/2020-12/schema',
       required: ['description', 'prompt'],
       additionalProperties: false,
-      properties: { model: { enum: ['model-b', 'model-a'] } },
+      properties: {
+        model: { enum: ['model-b', 'model-a'] },
+        execution: { enum: ['read-only'] },
+      },
     });
     expect(agentInputSchema([]).properties).not.toHaveProperty('model');
     expect(() => agentInputSchema([''])).toThrow('only non-empty');
@@ -131,7 +135,17 @@ describe('Codex Agent Core model-tool contract', () => {
       prompt: 'Review it.',
       subagent_type: 'explore',
       run_in_background: false,
-    })).toMatchObject({ subagent_type: 'explore', run_in_background: false });
+      execution: 'read-only',
+    })).toMatchObject({
+      subagent_type: 'explore',
+      run_in_background: false,
+      execution: 'read-only',
+    });
+    expect(() => normalizeAgentToolInput({
+      description: 'Inspect code',
+      prompt: 'Review it.',
+      execution: 'mutable',
+    })).toThrow('agent.execution must be "read-only"');
 
     expect(normalizeAgentMessageToolInput({ to: ' agent-1 ', message: '  First line\nSecond line  ' }))
       .toEqual({ to: ' agent-1 ', message: '  First line\nSecond line  ', summary: 'First line' });
@@ -349,12 +363,10 @@ describe('Codex Agent Core model-tool contract', () => {
     expect(modelToolCommandsMatch('printf "a  b"', 'printf "a b"')).toBe(false);
   });
 
-  test('maps only canonical action kinds and handles outline undo dynamically', () => {
+  test('maps only canonical action kinds', () => {
     expect(new Set(MODEL_TOOL_ACTION_KINDS).size).toBe(MODEL_TOOL_ACTION_KINDS.length);
     expect(MODEL_TOOL_ACTION_KINDS.some((kind) => kind.includes('.issue.'))).toBe(false);
     expect(MODEL_TOOL_ACTION_KINDS.some((kind) => kind.includes('.session.'))).toBe(false);
-    expect(modelToolActionKinds('outline_undo_stack', { action: 'list' })).toEqual(['outline.read']);
-    expect(modelToolActionKinds('outline_undo_stack', { action: 'undo' })).toEqual(['outline.edit']);
     expect(modelToolActionKinds('agent')).toEqual(['agent.subagent.spawn']);
     expect(modelToolActionKinds('agent_message')).toEqual(['agent.subagent.send']);
     expect(modelToolActionKinds('task_stop')).toEqual(['agent.subagent.interrupt', 'shell.stop']);
