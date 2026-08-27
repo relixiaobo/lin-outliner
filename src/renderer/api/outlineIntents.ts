@@ -117,6 +117,7 @@ export const outlineDocumentApi = {
   outdentNode,
   trashNode,
   batchTrashNodes,
+  batchDeleteRows,
   batchIndentNodes,
   batchOutdentNodes,
   batchToggleDone,
@@ -1000,6 +1001,30 @@ function removeFieldValue(valueId: string): Promise<CommandResult> {
     field: oneId(fieldDefId),
     mutation: { action: 'remove-value', value: oneId(valueId), entryId: value.parentId },
   }], focus(value.parentId));
+}
+
+function batchDeleteRows(trashIds: string[], fieldValueIds: string[]): Promise<CommandResult> {
+  return mutate(() => {
+    const view = requireProjection();
+    const fieldChangesByOwner = new Map<string, UpdateInstruction[]>();
+    for (const valueId of fieldValueIds) {
+      const value = requiredNode(view, valueId);
+      if (!value.parentId) throw new Error('Field value is unavailable.');
+      const entryId = value.parentId;
+      const { ownerId, fieldDefId } = fieldEntryContext(entryId);
+      const changes = fieldChangesByOwner.get(ownerId) ?? [];
+      changes.push({
+        kind: 'field-slot',
+        field: oneId(fieldDefId),
+        mutation: { action: 'remove-value', value: oneId(valueId), entryId },
+      });
+      fieldChangesByOwner.set(ownerId, changes);
+    }
+    return [
+      ...[...fieldChangesByOwner].map(([ownerId, changes]) => updateChange(ownerId, changes)),
+      ...trashIds.map((nodeId): Change => ({ op: 'lifecycle', action: 'trash', targets: oneId(nodeId) })),
+    ];
+  });
 }
 
 function addReference(parentId: string, targetId: string, index: number | null = null): Promise<CommandResult> {

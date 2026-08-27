@@ -135,6 +135,43 @@ describe('OutlineDocumentService', () => {
     }
   });
 
+  test('lets locally admitted mutations reach the Runtime before installing the quit barrier', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const document = new OutlineDocumentService(new OutlineClientSupervisor({
+      root,
+      noStart: true,
+      origin: 'desktop',
+    }));
+    try {
+      await document.init();
+      const first = document.runChanges([{
+        op: 'create',
+        placement: { kind: 'last', parent: oneToday() },
+        nodes: [{ content: richText('Queued before quit one'), children: [] }],
+      }]);
+      const second = document.runChanges([{
+        op: 'create',
+        placement: { kind: 'last', parent: oneToday() },
+        nodes: [{ content: richText('Queued before quit two'), children: [] }],
+      }]);
+      document.freezeMutationAdmission();
+      const barrier = document.latestAcceptedRevision();
+
+      const [firstResult, secondResult, targetRevision] = await Promise.all([first, second, barrier]);
+      expect(firstResult.update.revision).toBe(1);
+      expect(secondResult.update.revision).toBe(2);
+      expect(targetRevision).toBe(2);
+      await document.drainToRevision(targetRevision);
+      await document.unfreezeMutationAdmission();
+    } finally {
+      document.close();
+      await runtime.stop();
+    }
+  });
+
   test('keeps durable settlement separate from destructive acknowledgement', async () => {
     const root = await makeRoot();
     const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });

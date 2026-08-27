@@ -202,6 +202,48 @@ describe('renderer Outline client', () => {
     subscription.unsubscribe();
   });
 
+  test('does not advance a queued mutation base from a held Event', async () => {
+    let stream: ((record: OutlineStreamRecord) => void) | undefined;
+    const bases: number[] = [];
+    const projectionRevisions: number[] = [];
+    installOutlineBridge({
+      commit: async (request) => {
+        bases.push(request.changeSet.base.revision);
+        if (bases.length === 1) stream?.(streamEvent(8, 'cursor:8'));
+        throw new Error('injected stale mutation');
+      },
+      request: async (request) => {
+        if (request.command === 'show') return success('show', projectionPage(2));
+        throw new Error(`Unexpected command: ${request.command}`);
+      },
+      subscribe: (_subscription, listener) => {
+        stream = listener;
+        queueMicrotask(() => listener(streamHello('cursor:7')));
+        return () => undefined;
+      },
+    });
+    const subscription = subscribeDesktopProjection((update) => {
+      projectionRevisions.push(update.revision);
+    }, () => undefined);
+    await subscription.ready;
+
+    const mutation = () => runDesktopMutation((revision) => ({
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      base: { revision },
+      operations: [{ op: 'ensure', resource: 'date', date: '2026-08-28' }],
+    }));
+    const first = mutation();
+    const second = mutation();
+    await Promise.allSettled([first, second]);
+
+    expect(bases).toEqual([7, 7]);
+    expect(projectionRevisions).toEqual([7]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(projectionRevisions).toEqual([7, 8]);
+    subscription.unsubscribe();
+  });
+
   test('settles a no-change desktop mutation without waiting for an Operation Event', async () => {
     let stream: ((record: OutlineStreamRecord) => void) | undefined;
     const commands: string[] = [];

@@ -146,14 +146,8 @@ export async function runSelectionDelete(params: {
   const plan = planSelectionDelete(params);
   if (plan.hardDeleteId) return api.deleteNode(plan.hardDeleteId);
 
-  let lastResult: SelectionCommandResult | null = null;
-  if (plan.trashIds.length > 0) {
-    lastResult = await api.batchTrashNodes(plan.trashIds);
-  }
-  for (const id of plan.fieldValueIds) {
-    lastResult = await api.removeFieldValue(id);
-  }
-  return lastResult ?? commandRunnerNoop();
+  if (plan.trashIds.length === 0 && plan.fieldValueIds.length === 0) return commandRunnerNoop();
+  return api.batchDeleteRows(plan.trashIds, plan.fieldValueIds);
 }
 
 export function planSelectionDelete(params: {

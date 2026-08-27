@@ -32,6 +32,8 @@ import { createSelectionIndex } from './selector';
 import { projectOutlineFromSelectionIndex } from './projection';
 
 const MAX_AFFECTED_NODE_ID_SAMPLE = 1_000;
+const DURABILITY_IDLE_DELAY_MS = 700;
+const DURABILITY_MAX_WAIT_MS = 5_000;
 
 interface AppendedMutationSettlement {
   readonly kind: 'appended';
@@ -122,6 +124,10 @@ export interface OutlineRuntimeWorkspaceOptions {
   readonly contentStore?: ContentStore;
   readonly contentStoreOptions?: ContentStoreOptions;
   readonly assetStoreOptions?: OutlineAssetStoreOptions;
+  readonly durabilityIdleDelayMs?: number;
+  readonly durabilityMaxWaitMs?: number;
+  readonly durabilitySchedule?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
+  readonly durabilityCancel?: (timer: ReturnType<typeof setTimeout>) => void;
 }
 
 export class OutlineRuntimeWorkspace {
@@ -140,6 +146,14 @@ export class OutlineRuntimeWorkspace {
   private durabilityRun?: Promise<void>;
   private durabilityFailure?: unknown;
   private durableRevisionValue: number;
+  private readonly durabilityIdleDelayMs: number;
+  private readonly durabilityMaxWaitMs: number;
+  private readonly durabilitySchedule: NonNullable<OutlineRuntimeWorkspaceOptions['durabilitySchedule']>;
+  private readonly durabilityCancel: NonNullable<OutlineRuntimeWorkspaceOptions['durabilityCancel']>;
+  private durabilityIdleTimer?: ReturnType<typeof setTimeout>;
+  private durabilityMaxWaitTimer?: ReturnType<typeof setTimeout>;
+  private firstDirtyAt?: number;
+  private lastDirtyAt?: number;
   private mutationAdmissionFrozen = false;
   private mutationAdmissionCommitted = false;
 
@@ -150,8 +164,21 @@ export class OutlineRuntimeWorkspace {
     readonly instanceId: string,
     readonly eventBaselineSequence: number,
     now?: () => Date,
+    durabilityOptions: Pick<
+      OutlineRuntimeWorkspaceOptions,
+      'durabilityIdleDelayMs' | 'durabilityMaxWaitMs' | 'durabilitySchedule' | 'durabilityCancel'
+    > = {},
   ) {
     this.now = now ?? (() => new Date());
+    this.durabilityIdleDelayMs = Math.max(0, durabilityOptions.durabilityIdleDelayMs ?? DURABILITY_IDLE_DELAY_MS);
+    this.durabilityMaxWaitMs = Math.max(
+      this.durabilityIdleDelayMs,
+      durabilityOptions.durabilityMaxWaitMs ?? DURABILITY_MAX_WAIT_MS,
+    );
+    this.durabilitySchedule = durabilityOptions.durabilitySchedule ?? ((callback, delayMs) => (
+      setTimeout(callback, delayMs)
+    ));
+    this.durabilityCancel = durabilityOptions.durabilityCancel ?? ((timer) => clearTimeout(timer));
     this.readModel = DocumentReadModel.fromProjection(core.revision(), core.projection());
     this.assetReferenceCounts = countAssetReferences(Object.values(core.state().nodes));
     this.durableRevisionValue = core.revision();
@@ -206,6 +233,7 @@ export class OutlineRuntimeWorkspace {
         instanceId,
         loaded.latestEventSequence,
         options.now,
+        options,
       );
       for (const idempotency of loaded.idempotency) {
         workspace.acceptedByIdempotencyKey.set(idempotency.key, {
@@ -228,8 +256,10 @@ export class OutlineRuntimeWorkspace {
   }
 
   async freezeMutationAdmission(): Promise<number> {
-    this.mutationAdmissionFrozen = true;
-    return this.enqueueMutation(async () => this.revision());
+    return this.enqueueMutation(async () => {
+      this.mutationAdmissionFrozen = true;
+      return this.revision();
+    });
   }
 
   unfreezeMutationAdmission(): void {
@@ -253,19 +283,18 @@ export class OutlineRuntimeWorkspace {
     if (targetRevision > this.revision()) {
       throw new Error(`Cannot drain unaccepted Outline revision ${targetRevision}.`);
     }
-    if (this.durableRevisionValue >= targetRevision) return;
-    if (this.durabilityFailure) {
-      this.durabilityFailure = undefined;
+    while (this.durableRevisionValue < targetRevision) {
+      if (this.durabilityFailure) this.durabilityFailure = undefined;
       this.startDurabilityRun();
+      const run = this.durabilityRun;
+      if (!run) throw new Error(`Outline durability stopped before revision ${targetRevision}.`);
+      await run;
+      if (this.durabilityFailure) throw this.durabilityFailure;
     }
-    this.startDurabilityRun();
-    await this.durabilityRun;
-    if (this.durableRevisionValue >= targetRevision) return;
-    if (this.durabilityFailure) throw this.durabilityFailure;
-    throw new Error(`Outline durability stopped before revision ${targetRevision}.`);
   }
 
   close(): void {
+    this.clearDurabilityTimers();
     this.assets.close();
   }
 
@@ -908,7 +937,7 @@ export class OutlineRuntimeWorkspace {
           input: settlement.input,
           projectionUpdate: settlement.projectionUpdate,
         });
-        this.startDurabilityRun();
+        this.scheduleDurability();
         return result;
       }
       this.durableRevisionValue = Math.max(
@@ -967,40 +996,80 @@ export class OutlineRuntimeWorkspace {
     }
   }
 
+  private scheduleDurability(): void {
+    const now = this.now().getTime();
+    this.firstDirtyAt ??= now;
+    this.lastDirtyAt = now;
+    if (this.durabilityIdleTimer) this.durabilityCancel(this.durabilityIdleTimer);
+    this.durabilityIdleTimer = this.durabilitySchedule(() => {
+      this.durabilityIdleTimer = undefined;
+      this.startDurabilityRun();
+    }, this.durabilityIdleDelayMs);
+    this.ensureDurabilityMaxWaitTimer();
+  }
+
+  private ensureDurabilityTimers(): void {
+    if (this.pendingDurability.length === 0 || this.durabilityFailure) return;
+    const now = this.now().getTime();
+    this.firstDirtyAt ??= now;
+    this.lastDirtyAt ??= now;
+    if (!this.durabilityIdleTimer) {
+      const idleElapsed = now - this.lastDirtyAt;
+      this.durabilityIdleTimer = this.durabilitySchedule(() => {
+        this.durabilityIdleTimer = undefined;
+        this.startDurabilityRun();
+      }, Math.max(0, this.durabilityIdleDelayMs - idleElapsed));
+    }
+    this.ensureDurabilityMaxWaitTimer();
+  }
+
+  private ensureDurabilityMaxWaitTimer(): void {
+    if (this.durabilityMaxWaitTimer || this.firstDirtyAt === undefined) return;
+    const elapsed = this.now().getTime() - this.firstDirtyAt;
+    this.durabilityMaxWaitTimer = this.durabilitySchedule(() => {
+      this.durabilityMaxWaitTimer = undefined;
+      this.startDurabilityRun();
+    }, Math.max(0, this.durabilityMaxWaitMs - elapsed));
+  }
+
+  private clearDurabilityTimers(): void {
+    if (this.durabilityIdleTimer) this.durabilityCancel(this.durabilityIdleTimer);
+    if (this.durabilityMaxWaitTimer) this.durabilityCancel(this.durabilityMaxWaitTimer);
+    this.durabilityIdleTimer = undefined;
+    this.durabilityMaxWaitTimer = undefined;
+  }
+
   private startDurabilityRun(): void {
     if (this.durabilityRun || this.durabilityFailure || this.pendingDurability.length === 0) return;
-    const run = this.flushDurability();
+    this.clearDurabilityTimers();
+    this.firstDirtyAt = undefined;
+    this.lastDirtyAt = undefined;
+    const batch = this.pendingDurability.slice();
+    const run = this.flushDurability(batch);
     const wrapped = run.catch((error: unknown) => {
       this.durabilityFailure = error;
     }).finally(() => {
       if (this.durabilityRun !== wrapped) return;
       this.durabilityRun = undefined;
-      if (!this.durabilityFailure && this.pendingDurability.length > 0) this.startDurabilityRun();
+      this.ensureDurabilityTimers();
     });
     this.durabilityRun = wrapped;
   }
 
-  private async flushDurability(): Promise<void> {
-    while (this.pendingDurability.length > 0) {
-      const pending = this.pendingDurability[0]!;
+  private async flushDurability(batch: readonly PendingDurability[]): Promise<void> {
+    const appendedBatch = await this.store.appendBatch(batch.map((pending) => ({
+      ...pending.input,
+      createEvent: (sequence: number) => operationEvent(
+        this.instanceId,
+        sequence,
+        pending.input.operation,
+        pending.projectionUpdate,
+      ),
+    })));
+    for (let index = 0; index < batch.length; index += 1) {
+      const pending = batch[index]!;
       const operation = pending.input.operation;
-      const admission = await this.store.prepareMutation(
-        pending.input.idempotency ? {
-          key: pending.input.idempotency.key,
-          payloadHash: pending.input.idempotency.payloadHash,
-        } : undefined,
-        { instanceId: this.instanceId, revision: operation.revisionBefore },
-      );
-      this.publishEvents(admission.maintenanceEvents);
-      const appended = await this.store.append({
-        ...pending.input,
-        event: operationEvent(
-          this.instanceId,
-          admission.latestEventSequence + 1,
-          operation,
-          pending.projectionUpdate,
-        ),
-      });
+      const appended = appendedBatch[index]!;
       if (appended.operation.operationId !== operation.operationId) {
         throw new OutlineContractError(outlineError(
           'idempotency_conflict',
@@ -1008,7 +1077,6 @@ export class OutlineRuntimeWorkspace {
           `Accepted Operation settled to a different idempotent result: ${operation.operationId}`,
         ));
       }
-      this.pendingDurability.shift();
       this.durableRevisionValue = Math.max(this.durableRevisionValue, operation.revisionAfter);
       if (pending.input.idempotency) {
         this.acceptedByIdempotencyKey.set(pending.input.idempotency.key, {
@@ -1017,8 +1085,9 @@ export class OutlineRuntimeWorkspace {
       }
       this.core.acknowledgePersistenceMetadata(pending.input.persistence.metadataSequence);
       this.publishEvents(appended.maintenanceEvents);
-      this.publishEvents([appended.event]);
+      if (!appended.idempotent) this.publishEvents([appended.event]);
     }
+    this.pendingDurability.splice(0, batch.length);
   }
 
   private assertMutationAdmission(): void {

@@ -2277,6 +2277,66 @@ describe('row interaction resolvers', () => {
     expect(matchesShortcutEvent(keyboard('i', { metaKey: true }), 'trailing.description')).toBe(false);
   });
 
+  test('keeps the recovered keyboard scopes complete', () => {
+    const ids = (scope: Parameters<typeof shortcutDefinitionsForScope>[0]) => (
+      shortcutDefinitionsForScope(scope).map((shortcut) => shortcut.id)
+    );
+    expect(ids('editor')).toEqual([
+      'editor.description',
+      'editor.undo',
+      'editor.redo',
+      'editor.checkbox',
+      'editor.move_up',
+      'editor.move_down',
+    ]);
+    expect(ids('trailing')).toEqual([
+      'trailing.description',
+      'trailing.undo',
+      'trailing.redo',
+      'trailing.checkbox',
+    ]);
+    expect(ids('selection')).toEqual([
+      'selection.move_up',
+      'selection.move_down',
+      'selection.extend_up',
+      'selection.extend_down',
+      'selection.select_all',
+      'selection.copy',
+      'selection.cut',
+      'selection.duplicate',
+      'selection.checkbox',
+      'selection.delete',
+      'selection.outdent',
+      'selection.indent',
+      'selection.apply_tag',
+      'selection.navigate_up',
+      'selection.navigate_down',
+      'selection.convert_reference_right',
+      'selection.enter_edit',
+      'selection.clear',
+      'selection.type_char',
+    ]);
+    expect(ids('selected_reference')).toEqual([
+      'selected_reference.delete',
+      'selected_reference.convert_arrow_right',
+      'selected_reference.convert_printable',
+      'selected_reference.options_up',
+      'selected_reference.options_down',
+      'selected_reference.options_confirm',
+      'selected_reference.options_cancel',
+      'selected_reference.escape',
+    ]);
+    expect(ids('global')).toEqual([
+      'global.open_agent_panel',
+      'global.go_to_today',
+      'global.nav_back',
+      'global.nav_forward',
+      'global.toggle_page_translation',
+      'global.undo',
+      'global.redo',
+    ]);
+  });
+
   test('ignores shortcut resolvers during IME composition', () => {
     expect(isImeComposingEvent({ key: 'Process' })).toBe(true);
     expect(isImeComposingEvent({ keyCode: 229 })).toBe(true);

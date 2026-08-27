@@ -236,6 +236,10 @@ export class OutlineDocumentService {
   }
 
   async latestAcceptedRevision(): Promise<number> {
+    // Local admission closes synchronously, but callers that already passed the
+    // gate still own a place in mutationTail. Let them reach the Runtime before
+    // installing its cross-client freeze barrier.
+    await this.mutationTail;
     const status = await this.manageRuntime('freeze');
     return status.acceptedRevision;
   }

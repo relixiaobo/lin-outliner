@@ -281,7 +281,11 @@ Runtime owns one live Core. Its transaction keeps the Core rollback frontier
 live while validation, execution, projection-delta construction, recovery
 capture, and persistence-input capture run. Failure before acceptance rolls the
 transaction back. Ordinary private desktop edits then publish the accepted
-delta and enqueue that captured input for ordered durability. Append failure
+delta and enqueue that captured input for ordered durability. Durability waits
+for a 700 ms input-idle window but never lets a dirty epoch exceed five seconds;
+all Operations accumulated for one run retain separate transaction records and
+Event sequences while sharing one transaction-log fsync. An explicit durable
+wait or quit drain bypasses the timers. Append failure
 cannot retract an accepted UI edit; it freezes further mutation admission and
 must be resolved by drain/retry or an explicit Quit Anyway decision. Public,
 trusted cross-store, and reviewed durable paths keep the same rollback frontier

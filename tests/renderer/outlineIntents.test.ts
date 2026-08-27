@@ -506,6 +506,58 @@ describe('renderer Outline intents', () => {
     });
   });
 
+  test('deletes mixed rows through one contiguous ChangeSet', async () => {
+    const harness = await createHarness([
+      node('root', { children: ['body', 'owner'] }),
+      node('body', { parentId: 'root' }),
+      node('owner', { parentId: 'root', children: ['entry'] }),
+      node('field', { type: 'fieldDef' }),
+      node('entry', {
+        parentId: 'owner',
+        type: 'fieldEntry',
+        fieldDefId: 'field',
+        children: ['value-a', 'value-b'],
+      }),
+      node('value-a', { parentId: 'entry' }),
+      node('value-b', { parentId: 'entry' }),
+    ]);
+
+    await outlineDocumentApi.batchDeleteRows(['body'], ['value-a', 'value-b']);
+
+    expect(harness.commitInputs).toHaveLength(1);
+    expect(harness.commitInputs[0]!.operations).toEqual([
+      {
+        op: 'update',
+        targets: { target: { selector: { by: 'id', id: 'owner' }, cardinality: 'one' } },
+        changes: [
+          {
+            kind: 'field-slot',
+            field: { target: { selector: { by: 'id', id: 'field' }, cardinality: 'one' } },
+            mutation: {
+              action: 'remove-value',
+              value: { target: { selector: { by: 'id', id: 'value-a' }, cardinality: 'one' } },
+              entryId: 'entry',
+            },
+          },
+          {
+            kind: 'field-slot',
+            field: { target: { selector: { by: 'id', id: 'field' }, cardinality: 'one' } },
+            mutation: {
+              action: 'remove-value',
+              value: { target: { selector: { by: 'id', id: 'value-b' }, cardinality: 'one' } },
+              entryId: 'entry',
+            },
+          },
+        ],
+      },
+      {
+        op: 'lifecycle',
+        action: 'trash',
+        targets: { target: { selector: { by: 'id', id: 'body' }, cardinality: 'one' } },
+      },
+    ]);
+  });
+
   test('acknowledges only explicitly destructive desktop intents', async () => {
     const harness = await createHarness([
       node('root', { children: ['source', 'target'] }),

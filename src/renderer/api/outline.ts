@@ -48,9 +48,11 @@ export async function requestOutline<TResult>(command: string, input: unknown): 
 }
 
 export async function readDesktopProjection(): Promise<ProjectionSnapshot> {
-  const snapshot = await readCompleteDocumentProjection<NodeProjection>(requestOutline);
-  sharedEventSource?.noteRevision(snapshot.revision);
-  return snapshot;
+  return readCompleteDocumentProjection<NodeProjection>(requestOutline);
+}
+
+export function noteDesktopProjectionApplied(revision: number): void {
+  sharedEventSource?.noteRevision(revision);
 }
 
 export type DesktopFocusHint = FocusHint | ((
@@ -100,7 +102,6 @@ export function runDesktopMutation(
             ...(options.acknowledgeDestructive ? { acknowledgeDestructive: true } : {}),
           })
         : neverAcceptedMutation());
-      source.noteRevision(settlement.kind === 'outline.no-change' ? settlement.revision : settlement.revisionAfter);
       const update = accepted?.update ?? (settlement.kind === 'outline.no-change'
         ? await fullProjectionUpdate()
         : await updateFromOwnOperation(source, settlement.operationId));
@@ -117,7 +118,7 @@ export function runDesktopMutation(
       releaseEvents();
     }
   });
-  desktopMutationTail = result.then(() => undefined, () => undefined);
+  desktopMutationTail = result.then(yieldForProjectionFold, yieldForProjectionFold);
   return result;
 }
 
@@ -177,14 +178,17 @@ export function runDesktopHistory(command: 'undo' | 'redo'): Promise<CommandResu
     const releaseEvents = source.holdEvents();
     try {
       const operation = await requestOutline<Operation>(command, { idempotencyKey });
-      source.noteRevision(operation.revisionAfter);
       return { update: await updateFromOwnOperation(source, operation.operationId) };
     } finally {
       releaseEvents();
     }
   });
-  desktopMutationTail = result.then(() => undefined, () => undefined);
+  desktopMutationTail = result.then(yieldForProjectionFold, yieldForProjectionFold);
   return result;
+}
+
+async function yieldForProjectionFold(): Promise<void> {
+  await Promise.resolve();
 }
 
 export { projectionUpdateFromOutlineEvent };
@@ -251,6 +255,7 @@ export function subscribeDesktopProjection(
       if (!active) return snapshot;
       listener({ kind: 'full', ...snapshot });
       seededRevision = snapshot.revision;
+      noteDesktopProjectionApplied(snapshot.revision);
       const pending = buffered;
       buffered = [];
       for (const event of pending.sort((left, right) => left.sequence - right.sequence)) acceptEvent(event);
@@ -279,6 +284,7 @@ export function subscribeDesktopProjection(
     }
     listener(update);
     seededRevision = event.revision;
+    noteDesktopProjectionApplied(event.revision);
   };
 
   const subscription = subscribeDesktopOutlineEvents(acceptEvent, onError);
@@ -434,7 +440,6 @@ class DesktopOutlineEventSource {
     }
     if (record.type === 'event') {
       this.cursor = record.cursor;
-      this.noteRevision(record.event.revision);
       this.rememberOperation(record.event);
       if (this.eventHoldCount > 0) this.heldEvents.push(record.event);
       else this.dispatchEvent(record.event);

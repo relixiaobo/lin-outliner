@@ -102,6 +102,10 @@ export interface WorkspaceTransactionInput {
   readonly measureExactRevisionBytes?: ExactRevisionByteMeasurer;
 }
 
+export interface WorkspaceTransactionBatchInput extends Omit<WorkspaceTransactionInput, 'event'> {
+  readonly createEvent: (sequence: number) => OutlineEvent;
+}
+
 export interface WorkspaceTransactionAppendResult {
   readonly operation: Operation;
   readonly event: OutlineEvent;
@@ -519,6 +523,164 @@ export class WorkspaceTransactionLog {
         idempotent: false,
         maintenanceEvents: maintenanceEvent ? [maintenanceEvent] : [],
       };
+    });
+  }
+
+  async appendBatch(
+    inputs: readonly WorkspaceTransactionBatchInput[],
+  ): Promise<readonly WorkspaceTransactionAppendResult[]> {
+    if (inputs.length === 0) return [];
+    return this.enqueueWrite(async () => {
+      const state = await this.requireWritableState();
+      const initialInputs = inputs.map((batchInput): WorkspaceTransactionInput => {
+        const { createEvent, ...input } = batchInput;
+        return { ...input, event: createEvent(state.latestEventSequence + 1) };
+      });
+      const existingOperations = initialInputs.map((input) => {
+        assertTransactionInput(input);
+        const existing = input.idempotency
+          ? this.resolveIdempotency(state, input.idempotency)
+          : undefined;
+        if (!existing && state.operationById.has(input.operation.operationId)) {
+          throw new Error(`Outline Operation already exists: ${input.operation.operationId}`);
+        }
+        return existing;
+      });
+      const firstNewInputIndex = existingOperations.findIndex((operation) => operation === undefined);
+      if (firstNewInputIndex < 0) {
+        return existingOperations.map((operation) => {
+          if (!operation) throw new Error('Idempotent batch settlement is missing its Operation.');
+          const event = [...state.events].reverse()
+            .find((candidate) => candidate.operation?.operationId === operation.operationId);
+          if (!event) throw new Error(`Committed idempotent Operation has no retained Event: ${operation.operationId}`);
+          return {
+            operation,
+            event,
+            sequence: state.latestSequence,
+            idempotent: true,
+            maintenanceEvents: [],
+          };
+        });
+      }
+      const firstNewInput = initialInputs[firstNewInputIndex]!;
+      const maintenanceEvent = await this.expireEligibleRecovery(state, this.now(), {
+        instanceId: firstNewInput.event.instanceId,
+        revision: firstNewInput.operation.revisionBefore,
+      });
+      await this.prepareLogForAppend(state);
+      const staged = stageLoadedState(state);
+      const records: Array<TransactionRecordBody & { readonly checksum: string }> = [];
+      const results: WorkspaceTransactionAppendResult[] = [];
+
+      for (const batchInput of inputs) {
+        const { createEvent, ...transactionInput } = batchInput;
+        const input: WorkspaceTransactionInput = {
+          ...transactionInput,
+          event: createEvent(staged.latestEventSequence + 1),
+        };
+        assertTransactionInput(input);
+        const idempotent = input.idempotency
+          ? this.resolveIdempotency(staged, input.idempotency)
+          : undefined;
+        if (idempotent) {
+          const committedEvent = [...staged.events].reverse()
+            .find((candidate) => candidate.operation?.operationId === idempotent.operationId);
+          if (!committedEvent) {
+            throw new Error(`Committed idempotent Operation has no retained Event: ${idempotent.operationId}`);
+          }
+          results.push({
+            operation: idempotent,
+            event: committedEvent,
+            sequence: staged.latestSequence,
+            idempotent: true,
+            maintenanceEvents: [],
+          });
+          continue;
+        }
+        if (staged.operationById.has(input.operation.operationId)) {
+          throw new Error(`Outline Operation already exists: ${input.operation.operationId}`);
+        }
+
+        assertAssetDeltaAdmission(input.assetDelta ?? EMPTY_ASSET_DELTA, staged, this.now());
+        assertEventSequence(input.event, staged);
+        const encodedPatch = canonicalJson(input.recoveryPatch);
+        const patchBytes = Buffer.byteLength(encodedPatch);
+        const currentRecoveryBytes = await this.availableRecoveryBytes(
+          staged,
+          input.measureExactRevisionBytes,
+        );
+        const candidateAssetBytes = await this.measureRecoveryAssetBytes(
+          staged,
+          input.measureExactRevisionBytes,
+          input.recoveryPatch.protectedAssetRecordIds,
+          input.assetDelta ?? EMPTY_ASSET_DELTA,
+        );
+        const candidateRecoveryBytes = this.recoveryPatchBytes(staged) + patchBytes + candidateAssetBytes;
+        if (candidateRecoveryBytes > this.recoveryBudgetBytes) {
+          throw new OutlineContractError(outlineError(
+            'recovery_capacity_exceeded',
+            'durability',
+            'Recovery capacity is exhausted; no document changes were committed.',
+            {
+              details: {
+                budgetBytes: this.recoveryBudgetBytes,
+                retainedBytes: currentRecoveryBytes,
+                requestedBytes: Math.max(0, candidateRecoveryBytes - currentRecoveryBytes),
+              },
+            },
+          ));
+        }
+
+        const recovery = await this.persistRecovery(input.recoveryPatch, encodedPatch);
+        const body: TransactionRecordBody = {
+          kind: TRANSACTION_KIND,
+          storageVersion: OUTLINE_STORAGE_VERSION,
+          sequence: staged.latestSequence + 1,
+          previousChecksum: staged.headChecksum,
+          persistence: encodePersistenceCapture(input.persistence),
+          operation: clone(input.operation),
+          recovery,
+          event: clone(input.event),
+          ...(input.idempotency ? { idempotency: clone(input.idempotency) } : {}),
+          assetDelta: clone(input.assetDelta ?? EMPTY_ASSET_DELTA),
+        };
+        const record = logRecord(body);
+        assertReplayedRecord(record, staged);
+        applyTransactionRecord(staged, record, this.eventRetention);
+        staged.logValidBytes += jsonlRecordBytes(record);
+        records.push(record);
+        results.push({
+          operation: clone(input.operation),
+          event: clone(input.event),
+          sequence: record.sequence,
+          idempotent: false,
+          maintenanceEvents: [],
+        });
+      }
+
+      if (maintenanceEvent && results[firstNewInputIndex]) {
+        results[firstNewInputIndex] = {
+          ...results[firstNewInputIndex]!,
+          maintenanceEvents: [maintenanceEvent],
+        };
+      }
+      if (records.length === 0) return results;
+      try {
+        await appendJsonlBatchDurable(this.transactionLogPath, records, this.fsyncHandle);
+      } catch (error) {
+        this.state = undefined;
+        throw uncertainDurabilityError(error);
+      }
+      this.state = staged;
+      try {
+        for (const record of records) {
+          await this.afterTransactionFsync?.(clone(record.operation));
+        }
+      } catch (error) {
+        this.state = undefined;
+        throw error;
+      }
+      return results;
     });
   }
 
@@ -1390,6 +1552,23 @@ function applyTransactionRecord(state: LoadedState, record: TransactionRecordBod
   state.headChecksum = record.checksum;
 }
 
+function stageLoadedState(state: LoadedState): LoadedState {
+  return {
+    ...state,
+    replay: [...state.replay],
+    operations: [...state.operations],
+    operationById: new Map(state.operationById),
+    recoveryByOperationId: new Map(state.recoveryByOperationId),
+    idempotencyByKey: new Map(state.idempotencyByKey),
+    events: [...state.events],
+    assetRecordById: new Map(state.assetRecordById),
+    degradedAssetRecordById: new Map(state.degradedAssetRecordById),
+    assetLeaseById: new Map(state.assetLeaseById),
+    liveAssetRecordIds: new Set(state.liveAssetRecordIds),
+    orphanRecoveryBlobs: [...state.orphanRecoveryBlobs],
+  };
+}
+
 function applyAssetStageRecord(state: LoadedState, record: AssetStageRecordBody & { checksum: string }): void {
   try {
     assertOutlineAssetStage(record.stage);
@@ -1896,6 +2075,20 @@ async function appendJsonlDurable(
   const handle = await open(filePath, 'a', 0o600);
   try {
     await handle.writeFile(`${JSON.stringify(value)}\n`, 'utf8');
+    await fsyncHandle(handle);
+  } finally {
+    await handle.close();
+  }
+}
+
+async function appendJsonlBatchDurable(
+  filePath: string,
+  values: readonly unknown[],
+  fsyncHandle: (handle: FileHandle) => Promise<void>,
+): Promise<void> {
+  const handle = await open(filePath, 'a', 0o600);
+  try {
+    await handle.writeFile(values.map((value) => `${JSON.stringify(value)}\n`).join(''), 'utf8');
     await fsyncHandle(handle);
   } finally {
     await handle.close();

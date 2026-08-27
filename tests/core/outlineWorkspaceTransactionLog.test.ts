@@ -13,6 +13,7 @@ import {
   WorkspaceTransactionLog,
   type OutlineAssetStage,
   type OutlineRecoveryPatch,
+  type WorkspaceTransactionBatchInput,
   type WorkspaceTransactionInput,
 } from '../../src/outline/runtime/storage';
 
@@ -91,6 +92,113 @@ describe('WorkspaceTransactionLog', () => {
     })).rejects.toMatchObject({
       outlineError: { code: 'idempotency_conflict' },
     });
+  });
+
+  test('appends a transaction batch with one fsync and replays every record after restart', async () => {
+    const root = await makeRoot();
+    const core = Core.new({ installationId: crypto.randomUUID() });
+    let fsyncCount = 0;
+    const store = await initializedStore(root, core, {
+      fsync: async (handle) => {
+        await handle.sync();
+        fsyncCount += 1;
+      },
+    });
+    const first = await createTransaction(core, 1, (candidate) => {
+      candidate.createNode(candidate.projection().todayId, null, 'First batched row');
+    });
+    const second = await createTransaction(core, 2, (candidate) => {
+      candidate.createNode(candidate.projection().todayId, null, 'Second batched row');
+    });
+    fsyncCount = 0;
+
+    const results = await store.appendBatch([batchInput(first), batchInput(second)]);
+
+    expect(fsyncCount).toBe(1);
+    expect(results.map((result) => result.idempotent)).toEqual([false, false]);
+    expect(results.map((result) => result.event.sequence)).toEqual([1, 2]);
+    const restarted = new WorkspaceTransactionLog(root);
+    const loaded = await restarted.load();
+    expect(loaded.inconsistent).toBeUndefined();
+    expect(loaded.operations).toEqual([first.operation, second.operation]);
+    expect(loaded.events.map((event) => event.sequence)).toEqual([1, 2]);
+    const restored = Core.fromPersistenceState(loaded.snapshot!, loaded.replay, {
+      installationId: core.persistenceIdentity().installationId,
+    });
+    expect(restored.state()).toEqual(core.state());
+  });
+
+  test('retries every record idempotently after a batched fsync acknowledgement failure', async () => {
+    const root = await makeRoot();
+    const core = Core.new({ installationId: crypto.randomUUID() });
+    let failAcknowledgement = true;
+    const store = await initializedStore(root, core, {
+      afterTransactionFsync: () => {
+        if (!failAcknowledgement) return;
+        failAcknowledgement = false;
+        throw new Error('injected batched acknowledgement failure');
+      },
+    });
+    const first = await createTransaction(core, 1, (candidate) => {
+      candidate.createNode(candidate.projection().todayId, null, 'First uncertain row');
+    });
+    const second = await createTransaction(core, 2, (candidate) => {
+      candidate.createNode(candidate.projection().todayId, null, 'Second uncertain row');
+    });
+    const batch = [batchInput(first), batchInput(second)];
+
+    await expect(store.appendBatch(batch)).rejects.toThrow('injected batched acknowledgement failure');
+    const retry = await store.appendBatch(batch);
+
+    expect(retry.map((result) => result.idempotent)).toEqual([true, true]);
+    expect(retry.map((result) => result.operation.operationId)).toEqual([
+      first.operation.operationId,
+      second.operation.operationId,
+    ]);
+    const loaded = await new WorkspaceTransactionLog(root).load();
+    expect(loaded.inconsistent).toBeUndefined();
+    expect(loaded.operations).toEqual([first.operation, second.operation]);
+    expect(loaded.events.map((event) => event.sequence)).toEqual([1, 2]);
+  });
+
+  test('keeps maintenance and Event sequences valid for mixed idempotent and new batch entries', async () => {
+    const root = await makeRoot();
+    const core = Core.new({ installationId: crypto.randomUUID() });
+    const now = new Date('2026-01-01T00:00:00.000Z');
+    const store = await initializedStore(root, core, {
+      minimumRetentionDays: 0,
+      minimumRetentionOperations: 0,
+      now: () => now,
+    });
+    const first = await createTransaction(core, 1, (candidate) => {
+      candidate.createNode(candidate.projection().todayId, null, 'Existing batch row');
+    }, { createdAt: now.toISOString() });
+    await store.appendBatch([batchInput(first)]);
+    const second = await createTransaction(core, 2, (candidate) => {
+      candidate.createNode(candidate.projection().todayId, null, 'New batch row');
+    }, { createdAt: now.toISOString() });
+
+    const mixed = await store.appendBatch([batchInput(first), batchInput(second)]);
+
+    expect(mixed.map((result) => result.idempotent)).toEqual([true, false]);
+    expect(mixed[1]?.event.sequence).toBe(3);
+    expect(mixed[0]?.maintenanceEvents).toEqual([]);
+    expect(mixed[1]?.maintenanceEvents).toEqual([expect.objectContaining({
+      type: 'operation.recovery-expired',
+      sequence: 2,
+      revision: 1,
+    })]);
+    const loaded = await new WorkspaceTransactionLog(root).load();
+    expect(loaded.inconsistent).toBeUndefined();
+    expect(loaded.events.map((event) => event.sequence)).toEqual([1, 2, 3]);
+    expect(loaded.operations.map((operation) => operation.operationId)).toEqual([
+      first.operation.operationId,
+      second.operation.operationId,
+    ]);
+
+    const retry = await store.appendBatch([batchInput(first), batchInput(second)]);
+    expect(retry.map((result) => result.idempotent)).toEqual([true, true]);
+    expect((await store.load()).events.map((event) => event.sequence)).toEqual([1, 2, 3]);
   });
 
   test('reloads the asset-stage sequence after an uncertain fsync settlement', async () => {
@@ -415,6 +523,18 @@ async function createTransaction(
       payloadHash: changeSetHash,
       operationId,
     },
+  };
+}
+
+function batchInput(transaction: WorkspaceTransactionInput): WorkspaceTransactionBatchInput {
+  const { event, ...input } = transaction;
+  return {
+    ...input,
+    createEvent: (sequence) => ({
+      ...event,
+      sequence,
+      cursor: `event:${sequence}`,
+    }),
   };
 }
 

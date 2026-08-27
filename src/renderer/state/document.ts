@@ -358,6 +358,7 @@ export interface ProjectionStore {
 
 export interface ProjectionStoreOptions {
   readonly candidateCompactionYieldControl?: () => Promise<void>;
+  readonly onProjectionApplied?: (revision: number) => void;
 }
 
 // Holds the projection-derived index across edits and folds in ProjectionUpdates.
@@ -552,8 +553,9 @@ export function useProjectionStore(
       update,
     ));
     commit(next);
+    options.onProjectionApplied?.(update.revision);
     scheduleCandidateCompaction(next, update);
-  }, [commit, scheduleCandidateCompaction, setUi]);
+  }, [commit, options.onProjectionApplied, scheduleCandidateCompaction, setUi]);
 
   const applyProjectionUpdate = useCallback((update: ProjectionUpdate) => {
     const previous = stateRef.current;

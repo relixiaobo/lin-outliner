@@ -112,6 +112,80 @@ describe('OutlineRuntimeWorkspace', () => {
     expect(restarted.projection().nodes.some((node) => node.content.text === 'Accepted before fsync')).toBe(true);
   });
 
+  test('freezes admission behind mutations already queued in the Runtime', async () => {
+    const root = await makeRoot();
+    const workspace = await openWorkspace(root);
+    let releasePreparation!: () => void;
+    let signalPreparation!: () => void;
+    const preparationEntered = new Promise<void>((resolve) => { signalPreparation = resolve; });
+    const preparationGate = new Promise<void>((resolve) => { releasePreparation = resolve; });
+    const request = createRequest('Admitted before freeze', {
+      idempotencyKey: 'desktop:before-freeze',
+      idempotencyPayloadHash: 'e'.repeat(64),
+    });
+
+    const admitted = workspace.commitAcceptedPrepared(request, async () => {
+      signalPreparation();
+      await preparationGate;
+      return request;
+    });
+    await preparationEntered;
+    const freeze = workspace.freezeMutationAdmission();
+    releasePreparation();
+
+    const accepted = await admitted;
+    expect(await freeze).toBe(accepted.update.revision);
+    await expect(workspace.mutate(createRequest('Rejected after freeze'))).rejects.toMatchObject({
+      outlineError: { code: 'runtime_unavailable' },
+    });
+    await workspace.drainDurability(accepted.update.revision);
+    workspace.close();
+  });
+
+  test('coalesces sustained accepted edits at the maximum dirty age under one fsync', async () => {
+    const root = await makeRoot();
+    const clock = new TestClock();
+    let fsyncCount = 0;
+    let signalBatchFsync!: () => void;
+    const batchFsync = new Promise<void>((resolve) => { signalBatchFsync = resolve; });
+    const store = new WorkspaceTransactionLog(root, {
+      fsync: async (handle) => {
+        await handle.sync();
+        fsyncCount += 1;
+        if (fsyncCount > 2) signalBatchFsync();
+      },
+    });
+    const workspace = await openWorkspace(root, {
+      store,
+      now: () => new Date(clock.nowValue),
+      durabilityIdleDelayMs: 700,
+      durabilityMaxWaitMs: 5_000,
+      durabilitySchedule: clock.schedule,
+      durabilityCancel: clock.cancel,
+    });
+    const baselineFsyncs = fsyncCount;
+
+    for (let index = 0; index < 20; index += 1) {
+      const request = createRequest(`Sustained ${index}`, {
+        idempotencyKey: `desktop:sustained:${index}`,
+        idempotencyPayloadHash: index.toString(16).padStart(64, '0'),
+      });
+      await workspace.commitAcceptedPrepared(request, () => request);
+      await clock.advance(200);
+    }
+
+    expect(fsyncCount).toBe(baselineFsyncs);
+    await clock.advance(999);
+    expect(fsyncCount).toBe(baselineFsyncs);
+    await clock.advance(1);
+    await batchFsync;
+    await workspace.drainDurability(20);
+
+    expect(fsyncCount).toBe(baselineFsyncs + 1);
+    expect(await store.operations()).toHaveLength(20);
+    workspace.close();
+  });
+
   test('freezes writes after deferred acknowledgement failure and retries without executing twice', async () => {
     const root = await makeRoot();
     let failAcknowledgement = true;
@@ -124,6 +198,8 @@ describe('OutlineRuntimeWorkspace', () => {
       },
     });
     const workspace = await openWorkspace(root, { store });
+    const publishedEvents: OutlineEvent[] = [];
+    const unsubscribe = workspace.subscribe((event) => publishedEvents.push(event));
     const request = createRequest('Deferred retry', {
       idempotencyKey: 'desktop:deferred-retry',
       idempotencyPayloadHash: 'b'.repeat(64),
@@ -142,6 +218,9 @@ describe('OutlineRuntimeWorkspace', () => {
     expect(executions).toBe(1);
     expect(workspace.durableRevision()).toBe(accepted.update.revision);
     expect(await store.operations()).toHaveLength(1);
+    expect(publishedEvents).toEqual([]);
+    unsubscribe();
+    workspace.close();
   });
 
   test('persists consecutive accepted mutations in revision and Event order across restart', async () => {
@@ -953,4 +1032,40 @@ function openWorkspace(
     ...options,
     contentRoot: options.contentRoot ?? path.join(root, 'content'),
   });
+}
+
+interface ScheduledTask {
+  readonly callback: () => void;
+  readonly due: number;
+  canceled: boolean;
+}
+
+class TestClock {
+  nowValue = 0;
+  private nextId = 1;
+  private readonly tasks = new Map<number, ScheduledTask>();
+
+  schedule = (callback: () => void, delayMs: number): ReturnType<typeof setTimeout> => {
+    const id = this.nextId++;
+    this.tasks.set(id, { callback, due: this.nowValue + delayMs, canceled: false });
+    return id as unknown as ReturnType<typeof setTimeout>;
+  };
+
+  cancel = (timer: ReturnType<typeof setTimeout>): void => {
+    const task = this.tasks.get(timer as unknown as number);
+    if (task) task.canceled = true;
+  };
+
+  async advance(ms: number): Promise<void> {
+    this.nowValue += ms;
+    while (true) {
+      const next = [...this.tasks.entries()]
+        .filter(([, task]) => !task.canceled && task.due <= this.nowValue)
+        .sort(([, left], [, right]) => left.due - right.due)[0];
+      if (!next) return;
+      this.tasks.delete(next[0]);
+      next[1].callback();
+      await Promise.resolve();
+    }
+  }
 }
