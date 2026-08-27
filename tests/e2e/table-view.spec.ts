@@ -352,9 +352,12 @@ test.describe('table view', () => {
       outline.request = async <T,>(request: { command: string; input: unknown }) => {
         const input = request.input as {
           diff?: { normalizedChangeSet?: { operations?: Array<{ changes?: Array<Record<string, unknown>> }> } };
+          changeSet?: { operations?: Array<{ changes?: Array<Record<string, unknown>> }> };
         };
-        const appendsFieldText = request.command === 'apply'
-          && (input.diff?.normalizedChangeSet?.operations ?? []).some((operation) => (
+        const operations = request.command === 'apply'
+          ? input.diff?.normalizedChangeSet?.operations ?? []
+          : request.command === 'commit' ? input.changeSet?.operations ?? [] : [];
+        const appendsFieldText = operations.some((operation) => (
             operation.changes?.some((change) => {
               const mutation = change.mutation as Record<string, unknown> | undefined;
               return change.kind === 'field-slot' && mutation?.action === 'append-text';

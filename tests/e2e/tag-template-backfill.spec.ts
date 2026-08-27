@@ -36,7 +36,9 @@ async function templateRuntimeCalls(page: Page) {
   };
   return {
     diffs: calls.filter((call) => call.cmd === 'outline/diff' && carriesTemplateChange(call.args)),
-    applies: calls.filter((call) => call.cmd === 'outline/apply' && carriesTemplateChange(call.args)),
+    applies: calls.filter((call) => (
+      call.cmd === 'outline/apply' || call.cmd === 'outline/commit'
+    ) && carriesTemplateChange(call.args)),
   };
 }
 
@@ -81,7 +83,7 @@ test.describe('tag template seed backfill', () => {
     const beta = await nodeById(page, ids.beta);
     expect(alpha?.children.map((childId) => childId)).toHaveLength(2);
     expect(beta?.children.map((childId) => childId)).toHaveLength(2);
-    expect((await templateRuntimeCalls(page)).diffs).toHaveLength(2);
+    expect((await templateRuntimeCalls(page)).diffs).toHaveLength(1);
     expect((await templateRuntimeCalls(page)).applies).toHaveLength(1);
 
     const projection = await e2eProjection(page);
@@ -103,7 +105,7 @@ test.describe('tag template seed backfill', () => {
     await menu.getByRole('menuitem', { name: 'Apply template to tagged nodes' }).click();
     await expect.poll(async () => (
       (await templateRuntimeCalls(page)).diffs.length
-    )).toBe(3);
+    )).toBe(2);
     await expect(dialog).toHaveCount(0);
     expect((await templateRuntimeCalls(page)).applies).toHaveLength(1);
     await expect(row(page, ids.alpha).getByRole('button', { name: 'Open project tag' })).toBeFocused();

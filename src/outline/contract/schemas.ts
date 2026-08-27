@@ -1118,7 +1118,6 @@ export const RuntimeStatusSchema = Type.Union([
 export const AssetMetadataSchema = Type.Object({
   mimeType: Type.String({ minLength: 1, maxLength: 256 }),
   byteSize: Type.Integer({ minimum: 0 }),
-  sha256: Digest,
   originalFilename: Type.Optional(Type.String({ maxLength: 4_096 })),
   imageWidth: Type.Optional(Type.Integer({ minimum: 0 })),
   imageHeight: Type.Optional(Type.Integer({ minimum: 0 })),

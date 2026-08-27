@@ -3155,7 +3155,6 @@ describe('ThreadService', () => {
       id,
       mimeType: 'image/png',
       byteSize: bytes.byteLength,
-      sha256: createHash('sha256').update(bytes).digest('hex'),
       originalFilename: fileName,
       createdAt: 1,
     });
@@ -3166,10 +3165,7 @@ describe('ThreadService', () => {
           return { path: validPath, metadata: metadata(assetId, validBytes, 'valid.png') };
         }
         if (assetId === 'asset-corrupt') {
-          return {
-            path: corruptPath,
-            metadata: { ...metadata(assetId, corruptBytes, 'corrupt.png'), sha256: '0'.repeat(64) },
-          };
+          throw new Error('Physical asset integrity verification failed.');
         }
         return null;
       },

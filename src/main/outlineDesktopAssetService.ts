@@ -12,7 +12,6 @@ import {
   type AssetMetadata,
   type AssetRecord,
 } from '../outline/contract/schemas';
-import { sha256File } from './fileHashing';
 
 export class OutlineDesktopAssetService {
   constructor(
@@ -48,7 +47,6 @@ export class OutlineDesktopAssetService {
     const directory = path.join(this.exportRoot, safePathSegment(record.assetId));
     const filename = exportFilename(record);
     const destination = path.join(directory, filename);
-    if (await fileMatches(destination, record)) return destination;
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const temporary = path.join(directory, `.export-${crypto.randomUUID()}.tmp`);
     const handle = await open(temporary, 'wx', 0o600);
@@ -57,7 +55,8 @@ export class OutlineDesktopAssetService {
       for await (const chunk of client.exportAsset(record.assetId)) await handle.write(chunk);
       await handle.sync();
       await handle.close();
-      if (!await fileMatches(temporary, record)) {
+      const exported = await stat(temporary);
+      if (!exported.isFile() || exported.size !== record.metadata.byteSize) {
         throw new Error(`Outline Runtime export did not match AssetRecord: ${record.assetId}`);
       }
       await rename(temporary, destination);
@@ -122,7 +121,6 @@ function desktopMetadata(
     id,
     mimeType: metadata.mimeType,
     byteSize: metadata.byteSize,
-    sha256: metadata.sha256,
     createdAt,
     originalFilename: metadata.originalFilename,
     imageWidth: metadata.imageWidth,
@@ -132,13 +130,6 @@ function desktopMetadata(
     audioDurationMs: metadata.audioDurationMs,
     videoDurationMs: metadata.videoDurationMs,
   };
-}
-
-async function fileMatches(filePath: string, record: AssetRecord): Promise<boolean> {
-  const file = await stat(filePath).catch(() => null);
-  return Boolean(file?.isFile())
-    && file!.size === record.metadata.byteSize
-    && await sha256File(filePath).catch(() => '') === record.metadata.sha256;
 }
 
 function exportFilename(record: AssetRecord): string {

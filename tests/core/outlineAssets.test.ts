@@ -1,12 +1,23 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { Database } from 'bun:sqlite';
+import { appendFile, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { ChangeSet, NodeDraft } from '../../src/outline/contract';
+import { ContentStore } from '../../src/content';
+import {
+  AssetLeaseSchema,
+  AssetMetadataSchema,
+  AssetRecordSchema,
+  canonicalSha256,
+  type ChangeSet,
+  type NodeDraft,
+} from '../../src/outline/contract';
 import {
   applyOutlineDiff,
   diffOutlineChangeSet,
+  OutlineAssetStore,
   OutlineRuntimeWorkspace,
+  WorkspaceTransactionLog,
 } from '../../src/outline/runtime';
 
 const roots: string[] = [];
@@ -16,7 +27,14 @@ afterAll(async () => {
 });
 
 describe('Outline Runtime assets', () => {
-  test('deduplicates immutable blobs while keeping logical records and leases distinct', async () => {
+  test('keeps exact revision and retention coordinates out of public asset schemas', () => {
+    const publicSchemas = JSON.stringify([AssetMetadataSchema, AssetLeaseSchema, AssetRecordSchema]);
+    expect(publicSchemas).not.toContain('sha256');
+    expect(publicSchemas).not.toContain('digest');
+    expect(publicSchemas).not.toContain('anchorId');
+  });
+
+  test('deduplicates exact revisions while keeping logical records and leases distinct', async () => {
     const workspace = await makeWorkspace();
     const bytes = pngBytes(32, 24);
     const first = await workspace.assets.ingestBytes(bytes, 'first.png');
@@ -24,14 +42,50 @@ describe('Outline Runtime assets', () => {
 
     expect(first.assetId).not.toBe(second.assetId);
     expect(first.leaseId).not.toBe(second.leaseId);
-    expect(first.metadata.sha256).toBe(second.metadata.sha256);
-    expect((await readdir(workspace.assets.blobDirectory)).filter((name) => name.endsWith('.blob'))).toHaveLength(1);
+    expect(first.metadata).not.toHaveProperty('sha256');
+    const firstStored = await workspace.store.storedAssetRecord(first.assetId);
+    const secondStored = await workspace.store.storedAssetRecord(second.assetId);
+    expect(firstStored?.exactRevision.anchorId).not.toBe(secondStored?.exactRevision.anchorId);
+    expect(await workspace.assets.measureExactRevisionBytes([
+      { namespace: 'outline', recordKey: first.assetId, reference: firstStored!.exactRevision },
+      { namespace: 'outline', recordKey: second.assetId, reference: secondStored!.exactRevision },
+    ])).toBe(bytes.byteLength);
+    expect(JSON.stringify([firstStored, secondStored])).not.toContain('digest');
+    expect(await readFile(workspace.store.transactionLogPath, 'utf8')).not.toContain('"digest"');
+    expect(await contentRevisionFiles(workspace.assets.content.revisionsRoot)).toHaveLength(1);
 
-    const restarted = await OutlineRuntimeWorkspace.open(workspace.store.workspaceRoot());
+    const restarted = await OutlineRuntimeWorkspace.open(workspace.store.workspaceRoot(), {
+      contentRoot: workspace.assets.content.root,
+    });
     expect(await restarted.assets.show(first.assetId)).toMatchObject({
       assetId: first.assetId,
       metadata: { imageWidth: 32, imageHeight: 24 },
     });
+  });
+
+  test('charges one physical revision to recovery only after its last live logical record is removed', async () => {
+    const workspace = await makeWorkspace();
+    const bytes = Buffer.alloc(32 * 1024, 7);
+    const firstLease = await workspace.assets.ingestBytes(bytes, 'first.bin');
+    const secondLease = await workspace.assets.ingestBytes(bytes, 'second.bin');
+    const firstCreate = await applyChangeSet(workspace, createAttachmentChangeSet(firstLease.leaseId));
+    const secondCreate = await applyChangeSet(workspace, createAttachmentChangeSet(secondLease.leaseId));
+    const firstNodeId = firstCreate.affectedNodeIds.find((id) => (
+      workspace.documentState().nodes[id]?.assetId === firstLease.assetId
+    ));
+    const secondNodeId = secondCreate.affectedNodeIds.find((id) => (
+      workspace.documentState().nodes[id]?.assetId === secondLease.assetId
+    ));
+    expect(firstNodeId).toBeDefined();
+    expect(secondNodeId).toBeDefined();
+
+    await trashAndPurge(workspace, firstNodeId!);
+    const firstLogicalRecoveryBytes = await transactionRecoveryBytes(workspace.store.transactionLogPath);
+    expect((await workspace.status()).recovery.retainedBytes).toBe(firstLogicalRecoveryBytes);
+
+    await trashAndPurge(workspace, secondNodeId!);
+    const allLogicalRecoveryBytes = await transactionRecoveryBytes(workspace.store.transactionLogPath);
+    expect((await workspace.status()).recovery.retainedBytes).toBe(allLogicalRecoveryBytes + bytes.byteLength);
   });
 
   test('stores PDF thumbnails as linked AssetRecords protected by the parent lease and live Node', async () => {
@@ -149,14 +203,294 @@ describe('Outline Runtime assets', () => {
     });
 
     const corruptLease = await workspace.assets.ingestBytes(Buffer.from('quarantine me'), 'bad.txt');
-    const blobPath = path.join(workspace.assets.blobDirectory, `${corruptLease.metadata.sha256}.blob`);
+    const stored = await workspace.store.storedAssetRecord(corruptLease.assetId);
+    expect(stored).toBeDefined();
+    const blobPath = await workspace.assets.content.verifiedPath(
+      stored!.exactRevision,
+      'outline',
+      corruptLease.assetId,
+    );
     await writeFile(blobPath, Buffer.from('wrong bytes'));
-    await expect(workspace.assets.show(corruptLease.assetId)).rejects.toMatchObject({
+    const publicError = await rejectedError(workspace.assets.show(corruptLease.assetId));
+    expect(publicError).toMatchObject({ outlineError: { code: 'recovery_inconsistent' } });
+    const publicErrorJson = JSON.stringify(publicError);
+    expect(publicErrorJson).not.toContain(stored!.exactRevision.anchorId);
+    expect(publicErrorJson).not.toContain(blobPath);
+    expect(publicErrorJson).not.toMatch(/[a-f0-9]{64}/u);
+    const quarantined = await readdir(workspace.assets.content.quarantineRoot);
+    expect(quarantined).toHaveLength(1);
+    expect(await readFile(path.join(workspace.assets.content.quarantineRoot, quarantined[0]!))).toEqual(Buffer.from('wrong bytes'));
+  });
+
+  test('releases an anchor leaked before AssetRecord commit without collecting a committed record', async () => {
+    let injected = true;
+    const workspace = await makeWorkspace({
+      assetStoreOptions: {
+        hooks: {
+          afterAnchorCreated: () => {
+            if (!injected) return;
+            injected = false;
+            throw new Error('injected crash after anchor creation');
+          },
+        },
+      },
+    });
+
+    await expect(workspace.assets.ingestBytes(Buffer.from('uncommitted'), 'uncommitted.txt'))
+      .rejects.toThrow('injected crash after anchor creation');
+    const [leaked] = await workspace.assets.content.anchors('outline');
+    expect(leaked).toBeDefined();
+    expect(await workspace.store.assetRecords()).toEqual([]);
+
+    expect(await workspace.assets.reconcileAnchors()).toEqual([leaked!.anchorId]);
+    expect(await workspace.assets.content.collectGarbage()).toEqual({
+      revisionCount: 1,
+      byteLength: leaked!.byteLength,
+    });
+  });
+
+  test('keeps a committed AssetRecord when stage acknowledgement is lost after fsync', async () => {
+    let failNextFsync = false;
+    const workspace = await makeWorkspace({
+      storeOptions: {
+        fsync: async (handle) => {
+          await handle.sync();
+          if (!failNextFsync) return;
+          failNextFsync = false;
+          throw new Error('injected lost asset-stage acknowledgement');
+        },
+      },
+    });
+    failNextFsync = true;
+
+    const lease = await workspace.assets.ingestBytes(Buffer.from('durably staged'), 'durable.txt');
+    const stored = await workspace.store.storedAssetRecord(lease.assetId);
+    expect(stored).toBeDefined();
+    expect((await workspace.assets.content.anchors('outline')).map((entry) => entry.anchorId))
+      .toEqual([stored!.exactRevision.anchorId]);
+    expect((await workspace.assets.readVerified(lease.assetId)).bytes).toEqual(Buffer.from('durably staged'));
+  });
+
+  test('serializes reconciliation behind in-flight anchor and AssetRecord settlement', async () => {
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const workspace = await makeWorkspace({
+      assetStoreOptions: {
+        hooks: {
+          afterAnchorCreated: async () => {
+            enter();
+            await gate;
+          },
+        },
+      },
+    });
+
+    const ingesting = workspace.assets.ingestBytes(Buffer.from('in flight'), 'in-flight.txt');
+    await entered;
+    const [anchor] = await workspace.assets.content.anchors('outline');
+    expect(anchor).toBeDefined();
+    let reconciliationSettled = false;
+    const reconciling = workspace.assets.reconcileAnchors().finally(() => {
+      reconciliationSettled = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(reconciliationSettled).toBe(false);
+
+    release();
+    const lease = await ingesting;
+    expect(await reconciling).toEqual([]);
+    expect(await workspace.assets.show(lease.assetId)).toMatchObject({ assetId: lease.assetId });
+    expect((await workspace.assets.content.anchors('outline')).map((entry) => entry.anchorId))
+      .toEqual([anchor!.anchorId]);
+  });
+
+  test('reconciles only orphan anchors after a complete successful Runtime enumeration', async () => {
+    const workspace = await makeWorkspace();
+    const lease = await workspace.assets.ingestBytes(Buffer.from('shared revision'), 'shared.txt');
+    const stored = await workspace.store.storedAssetRecord(lease.assetId);
+    expect(stored).toBeDefined();
+    const orphan = await workspace.assets.content.cloneAnchor(
+      stored!.exactRevision.anchorId,
+      'outline',
+      'asset:orphan',
+    );
+
+    expect(await workspace.assets.reconcileAnchors()).toEqual([orphan.anchorId]);
+    expect((await workspace.assets.content.anchors('outline')).map((entry) => entry.anchorId))
+      .toEqual([stored!.exactRevision.anchorId]);
+    expect((await workspace.assets.readVerified(lease.assetId)).bytes).toEqual(Buffer.from('shared revision'));
+  });
+
+  test('releases no orphan when a committed AssetRecord anchor coordinate mismatches ContentStore', async () => {
+    const workspace = await makeWorkspace();
+    const lease = await workspace.assets.ingestBytes(Buffer.from('committed revision'), 'committed.txt');
+    const stored = await workspace.store.storedAssetRecord(lease.assetId);
+    expect(stored).toBeDefined();
+    const orphan = await workspace.assets.content.cloneAnchor(
+      stored!.exactRevision.anchorId,
+      'outline',
+      'asset:orphan',
+    );
+    const database = new Database(workspace.assets.content.databasePath);
+    database.query('UPDATE retention_anchors SET record_key = ? WHERE anchor_id = ?')
+      .run('asset:wrong-coordinate', stored!.exactRevision.anchorId);
+    database.close();
+
+    await expect(workspace.assets.reconcileAnchors()).rejects.toMatchObject({
       outlineError: { code: 'recovery_inconsistent' },
     });
-    const quarantined = await readdir(workspace.assets.quarantineDirectory);
-    expect(quarantined.some((name) => name.startsWith(corruptLease.metadata.sha256))).toBe(true);
-    expect(await readFile(path.join(workspace.assets.quarantineDirectory, quarantined[0]!))).toEqual(Buffer.from('wrong bytes'));
+    expect((await workspace.assets.content.anchors('outline')).map((entry) => entry.anchorId).sort())
+      .toEqual([stored!.exactRevision.anchorId, orphan.anchorId].sort());
+  });
+
+  test('releases no Outline anchor when the Runtime enumeration is inconsistent', async () => {
+    const workspace = await makeWorkspace();
+    const lease = await workspace.assets.ingestBytes(Buffer.from('keep both anchors'), 'keep.txt');
+    const stored = await workspace.store.storedAssetRecord(lease.assetId);
+    expect(stored).toBeDefined();
+    const orphan = await workspace.assets.content.cloneAnchor(
+      stored!.exactRevision.anchorId,
+      'outline',
+      'asset:orphan',
+    );
+    const transactionLogPath = workspace.store.transactionLogPath;
+    const contentRoot = workspace.assets.content.root;
+    const workspaceRoot = workspace.store.workspaceRoot();
+    workspace.close();
+    await appendFile(transactionLogPath, '{"invalid":"complete-record"}\n');
+
+    const transactions = new WorkspaceTransactionLog(workspaceRoot);
+    expect((await transactions.load()).inconsistent).toBeDefined();
+    const content = await ContentStore.open(contentRoot);
+    const assets = new OutlineAssetStore(content, transactions);
+    await expect(assets.reconcileAnchors()).rejects.toMatchObject({
+      outlineError: { code: 'recovery_inconsistent' },
+    });
+    expect((await content.anchors('outline')).map((entry) => entry.anchorId).sort())
+      .toEqual([stored!.exactRevision.anchorId, orphan.anchorId].sort());
+    assets.close();
+  });
+
+  test('degrades only invalid AssetRecord metadata while retaining shared exact bytes', async () => {
+    const workspace = await makeWorkspace();
+    const bytes = Buffer.from('one exact revision, two logical records');
+    const healthyLease = await workspace.assets.ingestBytes(bytes, 'healthy.txt');
+    const degradedLease = await workspace.assets.ingestBytes(bytes, 'degraded.txt');
+    const healthyStored = await workspace.store.storedAssetRecord(healthyLease.assetId);
+    const degradedStored = await workspace.store.storedAssetRecord(degradedLease.assetId);
+    expect(healthyStored?.exactRevision.anchorId).not.toBe(degradedStored?.exactRevision.anchorId);
+    expect(await workspace.assets.measureExactRevisionBytes([
+      { namespace: 'outline', recordKey: healthyLease.assetId, reference: healthyStored!.exactRevision },
+      { namespace: 'outline', recordKey: degradedLease.assetId, reference: degradedStored!.exactRevision },
+    ])).toBe(bytes.byteLength);
+    const transactionLogPath = workspace.store.transactionLogPath;
+    const contentRoot = workspace.assets.content.root;
+    const workspaceRoot = workspace.store.workspaceRoot();
+    workspace.close();
+
+    const lines = (await readFile(transactionLogPath, 'utf8')).trimEnd().split('\n');
+    const finalRecord = JSON.parse(lines.at(-1)!) as Record<string, unknown> & {
+      stage: { record: { metadata: { mimeType: string } } };
+    };
+    finalRecord.stage.record.metadata.mimeType = '';
+    const { checksum: _checksum, ...body } = finalRecord;
+    finalRecord.checksum = canonicalSha256(body);
+    lines[lines.length - 1] = JSON.stringify(finalRecord);
+    await writeFile(transactionLogPath, `${lines.join('\n')}\n`);
+
+    const transactions = new WorkspaceTransactionLog(workspaceRoot);
+    expect((await transactions.load()).inconsistent).toBeUndefined();
+    expect(await transactions.verifiedStoredAssetRecords()).toHaveLength(2);
+    const content = await ContentStore.open(contentRoot);
+    const assets = new OutlineAssetStore(content, transactions, {
+      now: () => new Date('2100-01-01T00:00:00.000Z'),
+    });
+    expect(await assets.reconcileAnchors()).toEqual([]);
+    expect((await assets.readVerified(healthyLease.assetId)).bytes).toEqual(bytes);
+    await expect(assets.show(degradedLease.assetId)).rejects.toMatchObject({
+      outlineError: { code: 'recovery_inconsistent' },
+    });
+    expect(await readdir(content.quarantineRoot)).toEqual([]);
+    expect(await content.anchors('outline')).toHaveLength(2);
+    expect(await assets.collectGarbage([])).toEqual([]);
+    expect((await assets.readVerified(healthyLease.assetId)).bytes).toEqual(bytes);
+    assets.close();
+
+    const compacting = await OutlineRuntimeWorkspace.open(workspaceRoot, {
+      contentRoot,
+      storeOptions: { compactionRecords: 1 },
+    });
+    await compacting.maintain({ compactIfNeeded: true });
+    compacting.close();
+    const compacted = await OutlineRuntimeWorkspace.open(workspaceRoot, { contentRoot });
+    expect((await compacted.assets.readVerified(healthyLease.assetId)).bytes).toEqual(bytes);
+    await expect(compacted.assets.show(degradedLease.assetId)).rejects.toMatchObject({
+      outlineError: { code: 'recovery_inconsistent' },
+    });
+    expect(await compacted.assets.content.anchors('outline')).toHaveLength(2);
+    compacted.close();
+  });
+
+  test('repairs crashes after AssetRecord removal and after anchor release in the required order', async () => {
+    let nowMs = Date.parse('2032-01-01T00:00:00.000Z');
+    let crashAfterRemoval = true;
+    const workspace = await makeWorkspace({
+      now: () => new Date(nowMs),
+      assetStoreOptions: {
+        leaseMs: 1_000,
+        hooks: {
+          afterAssetRecordsRemoved: (records) => {
+            if (!crashAfterRemoval || records.length === 0) return;
+            crashAfterRemoval = false;
+            throw new Error('injected crash after AssetRecord removal');
+          },
+        },
+      },
+    });
+    const lease = await workspace.assets.ingestBytes(Buffer.from('remove then release'), 'remove.txt');
+    const stored = await workspace.store.storedAssetRecord(lease.assetId);
+    expect(stored).toBeDefined();
+    nowMs += 1_001;
+
+    await expect(workspace.collectAssetGarbage()).rejects.toThrow('injected crash after AssetRecord removal');
+    expect(await workspace.store.storedAssetRecord(lease.assetId)).toBeUndefined();
+    expect((await workspace.assets.content.anchors('outline')).map((entry) => entry.anchorId))
+      .toEqual([stored!.exactRevision.anchorId]);
+    expect(await workspace.assets.reconcileAnchors()).toEqual([stored!.exactRevision.anchorId]);
+    expect(await workspace.assets.content.collectGarbage()).toEqual({
+      revisionCount: 1,
+      byteLength: stored!.exactRevision.byteLength,
+    });
+
+    let crashAfterRelease = true;
+    const second = await makeWorkspace({
+      now: () => new Date(nowMs),
+      assetStoreOptions: {
+        leaseMs: 1_000,
+        hooks: {
+          afterAnchorsReleased: (records) => {
+            if (!crashAfterRelease || records.length === 0) return;
+            crashAfterRelease = false;
+            throw new Error('injected crash after anchor release');
+          },
+        },
+      },
+    });
+    const secondLease = await second.assets.ingestBytes(Buffer.from('release then collect'), 'release.txt');
+    const secondStored = await second.store.storedAssetRecord(secondLease.assetId);
+    expect(secondStored).toBeDefined();
+    nowMs += 1_001;
+
+    await expect(second.collectAssetGarbage()).rejects.toThrow('injected crash after anchor release');
+    expect(await second.store.storedAssetRecord(secondLease.assetId)).toBeUndefined();
+    expect(await second.assets.content.anchors('outline')).toEqual([]);
+    expect(await contentRevisionFiles(second.assets.content.revisionsRoot)).toHaveLength(1);
+    expect(await second.assets.content.collectGarbage()).toEqual({
+      revisionCount: 1,
+      byteLength: secondStored!.exactRevision.byteLength,
+    });
   });
 });
 
@@ -204,6 +538,37 @@ async function applyChangeSet(
   );
 }
 
+async function trashAndPurge(workspace: OutlineRuntimeWorkspace, nodeId: string): Promise<void> {
+  await applyChangeSet(workspace, {
+    protocolVersion: 1,
+    kind: 'outline.changeset',
+    operations: [{ op: 'lifecycle', action: 'trash', targets: oneId(nodeId) }],
+  });
+  await applyChangeSet(workspace, {
+    protocolVersion: 1,
+    kind: 'outline.changeset',
+    operations: [{ op: 'lifecycle', action: 'purge', targets: oneId(nodeId) }],
+  }, true);
+}
+
+async function transactionRecoveryBytes(transactionLogPath: string): Promise<number> {
+  return (await readFile(transactionLogPath, 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as { kind?: string; recovery?: { byteSize?: number } })
+    .filter((record) => record.kind === 'outline.transaction')
+    .reduce((total, record) => total + (record.recovery?.byteSize ?? 0), 0);
+}
+
+async function rejectedError(promise: Promise<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (error) {
+    return error;
+  }
+  throw new Error('Expected promise to reject.');
+}
+
 function oneAlias(alias: 'today') {
   return { target: { selector: { by: 'alias' as const, alias }, cardinality: 'one' as const } };
 }
@@ -214,8 +579,17 @@ function oneId(id: string) {
 
 async function makeWorkspace(options: Parameters<typeof OutlineRuntimeWorkspace.open>[1] = {}) {
   const root = await mkdtemp(path.join(tmpdir(), 'tenon-outline-assets-'));
-  roots.push(root);
-  return OutlineRuntimeWorkspace.open(root, options);
+  const contentRoot = `${root}-content`;
+  roots.push(root, contentRoot);
+  return OutlineRuntimeWorkspace.open(root, { ...options, contentRoot });
+}
+
+async function contentRevisionFiles(root: string): Promise<readonly string[]> {
+  const prefixes = await readdir(root);
+  const files = await Promise.all(prefixes.map(async (prefix) => (
+    (await readdir(path.join(root, prefix))).map((entry) => `${prefix}/${entry}`)
+  )));
+  return files.flat().sort();
 }
 
 function pngBytes(width: number, height: number): Uint8Array {

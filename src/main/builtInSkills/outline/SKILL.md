@@ -83,8 +83,9 @@ adapt that executable pattern instead of reconstructing the table schema.
 
 Date field values use `YYYY-MM-DD`, `YYYY-MM-DDTHH:mm`, or `start/end` with `/`.
 Use exact local-date selectors for Daily Notes; do not apply timezone conversion
-to a local calendar date. In the final response, mention persisted Nodes as
-`[[node:^exact-id]]` so the client resolves the current title.
+to a local calendar date. In the final response, mention an ordinary persisted
+`node:UUID` as `[[node://UUID]]`, removing the internal `node:` prefix, so the
+client resolves the current title.
 
 ## Review and Execute
 

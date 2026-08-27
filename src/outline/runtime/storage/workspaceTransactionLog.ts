@@ -11,6 +11,7 @@ import {
 import type { FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { Value } from 'typebox/value';
+import type { ContentAnchorCoordinate } from '../../../content';
 import type {
   CorePersistenceCapture,
   WorkspacePersistenceEnvelopeV3,
@@ -42,7 +43,16 @@ import {
   assertOutlineRecoveryPatch,
   type OutlineRecoveryPatch,
 } from './recoveryPatch';
-import { assertOutlineAssetStage, type OutlineAssetStage } from './assetTypes';
+import {
+  assertOutlineAssetRetentionCoordinate,
+  assertOutlineAssetStage,
+  assertOutlineAssetStageCoordinate,
+  assertOutlineStoredAssetRecord,
+  type OutlineAssetRetentionCoordinate,
+  type OutlineAssetStage,
+  type OutlineAssetStageCoordinate,
+  type OutlineStoredAssetRecord,
+} from './assetTypes';
 import { encodeEventCursor } from '../eventCursor';
 
 const SNAPSHOT_FILE = 'outline.snapshot.json';
@@ -62,8 +72,12 @@ export interface OutlineAssetDelta {
   readonly consumedLeaseIds: readonly string[];
   readonly liveAddedAssetRecordIds: readonly string[];
   readonly liveRemovedAssetRecordIds: readonly string[];
-  readonly recoveryOnlyBytes: number;
 }
+
+export type ExactRevisionByteMeasurer = (
+  coordinates: readonly ContentAnchorCoordinate[],
+  excluding?: readonly ContentAnchorCoordinate[],
+) => Promise<number>;
 
 export interface OutlineIdempotencyRecord {
   readonly key: string;
@@ -78,6 +92,7 @@ export interface WorkspaceTransactionInput {
   readonly event: OutlineEvent;
   readonly idempotency?: OutlineIdempotencyRecord;
   readonly assetDelta?: OutlineAssetDelta;
+  readonly measureExactRevisionBytes?: ExactRevisionByteMeasurer;
 }
 
 export interface WorkspaceTransactionAppendResult {
@@ -158,7 +173,6 @@ interface RecoveryReference {
   readonly byteSize: number;
   readonly storage: 'inline' | 'blob';
   readonly inline?: OutlineRecoveryPatch;
-  readonly recoveryOnlyAssetBytes: number;
   readonly protectedAssetRecordIds: readonly string[];
 }
 
@@ -198,7 +212,7 @@ interface AssetStageRecordBody {
   readonly storageVersion: typeof OUTLINE_STORAGE_VERSION;
   readonly sequence: number;
   readonly previousChecksum: string;
-  readonly stage: OutlineAssetStage;
+  readonly stage: OutlineAssetStageCoordinate;
 }
 
 interface AssetGcRecordBody {
@@ -232,7 +246,7 @@ interface SnapshotBody {
   readonly recovery: Readonly<Record<string, RecoveryReference>>;
   readonly idempotency: readonly OutlineIdempotencyRecord[];
   readonly events: readonly OutlineEvent[];
-  readonly assetRecords: readonly AssetRecord[];
+  readonly assetRecords: readonly OutlineAssetRetentionCoordinate[];
   readonly assetLeases: readonly AssetLease[];
   readonly liveAssetRecordIds: readonly string[];
 }
@@ -248,7 +262,8 @@ interface LoadedState {
   recoveryByOperationId: Map<string, RecoveryReference>;
   idempotencyByKey: Map<string, OutlineIdempotencyRecord>;
   events: OutlineEvent[];
-  assetRecordById: Map<string, AssetRecord>;
+  assetRecordById: Map<string, OutlineStoredAssetRecord>;
+  degradedAssetRecordById: Map<string, OutlineAssetRetentionCoordinate>;
   assetLeaseById: Map<string, AssetLease>;
   liveAssetRecordIds: Set<string>;
   latestSequence: number;
@@ -265,7 +280,6 @@ const EMPTY_ASSET_DELTA: OutlineAssetDelta = Object.freeze({
   consumedLeaseIds: [],
   liveAddedAssetRecordIds: [],
   liveRemovedAssetRecordIds: [],
-  recoveryOnlyBytes: 0,
 });
 
 export class WorkspaceTransactionLog {
@@ -377,8 +391,8 @@ export class WorkspaceTransactionLog {
     });
   }
 
-  async health(): Promise<WorkspaceTransactionLogHealth> {
-    return this.enqueueWrite(async () => this.publicHealth(await this.ensureState()));
+  async health(measureExactRevisionBytes?: ExactRevisionByteMeasurer): Promise<WorkspaceTransactionLogHealth> {
+    return this.enqueueWrite(async () => this.publicHealth(await this.ensureState(), measureExactRevisionBytes));
   }
 
   async needsCompaction(): Promise<boolean> {
@@ -427,13 +441,19 @@ export class WorkspaceTransactionLog {
       assertEventSequence(input.event, state);
       const encodedPatch = canonicalJson(input.recoveryPatch);
       const patchBytes = Buffer.byteLength(encodedPatch);
-      const additionalRecoveryBytes = patchBytes + this.additionalRecoveryAssetBytes(
+      const currentRecoveryBytes = await this.availableRecoveryBytes(
         state,
-        input.recoveryPatch,
+        input.measureExactRevisionBytes,
+      );
+      const candidateAssetBytes = await this.measureRecoveryAssetBytes(
+        state,
+        input.measureExactRevisionBytes,
+        input.recoveryPatch.protectedAssetRecordIds,
         input.assetDelta ?? EMPTY_ASSET_DELTA,
       );
-      const currentRecoveryBytes = this.availableRecoveryBytes(state);
-      if (currentRecoveryBytes + additionalRecoveryBytes > this.recoveryBudgetBytes) {
+      const currentPatchBytes = this.recoveryPatchBytes(state);
+      const candidateRecoveryBytes = currentPatchBytes + patchBytes + candidateAssetBytes;
+      if (candidateRecoveryBytes > this.recoveryBudgetBytes) {
         throw new OutlineContractError(outlineError(
           'recovery_capacity_exceeded',
           'durability',
@@ -442,13 +462,13 @@ export class WorkspaceTransactionLog {
             details: {
               budgetBytes: this.recoveryBudgetBytes,
               retainedBytes: currentRecoveryBytes,
-              requestedBytes: additionalRecoveryBytes,
+              requestedBytes: Math.max(0, candidateRecoveryBytes - currentRecoveryBytes),
             },
           },
         ));
       }
 
-      const recovery = await this.persistRecovery(input.recoveryPatch, encodedPatch, input.assetDelta);
+      const recovery = await this.persistRecovery(input.recoveryPatch, encodedPatch);
       const body: TransactionRecordBody = {
         kind: TRANSACTION_KIND,
         storageVersion: OUTLINE_STORAGE_VERSION,
@@ -598,13 +618,36 @@ export class WorkspaceTransactionLog {
 
   async assetRecord(assetId: string): Promise<AssetRecord | undefined> {
     return this.enqueueWrite(async () => {
-      const record = (await this.ensureState()).assetRecordById.get(assetId);
-      return record ? clone(record) : undefined;
+      const state = await this.ensureState();
+      assertAssetRecordAvailable(state, assetId);
+      const stored = state.assetRecordById.get(assetId);
+      return stored ? clone(stored.record) : undefined;
     });
   }
 
   async assetRecords(): Promise<readonly AssetRecord[]> {
-    return this.enqueueWrite(async () => clone([...(await this.ensureState()).assetRecordById.values()]));
+    return this.enqueueWrite(async () => clone(
+      [...(await this.ensureState()).assetRecordById.values()].map((stored) => stored.record),
+    ));
+  }
+
+  async storedAssetRecord(assetId: string): Promise<OutlineStoredAssetRecord | undefined> {
+    return this.enqueueWrite(async () => {
+      const state = await this.ensureState();
+      assertAssetRecordAvailable(state, assetId);
+      const stored = state.assetRecordById.get(assetId);
+      return stored ? clone(stored) : undefined;
+    });
+  }
+
+  async verifiedStoredAssetRecords(): Promise<readonly OutlineAssetRetentionCoordinate[]> {
+    return this.enqueueWrite(async () => {
+      const state = await this.requireCompleteState();
+      return clone([
+        ...state.assetRecordById.values(),
+        ...state.degradedAssetRecordById.values(),
+      ]);
+    });
   }
 
   async resolveAssetLeases(
@@ -639,9 +682,14 @@ export class WorkspaceTransactionLog {
   async collectUnprotectedAssetRecords(
     liveAssetRecordIds: readonly string[],
     now = this.now(),
-  ): Promise<readonly AssetRecord[]> {
+  ): Promise<readonly OutlineStoredAssetRecord[]> {
     return this.enqueueWrite(async () => {
       const state = await this.requireWritableState();
+      // A degraded record may still contain logical links, such as a thumbnail
+      // AssetRecord ID, that cannot be trusted or traversed. Keep collection
+      // conservative until that one record is repaired instead of allowing its
+      // invalid metadata to remove otherwise healthy logical records.
+      if (state.degradedAssetRecordById.size > 0) return [];
       const protectedIds = new Set(liveAssetRecordIds);
       for (const lease of state.assetLeaseById.values()) {
         if (Date.parse(lease.expiresAt) > now.getTime()) protectedIds.add(lease.assetId);
@@ -652,14 +700,14 @@ export class WorkspaceTransactionLog {
       }
       expandThumbnailProtection(protectedIds, state.assetRecordById);
       const removed = [...state.assetRecordById.values()]
-        .filter((record) => !protectedIds.has(record.assetId));
+        .filter((stored) => !protectedIds.has(stored.record.assetId));
       if (removed.length === 0) return [];
       const body: AssetGcRecordBody = {
         kind: ASSET_GC_KIND,
         storageVersion: OUTLINE_STORAGE_VERSION,
         sequence: state.latestSequence + 1,
         previousChecksum: state.headChecksum,
-        assetIds: removed.map((record) => record.assetId).sort(),
+        assetIds: removed.map((stored) => stored.record.assetId).sort(),
       };
       const record = logRecord(body);
       assertReplayedRecord(record, state);
@@ -706,7 +754,10 @@ export class WorkspaceTransactionLog {
           recovery: clone(recovery),
           idempotency: clone(idempotency),
           events: clone(state.events.slice(-this.eventRetention)),
-          assetRecords: clone([...state.assetRecordById.values()]),
+          assetRecords: clone([
+            ...state.assetRecordById.values(),
+            ...state.degradedAssetRecordById.values(),
+          ]),
           assetLeases: clone([...state.assetLeaseById.values()]),
           liveAssetRecordIds: [...state.liveAssetRecordIds].sort(),
         });
@@ -743,6 +794,7 @@ export class WorkspaceTransactionLog {
 
   private async readState(snapshot: SnapshotEnvelope): Promise<LoadedState> {
     const snapshotChecksum = snapshot.checksum;
+    const classifiedAssets = classifySnapshotAssetRecords(snapshot.assetRecords);
     const state: LoadedState = {
       snapshot,
       snapshotChecksum,
@@ -752,8 +804,11 @@ export class WorkspaceTransactionLog {
       recoveryByOperationId: new Map(Object.entries(clone(snapshot.recovery))),
       idempotencyByKey: new Map(snapshot.idempotency.map((entry) => [entry.key, clone(entry)])),
       events: clone([...snapshot.events]),
-      assetRecordById: new Map(snapshot.assetRecords.map((record) => [record.assetId, clone(record)])),
-      assetLeaseById: new Map(snapshot.assetLeases.map((lease) => [lease.leaseId, clone(lease)])),
+      assetRecordById: classifiedAssets.valid,
+      degradedAssetRecordById: classifiedAssets.degraded,
+      assetLeaseById: new Map(snapshot.assetLeases
+        .filter((lease) => classifiedAssets.valid.has(lease.assetId))
+        .map((lease) => [lease.leaseId, clone(lease)])),
       liveAssetRecordIds: new Set(snapshot.liveAssetRecordIds),
       latestSequence: snapshot.sequence,
       latestEventSequence: snapshot.latestEventSequence,
@@ -858,7 +913,10 @@ export class WorkspaceTransactionLog {
     };
   }
 
-  private async publicHealth(state: LoadedState): Promise<WorkspaceTransactionLogHealth> {
+  private async publicHealth(
+    state: LoadedState,
+    measureExactRevisionBytes?: ExactRevisionByteMeasurer,
+  ): Promise<WorkspaceTransactionLogHealth> {
     const totalBytes = (await stat(this.transactionLogPath).catch((error: unknown) => {
       if (isNotFound(error)) return { size: 0 };
       throw error;
@@ -887,7 +945,7 @@ export class WorkspaceTransactionLog {
       },
       recovery: {
         ...recovery,
-        retainedBytes: this.availableRecoveryBytes(state),
+        retainedBytes: await this.availableRecoveryBytes(state, measureExactRevisionBytes),
         budgetBytes: this.recoveryBudgetBytes,
         orphanBlobCount: state.orphanRecoveryBlobs.length,
       },
@@ -923,6 +981,19 @@ export class WorkspaceTransactionLog {
     return state;
   }
 
+  private async requireCompleteState(): Promise<LoadedState> {
+    const state = await this.ensureState();
+    if (state.inconsistent) {
+      throw new OutlineContractError(outlineError(
+        'recovery_inconsistent',
+        'durability',
+        'The complete workspace state cannot be enumerated because persisted data is inconsistent.',
+        { details: state.inconsistent.message },
+      ));
+    }
+    return state;
+  }
+
   private resolveIdempotency(
     state: LoadedState,
     requested: Pick<OutlineIdempotencyRecord, 'key' | 'payloadHash'>,
@@ -944,7 +1015,6 @@ export class WorkspaceTransactionLog {
   private async persistRecovery(
     patch: OutlineRecoveryPatch,
     encoded: string,
-    assetDelta: OutlineAssetDelta | undefined,
   ): Promise<RecoveryReference> {
     assertOutlineRecoveryPatch(patch);
     const sha256 = sha256Text(encoded);
@@ -953,7 +1023,6 @@ export class WorkspaceTransactionLog {
       recoveryPatchId: patch.recoveryPatchId,
       sha256,
       byteSize,
-      recoveryOnlyAssetBytes: Math.max(0, assetDelta?.recoveryOnlyBytes ?? 0),
       protectedAssetRecordIds: [...patch.protectedAssetRecordIds],
     };
     if (byteSize <= this.inlineRecoveryBytes) return { ...base, storage: 'inline', inline: clone(patch) };
@@ -1002,57 +1071,81 @@ export class WorkspaceTransactionLog {
     return clone(patch);
   }
 
-  private availableRecoveryBytes(state: LoadedState): number {
+  private async availableRecoveryBytes(
+    state: LoadedState,
+    measureExactRevisionBytes?: ExactRevisionByteMeasurer,
+  ): Promise<number> {
+    return this.recoveryPatchBytes(state)
+      + await this.measureRecoveryAssetBytes(state, measureExactRevisionBytes);
+  }
+
+  private recoveryPatchBytes(state: LoadedState): number {
     let total = 0;
     for (const operation of state.operations) {
       if (operation.recovery.state === 'expired') continue;
       const reference = state.recoveryByOperationId.get(operation.operationId);
       if (reference) total += reference.byteSize;
     }
-    return total + this.recoveryAssetBytes(state);
-  }
-
-  private recoveryAssetBytes(state: LoadedState): number {
-    const protectedDigests = new Set<string>();
-    for (const [operationId, reference] of state.recoveryByOperationId) {
-      if (state.operationById.get(operationId)?.recovery.state === 'expired') continue;
-      for (const assetId of reference.protectedAssetRecordIds) {
-        if (state.liveAssetRecordIds.has(assetId)) continue;
-        const digest = state.assetRecordById.get(assetId)?.metadata.sha256;
-        if (digest) protectedDigests.add(digest);
-      }
-    }
-    let total = 0;
-    for (const record of state.assetRecordById.values()) {
-      if (protectedDigests.delete(record.metadata.sha256)) total += record.metadata.byteSize;
-    }
     return total;
   }
 
-  private additionalRecoveryAssetBytes(
+  private async measureRecoveryAssetBytes(
     state: LoadedState,
-    patch: OutlineRecoveryPatch,
-    delta: OutlineAssetDelta,
-  ): number {
-    const alreadyProtected = new Set<string>();
+    measureExactRevisionBytes: ExactRevisionByteMeasurer | undefined,
+    additionalProtectedAssetIds: readonly string[] = [],
+    delta: OutlineAssetDelta = EMPTY_ASSET_DELTA,
+  ): Promise<number> {
+    const protectedAssetIds = new Set<string>();
     for (const [operationId, reference] of state.recoveryByOperationId) {
       if (state.operationById.get(operationId)?.recovery.state === 'expired') continue;
-      for (const assetId of reference.protectedAssetRecordIds) alreadyProtected.add(assetId);
+      for (const assetId of reference.protectedAssetRecordIds) protectedAssetIds.add(assetId);
     }
-    const additionalDigests = new Set<string>();
+    for (const assetId of additionalProtectedAssetIds) protectedAssetIds.add(assetId);
     const liveAfter = new Set(state.liveAssetRecordIds);
     for (const assetId of delta.liveRemovedAssetRecordIds) liveAfter.delete(assetId);
     for (const assetId of delta.liveAddedAssetRecordIds) liveAfter.add(assetId);
-    for (const assetId of patch.protectedAssetRecordIds) {
-      if (liveAfter.has(assetId) || alreadyProtected.has(assetId)) continue;
-      const digest = state.assetRecordById.get(assetId)?.metadata.sha256;
-      if (digest) additionalDigests.add(digest);
+    const recoveryCoordinates: ContentAnchorCoordinate[] = [];
+    for (const assetId of protectedAssetIds) {
+      if (liveAfter.has(assetId)) continue;
+      const stored = storedAssetCoordinate(state, assetId);
+      if (!stored) {
+        throw new OutlineContractError(outlineError(
+          'recovery_inconsistent',
+          'durability',
+          `Recovery references an unavailable AssetRecord: ${assetId}`,
+        ));
+      }
+      recoveryCoordinates.push({
+        namespace: 'outline',
+        recordKey: assetId,
+        reference: stored.exactRevision,
+      });
     }
-    let total = 0;
-    for (const record of state.assetRecordById.values()) {
-      if (additionalDigests.delete(record.metadata.sha256)) total += record.metadata.byteSize;
+    if (recoveryCoordinates.length === 0) return 0;
+    if (!measureExactRevisionBytes) {
+      throw new OutlineContractError(outlineError(
+        'recovery_inconsistent',
+        'durability',
+        'Exact-revision accounting is unavailable for recovery admission.',
+      ));
     }
-    return total;
+    const liveCoordinates: ContentAnchorCoordinate[] = [];
+    for (const assetId of liveAfter) {
+      const stored = storedAssetCoordinate(state, assetId);
+      if (!stored) {
+        throw new OutlineContractError(outlineError(
+          'recovery_inconsistent',
+          'durability',
+          `The live document references an unavailable AssetRecord: ${assetId}`,
+        ));
+      }
+      liveCoordinates.push({
+        namespace: 'outline',
+        recordKey: assetId,
+        reference: stored.exactRevision,
+      });
+    }
+    return measureExactRevisionBytes(recoveryCoordinates, liveCoordinates);
   }
 
   private async expireEligibleRecovery(
@@ -1200,15 +1293,22 @@ export class WorkspaceTransactionLog {
 
 function expandThumbnailProtection(
   protectedIds: Set<string>,
-  records: ReadonlyMap<string, AssetRecord>,
+  records: ReadonlyMap<string, OutlineStoredAssetRecord>,
 ): void {
   const queue = [...protectedIds];
   while (queue.length > 0) {
-    const thumbnailAssetId = records.get(queue.shift()!)?.metadata.thumbnailAssetId;
+    const thumbnailAssetId = records.get(queue.shift()!)?.record.metadata.thumbnailAssetId;
     if (!thumbnailAssetId || protectedIds.has(thumbnailAssetId)) continue;
     protectedIds.add(thumbnailAssetId);
     queue.push(thumbnailAssetId);
   }
+}
+
+function storedAssetCoordinate(
+  state: LoadedState,
+  assetId: string,
+): OutlineAssetRetentionCoordinate | undefined {
+  return state.assetRecordById.get(assetId) ?? state.degradedAssetRecordById.get(assetId);
 }
 
 function snapshotEnvelope(body: SnapshotBody): SnapshotEnvelope {
@@ -1259,8 +1359,15 @@ function applyTransactionRecord(state: LoadedState, record: TransactionRecordBod
 }
 
 function applyAssetStageRecord(state: LoadedState, record: AssetStageRecordBody & { checksum: string }): void {
-  state.assetRecordById.set(record.stage.record.assetId, clone(record.stage.record));
-  state.assetLeaseById.set(record.stage.lease.leaseId, clone(record.stage.lease));
+  try {
+    assertOutlineAssetStage(record.stage);
+    const { lease: _lease, ...stored } = record.stage;
+    state.assetRecordById.set(record.stage.record.assetId, clone(stored));
+    state.assetLeaseById.set(record.stage.lease.leaseId, clone(record.stage.lease));
+  } catch {
+    const { lease: _lease, ...stored } = record.stage;
+    state.degradedAssetRecordById.set(record.stage.record.assetId, clone(stored));
+  }
   state.latestSequence = record.sequence;
   state.headChecksum = record.checksum;
 }
@@ -1269,6 +1376,7 @@ function applyAssetGcRecord(state: LoadedState, record: AssetGcRecordBody & { ch
   const removed = new Set(record.assetIds);
   for (const assetId of removed) {
     state.assetRecordById.delete(assetId);
+    state.degradedAssetRecordById.delete(assetId);
     state.liveAssetRecordIds.delete(assetId);
   }
   for (const [leaseId, lease] of state.assetLeaseById) {
@@ -1276,6 +1384,33 @@ function applyAssetGcRecord(state: LoadedState, record: AssetGcRecordBody & { ch
   }
   state.latestSequence = record.sequence;
   state.headChecksum = record.checksum;
+}
+
+function classifySnapshotAssetRecords(records: readonly OutlineAssetRetentionCoordinate[]): {
+  readonly valid: Map<string, OutlineStoredAssetRecord>;
+  readonly degraded: Map<string, OutlineAssetRetentionCoordinate>;
+} {
+  const valid = new Map<string, OutlineStoredAssetRecord>();
+  const degraded = new Map<string, OutlineAssetRetentionCoordinate>();
+  for (const candidate of records) {
+    const stored = clone(candidate);
+    try {
+      assertOutlineStoredAssetRecord(stored);
+      valid.set(stored.record.assetId, stored);
+    } catch {
+      degraded.set(stored.record.assetId, stored);
+    }
+  }
+  return { valid, degraded };
+}
+
+function assertAssetRecordAvailable(state: LoadedState, assetId: string): void {
+  if (!state.degradedAssetRecordById.has(assetId)) return;
+  throw new OutlineContractError(outlineError(
+    'recovery_inconsistent',
+    'durability',
+    `Outline AssetRecord metadata is invalid: ${assetId}`,
+  ));
 }
 
 function replaceOperation(state: LoadedState, operation: Operation): void {
@@ -1357,7 +1492,14 @@ function assertSnapshotEnvelope(value: unknown): asserts value is SnapshotEnvelo
   if (!value.operations.every((operation) => Value.Check(OperationSchema, operation))
     || !value.events.every((event) => Value.Check(EventSchema, event))
     || !value.idempotency.every(isIdempotencyRecord)
-    || !value.assetRecords.every((record) => Value.Check(AssetRecordSchema, record))
+    || !value.assetRecords.every((record) => {
+      try {
+        assertOutlineAssetRetentionCoordinate(record);
+        return true;
+      } catch {
+        return false;
+      }
+    })
     || !value.assetLeases.every((lease) => Value.Check(AssetLeaseSchema, lease))) {
     throw new Error('Outline workspace snapshot indexes are invalid');
   }
@@ -1378,9 +1520,14 @@ function assertSnapshotEnvelope(value: unknown): asserts value is SnapshotEnvelo
     }
   }
   const assetIds = new Set<string>();
-  for (const record of value.assetRecords) {
-    if (assetIds.has(record.assetId)) throw new Error(`Duplicate snapshot AssetRecord: ${record.assetId}`);
-    assetIds.add(record.assetId);
+  const assetAnchorIds = new Set<string>();
+  for (const stored of value.assetRecords) {
+    if (assetIds.has(stored.record.assetId)) throw new Error(`Duplicate snapshot AssetRecord: ${stored.record.assetId}`);
+    if (assetAnchorIds.has(stored.exactRevision.anchorId)) {
+      throw new Error(`Duplicate snapshot asset anchor: ${stored.exactRevision.anchorId}`);
+    }
+    assetIds.add(stored.record.assetId);
+    assetAnchorIds.add(stored.exactRevision.anchorId);
   }
   const leaseIds = new Set<string>();
   for (const lease of value.assetLeases) {
@@ -1451,7 +1598,7 @@ function assertLogRecord(value: unknown, sequence: number, previousChecksum: str
     || value.event.type !== 'operation.recovery-expired')) {
     throw new Error('Invalid outline recovery expiry record');
   } else if (value.kind === ASSET_STAGE_KIND) {
-    assertOutlineAssetStage(value.stage);
+    assertOutlineAssetStageCoordinate(value.stage);
   } else if (value.kind === ASSET_GC_KIND && (!isStringArray(value.assetIds) || new Set(value.assetIds).size !== value.assetIds.length)) {
     throw new Error('Invalid outline asset GC record');
   }
@@ -1460,14 +1607,19 @@ function assertLogRecord(value: unknown, sequence: number, previousChecksum: str
 function assertReplayedRecord(record: LogRecord, state: LoadedState): void {
   if (record.kind === ASSET_STAGE_KIND) {
     if (state.assetRecordById.has(record.stage.record.assetId)
-      || state.assetLeaseById.has(record.stage.lease.leaseId)) {
+      || state.degradedAssetRecordById.has(record.stage.record.assetId)
+      || state.assetLeaseById.has(record.stage.lease.leaseId)
+      || [...state.assetRecordById.values(), ...state.degradedAssetRecordById.values()]
+        .some((stored) => stored.exactRevision.anchorId === record.stage.exactRevision.anchorId)) {
       throw new Error(`Duplicate committed outline asset stage: ${record.stage.lease.leaseId}`);
     }
     return;
   }
   if (record.kind === ASSET_GC_KIND) {
     for (const assetId of record.assetIds) {
-      if (!state.assetRecordById.has(assetId)) throw new Error(`Asset GC references a missing AssetRecord: ${assetId}`);
+      if (!state.assetRecordById.has(assetId) && !state.degradedAssetRecordById.has(assetId)) {
+        throw new Error(`Asset GC references a missing AssetRecord: ${assetId}`);
+      }
     }
     return;
   }
@@ -1607,8 +1759,6 @@ function assertRecoveryReferenceShape(value: unknown): asserts value is Recovery
     || !Number.isSafeInteger(value.byteSize)
     || value.byteSize < 0
     || (value.storage !== 'inline' && value.storage !== 'blob')
-    || !Number.isSafeInteger(value.recoveryOnlyAssetBytes)
-    || value.recoveryOnlyAssetBytes < 0
     || !isStringArray(value.protectedAssetRecordIds)) {
     throw new Error('Invalid outline recovery reference');
   }
@@ -1623,9 +1773,7 @@ function assertAssetDelta(value: unknown): asserts value is OutlineAssetDelta {
   if (!isRecord(value)
     || !isStringArray(value.consumedLeaseIds)
     || !isStringArray(value.liveAddedAssetRecordIds)
-    || !isStringArray(value.liveRemovedAssetRecordIds)
-    || !Number.isSafeInteger(value.recoveryOnlyBytes)
-    || value.recoveryOnlyBytes < 0) {
+    || !isStringArray(value.liveRemovedAssetRecordIds)) {
     throw new Error('Invalid outline asset delta');
   }
 }

@@ -1483,7 +1483,6 @@ function legacyAssetMetadata(lease: AssetLease): AssetMetadata {
     id: lease.leaseId,
     mimeType: lease.metadata.mimeType,
     byteSize: lease.metadata.byteSize,
-    sha256: lease.metadata.sha256,
     originalFilename: lease.metadata.originalFilename,
     createdAt: Date.now(),
     imageWidth: lease.metadata.imageWidth,

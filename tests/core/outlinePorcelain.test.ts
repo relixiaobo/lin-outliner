@@ -15,7 +15,7 @@ afterAll(async () => {
 describe('outline porcelain CLI', () => {
   test('uses one normalized Diff/apply kernel across content and lifecycle commands', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
@@ -80,7 +80,7 @@ describe('outline porcelain CLI', () => {
 
   test('accepts a structured TargetSpec file without introducing fuzzy selection', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
@@ -102,7 +102,7 @@ describe('outline porcelain CLI', () => {
 
   test('reviews and confirms the exact destructive Diff on a TTY', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
@@ -135,7 +135,7 @@ describe('outline porcelain CLI', () => {
 
   test('bounds text replacement, rejects consumed inline references, and invalidates stale plans', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
@@ -195,7 +195,7 @@ describe('outline porcelain CLI', () => {
 
   test('expresses exact create, move, and duplicate placement through argv and exactly reverts each mutation', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
@@ -253,7 +253,7 @@ describe('outline porcelain CLI', () => {
 
   test('keeps retarget and content-to-reference replacement distinct and exactly reversible', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {

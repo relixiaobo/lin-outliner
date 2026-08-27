@@ -8,6 +8,8 @@ external behavior reference only.
 ## Runtime Boundaries
 
 - `src/core`: pure TypeScript outliner state machine.
+- `src/content`: neutral exact-revision admission, retention, verification, and
+  physical garbage collection shared by Host processes.
 - `src/outline/contract`: public Selector, Projection, ChangeSet, Diff,
   Operation, Event, asset, envelope, and capability schemas.
 - `src/outline/runtime`: standalone document domain, transactional persistence,
@@ -36,38 +38,75 @@ settles receipt-bearing Runtime mutations against that control state. The
 control database is not portable workspace content. See
 [`agent-memory.md`](agent-memory.md).
 
-Binary assets are outside the CRDT document. The document stores stable asset
-ids and derived metadata on `image` / `attachment` nodes;
-`src/outline/runtime/storage/assetStore.ts` owns content-addressed bytes and
-logical `AssetRecord` metadata under the workspace asset directory. Renderer
-flows stage files through public asset capabilities, then reference the returned
-lease in an ordinary ChangeSet. Native pickers, open, Reveal in Finder, copy,
-and external URL handling remain Electron-main OS effects rather than Runtime
-document capabilities.
+Binary assets are outside the CRDT document. The document stores stable logical
+asset IDs on `image` / `attachment` Nodes. Runtime owns Outline `AssetRecord`
+metadata, staging leases, live-Node and recovery-patch reachability, and the
+transaction that changes those facts. The neutral `ContentStore` stores immutable
+exact revisions, admission leases, opaque mechanical retention anchors,
+publication/deletion journals, physical-integrity quarantine, and physical GC
+under the explicit `{userData}/content/` root. It does not know Outline or Agent
+identity, filenames, MIME presentation, document reachability, or recovery
+policy.
 
-Every asset sidecar is a versioned `AssetMetadata` record carrying the stable
-logical `id`, exact `byteSize`, and lowercase SHA-256 digest. Buffer-backed and
-path-backed ingest share this contract, and generated PDF thumbnails receive the
-same integrity metadata. `OutlineAssetStore.readVerified()` is the portable byte-read
-boundary: it returns the stored bytes only after both length and digest match,
-and reports corruption explicitly. Local `asset://` range serving remains
-streaming and does not pre-read an entire video merely to render it.
+An `AssetRecord` contains one Host-private
+`ExactRevisionReference { anchorId, byteLength }`. The ContentStore anchor binds
+that handle to one reconciliation namespace, one opaque domain record key, and
+one physical revision; a released anchor ID is permanently retired and can
+never be rebound. Public `AssetMetadata`, `AssetLease`, CLI JSON, renderer DTOs,
+ChangeSets, and Operations expose neither physical digests nor anchor IDs;
+clients name only logical asset and lease IDs. Many logical records may retain
+one deduplicated exact revision through independent anchors. A physical
+digest/length mismatch quarantines that revision for every reference, while
+invalid Outline metadata degrades only its AssetRecord and never moves shared
+valid bytes.
 
-Path-backed assets hash the final stored file through a read stream. Buffer
-ingest, derived thumbnails, and verified reads hash in bounded 1 MiB turns that
-yield to the event loop between chunks, keeping the Runtime responsive for large
-assets. `bun run probe:asset-hashing` compiles the probe and runs it in
-Electron main, where it asserts and reports the Electron runtime version before
-measuring total hashing time and maximum event-loop stall for both paths;
-`ASSET_HASH_PROBE_MIB` overrides its 512 MiB fixture size.
+Logical AssetRecord collection pauses while any AssetRecord is degraded because
+its dependency edges, including thumbnail references, cannot be enumerated
+reliably. Healthy records remain readable and ordinary document work continues;
+the conservative pause prevents one damaged record from collecting another
+healthy logical record or releasing its anchor.
 
-Document-referenced source assets are portable. PDF thumbnails are derived
-outputs rather than portable source assets; their ids may appear in source
-metadata, but this integrity layer neither deletes nor rebuilds them. Future
-preview formats follow the same ownership rule only when they are reproducible.
-A digest never replaces `assetId`; it is an integrity and future object-store
-idempotency key, not user-visible identity. The pre-release v1 sidecar has no
-legacy reader.
+ContentStore persists `state.sqlite`, `blobs/`, `staging/`, and `quarantine/`.
+Runtime and ContentStore roots are derived independently from the same explicit
+userData authority; neither root is inferred from `cwd` or from the other root.
+Both Host processes use the same WAL/busy-retry and per-digest publication
+protocol. There is no workspace asset blob directory, sidecar reader, migration,
+dual write, or automatic startup deletion path. The shared-content-aligned
+Runtime workspace and ContentStore are storage version 2; earlier formats fail
+closed until the documented manual userData reset is completed.
+
+Asset admission publishes or verifies bytes under an admission lease. Runtime
+then holds its Outline namespace mutation/reconciliation barrier from before
+anchor creation through durable AssetRecord commit or failed-commit release.
+Creating the anchor atomically consumes the admission lease and returns only the
+Host-private exact-revision handle. Cross-store interruptions may leak an anchor
+but cannot leave a committed record whose revision was collected.
+Reconciliation first completes and validates the entire `(assetId, anchorId)`
+enumeration against the stored namespace/record coordinate, then releases only
+absent Outline anchors; unavailable, corrupt, missing, or mismatched state
+releases none.
+
+Record deletion uses the opposite order: Runtime durably removes an unreachable
+AssetRecord, then releases its anchor. ContentStore GC selects only published
+revisions with no active admission lease and no anchor in one SQLite transaction,
+marks them `deleting`, unlinks them, and settles the deletion journal. Admission
+and anchor cloning cannot attach to a deleting revision. Startup repairs
+interrupted publication and deletion states.
+
+Recovery policy remains Runtime-owned, but physical accounting remains neutral:
+Runtime supplies the exact-revision handles for live and recovery-protected
+AssetRecords, and ContentStore returns their distinct physical byte total
+without exposing its digest key. A revision shared by multiple recovery records
+is charged once, and a revision still retained by a live logical record is not
+charged as recovery-only storage.
+
+Renderer flows stage files through public asset capabilities and reference the
+returned lease in an ordinary ChangeSet. Native pickers, open, Reveal in Finder,
+copy, and external URL handling remain Electron-main OS effects rather than
+Runtime document capabilities. Local `asset://` range serving streams verified
+Runtime bytes and does not pre-read an entire video merely to render it. PDF
+thumbnails are separate logical AssetRecords over ordinary exact revisions; the
+parent relationship protects them through lease, live, recovery, and GC rules.
 
 Preview translation persistence is a separate local-derived-data boundary, not
 an asset or workspace fact. Electron main owns a bounded cache under `userData`;
@@ -118,11 +157,11 @@ after). `pdftoppm` is an **optional** system dependency — when it is missing o
 fails, ingest degrades gracefully and the attachment simply renders with its
 file-type icon instead of a thumbnail.
 
-The Runtime asset directory is treated as a local-file jail. Path-backed ingest resolves
-the source with `realpath` and accepts regular files only. Asset reads and system
-actions resolve the stored file with `realpath`, require the result to remain
-inside the asset root, and reject missing, non-file, or escaped paths before the
-renderer can serve, open, reveal, or copy the asset.
+Path-backed ingest resolves the source with `realpath` and accepts regular files
+only. Reads and exports resolve an AssetRecord through its Host-private anchor
+and exact-revision coordinate, then ContentStore verifies the bytes. Electron
+main system actions consume that verified stream through a private
+materialization; the renderer never receives a ContentStore path.
 
 ## Command Flow
 
@@ -180,10 +219,11 @@ No client uses a shell mutation loop or intermediate created-ID query to replace
 ChangeSet composition.
 
 Desktop mutation admission is serialized around the latest projected revision.
-The adapter runs `diff`, applies that exact reviewed artifact, then waits for the
-matching Operation Event. A missing or discontinuous Event triggers a bounded
-full Projection resync. Quit freezes new desktop admissions and drains accepted
-requests; Runtime durability is already complete before each apply response.
+Ordinary non-destructive edits use direct commit; destructive or review-bound
+work applies an exact Diff. The adapter then waits for the matching Operation
+Event. A missing or discontinuous Event triggers a bounded full Projection
+resync. Quit freezes new desktop admissions and drains accepted requests;
+Runtime durability is already complete before each response.
 
 ## Workspace Persistence And Replication Boundary
 
@@ -225,7 +265,8 @@ visible to watches under the identity that will publish the descriptor.
 
 Storage maintenance derives all work from the committed log and indexes. It
 repairs a torn tail, expires eligible recovery, removes orphan recovery blobs,
-collects unprotected assets, and compacts a log after its record/byte threshold.
+durably removes unprotected AssetRecords before releasing their anchors, invokes
+central ContentStore GC, and compacts a log after its record/byte threshold.
 Runtime schedules it after startup once the descriptor is serviceable, during
 foreground-idle windows, and before idle shutdown. A watch stream keeps Runtime
 alive but does not count as foreground work, so ordinary desktop sessions still
@@ -250,11 +291,12 @@ materializes and deletes with explicit work stacks rather than recursive JS
 traversal. Neither its snapshot bytes nor Core commands cross the public
 protocol.
 
-Asset ingest writes verified content-addressed bytes and a staged lease before a
-document mutation. Apply atomically converts referenced leases into live asset
-reachability. Internal mark-and-sweep garbage collection may unlink bytes only
-when no live Node, unexpired lease, or retained recovery patch protects them.
-There is no public physical-delete capability.
+Asset ingest admits one exact revision, settles its anchor and logical
+AssetRecord in anchor-first order, and returns a staged Outline lease before a
+document mutation. Apply atomically consumes referenced leases into live asset
+reachability. Runtime recovery and lease policy decides when a logical record is
+unreachable; ContentStore alone decides when an unleased, unanchored revision is
+physically collectible. There is no public physical-delete capability.
 
 `media add PATH|-` composes staging and media-Node creation as one common CLI
 intent while retaining the same internal lease boundary. `asset ingest` remains

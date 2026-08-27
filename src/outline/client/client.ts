@@ -283,24 +283,19 @@ export class OutlineClient {
         signal: lifetime.signal,
       });
       if (response.statusCode !== 200) await throwHttpError(response, 'asset export');
-      const expectedDigest = response.headers['x-outline-sha256'];
       const expectedBytes = Number(response.headers['content-length']);
-      if (typeof expectedDigest !== 'string'
-        || !/^[a-f0-9]{64}$/.test(expectedDigest)
-        || !Number.isSafeInteger(expectedBytes)
+      if (!Number.isSafeInteger(expectedBytes)
         || expectedBytes < 0) {
         throw protocolError('Outline Runtime returned invalid asset export headers.');
       }
-      const hash = createHash('sha256');
       let byteCount = 0;
       for await (const chunk of response) {
         const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
         byteCount += bytes.byteLength;
-        hash.update(bytes);
         yield bytes;
       }
-      if (byteCount !== expectedBytes || hash.digest('hex') !== expectedDigest) {
-        throw protocolError('Outline Runtime asset export failed integrity verification.');
+      if (byteCount !== expectedBytes) {
+        throw protocolError('Outline Runtime asset export length verification failed.');
       }
     } catch (error) {
       throw normalizeRequestError(error, lifetime);
@@ -335,7 +330,6 @@ export class OutlineClient {
       'content-range',
       'content-type',
       'x-outline-asset-id',
-      'x-outline-sha256',
     ]) {
       const value = response.headers[name];
       if (typeof value === 'string') headers.set(name, value);

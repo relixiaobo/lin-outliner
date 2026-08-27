@@ -28,7 +28,7 @@ import {
   type OutlineError,
   type OutlineResponse,
 } from '../contract';
-import { OutlineClientSupervisor, resolveOutlineRuntimeRoot } from '../client';
+import { OutlineClientSupervisor, resolveOutlineContentRoot, resolveOutlineRuntimeRoot } from '../client';
 import { OUTLINE_AGENT_ATTESTATION_ENV } from '../contract/agentAttestation';
 import {
   parseReadCommand,
@@ -52,6 +52,7 @@ export interface OutlineCliIo {
 export interface OutlineCliRunOptions {
   readonly io?: Partial<OutlineCliIo>;
   readonly runtimeRoot?: string;
+  readonly contentRoot?: string;
   readonly env?: Readonly<Record<string, string | undefined>>;
   readonly signal?: AbortSignal;
 }
@@ -151,10 +152,12 @@ async function executeInvocation(
   }
 
   const runtimeRoot = options.runtimeRoot ?? resolveOutlineRuntimeRoot({ env: options.env });
+  const contentRoot = options.contentRoot ?? resolveOutlineContentRoot({ env: options.env });
   const environment = options.env ?? process.env;
   const agentAttestation = environment[OUTLINE_AGENT_ATTESTATION_ENV];
   const supervisor = new OutlineClientSupervisor({
     root: runtimeRoot,
+    contentRoot,
     noStart: invocation.noStart,
     startupTimeoutMs: invocation.startupTimeoutMs,
     requestTimeoutMs: invocation.timeoutMs,
@@ -507,7 +510,6 @@ async function executeAssetExport(
   let file: Awaited<ReturnType<typeof open>> | undefined;
   let temporaryPath: string | undefined;
   let bytes = 0;
-  const digest = createHash('sha256');
   try {
     if (output !== '-') {
       temporaryPath = `${output}.outline-${crypto.randomUUID()}.tmp`;
@@ -515,7 +517,6 @@ async function executeAssetExport(
     }
     for await (const chunk of client.exportAsset(assetId, signal)) {
       bytes += chunk.byteLength;
-      digest.update(chunk);
       if (file) await file.write(chunk);
       else io.stdoutBytes(chunk);
     }
@@ -525,7 +526,7 @@ async function executeAssetExport(
     file = undefined;
     await rename(temporaryPath!, output);
     temporaryPath = undefined;
-    return { path: output, byteCount: bytes, sha256: digest.digest('hex') };
+    return { path: output, byteCount: bytes };
   } finally {
     client.close();
     if (file) await file.close().catch(() => undefined);

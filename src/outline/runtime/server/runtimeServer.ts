@@ -53,6 +53,7 @@ const MAX_REQUEST_BYTES = 64 * 1024 * 1024;
 
 export interface OutlineRuntimeServerOptions {
   readonly root: string;
+  readonly contentRoot: string;
   readonly idleTimeoutMs?: number;
   readonly workspaceOptions?: OutlineRuntimeWorkspaceOptions;
   readonly onIdle?: () => void | Promise<void>;
@@ -107,12 +108,15 @@ export class OutlineRuntimeServer {
     const owner = { pid: process.pid, instanceId, createdAt: new Date().toISOString() };
     const lock = await OutlineRuntimeLock.acquire(paths, owner);
     if (!lock) return null;
+    let workspace: OutlineRuntimeWorkspace | undefined;
+    let runtime: OutlineRuntimeServer | undefined;
     try {
       await ensurePrivateDirectory(path.dirname(paths.socketPath));
       await removeStaleSocket(paths.socketPath);
-      const workspace = await OutlineRuntimeWorkspace.open(paths.workspacePath, {
+      workspace = await OutlineRuntimeWorkspace.open(paths.workspacePath, {
         ...options.workspaceOptions,
         instanceId,
+        contentRoot: options.contentRoot,
       });
       const descriptor: RuntimeDescriptor = {
         descriptorVersion: OUTLINE_DESCRIPTOR_VERSION,
@@ -127,10 +131,18 @@ export class OutlineRuntimeServer {
         storageVersion: OUTLINE_STORAGE_VERSION,
         createdAt: owner.createdAt,
       };
-      const runtime = new OutlineRuntimeServer(paths, lock, workspace, descriptor, options);
+      runtime = new OutlineRuntimeServer(paths, lock, workspace, descriptor, options);
       await runtime.listen();
       return runtime;
     } catch (error) {
+      if (runtime) await runtime.cleanupFailedStart().catch(() => undefined);
+      else {
+        try {
+          workspace?.close();
+        } catch {
+          // Startup failure remains authoritative; the writer lock must still be released.
+        }
+      }
       await lock.release();
       throw error;
     }
@@ -143,6 +155,7 @@ export class OutlineRuntimeServer {
     for (const connection of this.connections) connection.destroy();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
     await this.removeOwnedDescriptor();
+    this.workspace.close();
     await removeStaleSocket(this.paths.socketPath);
     await this.lock.release();
   }
@@ -164,6 +177,16 @@ export class OutlineRuntimeServer {
     await chmod(this.paths.socketPath, 0o600);
     await writePrivateJson(this.paths.descriptorPath, this.descriptor);
     this.scheduleIdle();
+  }
+
+  private async cleanupFailedStart(): Promise<void> {
+    for (const connection of this.connections) connection.destroy();
+    if (this.server.listening) {
+      await new Promise<void>((resolve) => this.server.close(() => resolve()));
+    }
+    await this.removeOwnedDescriptor().catch(() => undefined);
+    this.workspace.close();
+    await removeStaleSocket(this.paths.socketPath).catch(() => undefined);
   }
 
   private async handleRequest(request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
@@ -291,7 +314,6 @@ export class OutlineRuntimeServer {
             'content-range': `bytes ${range.start}-${range.end}/${verified.record.metadata.byteSize}`,
           } : {}),
           'x-outline-asset-id': verified.record.assetId,
-          'x-outline-sha256': verified.record.metadata.sha256,
           'cache-control': 'private, max-age=31536000, immutable',
           connection: 'close',
         });

@@ -31,14 +31,15 @@ const PUBLIC_REFERENCE_NODE_ID_SET = new Set<string>(PUBLIC_REFERENCE_NODE_IDS);
 export function publicReferenceNodeKey(nodeId: string): string | null {
   const normalized = nodeId.trim();
   if (PUBLIC_REFERENCE_NODE_ID_SET.has(normalized)) return normalized;
-  return isClientNodeId(normalized) ? normalized.slice('node:'.length).toLowerCase() : null;
+  const canonical = normalized.toLowerCase();
+  return isClientNodeId(canonical) ? canonical.slice('node:'.length) : null;
 }
 
 /** Maps a public `node://` authority back to the canonical internal Node id. */
 export function nodeIdFromPublicReferenceKey(key: string): string | null {
   if (PUBLIC_REFERENCE_NODE_ID_SET.has(key)) return key;
   const candidate = `node:${key.toLowerCase()}`;
-  return CLIENT_NODE_ID_PATTERN.test(candidate) ? candidate : null;
+  return isClientNodeId(candidate) ? candidate : null;
 }
 
 export function isPublicReferenceNodeId(nodeId: string): boolean {

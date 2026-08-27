@@ -95,7 +95,7 @@ describe('outline CLI', () => {
 
   test('reports exact Runtime, transaction-log, and recovery health without starting another Runtime', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
@@ -569,7 +569,7 @@ describe('outline CLI', () => {
 
   test('compares bundled and live capability registries through one Runtime client', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
@@ -586,7 +586,7 @@ describe('outline CLI', () => {
 
   test('queries history by idempotency key and runs guarded revert, undo, and redo', async () => {
     const runningRoot = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root: runningRoot, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root: runningRoot, contentRoot: `${runningRoot}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
@@ -696,7 +696,7 @@ describe('outline CLI', () => {
 
   test('recovers an auto-keyed mutation when the committed response is lost', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     const originalHandle = runtime.router.handle.bind(runtime.router);
@@ -751,7 +751,7 @@ describe('outline CLI', () => {
 
   test('returns a typed non-writing conflict Diff when guarded revert preconditions changed', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
@@ -805,7 +805,7 @@ describe('outline CLI', () => {
 
   test('reads structured input from stdin only when explicitly requested', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     const explicit = captureIo('{not json');
@@ -831,7 +831,7 @@ describe('outline CLI', () => {
 
   test('runs read, direct commit, Diff, apply, and streaming export through the public CLI grammar', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
@@ -915,7 +915,7 @@ describe('outline CLI', () => {
 
   test('runs exact and batch counts, live Saved Searches, and multi-ID reads through the CLI', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     const add = async (text: string) => {
@@ -1051,7 +1051,7 @@ describe('outline CLI', () => {
 
   test('ensures and reads a Daily Note through the real CLI path', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
@@ -1077,7 +1077,7 @@ describe('outline CLI', () => {
 
   test('validates JSONL ChangeSet framing and writes a reviewed Diff atomically', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
@@ -1109,7 +1109,7 @@ describe('outline CLI', () => {
 
   test('requires an output artifact and streams a canonical Diff larger than 8 MiB', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
@@ -1156,7 +1156,7 @@ describe('outline CLI', () => {
 
   test('streams asset ingest, show, and verified export through the Runtime', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
@@ -1181,7 +1181,7 @@ describe('outline CLI', () => {
       expect(JSON.parse(shown.stdout).data).toMatchObject({
         kind: 'outline.asset',
         assetId: lease.assetId,
-        metadata: { sha256: lease.metadata.sha256 },
+        metadata: { byteSize: sourceBytes.byteLength },
       });
 
       const outputPath = path.join(root, 'exported.txt');
@@ -1189,11 +1189,14 @@ describe('outline CLI', () => {
       expect(await runOutlineCli([
         '--json', '--no-start', 'asset', 'export', lease.assetId, '--output', outputPath,
       ], { runtimeRoot: root, io: exported.io })).toBe(0);
-      expect(JSON.parse(exported.stdout).data).toMatchObject({
+      const exportResult = JSON.parse(exported.stdout).data;
+      expect(exportResult).toMatchObject({
         path: outputPath,
         byteCount: sourceBytes.byteLength,
-        sha256: lease.metadata.sha256,
       });
+      expect(exportResult).not.toHaveProperty('sha256');
+      expect(exportResult).not.toHaveProperty('digest');
+      expect(exportResult).not.toHaveProperty('anchorId');
       expect(await readFile(outputPath)).toEqual(sourceBytes);
 
       const stdinBytes = Buffer.from([0, 1, 2, 3, 255]);
@@ -1219,7 +1222,7 @@ describe('outline CLI', () => {
 
   test('forwards shell Item attestation outside public input and records Agent causation', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
@@ -1274,7 +1277,7 @@ describe('outline CLI', () => {
 
   test('aborts an ordinary read with code 143 on SIGTERM', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     let startRead: (() => void) | undefined;
@@ -1334,7 +1337,7 @@ describe('outline CLI', () => {
 
   test('aborts a dispatched ordinary write with recovery guidance on SIGINT', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     const originalHandle = runtime.router.handle.bind(runtime.router);
@@ -1387,7 +1390,7 @@ describe('outline CLI', () => {
 
   test('exits a real watch process with code 130 on SIGINT', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     const child = Bun.spawn([process.execPath, cliEntry, '--json', '--no-start', 'watch'], {
@@ -1412,7 +1415,7 @@ describe('outline CLI', () => {
 
   test('exits a real watch process with code 143 on SIGTERM', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     const child = Bun.spawn([process.execPath, cliEntry, '--json', '--no-start', 'watch'], {

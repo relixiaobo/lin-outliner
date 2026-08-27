@@ -20,6 +20,7 @@ export interface OutlineRuntimeLaunch {
 
 export interface OutlineClientSupervisorOptions {
   readonly root: string;
+  readonly contentRoot?: string;
   readonly noStart?: boolean;
   readonly startupTimeoutMs?: number;
   readonly requestTimeoutMs?: number;
@@ -222,13 +223,17 @@ export class OutlineClientSupervisor {
   }
 
   private launchRuntime(): void {
-    const launch = this.options.launch ?? defaultLaunch(this.options.root);
+    if (!this.options.contentRoot) {
+      throw runtimeUnavailable('Automatic Runtime start requires an explicit ContentStore root.');
+    }
+    const launch = this.options.launch ?? defaultLaunch(this.options.root, this.options.contentRoot);
     const child = spawn(launch.command, [...launch.args], {
       detached: launch.detached ?? true,
       stdio: 'ignore',
       env: {
         ...process.env,
         ELECTRON_RUN_AS_NODE: '1',
+        TENON_CONTENT_ROOT: this.options.contentRoot,
         ...launch.env,
       },
     });
@@ -259,12 +264,12 @@ function protocolIncompatible(message: string, details: unknown): OutlineContrac
   ));
 }
 
-function defaultLaunch(root: string): OutlineRuntimeLaunch {
+function defaultLaunch(root: string, contentRoot: string): OutlineRuntimeLaunch {
   const entry = process.env.TENON_OUTLINE_RUNTIME_ENTRY
     ?? fileURLToPath(new URL('../runtime/server/entry.ts', import.meta.url));
   return {
     command: process.execPath,
-    args: [entry, '--root', root],
+    args: [entry, '--root', root, '--content-root', contentRoot],
   };
 }
 

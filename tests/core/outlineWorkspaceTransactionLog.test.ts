@@ -7,7 +7,7 @@ import { Core } from '../../src/core/core';
 import { canonicalSha256 } from '../../src/outline/contract/canonical';
 import { OutlineContractError } from '../../src/outline/contract/errors';
 import type { Operation, OutlineEvent } from '../../src/outline/contract/schemas';
-import { OUTLINE_PROTOCOL_VERSION } from '../../src/outline/contract/version';
+import { OUTLINE_PROTOCOL_VERSION, OUTLINE_STORAGE_VERSION } from '../../src/outline/contract/version';
 import {
   createOutlineRecoveryPatch,
   WorkspaceTransactionLog,
@@ -23,6 +23,22 @@ afterAll(async () => {
 });
 
 describe('WorkspaceTransactionLog', () => {
+  test('rejects the superseded workspace format instead of reading or migrating it', async () => {
+    const root = await makeRoot();
+    const core = Core.new({ installationId: crypto.randomUUID() });
+    const store = await initializedStore(root, core);
+    const snapshot = JSON.parse(await readFile(store.snapshotPath, 'utf8')) as Record<string, unknown>;
+    const { checksum: _checksum, ...body } = snapshot;
+    const superseded = { ...body, storageVersion: OUTLINE_STORAGE_VERSION - 1 };
+    await writeFile(store.snapshotPath, JSON.stringify({
+      ...superseded,
+      checksum: canonicalSha256(superseded),
+    }));
+
+    await expect(new WorkspaceTransactionLog(root).load())
+      .rejects.toThrow('Invalid outline workspace snapshot');
+  });
+
   test('atomically replays document update Operation idempotency Event and recovery after restart', async () => {
     const root = await makeRoot();
     const core = Core.new({ installationId: crypto.randomUUID() });
@@ -417,9 +433,9 @@ function assetStage(name: string): OutlineAssetStage {
   const metadata = {
     mimeType: 'application/octet-stream',
     byteSize: name.length,
-    sha256: canonicalSha256({ name }),
     originalFilename: `${name}.bin`,
   };
+  const exactRevision = { anchorId: `anchor:${crypto.randomUUID()}`, byteLength: name.length };
   return {
     record: {
       protocolVersion: OUTLINE_PROTOCOL_VERSION,
@@ -435,6 +451,7 @@ function assetStage(name: string): OutlineAssetStage {
       metadata,
       expiresAt: '2030-01-02T00:00:00.000Z',
     },
+    exactRevision,
   };
 }
 

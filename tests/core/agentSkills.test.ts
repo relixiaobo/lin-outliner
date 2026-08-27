@@ -1379,7 +1379,7 @@ describe('agent skills', () => {
     expect(outline?.body).toContain('one direct child Node per row');
     expect(outline?.body).toContain('Never substitute a Markdown table');
     expect(outline?.body).toContain('`YYYY-MM-DDTHH:mm`');
-    expect(outline?.body).toContain('`[[node:^exact-id]]`');
+    expect(outline?.body).toContain('`[[node://UUID]]`');
     expect(outline?.body).toContain('[references/commands.md](references/commands.md)');
     expect(outline?.body).toContain('[references/changesets.md](references/changesets.md)');
     expect(outline?.body).toContain('[references/import.md](references/import.md)');

@@ -129,9 +129,11 @@ describe('Outline CLI runtime', () => {
     ]);
     await chmod(launcher, 0o755);
     const runtimeRoot = path.join(root, 'runtime');
+    const contentRoot = path.join(root, 'content');
     const env = {
       ...process.env,
       TENON_OUTLINE_RUNTIME_ROOT: runtimeRoot,
+      TENON_CONTENT_ROOT: contentRoot,
       TENON_OUTLINE_RUNTIME_IDLE_MS: '100',
     };
     delete env.TENON_OUTLINE_CLI_RUNTIME;
@@ -172,6 +174,7 @@ describe('Outline CLI runtime', () => {
         command: 'add',
         data: { kind: 'outline.operation', origin: 'local-user' },
       });
+      expect((await stat(path.join(contentRoot, 'state.sqlite'))).isFile()).toBe(true);
 
       const found = JSON.parse((await runLauncher([
         '--json', 'find', 'Packaged launcher smoke', '--limit', '1',

@@ -436,7 +436,7 @@ async function withRuntime(
 ): Promise<void> {
   const root = await mkdtemp(path.join(tmpdir(), 'tenon-outline-golden-'));
   roots.push(root);
-  const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+  const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
   expect(runtime).not.toBeNull();
   if (!runtime) return;
   const cli: CliHarness = {

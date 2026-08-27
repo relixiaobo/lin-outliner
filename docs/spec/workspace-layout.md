@@ -459,12 +459,14 @@ Source authority stays source-specific:
   content-addressed paths never leave the storage layer. Exact-file stream tokens
   retain that constraint and never promote the parent directory to a trusted
   root. Symlink replacement, mismatched IDs, and path substitution fail closed.
-- `asset` targets resolve by `assetId` inside the asset jail. Image and media
-  rendering may use the existing no-CORS `asset://` URL. Fetch-based EPUB
-  loading instead receives an opaque `preview-local://` UUID backed by the
-  bounded trusted-file registry; that scheme is registered only in the app's
-  default session, not the remote URL-preview partition. Open/reveal/copy stay
-  on the existing asset commands. A standalone `asset` preview is only valid
+- `asset` targets resolve by logical `assetId` through Runtime. Runtime reads its
+  Host-private exact-revision/anchor coordinate and ContentStore verifies the
+  bytes; neither the renderer nor preview contracts receive a digest, anchor, or
+  physical path. Image and media rendering may use the existing no-CORS
+  `asset://` URL. Fetch-based EPUB loading instead receives an opaque
+  `preview-local://` UUID backed by a bounded verified materialization; that
+  scheme is registered only in the app's default session, not the remote
+  URL-preview partition. Open/reveal/copy stay on the existing asset commands. A standalone `asset` preview is only valid
   when the view is bound to a file node via `nodeId`; a persisted `file-preview`
   view whose target is an `asset` but has no `nodeId` is invalidated on restore.
   If it was the current view, the pane falls back to a live outliner under the
@@ -872,11 +874,11 @@ available to later sessions in the same renderer through their in-memory caches.
 Documents without outline metadata render no rail.
 
 **Add to outline.** A non-node preview carries an "add to outline" action that
-saves the source into the document as a file node. It is offered for the kinds
-that can be copied into the asset store: `local-file` (full-file ingest, gated to
-the agent's trusted roots) and `agent-payload` (a typed, admission-bounded Thread
-resource). `url` is not yet ingestable. Anything the preview can resolve, it can
-ingest through the same authorization boundary. The action is enabled only after
+captures the source as an exact revision plus logical AssetRecord and creates a
+file node. It is offered for `local-file` (full-file ingest, gated to the Agent's
+trusted roots) and `agent-payload` (a typed, admission-bounded Thread resource).
+`url` is not yet ingestable. Anything the preview can resolve, it can ingest
+through the same authorization boundary. The action is enabled only after
 source resolution and submits the normalized source target, so a Thread image
 artifact uses its materialized trusted path rather than its stable artifact ID as a
 filesystem path. For a typed Thread resource, the

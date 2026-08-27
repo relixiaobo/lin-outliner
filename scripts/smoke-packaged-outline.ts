@@ -25,6 +25,7 @@ const packagedSkills = [
 ] as const;
 const userData = mkdtempSync(path.join(tmpdir(), 'outline-packaged-lifecycle-'));
 const runtimeRoot = path.join(userData, 'outline-runtime');
+const contentRoot = path.join(userData, 'content');
 const environment = packagedEnvironment(userData);
 
 let firstDesktop: PackagedDesktop | null = null;
@@ -71,6 +72,7 @@ try {
   const firstDescriptor = await waitForDescriptor();
   const firstMain = await packagedMainConfiguration(first.inspector);
   assertPackagedMainConfiguration(firstMain);
+  await assertCleanFirstLaunchLayout();
   if (firstDescriptor.pid === firstMain.pid) {
     throw new Error('Packaged desktop owns Outline Runtime in-process instead of as a standalone writer.');
   }
@@ -153,6 +155,11 @@ try {
       survivedDesktopRestart: true,
       stoppedCleanly: true,
     },
+    storage: {
+      runtimeRoot,
+      contentRoot,
+      cleanFirstLaunchLayout: true,
+    },
     desktop: {
       firstPid: firstMain.pid,
       reopenedPid: secondMain.pid,
@@ -213,6 +220,37 @@ async function verifyPackagedResources(): Promise<void> {
   for (const [label, source] of [['CLI', cliSource], ['Runtime', runtimeSource]] as const) {
     if (/(?:from\s+|require\()["']electron["']/.test(source) || source.includes('src/renderer/')) {
       throw new Error(`Packaged ${label} bundle imports an Electron or renderer surface.`);
+    }
+  }
+}
+
+async function assertCleanFirstLaunchLayout(): Promise<void> {
+  const requiredDirectories = [
+    runtimeRoot,
+    path.join(runtimeRoot, 'workspace'),
+    contentRoot,
+    path.join(contentRoot, 'blobs'),
+    path.join(contentRoot, 'staging'),
+    path.join(contentRoot, 'quarantine'),
+  ];
+  for (const directory of requiredDirectories) {
+    if (!(await stat(directory).catch(() => null))?.isDirectory()) {
+      throw new Error(`Packaged first launch did not create required directory: ${directory}`);
+    }
+  }
+  const database = await stat(path.join(contentRoot, 'state.sqlite')).catch(() => null);
+  if (!database?.isFile()) {
+    throw new Error('Packaged first launch did not create content/state.sqlite.');
+  }
+
+  const forbiddenPaths = [
+    path.join(runtimeRoot, 'workspace', 'assets', 'blobs'),
+    path.join(contentRoot, 'content.sqlite'),
+    path.join(contentRoot, 'revisions'),
+  ];
+  for (const forbiddenPath of forbiddenPaths) {
+    if (await lstat(forbiddenPath).catch(() => null)) {
+      throw new Error(`Packaged first launch created a retired storage path: ${forbiddenPath}`);
     }
   }
 }
@@ -501,6 +539,7 @@ function packagedEnvironment(userDataDir: string): Record<string, string> {
       || key === 'ELECTRON_USER_DATA_DIR'
       || key === 'LIN_AGENT_EXTRA_TOOL_PATH'
       || key === 'NODE_OPTIONS'
+      || key === 'TENON_CONTENT_ROOT'
       || key.startsWith('TENON_OUTLINE_')) continue;
     env[key] = value;
   }

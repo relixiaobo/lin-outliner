@@ -446,9 +446,11 @@ const APP_ICON_PNG_PATH = app.isPackaged
   ? join(process.resourcesPath, 'icon.png')
   : join(__dirname, '../../build/icon.png');
 const outlineRuntimeRoot = join(resolvedUserDataDir, 'outline-runtime');
+const outlineContentRoot = join(resolvedUserDataDir, 'content');
 const outlineClientSupervisor = new OutlineClientSupervisor({
   root: outlineRuntimeRoot,
-  launch: desktopOutlineRuntimeLaunch(outlineRuntimeRoot),
+  contentRoot: outlineContentRoot,
+  launch: desktopOutlineRuntimeLaunch(outlineRuntimeRoot, outlineContentRoot),
   origin: 'desktop',
 });
 const desktopOutlineClient = new DesktopOutlineClient({
@@ -462,25 +464,25 @@ configureOutlineCliRuntime({
   processExecPath: process.execPath,
 });
 
-function desktopOutlineRuntimeLaunch(root: string): OutlineRuntimeLaunch {
+function desktopOutlineRuntimeLaunch(root: string, contentRoot: string): OutlineRuntimeLaunch {
   const configuredEntry = process.env.TENON_OUTLINE_RUNTIME_ENTRY;
   if (configuredEntry) {
     return {
       command: process.env.TENON_OUTLINE_RUNTIME_COMMAND ?? process.execPath,
-      args: [configuredEntry, '--root', root],
+      args: [configuredEntry, '--root', root, '--content-root', contentRoot],
     };
   }
   if (app.isPackaged) {
     return {
       command: process.execPath,
-      args: [join(process.resourcesPath, 'outline', 'outline-runtime.mjs'), '--root', root],
+      args: [join(process.resourcesPath, 'outline', 'outline-runtime.mjs'), '--root', root, '--content-root', contentRoot],
     };
   }
   const npmExecutable = process.env.npm_execpath;
   const bunExecutable = npmExecutable && basename(npmExecutable) === 'bun' ? npmExecutable : 'bun';
   return {
     command: bunExecutable,
-    args: [resolve(__dirname, '../../src/outline/runtime/server/entry.ts'), '--root', root],
+    args: [resolve(__dirname, '../../src/outline/runtime/server/entry.ts'), '--root', root, '--content-root', contentRoot],
   };
 }
 
@@ -903,6 +905,7 @@ threadService = ThreadService.open(
             threadId: thread.id,
             turnId,
             runtimeRoot: outlineRuntimeRoot,
+            contentRoot: outlineContentRoot,
             supervisor: outlineClientSupervisor,
             baseEnvironment: (shell) => (
               managedSkillShellEnvironment!.processEnvironment(thread.id, turnId, shell)
@@ -960,6 +963,7 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
         threadId: context.thread.id,
         turnId: context.turn.id,
         runtimeRoot: outlineRuntimeRoot,
+        contentRoot: outlineContentRoot,
         supervisor: outlineClientSupervisor,
         baseEnvironment: (shell) => managedSkillShellEnvironment!.processEnvironment(
           context.thread.id,
@@ -1078,6 +1082,7 @@ function localWorkspaceForTurn(context: Parameters<ToolRuntime['createTools']>[0
     threadId: context.thread.id,
     turnId: context.turn.id,
     runtimeRoot: outlineRuntimeRoot,
+    contentRoot: outlineContentRoot,
     supervisor: outlineClientSupervisor,
     baseEnvironment: (shell) => managedSkillShellEnvironment!.processEnvironment(
       context.thread.id,

@@ -86,7 +86,7 @@ describe('built-in outline Skill import workflow', () => {
     const directory = await temporaryDirectory('outline-import-public-tana-');
     const artifacts = artifactPaths(directory);
     const source = path.join(skillRoot, 'fixtures', 'tana-real-export-shapes.json');
-    const runtime = await OutlineRuntimeServer.start({ root: artifacts.runtime, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root: artifacts.runtime, contentRoot: `${artifacts.runtime}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
 
@@ -269,7 +269,7 @@ describe('built-in outline Skill import workflow', () => {
       ...normalized,
       stats: { ...normalized.stats, tags: 1 },
     }), 'utf8');
-    const runtime = await OutlineRuntimeServer.start({ root: artifacts.runtime, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root: artifacts.runtime, contentRoot: `${artifacts.runtime}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
 
@@ -349,7 +349,7 @@ describe('built-in outline Skill import workflow', () => {
       return { title: date, kind: 'date' as const, date, nodes: [{ title: `Entry ${index + 1}` }] };
     });
     await writeFile(normalizedPath, JSON.stringify(normalizedSource(sections)), 'utf8');
-    const runtime = await OutlineRuntimeServer.start({ root: artifacts.runtime, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root: artifacts.runtime, contentRoot: `${artifacts.runtime}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
 

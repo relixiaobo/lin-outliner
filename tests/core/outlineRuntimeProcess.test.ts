@@ -3,8 +3,15 @@ import { Core, type CoreTransactionPatch } from '../../src/core/core';
 import { canonicalSha256 } from '../../src/outline/contract/canonical';
 import { outlineCapabilityContractDigest } from '../../src/outline/contract/capabilities';
 import { issueOutlineAgentAttestation } from '../../src/outline/contract/agentAttestation';
+import { OUTLINE_STORAGE_VERSION } from '../../src/outline/contract/version';
 import type { ChangeSet, Diff, Operation, OutlineEvent, ProjectionResult, RuntimeDescriptor } from '../../src/outline/contract/schemas';
-import { OutlineClient, OutlineClientSupervisor, readOutlineRuntimeDescriptor } from '../../src/outline/client';
+import {
+  OutlineClient,
+  OutlineClientSupervisor,
+  readOutlineRuntimeDescriptor,
+  resolveOutlineContentRoot,
+  resolveOutlineRuntimeRoot,
+} from '../../src/outline/client';
 import { OutlineRuntimeServer, resolveOutlineRuntimePaths } from '../../src/outline/runtime/server';
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -12,6 +19,7 @@ import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { createOutlineAgentShellEnvironmentProvider } from '../../src/main/outlineAgentShellEnvironment';
 
 const roots: string[] = [];
 const runtimeEntry = fileURLToPath(new URL('../../src/outline/runtime/server/entry.ts', import.meta.url));
@@ -22,9 +30,55 @@ afterAll(async () => {
 });
 
 describe('Outline Runtime process boundary', () => {
+  test('derives Runtime and ContentStore roots independently from one userData authority', () => {
+    const userData = path.join(tmpdir(), 'tenon-explicit-user-data');
+    const sharedEnvironment = { ELECTRON_USER_DATA_DIR: userData };
+    expect(resolveOutlineRuntimeRoot({ env: sharedEnvironment })).toBe(path.join(userData, 'outline-runtime'));
+    expect(resolveOutlineContentRoot({ env: sharedEnvironment })).toBe(path.join(userData, 'content'));
+
+    const runtimeOverride = path.join(tmpdir(), 'tenon-runtime-override');
+    const contentOverride = path.join(tmpdir(), 'tenon-content-override');
+    expect(resolveOutlineRuntimeRoot({
+      env: { ...sharedEnvironment, TENON_OUTLINE_RUNTIME_ROOT: runtimeOverride },
+    })).toBe(runtimeOverride);
+    expect(resolveOutlineContentRoot({
+      env: { ...sharedEnvironment, TENON_OUTLINE_RUNTIME_ROOT: runtimeOverride },
+    })).toBe(path.join(userData, 'content'));
+    expect(resolveOutlineContentRoot({
+      env: { ...sharedEnvironment, TENON_CONTENT_ROOT: contentOverride },
+    })).toBe(contentOverride);
+  });
+
+  test('injects the paired Runtime and ContentStore roots into Agent shell execution', async () => {
+    const root = await makeRoot();
+    const contentRoot = `${root}-content`;
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    const supervisor = new OutlineClientSupervisor({ root, noStart: true });
+    try {
+      const environment = await createOutlineAgentShellEnvironmentProvider({
+        threadId: 'thread:agent',
+        turnId: 'turn:agent',
+        runtimeRoot: root,
+        contentRoot,
+        supervisor,
+        baseEnvironment: async () => ({ env: { BASE_MARKER: 'retained' } }),
+      })({ toolCallId: 'item:agent', command: 'outline status' });
+      expect(environment.env).toMatchObject({
+        BASE_MARKER: 'retained',
+        TENON_OUTLINE_RUNTIME_ROOT: root,
+        TENON_CONTENT_ROOT: contentRoot,
+      });
+      expect(environment.env?.TENON_OUTLINE_AGENT_ATTESTATION).toBeDefined();
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   test('creates a private descriptor socket root and lock without leaking its bearer token', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
 
@@ -50,13 +104,30 @@ describe('Outline Runtime process boundary', () => {
     }
   });
 
+  test('rolls back the workspace, socket, and writer lock after descriptor publication fails', async () => {
+    const root = await makeRoot();
+    const contentRoot = `${root}-content`;
+    const paths = resolveOutlineRuntimePaths(root);
+    await mkdir(paths.descriptorPath);
+
+    await expect(OutlineRuntimeServer.start({ root, contentRoot, idleTimeoutMs: 60_000 }))
+      .rejects.toBeDefined();
+    expect(await stat(paths.socketPath).catch(() => null)).toBeNull();
+    expect(await stat(paths.lockPath).catch(() => null)).toBeNull();
+
+    await rm(paths.descriptorPath, { recursive: true });
+    const restarted = await OutlineRuntimeServer.start({ root, contentRoot, idleTimeoutMs: 60_000 });
+    expect(restarted).not.toBeNull();
+    await restarted?.stop();
+  });
+
   test('rejects a second writer while the first Runtime owns the workspace', async () => {
     const root = await makeRoot();
-    const first = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const first = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(first).not.toBeNull();
     if (!first) return;
     try {
-      expect(await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 })).toBeNull();
+      expect(await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 })).toBeNull();
       expect((await readOutlineRuntimeDescriptor(root))?.instanceId).toBe(first.descriptor.instanceId);
     } finally {
       await first.stop();
@@ -76,7 +147,7 @@ describe('Outline Runtime process boundary', () => {
     const old = new Date(Date.now() - 60_000);
     await utimes(paths.lockPath, old, old);
 
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
@@ -89,7 +160,7 @@ describe('Outline Runtime process boundary', () => {
 
   test('authenticates before decoding a request and preserves the unauthorized error code', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
@@ -110,7 +181,7 @@ describe('Outline Runtime process boundary', () => {
 
   test('serves find, diff, apply, and show through the authenticated process boundary', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     const client = new OutlineClient(runtime.descriptor);
@@ -184,7 +255,7 @@ describe('Outline Runtime process boundary', () => {
 
   test('streams verified AssetRecord bytes with browser-compatible range responses', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     const bytes = Buffer.from('0123456789');
@@ -197,6 +268,11 @@ describe('Outline Runtime process boundary', () => {
       expect(partial.headers.get('content-range')).toBe('bytes 2-5/10');
       expect(Buffer.from(await partial.arrayBuffer())).toEqual(Buffer.from('2345'));
 
+      const publicResponse = await rawAssetRequest(runtime.descriptor, lease.assetId);
+      expect(publicResponse.status).toBe(200);
+      expect(publicResponse.headers['x-outline-sha256']).toBeUndefined();
+      expect(publicResponse.body).toEqual(bytes);
+
       const invalidClient = new OutlineClient(runtime.descriptor);
       const invalid = await invalidClient.serveAsset(lease.assetId, 'bytes=20-30');
       expect(invalid.status).toBe(416);
@@ -208,7 +284,7 @@ describe('Outline Runtime process boundary', () => {
 
   test('records immutable Agent causation and consumes one attestation after a successful mutation', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     const causation = { threadId: 'thread:agent', turnId: 'turn:agent', itemId: 'item:agent' };
@@ -244,7 +320,7 @@ describe('Outline Runtime process boundary', () => {
 
   test('rejects missing and expired Agent attestations but releases a valid claim after a failed mutation', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     const local = new OutlineClient(runtime.descriptor, { origin: 'local-user' });
@@ -318,7 +394,7 @@ describe('Outline Runtime process boundary', () => {
 
   test('delivers replayed and live Events once across the replay subscription boundary', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
@@ -361,6 +437,7 @@ describe('Outline Runtime process boundary', () => {
     };
     const first = await OutlineRuntimeServer.start({
       root,
+      contentRoot: `${root}-content`,
       idleTimeoutMs: 60_000,
       workspaceOptions: { ...workspaceOptions, instanceId: 'runtime:startup-old' },
     });
@@ -408,6 +485,7 @@ describe('Outline Runtime process boundary', () => {
     nowMs += 2 * 86_400_000;
     const restarted = await OutlineRuntimeServer.start({
       root,
+      contentRoot: `${root}-content`,
       idleTimeoutMs: 25,
       workspaceOptions: { ...workspaceOptions, instanceId: 'runtime:startup-new' },
     });
@@ -442,7 +520,7 @@ describe('Outline Runtime process boundary', () => {
 
   test('requires resync instead of projecting a historical replay from a future revision', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     const projection = {
@@ -480,7 +558,7 @@ describe('Outline Runtime process boundary', () => {
 
   test('serves requests while one shared client holds an open watch', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     const client = new OutlineClient(runtime.descriptor);
@@ -502,7 +580,7 @@ describe('Outline Runtime process boundary', () => {
 
   test('keeps a desktop subscription alive beyond the finite command timeout', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     const subscriptionClient = new OutlineClient(runtime.descriptor, { requestTimeoutMs: 40 });
@@ -532,7 +610,7 @@ describe('Outline Runtime process boundary', () => {
 
   test('binds watch cursors to Runtime instance, filter, and Projection', async () => {
     const root = await makeRoot();
-    const first = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const first = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(first).not.toBeNull();
     if (!first) return;
     const filter = { origin: 'local-user' as const };
@@ -567,7 +645,7 @@ describe('Outline Runtime process boundary', () => {
     mismatchClient.close();
     await first.stop();
 
-    const restarted = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const restarted = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(restarted).not.toBeNull();
     if (!restarted) return;
     const restartedClient = new OutlineClient(restarted.descriptor);
@@ -589,6 +667,7 @@ describe('Outline Runtime process boundary', () => {
     const idle = new Promise<void>((resolve) => { idleResolve = resolve; });
     const runtime = await OutlineRuntimeServer.start({
       root,
+      contentRoot: `${root}-content`,
       idleTimeoutMs: 25,
       onIdle: () => { idleResolve?.(); },
     });
@@ -608,6 +687,7 @@ describe('Outline Runtime process boundary', () => {
     const idle = new Promise<void>((resolve) => { idleResolve = resolve; });
     const runtime = await OutlineRuntimeServer.start({
       root,
+      contentRoot: `${root}-content`,
       idleTimeoutMs: 25,
       onIdle: () => { idleResolve?.(); },
     });
@@ -626,6 +706,7 @@ describe('Outline Runtime process boundary', () => {
     const root = await makeRoot();
     const runtime = await OutlineRuntimeServer.start({
       root,
+      contentRoot: `${root}-content`,
       idleTimeoutMs: 25,
     });
     expect(runtime).not.toBeNull();
@@ -659,6 +740,7 @@ describe('Outline Runtime process boundary', () => {
     let idleCalls = 0;
     const runtime = await OutlineRuntimeServer.start({
       root,
+      contentRoot: `${root}-content`,
       idleTimeoutMs: 10,
       onIdle: async () => {
         idleCalls += 1;
@@ -691,6 +773,7 @@ describe('Outline Runtime process boundary', () => {
     const root = await makeRoot();
     const runtime = await OutlineRuntimeServer.start({
       root,
+      contentRoot: `${root}-content`,
       idleTimeoutMs: 10,
       onIdle: async () => { throw new Error('injected idle callback failure'); },
     });
@@ -753,7 +836,7 @@ describe('Outline Runtime process boundary', () => {
 
   test('retires the current private Runtime through its authenticated lifecycle route', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     const client = new OutlineClient(runtime.descriptor);
@@ -805,8 +888,8 @@ describe('Outline Runtime process boundary', () => {
       detached: false,
     };
     const supervisors = [
-      new OutlineClientSupervisor({ root, launch, startupTimeoutMs: 5_000 }),
-      new OutlineClientSupervisor({ root, launch, startupTimeoutMs: 5_000 }),
+      new OutlineClientSupervisor({ root, contentRoot: `${root}-content`, launch, startupTimeoutMs: 5_000 }),
+      new OutlineClientSupervisor({ root, contentRoot: `${root}-content`, launch, startupTimeoutMs: 5_000 }),
     ];
     const clients: OutlineClient[] = [];
     try {
@@ -937,8 +1020,8 @@ describe('Outline Runtime process boundary', () => {
       env: { TENON_OUTLINE_RUNTIME_IDLE_MS: '60000' },
       detached: false,
     };
-    const desktop = new OutlineClientSupervisor({ root, launch, startupTimeoutMs: 5_000 });
-    const cli = new OutlineClientSupervisor({ root, launch, startupTimeoutMs: 5_000 });
+    const desktop = new OutlineClientSupervisor({ root, contentRoot: `${root}-content`, launch, startupTimeoutMs: 5_000 });
+    const cli = new OutlineClientSupervisor({ root, contentRoot: `${root}-content`, launch, startupTimeoutMs: 5_000 });
     const clients = await Promise.all([desktop.connect(), cli.connect()]);
 
     try {
@@ -963,7 +1046,7 @@ describe('Outline Runtime process boundary', () => {
     expect(Buffer.byteLength(paths.socketPath)).toBeLessThanOrEqual(90);
     expect(paths.socketPath).not.toStartWith(root);
 
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
@@ -1034,7 +1117,7 @@ function staleDescriptor(socketPath: string): RuntimeDescriptor {
     protocolMajors: [1],
     contractDigest: '0'.repeat(64),
     runtimeVersion: '1.0.0',
-    storageVersion: 1,
+    storageVersion: OUTLINE_STORAGE_VERSION,
     createdAt: '2000-01-01T00:00:00.000Z',
   };
 }
@@ -1050,7 +1133,7 @@ function runtimeDescriptor(socketPath: string): RuntimeDescriptor {
     protocolMajors: [1],
     contractDigest: outlineCapabilityContractDigest(),
     runtimeVersion: '1.0.0',
-    storageVersion: 1,
+    storageVersion: OUTLINE_STORAGE_VERSION,
     createdAt: new Date().toISOString(),
   };
 }
@@ -1091,6 +1174,30 @@ async function rawRequest(
     });
     request.once('error', reject);
     request.end(body);
+  });
+}
+
+async function rawAssetRequest(
+  descriptor: RuntimeDescriptor,
+  assetId: string,
+): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: Buffer }> {
+  return new Promise((resolve, reject) => {
+    const request = http.request({
+      socketPath: descriptor.socketPath,
+      method: 'GET',
+      path: `/v1/assets/${encodeURIComponent(assetId)}`,
+      headers: { authorization: `Bearer ${descriptor.bearerToken}` },
+    }, async (response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of response) chunks.push(Buffer.from(chunk));
+      resolve({
+        status: response.statusCode ?? 0,
+        headers: response.headers,
+        body: Buffer.concat(chunks),
+      });
+    });
+    request.once('error', reject);
+    request.end();
   });
 }
 
@@ -1192,7 +1299,9 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
 }
 
 async function makeRoot(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), 'tenon-outline-runtime-process-'));
-  roots.push(root);
-  return root;
+  const temporaryRoot = await mkdtemp(path.join(tmpdir(), 'tenon-outline-runtime-process-'));
+  roots.push(temporaryRoot);
+  const runtimeRoot = path.join(temporaryRoot, 'runtime');
+  await mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
+  return runtimeRoot;
 }

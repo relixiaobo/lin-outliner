@@ -217,8 +217,12 @@ test.describe('definition configuration parity', () => {
       outline.request = async <T,>(request: { command: string; input: unknown }) => {
         const input = request.input as {
           diff?: { normalizedChangeSet?: { operations?: Array<{ changes?: Array<Record<string, unknown>> }> } };
+          changeSet?: { operations?: Array<{ changes?: Array<Record<string, unknown>> }> };
         };
-        const addsSort = request.command === 'apply' && (input.diff?.normalizedChangeSet?.operations ?? [])
+        const operations = request.command === 'apply'
+          ? input.diff?.normalizedChangeSet?.operations ?? []
+          : request.command === 'commit' ? input.changeSet?.operations ?? [] : [];
+        const addsSort = operations
           .some((operation) => (operation.changes ?? []).some((change) => (
             change.kind === 'view' && change.property === 'sort' && change.action === 'add'
           )));

@@ -12,9 +12,9 @@ describe('shared search query outline parser', () => {
     const result = parseSearchQueryOutline(core.projection(), [
       '- AND',
       '  - HAS_TAG',
-      `    - tag:: ${formatNodeReferenceMarker('#Work', tagId)}`,
+      `    - tag:: ${formatNodeReferenceMarker(tagId)}`,
       '  - FIELD_IS',
-      `    - field:: ${formatNodeReferenceMarker('Status', fieldId)}`,
+      `    - field:: ${formatNodeReferenceMarker(fieldId)}`,
       '    - value:: In progress',
     ].join('\n'));
 
@@ -47,7 +47,7 @@ describe('shared search query outline parser', () => {
     });
     expect(parseSearchQueryOutline(core.projection(), [
       '- HAS_TAG',
-      `  - tag:: ${formatNodeReferenceMarker('Ordinary', ordinaryId)}`,
+      `  - tag:: ${formatNodeReferenceMarker(ordinaryId)}`,
     ].join('\n'))).toMatchObject({
       ok: false,
       message: expect.stringContaining('tagDef'),

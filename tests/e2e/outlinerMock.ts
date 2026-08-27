@@ -938,6 +938,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       reasoningEffort: string;
     }>();
     const nextCanonicalId = () => `01910000-0000-7000-8000-${(++sequence).toString(16).padStart(12, '0')}`;
+    const nextCanonicalNodeId = () => `node:00000000-0000-4000-8000-${(++sequence).toString(16).padStart(12, '0')}`;
     const threadById = (threadId: string) => {
       const thread = mockThreads.find((candidate) => candidate.id === threadId);
       if (!thread) throw new Error(`Thread not found: ${threadId}`);
@@ -1439,7 +1440,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       // contract): the renderer mints the trailing draft row's stable id and
       // expects the created node to adopt it, so the row reconciles into a single
       // real node instead of leaving an orphan beside the still-buffering draft.
-      const nodeId = id ?? `node-${++sequence}`;
+      const nodeId = id ?? nextCanonicalNodeId();
       makeNode(nodeId, text, { parentId, showCheckbox: true, ...overrides });
       appendChild(parentId, nodeId, index);
       return nodeId;
@@ -2658,7 +2659,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       index: number | null,
       draft: Record<string, unknown>,
     ): string => {
-      const nodeId = typeof draft.id === 'string' ? draft.id : `node-${++sequence}`;
+      const nodeId = typeof draft.id === 'string' ? draft.id : nextCanonicalNodeId();
       const content = clone(draft.content as RichText);
       const metadata = draft.metadata && typeof draft.metadata === 'object'
         ? draft.metadata as Record<string, unknown>
@@ -3421,6 +3422,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       );
       return operation;
     };
+    const commitMockChangeSet = (changeSet: MockChangeSet) => {
+      const diff = previewMockChangeSet(changeSet);
+      if (diff.destructive.length > 0) {
+        throw new Error('Direct commit accepts only non-destructive ChangeSets.');
+      }
+      return applyMockDiff(diff, false);
+    };
     const applyMockHistory = (direction: 'undo' | 'redo') => {
       const source = direction === 'undo' ? outlineHistory : outlineRedoHistory;
       const destination = direction === 'undo' ? outlineRedoHistory : outlineHistory;
@@ -3515,6 +3523,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             previewMockChangeSet(input.changeSet as MockChangeSet),
           );
         }
+        if (request.command === 'commit') {
+          return outlineSuccess(
+            request.requestId,
+            request.command,
+            commitMockChangeSet(input.changeSet as MockChangeSet),
+          );
+        }
         if (request.command === 'apply') {
           return outlineSuccess(
             request.requestId,
@@ -3544,7 +3559,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             metadata: {
               mimeType: asset.mimeType,
               byteSize: asset.byteSize,
-              sha256: mockDigest(encoded),
               originalFilename: asset.originalFilename,
               imageWidth: asset.imageWidth,
               imageHeight: asset.imageHeight,
@@ -6642,11 +6656,13 @@ export async function commandCalls(page: Page) {
 export async function appliedOutlineOperations(page: Page, fromCall = 0): Promise<Array<Record<string, unknown>>> {
   const calls = (await commandCalls(page)).slice(fromCall);
   return calls.flatMap((call) => {
-    if (call.cmd !== 'outline/apply') return [];
     const input = call.args as {
       diff?: { normalizedChangeSet?: { operations?: Array<Record<string, unknown>> } };
+      changeSet?: { operations?: Array<Record<string, unknown>> };
     };
-    return input.diff?.normalizedChangeSet?.operations ?? [];
+    if (call.cmd === 'outline/apply') return input.diff?.normalizedChangeSet?.operations ?? [];
+    if (call.cmd === 'outline/commit') return input.changeSet?.operations ?? [];
+    return [];
   });
 }
 

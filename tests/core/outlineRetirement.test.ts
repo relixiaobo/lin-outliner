@@ -4,6 +4,7 @@ import path from 'node:path';
 
 const repoRoot = path.resolve(import.meta.dir, '..', '..');
 const implementationPlan = path.join(repoRoot, 'docs', 'plans', 'outliner-runtime-cli.md');
+const contentRoot = path.join(repoRoot, 'src', 'content');
 const retiredTokens = [
   ...[
     ['node', 'search'],
@@ -66,6 +67,66 @@ describe('Outline legacy surface retirement', () => {
         isNotFound(error) ? null : Promise.reject(error)
       ))
     )))).filter((value) => value !== null)).toEqual([]);
+  });
+
+  test('keeps shared content physical state private, neutral, and single-rooted', async () => {
+    const contentFiles = await textFiles([contentRoot]);
+    const dependencyFailures: string[] = [];
+    for (const file of contentFiles) {
+      const source = await readFile(file, 'utf8');
+      for (const match of source.matchAll(/from\s+['"]([^'"]+)['"]/gu)) {
+        const specifier = match[1]!;
+        if (!specifier.startsWith('./') && !specifier.startsWith('node:')) {
+          dependencyFailures.push(`${path.relative(repoRoot, file)}: ${specifier}`);
+        }
+      }
+    }
+    expect(dependencyFailures).toEqual([]);
+
+    const contentSource = (await Promise.all(contentFiles.map((file) => readFile(file, 'utf8')))).join('\n');
+    expect(contentSource).not.toContain(['content', 'sqlite'].join('.'));
+    expect(contentSource).not.toContain("path.join(root, '" + ['revi', 'sions'].join('') + "')");
+    expect(contentSource).not.toMatch(/(?:outline|agent|electron|renderer|core)\//u);
+
+    const mainSource = await readFile(path.join(repoRoot, 'src', 'main', 'main.ts'), 'utf8');
+    expect(mainSource).toContain("join(resolvedUserDataDir, 'outline-runtime')");
+    expect(mainSource).toContain("join(resolvedUserDataDir, 'content')");
+    expect(mainSource).not.toMatch(/dirname\(outlineRuntimeRoot\)/u);
+
+    const assetStoreSource = await readFile(
+      path.join(repoRoot, 'src', 'outline', 'runtime', 'storage', 'assetStore.ts'),
+      'utf8',
+    );
+    const assetTypesSource = await readFile(
+      path.join(repoRoot, 'src', 'outline', 'runtime', 'storage', 'assetTypes.ts'),
+      'utf8',
+    );
+    expect(assetStoreSource).toContain("mkdtemp(path.join(tmpdir(), 'tenon-outline-pdf-thumbnail-'))");
+    expect(assetStoreSource).not.toContain('mkdtemp(path.join(path.dirname(pdfPath)');
+    expect(assetStoreSource).not.toContain('digest');
+    expect(assetTypesSource).not.toContain('digest');
+  });
+
+  test('keeps retired asset paths, public deletion, and reference grammars absent', async () => {
+    const files = await textFiles([
+      path.join(repoRoot, 'src'),
+      path.join(repoRoot, 'scripts'),
+      path.join(repoRoot, 'docs', 'spec'),
+    ]);
+    const forbidden = [
+      ['workspace', 'assets', 'blobs'].join('/'),
+      ['delete', 'asset'].join('_'),
+      ['file:', '^path'].join(''),
+      ['kind:label', '^value'].join(''),
+    ];
+    const failures: string[] = [];
+    for (const file of files) {
+      const source = await readFile(file, 'utf8');
+      for (const token of forbidden) {
+        if (source.includes(token)) failures.push(`${path.relative(repoRoot, file)}: ${token}`);
+      }
+    }
+    expect(failures.sort()).toEqual([]);
   });
 });
 

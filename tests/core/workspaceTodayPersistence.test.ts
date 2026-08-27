@@ -16,11 +16,11 @@ describe('workspace today-node persistence', () => {
 
   test('the today node id is stable across a Runtime reopen with no mutations in between', async () => {
     workspaceRoot = await mkdtemp(path.join(tmpdir(), 'outline-today-persist-'));
-    const first = await OutlineRuntimeWorkspace.open(workspaceRoot);
+    const first = await openWorkspace(workspaceRoot);
     const todayId = first.projection().todayId;
     expect(todayId.startsWith('date:')).toBe(true);
 
-    const second = await OutlineRuntimeWorkspace.open(workspaceRoot);
+    const second = await openWorkspace(workspaceRoot);
     expect(second.projection().todayId).toBe(todayId);
     expect(second.projection().nodes.some((node) => node.id === todayId)).toBe(true);
   });
@@ -42,7 +42,7 @@ describe('workspace today-node persistence', () => {
 
     const store = new WorkspaceTransactionLog(workspaceRoot);
     await store.initialize(seed.serializeState());
-    const first = await OutlineRuntimeWorkspace.open(workspaceRoot, { store });
+    const first = await openWorkspace(workspaceRoot, { store });
     const reconciledTodayId = first.projection().todayId;
     expect(reconciledTodayId).not.toBe(removedTodayId);
     expect((await store.load()).replay).toEqual([]);
@@ -57,10 +57,21 @@ describe('workspace today-node persistence', () => {
       },
     });
 
-    const reopened = await OutlineRuntimeWorkspace.open(workspaceRoot);
+    const reopened = await openWorkspace(workspaceRoot);
     expect(reopened.projection().todayId).toBe(reconciledTodayId);
     expect(reopened.projection().nodes).toContainEqual(expect.objectContaining({
       content: expect.objectContaining({ text: 'After reconciliation' }),
     }));
   });
 });
+type WorkspaceOpenOptions = NonNullable<Parameters<typeof OutlineRuntimeWorkspace.open>[1]>;
+
+function openWorkspace(
+  root: string,
+  options: WorkspaceOpenOptions = {},
+): Promise<OutlineRuntimeWorkspace> {
+  return OutlineRuntimeWorkspace.open(root, {
+    ...options,
+    contentRoot: options.contentRoot ?? path.join(root, 'content'),
+  });
+}

@@ -140,7 +140,6 @@ describe('stable agent prompt composition', () => {
     expect(prompt.text).toContain('the latest invocation is authoritative');
     expect(prompt.text).toContain('[[file:///absolute/path]]');
     expect(prompt.text).toContain('standard percent-encoded file URLs');
-    expect(prompt.text).toContain('#d-memory, #d-episode, and #d-belief');
     expect(prompt.text).toContain('install or enable it through the ordinary task environment');
   });
 

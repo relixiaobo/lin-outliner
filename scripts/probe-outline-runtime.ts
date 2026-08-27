@@ -15,6 +15,7 @@ const LARGE_TREE_TEXT = 'Runtime probe large node';
 
 const temporaryRoot = await mkdtemp(path.join(tmpdir(), 'outline-runtime-probe-'));
 const runtimeRoot = path.join(temporaryRoot, 'runtime');
+const contentRoot = path.join(temporaryRoot, 'content');
 const artifactsRoot = path.join(temporaryRoot, 'artifacts');
 const largeChangeSetPath = path.join(artifactsRoot, 'large-tree.changeset.json');
 const largeDiffPath = path.join(artifactsRoot, 'large-tree.diff.json');
@@ -41,6 +42,7 @@ try {
   const coldStart = await measure(async () => {
     runtime = await OutlineRuntimeServer.start({
       root: runtimeRoot,
+      contentRoot,
       idleTimeoutMs: 60 * 60 * 1_000,
     });
     if (!runtime) throw new Error('The probe could not acquire the Runtime writer lock.');

@@ -571,16 +571,14 @@ export interface ProjectionSnapshot {
 }
 
 /**
- * Metadata sidecar for a stored asset. The bytes live on disk under the user
- * data directory; the document only ever references the stable `id`.
+ * Public metadata for an Outline asset. Physical integrity coordinates remain
+ * private to Runtime and ContentStore; renderer clients reference only `id`.
  */
 export interface AssetMetadata {
   schemaVersion: 1;
   id: string;
   mimeType: string;
   byteSize: number;
-  /** Lowercase hexadecimal SHA-256 of the stored bytes. */
-  sha256: string;
   originalFilename?: string;
   createdAt: number;
   imageWidth?: number;

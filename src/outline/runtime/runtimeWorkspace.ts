@@ -1,4 +1,5 @@
 import { Core } from '../../core/core';
+import { ContentStore, type ContentStoreOptions } from '../../content';
 import type { CoreTransactionMetadata } from '../../core/core';
 import { canonicalSha256 } from '../contract/canonical';
 import { OutlineContractError, outlineError } from '../contract/errors';
@@ -37,7 +38,6 @@ export interface OutlineRuntimeMutationRequest {
   readonly revertsOperationId?: string;
   readonly revertsOperationIds?: readonly string[];
   readonly protectedAssetRecordIds?: readonly string[];
-  readonly assetDelta?: OutlineAssetDelta;
   readonly assetLeases?: Readonly<Record<string, string>>;
   readonly idFactory?: (prefix: string) => string;
   readonly execute: (candidate: Core) => void | Operation['result'] | Promise<void | Operation['result']>;
@@ -59,6 +59,9 @@ export interface OutlineRuntimeWorkspaceOptions {
   readonly initialCore?: Core;
   readonly instanceId?: string;
   readonly now?: () => Date;
+  readonly contentRoot?: string;
+  readonly contentStore?: ContentStore;
+  readonly contentStoreOptions?: ContentStoreOptions;
   readonly assetStoreOptions?: OutlineAssetStoreOptions;
 }
 
@@ -110,29 +113,45 @@ export class OutlineRuntimeWorkspace {
       // can capture an update that causally depends on it.
       await store.compact(core.serializeState(), { instanceId, revision: core.revision() });
     }
-    const assets = new OutlineAssetStore(root, store, {
+    const contentStore = options.contentStore
+      ?? (options.contentRoot ? await ContentStore.open(options.contentRoot, options.contentStoreOptions) : undefined);
+    if (!contentStore) {
+      throw new Error('Outline Runtime requires an explicit ContentStore root.');
+    }
+    const assets = new OutlineAssetStore(contentStore, store, {
       ...options.assetStoreOptions,
       ...(options.now ? { now: options.now } : {}),
     });
-    const workspace = new OutlineRuntimeWorkspace(
-      core,
-      store,
-      assets,
-      instanceId,
-      loaded.latestEventSequence,
-      options.now,
-    );
-    return workspace;
+    try {
+      await assets.reconcileAnchors();
+      return new OutlineRuntimeWorkspace(
+        core,
+        store,
+        assets,
+        instanceId,
+        loaded.latestEventSequence,
+        options.now,
+      );
+    } catch (error) {
+      if (!options.contentStore) contentStore.close();
+      throw error;
+    }
   }
 
   revision(): number {
     return this.core.revision();
   }
 
+  close(): void {
+    this.assets.close();
+  }
+
   async status() {
     return {
       revision: this.revision(),
-      ...await this.store.health(),
+      ...await this.store.health((coordinates, excluding) => (
+        this.assets.measureExactRevisionBytes(coordinates, excluding)
+      )),
     };
   }
 
@@ -466,12 +485,10 @@ export class OutlineRuntimeWorkspace {
       ...patchAssetIds,
       ...request.protectedAssetRecordIds ?? [],
     ]);
-    const recoveryOnlyAssetIds = protectedAssetRecordIds.filter((assetId) => !afterLiveAssetIds.has(assetId));
     const assetDelta: OutlineAssetDelta = {
       consumedLeaseIds: Object.keys(request.assetLeases ?? {}).sort(),
       liveAddedAssetRecordIds: [...afterLiveAssetIds].filter((assetId) => !beforeLiveAssetIds.has(assetId)).sort(),
       liveRemovedAssetRecordIds: [...beforeLiveAssetIds].filter((assetId) => !afterLiveAssetIds.has(assetId)).sort(),
-      recoveryOnlyBytes: await this.assets.byteSizeOf(recoveryOnlyAssetIds),
     };
     const patchHash = semanticPatchDigest(patch.nodes);
     if (request.expectedPatchHash && request.expectedPatchHash !== patchHash) {
@@ -567,6 +584,9 @@ export class OutlineRuntimeWorkspace {
           },
         } : {}),
         assetDelta,
+        measureExactRevisionBytes: (coordinates, excluding) => (
+          this.assets.measureExactRevisionBytes(coordinates, excluding)
+        ),
       });
     } catch (error) {
       if (error instanceof OutlineContractError

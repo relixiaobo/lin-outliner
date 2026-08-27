@@ -126,5 +126,16 @@ async function settle(
 async function makeWorkspace(): Promise<OutlineRuntimeWorkspace> {
   const root = await mkdtemp(path.join(tmpdir(), 'tenon-outline-actions-'));
   roots.push(root);
-  return OutlineRuntimeWorkspace.open(root, { instanceId: `runtime:${crypto.randomUUID()}` });
+  return openWorkspace(root, { instanceId: `runtime:${crypto.randomUUID()}` });
+}
+type WorkspaceOpenOptions = NonNullable<Parameters<typeof OutlineRuntimeWorkspace.open>[1]>;
+
+function openWorkspace(
+  root: string,
+  options: WorkspaceOpenOptions = {},
+): Promise<OutlineRuntimeWorkspace> {
+  return OutlineRuntimeWorkspace.open(root, {
+    ...options,
+    contentRoot: options.contentRoot ?? path.join(root, 'content'),
+  });
 }

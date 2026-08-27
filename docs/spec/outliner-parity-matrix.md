@@ -31,7 +31,7 @@ to the same public Change union; only presentation and causation differ.
 | References, views, and searches | typed reference/view/search update instructions and exact executable query-rule union | distinct `reference set`, `reference replace`, and `reference inline`; `view *`; `search *` | Same Diff semantics as desktop intent; registry/schema/executor parity |
 | Trash and permanent removal | `lifecycle` | `trash`, `restore`, `purge` | Destructive Diff binding; retained recovery patch |
 | History and exact recovery | Operation ID and recovery state | `log`, `revert`, `undo`, `redo` | Reversal is another linked Operation |
-| Asset-backed media | `AssetLease` plus media `NodeDraft` | `asset ingest`, `asset show`, `asset export`, `media add`, `media set` | Digest-verified bytes; live/lease/recovery reachability |
+| Asset-backed media | `AssetLease` plus media `NodeDraft` | `asset ingest`, `asset show`, `asset export`, `media add`, `media set` | Host-verified exact revisions behind opaque anchors; live/lease/recovery reachability |
 | Bulk import | ordinary bindings plus `ensure`/`create`/`update` | `import inspect`, `import plan`, exact `apply`, and `import verify` | Coverage evidence, ChangeSet hash, Diff hash, Operation ID |
 | Complete single resource | typed `NodeDraft` or resource-specific create/update union | one porcelain invocation; complex state uses that command's `--input` | Final-state golden, one mutation invocation, one Operation, returned IDs, exact revert |
 | Dependent or bounded bulk resources | one ChangeSet with bindings and `many + max` | one `diff` and one `apply`; no shell loop or intermediate ID lookup | Golden ChangeSet/Diff/Operation counts and exact revert |

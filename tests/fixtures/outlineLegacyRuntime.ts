@@ -9,6 +9,7 @@ import {
   resolveOutlineRuntimePaths,
   writePrivateJson,
 } from '../../src/outline/runtime/server/runtimePaths';
+import { OUTLINE_STORAGE_VERSION } from '../../src/outline/contract/version';
 
 const root = argumentValue('--root');
 const contractDigest = argumentValue('--contract-digest');
@@ -33,7 +34,7 @@ const descriptor = {
   protocolMajors: [1] as [1],
   contractDigest,
   runtimeVersion: 'legacy-test',
-  storageVersion: 1 as const,
+  storageVersion: OUTLINE_STORAGE_VERSION,
   createdAt,
 };
 

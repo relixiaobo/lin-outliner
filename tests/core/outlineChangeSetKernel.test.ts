@@ -258,10 +258,10 @@ describe('outline ChangeSet kernel', () => {
 
   test('keeps a Diff self-contained across Runtime restart', async () => {
     const root = await makeRoot();
-    const first = await OutlineRuntimeWorkspace.open(root, { instanceId: 'runtime:first' });
+    const first = await openWorkspace(root, { instanceId: 'runtime:first' });
     const diff = await diffKeyed(first, createTodayChangeSet('Applied after restart'));
 
-    const restarted = await OutlineRuntimeWorkspace.open(root, { instanceId: 'runtime:second' });
+    const restarted = await openWorkspace(root, { instanceId: 'runtime:second' });
     const operation = await applyOutlineDiff(restarted, diff, { origin: 'external-client' });
 
     expect(operation.origin).toBe('external-client');
@@ -1007,11 +1007,22 @@ function updateRequest(nodeId: string, description: string) {
 }
 
 async function makeWorkspace(): Promise<OutlineRuntimeWorkspace> {
-  return OutlineRuntimeWorkspace.open(await makeRoot(), { instanceId: `runtime:${crypto.randomUUID()}` });
+  return openWorkspace(await makeRoot(), { instanceId: `runtime:${crypto.randomUUID()}` });
 }
 
 async function makeRoot(): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), 'tenon-outline-kernel-'));
   roots.push(root);
   return root;
+}
+type WorkspaceOpenOptions = NonNullable<Parameters<typeof OutlineRuntimeWorkspace.open>[1]>;
+
+function openWorkspace(
+  root: string,
+  options: WorkspaceOpenOptions = {},
+): Promise<OutlineRuntimeWorkspace> {
+  return OutlineRuntimeWorkspace.open(root, {
+    ...options,
+    contentRoot: options.contentRoot ?? path.join(root, 'content'),
+  });
 }

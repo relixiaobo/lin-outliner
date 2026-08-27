@@ -338,8 +338,9 @@ ordinary task decisions. A document table is one owner with table view state,
 direct child row Nodes, field-backed cells, and explicit display/group/sort
 configuration; it is not Markdown or aligned text. Date field values use
 `YYYY-MM-DD`, `YYYY-MM-DDTHH:mm`, or `start/end`, and local Daily Note dates are
-not timezone-converted. Final Agent answers reference persisted Nodes as
-`[[node:^exact-id]]` so the client resolves current titles.
+not timezone-converted. Final Agent answers reference an ordinary persisted
+`node:UUID` as `[[node://UUID]]`, removing the internal `node:` prefix, so the
+client resolves current titles.
 
 `references/changesets.md` includes a complete field-backed Daily Note table
 pattern backed by `fixtures/table-view-changeset.json`. The mandatory CLI golden

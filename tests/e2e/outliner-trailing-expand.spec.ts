@@ -29,9 +29,12 @@ async function delayCreateNode(page: Parameters<typeof trailingEditor>[0], delay
     outline.request = async <T,>(request: { command: string; input: unknown }) => {
       const input = request.input as {
         diff?: { normalizedChangeSet?: { operations?: Array<Record<string, unknown>> } };
+        changeSet?: { operations?: Array<Record<string, unknown>> };
       };
-      const createsNode = request.command === 'apply'
-        && (input.diff?.normalizedChangeSet?.operations ?? []).some((operation) => operation.op === 'create');
+      const operations = request.command === 'apply'
+        ? input.diff?.normalizedChangeSet?.operations ?? []
+        : request.command === 'commit' ? input.changeSet?.operations ?? [] : [];
+      const createsNode = operations.some((operation) => operation.op === 'create');
       if (createsNode) {
         await new Promise((resolve) => window.setTimeout(resolve, delay));
       }
@@ -60,9 +63,12 @@ async function rejectDraftMaterializations(
     outline.request = async <T,>(request: { command: string; input: unknown }) => {
       const input = request.input as {
         diff?: { normalizedChangeSet?: { operations?: Array<Record<string, unknown>> } };
+        changeSet?: { operations?: Array<Record<string, unknown>> };
       };
-      const createsNode = request.command === 'apply'
-        && (input.diff?.normalizedChangeSet?.operations ?? []).some((operation) => operation.op === 'create');
+      const operations = request.command === 'apply'
+        ? input.diff?.normalizedChangeSet?.operations ?? []
+        : request.command === 'commit' ? input.changeSet?.operations ?? [] : [];
+      const createsNode = operations.some((operation) => operation.op === 'create');
       if (createsNode && pending.length > 0) {
         const message = pending.shift()!;
         if (delay > 0) await new Promise((resolve) => window.setTimeout(resolve, delay));

@@ -13,13 +13,23 @@ export interface OutlineRuntimeRootOptions {
 export function resolveOutlineRuntimeRoot(options: OutlineRuntimeRootOptions = {}): string {
   const env = options.env ?? process.env;
   if (env.TENON_OUTLINE_RUNTIME_ROOT) return path.resolve(env.TENON_OUTLINE_RUNTIME_ROOT);
+  return path.join(resolveOutlineUserDataRoot(options), 'outline-runtime');
+}
+
+export function resolveOutlineContentRoot(options: OutlineRuntimeRootOptions = {}): string {
+  const env = options.env ?? process.env;
+  if (env.TENON_CONTENT_ROOT) return path.resolve(env.TENON_CONTENT_ROOT);
+  return path.join(resolveOutlineUserDataRoot(options), 'content');
+}
+
+function resolveOutlineUserDataRoot(options: OutlineRuntimeRootOptions): string {
+  const env = options.env ?? process.env;
   const home = options.home ?? homedir();
   const platform = options.platform ?? process.platform;
-  const userData = env.ELECTRON_USER_DATA_DIR
+  return env.ELECTRON_USER_DATA_DIR
     ?? (env.TENON_OUTLINE_PACKAGED === '1'
       ? packagedUserDataRoot(home, platform, env)
       : path.join(home, DEV_USER_DATA_DIR_NAME));
-  return path.join(userData, 'outline-runtime');
 }
 
 function packagedUserDataRoot(

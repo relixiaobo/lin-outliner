@@ -450,13 +450,17 @@ main-owned intent that builds the same public capture ChangeSet.
 ## Assets And Native Effects
 
 `asset ingest` accepts a path, stdin, or bounded bytes and returns a staged lease
-with exact size, lowercase SHA-256, MIME type, filename, and derived metadata.
-The Runtime verifies stored bytes on reads and exports. A document ChangeSet
-that references the lease atomically makes the logical asset reachable.
+with logical asset/lease IDs, exact byte size, MIME type, filename, and derived
+metadata. Public results never expose a physical digest, anchor, or ContentStore
+path. The Runtime resolves the logical AssetRecord and ContentStore verifies its
+exact revision on reads and exports. A document ChangeSet that references the
+lease atomically makes the logical asset reachable.
 
-Physical bytes remain while referenced by a live Node, unexpired lease, or
-retained recovery patch. Garbage collection is internal and recovery aware;
-there is no public asset-delete capability.
+Runtime retains logical records while protected by a live Node, unexpired lease,
+or retained recovery patch. It durably removes an unreachable record before
+releasing its opaque anchor; central ContentStore GC then collects only revisions
+with no admission lease or retention anchor. There is no public asset-delete
+capability. File export reports only destination and byte count.
 
 Native file pickers, trusted Agent-file resolution, managed Thread-resource
 reads, local open policy, Finder reveal, clipboard file flavors, and external URL

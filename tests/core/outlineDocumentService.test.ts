@@ -17,7 +17,7 @@ afterAll(async () => {
 describe('OutlineDocumentService', () => {
   test('tracks mutation settlement and resyncs through a Runtime restart', async () => {
     const root = await makeRoot();
-    let runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    let runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     const document = new OutlineDocumentService(new OutlineClientSupervisor({
@@ -51,7 +51,7 @@ describe('OutlineDocumentService', () => {
       document.unfreezeMutationAdmission();
 
       await runtime.stop();
-      runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+      runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
       expect(runtime).not.toBeNull();
       if (!runtime) return;
       await runtime.workspace.mutate(createRequest('Runtime restart mutation'));
@@ -69,7 +69,7 @@ describe('OutlineDocumentService', () => {
 
   test('does not submit an empty ChangeSet when Memory tag definitions already exist', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     const document = new OutlineDocumentService(new OutlineClientSupervisor({
@@ -92,7 +92,7 @@ describe('OutlineDocumentService', () => {
 
   test('keeps the desktop revision valid after a semantic no-change settlement', async () => {
     const root = await makeRoot();
-    const runtime = await OutlineRuntimeServer.start({ root, idleTimeoutMs: 60_000 });
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     const document = new OutlineDocumentService(new OutlineClientSupervisor({

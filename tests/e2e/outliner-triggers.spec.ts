@@ -26,11 +26,13 @@ async function todayChildren(page: import('@playwright/test').Page) {
 async function appliedOperations(page: import('@playwright/test').Page, fromCall = 0) {
   const calls = (await commandCalls(page)).slice(fromCall);
   return calls.flatMap((call) => {
-    if (call.cmd !== 'outline/apply') return [];
     const input = call.args as {
       diff?: { normalizedChangeSet?: { operations?: Array<Record<string, unknown>> } };
+      changeSet?: { operations?: Array<Record<string, unknown>> };
     };
-    return input.diff?.normalizedChangeSet?.operations ?? [];
+    if (call.cmd === 'outline/apply') return input.diff?.normalizedChangeSet?.operations ?? [];
+    if (call.cmd === 'outline/commit') return input.changeSet?.operations ?? [];
+    return [];
   });
 }
 
@@ -229,9 +231,12 @@ async function delayMockApply(
     outline.request = async <T,>(request: { command: string; input: unknown }) => {
       const input = request.input as {
         diff?: { normalizedChangeSet?: { operations?: Array<Record<string, unknown>> } };
+        changeSet?: { operations?: Array<Record<string, unknown>> };
       };
-      const operations = input.diff?.normalizedChangeSet?.operations ?? [];
-      const matched = request.command === 'apply' && operations.some((operation) => (
+      const operations = request.command === 'apply'
+        ? input.diff?.normalizedChangeSet?.operations ?? []
+        : request.command === 'commit' ? input.changeSet?.operations ?? [] : [];
+      const matched = operations.some((operation) => (
         operation.op === matches.op
         && (!matches.instructionKind || (
           Array.isArray(operation.changes)

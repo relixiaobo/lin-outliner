@@ -18,7 +18,6 @@ async function todayChildren(page: Parameters<typeof trailingEditor>[0]) {
 async function appliedAttachmentDrafts(page: Parameters<typeof trailingEditor>[0]) {
   const calls = await commandCalls(page);
   return calls.flatMap((call) => {
-    if (call.cmd !== 'outline/apply') return [];
     const input = call.args as {
       diff?: { normalizedChangeSet?: { operations?: Array<{
         op?: string;
@@ -29,8 +28,20 @@ async function appliedAttachmentDrafts(page: Parameters<typeof trailingEditor>[0
         };
         nodes?: Array<Record<string, unknown>>;
       }> } };
+      changeSet?: { operations?: Array<{
+        op?: string;
+        placement?: {
+          kind?: string;
+          parent?: { target?: { selector?: { by?: string; id?: string } } };
+          index?: number;
+        };
+        nodes?: Array<Record<string, unknown>>;
+      }> };
     };
-    return (input.diff?.normalizedChangeSet?.operations ?? []).flatMap((operation) => (
+    const operations = call.cmd === 'outline/apply'
+      ? input.diff?.normalizedChangeSet?.operations ?? []
+      : call.cmd === 'outline/commit' ? input.changeSet?.operations ?? [] : [];
+    return operations.flatMap((operation) => (
       operation.op === 'create'
         ? (operation.nodes ?? []).filter((draft) => draft.type === 'attachment').map((draft) => ({
             draft,

@@ -23,7 +23,7 @@ describe('OutlineRuntimeWorkspace', () => {
         expect(workspace?.projection().nodes.some((node) => node.content.text === 'Published after fsync')).toBe(false);
       },
     });
-    workspace = await OutlineRuntimeWorkspace.open(root, { store, instanceId: 'runtime:publish-order' });
+    workspace = await openWorkspace(root, { store, instanceId: 'runtime:publish-order' });
 
     const operation = await workspace.mutate(createRequest('Published after fsync'));
 
@@ -34,7 +34,7 @@ describe('OutlineRuntimeWorkspace', () => {
 
   test('keeps Runtime Operation history out of Core local undo persistence', async () => {
     const root = await makeRoot();
-    const workspace = await OutlineRuntimeWorkspace.open(root);
+    const workspace = await openWorkspace(root);
 
     await workspace.mutate(createRequest('Runtime-owned history'));
 
@@ -49,7 +49,7 @@ describe('OutlineRuntimeWorkspace', () => {
 
   test('discards the candidate when recovery capacity rejects admission', async () => {
     const root = await makeRoot();
-    const workspace = await OutlineRuntimeWorkspace.open(root, {
+    const workspace = await openWorkspace(root, {
       storeOptions: { recoveryBudgetBytes: 1 },
     });
     const before = workspace.documentState();
@@ -65,7 +65,7 @@ describe('OutlineRuntimeWorkspace', () => {
   test('publishes resumable recovery-expiry Events during live maintenance', async () => {
     const root = await makeRoot();
     let nowMs = Date.parse('2035-01-01T00:00:00.000Z');
-    const workspace = await OutlineRuntimeWorkspace.open(root, {
+    const workspace = await openWorkspace(root, {
       instanceId: 'runtime:maintenance-live',
       now: () => new Date(nowMs),
       storeOptions: { minimumRetentionDays: 1, minimumRetentionOperations: 0 },
@@ -101,12 +101,12 @@ describe('OutlineRuntimeWorkspace', () => {
       now: () => new Date(nowMs),
       storeOptions: { minimumRetentionDays: 1, minimumRetentionOperations: 0 },
     };
-    const first = await OutlineRuntimeWorkspace.open(root, { ...options, instanceId: 'runtime:startup-first' });
+    const first = await openWorkspace(root, { ...options, instanceId: 'runtime:startup-first' });
     const operation = await first.mutate(createRequest('Startup expiry'));
     const baseline = (await first.store.health()).transactionLog.eventSequence;
 
     nowMs += 2 * 86_400_000;
-    const restarted = await OutlineRuntimeWorkspace.open(root, { ...options, instanceId: 'runtime:startup-second' });
+    const restarted = await openWorkspace(root, { ...options, instanceId: 'runtime:startup-second' });
     await restarted.maintain();
     const [event] = await restarted.store.eventsAfter(baseline);
 
@@ -131,7 +131,7 @@ describe('OutlineRuntimeWorkspace', () => {
         if (snapshotRenames === 2) enterCompaction();
       },
     });
-    const workspace = await OutlineRuntimeWorkspace.open(root, { store });
+    const workspace = await openWorkspace(root, { store });
 
     const mutation = workspace.mutate(createRequest('Acknowledged before compaction'));
     const firstSettlement = await Promise.race([
@@ -156,7 +156,7 @@ describe('OutlineRuntimeWorkspace', () => {
         if (snapshotRenames === 2) throw new Error('injected maintenance failure');
       },
     });
-    const workspace = await OutlineRuntimeWorkspace.open(root, { store });
+    const workspace = await openWorkspace(root, { store });
 
     const first = await workspace.mutate(createRequest('Committed before maintenance failure'));
     expect(first.kind).toBe('outline.operation');
@@ -166,14 +166,14 @@ describe('OutlineRuntimeWorkspace', () => {
 
     const second = await workspace.mutate(createRequest('Writable after maintenance reload'));
     expect(second.revisionBefore).toBe(first.revisionAfter);
-    const restarted = await OutlineRuntimeWorkspace.open(root);
+    const restarted = await openWorkspace(root);
     expect(restarted.projection().nodes.some((node) => node.content.text === 'Committed before maintenance failure')).toBe(true);
     expect(restarted.projection().nodes.some((node) => node.content.text === 'Writable after maintenance reload')).toBe(true);
   });
 
   test('rejects an exact patch mismatch without changing live or durable state', async () => {
     const root = await makeRoot();
-    const workspace = await OutlineRuntimeWorkspace.open(root);
+    const workspace = await openWorkspace(root);
     const before = workspace.documentState();
 
     await expect(workspace.mutate({
@@ -189,10 +189,10 @@ describe('OutlineRuntimeWorkspace', () => {
 
   test('keeps document revisions monotonic across Runtime restart', async () => {
     const root = await makeRoot();
-    const firstRuntime = await OutlineRuntimeWorkspace.open(root, { instanceId: 'runtime:first' });
+    const firstRuntime = await openWorkspace(root, { instanceId: 'runtime:first' });
     const first = await firstRuntime.mutate(createRequest('Before restart'));
 
-    const restarted = await OutlineRuntimeWorkspace.open(root, { instanceId: 'runtime:second' });
+    const restarted = await openWorkspace(root, { instanceId: 'runtime:second' });
     expect(restarted.revision()).toBe(first.revisionAfter);
     const second = await restarted.mutate(createRequest('After restart'));
 
@@ -204,7 +204,7 @@ describe('OutlineRuntimeWorkspace', () => {
 
   test('returns the original Operation for an idempotent request without executing twice', async () => {
     const root = await makeRoot();
-    const workspace = await OutlineRuntimeWorkspace.open(root);
+    const workspace = await openWorkspace(root);
     let executions = 0;
     const request = createRequest('Idempotent row', {
       idempotencyKey: 'request:stable',
@@ -222,7 +222,7 @@ describe('OutlineRuntimeWorkspace', () => {
 
   test('serializes concurrent mutations into one revision and Event sequence', async () => {
     const root = await makeRoot();
-    const workspace = await OutlineRuntimeWorkspace.open(root, { instanceId: 'runtime:serialized' });
+    const workspace = await openWorkspace(root, { instanceId: 'runtime:serialized' });
 
     const [first, second] = await Promise.all([
       workspace.mutate(createRequest('Concurrent first')),
@@ -240,7 +240,7 @@ describe('OutlineRuntimeWorkspace', () => {
   test('persists guarded revert and revert-of-revert as new Operations', async () => {
     const root = await makeRoot();
     const nodeId = `node:${crypto.randomUUID()}`;
-    const workspace = await OutlineRuntimeWorkspace.open(root, { instanceId: 'runtime:revert' });
+    const workspace = await openWorkspace(root, { instanceId: 'runtime:revert' });
     const created = await workspace.mutate(createRequest('Reversible row', { nodeId }));
     const createdState = workspace.documentState();
 
@@ -257,7 +257,7 @@ describe('OutlineRuntimeWorkspace', () => {
       'reverted',
       'available',
     ]);
-    const restarted = await OutlineRuntimeWorkspace.open(root);
+    const restarted = await openWorkspace(root);
     expect(restarted.documentState()).toEqual(createdState);
   });
 
@@ -265,7 +265,7 @@ describe('OutlineRuntimeWorkspace', () => {
     const root = await makeRoot();
     const firstNodeId = `node:${crypto.randomUUID()}`;
     const secondNodeId = `node:${crypto.randomUUID()}`;
-    const workspace = await OutlineRuntimeWorkspace.open(root);
+    const workspace = await openWorkspace(root);
     await workspace.mutate(createRequest('First history row', { nodeId: firstNodeId }));
     await workspace.mutate(createRequest('Second history row', { nodeId: secondNodeId }));
 
@@ -275,7 +275,7 @@ describe('OutlineRuntimeWorkspace', () => {
     await workspace.undo({ origin: 'local-user' });
     expect(workspace.documentState().nodes[firstNodeId]).toBeUndefined();
 
-    const restarted = await OutlineRuntimeWorkspace.open(root);
+    const restarted = await openWorkspace(root);
     await restarted.redo({ origin: 'local-user' });
     expect(restarted.documentState().nodes[firstNodeId]).toBeDefined();
     expect(restarted.documentState().nodes[secondNodeId]).toBeUndefined();
@@ -285,7 +285,7 @@ describe('OutlineRuntimeWorkspace', () => {
       outlineError: { code: 'not_found' },
     });
 
-    const restartedAgain = await OutlineRuntimeWorkspace.open(root);
+    const restartedAgain = await openWorkspace(root);
     await restartedAgain.undo({ origin: 'local-user' });
     expect(restartedAgain.documentState().nodes[firstNodeId]).toBeDefined();
     expect(restartedAgain.documentState().nodes[secondNodeId]).toBeUndefined();
@@ -294,7 +294,7 @@ describe('OutlineRuntimeWorkspace', () => {
   test('undo reverts a materialized text-edit group as one user action', async () => {
     const root = await makeRoot();
     const nodeId = `node:${crypto.randomUUID()}`;
-    const workspace = await OutlineRuntimeWorkspace.open(root);
+    const workspace = await openWorkspace(root);
     const undoGroup = {
       groupId: `undo-group:${crypto.randomUUID()}`,
       kind: 'text-edit' as const,
@@ -317,7 +317,7 @@ describe('OutlineRuntimeWorkspace', () => {
       'available',
     ]);
 
-    const restarted = await OutlineRuntimeWorkspace.open(root);
+    const restarted = await openWorkspace(root);
     const redo = await restarted.redo({ origin: 'local-user' });
     expect(redo.revertsOperationId).toBe(undo.operationId);
     expect(restarted.documentState().nodes[nodeId]?.content.text).toBe('AB');
@@ -325,7 +325,7 @@ describe('OutlineRuntimeWorkspace', () => {
 
   test('scopes undo by origin and guards the selected Operation', async () => {
     const root = await makeRoot();
-    const workspace = await OutlineRuntimeWorkspace.open(root);
+    const workspace = await openWorkspace(root);
     const userNodeId = `node:${crypto.randomUUID()}`;
     const agentNodeId = `node:${crypto.randomUUID()}`;
     const newestUserNodeId = `node:${crypto.randomUUID()}`;
@@ -365,7 +365,7 @@ describe('OutlineRuntimeWorkspace', () => {
     expect(workspace.documentState().nodes[userNodeId]?.description).toBe('Edited by user');
     expect(workspace.documentState().nodes[newestUserNodeId]?.description).toBe('Edited newest by user');
 
-    const restarted = await OutlineRuntimeWorkspace.open(root);
+    const restarted = await openWorkspace(root);
     const agentRedo = await restarted.redo({
       origin: 'local-user',
       selectionOrigin: 'built-in-agent',
@@ -377,7 +377,7 @@ describe('OutlineRuntimeWorkspace', () => {
     expect(restarted.documentState().nodes[newestUserNodeId]?.description).toBe('Edited newest by user');
 
     const globalRoot = await makeRoot();
-    const globalWorkspace = await OutlineRuntimeWorkspace.open(globalRoot);
+    const globalWorkspace = await openWorkspace(globalRoot);
     const globalUserNodeId = `node:${crypto.randomUUID()}`;
     const globalAgentNodeId = `node:${crypto.randomUUID()}`;
     await globalWorkspace.mutate(createRequest('Global user row', { nodeId: globalUserNodeId }));
@@ -401,7 +401,7 @@ describe('OutlineRuntimeWorkspace', () => {
   test('rejects revert when one affected after value changed and writes no recovery Operation', async () => {
     const root = await makeRoot();
     const nodeId = `node:${crypto.randomUUID()}`;
-    const workspace = await OutlineRuntimeWorkspace.open(root);
+    const workspace = await openWorkspace(root);
     const created = await workspace.mutate(createRequest('Conflict row', { nodeId }));
     await workspace.mutate(updateRequest(nodeId, 'Changed after original Operation'));
 
@@ -438,7 +438,7 @@ describe('OutlineRuntimeWorkspace', () => {
         }
       },
     });
-    const workspace = await OutlineRuntimeWorkspace.open(root, { store });
+    const workspace = await openWorkspace(root, { store });
 
     await expect(workspace.mutate(createRequest('Committed without acknowledgement'))).rejects.toMatchObject({
       outlineError: { code: 'operation_settlement_unknown' },
@@ -448,14 +448,14 @@ describe('OutlineRuntimeWorkspace', () => {
       outlineError: { code: 'operation_settlement_unknown' },
     });
 
-    const restarted = await OutlineRuntimeWorkspace.open(root);
+    const restarted = await openWorkspace(root);
     expect(restarted.projection().nodes.some((node) => node.content.text === 'Committed without acknowledgement')).toBe(true);
     expect(restarted.projection().nodes.some((node) => node.content.text === 'Must not run on stale Core')).toBe(false);
   });
 
   test('pages newest-first Operation history and filters trusted causation', async () => {
     const root = await makeRoot();
-    const workspace = await OutlineRuntimeWorkspace.open(root);
+    const workspace = await openWorkspace(root);
     const first = await workspace.mutate({
       ...createRequest('Causation match'),
       origin: 'built-in-agent',
@@ -486,7 +486,7 @@ describe('OutlineRuntimeWorkspace', () => {
 
   test('pages every affected Node ID from retained recovery data', async () => {
     const root = await makeRoot();
-    const workspace = await OutlineRuntimeWorkspace.open(root);
+    const workspace = await openWorkspace(root);
     const operation = await workspace.mutate({
       origin: 'external-client',
       changeSetHash: canonicalSha256({ kind: 'bulk-create' }),
@@ -527,7 +527,7 @@ describe('OutlineRuntimeWorkspace', () => {
 
   test('derives bounded many defaults for every multi-target Runtime read selector', async () => {
     const root = await makeRoot();
-    const workspace = await OutlineRuntimeWorkspace.open(root);
+    const workspace = await openWorkspace(root);
     const nodeIds = [`node:${crypto.randomUUID()}`, `node:${crypto.randomUUID()}`];
     const marker = `runtime-read-${crypto.randomUUID()}`;
     await workspace.mutate({
@@ -585,7 +585,7 @@ describe('OutlineRuntimeWorkspace', () => {
 
   test('accepts standalone read Projections and rejects conflicting duplicate selectors', async () => {
     const root = await makeRoot();
-    const workspace = await OutlineRuntimeWorkspace.open(root);
+    const workspace = await openWorkspace(root);
     const firstId = `node:${crypto.randomUUID()}`;
     const secondId = `node:${crypto.randomUUID()}`;
     await workspace.mutate({
@@ -639,7 +639,7 @@ describe('OutlineRuntimeWorkspace', () => {
 
   test('rejects a handler result that violates the executable capability schema', async () => {
     const root = await makeRoot();
-    const workspace = await OutlineRuntimeWorkspace.open(root);
+    const workspace = await openWorkspace(root);
     const router = new OutlineRuntimeRouter(workspace);
     router.register('show', () => ({ nodes: 'not-an-array' }));
 
@@ -726,4 +726,15 @@ async function makeRoot(): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), 'tenon-outline-runtime-workspace-'));
   roots.push(root);
   return root;
+}
+type WorkspaceOpenOptions = NonNullable<Parameters<typeof OutlineRuntimeWorkspace.open>[1]>;
+
+function openWorkspace(
+  root: string,
+  options: WorkspaceOpenOptions = {},
+): Promise<OutlineRuntimeWorkspace> {
+  return OutlineRuntimeWorkspace.open(root, {
+    ...options,
+    contentRoot: options.contentRoot ?? path.join(root, 'content'),
+  });
 }

@@ -70,6 +70,11 @@ Agent Core. It is a contract checklist, not project status.
 - Add no alternate history ledger.
 - Keep document Operation history, recovery patches, and asset reachability in
   the standalone Runtime; Agent stores retain only feature control state.
+- Keep immutable exact revisions, admission leases, opaque retention anchors,
+  integrity quarantine, and physical GC in neutral `src/content/`. Outline
+  AssetRecords retain those revisions through Host-private coordinates; Agent
+  resource-reference records and resolution remain future work rather than an
+  alternate store in this feature.
 - Keep rollout JSONL append-only and projections rebuildable.
 - Keep feature stores explicitly owned and keyed by canonical IDs.
 - Persist Agent identity, recorded configuration, stop provenance, retained
