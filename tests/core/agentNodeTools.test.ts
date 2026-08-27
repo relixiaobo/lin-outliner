@@ -1599,23 +1599,37 @@ describe('agent node tools', () => {
     expect(envelope.error?.code).toBe('invalid_annotation');
   });
 
-  test('node_create rejects out-of-root local-file markers from agent outlines', async () => {
+  test('node_create rejects mixed-case out-of-root local-file markers across outline text positions', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-node-root-'));
     const sourceRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-node-source-'));
     try {
-      const core = Core.new();
-      const today = core.projection().todayId;
       const outsidePath = path.join(sourceRoot, 'id_rsa');
-      const marker = formatFileReferenceMarker(outsidePath);
+      const marker = formatFileReferenceMarker(outsidePath).replace('file:', 'FiLe:');
+      for (const outline of [
+        `- Read ${marker}`,
+        `- Task - Read ${marker}`,
+        `- ${marker}:: value`,
+        `- Notes:: ${marker}`,
+        `- Root\n  - ${marker}:: value`,
+        `- Root\n  - Notes:: ${marker}`,
+        [
+          '- %%view:table%% Root',
+          '  - %%view-display%%',
+          '    - field:: sys:name',
+          `    - label:: ${marker}`,
+        ].join('\n'),
+      ]) {
+        const core = Core.new();
+        const today = core.projection().todayId;
+        const result = await executeRawTool(core, 'node_create', {
+          parent_id: today,
+          outline,
+        }, { localFileRoot: localRoot });
 
-      const result = await executeRawTool(core, 'node_create', {
-        parent_id: today,
-        outline: `- Read ${marker}`,
-      }, { localFileRoot: localRoot });
-
-      expect(result.details.ok).toBe(false);
-      expect(result.details.error?.code).toBe('invalid_file_reference');
-      expect(core.state().nodes[today]!.children).toHaveLength(0);
+        expect(result.details.ok).toBe(false);
+        expect(result.details.error?.code).toBe('invalid_file_reference');
+        expect(core.state().nodes[today]!.children).toHaveLength(0);
+      }
     } finally {
       await Promise.all([
         rm(localRoot, { recursive: true, force: true }),
@@ -1657,6 +1671,27 @@ describe('agent node tools', () => {
     expect(core.state().nodes[refId]!.type).toBe('reference');
     expect(core.state().nodes[refId]!.targetId).toBe(targetId);
     expect(core.state().nodes[today]!.children).toEqual([targetParentId, afterId, refId]);
+  });
+
+  test('direct reference mutations reject private Node ids that have no canonical URI', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const source = mustFocus(core.createNode(today, null, 'Source'));
+
+    const create = await executeTool(core, 'node_create', {
+      parent_id: source,
+      target_id: today,
+    });
+    expect(create.ok).toBe(false);
+    expect(create.error?.code).toBe('invalid_reference');
+
+    const edit = await executeTool(core, 'node_edit', {
+      node_id: source,
+      replace_with_reference_to: today,
+    });
+    expect(edit.ok).toBe(false);
+    expect(edit.error?.code).toBe('invalid_reference');
+    expect(core.state().nodes[source]!.type).not.toBe('reference');
   });
 
   test('node_read and node_edit round-trip semantic reference titles without creating directives', async () => {
@@ -1965,6 +2000,46 @@ describe('agent node tools', () => {
         target: { kind: 'node', nodeId: targetId },
       }],
     });
+  });
+
+  test('node_create duplicate_id keeps private inline reference fallbacks as ordinary content', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const cases = [{
+      text: 'Field: tail',
+      offset: 6,
+      displayName: ': value',
+      expected: 'Field:: value tail',
+    }, {
+      text: 'Prefix  suffix',
+      offset: 7,
+      displayName: '- hidden',
+      expected: 'Prefix - hidden suffix',
+    }];
+
+    for (const entry of cases) {
+      const sourceId = mustFocus(core.createRichTextContentNode(today, null, {
+        text: entry.text,
+        marks: [],
+        inlineRefs: [{
+          offset: entry.offset,
+          target: { kind: 'node', nodeId: today },
+          displayName: entry.displayName,
+        }],
+      }));
+      const duplicated = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+        parent_id: today,
+        duplicate_id: sourceId,
+      });
+
+      expect(duplicated.ok).toBe(true);
+      const clone = core.state().nodes[duplicated.data!.createdRootIds[0]!]!;
+      expect(clone.type).not.toBe('reference');
+      expect(clone).not.toHaveProperty('targetId');
+      expect(clone).not.toHaveProperty('description');
+      expect(clone.content).toEqual({ text: entry.expected, marks: [], inlineRefs: [] });
+      expect(clone.children).toEqual([]);
+    }
   });
 
   test('node_create rejects references to trashed targets before mutation', async () => {

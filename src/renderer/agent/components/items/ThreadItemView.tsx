@@ -76,6 +76,7 @@ import {
   type ThreadNodeReferenceOpenHandler,
 } from '../../threadReferences';
 import { basenameForPath, referenceDisplayFallback, splitReferenceMarkers } from '../../../../core/referenceMarkup';
+import { renderedMarkdownHasReference } from '../../../../core/markdownNodeReferences';
 import {
   boundedToolArgumentsForDisplay,
   modelCallArgumentSource,
@@ -2113,7 +2114,7 @@ function isVisibleMarkdownToken(token: Token): boolean {
  */
 function isSummarizedInFull(token: Token): boolean {
   if (token.type !== 'paragraph' && token.type !== 'heading') return false;
-  if (splitReferenceMarkers(token.raw).some((segment) => segment.type !== 'text')) return false;
+  if (renderedMarkdownHasReference(token.raw)) return false;
   return carriesNoTarget(token);
 }
 

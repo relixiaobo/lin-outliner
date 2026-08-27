@@ -4,6 +4,7 @@ import type { DocumentCommand } from '../../../core/commands';
 import { normalizeDateFieldValue } from '../../../core/dateFieldValue';
 import { isInternalConfigNode } from '../../../core/configSchema';
 import { projectFieldConfig, projectTagConfig, nodeIsDone, nodeShowsCheckbox } from '../../../core/configProjection';
+import { isPublicReferenceNodeId } from '../../../core/nodeId';
 import { validateSearchQueries } from '../../../core/searchEngine';
 import { fieldSlotId, nodeFieldSlots } from '../../../core/fieldSlots';
 import {
@@ -121,6 +122,7 @@ import type {
   NodeEditMoveParams,
   NodeEditParams,
   NodeMergeFieldPreview,
+  NodeToolIssue,
   ProjectedDefinitionConfig,
   NodeReadData,
   NodeSearchBatchCountData,
@@ -948,7 +950,7 @@ async function executeReferenceReplaceEdit(
       metrics: { durationMs: elapsed(started) },
     }));
   }
-  const targetValidation = validateReferenceTargetIds(index, [params.replaceWithReferenceTo]);
+  const targetValidation = validateDirectReferenceTargetIds(index, [params.replaceWithReferenceTo]);
   if (targetValidation) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', targetValidation.code, targetValidation.error, {
       instructions: targetValidation.instructions,
@@ -1818,7 +1820,7 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
       }
 
       if (params.targetId) {
-        const targetValidation = validateReferenceTargetIds(initialIndex, [params.targetId]);
+        const targetValidation = validateDirectReferenceTargetIds(initialIndex, [params.targetId]);
         if (targetValidation) {
           return nodeErrorResult(errorEnvelope('node_create', targetValidation.code, targetValidation.error, {
             instructions: targetValidation.instructions,
@@ -4890,10 +4892,21 @@ function collectNodeLocalFileReferencePaths(node: OutlineNode, paths: string[]) 
 }
 
 function collectTextLocalFileReferencePaths(text: string, paths: string[]) {
-  if (!text.includes('[[file:')) return;
   for (const ref of markdownReferenceMarkupToRichText(text).inlineRefs) {
     if (ref.target.kind === 'local-file') paths.push(ref.target.path);
   }
+}
+
+function validateDirectReferenceTargetIds(index: ProjectionIndex, targetIds: string[]): NodeToolIssue | null {
+  const validation = validateReferenceTargetIds(index, targetIds);
+  if (validation) return validation;
+  const privateTarget = targetIds.find((targetId) => !isPublicReferenceNodeId(targetId));
+  if (!privateTarget) return null;
+  return {
+    code: 'invalid_reference',
+    error: `Reference target has no public Node URI: ${privateTarget}`,
+    instructions: 'Choose a UUID-backed content Node or an explicitly public system Node.',
+  };
 }
 
 function collectOutlineAnnotationIds(document: OutlineDocument): string[] {

@@ -48,6 +48,66 @@ describe('RichTextEditor structured paste commit', () => {
     expect(renamedReference.dataset.inlineRef).toBe(MISSING_NODE_ID);
   });
 
+  test('applies a focused Node reference title refresh when the editor blurs', () => {
+    const content: RichText = {
+      text: 'See ',
+      marks: [],
+      inlineRefs: [{
+        offset: 4,
+        target: { kind: 'node', nodeId: MISSING_NODE_ID },
+        displayName: 'Stored title',
+      }],
+    };
+    let title = 'Current title';
+    const props = () => ({ resolveInlineReferenceDisplayName: () => title });
+    const rendered = renderEditor(content, props());
+    const editor = rendered.document.querySelector<HTMLElement>('.ProseMirror')!;
+    let activeElement: Element | null = editor;
+    Object.defineProperty(rendered.document, 'activeElement', {
+      configurable: true,
+      get: () => activeElement,
+    });
+
+    title = 'Renamed title';
+    rendered.rerender(content, props());
+    expect(rendered.document.querySelector<HTMLElement>('.inline-ref')?.textContent).toBe('Current title');
+
+    activeElement = rendered.document.body;
+    act(() => editor.dispatchEvent(new rendered.window.Event('blur')));
+
+    const renamedReference = rendered.document.querySelector<HTMLElement>('.inline-ref')!;
+    expect(renamedReference.textContent).toBe('Renamed title');
+    expect(renamedReference.dataset.inlineRef).toBe(MISSING_NODE_ID);
+  });
+
+  test('applies a composing Node reference title refresh at composition end', async () => {
+    const content: RichText = {
+      text: 'See ',
+      marks: [],
+      inlineRefs: [{
+        offset: 4,
+        target: { kind: 'node', nodeId: MISSING_NODE_ID },
+        displayName: 'Stored title',
+      }],
+    };
+    let title = 'Current title';
+    const props = () => ({ resolveInlineReferenceDisplayName: () => title });
+    const rendered = renderEditor(content, props());
+    const editor = rendered.document.querySelector<HTMLElement>('.ProseMirror')!;
+
+    act(() => editor.dispatchEvent(new rendered.window.Event('compositionstart')));
+    title = 'Renamed title';
+    rendered.rerender(content, props());
+    expect(rendered.document.querySelector<HTMLElement>('.inline-ref')?.textContent).toBe('Current title');
+
+    await act(async () => {
+      editor.dispatchEvent(new rendered.window.Event('compositionend'));
+      await Promise.resolve();
+    });
+
+    expect(rendered.document.querySelector<HTMLElement>('.inline-ref')?.textContent).toBe('Renamed title');
+  });
+
   test('keeps editor content unchanged while pending and after the owning Core command rejects', async () => {
     let resolvePaste: ((applied: boolean) => void) | undefined;
     let pastedContent: RichText | undefined;

@@ -174,6 +174,8 @@ describe('reference URI markup', () => {
     expect(renderedMarkdownNodeReferenceIds(markdown)).toEqual([NODE_ID, NODE_ID]);
     expect(renderedMarkdownNodeReferenceIds(`\\\\${marker}`)).toEqual([NODE_ID]);
     expect(renderedMarkdownNodeReferenceIds(`\\\\\\${marker}`)).toEqual([]);
+    expect(renderedMarkdownNodeReferenceIds(`&#91;${marker.slice(1)} / \\${marker}`)).toEqual([NODE_ID]);
+    expect(renderedMarkdownNodeReferenceIds(`&acE; ${marker}`)).toEqual([NODE_ID]);
   });
 
   test('derives display fallback independently from marker identity', () => {

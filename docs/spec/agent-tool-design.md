@@ -85,6 +85,15 @@ semantics. Undo and redo accept an optional `operation_id` stack-top guard. A
 guard mismatch performs no mutation, so a caller requesting an exact reversal
 must not fall back to an unguarded stack operation.
 
+Direct reference mutations (`node_create.target_id` and
+`node_edit.replace_with_reference_to`) admit only existing, non-Trash targets
+that have a public canonical `node:` URI. Private date, image, attachment, and
+structural IDs remain valid exact search operands but cannot become tree
+references through these mutation shortcuts. Agent outline admission parses
+local-file markers with the same case-insensitive scheme rules as the canonical
+URI codec and checks every persisted marker against the configured local-file
+root before mutation; a spelling such as `FILE:` cannot bypass that boundary.
+
 Node outline text represents an owner's effective non-list view mode with
 `%%view:<mode>%%` on that owner's line. `node_read` and user-view context emit
 the same directive for ordinary and saved-search owners; `node_create` and
@@ -189,7 +198,10 @@ marker-only ordinary inline reference uses the reserved
 only when it guards exactly that bare-marker shape. The parser admits only the
 unescaped named delimiter or an undiscriminated bare marker as a tree reference, so
 ordinary inline-reference content cannot be promoted during read/edit, create, or
-duplicate round trips.
+duplicate round trips. When a private structured reference must degrade to its
+display fallback at a text boundary, semantic escaping considers the complete
+insertion prefix and suffix; punctuation split across the insertion cannot turn
+ordinary content into a field, description, or other outline structure.
 
 `outline_undo_stack` is an explicit world-state operation. Thread forking never
 invokes it.

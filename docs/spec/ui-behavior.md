@@ -138,6 +138,11 @@ keyboard or pointer change should be checked against this matrix.
 - Trigger detection in the focused editor uses the current mirror and a bounded
   caret window for long text. Full-text trigger parsing is retained only for
   short rows where slash/bare-trigger semantics require exact whole-row context.
+- Inline-reference title and color changes update presentation immediately when
+  the editor is idle. While it is focused or composing, the editor records a
+  pending presentation refresh and applies it on blur or composition end from
+  the current ProseMirror document, so a target rename never overwrites local
+  semantic edits and does not wait for an unrelated parent render.
 
 ## Trailing Input Matrix
 
@@ -752,6 +757,12 @@ the structured `ReferenceTarget`, copied URI, or equality. URI syntax grants no
 authority: Core still preflights Node existence/Trash state, and file actions
 still apply their working-set and Host security checks. A backslash-escaped
 marker remains literal at boundaries that support semantic escaping.
+Thread Markdown maps normalized AST text back through each text node's source
+position before classifying escapes. Numeric or named entities may therefore
+form an active reference without stealing the source occurrence of a later,
+byte-identical escaped marker. Rendering, referenced-Node extraction, and
+reasoning-summary target detection use that same mapping; a leading
+entity-encoded reference remains available in the expanded reasoning body.
 
 | Interaction | Expected behavior |
 | --- | --- |

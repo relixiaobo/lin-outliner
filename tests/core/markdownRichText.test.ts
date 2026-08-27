@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { formatNodeReferenceMarker } from '../../src/core/referenceMarkup';
 import { markdownReferenceMarkupToRichText, richTextToMarkdownReferenceMarkup } from '../../src/core/markdownRichText';
 import type { RichText, TextMark, TextMarkKind } from '../../src/core/types';
+import { parseLinOutline } from '../../src/main/agent/capabilities/agentOutlineParser';
 
 const NODE_ID = 'node:11111111-1111-4111-8111-111111111111';
 const NODE_MARKER = '[[node://11111111-1111-4111-8111-111111111111]]';
@@ -67,6 +68,45 @@ describe('markdown rich text outline bridge', () => {
         marks: [],
         inlineRefs: [],
       });
+    }
+  });
+
+  test('escapes private reference fallbacks against both insertion boundaries', () => {
+    const cases = [{
+      content: {
+        text: 'Field: tail',
+        marks: [],
+        inlineRefs: [{
+          offset: 6,
+          target: { kind: 'node' as const, nodeId: 'date:private' },
+          displayName: ': value',
+        }],
+      },
+      serialized: 'Field:\\: value tail',
+      title: 'Field:\\: value tail',
+    }, {
+      content: {
+        text: 'Prefix  suffix',
+        marks: [],
+        inlineRefs: [{
+          offset: 7,
+          target: { kind: 'node' as const, nodeId: 'date:private' },
+          displayName: '- hidden',
+        }],
+      },
+      serialized: 'Prefix \\- hidden suffix',
+      title: 'Prefix \\- hidden suffix',
+    }];
+
+    for (const { content, serialized, title } of cases) {
+      expect(richTextToMarkdownReferenceMarkup(content)).toBe(serialized);
+      const parsed = parseLinOutline(`- ${serialized}`);
+      expect(parsed.ok).toBe(true);
+      if (!parsed.ok) continue;
+      expect(parsed.document.fields).toEqual([]);
+      expect(parsed.document.roots).toHaveLength(1);
+      expect(parsed.document.roots[0]).toMatchObject({ title, fields: [] });
+      expect(parsed.document.roots[0]!.description).toBeNull();
     }
   });
 

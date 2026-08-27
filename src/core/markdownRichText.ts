@@ -35,7 +35,12 @@ export function richTextToMarkdownReferenceMarkup(
     return [{ start, end: start + displayName.length }];
   });
   for (const ref of refs) {
-    add(ref.offset, inlineRefMarker(ref), 10);
+    const offset = Math.min(Math.max(0, Math.trunc(ref.offset)), content.text.length);
+    const skipped = skippedRanges.find((range) => range.start === offset);
+    add(offset, inlineRefMarker(ref, {
+      prefix: `${context.prefix ?? ''}${content.text.slice(0, offset)}`,
+      suffix: `${content.text.slice(skipped?.end ?? offset)}${context.suffix ?? ''}`,
+    }), 10);
   }
   const serializableMarks = mergeEquivalentTextMarks(marksOutsideSkippedRanges(
     markdownSerializableMarks(content.marks),
@@ -80,14 +85,17 @@ export function richTextToMarkdownReferenceMarkup(
   return out;
 }
 
-function inlineRefMarker(ref: RichText['inlineRefs'][number]): string {
+function inlineRefMarker(
+  ref: RichText['inlineRefs'][number],
+  context: Pick<SemanticEscapeOptions, 'prefix' | 'suffix'>,
+): string {
   const uri = ref.target.kind === 'node'
     ? formatNodeReferenceUri(ref.target.nodeId)
     : formatFileReferenceUri(ref.target.path, ref.target.entryKind);
   if (uri) return `[[${uri}]]`;
   const display = ref.displayName?.replace(/[\r\n]+/gu, ' ').replace(/\s+/gu, ' ').trim()
     || referenceDisplayFallback(ref.target);
-  return escapeSemanticText(display);
+  return escapeSemanticText(display, context);
 }
 
 function markdownSerializableMarks(marks: readonly TextMark[]): TextMark[] {

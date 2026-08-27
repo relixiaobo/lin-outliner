@@ -31,6 +31,17 @@ describe('Thread Markdown references', () => {
     ]);
   });
 
+  test('maps an entity-normalized marker before an escaped duplicate to its own source occurrence', () => {
+    const markdown = `&#91;${NODE_MARKER.slice(1)} / \\${NODE_MARKER}`;
+
+    expect(renderedMarkdownNodeReferenceIds(markdown)).toEqual([NODE_ID]);
+    const document = renderThreadMarkdown(markdown);
+    const references = [...document.querySelectorAll<HTMLElement>('[data-inline-ref]')];
+    expect(references).toHaveLength(1);
+    expect(references[0]!.dataset.inlineRef).toBe(NODE_ID);
+    expect(document.body.textContent).toContain(NODE_MARKER);
+  });
+
   test('preserves document definitions when rendering reference-style links in blocks', () => {
     const markdown = [
       `[Existing ${NODE_MARKER}][reference-link]`,
