@@ -1,10 +1,14 @@
 # Outline Source Resources And Derived Previews
 
-**Shape:** (a) ONE complete feature in one PR. The URI field contract, built-in
-Source field, ordinary-Node cutover, managed-asset relationship, paste and
-capture behavior, derived preview interaction, special-Node retirement, current
-specifications, and verification land together. The internal sections below are
-build order, not independently shippable slices.
+**Shape:** (b) A SET with two ordered delivery units. **PR-I** is the
+repository-required, human-led interface-only prerequisite: it lands the final
+URI/Source protocol, exact-file authorization contract, invariant enforcement,
+and contract tests while current main remains buildable. **PR-F** then ships one
+complete user-visible feature: the ordinary-Node cutover, every ingest and
+preview interaction, managed-asset liveness, special-Node retirement, current
+specifications, and end-to-end verification. PR-I is the explicit A10
+shared-interface exception, not a partial product slice or an interim contract;
+PR-F starts only from PR-I's merged final interfaces.
 
 ## Goal
 
@@ -12,7 +16,7 @@ Give URLs, images, and other files one Outline model and one interaction:
 
 ```text
 Node: content = editable RichText, possibly empty
-|- Source field entry: exactly one URI value
+|- Source field entry: ordered URI values
 |- other field entries
 `- ordinary child Nodes
 
@@ -25,18 +29,20 @@ entries may be represented structurally below the Node, but they are typed field
 slots rather than ordinary child Nodes. A preview is presentation only and never
 occupies an Outline level.
 
-A Node with a valid Source value is informally a resource Node, but it remains an
-ordinary content Node. Adding or removing Source changes its derived presentation,
-not its Node type. This lets a user paste a URL, image, or file; edit or clear the
-title; add tags, fields, and notes; hide and restore the preview; replace the
-source; or remove the source without crossing different object models.
+A Node with at least one valid Source value is informally a resource Node, but it
+remains an ordinary content Node. Adding or removing Source values changes its
+derived presentation, not its Node type. This lets a user paste a URL, image, or
+file; edit or clear the title; collect multiple related sources in one Node;
+choose which source to preview; add tags, fields, and notes; hide and restore the
+preview; or remove sources without crossing different object models.
 
-The minimum acceptable outcome is that title, source, preview visibility, and
-ordinary children become independent:
+The minimum acceptable outcome is that title, ordered sources, selected source,
+preview visibility, and ordinary children become independent:
 
 - clearing the title preserves Source and preview;
 - hiding the preview preserves Source and always leaves a recovery action;
-- removing Source removes the preview and leaves an ordinary Node; and
+- removing the selected Source falls back to the first remaining value, while
+  removing the final Source removes the preview and leaves an ordinary Node; and
 - expanding or collapsing children never opens or closes the preview.
 
 ## Non-goals
@@ -74,21 +80,23 @@ ordinary children become independent:
   A field definition owns one fixed field type; a Source value's scheme never
   changes the Source field's type.
 - **FR-2:** Seed one protected built-in field definition with stable ID
-  `field:source`, default display name `Source`, fixed type `uri`, and exactly one
-  direct value per owner Node. Users may add, replace, or remove a Node's Source
-  entry but cannot change the built-in definition's type or cardinality.
+  `field:source`, default display name `Source`, fixed type `uri`, and ordered
+  multi-value cardinality. An owner has zero or one Source slot; a present slot
+  has one or more direct URI value rows. Users may add, replace, reorder, or
+  remove values but cannot change the definition's type or cardinality.
 - **FR-3:** Represent every Outline resource as an ordinary content Node whose
-  canonical source relationship is the Source field value. Delete the Outline
+  canonical source relationships are the Source field values. Delete the Outline
   `image` and `attachment` Node variants and their dedicated mutation paths.
-- **FR-4:** Store one absolute canonical URI in Source. Support web sources,
+- **FR-4:** Store one absolute canonical URI in each Source value. Support web sources,
   managed Outline assets, and explicitly linked local filesystem sources without
   treating those representations as equivalent authorities.
 - **FR-5:** Derive preview kind, readable source label, metadata, available
   actions, and availability from the Source URI through one resolver shared by
   list rows, Node pages, search classification, and preview opening.
-- **FR-6:** Keep preview visibility in per-user local view state, separate from
-  document state and child disclosure. Persist the hidden set across navigation
-  and restart, and sanitize it when Nodes or Source entries disappear.
+- **FR-6:** Keep preview visibility and the selected Source value in per-user
+  local view state, separate from document state and child disclosure. Persist
+  both across navigation and restart, and fall back deterministically when Nodes
+  or Source values disappear.
 - **FR-7:** Turn a single-resource paste on an empty editor row into one atomic
   ordinary Node plus Source field operation. Preserve inline-link behavior for
   selections, non-empty prose, multi-line prose, and protected rich-text ranges.
@@ -106,6 +114,13 @@ ordinary children become independent:
   state. A renderer or reader may change its source adapter and outer host, but
   its established content interaction, actions, security boundary, and restored
   reading state remain behaviorally equivalent.
+- **FR-12:** Make dedicated Source mutations the only public operations that may
+  add, replace, reorder, or remove its direct values. Reject generic field,
+  content, tree, move, clone, paste/import, template, replay, and replication
+  operations that would bypass Source structure or managed-asset settlement.
+- **FR-13:** Authorize a live external `file:` Source only through a persistent,
+  Host-private grant for the exact canonical regular file selected by the user.
+  A grant never admits its containing directory, any sibling, or a URI syntax.
 - **NFR-1:** Invalid, unsupported, missing, denied, or temporarily unavailable
   sources degrade locally. They never remove Source, rewrite content, or abort an
   otherwise valid Outline projection.
@@ -114,6 +129,9 @@ ordinary children become independent:
   undo history, or an in-flight transaction.
 - **NFR-3:** Preview loading keeps stable geometry, does not shift sibling rows,
   and preserves native keyboard, selection, drag, and virtualization behavior.
+- **NFR-4:** External-file grant persistence and mutation fail closed. A missing,
+  unreadable, corrupt, revoked, or mismatched grant makes only the affected
+  Source denied; it never exposes a sibling file or aborts Outline projection.
 
 ### 1. Canonical Node And Field Model
 
@@ -131,17 +149,61 @@ Source definition identifies the slot by ID, never by its rendered label. A
 resource predicate conceptually means:
 
 ```ts
-isResourceNode(node, index) = hasOneUsableSourceValue(node.id, 'field:source')
+isResourceNode(node, index) = hasAnyUsableSourceValue(node.id, 'field:source')
 ```
 
 It does not inspect tags, title text, file extensions in `content`, capture
 sidecars, or a special Node discriminant. Adding tags never creates, removes, or
 changes a preview.
 
-Source is single-valued because one visible preview and one set of Open/Reveal
-actions must have one unambiguous target. A replace operation updates that value;
-it does not append another direct field value. Descendants of the value row keep
-their ordinary Node semantics but do not become additional Source values.
+Source is ordered and multi-valued because one Node may collect alternative or
+related representations while showing one unambiguous preview at a time. Each
+direct value row has stable identity. The first value is the default selected
+Source; local view state may select another value without mutating the document.
+Descendants of a value row keep their ordinary Node semantics but do not become
+additional Source values.
+
+The public protocol exposes final, Source-aware operations rather than treating
+the built-in field as a generic append-only slot:
+
+- `add-source` appends one value and creates the Source slot when absent;
+- `replace-source` targets one direct value ID and preserves its position;
+- `reorder-source` moves one direct value within the ordered slot;
+- `remove-source` removes one targeted value and removes the slot when it was the
+  final value; and
+- `clear-sources` removes the complete slot atomically.
+
+The invariant is enforced below renderer helpers, at every public and persisted
+mutation boundary:
+
+- generic field-slot `append-text`, `append-reference`, `append-nodes`, and
+  `append-field` actions reject `field:source`;
+- generic content editing rejects a direct Source value row, so URI edits are
+  lowered to `replace-source` rather than bypassing managed-asset settlement;
+- generic create-tree, direct value duplication, move-into-slot, paste/import,
+  template/default/auto-init, and field-copy paths cannot synthesize Source;
+- cloning or duplicating an entire valid owner Node may reproduce its ordered
+  Source relationships, but copying only its Source slot or direct value must use
+  the dedicated add operation;
+- command replay, undo/redo, restore, replication/change admission, and decoded
+  persisted state validate the same zero-or-one-slot/one-or-more-values shape
+  before a write becomes authoritative; and
+- importers and other bulk producers create the owner first and emit the same
+  dedicated Source mutation rather than constructing a privileged field tree.
+
+The dedicated mutations are also settlement boundaries. A managed URI becomes
+visible only after its asset lease is ready; replacing, removing, or clearing a
+managed value releases only the affected relationships after document commit.
+Every managed Source value keeps its AssetRecord live whether selected, hidden,
+or off screen.
+
+Multiple direct URI values are valid; duplicate Source field slots, non-value
+direct children, and generic mutations that bypass settlement are not. Runtime
+projection encountering malformed structure never chooses an arbitrary slot:
+the Node remains usable, Source presentation becomes unavailable, and a
+dedicated Source mutation can repair it. Persistence, command decoding, and
+change admission reject malformed structure fail closed so new corruption
+cannot enter the store.
 
 An empty `content` remains genuinely empty and editable. The renderer may derive
 a filename, host, or provider title for breadcrumbs, references, accessibility,
@@ -169,7 +231,7 @@ The Source resolver admits these persistent families:
 | `https://example.com/page` | Remote mutable web source | Current URL policy; no exact bytes implied |
 | `https://example.com/image.png` | Remote mutable media source | Same web authority; renderer may derive an image preview |
 | `asset://local/{encodedAssetId}` | Profile-local Outline AssetRecord | Runtime verifies metadata and exact revision, then issues scoped preview/open actions |
-| `file:///Users/me/report.pdf` | Explicitly linked live local source | Host revalidates admitted scope, containment, identity, and requested action on every use |
+| `file:///Users/me/report.pdf` | Explicitly linked live local source | Host matches a persistent exact-file grant and revalidates canonical target, opened identity, and requested action on every use |
 
 `asset://local/{encodedAssetId}` promotes the post-#592 canonical `assetUrl` /
 `assetIdFromUrl` format from a generated transport detail to the persistent
@@ -187,16 +249,61 @@ resolve to the same AssetRecord and transport.
 
 A raw local path is never a Source value. File choosers and path-aware importers
 encode an absolute standard `file:` URI. A syntactically valid file URI still
-grants no access: an explicit Link File action records or reuses the appropriate
-profile-local external-root admission. Manually entered or pasted file URIs
-without current admission show a permission-required state with a Choose File
-recovery action; they do not silently gain ambient access.
+grants no access. Manually entered, pasted, or edited file URIs without a matching
+exact-file grant show a permission-required state with a Choose File recovery
+action; they do not silently gain ambient access.
+
+#### Exact Local-file Authorization
+
+Electron main owns an atomic private JSON grant store under the active profile's
+`userData`, following the existing `PRIVATE_JSON_FILE_OPTIONS` store boundary.
+Each record binds one selected absolute locator to the one canonical regular file
+resolved by the chooser at admission time. It may retain the minimum Host-private
+identity and audit metadata needed for validation, but no grant ID, canonical
+path, device/inode value, or scope record enters Source, renderer state, the
+Outline protocol, or Agent-visible data. In particular, a parent directory is
+never recorded as an admitted root.
+
+Grant and resolution rules are exact:
+
+- chooser admission resolves the selected locator, requires a regular file,
+  persists the exact-file grant, and only then permits `add-source` or
+  `replace-source` to commit the corresponding file URI;
+- a grant may be reused by another Source only when its locator again resolves to
+  the same canonical file; a separately admitted exact grant for another file is
+  independently reusable;
+- manually editing `Documents/a.pdf` to `Documents/b.pdf` remains denied unless
+  `b.pdf` already has its own exact grant, even though both share a directory;
+- **Choose File** on a denied current Source is a relink action: the chosen file
+  must resolve to that Source's exact canonical target, otherwise nothing changes;
+- **Replace Source...** may select a different file; main persists its new grant
+  before the document mutation and removes a newly orphaned grant if settlement
+  fails, while preserving any pre-existing grant;
+- **Forget local-file access** revokes that exact grant without deleting or
+  rewriting Source. Every Node that relied on it becomes denied and can relink;
+- grants survive restart. An unreadable or invalid grant store is treated as no
+  grants for resolution, and repair/re-admission must occur through a chooser;
+  Outline loading and unrelated sources continue;
+- a symlink locator is bound to its chooser-time canonical target. If the symlink
+  later resolves elsewhere, the grant mismatches and the Source is denied; and
+- ordinary replacement of file contents at the same non-symlink canonical path
+  remains valid for a live Source. Each preview/read/copy operation opens the
+  current file, verifies the opened regular-file identity against a fresh
+  canonical resolution, and consumes that handle; Open/Reveal revalidate at
+  dispatch and receive only the Host-validated canonical path.
+
+Exact-file grants are profile authorization, not revision identity. They grant
+only Source preview/Open/Reveal/copy operations defined by the Host action
+policy. They do not grant Agent ambient filesystem access, expand an Agent
+external-root capability, admit directories, weaken dangerous-open checks, or
+act as ownership. URI parsing remains pure and side-effect free.
 
 Scheme parsing is pure and has no side effects. Resolution returns a descriptor,
 not a universal product object:
 
 ```ts
 type ResolvedNodeSource = {
+  sourceValueId: string;
   uri: string;
   kind: 'web' | 'image' | 'document' | 'audio' | 'video' | 'file';
   label: string;
@@ -212,12 +319,17 @@ duration. Remote classification uses the same provider/URL/observed-metadata
 rules as preview rendering; unsupported or unknown remote kinds remain web
 sources rather than guessed files.
 
+The resolver returns one descriptor per direct Source value in document order.
+The presentation layer joins those descriptors with the local selected-value ID;
+if that ID no longer exists it selects the first value. Resolution never writes
+selection into the document or silently skips an unavailable selected value.
+
 Source presentation remains truthful without exposing internal noise by default:
 web sources show the canonical URL, `file:` sources show the decoded path, and
 managed assets show their AssetRecord filename plus a quiet managed-copy cue.
 Editing or **Copy URI** exposes the exact stored value. Presentation labels never
-become a second stored locator, and a user may replace any Source through paste,
-editing, or the appropriate chooser.
+become a second stored locator, and a user may add or replace a Source value
+through paste, editing, or the appropriate chooser.
 
 ### 3. Resource Preview Interaction
 
@@ -225,9 +337,10 @@ An expanded resource presentation follows the Tana-inspired order while keeping
 Tenon's Node and field semantics:
 
 ```text
-   [open source]  [derived preview]                         [hide preview]
+   [open selected]  [derived preview]  [source switcher]    [hide preview]
 *  editable Node content  #tags
-     Source   readable source value
+     Source   selected source value
+              another source value
      other fields
      ordinary children
 ```
@@ -240,57 +353,83 @@ ordinary child disclosure, including the normal trailing draft for a leaf.
 Preview controls use familiar icons with tooltips and no rounded-square hover
 box. The upper-right close icon is named **Hide preview** and changes only local
 visibility. URL summaries and provider embeds expose the Tana-style upper-left
-Open source action. A mature file preview that already owns the appropriate
-Open/Expand/action HUD delegates opening to that retained control instead of
-adding a duplicate upper-left command. Interactive media and document controls
-retain their own input handling.
+Open source action for the selected value. When more than one Source exists, the
+current-source label in the preview toolbar opens a compact ordered menu;
+choosing an entry selects it and swaps the preview without changing the document.
+A mature file preview that already owns the appropriate Open/Expand/action HUD
+delegates opening to that retained control instead of adding a duplicate
+upper-left command. Interactive media and document controls retain their own
+input handling.
+
+The Source field renders one typed value row per URI. The selected row uses a
+neutral indicator, not an accent fill. Each non-selected row exposes an icon
+action named **Preview this source**; activating it selects the value and shows
+the preview if hidden. Existing field-value ordering gestures reorder Source
+values. Switching, hiding, and showing remain usable from the keyboard and do not
+move focus into an interactive preview body.
 
 When hidden, the resource returns to an ordinary content-and-fields outline:
 
 ```text
 *  editable Node content  #tags
-     Source   readable source value                    [show preview]
+     Source   selected source value                    [show preview]
+              another source value             [preview this source]
      other fields
      ordinary children
 ```
 
-The Source row is always rendered while Source exists, even when other optional
-field-display rules would hide it. A trailing **Show preview** icon is present
-for every preview-capable resolved or retryable source. This is the recovery path
-missing from the observed Tana interaction.
+The Source field is always rendered while at least one value exists, even when
+other optional field-display rules would hide it. A trailing **Show preview**
+icon is present on the selected/default preview-capable or retryable value. Other
+values expose **Preview this source**. This is the recovery path missing from the
+observed Tana interaction.
 
 Visibility rules are deterministic:
 
-- newly pasted, captured, or newly added Source values show preview by default;
+- the first newly pasted, captured, or added Source value is selected and shown
+  by default;
+- adding another value preserves the current selection and hidden/shown choice;
 - Hide preview adds the Node ID to a per-workspace local hidden set;
 - Show preview removes it;
-- editing Source while visible reloads the preview in place;
-- editing Source while hidden preserves the explicit hidden choice;
-- removing Source clears stale local visibility state; a later newly added Source
-  therefore starts visible; and
+- choosing another Source stores its value-row ID in per-workspace local view
+  state and swaps only the preview target and selected-source actions;
+- editing the selected value while visible reloads the preview in place; editing
+  another value leaves the current preview unchanged;
+- editing any value while hidden preserves the explicit hidden choice;
+- removing the selected value clears its selection and falls back to the first
+  remaining value; removing the final value clears selection and visibility
+  state, so a later first value starts visible;
+- reordering keeps an explicit selection by stable value-row ID; without an
+  explicit selection, the first value remains the deterministic default; and
 - navigation, references, tags, title edits, and child disclosure do not change
-  preview visibility.
+  source selection or preview visibility.
 
-Three independent state axes must remain separate:
+Four independent state axes must remain separate:
 
 1. resource preview visibility: shown/hidden, keyed by Node in local view state;
-2. retained preview-body state: summary/full, local height, page/section/media
+2. selected Source: one value-row ID, keyed by Node in local view state, with the
+   first direct value as fallback;
+3. retained preview-body state: summary/full, local height, page/section/media
    state, keyed by resolved source identity; and
-3. ordinary child disclosure: collapsed/expanded, keyed by Node in the Outliner.
+4. ordinary child disclosure: collapsed/expanded, keyed by Node in the Outliner.
 
-Hide/Show changes only axis 1. Existing document **Expand/Collapse**, page jumps,
-and reader restoration change axis 2. The Node chevron changes only axis 3.
+Hide/Show changes only axis 1. The source switcher and **Preview this source**
+change only axis 2, except that the latter also restores axis 1 when hidden.
+Existing document **Expand/Collapse**, page jumps, and reader restoration change
+axis 3. The Node chevron changes only axis 4.
 
-Deleting Source removes the preview immediately and leaves the Node, its content,
-tags, other fields, and children untouched. Deleting the Node removes its Source
-relationship through ordinary subtree deletion. Clearing content never removes
-Source. Hiding preview never affects managed-asset liveness.
+Deleting the selected Source value falls back to the first remaining value;
+deleting the final value removes the preview immediately and leaves the Node,
+its content, tags, other fields, and children untouched. Deleting the Node removes
+all Source relationships through ordinary subtree deletion. Clearing content
+never removes Source. Selecting or hiding a preview never affects managed-asset
+liveness.
 
 The same resolver and preview body serve the drilled Node page. Node-page
 navigation chrome may keep its established placement, but Hide/Show, source
-replacement, availability, and Open semantics remain identical. Dense table and
-calendar projections render the URI field/link without mounting the rich inline
-preview.
+selection/replacement, availability, and Open semantics remain identical. Dense
+table and calendar projections render the ordered URI field values without
+mounting the rich inline preview.
 
 ### 4. File Preview Preservation Boundary
 
@@ -344,7 +483,9 @@ mechanical consequence of this refactor.
 
 ### 5. Renderer Selection And Failure Recovery
 
-One ordered renderer registry selects presentation from the resolved descriptor:
+One ordered renderer registry selects presentation from the currently selected
+resolved descriptor. Other Source values resolve independently for their labels,
+availability, actions, and switcher state without mounting preview bodies:
 
 | Source kind | Inline presentation |
 | --- | --- |
@@ -363,10 +504,11 @@ existing unprivileged preview path; this feature adds no privileged arbitrary-UR
 fetcher.
 
 Loading uses a stable aspect ratio or bounded summary height. Failure replaces
-only the preview body with compact unavailable/retry actions. Invalid Source text
-shows the URI field's non-blocking validation hint and no preview. A missing
-managed AssetRecord, denied file source, failed remote metadata load, or embed
-failure never deletes or rewrites Source.
+only the selected preview body with compact unavailable/retry actions. Invalid
+Source text shows that value row's non-blocking validation hint and no preview.
+A missing managed AssetRecord, denied file source, failed remote metadata load,
+or embed failure never deletes or rewrites any Source value or silently selects a
+different one.
 
 ### 6. Paste, Drop, Picker, And Capture Flows
 
@@ -375,11 +517,12 @@ failure never deletes or rewrites Source.
 1. The editor receives exactly one bare `http:`, `https:`, or normalizable `www.`
    URL with no additional prose or files.
 2. If the target content is empty, the paste command atomically writes the
-   normalized URL as content and creates/replaces Source with the canonical URL.
+   normalized URL as content and appends the canonical URL to Source. It creates
+   the Source slot when absent and never replaces an existing value implicitly.
 3. The Node keeps its existing ID, tags, other fields, and children. A draft row
    materializes through the normal stable-draft path.
-4. The preview appears by default and resolves asynchronously without blocking
-   the document mutation.
+4. The preview appears by default when this is the first Source. Otherwise the
+   existing selected Source and hidden/shown choice remain unchanged.
 
 If content is non-empty, text is selected, the URL occurs within prose or
 multi-line content, or an HTML anchor/code range is authoritative, preserve the
@@ -390,7 +533,7 @@ existing rich-text link behavior. Typing a URL does not auto-convert the Node.
 1. Snapshot clipboard/drop `File` objects during the event and begin bounded
    managed admission through the Runtime.
 2. For each successfully admitted file, create an ordinary Node whose content is
-   the filename and whose Source is its canonical `asset://local/...` URI.
+   the filename and whose first Source is its canonical `asset://local/...` URI.
 3. An empty target row becomes the first resource without changing its identity;
    remaining files become ordered siblings. A non-empty paste inserts siblings
    after the row; drop keeps the normal before/inside/after placement contract.
@@ -410,22 +553,28 @@ longer select a Node type.
 #### FLOW-3: Link A Live Local File
 
 An explicit **Link file...** action opens the native chooser, records/reuses the
-Host admission, and creates an ordinary Node with filename content plus a `file:`
-Source. It captures no exact revision. Moving, replacing, denying, or deleting
-the external file changes availability honestly; Tenon never deletes it. The
-default paste/drop/picker flow remains managed capture so ordinary attachments
-are replayable.
+exact-file grant, and creates an ordinary Node with filename content plus a
+`file:` Source. Invoking **Add source** on an existing Source field uses the same
+chooser and appends another value instead. It captures no exact revision. Moving,
+replacing, denying, or deleting the external file changes only that value's
+availability honestly; Tenon never deletes it. The default paste/drop/picker flow
+remains managed capture so ordinary attachments are replayable.
 
-#### FLOW-4: Edit Or Remove Source
+#### FLOW-4: Select, Edit, Reorder, Or Remove Sources
 
-- Replacing a web Source re-runs provider/renderer selection.
-- Replacing a managed Source or local link settles the new relationship before
-  releasing the old managed relationship.
+- Selecting a Source updates only local view state and the derived preview/actions.
+- Replacing a web value re-runs its provider/renderer selection; if it is not
+  selected, the visible preview does not change.
+- Replacing a managed value or local link settles the new relationship before
+  releasing that value's old managed relationship.
 - Editing a `file:` URI never carries admission from a different path by string
   similarity; the resolver revalidates the resulting locator.
-- Removing Source releases its managed relationship after document commit and
-  clears preview state. Undo retains or restores the AssetRecord through the
-  Runtime's protected-history contract.
+- Reordering preserves an explicit selection by stable value-row ID; the first
+  value becomes the default only when no explicit selection exists.
+- Removing a value releases only its managed relationship after document commit.
+  Removing the selected value falls back to the first remaining value; removing
+  the final value clears Source preview state. Undo retains or restores every
+  affected AssetRecord through the Runtime's protected-history contract.
 
 ### 7. Managed Asset Liveness And Derived Classification
 
@@ -436,30 +585,39 @@ and icon asset relationships; it no longer scans `node.assetId` or
 `thumbnailAssetId` on special Nodes.
 
 Duplicating or referencing a resource Node does not copy bytes. A duplicated
-Node carries another Source value to the same AssetRecord. Collection occurs
-only after no live document Source, protected operation-history state, staged
-transaction, icon/banner relationship, or other canonical anchor needs the
-record. Thumbnail relationships remain AssetRecord metadata and are expanded by
-the asset store rather than duplicated onto Nodes.
+Node carries the same ordered Source values and adds relationships to their
+AssetRecords. Collection occurs only after no live document Source value,
+protected operation-history state, staged transaction, icon/banner relationship,
+or other canonical anchor needs the record. Thumbnail relationships remain
+AssetRecord metadata and are expanded by the asset store rather than duplicated
+onto Nodes.
 
-Search and query behavior must consume the same derived source classification as
-the renderer. `HAS_MEDIA`, `HAS_IMAGE`, `HAS_AUDIO`, and `HAS_VIDEO` use
-authoritative managed metadata and deterministic supported-remote classification.
-They never inspect content text or the retired Node type. Type-oriented UI that
-previously treated `image` as an Outline Node type routes to the derived media
-predicate or is removed when it exposed only the retired implementation detail.
+Search and query behavior aggregates derived classification across every Source
+value, independently of the locally selected preview. `HAS_MEDIA`, `HAS_IMAGE`,
+`HAS_AUDIO`, and `HAS_VIDEO` match when any value has the corresponding
+authoritative managed metadata or deterministic supported-remote classification.
+They never inspect content text, local selection, or the retired Node type.
+Type-oriented UI that previously treated `image` as an Outline Node type routes
+to the aggregate derived media predicate or is removed when it exposed only the
+retired implementation detail.
 
 A single derived source index joins field slots to Runtime AssetRecord metadata
 for projection/search without copying that metadata into each Node. Missing
 metadata yields unknown/unavailable classification rather than a false type or a
 projection failure.
 
-### 8. Clean Protocol Cut
+### 8. Clean Protocol And Product Cut
 
-The implementation removes, in the same complete feature:
+The two ordered delivery units converge on one clean target with no migration,
+legacy reader, alias, or dual writer. PR-I removes `FieldType` value `url` and
+lands its final `uri` registry, validation, icon, config, search, import,
+launcher, and tests. It also lands the protected Source definition, dedicated
+ordered Source mutations, structural admission guards, URI codecs, and exact-file
+grant/resolver contracts.
 
-- `FieldType` value `url`, replacing its registry, validation, icon, config,
-  search, import, launcher, and tests with `uri`;
+PR-F then removes the product surfaces that require the complete consumer
+cutover:
+
 - Outline `ImageNode` and `AttachmentNode` variants and their discriminants;
 - `assetId`, `mediaUrl`, `mediaAlt`, file metadata, and thumbnail fields from the
   Node union;
@@ -468,6 +626,12 @@ The implementation removes, in the same complete feature:
 - file-node keyboard-anchor, row-title, type-icon-as-bullet, and
   preview-via-child-expanded special cases; and
 - special-node reference-candidate and search branches.
+
+Generic field-slot and tree commands do not become a compatibility path for
+Source. PR-I rejects those commands when they target the built-in slot and proves
+the dedicated add/replace/reorder/remove/clear operations through the public
+ChangeSet and CLI contract. PR-F routes every renderer, paste, import, clone, and
+automatic producer through those final operations.
 
 The cut does not remove:
 
@@ -482,41 +646,70 @@ A source guard distinguishes these namespaces so a broad text replacement cannot
 retire Agent or preview concepts accidentally. No old Node decoder or `url` field
 alias remains after the pre-release userData reset.
 
-### 9. Dependencies, Risks, And Implementation Surface
+### 9. Delivery Units, Dependencies, Risks, And Implementation Surface
 
-Implementation begins only after #592 lands and the branch rebases on its final
-Outliner Runtime, field, asset, preview, UI-state, and quit/recovery architecture.
-#592 currently overlaps the future implementation in `OutlinerItem`, preview
-components, Outliner CSS, Runtime asset liveness, and `ui-behavior`; writing
-against its pre-merge shape would be knowingly disposable work.
+The implementation baseline is the final #592 Outliner Runtime, field, asset,
+preview, UI-state, and quit/recovery architecture. Each delivery unit starts from
+current main and regenerates its exact file queue from repository searches; no
+consumer is written against an interim protocol.
 
-This feature then lands before the Outline-consumer portion of
-`agent-result-and-file-lifecycle`. That later plan may share or clone exact
-revisions into Outline AssetRecords, but it must create ordinary Nodes with a
-managed Source field rather than special attachment/image Nodes.
+#### PR-I: Final Shared Interfaces
 
-Expected implementation areas, re-derived after #592 rather than treated as a
-fixed file checklist:
+This human-led interface-only prerequisite owns the coordinated shared/protocol
+change required by A4 and A10:
 
-- protocol and Core: `FieldType`, Node union, built-in definitions, commands,
-  field resolution, search, paste/import tree shapes, launcher capture;
-- Outliner Runtime: schemas, ChangeSet/CLI operations, asset settlement,
-  projection, derived source index, history protection, and liveness scanning;
-- desktop Host/preload: Source resolution, explicit local-file admission, safe
-  Open/Reveal, and managed preview targets;
-- renderer: URI field presentation, paste/drop/picker ingest, Outliner and Node
-  page composition, local preview-visibility persistence, renderer registry,
-  errors, and accessible controls;
-- specifications: UI behavior, commands/protocol, architecture, launcher,
-  search grammar, preview/design-system contracts, and the Agent file-lifecycle
-  dependency; and
-- tests: protocol/codec, commands, liveness/recovery, search, paste, row
-  interaction, UI state, preview selection, E2E keyboard/drag, and light/dark
-  visual evidence.
+- replace `url` with the final `uri` field contract and mechanically update only
+  the existing generic field consumers needed to keep main buildable;
+- seed protected `field:source` and land final URI value identity/order schemas,
+  `asset://local/...` and file/web parser/formatter contracts;
+- land public `add-source`, `replace-source`, `reorder-source`, `remove-source`,
+  and `clear-sources` commands plus Core/Runtime structural and settlement guards;
+- land the Host-private exact-file grant store, grant/revoke/relink resolver, safe
+  action boundary, and final preload/Runtime DTOs without starting renderer
+  resource composition; and
+- prove protocol encoding, CLI/ChangeSet admission, replay, clone-owner behavior,
+  malformed-state rejection/degradation, grant persistence, and exact-file
+  denial through contract tests.
 
-Primary risks are a managed asset being collected after its relationship moves
-from a scalar Node field into a Source field tree; field values being counted as
-ordinary children; preview state leaking back into child disclosure; async
+PR-I retains the current special Node consumers until PR-F and creates no dual
+Source writer or compatibility decoder. Its interfaces are final and build/test
+green, but it intentionally does not expose the new resource UI. This is the
+repository's explicit shared-interface-first exception, not a standalone partial
+MVP and not a basis for parallel consumer work before merge.
+
+#### PR-F: Complete Resource Cutover
+
+After PR-I merges, one complete user-visible PR:
+
+- routes URL, file, image, import, launcher, clone, and capture producers to
+  ordinary Nodes plus ordered Source values;
+- moves all managed-asset liveness, history, classification, and search behavior
+  to every Source relationship;
+- composes preview-first rows, selected-source switching, recoverable Hide/Show,
+  Source editing/order controls, and all failure states in Outliner and Node page;
+- rebinds the complete existing preview/reader responsibility inventory;
+- deletes the Outline `image`/`attachment` Node protocol and every special
+  producer/consumer; and
+- folds the final behavior into current specs and provides core, renderer, E2E,
+  clean-userData, accessibility, and light/dark visual evidence.
+
+Only after PR-F lands may `agent-result-and-file-lifecycle` build its Outline
+consumer. That later plan may share or clone exact revisions into Outline
+AssetRecords, but it must create ordinary Nodes with ordered managed Source
+values rather than special attachment/image Nodes.
+
+Expected implementation areas are re-derived per unit rather than treated as a
+fixed file checklist. PR-I owns shared Core commands/types, field and Runtime
+schemas, Source codecs/admission, Host grant persistence/resolution, and contract
+tests. PR-F owns the Node-union retirement, Runtime liveness/index consumers,
+renderer ingest/composition/view state, preview reuse, current specifications,
+and user-visible verification.
+
+Primary risks are a managed asset being collected while any non-selected Source
+still references it; source selection leaking into document or child disclosure;
+async work from an old selection replacing the current preview; a file chooser
+grant widening to a sibling or surviving revocation; malformed generic mutations
+bypassing Source settlement; field values being counted as ordinary children;
 metadata destabilizing projection/search; and accidental retirement of Agent
 attachment/image types. Each risk has an explicit guard or acceptance criterion
 below.
@@ -525,81 +718,119 @@ below.
 
 - **AC-1:** When a bare URL is pasted into an empty row, one atomic operation
   keeps/materializes that Node, writes URL content, adds one Source URI value, and
-  shows the derived preview.
+  shows it when it is the first Source. Existing Source values are never replaced
+  implicitly; an additional value preserves the current selection and visibility.
 - **AC-2:** When a URL is pasted into selected or non-empty prose, the editor
   creates or inserts an inline rich-text link and does not add Source.
 - **AC-3:** When an image or other file is pasted, dropped, or picked, the result
-  is an ordinary content Node plus managed Source; no `image` or `attachment`
-  Node exists in state, command payloads, or projection.
-- **AC-4:** When content is cleared, Source, tags, other fields, children, managed
-  liveness, and preview remain unchanged.
+  is an ordinary content Node plus a first managed Source value; no `image` or
+  `attachment` Node exists in state, command payloads, or projection.
+- **AC-4:** When content is cleared, every Source value, selection, tags, other
+  fields, children, managed liveness, and preview remain unchanged.
 - **AC-5:** When Hide preview is activated, only local visibility changes and the
-  Source row immediately exposes Show preview.
-- **AC-6:** When Show preview is activated after navigation or restart, the same
-  Source resolves and the preview returns without a document mutation.
+  selected/default Source row immediately exposes Show preview; every other row
+  exposes Preview this source.
+- **AC-6:** When a user selects another Source and then navigates or restarts,
+  that stable value-row selection returns without a document mutation. Show
+  preview resolves that selection; a missing selection falls back to the first
+  value.
 - **AC-7:** When the Node chevron is activated, only ordinary children/trailing
-  draft disclosure changes; preview visibility is unchanged.
-- **AC-8:** When Source is removed, the preview disappears and the Node remains
-  ordinary with all unrelated content and descendants intact.
-- **AC-9:** When a visible Source changes, the old preview cannot overwrite the
-  new one after asynchronous completion. When hidden, replacement remains hidden.
-- **AC-10:** If Source is invalid, unsupported, missing, denied, or fails to load,
-  the value stays editable and the Node action remains usable; no projection or
-  editor action aborts.
+  draft disclosure changes; Source selection and preview visibility are unchanged.
+- **AC-8:** When the selected value is removed, preview falls back to the first
+  remaining value. When the final value is removed, preview disappears and the
+  Node remains ordinary with all unrelated content and descendants intact.
+- **AC-9:** When a visible Source is selected or edited, async work from the old
+  selection/value cannot overwrite the new preview. When hidden, replacement and
+  reordering remain hidden.
+- **AC-10:** If a selected Source is invalid, unsupported, missing, denied, or
+  fails to load, that value stays editable and selected with usable recovery; the
+  product does not silently choose another value or abort projection/editing.
 - **AC-11:** A managed Source resolves only through its AssetRecord and scoped
-  transport. A `file:` Source resolves only through current Host admission. Raw
-  paths and non-canonical `asset:` forms fail the Source codec.
-- **AC-12:** Removing or replacing the last managed Source releases collection
-  eligibility only after commit; undo/redo and crash recovery never lose bytes
-  needed by a recoverable document state.
+  transport. A `file:` Source resolves only through an exact-file grant; editing
+  an admitted `Documents/a.pdf` URI to an unadmitted sibling remains denied. Raw
+  paths and non-canonical `asset:` forms fail Source resolution.
+- **AC-12:** Removing, replacing, clearing, or cloning managed Source values
+  updates each relationship only after commit; every selected and non-selected
+  live value plus undo/redo and crash recovery retains bytes needed by a
+  recoverable document state.
 - **AC-13:** Tags and ordinary fields can be added before or after Source without
-  changing renderer selection or preview visibility.
-- **AC-14:** YouTube uses the supported inline player; an ordinary page uses a
-  compact summary; image/document/media/unsupported file sources choose their
-  corresponding shared renderer and retain Open behavior.
+  changing Source order, selection, renderer choice, or preview visibility.
+- **AC-14:** The selected YouTube value uses the supported inline player; a
+  selected ordinary page uses a compact summary; selected image/document/media/
+  unsupported file values choose their corresponding shared renderer and retain
+  selected-source Open behavior.
 - **AC-15:** A resource Node referenced elsewhere remains a normal Node reference.
   Its authored content is the label when non-empty; an empty content label may
-  use a derived readable fallback without changing stored content.
-- **AC-16:** `HAS_MEDIA` and media-kind queries agree with the preview resolver for
-  managed assets and deterministically classified remote sources.
+  use the selected/default Source's readable fallback without changing stored
+  content.
+- **AC-16:** `HAS_MEDIA` and media-kind queries match when any Source value has
+  the derived classification, regardless of which value is locally selected.
 - **AC-17:** Full-tree source guards find no retired Outline special-Node or `url`
   field protocol authority while continuing to admit the named Agent, Markdown,
   and preview concepts.
 - **AC-18:** Light and dark E2E evidence covers shown, hidden/recoverable, empty
-  title, unavailable, YouTube, ordinary URL, image, document, and ordinary-child
-  states without overlap, reflow-on-hover, or broken keyboard navigation.
+  title, multi-Source switching/reordering/removal, unavailable selected value,
+  YouTube, ordinary URL, image, document, and ordinary-child states without
+  overlap, reflow-on-hover, or broken keyboard navigation.
 - **AC-19:** The post-#592 preview responsibility inventory is empty only after
   every retained file reader, media control, action, reader-state restoration,
   translation path, security boundary, and accessibility behavior has equivalent
   Source-backed evidence; absence from the new Node scalar shape is not a valid
   retirement reason.
+- **AC-20:** Public CLI/ChangeSet tests prove dedicated Source operations preserve
+  one field slot with ordered direct URI values, while generic `append-text`,
+  `append-reference`, `append-nodes`, `append-field`, and direct content mutation
+  cannot target Source or bypass asset settlement.
+- **AC-21:** Create, move, direct-value clone, paste/import, template/default,
+  restore, undo/redo, and replication/change admission reject malformed Source
+  structure. Cloning a complete valid owner preserves its ordered values; runtime
+  projection of impossible duplicate slots degrades Source only and chooses none.
+- **AC-22:** After an exact-file chooser grant and restart, the same Source
+  remains usable; Forget local-file access revokes only that exact grant, leaves
+  Source text intact, and makes every dependent value denied without affecting
+  sibling or managed/web sources.
+- **AC-23:** Relink accepts a chosen file only when it resolves to the denied
+  Source's exact target. Replace Source may choose a different file and persists
+  its grant before the document update; a failed settlement removes a newly
+  orphaned grant and leaves the previous Source/grant unchanged.
+- **AC-24:** A symlink retarget makes its Source denied, while ordinary content
+  replacement at the same non-symlink path remains a valid live source after
+  opened-file identity checks. A missing, unreadable, or corrupt grant store
+  denies external file Sources without aborting Outline or authorizing any path.
 
 ## Open questions
 
-None. `Source`, `field:source`, fixed single-value `uri`, the post-#592 canonical
-`asset://local/{encodedAssetId}` form, managed capture by default, explicit local
-linking, preview-first resource layout, recoverable local Hide/Show state, and
-the clean removal of Outline `image`/`attachment` are coordinated design
+None. `Source`, `field:source`, fixed ordered multi-value `uri`, first-value
+default with local source selection, the post-#592 canonical
+`asset://local/{encodedAssetId}` form, managed capture by default, exact-file
+local linking, preview-first resource layout, recoverable local Hide/Show state,
+and clean removal of Outline `image`/`attachment` are coordinated design
 decisions. A redirect on any of them changes the protocol or product behavior
 and must happen during plan review rather than being guessed during build.
 
 ## Build Checklist
 
-- [ ] Rebase after #592 and regenerate the exact special-Node, URL-field,
-      asset-liveness, preview, paste, query, and specification work queue from
-      repository searches.
-- [ ] Generate and disposition the current file-preview responsibility inventory;
-      preserve all renderer/control/reader behavior except the explicitly replaced
-      special-Node host assumptions.
-- [ ] Cut `url` to `uri`; add protected single-value Source and the pure Source
-      URI codec/resolver contract.
-- [ ] Move managed-asset liveness and derived classification to Source field
-      relationships; add transaction/history/recovery coverage.
-- [ ] Cut every ingest/capture/import path to ordinary Nodes plus Source.
-- [ ] Implement preview-first resource composition, persistent recoverable
-      Hide/Show state, renderer selection, Source editing, and failure recovery.
-- [ ] Remove Outline special Node/command/projection/search/reference branches
-      and make the generated retirement work queue empty.
-- [ ] Fold the design into current specs; run `bun run typecheck`,
+- [ ] PR-I: claim the shared interface from current main after repeating the open
+      PR/file collision check; coordinate ownership of Core protocol files.
+- [ ] PR-I: cut `url` to `uri`; land protected ordered multi-value Source, final
+      Source mutations/codecs, structural and settlement guards, and public
+      CLI/ChangeSet contract tests.
+- [ ] PR-I: land exact-file grant persistence, revoke/relink/replace semantics,
+      Host action validation, corruption degradation, and restart/security tests.
+- [ ] PR-I: keep current main buildable without adding renderer Source consumers;
+      run typecheck, core/contract tests, source guards, and docs checks.
+- [ ] PR-F: regenerate the special-Node, asset-liveness, preview, paste, query,
+      selection-view-state, and specification queues from the merged interfaces.
+- [ ] PR-F: generate and disposition the current file-preview responsibility
+      inventory; preserve all renderer/control/reader behavior except the
+      explicitly replaced special-Node host assumptions.
+- [ ] PR-F: move every ingest/capture/import, managed-asset relationship, derived
+      classification, query, history, and recovery path to ordered Source values.
+- [ ] PR-F: implement preview-first composition, persistent Source selection,
+      recoverable Hide/Show, switching/reordering/editing, renderer selection,
+      and failure recovery.
+- [ ] PR-F: remove Outline special Node/command/projection/search/reference
+      branches and make the generated retirement work queue empty.
+- [ ] PR-F: fold design into current specs; run `bun run typecheck`,
       `bun run test:core`, `bun run test:renderer`, relevant E2E, light/dark
       visual verification, `bun run docs:check`, and clean-userData verification.

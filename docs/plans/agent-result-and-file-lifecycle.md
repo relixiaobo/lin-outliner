@@ -1,13 +1,13 @@
 # Agent Result And Resource Reference Lifecycle
 
 **Shape:** (a) ONE complete feature in one PR after the reference URI foundation
-and neutral ContentStore/Outline consumer (shipped in #590 and #584),
-`outline-source-resource-unification`, and #587 land. The Agent resource-reference
-cutover, conversation workspace and final-citation contract, and delegated-
-handoff projection are foundation-first build stages in that PR. #584 separately
-established the shared exact-revision store as part of its complete Outliner
-Runtime feature; #587 remains a complete composer-history feature over an opaque
-current resource handle.
+and neutral ContentStore/Outline consumer (shipped in #590 and #584), both ordered
+delivery units of `outline-source-resource-unification`, and #587 land. The Agent
+resource-reference cutover, conversation workspace and final-citation contract,
+and delegated-handoff projection are foundation-first build stages in that PR.
+#584 separately established the shared exact-revision store as part of its
+complete Outliner Runtime feature; #587 remains a complete composer-history
+feature over an opaque current resource handle.
 
 ## Goal
 
@@ -196,11 +196,13 @@ An Outline AssetRecord is Outline's canonical reference. An Agent
 `ResourceReferenceRecord` is a Host-private Agent reference carrying display
 metadata and zero or one representation of each kind:
 
-After `outline-source-resource-unification`, an ordinary Outline Node relates to
-an AssetRecord through its single `field:source` URI value. The AssetRecord stays
-Outline's canonical exact-revision metadata record; the Node has no special
-`image`/`attachment` type or asset scalar. Cross-domain addition creates that
-Source-backed ordinary Node relationship and never restores the retired shape.
+After both `outline-source-resource-unification` delivery units, an ordinary
+Outline Node relates to zero or more AssetRecords through its ordered
+`field:source` URI values. Every managed value is independently live whether or
+not it is the locally selected preview. The AssetRecord stays Outline's canonical
+exact-revision metadata record; the Node has no special `image`/`attachment` type
+or asset scalar. Cross-domain addition creates or appends that Source-backed
+ordinary Node relationship and never restores the retired shape.
 
 ```ts
 interface SourceLocator {
@@ -584,21 +586,23 @@ exhausted-settlement degradation.
 
 ### 8. Sequencing And Verification
 
-The dependency order is fixed:
+The dependency order is fixed where an edge is stated:
 
 1. merge this architecture plan;
 2. use the reference URI foundation shipped in #590; its cutover deleted the
    retired marker grammar;
 3. #584 shipped neutral exact revisions plus Outline AssetRecord references and
    retention anchors;
-4. `outline-source-resource-unification` moves the Outline relationship to the
-   built-in Source field on ordinary Nodes while preserving AssetRecord as the
-   exact-revision record;
-5. #587 rebases on current `main` and finishes Composer history over the
-   current opaque resource handle without inventing the later store; and
-6. after both dependencies are on `main`, implement this plan's three internal
-   stages in one complete PR; and
-7. implement `agent-cross-thread-reference` only after this plan's resolver,
+4. use #592's final Outliner Runtime and preview architecture as the Outline
+   consumer baseline;
+5. land the human-led interface PR from `outline-source-resource-unification`,
+   then its complete resource cutover PR; only the latter establishes ordinary
+   Nodes with ordered Source values as the usable Outline consumer;
+6. #587 independently finishes Composer history over the current opaque resource
+   handle without inventing the later store;
+7. after the complete Outline cutover and #587 are on `main`, implement this
+   plan's three internal stages in one complete PR; and
+8. implement `agent-cross-thread-reference` only after this plan's resolver,
    working-set, and canonical citation contracts are on `main`.
 
 #584 deliberately did not implement Agent resource records, final citations, or
