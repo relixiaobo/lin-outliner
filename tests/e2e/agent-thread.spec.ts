@@ -4227,7 +4227,8 @@ test.describe('canonical agent Thread surface', () => {
       });
       // The delivery Turn, in the shape the host actually writes: the settled
       // activity Item flushed here, the context evidence for the wake-up, the
-      // notification framing, then the model's answer to the reader.
+      // content-free provider-role input whose typed context woke the model,
+      // then the model's answer to the reader.
       const deliveryTurn = {
         id: deliveryTurnId,
         items: [
@@ -4280,7 +4281,7 @@ test.describe('canonical agent Thread surface', () => {
             acceptedAt: startedAt + 2_100,
             content: [{
               type: 'text',
-              text: '<task-notification>Agent research finished. Read its transcript at …</task-notification>',
+              text: ' \n\t',
             }],
           },
           {
@@ -4331,10 +4332,12 @@ test.describe('canonical agent Thread surface', () => {
     });
 
     // The conversation is still the narrative: the main agent's prose is the
-    // thing to read, and the host's own wake-up framing reaches nobody.
+    // thing to read, and the content-free wake-up input creates no empty UI.
     const deliveryTurn = page.locator(`[data-thread-turn-row="${fixture.deliveryTurnId}"]`);
     await expect(deliveryTurn).toContainText('Research says the order holds');
-    await expect(page.locator('.thread-transcript')).not.toContainText('task-notification');
+    await expect(deliveryTurn.locator('.thread-user-message')).toHaveCount(0);
+    await expect(deliveryTurn.locator('.thread-user-message').getByRole('button', { name: 'Copy message' }))
+      .toHaveCount(0);
 
     // What replaces it is a MESSAGE from the Agent, in the shape every
     // participant here speaks in: its own avatar and name, never the reader's

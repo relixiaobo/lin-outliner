@@ -120,6 +120,14 @@ three `contextEvidence` rows, none of which the transcript renders, and all of
 which belong to this Thread's own agent — so ungrouped they put a named `main`
 above an empty box before the child that actually spoke.
 
+That renderability boundary is structural and author-independent. A
+`userMessage` with no attachment or Node reference and only empty or
+whitespace text contributes no bubble, speaker, copy target, accessibility
+output, or spacing. Attachment-only and Node-reference-only messages remain
+visible. A resolved `SubagentReport` is the visible projection of its delivery
+Item, so the replacement remains visible even when the underlying provider-role
+content is empty.
+
 Content under a speaker is PLAIN PROSE, never a bubble. The avatar and name
 above already say who is talking, and a second container would draw the same
 fact twice. That is what retires the `From <name>` label the report and the

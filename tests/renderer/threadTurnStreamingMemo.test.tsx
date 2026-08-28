@@ -97,6 +97,92 @@ describe('streaming Turn item memoization', () => {
 });
 
 describe('Turn provider recovery', () => {
+  test('filters content-free input for every author before opening a visible run', async () => {
+    const { document, root } = installDom();
+    const ThreadTurnView = await loadThreadTurnView();
+    const authors = [
+      { kind: 'reader' } as const,
+      { kind: 'agent', threadId: 'delegate' } as const,
+      { kind: 'host' } as const,
+      { kind: 'feature', feature: 'automation', ref: 'execution' } as const,
+    ];
+    const items = authors.map((author, index) => {
+      const item = blankUserMessage(`blank-${index}`, author);
+      return index === 0 ? { ...item, content: [] } : item;
+    });
+    const value: Turn = {
+      ...turn([...items, agentResponse('Visible answer')]),
+      status: 'completed',
+      completedAt: 2,
+      durationMs: null,
+    };
+
+    await render(root, (
+      <ThreadTurnView
+        {...turnProps()}
+        {...turnAnchors(value)}
+      />
+    ));
+
+    expect(document.querySelectorAll('.thread-speaker')).toHaveLength(1);
+    expect(document.querySelector('.thread-speaker-name')?.textContent).toBe('Main Agent');
+    expect(document.querySelector('.thread-agent-message')?.textContent).toContain('Visible answer');
+    expect(document.querySelector('.thread-user-message')).toBeNull();
+    expect(document.querySelector('.thread-user-content-sequence')).toBeNull();
+    expect(document.querySelector('.thread-message-actions-slot')).toBeNull();
+    await act(async () => root.unmount());
+  });
+
+  test('keeps attachment-only and Node-reference-only reader input visible', async () => {
+    const { document, root } = installDom();
+    const ThreadTurnView = await loadThreadTurnView();
+    const attachmentOnly: Extract<ThreadItem, { type: 'userMessage' }> = {
+      ...userMessage(''),
+      id: 'attachment-only',
+      provenance: {
+        originThreadId: 'thread',
+        originTurnId: 'turn',
+        originItemId: 'attachment-only',
+      },
+      content: [{
+        type: 'attachment',
+        id: 'attachment',
+        name: 'evidence.txt',
+        mimeType: 'text/plain',
+        sizeBytes: 8,
+        source: { kind: 'localFile', path: '/workspace/evidence.txt' },
+      }],
+    };
+    const nodeOnly: Extract<ThreadItem, { type: 'userMessage' }> = {
+      ...userMessage(''),
+      id: 'node-only',
+      provenance: {
+        originThreadId: 'thread',
+        originTurnId: 'turn',
+        originItemId: 'node-only',
+      },
+      content: [{ type: 'nodeReference', nodeId: 'node:alpha', note: 'Alpha' }],
+    };
+    const value: Turn = {
+      ...turn([attachmentOnly, nodeOnly]),
+      status: 'completed',
+      completedAt: 2,
+      durationMs: null,
+    };
+
+    await render(root, (
+      <ThreadTurnView
+        {...turnProps()}
+        {...turnAnchors(value)}
+      />
+    ));
+
+    expect(document.querySelectorAll('.thread-user-message')).toHaveLength(2);
+    expect(document.querySelector('.thread-message-file-ref')?.textContent).toContain('evidence.txt');
+    expect(document.querySelector('.thread-message-inline-ref')?.textContent).toBe('Alpha');
+    await act(async () => root.unmount());
+  });
+
   test('resolves canonical root-Thread input to the conversation Agent', async () => {
     const { document, root } = installDom();
     const ThreadTurnView = await loadThreadTurnView();
@@ -271,6 +357,18 @@ function userMessage(text: string): Extract<ThreadItem, { type: 'userMessage' }>
     clientId: 'user-client-id',
     content: [{ type: 'text', text }],
     acceptedAt: 1,
+  };
+}
+
+function blankUserMessage(
+  id: string,
+  author: Extract<ThreadItem, { type: 'userMessage' }>['author'],
+): Extract<ThreadItem, { type: 'userMessage' }> {
+  return {
+    ...userMessage(' \n\t'),
+    id,
+    author,
+    provenance: { originThreadId: 'thread', originTurnId: 'turn', originItemId: id },
   };
 }
 

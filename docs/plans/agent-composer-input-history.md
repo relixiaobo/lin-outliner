@@ -314,6 +314,14 @@ and `isReaderAuthoredUserMessage`, so a delegated brief, peer message, host
 envelope, feature prompt, or machine steer can never become a reader-authored
 rollback submission.
 
+Renderability follows the same structured Item boundary for every author. A
+`userMessage` with no attachment or Node reference and only empty or
+whitespace text produces no bubble, speaker run, copy target, accessibility
+output, or spacing. Attachment-only and Node-reference-only reader Items remain
+visible. When a resolved `SubagentReport` replaces a delivery Item, the report
+is that Item's visible projection; the underlying content does not suppress the
+replacement.
+
 ### Navigation state machine
 
 The idle state has no history cursor. On the first eligible Up:

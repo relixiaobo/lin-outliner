@@ -151,6 +151,8 @@ export function isThreadToolItem(item: ThreadItem): item is ThreadToolItem {
     || item.type === 'webSearch';
 }
 
+const emptyUserMessageProjectionByItem = new WeakMap<UserMessageThreadItem, boolean>();
+
 /**
  * Items the transcript deliberately draws as nothing at all.
  *
@@ -165,6 +167,16 @@ export function threadItemRendersNothing(item: ThreadItem, anchored: boolean): b
   if (item.type === 'subAgentActivity') return !anchored;
   // Inspection-only: what the context carried, for Turn Details to explain.
   if (item.type === 'contextEvidence') return true;
+  // User input is structured: attachments and Node references are visible even
+  // without prose, while an empty array or whitespace-only text has no ordinary
+  // transcript projection for any author kind.
+  if (item.type === 'userMessage') {
+    const cached = emptyUserMessageProjectionByItem.get(item);
+    if (cached !== undefined) return cached;
+    const empty = !item.content.some((part) => part.type !== 'text' || part.text.trim().length > 0);
+    emptyUserMessageProjectionByItem.set(item, empty);
+    return empty;
+  }
   return item.type === 'agentMessage' && item.phase === 'commentary' && !item.text.trim();
 }
 

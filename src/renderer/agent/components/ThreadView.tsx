@@ -3619,14 +3619,22 @@ export const ThreadTurnView = memo(function ThreadTurnView({
       workingTextOwnsMotion,
     ],
   );
+  const visibleItemReplacement = delivery !== null
+    && reportEntry !== null
+    && deliveryNoticeItemId !== null
+    ? { delivery, itemId: deliveryNoticeItemId }
+    : null;
+  const itemHasVisibleReplacement = (item: ThreadItem): boolean => (
+    item.id === visibleItemReplacement?.itemId
+  );
   const renderItem = (item: ThreadItem, showMessageActions: boolean) => (
     // The host's own notification text is not a message to the reader. Where
     // this Turn exists because an Agent's result arrived, the Agent's own
     // report replaces it — folded, as a message from that Agent — instead of
     // the wall of task-notification framing addressed to the model.
-    delivery !== null && reportEntry !== null && item.id === deliveryNoticeItemId ? (
+    visibleItemReplacement !== null && item.id === visibleItemReplacement.itemId ? (
       <SubagentReport
-        delivery={delivery}
+        delivery={visibleItemReplacement.delivery}
         index={index}
         key={item.id}
         onOpenNodeReference={onOpenNodeReference}
@@ -3713,10 +3721,14 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     // Turn starts with a settled activity Item and three `contextEvidence`
     // rows, which put a named `main` over an empty box before the child that
     // actually spoke.
-    if (block.kind === 'item' && threadItemRendersNothing(
-      block.item,
-      anchors.anchorByItemId.has(block.item.id),
-    )) continue;
+    if (
+      block.kind === 'item'
+      && !itemHasVisibleReplacement(block.item)
+      && threadItemRendersNothing(
+        block.item,
+        anchors.anchorByItemId.has(block.item.id),
+      )
+    ) continue;
     const speaker = speakerOf(block);
     if (block.kind === 'process') {
       // The summary goes on this speaker's own line; only the rows stay here.
