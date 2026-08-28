@@ -1,8 +1,8 @@
 # Agent Result And Resource Reference Lifecycle
 
 **Shape:** (a) ONE complete feature in one PR after the reference URI foundation
-and neutral ContentStore/Outline consumer (shipped in #590 and #584), and #587
-lands. The Agent resource-reference
+and neutral ContentStore/Outline consumer (shipped in #590 and #584),
+`outline-source-resource-unification`, and #587 land. The Agent resource-reference
 cutover, conversation workspace and final-citation contract, and delegated-
 handoff projection are foundation-first build stages in that PR. #584 separately
 established the shared exact-revision store as part of its complete Outliner
@@ -104,8 +104,9 @@ version and availability semantics?
 - **FR-5:** Derive final-citation requests only from unescaped
   `[[file:///...]]` reference URIs in terminal assistant text. Persist Host
   binding metadata without rewriting the model-authored text.
-- **FR-6:** Capture exact revisions when stable replay is required: Outline
-  attachments, submitted Composer bytes without a durable source, submitted
+- **FR-6:** Capture exact revisions when stable replay is required: managed
+  Outline Source assets, submitted Composer bytes without a durable source,
+  submitted
   local attachments, canonical generated/web/Browser Pilot/Skill/tool file
   results, final regular-file delivery, and cross-domain reference creation.
 - **FR-7:** Give each ordinary root conversation an isolated managed workspace;
@@ -194,6 +195,12 @@ Source representation ------------------------+--> scoped filesystem location
 An Outline AssetRecord is Outline's canonical reference. An Agent
 `ResourceReferenceRecord` is a Host-private Agent reference carrying display
 metadata and zero or one representation of each kind:
+
+After `outline-source-resource-unification`, an ordinary Outline Node relates to
+an AssetRecord through its single `field:source` URI value. The AssetRecord stays
+Outline's canonical exact-revision metadata record; the Node has no special
+`image`/`attachment` type or asset scalar. Cross-domain addition creates that
+Source-backed ordinary Node relationship and never restores the retired shape.
 
 ```ts
 interface SourceLocator {
@@ -411,7 +418,7 @@ Every known producer and consumer follows the same reference rules:
 | `file_write`, `file_edit`, shell/Skill file in execution directory | source in the current working set | none until submitted, retained by a canonical tool result, or finally cited | current-work intent resolves source; container cleanup removes it |
 | Composer picker/drop/local mention | source while selecting when available | successful submission captures an exact revision and links the Item | replay/model use resolves revision; Reveal/Edit Source resolves source if retained |
 | Clipboard image, browser `File`, large paste | transient bytes | capture during bounded admission | draft/Item links retain revision; discard releases its link |
-| Outline attachment/imported media | source or incoming bytes | capture before AssetRecord settlement | Outline replay resolves revision; source locator is optional metadata |
+| Managed Outline Source/imported media | source or incoming bytes | capture before AssetRecord settlement, then commit an ordinary Node with its managed Source URI | Outline preview/replay resolves the AssetRecord revision; source locator is optional metadata |
 | Remote URL | external link or fetch input, not a filesystem source locator | capture and create a resource reference only when the product action requires stable/offline bytes | ordinary link opening follows URL policy; replayable bytes resolve through the exact revision |
 | Generated image, retained web binary/image | scratch/transient bytes | canonical tool result captures and links | observation materializes from exact revision |
 | Browser Pilot screenshot/download | scratch or execution output | capture only when retained by canonical tool result or final citation | uncaptured output follows scratch/operation cleanup |
@@ -444,7 +451,9 @@ large paste, durable Outline references, generated images, retained web/Browser
 Pilot/Skill/tool files, and provider materialization.
 
 Canonical Items, settled drafts, tool results, history, fork, Retry, rollback,
-deletion, and quota retain reference links rather than physical copies. Remove
+deletion, and quota retain reference links rather than physical copies. Adding a
+result to Outline uses the shipped Source-backed ordinary-Node constructor and
+its AssetRecord settlement boundary. Remove
 digest-bearing public/renderer handles and all per-Thread binary directories.
 Keep internal text/context/diagnostic payloads, mutable execution files,
 installed tools, caches, and transient materializations outside ContentStore.
@@ -582,11 +591,14 @@ The dependency order is fixed:
    retired marker grammar;
 3. #584 shipped neutral exact revisions plus Outline AssetRecord references and
    retention anchors;
-4. #587 rebases on current `main` and finishes Composer history over the
+4. `outline-source-resource-unification` moves the Outline relationship to the
+   built-in Source field on ordinary Nodes while preserving AssetRecord as the
+   exact-revision record;
+5. #587 rebases on current `main` and finishes Composer history over the
    current opaque resource handle without inventing the later store; and
-5. after both are on `main`, implement this plan's three internal stages in one
-   complete PR; and
-6. implement `agent-cross-thread-reference` only after this plan's resolver,
+6. after both dependencies are on `main`, implement this plan's three internal
+   stages in one complete PR; and
+7. implement `agent-cross-thread-reference` only after this plan's resolver,
    working-set, and canonical citation contracts are on `main`.
 
 #584 deliberately did not implement Agent resource records, final citations, or
@@ -699,6 +711,8 @@ decision.
 
 - [x] Implement the neutral exact-revision/retention-anchor kernel in #584
   and align Outline AssetRecords without public physical authority.
+- [ ] Consume the shipped Source-backed ordinary-Node/AssetRecord relationship;
+  do not create or restore Outline `image`/`attachment` Node variants.
 - [ ] Rebase #587 on the #584 foundation and preserve current Agent handles
   opaquely with no navigation-time byte copy or later-store implementation.
 - [ ] Add Agent resource-reference records, canonical links, resolver intents,
