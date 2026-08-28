@@ -1,4 +1,5 @@
 import type { Core, CoreTransactionNodePatch, ResolvedContentTree } from '../../core/core';
+import { memoryTagDefinitionForId } from '../../core/memoryDefinitions';
 import { isClientNodeId } from '../../shared/nodeId';
 import type { BatchMoveNodeInput, DocumentProjection, FieldSlotMutation } from '../../core/types';
 import {
@@ -43,11 +44,20 @@ import {
 import { OUTLINE_PROTOCOL_VERSION } from '../contract/version';
 import { checkOutlineSchema, outlineSchemaValidationDetails } from '../contract/validation';
 import { createDeterministicCoreIdFactory, deterministicPublicNodeId } from './deterministicIds';
+import { assertProtectedMemoryDefinitionPatch } from './protectedDefinitions';
 import { projectOutline, resolveTargetRef } from './projection';
 import { semanticAffectedDigest, semanticNodeDigest } from './semanticDigest';
-import { createSelectionIndex, resolveTargetSpec } from './selector';
+import {
+  createSelectionIndex,
+  resolveTargetSpec,
+  type OutlineSelectionIndex,
+} from './selector';
 import type { OutlineRuntimeRequestContext } from './server/runtimeRouter';
-import type { OutlineRuntimeWorkspace } from './runtimeWorkspace';
+import type {
+  OutlineAcceptedMutation,
+  OutlineRuntimeMutationRequest,
+  OutlineRuntimeWorkspace,
+} from './runtimeWorkspace';
 import { isSystemFieldId } from '../../core/systemFields';
 import { buildConfigIndex } from '../../core/configProjection';
 import { searchNodeToQueryExpr } from '../../core/searchEngine';
@@ -59,6 +69,17 @@ interface ExecuteResult {
 
 interface CommitOptions {
   readonly undoGroup?: Operation['undoGroup'];
+}
+
+export interface AcceptedChangeSetMutation extends OutlineAcceptedMutation {
+  readonly diff: Diff;
+}
+
+interface PreparedDirectCommit {
+  readonly request: OutlineRuntimeMutationRequest;
+  readonly normalized: ChangeSet;
+  readonly changeSetHash: string;
+  readonly execution: () => ExecuteResult;
 }
 
 export async function diffOutlineChangeSet(
@@ -73,6 +94,7 @@ export async function diffOutlineChangeSet(
   const { patch } = await candidate.transactionWithPatch('user', async () => {
     execution = await executeOutlineChangeSet(candidate, normalized, assetLeases);
   }, { operationId: `preview:${changeSetHash}`, command: 'outline_diff' });
+  assertProtectedMemoryDefinitionPatch(patch);
   return diffFromPatch(normalized, changeSetHash, execution.bindings, execution.reviewedReplaceTargetIds, patch.nodes);
 }
 
@@ -86,53 +108,93 @@ export async function commitOutlineChangeSet(
   return workspace.commitPrepared({
     idempotencyKey: input.idempotencyKey,
     ...(input.idempotencyKey ? { idempotencyPayloadHash: directPayloadHash } : {}),
+  }, async () => (await prepareDirectCommit(workspace, input, context, options, directPayloadHash)).request);
+}
+
+export async function commitOutlineChangeSetAccepted(
+  workspace: OutlineRuntimeWorkspace,
+  input: ChangeSet,
+  context: OutlineRuntimeRequestContext,
+  options: CommitOptions = {},
+): Promise<AcceptedChangeSetMutation> {
+  const directPayloadHash = directCommitPayloadHash(input);
+  let prepared: PreparedDirectCommit | undefined;
+  const accepted = await workspace.commitAcceptedPrepared({
+    idempotencyKey: input.idempotencyKey,
+    ...(input.idempotencyKey ? { idempotencyPayloadHash: directPayloadHash } : {}),
   }, async () => {
-    const normalized = normalizeOutlineChangeSetFromProjection(
-      workspace.revision(),
-      workspace.projection(),
-      input,
-    );
-    assertDirectCommitIsNonDestructive(normalized);
-    const changeSetHash = canonicalChangeSetHash(normalized);
-    const commitHash = directCommitHash(changeSetHash);
-    const assetLeases = await resolveChangeSetAssetLeases(workspace, normalized);
-    let execution: ExecuteResult = { bindings: {}, reviewedReplaceTargetIds: [] };
-    return {
-      origin: context.origin,
-      causation: context.causation,
-      source: normalized.source,
+    prepared = await prepareDirectCommit(workspace, input, context, options, directPayloadHash);
+    return prepared.request;
+  });
+  if (!accepted.diff) throw new Error('Accepted Outline mutation is missing its replayable Diff.');
+  return {
+    settlement: accepted.settlement,
+    update: accepted.update,
+    diff: accepted.diff,
+  };
+}
+
+async function prepareDirectCommit(
+  workspace: OutlineRuntimeWorkspace,
+  input: ChangeSet,
+  context: OutlineRuntimeRequestContext,
+  options: CommitOptions,
+  directPayloadHash: string,
+): Promise<PreparedDirectCommit> {
+  const baseIndex = workspace.selectionIndex();
+  const normalized = normalizeOutlineChangeSetFromSelectionIndex(
+    workspace.revision(),
+    baseIndex,
+    input,
+  );
+  assertDirectCommitIsNonDestructive(normalized);
+  const changeSetHash = canonicalChangeSetHash(normalized);
+  const commitHash = directCommitHash(changeSetHash);
+  const assetLeases = await resolveChangeSetAssetLeases(workspace, normalized);
+  let execution: ExecuteResult = { bindings: {}, reviewedReplaceTargetIds: [] };
+  const request: OutlineRuntimeMutationRequest = {
+    origin: context.origin,
+    causation: context.causation,
+    source: normalized.source,
+    changeSetHash,
+    diffHash: commitHash,
+    summary: summarizeChangeSet(normalized),
+    idempotencyKey: normalized.idempotencyKey,
+    ...(normalized.idempotencyKey ? { idempotencyPayloadHash: directPayloadHash } : {}),
+    idFactory: createDeterministicCoreIdFactory(changeSetHash),
+    undoGroup: options.undoGroup,
+    assetLeases: Object.fromEntries(Object.entries(assetLeases).map(([leaseId, lease]) => [leaseId, lease.assetId])),
+    execute: async (candidate) => {
+      execution = await executeOutlineChangeSet(candidate, normalized, assetLeases, baseIndex);
+    },
+    ...(normalized.return ? {
+      result: (candidate: Core) => normalized.return!.map((projection) => (
+        projectOutline(candidate, projection, execution.bindings)
+      )),
+    } : {}),
+    noChangeResult: (candidate: Core) => ({
+      protocolVersion: OUTLINE_PROTOCOL_VERSION,
+      kind: 'outline.no-change',
       changeSetHash,
       diffHash: commitHash,
-      summary: summarizeChangeSet(normalized),
-      idempotencyKey: normalized.idempotencyKey,
-      ...(normalized.idempotencyKey ? { idempotencyPayloadHash: directPayloadHash } : {}),
-      idFactory: createDeterministicCoreIdFactory(changeSetHash),
-      undoGroup: options.undoGroup,
-      assetLeases: Object.fromEntries(Object.entries(assetLeases).map(([leaseId, lease]) => [leaseId, lease.assetId])),
-      execute: async (candidate) => {
-        execution = await executeOutlineChangeSet(candidate, normalized, assetLeases);
-      },
+      revision: workspace.revision(),
+      affectedNodeCount: 0,
+      recovery: { state: 'not-required' },
       ...(normalized.return ? {
-        result: (candidate: Core) => normalized.return!.map((projection) => (
+        result: normalized.return.map((projection) => (
           projectOutline(candidate, projection, execution.bindings)
         )),
       } : {}),
-      noChangeResult: (candidate: Core) => ({
-        protocolVersion: OUTLINE_PROTOCOL_VERSION,
-        kind: 'outline.no-change',
-        changeSetHash,
-        diffHash: commitHash,
-        revision: workspace.revision(),
-        affectedNodeCount: 0,
-        recovery: { state: 'not-required' },
-        ...(normalized.return ? {
-          result: normalized.return.map((projection) => (
-            projectOutline(candidate, projection, execution.bindings)
-          )),
-        } : {}),
-      }),
-    };
-  });
+    }),
+    acceptedDiff: (patch) => diffFromPatch(
+      normalized,
+      changeSetHash,
+      execution.bindings,
+      execution.reviewedReplaceTargetIds,
+      patch.nodes,
+    ),
+  };
+  return { request, normalized, changeSetHash, execution: () => execution };
 }
 
 export async function applyOutlineDiff(
@@ -216,6 +278,18 @@ export function normalizeOutlineChangeSetFromProjection(
   projection: DocumentProjection,
   input: ChangeSet,
 ): ChangeSet {
+  return normalizeOutlineChangeSetFromSelectionIndex(
+    revision,
+    createSelectionIndex(projection),
+    input,
+  );
+}
+
+function normalizeOutlineChangeSetFromSelectionIndex(
+  revision: number,
+  index: OutlineSelectionIndex,
+  input: ChangeSet,
+): ChangeSet {
   if (!checkOutlineSchema(ChangeSetSchema, input)) {
     throw new OutlineContractError(outlineError(
       'invalid_input',
@@ -257,7 +331,6 @@ export function normalizeOutlineChangeSetFromProjection(
     };
   });
 
-  const index = createSelectionIndex(projection);
   const expected = new Map<string, string>();
   for (const [nodeId, digest] of Object.entries(input.base?.nodes ?? {})) {
     const node = index.byId.get(nodeId);
@@ -303,13 +376,22 @@ export async function executeOutlineChangeSet(
   core: Core,
   changeSet: ChangeSet,
   assetLeases: Readonly<Record<string, AssetLease>> = {},
+  baseIndex: OutlineSelectionIndex = createSelectionIndex(core.projection()),
 ): Promise<ExecuteResult> {
-  const baseIndex = createSelectionIndex(core.projection());
   const bindings: Record<string, readonly string[]> = {};
   const reviewedReplaceTargetIds = new Set<string>();
+  const cooperativeImport = changeSet.source?.kind === 'import';
   for (const [operationIndex, change] of changeSet.operations.entries()) {
     try {
-      const result = await executeChange(core, baseIndex, bindings, change, operationIndex, assetLeases);
+      const result = await executeChange(
+        core,
+        baseIndex,
+        bindings,
+        change,
+        operationIndex,
+        assetLeases,
+        cooperativeImport,
+      );
       if (change.op === 'update' && change.changes.some(isReviewedTextReplaceInstruction)) {
         for (const targetId of result) reviewedReplaceTargetIds.add(targetId);
       }
@@ -359,6 +441,7 @@ async function executeChange(
   change: Change,
   operationIndex: number,
   assetLeases: Readonly<Record<string, AssetLease>>,
+  cooperativeImport: boolean,
 ): Promise<readonly string[]> {
   switch (change.op) {
     case 'resolve': return resolveTargetSpec(baseIndex, change.target);
@@ -375,7 +458,13 @@ async function executeChange(
               parentIndex === 0,
             ))
           : undefined;
-        if (fastTrees && core.tryCreateResolvedContentTrees(destination.parentId, destination.index, fastTrees)) {
+        const fastCreated = fastTrees && (cooperativeImport
+          ? await core.tryCreateResolvedContentTreesYielding(destination.parentId, destination.index, fastTrees, {
+              yieldEveryNodes: 250,
+              commitEveryNodes: 250,
+            })
+          : core.tryCreateResolvedContentTrees(destination.parentId, destination.index, fastTrees));
+        if (fastTrees && fastCreated) {
           created.push(...fastTrees.map((tree) => tree.id));
           continue;
         }
@@ -626,6 +715,20 @@ function executeEnsure(
     if (!nodeId) throw new Error(`Core did not resolve tag search: ${tagId}`);
     return [nodeId];
   }
+  const protectedDefinition = change.definitionType === 'tag' && change.id
+    ? memoryTagDefinitionForId(change.id)
+    : undefined;
+  if (protectedDefinition) {
+    if (change.name.trim() !== protectedDefinition.name) {
+      throw usageError(`Protected definition ID has a fixed name: ${change.id}`);
+    }
+    const nodeId = core.ensureProtectedTagDefinition(
+      protectedDefinition.name,
+      protectedDefinition.tagId,
+    ).focus?.nodeId;
+    if (!nodeId) throw new Error(`Core did not resolve protected definition: ${change.id}`);
+    return [nodeId];
+  }
   const existing = core.projection().nodes.find((node) => (
     node.type === (change.definitionType === 'tag' ? 'tagDef' : 'fieldDef')
     && node.content.text.trim().toLocaleLowerCase() === change.name.trim().toLocaleLowerCase()
@@ -817,7 +920,9 @@ function executeUpdate(
     else if (instruction.action === 'retarget') core.setReferenceTarget(targetId, referenceTargetId);
     else if (instruction.action === 'replace') core.replaceNodeWithReference(targetId, referenceTargetId);
     else if (instruction.action === 'inline') {
-      if (current?.type === 'reference') core.convertReferenceToInlineNode(targetId);
+      if (current?.type === 'reference') {
+        core.convertReferenceToInlineNode(targetId, instruction.replacementId);
+      }
       else {
         if (referenceTargetId === targetId) {
           throw usageError('reference inline requires REFERENCE when TARGET is a content Node.');
@@ -825,7 +930,13 @@ function executeUpdate(
         core.replaceNodeWithInlineReference(targetId, referenceTargetId);
       }
     }
-    else core.restoreInlineReferenceNodeToReference(targetId, referenceTargetId);
+    else if (instruction.action === 'restore') {
+      core.restoreInlineReferenceNodeToReference(
+        targetId,
+        referenceTargetId,
+        instruction.replacementId,
+      );
+    }
   } else if (instruction.kind === 'view') {
     executeViewUpdate(core, baseIndex, bindings, targetId, instruction);
   } else if (instruction.kind === 'search') {

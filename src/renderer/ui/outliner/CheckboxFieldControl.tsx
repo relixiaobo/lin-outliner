@@ -1,22 +1,16 @@
-import { useEffect, useRef, type KeyboardEvent } from 'react';
-import { api } from '../../api/client';
-import type { NodeProjection } from '../../api/types';
-import { plainText } from '../../api/types';
+import { useLayoutEffect, useRef, type KeyboardEvent } from 'react';
 import type { FocusRequest, FocusTarget } from '../../state/document';
+import { isCompositionLive } from '../editor/compositionRelay';
 import { focusTargetMatches } from '../focus/focusModel';
 import { resolveNodeLineKeyAction } from '../interactions/nodeLineKeymap';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { CheckboxMark } from '../primitives/CheckboxMark';
-import type { CommandRunner } from '../shared';
 import { useT } from '../../i18n/I18nProvider';
 
 interface CheckboxFieldControlProps {
-  entryId?: string;
-  displayValue?: string;
+  value: string;
   inherited?: boolean;
-  onCreateValue?: (value: string) => Promise<unknown> | unknown;
-  run: CommandRunner;
-  valueNode?: NodeProjection;
+  onToggle: (value: string) => void;
   focusTarget?: FocusTarget;
   focusRequest?: FocusRequest | null;
   onFocus?: () => void;
@@ -34,28 +28,19 @@ interface CheckboxFieldControlProps {
 export function CheckboxFieldControl(props: CheckboxFieldControlProps) {
   const t = useT();
   const buttonRef = useRef<HTMLButtonElement | null>(null);
-  const checked = booleanValue(props.valueNode?.content.text ?? props.displayValue ?? '');
+  const checked = booleanValue(props.value);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const request = props.focusRequest;
     const target = props.focusTarget;
     if (!request || !target || !focusTargetMatches(request.target, target)) return;
+    if (isCompositionLive()) return;
     buttonRef.current?.focus({ preventScroll: true });
     props.onFocusRequestConsumed?.(request);
   }, [props.focusRequest, props.focusTarget, props.onFocusRequestConsumed]);
 
   const toggle = () => {
-    const next = checked ? 'false' : 'true';
-    const valueNode = props.valueNode;
-    if (valueNode) {
-      void props.run(() => api.replaceNodeText(valueNode.id, plainText(next)));
-      return;
-    }
-    if (props.onCreateValue) {
-      void props.onCreateValue(next);
-      return;
-    }
-    if (props.entryId) void props.run(() => api.createNode(props.entryId!, null, next));
+    props.onToggle(checked ? 'false' : 'true');
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {

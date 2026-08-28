@@ -4,18 +4,20 @@ export type QuitDecision = 'retry' | 'quit-anyway' | 'cancel';
 
 export interface QuitCoordinatorHost {
   freezeAdmission(): void;
-  unfreezeAdmission(): void;
-  commitAdmissionFreeze(): void;
-  latestAcceptedRevision(): number;
-  durableRevision(): number;
+  unfreezeAdmission(): void | Promise<void>;
+  commitAdmissionFreeze(): void | Promise<void>;
+  latestAcceptedRevision(): number | Promise<number>;
+  durableRevision(): number | Promise<number>;
   drainToRevision(revision: number): Promise<void>;
   showDrainFailure(error: unknown, outcome: QuitDrainOutcome): Promise<QuitDecision>;
   teardown(): Promise<void>;
+  shutdownRuntime(signal: AbortSignal): Promise<void>;
   exit(): void;
 }
 
 export interface QuitCoordinatorOptions {
   drainTimeoutMs?: number;
+  runtimeShutdownTimeoutMs?: number;
 }
 
 interface QuitDrainResult {
@@ -28,12 +30,14 @@ export class AppQuitCoordinator {
   private drainInFlight?: Promise<void>;
   private requestPromise?: Promise<void>;
   private readonly drainTimeoutMs: number;
+  private readonly runtimeShutdownTimeoutMs: number;
 
   constructor(
     private readonly host: QuitCoordinatorHost,
     options: QuitCoordinatorOptions = {},
   ) {
     this.drainTimeoutMs = Math.max(1, options.drainTimeoutMs ?? 2_500);
+    this.runtimeShutdownTimeoutMs = Math.max(1, options.runtimeShutdownTimeoutMs ?? 2_500);
   }
 
   phase(): QuitPhase {
@@ -57,9 +61,15 @@ export class AppQuitCoordinator {
     // boundary: an automatic exit after repeated failures would discard
     // accepted-but-not-durable document changes without an explicit choice.
     while (true) {
-      const result = await this.drainOnce();
-      if (result.outcome === 'ready' && this.barrierHolds()) break;
-      if (result.outcome === 'ready') continue;
+      let result = await this.drainOnce();
+      if (result.outcome === 'ready') {
+        try {
+          if (await this.barrierHolds()) break;
+          continue;
+        } catch (error) {
+          result = { outcome: 'failed', error };
+        }
+      }
       let decision: QuitDecision;
       try {
         decision = await this.host.showDrainFailure(
@@ -68,28 +78,44 @@ export class AppQuitCoordinator {
         );
       } catch (error) {
         this.phaseValue = 'idle';
-        this.host.unfreezeAdmission();
+        await this.host.unfreezeAdmission();
         throw error;
       }
       if (decision === 'retry') continue;
       if (decision === 'cancel') {
         this.phaseValue = 'idle';
-        this.host.unfreezeAdmission();
+        await this.host.unfreezeAdmission();
         return;
       }
       break;
     }
 
-    this.host.commitAdmissionFreeze();
     this.phaseValue = 'tearing-down';
+    let phaseTwoError: unknown;
+    try {
+      await this.host.commitAdmissionFreeze();
+    } catch (error) {
+      phaseTwoError = error;
+    }
     try {
       await this.host.teardown();
+    } catch (error) {
+      phaseTwoError ??= error;
     } finally {
-      // Phase 2 is intentionally irreversible: some services may already be
-      // disposed even if a later teardown step fails.
+      try {
+        await shutdownWithTimeout(
+          (signal) => this.host.shutdownRuntime(signal),
+          this.runtimeShutdownTimeoutMs,
+        );
+      } catch (error) {
+        phaseTwoError ??= error;
+      }
+      // Phase 2 is intentionally irreversible: services may already be
+      // disposed even if Runtime shutdown or a later teardown step fails.
       this.phaseValue = 'done';
       this.host.exit();
     }
+    if (phaseTwoError) throw phaseTwoError;
   }
 
   private drainError(result: QuitDrainResult): Error {
@@ -99,8 +125,8 @@ export class AppQuitCoordinator {
       : new Error('Workspace persistence did not reach the accepted revision.');
   }
 
-  private barrierHolds(): boolean {
-    return this.host.durableRevision() >= this.host.latestAcceptedRevision();
+  private async barrierHolds(): Promise<boolean> {
+    return await this.host.durableRevision() >= await this.host.latestAcceptedRevision();
   }
 
   private async drainOnce(): Promise<QuitDrainResult> {
@@ -109,9 +135,10 @@ export class AppQuitCoordinator {
     // second drain against the same persistence frontier.
     let drain = this.drainInFlight;
     if (!drain) {
-      const target = this.host.latestAcceptedRevision();
       try {
-        drain = Promise.resolve(this.host.drainToRevision(target));
+        drain = Promise.resolve(this.host.latestAcceptedRevision()).then((target) => (
+          this.host.drainToRevision(target)
+        ));
       } catch (error) {
         return { outcome: 'failed', error };
       }
@@ -127,6 +154,44 @@ export class AppQuitCoordinator {
     }
     return drainWithTimeout(drain, this.drainTimeoutMs);
   }
+}
+
+function shutdownWithTimeout(
+  shutdown: (signal: AbortSignal) => Promise<void>,
+  timeoutMs: number,
+): Promise<void> {
+  const controller = new AbortController();
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const succeed = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    };
+    const timer = setTimeout(() => {
+      const error = new Error('Outline Runtime shutdown timed out.');
+      controller.abort(error);
+      fail(error);
+    }, timeoutMs);
+    let operation: Promise<void>;
+    try {
+      operation = shutdown(controller.signal);
+    } catch (error) {
+      fail(error);
+      return;
+    }
+    void operation.then(
+      succeed,
+      fail,
+    );
+  });
 }
 
 function drainWithTimeout(drain: Promise<void>, timeoutMs: number): Promise<QuitDrainResult> {

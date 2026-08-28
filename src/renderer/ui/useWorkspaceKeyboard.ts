@@ -1,18 +1,20 @@
 import { useEffect, useRef } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { api } from '../api/client';
-import { parseIsoLocalDate, todayIsoLocalDate, type NodeId } from '../api/types';
+import { EMPTY_RICH_TEXT, parseIsoLocalDate, todayIsoLocalDate, type NodeId } from '../api/types';
 import { resolveReferenceTargetId } from '../state/document';
 import type { DocumentIndex, UiState } from '../state/document';
 import { buildSelectableRows } from '../state/selectableRows';
 import { targetIdsForRows } from './interactions/contextMenuSelection';
 import { isImeComposingEvent } from './interactions/imeKeyboard';
-import { batchIndentNodeIds, expandIndentTargets } from './interactions/outlinerStructure';
+import { batchIndentNodeIds, expandIndentTargets, indentTargetParentId } from './interactions/outlinerStructure';
 import { armReferenceTypeAhead } from './interactions/referenceTypeAhead';
 import {
   idsAllowedForStructuralIndentBatch,
   idsAllowedForStructuralOutdentBatch,
   idsEnabledForSelectionAction,
+  planSelectionDelete,
+  planSelectionSiblingMoves,
   runSelectionDelete,
   runSelectionDuplicate,
   runSelectionMove,
@@ -35,10 +37,16 @@ import { matchesShortcutEvent } from './interactions/shortcutRegistry';
 import {
   clearFocusState,
   cursorOffset,
+  cursorEnd,
   requestFocusState,
   rowFocusTarget,
 } from './focus/focusModel';
 import { animateOutlinerRowMovementAfterNextCommit } from './outliner/rowMoveAnimation';
+import { startOptimisticRemoval, startOptimisticStructuralBatch } from './outliner/optimisticStructuralEdit';
+import {
+  optimisticDonePatch,
+  startOptimisticNodePatchBatch,
+} from './outliner/optimisticNodePatch';
 import { collapseExpandedParentIds, parentIdsEmptiedByOutdent, type CommandRunner } from './shared';
 
 async function writeClipboardText(text: string): Promise<boolean> {
@@ -116,6 +124,7 @@ interface UseWorkspaceKeyboardOptions {
   onNavigateBack: () => void;
   onNavigateForward: () => void;
   onOpenPanel: () => void;
+  panelId: string | null;
   requestEditFocus: (nodeId: NodeId, parentId?: NodeId | null) => void;
   rootId: NodeId | null;
   run: CommandRunner;
@@ -131,6 +140,7 @@ export function useWorkspaceKeyboard({
   onNavigateBack,
   onNavigateForward,
   onOpenPanel,
+  panelId,
   requestEditFocus,
   rootId,
   run,
@@ -188,12 +198,14 @@ export function useWorkspaceKeyboard({
           : null;
         if (singleSelectedId && singleSelectedNode && selectedReferenceTargetId) {
           const parentId = singleSelectedNode.parentId;
-          if (!parentId) return;
+          if (!parentId || !panelId) return;
           armReferenceTypeAhead({
             referenceId: singleSelectedId,
             parentId,
             targetId: selectedReferenceTargetId,
-            panelId: null,
+            targetDisplayName: currentIndex.byId.get(selectedReferenceTargetId)?.content.text || undefined,
+            siblingIds: currentIndex.byId.get(parentId)?.children ?? [],
+            panelId,
             selectionRootId,
             run,
             setUi,
@@ -310,28 +322,21 @@ export function useWorkspaceKeyboard({
       const selectedReferenceTargetId = singleSelectedNode?.type === 'reference' && singleSelectedNode.targetId
         ? resolveReferenceTargetId(singleSelectedNode.targetId, currentIndex.byId) ?? singleSelectedNode.targetId
         : null;
-      const convertSelectedReferenceToInline = () => {
-        if (!singleSelectedId || !singleSelectedNode || !selectedReferenceTargetId) return;
+      const convertSelectedReferenceToInline = (initialText?: string) => {
+        if (!singleSelectedId || !singleSelectedNode || !selectedReferenceTargetId || !panelId) return;
         const parentId = singleSelectedNode.parentId;
         if (!parentId) return;
-        void run(() => api.convertReferenceToInlineNode(singleSelectedId)).then((result) => {
-          if (!result || !('focus' in result)) return;
-          const inlineNodeId = result.focus?.nodeId;
-          const inlineParentId = result.focus?.parentId ?? parentId;
-          if (!inlineNodeId) return;
-          window.requestAnimationFrame(() => {
-            setUi((prev) => {
-              const target = rowFocusTarget(inlineNodeId, inlineParentId, null);
-              return {
-                ...requestFocusState(prev, target, cursorOffset(0, 'after')),
-                pendingReferenceConversion: {
-                  nodeId: inlineNodeId,
-                  parentId: inlineParentId,
-                  targetId: selectedReferenceTargetId,
-                },
-              };
-            });
-          });
+        armReferenceTypeAhead({
+          referenceId: singleSelectedId,
+          parentId,
+          targetId: selectedReferenceTargetId,
+          targetDisplayName: currentIndex.byId.get(selectedReferenceTargetId)?.content.text || undefined,
+          siblingIds: currentIndex.byId.get(parentId)?.children ?? [],
+          panelId,
+          selectionRootId,
+          initialText,
+          run,
+          setUi,
         });
       };
 
@@ -351,18 +356,7 @@ export function useWorkspaceKeyboard({
       }
       if (action === 'type_char') {
         if (selectedReferenceTargetId) {
-          const parentId = singleSelectedNode?.parentId;
-          if (!singleSelectedId || !parentId) return;
-          armReferenceTypeAhead({
-            referenceId: singleSelectedId,
-            parentId,
-            targetId: selectedReferenceTargetId,
-            panelId: null,
-            selectionRootId,
-            initialText: event.key,
-            run,
-            setUi,
-          });
+          convertSelectedReferenceToInline(event.key);
           return;
         }
         appendTypedCharToRow(orderedSelected[0] ?? anchor, event.key);
@@ -412,6 +406,49 @@ export function useWorkspaceKeyboard({
         currentIndex.byId,
         parentIdForSelectedRow,
       );
+      const startSelectionDelete = (hardDeleteSingleReferenceId?: NodeId) => {
+        const plan = planSelectionDelete({
+          ids: batchIds,
+          panelRootId: selectionRootId,
+          byId: currentIndex.byId,
+          rowMap: rowsById,
+          hardDeleteSingleReferenceId,
+        });
+        const removalIds = plan.hardDeleteId
+          ? [plan.hardDeleteId]
+          : [...plan.trashIds, ...plan.fieldValueIds];
+        if (removalIds.length === 0) return;
+        const previous = rows[Math.max(0, rows.indexOf(batchIds[0]) - 1)];
+        const restoreSelection = () => {
+          setUi((state) => ({
+            ...clearFocusState(state),
+            focusedId: null,
+            selectedId: currentUi.selectedId,
+            selectedIds: new Set(currentUi.selectedIds),
+            selectionAnchorId: currentUi.selectionAnchorId,
+            selectionRootId: currentUi.selectionRootId,
+            selectionSource: currentUi.selectionSource,
+          }));
+        };
+        void startOptimisticRemoval({
+          ids: removalIds,
+          setUi,
+          command: () => run(() => runSelectionDelete({
+            ids: batchIds,
+            panelRootId: selectionRootId,
+            byId: currentIndex.byId,
+            rowMap: rowsById,
+            hardDeleteSingleReferenceId,
+          })),
+          onRejected: restoreSelection,
+          onFailed: restoreSelection,
+        });
+        if (previous && !batchIds.includes(previous)) {
+          requestEditFocus(previous, rowsById.get(previous)?.parentId);
+        } else {
+          setUi(clearKeyboardSelectionState);
+        }
+      };
       if (action === 'batch_copy' || action === 'batch_cut') {
         const clipboardText = serializeSelectedRows(rows, currentUi.selectedIds, currentIndex.byId);
         void writeClipboardText(clipboardText).then((ok) => {
@@ -420,33 +457,16 @@ export function useWorkspaceKeyboard({
             return;
           }
           if (action === 'batch_copy') return;
-          const previous = rows[Math.max(0, rows.indexOf(batchIds[0]) - 1)];
-          void run(() => runSelectionDelete({
-            ids: batchIds,
-            panelRootId: selectionRootId,
-            byId: currentIndex.byId,
-            rowMap: rowsById,
-          })).then(() => {
-            if (previous && !batchIds.includes(previous)) requestEditFocus(previous, rowsById.get(previous)?.parentId);
-            else setUi(clearKeyboardSelectionState);
-          });
+          startSelectionDelete();
         });
         return;
       }
       if (action === 'batch_delete') {
-        const previous = rows[Math.max(0, rows.indexOf(batchIds[0]) - 1)];
-        void run(() => runSelectionDelete({
-          ids: batchIds,
-          panelRootId: selectionRootId,
-          byId: currentIndex.byId,
-          rowMap: rowsById,
-          hardDeleteSingleReferenceId: currentUi.selectionSource === 'ref-click' && selectedReferenceTargetId
+        startSelectionDelete(
+          currentUi.selectionSource === 'ref-click' && selectedReferenceTargetId
             ? singleSelectedId ?? undefined
             : undefined,
-        })).then(() => {
-          if (previous && !batchIds.includes(previous)) requestEditFocus(previous, rowsById.get(previous)?.parentId);
-          else setUi(clearKeyboardSelectionState);
-        });
+        );
         return;
       }
       if (action === 'batch_duplicate') {
@@ -459,19 +479,36 @@ export function useWorkspaceKeyboard({
         return;
       }
       if (action === 'batch_move_up' || action === 'batch_move_down') {
-        void run(() => runSelectionMove({
+        const direction = action === 'batch_move_up' ? 'up' : 'down';
+        const placements = planSelectionSiblingMoves({
           ids: batchIds,
-          direction: action === 'batch_move_up' ? 'up' : 'down',
+          direction,
           panelRootId: selectionRootId,
           byId: currentIndex.byId,
           rowMap: rowsById,
-        })).then(() => {
-          setUi((prev) => selectKeyboardRowsState(prev, {
-            selectedId: anchor,
-            selectedIds: new Set(batchIds),
-            selectionAnchorId: anchor,
-            selectionRootId,
-          }));
+        });
+        if (!panelId || placements.length === 0) return;
+        animateOutlinerRowMovementAfterNextCommit();
+        startOptimisticStructuralBatch({
+          panelId,
+          setUi,
+          inputs: placements.map((placement) => ({
+            id: placement.id,
+            parentId: placement.parentId,
+            sourceParentId: placement.parentId,
+            beforeId: placement.beforeId,
+            afterId: placement.afterId,
+            content: currentIndex.byId.get(placement.id)?.content ?? EMPTY_RICH_TEXT,
+            placement: cursorEnd(),
+            preserveFocus: true,
+          })),
+          command: () => run(() => runSelectionMove({
+            ids: batchIds,
+            direction,
+            panelRootId: selectionRootId,
+            byId: currentIndex.byId,
+            rowMap: rowsById,
+          })),
         });
         return;
       }
@@ -530,41 +567,88 @@ export function useWorkspaceKeyboard({
             ? batchIndentNodeIds(operationRowIds, currentIndex.byId)
             : operationRowIds;
         if (operationIds.length === 0) return;
-        const emptiedParentIds = action === 'batch_outdent'
-          ? parentIdsEmptiedByOutdent(operationIds, currentIndex.byId, selectionRootId)
-          : new Set<NodeId>();
-        const structuralAction = action === 'batch_indent' || action === 'batch_outdent';
-        const restoredSelection = {
-          selectedId: anchor,
-          selectedIds: new Set(batchIds),
-          selectionAnchorId: anchor,
-          selectionRootId,
-        };
+        if (action === 'batch_checkbox') {
+          const now = Date.now();
+          const patches = operationIds.flatMap((id) => {
+            const node = currentIndex.byId.get(id);
+            return node ? [optimisticDonePatch({
+              index: currentIndex,
+              node,
+              ui: currentUi,
+              transition: 'cycle',
+              now,
+            })] : [];
+          });
+          void startOptimisticNodePatchBatch({
+            currentUi,
+            setUi,
+            patches,
+            command: () => run(() => batchOperation(operationIds), { applyFocus: false }),
+          });
+          return;
+        }
+        if ((action === 'batch_indent' || action === 'batch_outdent') && panelId) {
+          const emptiedParentIds = action === 'batch_outdent'
+            ? parentIdsEmptiedByOutdent(operationIds, currentIndex.byId, selectionRootId)
+            : new Set<NodeId>();
+          const orderedIds = action === 'batch_outdent' ? [...operationIds].reverse() : operationIds;
+          const placements = orderedIds.flatMap((id) => {
+            const node = currentIndex.byId.get(id);
+            const sourceParentId = node?.parentId;
+            if (!node || !sourceParentId) return [];
+            const targetParentId = action === 'batch_indent'
+              ? indentTargetParentId(id, currentIndex.byId)
+              : currentIndex.byId.get(sourceParentId)?.parentId ?? null;
+            if (!targetParentId) return [];
+            return [{
+              id,
+              node,
+              sourceParentId,
+              targetParentId,
+              afterId: action === 'batch_indent'
+                ? currentIndex.byId.get(targetParentId)?.children.at(-1) ?? null
+                : sourceParentId,
+            }];
+          });
+          if (placements.length === 0) return;
+          const restoreExpansion = () => {
+            setUi((state) => ({ ...state, expanded: new Set(currentUi.expanded) }));
+          };
+          animateOutlinerRowMovementAfterNextCommit();
+          startOptimisticStructuralBatch({
+            panelId,
+            setUi,
+            inputs: placements.map((placement, index) => ({
+              id: placement.id,
+              sourceParentId: placement.sourceParentId,
+              parentId: placement.targetParentId,
+              afterId: placement.afterId,
+              presentation: placement.node.type === 'fieldEntry' ? 'field' as const : 'content' as const,
+              resolvedFieldDefId: placement.node.type === 'fieldEntry' ? placement.node.fieldDefId : undefined,
+              content: placement.node.content,
+              placement: cursorEnd(),
+              preserveFocus: true,
+              ...(index === 0
+                ? {
+                    updateUi: (state: UiState) => ({
+                      ...state,
+                      expanded: action === 'batch_indent'
+                        ? expandIndentTargets(state.expanded, operationIds, currentIndex.byId)
+                        : collapseExpandedParentIds(state.expanded, emptiedParentIds),
+                    }),
+                  }
+                : {}),
+            })),
+            command: () => run(() => batchOperation(operationIds), { applyFocus: false }),
+            onRejected: restoreExpansion,
+            onFailed: restoreExpansion,
+          });
+          return;
+        }
         void run(() => batchOperation(operationIds), {
           applyFocus: false,
-          beforeApply: structuralAction
-            ? () => {
-              animateOutlinerRowMovementAfterNextCommit();
-              setUi((prev) => {
-                const liveIndex = latestStateRef.current.index ?? currentIndex;
-                const expanded = action === 'batch_indent'
-                  ? expandIndentTargets(prev.expanded, operationIds, liveIndex.byId)
-                  : action === 'batch_outdent' && emptiedParentIds.size > 0
-                    ? collapseExpandedParentIds(prev.expanded, emptiedParentIds)
-                    : prev.expanded;
-                return selectKeyboardRowsState(
-                  { ...prev, expanded },
-                  restoredSelection,
-                );
-              });
-            }
-            : undefined,
         }).then((result) => {
           if (!result) return;
-          if (action === 'batch_checkbox') {
-            setUi((prev) => selectKeyboardRowsState(prev, restoredSelection));
-            return;
-          }
         });
       }
     };
@@ -577,10 +661,11 @@ export function useWorkspaceKeyboard({
     onNavigateBack,
     onNavigateForward,
     onOpenPanel,
+    panelId,
     requestEditFocus,
     rootId,
     run,
-      setError,
+    setError,
     setUi,
     ui,
   ]);

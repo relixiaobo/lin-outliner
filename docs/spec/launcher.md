@@ -67,8 +67,8 @@ navigation commands.
 The app's `before-quit` handler uses the document service's two-phase quit
 coordinator. Phase 1 is reversible: it freezes new document mutation admission,
 queues later mutation requests, waits for already-admitted work, closes the
-active text undo group, and drains the workspace saver to the latest accepted
-revision's durable acknowledgement.
+active text undo group, asks Runtime for the latest accepted revision, and drains
+Runtime's durable frontier through that revision.
 If the drain fails or times out, the native dialog offers Retry, Quit Anyway, or
 Cancel. Cancel restores mutation admission, resumes queued requests, and leaves
 the launcher and all auxiliary services running; Quit Anyway rejects the queued

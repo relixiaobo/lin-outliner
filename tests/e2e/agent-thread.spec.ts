@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
 import { emulateVisualMedia, resolveTokenColor } from './emulatedMedia';
-import { clipboardText, commandCalls, ids, openMockedApp, rowBody } from './outlinerMock';
+import { clipboardText, commandCalls, ids, openMockedApp, rowBody, rowEditor } from './outlinerMock';
 import { ATTACHMENT_UPLOAD_CHUNK_BYTES } from '../../src/core/agentAttachmentLimits';
 import { en } from '../../src/core/i18n/messages/en';
 import { zhHans } from '../../src/core/i18n/messages/zh-Hans';
@@ -480,6 +480,21 @@ async function openSelectedThreadActions(page: Page): Promise<void> {
     .getByRole('button', { name: 'Thread actions' })
     .click();
 }
+
+test('automatic Thread creation preserves outliner focus established while it is pending', async ({ page }) => {
+  await openMockedApp(page, { initialThreadStartDelayMs: 750 });
+  const editor = rowEditor(page, ids.beta);
+
+  await editor.click();
+  await expect(editor).toBeFocused();
+  await expect(page.locator('.thread-dock-title')).toContainText('Untitled Thread');
+  await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toBeVisible();
+  await expect(editor).toBeFocused();
+
+  await page.keyboard.type('!');
+  await expect(editor).toContainText('!');
+  await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toHaveText('');
+});
 
 test.describe('canonical agent Thread surface', () => {
   test.beforeEach(async ({ page }) => {

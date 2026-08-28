@@ -36,6 +36,14 @@ export interface ResolvedOutlinerDropBatchMove {
   expandTargetId?: NodeId;
 }
 
+export interface OptimisticBatchMovePlacement {
+  id: NodeId;
+  sourceParentId: NodeId;
+  targetParentId: NodeId;
+  beforeId?: NodeId;
+  afterId?: NodeId;
+}
+
 export interface OutlinerDropAnchor {
   readonly targetNodeId: NodeId;
   readonly targetParentId: NodeId;
@@ -165,6 +173,56 @@ export function resolveOutlinerDropBatchMove(input: ResolveOutlinerDropBatchMove
     }));
 
   return { moves, expandTargetId: target.expandTargetId };
+}
+
+export function optimisticBatchMovePlacements(input: {
+  moves: readonly BatchMoveNodeInput[];
+  parentIdForNode: (nodeId: NodeId) => NodeId | null | undefined;
+  childrenForParent: (parentId: NodeId) => readonly NodeId[];
+}): OptimisticBatchMovePlacement[] {
+  const movedIds = new Set(input.moves.map((move) => move.nodeId));
+  const initialParents = new Map<NodeId, NodeId>();
+  const currentParents = new Map<NodeId, NodeId>();
+  const children = new Map<NodeId, NodeId[]>();
+  const mutableChildren = (parentId: NodeId) => {
+    const existing = children.get(parentId);
+    if (existing) return existing;
+    const next = [...input.childrenForParent(parentId)];
+    children.set(parentId, next);
+    return next;
+  };
+  for (const move of input.moves) {
+    const sourceParentId = currentParents.get(move.nodeId) ?? input.parentIdForNode(move.nodeId);
+    if (!sourceParentId) continue;
+    if (!initialParents.has(move.nodeId)) initialParents.set(move.nodeId, sourceParentId);
+    const sourceChildren = mutableChildren(sourceParentId);
+    const sourceIndex = sourceChildren.indexOf(move.nodeId);
+    if (sourceIndex >= 0) sourceChildren.splice(sourceIndex, 1);
+    const targetChildren = mutableChildren(move.parentId);
+    const targetIndex = typeof move.index === 'number'
+      ? Math.max(0, Math.min(move.index, targetChildren.length))
+      : targetChildren.length;
+    targetChildren.splice(targetIndex, 0, move.nodeId);
+    currentParents.set(move.nodeId, move.parentId);
+  }
+
+  const placements: OptimisticBatchMovePlacement[] = [];
+  for (const [targetParentId, finalChildren] of children) {
+    for (let index = 0; index < finalChildren.length; index += 1) {
+      const id = finalChildren[index]!;
+      const sourceParentId = initialParents.get(id);
+      if (!sourceParentId || !movedIds.has(id)) continue;
+      const previousId = finalChildren[index - 1];
+      const nextUnmovedId = finalChildren.slice(index + 1).find((candidate) => !movedIds.has(candidate));
+      placements.push({
+        id,
+        sourceParentId,
+        targetParentId,
+        ...(previousId ? { afterId: previousId } : nextUnmovedId ? { beforeId: nextUnmovedId } : {}),
+      });
+    }
+  }
+  return placements;
 }
 
 function resolveOutlinerDropTarget(input: {

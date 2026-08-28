@@ -10,6 +10,13 @@ import { commandRunnerNoop, type CommandRunnerResult } from '../shared';
 
 export type SelectionCommandResult = CommandRunnerResult;
 
+export interface SelectionSiblingMovePlacement {
+  id: NodeId;
+  parentId: NodeId;
+  beforeId?: NodeId;
+  afterId?: NodeId;
+}
+
 type SelectionActionKey = keyof SelectableRowActionPolicy;
 
 export interface SelectionDeletePlan {
@@ -139,14 +146,8 @@ export async function runSelectionDelete(params: {
   const plan = planSelectionDelete(params);
   if (plan.hardDeleteId) return api.deleteNode(plan.hardDeleteId);
 
-  let lastResult: SelectionCommandResult | null = null;
-  if (plan.trashIds.length > 0) {
-    lastResult = await api.batchTrashNodes(plan.trashIds);
-  }
-  for (const id of plan.fieldValueIds) {
-    lastResult = await api.removeFieldValue(id);
-  }
-  return lastResult ?? commandRunnerNoop();
+  if (plan.trashIds.length === 0 && plan.fieldValueIds.length === 0) return commandRunnerNoop();
+  return api.batchDeleteRows(plan.trashIds, plan.fieldValueIds);
 }
 
 export function planSelectionDelete(params: {
@@ -212,4 +213,52 @@ export async function runSelectionMove(params: {
   return params.direction === 'up'
     ? api.batchMoveNodesUp(moveIds)
     : api.batchMoveNodesDown(moveIds);
+}
+
+export function planSelectionSiblingMoves(params: {
+  ids: readonly NodeId[];
+  direction: 'up' | 'down';
+  panelRootId: NodeId;
+  byId: Map<NodeId, NodeProjection>;
+  rowMap?: ReadonlyMap<NodeId, SelectableRow>;
+}): SelectionSiblingMovePlacement[] {
+  const moveIds = idsEnabledForSelectionAction({
+    ids: params.ids,
+    action: 'move',
+    panelRootId: params.panelRootId,
+    byId: params.byId,
+    rowMap: params.rowMap,
+  });
+  const selected = new Set(moveIds);
+  const parentIds = [...new Set(moveIds.map((id) => params.byId.get(id)?.parentId))]
+    .filter((id): id is NodeId => Boolean(id));
+  const placements: SelectionSiblingMovePlacement[] = [];
+  for (const parentId of parentIds) {
+    const final = [...(params.byId.get(parentId)?.children ?? [])];
+    if (params.direction === 'up') {
+      for (let index = 1; index < final.length; index += 1) {
+        if (selected.has(final[index]!) && !selected.has(final[index - 1]!)) {
+          [final[index - 1], final[index]] = [final[index]!, final[index - 1]!];
+        }
+      }
+    } else {
+      for (let index = final.length - 2; index >= 0; index -= 1) {
+        if (selected.has(final[index]!) && !selected.has(final[index + 1]!)) {
+          [final[index], final[index + 1]] = [final[index + 1]!, final[index]!];
+        }
+      }
+    }
+    for (let index = 0; index < final.length; index += 1) {
+      const id = final[index]!;
+      if (!selected.has(id)) continue;
+      const previousId = final[index - 1];
+      const nextUnselectedId = final.slice(index + 1).find((candidate) => !selected.has(candidate));
+      placements.push({
+        id,
+        parentId,
+        ...(previousId ? { afterId: previousId } : nextUnselectedId ? { beforeId: nextUnselectedId } : {}),
+      });
+    }
+  }
+  return placements;
 }

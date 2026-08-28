@@ -2,6 +2,8 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { MEMORY_TAG_DEFINITIONS } from '../../src/core/agent/memory';
+import { projectFieldConfig } from '../../src/core/configProjection';
 import type { Change, ChangeSet, NodeDraft, Operation, TargetRef } from '../../src/outline/contract';
 import {
   OutlineRuntimeWorkspace,
@@ -16,6 +18,52 @@ afterAll(async () => {
 });
 
 describe('outline ChangeSet capability coverage', () => {
+  test('protects deterministic Memory tags while permitting ordinary tag application', async () => {
+    const workspace = await makeWorkspace();
+    const ensured = await settle(workspace, MEMORY_TAG_DEFINITIONS.map((definition, index): Change => ({
+      op: 'ensure',
+      resource: 'definition',
+      definitionType: 'tag',
+      id: definition.tagId,
+      name: definition.name,
+      bind: `memoryTag${index + 1}`,
+    })));
+    for (const definition of MEMORY_TAG_DEFINITIONS) {
+      expect(workspace.documentState().nodes[definition.tagId]).toMatchObject({
+        id: definition.tagId,
+        type: 'tagDef',
+        parentId: workspace.projection().schemaId,
+        locked: true,
+        content: { text: definition.name },
+      });
+    }
+
+    const ordinary = await settle(workspace, [{
+      op: 'create',
+      placement: { kind: 'last', parent: oneAlias('today') },
+      nodes: [draft('Ordinary tagged Node')],
+      bind: 'ordinary',
+    }]);
+    const ordinaryId = ordinary.diff.bindings.ordinary![0]!;
+    const memoryTagId = MEMORY_TAG_DEFINITIONS[0]!.tagId;
+    await settle(workspace, [{
+      op: 'update',
+      targets: oneId(ordinaryId),
+      changes: [{ kind: 'tag', action: 'add', tag: oneId(memoryTagId) }],
+    }]);
+    expect(workspace.documentState().nodes[ordinaryId]?.tags).toContain(memoryTagId);
+
+    await expect(diffOutlineChangeSet(workspace, changeSet([{
+      op: 'create',
+      placement: { kind: 'last', parent: oneId(memoryTagId) },
+      nodes: [draft('Forbidden definition child')],
+    }]))).rejects.toMatchObject({ outlineError: { code: 'precondition_failed' } });
+    await expect(workspace.revert(ensured.operation.operationId, {
+      origin: 'external-client',
+    })).rejects.toMatchObject({ outlineError: { code: 'precondition_failed' } });
+    expect(workspace.documentState().nodes[memoryTagId]).toBeDefined();
+  });
+
   test('keeps explicit definition IDs stable and rejects same-name ID conflicts without writing', async () => {
     const workspace = await makeWorkspace();
     const definition = {
@@ -41,6 +89,13 @@ describe('outline ChangeSet capability coverage', () => {
       type: 'fieldDef',
       content: { text: 'URL' },
     });
+    expect(projectFieldConfig(
+      new Map(Object.values(workspace.documentState().nodes).map((node) => [node.id, node])),
+      workspace.documentState().nodes['field:url']!,
+    )).toMatchObject({ fieldType: 'url' });
+    expect(Object.values(workspace.documentState().nodes).some((node) => (
+      node.type === 'fieldEntry' && node.fieldDefId === 'field:url'
+    ))).toBe(false);
 
     const operationsBeforeConflict = await workspace.store.operations();
     await expect(diffOutlineChangeSet(workspace, {
@@ -89,7 +144,10 @@ describe('outline ChangeSet capability coverage', () => {
       nodes: [draft('Rich captured node', {
         content: {
           text: 'Rich captured node',
-          marks: [{ start: 0, end: 4, type: 'bold' }],
+          marks: [
+            { start: 0, end: 4, type: 'bold' },
+            { start: 5, end: 13, type: 'link', attrs: { href: 'https://example.com/docs_(v1)' } },
+          ],
           inlineRefs: [{ offset: 4, target: { kind: 'node', nodeId: referenceA! } }],
         },
         description: 'Captured description',
@@ -105,7 +163,10 @@ describe('outline ChangeSet capability coverage', () => {
     const richId = rich.diff.bindings.rich![0]!;
     const richNode = workspace.documentState().nodes[richId]!;
     expect(richNode.capture).toEqual(capture);
-    expect(richNode.content.marks).toEqual([{ start: 0, end: 4, type: 'bold' }]);
+    expect(richNode.content.marks).toEqual([
+      { start: 0, end: 4, type: 'bold' },
+      { start: 5, end: 13, type: 'link', attrs: { href: 'https://example.com/docs_(v1)' } },
+    ]);
     expect(richNode.content.inlineRefs).toEqual([{ offset: 4, target: { kind: 'node', nodeId: referenceA } }]);
     expect(richNode.tags).toContain(tagId);
     expect(richNode.completedAt).toBeGreaterThan(0);
@@ -113,6 +174,17 @@ describe('outline ChangeSet capability coverage', () => {
     expect(Object.values(workspace.documentState().nodes)).toContainEqual(
       expect.objectContaining({ type: 'fieldEntry', parentId: richId, fieldDefId: fieldId }),
     );
+
+    const unchecked = await settle(workspace, [{
+      op: 'create',
+      placement: { kind: 'last', parent: oneAlias('today') },
+      nodes: [draft('Unchecked', { checkbox: true, done: false })],
+      bind: 'unchecked',
+    }]);
+    expect(workspace.documentState().nodes[unchecked.diff.bindings.unchecked![0]!]).toMatchObject({
+      content: { text: 'Unchecked' },
+      completedAt: 0,
+    });
 
     const reference = await settle(workspace, [{
       op: 'create',
@@ -127,20 +199,35 @@ describe('outline ChangeSet capability coverage', () => {
       changes: [{ kind: 'reference', action: 'retarget', target: oneId(referenceB!) }],
     }]);
     expect(workspace.documentState().nodes[referenceId]?.targetId).toBe(referenceB);
+    const inlineId = 'node:00000000-0000-4000-8000-000000000011';
     const inlined = await settle(workspace, [{
       op: 'update',
       targets: oneId(referenceId),
-      changes: [{ kind: 'reference', action: 'inline', target: oneId(referenceB!) }],
+      changes: [{
+        kind: 'reference',
+        action: 'inline',
+        target: oneId(referenceB!),
+        replacementId: inlineId,
+      }],
     }]);
-    const inlineId = inlined.diff.affected.find((entry) => entry.effect === 'create')!.id;
+    expect(inlined.diff.affected).toContainEqual(expect.objectContaining({ id: inlineId, effect: 'create' }));
     expect(workspace.documentState().nodes[referenceId]).toBeUndefined();
     expect(workspace.documentState().nodes[inlineId]?.type).toBeUndefined();
+    const restoredReferenceId = 'node:00000000-0000-4000-8000-000000000012';
     const restored = await settle(workspace, [{
       op: 'update',
       targets: oneId(inlineId),
-      changes: [{ kind: 'reference', action: 'restore', target: oneId(referenceB!) }],
+      changes: [{
+        kind: 'reference',
+        action: 'restore',
+        target: oneId(referenceB!),
+        replacementId: restoredReferenceId,
+      }],
     }]);
-    const restoredReferenceId = restored.diff.affected.find((entry) => entry.effect === 'create')!.id;
+    expect(restored.diff.affected).toContainEqual(expect.objectContaining({
+      id: restoredReferenceId,
+      effect: 'create',
+    }));
     expect(workspace.documentState().nodes[restoredReferenceId]).toMatchObject({ type: 'reference', targetId: referenceB });
 
     await settle(workspace, [{
@@ -214,7 +301,10 @@ describe('outline ChangeSet capability coverage', () => {
     }]);
     expect(workspace.documentState().nodes[richId]?.content).toMatchObject({
       text: 'Deep captured node',
-      marks: [expect.objectContaining({ start: 0, end: 4, type: 'italic' })],
+      marks: [
+        expect.objectContaining({ start: 0, end: 4, type: 'italic' }),
+        { start: 5, end: 13, type: 'link', attrs: { href: 'https://example.com/docs_(v1)' } },
+      ],
     });
 
     await settle(workspace, [{
@@ -234,6 +324,170 @@ describe('outline ChangeSet capability coverage', () => {
       type: 'reference',
       targetId: referenceB,
     });
+  });
+
+  test('preserves field multiplicity, reference identity, omissions, template values, and one owner entry', async () => {
+    const workspace = await makeWorkspace();
+    const fieldId = 'field:runtime-values';
+    const tagId = 'tag:runtime-values';
+    const firstTargetId = 'node:00000000-0000-4000-8000-000000000021';
+    const secondTargetId = 'node:00000000-0000-4000-8000-000000000022';
+    await settle(workspace, [
+      {
+        op: 'ensure',
+        resource: 'definition',
+        definitionType: 'field',
+        id: fieldId,
+        name: 'Runtime values',
+        fieldType: 'plain',
+        bind: 'field',
+      },
+      {
+        op: 'ensure',
+        resource: 'definition',
+        definitionType: 'tag',
+        id: tagId,
+        name: 'Runtime record',
+        bind: 'tag',
+      },
+      {
+        op: 'create',
+        placement: { kind: 'last', parent: oneAlias('today') },
+        nodes: [
+          draft('First target', { id: firstTargetId }),
+          draft('Second target', { id: secondTargetId }),
+        ],
+      },
+    ]);
+    await settle(workspace, [{
+      op: 'update',
+      targets: oneId(tagId),
+      changes: [{ kind: 'field', action: 'attach', field: oneId(fieldId) }],
+    }]);
+    await settle(workspace, [{
+      op: 'update',
+      targets: oneId(tagId),
+      changes: [{
+        kind: 'field-slot',
+        field: oneId(fieldId),
+        mutation: { action: 'append-text', text: 'Template default' },
+      }],
+    }]);
+
+    const sameReferenceLabel = (nodeId: string): NodeDraft => draft('', {
+      content: {
+        text: '',
+        marks: [],
+        inlineRefs: [{
+          offset: 0,
+          displayName: 'Same reference',
+          target: { kind: 'node', nodeId },
+        }],
+      },
+    });
+    const sameLinkLabel = (href: string): NodeDraft => draft('docs', {
+      content: {
+        text: 'docs',
+        marks: [{ start: 0, end: 4, type: 'link', attrs: { href } }],
+        inlineRefs: [],
+      },
+    });
+    const created = await settle(workspace, [{
+      op: 'create',
+      placement: { kind: 'last', parent: oneAlias('today') },
+      nodes: [draft('Record', {
+        tags: [tagId],
+        fields: [{
+          fieldDefId: fieldId,
+          values: [
+            draft('Same value'),
+            draft('Same value'),
+            sameReferenceLabel(firstTargetId),
+            sameReferenceLabel(secondTargetId),
+            sameLinkLabel('https://a.test/docs_(v1)'),
+            sameLinkLabel('https://b.test'),
+          ],
+        }],
+        children: [draft('Ordinary child')],
+      })],
+      bind: 'owner',
+    }]);
+    const ownerId = created.diff.bindings.owner![0]!;
+    const owner = workspace.documentState().nodes[ownerId]!;
+    const fieldEntries = owner.children
+      .map((childId) => workspace.documentState().nodes[childId])
+      .filter((node) => node?.type === 'fieldEntry' && node.fieldDefId === fieldId);
+    expect(fieldEntries).toHaveLength(1);
+    const entryId = fieldEntries[0]!.id;
+    expect(owner.children[0]).toBe(entryId);
+
+    await settle(workspace, [{
+      op: 'update',
+      targets: oneId(ownerId),
+      changes: [{
+        kind: 'field-slot',
+        field: oneId(fieldId),
+        mutation: { action: 'append-text', text: 'Later value' },
+      }],
+    }]);
+    await settle(workspace, [{
+      op: 'update',
+      targets: oneId(ownerId),
+      changes: [{
+        kind: 'text-patch',
+        field: 'content',
+        patch: {
+          ops: [{
+            type: 'replace',
+            from: 0,
+            to: 'Record'.length,
+            content: { text: 'Record updated', marks: [], inlineRefs: [] },
+          }],
+        },
+      }],
+    }]);
+
+    const finalState = workspace.documentState();
+    const finalOwner = finalState.nodes[ownerId]!;
+    const finalEntries = finalOwner.children.filter((childId) => (
+      finalState.nodes[childId]?.type === 'fieldEntry'
+      && finalState.nodes[childId]?.fieldDefId === fieldId
+    ));
+    expect(finalOwner.content.text).toBe('Record updated');
+    expect(finalEntries).toEqual([entryId]);
+    expect(finalState.nodes[entryId]!.children.map((valueId) => finalState.nodes[valueId]!.content)).toEqual([
+      { text: 'Same value', marks: [], inlineRefs: [] },
+      { text: 'Same value', marks: [], inlineRefs: [] },
+      {
+        text: '',
+        marks: [],
+        inlineRefs: [{
+          offset: 0,
+          displayName: 'Same reference',
+          target: { kind: 'node', nodeId: firstTargetId },
+        }],
+      },
+      {
+        text: '',
+        marks: [],
+        inlineRefs: [{
+          offset: 0,
+          displayName: 'Same reference',
+          target: { kind: 'node', nodeId: secondTargetId },
+        }],
+      },
+      {
+        text: 'docs',
+        marks: [{ start: 0, end: 4, type: 'link', attrs: { href: 'https://a.test/docs_(v1)' } }],
+        inlineRefs: [],
+      },
+      {
+        text: 'docs',
+        marks: [{ start: 0, end: 4, type: 'link', attrs: { href: 'https://b.test' } }],
+        inlineRefs: [],
+      },
+      { text: 'Later value', marks: [], inlineRefs: [] },
+    ]);
   });
 
   test('executes view, search, template, and definition-merge behavior through one public union', async () => {
@@ -297,6 +551,7 @@ describe('outline ChangeSet capability coverage', () => {
       nodes: [draft('Runtime search', {
         type: 'search',
         metadata: { query: { kind: 'rule', op: 'STRING_MATCH', text: 'Tagged' } },
+        children: [draft('Unrelated search child')],
       })],
       bind: 'search',
     }]);
@@ -311,7 +566,10 @@ describe('outline ChangeSet capability coverage', () => {
         query: { kind: 'rule', op: 'STRING_MATCH', text: 'template' },
       }],
     }]);
-    expect(workspace.documentState().nodes[searchId]).toMatchObject({ type: 'search', content: { text: 'Renamed search' } });
+    const updatedSearch = workspace.documentState().nodes[searchId]!;
+    expect(updatedSearch).toMatchObject({ type: 'search', content: { text: 'Renamed search' } });
+    expect(updatedSearch.children.map((id) => workspace.documentState().nodes[id]?.content.text))
+      .toContain('Unrelated search child');
   });
 
   test('registers reusable options and removes one field value through typed field instructions', async () => {
@@ -395,6 +653,14 @@ function oneAlias(alias: 'today'): TargetRef {
 
 function oneId(id: string): TargetRef {
   return { target: { selector: { by: 'id', id }, cardinality: 'one' } };
+}
+
+function changeSet(operations: readonly Change[]): ChangeSet {
+  return {
+    protocolVersion: 1,
+    kind: 'outline.changeset',
+    operations: [...operations],
+  };
 }
 
 function draft(text: string, patch: Partial<NodeDraft> = {}): NodeDraft {

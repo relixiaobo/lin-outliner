@@ -70,8 +70,8 @@ test.describe('date field picker', () => {
     await draft.click();
     // Commit a value the date field cannot parse. The validation hint only
     // decorates a committed value node, so type then Enter to materialize it.
-    await page.keyboard.type('notadate');
-    await page.keyboard.press('Enter');
+    await draft.pressSequentially('notadate');
+    await draft.press('Enter');
 
     const dueRow = row(page, ids.dueEntry);
     const hint = dueRow.locator('.field-value-hint');
@@ -89,9 +89,9 @@ test.describe('date field picker', () => {
     await draft.click();
     // A non-empty draft keeps Space literal (e.g. typing "next monday") instead of
     // summoning the picker, so natural-language values can contain spaces.
-    await page.keyboard.type('next');
-    await page.keyboard.press('Space');
-    await page.keyboard.type('monday');
+    await draft.pressSequentially('next');
+    await draft.press('Space');
+    await draft.pressSequentially('monday');
 
     await expect(page.getByRole('dialog', { name: 'Date picker' })).toHaveCount(0);
     await expect(draft).toHaveText('next monday');

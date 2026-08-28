@@ -1,10 +1,15 @@
-import { Core } from '../../core/core';
+import {
+  Core,
+  type CoreTransactionMetadata,
+  type CoreTransactionPatch,
+} from '../../core/core';
+import { runTransientSearchExpr } from '../../core/searchEngine';
+import type { NodeAccessStats } from '../../core/nodeAccessRanking';
 import { ContentStore, type ContentStoreOptions } from '../../content';
-import type { CoreTransactionMetadata } from '../../core/core';
 import { canonicalSha256 } from '../contract/canonical';
 import { OutlineContractError, outlineError } from '../contract/errors';
-import type { Operation, OutlineEvent, RevertConflictDiff, NoChangeResult } from '../contract/schemas';
-import type { Node } from '../../core/types';
+import type { Diff, Operation, OutlineEvent, RevertConflictDiff, NoChangeResult } from '../contract/schemas';
+import type { DocumentState, Node, ProjectionUpdate, SearchHit } from '../../core/types';
 import { projectNode } from '../../core/projection';
 import { OUTLINE_PROTOCOL_VERSION } from '../contract/version';
 import {
@@ -15,14 +20,72 @@ import {
   type OutlineAssetStoreOptions,
   type OutlineAssetDelta,
   type WorkspaceMutationAdmission,
+  type WorkspaceTransactionInput,
   type WorkspaceTransactionAppendResult,
   type WorkspaceTransactionLogOptions,
 } from './storage';
 import { semanticPatchDigest } from './semanticDigest';
 import { encodeEventCursor } from './eventCursor';
 import { encodeOperationLogCursor } from './operationLogCursor';
+import { DocumentReadModel } from './documentReadModel';
+import type { Projection, ProjectionResult } from '../contract/schemas';
+import { createSelectionIndex } from './selector';
+import { projectOutlineFromSelectionIndex } from './projection';
+import { assertProtectedMemoryDefinitionPatch } from './protectedDefinitions';
 
 const MAX_AFFECTED_NODE_ID_SAMPLE = 1_000;
+const DURABILITY_IDLE_DELAY_MS = 700;
+const DURABILITY_MAX_WAIT_MS = 5_000;
+
+interface AppendedMutationSettlement {
+  readonly kind: 'appended';
+  readonly appended: WorkspaceTransactionAppendResult;
+  readonly projectionUpdate: ProjectionUpdate;
+  readonly assetReferenceCounts: Map<string, number>;
+}
+
+interface NoChangeMutationSettlement {
+  readonly kind: 'no-change';
+  readonly result: NoChangeResult;
+  readonly patch: CoreTransactionPatch;
+}
+
+type MutationSettlement = AppendedMutationSettlement | NoChangeMutationSettlement | DeferredMutationSettlement;
+
+type DeferredTransactionInput = Omit<WorkspaceTransactionInput, 'event'>;
+
+interface DeferredMutationSettlement {
+  readonly kind: 'deferred';
+  readonly input: DeferredTransactionInput;
+  readonly projectionUpdate: ProjectionUpdate;
+  readonly assetReferenceCounts: Map<string, number>;
+  readonly patch: CoreTransactionPatch;
+}
+
+interface PendingDurability {
+  readonly input: DeferredTransactionInput;
+  readonly projectionUpdate: ProjectionUpdate;
+}
+
+export interface OutlineAcceptedMutation {
+  readonly settlement: Operation | NoChangeResult;
+  readonly update: ProjectionUpdate;
+  readonly patch?: CoreTransactionPatch;
+  readonly diff?: Diff;
+}
+
+export interface OutlineDurabilityStatus {
+  readonly acceptedRevision: number;
+  readonly durableRevision: number;
+  readonly admissionFrozen: boolean;
+  readonly failure?: { readonly message: string };
+}
+
+class ExistingOperationSettlement extends Error {
+  constructor(readonly operation: Operation) {
+    super(`Operation settled idempotently: ${operation.operationId}`);
+  }
+}
 
 export interface OutlineRuntimeMutationRequest {
   readonly origin: Operation['origin'];
@@ -43,6 +106,7 @@ export interface OutlineRuntimeMutationRequest {
   readonly execute: (candidate: Core) => void | Operation['result'] | Promise<void | Operation['result']>;
   readonly result?: (candidate: Core) => Operation['result'];
   readonly noChangeResult?: (candidate: Core) => NoChangeResult;
+  readonly acceptedDiff?: (patch: CoreTransactionPatch) => Diff;
 }
 
 export interface OutlineHistoryMutationOptions extends Pick<
@@ -63,13 +127,40 @@ export interface OutlineRuntimeWorkspaceOptions {
   readonly contentStore?: ContentStore;
   readonly contentStoreOptions?: ContentStoreOptions;
   readonly assetStoreOptions?: OutlineAssetStoreOptions;
+  readonly durabilityIdleDelayMs?: number;
+  readonly durabilityMaxWaitMs?: number;
+  readonly durabilitySchedule?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
+  readonly durabilityCancel?: (timer: ReturnType<typeof setTimeout>) => void;
 }
 
 export class OutlineRuntimeWorkspace {
   private mutationChain: Promise<unknown> = Promise.resolve();
   private settlementUnknown = false;
+  private settlementUnknownIdempotencyKey?: string;
   private eventListeners = new Set<(event: OutlineEvent) => void>();
   private readonly now: () => Date;
+  private readonly readModel: DocumentReadModel;
+  private assetReferenceCounts: Map<string, number>;
+  private pendingPublicationPatch?: CoreTransactionPatch;
+  private readonly pendingDurability: PendingDurability[] = [];
+  private readonly acceptedByIdempotencyKey = new Map<string, {
+    readonly payloadHash: string;
+    readonly result?: OutlineAcceptedMutation;
+  }>();
+  private durabilityRun?: Promise<void>;
+  private durabilityFailure?: unknown;
+  private durableRevisionValue: number;
+  private readonly durabilityIdleDelayMs: number;
+  private readonly durabilityMaxWaitMs: number;
+  private readonly durabilitySchedule: NonNullable<OutlineRuntimeWorkspaceOptions['durabilitySchedule']>;
+  private readonly durabilityCancel: NonNullable<OutlineRuntimeWorkspaceOptions['durabilityCancel']>;
+  private durabilityIdleTimer?: ReturnType<typeof setTimeout>;
+  private durabilityMaxWaitTimer?: ReturnType<typeof setTimeout>;
+  private firstDirtyAt?: number;
+  private lastDirtyAt?: number;
+  private mutationAdmissionFrozen = false;
+  private mutationAdmissionCommitted = false;
+  private personalAccessRanking = new Map<string, NodeAccessStats>();
 
   private constructor(
     private core: Core,
@@ -78,8 +169,24 @@ export class OutlineRuntimeWorkspace {
     readonly instanceId: string,
     readonly eventBaselineSequence: number,
     now?: () => Date,
+    durabilityOptions: Pick<
+      OutlineRuntimeWorkspaceOptions,
+      'durabilityIdleDelayMs' | 'durabilityMaxWaitMs' | 'durabilitySchedule' | 'durabilityCancel'
+    > = {},
   ) {
     this.now = now ?? (() => new Date());
+    this.durabilityIdleDelayMs = Math.max(0, durabilityOptions.durabilityIdleDelayMs ?? DURABILITY_IDLE_DELAY_MS);
+    this.durabilityMaxWaitMs = Math.max(
+      this.durabilityIdleDelayMs,
+      durabilityOptions.durabilityMaxWaitMs ?? DURABILITY_MAX_WAIT_MS,
+    );
+    this.durabilitySchedule = durabilityOptions.durabilitySchedule ?? ((callback, delayMs) => (
+      setTimeout(callback, delayMs)
+    ));
+    this.durabilityCancel = durabilityOptions.durabilityCancel ?? ((timer) => clearTimeout(timer));
+    this.readModel = DocumentReadModel.fromProjection(core.revision(), core.projection());
+    this.assetReferenceCounts = countAssetReferences(Object.values(core.state().nodes));
+    this.durableRevisionValue = core.revision();
   }
 
   static async open(root: string, options: OutlineRuntimeWorkspaceOptions = {}): Promise<OutlineRuntimeWorkspace> {
@@ -124,14 +231,21 @@ export class OutlineRuntimeWorkspace {
     });
     try {
       await assets.reconcileAnchors();
-      return new OutlineRuntimeWorkspace(
+      const workspace = new OutlineRuntimeWorkspace(
         core,
         store,
         assets,
         instanceId,
         loaded.latestEventSequence,
         options.now,
+        options,
       );
+      for (const idempotency of loaded.idempotency) {
+        workspace.acceptedByIdempotencyKey.set(idempotency.key, {
+          payloadHash: idempotency.payloadHash,
+        });
+      }
+      return workspace;
     } catch (error) {
       if (!options.contentStore) contentStore.close();
       throw error;
@@ -139,10 +253,60 @@ export class OutlineRuntimeWorkspace {
   }
 
   revision(): number {
-    return this.core.revision();
+    return this.readModel.revision;
+  }
+
+  durableRevision(): number {
+    return this.durableRevisionValue;
+  }
+
+  async freezeMutationAdmission(): Promise<number> {
+    return this.enqueueMutation(async () => {
+      this.mutationAdmissionFrozen = true;
+      return this.revision();
+    });
+  }
+
+  unfreezeMutationAdmission(): void {
+    if (!this.mutationAdmissionCommitted) this.mutationAdmissionFrozen = false;
+  }
+
+  commitMutationAdmissionFreeze(): void {
+    this.mutationAdmissionFrozen = true;
+    this.mutationAdmissionCommitted = true;
+  }
+
+  durabilityStatus(): OutlineDurabilityStatus {
+    return {
+      acceptedRevision: this.revision(),
+      durableRevision: this.durableRevisionValue,
+      admissionFrozen: this.mutationAdmissionFrozen,
+      ...(this.durabilityFailure ? {
+        failure: {
+          message: this.durabilityFailure instanceof Error
+            ? this.durabilityFailure.message
+            : String(this.durabilityFailure),
+        },
+      } : {}),
+    };
+  }
+
+  async drainDurability(targetRevision = this.revision()): Promise<void> {
+    if (targetRevision > this.revision()) {
+      throw new Error(`Cannot drain unaccepted Outline revision ${targetRevision}.`);
+    }
+    while (this.durableRevisionValue < targetRevision) {
+      if (this.durabilityFailure) this.durabilityFailure = undefined;
+      this.startDurabilityRun();
+      const run = this.durabilityRun;
+      if (!run) throw new Error(`Outline durability stopped before revision ${targetRevision}.`);
+      await run;
+      if (this.durabilityFailure) throw this.durabilityFailure;
+    }
   }
 
   close(): void {
+    this.clearDurabilityTimers();
     this.assets.close();
   }
 
@@ -156,11 +320,67 @@ export class OutlineRuntimeWorkspace {
   }
 
   projection() {
-    return this.core.projection();
+    return this.readModel.projection;
+  }
+
+  searchText(query: string, limit: number): SearchHit[] {
+    const text = query.trim();
+    if (!text) return [];
+    const result = runTransientSearchExpr(
+      this.readModel.projection,
+      { kind: 'rule', op: 'STRING_MATCH', text },
+      {
+        limit,
+        textIndex: this.readModel.textIndex,
+        personalAccessRanking: {
+          getNodeAccessStats: (nodeId) => this.personalAccessRanking.get(nodeId),
+          now: this.now().getTime(),
+        },
+      },
+    );
+    return result.ok ? result.hits : [];
+  }
+
+  replacePersonalAccessRanking(entries: ReadonlyMap<string, NodeAccessStats>): void {
+    this.personalAccessRanking = new Map(entries);
+  }
+
+  upsertPersonalAccessRanking(entries: ReadonlyMap<string, NodeAccessStats>): void {
+    for (const [nodeId, stats] of entries) this.personalAccessRanking.set(nodeId, stats);
+  }
+
+  removePersonalAccessRanking(nodeIds: readonly string[]): void {
+    for (const nodeId of nodeIds) this.personalAccessRanking.delete(nodeId);
+  }
+
+  selectionIndex() {
+    return createSelectionIndex(this.readModel.projection, {
+      nodesById: this.readModel.nodes,
+      textIndex: this.readModel.textIndex,
+    });
+  }
+
+  project(
+    projection: Projection,
+    bindings: Readonly<Record<string, readonly string[]>> = {},
+  ): ProjectionResult {
+    return projectOutlineFromSelectionIndex(
+      this.revision(),
+      this.selectionIndex(),
+      projection,
+      bindings,
+    );
   }
 
   documentState() {
-    return this.core.state();
+    const state = this.core.state();
+    const patch = this.pendingPublicationPatch;
+    if (!patch) return state;
+    for (const entry of patch.nodes) {
+      if (entry.before) state.nodes[entry.id] = cloneNode(entry.before);
+      else delete state.nodes[entry.id];
+    }
+    return state;
   }
 
   forkCore(options: { idFactory?: (prefix: string) => string } = {}): Core {
@@ -173,13 +393,27 @@ export class OutlineRuntimeWorkspace {
   }
 
   collectAssetGarbage(): Promise<readonly string[]> {
-    return this.enqueueMutation(() => this.assets.collectGarbage([
-      ...assetRecordIdsInNodes(Object.values(this.core.state().nodes)),
-    ]));
+    return this.enqueueMutation(async () => {
+      await this.drainDurability();
+      return this.assets.collectGarbage([...this.assetReferenceCounts.keys()]);
+    });
   }
 
-  maintain(options: { readonly compactIfNeeded?: boolean } = {}): Promise<void> {
-    return this.enqueueMutation(() => this.runMaintenance(options.compactIfNeeded === true));
+  async maintain(options: { readonly compactIfNeeded?: boolean } = {}): Promise<void> {
+    let compaction: Promise<void> | undefined;
+    await this.enqueueMutation(async () => {
+      await this.drainDurability();
+      const context = { instanceId: this.instanceId, revision: this.revision() };
+      this.publishEvents(await this.store.maintain(context));
+      await this.assets.collectGarbage([...this.assetReferenceCounts.keys()]);
+      if (options.compactIfNeeded === true && await this.store.needsCompaction()) {
+        const snapshot = this.core.serializeState();
+        compaction = this.store.compact(snapshot, context).then((events) => {
+          this.publishEvents(events);
+        });
+      }
+    });
+    if (compaction) await compaction;
   }
 
   async mutate(request: OutlineRuntimeMutationRequest): Promise<Operation> {
@@ -195,9 +429,59 @@ export class OutlineRuntimeWorkspace {
     prepare: () => OutlineRuntimeMutationRequest | Promise<OutlineRuntimeMutationRequest>,
   ): Promise<Operation | NoChangeResult> {
     return this.enqueueMutation(async () => {
+      this.assertMutationAdmission();
       const admission = await this.prepareMutation(admissionRequest);
       if (admission.existingOperation) return admission.existingOperation;
       return this.applyMutation(await prepare(), admission);
+    });
+  }
+
+  async commitAcceptedPrepared(
+    admissionRequest: Pick<OutlineRuntimeMutationRequest, 'idempotencyKey' | 'idempotencyPayloadHash'>,
+    prepare: () => OutlineRuntimeMutationRequest | Promise<OutlineRuntimeMutationRequest>,
+  ): Promise<OutlineAcceptedMutation> {
+    return this.enqueueMutation(async () => {
+      this.assertMutationAdmission();
+      const idempotencyKey = admissionRequest.idempotencyKey;
+      const payloadHash = admissionRequest.idempotencyPayloadHash;
+      if (!idempotencyKey || !payloadHash) {
+        throw new OutlineContractError(outlineError(
+          'invalid_input',
+          'usage',
+          'Accepted desktop mutations require an idempotency key and payload hash.',
+        ));
+      }
+      const existing = this.acceptedByIdempotencyKey.get(idempotencyKey);
+      if (existing) {
+        if (existing.payloadHash !== payloadHash) {
+          throw new OutlineContractError(outlineError(
+            'idempotency_conflict',
+            'conflict',
+            `Idempotency key was already used with different input: ${idempotencyKey}`,
+          ));
+        }
+        if (existing.result) return existing.result;
+        const persisted = await this.store.idempotencySettlement(idempotencyKey, payloadHash);
+        if (persisted?.accepted) {
+          return {
+            settlement: persisted.operation,
+            update: persisted.accepted.update,
+            diff: persisted.accepted.diff,
+          };
+        }
+        throw new OutlineContractError(outlineError(
+          'idempotency_conflict',
+          'conflict',
+          `Idempotency key is already bound to a non-desktop settlement: ${idempotencyKey}`,
+        ));
+      }
+      const result = await this.applyAcceptedMutation(await prepare());
+      this.acceptedByIdempotencyKey.set(idempotencyKey, {
+        payloadHash,
+        ...((result.settlement.kind === 'outline.no-change'
+          || result.settlement.revisionAfter > this.durableRevisionValue) ? { result } : {}),
+      });
+      return result;
     });
   }
 
@@ -209,7 +493,23 @@ export class OutlineRuntimeWorkspace {
       );
       this.publishEvents(admission.maintenanceEvents);
       if (admission.existingOperation) {
+        if (this.settlementUnknown) {
+          if (this.settlementUnknownIdempotencyKey !== idempotencyKey) {
+            throw new OutlineContractError(outlineError(
+              'operation_settlement_unknown',
+              'durability',
+              'A different mutation may have committed; resolve it by its idempotency key or restart before writing again.',
+              { retryable: true },
+            ));
+          }
+          if (!admission.existingEvent) {
+            throw new Error(`Committed idempotent Operation has no retained Event: ${admission.existingOperation.operationId}`);
+          }
+          await this.reloadDurableState(admission.existingOperation.revisionAfter);
+          this.publishEvents([admission.existingEvent]);
+        }
         this.settlementUnknown = false;
+        this.settlementUnknownIdempotencyKey = undefined;
         return admission.existingOperation;
       }
       if (this.settlementUnknown) {
@@ -400,6 +700,8 @@ export class OutlineRuntimeWorkspace {
   private async prepareMutation(
     request: Pick<OutlineRuntimeMutationRequest, 'idempotencyKey' | 'idempotencyPayloadHash'>,
   ): Promise<WorkspaceMutationAdmission> {
+    this.assertMutationAdmission();
+    await this.drainDurability();
     if (this.settlementUnknown) {
       throw new OutlineContractError(outlineError(
         'operation_settlement_unknown',
@@ -430,12 +732,28 @@ export class OutlineRuntimeWorkspace {
     request: OutlineRuntimeMutationRequest,
     preparedAdmission?: WorkspaceMutationAdmission,
   ): Promise<Operation | NoChangeResult> {
-    const admission = preparedAdmission ?? await this.prepareMutation(request);
-    if (admission.existingOperation) return admission.existingOperation;
+    const result = await this.applyMutationWithSettlement(request, preparedAdmission, false);
+    if ('settlement' in result) return result.settlement;
+    return result;
+  }
 
-    const candidate = this.core.forkForRuntime({ idFactory: request.idFactory });
-    const fromVersion = candidate.replicationVersionVector();
-    const afterMetadataSequence = candidate.persistenceMetadataSequence();
+  private applyAcceptedMutation(request: OutlineRuntimeMutationRequest): Promise<OutlineAcceptedMutation> {
+    return this.applyMutationWithSettlement(request, undefined, true) as Promise<OutlineAcceptedMutation>;
+  }
+
+  private async applyMutationWithSettlement(
+    request: OutlineRuntimeMutationRequest,
+    preparedAdmission: WorkspaceMutationAdmission | undefined,
+    deferDurability: boolean,
+  ): Promise<Operation | NoChangeResult | OutlineAcceptedMutation> {
+    this.assertMutationAdmission();
+    const admission = deferDurability
+      ? undefined
+      : preparedAdmission ?? await this.prepareMutation(request);
+    if (admission?.existingOperation) return admission.existingOperation;
+
+    const fromVersion = this.core.replicationVersionVector();
+    const afterMetadataSequence = this.core.persistenceMetadataSequence();
     const operationId = `operation:${crypto.randomUUID()}`;
     const metadata: CoreTransactionMetadata = {
       operationId,
@@ -443,174 +761,262 @@ export class OutlineRuntimeWorkspace {
       summary: request.summary,
       ...(request.causation ? { causation: request.causation } : {}),
     };
-    const { result: transactionResult, patch } = await candidate.transactionWithPatch(
-      'system',
-      () => request.execute(candidate),
-      metadata,
-    );
-    if (patch.nodes.length === 0 && !patch.systemChanged) {
-      const noChange = request.noChangeResult?.(candidate);
-      if (noChange) return noChange;
-      throw new OutlineContractError(outlineError(
-        'precondition_failed',
-        'conflict',
-        'The mutation produced no document changes.',
-      ));
-    }
-    const resolvedLeases = await this.assets.resolveLeases(Object.keys(request.assetLeases ?? {}));
-    for (const [leaseId, expectedAssetId] of Object.entries(request.assetLeases ?? {})) {
-      if (resolvedLeases.get(leaseId)?.assetId !== expectedAssetId) {
-        throw new OutlineContractError(outlineError(
-          'precondition_failed',
-          'conflict',
-          `Asset lease resolution changed before settlement: ${leaseId}`,
-        ));
-      }
-    }
-    const beforeLiveAssetIds = assetRecordIdsInNodes(Object.values(this.core.state().nodes));
-    const afterLiveAssetIds = assetRecordIdsInNodes(Object.values(candidate.state().nodes));
-    for (const assetId of Object.values(request.assetLeases ?? {})) {
-      if (!afterLiveAssetIds.has(assetId)) {
-        throw new OutlineContractError(outlineError(
-          'precondition_failed',
-          'conflict',
-          `Consumed asset lease is not referenced by the settled document: ${assetId}`,
-        ));
-      }
-    }
-    const patchAssetIds = assetRecordIdsInNodes(patch.nodes.flatMap((entry) => (
-      [entry.before, entry.after].filter((node): node is Node => node !== null)
-    )));
-    const protectedAssetRecordIds = await this.assets.expandAssetIds([
-      ...patchAssetIds,
-      ...request.protectedAssetRecordIds ?? [],
-    ]);
-    const assetDelta: OutlineAssetDelta = {
-      consumedLeaseIds: Object.keys(request.assetLeases ?? {}).sort(),
-      liveAddedAssetRecordIds: [...afterLiveAssetIds].filter((assetId) => !beforeLiveAssetIds.has(assetId)).sort(),
-      liveRemovedAssetRecordIds: [...beforeLiveAssetIds].filter((assetId) => !afterLiveAssetIds.has(assetId)).sort(),
-    };
-    const patchHash = semanticPatchDigest(patch.nodes);
-    if (request.expectedPatchHash && request.expectedPatchHash !== patchHash) {
-      throw new OutlineContractError(outlineError(
-        'diff_mismatch',
-        'conflict',
-        'The applied Node patch does not match the reviewed Diff.',
-        { details: { expected: request.expectedPatchHash, actual: patchHash } },
-      ));
-    }
-    const persistence = candidate.capturePersistenceUpdate(fromVersion, afterMetadataSequence);
-    const result = request.result?.(candidate) ?? transactionResult;
-    const createdAt = this.now().toISOString();
-    const recoveryPatch = createOutlineRecoveryPatch({
-      operationId,
-      origin: request.origin,
-      causation: request.causation,
-      changeSetHash: request.changeSetHash,
-      diffHash: request.diffHash,
-      corePatch: patch,
-      protectedAssetRecordIds,
-      createdAt,
-    });
-    const affectedNodeIds = patch.nodes.map((entry) => entry.id);
-    const affectedNodeIdsSample = affectedNodeIds.slice(0, MAX_AFFECTED_NODE_ID_SAMPLE);
-    const operation: Operation = {
-      protocolVersion: OUTLINE_PROTOCOL_VERSION,
-      kind: 'outline.operation',
-      operationId,
-      changeSetHash: request.changeSetHash,
-      diffHash: request.diffHash,
-      origin: request.origin,
-      ...(request.causation ? { causation: request.causation } : {}),
-      ...(request.source ? { source: request.source } : {}),
-      summary: request.summary,
-      affectedNodeIds: affectedNodeIdsSample,
-      affectedNodeCount: affectedNodeIds.length,
-      affectedNodeIdsHash: canonicalSha256(affectedNodeIds),
-      ...(affectedNodeIds.length > MAX_AFFECTED_NODE_ID_SAMPLE ? {
-        affectedNodeIdsTruncated: true,
-        affectedNodeIdsCursor: encodeOperationLogCursor({
-          kind: 'affected',
-          filterHash: canonicalSha256({ operationId }),
-          operationId,
-          offset: MAX_AFFECTED_NODE_ID_SAMPLE,
-        }),
-      } : {}),
-      revisionBefore: patch.revisionBefore,
-      revisionAfter: patch.revisionAfter,
-      createdAt,
-      recovery: {
-        recoveryPatchId: recoveryPatch.recoveryPatchId,
-        state: 'available',
-        retainedUntilAtLeast: recoveryPatch.retainedUntilAtLeast,
-      },
-      ...(request.undoGroup ? { undoGroup: request.undoGroup } : {}),
-      ...(request.revertsOperationId ? { revertsOperationId: request.revertsOperationId } : {}),
-      ...(request.revertsOperationIds ? { revertsOperationIds: [...request.revertsOperationIds] } : {}),
-      ...(result ? { result } : {}),
-    };
-    const eventSequence = admission.latestEventSequence + 1;
-    const event: OutlineEvent = {
-      protocolVersion: OUTLINE_PROTOCOL_VERSION,
-      kind: 'outline.event',
-      type: operationRevertsAny(operation) ? 'operation.reverted' : 'operation.committed',
-      instanceId: this.instanceId,
-      sequence: eventSequence,
-      revision: operation.revisionAfter,
-      cursor: encodeEventCursor({
-        instanceId: this.instanceId,
-        sequence: eventSequence,
-        revision: operation.revisionAfter,
-      }),
-      operation,
-      changes: {
-        todayId: candidate.todayId(),
-        changedNodes: patch.nodes.flatMap((entry) => entry.after ? [projectNode(entry.after)] : []),
-        removedIds: patch.nodes.flatMap((entry) => entry.after ? [] : [entry.id]),
-      },
-    };
-    let appended: WorkspaceTransactionAppendResult;
     try {
-      appended = await this.store.append({
-        persistence,
-        operation,
-        recoveryPatch,
-        event,
-        ...(request.idempotencyKey ? {
-          idempotency: {
-            key: request.idempotencyKey,
-            payloadHash: request.idempotencyPayloadHash!,
+      const { settlement } = await this.core.transactionWithPatchSettlement(
+        'system',
+        () => request.execute(this.core),
+        async ({ result: transactionResult, patch }): Promise<MutationSettlement> => {
+          assertProtectedMemoryDefinitionPatch(patch);
+          if (patch.nodes.length === 0 && !patch.systemChanged) {
+            const noChange = request.noChangeResult?.(this.core);
+            if (noChange) return { kind: 'no-change', result: noChange, patch };
+            throw new OutlineContractError(outlineError(
+              'precondition_failed',
+              'conflict',
+              'The mutation produced no document changes.',
+            ));
+          }
+
+          this.pendingPublicationPatch = patch;
+          const resolvedLeases = await this.assets.resolveLeases(Object.keys(request.assetLeases ?? {}));
+          for (const [leaseId, expectedAssetId] of Object.entries(request.assetLeases ?? {})) {
+            if (resolvedLeases.get(leaseId)?.assetId !== expectedAssetId) {
+              throw new OutlineContractError(outlineError(
+                'precondition_failed',
+                'conflict',
+                `Asset lease resolution changed before settlement: ${leaseId}`,
+              ));
+            }
+          }
+
+          const nextAssetReferenceCounts = applyAssetReferencePatch(this.assetReferenceCounts, patch);
+          for (const assetId of Object.values(request.assetLeases ?? {})) {
+            if ((nextAssetReferenceCounts.get(assetId) ?? 0) === 0) {
+              throw new OutlineContractError(outlineError(
+                'precondition_failed',
+                'conflict',
+                `Consumed asset lease is not referenced by the settled document: ${assetId}`,
+              ));
+            }
+          }
+          const patchAssetIds = assetRecordIdsInNodes(patch.nodes.flatMap((entry) => (
+            [entry.before, entry.after].filter((node): node is Node => node !== null)
+          )));
+          const protectedAssetRecordIds = await this.assets.expandAssetIds([
+            ...patchAssetIds,
+            ...request.protectedAssetRecordIds ?? [],
+          ]);
+          const assetDelta: OutlineAssetDelta = {
+            consumedLeaseIds: Object.keys(request.assetLeases ?? {}).sort(),
+            liveAddedAssetRecordIds: changedAssetIds(
+              this.assetReferenceCounts,
+              nextAssetReferenceCounts,
+              (before, after) => before === 0 && after > 0,
+            ),
+            liveRemovedAssetRecordIds: changedAssetIds(
+              this.assetReferenceCounts,
+              nextAssetReferenceCounts,
+              (before, after) => before > 0 && after === 0,
+            ),
+          };
+          const patchHash = semanticPatchDigest(patch.nodes);
+          if (request.expectedPatchHash && request.expectedPatchHash !== patchHash) {
+            throw new OutlineContractError(outlineError(
+              'diff_mismatch',
+              'conflict',
+              'The applied Node patch does not match the reviewed Diff.',
+              { details: { expected: request.expectedPatchHash, actual: patchHash } },
+            ));
+          }
+
+          const persistence = this.core.capturePersistenceUpdate(fromVersion, afterMetadataSequence);
+          const result = request.result?.(this.core) ?? transactionResult;
+          const createdAt = this.now().toISOString();
+          const recoveryPatch = createOutlineRecoveryPatch({
             operationId,
-          },
-        } : {}),
-        assetDelta,
-        measureExactRevisionBytes: (coordinates, excluding) => (
-          this.assets.measureExactRevisionBytes(coordinates, excluding)
-        ),
-      });
-    } catch (error) {
-      if (error instanceof OutlineContractError
-        && error.outlineError.code !== 'durability_failed') throw error;
-      this.settlementUnknown = true;
-      throw new OutlineContractError(outlineError(
-        'operation_settlement_unknown',
-        'durability',
-        'The mutation may have committed, but acknowledgement was not completed.',
-        {
-          retryable: true,
-          details: {
-            ...(request.idempotencyKey ? { idempotencyKey: request.idempotencyKey } : {}),
-            cause: error instanceof Error ? error.message : String(error),
-          },
+            origin: request.origin,
+            causation: request.causation,
+            changeSetHash: request.changeSetHash,
+            diffHash: request.diffHash,
+            corePatch: patch,
+            protectedAssetRecordIds,
+            createdAt,
+          });
+          const affectedNodeIds = patch.nodes.map((entry) => entry.id);
+          const affectedNodeIdsSample = affectedNodeIds.slice(0, MAX_AFFECTED_NODE_ID_SAMPLE);
+          const operation: Operation = {
+            protocolVersion: OUTLINE_PROTOCOL_VERSION,
+            kind: 'outline.operation',
+            operationId,
+            changeSetHash: request.changeSetHash,
+            diffHash: request.diffHash,
+            origin: request.origin,
+            ...(request.causation ? { causation: request.causation } : {}),
+            ...(request.source ? { source: request.source } : {}),
+            summary: request.summary,
+            affectedNodeIds: affectedNodeIdsSample,
+            affectedNodeCount: affectedNodeIds.length,
+            affectedNodeIdsHash: canonicalSha256(affectedNodeIds),
+            ...(affectedNodeIds.length > MAX_AFFECTED_NODE_ID_SAMPLE ? {
+              affectedNodeIdsTruncated: true,
+              affectedNodeIdsCursor: encodeOperationLogCursor({
+                kind: 'affected',
+                filterHash: canonicalSha256({ operationId }),
+                operationId,
+                offset: MAX_AFFECTED_NODE_ID_SAMPLE,
+              }),
+            } : {}),
+            revisionBefore: patch.revisionBefore,
+            revisionAfter: patch.revisionAfter,
+            createdAt,
+            recovery: {
+              recoveryPatchId: recoveryPatch.recoveryPatchId,
+              state: 'available',
+              retainedUntilAtLeast: recoveryPatch.retainedUntilAtLeast,
+            },
+            ...(request.undoGroup ? { undoGroup: request.undoGroup } : {}),
+            ...(request.revertsOperationId ? { revertsOperationId: request.revertsOperationId } : {}),
+            ...(request.revertsOperationIds ? { revertsOperationIds: [...request.revertsOperationIds] } : {}),
+            ...(result ? { result } : {}),
+          };
+          const projectionUpdate: ProjectionUpdate = {
+            kind: 'delta',
+            revision: operation.revisionAfter,
+            todayId: this.core.todayId(),
+            changedNodes: patch.nodes.flatMap((entry) => entry.after ? [projectNode(entry.after)] : []),
+            removedIds: patch.nodes.flatMap((entry) => entry.after ? [] : [entry.id]),
+          };
+          const acceptedDiff = deferDurability ? request.acceptedDiff?.(patch) : undefined;
+          const deferredInput: DeferredTransactionInput = {
+            persistence,
+            operation,
+            recoveryPatch,
+            ...(request.idempotencyKey ? {
+              idempotency: {
+                key: request.idempotencyKey,
+                payloadHash: request.idempotencyPayloadHash!,
+                operationId,
+                ...(acceptedDiff ? {
+                  accepted: {
+                    update: projectionUpdate,
+                    diff: acceptedDiff,
+                  },
+                } : {}),
+              },
+            } : {}),
+            assetDelta,
+            measureExactRevisionBytes: (coordinates, excluding) => (
+              this.assets.measureExactRevisionBytes(coordinates, excluding)
+            ),
+          };
+          if (deferDurability) {
+            return {
+              kind: 'deferred',
+              input: deferredInput,
+              projectionUpdate,
+              assetReferenceCounts: nextAssetReferenceCounts,
+              patch,
+            };
+          }
+          if (!admission) throw new Error('Durable Outline mutation is missing admission state.');
+          const event = operationEvent(
+            this.instanceId,
+            admission.latestEventSequence + 1,
+            operation,
+            projectionUpdate,
+          );
+          let appended: WorkspaceTransactionAppendResult;
+          try {
+            appended = await this.store.append({
+              ...deferredInput,
+              event,
+            });
+          } catch (error) {
+            if (error instanceof OutlineContractError
+              && error.outlineError.code !== 'durability_failed') throw error;
+            this.settlementUnknown = true;
+            this.settlementUnknownIdempotencyKey = request.idempotencyKey;
+            throw new OutlineContractError(outlineError(
+              'operation_settlement_unknown',
+              'durability',
+              'The mutation may have committed, but acknowledgement was not completed.',
+              {
+                retryable: true,
+                details: {
+                  ...(request.idempotencyKey ? { idempotencyKey: request.idempotencyKey } : {}),
+                  cause: error instanceof Error ? error.message : String(error),
+                },
+              },
+            ));
+          }
+          if (appended.idempotent) throw new ExistingOperationSettlement(appended.operation);
+          return {
+            kind: 'appended',
+            appended,
+            projectionUpdate,
+            assetReferenceCounts: nextAssetReferenceCounts,
+          };
         },
-      ));
+        metadata,
+        { idFactory: request.idFactory },
+      );
+
+      if (settlement.kind === 'no-change') {
+        if (!deferDurability) return settlement.result;
+        return {
+          settlement: settlement.result,
+          update: {
+            kind: 'delta',
+            revision: settlement.result.revision,
+            todayId: this.core.todayId(),
+            changedNodes: [],
+            removedIds: [],
+          },
+          patch: settlement.patch,
+          ...(request.acceptedDiff ? { diff: request.acceptedDiff(settlement.patch) } : {}),
+        };
+      }
+      this.assetReferenceCounts = settlement.assetReferenceCounts;
+      const readModelApplied = request.source?.kind === 'import'
+        ? await this.readModel.applyUpdateYielding(settlement.projectionUpdate, { yieldEveryNodes: 250 })
+        : this.readModel.applyUpdate(settlement.projectionUpdate);
+      if (!readModelApplied) {
+        this.readModel.reseed(this.core.revision(), this.core.projection());
+      }
+      if (settlement.kind === 'deferred') {
+        const result: OutlineAcceptedMutation = {
+          settlement: settlement.input.operation,
+          update: settlement.projectionUpdate,
+          patch: settlement.patch,
+          ...(settlement.input.idempotency?.accepted
+            ? { diff: settlement.input.idempotency.accepted.diff }
+            : {}),
+        };
+        this.pendingDurability.push({
+          input: settlement.input,
+          projectionUpdate: settlement.projectionUpdate,
+        });
+        this.scheduleDurability();
+        return result;
+      }
+      this.durableRevisionValue = Math.max(
+        this.durableRevisionValue,
+        settlement.appended.operation.revisionAfter,
+      );
+      this.publishEvents(settlement.appended.maintenanceEvents);
+      this.publishEvents([settlement.appended.event]);
+      if (request.idempotencyKey) {
+        this.acceptedByIdempotencyKey.set(request.idempotencyKey, {
+          payloadHash: request.idempotencyPayloadHash!,
+        });
+      }
+      return settlement.appended.operation;
+    } catch (error) {
+      if (error instanceof ExistingOperationSettlement) return error.operation;
+      throw error;
+    } finally {
+      this.pendingPublicationPatch = undefined;
     }
-    if (!appended.idempotent) {
-      this.core = candidate;
-      this.publishEvents(appended.maintenanceEvents);
-      this.publishEvents([appended.event]);
-    }
-    return appended.operation;
   }
 
   private async applyRequiredMutation(
@@ -628,17 +1034,6 @@ export class OutlineRuntimeWorkspace {
     return result;
   }
 
-  private async runMaintenance(compactIfNeeded: boolean): Promise<void> {
-    const context = { instanceId: this.instanceId, revision: this.revision() };
-    this.publishEvents(await this.store.maintain(context));
-    await this.assets.collectGarbage([
-      ...assetRecordIdsInNodes(Object.values(this.core.state().nodes)),
-    ]);
-    if (compactIfNeeded && await this.store.needsCompaction()) {
-      this.publishEvents(await this.store.compact(this.core.serializeState(), context));
-    }
-  }
-
   private publishEvents(events: readonly OutlineEvent[]): void {
     for (const event of events) {
       for (const listener of this.eventListeners) {
@@ -651,11 +1046,188 @@ export class OutlineRuntimeWorkspace {
     }
   }
 
+  private async reloadDurableState(expectedRevision: number): Promise<void> {
+    const loaded = await this.store.load();
+    if (!loaded.snapshot) throw new Error('Durable settlement recovery has no workspace snapshot');
+    if (loaded.inconsistent) throw loaded.inconsistent;
+    const revision = loaded.events.at(-1)?.revision
+      ?? loaded.operations.at(-1)?.revisionAfter
+      ?? 0;
+    if (revision < expectedRevision) {
+      throw new Error(`Durable settlement recovery stopped at revision ${revision}, expected at least ${expectedRevision}`);
+    }
+    const recovered = loaded.replay.length > 0
+      ? Core.fromPersistenceState(loaded.snapshot, loaded.replay, {
+          installationId: loaded.snapshot.local.installationId,
+          revision,
+        })
+      : Core.fromState(loaded.snapshot, {
+          installationId: loaded.snapshot.local.installationId,
+          revision,
+        });
+    if (recovered.requiresInitialPersist()) {
+      throw new Error('Durable settlement recovery requires workspace reconciliation before writes can resume');
+    }
+    await this.assets.reconcileAnchors();
+    this.core = recovered;
+    this.readModel.reseed(recovered.revision(), recovered.projection());
+    this.assetReferenceCounts = countAssetReferences(Object.values(recovered.state().nodes));
+    this.durableRevisionValue = recovered.revision();
+    for (const idempotency of loaded.idempotency) {
+      this.acceptedByIdempotencyKey.set(idempotency.key, { payloadHash: idempotency.payloadHash });
+    }
+  }
+
+  private scheduleDurability(): void {
+    const now = this.now().getTime();
+    this.firstDirtyAt ??= now;
+    this.lastDirtyAt = now;
+    if (this.durabilityIdleTimer) this.durabilityCancel(this.durabilityIdleTimer);
+    this.durabilityIdleTimer = this.durabilitySchedule(() => {
+      this.durabilityIdleTimer = undefined;
+      this.startDurabilityRun();
+    }, this.durabilityIdleDelayMs);
+    this.ensureDurabilityMaxWaitTimer();
+  }
+
+  private ensureDurabilityTimers(): void {
+    if (this.pendingDurability.length === 0 || this.durabilityFailure) return;
+    const now = this.now().getTime();
+    this.firstDirtyAt ??= now;
+    this.lastDirtyAt ??= now;
+    if (!this.durabilityIdleTimer) {
+      const idleElapsed = now - this.lastDirtyAt;
+      this.durabilityIdleTimer = this.durabilitySchedule(() => {
+        this.durabilityIdleTimer = undefined;
+        this.startDurabilityRun();
+      }, Math.max(0, this.durabilityIdleDelayMs - idleElapsed));
+    }
+    this.ensureDurabilityMaxWaitTimer();
+  }
+
+  private ensureDurabilityMaxWaitTimer(): void {
+    if (this.durabilityMaxWaitTimer || this.firstDirtyAt === undefined) return;
+    const elapsed = this.now().getTime() - this.firstDirtyAt;
+    this.durabilityMaxWaitTimer = this.durabilitySchedule(() => {
+      this.durabilityMaxWaitTimer = undefined;
+      this.startDurabilityRun();
+    }, Math.max(0, this.durabilityMaxWaitMs - elapsed));
+  }
+
+  private clearDurabilityTimers(): void {
+    if (this.durabilityIdleTimer) this.durabilityCancel(this.durabilityIdleTimer);
+    if (this.durabilityMaxWaitTimer) this.durabilityCancel(this.durabilityMaxWaitTimer);
+    this.durabilityIdleTimer = undefined;
+    this.durabilityMaxWaitTimer = undefined;
+  }
+
+  private startDurabilityRun(): void {
+    if (this.durabilityRun || this.durabilityFailure || this.pendingDurability.length === 0) return;
+    this.clearDurabilityTimers();
+    this.firstDirtyAt = undefined;
+    this.lastDirtyAt = undefined;
+    const batch = this.pendingDurability.slice();
+    const run = this.flushDurability(batch);
+    const wrapped = run.catch((error: unknown) => {
+      this.durabilityFailure = error;
+    }).finally(() => {
+      if (this.durabilityRun !== wrapped) return;
+      this.durabilityRun = undefined;
+      this.ensureDurabilityTimers();
+    });
+    this.durabilityRun = wrapped;
+  }
+
+  private async flushDurability(batch: readonly PendingDurability[]): Promise<void> {
+    const appendedBatch = await this.store.appendBatch(batch.map((pending) => ({
+      ...pending.input,
+      createEvent: (sequence: number) => operationEvent(
+        this.instanceId,
+        sequence,
+        pending.input.operation,
+        pending.projectionUpdate,
+      ),
+    })));
+    for (let index = 0; index < batch.length; index += 1) {
+      const pending = batch[index]!;
+      const operation = pending.input.operation;
+      const appended = appendedBatch[index]!;
+      if (appended.operation.operationId !== operation.operationId) {
+        throw new OutlineContractError(outlineError(
+          'idempotency_conflict',
+          'conflict',
+          `Accepted Operation settled to a different idempotent result: ${operation.operationId}`,
+        ));
+      }
+      this.durableRevisionValue = Math.max(this.durableRevisionValue, operation.revisionAfter);
+      if (pending.input.idempotency) {
+        this.acceptedByIdempotencyKey.set(pending.input.idempotency.key, {
+          payloadHash: pending.input.idempotency.payloadHash,
+        });
+      }
+      this.core.acknowledgePersistenceMetadata(pending.input.persistence.metadataSequence);
+      this.publishEvents(appended.maintenanceEvents);
+      this.publishEvents([appended.event]);
+    }
+    this.pendingDurability.splice(0, batch.length);
+  }
+
+  private assertMutationAdmission(): void {
+    if (this.mutationAdmissionFrozen) {
+      throw new OutlineContractError(outlineError(
+        'runtime_unavailable',
+        'unavailable',
+        'Outline mutation admission is frozen.',
+        { retryable: true },
+      ));
+    }
+    if (this.durabilityFailure) {
+      throw new OutlineContractError(outlineError(
+        'durability_failed',
+        'durability',
+        'A previously accepted Outline mutation is not durable; drain or restart before writing again.',
+        {
+          retryable: true,
+          details: this.durabilityFailure instanceof Error
+            ? this.durabilityFailure.message
+            : String(this.durabilityFailure),
+        },
+      ));
+    }
+  }
+
   private enqueueMutation<TResult>(task: () => Promise<TResult>): Promise<TResult> {
     const next = this.mutationChain.then(task, task);
     this.mutationChain = next.then(() => undefined, () => undefined);
     return next;
   }
+}
+
+function operationEvent(
+  instanceId: string,
+  sequence: number,
+  operation: Operation,
+  update: ProjectionUpdate,
+): OutlineEvent {
+  return {
+    protocolVersion: OUTLINE_PROTOCOL_VERSION,
+    kind: 'outline.event',
+    type: operationRevertsAny(operation) ? 'operation.reverted' : 'operation.committed',
+    instanceId,
+    sequence,
+    revision: operation.revisionAfter,
+    cursor: encodeEventCursor({
+      instanceId,
+      sequence,
+      revision: operation.revisionAfter,
+    }),
+    operation,
+    changes: {
+      todayId: update.kind === 'delta' ? update.todayId : update.projection.todayId,
+      changedNodes: update.kind === 'delta' ? update.changedNodes : update.projection.nodes,
+      removedIds: update.kind === 'delta' ? update.removedIds : [],
+    },
+  };
 }
 
 function assetRecordIdsInNodes(nodes: readonly Node[]): Set<string> {
@@ -667,6 +1239,52 @@ function assetRecordIdsInNodes(nodes: readonly Node[]): Set<string> {
     if (node.type === 'attachment' && node.thumbnailAssetId) result.add(node.thumbnailAssetId);
   }
   return result;
+}
+
+function countAssetReferences(nodes: readonly Node[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const node of nodes) {
+    for (const assetId of assetRecordIdsInNodes([node])) {
+      counts.set(assetId, (counts.get(assetId) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
+function applyAssetReferencePatch(
+  current: ReadonlyMap<string, number>,
+  patch: CoreTransactionPatch,
+): Map<string, number> {
+  const next = new Map(current);
+  for (const entry of patch.nodes) {
+    if (entry.before) {
+      for (const assetId of assetRecordIdsInNodes([entry.before as Node])) {
+        const count = (next.get(assetId) ?? 0) - 1;
+        if (count > 0) next.set(assetId, count);
+        else next.delete(assetId);
+      }
+    }
+    if (entry.after) {
+      for (const assetId of assetRecordIdsInNodes([entry.after as Node])) {
+        next.set(assetId, (next.get(assetId) ?? 0) + 1);
+      }
+    }
+  }
+  return next;
+}
+
+function changedAssetIds(
+  before: ReadonlyMap<string, number>,
+  after: ReadonlyMap<string, number>,
+  matches: (beforeCount: number, afterCount: number) => boolean,
+): string[] {
+  return [...new Set([...before.keys(), ...after.keys()])]
+    .filter((assetId) => matches(before.get(assetId) ?? 0, after.get(assetId) ?? 0))
+    .sort();
+}
+
+function cloneNode(node: Readonly<Node>): Node {
+  return JSON.parse(JSON.stringify(node)) as Node;
 }
 
 interface HistoryStackItem {

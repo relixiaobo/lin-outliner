@@ -1,5 +1,8 @@
 import { OutlineContractError, outlineError } from '../../outline/contract/errors';
 import type {
+  AcceptedDesktopChangeSetMutation,
+  ChangeSet,
+  OperationUndoGroup,
   OutlineResponse,
   OutlineStreamRecord,
   WatchRequest,
@@ -8,6 +11,11 @@ import { OUTLINE_PROTOCOL_VERSION } from '../../outline/contract/version';
 
 export interface DesktopOutlineTransportClient {
   requestResponse(command: string, input: unknown, signal?: AbortSignal): Promise<OutlineResponse>;
+  commitDesktopChangeSet(
+    changeSet: ChangeSet,
+    undoGroup?: OperationUndoGroup,
+    signal?: AbortSignal,
+  ): Promise<AcceptedDesktopChangeSetMutation>;
   watchSubscription(input: WatchRequest, signal?: AbortSignal): AsyncGenerator<OutlineStreamRecord>;
   close(): void;
 }
@@ -42,6 +50,27 @@ export class DesktopOutlineClient {
     try {
       const client = await this.connect();
       return await client.requestResponse(command, input, controller.signal);
+    } catch (error) {
+      this.invalidateClientAfterTransportFailure(error);
+      throw error;
+    } finally {
+      this.requests.delete(key);
+    }
+  }
+
+  async commit(
+    ownerId: number,
+    requestId: string,
+    changeSet: ChangeSet,
+    undoGroup?: OperationUndoGroup,
+  ): Promise<AcceptedDesktopChangeSetMutation> {
+    const key = operationKey(ownerId, requestId);
+    if (this.requests.has(key)) throw new Error(`Desktop Outline request is already active: ${requestId}`);
+    const controller = new AbortController();
+    this.requests.set(key, { ownerId, controller });
+    try {
+      const client = await this.connect();
+      return await client.commitDesktopChangeSet(changeSet, undoGroup, controller.signal);
     } catch (error) {
       this.invalidateClientAfterTransportFailure(error);
       throw error;

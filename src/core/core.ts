@@ -1,4 +1,5 @@
 import { autoInitStrategiesForFieldType } from './autoInit';
+import { applyCompletedAtTransition } from './doneState';
 import { CoreError } from './errors';
 import {
   LoroOutlinerDocument,
@@ -244,6 +245,7 @@ export interface EnsureDateNodesYieldingOptions {
 interface CoreTransaction {
   origin: string;
   metadata: CoreTransactionMetadata;
+  idFactory?: (prefix: string) => string;
   chunkedCommits: number;
   affectedNodeIds: Set<NodeId>;
   originalNodes: Map<NodeId, Node | undefined>;
@@ -270,6 +272,14 @@ export interface CoreTransactionPatch {
 export interface CoreTransactionResult<T> {
   readonly result: T;
   readonly patch: CoreTransactionPatch;
+}
+
+export interface CoreTransactionSettlementResult<T, Settlement> extends CoreTransactionResult<T> {
+  readonly settlement: Settlement;
+}
+
+export interface CoreTransactionExecutionOptions {
+  readonly idFactory?: (prefix: string) => string;
 }
 
 interface TouchedMutationPatch {
@@ -345,6 +355,10 @@ interface CoreInitialState {
   persistenceMetadataSequence?: number;
   replayedPersistenceRevision?: number;
   replayedMetadataSequence?: number;
+}
+
+interface CoreRuntimeForkState {
+  runtimeFork: Core;
 }
 
 interface PersistenceMetadataChange {
@@ -478,7 +492,39 @@ export class Core {
   // `parent not found` when the user adds the first row to today's note.
   private initialPersistRequired = false;
 
-  private constructor(initial: CoreInitialState = {}, options: CorePersistenceOptions = {}) {
+  private constructor(
+    initial: CoreInitialState | CoreRuntimeForkState = {},
+    options: CorePersistenceOptions = {},
+  ) {
+    if ('runtimeFork' in initial) {
+      const source = initial.runtimeFork;
+      this.idFactory = options.idFactory ?? freshId;
+      this.installationIdValue = source.installationIdValue;
+      this.workspaceIdValue = source.workspaceIdValue;
+      this.documentIdValue = source.documentIdValue;
+      this.replicaIdValue = source.replicaIdValue;
+      this.loro = source.loro.forkForRuntime();
+      this.stateValue = {
+        ...source.stateValue,
+        nodes: { ...source.stateValue.nodes },
+      };
+      this.history = new OperationJournal(clone(source.history.entriesForSerialization(500)));
+      this.projectionNodes = new Map(source.projectionNodes);
+      this.projectionOrder = [...source.projectionOrder];
+      this.projectionReady = source.projectionReady;
+      this.revisionValue = source.revisionValue;
+      this.persistenceRevisionValue = source.persistenceRevisionValue;
+      this.persistenceMetadataSequenceValue = source.persistenceMetadataSequenceValue;
+      this.persistenceMetadataChanges = clone(source.persistenceMetadataChanges);
+      this.loadedPersistenceVersionValue = source.loadedPersistenceVersionValue.slice();
+      this.lastRevisionDelta = {
+        ...source.lastRevisionDelta,
+        changedNodeIds: [...source.lastRevisionDelta.changedNodeIds],
+      };
+      this.initialPersistRequired = source.initialPersistRequired;
+      return;
+    }
+
     this.idFactory = options.idFactory ?? freshId;
     const installationId = options.installationId ?? initial.local?.installationId ?? createPersistenceId();
     if (!isPersistenceId(installationId)) throw CoreError.invalidOperation('invalid installation identity');
@@ -595,11 +641,13 @@ export class Core {
   }
 
   forkForRuntime(options: Pick<CorePersistenceOptions, 'idFactory'> = {}): Core {
-    return Core.fromState(Core.deserializeState(this.serializeState()), {
-      installationId: this.installationIdValue,
-      revision: this.revisionValue,
-      ...options,
-    });
+    this.assertReplicationIdle();
+    // Preserve the old persistence-fork boundary: close any harmless pending
+    // serializer operations before cloning, then copy the settled incremental
+    // state instead of round-tripping the complete workspace through JSON/Loro.
+    this.loro.commit(SYSTEM_COMMIT_ORIGIN);
+    this.refreshStateFromLoro();
+    return new Core({ runtimeFork: this }, options);
   }
 
   state() {
@@ -979,9 +1027,21 @@ export class Core {
     origin: CommitOrigin,
     fn: () => T | Promise<T>,
     metadata: CoreTransactionMetadata = {},
+    options: CoreTransactionExecutionOptions = {},
   ): Promise<CoreTransactionResult<T>> {
     if (this.activeTransaction) throw CoreError.invalidOperation('nested patch transactions are not supported');
-    return this.transactionWithResolvedOriginAndPatch(commitOriginFor(origin), fn, metadata);
+    return this.transactionWithResolvedOriginAndPatch(commitOriginFor(origin), fn, metadata, options);
+  }
+
+  async transactionWithPatchSettlement<T, Settlement>(
+    origin: CommitOrigin,
+    fn: () => T | Promise<T>,
+    settle: (transaction: CoreTransactionResult<T>) => Settlement | Promise<Settlement>,
+    metadata: CoreTransactionMetadata = {},
+    options: CoreTransactionExecutionOptions = {},
+  ): Promise<CoreTransactionSettlementResult<T, Settlement>> {
+    if (this.activeTransaction) throw CoreError.invalidOperation('nested patch transactions are not supported');
+    return this.transactionWithResolvedOriginAndPatch(commitOriginFor(origin), fn, metadata, options, settle);
   }
 
   private async transactionWithResolvedOrigin<T>(
@@ -992,18 +1052,44 @@ export class Core {
     return (await this.transactionWithResolvedOriginAndPatch(origin, fn, metadata)).result;
   }
 
-  private async transactionWithResolvedOriginAndPatch<T>(
+  private transactionWithResolvedOriginAndPatch<T>(
     resolvedOrigin: string,
     fn: () => T | Promise<T>,
     metadata: CoreTransactionMetadata,
-  ): Promise<CoreTransactionResult<T>> {
+    options?: CoreTransactionExecutionOptions,
+  ): Promise<CoreTransactionResult<T>>;
+
+  private transactionWithResolvedOriginAndPatch<T, Settlement>(
+    resolvedOrigin: string,
+    fn: () => T | Promise<T>,
+    metadata: CoreTransactionMetadata,
+    options: CoreTransactionExecutionOptions,
+    settle: (transaction: CoreTransactionResult<T>) => Settlement | Promise<Settlement>,
+  ): Promise<CoreTransactionSettlementResult<T, Settlement>>;
+
+  private async transactionWithResolvedOriginAndPatch<T, Settlement = never>(
+    resolvedOrigin: string,
+    fn: () => T | Promise<T>,
+    metadata: CoreTransactionMetadata,
+    options: CoreTransactionExecutionOptions = {},
+    settle?: (transaction: CoreTransactionResult<T>) => Settlement | Promise<Settlement>,
+  ): Promise<CoreTransactionResult<T> | CoreTransactionSettlementResult<T, Settlement>> {
     const rollbackFrontiers = this.loro.frontiers();
     const revisionBefore = this.revisionValue;
     const persistenceRevisionBefore = this.persistenceRevisionValue;
+    const persistenceMetadataSequenceBefore = this.persistenceMetadataSequenceValue;
+    const persistenceMetadataChangesBefore = this.persistenceMetadataChanges.map((change) => clone(change));
+    const operationHistoryBefore = this.history.entriesForSerialization(500).map((entry) => clone(entry));
+    const revisionDeltaBefore: CoreRevisionDelta = {
+      revision: this.lastRevisionDelta.revision,
+      changedNodeIds: [...this.lastRevisionDelta.changedNodeIds],
+      requiresFullSearchRebuild: this.lastRevisionDelta.requiresFullSearchRebuild,
+    };
     this.loro.clearTouchedNodeIds();
     this.activeTransaction = {
       origin: resolvedOrigin,
       metadata,
+      idFactory: options.idFactory,
       chunkedCommits: 0,
       affectedNodeIds: new Set(),
       originalNodes: new Map(),
@@ -1017,7 +1103,7 @@ export class Core {
       const finalized = this.finalizeActiveTransaction(transaction);
       this.activeTransaction = undefined;
       this.verifyCaches();
-      return {
+      const completed: CoreTransactionResult<T> = {
         result,
         patch: freezeCoreTransactionPatch({
           revisionBefore,
@@ -1028,10 +1114,21 @@ export class Core {
           nodes: finalized.nodes,
         }),
       };
+      if (!settle) return completed;
+      return {
+        ...completed,
+        settlement: await settle(completed),
+      };
     } catch (error) {
       this.loro.revertTo(rollbackFrontiers, SYSTEM_COMMIT_ORIGIN);
       this.loro.clearTouchedNodeIds();
       this.activeTransaction = undefined;
+      this.revisionValue = revisionBefore;
+      this.persistenceRevisionValue = persistenceRevisionBefore;
+      this.persistenceMetadataSequenceValue = persistenceMetadataSequenceBefore;
+      this.persistenceMetadataChanges = persistenceMetadataChangesBefore;
+      this.history = new OperationJournal(operationHistoryBefore);
+      this.lastRevisionDelta = revisionDeltaBefore;
       // The revert rewrites the tree wholesale; drop the projection cache so the
       // next read rebuilds it from the rolled-back state.
       this.invalidateProjectionCache();
@@ -1299,6 +1396,78 @@ export class Core {
       };
       for (const [treeIndex, tree] of trees.entries()) {
         insert(parentId, tree, index === undefined || index === null ? index : index + treeIndex);
+      }
+      created = true;
+      const last = trees.at(-1);
+      return last ? focus(last.id, { parentId, placement: { kind: 'end' } }) : undefined;
+    });
+    return created;
+  }
+
+  async tryCreateResolvedContentTreesYielding(
+    parentId: string,
+    index: number | null | undefined,
+    trees: readonly ResolvedContentTree[],
+    options: { yieldEveryNodes?: number; commitEveryNodes?: number; yield?: () => Promise<void> } = {},
+  ): Promise<boolean> {
+    let created = false;
+    await this.mutateAsyncFocus(async () => {
+      const state = this.snapshot();
+      ensureParentMutable(state, parentId);
+      const ids = new Set<NodeId>();
+      const yieldEveryNodes = Math.max(1, options.yieldEveryNodes ?? 250);
+      const yieldOperation = options.yield ?? yieldToEventLoop;
+      let processed = 0;
+      const yieldIfNeeded = async () => {
+        processed += 1;
+        if (processed % yieldEveryNodes === 0) await yieldOperation();
+      };
+      const preflight = async (tree: ResolvedContentTree): Promise<boolean> => {
+        if (!isClientNodeId(tree.id) || ids.has(tree.id) || state.nodes[tree.id]) return false;
+        ids.add(tree.id);
+        for (const tagId of tree.tagIds ?? []) ensureTagDefinition(state, tagId);
+        await yieldIfNeeded();
+        for (const child of tree.children) {
+          if (!await preflight(child)) return false;
+        }
+        return true;
+      };
+      for (const tree of trees) {
+        if (!await preflight(tree)) return undefined;
+      }
+
+      processed = 0;
+      const total = countResolvedContentTrees(trees);
+      const commitEveryNodes = options.commitEveryNodes
+        ? Math.max(1, options.commitEveryNodes)
+        : undefined;
+      const insert = async (
+        parent: string,
+        tree: ResolvedContentTree,
+        targetIndex: number | null | undefined,
+      ): Promise<void> => {
+        const type = tree.type === 'codeBlock' ? 'codeBlock' : undefined;
+        this.loro.createNodeWithId(tree.id, parent, targetIndex, type, (node) => {
+          node.content = clone(tree.content);
+          const description = normalizeOptionalText(tree.description);
+          if (description !== undefined) node.description = description;
+          if (type === 'codeBlock') {
+            (node as CodeBlockNode).codeLanguage = normalizeCodeLanguage(tree.codeLanguage) || undefined;
+          }
+          if (tree.done) node.completedAt = nowMs();
+          else if (tree.checkbox) node.completedAt = 0;
+        });
+        this.applyChildTagsDirect(parent, tree.id);
+        for (const tagId of tree.tagIds ?? []) this.applyTagNoHistoryDirect(tree.id, tagId);
+        processed += 1;
+        if (commitEveryNodes && processed % commitEveryNodes === 0 && processed < total) {
+          this.commitActiveTransactionChunk();
+        }
+        if (processed % yieldEveryNodes === 0) await yieldOperation();
+        for (const child of tree.children) await insert(tree.id, child, undefined);
+      };
+      for (const [treeIndex, tree] of trees.entries()) {
+        await insert(parentId, tree, index === undefined || index === null ? index : index + treeIndex);
       }
       created = true;
       const last = trees.at(-1);
@@ -1987,7 +2156,9 @@ export class Core {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureNodeEditable(state, nodeId);
-      this.writeDoneStateDirect(state, nodeId, toggleNodeDone);
+      this.writeDoneStateDirect(state, nodeId, (node, tagDriven) => {
+        applyCompletedAtTransition(node, { tagDriven, transition: 'toggle' });
+      });
       return focus(nodeId);
     });
   }
@@ -1996,7 +2167,9 @@ export class Core {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureNodeEditable(state, nodeId);
-      this.writeDoneStateDirect(state, nodeId, cycleNodeDoneState);
+      this.writeDoneStateDirect(state, nodeId, (node, tagDriven) => {
+        applyCompletedAtTransition(node, { tagDriven, transition: 'cycle' });
+      });
       return focus(nodeId);
     });
   }
@@ -2056,7 +2229,9 @@ export class Core {
         const state = this.snapshot();
         if (!state.nodes[nodeId]) continue;
         ensureNodeEditable(state, nodeId);
-        this.writeDoneStateDirect(state, nodeId, toggleNodeDone);
+        this.writeDoneStateDirect(state, nodeId, (node, tagDriven) => {
+          applyCompletedAtTransition(node, { tagDriven, transition: 'toggle' });
+        });
       }
       return undefined;
     });
@@ -2068,7 +2243,9 @@ export class Core {
         const state = this.snapshot();
         if (!state.nodes[nodeId]) continue;
         ensureNodeEditable(state, nodeId);
-        this.writeDoneStateDirect(state, nodeId, cycleNodeDoneState);
+        this.writeDoneStateDirect(state, nodeId, (node, tagDriven) => {
+          applyCompletedAtTransition(node, { tagDriven, transition: 'cycle' });
+        });
       }
       return undefined;
     });
@@ -2210,6 +2387,37 @@ export class Core {
       if (existing) return focus(existing);
       const id = this.createTagDefDirect(normalized, proposedId);
       return focus(id);
+    });
+  }
+
+  ensureProtectedTagDefinition(name: string, proposedId: string): CommandOutcome {
+    const normalized = name.trim();
+    if (!normalized) throw CoreError.invalidOperation('tag name cannot be empty');
+    return this.mutate(() => {
+      const state = this.snapshot();
+      const sameNameId = findTagByName(state, normalized);
+      if (sameNameId && sameNameId !== proposedId) {
+        throw CoreError.invalidOperation(`tag name is already bound to another ID: ${normalized}`);
+      }
+      const existing = state.nodes[proposedId];
+      if (!existing) return focus(this.createTagDefDirect(normalized, proposedId, true));
+      if (existing.type !== 'tagDef') {
+        throw CoreError.invalidOperation(`protected tag definition identity is invalid: ${proposedId}`);
+      }
+      if (existing.content.text !== normalized
+        || !existing.locked
+        || existing.parentId !== SCHEMA_ID
+        || existing.trashedFromParentId !== undefined) {
+        const protectedNode = clone(existing);
+        protectedNode.content = plainText(normalized);
+        protectedNode.locked = true;
+        delete protectedNode.trashedFromParentId;
+        delete protectedNode.trashedFromIndex;
+        protectedNode.updatedAt = nowMs();
+        this.loro.writeNode(protectedNode);
+        if (existing.parentId !== SCHEMA_ID) this.loro.moveNode(proposedId, SCHEMA_ID, undefined);
+      }
+      return focus(proposedId);
     });
   }
 
@@ -3251,7 +3459,7 @@ export class Core {
     });
   }
 
-  convertReferenceToInlineNode(referenceId: string): CommandOutcome {
+  convertReferenceToInlineNode(referenceId: string, replacementId?: string): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureNodeMovable(state, referenceId);
@@ -3264,7 +3472,13 @@ export class Core {
       if (!parentId) throw CoreError.noParent();
       ensureParentMutable(state, parentId);
       const index = childIndex(state, parentId, referenceId) ?? 0;
-      const inlineNodeId = this.createInlineReferenceNodeDirect(state, parentId, index, targetId);
+      const inlineNodeId = this.createInlineReferenceNodeDirect(
+        state,
+        parentId,
+        index,
+        targetId,
+        replacementId,
+      );
       this.removeSubtreeDirect(referenceId);
       return focus(inlineNodeId, {
         parentId,
@@ -3273,7 +3487,11 @@ export class Core {
     });
   }
 
-  restoreInlineReferenceNodeToReference(nodeId: string, targetId: string): CommandOutcome {
+  restoreInlineReferenceNodeToReference(
+    nodeId: string,
+    targetId: string,
+    replacementId?: string,
+  ): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureNodeMovable(state, nodeId);
@@ -3288,7 +3506,7 @@ export class Core {
       if (wouldCreateReferenceCycle(state, parentId, resolvedTargetId)) throw CoreError.referenceCycle();
       ensureParentCanContainChildInstance(state, parentId, resolvedTargetId, nodeId);
       const index = childIndex(state, parentId, nodeId) ?? 0;
-      const referenceId = this.freshId('ref');
+      const referenceId = this.resolveRuntimeNodeId(state, replacementId, 'ref');
       this.loro.createNodeWithId<ReferenceNode>(referenceId, parentId, index, 'reference', (reference) => {
         reference.targetId = resolvedTargetId;
       });
@@ -4403,7 +4621,7 @@ export class Core {
   }
 
   private freshId(prefix: string): string {
-    return this.idFactory(prefix);
+    return (this.activeTransaction?.idFactory ?? this.idFactory)(prefix);
   }
 
   private resolveRuntimeNodeId(state: DocumentState, id: string | undefined, prefix: string): string {
@@ -4428,9 +4646,12 @@ export class Core {
     parentId: string,
     index: number | null | undefined,
     targetId: string,
+    replacementId?: string,
   ) {
     const target = requiredNode(state, targetId);
-    return this.createRichTextNodeDirect(parentId, index, {
+    const inlineNodeId = this.resolveRuntimeNodeId(state, replacementId, 'node');
+    this.loro.createNodeWithId(inlineNodeId, parentId, index, undefined, (node) => {
+      node.content = {
       text: '',
       marks: [],
       inlineRefs: [{
@@ -4438,14 +4659,17 @@ export class Core {
         target: nodeReferenceTarget(targetId),
         displayName: target.content.text || undefined,
       }],
+      };
     });
+    return inlineNodeId;
   }
 
-  private createTagDefDirect(name: string, proposedId?: string) {
+  private createTagDefDirect(name: string, proposedId?: string, locked = false) {
     const id = proposedId ?? this.freshId('tag');
     const color = nextTagColor(this.snapshot());
     this.loro.createNodeWithId(id, SCHEMA_ID, undefined, 'tagDef', (node) => {
       node.content = plainText(name);
+      node.locked = locked;
     });
     // config-as-nodes: the round-robin auto color lives in the defConfig subtree.
     this.setConfigValueDirect(id, { kind: 'scalar', configKey: 'color', text: color });
@@ -5635,37 +5859,22 @@ function nowMs() {
   return Date.now();
 }
 
-// Checkbox click (nodex `resolveCheckboxClick`): toggle undone ↔ done, never
-// removing the checkbox. Tag-driven nodes keep their checkbox via the tag, so
-// undone clears the timestamp entirely; manual nodes fall back to the undone
-// sentinel (0) to keep the box visible.
-function toggleNodeDone(node: Node, tagDriven: boolean) {
-  if (nodeIsDone(node)) {
-    if (tagDriven) delete node.completedAt;
-    else node.completedAt = 0;
-  } else {
-    node.completedAt = nowMs();
-  }
-}
-
-// Cmd+Enter cycle (nodex `resolveCmdEnterCycle`): tag-driven nodes are a 2-state
-// toggle (undone ↔ done); manual nodes cycle no-checkbox → undone → done → none.
-function cycleNodeDoneState(node: Node, tagDriven: boolean) {
-  if (tagDriven) {
-    if (nodeIsDone(node)) delete node.completedAt;
-    else node.completedAt = nowMs();
-    return;
-  }
-  if (node.completedAt === undefined) node.completedAt = 0;
-  else if (node.completedAt === 0) node.completedAt = nowMs();
-  else delete node.completedAt;
-}
-
 function freshId(prefix: string): string {
   return `${prefix}:${crypto.randomUUID()}`;
 }
 
 function countCreateNodeTrees(nodes: readonly CreateNodeTree[]): number {
+  let count = 0;
+  const stack = [...nodes];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    count += 1;
+    stack.push(...node.children);
+  }
+  return count;
+}
+
+function countResolvedContentTrees(nodes: readonly ResolvedContentTree[]): number {
   let count = 0;
   const stack = [...nodes];
   while (stack.length > 0) {

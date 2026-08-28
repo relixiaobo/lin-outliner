@@ -25,12 +25,18 @@ export interface OutlineClientSupervisorOptions {
   readonly startupTimeoutMs?: number;
   readonly requestTimeoutMs?: number;
   readonly launch?: OutlineRuntimeLaunch;
+  readonly expectedDevelopmentSessionId?: string;
   readonly origin?: 'desktop' | 'local-user' | 'external-client' | 'built-in-agent';
   readonly agentAttestation?: string;
 }
 
 export class OutlineClientSupervisor {
-  constructor(private readonly options: OutlineClientSupervisorOptions) {}
+  constructor(private readonly options: OutlineClientSupervisorOptions) {
+    const value = options.expectedDevelopmentSessionId;
+    if (value !== undefined && (value.length < 1 || value.length > 128)) {
+      throw new RangeError('Expected Outline Runtime development session ID must contain between 1 and 128 characters.');
+    }
+  }
 
   async connect(signal?: AbortSignal): Promise<OutlineClient> {
     outlineCapabilityContractDigest();
@@ -42,7 +48,7 @@ export class OutlineClientSupervisor {
     } catch (error) {
       if (this.options.noStart
         || !isProtocolIncompatible(error)
-        || !await this.retireIncompatibleRuntime(deadline, signal)) throw error;
+        || !await this.retireMismatchedRuntime(deadline, signal)) throw error;
       existing = await this.tryConnectBefore(deadline, signal);
     }
     if (existing) return existing;
@@ -97,6 +103,50 @@ export class OutlineClientSupervisor {
     }
   }
 
+  async shutdown(signal?: AbortSignal): Promise<void> {
+    outlineCapabilityContractDigest();
+    const deadline = Date.now() + Math.max(
+      1,
+      this.options.startupTimeoutMs ?? OUTLINE_DEFAULT_STARTUP_TIMEOUT_MS,
+    );
+    const descriptor = await readOutlineRuntimeDescriptor(this.options.root);
+    if (!descriptor) return;
+    this.assertCompatibleDescriptor(descriptor);
+    if (!await descriptorHasMatchingRuntimeOwner(this.options.root, descriptor)) {
+      throw runtimeUnavailable('Outline Runtime shutdown refused a descriptor without its matching owner.');
+    }
+
+    const probe = deadlineSignal(signal, Math.max(1, deadline - Date.now()));
+    const client = new OutlineClient(descriptor, {
+      origin: 'desktop',
+      ...(this.options.requestTimeoutMs ? { requestTimeoutMs: this.options.requestTimeoutMs } : {}),
+    });
+    try {
+      const identity = await client.probeRuntimeIdentity(probe.signal);
+      if (identity.instanceId !== descriptor.instanceId
+        || identity.contractDigest !== descriptor.contractDigest
+        || !await this.descriptorStillOwned(descriptor)) {
+        throw runtimeUnavailable('Outline Runtime changed ownership before shutdown.');
+      }
+      await client.manageDesktopRuntime('shutdown', undefined, probe.signal);
+      client.close();
+      await this.waitForRuntimeRelease(
+        descriptor,
+        deadline,
+        probe.signal,
+        'Outline Runtime shutdown did not release its descriptor and owner before the startup timeout.',
+      );
+    } catch (error) {
+      if (probe.timedOut() && !signal?.aborted) {
+        throw runtimeUnavailable('Outline Runtime shutdown exceeded the startup timeout.', error);
+      }
+      throw error;
+    } finally {
+      probe.cleanup();
+      client.close();
+    }
+  }
+
   private async tryConnectBefore(deadline: number, signal?: AbortSignal): Promise<OutlineClient | null> {
     const remaining = Math.max(1, deadline - Date.now());
     const probe = deadlineSignal(signal, remaining);
@@ -114,13 +164,7 @@ export class OutlineClientSupervisor {
   private async tryConnect(signal?: AbortSignal): Promise<OutlineClient | null> {
     const descriptor = await readOutlineRuntimeDescriptor(this.options.root);
     if (!descriptor) return null;
-    const expectedDigest = outlineCapabilityContractDigest();
-    if (descriptor.contractDigest !== expectedDigest) {
-      throw protocolIncompatible(
-        'Bundled CLI contract does not match the Outline Runtime descriptor.',
-        { expectedDigest, actualDigest: descriptor.contractDigest },
-      );
-    }
+    this.assertCompatibleDescriptor(descriptor);
     const client = new OutlineClient(descriptor, {
       ...(this.options.origin ? { origin: this.options.origin } : {}),
       ...(this.options.agentAttestation ? { agentAttestation: this.options.agentAttestation } : {}),
@@ -137,37 +181,47 @@ export class OutlineClientSupervisor {
     }
   }
 
-  private async retireIncompatibleRuntime(deadline: number, signal?: AbortSignal): Promise<boolean> {
+  private async retireMismatchedRuntime(deadline: number, signal?: AbortSignal): Promise<boolean> {
     const descriptor = await readOutlineRuntimeDescriptor(this.options.root);
     if (!descriptor) return true;
     const expectedDigest = outlineCapabilityContractDigest();
-    if (descriptor.contractDigest === expectedDigest) return false;
+    const expectedDevelopmentSessionId = this.options.expectedDevelopmentSessionId;
+    if (descriptor.contractDigest === expectedDigest
+      && (!expectedDevelopmentSessionId
+        || descriptor.developmentSessionId === expectedDevelopmentSessionId)) return false;
     if (!await descriptorHasMatchingRuntimeOwner(this.options.root, descriptor)) return false;
 
+    const claim = await acquireOutlineRuntimeRetirementClaim(this.options.root, descriptor.instanceId);
     const probe = deadlineSignal(signal, Math.max(1, deadline - Date.now()));
     const client = new OutlineClient(descriptor);
     try {
-      const identity = await client.probeRuntimeIdentity(probe.signal);
-      if (identity.instanceId !== descriptor.instanceId
-        || identity.contractDigest !== descriptor.contractDigest
-        || !await this.descriptorStillOwned(descriptor)) return false;
-
-      const claim = await acquireOutlineRuntimeRetirementClaim(this.options.root, descriptor.instanceId);
-      try {
-        if (claim.owned) await this.requestRuntimeRetirement(client, descriptor, expectedDigest, probe.signal);
-        await this.waitForRuntimeRelease(descriptor, deadline, probe.signal);
-        return true;
-      } finally {
-        await claim.release();
+      if (claim.owned) {
+        const identity = await client.probeRuntimeIdentity(probe.signal);
+        if (identity.instanceId !== descriptor.instanceId
+          || identity.contractDigest !== descriptor.contractDigest
+          || !await this.descriptorStillOwned(descriptor)) return false;
+        await this.requestRuntimeRetirement(
+          client,
+          descriptor,
+          expectedDigest,
+          expectedDevelopmentSessionId,
+          probe.signal,
+        );
       }
+      await this.waitForRuntimeRelease(descriptor, deadline, probe.signal);
+      return true;
     } catch (error) {
       if (probe.timedOut() && !signal?.aborted) {
         throw runtimeUnavailable('Outline Runtime replacement exceeded the startup timeout.', error);
       }
       throw error;
     } finally {
-      probe.cleanup();
-      client.close();
+      try {
+        await claim.release();
+      } finally {
+        probe.cleanup();
+        client.close();
+      }
     }
   }
 
@@ -175,17 +229,26 @@ export class OutlineClientSupervisor {
     client: OutlineClient,
     descriptor: RuntimeDescriptor,
     expectedDigest: string,
+    expectedDevelopmentSessionId: string | undefined,
     signal: AbortSignal,
   ): Promise<void> {
     let retirementRequested = false;
     try {
       retirementRequested = await client.requestRuntimeRetirement(
         descriptor.instanceId,
-        expectedDigest,
+        {
+          contractDigest: expectedDigest,
+          ...(expectedDevelopmentSessionId ? {
+            developmentSessionId: expectedDevelopmentSessionId,
+          } : {}),
+        },
         signal,
       );
     } catch (error) {
-      if (!isUnavailableConnection(error)) throw error;
+      const oldRuntimeCannotRetireSameContract = descriptor.contractDigest === expectedDigest
+        && expectedDevelopmentSessionId !== undefined
+        && isUnsupportedDevelopmentRetirement(error);
+      if (!isUnavailableConnection(error) && !oldRuntimeCannotRetireSameContract) throw error;
     }
     if (!retirementRequested && await this.descriptorStillOwned(descriptor)) {
       try {
@@ -200,6 +263,7 @@ export class OutlineClientSupervisor {
     descriptor: RuntimeDescriptor,
     deadline: number,
     signal: AbortSignal,
+    timeoutMessage = 'The incompatible Outline Runtime did not retire before the startup timeout.',
   ): Promise<void> {
     while (Date.now() < deadline) {
       const [current, ownerStillMatches] = await Promise.all([
@@ -210,9 +274,30 @@ export class OutlineClientSupervisor {
       await delay(Math.min(25, Math.max(1, deadline - Date.now())), signal);
     }
     throw runtimeUnavailable(
-      'The incompatible Outline Runtime did not retire before the startup timeout.',
+      timeoutMessage,
       JSON.stringify({ pid: descriptor.pid, instanceId: descriptor.instanceId }),
     );
+  }
+
+  private assertCompatibleDescriptor(descriptor: RuntimeDescriptor): void {
+    const expectedDigest = outlineCapabilityContractDigest();
+    if (descriptor.contractDigest !== expectedDigest) {
+      throw protocolIncompatible(
+        'Bundled CLI contract does not match the Outline Runtime descriptor.',
+        { expectedDigest, actualDigest: descriptor.contractDigest },
+      );
+    }
+    const expectedDevelopmentSessionId = this.options.expectedDevelopmentSessionId;
+    if (expectedDevelopmentSessionId
+      && descriptor.developmentSessionId !== expectedDevelopmentSessionId) {
+      throw protocolIncompatible(
+        'The Outline Runtime belongs to a different development session.',
+        {
+          expectedDevelopmentSessionId,
+          actualDevelopmentSessionId: descriptor.developmentSessionId,
+        },
+      );
+    }
   }
 
   private async descriptorStillOwned(descriptor: RuntimeDescriptor): Promise<boolean> {
@@ -235,6 +320,9 @@ export class OutlineClientSupervisor {
         ELECTRON_RUN_AS_NODE: '1',
         TENON_CONTENT_ROOT: this.options.contentRoot,
         ...launch.env,
+        ...(this.options.expectedDevelopmentSessionId ? {
+          TENON_OUTLINE_RUNTIME_DEVELOPMENT_SESSION_ID: this.options.expectedDevelopmentSessionId,
+        } : {}),
       },
     });
     child.unref();
@@ -299,6 +387,12 @@ function isProtocolIncompatible(error: unknown): boolean {
     && error.outlineError.code === 'protocol_incompatible';
 }
 
+function isUnsupportedDevelopmentRetirement(error: unknown): boolean {
+  return error instanceof OutlineContractError
+    && (error.outlineError.code === 'invalid_input'
+      || error.outlineError.code === 'protocol_incompatible');
+}
+
 function isMissingProcess(error: unknown): boolean {
   return isRecord(error) && error.code === 'ESRCH';
 }
@@ -309,7 +403,10 @@ function sameRuntimeDescriptor(left: RuntimeDescriptor, right: RuntimeDescriptor
     && left.createdAt === right.createdAt
     && left.socketPath === right.socketPath
     && left.bearerToken === right.bearerToken
-    && left.contractDigest === right.contractDigest;
+    && left.contractDigest === right.contractDigest
+    && left.runtimeVersion === right.runtimeVersion
+    && left.developmentSessionId === right.developmentSessionId
+    && left.storageVersion === right.storageVersion;
 }
 
 function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {

@@ -74,8 +74,10 @@ function uiState(patch: Partial<UiState> = {}): UiState {
     focusRequest: null,
     pendingInputChar: null,
     pendingReferenceConversion: null,
-    pendingReferenceTypeAhead: null,
     trailingDraftPlacement: null,
+    pendingStructuralChanges: [],
+    pendingNodePatches: new Map(),
+    pendingRemovalIds: new Set(),
     expanded: new Set(),
     expandedHiddenFields: new Set(),
     editingDescriptionId: null,
@@ -643,7 +645,6 @@ describe('reduceUiStateForProjectionUpdate', () => {
       focusRequest: { target: focusTarget, placement: { kind: 'end' } },
       pendingInputChar: { target: focusTarget, char: 'x' },
       pendingReferenceConversion: { nodeId: 'a', parentId: 'root', targetId: 'c' },
-      pendingReferenceTypeAhead: { nodeId: 'c', parentId: 'b', targetId: 'a2' },
       trailingDraftPlacement: { parentId: 'c', afterId: null, panelId: 'panel-1' },
       expanded: new Set(['a', 'b', 'c']),
       editingDescriptionId: 'c',
@@ -664,7 +665,6 @@ describe('reduceUiStateForProjectionUpdate', () => {
     expect(next.focusSurface).toBeNull();
     expect(next.focusRequest).toBeNull();
     expect(next.pendingInputChar).toBeNull();
-    expect(next.pendingReferenceTypeAhead).toBeNull();
     expect(next.trailingDraftPlacement).toBeNull();
     expect(next.selectedId).toBe('a');
     expect(next.selectedIds).toEqual(new Set(['a']));
@@ -690,7 +690,6 @@ describe('reduceUiStateForProjectionUpdate', () => {
       focusRequest: { target: removedTarget, placement: { kind: 'end' } },
       pendingInputChar: { target: removedTarget, char: 'x' },
       pendingReferenceConversion: { nodeId: 'a', parentId: 'root', targetId: 'c' },
-      pendingReferenceTypeAhead: { nodeId: 'a', parentId: 'root', targetId: 'c' },
       trailingDraftPlacement: { parentId: 'a', afterId: 'b', panelId: 'panel-1' },
     });
 
@@ -709,7 +708,6 @@ describe('reduceUiStateForProjectionUpdate', () => {
     expect(next.focusRequest).toBeNull();
     expect(next.pendingInputChar).toBeNull();
     expect(next.pendingReferenceConversion).toBeNull();
-    expect(next.pendingReferenceTypeAhead).toBeNull();
     expect(next.trailingDraftPlacement).toBeNull();
   });
 
@@ -725,7 +723,6 @@ describe('reduceUiStateForProjectionUpdate', () => {
       selectedIds: new Set(['c']),
       focusRequest: { target: focusTarget, placement: { kind: 'end' } },
       pendingInputChar: { target: focusTarget, char: 'x' },
-      pendingReferenceTypeAhead: { nodeId: 'c', parentId: 'b', targetId: 'a2' },
       trailingDraftPlacement: { parentId: 'b', afterId: 'c', panelId: 'panel-1' },
     });
 
@@ -747,7 +744,6 @@ describe('reduceUiStateForProjectionUpdate', () => {
     expect(next.focusSurface).toBeNull();
     expect(next.focusRequest).toBeNull();
     expect(next.pendingInputChar).toBeNull();
-    expect(next.pendingReferenceTypeAhead).toBeNull();
     expect(next.trailingDraftPlacement).toBeNull();
     expect(next.selectedIds).toEqual(new Set(['c']));
   });

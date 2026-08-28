@@ -139,7 +139,12 @@ import {
   type SettingsOpenTarget,
 } from '../core/settingsWindow';
 import { LIN_WINDOW_ACTIVE_CHANNEL } from '../core/windowActivity';
-import { ASSET_URL_SCHEME, PREVIEW_LOCAL_URL_SCHEME, previewLocalUrl } from '../core/assets';
+import {
+  ASSET_URL_SCHEME,
+  PREVIEW_LOCAL_URL_SCHEME,
+  assetIdFromUrl,
+  previewLocalUrl,
+} from '../core/assets';
 import { normalizePreviewHttpUrl } from '../core/preview';
 import { officeOwnershipFileInfo } from '../core/officeFiles';
 import {
@@ -447,16 +452,26 @@ const APP_ICON_PNG_PATH = app.isPackaged
   : join(__dirname, '../../build/icon.png');
 const outlineRuntimeRoot = join(resolvedUserDataDir, 'outline-runtime');
 const outlineContentRoot = join(resolvedUserDataDir, 'content');
+const outlineDevelopmentSessionId = app.isPackaged ? undefined : `desktop:${randomUUID()}`;
 const outlineClientSupervisor = new OutlineClientSupervisor({
   root: outlineRuntimeRoot,
   contentRoot: outlineContentRoot,
   launch: desktopOutlineRuntimeLaunch(outlineRuntimeRoot, outlineContentRoot),
+  ...(outlineDevelopmentSessionId ? { expectedDevelopmentSessionId: outlineDevelopmentSessionId } : {}),
   origin: 'desktop',
 });
 const desktopOutlineClient = new DesktopOutlineClient({
   connect: () => outlineClientSupervisor.connect(),
 });
 const outlineDocumentService = new OutlineDocumentService(outlineClientSupervisor);
+outlineDocumentService.setDurabilityFailureHandler((error, revision) => reportError({
+  domain: 'document',
+  severity: 'error',
+  code: 'workspace-save-failed',
+  message: `Workspace save failed at revision ${revision}.`,
+  context: { operation: 'workspace-save', revision },
+  error,
+}));
 configureOutlineCliRuntime({
   isPackaged: app.isPackaged,
   moduleDir: __dirname,
@@ -1379,12 +1394,18 @@ async function recordDocumentNodeAccess(nodeIds: readonly string[], source: Node
   const existingIds = new Set(outlineDocumentService.projectionNodesByIds(uniqueIds).map((node) => node.id));
   const validIds = uniqueIds.filter((nodeId) => existingIds.has(nodeId));
   if (validIds.length === 0) return;
-  await nodeAccessStore.recordMany(validIds, source);
+  const update = await nodeAccessStore.recordMany(validIds, source);
+  await outlineDocumentService.upsertPersonalAccessRanking(update.upserted);
+  if (update.removed.length > 0) {
+    await outlineDocumentService.removePersonalAccessRanking(update.removed);
+  }
 }
 
 function pruneNodeAccessForProjectionUpdate(update: ProjectionUpdate): void {
   if (update.kind === 'full') {
-    void nodeAccessStore.retainOnly(update.projection.nodes.map((node) => node.id)).catch(() => undefined);
+    void nodeAccessStore.retainOnly(update.projection.nodes.map((node) => node.id))
+      .then(() => outlineDocumentService.replacePersonalAccessRanking(nodeAccessStore.snapshot()))
+      .catch(() => undefined);
     return;
   }
   const trashedIds = update.changedNodes
@@ -1397,7 +1418,9 @@ function pruneNodeAccessForProjectionUpdate(update: ProjectionUpdate): void {
     }
   }
   if (staleIds.size === 0) return;
-  void nodeAccessStore.deleteMany([...staleIds]).catch(() => undefined);
+  void nodeAccessStore.deleteMany([...staleIds])
+    .then(() => outlineDocumentService.removePersonalAccessRanking([...staleIds]))
+    .catch(() => undefined);
 }
 
 function descendantProjectionIds(rootIds: readonly string[], nodes: readonly NodeProjection[]): string[] {
@@ -4965,9 +4988,9 @@ if (!app.requestSingleInstanceLock()) {
     freezeAdmission: () => outlineDocumentService.freezeMutationAdmission(),
     unfreezeAdmission: () => outlineDocumentService.unfreezeMutationAdmission(),
     commitAdmissionFreeze: () => outlineDocumentService.commitMutationAdmissionFreeze(),
-    latestAcceptedRevision: () => outlineDocumentService.latestAcceptedMutationSequence(),
-    durableRevision: () => outlineDocumentService.settledMutationSequence(),
-    drainToRevision: (revision) => outlineDocumentService.drainMutations(revision),
+    latestAcceptedRevision: () => outlineDocumentService.latestAcceptedRevision(),
+    durableRevision: () => outlineDocumentService.durableRevision(),
+    drainToRevision: (revision) => outlineDocumentService.drainToRevision(revision),
     showDrainFailure: async (error, outcome): Promise<QuitDecision> => {
       const strings = getMessages(effectiveLocale()).dialog;
       const parent = liveWindow(mainWindow);
@@ -4985,6 +5008,7 @@ if (!app.requestSingleInstanceLock()) {
       return response.response === 0 ? 'retry' : response.response === 1 ? 'quit-anyway' : 'cancel';
     },
     teardown: teardownForQuit,
+    shutdownRuntime: (signal) => outlineClientSupervisor.shutdown(signal),
     exit: () => app.exit(0),
   });
 
@@ -5010,6 +5034,16 @@ if (!app.requestSingleInstanceLock()) {
         error,
       });
     });
+    await outlineDocumentService.replacePersonalAccessRanking(nodeAccessStore.snapshot()).catch((error) => {
+      reportError({
+        domain: 'node-access',
+        severity: 'warn',
+        code: 'node-access-runtime-sync',
+        message: 'Node access ranking Runtime sync failed',
+        context: { operation: 'runtime-sync' },
+        error,
+      });
+    });
     const icon = nativeImage.createFromPath(APP_ICON_PNG_PATH);
     if (process.platform === 'darwin' && !icon.isEmpty()) app.dock?.setIcon(icon);
     app.setAboutPanelOptions({
@@ -5019,8 +5053,10 @@ if (!app.requestSingleInstanceLock()) {
       ...(icon.isEmpty() ? {} : { iconPath: APP_ICON_PNG_PATH }),
     });
     protocol.handle(ASSET_URL_SCHEME, (request) => {
-      const id = new URL(request.url).hostname;
-      return assetService.serve(id, request);
+      const assetId = assetIdFromUrl(request.url);
+      return assetId
+        ? assetService.serve(assetId, request)
+        : new Response('Asset not found', { status: 404, headers: { 'content-type': 'text/plain' } });
     });
     protocol.handle(PREVIEW_LOCAL_URL_SCHEME, (request) => {
       const token = new URL(request.url).hostname;
@@ -5094,7 +5130,7 @@ if (!app.requestSingleInstanceLock()) {
       });
       // Phase 2 is irreversible. A teardown rejection still calls app.exit and
       // must not reopen document admission after services have started closing.
-      if (quitCoordinator.phase() === 'idle') outlineDocumentService.unfreezeMutationAdmission();
+      if (quitCoordinator.phase() === 'idle') void outlineDocumentService.unfreezeMutationAdmission();
     });
   });
 }

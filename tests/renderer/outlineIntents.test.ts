@@ -230,6 +230,88 @@ describe('renderer Outline intents', () => {
     expect(firstUpdate(harness.changeSets[2]!)).toEqual({ kind: 'checkbox', visible: false });
   });
 
+  test('creates and converts unchecked checkbox rows atomically', async () => {
+    const harness = await createHarness([
+      node('root', { children: ['target'] }),
+      node('target', { parentId: 'root', content: rich('/checkbox') }),
+    ]);
+
+    await outlineDocumentApi.createCheckboxNode('root', 1, rich('Created'), 'created-checkbox');
+    await outlineDocumentApi.convertNodeToCheckbox('target', rich('Converted'));
+
+    expect(harness.changeSets[0]!.operations).toEqual([{
+      op: 'create',
+      placement: { kind: 'index', parent: oneId('root'), index: 1 },
+      nodes: [{
+        id: 'created-checkbox',
+        content: rich('Created'),
+        children: [],
+        checkbox: true,
+        done: false,
+      }],
+    }]);
+    expect(harness.changeSets[1]!.operations).toEqual([{
+      op: 'update',
+      targets: oneId('target'),
+      changes: [
+        { kind: 'content', value: rich('Converted') },
+        { kind: 'checkbox', visible: true },
+      ],
+    }]);
+  });
+
+  test('replaces tag trigger content and applies an existing tag atomically', async () => {
+    const harness = await createHarness([
+      node('root', { children: ['target'] }),
+      node('target', { parentId: 'root', content: rich('Task #project') }),
+      node('tag:project', { type: 'tagDef', content: rich('project') }),
+    ]);
+
+    await outlineDocumentApi.applyTagWithContent('target', 'tag:project', rich('Task '));
+
+    expect(harness.changeSets[0]!.operations).toEqual([{
+      op: 'update',
+      targets: oneId('target'),
+      changes: [
+        { kind: 'content', value: rich('Task ') },
+        { kind: 'tag', action: 'add', tag: oneId('tag:project') },
+      ],
+    }]);
+  });
+
+  test('ensures a renderer-reserved tag and applies it with trigger content in one ChangeSet', async () => {
+    const harness = await createHarness([
+      node('root', { children: ['target'] }),
+      node('target', { parentId: 'root', content: rich('#new') }),
+    ]);
+
+    await outlineDocumentApi.createTagAndApplyWithContent(
+      'target',
+      'new',
+      rich(''),
+      'node:reserved-tag',
+    );
+
+    expect(harness.changeSets[0]!.operations).toEqual([
+      {
+        op: 'ensure',
+        resource: 'definition',
+        definitionType: 'tag',
+        id: 'node:reserved-tag',
+        name: 'new',
+        bind: 'tag',
+      },
+      {
+        op: 'update',
+        targets: oneId('target'),
+        changes: [
+          { kind: 'content', value: rich('') },
+          { kind: 'tag', action: 'add', tag: { binding: 'tag' } },
+        ],
+      },
+    ]);
+  });
+
   test('reads desktop backlinks from the dedicated Projection collection', async () => {
     await createHarness([node('target')], [{
       targetId: 'target', sourceId: 'source', referenceId: 'reference', kind: 'tree',
@@ -282,6 +364,46 @@ describe('renderer Outline intents', () => {
     }]);
     expect(result.focus).toEqual({
       nodeId: 'trigger',
+      surface: 'field-name',
+      placement: { kind: 'all' },
+      selectAll: true,
+    });
+  });
+
+  test('binds a newly materialized draft before converting it into an inline field', async () => {
+    const harness = await createHarness([
+      node('root', { children: [] }),
+    ]);
+
+    const result = await outlineDocumentApi.createInlineField(
+      'root',
+      0,
+      '',
+      'plain',
+      undefined,
+      'node:field-entry',
+    );
+
+    expect(harness.changeSets[0]!.operations).toEqual([
+      {
+        op: 'create',
+        placement: { kind: 'index', parent: oneId('root'), index: 0 },
+        nodes: [{
+          id: 'node:field-entry',
+          content: { text: '', marks: [], inlineRefs: [] },
+          children: [],
+        }],
+        bind: 'field-entry',
+      },
+      {
+        op: 'update',
+        targets: { binding: 'field-entry' },
+        changes: [{ kind: 'field', action: 'convert', name: '', fieldType: 'plain' }],
+      },
+    ]);
+    expect(result.focus).toEqual({
+      nodeId: 'node:field-entry',
+      parentId: 'root',
       surface: 'field-name',
       placement: { kind: 'all' },
       selectAll: true,
@@ -384,6 +506,58 @@ describe('renderer Outline intents', () => {
     });
   });
 
+  test('deletes mixed rows through one contiguous ChangeSet', async () => {
+    const harness = await createHarness([
+      node('root', { children: ['body', 'owner'] }),
+      node('body', { parentId: 'root' }),
+      node('owner', { parentId: 'root', children: ['entry'] }),
+      node('field', { type: 'fieldDef' }),
+      node('entry', {
+        parentId: 'owner',
+        type: 'fieldEntry',
+        fieldDefId: 'field',
+        children: ['value-a', 'value-b'],
+      }),
+      node('value-a', { parentId: 'entry' }),
+      node('value-b', { parentId: 'entry' }),
+    ]);
+
+    await outlineDocumentApi.batchDeleteRows(['body'], ['value-a', 'value-b']);
+
+    expect(harness.commitInputs).toHaveLength(1);
+    expect(harness.commitInputs[0]!.operations).toEqual([
+      {
+        op: 'update',
+        targets: { target: { selector: { by: 'id', id: 'owner' }, cardinality: 'one' } },
+        changes: [
+          {
+            kind: 'field-slot',
+            field: { target: { selector: { by: 'id', id: 'field' }, cardinality: 'one' } },
+            mutation: {
+              action: 'remove-value',
+              value: { target: { selector: { by: 'id', id: 'value-a' }, cardinality: 'one' } },
+              entryId: 'entry',
+            },
+          },
+          {
+            kind: 'field-slot',
+            field: { target: { selector: { by: 'id', id: 'field' }, cardinality: 'one' } },
+            mutation: {
+              action: 'remove-value',
+              value: { target: { selector: { by: 'id', id: 'value-b' }, cardinality: 'one' } },
+              entryId: 'entry',
+            },
+          },
+        ],
+      },
+      {
+        op: 'lifecycle',
+        action: 'trash',
+        targets: { target: { selector: { by: 'id', id: 'body' }, cardinality: 'one' } },
+      },
+    ]);
+  });
+
   test('acknowledges only explicitly destructive desktop intents', async () => {
     const harness = await createHarness([
       node('root', { children: ['source', 'target'] }),
@@ -473,6 +647,26 @@ async function createHarness(
   let operationSequence = 0;
 
   const outline: NonNullable<LinApi['outline']> = {
+    commit: async (input) => {
+      const changeSet = input.changeSet;
+      changeSets.push(changeSet);
+      commitInputs.push(changeSet);
+      commitRequests.push(input);
+      revision += 1;
+      operationSequence += 1;
+      const operation = operationFor(revision, operationSequence);
+      return {
+        settlement: operation,
+        update: {
+          kind: 'delta',
+          revision,
+          todayId: projection.todayId,
+          changedNodes: [],
+          removedIds: [],
+        },
+        diff: diffFor(changeSet, revision - 1),
+      };
+    },
     request: async (request) => {
       if (request.command === 'show') {
         return success(request, {
@@ -484,18 +678,6 @@ async function createHarness(
         const changeSet = (request.input as { changeSet: ChangeSet }).changeSet;
         changeSets.push(changeSet);
         return success(request, diffFor(changeSet, revision));
-      }
-      if (request.command === 'commit') {
-        const input = request.input as { changeSet: ChangeSet; undoGroup?: OperationUndoGroup };
-        const changeSet = input.changeSet;
-        changeSets.push(changeSet);
-        commitInputs.push(changeSet);
-        commitRequests.push(input);
-        revision += 1;
-        operationSequence += 1;
-        const operation = operationFor(revision, operationSequence);
-        stream?.(eventFor(operation, operationSequence));
-        return success(request, operation);
       }
       if (request.command === 'apply') {
         const input = request.input as { diff: Diff; acknowledgeDestructive?: boolean };

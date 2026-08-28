@@ -1,6 +1,7 @@
 import {
   memo,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type Dispatch,
@@ -14,6 +15,7 @@ import {
 } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { api } from '../../api/client';
+import { freshNodeId } from '../../../core/nodeId';
 import type { OperationUndoGroup } from '../../../outline/contract';
 import type {
   AssetMetadata,
@@ -28,11 +30,12 @@ import type {
 } from '../../api/types';
 import { EMPTY_RICH_TEXT, inlineRefNodeId, nodeReferenceTarget, plainText, replaceAllRichTextPatch } from '../../api/types';
 import { projectFieldTypeById, nodeShowsCheckbox } from '../../../core/configProjection';
-import type { CursorPlacement } from '../../state/document';
+import type { CursorPlacement, FocusTarget } from '../../state/document';
 import {
   flattenVisibleRows,
   resolveReferenceTargetId,
   type DocumentIndex,
+  type PendingStructuralChange,
   type UiState,
 } from '../../state/document';
 import { referenceSummaryForIndex } from '../../state/referenceSummary';
@@ -47,6 +50,7 @@ import {
   richTextEquals,
 } from '../editor/richTextCodec';
 import { applyRichTextPatchToContent } from '../editor/richTextPatchApply';
+import { CoalescedTextPatchQueue } from '../editor/coalescedTextPatchQueue';
 import { indentTargetParentId, previousVisibleRowId } from '../interactions/outlinerStructure';
 import { resolveDropHoverPosition, type DropHoverPosition } from '../interactions/dropPosition';
 import { selectVisibleRowsState } from '../interactions/selectionActions';
@@ -58,7 +62,6 @@ import {
   ingestFiles,
 } from '../interactions/attachmentIngest';
 import { getTreeReferenceBlockReason } from '../interactions/referenceRules';
-import { armReferenceTypeAhead } from '../interactions/referenceTypeAhead';
 import { resolveFieldOptions, resolveSelectedOptionId, type FieldOption } from '../interactions/fieldOptions';
 import { resolveSelectedReferenceShortcut } from '../interactions/selectedReferenceShortcuts';
 import {
@@ -75,7 +78,7 @@ import type {
   TriggerAnchor,
   TriggerState,
 } from '../shared';
-import { collapseExpandedParentIds, commandRunnerAbort, commandRunnerNoop, outlinerChildren, parentIdsEmptiedByOutdent, textOf } from '../shared';
+import { commandRunnerAbort, commandRunnerNoop, outlinerChildren, parentIdsEmptiedByOutdent, textOf } from '../shared';
 import {
   clearFocusRequestState,
   clearFocusState,
@@ -106,7 +109,6 @@ import { DoneCheckbox } from './DoneCheckbox';
 import { NodeContextMenu } from './NodeContextMenu';
 import { NodeDescription } from './NodeDescription';
 import { OutlinerRowShell } from './OutlinerRowShell';
-import { OutlinerView } from './OutlinerView';
 import { animateOutlinerRowMovementAfterNextCommit } from './rowMoveAnimation';
 import {
   buildOutlinerRows,
@@ -117,7 +119,6 @@ import {
 } from './row-model';
 import { draftCreateIndex, previousDraftSiblingId } from '../../state/trailingDraftPlacement';
 import { selectableRowForId } from '../../state/selectableRows';
-import { IndentGuide } from './IndentGuide';
 import { RowLeading } from './RowLeading';
 import { makeDraftNode } from './draftRow';
 import { TrailingOptionsPopover } from './TrailingOptionsPopover';
@@ -128,6 +129,8 @@ import { CalendarIcon, ICON_SIZE, OpenIcon, WarningIcon } from '../icons';
 import {
   createPlaceholderInlineField,
   createPlaceholderInlineFieldAfterNode,
+  fieldDefinitionIdFromInlineFieldOutcome,
+  referenceTriggerFromSlash,
   triggerOwnsWholeText,
 } from './trailingTriggers';
 import {
@@ -144,6 +147,25 @@ import {
 } from './PopoverList';
 import { noteOutlinerItemRender } from './renderProbe';
 import { useT } from '../../i18n/I18nProvider';
+import { usePopoverSelection } from './usePopoverSelection';
+import {
+  addOptimisticRemovals,
+  clearOptimisticRemovals,
+  latestOptimisticStructuralDependency,
+  optimisticMergedNode,
+  optimisticReplacementAnchors,
+  startOptimisticStructuralEdit,
+  startOptimisticRelocation,
+  startOptimisticRemoval,
+  type BeginOptimisticStructuralEditInput,
+} from './optimisticStructuralEdit';
+import {
+  nodeWithPendingPatch,
+  optimisticTagPatch,
+  pendingNodePatch,
+  startOptimisticDoneTransition,
+  startOptimisticNodePatch,
+} from './optimisticNodePatch';
 
 const TEXT_EDIT_UNDO_GROUP_FLUSH_MS = 700;
 
@@ -169,7 +191,10 @@ interface OutlinerItemProps {
   onTogglePin: (nodeId: NodeId) => void;
   referencePath: readonly NodeId[];
   optionField?: NodeProjection;
-  onSelectOption?: (optionId: NodeId) => Promise<unknown> | unknown;
+  onSelectOption?: (
+    optionId: NodeId,
+    id?: NodeId,
+  ) => Promise<CommandRunnerOperationResult>;
   // Field-value editing context: present only when this row renders a field's
   // value (not body content). It makes the row create/select through the field
   // command set and, for optionPicker fields, mounts the options popover.
@@ -182,25 +207,16 @@ interface OutlinerItemProps {
   // Optional visual anchor for a relocated trailing draft. When present, the
   // draft sits after this sibling and materializes at the same structural index.
   draftAfterId?: NodeId | null;
+  optimisticChange?: PendingStructuralChange;
   // Empty-state placeholder shown on this trailing draft's editor (definition
   // template / options blocks), so an empty section reads "add here" instead of
   // a lone label over a near-invisible ghost bullet. Ignored once materialized.
   draftPlaceholder?: string;
-  // Flat (virtualized) rendering: the row's children are emitted as sibling rows
-  // by the flat producer, so this row must not render its own nested OutlinerView.
-  // Indentation comes from `depth` (cumulative) instead of nested `.children`.
-  flat?: boolean;
   semanticRole?: 'treeitem' | 'presentation';
   hideDisplayFields?: boolean;
   suppressChildFieldEntries?: boolean;
   tableNextRowId?: NodeId | null;
   onDisclosureToggleAnchor?: (anchorElement: HTMLElement | null) => void;
-}
-
-function commandResultFocusNodeId(result: CommandRunnerOperationResult): NodeId | null {
-  if (!result || typeof result !== 'object' || !('focus' in result)) return null;
-  const focus = (result as { focus?: { nodeId?: unknown } }).focus;
-  return typeof focus?.nodeId === 'string' ? focus.nodeId : null;
 }
 
 function commandResultWithFocus(result: CommandResult, focus: Omit<FocusHint, 'selectAll'>): CommandResult {
@@ -215,7 +231,21 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const parentNode = props.index.byId.get(props.parentId);
   // A draft row synthesizes an empty plain node so the normal render path runs;
   // `realNode` distinguishes "not materialized yet" from a real node.
-  const node = realNode ?? (props.draft ? makeDraftNode(props.nodeId, props.parentId) : undefined);
+  const optimisticContent = props.optimisticChange?.latestContent.current;
+  const projectedOrDraftNode = props.optimisticChange?.nodeOverride?.current ?? realNode ?? (props.draft
+    ? makeDraftNode(props.nodeId, props.parentId, optimisticContent ?? EMPTY_RICH_TEXT)
+    : undefined);
+  const structuralNode = projectedOrDraftNode && props.optimisticChange?.presentation === 'codeBlock'
+    ? {
+        ...projectedOrDraftNode,
+        type: 'codeBlock' as const,
+        content: optimisticContent ?? projectedOrDraftNode.content,
+        codeLanguage: '',
+      }
+    : projectedOrDraftNode;
+  const node = structuralNode
+    ? nodeWithPendingPatch(structuralNode, props.ui.pendingNodePatches.get(structuralNode.id))
+    : structuralNode;
   const [draftContent, setDraftContent] = useState<RichText>(node?.content ?? EMPTY_RICH_TEXT);
   const [draftContentRevision, setDraftContentRevision] = useState(0);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
@@ -228,7 +258,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const draftContentRef = useRef<RichText>(node?.content ?? EMPTY_RICH_TEXT);
   const localDraftSyncRef = useRef<{ nodeId: NodeId; content: RichText } | null>(null);
   const pendingTextPatchRef = useRef<Promise<unknown>>(Promise.resolve());
-  const pendingTextPatchCountRef = useRef(0);
+  const textPatchQueueRef = useRef<CoalescedTextPatchQueue | null>(null);
+  if (!textPatchQueueRef.current) textPatchQueueRef.current = new CoalescedTextPatchQueue();
+  const textPatchQueue = textPatchQueueRef.current;
   // Guards materialization so the create fires exactly once per draft. A second
   // caller shares the in-flight result, so it can stop its dependent command when
   // the create is rejected without starting another create.
@@ -243,6 +275,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // draft eager-materializes (normal typing) or stays buffered (a #/@/`/`/`>` query
   // resolving atomically).
   const draftTriggerActiveRef = useRef(false);
+  const semanticTriggerResolutionRef = useRef(false);
   const restoredReferenceConversionNodeRef = useRef<NodeId | null>(null);
   const descriptionReturnPlacementRef = useRef<CursorPlacement>(cursorEnd());
   const optionAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -268,9 +301,14 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const referenceTargetId = node?.type === 'reference' && node.targetId
     ? resolveReferenceTargetId(node.targetId, props.index.byId)
     : null;
-  const displayed = referenceTargetId ? props.index.byId.get(referenceTargetId) ?? node : node;
+  const projectedDisplayed = referenceTargetId ? props.index.byId.get(referenceTargetId) ?? node : node;
+  const displayed = projectedDisplayed
+    ? nodeWithPendingPatch(projectedDisplayed, props.ui.pendingNodePatches.get(projectedDisplayed.id))
+    : projectedDisplayed;
   const childParentId = referenceTargetId ?? props.nodeId;
-  const childParentNode = props.index.byId.get(childParentId);
+  const childParentNode = childParentId === node?.id
+    ? node
+    : props.index.byId.get(childParentId);
   const referenceCycle = node?.type === 'reference'
     && Boolean(referenceTargetId)
     && props.referencePath.includes(childParentId);
@@ -301,6 +339,12 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // A non-image file renders as a lightweight row (file-icon bullet + read-only
   // filename, expand → inline preview); an image keeps its inline-image presentation.
   const nonImageFileRow = fileNodeRow && fileNodeRow.type !== 'image' ? fileNodeRow : null;
+  const trailingDraftOrigin = props.draft === true
+    && !realNode
+    && (!props.optimisticChange || props.optimisticChange.originatesFromDraft === true);
+  const exposesTrailingDraftMarker = trailingDraftOrigin
+    && (!props.optimisticChange || props.optimisticChange.retainsTrailingDraftMarker === true);
+  const ordinaryTrailingDraft = trailingDraftOrigin && !props.optimisticChange;
   const row = useOutlinerRowInteraction({
     rowId: props.nodeId,
     parentId: props.parentId,
@@ -318,16 +362,13 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     locked: node?.locked ?? true,
     dragId: props.dragId,
     setDragId: props.setDragId,
-    // Tag a not-yet-materialized draft wrap with data-trailing-parent-id so the
-    // trailing editor is findable the way the legacy TrailingInput row was.
-    draft: props.draft === true && !realNode,
+    draft: ordinaryTrailingDraft,
     draftAfterId: props.draftAfterId,
   });
   // A not-yet-materialized draft is also "focused" when keyboard navigation
   // targets the parent's trailing surface (the existing trailing-focus signal);
   // once the editor takes focus, onFocus settles it to this row's own id.
-  const trailingDraftFocused = props.draft === true
-    && !realNode
+  const trailingDraftFocused = ordinaryTrailingDraft
     && props.ui.focusedId === props.parentId
     && props.ui.focusSurface === 'trailing'
     && props.ui.focusedPanelId === props.panelId;
@@ -336,9 +377,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     && props.ui.focusedPanelId === props.panelId)
     || trailingDraftFocused;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const nextContent = displayed?.content ?? EMPTY_RICH_TEXT;
-    if (pendingTextPatchCountRef.current > 0) return;
+    if (textPatchQueue.isBusy()) return;
     const pendingLocalDraft = localDraftSyncRef.current;
     if (pendingLocalDraft) {
       if (pendingLocalDraft.nodeId !== displayed?.id) {
@@ -354,6 +395,20 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     setDraftContent(nextContent);
   }, [displayed?.id, displayed?.content, displayed?.type === 'reference' ? displayed.targetId : undefined, rowEditorFocused]);
 
+  useLayoutEffect(() => {
+    const change = props.optimisticChange;
+    if (!change) return;
+    const content = change.latestContent.current;
+    const refMatches = richTextEquals(draftContentRef.current, content);
+    const stateMatches = richTextEquals(draftContent, content);
+    if (refMatches && stateMatches) return;
+    const editId = referenceTargetId ?? node?.id ?? props.nodeId;
+    localDraftSyncRef.current = { nodeId: editId, content };
+    draftContentRef.current = content;
+    if (!stateMatches) setDraftContent(content);
+    setDraftContentRevision((revision) => revision + 1);
+  }, [draftContent, props.optimisticChange]);
+
   useEffect(() => () => {
     if (materializedTextUndoGroupFlushRef.current) {
       clearTimeout(materializedTextUndoGroupFlushRef.current);
@@ -364,6 +419,15 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   if (!node || !displayed) return null;
 
   const replaceLocalDraftContent = (content: RichText) => {
+    if (props.optimisticChange) {
+      props.optimisticChange.latestContent.current = content;
+      if (props.optimisticChange.nodeOverride) {
+        props.optimisticChange.nodeOverride.current = {
+          ...props.optimisticChange.nodeOverride.current,
+          content,
+        };
+      }
+    }
     localDraftSyncRef.current = { nodeId: targetEditId, content };
     draftContentRef.current = content;
     setDraftContent(content);
@@ -372,6 +436,17 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
 
   const targetEditId = referenceTargetId ?? node.id;
   const drillDownId = referenceTargetId ?? node.id;
+  const startDoneTransition = (
+    transition: 'toggle' | 'cycle',
+    command: () => Promise<CommandRunnerOperationResult>,
+  ) => startOptimisticDoneTransition({
+    index: props.index,
+    node: displayed,
+    currentUi: props.uiRef.current,
+    setUi: props.setUi,
+    transition,
+    command,
+  });
   // Field-value editing flags. A field value's trailing draft is NOT a separate
   // editing mode: it materializes through the same materializeDraft path as a body
   // node, differing only in WHICH create command runs (injected via
@@ -393,11 +468,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     }
   };
   const fieldDescriptor = props.fieldValue?.descriptor;
-  const checkboxFieldValue = Boolean(
-    props.fieldValue
-    && fieldDescriptor?.isWholeFieldControl
-    && realNode,
-  );
+  const checkboxFieldValue = Boolean(props.fieldValue && fieldDescriptor?.isWholeFieldControl);
   // An options field's draft shows the additive options overlay and treats free
   // text as the filter query, so #/@// and the code fence are plain text there.
   const optionPickerDraft = fieldValueDraft && fieldDescriptor?.interaction === 'optionPicker';
@@ -409,7 +480,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // A not-yet-materialized draft consumes the parent's trailing focus request
   // (keyboard nav into the trailing line targets `(parentId, 'trailing')`); once
   // the editor focuses, onFocus settles the signal to this row's own id.
-  const editorRequestTarget = props.draft && !realNode
+  const editorRequestTarget = ordinaryTrailingDraft
     ? focusTarget(props.parentId, props.parentId, props.panelId, 'trailing')
     : editorFocusTarget;
   const descriptionFocusTarget = focusTarget(props.nodeId, props.parentId, props.panelId, 'description');
@@ -474,9 +545,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     }
     row.toggleExpandOrSelect();
   };
-  const childReferencePath = [...props.referencePath, childParentId];
   const pendingReferenceConversion = props.ui.pendingReferenceConversion?.nodeId === props.nodeId;
-  const pendingReferenceTypeAhead = props.ui.pendingReferenceTypeAhead?.nodeId === props.nodeId;
   // A non-image file node shows its file-type icon as the bullet (the row text is the
   // read-only filename); an image keeps the neutral content bullet (its inline image is
   // its identity). The bullet still drills to the node page on click.
@@ -529,8 +598,16 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     window.addEventListener(DROP_TARGET_CHANGE_EVENT, handleDropTargetChange);
     return () => window.removeEventListener(DROP_TARGET_CHANGE_EVENT, handleDropTargetChange);
   }, [externalFileDropTargetKey]);
+  // ProseMirror owns focused text between projection settlements. Read the live
+  // ref when a pending structural change clears so the editor never falls back
+  // to the React snapshot from before materialization and resets the caret.
+  const renderedDraftContent = referenceTargetId
+    ? displayed.content
+    : props.optimisticChange?.latestContent.current ?? draftContentRef.current;
   const editorContentRevision = pendingReferenceConversion
     ? displayed.updatedAt
+    : props.optimisticChange
+      ? textRenderRevision(JSON.stringify(renderedDraftContent))
     : draftContentRevision;
   const activeTrigger = props.trigger?.nodeId === props.nodeId ? props.trigger : null;
   const activeFileTagTrigger = fileNodeRow && activeTrigger?.kind === '#' ? activeTrigger : null;
@@ -543,11 +620,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // blur/Enter materialize is already in flight but the real node has not landed.
   const onDraftTrigger = props.draft === true && !realNode && !materializeStartedRef.current;
 
-  const restorePendingReferenceConversion = async (
-    _content: RichText,
-    options: { rearmTypeAhead?: boolean } = {},
-  ) => {
-    await pendingTextPatchRef.current;
+  const restorePendingReferenceConversion = async (_content: RichText) => {
     const content = draftContentRef.current;
     const pendingConversion = props.ui.pendingReferenceConversion;
     if (pendingConversion?.nodeId !== props.nodeId) return { restored: false, nodeId: props.nodeId };
@@ -579,48 +652,77 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     }
 
     restoredReferenceConversionNodeRef.current = props.nodeId;
-    const outcome = await props.run(() => api.restoreInlineReferenceNodeToReference(
-      props.nodeId,
-      pendingConversion.targetId,
-    ), { applyFocus: false });
-    const referenceId = outcome && 'focus' in outcome ? outcome.focus?.nodeId ?? null : null;
-    const referenceParentId = outcome && 'focus' in outcome
-      ? outcome.focus?.parentId ?? parentId
-      : parentId;
-    if (!referenceId) restoredReferenceConversionNodeRef.current = null;
-
-    if (options.rearmTypeAhead && referenceId) {
-      props.setUi((prev) => (
-        prev.pendingReferenceConversion?.nodeId === props.nodeId
-          ? { ...prev, pendingReferenceConversion: null }
-          : prev
-      ));
-      window.requestAnimationFrame(() => {
-        armReferenceTypeAhead({
-          referenceId,
-          parentId: referenceParentId,
-          targetId: pendingConversion.targetId,
-          panelId: props.panelId,
-          selectionRootId: props.selectionRootId,
-          run: props.run,
-          setUi: props.setUi,
-        });
+    const replacementId = freshNodeId();
+    const pendingBeforeRestore = pendingTextPatchRef.current;
+    const anchors = props.optimisticChange
+      ? {
+          beforeId: props.optimisticChange.beforeId,
+          afterId: props.optimisticChange.afterId,
+        }
+      : optimisticReplacementAnchors(
+          props.index.byId.get(parentId)?.children ?? [],
+          props.nodeId,
+        );
+    const restoreSource = () => {
+      restoredReferenceConversionNodeRef.current = null;
+      props.setUi((previous) => {
+        const restored = clearOptimisticRemovals(previous, [props.nodeId]);
+        return {
+          ...restored,
+          pendingReferenceConversion: restored.pendingReferenceConversion?.nodeId === replacementId
+            ? pendingConversion
+            : restored.pendingReferenceConversion,
+        };
       });
-      return { restored: true, nodeId: referenceId };
-    }
-
-    props.setUi((prev) => (
-      prev.pendingReferenceConversion?.nodeId === props.nodeId
-        ? { ...prev, pendingReferenceConversion: null }
-        : prev
-    ));
-    return { restored: true, nodeId: referenceId ?? props.nodeId };
+    };
+    const { settlement } = startOptimisticStructuralEdit({
+      panelId: props.panelId,
+      setUi: props.setUi,
+      input: {
+        id: replacementId,
+        parentId,
+        ...anchors,
+        content: EMPTY_RICH_TEXT,
+        nodeOverride: {
+          ...makeDraftNode(replacementId, parentId),
+          type: 'reference',
+          targetId: pendingConversion.targetId,
+        },
+        placement: cursorStart(),
+        preserveFocus: true,
+        updateUi: (previous) => ({
+          ...addOptimisticRemovals(previous, [props.nodeId]),
+          pendingReferenceConversion: null,
+        }),
+      },
+      command: async () => {
+        if (props.optimisticChange && !await props.optimisticChange.settlement.current) return null;
+        await pendingBeforeRestore;
+        return props.run(() => api.restoreInlineReferenceNodeToReference(
+          props.nodeId,
+          pendingConversion.targetId,
+          replacementId,
+        ), { applyFocus: false });
+      },
+      reconcile: async () => {
+        props.setUi((previous) => clearOptimisticRemovals(previous, [props.nodeId]));
+        return true;
+      },
+      onRejected: restoreSource,
+      onFailed: restoreSource,
+    });
+    pendingTextPatchRef.current = settlement;
+    return await settlement
+      ? { restored: true, nodeId: replacementId }
+      : { restored: false, nodeId: props.nodeId };
   };
 
   const commitDraft = async (content = draftContentRef.current) => {
     draftContentRef.current = content;
     setDraftContent(content);
     if (props.draft && !realNode) {
+      if (semanticTriggerResolutionRef.current) return props.nodeId;
+      if (props.optimisticChange?.phase === 'submitting') return props.nodeId;
       // Blur/commit on the trailing draft (body OR field value): materialize only
       // if something was typed (so a click-away on an empty line never persists an
       // empty node). materializeDraft routes to the right create command.
@@ -640,28 +742,63 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   };
 
   const currentDraftCreateIndex = () => draftCreateIndex(parentNode, props.draftAfterId ?? null);
-  const placementAfterMaterializedDraft = () => (
-    props.draftAfterId && !props.fieldValue
-      ? { parentId: props.parentId, afterId: props.nodeId, panelId: props.panelId }
-      : null
-  );
-  const materializedDraftFocusState = (state: UiState) => ({
-    ...selectFocusState(
-      state,
-      rowFocusTarget(
-        props.nodeId,
-        materializedFieldParentIdRef.current ?? props.parentId,
-        props.panelId,
-      ),
-    ),
-    trailingDraftPlacement: placementAfterMaterializedDraft(),
-  });
   const rememberMaterializedFieldEntry = (result: CommandRunnerOperationResult) => {
-    const focusNodeId = commandResultFocusNodeId(result);
-    const entryId = focusNodeId && focusNodeId !== props.fieldValue?.ownerId
-      ? focusNodeId
-      : props.fieldValue?.entryId ?? null;
-    if (entryId) materializedFieldParentIdRef.current = entryId;
+    const fieldValue = props.fieldValue;
+    if (!fieldValue) return null;
+    const changedNodes = result && typeof result === 'object' && 'update' in result
+      ? result.update.kind === 'full'
+        ? result.update.projection.nodes
+        : result.update.changedNodes
+      : [];
+    const entryId = fieldValue.entryId ?? changedNodes.find((candidate) => (
+      candidate.type === 'fieldEntry'
+      && candidate.parentId === fieldValue.ownerId
+      && candidate.fieldDefId === fieldValue.fieldDefId
+    ))?.id ?? null;
+    if (entryId) {
+      materializedFieldParentIdRef.current = entryId;
+      const previousParentId = props.parentId;
+      props.setUi((previous) => {
+        let remappedPendingChange = false;
+        for (const change of previous.pendingStructuralChanges) {
+          if (
+            change.id !== entryId
+            && change.panelId === props.panelId
+            && change.parentId === previousParentId
+          ) {
+            change.parentId = entryId;
+            remappedPendingChange = true;
+          }
+        }
+        const pendingStructuralChanges = remappedPendingChange
+          ? [...previous.pendingStructuralChanges]
+          : previous.pendingStructuralChanges;
+        const remapTarget = (target: FocusTarget) => (
+          target.panelId === props.panelId && target.parentId === previousParentId
+            ? { ...target, parentId: entryId, ...(target.nodeId === previousParentId ? { nodeId: entryId } : {}) }
+            : target
+        );
+        const focusTargetsPreviousParent = previous.focusedPanelId === props.panelId
+          && previous.focusedParentId === previousParentId;
+        return {
+          ...previous,
+          pendingStructuralChanges,
+          ...(focusTargetsPreviousParent ? { focusedParentId: entryId } : {}),
+          ...(previous.focusSurface === 'trailing'
+            && previous.focusedPanelId === props.panelId
+            && previous.focusedId === previousParentId
+            ? { focusedId: entryId, focusedParentId: entryId }
+            : {}),
+          focusRequest: previous.focusRequest
+            ? { ...previous.focusRequest, target: remapTarget(previous.focusRequest.target) }
+            : null,
+          trailingDraftPlacement: previous.trailingDraftPlacement?.panelId === props.panelId
+            && previous.trailingDraftPlacement.parentId === previousParentId
+            ? { ...previous.trailingDraftPlacement, parentId: entryId }
+            : previous.trailingDraftPlacement,
+        };
+      });
+    }
     return entryId;
   };
   // Materialization: turn the draft into a real node under its stable id on
@@ -679,6 +816,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // shared — the field value path is no longer a separate editing mode.
   const materializeDraft = (): Promise<boolean> => {
     if (realNode) return Promise.resolve(true);
+    if (semanticTriggerResolutionRef.current) return Promise.resolve(false);
+    if (props.optimisticChange?.phase === 'submitting') return props.optimisticChange.settlement.current;
     if (materializePromiseRef.current) return materializePromiseRef.current;
     if (materializeStartedRef.current) return Promise.resolve(false);
     const seed = draftContentRef.current;
@@ -688,6 +827,12 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     if (fieldValue && seed.text.trim().length === 0 && seed.inlineRefs.length === 0) {
       return Promise.resolve(false);
     }
+    const dependency = latestOptimisticStructuralDependency(
+      props.uiRef.current,
+      props.panelId,
+      props.parentId,
+      props.nodeId,
+    );
     materializeStartedRef.current = true;
     const createIndex = currentDraftCreateIndex();
     const undoGroup: OperationUndoGroup | undefined = fieldValue
@@ -697,67 +842,73 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       clearMaterializedTextUndoGroup();
       materializedTextUndoGroupRef.current = undoGroup;
     }
-    const runCreate = fieldValue
-      ? () => props.run(
-        () => fieldValue.materializeValue(props.nodeId, seed.text),
-        { applyFocus: false },
-      )
-      : () => props.run(
-        () => api.materializeDraftNode(props.parentId, createIndex, seed.text, props.nodeId, undoGroup),
-        {
-          applyFocus: false,
-          beforeApply: () => {
-            props.setUi(materializedDraftFocusState);
-          },
-        },
-      );
-    const materializePromise = pendingTextPatchRef.current
-      .then(runCreate)
-      .then((result) => {
-        if (result === null) {
-          materializeStartedRef.current = false;
-          materializePromiseRef.current = null;
-          return false;
-        }
-        if (fieldValue) {
-          rememberMaterializedFieldEntry(result);
-        }
+    const runCreate = () => props.run(
+      fieldValue
+        ? () => fieldValue.materializeValue(props.nodeId, seed.text)
+        : props.draftAfterId
+          ? () => api.createNodeRelativeTo(
+              props.draftAfterId!,
+              props.parentId,
+              'after',
+              seed,
+              props.nodeId,
+              undoGroup ? { undoGroup } : undefined,
+            )
+          : () => api.materializeDraftNode(props.parentId, createIndex, seed.text, props.nodeId, undoGroup),
+      {
+        applyFocus: false,
+        beforeApply: fieldValue ? rememberMaterializedFieldEntry : undefined,
+      },
+    );
+    const pendingBeforeMaterialize = pendingTextPatchRef.current;
+    const resetFailedMaterialization = () => {
+      materializeStartedRef.current = false;
+      materializePromiseRef.current = null;
+      if (undoGroup && materializedTextUndoGroupRef.current?.groupId === undoGroup.groupId) {
+        clearMaterializedTextUndoGroup();
+      }
+    };
+    const { settlement: materializePromise } = startOptimisticStructuralEdit({
+      panelId: props.panelId,
+      setUi: props.setUi,
+      input: {
+        id: props.nodeId,
+        parentId: props.parentId,
+        originatesFromDraft: true,
+        retainsTrailingDraftMarker: !fieldValue,
+        afterId: props.draftAfterId,
+        content: seed,
+        placement: cursorEnd(),
+      },
+      retainOnRejected: true,
+      command: async () => {
+        if (dependency && !await dependency.settlement.current) return null;
+        await pendingBeforeMaterialize;
+        return runCreate();
+      },
+      reconcile: async (result, change) => {
         if (undoGroup && materializedTextUndoGroupRef.current?.groupId === undoGroup.groupId) {
           scheduleMaterializedTextUndoGroupFlush();
         }
-        const latest = draftContentRef.current;
-        const needsReconcile = latest.text !== seed.text
-          || latest.marks.length > 0
-          || latest.inlineRefs.length > 0;
-        if (needsReconcile) {
-          return props.run(
-            () => api.applyNodeTextPatch(
-              props.nodeId,
-              replaceAllRichTextPatch(latest),
-              undoGroup ? { undoGroup } : undefined,
-            ),
-            { applyFocus: false },
-          ).then(() => {
-            if (undoGroup && materializedTextUndoGroupRef.current?.groupId === undoGroup.groupId) {
-              scheduleMaterializedTextUndoGroupFlush();
-            }
-            return true;
-          });
+        const latest = change.latestContent.current;
+        if (richTextEquals(latest, seed)) return true;
+        const reconciled = await props.run(
+          () => api.applyNodeTextPatch(
+            props.nodeId,
+            replaceAllRichTextPatch(latest),
+            undoGroup ? { undoGroup } : undefined,
+          ),
+          { applyFocus: false },
+        );
+        if (reconciled === null) return false;
+        if (undoGroup && materializedTextUndoGroupRef.current?.groupId === undoGroup.groupId) {
+          scheduleMaterializedTextUndoGroupFlush();
         }
         return true;
-      })
-      .then((materialized) => {
-        if (materialized) props.setUi(materializedDraftFocusState);
-        return materialized;
-      })
-      .catch((error) => {
-        materializeStartedRef.current = false;
-        materializePromiseRef.current = null;
-        if (undoGroup && materializedTextUndoGroupRef.current?.groupId === undoGroup.groupId) {
-          clearMaterializedTextUndoGroup();
-        }
-        throw error;
-      });
+      },
+      onRejected: resetFailedMaterialization,
+      onFailed: resetFailedMaterialization,
+    });
     materializePromiseRef.current = materializePromise;
     pendingTextPatchRef.current = materializePromise;
     void materializePromise;
@@ -766,6 +917,15 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
 
   const applyTextPatch = (patch: RichTextPatch) => {
     const nextContent = applyRichTextPatchToContent(draftContentRef.current, patch);
+    if (props.optimisticChange) {
+      props.optimisticChange.latestContent.current = nextContent;
+      if (props.optimisticChange.nodeOverride) {
+        props.optimisticChange.nodeOverride.current = {
+          ...props.optimisticChange.nodeOverride.current,
+          content: nextContent,
+        };
+      }
+    }
     localDraftSyncRef.current = { nodeId: targetEditId, content: nextContent };
     draftContentRef.current = nextContent;
     if (
@@ -779,7 +939,22 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     }
     if (optionPickerDraft && !optionsOpen) setOptionsOpen(true);
 
+    const fireAction = resolveContentRowUpdateAction({
+      text: nextContent.text,
+      inlineRefCount: nextContent.inlineRefs.length,
+      enableFieldTrigger: !suppressTextTriggers,
+      enableCodeFence: !suppressTextTriggers
+        && node.type === undefined
+        && !pendingReferenceConversion
+        && !displayed.locked,
+    });
+    // Bare structural triggers are renderer transactions. Persisting their
+    // transient marker first would add an IPC round trip and briefly expose the
+    // wrong row type before the atomic field/code command runs.
+    if (fireAction.type !== 'none') return;
+
     if (props.draft && !realNode) {
+      if (props.optimisticChange) return;
       // A body trailing draft eagerly materializes on the first typed character:
       // the draft becomes a real node carrying the text, and a fresh empty trailing
       // line takes its place below — the smooth "there is always a line to type
@@ -797,43 +972,32 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       //    handleContentUpdateAction, which runs *after* this callback, so they are
       //    detected here directly from the buffered content and create their node
       //    atomically (createPlaceholderInlineField / convertRowToCodeBlock).
-      const fireAction = resolveContentRowUpdateAction({
-        text: draftContentRef.current.text,
-        inlineRefCount: draftContentRef.current.inlineRefs.length,
-        enableFieldTrigger: !suppressTextTriggers,
-        enableCodeFence: !suppressTextTriggers
-          && node.type === undefined
-          && !pendingReferenceConversion
-          && !displayed.locked,
-      });
-      const willFireTrigger = fireAction.type !== 'none';
-      if (!props.fieldValue && !draftTriggerActiveRef.current && !willFireTrigger) {
-        materializeDraft();
+      if (!props.fieldValue && !draftTriggerActiveRef.current) {
+        queueMicrotask(() => materializeDraft());
       }
       return;
     }
-    pendingTextPatchCountRef.current += 1;
-    pendingTextPatchRef.current = pendingTextPatchRef.current
-      .then(() => {
+    pendingTextPatchRef.current = textPatchQueue.enqueue({
+      key: targetEditId,
+      patch,
+      latestContent: nextContent,
+      send: (nextPatch) => {
         const undoGroup = materializedTextUndoGroupFor(targetEditId);
         if (undoGroup) scheduleMaterializedTextUndoGroupFlush();
         return props.run(() => api.applyNodeTextPatch(
           targetEditId,
-          patch,
+          nextPatch,
           undoGroup ? { undoGroup } : undefined,
         ), {
           applyFocus: false,
         });
-      })
-      .finally(() => {
-        pendingTextPatchCountRef.current -= 1;
-      });
-    void pendingTextPatchRef.current;
+      },
+    });
   };
 
   const applyTextWithoutTrigger = async () => {
     const trigger = props.trigger?.nodeId === props.nodeId ? props.trigger : null;
-    await pendingTextPatchRef.current;
+    const pendingBeforeReplacement = pendingTextPatchRef.current;
     const nextContent = trigger
       ? deleteRichTextRange(draftContentRef.current, trigger.from, trigger.to)
         : plainText(draftContentRef.current.text.replace(/(?:^|\s)([#@/>])([^\s#@/>]*)$/, '').trimEnd());
@@ -841,18 +1005,24 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     // A draft has no node to patch yet — the de-triggered text stays buffered until
     // it materializes on Enter/blur.
     if (onDraftTrigger) return;
+    await pendingBeforeReplacement;
     await props.run(() => api.replaceNodeText(targetEditId, nextContent));
   };
 
-  const clearTriggerText = async () => {
-    if (activeFileTagTrigger) return;
-    await applyTextWithoutTrigger();
-  };
-
   const handleEditorChange = (content: RichText) => {
+    if (props.optimisticChange) props.optimisticChange.latestContent.current = content;
     localDraftSyncRef.current = { nodeId: targetEditId, content };
     draftContentRef.current = content;
     setDraftContent(content);
+  };
+
+  const runSemanticTriggerResolution = async <T,>(operation: () => Promise<T>): Promise<T> => {
+    semanticTriggerResolutionRef.current = true;
+    try {
+      return await operation();
+    } finally {
+      semanticTriggerResolutionRef.current = false;
+    }
   };
 
   const handlePasteOutliner = (payload: {
@@ -894,15 +1064,15 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       if (trees.length === 0) return Promise.resolve(false);
       return runClaimedVirtualFieldMaterialization(() => props.run(
           () => props.fieldValue!.materializeNodes(props.nodeId, trees),
-          { applyFocus: false },
-        )).then((outcome) => {
-        if (outcome) {
-          rememberMaterializedFieldEntry(outcome);
-          replaceLocalDraftContent(EMPTY_RICH_TEXT);
-          applySuccessfulPaste();
-        }
-        return false;
-      });
+          {
+            applyFocus: false,
+            beforeApply: (result) => {
+              rememberMaterializedFieldEntry(result);
+              replaceLocalDraftContent(EMPTY_RICH_TEXT);
+              applySuccessfulPaste();
+            },
+          },
+        )).then(() => false);
     }
 
     // The pristine trailing draft has no core node yet (it materializes on the
@@ -978,12 +1148,19 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       || materializeStartedRef.current
     ) return false;
     const [first, ...rest] = assets;
+    let entryId: NodeId | null = null;
     const outcome = await runClaimedVirtualFieldMaterialization(() => props.run(
         () => props.fieldValue!.materializeAsset(props.nodeId, first!),
-        { applyFocus: false },
+        {
+          ...options,
+          applyFocus: false,
+          beforeApply: (result) => {
+            entryId = rememberMaterializedFieldEntry(result);
+            options?.beforeApply?.(result);
+          },
+        },
       ));
     if (!outcome) return true;
-    const entryId = rememberMaterializedFieldEntry(outcome);
     replaceLocalDraftContent(EMPTY_RICH_TEXT);
     if (entryId) await insertAssetNodesAt(rest, null, entryId, options);
     return true;
@@ -1160,10 +1337,12 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       if (!materializeStartedRef.current) {
         const outcome = await runClaimedVirtualFieldMaterialization(() => props.run(
             () => props.fieldValue!.materializeImageUrl(props.nodeId, url),
-            { applyFocus: false },
+            {
+              applyFocus: false,
+              beforeApply: rememberMaterializedFieldEntry,
+            },
           ));
         if (outcome) {
-          rememberMaterializedFieldEntry(outcome);
           replaceLocalDraftContent(EMPTY_RICH_TEXT);
         }
       } else {
@@ -1192,72 +1371,181 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     }
   };
 
-  // Atomic tag application on the trailing draft: a `#tag` query resolves straight
-  // into a tagged node (create_tagged_node / create_tag_and_tagged_node) carrying
-  // the draft's non-trigger text, instead of materializing a plain node and then
-  // applying the tag. Wired only when onDraftTrigger; a real node falls back to the
-  // TagSelector's own apply_tag path.
+  const startOptimisticDraftMaterialization = (params: {
+    content: RichText;
+    nodeOverride?: NodeProjection;
+    placement?: CursorPlacement;
+    updateUi?: (previous: UiState) => UiState;
+    rollbackUi?: (previous: UiState) => UiState;
+    command: (change: PendingStructuralChange) => Promise<CommandRunnerOperationResult>;
+    reconcile?: (
+      result: NonNullable<CommandRunnerOperationResult>,
+      change: PendingStructuralChange,
+    ) => boolean | void | Promise<boolean | void>;
+  }): CommandRunnerOperationResult => {
+    const previousContent = draftContentRef.current;
+    const pendingBeforeCommand = pendingTextPatchRef.current;
+    const dependency = latestOptimisticStructuralDependency(
+      props.uiRef.current,
+      props.panelId,
+      props.parentId,
+      props.nodeId,
+    );
+    materializeStartedRef.current = true;
+    const { settlement } = startOptimisticStructuralEdit({
+      panelId: props.panelId,
+      setUi: props.setUi,
+      input: {
+        id: props.nodeId,
+        parentId: props.parentId,
+        originatesFromDraft: true,
+        afterId: props.draftAfterId,
+        content: params.content,
+        nodeOverride: params.nodeOverride ?? {
+          ...makeDraftNode(props.nodeId, props.parentId, params.content),
+          content: params.content,
+        },
+        placement: params.placement ?? cursorEnd(),
+        updateSource: () => replaceLocalDraftContent(params.content),
+        updateUi: params.updateUi,
+      },
+      command: async (change) => {
+        if (dependency && !await dependency.settlement.current) return null;
+        await pendingBeforeCommand;
+        return props.run(() => params.command(change), {
+          applyFocus: false,
+          beforeApply: props.fieldValue ? rememberMaterializedFieldEntry : undefined,
+        });
+      },
+      reconcile: async (result, change) => {
+        if (await params.reconcile?.(result, change) === false) return false;
+        return reconcilePendingStructuralChange(change);
+      },
+      onRejected: () => {
+        materializeStartedRef.current = false;
+        if (params.rollbackUi) props.setUi(params.rollbackUi);
+        replaceLocalDraftContent(previousContent);
+        restoreFocusAfterStructuralFailure(false);
+      },
+      onFailed: () => {
+        materializeStartedRef.current = false;
+        if (params.rollbackUi) props.setUi(params.rollbackUi);
+      },
+    });
+    pendingTextPatchRef.current = settlement;
+    return commandRunnerNoop();
+  };
+
+  // A `#tag` query resolves as one optimistic transaction. Drafts create the final
+  // tagged row directly; materialized rows replace the trigger text and apply the
+  // tag in one update, so neither path waits for Runtime before showing the chip.
   const applyDraftTag = async (tag: NodeProjection) => {
     const trigger = props.trigger?.nodeId === props.nodeId ? props.trigger : null;
     if (!trigger) return null;
-    await pendingTextPatchRef.current;
     const content = deleteRichTextRange(draftContentRef.current, trigger.from, trigger.to);
-    if (virtualFieldValueDraft && props.fieldValue) {
-      const outcome = await runClaimedVirtualFieldMaterialization(() => props.fieldValue!.materializeNodes(
-          props.nodeId,
-          [{ content, children: [] }],
-          [tag.id],
-        ));
-      if (outcome) {
-        const entryId = rememberMaterializedFieldEntry(outcome);
-        replaceLocalDraftContent(EMPTY_RICH_TEXT);
-        if (entryId) {
-          return commandResultWithFocus(outcome, {
-            nodeId: props.nodeId,
-            parentId: entryId,
-            surface: 'row',
-            placement: { kind: 'end' },
-          });
-        }
-      }
-      return outcome;
-    }
-    const outcome = await api.createTaggedNode(props.parentId, content, tag.id);
-    // Clear the buffered query only after the tagged node lands, so the draft keeps
-    // showing "#query" through a slow create (and never re-materializes the query as
-    // a stray plain node on the blur that follows).
-    replaceLocalDraftContent(EMPTY_RICH_TEXT);
-    return outcome;
+    return startOptimisticDraftMaterialization({
+      content,
+      nodeOverride: {
+        ...makeDraftNode(props.nodeId, props.parentId, content),
+        tags: [tag.id],
+      },
+      command: () => props.fieldValue
+        ? props.fieldValue.materializeNodes(props.nodeId, [{ content, children: [] }], [tag.id])
+        : api.createTaggedNode(
+            props.parentId,
+            content,
+            tag.id,
+            currentDraftCreateIndex(),
+            props.nodeId,
+          ),
+    });
   };
 
   const createAndApplyDraftTag = async (name: string) => {
     const trigger = props.trigger?.nodeId === props.nodeId ? props.trigger : null;
     if (!trigger) return null;
-    await pendingTextPatchRef.current;
     const content = deleteRichTextRange(draftContentRef.current, trigger.from, trigger.to);
-    if (virtualFieldValueDraft && props.fieldValue) {
-      const outcome = await runClaimedVirtualFieldMaterialization(() => props.fieldValue!.materializeNodes(props.nodeId, [{
-          content,
-          children: [],
-          tags: [name],
-        }]));
-      if (outcome) {
-        const entryId = rememberMaterializedFieldEntry(outcome);
-        replaceLocalDraftContent(EMPTY_RICH_TEXT);
-        if (entryId) {
-          return commandResultWithFocus(outcome, {
-            nodeId: props.nodeId,
-            parentId: entryId,
-            surface: 'row',
-            placement: { kind: 'end' },
-          });
-        }
-      }
-      return outcome;
-    }
-    const outcome = await api.createTagAndTaggedNode(props.parentId, content, name);
-    replaceLocalDraftContent(EMPTY_RICH_TEXT);
-    return outcome;
+    return startOptimisticDraftMaterialization({
+      content,
+      command: () => props.fieldValue
+        ? props.fieldValue.materializeNodes(props.nodeId, [{ content, children: [], tags: [name] }])
+        : api.createTagAndTaggedNode(
+            props.parentId,
+            content,
+            name,
+            currentDraftCreateIndex(),
+            props.nodeId,
+          ),
+    });
+  };
+
+  const applyMaterializedTag = async (tag: NodeProjection) => {
+    const trigger = props.trigger?.nodeId === props.nodeId ? props.trigger : null;
+    if (!trigger || !displayed) return null;
+    const previousContent = draftContentRef.current;
+    const pendingBeforeReplacement = pendingTextPatchRef.current;
+    const content = fileNodeRow
+      ? previousContent
+      : deleteRichTextRange(previousContent, trigger.from, trigger.to);
+    if (!fileNodeRow) replaceLocalDraftContent(content);
+    void startOptimisticNodePatch({
+      currentUi: props.uiRef.current,
+      setUi: props.setUi,
+      patch: optimisticTagPatch({
+        node: displayed,
+        ui: props.uiRef.current,
+        tagId: tag.id,
+        action: 'add',
+        ...(!fileNodeRow ? { content } : {}),
+      }),
+      command: async () => {
+        await pendingBeforeReplacement;
+        return props.run(() => (
+          fileNodeRow
+            ? api.applyTag(targetEditId, tag.id)
+            : api.applyTagWithContent(targetEditId, tag.id, content)
+        ), {
+          applyFocus: false,
+        });
+      },
+      onRejected: !fileNodeRow ? () => replaceLocalDraftContent(previousContent) : undefined,
+    });
+    return commandRunnerNoop();
+  };
+
+  const createAndApplyMaterializedTag = async (name: string) => {
+    const trigger = props.trigger?.nodeId === props.nodeId ? props.trigger : null;
+    if (!trigger || !displayed) return null;
+    const previousContent = draftContentRef.current;
+    const pendingBeforeReplacement = pendingTextPatchRef.current;
+    const content = fileNodeRow
+      ? previousContent
+      : deleteRichTextRange(previousContent, trigger.from, trigger.to);
+    const tagId = freshNodeId();
+    if (!fileNodeRow) replaceLocalDraftContent(content);
+    void startOptimisticNodePatch({
+      currentUi: props.uiRef.current,
+      setUi: props.setUi,
+      patch: optimisticTagPatch({
+        node: displayed,
+        ui: props.uiRef.current,
+        tagId,
+        action: 'add',
+        ...(!fileNodeRow ? { content } : {}),
+        pendingTagName: name,
+      }),
+      command: async () => {
+        await pendingBeforeReplacement;
+        return props.run(
+          () => fileNodeRow
+            ? api.createTagAndBatchApply([targetEditId], name, tagId)
+            : api.createTagAndApplyWithContent(targetEditId, name, content, tagId),
+          { applyFocus: false },
+        );
+      },
+      onRejected: !fileNodeRow ? () => replaceLocalDraftContent(previousContent) : undefined,
+    });
+    return commandRunnerNoop();
   };
 
   const applyReference = async (target: NodeProjection) => {
@@ -1265,7 +1553,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     if (!trigger) {
       return;
     }
-    await pendingTextPatchRef.current;
+    const pendingBeforeReplacement = pendingTextPatchRef.current;
     const currentDraft = draftContentRef.current;
     const byIdWithTarget = props.index.byId.has(target.id)
       ? props.index.byId
@@ -1288,46 +1576,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       sourceIsReference: node.type === 'reference',
     });
     if (action === 'blocked') return commandRunnerNoop();
-    if (action === 'tree_reference') {
-      if (onDraftTrigger && props.fieldValue) {
-        const outcome = virtualFieldValueDraft
-          ? await runClaimedVirtualFieldMaterialization(() => props.fieldValue!.materializeReference(props.nodeId, target.id))
-          : await props.fieldValue.materializeReference(props.nodeId, target.id);
-        if (!outcome) return outcome;
-        const materializedParentId = rememberMaterializedFieldEntry(outcome);
-        if (!materializedParentId) return outcome;
-        replaceLocalDraftContent(EMPTY_RICH_TEXT);
-        return commandResultWithFocus(outcome, {
-          nodeId: materializedParentId,
-          parentId: materializedParentId,
-          surface: 'trailing',
-          placement: { kind: 'end' },
-        });
-      }
-      // Whole-text @ref. A draft has no node yet, so it creates a fresh
-      // inline-conversion row (add_reference_conversion); a real (empty) row
-      // converts itself in place (replace_node_with_reference_conversion).
-      const outcome = onDraftTrigger
-        ? await api.addReferenceConversion(props.parentId, target.id, null, textOf(target))
-        : await api.replaceNodeWithReferenceConversion(props.nodeId, target.id, textOf(target));
-      if (onDraftTrigger) replaceLocalDraftContent(EMPTY_RICH_TEXT);
-      const inlineNodeId = outcome.focus?.nodeId;
-      if (!inlineNodeId) {
-        return outcome;
-      }
-      const inlineParentId = outcome.focus?.parentId ?? props.parentId;
-      props.setUi((prev) => ({
-        ...prev,
-        pendingReferenceConversion: {
-          nodeId: inlineNodeId,
-          parentId: inlineParentId,
-          targetId: target.id,
-        },
-        pendingReferenceTypeAhead: null,
-      }));
-      return outcome;
-    }
-
     const nextContent = replaceRichTextRangeWithInlineRef(
       currentDraft,
       trigger.from,
@@ -1340,38 +1588,83 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         // the current UI language — would freeze it into the document.
         displayName: textOf(target),
       },
+      // A whole-row conversion gets its editable caret anchor from the editor's
+      // transient sentinel. Only an inline insertion stores a real separating gap.
+      { trailingSpace: action !== 'tree_reference' },
     );
-    if (onDraftTrigger) {
-      if (props.fieldValue) {
-        const outcome = virtualFieldValueDraft
-          ? await runClaimedVirtualFieldMaterialization(() => props.fieldValue!.materializeNodes(props.nodeId, [{
+    if (action === 'tree_reference') {
+      if (onDraftTrigger) {
+        const fieldReference = Boolean(props.fieldValue);
+        const optimisticNode: NodeProjection = fieldReference
+          ? {
+              ...makeDraftNode(props.nodeId, props.parentId),
+              type: 'reference',
+              targetId: target.id,
+            }
+          : {
+              ...makeDraftNode(props.nodeId, props.parentId, nextContent),
               content: nextContent,
-              children: [],
-            }]))
-          : await props.fieldValue.materializeNodes(props.nodeId, [{
-              content: nextContent,
-              children: [],
-            }]);
-        if (!outcome) return outcome;
-        const entryId = rememberMaterializedFieldEntry(outcome);
-        if (!entryId) return outcome;
-        // The materialized value keeps the draft id, so this component survives
-        // the projection update. Adopt the content written by appendNodes; the
-        // new trailing draft has its own id and starts empty independently.
-        replaceLocalDraftContent(nextContent);
-        return commandResultWithFocus(outcome, {
-          nodeId: entryId,
-          parentId: entryId,
-          surface: 'trailing',
-          placement: { kind: 'end' },
+            };
+        const result = startOptimisticDraftMaterialization({
+          content: fieldReference ? EMPTY_RICH_TEXT : nextContent,
+          nodeOverride: optimisticNode,
+          placement: cursorAtOffset(
+            cursorOffsetAfterInlineReference(nextContent, trigger.from),
+            'after',
+          ),
+          updateUi: fieldReference
+            ? undefined
+            : (previous) => ({
+                ...previous,
+                pendingReferenceConversion: {
+                  nodeId: props.nodeId,
+                  parentId: props.parentId,
+                  targetId: target.id,
+                },
+              }),
+          rollbackUi: fieldReference
+            ? undefined
+            : (previous) => (
+                previous.pendingReferenceConversion?.nodeId === props.nodeId
+                  ? { ...previous, pendingReferenceConversion: null }
+                  : previous
+              ),
+          command: () => props.fieldValue
+            ? props.fieldValue.materializeReference(props.nodeId, target.id)
+            : api.addReferenceConversion(
+                props.parentId,
+                target.id,
+                currentDraftCreateIndex(),
+                textOf(target),
+                props.nodeId,
+              ),
         });
+        if (fieldReference) focusTrailingDraft();
+        return result;
       }
-      // Inline @ref inside buffered draft text (e.g. "See @Alpha"): commit one
-      // rich-text row atomically (create_rich_text_node) rather than materializing
-      // a plain node first and patching it.
-      const outcome = await api.createRichTextNode(props.parentId, null, nextContent);
-      replaceLocalDraftContent(EMPTY_RICH_TEXT);
-      return outcome;
+      // Whole-text @ref. A draft has no node yet, so it creates a fresh
+      // inline-conversion row (add_reference_conversion); a real (empty) row
+      // converts itself in place (replace_node_with_reference_conversion).
+      startOptimisticReferenceReplacement(target, nextContent, pendingBeforeReplacement);
+      return commandRunnerNoop();
+    }
+
+    if (onDraftTrigger) {
+      return startOptimisticDraftMaterialization({
+        content: nextContent,
+        placement: cursorAtOffset(
+          cursorOffsetAfterInlineReference(nextContent, trigger.from),
+          'after',
+        ),
+        command: () => props.fieldValue
+          ? props.fieldValue.materializeNodes(props.nodeId, [{ content: nextContent, children: [] }])
+          : api.createRichTextNode(
+              props.parentId,
+              currentDraftCreateIndex(),
+              nextContent,
+              props.nodeId,
+            ),
+      });
     }
     replaceLocalDraftContent(nextContent);
     requestRowFocus(
@@ -1379,7 +1672,10 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       cursorAtOffset(cursorOffsetAfterInlineReference(nextContent, trigger.from), 'after'),
       props.parentId,
     );
-    return api.replaceNodeText(targetEditId, nextContent);
+    await pendingBeforeReplacement;
+    return props.run(() => api.replaceNodeText(targetEditId, nextContent), {
+      applyFocus: false,
+    });
   };
 
   const executeSlashCommand = async (commandId: SlashCommandId) => {
@@ -1387,26 +1683,12 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     if (!trigger) return null;
 
     if (commandId === 'field') {
-      await pendingTextPatchRef.current;
-      if (virtualFieldValueDraft && props.fieldValue) {
-        const outcome = await runClaimedVirtualFieldMaterialization(() => (
-          props.fieldValue!.materializeField(props.nodeId)
-        ));
-        if (outcome) replaceLocalDraftContent(EMPTY_RICH_TEXT);
-        return outcome;
-      }
-      // Draft: create the inline field as a child of the parent (create_inline_field);
-      // a real node anchors it right after itself (create_inline_field_after_node).
-      if (!onDraftTrigger) return createPlaceholderInlineFieldAfterNode(props.nodeId, 'plain');
-      const outcome = await createPlaceholderInlineField(props.parentId, null, 'plain');
-      // Drop the buffered "/" query so it does not re-materialize as a stray node
-      // when the field name input steals focus from the draft.
-      replaceLocalDraftContent(EMPTY_RICH_TEXT);
-      return outcome;
+      startOptimisticFieldConversion();
+      return commandRunnerNoop();
     }
 
     if (commandId === 'reference') {
-      await pendingTextPatchRef.current;
+      const pendingBeforeReplacement = pendingTextPatchRef.current;
       const nextContent = replaceRichTextRangeWithText(draftContentRef.current, trigger.from, trigger.to, '@');
       replaceLocalDraftContent(nextContent);
       if (onDraftTrigger) {
@@ -1418,183 +1700,91 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         focusTrailingDraft();
         return commandRunnerNoop();
       }
-      const result = await api.replaceNodeText(targetEditId, nextContent);
-      window.requestAnimationFrame(() => {
-        props.setTrigger({
-          nodeId: props.nodeId,
-          kind: '@',
-          query: '',
-          from: trigger.from,
-          to: trigger.from + 1,
-          anchor: trigger.anchor,
-        });
+      props.setTrigger({
+        nodeId: props.nodeId,
+        ...referenceTriggerFromSlash(trigger),
       });
-      return result;
+      await pendingBeforeReplacement;
+      return props.run(() => api.replaceNodeText(targetEditId, nextContent), {
+        applyFocus: false,
+      });
     }
 
     if (commandId === 'heading') {
-      await pendingTextPatchRef.current;
+      const pendingBeforeReplacement = pendingTextPatchRef.current;
       const withoutTrigger = deleteRichTextRange(draftContentRef.current, trigger.from, trigger.to);
       const nextContent = markWholeTextAsHeading(withoutTrigger);
       if (onDraftTrigger) {
-        if (virtualFieldValueDraft && props.fieldValue) {
-          const outcome = await runClaimedVirtualFieldMaterialization(() => props.fieldValue!.materializeNodes(props.nodeId, [{
-              content: nextContent,
-              children: [],
-            }]));
-          if (!outcome) return outcome;
-          const entryId = rememberMaterializedFieldEntry(outcome);
-          replaceLocalDraftContent(EMPTY_RICH_TEXT);
-          return entryId
-            ? commandResultWithFocus(outcome, {
-                nodeId: props.nodeId,
-                parentId: entryId,
-                surface: 'row',
-                placement: { kind: 'end' },
-              })
-            : outcome;
-        }
-        const outcome = await api.createRichTextNode(props.parentId, null, nextContent);
-        replaceLocalDraftContent(EMPTY_RICH_TEXT);
-        return outcome;
+        startOptimisticHeadingConversion(nextContent);
+        return commandRunnerNoop();
       }
       replaceLocalDraftContent(nextContent);
-      return api.replaceNodeText(targetEditId, nextContent);
+      await pendingBeforeReplacement;
+      return props.run(() => api.replaceNodeText(targetEditId, nextContent), {
+        applyFocus: false,
+      });
     }
 
     if (commandId === 'checkbox') {
-      if (onDraftTrigger) {
-        await pendingTextPatchRef.current;
-        const withoutTrigger = deleteRichTextRange(draftContentRef.current, trigger.from, trigger.to);
-        if (virtualFieldValueDraft && props.fieldValue) {
-          const outcome = await runClaimedVirtualFieldMaterialization(() => props.fieldValue!.materializeNodes(props.nodeId, [{
-              content: withoutTrigger,
-              children: [],
-              checkbox: true,
-              done: false,
-            }]));
-          if (!outcome) return outcome;
-          const entryId = rememberMaterializedFieldEntry(outcome);
-          replaceLocalDraftContent(EMPTY_RICH_TEXT);
-          return entryId
-            ? commandResultWithFocus(outcome, {
-                nodeId: props.nodeId,
-                parentId: entryId,
-                surface: 'row',
-                placement: { kind: 'end' },
-              })
-            : outcome;
-        }
-        const created = await api.createRichTextNode(props.parentId, null, withoutTrigger);
-        replaceLocalDraftContent(EMPTY_RICH_TEXT);
-        const nodeId = created.focus?.nodeId;
-        if (!nodeId) return created;
-        return api.toggleDone(nodeId);
-      }
-      await applyTextWithoutTrigger();
-      return api.toggleDone(targetEditId);
-    }
-
-    if (commandId === 'code') {
-      await pendingTextPatchRef.current;
       const withoutTrigger = deleteRichTextRange(draftContentRef.current, trigger.from, trigger.to);
-      if (onDraftTrigger) {
-        if (virtualFieldValueDraft && props.fieldValue) {
-          const outcome = await runClaimedVirtualFieldMaterialization(() => props.fieldValue!.materializeNodes(props.nodeId, [{
-              content: withoutTrigger,
-              children: [],
-              type: 'codeBlock',
-            }]));
-          if (!outcome) return outcome;
-          const entryId = rememberMaterializedFieldEntry(outcome);
-          replaceLocalDraftContent(EMPTY_RICH_TEXT);
-          return entryId
-            ? commandResultWithFocus(outcome, {
-                nodeId: props.nodeId,
-                parentId: entryId,
-                surface: 'row',
-                placement: { kind: 'end' },
-              })
-            : outcome;
-        }
-        const created = await api.createRichTextNode(props.parentId, null, withoutTrigger);
-        replaceLocalDraftContent(EMPTY_RICH_TEXT);
-        const nodeId = created.focus?.nodeId;
-        if (!nodeId) return created;
-        return api.setCodeBlock(nodeId);
-      }
-      replaceLocalDraftContent(withoutTrigger);
-      await api.replaceNodeText(targetEditId, withoutTrigger);
-      return api.setCodeBlock(targetEditId);
-    }
-
-    if (commandId === 'image') {
-      await pendingTextPatchRef.current;
-      const withoutTrigger = deleteRichTextRange(draftContentRef.current, trigger.from, trigger.to);
-      if (virtualFieldValueDraft) {
-        replaceLocalDraftContent(withoutTrigger);
-        if (withoutTrigger.text.trim().length > 0 || withoutTrigger.inlineRefs.length > 0) {
-          materializeDraft();
-          await pendingTextPatchRef.current;
-        }
-        const assets = await api.pickImageFiles();
-        if (assets.length > 0) await landImagesOnCurrentRow(assets);
-        return commandRunnerNoop();
-      }
-      replaceLocalDraftContent(withoutTrigger);
-      if (onDraftTrigger) {
-        // Picking files needs a real row to land them on; materialize the
-        // de-triggered draft first, then drop the images onto it.
-        materializeDraft();
-        await pendingTextPatchRef.current;
-      } else {
-        const cleared = await props.run(() => api.replaceNodeText(targetEditId, withoutTrigger));
-        if (cleared === null) return commandRunnerAbort();
-      }
-      const assets = await api.pickImageFiles();
-      await landImagesOnCurrentRow(assets);
+      startOptimisticCheckboxConversion(withoutTrigger);
       return commandRunnerNoop();
     }
 
-    if (commandId === 'attachment') {
-      await pendingTextPatchRef.current;
+    if (commandId === 'code') {
       const withoutTrigger = deleteRichTextRange(draftContentRef.current, trigger.from, trigger.to);
-      if (virtualFieldValueDraft) {
-        replaceLocalDraftContent(withoutTrigger);
-        if (withoutTrigger.text.trim().length > 0 || withoutTrigger.inlineRefs.length > 0) {
-          materializeDraft();
-          await pendingTextPatchRef.current;
-        }
-        const assets = await api.pickAttachmentFiles();
-        if (assets.length > 0) await landAssetsOnCurrentRow(assets);
-        return commandRunnerNoop();
-      }
+      startOptimisticCodeBlockConversion(withoutTrigger);
+      return commandRunnerNoop();
+    }
+
+    if (commandId === 'image' || commandId === 'attachment') {
+      const pendingBeforeReplacement = pendingTextPatchRef.current;
+      const previousContent = draftContentRef.current;
+      const withoutTrigger = deleteRichTextRange(draftContentRef.current, trigger.from, trigger.to);
       replaceLocalDraftContent(withoutTrigger);
-      if (onDraftTrigger) {
-        const assets = await api.pickAttachmentFiles();
-        if (assets.length > 0) {
-          replaceLocalDraftContent(EMPTY_RICH_TEXT);
-          await insertAssetNodesAt(assets, currentDraftCreateIndex());
-        }
-        return commandRunnerNoop();
-      } else {
-        const cleared = await props.run(() => api.replaceNodeText(targetEditId, withoutTrigger));
-        if (cleared === null) return commandRunnerAbort();
+      const assetsPromise = commandId === 'image'
+        ? api.pickImageFiles()
+        : api.pickAttachmentFiles();
+      let contentSettlement: Promise<boolean> = Promise.resolve(true);
+      if (virtualFieldValueDraft && (
+        withoutTrigger.text.trim().length > 0
+        || withoutTrigger.inlineRefs.length > 0
+      )) {
+        materializeDraft();
+        contentSettlement = pendingTextPatchRef.current.then(() => true);
+      } else if (!onDraftTrigger) {
+        contentSettlement = startOptimisticNodePatch({
+          currentUi: props.uiRef.current,
+          setUi: props.setUi,
+          patch: pendingNodePatch(targetEditId, { content: withoutTrigger }),
+          command: async () => {
+            await pendingBeforeReplacement;
+            return props.run(() => api.replaceNodeText(targetEditId, withoutTrigger), {
+              applyFocus: false,
+            });
+          },
+          onRejected: () => replaceLocalDraftContent(previousContent),
+        });
       }
-      const assets = await api.pickAttachmentFiles();
-      await landAssetsOnCurrentRow(assets);
+      const assets = await assetsPromise;
+      if (!await contentSettlement) return commandRunnerAbort();
+      if (commandId === 'image') await landImagesOnCurrentRow(assets);
+      else await landAssetsOnCurrentRow(assets);
       return commandRunnerNoop();
     }
 
     if (commandId === 'command_palette') {
-      await pendingTextPatchRef.current;
+      let clear: Promise<void>;
       if (onDraftTrigger) {
         replaceLocalDraftContent(deleteRichTextRange(draftContentRef.current, trigger.from, trigger.to));
+        clear = Promise.resolve();
       } else {
-        await applyTextWithoutTrigger();
+        clear = applyTextWithoutTrigger();
       }
-      // The `/`-menu row summons the SAME panel the hotkey does.
+      // The palette is renderer-local, so it opens in the selection frame rather
+      // than waiting for the trigger-removal patch to cross the Runtime boundary.
       void window.lin?.showLauncher?.();
+      await clear;
       return commandRunnerNoop();
     }
 
@@ -1606,34 +1796,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // and how a pasted fence becomes a `codeBlock` node. Focus lands in the new
   // code editor via a focus request the CodeBlockRow consumes on mount.
   const convertRowToCodeBlock = () => {
-    void (async () => {
-      if (virtualFieldValueDraft && props.fieldValue) {
-        const outcome = await runClaimedVirtualFieldMaterialization(() => props.run(
-            () => props.fieldValue!.materializeNodes(props.nodeId, [{
-              content: EMPTY_RICH_TEXT,
-              children: [],
-              type: 'codeBlock',
-            }]),
-            { applyFocus: false },
-          ));
-        if (outcome) {
-          rememberMaterializedFieldEntry(outcome);
-          replaceLocalDraftContent(EMPTY_RICH_TEXT);
-          requestRowFocus(
-            props.nodeId,
-            cursorEnd(),
-            materializedFieldParentIdRef.current ?? props.parentId,
-          );
-        }
-        return;
-      }
-      if (props.draft && !realNode) materializeDraft();
-      await pendingTextPatchRef.current;
-      replaceLocalDraftContent(EMPTY_RICH_TEXT);
-      await props.run(() => api.replaceNodeText(targetEditId, EMPTY_RICH_TEXT));
-      await props.run(() => api.setCodeBlock(targetEditId));
-      requestRowFocus(props.nodeId, cursorEnd());
-    })();
+    semanticTriggerResolutionRef.current = true;
+    queueMicrotask(() => startOptimisticCodeBlockConversion());
   };
 
   // From the empty trailing draft, step focus up to the visually-previous row
@@ -1789,26 +1953,33 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // Append an existing pool option as a reference (the additive options overlay),
   // then return to the trailing draft for the next value. The typed query is
   // discarded — the user picked an option rather than creating from the text.
-  const selectOptionAndAdvance = async (optionId: NodeId) => {
+  const selectOptionAndAdvance = (optionId: NodeId) => {
     setOptionsOpen(false);
-    replaceLocalDraftContent(EMPTY_RICH_TEXT);
-    const outcome = props.fieldValue
-      ? await props.run(() => props.fieldValue!.onSelectOption(optionId), { applyFocus: false })
-      : null;
-    const materializedParentId = commandResultFocusNodeId(outcome);
-    focusTrailingDraft(null, materializedParentId ?? props.fieldValue?.entryId ?? props.parentId);
+    const pendingParentId = props.fieldValue?.entryId ?? props.parentId;
+    const option = props.index.byId.get(optionId);
+    if (!props.fieldValue || !option) return;
+    startOptimisticDraftMaterialization({
+      content: EMPTY_RICH_TEXT,
+      nodeOverride: {
+        ...makeDraftNode(props.nodeId, props.parentId),
+        type: 'reference',
+        targetId: optionId,
+      },
+      command: (change) => props.fieldValue!.onSelectOption(optionId, change.id),
+    });
+    focusTrailingDraft(null, pendingParentId);
   };
 
   // Materialize the current draft (body or field value) then advance to the next
   // trailing draft. Shared by Enter and the options overlay's create affordance —
   // both create a value from the typed text via the same path.
-  const materializeDraftAndAdvance = async () => {
-    materializeDraft();
-    await pendingTextPatchRef.current;
+  const materializeDraftAndAdvance = () => {
+    const materialized = materializeDraft();
     focusTrailingDraft(
       !props.fieldValue ? props.nodeId : null,
       materializedFieldParentIdRef.current ?? props.fieldValue?.entryId ?? props.parentId,
     );
+    return materialized;
   };
 
   // Commit a date the picker produced. A draft materializes with the picked text
@@ -1827,13 +1998,316 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       return;
     }
     replaceLocalDraftContent(text);
-    pendingTextPatchRef.current = pendingTextPatchRef.current.then(() =>
-      props.run(() => api.replaceNodeText(targetEditId, text), { applyFocus: false }));
-    void pendingTextPatchRef.current;
+    applyTextPatch(replaceAllRichTextPatch(text));
+  };
+
+  const clearPendingRemoval = (nodeId: NodeId) => {
+    props.setUi((prev) => clearOptimisticRemovals(prev, [nodeId]));
+  };
+
+  const reconcilePendingStructuralChange = async (change: PendingStructuralChange): Promise<boolean> => {
+    const latest = change.latestContent.current;
+    if (richTextEquals(latest, change.initialContent)) return true;
+    return await props.run(
+      () => api.replaceNodeText(change.id, latest),
+      { applyFocus: false },
+    ) !== null;
+  };
+
+  const startPendingStructuralCommand = (
+    input: BeginOptimisticStructuralEditInput,
+    command: (change: PendingStructuralChange) => Promise<unknown | null>,
+    onRejected: () => void,
+    retainOnRejected = false,
+  ) => startOptimisticStructuralEdit({
+    panelId: props.panelId,
+    setUi: props.setUi,
+    input,
+    command,
+    reconcile: (_result, pendingChange) => reconcilePendingStructuralChange(pendingChange),
+    onRejected,
+    retainOnRejected,
+  }).settlement;
+
+  const startDependentContentEnter = (
+    source: PendingStructuralChange,
+    payload: EditorSplitPayload,
+  ) => {
+    const insertsBefore = payload.atStart && !payload.atEnd;
+    const splitsContent = !payload.atStart && !payload.atEnd;
+    if (!insertsBefore) {
+      source.latestContent.current = payload.before;
+      replaceLocalDraftContent(payload.before);
+    }
+    void startPendingStructuralCommand(
+      {
+        parentId: source.parentId,
+        ...(insertsBefore ? { beforeId: source.id } : { afterId: source.id }),
+        content: splitsContent ? payload.after : EMPTY_RICH_TEXT,
+        placement: insertsBefore || payload.atEnd ? cursorEnd() : cursorStart(),
+      },
+      async (change) => {
+        if (!await source.settlement.current) return null;
+        const operation = splitsContent
+          ? () => api.splitNode(source.id, payload.before, payload.after, {}, change.id)
+          : () => api.createNodeRelativeTo(
+              source.id,
+              source.parentId,
+              insertsBefore ? 'before' : 'after',
+              EMPTY_RICH_TEXT,
+              change.id,
+            );
+        return props.run(operation, {
+          applyFocus: false,
+        });
+      },
+      () => undefined,
+      true,
+    );
+  };
+
+  const restoreFocusAfterStructuralFailure = (hadProjectedNode: boolean) => {
+    props.setUi((prev) => requestFocusState(
+      prev,
+      hadProjectedNode
+        ? rowFocusTarget(props.nodeId, props.parentId, props.panelId)
+        : focusTarget(props.parentId, props.parentId, props.panelId, 'trailing'),
+      cursorEnd(),
+    ));
+  };
+
+  const startOptimisticReferenceReplacement = (
+    target: NodeProjection,
+    content: RichText,
+    pendingBeforeReplacement: Promise<unknown>,
+  ) => {
+    const replacementId = freshNodeId();
+    const siblings = props.index.byId.get(props.parentId)?.children ?? [];
+    const anchors = optimisticReplacementAnchors(siblings, props.nodeId);
+    const clearReplacementState = () => {
+      flushSync(() => {
+        props.setUi((previous) => {
+          const restored = clearOptimisticRemovals(previous, [props.nodeId]);
+          const withoutConversion = restored.pendingReferenceConversion?.nodeId === replacementId
+            ? { ...restored, pendingReferenceConversion: null }
+            : restored;
+          return requestFocusState(
+            withoutConversion,
+            rowFocusTarget(props.nodeId, props.parentId, props.panelId),
+            cursorEnd(),
+          );
+        });
+      });
+    };
+    const { settlement } = startOptimisticStructuralEdit({
+      panelId: props.panelId,
+      setUi: props.setUi,
+      input: {
+        id: replacementId,
+        parentId: props.parentId,
+        ...anchors,
+        content,
+        nodeOverride: makeDraftNode(replacementId, props.parentId, content),
+        placement: cursorAtOffset(0, 'after'),
+        updateUi: (previous) => ({
+          ...addOptimisticRemovals(previous, [props.nodeId]),
+          pendingReferenceConversion: {
+            nodeId: replacementId,
+            parentId: props.parentId,
+            targetId: target.id,
+          },
+        }),
+      },
+      command: async (change) => {
+        await pendingBeforeReplacement;
+        return props.run(() => api.replaceNodeWithReferenceConversion(
+          props.nodeId,
+          target.id,
+          textOf(target),
+          change.id,
+        ), { applyFocus: false });
+      },
+      reconcile: async (_result, change) => {
+        if (!await reconcilePendingStructuralChange(change)) return false;
+        clearPendingRemoval(props.nodeId);
+        return true;
+      },
+      onRejected: clearReplacementState,
+      onFailed: clearReplacementState,
+    });
+    pendingTextPatchRef.current = settlement;
+  };
+
+  const startOptimisticFieldConversion = () => {
+    const priorChange = props.optimisticChange;
+    const hadProjectedNode = Boolean(realNode) || Boolean(priorChange);
+    const previousContent = draftContentRef.current;
+    const pendingBeforeConversion = pendingTextPatchRef.current;
+    const { settlement } = startOptimisticStructuralEdit({
+      panelId: props.panelId,
+      setUi: props.setUi,
+      input: {
+        id: props.nodeId,
+        parentId: props.parentId,
+        originatesFromDraft: !hadProjectedNode || priorChange?.originatesFromDraft === true,
+        beforeId: priorChange?.beforeId,
+        afterId: priorChange?.afterId ?? props.draftAfterId,
+        presentation: 'field',
+        content: EMPTY_RICH_TEXT,
+        placement: cursorAll(),
+        updateSource: () => replaceLocalDraftContent(EMPTY_RICH_TEXT),
+      },
+      command: async (change) => {
+        if (priorChange && !await priorChange.settlement.current) return null;
+        await pendingBeforeConversion;
+        const operation = virtualFieldValueDraft && props.fieldValue
+          ? () => props.fieldValue!.materializeField(change.id)
+          : hadProjectedNode
+            ? () => createPlaceholderInlineFieldAfterNode(change.id, 'plain')
+            : () => createPlaceholderInlineField(
+                props.parentId,
+                currentDraftCreateIndex(),
+                'plain',
+                change.id,
+              );
+        return props.run(operation, {
+          applyFocus: false,
+          beforeApply: virtualFieldValueDraft ? rememberMaterializedFieldEntry : undefined,
+        });
+      },
+      reconcile: async (outcome, change) => {
+        if (!('update' in outcome)) return true;
+        const fieldDefId = fieldDefinitionIdFromInlineFieldOutcome(outcome, change.id);
+        if (change.resolvedFieldDefId) change.resolvedFieldDefId.current = fieldDefId;
+        const name = change.latestFieldName?.current.trim() ?? '';
+        if (!fieldDefId || !name) return true;
+        return await props.run(() => api.replaceNodeText(fieldDefId, plainText(name)), {
+          applyFocus: false,
+        }) !== null;
+      },
+      onRejected: () => {
+        replaceLocalDraftContent(previousContent);
+        restoreFocusAfterStructuralFailure(hadProjectedNode);
+        materializeStartedRef.current = false;
+      },
+      onFailed: () => {
+        materializeStartedRef.current = false;
+      },
+    });
+    pendingTextPatchRef.current = settlement;
+  };
+
+  const startOptimisticContentConversion = (params: {
+    content: RichText;
+    presentation: 'content' | 'codeBlock';
+    nodeOverride?: NodeProjection;
+    fieldValueTree: CreateNodeTree;
+    convert: (nodeId: NodeId, content: RichText) => Promise<CommandResult>;
+    create: (
+      parentId: NodeId,
+      index: number | null,
+      content: RichText,
+      id: NodeId,
+    ) => Promise<CommandResult>;
+  }) => {
+    const priorChange = props.optimisticChange;
+    const hadProjectedNode = Boolean(realNode) || Boolean(priorChange);
+    const previousContent = draftContentRef.current;
+    const pendingBeforeConversion = pendingTextPatchRef.current;
+    const { settlement } = startOptimisticStructuralEdit({
+      panelId: props.panelId,
+      setUi: props.setUi,
+      input: {
+        id: props.nodeId,
+        parentId: props.parentId,
+        originatesFromDraft: !hadProjectedNode || priorChange?.originatesFromDraft === true,
+        beforeId: priorChange?.beforeId,
+        afterId: priorChange?.afterId ?? props.draftAfterId,
+        presentation: params.presentation,
+        content: params.content,
+        nodeOverride: params.nodeOverride,
+        placement: cursorEnd(),
+        updateSource: () => replaceLocalDraftContent(params.content),
+      },
+      command: async (change) => {
+        if (priorChange && !await priorChange.settlement.current) return null;
+        await pendingBeforeConversion;
+        const operation = virtualFieldValueDraft && props.fieldValue
+          ? () => props.fieldValue!.materializeNodes(change.id, [params.fieldValueTree])
+          : hadProjectedNode
+            ? () => params.convert(change.id, params.content)
+            : () => params.create(
+                props.parentId,
+                currentDraftCreateIndex(),
+                params.content,
+                change.id,
+              );
+        return props.run(operation, {
+          applyFocus: false,
+          beforeApply: virtualFieldValueDraft ? rememberMaterializedFieldEntry : undefined,
+        });
+      },
+      reconcile: (_outcome, change) => reconcilePendingStructuralChange(change),
+      onRejected: () => {
+        replaceLocalDraftContent(previousContent);
+        restoreFocusAfterStructuralFailure(hadProjectedNode);
+        materializeStartedRef.current = false;
+      },
+      onFailed: () => {
+        materializeStartedRef.current = false;
+      },
+    });
+    pendingTextPatchRef.current = settlement;
+  };
+
+  const startOptimisticCodeBlockConversion = (content: RichText = EMPTY_RICH_TEXT) => {
+    startOptimisticContentConversion({
+      content,
+      presentation: 'codeBlock',
+      fieldValueTree: { content, children: [], type: 'codeBlock' },
+      convert: api.convertNodeToCodeBlock,
+      create: api.createCodeBlock,
+    });
+  };
+
+  const startOptimisticHeadingConversion = (content: RichText) => {
+    const source = props.optimisticChange?.nodeOverride?.current
+      ?? realNode
+      ?? makeDraftNode(props.nodeId, props.parentId, content);
+    startOptimisticContentConversion({
+      content,
+      presentation: 'content',
+      nodeOverride: { ...source, content },
+      fieldValueTree: { content, children: [] },
+      convert: api.replaceNodeText,
+      create: api.createRichTextNode,
+    });
+  };
+
+  const startOptimisticCheckboxConversion = (content: RichText) => {
+    const source = props.optimisticChange?.nodeOverride?.current
+      ?? realNode
+      ?? makeDraftNode(props.nodeId, props.parentId, content);
+    startOptimisticContentConversion({
+      content,
+      presentation: 'content',
+      nodeOverride: { ...source, content, completedAt: 0 },
+      fieldValueTree: { content, children: [], checkbox: true, done: false },
+      convert: api.convertNodeToCheckbox,
+      create: api.createCheckboxNode,
+    });
   };
 
   const handleEnter = async (payload: EditorSplitPayload) => {
     if (props.trigger?.nodeId === props.nodeId) return;
+    if (props.optimisticChange?.phase === 'submitting' && !realNode) {
+      if (props.fieldValue) {
+        focusTrailingDraft(null, props.parentId);
+      } else if (props.optimisticChange.presentation === 'content') {
+        startDependentContentEnter(props.optimisticChange, payload);
+      }
+      return;
+    }
     if (props.draft && !realNode) {
       const buffered = draftContentRef.current;
       const bodyDraftHasContent = !props.fieldValue
@@ -1846,9 +2320,16 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         // renderer trailing draft via materializeDraftAndAdvance, so Enter there never
         // leaks a stray empty sibling.)
         if (!payload.atEnd) replaceLocalDraftContent(payload.before);
+        materializeDraft();
+        const source = props.uiRef.current.pendingStructuralChanges.find((change) => (
+          change.id === props.nodeId && change.panelId === props.panelId
+        ));
+        if (source) {
+          startDependentContentEnter(source, payload);
+          return;
+        }
         const materializedIndex = currentDraftCreateIndex();
         const continuationIndex = materializedIndex === null ? null : materializedIndex + 1;
-        materializeDraft();
         await pendingTextPatchRef.current;
         await props.run(() => api.createNode(
           props.parentId,
@@ -1868,39 +2349,120 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       return;
     }
     if (props.tableNextRowId) {
-      await commitDraft(draftContentRef.current);
+      void commitDraft(draftContentRef.current);
       requestRowFocus(props.tableNextRowId, cursorStart(), props.parentId);
       return;
     }
     const siblings = props.index.byId.get(props.parentId)?.children ?? [];
     const rowIndex = siblings.indexOf(props.nodeId);
     if (payload.atStart && !payload.atEnd) {
-      await pendingTextPatchRef.current;
-      await props.run(() => api.createNode(props.parentId, rowIndex >= 0 ? rowIndex : null, ''));
+      await startPendingStructuralCommand(
+        {
+          parentId: props.parentId,
+          beforeId: props.nodeId,
+          content: EMPTY_RICH_TEXT,
+          placement: cursorEnd(),
+        },
+        async (pendingDraft) => {
+          await pendingTextPatchRef.current;
+          return props.run(
+            () => api.createNode(
+              props.parentId,
+              rowIndex >= 0 ? rowIndex : null,
+              '',
+              pendingDraft.id,
+            ),
+            { applyFocus: false },
+          );
+        },
+        () => {
+          flushSync(() => {
+            props.setUi((prev) => requestFocusState(
+              prev,
+              rowFocusTarget(props.nodeId, props.parentId, props.panelId),
+              cursorStart(),
+            ));
+          });
+        },
+      );
       return;
     }
     if (!payload.atEnd) {
-      await props.run(() => api.splitNode(targetEditId, payload.before, payload.after, {
-        // A file node's `expanded` means "preview open", not "children visible to
-        // type into", so Enter on a file row always adds a sibling (never a child).
-        ...(node.type === 'reference'
-          ? { targetParentId: props.parentId, targetIndex: rowIndex >= 0 ? rowIndex + 1 : null }
-          : !fileNodeRow && row.expanded && row.hasChildren
-            ? { targetParentId: props.nodeId, targetIndex: 0 }
-            : {}),
-        focusPlacement: { kind: 'start' },
-      }));
+      const contentBeforeSplit = draftContentRef.current;
+      const splitIntoChildren = node.type !== 'reference'
+        && !fileNodeRow
+        && row.expanded
+        && row.hasChildren;
+      const targetParentId = splitIntoChildren ? props.nodeId : props.parentId;
+      const targetIndex = splitIntoChildren ? 0 : rowIndex >= 0 ? rowIndex + 1 : null;
+      await startPendingStructuralCommand(
+        {
+          parentId: targetParentId,
+          ...(splitIntoChildren
+            ? { beforeId: rowChildIds[0] ?? null }
+            : { afterId: props.nodeId }),
+          content: payload.after,
+          placement: cursorStart(),
+          updateSource: () => replaceLocalDraftContent(payload.before),
+        },
+        async (pendingDraft) => {
+          await pendingTextPatchRef.current;
+          return props.run(() => api.splitNode(targetEditId, payload.before, payload.after, {
+            // A file node's `expanded` means "preview open", not "children visible to
+            // type into", so Enter on a file row always adds a sibling (never a child).
+            ...(node.type === 'reference'
+              ? { targetParentId: props.parentId, targetIndex: rowIndex >= 0 ? rowIndex + 1 : null }
+              : splitIntoChildren
+                ? { targetParentId: props.nodeId, targetIndex: 0 }
+                : {}),
+            focusPlacement: { kind: 'start' },
+          }, pendingDraft.id), { applyFocus: false });
+        },
+        () => {
+          flushSync(() => {
+            replaceLocalDraftContent(contentBeforeSplit);
+            props.setUi((prev) => requestFocusState(
+              prev,
+              rowFocusTarget(props.nodeId, props.parentId, props.panelId),
+              cursorAtOffset(payload.before.text.length),
+            ));
+          });
+        },
+      );
       return;
     }
-    await commitDraft(payload.before);
-    if (!fileNodeRow && row.expanded && row.hasChildren) {
-      await props.run(() => api.createNode(childParentId, 0, payload.after.text));
-      return;
-    }
-    await props.run(() => api.createNode(props.parentId, rowIndex >= 0 ? rowIndex + 1 : null, ''));
+    const createAsFirstChild = !fileNodeRow && row.expanded && row.hasChildren;
+    const targetParentId = createAsFirstChild ? childParentId : props.parentId;
+    const targetIndex = createAsFirstChild ? 0 : rowIndex >= 0 ? rowIndex + 1 : null;
+    await startPendingStructuralCommand(
+      {
+        parentId: targetParentId,
+        ...(createAsFirstChild
+          ? { beforeId: rowChildIds[0] ?? null }
+          : { afterId: props.nodeId }),
+        content: EMPTY_RICH_TEXT,
+        placement: cursorEnd(),
+      },
+      async (pendingDraft) => {
+        await commitDraft(payload.before);
+        return props.run(
+          () => api.createNode(targetParentId, targetIndex, '', pendingDraft.id),
+          { applyFocus: false },
+        );
+      },
+      () => {
+        flushSync(() => {
+          props.setUi((prev) => requestFocusState(
+            prev,
+            rowFocusTarget(props.nodeId, props.parentId, props.panelId),
+            cursorEnd(),
+          ));
+        });
+      },
+    );
   };
 
-  const handleModEnter = async (content: RichText) => {
+  const handleModEnter = (content: RichText) => {
     const emptyDraft = content.text.trim().length === 0 && content.inlineRefs.length === 0;
     if (props.draft && !realNode) {
       draftContentRef.current = content;
@@ -1908,13 +2470,16 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       // Empty field values intentionally do not materialize. Every other trailing
       // draft must become a real node before checkbox commands target it.
       if (props.fieldValue && emptyDraft) return;
-      const materialized = await materializeDraft();
-      if (!materialized) return;
-    } else {
-      setDraftContent(content);
-      await commitDraft(content);
     }
-    await props.run(() => api.cycleDoneState(targetEditId));
+    void startDoneTransition('cycle', async () => {
+      if (props.draft && !realNode) {
+        if (!await materializeDraft()) return null;
+      } else {
+        setDraftContent(content);
+        await commitDraft(content);
+      }
+      return props.run(() => api.cycleDoneState(targetEditId));
+    });
   };
 
   const handleCodeBlockTextChange = (text: string) => {
@@ -1924,10 +2489,13 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   };
 
   const handleCodeBlockExit = async () => {
-    await commitDraft();
-    const siblings = props.index.byId.get(props.parentId)?.children ?? [];
-    const rowIndex = siblings.indexOf(props.nodeId);
-    await props.run(() => api.createNode(props.parentId, rowIndex >= 0 ? rowIndex + 1 : null, ''));
+    const content = draftContentRef.current;
+    await handleEnter({
+      before: content,
+      after: EMPTY_RICH_TEXT,
+      atStart: content.text.length === 0 && content.inlineRefs.length === 0,
+      atEnd: true,
+    });
   };
 
   const handleSetCodeLanguage = (language: string) => {
@@ -1985,12 +2553,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       // also drops its mirror reference in the option pool (no orphan options);
       // a body node just goes to Trash. The renderer owns focus because the
       // deleted row may be the first or only visible row in the current scope.
-      if (props.fieldValue) {
-        await props.run(() => api.removeFieldValue(props.nodeId), { applyFocus: false });
-      } else {
-        await props.run(() => api.trashNode(props.nodeId), { applyFocus: false });
-      }
-      props.setUi((prev) => {
+      const focusAfterRemoval = (prev: UiState) => {
         if (previousId) {
           return requestFocusState(prev, targetForId(previousId), cursorEnd());
         }
@@ -2002,6 +2565,23 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           focusTarget(props.parentId, props.parentId, props.panelId, 'trailing'),
           cursorEnd(),
         );
+      };
+      await startOptimisticRemoval({
+        ids: [props.nodeId],
+        setUi: props.setUi,
+        updateUi: focusAfterRemoval,
+        command: () => props.fieldValue
+          ? props.run(() => api.removeFieldValue(props.nodeId), { applyFocus: false })
+          : props.run(() => api.trashNode(props.nodeId), { applyFocus: false }),
+        onRejected: () => {
+          flushSync(() => {
+            props.setUi((prev) => requestFocusState(
+              prev,
+              rowFocusTarget(props.nodeId, props.parentId, props.panelId),
+              cursorStart(),
+            ));
+          });
+        },
       });
       return;
     }
@@ -2026,31 +2606,89 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       return;
     }
 
-    const joinOffset = previousNode.content.text.length;
-    await commitDraft();
-    const result = await props.run(() => api.mergeNodeInto(props.nodeId, previousId));
-    if (result) {
-      requestRowFocus(previousId, cursorAtOffset(joinOffset));
-    }
+    if (!previousNode.parentId) return;
+    const resolvedReferenceTargetId = previousNode.type === 'reference' && previousNode.targetId
+      ? resolveReferenceTargetId(previousNode.targetId, props.index.byId) ?? undefined
+      : undefined;
+    const mergedNode = optimisticMergedNode({
+      target: previousNode,
+      source: node,
+      sourceContent: draftContentRef.current,
+      resolvedReferenceTargetId,
+      referenceDisplayName: resolvedReferenceTargetId
+        ? props.index.byId.get(resolvedReferenceTargetId)?.content.text || undefined
+        : undefined,
+    });
+    const joinOffset = previousNode.type === 'reference'
+      ? 0
+      : previousNode.content.text.length;
+    const pendingCommit = commitDraft();
+    startOptimisticStructuralEdit({
+      panelId: props.panelId,
+      setUi: props.setUi,
+      input: {
+        id: previousId,
+        parentId: previousNode.parentId,
+        content: mergedNode.content,
+        nodeOverride: mergedNode,
+        placement: cursorAtOffset(joinOffset),
+        updateUi: (previous) => addOptimisticRemovals(previous, [props.nodeId]),
+      },
+      command: async () => {
+        await pendingCommit;
+        return props.run(() => api.mergeNodeInto(props.nodeId, previousId), {
+          applyFocus: false,
+        });
+      },
+      reconcile: async (_result, change) => {
+        if (!await reconcilePendingStructuralChange(change)) return false;
+        clearPendingRemoval(props.nodeId);
+        return true;
+      },
+      onRejected: () => {
+        flushSync(() => {
+          clearPendingRemoval(props.nodeId);
+          props.setUi((previous) => requestFocusState(
+            previous,
+            rowFocusTarget(props.nodeId, props.parentId, props.panelId),
+            cursorStart(),
+          ));
+        });
+      },
+    });
   };
 
   const handleTab = async (shiftKey: boolean, cursorOffset: number) => {
-    const indentUnder = async (targetParentId: NodeId) => {
-      await props.run(() => api.indentNode(props.nodeId), {
-        applyFocus: false,
-        beforeApply: () => {
-          animateOutlinerRowMovementAfterNextCommit();
-          props.setUi((prev) => {
-            const expanded = new Set(prev.expanded);
-            expanded.add(targetParentId);
-            return requestFocusState(
-              { ...prev, expanded },
-              rowFocusTarget(props.nodeId, null, props.panelId),
-              cursorAtOffset(cursorOffset),
-            );
-          });
+    const relocate = (input: {
+      targetParentId: NodeId;
+      beforeId?: NodeId | null;
+      afterId?: NodeId | null;
+      expandId?: NodeId;
+      collapseIds?: ReadonlySet<NodeId>;
+      operation: () => Promise<CommandResult>;
+    }) => {
+      const pendingCommit = commitDraft();
+      animateOutlinerRowMovementAfterNextCommit();
+      const { settlement } = startOptimisticRelocation({
+        panelId: props.panelId,
+        setUi: props.setUi,
+        currentUi: props.uiRef.current,
+        id: props.nodeId,
+        sourceParentId: props.parentId,
+        targetParentId: input.targetParentId,
+        beforeId: input.beforeId,
+        afterId: input.afterId,
+        content: draftContentRef.current,
+        placement: cursorAtOffset(cursorOffset),
+        expandId: input.expandId,
+        collapseIds: input.collapseIds,
+        command: async () => {
+          await pendingCommit;
+          return props.run(input.operation, { applyFocus: false });
         },
+        reconcile: (_result, change) => reconcilePendingStructuralChange(change),
       });
+      return settlement;
     };
     if (props.draft && !realNode) {
       // Structural keys RELOCATE the empty trailing draft instead of materializing
@@ -2073,12 +2711,32 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         const hasBufferedValue = Boolean(props.fieldValue)
           && (buffered.text.trim().length > 0 || buffered.inlineRefs.length > 0);
         if (hasBufferedValue) {
-          // Field-value drafts buffer text until commit. Materialize the value
-          // before indenting so Tab never discards the buffered text when the
-          // direct-value draft is replaced by the target's ordinary child draft.
-          materializeDraft();
-          await pendingTextPatchRef.current;
-          await indentUnder(indentTarget);
+          // Materialization and indent are one visible transaction. Runtime still
+          // creates the value before moving it, but the renderer places the stable
+          // draft id under its target immediately instead of showing an entry-level
+          // row until both requests settle.
+          const materialized = materializeDraft();
+          const target = props.index.byId.get(indentTarget);
+          const { settlement } = startOptimisticRelocation({
+            panelId: props.panelId,
+            setUi: props.setUi,
+            currentUi: props.uiRef.current,
+            id: props.nodeId,
+            sourceParentId: props.parentId,
+            targetParentId: indentTarget,
+            afterId: outlinerChildren(target, props.index.byId).at(-1) ?? null,
+            content: buffered,
+            placement: cursorAtOffset(cursorOffset),
+            expandId: indentTarget,
+            retainOnRejected: true,
+            command: async () => {
+              if (!await materialized) return null;
+              return props.run(() => api.indentNode(props.nodeId), { applyFocus: false });
+            },
+            reconcile: (_result, change) => reconcilePendingStructuralChange(change),
+          });
+          pendingTextPatchRef.current = settlement;
+          await settlement;
           return;
         }
         props.setUi((prev) => {
@@ -2109,49 +2767,68 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       }));
       return;
     }
-    await commitDraft();
     if (!shiftKey) {
       const targetParentId = indentTargetParentId(props.nodeId, props.index.byId);
       if (!targetParentId) return;
-      await indentUnder(targetParentId);
+      const target = props.index.byId.get(targetParentId);
+      await relocate({
+        targetParentId,
+        afterId: outlinerChildren(target, props.index.byId).at(-1) ?? null,
+        expandId: targetParentId,
+        operation: () => api.indentNode(props.nodeId),
+      });
       return;
     }
     if (props.parentId === props.rootId) return;
     const emptiedParentIds = parentIdsEmptiedByOutdent([props.nodeId], props.index.byId, props.rootId);
-    await props.run(() => api.outdentNode(props.nodeId), {
-      applyFocus: false,
-      beforeApply: () => {
-        animateOutlinerRowMovementAfterNextCommit();
-        props.setUi((prev) => {
-          const next = emptiedParentIds.size > 0
-            ? { ...prev, expanded: collapseExpandedParentIds(prev.expanded, emptiedParentIds) }
-            : prev;
-          return requestFocusState(
-            next,
-            rowFocusTarget(props.nodeId, null, props.panelId),
-            cursorAtOffset(cursorOffset),
-          );
-        });
-      },
+    const targetParentId = props.index.byId.get(props.parentId)?.parentId;
+    if (!targetParentId) return;
+    await relocate({
+      targetParentId,
+      afterId: props.parentId,
+      collapseIds: emptiedParentIds,
+      operation: () => api.outdentNode(props.nodeId),
     });
   };
 
   const moveCurrentNode = async (direction: 'up' | 'down') => {
-    await commitDraft();
-    const result = await props.run(() => (
-      direction === 'up'
-        ? api.batchMoveNodesUp([props.nodeId])
-        : api.batchMoveNodesDown([props.nodeId])
-    ));
-    if (result) requestRowFocus(props.nodeId);
+    const siblings = props.index.byId.get(props.parentId)?.children ?? [];
+    const currentIndex = siblings.indexOf(props.nodeId);
+    const anchorId = direction === 'up'
+      ? siblings[currentIndex - 1]
+      : siblings[currentIndex + 1];
+    if (currentIndex < 0 || !anchorId) return;
+    const pendingCommit = commitDraft();
+    animateOutlinerRowMovementAfterNextCommit();
+    await startOptimisticRelocation({
+      panelId: props.panelId,
+      setUi: props.setUi,
+      currentUi: props.uiRef.current,
+      id: props.nodeId,
+      sourceParentId: props.parentId,
+      targetParentId: props.parentId,
+      ...(direction === 'up' ? { beforeId: anchorId } : { afterId: anchorId }),
+      content: draftContentRef.current,
+      placement: cursorEnd(),
+      command: async () => {
+        await pendingCommit;
+        return props.run(() => (
+          direction === 'up'
+            ? api.batchMoveNodesUp([props.nodeId])
+            : api.batchMoveNodesDown([props.nodeId])
+        ), { applyFocus: false });
+      },
+      reconcile: (_result, change) => reconcilePendingStructuralChange(change),
+    }).settlement;
   };
 
-  const exitToSelection = async () => {
+  const exitToSelection = () => {
     if (props.trigger?.nodeId === props.nodeId) {
       props.setTrigger(null);
       return;
     }
-    const selectionId = await commitDraft() ?? props.nodeId;
+    void commitDraft();
+    const selectionId = props.nodeId;
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
@@ -2363,6 +3040,40 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     && props.ui.selectedIds.size === 1
     && props.ui.selectedIds.has(props.nodeId),
   );
+  const appendSelectedOption = (optionId: NodeId) => {
+    if (!props.onSelectOption) return;
+    const option = props.index.byId.get(optionId);
+    if (!option) return;
+    const dependency = latestOptimisticStructuralDependency(
+      props.uiRef.current,
+      props.panelId,
+      props.parentId,
+      props.nodeId,
+    );
+    const siblings = props.index.byId.get(props.parentId)?.children ?? [];
+    const valueId = freshNodeId();
+    startOptimisticStructuralEdit({
+      panelId: props.panelId,
+      setUi: props.setUi,
+      input: {
+        id: valueId,
+        parentId: props.parentId,
+        afterId: dependency?.id ?? siblings.at(-1) ?? null,
+        content: EMPTY_RICH_TEXT,
+        nodeOverride: {
+          ...makeDraftNode(valueId, props.parentId),
+          type: 'reference',
+          targetId: optionId,
+        },
+        placement: cursorStart(),
+        preserveFocus: true,
+      },
+      command: async (change) => {
+        if (dependency && !await dependency.settlement.current) return null;
+        return props.onSelectOption!(optionId, change.id);
+      },
+    });
+  };
 
   // Additive layers on a committed field value: a non-blocking validation hint
   // and (for a well-formed url / email) an open-link affordance. The hint takes
@@ -2379,13 +3090,31 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // no button (avoids a redundant icon beside the placeholder).
   const showDateTrigger = dateFieldValue && Boolean(realNode);
 
-  // The row's primary focus surface. A stored checkbox keeps its boolean control
-  // inside the ordinary row; other values use the shared text/code editors.
-  const rowEditorElement = checkboxFieldValue && props.fieldValue && realNode ? (
+  // The row's primary focus surface. Checkbox drafts and committed values keep
+  // the same control and Node ID, so materialization cannot remount the editor.
+  const rowEditorElement = checkboxFieldValue && props.fieldValue ? (
     <CheckboxFieldControl
-      entryId={props.fieldValue.entryId}
-      run={props.run}
-      valueNode={realNode}
+      value={realNode
+        ? displayed.content.text
+        : draftContent.text || props.fieldValue.displayValue || ''}
+      inherited={!realNode && props.fieldValue.inheritedDisplayValue}
+      onToggle={(value) => {
+        const content = plainText(value);
+        if (!realNode) {
+          replaceLocalDraftContent(content);
+          void materializeDraft();
+          return;
+        }
+        void startOptimisticNodePatch({
+          currentUi: props.uiRef.current,
+          setUi: props.setUi,
+          patch: pendingNodePatch(targetEditId, { content }),
+          command: () => props.run(
+            () => api.replaceNodeText(targetEditId, content),
+            { applyFocus: false },
+          ),
+        });
+      }}
       focusTarget={editorFocusTarget}
       focusRequest={props.ui.focusRequest}
       onFocus={row.updateSelection}
@@ -2401,7 +3130,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   ) : isCodeBlock ? (
     <CodeBlockRow
       nodeId={props.nodeId}
-      text={draftContent.text}
+      text={renderedDraftContent.text}
       language={displayed.codeLanguage}
       readOnly={displayed.locked}
       onFocus={row.updateSelection}
@@ -2429,7 +3158,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   ) : (
     <RichTextEditor
       nodeId={props.nodeId}
-      content={draftContent}
+      content={renderedDraftContent}
       contentRevision={editorContentRevision}
       inlineSlotEl={inlineTagSlot}
       readOnly={displayed.locked}
@@ -2483,42 +3212,14 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       resolveInlineReferenceDisplayName={(targetId) => props.index.byId.get(targetId)?.content.text.trim() || undefined}
       onFieldTriggerFire={suppressTextTriggers ? undefined : () => {
         props.setTrigger(null);
-        if (virtualFieldValueDraft && props.fieldValue) {
-          void runClaimedVirtualFieldMaterialization(() => props.run(
-              () => props.fieldValue!.materializeField(props.nodeId),
-              { applyFocus: false },
-            )).then((outcome) => {
-            if (!outcome) return;
-            replaceLocalDraftContent(EMPTY_RICH_TEXT);
-            const focus = typeof outcome === 'object' && 'focus' in outcome
-              ? (outcome as { focus?: { nodeId?: unknown; parentId?: unknown } }).focus
-              : undefined;
-            const focusNodeId = focus?.nodeId;
-            if (typeof focusNodeId !== 'string') return;
-            const focusParentId = focus && typeof focus.parentId === 'string'
-              ? focus.parentId
-              : null;
-            props.setUi((prev) => requestFocusState(
-              prev,
-              focusTarget(
-                focusNodeId,
-                focusParentId,
-                props.panelId,
-                'field-name',
-              ),
-              cursorAll(),
-            ));
-          });
-          return;
-        }
-        // A draft has no real node to anchor "after"; create the field as a
-        // child of the parent (create_inline_field). A real row anchors it
-        // right after itself (create_inline_field_after_node).
-        const createField = onDraftTrigger
-          ? () => createPlaceholderInlineField(props.parentId, null, 'plain')
-          : () => createPlaceholderInlineFieldAfterNode(props.nodeId, 'plain');
-        if (onDraftTrigger) replaceLocalDraftContent(EMPTY_RICH_TEXT);
-        void pendingTextPatchRef.current.then(() => props.run(createField));
+        // Claim the draft synchronously. Replacing the ProseMirror row with the
+        // field presentation blurs the old editor; its blur commit must not start
+        // a competing plain-node materialization for the same reserved id.
+        semanticTriggerResolutionRef.current = true;
+        // ProseMirror is still dispatching the transaction that recognized `>`.
+        // Switch row presentation in the next microtask so React never tears down
+        // the editor from inside that dispatch callback.
+        queueMicrotask(() => startOptimisticFieldConversion());
       }}
       onCodeFenceFire={
         !suppressTextTriggers
@@ -2614,6 +3315,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   ) : null;
   const outlinerWrapProps = {
     ...row.wrapProps,
+    ...(exposesTrailingDraftMarker ? { 'data-trailing-parent-id': props.parentId } : {}),
     onDragOver: (event: DragEvent<HTMLDivElement>) => {
       if (hasFileTransfer(event.dataTransfer)) {
         handleExternalFileDragOver(event);
@@ -2656,10 +3358,11 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         nonImageFileRow ? 'file-node-row' : '',
         externalFileDropPosition ? `drop-${externalFileDropPosition}` : '',
         pendingReferenceConversion ? 'ref-converting' : '',
-        pendingReferenceTypeAhead ? 'ref-typeahead' : '',
-        // A not-yet-materialized trailing draft reads as a fainter bullet, so it
-        // is visually distinct from a real (empty) node.
-        props.draft && !realNode ? 'node-draft' : '',
+        // Only the ordinary trailing draft reads as a fainter "next" slot. A
+        // pending structural row already represents the exact submitted Node ID,
+        // so it uses real-row presentation before and after settlement.
+        ordinaryTrailingDraft ? 'node-draft' : '',
+        props.optimisticChange && !realNode ? 'node-pending-structure' : '',
       ].filter(Boolean).join(' '))}
       onSelectFromPointer={row.selectFromPointer}
       onContextMenu={virtualFieldValueDraft ? undefined : openContextMenu}
@@ -2691,7 +3394,10 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             <DoneCheckbox
               checked={Boolean(displayed.completedAt)}
               readOnly={displayed.locked}
-              onToggle={() => void props.run(() => api.toggleDone(targetEditId))}
+              onToggle={() => void startDoneTransition(
+                'toggle',
+                () => props.run(() => api.toggleDone(targetEditId)),
+              )}
             />
           )}
           {fileNodeRow ? (
@@ -2720,6 +3426,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
                         nodeId={targetEditId}
                         tagIds={displayed.tags}
                         index={props.index}
+                        ui={props.ui}
+                        setUi={props.setUi}
                         run={props.run}
                         onRoot={props.onRoot}
                       />
@@ -2762,6 +3470,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
                   nodeId={targetEditId}
                   tagIds={displayed.tags}
                   index={props.index}
+                  ui={props.ui}
+                  setUi={props.setUi}
                   run={props.run}
                   onRoot={props.onRoot}
                 />
@@ -2780,6 +3490,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
                   nodeId={targetEditId}
                   tagIds={displayed.tags}
                   index={props.index}
+                  ui={props.ui}
+                  setUi={props.setUi}
                   run={props.run}
                   onRoot={props.onRoot}
                 />,
@@ -2790,6 +3502,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
                 nodeId={targetEditId}
                 tagIds={displayed.tags}
                 index={props.index}
+                ui={props.ui}
+                setUi={props.setUi}
                 run={props.run}
                 onRoot={props.onRoot}
               />
@@ -2877,7 +3591,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
               byId={props.index.byId}
               optionField={props.optionField}
               valueNode={node}
-              onSelectOption={props.onSelectOption}
+              onSelectOption={appendSelectedOption}
             />
           )}
           {/* The additive options overlay for an optionPicker field-value draft.
@@ -2887,7 +3601,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
               typed-existing name into a reference. Mutually exclusive with
               SelectedReferenceOptionPicker above, which targets a committed
               reference row, not a draft. */}
-          {optionPickerDraft && props.fieldValue && (
+          {optionPickerDraft && props.fieldValue?.optionField && (
             <TrailingOptionsPopover
               anchorRef={optionAnchorRef}
               optionField={props.fieldValue.optionField}
@@ -2907,13 +3621,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         </>
       )}
     >
-
-      {!props.flat && row.expanded && (
-        <IndentGuide
-          reference={referenceLikeRow}
-          onToggleChildren={row.toggleDirectChildrenExpansion}
-        />
-      )}
 
       {nonImageFileRow && row.expanded && (
         // The inline file preview lives below the row (inside row-wrap, outside .row),
@@ -2940,11 +3647,16 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           nodeId={targetEditId}
           run={props.run}
           close={() => props.setTrigger(null)}
-          clearTriggerText={clearTriggerText}
-          applyReference={applyReference}
-          applyTag={onDraftTrigger ? applyDraftTag : undefined}
-          createTagAndApply={onDraftTrigger ? createAndApplyDraftTag : undefined}
-          executeSlashCommand={executeSlashCommand}
+          applyReference={(target) => runSemanticTriggerResolution(() => applyReference(target))}
+          applyTag={(tag) => runSemanticTriggerResolution(() => (
+            onDraftTrigger ? applyDraftTag(tag) : applyMaterializedTag(tag)
+          ))}
+          createTagAndApply={(name) => runSemanticTriggerResolution(() => (
+            onDraftTrigger ? createAndApplyDraftTag(name) : createAndApplyMaterializedTag(name)
+          ))}
+          executeSlashCommand={(commandId) => runSemanticTriggerResolution(
+            () => executeSlashCommand(commandId),
+          )}
           enabledSlashCommandIds={['field', 'reference', 'heading', 'checkbox', 'code', 'image', 'attachment', 'command_palette']}
           treeReferenceParentId={
             triggerOwnsWholeDraft
@@ -3005,40 +3717,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         />
       )}
 
-      {!props.flat && row.expanded && (
-        // role="group" owns the nested treeitems under this row, completing the
-        // ARIA tree nesting (treeitem → group → treeitems). A non-image file row's
-        // expansion also opens its inline preview above this group, but its children
-        // remain normal outline children; childless file rows therefore show the
-        // same trailing draft as any other expanded leaf.
-        <div className="children" role="group">
-          <OutlinerView
-            panelId={props.panelId}
-            parentId={childParentId}
-            rootId={props.rootId}
-            selectionRootId={props.selectionRootId}
-            onRoot={props.onRoot}
-            depth={0}
-            index={props.index}
-            isNodePinned={props.isNodePinned}
-            ui={props.ui}
-            uiRef={props.uiRef}
-            setUi={props.setUi}
-            run={props.run}
-            onTogglePin={props.onTogglePin}
-            trigger={props.trigger}
-            setTrigger={props.setTrigger}
-            dragId={props.dragId}
-            setDragId={props.setDragId}
-            referencePath={childReferencePath}
-            // The trailing draft (eager materialization) replaces the old child
-            // TrailingInput: shown for an empty child list or when nav focuses
-            // the trailing surface, unless this is a reference cycle.
-            trailingDraft={referenceCycle ? 'none' : 'auto'}
-          />
-        </div>
-      )}
-
     </OutlinerRowShell>
   );
 }
@@ -3048,7 +3726,7 @@ interface SelectedReferenceOptionPickerProps {
   byId: Map<NodeId, NodeProjection>;
   optionField: NodeProjection;
   valueNode: NodeProjection;
-  onSelectOption: (optionId: NodeId) => Promise<unknown> | unknown;
+  onSelectOption: (optionId: NodeId) => void;
 }
 
 function selectedOptionIndex(options: readonly FieldOption[], selectedOptionId: NodeId | undefined) {
@@ -3067,9 +3745,16 @@ function SelectedReferenceOptionPicker({
   const options = resolveFieldOptions(optionField, byId);
   const selectedOptionId = resolveSelectedOptionId(valueNode, options);
   const [open, setOpen] = useState(true);
-  const [activeIndex, setActiveIndex] = useState(() => selectedOptionIndex(options, selectedOptionId));
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const stateRef = useRef({ activeIndex, options });
+  const selectionKey = `${valueNode.id}:${selectedOptionId ?? ''}:${options.map((option) => option.id).join('|')}`;
+  const [activeIndex, setActiveIndex] = usePopoverSelection({
+    initialIndex: selectedOptionIndex(options, selectedOptionId),
+    itemCount: options.length,
+    listRef: menuRef,
+    open,
+    selectionKey,
+  });
+  const stateRef = useRef({ activeIndex, options, onSelectOption });
   const menuStyle = useAnchoredOverlay(menuRef, {
     anchorRef,
     disabled: !open || options.length === 0,
@@ -3078,19 +3763,18 @@ function SelectedReferenceOptionPicker({
     placement: 'bottom-start',
     width: 280,
   });
-  stateRef.current = { activeIndex, options };
+  stateRef.current = { activeIndex, options, onSelectOption };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setOpen(true);
-    setActiveIndex(selectedOptionIndex(options, selectedOptionId));
-  }, [options.length, selectedOptionId, valueNode.id]);
+  }, [selectionKey]);
 
   const selectOption = (optionId: NodeId) => {
     setOpen(false);
     void onSelectOption(optionId);
   };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open || options.length === 0) return;
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       const action = resolveSelectedReferenceShortcut(event, { optionsOpen: true });
@@ -3118,11 +3802,14 @@ function SelectedReferenceOptionPicker({
         return;
       }
       const option = state.options[state.activeIndex];
-      if (option) selectOption(option.id);
+      if (option) {
+        setOpen(false);
+        void state.onSelectOption(option.id);
+      }
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [onSelectOption, open, options.length]);
+  }, [open]);
 
   if (!open || options.length === 0) return null;
 
@@ -3174,7 +3861,7 @@ function referencePathEqual(a: readonly NodeId[], b: readonly NodeId[]): boolean
 }
 
 // A focus/pending-input request targeting a descendant must reach that row, but
-// rows render through their ancestors' nested OutlinerView — so an ancestor that
+// rows render through their ancestor flat projection — so an ancestor that
 // skips re-render freezes the whole subtree and the request never propagates to
 // the target editor (focus silently falls to <body>; see the eager Tab/indent and
 // nested-continuation paths). Return the request when this row sits on the path to
@@ -3273,9 +3960,14 @@ function outlinerItemPropsEqual(prev: OutlinerItemProps, next: OutlinerItemProps
   if (prev.hideDisplayFields !== next.hideDisplayFields) return false;
   if (prev.suppressChildFieldEntries !== next.suppressChildFieldEntries) return false;
   if (prev.tableNextRowId !== next.tableNextRowId) return false;
+  if (prev.optimisticChange !== next.optimisticChange) return false;
   // Drag start/end is infrequent; re-render every row so drag handlers close over
   // the current dragId and the dragged row picks up its 'dragging' class.
   if (prev.dragId !== next.dragId) return false;
+  const prevOpenId = outlinerItemOpenId(prev);
+  const nextOpenId = outlinerItemOpenId(next);
+  if (prevOpenId !== nextOpenId) return false;
+  if (prev.ui.pendingNodePatches.get(prevOpenId) !== next.ui.pendingNodePatches.get(nextOpenId)) return false;
   // Description editing toggles rarely and a reference row edits its target's
   // description (keyed by the resolved target, not nodeId), so a per-row check
   // would miss reference rows — compare it globally instead.
@@ -3290,7 +3982,7 @@ function outlinerItemPropsEqual(prev: OutlinerItemProps, next: OutlinerItemProps
   // Propagate a focus/pending-input request down to a nested target (see above).
   if (focusAncestorToken(prev, prev.ui.focusRequest) !== focusAncestorToken(next, next.ui.focusRequest)) return false;
   if (focusAncestorToken(prev, prev.ui.pendingInputChar) !== focusAncestorToken(next, next.ui.pendingInputChar)) return false;
-  // Nested OutlinerViews receive `ui` by prop-drilling through their owning
+  // Nested rows receive `ui` through their owning flat projection, so the
   // expanded row, so a memoized ancestor that bails out freezes its descendants'
   // `ui`. Whenever a field a *descendant's* render reads moves — even if this
   // row's own memo state is unchanged — an expanded row must re-render to forward
@@ -3315,8 +4007,8 @@ function outlinerItemPropsEqual(prev: OutlinerItemProps, next: OutlinerItemProps
     || prev.ui.selectedIds !== next.ui.selectedIds
     || prev.ui.selectionSource !== next.ui.selectionSource
     || prev.ui.pendingReferenceConversion !== next.ui.pendingReferenceConversion
-    || prev.ui.pendingReferenceTypeAhead !== next.ui.pendingReferenceTypeAhead
     || prev.ui.trailingDraftPlacement !== next.ui.trailingDraftPlacement
+    || prev.ui.pendingNodePatches !== next.ui.pendingNodePatches
   )) {
     return false;
   }

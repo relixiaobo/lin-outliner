@@ -10,9 +10,10 @@ import {
   type SetStateAction,
 } from 'react';
 import { api } from '../api/client';
-import type { NodeId, RichText, RichTextPatch } from '../api/types';
+import type { NodeId, NodeProjection, RichText, RichTextPatch } from '../api/types';
+import { freshNodeId } from '../../core/nodeId';
 import { EMPTY_RICH_TEXT, nodeReferenceTarget, plainText } from '../api/types';
-import { fieldSlotsForIndex, flattenVisibleRows, resolveReferenceTargetId, type DocumentIndex, type UiState } from '../state/document';
+import { flattenVisibleRows, resolveReferenceTargetId, type DocumentIndex, type UiState } from '../state/document';
 import { dayNoteIsoDateForNode } from '../state/dayNoteCounts';
 import { RichTextEditor, type EditorSplitPayload } from './editor/RichTextEditor';
 import {
@@ -23,6 +24,7 @@ import {
   richTextEquals,
 } from './editor/richTextCodec';
 import { applyRichTextPatchToContent } from './editor/richTextPatchApply';
+import { CoalescedTextPatchQueue } from './editor/coalescedTextPatchQueue';
 import { DefinitionConfigPanel } from './definition/DefinitionConfigPanel';
 import { definitionKind, definitionOutlinerLabel, definitionOutlinerPlaceholder } from './definition/definitionConfig';
 import { projectFieldTypeById, nodeShowsCheckbox } from '../../core/configProjection';
@@ -52,10 +54,10 @@ import {
   TrashIcon,
 } from './icons';
 import { FieldTypeIcon } from './outliner/fieldTypePresentation';
+import { referenceTriggerFromSlash } from './outliner/trailingTriggers';
 import { DoneCheckbox } from './outliner/DoneCheckbox';
 import { NodeContextMenu } from './outliner/NodeContextMenu';
 import { NodeDescription } from './outliner/NodeDescription';
-import { buildOutlinerRows } from './outliner/row-model';
 import { TriggerPopover } from './outliner/TriggerPopover';
 import { ButtonControl } from './primitives/ButtonControl';
 import { IconButton } from './primitives/IconButton';
@@ -69,7 +71,13 @@ import { dispatchPreviewTargetOpen } from './preview/previewEvents';
 import { buildPanelBreadcrumb } from './panelBreadcrumb';
 import { PanelDateNavigation } from './PanelDateNavigation';
 import { PanelChildrenOutline, PanelStickyBreadcrumb, usePanelTitleDock, type PanelDragHandle } from './PanelShared';
-import { RECURSIVE_OUTLINER_FALLBACK_ENABLED } from './outliner/OutlinerFlatView';
+import {
+  nodeWithPendingPatch,
+  optimisticTagPatch,
+  pendingNodePatch,
+  startOptimisticDoneTransition,
+  startOptimisticNodePatch,
+} from './outliner/optimisticNodePatch';
 import { useT } from '../i18n/I18nProvider';
 import { referenceSummaryForIndex } from '../state/referenceSummary';
 
@@ -140,7 +148,10 @@ export function NodePanel(props: NodePanelProps) {
   const resolvedRootId = requestedRootNode?.type === 'reference' && requestedRootNode.targetId
     ? resolveReferenceTargetId(requestedRootNode.targetId, props.index.byId) ?? props.rootId
     : props.rootId;
-  const rootNode = props.index.byId.get(resolvedRootId);
+  const projectedRootNode = props.index.byId.get(resolvedRootId);
+  const rootNode = projectedRootNode
+    ? nodeWithPendingPatch(projectedRootNode, props.ui.pendingNodePatches.get(resolvedRootId))
+    : projectedRootNode;
   // A file root (attachment/image) renders its read-only filename plus a preview
   // "hero" above its children outline. It remains a normal node, so the preview is
   // extra, not a substitute for children.
@@ -171,6 +182,9 @@ export function NodePanel(props: NodePanelProps) {
   const scrollRestoreFrameRef = useRef<number | null>(null);
   const restoringScrollRef = useRef(false);
   const pendingTitlePatchRef = useRef<Promise<unknown>>(Promise.resolve());
+  const titlePatchQueueRef = useRef<CoalescedTextPatchQueue | null>(null);
+  if (!titlePatchQueueRef.current) titlePatchQueueRef.current = new CoalescedTextPatchQueue();
+  const titlePatchQueue = titlePatchQueueRef.current;
   const titleContentRef = useRef<RichText>(rootNode?.content ?? EMPTY_RICH_TEXT);
   const localTitleSyncRef = useRef<{ nodeId: NodeId; content: RichText } | null>(null);
   const titleTriggerActiveRef = useRef(false);
@@ -194,16 +208,6 @@ export function NodePanel(props: NodePanelProps) {
     && props.ui.focusSurface === 'panel-title'
     && props.ui.focusedPanelId === props.panelId;
   const referenceSummary = useMemo(() => referenceSummaryForIndex(props.index), [props.index]);
-  const panelRows = useMemo(() => (
-    RECURSIVE_OUTLINER_FALLBACK_ENABLED
-      ? buildOutlinerRows(rootNode, props.index.byId, {
-        expandedHiddenFields: props.ui.expandedHiddenFields,
-        systemFieldContext: { referenceSummary },
-        fieldSlots: (nodeId) => fieldSlotsForIndex(props.index, nodeId),
-      })
-      : undefined
-  ), [props.index.byId, props.ui.expandedHiddenFields, referenceSummary, rootNode]);
-
   const handleOutlinerDragOver = (event: DragEvent<HTMLDivElement>) => {
     if (!props.dragId) return;
     event.preventDefault();
@@ -371,8 +375,8 @@ export function NodePanel(props: NodePanelProps) {
   };
 
   const commitTitle = async (_content = titleContentRef.current) => {
-    await pendingTitlePatchRef.current;
     clearHeaderFocus();
+    await pendingTitlePatchRef.current;
   };
 
   const applyTitlePatch = (patch: RichTextPatch) => {
@@ -382,11 +386,14 @@ export function NodePanel(props: NodePanelProps) {
     if (titleTriggerActiveRef.current || patch.ops.some((op) => op.type === 'replace_all')) {
       setTitleContent(nextContent);
     }
-    pendingTitlePatchRef.current = pendingTitlePatchRef.current.then(() =>
-      props.run(() => api.applyNodeTextPatch(resolvedRootId, patch), {
+    pendingTitlePatchRef.current = titlePatchQueue.enqueue({
+      key: resolvedRootId,
+      patch,
+      latestContent: nextContent,
+      send: (nextPatch) => props.run(() => api.applyNodeTextPatch(resolvedRootId, nextPatch), {
         applyFocus: false,
-      }));
-    void pendingTitlePatchRef.current;
+      }),
+    });
   };
 
   const handleTitleChange = (content: RichText) => {
@@ -402,13 +409,31 @@ export function NodePanel(props: NodePanelProps) {
   };
 
   const handleTitleEnter = (_payload: EditorSplitPayload) => {
-    void commitTitle().then(blurActiveElement);
+    blurActiveElement();
+    void commitTitle();
   };
 
-  const handleTitleModEnter = async (content: RichText) => {
+  const startRootDoneTransition = (
+    transition: 'toggle' | 'cycle',
+    command: () => ReturnType<CommandRunner>,
+  ) => {
+    if (!rootNode) return Promise.resolve(false);
+    return startOptimisticDoneTransition({
+      index: props.index,
+      node: rootNode,
+      currentUi: uiRef.current,
+      setUi: props.setUi,
+      transition,
+      command,
+    });
+  };
+
+  const handleTitleModEnter = (content: RichText) => {
     replaceLocalTitleContent(content);
-    await pendingTitlePatchRef.current;
-    await props.run(() => api.cycleDoneState(resolvedRootId));
+    void startRootDoneTransition('cycle', async () => {
+      await pendingTitlePatchRef.current;
+      return props.run(() => api.cycleDoneState(resolvedRootId));
+    });
   };
 
   const openHeaderContextMenu = (event: MouseEvent) => {
@@ -483,21 +508,85 @@ export function NodePanel(props: NodePanelProps) {
     />
   ) : null;
 
-  const clearTitleTriggerText = async () => {
+  const applyTitleTag = async (tag: NodeProjection) => {
+    if (!titleTrigger || !rootNode) return null;
+    const previousContent = titleContentRef.current;
+    const pendingBeforeReplacement = pendingTitlePatchRef.current;
+    const content = deleteRichTextRange(previousContent, titleTrigger.from, titleTrigger.to);
+    replaceLocalTitleContent(content);
+    void startOptimisticNodePatch({
+      currentUi: uiRef.current,
+      setUi: props.setUi,
+      patch: optimisticTagPatch({
+        node: rootNode,
+        ui: uiRef.current,
+        tagId: tag.id,
+        action: 'add',
+        content,
+      }),
+      command: async () => {
+        await pendingBeforeReplacement;
+        return props.run(() => api.applyTagWithContent(resolvedRootId, tag.id, content), {
+          applyFocus: false,
+        });
+      },
+      onRejected: () => replaceLocalTitleContent(previousContent),
+    });
+    return commandRunnerNoop();
+  };
+
+  const createAndApplyTitleTag = async (name: string) => {
+    if (!titleTrigger || !rootNode) return null;
+    const previousContent = titleContentRef.current;
+    const pendingBeforeReplacement = pendingTitlePatchRef.current;
+    const content = deleteRichTextRange(previousContent, titleTrigger.from, titleTrigger.to);
+    const tagId = freshNodeId();
+    replaceLocalTitleContent(content);
+    void startOptimisticNodePatch({
+      currentUi: uiRef.current,
+      setUi: props.setUi,
+      patch: optimisticTagPatch({
+        node: rootNode,
+        ui: uiRef.current,
+        tagId,
+        action: 'add',
+        content,
+        pendingTagName: name,
+      }),
+      command: async () => {
+        await pendingBeforeReplacement;
+        return props.run(
+          () => api.createTagAndApplyWithContent(resolvedRootId, name, content, tagId),
+          { applyFocus: false },
+        );
+      },
+      onRejected: () => replaceLocalTitleContent(previousContent),
+    });
+    return commandRunnerNoop();
+  };
+
+  const applyTitleTextWithoutTrigger = async () => {
     if (!titleTrigger || !rootNode) return;
-    await pendingTitlePatchRef.current;
-    const nextContent = deleteRichTextRange(titleContent, titleTrigger.from, titleTrigger.to);
-    replaceLocalTitleContent(nextContent);
-    await props.run(() => api.replaceNodeText(resolvedRootId, nextContent));
+    const pendingBeforeReplacement = pendingTitlePatchRef.current;
+    const content = deleteRichTextRange(
+      titleContentRef.current,
+      titleTrigger.from,
+      titleTrigger.to,
+    );
+    replaceLocalTitleContent(content);
+    await pendingBeforeReplacement;
+    await props.run(() => api.replaceNodeText(resolvedRootId, content), {
+      applyFocus: false,
+    });
   };
 
   const applyTitleInlineReference = async (target: { id: NodeId; content: RichText }) => {
     if (!titleTrigger || !rootNode) {
       return;
     }
-    await pendingTitlePatchRef.current;
+    const pendingBeforeReplacement = pendingTitlePatchRef.current;
     const nextContent = replaceRichTextRangeWithInlineRef(
-      titleContent,
+      titleContentRef.current,
       titleTrigger.from,
       titleTrigger.to,
       {
@@ -511,46 +600,74 @@ export function NodePanel(props: NodePanelProps) {
       titleFocusTarget,
       cursorAtOffset(cursorOffsetAfterInlineReference(nextContent, titleTrigger.from), 'after'),
     ));
-    return api.replaceNodeText(resolvedRootId, nextContent);
+    await pendingBeforeReplacement;
+    return props.run(() => api.replaceNodeText(resolvedRootId, nextContent), {
+      applyFocus: false,
+    });
   };
 
   const executeTitleSlashCommand = async (commandId: SlashCommandId) => {
     if (!titleTrigger || !rootNode) return null;
 
     if (commandId === 'reference') {
-      await pendingTitlePatchRef.current;
-      const nextContent = replaceRichTextRangeWithText(titleContent, titleTrigger.from, titleTrigger.to, '@');
+      const pendingBeforeReplacement = pendingTitlePatchRef.current;
+      const nextContent = replaceRichTextRangeWithText(
+        titleContentRef.current,
+        titleTrigger.from,
+        titleTrigger.to,
+        '@',
+      );
       replaceLocalTitleContent(nextContent);
-      const result = await api.replaceNodeText(resolvedRootId, nextContent);
-      window.requestAnimationFrame(() => {
-        setTitleTrigger({
-          kind: '@',
-          query: '',
-          from: titleTrigger.from,
-          to: titleTrigger.from + 1,
-          anchor: titleTrigger.anchor,
-        });
+      setTitleTrigger(referenceTriggerFromSlash(titleTrigger));
+      await pendingBeforeReplacement;
+      return props.run(() => api.replaceNodeText(resolvedRootId, nextContent), {
+        applyFocus: false,
       });
-      return result;
     }
 
     if (commandId === 'heading') {
-      await pendingTitlePatchRef.current;
-      const withoutTrigger = deleteRichTextRange(titleContent, titleTrigger.from, titleTrigger.to);
+      const pendingBeforeReplacement = pendingTitlePatchRef.current;
+      const withoutTrigger = deleteRichTextRange(
+        titleContentRef.current,
+        titleTrigger.from,
+        titleTrigger.to,
+      );
       const nextContent = markWholeTextAsHeading(withoutTrigger);
       replaceLocalTitleContent(nextContent);
-      return api.replaceNodeText(resolvedRootId, nextContent);
+      await pendingBeforeReplacement;
+      return props.run(() => api.replaceNodeText(resolvedRootId, nextContent), {
+        applyFocus: false,
+      });
     }
 
     if (commandId === 'checkbox') {
-      await clearTitleTriggerText();
-      return api.toggleDone(resolvedRootId);
+      const previousContent = titleContentRef.current;
+      const nextContent = deleteRichTextRange(
+        previousContent,
+        titleTrigger.from,
+        titleTrigger.to,
+      );
+      const pendingBeforeReplacement = pendingTitlePatchRef.current;
+      replaceLocalTitleContent(nextContent);
+      void startOptimisticNodePatch({
+        currentUi: uiRef.current,
+        setUi: props.setUi,
+        patch: pendingNodePatch(resolvedRootId, { content: nextContent, completedAt: 0 }),
+        command: async () => {
+          await pendingBeforeReplacement;
+          return props.run(() => api.convertNodeToCheckbox(resolvedRootId, nextContent), {
+            applyFocus: false,
+          });
+        },
+        onRejected: () => replaceLocalTitleContent(previousContent),
+      });
+      return commandRunnerNoop();
     }
 
     if (commandId === 'command_palette') {
-      await clearTitleTriggerText();
-      // The `/`-menu row summons the SAME panel the hotkey does.
+      const clear = applyTitleTextWithoutTrigger();
       void window.lin?.showLauncher?.();
+      await clear;
       return commandRunnerNoop();
     }
 
@@ -628,7 +745,10 @@ export function NodePanel(props: NodePanelProps) {
               {rootNode && showDoneCheckbox && (
                 <DoneCheckbox
                   checked={Boolean(rootNode.completedAt)}
-                  onToggle={() => void props.run(() => api.toggleDone(resolvedRootId))}
+                  onToggle={() => void startRootDoneTransition(
+                    'toggle',
+                    () => props.run(() => api.toggleDone(resolvedRootId)),
+                  )}
                 />
               )}
               {fileTitleLabel ? (
@@ -705,7 +825,8 @@ export function NodePanel(props: NodePanelProps) {
                   nodeId={resolvedRootId}
                   run={props.run}
                   close={() => setTitleTrigger(null)}
-                  clearTriggerText={clearTitleTriggerText}
+                  applyTag={applyTitleTag}
+                  createTagAndApply={createAndApplyTitleTag}
                   applyReference={applyTitleInlineReference}
                   executeSlashCommand={executeTitleSlashCommand}
                   enabledSlashCommandIds={['reference', 'heading', 'checkbox', 'command_palette']}
@@ -760,6 +881,8 @@ export function NodePanel(props: NodePanelProps) {
                 nodeId={resolvedRootId}
                 tagIds={rootNode.tags}
                 index={props.index}
+                ui={props.ui}
+                setUi={props.setUi}
                 run={props.run}
                 onRoot={props.onRoot}
               />
@@ -854,7 +977,6 @@ export function NodePanel(props: NodePanelProps) {
             panelId={props.panelId}
             parentId={resolvedRootId}
             rootId={resolvedRootId}
-            rows={panelRows}
             run={props.run}
             scrollParentRef={mainPanelRef}
             setDragId={props.setDragId}

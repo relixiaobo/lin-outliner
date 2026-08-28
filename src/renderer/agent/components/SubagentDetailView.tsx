@@ -162,6 +162,7 @@ export function SubagentDetailView({
           <ThreadView
             active
             composerEnabled={composerEnabled}
+            composerFocusExpectedActiveElement={null}
             composerFocusToken={0}
             composerPlaceholder={entry?.stoppedByUser
               ? t.agent.thread.agent.composerResumePlaceholder

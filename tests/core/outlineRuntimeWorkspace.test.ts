@@ -1,7 +1,8 @@
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { Core } from '../../src/core/core';
 import { canonicalSha256 } from '../../src/outline/contract/canonical';
 import type { ProjectionResult, Selector } from '../../src/outline/contract/schemas';
 import { decodeEventCursor, OutlineRuntimeWorkspace } from '../../src/outline/runtime';
@@ -15,12 +16,47 @@ afterAll(async () => {
 });
 
 describe('OutlineRuntimeWorkspace', () => {
+  test('commits ordinary mutations against the live Core without forking the document', async () => {
+    const root = await makeRoot();
+    const workspace = await openWorkspace(root);
+    const fork = spyOn(Core.prototype, 'forkForRuntime');
+
+    try {
+      await workspace.mutate(createRequest('Live Core mutation'));
+      expect(fork).not.toHaveBeenCalled();
+    } finally {
+      fork.mockRestore();
+    }
+  });
+
   test('publishes a candidate only after the transaction record fsyncs', async () => {
     const root = await makeRoot();
     let workspace: OutlineRuntimeWorkspace | undefined;
+    const revisionBefore = 0;
     const store = new WorkspaceTransactionLog(root, {
-      afterTransactionFsync: () => {
+      afterTransactionFsync: async () => {
+        expect(workspace?.revision()).toBe(revisionBefore);
         expect(workspace?.projection().nodes.some((node) => node.content.text === 'Published after fsync')).toBe(false);
+        expect(workspace?.searchText('Published after fsync', 10)).toEqual([]);
+
+        const response = await new OutlineRuntimeRouter(workspace!).handle({
+          protocolVersion: 1,
+          requestId: 'request:read-generation-before-publication',
+          command: 'find',
+          input: {
+            mode: 'count',
+            query: { kind: 'rule', op: 'STRING_MATCH', text: 'Published after fsync' },
+          },
+        }, { origin: 'local-user' });
+        expect(response).toMatchObject({
+          ok: true,
+          revision: revisionBefore,
+          data: {
+            kind: 'outline.count',
+            revision: revisionBefore,
+            count: 0,
+          },
+        });
       },
     });
     workspace = await openWorkspace(root, { store, instanceId: 'runtime:publish-order' });
@@ -28,8 +64,319 @@ describe('OutlineRuntimeWorkspace', () => {
     const operation = await workspace.mutate(createRequest('Published after fsync'));
 
     expect(operation.revisionAfter).toBe(operation.revisionBefore + 1);
+    expect(workspace.revision()).toBe(operation.revisionAfter);
     expect(workspace.projection().nodes.some((node) => node.content.text === 'Published after fsync')).toBe(true);
+    expect(workspace.searchText('Published after fsync', 10)).toHaveLength(1);
     expect((await store.operations()).map((entry) => entry.operationId)).toEqual([operation.operationId]);
+  });
+
+  test('applies personal access only to transient desktop text ranking', async () => {
+    const root = await makeRoot();
+    const now = 10_000;
+    const workspace = await openWorkspace(root, { now: () => new Date(now) });
+    const nodeIds = [
+      'node:00000000-0000-4000-8000-000000000001',
+      'node:00000000-0000-4000-8000-000000000002',
+    ];
+    await workspace.mutate({
+      ...createRequest('Create personal ranking fixtures'),
+      execute: (core) => {
+        const parentId = core.projection().todayId;
+        core.createNode(parentId, null, 'Personal ranking needle', nodeIds[0]);
+        core.createNode(parentId, null, 'Personal ranking needle', nodeIds[1]);
+      },
+    });
+
+    const baseline = workspace.searchText('personal ranking needle', 10);
+    expect(baseline.map((hit) => hit.nodeId)).toEqual(expect.arrayContaining(nodeIds));
+    expect(baseline[0]?.nodeId).toBe(nodeIds[0]);
+
+    workspace.replacePersonalAccessRanking(new Map([
+      [nodeIds[1]!, { s: 20, tUpdate: now }],
+    ]));
+    const ranked = workspace.searchText('personal ranking needle', 10);
+    expect(ranked[0]?.nodeId).toBe(nodeIds[1]);
+
+    workspace.removePersonalAccessRanking([nodeIds[1]!]);
+    const removed = workspace.searchText('personal ranking needle', 10);
+    expect(removed[0]?.nodeId).toBe(nodeIds[0]);
+  });
+
+  test('keeps a committed mutation successful when the observer commit fails', async () => {
+    const root = await makeRoot();
+    const workspace = await openWorkspace(root, { instanceId: 'runtime:observer-failure' });
+    const unsubscribeFailure = workspace.subscribe(() => {
+      throw new Error('observer commit failed');
+    });
+    const deliveredOperationIds: string[] = [];
+    const unsubscribeDelivery = workspace.subscribe((event) => {
+      if (event.operation) deliveredOperationIds.push(event.operation.operationId);
+    });
+
+    const operation = await workspace.mutate(createRequest('Committed before observer failure'));
+
+    expect(operation.revisionAfter).toBe(1);
+    expect(deliveredOperationIds).toEqual([operation.operationId]);
+    expect(workspace.projection().nodes.some(
+      (node) => node.content.text === 'Committed before observer failure',
+    )).toBe(true);
+    unsubscribeFailure();
+    unsubscribeDelivery();
+    workspace.close();
+
+    const restarted = await openWorkspace(root, { instanceId: 'runtime:observer-failure-restart' });
+    expect(restarted.projection().nodes.some(
+      (node) => node.content.text === 'Committed before observer failure',
+    )).toBe(true);
+    expect((await restarted.store.operations()).map((entry) => entry.operationId)).toEqual([
+      operation.operationId,
+    ]);
+    restarted.close();
+  });
+
+  test('accepts desktop mutations before transaction-log fsync and drains the durable frontier', async () => {
+    const root = await makeRoot();
+    let blockFsync = false;
+    let releaseFsync!: () => void;
+    let signalFsync!: () => void;
+    const fsyncEntered = new Promise<void>((resolve) => { signalFsync = resolve; });
+    const fsyncGate = new Promise<void>((resolve) => { releaseFsync = resolve; });
+    const store = new WorkspaceTransactionLog(root, {
+      fsync: async (handle) => {
+        if (blockFsync) {
+          signalFsync();
+          await fsyncGate;
+        }
+        await handle.sync();
+      },
+    });
+    const workspace = await openWorkspace(root, { store, instanceId: 'runtime:accepted' });
+    blockFsync = true;
+    const request = createRequest('Accepted before fsync', {
+      idempotencyKey: 'desktop:accepted',
+      idempotencyPayloadHash: 'a'.repeat(64),
+    });
+
+    const accepted = await workspace.commitAcceptedPrepared(request, () => request);
+    await fsyncEntered;
+
+    expect(accepted.update).toMatchObject({ kind: 'delta', revision: 1 });
+    expect(workspace.revision()).toBe(1);
+    expect(workspace.durableRevision()).toBe(0);
+    expect(workspace.projection().nodes.some((node) => node.content.text === 'Accepted before fsync')).toBe(true);
+
+    releaseFsync();
+    await workspace.drainDurability(1);
+    expect(workspace.durableRevision()).toBe(1);
+    expect((await store.operations()).map((operation) => operation.operationId)).toEqual([
+      accepted.settlement.kind === 'outline.operation' ? accepted.settlement.operationId : '',
+    ]);
+
+    const restarted = await openWorkspace(root);
+    expect(restarted.projection().nodes.some((node) => node.content.text === 'Accepted before fsync')).toBe(true);
+  });
+
+  test('freezes admission behind mutations already queued in the Runtime', async () => {
+    const root = await makeRoot();
+    const workspace = await openWorkspace(root);
+    let releasePreparation!: () => void;
+    let signalPreparation!: () => void;
+    const preparationEntered = new Promise<void>((resolve) => { signalPreparation = resolve; });
+    const preparationGate = new Promise<void>((resolve) => { releasePreparation = resolve; });
+    const request = createRequest('Admitted before freeze', {
+      idempotencyKey: 'desktop:before-freeze',
+      idempotencyPayloadHash: 'e'.repeat(64),
+    });
+
+    const admitted = workspace.commitAcceptedPrepared(request, async () => {
+      signalPreparation();
+      await preparationGate;
+      return request;
+    });
+    await preparationEntered;
+    const freeze = workspace.freezeMutationAdmission();
+    releasePreparation();
+
+    const accepted = await admitted;
+    expect(await freeze).toBe(accepted.update.revision);
+    await expect(workspace.mutate(createRequest('Rejected after freeze'))).rejects.toMatchObject({
+      outlineError: { code: 'runtime_unavailable' },
+    });
+    await workspace.drainDurability(accepted.update.revision);
+    workspace.close();
+  });
+
+  test('coalesces sustained accepted edits at the maximum dirty age under one fsync', async () => {
+    const root = await makeRoot();
+    const clock = new TestClock();
+    let fsyncCount = 0;
+    let signalBatchFsync!: () => void;
+    const batchFsync = new Promise<void>((resolve) => { signalBatchFsync = resolve; });
+    const store = new WorkspaceTransactionLog(root, {
+      fsync: async (handle) => {
+        await handle.sync();
+        fsyncCount += 1;
+        if (fsyncCount > 2) signalBatchFsync();
+      },
+    });
+    const workspace = await openWorkspace(root, {
+      store,
+      now: () => new Date(clock.nowValue),
+      durabilityIdleDelayMs: 700,
+      durabilityMaxWaitMs: 5_000,
+      durabilitySchedule: clock.schedule,
+      durabilityCancel: clock.cancel,
+    });
+    const baselineFsyncs = fsyncCount;
+
+    for (let index = 0; index < 20; index += 1) {
+      const request = createRequest(`Sustained ${index}`, {
+        idempotencyKey: `desktop:sustained:${index}`,
+        idempotencyPayloadHash: index.toString(16).padStart(64, '0'),
+      });
+      await workspace.commitAcceptedPrepared(request, () => request);
+      await clock.advance(200);
+    }
+
+    expect(fsyncCount).toBe(baselineFsyncs);
+    await clock.advance(999);
+    expect(fsyncCount).toBe(baselineFsyncs);
+    await clock.advance(1);
+    await batchFsync;
+    await workspace.drainDurability(20);
+
+    expect(fsyncCount).toBe(baselineFsyncs + 1);
+    expect(await store.operations()).toHaveLength(20);
+    workspace.close();
+  });
+
+  test('freezes writes after deferred acknowledgement failure and retries without executing twice', async () => {
+    const root = await makeRoot();
+    let failAcknowledgement = true;
+    let executions = 0;
+    const store = new WorkspaceTransactionLog(root, {
+      afterTransactionFsync: () => {
+        if (!failAcknowledgement) return;
+        failAcknowledgement = false;
+        throw new Error('injected deferred acknowledgement failure');
+      },
+    });
+    const workspace = await openWorkspace(root, { store });
+    const publishedEvents: OutlineEvent[] = [];
+    const unsubscribe = workspace.subscribe((event) => publishedEvents.push(event));
+    const request = createRequest('Deferred retry', {
+      idempotencyKey: 'desktop:deferred-retry',
+      idempotencyPayloadHash: 'b'.repeat(64),
+      onExecute: () => { executions += 1; },
+    });
+    const accepted = await workspace.commitAcceptedPrepared(request, () => request);
+
+    await expect(workspace.drainDurability(accepted.update.revision)).rejects.toThrow(
+      'injected deferred acknowledgement failure',
+    );
+    expect(publishedEvents).toEqual([]);
+    await expect(workspace.mutate(createRequest('Blocked while dirty'))).rejects.toMatchObject({
+      outlineError: { code: 'durability_failed' },
+    });
+
+    await workspace.drainDurability(accepted.update.revision);
+    expect(executions).toBe(1);
+    expect(workspace.durableRevision()).toBe(accepted.update.revision);
+    expect(await store.operations()).toHaveLength(1);
+    expect(publishedEvents).toEqual([
+      expect.objectContaining({
+        type: 'operation.committed',
+        revision: accepted.update.revision,
+        operation: expect.objectContaining({
+          operationId: accepted.settlement.kind === 'outline.operation'
+            ? accepted.settlement.operationId
+            : '',
+        }),
+      }),
+    ]);
+    unsubscribe();
+    workspace.close();
+  });
+
+  test('persists consecutive accepted mutations in revision and Event order across restart', async () => {
+    const root = await makeRoot();
+    let releaseFirstFsync!: () => void;
+    const firstFsyncBlocked = new Promise<void>((resolve) => { releaseFirstFsync = resolve; });
+    let fsyncCount = 0;
+    const store = new WorkspaceTransactionLog(root, {
+      afterTransactionFsync: async () => {
+        fsyncCount += 1;
+        if (fsyncCount === 1) await firstFsyncBlocked;
+      },
+    });
+    const workspace = await openWorkspace(root, { store, instanceId: 'runtime:accepted-order' });
+    const firstRequest = createRequest('Accepted first', {
+      idempotencyKey: 'desktop:accepted-first',
+      idempotencyPayloadHash: 'c'.repeat(64),
+    });
+    const secondRequest = createRequest('Accepted second', {
+      idempotencyKey: 'desktop:accepted-second',
+      idempotencyPayloadHash: 'd'.repeat(64),
+    });
+
+    const first = await workspace.commitAcceptedPrepared(firstRequest, () => firstRequest);
+    const second = await workspace.commitAcceptedPrepared(secondRequest, () => secondRequest);
+
+    expect(first.update.revision).toBe(1);
+    expect(second.update.revision).toBe(2);
+    expect(workspace.revision()).toBe(2);
+    expect(workspace.durableRevision()).toBe(0);
+
+    releaseFirstFsync();
+    await workspace.drainDurability(2);
+
+    expect(workspace.durableRevision()).toBe(2);
+    expect((await store.operations()).map((operation) => operation.operationId)).toEqual([
+      first.settlement.kind === 'outline.operation' ? first.settlement.operationId : '',
+      second.settlement.kind === 'outline.operation' ? second.settlement.operationId : '',
+    ]);
+    expect((await store.eventsAfter(0)).map((event) => [event.sequence, event.revision])).toEqual([
+      [1, 1],
+      [2, 2],
+    ]);
+
+    workspace.close();
+    const restarted = await openWorkspace(root, { instanceId: 'runtime:accepted-order-restart' });
+    expect(restarted.revision()).toBe(2);
+    expect(restarted.projection().nodes.map((node) => node.content.text)).toEqual(
+      expect.arrayContaining(['Accepted first', 'Accepted second']),
+    );
+    restarted.close();
+  });
+
+  test('does not evict accepted idempotency results under sustained editing', async () => {
+    const root = await makeRoot();
+    const workspace = await openWorkspace(root);
+    let firstExecutions = 0;
+    const requests = Array.from({ length: 1_025 }, (_, index) => createNoChangeRequest(
+      `Accepted no-change ${index}`,
+      `desktop:no-change:${index}`,
+      index === 0 ? () => { firstExecutions += 1; } : undefined,
+    ));
+
+    let firstResult: Awaited<ReturnType<OutlineRuntimeWorkspace['commitAcceptedPrepared']>> | undefined;
+    for (const request of requests) {
+      const result = await workspace.commitAcceptedPrepared(request, () => request);
+      if (!firstResult) firstResult = result;
+    }
+    const retry = await workspace.commitAcceptedPrepared(requests[0]!, () => requests[0]!);
+
+    expect(retry).toEqual(firstResult);
+    expect(retry.update).toEqual({
+      kind: 'delta',
+      revision: 0,
+      todayId: workspace.projection().todayId,
+      changedNodes: [],
+      removedIds: [],
+    });
+    expect(firstExecutions).toBe(1);
+    expect(workspace.revision()).toBe(0);
+    expect(await workspace.store.operations()).toEqual([]);
   });
 
   test('keeps Runtime Operation history out of Core local undo persistence', async () => {
@@ -144,6 +491,105 @@ describe('OutlineRuntimeWorkspace', () => {
     expect(operation.kind).toBe('outline.operation');
     expect(workspace.projection().nodes.some((node) => node.content.text === 'Acknowledged before compaction')).toBe(true);
     expect(snapshotRenames).toBe(1);
+  });
+
+  test('accepts a desktop mutation while an idle compaction is in flight', async () => {
+    const root = await makeRoot();
+    let snapshotRenames = 0;
+    let enterCompaction!: () => void;
+    let releaseCompaction!: () => void;
+    const compactionEntered = new Promise<void>((resolve) => { enterCompaction = resolve; });
+    const compactionGate = new Promise<void>((resolve) => { releaseCompaction = resolve; });
+    const store = new WorkspaceTransactionLog(root, {
+      compactionRecords: 1,
+      afterSnapshotRename: async () => {
+        snapshotRenames += 1;
+        if (snapshotRenames !== 2) return;
+        enterCompaction();
+        await compactionGate;
+      },
+    });
+    const workspace = await openWorkspace(root, { store });
+    await workspace.mutate(createRequest('Durable before compaction'));
+
+    const maintenance = workspace.maintain({ compactIfNeeded: true });
+    await compactionEntered;
+    const request = createRequest('Accepted during compaction', {
+      idempotencyKey: 'desktop:during-compaction',
+      idempotencyPayloadHash: 'c'.repeat(64),
+    });
+    const accepting = workspace.commitAcceptedPrepared(request, () => request);
+    const firstSettlement = await Promise.race([
+      accepting.then(() => 'mutation' as const),
+      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 100)),
+    ]);
+
+    releaseCompaction();
+    await maintenance;
+    expect(firstSettlement).toBe('mutation');
+    const accepted = await accepting;
+    expect(accepted.update).toMatchObject({ kind: 'delta', revision: 2 });
+    await workspace.drainDurability(2);
+
+    const restarted = await openWorkspace(root);
+    expect(restarted.projection().nodes.map((node) => node.content.text)).toEqual(
+      expect.arrayContaining(['Durable before compaction', 'Accepted during compaction']),
+    );
+  });
+
+  test('retains a desktop mutation accepted while compaction fails after snapshot replacement', async () => {
+    const root = await makeRoot();
+    let snapshotRenames = 0;
+    let enterCompaction!: () => void;
+    let releaseCompaction!: () => void;
+    const compactionEntered = new Promise<void>((resolve) => { enterCompaction = resolve; });
+    const compactionGate = new Promise<void>((resolve) => { releaseCompaction = resolve; });
+    const store = new WorkspaceTransactionLog(root, {
+      compactionRecords: 1,
+      afterSnapshotRename: async () => {
+        snapshotRenames += 1;
+        if (snapshotRenames !== 2) return;
+        enterCompaction();
+        await compactionGate;
+        throw new Error('injected failure after snapshot replacement');
+      },
+    });
+    const workspace = await openWorkspace(root, { store });
+    const durableOperation = await workspace.mutate(createRequest('Durable before failed compaction'));
+
+    const maintenance = workspace.maintain({ compactIfNeeded: true });
+    await compactionEntered;
+    const request = createRequest('Accepted during failed compaction', {
+      idempotencyKey: 'desktop:during-failed-compaction',
+      idempotencyPayloadHash: 'd'.repeat(64),
+    });
+    const accepted = await workspace.commitAcceptedPrepared(request, () => request);
+    expect(accepted.update).toMatchObject({ kind: 'delta', revision: 2 });
+
+    releaseCompaction();
+    await expect(maintenance).rejects.toThrow('injected failure after snapshot replacement');
+    await workspace.drainDurability(2);
+    workspace.close();
+
+    const restarted = await openWorkspace(root);
+    expect(restarted.projection().nodes.map((node) => node.content.text)).toEqual(
+      expect.arrayContaining(['Durable before failed compaction', 'Accepted during failed compaction']),
+    );
+    const acceptedOperationId = accepted.settlement.kind === 'outline.operation'
+      ? accepted.settlement.operationId
+      : '';
+    const operations = await restarted.store.operations();
+    expect(operations.map((operation) => operation.operationId)).toEqual([
+      durableOperation.operationId,
+      acceptedOperationId,
+    ]);
+    expect(new Set(operations.map((operation) => operation.operationId)).size).toBe(2);
+    expect(operations.map((operation) => [operation.revisionBefore, operation.revisionAfter])).toEqual([
+      [0, 1],
+      [1, 2],
+    ]);
+    expect(restarted.revision()).toBe(2);
+    restarted.close();
   });
 
   test('does not reverse a durable Operation when later compaction maintenance fails', async () => {
@@ -453,6 +899,65 @@ describe('OutlineRuntimeWorkspace', () => {
     expect(restarted.projection().nodes.some((node) => node.content.text === 'Must not run on stale Core')).toBe(false);
   });
 
+  test('rehydrates and publishes the retained Event when the exact unknown settlement is retried', async () => {
+    const root = await makeRoot();
+    let fail = false;
+    let executions = 0;
+    const store = new WorkspaceTransactionLog(root, {
+      afterTransactionFsync: () => {
+        if (!fail) return;
+        fail = false;
+        throw new Error('injected acknowledgement crash');
+      },
+    });
+    const workspace = await openWorkspace(root, { store });
+    const earlierKey = 'runtime:earlier-settlement';
+    const earlierHash = 'd'.repeat(64);
+    await workspace.mutate(createRequest('Earlier durable write', {
+      idempotencyKey: earlierKey,
+      idempotencyPayloadHash: earlierHash,
+    }));
+    fail = true;
+    const events: OutlineEvent[] = [];
+    const unsubscribe = workspace.subscribe((event) => events.push(event));
+    const idempotencyKey = 'runtime:recover-live-settlement';
+    const payloadHash = 'e'.repeat(64);
+    const request = createRequest('Recovered without restart', {
+      idempotencyKey,
+      idempotencyPayloadHash: payloadHash,
+      onExecute: () => { executions += 1; },
+    });
+
+    await expect(workspace.mutate(request)).rejects.toMatchObject({
+      outlineError: { code: 'operation_settlement_unknown' },
+    });
+    expect(workspace.revision()).toBe(1);
+    expect(events).toEqual([]);
+    await expect(workspace.settledOperation(earlierKey, earlierHash)).rejects.toMatchObject({
+      outlineError: { code: 'operation_settlement_unknown' },
+    });
+
+    const operation = await workspace.settledOperation(idempotencyKey, payloadHash);
+    expect(operation?.revisionAfter).toBe(2);
+    expect(executions).toBe(1);
+    expect(workspace.revision()).toBe(2);
+    expect(workspace.durableRevision()).toBe(2);
+    expect(workspace.projection().nodes.some((node) => node.content.text === 'Recovered without restart')).toBe(true);
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: 'operation.committed',
+        revision: 2,
+        operation: expect.objectContaining({ operationId: operation?.operationId }),
+      }),
+    ]);
+
+    expect(await workspace.settledOperation(idempotencyKey, payloadHash)).toEqual(operation);
+    expect(events).toHaveLength(1);
+    const next = await workspace.mutate(createRequest('Write after live recovery'));
+    expect(next.revisionBefore).toBe(2);
+    unsubscribe();
+  });
+
   test('pages newest-first Operation history and filters trusted causation', async () => {
     const root = await makeRoot();
     const workspace = await openWorkspace(root);
@@ -694,6 +1199,29 @@ function createRequest(text: string, options: CreateRequestOptions = {}) {
   };
 }
 
+function createNoChangeRequest(text: string, idempotencyKey: string, onExecute?: () => void) {
+  const changeSetHash = canonicalSha256({ kind: 'no-change', text });
+  const diffHash = canonicalSha256({ kind: 'no-change-diff', text });
+  return {
+    origin: 'desktop' as const,
+    changeSetHash,
+    diffHash,
+    summary: `${text}.`,
+    idempotencyKey,
+    idempotencyPayloadHash: canonicalSha256({ kind: 'no-change-payload', text }),
+    execute: () => { onExecute?.(); },
+    noChangeResult: (core: Core) => ({
+      protocolVersion: 1 as const,
+      kind: 'outline.no-change' as const,
+      changeSetHash,
+      diffHash,
+      revision: core.revision(),
+      affectedNodeCount: 0 as const,
+      recovery: { state: 'not-required' as const },
+    }),
+  };
+}
+
 function updateRequest(nodeId: string, description: string) {
   const payload = { kind: 'update', nodeId, description };
   return {
@@ -737,4 +1265,40 @@ function openWorkspace(
     ...options,
     contentRoot: options.contentRoot ?? path.join(root, 'content'),
   });
+}
+
+interface ScheduledTask {
+  readonly callback: () => void;
+  readonly due: number;
+  canceled: boolean;
+}
+
+class TestClock {
+  nowValue = 0;
+  private nextId = 1;
+  private readonly tasks = new Map<number, ScheduledTask>();
+
+  schedule = (callback: () => void, delayMs: number): ReturnType<typeof setTimeout> => {
+    const id = this.nextId++;
+    this.tasks.set(id, { callback, due: this.nowValue + delayMs, canceled: false });
+    return id as unknown as ReturnType<typeof setTimeout>;
+  };
+
+  cancel = (timer: ReturnType<typeof setTimeout>): void => {
+    const task = this.tasks.get(timer as unknown as number);
+    if (task) task.canceled = true;
+  };
+
+  async advance(ms: number): Promise<void> {
+    this.nowValue += ms;
+    while (true) {
+      const next = [...this.tasks.entries()]
+        .filter(([, task]) => !task.canceled && task.due <= this.nowValue)
+        .sort(([, left], [, right]) => left.due - right.due)[0];
+      if (!next) return;
+      this.tasks.delete(next[0]);
+      next[1].callback();
+      await Promise.resolve();
+    }
+  }
 }

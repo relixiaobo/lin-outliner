@@ -17,7 +17,6 @@ function baseUi(patch: Partial<UiState> = {}): UiState {
     focusRequest: null,
     pendingInputChar: null,
     pendingReferenceConversion: null,
-    pendingReferenceTypeAhead: null,
     expanded: new Set<NodeId>(),
     expandedHiddenFields: new Set<string>(),
     editingDescriptionId: null,

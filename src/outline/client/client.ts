@@ -5,12 +5,17 @@ import { OutlineContractError, outlineError } from '../contract/errors';
 import { checkOutlineSchema } from '../contract/validation';
 import {
   OutlineErrorSchema,
+  AcceptedDesktopChangeSetMutationSchema,
   AssetLeaseSchema,
+  ChangeSetSchema,
   OutlineResponseSchema,
   OutlineStreamRecordSchema,
+  type ChangeSet,
+  type AcceptedDesktopChangeSetMutation,
   type OutlineRequest,
   type OutlineResponse,
   type OutlineStreamRecord,
+  type OperationUndoGroup,
   type RuntimeDescriptor,
   type AssetLease,
   type WatchRequest,
@@ -32,6 +37,35 @@ export interface OutlineRuntimeIdentity {
   readonly instanceId: string;
   readonly contractDigest: string;
 }
+
+export type DesktopRuntimeLifecycleAction =
+  | 'status'
+  | 'freeze'
+  | 'unfreeze'
+  | 'commit-freeze'
+  | 'drain'
+  | 'shutdown';
+
+export interface DesktopRuntimeDurabilityStatus {
+  readonly acceptedRevision: number;
+  readonly durableRevision: number;
+  readonly admissionFrozen: boolean;
+  readonly failure?: { readonly message: string };
+}
+
+export interface DesktopTextSearchHit {
+  readonly nodeId: string;
+  readonly score: number;
+}
+
+export interface DesktopPersonalAccessStats {
+  readonly s: number;
+  readonly tUpdate: number | null;
+}
+
+export type DesktopPersonalAccessRankingUpdate =
+  | { readonly action: 'replace' | 'upsert'; readonly entries: readonly (readonly [string, DesktopPersonalAccessStats])[] }
+  | { readonly action: 'remove'; readonly nodeIds: readonly string[] };
 
 export class OutlineClient {
   // A watch owns one long-lived socket. Requests and asset transfers must still
@@ -84,6 +118,137 @@ export class OutlineClient {
     }
   }
 
+  async commitDesktopChangeSet(
+    changeSet: ChangeSet,
+    undoGroup?: OperationUndoGroup,
+    signal?: AbortSignal,
+  ): Promise<AcceptedDesktopChangeSetMutation> {
+    if (!checkOutlineSchema(ChangeSetSchema, changeSet)) {
+      throw protocolError('Desktop Outline commit received an invalid ChangeSet.');
+    }
+    const lifetime = createRequestLifetime(signal, this.requestTimeoutMs);
+    const requestId = `desktop:${crypto.randomUUID()}`;
+    try {
+      const value = await this.jsonRequest('/v1/desktop/commit', {
+        protocolVersion: OUTLINE_PROTOCOL_VERSION,
+        requestId,
+        changeSet,
+        ...(undoGroup ? { undoGroup } : {}),
+      }, lifetime.signal);
+      if (!isRecord(value)
+        || value.protocolVersion !== OUTLINE_PROTOCOL_VERSION
+        || value.requestId !== requestId
+        || !Number.isSafeInteger(value.revision)
+        || !isAcceptedDesktopChangeSetMutation(value.data)) {
+        throw protocolError('Outline Runtime returned an invalid desktop accepted-mutation response.');
+      }
+      return value.data;
+    } catch (error) {
+      throw normalizeRequestError(error, lifetime);
+    } finally {
+      lifetime.cleanup();
+    }
+  }
+
+  async searchDesktopNodes(
+    query: string,
+    limit: number,
+    signal?: AbortSignal,
+  ): Promise<DesktopTextSearchHit[]> {
+    if (typeof query !== 'string'
+      || query.length > 10_000
+      || !Number.isSafeInteger(limit)
+      || limit < 1
+      || limit > 10_000) {
+      throw protocolError('Desktop ranked search requires bounded query text and result count.');
+    }
+    const lifetime = createRequestLifetime(signal, this.requestTimeoutMs);
+    const requestId = `desktop-search:${crypto.randomUUID()}`;
+    try {
+      const value = await this.jsonRequest('/v1/desktop/search', {
+        protocolVersion: OUTLINE_PROTOCOL_VERSION,
+        requestId,
+        query,
+        limit,
+      }, lifetime.signal);
+      if (!isRecord(value)
+        || value.protocolVersion !== OUTLINE_PROTOCOL_VERSION
+        || value.requestId !== requestId
+        || !Number.isSafeInteger(value.revision)
+        || !isRecord(value.data)
+        || !Array.isArray(value.data.hits)
+        || !value.data.hits.every(isDesktopTextSearchHit)) {
+        throw protocolError('Outline Runtime returned an invalid desktop ranked-search response.');
+      }
+      return value.data.hits;
+    } catch (error) {
+      throw normalizeRequestError(error, lifetime);
+    } finally {
+      lifetime.cleanup();
+    }
+  }
+
+  async syncDesktopPersonalAccessRanking(
+    update: DesktopPersonalAccessRankingUpdate,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (!isDesktopPersonalAccessRankingUpdate(update)) {
+      throw protocolError('Desktop personal-access ranking sync requires a bounded valid update.');
+    }
+    const lifetime = createRequestLifetime(signal, this.requestTimeoutMs);
+    const requestId = `desktop-ranking:${crypto.randomUUID()}`;
+    try {
+      const value = await this.jsonRequest('/v1/desktop/personal-access-ranking', {
+        protocolVersion: OUTLINE_PROTOCOL_VERSION,
+        requestId,
+        update,
+      }, lifetime.signal);
+      if (!isRecord(value)
+        || value.protocolVersion !== OUTLINE_PROTOCOL_VERSION
+        || value.requestId !== requestId
+        || !isRecord(value.data)
+        || value.data.synced !== true) {
+        throw protocolError('Outline Runtime returned an invalid personal-access ranking response.');
+      }
+    } catch (error) {
+      throw normalizeRequestError(error, lifetime);
+    } finally {
+      lifetime.cleanup();
+    }
+  }
+
+  async manageDesktopRuntime(
+    action: DesktopRuntimeLifecycleAction,
+    targetRevision?: number,
+    signal?: AbortSignal,
+  ): Promise<DesktopRuntimeDurabilityStatus> {
+    if ((action === 'drain') !== (targetRevision !== undefined)
+      || (targetRevision !== undefined && (!Number.isSafeInteger(targetRevision) || targetRevision < 0))) {
+      throw protocolError('Desktop Runtime drain requires one non-negative target revision.');
+    }
+    const lifetime = createRequestLifetime(signal, this.requestTimeoutMs);
+    const requestId = `desktop-lifecycle:${crypto.randomUUID()}`;
+    try {
+      const value = await this.jsonRequest('/v1/desktop/lifecycle', {
+        protocolVersion: OUTLINE_PROTOCOL_VERSION,
+        requestId,
+        action,
+        ...(targetRevision !== undefined ? { targetRevision } : {}),
+      }, lifetime.signal);
+      if (!isRecord(value)
+        || value.protocolVersion !== OUTLINE_PROTOCOL_VERSION
+        || value.requestId !== requestId
+        || !isDesktopRuntimeDurabilityStatus(value.data)) {
+        throw protocolError('Outline Runtime returned an invalid desktop lifecycle response.');
+      }
+      return value.data;
+    } catch (error) {
+      throw normalizeRequestError(error, lifetime);
+    } finally {
+      lifetime.cleanup();
+    }
+  }
+
   async probeRuntimeIdentity(signal?: AbortSignal): Promise<OutlineRuntimeIdentity> {
     const lifetime = createRequestLifetime(signal, this.requestTimeoutMs);
     const request: OutlineRequest = {
@@ -122,11 +287,20 @@ export class OutlineClient {
 
   async requestRuntimeRetirement(
     instanceId: string,
-    replacementContractDigest: string,
+    replacement: {
+      readonly contractDigest: string;
+      readonly developmentSessionId?: string;
+    },
     signal?: AbortSignal,
   ): Promise<boolean> {
     const lifetime = createRequestLifetime(signal, this.requestTimeoutMs);
-    const body = JSON.stringify({ instanceId, replacementContractDigest });
+    const body = JSON.stringify({
+      instanceId,
+      replacementContractDigest: replacement.contractDigest,
+      ...(replacement.developmentSessionId ? {
+        replacementDevelopmentSessionId: replacement.developmentSessionId,
+      } : {}),
+    });
     try {
       const response = await this.openRequest({
         method: 'POST',
@@ -662,6 +836,56 @@ function protocolError(message: string): OutlineContractError {
   ));
 }
 
+function isAcceptedDesktopChangeSetMutation(value: unknown): value is AcceptedDesktopChangeSetMutation {
+  return checkOutlineSchema(AcceptedDesktopChangeSetMutationSchema, value);
+}
+
+function isDesktopRuntimeDurabilityStatus(value: unknown): value is DesktopRuntimeDurabilityStatus {
+  return isRecord(value)
+    && Number.isSafeInteger(value.acceptedRevision)
+    && (value.acceptedRevision as number) >= 0
+    && Number.isSafeInteger(value.durableRevision)
+    && (value.durableRevision as number) >= 0
+    && (value.durableRevision as number) <= (value.acceptedRevision as number)
+    && typeof value.admissionFrozen === 'boolean'
+    && (value.failure === undefined
+      || (isRecord(value.failure) && typeof value.failure.message === 'string'));
+}
+
+function isDesktopTextSearchHit(value: unknown): value is DesktopTextSearchHit {
+  return isRecord(value)
+    && typeof value.nodeId === 'string'
+    && value.nodeId.length > 0
+    && typeof value.score === 'number'
+    && Number.isFinite(value.score);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isDesktopPersonalAccessRankingUpdate(value: unknown): value is DesktopPersonalAccessRankingUpdate {
+  if (!isRecord(value) || (value.action !== 'replace' && value.action !== 'upsert' && value.action !== 'remove')) {
+    return false;
+  }
+  if (value.action === 'remove') {
+    return Array.isArray(value.nodeIds)
+      && value.nodeIds.length <= 5_000
+      && value.nodeIds.every((nodeId) => typeof nodeId === 'string' && nodeId.length > 0);
+  }
+  return Array.isArray(value.entries)
+    && value.entries.length <= 5_000
+    && value.entries.every((entry) => (
+      Array.isArray(entry)
+      && entry.length === 2
+      && typeof entry[0] === 'string'
+      && entry[0].length > 0
+      && isRecord(entry[1])
+      && typeof entry[1].s === 'number'
+      && Number.isFinite(entry[1].s)
+      && entry[1].s > 0
+      && typeof entry[1].tUpdate === 'number'
+      && Number.isFinite(entry[1].tUpdate)
+      && entry[1].tUpdate >= 0
+    ));
 }

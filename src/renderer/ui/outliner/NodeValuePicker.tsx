@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -17,6 +18,7 @@ import {
   PopoverListItem,
 } from './PopoverList';
 import { RowMarker } from './RowMarker';
+import { usePopoverSelection } from './usePopoverSelection';
 
 export type NodeValuePickerMarker = 'bullet' | 'reference' | 'hash';
 
@@ -88,7 +90,6 @@ export function NodeValuePicker({
   const optionsAriaLabel = tp.optionsListLabel({ name: ariaLabel });
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [activeIndex, setActiveIndex] = useState(0);
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -127,26 +128,19 @@ export function NodeValuePicker({
     placement: 'bottom-start',
     width,
   });
+  const [activeIndex, setActiveIndex] = usePopoverSelection({
+    itemCount: actions.length,
+    listRef: menuRef,
+    open,
+    selectionKey: `${query}:${actions.map(actionKey).join('|')}`,
+  });
 
-  useEffect(() => {
-    setActiveIndex(0);
-  }, [query, actions.length]);
-
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return;
-    menuRef.current
-      ?.querySelector('[data-selected="true"]')
-      ?.scrollIntoView({ block: 'nearest' });
-  }, [activeIndex, open]);
-
-  useEffect(() => {
-    if (!open) return;
-    window.requestAnimationFrame(() => {
-      const input = inputRef.current;
-      if (!input) return;
-      input.focus();
-      if (selectedLabel && query === selectedLabel) input.select();
-    });
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus();
+    if (selectedLabel && query === selectedLabel) input.select();
   }, [open, query, selectedLabel]);
 
   useEffect(() => {

@@ -106,11 +106,14 @@ import { OUTLINE_PROTOCOL_VERSION } from '../outline/contract/version';
 import type { OutlineStreamRecord } from '../outline/contract/schemas';
 import {
   OUTLINE_DESKTOP_CANCEL_CHANNEL,
+  OUTLINE_DESKTOP_COMMIT_CHANNEL,
   OUTLINE_DESKTOP_REQUEST_CHANNEL,
   OUTLINE_DESKTOP_STREAM_CHANNEL,
   OUTLINE_DESKTOP_SUBSCRIBE_CHANNEL,
   OUTLINE_DESKTOP_UNSUBSCRIBE_CHANNEL,
   type OutlineDesktopRequest,
+  type OutlineDesktopCommitRequest,
+  type OutlineDesktopCommitResponse,
   type OutlineDesktopResponse,
   type OutlineDesktopStreamMessage,
   type OutlineDesktopSubscription,
@@ -302,6 +305,9 @@ const api = {
   outline: {
     request: (request: OutlineDesktopRequest) => (
       ipcRenderer.invoke(OUTLINE_DESKTOP_REQUEST_CHANNEL, request) as Promise<OutlineDesktopResponse>
+    ),
+    commit: (request: OutlineDesktopCommitRequest) => (
+      ipcRenderer.invoke(OUTLINE_DESKTOP_COMMIT_CHANNEL, request) as Promise<OutlineDesktopCommitResponse>
     ),
     cancel: (requestId: string) => {
       ipcRenderer.send(OUTLINE_DESKTOP_CANCEL_CHANNEL, requestId);

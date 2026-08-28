@@ -3,6 +3,7 @@ import {
   appliedOutlineOperations,
   commandCalls,
   e2eProjection,
+  holdOutlineMutation,
   ids,
   openMockedApp,
   row,
@@ -747,6 +748,33 @@ test.describe('table view', () => {
     await expect(rootGrid(page).getByRole('row')).toHaveCount(6);
   });
 
+  test('moves to the next table title before the current text patch settles', async ({ page }) => {
+    await invokeCommands(page, [{ cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'table' } }]);
+    const alphaEditor = rowEditor(page, ids.alpha);
+    const betaEditor = rowEditor(page, ids.beta);
+    await alphaEditor.click();
+    await alphaEditor.evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      range.collapse(false);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    });
+    const releaseMutation = await holdOutlineMutation(page, { op: 'update', instructionKind: 'text-patch' });
+    await page.keyboard.type(' updated');
+    await page.keyboard.press('Enter');
+
+    expect(await betaEditor.evaluate((element) => element === document.activeElement)).toBe(true);
+    expect((await e2eProjection(page).then((projection) => (
+      projection.nodes.find((node) => node.id === ids.alpha)?.content.text
+    )))).toBe('Alpha');
+    await releaseMutation();
+    await expect.poll(async () => (
+      (await e2eProjection(page)).nodes.find((node) => node.id === ids.alpha)?.content.text
+    )).toBe('Alpha updated');
+  });
+
   test('adds, creates, reorders, relabels, resizes, and hides columns', async ({ page }) => {
     await configureRootTable(page);
     await invokeCommands(page, [
@@ -1077,7 +1105,7 @@ test('reads and edits saved-search table fields through the complete reference c
       && mutation?.action === 'append-text'
       && mutation.text === '2026-05-20';
   }).length).toBe(1);
-  expect((await appliedUpdates(page, beforeCall)).filter(({ change }) => change.kind === 'field-slot')).toHaveLength(2);
+  expect((await appliedUpdates(page, beforeCall)).filter(({ change }) => change.kind === 'field-slot')).toHaveLength(1);
 
   const projection = await e2eProjection(page);
   const alpha = projection.nodes.find((node) => node.id === ids.alpha)!;

@@ -48,9 +48,11 @@ export async function requestOutline<TResult>(command: string, input: unknown): 
 }
 
 export async function readDesktopProjection(): Promise<ProjectionSnapshot> {
-  const snapshot = await readCompleteDocumentProjection<NodeProjection>(requestOutline);
-  sharedEventSource?.noteRevision(snapshot.revision);
-  return snapshot;
+  return readCompleteDocumentProjection<NodeProjection>(requestOutline);
+}
+
+export function noteDesktopProjectionApplied(revision: number): void {
+  sharedEventSource?.noteRevision(revision);
 }
 
 export type DesktopFocusHint = FocusHint | ((
@@ -88,32 +90,27 @@ export function runDesktopMutation(
     const releaseEvents = source.holdEvents();
     try {
       const needsReviewedDiff = options.acknowledgeDestructive === true
-        || options.requiresDiff === true
-        || (typeof focus === 'function' && options.requiresDiff !== false);
+        || options.requiresDiff === true;
       const diff = needsReviewedDiff
         ? await requestOutline<Diff>('diff', { changeSet })
         : null;
-      const settlement = diff
+      const acceptedReceipt = diff ? null : await requestAcceptedDesktopMutation(changeSet, options.undoGroup);
+      const accepted = acceptedReceipt as (typeof acceptedReceipt & { readonly update: ProjectionUpdate });
+      const settlement = accepted?.settlement ?? (diff
         ? await requestOutline<Operation | NoChangeResult>('apply', {
             diff,
             ...(options.acknowledgeDestructive ? { acknowledgeDestructive: true } : {}),
           })
-        : await requestOutline<Operation | NoChangeResult>('commit', {
-            changeSet,
-            ...(options.undoGroup ? { undoGroup: options.undoGroup } : {}),
-          });
-      source.noteRevision(settlement.kind === 'outline.no-change' ? settlement.revision : settlement.revisionAfter);
-      let update: ProjectionUpdate;
-      if (settlement.kind === 'outline.no-change') {
-        update = await fullProjectionUpdate();
-      } else {
-        update = await updateFromOwnOperation(source, settlement.operationId);
-      }
+        : neverAcceptedMutation());
+      const update = accepted?.update ?? (settlement.kind === 'outline.no-change'
+        ? await fullProjectionUpdate()
+        : await updateFromOwnOperation(source, settlement.operationId));
+      const focusDiff = accepted?.diff ?? diff ?? directCommitFocusDiff(changeSet, revision);
       return {
         update,
         ...(focus ? {
           focus: typeof focus === 'function'
-            ? focus(settlement, diff ?? directCommitFocusDiff(changeSet, revision), update)
+            ? focus(settlement, focusDiff, update)
             : focus,
         } : {}),
       };
@@ -121,8 +118,25 @@ export function runDesktopMutation(
       releaseEvents();
     }
   });
-  desktopMutationTail = result.then(() => undefined, () => undefined);
+  desktopMutationTail = result.then(yieldForProjectionFold, yieldForProjectionFold);
   return result;
+}
+
+function neverAcceptedMutation(): never {
+  throw new Error('Desktop mutation did not produce an accepted or reviewed settlement.');
+}
+
+function requestAcceptedDesktopMutation(
+  changeSet: ChangeSet,
+  undoGroup?: Operation['undoGroup'],
+) {
+  const bridge = window.lin?.outline;
+  if (!bridge) throw new Error('Tenon Outline bridge is unavailable');
+  return bridge.commit({
+    requestId: `renderer:${crypto.randomUUID()}`,
+    changeSet,
+    ...(undoGroup ? { undoGroup } : {}),
+  });
 }
 
 function directCommitFocusDiff(changeSet: ChangeSet, revision: number): Diff {
@@ -164,14 +178,17 @@ export function runDesktopHistory(command: 'undo' | 'redo'): Promise<CommandResu
     const releaseEvents = source.holdEvents();
     try {
       const operation = await requestOutline<Operation>(command, { idempotencyKey });
-      source.noteRevision(operation.revisionAfter);
       return { update: await updateFromOwnOperation(source, operation.operationId) };
     } finally {
       releaseEvents();
     }
   });
-  desktopMutationTail = result.then(() => undefined, () => undefined);
+  desktopMutationTail = result.then(yieldForProjectionFold, yieldForProjectionFold);
   return result;
+}
+
+async function yieldForProjectionFold(): Promise<void> {
+  await Promise.resolve();
 }
 
 export { projectionUpdateFromOutlineEvent };
@@ -238,6 +255,7 @@ export function subscribeDesktopProjection(
       if (!active) return snapshot;
       listener({ kind: 'full', ...snapshot });
       seededRevision = snapshot.revision;
+      noteDesktopProjectionApplied(snapshot.revision);
       const pending = buffered;
       buffered = [];
       for (const event of pending.sort((left, right) => left.sequence - right.sequence)) acceptEvent(event);
@@ -266,6 +284,7 @@ export function subscribeDesktopProjection(
     }
     listener(update);
     seededRevision = event.revision;
+    noteDesktopProjectionApplied(event.revision);
   };
 
   const subscription = subscribeDesktopOutlineEvents(acceptEvent, onError);
@@ -421,7 +440,6 @@ class DesktopOutlineEventSource {
     }
     if (record.type === 'event') {
       this.cursor = record.cursor;
-      this.noteRevision(record.event.revision);
       this.rememberOperation(record.event);
       if (this.eventHoldCount > 0) this.heldEvents.push(record.event);
       else this.dispatchEvent(record.event);

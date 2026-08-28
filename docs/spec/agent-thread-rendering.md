@@ -1317,6 +1317,10 @@ neutral. When no provider is usable, the dock creates nothing and offers the
 Providers settings action instead. Starting a Thread resolves the remembered
 execution selection when it is still usable, or the current provider and Profile
 defaults otherwise, plus the working directory at the main-process boundary.
+Automatic creation is asynchronous: if the reader focuses another surface while
+it is pending, completion preserves that newer focus instead of pulling the next
+keystroke into the composer. Explicit creation reclaims only its own initiating
+control or an unclaimed document body; it likewise preserves a newer focus target.
 
 The first accepted user input sets a Thread's empty preview from the first
 non-empty text part, then an attachment name, then a Node-reference note. The

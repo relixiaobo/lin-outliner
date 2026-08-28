@@ -282,18 +282,25 @@ function classifyShellSegment(segmentInput: string, fullCommand: string): ToolAc
   return [unknownShellDescriptor(fullCommand, 'Unclassified shell syntax.')];
 }
 
-const OUTLINE_GLOBAL_OPTIONS_WITH_VALUE = new Set(['--protocol', '--startup-timeout']);
+const OUTLINE_GLOBAL_OPTIONS_WITH_VALUE = new Set(['--protocol', '--startup-timeout', '--timeout']);
+const OUTLINE_GLOBAL_FLAGS = new Set(['--human', '--json', '--no-start']);
+
+export interface DirectOutlineShellInvocation {
+  readonly command: OutlineCapability['name'];
+  readonly args: readonly string[];
+  readonly output: 'human' | 'json';
+}
+
+export function directOutlineShellInvocation(command: string): DirectOutlineShellInvocation | null {
+  const segments = splitShellSegments(command);
+  if (segments.length !== 1) return null;
+  return outlineShellInvocation(parseShellWords(segments[0]!));
+}
 
 function classifyOutlineActions(words: readonly string[]): readonly AgentToolActionKind[] | null {
-  let index = shellExecutableIndex(words);
-  const executable = words[index];
-  if (!executable || path.basename(executable).toLowerCase() !== 'outline') return null;
-  index += 1;
-  while (index < words.length && words[index]?.startsWith('-')) {
-    if (OUTLINE_GLOBAL_OPTIONS_WITH_VALUE.has(words[index]!)) index += 1;
-    index += 1;
-  }
-  const capability = longestOutlineCapability(words.slice(index));
+  const invocation = outlineShellInvocation(words);
+  if (!invocation) return null;
+  const capability = OUTLINE_CAPABILITIES.find((entry) => entry.name === invocation.command);
   if (!capability) return null;
   if (capability.name === 'diff' || capability.kind === 'local' || capability.kind === 'read' || capability.kind === 'observe') {
     return ['outline.read'];
@@ -302,6 +309,33 @@ function classifyOutlineActions(words: readonly string[]): readonly AgentToolAct
     return ['outline.edit', 'outline.delete'];
   }
   return ['outline.edit'];
+}
+
+function outlineShellInvocation(words: readonly string[]): DirectOutlineShellInvocation | null {
+  let index = shellExecutableIndex(words);
+  const executable = words[index];
+  if (!executable || path.basename(executable).toLowerCase() !== 'outline') return null;
+  index += 1;
+  let output: DirectOutlineShellInvocation['output'] = 'json';
+  while (index < words.length && words[index]?.startsWith('-')) {
+    const option = words[index]!;
+    if (OUTLINE_GLOBAL_OPTIONS_WITH_VALUE.has(option)) {
+      if (words[index + 1] === undefined) return null;
+      index += 2;
+      continue;
+    }
+    if (!OUTLINE_GLOBAL_FLAGS.has(option)) return null;
+    if (option === '--human') output = 'human';
+    if (option === '--json') output = 'json';
+    index += 1;
+  }
+  const capability = longestOutlineCapability(words.slice(index));
+  if (!capability) return null;
+  return {
+    command: capability.name,
+    args: words.slice(index + capability.name.split(' ').length),
+    output,
+  };
 }
 
 function shellExecutableIndex(words: readonly string[]): number {

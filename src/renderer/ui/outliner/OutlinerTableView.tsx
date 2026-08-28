@@ -32,9 +32,23 @@ import {
   isSystemFieldId,
   systemFieldDisplay,
 } from '../../../core/systemFields';
-import { fieldSlotsForIndex, type DocumentIndex, type ToolbarDropdownRequest, type UiState } from '../../state/document';
+import {
+  fieldSlotsForIndex,
+  type DocumentIndex,
+  type PendingStructuralChange,
+  type ToolbarDropdownRequest,
+  type UiState,
+} from '../../state/document';
 import { outlinerChildParentId } from '../../state/document';
 import { referenceSummaryForIndex } from '../../state/referenceSummary';
+import {
+  applyPendingRowPlacement,
+  insertPendingStructuralRow,
+  pendingStructuralProjectionSuppressions,
+  pendingStructuralRow,
+  resolvePendingRowPlacement,
+  trailingDraftPlacementMatches,
+} from '../../state/trailingDraftPlacement';
 import {
   cursorEnd,
   cursorStart,
@@ -69,7 +83,7 @@ import { useT } from '../../i18n/I18nProvider';
 import { FieldValueOutliner } from './FieldValueOutliner';
 import { OutlinerFieldRow } from './OutlinerFieldRow';
 import { OutlinerItem } from './OutlinerItem';
-import { OutlinerView } from './OutlinerView';
+import { OutlinerFlatView } from './OutlinerFlatView';
 import { FieldKindIcon, ViewToolbar } from './ViewToolbar';
 import { RowHost } from './RowHost';
 import { RowMarker } from './RowMarker';
@@ -99,6 +113,10 @@ import {
   type TableCellAddress,
   type TableNavigationKey,
 } from './tableNavigation';
+import {
+  nodeWithPendingPatch,
+  startOptimisticDoneTransition,
+} from './optimisticNodePatch';
 
 const TABLE_VIRTUALIZE_MIN_ROWS = 60;
 const TABLE_ROW_ESTIMATE_PX = 34;
@@ -314,7 +332,13 @@ function tableRenderRows(
   const result: TableRenderRow[] = [];
   for (const row of rows) {
     if (row.type === 'content') {
-      result.push({ kind: 'data', key: `row:${row.id}`, id: row.id, filtered: false });
+      result.push({
+        kind: 'data',
+        key: `row:${row.id}`,
+        id: row.id,
+        filtered: false,
+        ...(row.draft ? { draft: true, afterId: row.afterId ?? null } : {}),
+      });
       continue;
     }
     if (row.type !== 'filteredOut') continue;
@@ -336,6 +360,52 @@ function tableRenderRows(
   }
   if (draft) result.push(draft);
   return result;
+}
+
+function insertTablePendingChange(
+  rows: readonly TableRenderRow[],
+  change: PendingStructuralChange,
+  existsInProjection: boolean,
+): TableRenderRow[] {
+  if (change.presentation === 'field') {
+    return rows.filter((row) => row.kind !== 'data' || row.id !== change.id);
+  }
+  const placement = resolvePendingRowPlacement({
+    rows,
+    change,
+    matches: (row, id) => row.kind === 'data' && row.id === id,
+    fallbackIndex: (currentRows) => {
+      const filteredHeadingIndex = currentRows.findIndex((row) => row.kind === 'filteredHeading');
+      return filteredHeadingIndex >= 0 ? filteredHeadingIndex : currentRows.length;
+    },
+  });
+  if (!placement) return [...rows];
+  const existing = placement.kind === 'replace' ? rows[placement.index] : undefined;
+  const pendingRow: TableRenderRow = {
+    kind: 'data',
+    key: existing?.key ?? `row:${change.id}`,
+    id: change.id,
+    filtered: existing?.kind === 'data' ? existing.filtered : false,
+    ...(!existsInProjection ? { draft: true } : {}),
+    afterId: change.afterId,
+  };
+  return applyPendingRowPlacement(rows, pendingRow, placement);
+}
+
+function insertTableDraft(
+  rows: readonly TableRenderRow[],
+  draft: Extract<TableRenderRow, { kind: 'data' }>,
+  afterId: NodeId | null,
+): TableRenderRow[] {
+  if (afterId) {
+    const anchorIndex = rows.findIndex((row) => row.kind === 'data' && row.id === afterId);
+    if (anchorIndex >= 0) {
+      return [...rows.slice(0, anchorIndex + 1), draft, ...rows.slice(anchorIndex + 1)];
+    }
+  }
+  const filteredHeadingIndex = rows.findIndex((row) => row.kind === 'filteredHeading');
+  const insertIndex = filteredHeadingIndex >= 0 ? filteredHeadingIndex : rows.length;
+  return [...rows.slice(0, insertIndex), draft, ...rows.slice(insertIndex)];
 }
 
 function MeasuredTableRow({
@@ -383,16 +453,60 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     [parent, props.index.byId],
   );
   const columns = useMemo(() => visibleDisplayFields(view), [view]);
+  const panelPendingChanges = useMemo(
+    () => props.ui.pendingStructuralChanges.filter((change) => (
+      change.panelId === props.panelId && !props.ui.pendingRemovalIds.has(change.id)
+    )),
+    [props.panelId, props.ui.pendingRemovalIds, props.ui.pendingStructuralChanges],
+  );
+  const projectedSuppressionIds = useMemo(
+    () => pendingStructuralProjectionSuppressions(
+      panelPendingChanges,
+      props.parentId,
+      props.ui.pendingRemovalIds,
+    ),
+    [panelPendingChanges, props.parentId, props.ui.pendingRemovalIds],
+  );
   const builtRows = useMemo(() => buildOutlinerRows(parent, props.index.byId, {
     expandedHiddenFields: props.ui.expandedHiddenFields,
+    pendingRemovalIds: projectedSuppressionIds,
     suppressFieldEntries: props.suppressOwnerFieldEntries,
     fieldSlots: (nodeId) => fieldSlotsForIndex(props.index, nodeId),
-  }), [parent, props.index.byId, props.suppressOwnerFieldEntries, props.ui.expandedHiddenFields]);
-  const ownerRows = useMemo(
-    () => builtRows.filter((row) => row.type === 'field' || row.type === 'hiddenField'),
-    [builtRows],
+  }), [
+    parent,
+    props.index.byId,
+    props.suppressOwnerFieldEntries,
+    props.ui.expandedHiddenFields,
+    projectedSuppressionIds,
+  ]);
+  const pendingChanges = useMemo(
+    () => panelPendingChanges.filter((change) => change.parentId === props.parentId),
+    [panelPendingChanges, props.parentId],
   );
-  const draftId = useTrailingDraftId(props.parentId, props.index.byId);
+  const pendingChangeIds = useMemo(
+    () => new Set(pendingChanges.map((change) => change.id)),
+    [pendingChanges],
+  );
+  const rowsWithPendingFields = useMemo(
+    () => pendingChanges
+      .filter((change) => change.presentation === 'field')
+      .reduce((rows, change) => insertPendingStructuralRow(
+        rows,
+        pendingStructuralRow(change, props.index.byId.has(change.id)),
+        change.beforeId,
+        change.afterId,
+      ), builtRows),
+    [builtRows, pendingChanges, props.index.byId],
+  );
+  const ownerRows = useMemo(
+    () => rowsWithPendingFields.filter((row) => row.type === 'field' || row.type === 'hiddenField'),
+    [rowsWithPendingFields],
+  );
+  const optimisticChangesById = useMemo(
+    () => new Map(pendingChanges.map((change) => [change.id, change])),
+    [pendingChanges],
+  );
+  const draftId = useTrailingDraftId(props.parentId, props.index.byId, pendingChangeIds);
   const trailingMode = props.trailingDraft ?? 'none';
   const realContentCount = useMemo(() => builtRows.reduce((count, row) => {
     if (row.type === 'content') return count + 1;
@@ -404,21 +518,42 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     && props.ui.focusedPanelId === props.panelId;
   const draftFocused = props.ui.focusedId === draftId
     && props.ui.focusedPanelId === props.panelId;
+  const baseRenderRows = useMemo(
+    () => tableRenderRows(builtRows, props.ui.expanded, null),
+    [builtRows, props.ui.expanded],
+  );
+  const rowsWithPendingChanges = useMemo(
+    () => pendingChanges.reduce((rows, change) => insertTablePendingChange(
+      rows,
+      change,
+      props.index.byId.has(change.id),
+    ), baseRenderRows),
+    [baseRenderRows, pendingChanges, props.index.byId],
+  );
   const showDraft = parent?.type !== 'search' && Boolean(parent) && (
     trailingMode === 'always'
     || (trailingMode === 'auto' && (realContentCount === 0 || trailingFocused || draftFocused))
   );
+  const draftAfterId = trailingDraftPlacementMatches({
+    placement: props.ui.trailingDraftPlacement,
+    parentId: props.parentId,
+    panelId: props.panelId,
+  })
+    ? props.ui.trailingDraftPlacement?.afterId ?? null
+    : null;
   const draftRow = useMemo(() => showDraft ? {
     kind: 'data' as const,
     key: `row:${draftId}`,
     id: draftId,
     filtered: false,
     draft: true,
-    afterId: null,
-  } : null, [draftId, showDraft]);
+    afterId: draftAfterId,
+  } : null, [draftAfterId, draftId, showDraft]);
   const renderRows = useMemo(
-    () => tableRenderRows(builtRows, props.ui.expanded, draftRow),
-    [builtRows, draftRow, props.ui.expanded],
+    () => draftRow
+      ? insertTableDraft(rowsWithPendingChanges, draftRow, draftAfterId)
+      : rowsWithPendingChanges,
+    [draftAfterId, draftRow, rowsWithPendingChanges],
   );
   const rowIds = useMemo(
     () => renderRows.flatMap((row) => row.kind === 'data' ? [row.id] : []),
@@ -430,6 +565,7 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
   );
   const [activeCell, setActiveCell] = useState<TableCellAddress | null>(null);
   const cellRefs = useRef(new Map<string, HTMLElement>());
+  const pendingCellFocusRef = useRef<TableCellAddress | null>(null);
   const referencePath = props.referencePath ?? [props.parentId];
   const referenceSummary = useMemo(() => referenceSummaryForIndex(props.index), [props.index]);
   const columnLabels = useMemo(() => new Map(columns.map((column) => [
@@ -455,7 +591,7 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
   }, [props.setUi]);
 
   const effectiveActiveCell = nearestTableCell(rowIds, columnIds, activeCell);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (
       effectiveActiveCell?.rowId === activeCell?.rowId
       && effectiveActiveCell?.columnId === activeCell?.columnId
@@ -471,9 +607,22 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
   useLayoutEffect(() => applyGridTemplate(), [applyGridTemplate, columns]);
 
   const focusCell = useCallback((cell: TableCellAddress) => {
+    pendingCellFocusRef.current = cell;
     setActiveCell(cell);
-    window.requestAnimationFrame(() => cellRefs.current.get(cellKey(cell))?.focus());
+    const target = cellRefs.current.get(cellKey(cell));
+    if (!target) return;
+    target.focus();
+    pendingCellFocusRef.current = null;
   }, []);
+
+  useLayoutEffect(() => {
+    const pending = pendingCellFocusRef.current;
+    if (!pending) return;
+    const target = cellRefs.current.get(cellKey(pending));
+    if (!target) return;
+    target.focus();
+    pendingCellFocusRef.current = null;
+  }, [activeCell?.columnId, activeCell?.rowId]);
 
   const registerCell = useCallback((cell: TableCellAddress, element: HTMLElement | null) => {
     const key = cellKey(cell);
@@ -496,13 +645,26 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     if (!rowNode) return;
     const ownerId = outlinerChildParentId(rowId, props.index.byId);
     if (!ownerId) return;
-    const owner = props.index.byId.get(ownerId);
-    if (!owner || owner.locked) return;
+    const projectedOwner = props.index.byId.get(ownerId);
+    if (!projectedOwner || projectedOwner.locked) return;
+    const owner = nodeWithPendingPatch(
+      projectedOwner,
+      props.uiRef.current.pendingNodePatches.get(ownerId),
+    );
     const address = { rowId, columnId: column.id };
     setActiveCell(address);
 
     if (isSystemFieldId(column.field)) {
-      if (column.field === DONE_FIELD) void props.run(() => api.toggleDone(ownerId));
+      if (column.field === DONE_FIELD) {
+        void startOptimisticDoneTransition({
+          index: props.index,
+          node: owner,
+          currentUi: props.uiRef.current,
+          setUi: props.setUi,
+          transition: 'toggle',
+          command: () => props.run(() => api.toggleDone(ownerId)),
+        });
+      }
       return;
     }
 
@@ -514,7 +676,7 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
       source: 'own' as const,
     };
     focusFieldValue(slot, seed);
-  }, [focusFieldValue, props.index.byId, props.run]);
+  }, [focusFieldValue, props.index, props.run, props.setUi, props.uiRef]);
 
   const onGridKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (isImeComposingEvent(event)) return;
@@ -528,12 +690,9 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     const current = { rowId, columnId };
     if (target !== cellElement) {
       if (event.key === 'Escape') {
-        window.requestAnimationFrame(() => {
-          const cell = cellRefs.current.get(cellKey(current));
-          const focused = document.activeElement;
-          if (cell && focused instanceof Node && cell.contains(focused) && focused !== cell) return;
-          cell?.focus();
-        });
+        const focused = document.activeElement;
+        if (focused instanceof Node && cellElement.contains(focused) && focused !== cellElement) return;
+        focusCell(current);
       }
       return;
     }
@@ -753,6 +912,7 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     const nestedRows = expanded && childParent
       ? buildOutlinerRows(childParent, props.index.byId, {
         expandedHiddenFields: props.ui.expandedHiddenFields,
+        pendingRemovalIds: props.ui.pendingRemovalIds,
         suppressFieldEntries: true,
         fieldSlots: (nodeId) => fieldSlotsForIndex(props.index, nodeId),
       })
@@ -817,8 +977,10 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
               referencePath={referencePath}
               draft={row.draft}
               draftAfterId={row.draft ? row.afterId ?? null : undefined}
-              draftPlaceholder={row.draft ? props.draftPlaceholder : undefined}
-              flat
+              draftPlaceholder={row.draft && !optimisticChangesById.has(row.id)
+                ? props.draftPlaceholder
+                : undefined}
+              optimisticChange={optimisticChangesById.get(row.id)}
               semanticRole="presentation"
               hideDisplayFields
               suppressChildFieldEntries
@@ -867,29 +1029,53 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
             className="outliner-table-nested"
             role={nestedIsTable ? 'presentation' : 'tree'}
           >
-            <OutlinerView
-              panelId={props.panelId}
-              parentId={ownerId}
-              rootId={props.rootId}
-              selectionRootId={selectionRootId}
-              onRoot={props.onRoot}
-              depth={0}
-              index={props.index}
-              isNodePinned={props.isNodePinned}
-              ui={props.ui}
-              uiRef={props.uiRef}
-              setUi={props.setUi}
-              run={props.run}
-              onTogglePin={props.onTogglePin}
-              trigger={props.trigger}
-              setTrigger={props.setTrigger}
-              dragId={props.dragId}
-              setDragId={props.setDragId}
-              referencePath={childReferencePath}
-              rows={nestedRows}
-              suppressFieldEntries
-              trailingDraft="auto"
-            />
+            {nestedIsTable ? (
+              <OutlinerTableView
+                panelId={props.panelId}
+                parentId={ownerId}
+                rootId={props.rootId}
+                selectionRootId={selectionRootId}
+                onRoot={props.onRoot}
+                depth={0}
+                index={props.index}
+                isNodePinned={props.isNodePinned}
+                ui={props.ui}
+                uiRef={props.uiRef}
+                setUi={props.setUi}
+                run={props.run}
+                onTogglePin={props.onTogglePin}
+                trigger={props.trigger}
+                setTrigger={props.setTrigger}
+                dragId={props.dragId}
+                setDragId={props.setDragId}
+                referencePath={childReferencePath}
+                suppressOwnerFieldEntries
+                trailingDraft="auto"
+              />
+            ) : (
+              <OutlinerFlatView
+                panelId={props.panelId}
+                parentId={ownerId}
+                rootId={props.rootId}
+                selectionRootId={selectionRootId}
+                onRoot={props.onRoot}
+                index={props.index}
+                isNodePinned={props.isNodePinned}
+                ui={props.ui}
+                uiRef={props.uiRef}
+                setUi={props.setUi}
+                run={props.run}
+                onTogglePin={props.onTogglePin}
+                trigger={props.trigger}
+                setTrigger={props.setTrigger}
+                dragId={props.dragId}
+                setDragId={props.setDragId}
+                referencePath={childReferencePath}
+                suppressRootFieldEntries
+                trailingDraft="auto"
+                embeddedFlow
+              />
+            )}
           </div>
         ) : null}
       </div>
@@ -965,6 +1151,7 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
                 setDragId={props.setDragId}
                 isFirstInFieldGroup={rows[index - 1]?.type !== 'field'}
                 isLastInFieldGroup={rows[index + 1]?.type !== 'field'}
+                optimisticChange={optimisticChangesById.get(row.id)}
               />
             )}
             renderContent={() => null}
@@ -1089,7 +1276,10 @@ function TableFieldCell(props: TableFieldCellProps) {
   const ownerId = props.rowNode
     ? outlinerChildParentId(props.rowNode.id, props.index.byId)
     : null;
-  const owner = ownerId ? props.index.byId.get(ownerId) : undefined;
+  const projectedOwner = ownerId ? props.index.byId.get(ownerId) : undefined;
+  const owner = projectedOwner
+    ? nodeWithPendingPatch(projectedOwner, props.ui.pendingNodePatches.get(projectedOwner.id))
+    : projectedOwner;
   const field = props.index.byId.get(props.column.field);
   const slot = owner && field?.type === 'fieldDef'
     ? fieldSlotForViewCell(props.rowNode!, field.id, props.index.byId) ?? {
@@ -1121,7 +1311,14 @@ function TableFieldCell(props: TableFieldCellProps) {
           byId={props.index.byId}
           onRoot={props.onRoot}
           onToggleDone={display.kind === 'done' && !owner.locked
-            ? () => void props.run(() => api.toggleDone(owner.id))
+            ? () => void startOptimisticDoneTransition({
+                index: props.index,
+                node: owner,
+                currentUi: props.uiRef.current,
+                setUi: props.setUi,
+                transition: 'toggle',
+                command: () => props.run(() => api.toggleDone(owner.id)),
+              })
             : undefined}
         />
       );

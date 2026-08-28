@@ -1,4 +1,5 @@
 export * from './changeSet';
+export * from './documentReadModel';
 export * from './deterministicIds';
 export * from './projection';
 export * from './eventCursor';

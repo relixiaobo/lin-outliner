@@ -180,7 +180,7 @@ replace or reinterpret the panel-level block-selection model.
 
 Since PR #64 (node-line-editor-unification Phase 2b) the trailing line is no
 longer a separate `TrailingInput` component — it is the unified `OutlinerItem`
-draft row (`OutlinerView` appends it via `showDraft`). The behaviors below are
+draft row (`OutlinerFlatView` appends it from the visual-row projection). The behaviors below are
 preserved; they are now handled inline in the draft branches of `OutlinerItem`'s
 keymap, not the removed `resolveTrailingRow*` / `*EffectiveParent` /
 `shouldShowTrailingInput` helpers.
@@ -194,7 +194,7 @@ keymap, not the removed `resolveTrailingRow*` / `*EffectiveParent` /
 | Shift+Tab in trailing draft | Return effective parent to the original scope. | `OutlinerItem.handleTab` draft branch (shiftKey). | `outliner-trailing-expand.spec.ts` |
 | Backspace in empty trailing draft | Focus last visible row, or collapse empty expanded parent. | `OutlinerItem.handleBackspaceAtStart` draft branch. | `outliner-trailing-expand.spec.ts` |
 | Chevron on leaf node | Expand leaf to show child trailing draft and focus it. | `toggleExpandOrSelect`. | `outliner-trailing-expand.spec.ts` |
-| Parent with content child | Do not render another child trailing draft under that parent. | `OutlinerView.showDraft`. | `outliner-trailing-expand.spec.ts` |
+| Parent with content child | Do not render another child trailing draft under that parent. | `buildVisualRows` trailing-draft projection. | `outliner-trailing-expand.spec.ts` |
 | Empty trailing draft in a definition Default-content / Pre-determined-options block | Show an "add here" placeholder on the draft editor (`Add default content…` / `Add an option…`) so the section is not a label over a ghost bullet; the generic body draft stays unlabeled. | `definitionOutlinerPlaceholder` → `NodePanel` `draftPlaceholder` → `OutlinerItem` editor placeholder (root draft only). | `definition-config.spec.ts` |
 
 ## Implementation Rules

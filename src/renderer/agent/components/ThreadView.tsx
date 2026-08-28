@@ -103,7 +103,11 @@ import {
   type ThreadToolItem,
 } from './items/ThreadItemView';
 import { isRetryableTurn, userFacingAgentError } from '../threadErrorMessage';
-import { clickInstalledFocusTarget, composerRefocusDecision } from '../composerRefocus';
+import {
+  clickInstalledFocusTarget,
+  composerFocusRequestIsCurrent,
+  composerRefocusDecision,
+} from '../composerRefocus';
 import {
   setThreadDisclosureOverride,
   subscribeThreadDisclosure,
@@ -166,6 +170,7 @@ import { parseNodeReferenceMarkers } from '../../../core/referenceMarkup';
 interface ThreadViewProps {
   readonly active: boolean;
   readonly composerEnabled: boolean;
+  readonly composerFocusExpectedActiveElement: Element | null;
   readonly composerFocusToken: number;
   readonly getUserView: () => RendererUserViewHints;
   readonly goal: ThreadGoal | null;
@@ -629,6 +634,7 @@ interface PendingComposerPasteRequest extends PendingComposerPaste {
 export function ThreadView({
   active,
   composerEnabled,
+  composerFocusExpectedActiveElement,
   composerFocusToken,
   configuration,
   getUserView,
@@ -2050,9 +2056,15 @@ export function ThreadView({
       || handledFocusTokenRef.current >= composerFocusToken
       || waitingForInput) return undefined;
     handledFocusTokenRef.current = composerFocusToken;
-    const frame = window.requestAnimationFrame(() => composerRef.current?.focus());
+    const frame = window.requestAnimationFrame(() => {
+      if (composerFocusRequestIsCurrent(
+        composerFocusExpectedActiveElement,
+        document.activeElement,
+        document.body,
+      )) composerRef.current?.focus();
+    });
     return () => window.cancelAnimationFrame(frame);
-  }, [composerFocusToken, waitingForInput]);
+  }, [composerFocusExpectedActiveElement, composerFocusToken, waitingForInput]);
 
   useEffect(() => {
     if (failedThreadCreationFocusToken <= 0

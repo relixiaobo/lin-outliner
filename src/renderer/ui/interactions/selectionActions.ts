@@ -129,7 +129,6 @@ export function selectVisibleRowsState(
     focusSurface: null,
     focusRequest: null,
     pendingInputChar: null,
-    pendingReferenceTypeAhead: null,
     trailingDraftPlacement: null,
     selectedId: first,
     selectedIds: new Set(rows),

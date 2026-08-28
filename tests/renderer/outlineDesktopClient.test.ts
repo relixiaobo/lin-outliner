@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { LinApi } from '../../src/preload';
-import type { OutlineResponse, OutlineStreamRecord } from '../../src/outline/contract';
+import type {
+  ChangeSet,
+  Diff,
+  Operation,
+  OutlineResponse,
+  OutlineStreamRecord,
+} from '../../src/outline/contract';
 import {
   OutlineRequestError,
   projectionUpdateFromOutlineEvent,
@@ -113,18 +119,17 @@ describe('renderer Outline client', () => {
     subscription.unsubscribe();
   });
 
-  test('serializes a desktop ChangeSet at the latest revision and reconciles its cached Operation Event', async () => {
+  test('returns an accepted desktop delta before the durable Operation Event arrives', async () => {
     let stream: ((record: OutlineStreamRecord) => void) | undefined;
     let submittedChangeSet: unknown;
     const subscriptionUpdates: unknown[] = [];
     installOutlineBridge({
+      commit: async (request) => {
+        submittedChangeSet = request.changeSet;
+        return acceptedMutation(request.changeSet, 8);
+      },
       request: async (request) => {
         if (request.command === 'show') return success('show', projectionPage(2));
-        if (request.command === 'commit') {
-          submittedChangeSet = (request.input as { changeSet: unknown }).changeSet;
-          stream?.(streamEvent(8, 'cursor:8', operation(8)));
-          return success('commit', operation(8));
-        }
         throw new Error(`Unexpected command: ${request.command}`);
       },
       subscribe: (_subscription, listener) => {
@@ -153,8 +158,89 @@ describe('renderer Outline client', () => {
     });
     expect(result.update).toMatchObject({ kind: 'delta', revision: 8 });
     expect(subscriptionUpdates).toHaveLength(1);
+    stream?.(streamEvent(8, 'cursor:8'));
+    expect(subscriptionUpdates.at(-1)).toMatchObject({ kind: 'delta', revision: 8 });
+    subscription.unsubscribe();
+  });
+
+  test('holds an early durable Event until its accepted update can be applied first', async () => {
+    let stream: ((record: OutlineStreamRecord) => void) | undefined;
+    const subscriptionUpdates: unknown[] = [];
+    installOutlineBridge({
+      commit: async (request) => {
+        stream?.(streamEvent(8, 'cursor:8'));
+        return acceptedMutation(request.changeSet, 8);
+      },
+      request: async (request) => {
+        if (request.command === 'show') return success('show', projectionPage(2));
+        throw new Error(`Unexpected command: ${request.command}`);
+      },
+      subscribe: (_subscription, listener) => {
+        stream = listener;
+        queueMicrotask(() => listener(streamHello('cursor:7')));
+        return () => undefined;
+      },
+    });
+    const subscription = subscribeDesktopProjection((update) => subscriptionUpdates.push(update), () => undefined);
+    await subscription.ready;
+
+    const result = await runDesktopMutation((revision) => ({
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      base: { revision },
+      operations: [{
+        op: 'update',
+        targets: { target: { selector: { by: 'id', id: 'today' }, cardinality: 'one' } },
+        changes: [{ kind: 'done', value: true }],
+      }],
+    }));
+
+    expect(result.update).toMatchObject({ kind: 'delta', revision: 8 });
+    expect(subscriptionUpdates).toHaveLength(1);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(subscriptionUpdates.at(-1)).toMatchObject({ kind: 'delta', revision: 8 });
+    subscription.unsubscribe();
+  });
+
+  test('does not advance a queued mutation base from a held Event', async () => {
+    let stream: ((record: OutlineStreamRecord) => void) | undefined;
+    const bases: number[] = [];
+    const projectionRevisions: number[] = [];
+    installOutlineBridge({
+      commit: async (request) => {
+        bases.push(request.changeSet.base.revision);
+        if (bases.length === 1) stream?.(streamEvent(8, 'cursor:8'));
+        throw new Error('injected stale mutation');
+      },
+      request: async (request) => {
+        if (request.command === 'show') return success('show', projectionPage(2));
+        throw new Error(`Unexpected command: ${request.command}`);
+      },
+      subscribe: (_subscription, listener) => {
+        stream = listener;
+        queueMicrotask(() => listener(streamHello('cursor:7')));
+        return () => undefined;
+      },
+    });
+    const subscription = subscribeDesktopProjection((update) => {
+      projectionRevisions.push(update.revision);
+    }, () => undefined);
+    await subscription.ready;
+
+    const mutation = () => runDesktopMutation((revision) => ({
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      base: { revision },
+      operations: [{ op: 'ensure', resource: 'date', date: '2026-08-28' }],
+    }));
+    const first = mutation();
+    const second = mutation();
+    await Promise.allSettled([first, second]);
+
+    expect(bases).toEqual([7, 7]);
+    expect(projectionRevisions).toEqual([7]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(projectionRevisions).toEqual([7, 8]);
     subscription.unsubscribe();
   });
 
@@ -162,11 +248,8 @@ describe('renderer Outline client', () => {
     let stream: ((record: OutlineStreamRecord) => void) | undefined;
     const commands: string[] = [];
     installOutlineBridge({
-      request: async (request) => {
-        commands.push(request.command);
-        if (request.command === 'show') return success('show', projectionPage(2));
-        if (request.command !== 'commit') throw new Error(`Unexpected command: ${request.command}`);
-        return success('commit', {
+      commit: async (request) => ({
+        settlement: {
           protocolVersion: 1,
           kind: 'outline.no-change',
           changeSetHash: 'a'.repeat(64),
@@ -174,7 +257,20 @@ describe('renderer Outline client', () => {
           revision: 7,
           affectedNodeCount: 0,
           recovery: { state: 'not-required' },
-        });
+        },
+        update: {
+          kind: 'delta',
+          revision: 7,
+          todayId: 'today',
+          changedNodes: [],
+          removedIds: [],
+        },
+        diff: focusDiff(request.changeSet, 7),
+      }),
+      request: async (request) => {
+        commands.push(request.command);
+        if (request.command === 'show') return success('show', projectionPage(2));
+        throw new Error(`Unexpected command: ${request.command}`);
       },
       subscribe: (_subscription, listener) => {
         stream = listener;
@@ -193,9 +289,15 @@ describe('renderer Outline client', () => {
       operations: [{ op: 'ensure', resource: 'date', date: '2026-08-24' }],
     }));
 
-    expect(result.update).toMatchObject({ kind: 'full', revision: 7 });
-    expect(commands).toEqual(['commit', 'show']);
-    expect(stream).toBeDefined();
+    expect(result.update).toEqual({
+      kind: 'delta',
+      revision: 7,
+      todayId: 'today',
+      changedNodes: [],
+      removedIds: [],
+    });
+    expect(commands).toEqual([]);
+    expect(stream).toBeFunction();
     subscription.unsubscribe();
   });
 
@@ -266,6 +368,7 @@ function installOutlineRequest(
   Object.assign(window, {
     lin: {
       outline: {
+        commit: async () => { throw new Error('Unexpected desktop commit.'); },
         request,
         cancel: () => undefined,
         subscribe: () => () => undefined,
@@ -274,8 +377,19 @@ function installOutlineRequest(
   });
 }
 
-function installOutlineBridge(outline: NonNullable<LinApi['outline']>): void {
-  Object.assign(window, { lin: { outline } as unknown as LinApi });
+function installOutlineBridge(
+  outline: Partial<NonNullable<LinApi['outline']>>
+    & Pick<NonNullable<LinApi['outline']>, 'request' | 'subscribe'>,
+): void {
+  Object.assign(window, {
+    lin: {
+      outline: {
+        commit: async () => { throw new Error('Unexpected desktop commit.'); },
+        cancel: () => undefined,
+        ...outline,
+      },
+    } as unknown as LinApi,
+  });
 }
 
 function success(command: string, data: unknown): OutlineResponse {
@@ -312,6 +426,36 @@ function projectionPage(page: number, revision = 7) {
     },
     nodes: [node(page === 1 ? 'workspace' : 'today')],
     ...(page === 1 ? { truncated: true, cursor: 'page:2' } : {}),
+  };
+}
+
+function acceptedMutation(changeSet: ChangeSet, revision: number) {
+  return {
+    settlement: operation(revision),
+    update: {
+      kind: 'delta' as const,
+      revision,
+      todayId: 'today',
+      changedNodes: [node('today')],
+      removedIds: [],
+    },
+    diff: focusDiff(changeSet, revision - 1),
+  };
+}
+
+function focusDiff(changeSet: ChangeSet, revision: number): Diff {
+  return {
+    protocolVersion: 1,
+    kind: 'outline.diff',
+    diffHash: 'a'.repeat(64),
+    changeSetHash: 'b'.repeat(64),
+    baseRevision: revision,
+    normalizedChangeSet: changeSet,
+    bindings: {},
+    affected: [],
+    destructive: [],
+    warnings: [],
+    resultEstimate: { nodeCount: 0, encodedBytes: 0 },
   };
 }
 
@@ -363,9 +507,25 @@ function streamEvent(revision: number, cursor: string, committed = operation(rev
   } as OutlineStreamRecord;
 }
 
-function operation(revision: number) {
+function operation(revision: number): Operation {
   return {
+    protocolVersion: 1,
+    kind: 'outline.operation',
     operationId: `operation:${revision}`,
+    changeSetHash: 'a'.repeat(64),
+    diffHash: 'b'.repeat(64),
+    origin: 'desktop',
+    summary: 'Accepted desktop mutation.',
+    affectedNodeIds: ['today'],
+    affectedNodeCount: 1,
+    affectedNodeIdsHash: 'c'.repeat(64),
+    revisionBefore: revision - 1,
     revisionAfter: revision,
+    createdAt: '2026-08-27T00:00:00.000Z',
+    recovery: {
+      recoveryPatchId: `recovery:${revision}`,
+      state: 'available',
+      retainedUntilAtLeast: '2026-09-27T00:00:00.000Z',
+    },
   };
 }

@@ -27,8 +27,7 @@ import {
 } from '../../contract/version';
 import type { OutlineHistoryMutationOptions, OutlineRuntimeWorkspace } from '../runtimeWorkspace';
 import { applyOutlineDiff, commitOutlineChangeSet, diffOutlineChangeSet } from '../changeSet';
-import { projectOutline } from '../projection';
-import { countQueryMatches, countSavedSearchMatches, createSelectionIndex } from '../selector';
+import { countQueryMatches, countSavedSearchMatches } from '../selector';
 import { decodeOperationLogCursor, encodeOperationLogCursor } from '../operationLogCursor';
 
 export interface OutlineRuntimeRequestContext {
@@ -136,8 +135,8 @@ export class OutlineRuntimeRouter {
         includeTrash?: boolean;
       };
       if (value.mode === 'count') {
-        const core = this.workspace.forkCore();
-        const index = createSelectionIndex(core.projection());
+        const revision = this.workspace.revision();
+        const index = this.workspace.selectionIndex();
         if (value.queries) {
           const names = new Set<string>();
           for (const entry of value.queries) {
@@ -152,7 +151,7 @@ export class OutlineRuntimeRouter {
           }
           return {
             kind: 'outline.batch-count',
-            revision: core.revision(),
+            revision,
             exact: true,
             counts: value.queries.map((entry) => ({
               name: entry.name,
@@ -171,7 +170,7 @@ export class OutlineRuntimeRouter {
         }
         return {
           kind: 'outline.count',
-          revision: core.revision(),
+          revision,
           exact: true,
           count: value.searchId
             ? countSavedSearchMatches(index, value.searchId)
@@ -182,7 +181,7 @@ export class OutlineRuntimeRouter {
         };
       }
       if (!value.target) throw new Error('validated find projection input is missing target');
-      return projectOutline(this.workspace.forkCore(), value.projection ?? {
+      return this.workspace.project(value.projection ?? {
         kind: 'summary',
         targets: { target: value.target },
         page: { limit: value.target.max ?? 100 },
@@ -191,7 +190,7 @@ export class OutlineRuntimeRouter {
     if (command === 'show') {
       const value = input as { selector?: Selector; projection?: Projection };
       const selector = reconcileReadSelector('show', value.selector, value.projection);
-      return projectOutline(this.workspace.forkCore(), value.projection ?? {
+      return this.workspace.project(value.projection ?? {
         kind: 'node',
         targets: { target: readTargetSpec(selector) },
         include: ['description', 'children', 'tags', 'fields', 'references', 'media', 'view', 'trash'],
@@ -200,7 +199,7 @@ export class OutlineRuntimeRouter {
     if (command === 'export') {
       const value = input as { selector?: Selector; projection?: Projection };
       const selector = reconcileReadSelector('export', value.selector, value.projection);
-      return projectOutline(this.workspace.forkCore(), value.projection ?? {
+      return this.workspace.project(value.projection ?? {
         kind: 'export',
         targets: { target: readTargetSpec(selector) },
         depth: 1_024,

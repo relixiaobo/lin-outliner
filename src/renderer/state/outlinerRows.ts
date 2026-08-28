@@ -28,7 +28,7 @@ export type OutlinerRowItem =
   // projection yet (eager materialization). `buildOutlinerRows` never emits it;
   // it is appended in the render layer so it stays out of nav/selection/agent
   // context until the user types and it materializes.
-  | { id: NodeId; type: 'content'; draft?: boolean; afterId?: NodeId | null }
+  | { id: NodeId; type: 'content'; draft?: boolean; beforeId?: NodeId | null; afterId?: NodeId | null }
   | { id: string; type: 'group'; label: string }
   | { id: string; type: 'filteredOut'; count: number; rows: OutlinerRowItem[] }
   | { id: string; type: 'hiddenField'; fieldId: NodeId; label: string };
@@ -36,6 +36,7 @@ export type OutlinerRowItem =
 export interface RowBuildOptions {
   expandedHiddenFields?: Set<string>;
   suppressFieldEntries?: boolean;
+  pendingRemovalIds?: ReadonlySet<NodeId>;
   systemFieldContext?: SystemFieldContext;
   fieldSlots?: (nodeId: NodeId) => readonly NodeFieldSlot[];
 }
@@ -634,6 +635,7 @@ function buildChildRows(
 
   for (const slot of tagSlots) appendFieldSlot(slot);
   for (const childId of parent.children) {
+    if (options.pendingRemovalIds?.has(childId)) continue;
     const child = byId.get(childId);
     if (!child) continue;
     if (child.type && INTERNAL_VIEW_NODE_TYPES.has(child.type)) continue;

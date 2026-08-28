@@ -2,18 +2,20 @@ import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import { api } from '../../api/client';
 import type { NodeId, NodeProjection } from '../../api/types';
 import { projectFieldConfig } from '../../../core/configProjection';
-import { freshNodeId } from '../../../core/nodeId';
 import { mediaKindForMimeType } from '../../../core/mediaKind';
-import { fieldSlotsForIndex, type DocumentIndex, type UiState } from '../../state/document';
+import {
+  fieldSlotsForIndex,
+  type DocumentIndex,
+  type PendingStructuralChange,
+  type UiState,
+} from '../../state/document';
 import { fieldValueEditor, type FieldValueContext } from '../fields/fieldValueEditors';
-import { requestFocusState, rowFocusTarget } from '../focus/focusModel';
 import { attachmentNodeInput } from '../interactions/attachmentIngest';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
-import { OutlinerView } from './OutlinerView';
+import { OutlinerFlatView } from './OutlinerFlatView';
 import { buildOutlinerRows, viewFieldValuesFor } from './row-model';
-import { CheckboxFieldControl } from './CheckboxFieldControl';
 import { useT } from '../../i18n/I18nProvider';
-import { fieldSlotHasInheritedDefault, type NodeFieldSlot } from '../../../core/fieldSlots';
+import { fieldSlotHasInheritedDefault, fieldSlotId, type NodeFieldSlot } from '../../../core/fieldSlots';
 import { EMPTY_RICH_TEXT } from '../../api/types';
 import { CheckIcon, ICON_SIZE } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
@@ -38,6 +40,7 @@ interface FieldValueOutlinerProps {
   optionField?: NodeProjection;
   placeholder: string;
   embeddedInGridCell?: boolean;
+  optimisticChange?: PendingStructuralChange;
 }
 
 export function FieldValueOutliner(props: FieldValueOutlinerProps) {
@@ -73,6 +76,9 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
   const optionFieldType = optionFieldConfig?.fieldType;
   const descriptor = fieldValueEditor(optionFieldType);
   const autocollect = optionFieldConfig?.autocollectOptions === true;
+  const pendingField = props.optimisticChange?.presentation === 'field'
+    ? props.optimisticChange
+    : undefined;
   const constraints = {
     min: optionFieldConfig?.minValue,
     max: optionFieldConfig?.maxValue,
@@ -95,23 +101,37 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
   // updateFieldSlot owns both virtual-slot materialization and existing-entry
   // routing. Auto-collect joins the reusable pool; plain text stays local. Both
   // append — everything is a node, there is no cardinality gate.
+  const resolveFieldTarget = async () => {
+    if (!pendingField) {
+      return {
+        entryId: entry?.type === 'fieldEntry' ? entry.id : undefined,
+        fieldDefId: props.slot.fieldDefId,
+      };
+    }
+    if (!await pendingField.settlement.current) {
+      throw new Error('The pending field could not be created.');
+    }
+    const fieldDefId = pendingField.resolvedFieldDefId?.current;
+    if (!fieldDefId) throw new Error('The pending field definition was not resolved.');
+    return { entryId: pendingField.id, fieldDefId };
+  };
+  const updateFieldValue = async (
+    mutation: Record<string, unknown>,
+  ) => {
+    const target = await resolveFieldTarget();
+    return api.updateFieldSlot(props.ownerId, target.fieldDefId, {
+      ...mutation,
+      ...(target.entryId ? { entryId: target.entryId } : {}),
+    } as Parameters<typeof api.updateFieldSlot>[2]);
+  };
+
   const materializeValue = (id: NodeId, text: string) => (
-    api.updateFieldSlot(props.ownerId, props.slot.fieldDefId, {
+    updateFieldValue({
       kind: 'appendText',
       text,
       id,
-      ...(entry ? { entryId: entry.id } : {}),
       ...(autocollect ? { collect: true } : {}),
     })
-  );
-
-  // An empty checkbox field needs a toggle even though there is no stored value
-  // row yet. Once toggled, its value is rendered by OutlinerView like every other
-  // stored value so it gains disclosure, ordinary children, and structural keys.
-  const showEmptyWholeFieldControl = Boolean(
-    props.optionField
-    && descriptor.isWholeFieldControl
-    && empty
   );
 
   const acceptInheritedDefault = () => {
@@ -123,35 +143,19 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
     ));
   };
 
-  const createWholeFieldValue = async (value: string) => {
-    const valueId = freshNodeId();
-    const result = await props.run(() => api.updateFieldSlot(
-      props.ownerId,
-      props.slot.fieldDefId,
-      {
-        kind: 'appendText',
-        text: value,
-        id: valueId,
-        ...(entry ? { entryId: entry.id } : {}),
-      },
-    ), { applyFocus: false });
-    if (result && 'update' in result && result.focus?.nodeId) {
-      props.setUi((previous) => requestFocusState(
-        previous,
-        rowFocusTarget(valueId, result.focus!.nodeId, props.panelId),
-      ));
-    }
-    return result;
-  };
-
   // Everything is a node: the value area always offers a trailing draft as the
   // uniform entry point for the next value (shown when empty or when nav focuses
   // the trailing surface). Values always append — there is no cardinality gate.
+  // Keep the draft mounted while it materializes. The pending structural row
+  // replaces that draft in place under the same Node ID and React key; once the
+  // stored value reaches the projection, `auto` naturally suppresses the next
+  // trailing draft unless navigation explicitly asks for it.
   const trailingMode = 'auto' as const;
 
-  const ctx: FieldValueContext | undefined = props.optionField
+  const ctx: FieldValueContext | undefined = props.optionField || pendingField
     ? {
       ownerId: props.ownerId,
+      fieldDefId: props.slot.fieldDefId,
       entryId: entry?.type === 'fieldEntry' ? entry.id : undefined,
       optionField: props.optionField,
       descriptor,
@@ -159,71 +163,63 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
       constraints,
       autocollect,
       placeholder: valuePlaceholder,
+      displayValue: inheritedDefaultText || undefined,
+      inheritedDisplayValue: Boolean(inheritedDefaultText),
       materializeValue,
       materializeReference: (id, targetId) => (
-        api.updateFieldSlot(props.ownerId, props.slot.fieldDefId, {
+        updateFieldValue({
           kind: 'appendReference',
           targetId,
           id,
-          ...(entry ? { entryId: entry.id } : {}),
         })
       ),
       materializeNodes: (id, nodes, firstTagIds) => (
-        api.updateFieldSlot(props.ownerId, props.slot.fieldDefId, {
+        updateFieldValue({
           kind: 'appendNodes',
           nodes,
           id,
           ...(firstTagIds && firstTagIds.length > 0 ? { firstTagIds } : {}),
-          ...(entry ? { entryId: entry.id } : {}),
         })
       ),
       materializeField: (id) => (
-        api.updateFieldSlot(props.ownerId, props.slot.fieldDefId, {
+        updateFieldValue({
           kind: 'appendField',
           name: '',
           fieldType: 'plain',
           id,
-          ...(entry ? { entryId: entry.id } : {}),
         })
       ),
       materializeAsset: (id, asset) => (
         mediaKindForMimeType(asset.mimeType) === 'image'
-          ? api.updateFieldSlot(props.ownerId, props.slot.fieldDefId, {
+          ? updateFieldValue({
               kind: 'appendImage',
               assetId: asset.id,
               width: asset.imageWidth,
               height: asset.imageHeight,
               name: asset.originalFilename,
               id,
-              ...(entry ? { entryId: entry.id } : {}),
             })
-          : api.updateFieldSlot(props.ownerId, props.slot.fieldDefId, {
+          : updateFieldValue({
               kind: 'appendAttachment',
               ...attachmentNodeInput(asset),
               id,
-              ...(entry ? { entryId: entry.id } : {}),
             })
       ),
       materializeImageUrl: (id, mediaUrl) => (
-        api.updateFieldSlot(props.ownerId, props.slot.fieldDefId, {
+        updateFieldValue({
           kind: 'appendImage',
           mediaUrl,
           id,
-          ...(entry ? { entryId: entry.id } : {}),
         })
       ),
-      onSelectOption: (optionId) => (
-        api.updateFieldSlot(props.ownerId, props.slot.fieldDefId, {
+      onSelectOption: (optionId, id) => (
+        updateFieldValue({
           kind: 'selectOption',
           optionNodeId: optionId,
-          ...(entry ? { entryId: entry.id } : {}),
+          ...(id ? { id } : {}),
         })
       ),
-      commitSlot: () => api.updateFieldSlot(
-        props.ownerId,
-        props.slot.fieldDefId,
-        { kind: 'commit', ...(entry ? { entryId: entry.id } : {}) },
-      ),
+      commitSlot: () => updateFieldValue({ kind: 'commit' }),
     }
     : undefined;
 
@@ -235,41 +231,32 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
         ? tf.inheritedDefaultAriaLabel({ value: inheritedDefaultText })
         : empty ? props.placeholder : tf.fieldValueAriaLabel}
     >
-      {showEmptyWholeFieldControl ? (
-        <CheckboxFieldControl
-          displayValue={inheritedDefaultText || undefined}
-          entryId={entry?.type === 'fieldEntry' ? entry.id : undefined}
-          inherited={Boolean(inheritedDefaultText)}
-          onCreateValue={createWholeFieldValue}
-          run={props.run}
-        />
-      ) : (
-        <OutlinerView
-          panelId={props.panelId}
-          parentId={valueParentId}
-          parentOverride={entry ? undefined : valueParent}
-          rootId={valueParentId}
-          selectionRootId={props.selectionRootId}
-          onRoot={props.onRoot}
-          depth={0}
-          index={props.index}
-          isNodePinned={props.isNodePinned}
-          ui={props.ui}
-          uiRef={props.uiRef}
-          setUi={props.setUi}
-          run={props.run}
-          onTogglePin={props.onTogglePin}
-          trigger={props.trigger}
-          setTrigger={props.setTrigger}
-          dragId={props.dragId}
-          setDragId={props.setDragId}
-          referencePath={[valueParentId]}
-          fieldValue={ctx}
-          trailingDraft={trailingMode}
-          showViewToolbar={false}
-          rowSemanticRole={props.embeddedInGridCell ? 'presentation' : undefined}
-        />
-      )}
+      <OutlinerFlatView
+        panelId={props.panelId}
+        parentId={valueParentId}
+        rootId={valueParentId}
+        selectionRootId={props.selectionRootId}
+        onRoot={props.onRoot}
+        index={props.index}
+        isNodePinned={props.isNodePinned}
+        ui={props.ui}
+        uiRef={props.uiRef}
+        setUi={props.setUi}
+        run={props.run}
+        onTogglePin={props.onTogglePin}
+        trigger={props.trigger}
+        setTrigger={props.setTrigger}
+        dragId={props.dragId}
+        setDragId={props.setDragId}
+        fieldValue={ctx}
+        rootParent={valueParent}
+        trailingDraft={trailingMode}
+        draftOwnerKey={fieldSlotId(props.ownerId, props.slot.fieldDefId)}
+        pendingDraftPolicy={descriptor.isWholeFieldControl ? 'retain' : 'advance'}
+        showViewToolbar={false}
+        rowSemanticRole={props.embeddedInGridCell ? 'presentation' : undefined}
+        embeddedFlow
+      />
       {inheritedDefaultText && !descriptor.isWholeFieldControl ? (
         <span
           aria-hidden="true"

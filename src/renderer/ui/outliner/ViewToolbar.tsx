@@ -1,6 +1,7 @@
 import {
   forwardRef,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -786,10 +787,9 @@ function NameFilterControl({
     });
   }, [committedValue, nameFilterId, open, run]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return;
-    const frame = window.requestAnimationFrame(() => inputRef.current?.focus());
-    return () => window.cancelAnimationFrame(frame);
+    inputRef.current?.focus();
   }, [open]);
 
   useEffect(() => {

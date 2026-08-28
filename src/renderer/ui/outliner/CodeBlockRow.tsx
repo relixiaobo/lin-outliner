@@ -9,13 +9,16 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import type {
-  CursorPlacement,
   FocusRequest,
   FocusTarget,
   PendingInputChar,
 } from '../../state/document';
 import { focusTargetMatches } from '../focus/focusModel';
 import { isCompositionLive } from '../editor/compositionRelay';
+import {
+  insertTextIntoControlValue,
+  setTextControlCursor,
+} from '../focus/textControlFocus';
 import { CheckIcon, ChevronDownIcon, CopyIcon, ICON_SIZE } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { MenuItem } from '../primitives/MenuItem';
@@ -62,14 +65,6 @@ interface CodeBlockRowProps {
   onPendingInputConsumed?: (input: PendingInputChar) => void;
 }
 
-function caretForPlacement(placement: CursorPlacement, length: number): PendingSelection {
-  if (placement.kind === 'start') return 0;
-  if (placement.kind === 'all') return [0, length];
-  if (placement.kind === 'text-offset') return Math.max(0, Math.min(placement.offset, length));
-  // 'end' and 'preserve' both resolve to the end for a freshly focused block.
-  return length;
-}
-
 export function CodeBlockRow(props: CodeBlockRowProps) {
   const tc = useT().outliner.field.code;
   // Fall back to Plain text for fence info strings Shiki can't highlight (e.g.
@@ -99,7 +94,7 @@ export function CodeBlockRow(props: CodeBlockRowProps) {
   // Keep the editable value in sync with external document updates (undo,
   // agent edits). Skip mid-composition; normal typing keeps them equal so this
   // never clobbers the caret.
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (composingRef.current) return;
     setValue((prev) => (prev === props.text ? prev : props.text));
   }, [props.text]);
@@ -147,7 +142,7 @@ export function CodeBlockRow(props: CodeBlockRowProps) {
     propsRef.current.onTextChange(next);
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const textarea = textareaRef.current;
     const request = props.focusRequest;
     const target = props.focusTarget;
@@ -157,23 +152,24 @@ export function CodeBlockRow(props: CodeBlockRowProps) {
     // editor relays it at compositionend.
     if (isCompositionLive()) return;
     textarea.focus({ preventScroll: true });
-    const selection = caretForPlacement(request.placement, textarea.value.length);
-    if (Array.isArray(selection)) textarea.setSelectionRange(selection[0], selection[1]);
-    else textarea.setSelectionRange(selection, selection);
+    setTextControlCursor(textarea, request.placement);
     props.onFocusRequestConsumed?.(request);
   }, [props.focusRequest, props.focusTarget, props.onFocusRequestConsumed]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const textarea = textareaRef.current;
     const input = props.pendingInput;
     const target = props.focusTarget;
     if (!textarea || !input || !target || props.readOnly) return;
     if (!focusTargetMatches(input.target, target)) return;
     textarea.focus({ preventScroll: true });
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const next = textarea.value.slice(0, start) + input.char + textarea.value.slice(end);
-    commitValue(next, start + input.char.length);
+    const next = insertTextIntoControlValue({
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+      text: input.char,
+    });
+    commitValue(next.value, next.cursor);
     props.onPendingInputConsumed?.(input);
   }, [props.pendingInput, props.focusTarget, props.readOnly, props.onPendingInputConsumed, commitValue]);
 

@@ -209,9 +209,6 @@ function nodeCandidates(
     .filter((candidate) => candidate.rank !== null)
     .sort((left, right) => {
       if (left.rank !== right.rank) return (left.rank ?? 0) - (right.rank ?? 0);
-      if (Boolean(left.disabledReason) !== Boolean(right.disabledReason)) {
-        return left.disabledReason ? 1 : -1;
-      }
       if (left.isUntitled !== right.isUntitled) return left.isUntitled ? 1 : -1;
       if (left.contextRank !== right.contextRank) return left.contextRank - right.contextRank;
       if (normalized && left.label.length !== right.label.length) return left.label.length - right.label.length;

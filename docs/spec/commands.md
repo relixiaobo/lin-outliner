@@ -225,6 +225,21 @@ Desktop Event subscriptions use the command deadline only until the first
 validated `hello`; after that, cancellation, transport closure, or a Runtime
 `end` record owns their lifetime.
 
+The public `commit` and `apply` capabilities always use durable settlement. The
+renderer does not receive a generic private Runtime router: its sender-checked
+desktop IPC allowlist exposes the ordinary accepted mutation route, bounded
+reads/search, byte upload and picker-owned asset actions, and lifecycle methods.
+It cannot submit path-backed ingest/export or arbitrary public capabilities.
+
+An accepted desktop receipt contains the exact `Operation` or no-change result,
+the `ProjectionUpdate`, and the reviewed/direct Diff needed for local focus
+derivation. A changed receipt is recorded with the transaction-log idempotency
+entry and can be replayed exactly after Runtime restart for as long as that
+Operation remains retained. Semantic no-change has no transaction record or
+Event, so its exact accepted receipt is reused only by the live Runtime process.
+The desktop client keeps these idempotency keys resident for sustained editing
+rather than evicting unresolved accepted results.
+
 ## Selector And Projection
 
 A `Selector` is independent of renderer state:
@@ -426,6 +441,14 @@ Every commit appends ordered `projection.changed`, `operation.committed`,
 opaque cursor and emits `resync.required` when retained history cannot bridge a
 gap. Desktop adapters convert projection Events to the renderer's incremental
 `ProjectionUpdate`; revision gaps trigger a complete Projection read.
+
+For an ordinary initiating desktop edit, the accepted update is the first
+authoritative fold. Its later durable Event is a same-revision confirmation and
+is deduplicated; other windows fold that Event as propagation. An Event that
+arrives before the accepted response is held until that response can advance the
+mutation base. Held Events never advance a renderer subscription's folded
+projection frontier. This keeps the admission revision and visible projection
+revision aligned without applying one logical edit twice.
 
 A watch that requests an attached Projection may receive one only when Runtime
 can produce it at that Event's revision. If replay reaches a historical Event

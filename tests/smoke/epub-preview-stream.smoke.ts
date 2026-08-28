@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { assetUrl } from '../../src/core/assets';
 import { closeSmokeApp, launchSmokeApp, type SmokeApp } from './electronApp';
 
 test.describe('EPUB preview stream', () => {
@@ -14,7 +15,7 @@ test.describe('EPUB preview stream', () => {
   });
 
   test('the packaged renderer can range-fetch a resolved asset stream', async () => {
-    const result = await smoke.window.evaluate(async () => {
+    const assetId = await smoke.window.evaluate(async () => {
       const lin = window.lin;
       if (!lin) throw new Error('Missing preload API');
       const response = await lin.outline.request({
@@ -28,11 +29,15 @@ test.describe('EPUB preview stream', () => {
         },
       });
       if (!response.ok) throw new Error(response.error.message);
-      const asset = response.data as { assetId: string };
+      return (response.data as { assetId: string }).assetId;
+    });
+    const result = await smoke.window.evaluate(async ({ assetId: id, stableAssetUrl }) => {
+      const lin = window.lin;
+      if (!lin) throw new Error('Missing preload API');
       const resolved = await lin.invoke<{
         source: { streamUrl?: string } | null;
       }>('preview_resolve_source', {
-        target: { kind: 'asset', assetId: asset.assetId },
+        target: { kind: 'asset', assetId: id },
       });
       const streamUrl = resolved.source?.streamUrl;
       if (!streamUrl) throw new Error('Missing EPUB stream URL');
@@ -40,7 +45,7 @@ test.describe('EPUB preview stream', () => {
       const streamResponse = await fetch(streamUrl, {
         headers: { Range: 'bytes=0-3' },
       });
-      const stableAssetFetchBlocked = await fetch(`asset://${asset.assetId}`)
+      const stableAssetFetchBlocked = await fetch(stableAssetUrl)
         .then(() => false, () => true);
       return {
         bytes: Array.from(new Uint8Array(await streamResponse.arrayBuffer())),
@@ -48,7 +53,7 @@ test.describe('EPUB preview stream', () => {
         stableAssetFetchBlocked,
         status: streamResponse.status,
       };
-    });
+    }, { assetId, stableAssetUrl: assetUrl(assetId) });
 
     expect(result).toEqual({
       bytes: [0x50, 0x4b, 0x03, 0x04],

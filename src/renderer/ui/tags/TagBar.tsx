@@ -1,8 +1,15 @@
-import { useMemo, useRef, useState, type MouseEvent } from 'react';
+import {
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type MouseEvent,
+  type SetStateAction,
+} from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../../api/client';
-import type { NodeId, NodeProjection } from '../../api/types';
-import type { DocumentIndex } from '../../state/document';
+import { plainText, type NodeId, type NodeProjection } from '../../api/types';
+import type { DocumentIndex, UiState } from '../../state/document';
 import { isNodeInTrash } from '../interactions/nodeLocation';
 import { CloseIcon, CopyIcon, ICON_SIZE, SearchIcon, SettingsIcon } from '../icons';
 import { ConfirmDialog } from '../primitives/ConfirmDialog';
@@ -13,6 +20,10 @@ import { useDismissibleOverlay } from '../primitives/useDismissibleOverlay';
 import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import { useT } from '../../i18n/I18nProvider';
 import { commandRunnerNoop, textOf, type CommandRunner } from '../shared';
+import {
+  optimisticTagPatch,
+  startOptimisticNodePatch,
+} from '../outliner/optimisticNodePatch';
 import { AppliedTag } from './AppliedTag';
 import { resolveTagColor } from './tagColors';
 
@@ -20,6 +31,8 @@ interface TagBarProps {
   nodeId: NodeId;
   tagIds: readonly NodeId[];
   index: DocumentIndex;
+  ui: UiState;
+  setUi: Dispatch<SetStateAction<UiState>>;
   run: CommandRunner;
   onRoot?: (nodeId: NodeId) => void;
 }
@@ -28,11 +41,13 @@ interface TagBadgeProps {
   nodeId: NodeId;
   tag: NodeProjection;
   index: DocumentIndex;
+  ui: UiState;
+  setUi: Dispatch<SetStateAction<UiState>>;
   run: CommandRunner;
   onRoot?: (nodeId: NodeId) => void;
 }
 
-function TagBadge({ nodeId, tag, index, run, onRoot }: TagBadgeProps) {
+function TagBadge({ nodeId, tag, index, ui, setUi, run, onRoot }: TagBadgeProps) {
   const t = useT();
   const color = resolveTagColor(tag, index.byId);
   const label = textOf(tag) || t.common.untitled;
@@ -63,7 +78,19 @@ function TagBadge({ nodeId, tag, index, run, onRoot }: TagBadgeProps) {
   });
 
   const removeTag = () => {
-    void run(() => api.removeTag(nodeId, tag.id));
+    const node = index.byId.get(nodeId);
+    if (!node) return;
+    void startOptimisticNodePatch({
+      currentUi: ui,
+      setUi,
+      patch: optimisticTagPatch({
+        node,
+        ui,
+        tagId: tag.id,
+        action: 'remove',
+      }),
+      command: () => run(() => api.removeTag(nodeId, tag.id), { applyFocus: false }),
+    });
   };
 
   const openTagSearch = () => {
@@ -196,9 +223,14 @@ function TagBadge({ nodeId, tag, index, run, onRoot }: TagBadgeProps) {
   );
 }
 
-export function TagBar({ nodeId, tagIds, index, run, onRoot }: TagBarProps) {
+export function TagBar({ nodeId, tagIds, index, ui, setUi, run, onRoot }: TagBarProps) {
+  const pendingTagNames = ui.pendingNodePatches.get(nodeId)?.pendingTagNames;
   const tags = tagIds
-    .map((tagId) => index.byId.get(tagId))
+    .map((tagId) => index.byId.get(tagId) ?? (
+      pendingTagNames?.[tagId]
+        ? pendingTagDefinition(tagId, pendingTagNames[tagId])
+        : undefined
+    ))
     .filter((tag): tag is NodeProjection => Boolean(tag));
 
   if (tags.length === 0) return null;
@@ -211,10 +243,26 @@ export function TagBar({ nodeId, tagIds, index, run, onRoot }: TagBarProps) {
           nodeId={nodeId}
           tag={tag}
           index={index}
+          ui={ui}
+          setUi={setUi}
           run={run}
           onRoot={onRoot}
         />
       ))}
     </span>
   );
+}
+
+function pendingTagDefinition(id: NodeId, name: string): NodeProjection {
+  return {
+    id,
+    type: 'tagDef',
+    children: [],
+    content: plainText(name),
+    tags: [],
+    createdAt: 0,
+    updatedAt: 0,
+    locked: false,
+    autoCollected: false,
+  };
 }
