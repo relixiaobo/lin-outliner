@@ -1,33 +1,33 @@
 # Desktop Host Composition And Resource Ownership
 
-**Shape:** (a) ONE complete internal refactor in one PR after the standalone
-Outliner Runtime cutover lands. The typed composition root, startup
-coordination, resource ownership, desktop transport extraction, shutdown
-preservation, architecture guards, and current-spec updates ship together. No
-intermediate state with two composition or quit authorities is mergeable.
-
 ## Goal
 
 Replace Electron main's implicit process-wide object graph with one explicit,
-statically typed `DesktopHost` composition root. A reviewer should be able to
-answer these questions without reading all of `src/main/main.ts`:
+statically typed `DesktopHost` composition root while preserving the complete
+post-#592 desktop and standalone Outline Runtime behavior.
 
-- which domain creates and owns each long-lived service;
-- which dependency must be ready before another operation may run;
-- which listener, timer, subscription, protocol, IPC registration, worker, or
-  store releases each acquired resource; and
-- which steps belong to safe quit rather than ordinary resource disposal.
+A reviewer should be able to answer these questions without reading all of
+`src/main/main.ts`:
 
-`src/main/main.ts` becomes the fixed Electron bootstrap and native event entry.
-It preserves pre-ready security and `userData` invariants, creates one
-`DesktopHost`, and delegates post-ready application events through narrow typed
-methods. The refactor preserves current product behavior and domain authorities;
-it makes no startup-speed, interaction-latency, memory-use, or file-size claim.
+- which owner constructs each long-lived service and bridge;
+- which concrete operation starts each service, in what order, and with what
+  failure policy;
+- which owner releases every listener, timer, subscription, protocol, IPC
+  handler, worker, store, client, and child process relationship;
+- which state is authoritative in Electron main, the Agent subsystem, or the
+  standalone Outline Runtime; and
+- which shutdown steps are reversible cleanup versus the data-safety and
+  authenticated Runtime-shutdown protocol.
 
-The design adopts the useful part of Cordis -- composition outside consumers
-and ownership of reversible effects -- without adopting a dynamic plugin
-runtime. Tenon currently has one known Electron host graph, so constructor and
-factory arguments remain the dependency mechanism.
+`src/main/main.ts` becomes the fixed Electron bootstrap and native process-event
+entry. It preserves pre-ready identity, `userData`, security, privileged-scheme,
+diagnostic, and single-instance invariants; creates one `DesktopHost` only for
+the winning application instance; and delegates post-ready behavior through
+narrow typed methods.
+
+This refactor adopts the useful part of Cordis -- composition outside consumers
+and explicit ownership of effects -- without adopting a dynamic plugin runtime.
+It makes no startup-speed, interaction-latency, memory-use, or line-count claim.
 
 ## Non-goals
 
@@ -35,160 +35,234 @@ factory arguments remain the dependency mechanism.
   state machine, configuration-driven module loading, hot reload, or runtime
   service replacement.
 - No user-installable Host or renderer plugins, feature enable/disable system,
-  npm/local module loading, or third-party trust and permission model.
-- No generic `ServiceModule<T> { service; close() }`. A module may export
-  several capabilities; a resource is not necessarily a service; readiness,
-  quiescence, durability, and disposal are different protocols.
-- No startup reorder or `startup-window-first` implementation. This refactor
-  records and preserves the post-#584 startup graph; startup optimization stays
-  a separately measured, user-visible change.
-- No change to Outliner, ChangeSet, Operation, Thread/Turn/Item, Agent tool,
-  Memory, Automation, action, renderer capability, or preload contracts.
-- No return of document authority, workspace persistence, recovery, or asset
-  reachability to Electron main after the standalone Runtime cutover.
+  third-party module loading, or plugin trust and permission model.
+- No generic `ServiceModule<T> { service; close() }`. A domain may expose several
+  capabilities, and construction, readiness, admission, durability, ordered
+  quiescence, final release, and process exit remain different protocols.
+- No `StartupCoordinator`, startup phase framework, first-window reorder,
+  per-handler readiness gate, persistent startup-failure UI, or implementation
+  of `startup-window-first`.
+- No change to the Outliner Runtime contract, ChangeSet/Operation/Event model,
+  Thread/Turn/Item protocol, Agent tools, Memory semantics, Automation behavior,
+  action registry, renderer capabilities, or preload surface.
+- No return of document state, durability, search indexing, AssetRecords, or
+  ContentStore authority to Electron main.
+- No replacement of the #592 Runtime freeze, drain, commit-freeze, authenticated
+  shutdown, descriptor-release, or writer-lock-release protocol with ordinary
+  disposal.
 - No generic application database, database-per-module rule, cross-domain
-  schema, or duplicate copy of document, Agent, Memory, Automation, or resource
-  data.
-- No renderer plugin architecture, React rewrite, visual change, menu change,
-  notification-copy change, or new settings.
-- No line-count target. Moving construction alone will not remove native
-  security, window, local-file, and transport behavior from the product.
+  schema, or duplicate copy of document, Agent, Memory, Automation, resource,
+  settings, diagnostic, or cache data.
+- No visual, menu, notification-copy, or settings change.
 
 ## Design
 
-### Prerequisite And Rebase Contract
+### Delivery Shape
 
-Implementation starts only from a main branch containing the complete
-`outliner-runtime-cli` cutover. That change replaces the current in-main
-`DocumentService` authority with a desktop `OutlineClient`, Runtime supervision,
-and a revision-ordered Event subscription. The desktop may settle submitted
-ChangeSets and release its Runtime lease during quit, but it does not flush or
-close Runtime-owned workspace persistence.
+**Shape:** (a) ONE complete internal refactor in one PR. Static composition,
+effect ownership, transport extraction, construction rollback, startup-order
+preservation, safe-quit wiring, source guards, and current-spec updates ship
+together. No intermediate merge may leave two composition roots, two quit
+authorities, or a mixture of owned and process-exit-only IPC registrations.
 
-After that cutover, derive the real construction, readiness, registration, and
-shutdown graphs from the rebased tree. Do not copy the current `main.ts` graph
-or the current `startup-window-first` DAG into the implementation. Re-review
-`startup-window-first` against the Runtime client boundary; its current
-`documentService.initWorkspace()` and BM25 assumptions will no longer describe
-the host.
+The implementation starts from a main branch containing #592 and must not run
+in parallel with another change that edits Agent construction, Host resource
+resolution, `src/main/main.ts`, `AppQuitCoordinator`, or the Outline desktop
+lifecycle. The exact order relative to the Agent resource-reference lifecycle is
+the directional question under **Open questions**.
 
-The active `agent-result-and-file-lifecycle` design remains authoritative for
-the app-level `ContentStore` and resource-reference settlement. This refactor
-may own a ContentStore process handle only where the rebased graph requires it;
-it does not redefine exact revisions, retention anchors, logical references,
-or collection.
+### Post-#592 Process And Data Authorities
 
-### Four Separate Responsibilities
+Composition owns object relationships; it does not move authoritative state:
 
-The host architecture keeps four responsibilities explicit:
+```text
+Electron main
+  |- native windows, menus, dialogs, permissions, protocols, IPC admission
+  |- DesktopHost construction, startup, reversible effects, and quit adapter
+  |- OutlineDocumentService desktop adapter
+  |    |- accepted main-process mutation queue
+  |    |- Runtime Event watch/reconnect and live desktop Projection
+  |    |- Operation waiters and durability-failure observation
+  |    `- personal-access ranking synchronization
+  |- Agent Thread/Turn/Item stores, Memory control data, and Automation data
+  `- local settings, credentials, diagnostics, caches, and node-access stats
+
+Standalone Outline Runtime
+  |- authoritative live Core and document revision
+  |- ChangeSet execution, Operation/Event ordering, and accepted/durable frontier
+  |- transaction log, recovery, batching, maintenance, and writer lock
+  |- long-lived read model and text-search index
+  |- protected definitions and Runtime-side capability admission
+  `- Outline AssetRecords and exact-revision retention over ContentStore
+
+Renderer
+  `- folded projection and UI-session state received through preload/IPC
+```
+
+`OutlineDocumentService` is therefore not the document authority and is not a
+stateless transport wrapper. It is the stateful desktop adapter that preserves
+the mutation tail, Event-to-Projection ordering, Runtime replacement recovery,
+durability monitoring, and ranking synchronization recovered by #592. Moving
+its construction must preserve those responsibilities and their tests.
+
+Memory prose remains ordinary editable Outliner Nodes. `MemoryControlStore`
+retains only Agent-owned control, lineage, recovery, visibility, citation, and
+publication facts. `MemoryExtension` observes committed Runtime projection
+deliveries, including their Operation causation, and publishes through the same
+main-process mutation queue. `NodeAccessStore` remains local personal-ranking
+state; its bridge mirrors full and incremental updates into the Runtime read
+model without becoming document state.
+
+The neutral `ContentStore` remains a physical exact-revision service shared by
+the Runtime and future Agent references. It does not become a Host database or
+logical file registry.
+
+### Fixed Bootstrap And Host Boundary
+
+`src/main/main.ts` retains only work that must precede or surround an ordinary
+Host instance:
+
+1. set application identity;
+2. resolve and set `userData` before any service reads it;
+3. create the diagnostic sink and install early process-failure handlers;
+4. apply pre-ready command-line and privileged-scheme configuration;
+5. acquire the single-instance lock and terminate the loser without constructing
+   service graphs or starting background work;
+6. create one `DesktopHost` for the winning instance;
+7. call `DesktopHost.start()` from `app.whenReady()`; and
+8. forward `second-instance`, `window-all-closed`, `before-quit`, activation,
+   and development-parent death through narrow Host entry points where they need
+   Host state.
+
+The bootstrap does not expose a partially constructed Host to Electron event
+callbacks. Construction failure disposes every acquired resource, reports the
+original error plus cleanup failures, and exits with the existing failure
+semantics.
+
+An asynchronous `DesktopHost.start()` failure is not reduced to root-scope
+disposal. The Host first withdraws any partially published transport/window,
+stops only the producers that reached their started state, closes desktop
+Runtime consumers, requests bounded authenticated shutdown of the exact Runtime
+instance when one was started, and finally disposes remaining effects. Runtime
+shutdown retains its own freeze-and-durability behavior. Cleanup errors are
+reported, while the original startup error remains the failure returned to the
+bootstrap. This is a failed-start rollback, not another user-facing quit path:
+it presents no Retry/Cancel/Quit Anyway decision and owns no ordinary quit event.
+
+The target responsibility split is:
 
 ```text
 main.ts
-  -> createDesktopHost(environment)
-       |- static typed domain composition
-       |- StartupCoordinator: start and readiness dependencies
-       |- ResourceScope: reversible process-lifetime effects
-       `- AppQuitCoordinator: freeze, settle, decision, teardown, exit
+  `- fixed bootstrap
+       `- createDesktopHost(environment)
+            |- static typed domain composition
+            |- DesktopHost.start(): explicit current startup order
+            |- ResourceScope: reversible effects and final release
+            `- AppQuitCoordinator: durability, irreversible teardown,
+                                    authenticated Runtime shutdown, and exit
 ```
 
-They are connected deliberately but never collapsed into one universal
-lifecycle:
+There is deliberately no host-wide readiness object. `DesktopHost.start()` is a
+one-caller orchestration method, not a readiness authority. Existing service
+owners keep their current `init()`, `initialize()`, `load()`, `start()`, retry,
+and single-flight semantics. IPC remains unpublished until the current awaited
+startup sequence completes.
 
-- composition says what depends on what;
-- startup says when a capability may be used;
-- resource scope says how ordinary acquired effects are released; and
-- quit coordination protects accepted user work and owns irreversible exit.
+### Current Construction Graph
 
-`DesktopHost` stores handles to existing authorities; it does not copy domain
-state or become a new business-logic object. Its public methods are derived
-only from post-ready Electron events such as activation, URL opening, resume,
-window recreation, and quit request.
+`createDesktopHost(environment)` reproduces the following post-#592 graph with
+typed factory parameters and typed exports:
 
-### Fixed Bootstrap
-
-`src/main/main.ts` retains operations that must precede or surround an ordinary
-host instance:
-
-1. resolve and set `userData` before any service reads it;
-2. register privileged schemes before `app.ready`;
-3. acquire the application single-instance lock and terminate the loser;
-4. install early process diagnostics;
-5. enter `app.whenReady()`, construct one complete `DesktopHost`, and publish it
-   to event callbacks only after successful construction; and
-6. forward process/application events to narrow Host methods.
-
-Existing navigation, redirect, permission, CSP, window-open, renderer
-capability, and sender-admission rules remain unchanged. Post-ready registration
-may move into owned native modules, but no generic dispatcher may widen an IPC,
-protocol, or window boundary.
-
-### Static Typed Composition
-
-`createDesktopHost(environment)` is the sole post-ready composition root.
-Factories receive exact concrete interfaces and return the capabilities their
-consumers need. They never read from a mutable service bag or resolve a service
-by name. A representative factory shape is:
-
-```ts
-function createAgentModule(
-  dependencies: AgentDependencies,
-  resources: ResourceScope,
-): AgentExports
+```text
+Bootstrap environment + DiagnosticLogStore/reportError
+  |
+  |- Outline desktop boundary
+  |    |- development-session identity and Runtime launch description
+  |    |- OutlineClientSupervisor
+  |    |- DesktopOutlineClient                 (renderer Outline transport)
+  |    |- OutlineDocumentService               (main desktop adapter)
+  |    |    `- durability failure -> DiagnosticLogStore
+  |    `- OutlineDesktopAssetService
+  |
+  |- Agent host
+  |    |- managed Skills + BrowserPilotHost + configuration + worktrees
+  |    |- MemoryControlStore
+  |    |- TimelineMemoryStore -> OutlineDocumentService
+  |    |- MemoryExtension
+  |    |- PiTurnExecutor -> one-time ToolRuntime binding
+  |    |- ThreadService
+  |    |- AutomationStore/Worktree/Dispatcher/Scheduler/Service
+  |    `- ToolRuntime -> ThreadService + AutomationService
+  |
+  |- projection bridges
+  |    |- Outline projection -> MemoryExtension
+  |    `- Outline projection <-> NodeAccessStore <-> Runtime ranking sync
+  |
+  |- preview host
+  |    |- PreviewTranslationCacheStore + PageTranslationService
+  |    `- LocalFilePreviewStreamRegistry + URL-preview session
+  |
+  |- native files, windows, launcher, updates, and ActionInvocationService
+  `- capability-grouped IPC/protocol/native-event transport
 ```
 
-`AgentExports` may contain several handles; it is not wrapped as one synthetic
-service. Memory remains inside the Agent ownership family because its worker,
-control ledger, Thread integration, and Outliner publication are Agent
-extensions. This directory choice does not change data authority: published
-Memory prose is ordinary Nodes in the Outliner Runtime, while the Memory
-control store retains only control, lineage, recovery, and visibility facts.
+The current graph contains real constructor cycles. They are represented as
+one-time local bindings with narrow callback types, not hidden by a mutable
+service bag:
 
-Likely ownership areas after #584 include the Outline client, Agent and its
-extensions, native windows/actions, previews/updates, diagnostics, and desktop
-transport. These are review landmarks, not mandatory `createXServices()`
-buckets. A factory exists only when the rebased dependency graph shows a
-cohesive owner; broad `agentServices` or `previewServices` bags that merely hide
-unrelated construction are forbidden. Cycles are broken with narrow callbacks
-or publisher interfaces owned by the composition root, never mutable globals
-or `any` registries.
+- `PiTurnExecutor` callbacks reach `ToolRuntime`, which is created after
+  `ThreadService`;
+- `AttachmentResolver` callbacks reach `ThreadService` after it is opened; and
+- `AutomationDispatcher` and `AutomationScheduler` callbacks reach the final
+  `AutomationService`.
 
-Existing domain registries remain domain registries:
+Each binding fails immediately if invoked before composition completes. It can
+be assigned once only. No `any`, string registry, global singleton lookup, or
+general-purpose late-binding container is introduced.
 
-- the Agent extension registry owns Agent extensions;
-- the canonical model-tool registry owns model tool identity and admission;
-- the action registry owns object/action semantics;
-- the Outliner Runtime capability registry owns document operations; and
-- renderer capability registration owns which window may call each desktop
-  transport surface.
+Existing domain registries remain domain registries: Agent extensions, canonical
+model tools, actions, Runtime capabilities, and renderer capabilities keep their
+current identity and admission authority.
 
-### Startup Coordinator
+### Current Startup And Publication Graph
 
-`StartupCoordinator` expresses the actual post-#584 readiness DAG using typed
-handles and named phases. It is a small host-specific coordinator, not a
-dynamic scheduler or plugin state machine. It distinguishes:
+`DesktopHost.start()` preserves this exact post-#592 order:
 
-- pre-ready fixed bootstrap;
-- capabilities required before the first usable Main window;
-- work deferred until after the first-window boundary; and
-- facilities created on demand.
+1. reconcile provider configuration best-effort and clear a stale remembered
+   selection when the active provider changes;
+2. await `OutlineDocumentService.init()`, which establishes the Runtime watch,
+   reads the initial Projection, and incorporates buffered Events;
+3. initialize the Memory mutation index from that live Projection;
+4. await `ThreadService.initialize()`;
+5. await `MemoryExtension.startWorker()`;
+6. await `AutomationService.start()`;
+7. register the `powerMonitor` resume wake effect;
+8. load `NodeAccessStore` with warning-level degradation;
+9. replace the Runtime personal-access ranking from the loaded snapshot with
+   warning-level degradation;
+10. install the app icon and About metadata;
+11. register the authority-validated asset and opaque local-preview protocols;
+12. apply the stored native theme and configure default/URL-preview sessions;
+13. register desktop IPC;
+14. create the Main window;
+15. schedule the app-update and managed-Skill update timers; and
+16. create the Launcher window, register its renderer capabilities and hotkey,
+    install the application menu, and register activation handling.
 
-The coordinator preserves the rebased ordering and failure policy. It does not
-make every factory eager, await existing background work on the critical path,
-or parallelize tasks merely because their promises can run concurrently.
-Readiness that may be requested from more than one caller is single-flight;
-failure is reported consistently and retries only where the owning domain
-already supports retry.
+Construction-time background work that currently bootstraps managed Skills,
+loads Agent settings, or prunes scratch remains explicitly inventoried. The
+refactor may move it behind the winning-instance boundary, but may not add an
+await to the first-window path, make optional failure fatal, or silently run it
+twice.
 
-An IPC handler waits on the exact capability readiness it needs, not a universal
-"application ready" promise. Deferred work has an owner, cancellation path, and
-diagnostic route. Startup readiness never calls resource disposal itself;
-`createDesktopHost` handles failed construction by disposing everything already
-acquired before rethrowing the original startup error with cleanup context.
+`startup-window-first` remains a later behavioral feature. It owns window-first
+publication, capability-specific readiness gates, DAG parallelism, persistent
+failure UI, and measurement. This refactor neither anticipates that mechanism
+nor adds unused readiness scaffolding for it.
 
-### Resource Scope
+### ResourceScope Owns Effects, Not Protocols
 
-`ResourceScope` owns ordinary reversible effects with process or child-module
-lifetime:
+`ResourceScope` is a thin owner for reversible process-lifetime effects:
 
 ```ts
 interface ResourceScope {
@@ -198,262 +272,297 @@ interface ResourceScope {
 }
 ```
 
-It accepts cancellation functions for Electron listeners, timers, watchers,
-subscriptions, hotkeys, protocol/IPC handlers, transport connections, and
-services whose shutdown has no separate domain ordering semantics. A child is
-registered with its parent immediately, may be disposed early, and remains
-idempotent when the parent later disposes.
+It owns cancellation/unregistration for Electron and process listeners, timers,
+watchers, subscriptions, global hotkeys, protocol handlers, IPC handlers,
+transport connections, and idempotent final release that has no independent
+ordering semantics. Named child scopes may be released early at an explicit
+Host lifecycle point and remain idempotent when the parent later disposes.
 
-Implement the stack with the platform `AsyncDisposableStack` where the rebased
-Electron runtime and TypeScript type surface support it. The wrapper remains
-necessary because the Host contract is stronger than the raw primitive:
+The contract requires:
 
 - reverse-registration disposal;
-- one cached disposal promise so concurrent calls join the same work;
-- exactly-once disposal;
+- one cached disposal promise so concurrent and repeated callers join the same
+  work;
+- exactly-once invocation of every disposer;
 - continuation after an individual disposer fails;
-- normalized reporting of all cleanup failures; and
-- named child scopes for diagnostics.
+- normalized aggregate reporting with child ownership context; and
+- construction rollback for every effect acquired before a later step fails.
 
-If TypeScript still omits the disposable declarations under the project's
-`ES2022` library set, add the smallest deliberate `ESNext.Disposable` type
-configuration change with infrastructure-owner coordination. Do not replace the
-standard stack with a new lifecycle framework to avoid that coordination.
+Use `AsyncDisposableStack` when the Electron runtime and TypeScript library
+surface both support it. The wrapper remains necessary because raw concurrent
+`disposeAsync()` callers do not by themselves provide the Host's shared-promise
+contract or named error reporting. If the current ES2022 configuration needs
+`ESNext.Disposable`, coordinate the smallest explicit `tsconfig.json` change
+with its infrastructure owner.
 
-Transactional construction belongs to `createDesktopHost`, not to the stack:
-every acquired effect is deferred before the next fallible construction step;
-a catch path awaits scope disposal and never publishes a partial Host.
-
-`ResourceScope` does not decide when work is durable, stop accepting mutations,
-wait for Agent Turns, settle ChangeSets, select retry/cancel/quit-anyway, or call
+`ResourceScope` does not freeze admissions, calculate an accepted frontier,
+wait for durability, choose Retry/Cancel/Quit Anyway, stop ordered Agent
+producers, commit a Runtime freeze, authenticate a Runtime instance, request
+Runtime shutdown, wait for descriptor/writer-lock release, or call
 `app.quit()`/`app.exit()`.
 
-### Quit Coordination
+`closeAgentServices()` remains the ordered Agent shutdown protocol. Individual
+Memory, Thread, and Automation stores are not registered as independent generic
+disposers. Outline desktop consumers are released at their explicit position
+before Runtime shutdown. `OutlineClientSupervisor.shutdown()` is never placed in
+any `ResourceScope`.
 
-`AppQuitCoordinator` remains the only user-data safety and irreversible-exit
-authority. Its post-#584 host adapter uses the concrete domain verbs present
-after the Runtime cutover; it is not replaced by `DesktopHost.close()` or a
-module-wide `close()` convention.
+### Post-#592 Quit Graph
 
-The semantic order remains:
+`AppQuitCoordinator` remains the only safe-quit and irreversible-exit authority.
+The Host supplies typed adapters to its existing verbs; it does not replace the
+coordinator with `DesktopHost.close()`.
 
-1. freeze new desktop and producer admission;
-2. settle work already accepted by the desktop, including submitted Outliner
-   ChangeSets through the Runtime client boundary;
-3. on a recoverable settlement failure, let the user retry, cancel quit, or
-   explicitly quit anyway;
-4. commit the admission freeze and enter irreversible teardown;
-5. stop producers/workers, close domain stores using their own ordered
-   protocols, release the desktop Runtime lease, and dispose remaining lexical
-   resources; and
-6. exit even if a late teardown step reports failure.
+```text
+before-quit
+  -> freeze local Outline mutation admission synchronously
+  -> await every caller already admitted to OutlineDocumentService.mutationTail
+  -> install the cross-client Runtime freeze barrier
+  -> read latest accepted Runtime revision
+  -> drain that revision to durable (bounded attempt)
+       |- failure/timeout -> Retry -> repeat the same in-flight drain
+       |- failure/timeout -> Cancel -> Runtime unfreeze + local unfreeze
+       `- failure/timeout -> Quit Anyway -> continue irreversibly
+  -> commit Runtime admission freeze
+  -> teardown desktop consumers and local domains
+       |- unregister hotkeys, resume/listener/transport effects
+       |- dispose PageTranslationService
+       |- bounded best-effort local flushes
+       |- Automation stop -> Memory worker stop -> ThreadService close
+       |                    -> Memory store close -> Automation store close
+       `- close DesktopOutlineClient and OutlineDocumentService
+  -> authenticated OutlineClientSupervisor.shutdown(signal)
+       |- validate contract digest, development session, descriptor owner,
+       |  live instance identity, and ownership again
+       |- request shutdown of that exact Runtime
+       `- wait for descriptor and writer-lock ownership to disappear
+  -> app.exit(0), even after a late teardown/shutdown failure
+```
 
-The exact ordered list is regenerated from the rebased host. Independent
-best-effort flushes may remain parallel where their contracts permit it, but a
-generic `Promise.all` cannot replace load-bearing sequencing. A cancellation
-before irreversible teardown reopens only the admissions that the existing
-coordinator contract permits.
+The existing drain and Runtime-shutdown timeouts remain independent. Closing a
+watch or client cannot abort an admitted mutation before the durability barrier,
+and shutdown cannot happen while a desktop Runtime consumer remains live. A
+cancel before the irreversible phase restores the exact existing local and
+Runtime admission state; nothing attempts to reconstruct disposed services.
 
-### Desktop Transport
+### Desktop Transport Ownership
 
-Capability-grouped registrars replace the monolithic registration block. Each
-registrar receives only the service handles and window authorization it needs,
-registers the exact current IPC/protocol/listener surface, and defers the
-matching unregister operation into its child `ResourceScope`.
+Replace `registerIpc()` with capability-grouped registrars. Each registrar:
 
-Outliner, Agent, Automation, settings, resources, actions, preview, launcher,
-and native window registrars remain separately testable where those boundaries
-exist after #584. Preload contracts and renderer capabilities do not widen.
-Native file pickers, external URL opening, window actions, and other OS effects
-remain in Electron main-side modules even though document operations move to
-the Runtime.
+- receives only the services and window authorization it uses;
+- preserves the exact channel, payload decoder, capability/sender check, and
+  error semantics;
+- returns or immediately registers a disposer that removes every handler and
+  listener it added; and
+- has focused wrong-window and unregistered-sender coverage.
 
-### Data Ownership
+The post-#592 groups are:
 
-Composition changes object lifetime, not persistent truth:
+- Outline Runtime renderer transport;
+- app updates;
+- action invocation and renderer-step acknowledgement;
+- Agent Core, message context menu, Memory, and Automation;
+- the admitted app-command router for Agent, assets, preview, and translation;
+- node-access observation and Runtime ranking synchronization;
+- windows, Settings, Launcher, theme, locale, and translation preferences;
+- provider configuration, Agent settings, and diagnostics; and
+- native file picking/search/preview/open/reveal plus attachment upload.
 
-- the standalone Outliner Runtime owns document state, Operations, recovery,
-  Events, Outline AssetRecords, and workspace durability;
-- `ThreadService` and its stores own Thread/Turn/Item and Run history;
-- Memory prose is stored as ordinary Outliner Nodes, while Memory-specific
-  control data stays in its existing Agent store;
-- Automation keeps its schedule, claim, and continuity records;
-- the app-level ContentStore keeps exact byte revisions and mechanical
-  retention state without becoming a logical product database;
-- settings, credentials, diagnostics, update state, and caches retain their
-  existing local stores; and
-- renderer state remains a projection and UI-session concern.
+Protocols are owned separately from IPC because `protocol.unhandle()` and
+session lifetime differ from `ipcMain.removeHandler()`. Window/WebContents
+listeners belong to the window instance that registered them, not the process
+transport scope. Renderer capability registration and sender checks remain at
+the current least-privilege boundary.
 
-A module may own a domain store because its feature needs one. Plugin shape or
-directory symmetry never creates a database requirement, and `ResourceScope`
-disposal never deletes persisted data.
+### Implementation Surface
 
-### Failure Policy
+The expected implementation surface is concrete rather than deferred to the
+first coding step:
 
-Required authority failure aborts Host construction visibly and rolls back
-already acquired resources. Optional update checks, derived caches, optional
-external tools, and inspection-only capabilities continue through their
-existing bounded degradation and diagnostic paths. No capability waits forever
-in a hidden Cordis-style `PENDING` state.
+- `src/main/desktopHost/createDesktopHost.ts` -- the sole typed composition root;
+- `src/main/desktopHost/resourceScope.ts` -- reversible effect ownership;
+- `src/main/desktopHost/outlineHost.ts` -- supervisor, desktop clients/adapters,
+  assets, and typed quit exports without Runtime authority;
+- `src/main/desktopHost/nodeAccessBridge.ts` -- projection pruning and Runtime
+  personal-ranking synchronization;
+- `src/main/desktopHost/previewHost.ts` -- page translation, preview cache,
+  local streams, and URL-preview session ownership;
+- `src/main/desktopHost/windowHost.ts` -- Main/Settings/provider/Launcher window
+  state and native window effects;
+- `src/main/desktopHost/actionHost.ts` -- `ActionInvocationService` wiring;
+- `src/main/desktopHost/transport/` -- the capability-grouped registrars above;
+- `src/main/agent/createAgentHost.ts` plus focused managed-Skill, execution,
+  Memory, and Automation builders; no broad `agentServices` bag;
+- `src/main/localFiles/` -- existing picker, search, metadata, icon, thumbnail,
+  and bounded-preview behavior extracted without semantic change;
+- `src/main/outlineClient/ipc.ts` -- disposer-returning Outline registration;
+- `src/main/main.ts` -- fixed bootstrap and Host event forwarding; and
+- focused tests for `ResourceScope`, construction rollback, current startup
+  order, transport disposal/admission, and the complete quit graph.
 
-Cleanup failure cannot skip later cleanup. The Host reports resource-scope and
-domain teardown failures with ownership context, preserves stable error codes,
-and does not leak secrets or private paths into renderer-visible messages.
-
-### Cordis Adoption Gate
-
-Static composition is the target, not temporary scaffolding. A new PM-ratified
-plan may reconsider Cordis only when a concrete product requirement needs
-runtime composition semantics, for example:
-
-- multiple supported Host profiles with materially different service graphs;
-- user-visible replacement or enable/disable of whole capabilities;
-- trusted third-party modules with an approved isolation and permission model;
-- live unload/reload; or
-- repeated graph/lifecycle failures that static typed composition cannot
-  express or diagnose.
-
-Large files, aesthetic symmetry with DSH, or a desire to call internal features
-"plugins" are not sufficient. If the gate is crossed, typed factories may be
-adapted into plugins, but service identity, dependency loss, active-Turn unload,
-configuration validation, renderer loading, and third-party trust require a
-separate design.
-
-### Build Order Inside The Implementation PR
-
-1. Rebase after #584, inventory constructors, registrations, readiness edges,
-   process globals, and shutdown steps from artifacts on disk, and re-audit
-   `startup-window-first` plus open PR collisions.
-2. Add `ResourceScope` with focused tests and immediately use it in one complete
-   low-risk owner; coordinate the disposable type-library change if required.
-3. Add `DesktopHost` and `StartupCoordinator`, preserving the measured startup
-   order and construction-failure behavior.
-4. Move cohesive domain construction and desktop transport registrars behind
-   typed factories, one green commit at a time, while retaining domain
-   registries and data authorities.
-5. Connect the existing `AppQuitCoordinator` to the new owners with explicit
-   post-#584 settlement and teardown verbs; delete the superseded quit closure.
-6. Reduce `main.ts` to the fixed bootstrap and native event delegation, then
-   remove superseded globals and forwarding helpers.
-7. Fold the resulting ownership/readiness graph into current specs and run the
-   full automated and real-desktop gate.
-
-The work queue is derived from remaining constructor, registration, timer,
-listener, subscription, IPC, and process-global hits in the rebased `main.ts`.
-Completion is an empty result or a documented bootstrap allow-list, not a
-hand-maintained migration checklist.
-
-### Expected Surface
-
-The exact file list is regenerated after #584. Expected ownership areas are:
-
-- `src/main/main.ts`;
-- new `src/main/desktopHost/` composition, startup, resource, transport, and
-  domain-owner modules;
-- existing main services only where a narrow factory or shutdown seam is
-  required;
-- focused core/main tests for resource scope, construction rollback, startup
-  ordering, quit ordering, and sender admission;
-- existing Electron E2E and packaged smoke coverage; and
-- `docs/spec/architecture.md`, `docs/spec/agent-core.md`, and
-  `docs/spec/error-observability.md` where the final graph changes current
-  descriptions.
+The refactor updates brittle source guards rather than weakening them, including
+the guards in `appQuitCoordinator.test.ts`, `outlineRetirement.test.ts`, and
+`urlPreviewSecurity.test.ts`. Current architecture is folded into
+`docs/spec/architecture.md`, `agent-core.md`, `agent-memory.md`,
+`agent-automations.md`, and `error-observability.md` where the ownership graph is
+described.
 
 No public protocol change is expected. `package.json`, `bun.lock`,
 `src/core/commands.ts`, `src/core/types.ts`, and preload contracts remain out of
-scope. `tsconfig.json` changes only if the standard disposable type library
-requires the coordinated addition described above.
+scope. `tsconfig.json` changes only under the coordinated disposable-library
+condition above. Dev agents do not edit `docs/TASKS.md` or `CHANGELOG.md`.
 
-### Risk Controls
+### Responsibility Audit And Build Order
 
-- **Stale graph:** #584 replaces document authority and desktop settlement.
-  Implementation cannot claim current constructor names as the target; its
-  first artifact is a regenerated post-cutover graph and empty-result queue.
-- **New dependency drawer:** moving code without narrowing dependencies would
-  only relocate `main.ts`. Factory signatures and architecture guards expose
-  exact imports, exports, globals, and registrations after every move.
-- **Quit regression:** a generic disposer could release a store before accepted
-  work settles. Ordered domain shutdown remains outside `ResourceScope`, and
-  coordinator tests cover retry, cancel, quit-anyway, and late teardown errors.
-- **Startup regression:** extraction may accidentally await optional work or
-  double-start a readiness path. Preserve the rebased DAG, require single-flight
-  readiness, and compare the existing first-window probe before and after.
-- **Security regression:** splitting transport can omit a sender, window, or
-  navigation check. Registrars move existing admission checks intact and retain
-  wrong-sender tests; no generic dispatcher is introduced.
-- **Platform mismatch:** runtime support for `AsyncDisposableStack` does not by
-  itself provide project type declarations or the Host's join semantics. Gate
-  the small type-library change explicitly and test the wrapper contract.
+#592 demonstrated that a mechanically successful architecture cutover can omit
+mature responsibilities. This refactor therefore treats the current tree, not a
+handwritten checklist or an old `main.ts`, as the migration queue.
+
+Before moving code, generate and retain review evidence for every current:
+
+- top-level service/store/client construction;
+- `init`, `initialize`, `load`, `start`, `subscribe`, and projection-observer
+  edge;
+- timer, process/Electron/WebContents listener, global hotkey, protocol, and IPC
+  registration;
+- startup degradation branch and diagnostic route;
+- quit freeze/drain/decision/teardown/shutdown step; and
+- main-process mutable global that survives startup.
+
+Each entry receives one disposition: retained bootstrap, moved to a named owner,
+replaced by an equivalent typed edge, or explicitly removed under a separate
+ratified decision. This refactor has no planned removals. Re-running the driver
+derives the remaining queue from source and finishes with zero unclassified
+entries. File existence and empty source queries, not agent memory, prove
+completion.
+
+Build inside the single implementation PR in this order:
+
+1. add the generated responsibility inventory and behavioral/source guards;
+2. add and fully test `ResourceScope` without changing startup or quit order;
+3. extract the Outline desktop boundary and encode the #592 quit adapters;
+4. extract `AgentHost`, preserving its one-time cycles and ordered shutdown;
+5. extract node-access, preview, native-file, action, window, and update owners;
+6. replace the monolithic transport with owned capability registrars;
+7. create `DesktopHost.start()` with the exact current sequence;
+8. reduce `main.ts` to the fixed bootstrap and event forwarding only after every
+   responsibility has a classified destination;
+9. fold the final graph into current specs; and
+10. run the full automated and real-desktop gate before removing the migration
+    inventory from generated `tmp/` output. Durable guard logic remains tracked.
+
+### Cordis Adoption Gate
+
+Static composition is the target architecture, not temporary scaffolding. A
+separate PM-ratified design may reconsider Cordis only when a concrete product
+requirement needs runtime graph semantics, such as supported Host profiles with
+materially different graphs, user-visible capability replacement or
+enable/disable, trusted third-party modules with an isolation and permission
+model, or live unload/reload. A large `main.ts`, directory symmetry with DSH, or
+calling internal domains "plugins" is not sufficient.
+
+If that gate is crossed, typed factories may become plugin adapters, but service
+identity, dependency disappearance, active-Turn unload, persistent-state
+compatibility, configuration validation, renderer loading, and third-party trust
+require their own design. This refactor does not pre-commit those answers.
+
+### Failure Policy
+
+Required Outline, Agent Thread, Memory, and Automation startup failures retain
+their current fatal behavior. Provider reconciliation, node-access loading and
+ranking sync, update checks, managed-Skill refresh, scratch cleanup, derived
+caches, optional external tools, and inspection-only observers retain their
+current bounded degradation and diagnostic routes.
+
+Cleanup failure never skips later cleanup. Construction rollback and late
+teardown report errors with ownership context while preserving the original
+failure. Renderer-visible errors contain no secret, raw private path, or Host
+internal identity. No capability enters a hidden Cordis-style `PENDING` state.
 
 ### Verification
 
 Focused tests prove:
 
-- construction failure disposes every acquired resource exactly once and never
+- construction failure releases every acquired effect exactly once and never
   publishes a partial Host;
+- failed startup withdraws partial publication, stops only started producers,
+  closes Runtime consumers, and attempts bounded exact-instance Runtime shutdown
+  while preserving the original startup failure;
 - concurrent and repeated scope disposal joins one completion;
-- child and parent scopes release effects in reverse ownership order;
-- one disposer failure does not prevent later disposal and all failures are
-  reported;
-- startup follows the post-#584 readiness graph without duplicate start work;
-- quit preserves freeze, settlement, user decision, irreversible teardown, and
-  exit ordering;
-- optional capability failure degrades while required authority failure aborts;
-- deferred work starts only at its existing boundary and is cancelled on
-  teardown;
-- every desktop transport registrar preserves wrong-window/unregistered-sender
-  rejection; and
-- the architecture guard finds no unowned constructor, timer, listener,
-  subscription, IPC block, or process-wide service variable in `main.ts`
-  outside the bootstrap allow-list.
+- child and parent scopes release in reverse ownership order;
+- one disposer failure does not prevent later disposal and failures aggregate;
+- `DesktopHost.start()` follows the exact post-#592 sequence without adding
+  readiness gates or duplicate starts;
+- the node-access snapshot is synchronized after load, and later projection and
+  access changes keep local and Runtime ranking state aligned;
+- every transport registrar preserves sender/capability rejection and removes
+  its complete registration set;
+- quit preserves local admission closure, admitted-tail settlement, Runtime
+  freeze/drain, Retry/Cancel/Quit Anyway, commit freeze, ordered consumer close,
+  authenticated exact-instance shutdown, descriptor/writer-lock release, and
+  exit-after-late-failure;
+- packaged relaunch after committed freeze starts a different writable Runtime;
+  and
+- the generated responsibility audit reports zero unclassified or duplicated
+  owners, with only the fixed bootstrap allow-list remaining in `main.ts`.
 
-Run `bun run typecheck`, both unit suites, relevant E2E and packaged smoke
-coverage, `bun run docs:check`, and `git diff --check`. Record a pre-refactor and
-post-refactor first-window timing using the existing probe; investigate material
-regression without claiming an optimization.
+Run `bun run typecheck`, `bun run test:core`, `bun run test:renderer`, relevant
+Electron E2E and packaged Runtime lifecycle coverage, `bun run docs:check`, and
+`git diff --check`. Record the existing first-window probe before and after;
+investigate a material regression without claiming an optimization.
 
-Real-desktop verification covers first launch, Runtime connection and Outliner
-mutation settlement, one Agent tool round, Memory publication, Automation wake,
-Preview, Settings and Provider Config, Launcher summon, window close/reopen,
-macOS resume, quit cancel/retry/quit-anyway paths, and relaunch with no lost
-accepted work or residual desktop process.
+Real-desktop verification covers first launch, Runtime connection/replacement,
+Outliner mutation and durability settlement, Memory publication, personal
+ranking, one Agent tool round, Automation wake/resume, Preview, Settings and
+Provider Config, Launcher summon, window close/reopen, quit cancel/retry/quit
+anyway, and immediate packaged relaunch with no lost accepted work, frozen
+Runtime reuse, stale descriptor, held writer lock, or residual desktop process.
 
 ### Acceptance Criteria
 
-- One typed `DesktopHost` is the sole post-ready composition root.
-- Dependency composition, startup readiness, resource disposal, and safe quit
-  are separate, inspectable mechanisms.
-- Every process-lifetime effect has one owner and disposer; every ordered domain
-  shutdown remains in its domain or the quit coordinator.
-- `main.ts` contains only fixed bootstrap, security/event entry, and explicit
-  allow-listed native behavior; there is no line-count target.
-- Startup behavior and first-window critical path match the rebased baseline
-  within measurement noise unless a separately ratified plan changes them.
-- Outliner, Agent, Memory, Automation, ContentStore, previews, actions, updates,
-  windows, renderer capabilities, and persisted data retain their authorities
-  and behavior.
-- No Cordis dependency, dynamic plugin runtime, generic service wrapper,
-  service bag, alternate data store, or renderer plugin system lands.
-- Current specs describe the final graph and the future Cordis adoption gate.
+- One typed `DesktopHost` is the sole composition root for the winning Electron
+  instance.
+- Dependency composition, explicit startup order, reversible effect disposal,
+  domain shutdown, safe quit, and Runtime process shutdown remain separate and
+  inspectable.
+- `OutlineDocumentService` retains every #592 desktop-adapter responsibility;
+  the standalone Runtime retains every document/data authority.
+- Every post-lock reversible effect has one named owner and disposer; permanent
+  pre-ready process invariants are explicit in the bootstrap allow-list, and
+  every ordered domain protocol stays outside generic disposal.
+- `main.ts` contains only the fixed bootstrap and narrow native event entry;
+  there is no line-count target.
+- Startup publication and failure behavior match the post-#592 baseline.
+- The complete freeze/drain/decision/consumer-close/authenticated-shutdown/exit
+  graph is preserved, including immediate packaged relaunch writability.
+- No Cordis dependency, dynamic plugin runtime, service bag, generic service
+  wrapper, alternate data store, or renderer plugin system lands.
+- Current specs describe the resulting ownership and lifecycle graph, and the
+  responsibility audit has no unclassified entry.
 
 ## Open questions
 
-- The exact factory boundaries and readiness DAG are intentionally derived from
-  the tree after #584 lands; changing the authorities fixed above requires PM
-  review rather than an implementation-local decision.
-- Re-review `startup-window-first` after that graph is recorded. It may consume
-  `StartupCoordinator`, but it must not be silently folded into this
-  behavior-preserving refactor.
+- **Sequencing authority:** the earlier #591 review proposed `#587 -> #591 ->
+  Agent Result And Resource Reference Lifecycle -> Cross-Thread Reference` so
+  the Host foundation precedes its new resolver/workspace consumers. After #592,
+  the main-owned board records `#587 -> Agent Result And Resource Reference
+  Lifecycle -> Cross-Thread Reference` and does not place #591 in that chain.
+  These are conflicting directional decisions. Recommendation: main and the PM
+  explicitly choose one before implementation. If #591 stays before the file
+  lifecycle, it must provide a stable typed insertion point for the later Host
+  resolver without inventing that feature. If product work keeps the board's
+  order, #591 waits until the file-lifecycle graph settles and must not block it.
 
 ## Checklist
 
-- [ ] Rebase after #584 and regenerate construction, readiness, resource,
-  transport, startup, and shutdown inventories.
-- [ ] Re-run the open-PR collision check and record the real overlap in the PR.
-- [ ] Re-audit `startup-window-first` against the standalone Runtime client.
-- [ ] Add resource, rollback, readiness, shutdown-order, sender-admission, and
-  architecture guards before moving ownership.
+- [ ] Resolve the sequencing conflict with the main-owned board.
+- [ ] Rebase on the selected dependency tip and repeat the open-PR file collision
+  check.
+- [ ] Generate the post-#592 responsibility inventory from source.
+- [ ] Add resource, rollback, startup-order, quit-order, Runtime-relaunch,
+  sender-admission, and architecture guards before moving ownership.
 - [ ] Move complete owners in reviewable green commits inside one PR.
-- [ ] Remove superseded globals, wiring, and forwarding helpers.
+- [ ] Remove superseded globals, wiring, forwarding helpers, and registrations
+  only after the audit classifies their replacement.
 - [ ] Update current specifications in the same PR.
-- [ ] Run automated gates and real-desktop startup/quit verification.
+- [ ] Run automated gates and real-desktop startup/quit/relaunch verification.
