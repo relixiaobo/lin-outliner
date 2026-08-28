@@ -1522,6 +1522,42 @@ test.describe('canonical agent Thread surface', () => {
     expect((await commandCalls(page)).filter((call) => call.cmd === 'thread/rollback')).toHaveLength(0);
   });
 
+  test('retains an image preview after recalled input is accepted as active-Turn steering', async ({ page }) => {
+    await openMockedApp(page, { agentTurnStaysActive: true });
+    await createNewThread(page);
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.fill('Inspect this image');
+    await page.locator('.thread-composer-file-input').setInputFiles({
+      name: 'active-history.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+        'base64',
+      ),
+    });
+    const thumbnail = page.locator('.thread-composer-attachment-thumbnail');
+    await expect(thumbnail).toBeVisible();
+    const admittedPreviewUrl = await thumbnail.getAttribute('src');
+    expect(admittedPreviewUrl).toMatch(/^blob:/u);
+
+    await page.getByRole('button', { name: 'Send' }).click();
+    await composer.focus();
+    await composer.press('ArrowUp');
+    await expect(thumbnail).toHaveAttribute('src', admittedPreviewUrl!);
+    await composer.pressSequentially(' steered');
+    await page.getByRole('button', { name: 'Steer' }).click();
+    await expect.poll(async () => (
+      (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').length
+    )).toBe(2);
+
+    await composer.focus();
+    await composer.press('ArrowUp');
+    await expect(composer).toContainText('Inspect this image');
+    await expect(composer).toContainText('steered');
+    await expect(thumbnail).toBeVisible();
+    await expect(thumbnail).toHaveAttribute('src', admittedPreviewUrl!);
+  });
+
   test('retains a session-known image preview when attachment history is recalled', async ({ page }) => {
     await openMockedApp(page);
     await createNewThread(page);

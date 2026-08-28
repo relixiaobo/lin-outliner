@@ -1485,6 +1485,11 @@ When the mounted renderer already admitted an image preview, a successful send r
 that preview lease against the accepted canonical attachment. Recall aliases the same
 lease under the fresh draft identity without rereading or copying source bytes; an
 attachment whose thumbnail is unavailable keeps the generic name/type/size card.
+The renderer preserves the complete `turn/submit` result across its send boundary:
+`deduplicated` says whether the submitted attachment identities became canonical, while
+the nullable `turn` field says only whether main opened a new Turn for layout and
+anchoring. A successful active-Turn steer therefore retains submitted preview leases
+even though its response has `turn: null`.
 
 Picker, paste, drop, browser-file, mention, and generated-paste admissions remain in the
 single serialized queue and never move into a history slot. While any such admission is
@@ -1725,13 +1730,14 @@ Each new target measurement advances the anchor to a later pre-paint layout
 pass; only then are its runway spacer and target coverage committed before the
 scroll that uses them. An uncovered target or a pass whose own measurements do
 not yet place the message at the top defers the write rather than exposing a
-position it will have to correct. The `turn/submit` response returns the exact newly
-accepted Turn when main started one and `null` when main steered or deduplicated
-the submission, so a concurrently loaded history page cannot be mistaken for the
-new send; it remains the anchor's fallback for a send whose Item never arrives
-by notification, and a submission with nothing anchorable falls back to the
-tail. Main, not the renderer's cached snapshot, owns that start-or-steer
-decision. Steering an existing active Turn keeps the bottom-follow path: the
+position it will have to correct. The `turn/submit` response's `turn` field contains
+the exact newly accepted Turn when main started one and is `null` when main steered or
+deduplicated the submission, so a concurrently loaded history page cannot be mistaken
+for the new send; it remains the anchor's fallback for a send whose Item never arrives
+by notification, and a submission with nothing anchorable falls back to the tail. This
+layout signal is independent from the response's admission disposition. Main,
+not the renderer's cached snapshot, owns the start-or-steer decision. Steering
+an existing active Turn keeps the bottom-follow path: the
 transcript reads the steer off the Item landing in the Turn that was already the
 tail at click time, and never anchors a reply the reader is in the middle of.
 The renderer does not alter notification order.

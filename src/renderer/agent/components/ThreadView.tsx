@@ -38,6 +38,7 @@ import type {
   ThreadResourceReference,
   ThreadUserContent,
   Turn,
+  TurnSubmitResponse,
 } from '../../../core/agent/protocol';
 import { isReaderAuthoredUserMessage } from '../../../core/agent/protocol';
 import type { ThreadGoal } from '../../../core/agent/goal';
@@ -253,7 +254,7 @@ interface ThreadViewProps {
   readonly onSend: (
     content: readonly ThreadUserContent[],
     clientMessageId: string,
-  ) => Promise<Turn | null>;
+  ) => Promise<TurnSubmitResponse | null>;
   readonly onSubmitUserInput: (answers: readonly RequestUserInputAnswer[]) => Promise<void>;
 }
 
@@ -2442,10 +2443,12 @@ export function ThreadView({
     composerRef.current?.clear();
     updateAttachments((current) => current.filter((attachment) => !submittedAttachmentIds.has(attachment.id)));
     try {
-      const acceptedTurn = await onSend(submittedContent, pendingSend.clientMessageId);
-      const acceptedAttachmentIds = acceptedTurn
-        ? canonicalThreadAttachmentIds([acceptedTurn])
-        : new Set<string>();
+      const submission = await onSend(submittedContent, pendingSend.clientMessageId);
+      const acceptedTurn = submission?.turn ?? null;
+      // A steer is accepted into the active Turn and therefore has no new Turn
+      // in the response. Admission disposition, not nullable layout data, owns
+      // the preview lease transfer for the exact submitted attachment IDs.
+      const attachmentsAccepted = submission !== null && !submission.deduplicated;
       const ourThread = pendingSend.threadId === threadId;
       if (acceptedTurn && ourThread) {
         // Which Turn the host made of this send. Usually the anchor has already
@@ -2470,7 +2473,7 @@ export function ThreadView({
         }
       }
       for (const attachmentId of submittedAttachmentIds) {
-        if (acceptedAttachmentIds.has(attachmentId)) {
+        if (attachmentsAccepted) {
           attachmentUiState.rememberCanonicalPreview(attachmentId);
         } else {
           attachmentUiState.releaseDraft(attachmentId);

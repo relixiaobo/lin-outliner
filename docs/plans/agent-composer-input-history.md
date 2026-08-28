@@ -446,6 +446,13 @@ Preserve the exact ordered `ThreadUserContent[]` shape:
   thumbnail or pasted-text excerpt data is unavailable, recalled atoms and tray
   cards use the established generic name/type/size presentation.
 
+The renderer send boundary preserves the complete admission result. Its
+`deduplicated` disposition determines whether submitted attachment identities
+became canonical; the nullable `turn` field determines only whether main opened
+a new Turn for layout and anchoring. A successful steer has `turn: null` and
+still transfers every already-known submitted preview lease to its accepted
+canonical attachment identity.
+
 Canonical history does not persist renderer-only pasted-text excerpts. A
 recalled `Pasted*.txt` therefore degrades to the ordinary text/file tray card
 unless the current navigation session already owns an excerpt for that working
