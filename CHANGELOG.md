@@ -97,6 +97,30 @@ Entries reference the pull request that introduced them when one exists.
   the comparison retained one unrelated 1/5 workspace-layout signal on this
   renderer-free diff under the repository's non-gating E2E policy.
 
+### Fixed
+
+- **The standalone Outliner Runtime again carries the complete mature desktop
+  experience (PR #592, codex)** — coalesced and optimistic text, structural, and
+  field editing now preserve first-frame focus, editor identity, IME continuity,
+  middle-Enter splits, mixed selection deletion, and the full keyboard contract
+  over one flat incremental projection. Runtime durability restores accepted
+  versus durable settlement, held-Event ordering, a 700 ms idle / five-second
+  maximum dirty window, batched transaction records under one fsync, replay-safe
+  cursors, and a linearizable quit barrier. Memory definition protection,
+  publication and citation ordering, personal ranking synchronization, immutable
+  asset metadata and URL authority, bounded media parsing, thumbnail retention,
+  Runtime replacement, and cross-frame Agent/Outliner focus ownership are also
+  restored. Clean quit now stops the exact authenticated Runtime instance after
+  draining it, so a packaged relaunch cannot inherit permanently frozen mutation
+  admission. A tracked clean-clone audit reconstructs four lost historical trees
+  and classifies all 2,307 retained responsibilities with zero unclassified.
+  Gate review found two High ordering defects, two Medium recovery omissions, a
+  later High packaged-relaunch defect, and an unreproducible audit boundary; all
+  were fixed before the final no-findings review. Verified with typecheck,
+  `docs:check`, 2,644 passing Core tests with 6 skipped, 1,436 renderer tests, 59
+  focused lifecycle/process tests, local and single-branch recovery audits,
+  whitespace checks, and all five GitHub E2E samples plus baseline subtraction.
+
 ### Internal
 
 - **Reference URIs and historical Thread access now have one execution-ready

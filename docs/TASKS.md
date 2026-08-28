@@ -38,12 +38,15 @@ theme-section entry below; this list is the ordering, not a second record):
 - **Lane 0 — standalone Outliner Runtime shipped**:
   [`reference-uri-unification`](plans/archive/reference-uri-unification.md)
   shipped in #590, then [`outliner-runtime-cli`](plans/archive/outliner-runtime-cli.md)
-  shipped in #584. The standalone Runtime now owns document state, transactional
-  recovery, persistence, events, and Outline AssetRecords over the neutral
-  ContentStore; desktop and the `outline` CLI are equal versioned clients, and
-  the old main-process authority, native Node tools, import writer, and asset
-  paths are retired. The shared-file claim is released. Next, #587 rebases on
-  current `main`; `agent-result-and-file-lifecycle` follows after it.
+  shipped in #584; [`outliner-runtime-recovery`](plans/archive/outliner-runtime-recovery.md)
+  then restored the mature desktop, persistence, Memory, asset, ranking, and
+  lifecycle responsibilities in #592. The standalone Runtime now owns document
+  state, transactional recovery, persistence, events, and Outline AssetRecords
+  over the neutral ContentStore; desktop and the `outline` CLI are equal
+  versioned clients, and the old main-process authority, native Node tools,
+  import writer, and asset paths are retired. The shared-file claim is released.
+  Next, #587 rebases on current `main`; `agent-result-and-file-lifecycle` follows
+  after it.
 - **Lane A — build-ready quick wins** (fast-track, parallelize freely; small items
   don't count against the review-queue cap): `floating-toolbar-polish` (**unblocked
   2026-08-10** — its `core/types.ts` dependency landed with #510; rebase and go),
@@ -1168,6 +1171,11 @@ CHANGELOG entry and any merged PR, distilled rules in [`lessons.md`](lessons.md)
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **[outliner-runtime-recovery](plans/archive/outliner-runtime-recovery.md)**
+  (codex, PR #592, merged 2026-08-28) — recovered the mature desktop editor,
+  durability, Memory, asset, ranking, and lifecycle responsibilities omitted by
+  the Runtime cutover; the tracked 2,307-responsibility audit closes with zero
+  unclassified, and repeated gate review closed every ordering and relaunch gap.
 - **[outliner-runtime-cli](plans/archive/outliner-runtime-cli.md)** (codex, PR
   #584, merged 2026-08-27) — one standalone Runtime now owns document state,
   transactional Operation/Event recovery, persistence, and Outline AssetRecords

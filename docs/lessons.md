@@ -13,6 +13,24 @@ UI-refactor round), **A11** (batch work resumable by construction), **A12**
 append-into-the-existing-category changelog rule (the 21-duplicate-section
 untangle of 2026-08-03).
 
+## An irreversible freeze needs an authority-lifetime contract
+
+PR #592 initially committed mutation admission closed during Electron quit but
+only disconnected the desktop clients. The standalone Runtime remained alive for
+its idle window, so a packaged relaunch reattached to the same permanently frozen
+writer and every edit failed despite a clean durability drain.
+
+**When an irreversible barrier lives in another process, define what ends or
+takes over that authority before committing the barrier.** Closing consumers is
+not lifecycle ownership. Either stop the exact authenticated authority and wait
+for its descriptor and lock to disappear, or encode an owner/session takeover
+that can safely reopen admission. Bound the wait so shutdown itself cannot hang.
+
+Regression coverage must cross the real process boundary: commit the barrier,
+close the original host, reconnect with production-style identity, and prove a
+mutation succeeds before the old idle timeout would have expired. An in-process
+drain test cannot expose a survivor that the next host will reuse.
+
 ## Cleanup ownership and deletion durability are separate commits
 
 PR #584 exposed both halves of durable file cleanup. Creating staging bytes
