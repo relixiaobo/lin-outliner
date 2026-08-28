@@ -601,6 +601,15 @@ Standalone agent items (not part of the program):
   interpretation, and rerun the collision check before finishing shared Agent
   files. Agent resource-reference records and the intent-aware resolver land
   later in `agent-result-and-file-lifecycle`, not in #587.
+- **[agent-failure-recovery-experience](plans/agent-failure-recovery-experience.md)**
+  (P1, `draft`; three independent complete features after #587 and #592) — use
+  canonical projected history as the only continuation checkpoint; rename the
+  existing input-only whole-Turn replacement to explicit Rerun; and separate
+  stable Agent liveness from immutable generation outcome and direct-parent
+  notification facts. #587 remains the sole author/renderability fix for blank
+  delegated speakers. No checkpoint ledger, tool-retry engine, attempt graph,
+  or OS-notification work is in scope. The review queue is full, so claims wait
+  for both dependencies and a regenerated collision check.
 - **agent-dream-followups** — **REMOVED 2026-08-03.** Seven polish items for a subsystem
   that no longer exists: `dream-channel-and-memory-retire` retired Dream in full (#324, #328,
   #329) and `rg -i dream src/` is empty. It survived the retirement because nothing links a
