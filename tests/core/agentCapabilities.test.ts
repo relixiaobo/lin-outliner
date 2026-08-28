@@ -3,7 +3,10 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { evaluateAgentToolCapability } from '../../src/main/agent/capabilities/agentCapabilities';
+import {
+  directOutlineShellInvocation,
+  evaluateAgentToolCapability,
+} from '../../src/main/agent/capabilities/agentCapabilities';
 import { unavailableToolResultMessage } from '../../src/main/agent/capabilities/agentCapabilityEvents';
 import { parseAgentCapabilitySettings } from '../../src/main/agent/capabilities/agentCapabilityRules';
 import { executeAgentSkillShellCommand } from '../../src/main/agent/capabilities/agentSkillShell';
@@ -87,8 +90,10 @@ describe('agent capabilities', () => {
     const { workspace } = await workspaceFixture();
     const cases = [
       ['outline --json show @today', ['outline.read']],
+      ['outline --timeout 300000 --json show @today', ['outline.read']],
       ['TENON_TEST=1 command outline diff --file changes.json', ['outline.read']],
       ['/Applications/Tenon.app/Contents/Resources/outline apply --file diff.json', ['outline.edit', 'outline.delete']],
+      ['outline --timeout 300000 apply --file diff.json', ['outline.edit', 'outline.delete']],
       ['outline daily ensure --date 2026-08-24', ['outline.edit']],
       ['outline purge @trash --yes', ['outline.edit', 'outline.delete']],
     ] as const;
@@ -100,6 +105,12 @@ describe('agent capabilities', () => {
       });
       expect(decision.descriptors.map((descriptor) => descriptor.actionKind), command).toEqual(actionKinds);
     }
+    expect(directOutlineShellInvocation('outline --timeout 300000 --human show @today')).toEqual({
+      command: 'show',
+      args: ['@today'],
+      output: 'human',
+    });
+    expect(directOutlineShellInvocation('outline show @today && echo done')).toBeNull();
   });
 
   test('applies outline Action blocks to shell commands', async () => {

@@ -164,38 +164,37 @@ export class OutlineClientSupervisor {
         || descriptor.developmentSessionId === expectedDevelopmentSessionId)) return false;
     if (!await descriptorHasMatchingRuntimeOwner(this.options.root, descriptor)) return false;
 
+    const claim = await acquireOutlineRuntimeRetirementClaim(this.options.root, descriptor.instanceId);
     const probe = deadlineSignal(signal, Math.max(1, deadline - Date.now()));
     const client = new OutlineClient(descriptor);
     try {
-      const identity = await client.probeRuntimeIdentity(probe.signal);
-      if (identity.instanceId !== descriptor.instanceId
-        || identity.contractDigest !== descriptor.contractDigest
-        || !await this.descriptorStillOwned(descriptor)) return false;
-
-      const claim = await acquireOutlineRuntimeRetirementClaim(this.options.root, descriptor.instanceId);
-      try {
-        if (claim.owned) {
-          await this.requestRuntimeRetirement(
-            client,
-            descriptor,
-            expectedDigest,
-            expectedDevelopmentSessionId,
-            probe.signal,
-          );
-        }
-        await this.waitForRuntimeRelease(descriptor, deadline, probe.signal);
-        return true;
-      } finally {
-        await claim.release();
+      if (claim.owned) {
+        const identity = await client.probeRuntimeIdentity(probe.signal);
+        if (identity.instanceId !== descriptor.instanceId
+          || identity.contractDigest !== descriptor.contractDigest
+          || !await this.descriptorStillOwned(descriptor)) return false;
+        await this.requestRuntimeRetirement(
+          client,
+          descriptor,
+          expectedDigest,
+          expectedDevelopmentSessionId,
+          probe.signal,
+        );
       }
+      await this.waitForRuntimeRelease(descriptor, deadline, probe.signal);
+      return true;
     } catch (error) {
       if (probe.timedOut() && !signal?.aborted) {
         throw runtimeUnavailable('Outline Runtime replacement exceeded the startup timeout.', error);
       }
       throw error;
     } finally {
-      probe.cleanup();
-      client.close();
+      try {
+        await claim.release();
+      } finally {
+        probe.cleanup();
+        client.close();
+      }
     }
   }
 

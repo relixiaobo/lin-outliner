@@ -1,7 +1,9 @@
+import { renderedMarkdownNodeReferenceIds } from '../../../../core/markdownNodeReferences';
 import type {
   AgentCoreExtension,
   ThreadHistoryRollbackContext,
   ThreadServiceExtensionHost,
+  ToolLifecycleResult,
   TurnAdmissionContext,
   TurnAdmissionContribution,
 } from '../../../../core/agent/extensions';
@@ -12,13 +14,21 @@ import {
   type ThreadMemoryMode,
 } from '../../../../core/agent/memory';
 import type {
+  AgentCoreRecordedNotification,
   Thread,
   ThreadId,
   Turn,
   TurnId,
 } from '../../../../core/agent/protocol';
 import type { DocumentProjection, ProjectionUpdate } from '../../../../core/types';
-import type { Operation } from '../../../../outline/contract';
+import {
+  checkOutlineSchema,
+  OutlineResponseSchema,
+  ProjectionResultSchema,
+  type Operation,
+  type ProjectionResult,
+} from '../../../../outline/contract';
+import { directOutlineShellInvocation } from '../../capabilities/agentCapabilities';
 import { uuidV7 } from '../../uuid';
 import {
   MemoryControlStore,
@@ -45,11 +55,17 @@ import {
 } from './TimelineMemoryStore';
 
 const EXPLICIT_MEMORY_INTENT = /\b(?:remember|forget)\b|\b(?:save|store|add|update|change|remove|delete)\b[^\n]{0,80}\bmemory\b|\bmemory\b[^\n]{0,80}\b(?:save|store|add|update|change|remove|delete)\b|记住|请记|帮我记|保存.{0,20}记忆|记忆.{0,20}(?:保存|添加|更新|修改|删除|移除)|忘掉|忘记/iu;
+const MAX_TRACKED_MEMORY_READS = 8;
 
 interface ResetPublicationPayload {
   readonly epoch: number;
   readonly excludedTurnIds: readonly TurnId[];
   readonly containerIds: readonly string[];
+}
+
+interface TurnMemoryUsage {
+  readonly nodeIds: Set<string>;
+  readonly threadId: ThreadId;
 }
 
 export interface MemoryThreadHost extends ThreadServiceExtensionHost {
@@ -89,6 +105,7 @@ export class MemoryExtension implements AgentCoreExtension {
   private workerStopping = false;
   private workerStopPromise: Promise<void> | null = null;
   private storeClosed = false;
+  private readonly turnMemoryUsage = new Map<TurnId, TurnMemoryUsage>();
   private lastGraphDigest = '';
   private mutationIndex: MemoryMutationIndex | null = null;
   private graphChangeTimer?: ReturnType<typeof setTimeout>;
@@ -326,6 +343,7 @@ export class MemoryExtension implements AgentCoreExtension {
     const admission = this.control.admission(activeTurn.id);
     const explicitlyRequested = activeTurn.provenance.trigger.kind === 'user' && turnHasExplicitMemoryIntent(activeTurn);
     if (!admission?.eligibleAtAdmission || this.control.isTurnExcluded(activeTurn.id)) {
+      this.turnMemoryUsage.delete(activeTurn.id);
       return explicitlyRequested ? {
         extensionId: this.id,
         additionalContext: {
@@ -340,6 +358,7 @@ export class MemoryExtension implements AgentCoreExtension {
       this.control.featureMode() !== 'enabled'
       || admission.featureModeGeneration !== this.control.status().featureModeGeneration
     ) {
+      this.turnMemoryUsage.delete(activeTurn.id);
       return explicitlyRequested ? {
         extensionId: this.id,
         additionalContext: {
@@ -350,6 +369,12 @@ export class MemoryExtension implements AgentCoreExtension {
         },
       } : null;
     }
+    if (!this.turnMemoryUsage.has(activeTurn.id)) {
+      this.turnMemoryUsage.set(activeTurn.id, {
+        nodeIds: new Set(),
+        threadId: thread.id,
+      });
+    }
     return {
       extensionId: this.id,
       additionalContext: {
@@ -359,6 +384,55 @@ export class MemoryExtension implements AgentCoreExtension {
         },
       },
     };
+  }
+
+  onToolCompleted(context: ToolLifecycleResult): void {
+    const usage = this.turnMemoryUsage.get(context.turnId);
+    if (!usage || usage.threadId !== context.threadId) return;
+    const returnedNodeIds = outlineShowNodeIds(context);
+    if (returnedNodeIds.size === 0) return;
+    let visible: Map<string, CanonicalMemoryNode>;
+    try {
+      visible = new Map(this.visibleMemoryNodes().map((entry) => [entry.node.id, entry]));
+    } catch {
+      return;
+    }
+    for (const nodeId of returnedNodeIds) {
+      if (usage.nodeIds.size >= MAX_TRACKED_MEMORY_READS) break;
+      if (usage.nodeIds.has(nodeId) || !visible.has(nodeId)) continue;
+      usage.nodeIds.add(nodeId);
+    }
+  }
+
+  onNotification(notification: AgentCoreRecordedNotification): void {
+    if (notification.type !== 'turn/completed') return;
+    const usage = this.turnMemoryUsage.get(notification.turnId);
+    this.turnMemoryUsage.delete(notification.turnId);
+    if (
+      !usage
+      || usage.threadId !== notification.threadId
+      || usage.nodeIds.size === 0
+      || notification.turn.status !== 'completed'
+    ) return;
+    for (const response of notification.turn.items) {
+      if (
+        response.type !== 'agentMessage'
+        || (response.phase !== 'final_answer' && response.phase !== null)
+        || !response.text.trim()
+      ) continue;
+      const citedNodeIds = new Set(renderedMarkdownNodeReferenceIds(response.text));
+      for (const nodeId of usage.nodeIds) {
+        if (!citedNodeIds.has(nodeId)) continue;
+        this.control.recordCitationUsage({
+          citationItemId: response.id,
+          citationTurnId: notification.turnId,
+          nodeId,
+          originItemIds: this.control.lineageForNode(nodeId)
+            .filter((edge) => this.control.isOriginClaimed(edge.originItemId))
+            .map((edge) => edge.originItemId),
+        });
+      }
+    }
   }
 
   onThreadIdle(thread: Thread): void {
@@ -575,6 +649,56 @@ function turnHasExplicitMemoryIntent(turn: Turn): boolean {
 function isMemoryPublication(operation: Operation | undefined): boolean {
   return operation?.source?.kind === 'automation'
     && operation.source.label?.startsWith('Memory publication generation ') === true;
+}
+
+function outlineShowNodeIds(context: ToolLifecycleResult): ReadonlySet<string> {
+  if (
+    context.identity.namespace !== null
+    || context.identity.name !== 'bash'
+    || context.error !== null
+    || !isRecord(context.arguments)
+    || typeof context.arguments.command !== 'string'
+  ) return new Set();
+  const invocation = directOutlineShellInvocation(context.arguments.command);
+  if (!invocation || invocation.command !== 'show') return new Set();
+  const stdout = successfulBashStdout(context.result);
+  if (stdout === null) return new Set();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return new Set();
+  }
+  let projection: ProjectionResult;
+  if (invocation.output === 'human') {
+    if (!checkOutlineSchema(ProjectionResultSchema, parsed)) return new Set();
+    projection = parsed;
+  } else {
+    if (
+      !checkOutlineSchema(OutlineResponseSchema, parsed)
+      || !parsed.ok
+      || parsed.command !== 'show'
+      || !checkOutlineSchema(ProjectionResultSchema, parsed.data)
+    ) return new Set();
+    projection = parsed.data;
+  }
+  return new Set(projection.nodes.flatMap((node) => (
+    isRecord(node) && typeof node.id === 'string' && node.id.trim() ? [node.id] : []
+  )));
+}
+
+function successfulBashStdout(value: unknown): string | null {
+  if (
+    !isRecord(value)
+    || value.ok !== true
+    || value.tool !== 'bash'
+    || !isRecord(value.data)
+    || typeof value.data.stdout !== 'string'
+    || value.data.interrupted === true
+    || value.data.outputLimitExceeded === true
+    || value.data.backgroundTaskId !== undefined
+  ) return null;
+  return value.data.stdout.trim();
 }
 
 function canonicalGraphDigest(nodes: readonly CanonicalMemoryNode[]): string {

@@ -117,6 +117,7 @@ export interface WorkspaceTransactionAppendResult {
 export interface WorkspaceMutationAdmission {
   readonly latestEventSequence: number;
   readonly existingOperation?: Operation;
+  readonly existingEvent?: OutlineEvent;
   readonly maintenanceEvents: readonly OutlineEvent[];
 }
 
@@ -182,6 +183,7 @@ export interface WorkspaceTransactionLogOptions {
   readonly afterRecoveryBlobFsync?: (patch: OutlineRecoveryPatch) => void | Promise<void>;
   readonly afterTransactionFsync?: (operation: Operation) => void | Promise<void>;
   readonly afterSnapshotRename?: () => void | Promise<void>;
+  readonly afterTransactionLogRead?: () => void | Promise<void>;
 }
 
 interface RecoveryReference {
@@ -287,10 +289,17 @@ interface LoadedState {
   latestEventSequence: number;
   headChecksum: string;
   logValidBytes: number;
+  logFileCursor: LogFileCursor | undefined;
   tornTail: boolean;
   staleLog: boolean;
   orphanRecoveryBlobs: string[];
   inconsistent?: Error;
+}
+
+interface LogFileCursor {
+  readonly dev: number;
+  readonly ino: number;
+  readonly size: number;
 }
 
 const EMPTY_ASSET_DELTA: OutlineAssetDelta = Object.freeze({
@@ -315,6 +324,7 @@ export class WorkspaceTransactionLog {
   private readonly afterRecoveryBlobFsync?: WorkspaceTransactionLogOptions['afterRecoveryBlobFsync'];
   private readonly afterTransactionFsync?: WorkspaceTransactionLogOptions['afterTransactionFsync'];
   private readonly afterSnapshotRename?: WorkspaceTransactionLogOptions['afterSnapshotRename'];
+  private readonly afterTransactionLogRead?: WorkspaceTransactionLogOptions['afterTransactionLogRead'];
   private state?: LoadedState;
   private writeChain: Promise<unknown> = Promise.resolve();
 
@@ -337,6 +347,7 @@ export class WorkspaceTransactionLog {
     this.afterRecoveryBlobFsync = options.afterRecoveryBlobFsync;
     this.afterTransactionFsync = options.afterTransactionFsync;
     this.afterSnapshotRename = options.afterSnapshotRename;
+    this.afterTransactionLogRead = options.afterTransactionLogRead;
   }
 
   workspaceRoot(): string {
@@ -503,7 +514,13 @@ export class WorkspaceTransactionLog {
       assertReplayedRecord(record, state);
       await this.prepareLogForAppend(state);
       try {
-        await appendJsonlDurable(this.transactionLogPath, record, this.fsyncHandle);
+        const cursor = await appendJsonlDurable(
+          this.transactionLogPath,
+          record,
+          this.fsyncHandle,
+          state.logFileCursor,
+        );
+        state.logFileCursor = cursor;
       } catch (error) {
         this.state = undefined;
         throw new OutlineContractError(outlineError(
@@ -666,7 +683,12 @@ export class WorkspaceTransactionLog {
       }
       if (records.length === 0) return results;
       try {
-        await appendJsonlBatchDurable(this.transactionLogPath, records, this.fsyncHandle);
+        staged.logFileCursor = await appendJsonlBatchDurable(
+          this.transactionLogPath,
+          records,
+          this.fsyncHandle,
+          state.logFileCursor,
+        );
       } catch (error) {
         this.state = undefined;
         throw uncertainDurabilityError(error);
@@ -693,7 +715,17 @@ export class WorkspaceTransactionLog {
       if (idempotency) {
         const existing = this.resolveIdempotency(state, idempotency);
         if (existing) {
-          return { latestEventSequence: state.latestEventSequence, existingOperation: existing, maintenanceEvents: [] };
+          const existingEvent = [...state.events].reverse()
+            .find((candidate) => candidate.operation?.operationId === existing.operationId);
+          if (!existingEvent) {
+            throw new Error(`Committed idempotent Operation has no retained Event: ${existing.operationId}`);
+          }
+          return {
+            latestEventSequence: state.latestEventSequence,
+            existingOperation: existing,
+            existingEvent: clone(existingEvent),
+            maintenanceEvents: [],
+          };
         }
       }
       if (state.inconsistent) {
@@ -799,7 +831,12 @@ export class WorkspaceTransactionLog {
       assertReplayedRecord(record, state);
       await this.prepareLogForAppend(state);
       try {
-        await appendJsonlDurable(this.transactionLogPath, record, this.fsyncHandle);
+        state.logFileCursor = await appendJsonlDurable(
+          this.transactionLogPath,
+          record,
+          this.fsyncHandle,
+          state.logFileCursor,
+        );
       } catch (error) {
         this.state = undefined;
         throw uncertainDurabilityError(error);
@@ -906,7 +943,12 @@ export class WorkspaceTransactionLog {
       assertReplayedRecord(record, state);
       await this.prepareLogForAppend(state);
       try {
-        await appendJsonlDurable(this.transactionLogPath, record, this.fsyncHandle);
+        state.logFileCursor = await appendJsonlDurable(
+          this.transactionLogPath,
+          record,
+          this.fsyncHandle,
+          state.logFileCursor,
+        );
       } catch (error) {
         this.state = undefined;
         throw uncertainDurabilityError(error);
@@ -1007,14 +1049,14 @@ export class WorkspaceTransactionLog {
       latestEventSequence: snapshot.latestEventSequence,
       headChecksum: snapshotChecksum,
       logValidBytes: 0,
+      logFileCursor: undefined,
       tornTail: false,
       staleLog: false,
       orphanRecoveryBlobs: [],
     };
-    const raw = await readFile(this.transactionLogPath, 'utf8').catch((error: unknown) => {
-      if (isNotFound(error)) return '';
-      throw error;
-    });
+    const loadedLog = await readLogFile(this.transactionLogPath, this.afterTransactionLogRead);
+    const raw = loadedLog?.raw ?? '';
+    state.logFileCursor = loadedLog?.cursor;
     if (!raw) {
       state.staleLog = true;
       state.orphanRecoveryBlobs = await this.findOrphanRecoveryBlobs(state);
@@ -1044,8 +1086,24 @@ export class WorkspaceTransactionLog {
     state.logValidBytes = Buffer.byteLength(`${lines[0]}\n`);
     if (header.snapshotChecksum !== snapshotChecksum) {
       if (header.snapshotSequence <= snapshot.sequence) {
-        state.staleLog = true;
-        state.tornTail = false;
+        const unsafeRecord = lines.slice(1).find((line) => {
+          try {
+            const value = JSON.parse(line) as unknown;
+            return !isRecord(value)
+              || !Number.isSafeInteger(value.sequence)
+              || value.sequence > snapshot.sequence;
+          } catch {
+            return true;
+          }
+        });
+        if (unsafeRecord) {
+          state.inconsistent = new Error(
+            'Outline transaction log cannot be proven absorbed by the current snapshot',
+          );
+        } else {
+          state.staleLog = true;
+          state.tornTail = false;
+        }
       } else {
         state.inconsistent = new Error('Outline transaction log references a newer or different snapshot');
       }
@@ -1390,7 +1448,17 @@ export class WorkspaceTransactionLog {
     };
     const record = logRecord(body);
     await this.prepareLogForAppend(state);
-    await appendJsonlDurable(this.transactionLogPath, record, this.fsyncHandle);
+    try {
+      state.logFileCursor = await appendJsonlDurable(
+        this.transactionLogPath,
+        record,
+        this.fsyncHandle,
+        state.logFileCursor,
+      );
+    } catch (error) {
+      this.state = undefined;
+      throw uncertainDurabilityError(error);
+    }
     applyRecoveryExpiryRecord(state, record, this.eventRetention);
     state.logValidBytes += jsonlRecordBytes(record);
     const referencedBlobDigests = new Set([...state.recoveryByOperationId.values()]
@@ -1431,6 +1499,7 @@ export class WorkspaceTransactionLog {
         `${JSON.stringify(logHeader(state.snapshotChecksum, state.snapshot.sequence))}\n`,
         this.fsyncHandle,
       );
+      state.logFileCursor = await logFileCursor(this.transactionLogPath);
       state.logValidBytes = Buffer.byteLength(`${JSON.stringify(logHeader(
         state.snapshotChecksum,
         state.snapshot.sequence,
@@ -1442,8 +1511,14 @@ export class WorkspaceTransactionLog {
     if (!state.tornTail) return;
     const handle = await open(this.transactionLogPath, 'r+');
     try {
+      await assertActiveLogCursor(this.transactionLogPath, handle, state.logFileCursor);
       await handle.truncate(state.logValidBytes);
       await this.fsyncHandle(handle);
+      state.logFileCursor = await assertActiveLogCursor(
+        this.transactionLogPath,
+        handle,
+        { ...state.logFileCursor!, size: state.logValidBytes },
+      );
     } finally {
       await handle.close();
     }
@@ -1883,6 +1958,11 @@ function assertReplayedRecord(record: LogRecord, state: LoadedState): void {
     ?? state.snapshot.document.persistenceRevision;
   const previousMetadataSequence = state.replay.at(-1)?.metadataSequence
     ?? state.snapshot.document.persistenceMetadataSequence;
+  const previousReplica = state.replay.at(-1)?.local ?? state.snapshot.document.local;
+  if (record.persistence.local.installationId !== previousReplica.installationId
+    || record.persistence.local.replicaId !== previousReplica.replicaId) {
+    throw new Error(`Committed workspace replica identity changed: ${record.operation.operationId}`);
+  }
   if (record.persistence.persistenceRevision <= previousPersistenceRevision
     || record.persistence.metadataSequence < previousMetadataSequence) {
     throw new Error(`Committed persistence ordering is not monotonic: ${record.operation.operationId}`);
@@ -1890,6 +1970,7 @@ function assertReplayedRecord(record: LogRecord, state: LoadedState): void {
 }
 
 function assertTransactionInput(input: WorkspaceTransactionInput): void {
+  assertEncodedPersistenceCapture(encodePersistenceCapture(input.persistence));
   assertOutlineRecoveryPatch(input.recoveryPatch);
   const operationValid = Value.Check(OperationSchema, input.operation);
   const eventValid = Value.Check(EventSchema, input.event);
@@ -2071,11 +2152,26 @@ async function appendJsonlDurable(
   filePath: string,
   value: unknown,
   fsyncHandle: (handle: FileHandle) => Promise<void>,
-): Promise<void> {
+  expected: LogFileCursor | undefined,
+): Promise<LogFileCursor> {
+  return appendJsonlTextDurable(filePath, `${JSON.stringify(value)}\n`, fsyncHandle, expected);
+}
+
+async function appendJsonlTextDurable(
+  filePath: string,
+  text: string,
+  fsyncHandle: (handle: FileHandle) => Promise<void>,
+  expected: LogFileCursor | undefined,
+): Promise<LogFileCursor> {
   const handle = await open(filePath, 'a', 0o600);
   try {
-    await handle.writeFile(`${JSON.stringify(value)}\n`, 'utf8');
+    await assertActiveLogCursor(filePath, handle, expected);
+    await handle.writeFile(text, 'utf8');
     await fsyncHandle(handle);
+    return await assertActiveLogCursor(filePath, handle, {
+      ...expected!,
+      size: expected!.size + Buffer.byteLength(text),
+    });
   } finally {
     await handle.close();
   }
@@ -2085,14 +2181,74 @@ async function appendJsonlBatchDurable(
   filePath: string,
   values: readonly unknown[],
   fsyncHandle: (handle: FileHandle) => Promise<void>,
-): Promise<void> {
-  const handle = await open(filePath, 'a', 0o600);
+  expected: LogFileCursor | undefined,
+): Promise<LogFileCursor> {
+  return appendJsonlTextDurable(
+    filePath,
+    values.map((value) => `${JSON.stringify(value)}\n`).join(''),
+    fsyncHandle,
+    expected,
+  );
+}
+
+async function readLogFile(
+  filePath: string,
+  afterRead?: () => void | Promise<void>,
+): Promise<{
+  readonly raw: string;
+  readonly cursor: LogFileCursor;
+} | undefined> {
+  const handle = await open(filePath, 'r').catch((error: unknown) => {
+    if (isNotFound(error)) return undefined;
+    throw error;
+  });
+  if (!handle) return undefined;
   try {
-    await handle.writeFile(values.map((value) => `${JSON.stringify(value)}\n`).join(''), 'utf8');
-    await fsyncHandle(handle);
+    const before = cursorFromStat(await handle.stat());
+    const bytes = await handle.readFile();
+    await afterRead?.();
+    const after = cursorFromStat(await handle.stat());
+    const active = await logFileCursor(filePath);
+    if (!sameLogFile(before, after)
+      || !sameLogFile(after, active)
+      || before.size !== after.size
+      || after.size !== active.size
+      || bytes.byteLength !== after.size) {
+      throw new Error('Outline transaction log changed while loading its verified prefix');
+    }
+    return { raw: bytes.toString('utf8'), cursor: after };
   } finally {
     await handle.close();
   }
+}
+
+async function logFileCursor(filePath: string): Promise<LogFileCursor> {
+  return cursorFromStat(await stat(filePath));
+}
+
+async function assertActiveLogCursor(
+  filePath: string,
+  handle: FileHandle,
+  expected: LogFileCursor | undefined,
+): Promise<LogFileCursor> {
+  if (!expected) throw new Error('Outline transaction log identity is unavailable');
+  const opened = cursorFromStat(await handle.stat());
+  const active = await logFileCursor(filePath);
+  if (!sameLogFile(opened, expected)
+    || !sameLogFile(active, expected)
+    || opened.size !== expected.size
+    || active.size !== expected.size) {
+    throw new Error('Outline transaction log changed while confirming durable append');
+  }
+  return opened;
+}
+
+function cursorFromStat(value: { readonly dev: number; readonly ino: number; readonly size: number }): LogFileCursor {
+  return { dev: value.dev, ino: value.ino, size: value.size };
+}
+
+function sameLogFile(left: LogFileCursor, right: LogFileCursor): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
 }
 
 async function writeJsonDurable(

@@ -338,6 +338,7 @@ function turnProps(indexStore: DocumentIndexStore) {
 function threadViewProps(indexStore: DocumentIndexStore) {
   return {
     composerEnabled: true,
+    composerFocusExpectedActiveElement: null,
     composerFocusToken: 0,
     configuration: null,
     getUserView: turnProps(indexStore).getUserView,

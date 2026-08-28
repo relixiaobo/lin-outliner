@@ -21,12 +21,15 @@ import {
   canonicalDiffHash,
   canonicalJson,
   canonicalJsonChunks,
+  canonicalSha256,
   checkOutlineSchema,
   outlineError,
   outlineCapability,
+  outlineCapabilityContractDigest,
   outlineCapabilityManifest,
   outlineExitCodeForError,
   outlineSchemaValidator,
+  OUTLINE_PRIVATE_RUNTIME_CONTRACT_VERSION,
   porcelainHelpOptions,
 } from '../../src/outline/contract';
 
@@ -308,6 +311,13 @@ describe('outline public contract', () => {
       expect(capability.help.examples.length).toBeGreaterThanOrEqual(2);
       expect(capability.help.examples.length).toBeLessThanOrEqual(3);
     }
+  });
+
+  test('includes the private Runtime contract version in the compatibility digest', () => {
+    expect(outlineCapabilityContractDigest()).toBe(canonicalSha256({
+      capabilities: outlineCapabilityManifest(),
+      privateRuntimeContractVersion: OUTLINE_PRIVATE_RUNTIME_CONTRACT_VERSION,
+    }));
   });
 
   test('compacts repeated cyclic definitions without changing exact query validation', () => {

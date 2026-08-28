@@ -95,8 +95,10 @@ describe('NodeAccessStore', () => {
 
     await store.recordMany(['node:old'], 'human', 1_000);
     await store.recordMany(['node:weak'], 'agentRecall', 2_000);
-    await store.recordMany(['node:new'], 'human', 3_000);
+    const update = await store.recordMany(['node:new'], 'human', 3_000);
 
     expect([...store.snapshot().keys()].sort()).toEqual(['node:new', 'node:old']);
+    expect([...update.upserted.keys()]).toEqual(['node:new']);
+    expect(update.removed).toEqual(['node:weak']);
   });
 });

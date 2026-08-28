@@ -69,6 +69,29 @@ The recovery treats these pre-cutover behaviors as invariants:
 | Import | Large tree creation and search-index refresh yield cooperatively while remaining one undoable atomic intent. |
 | Security | Renderer IPC exposes a bounded desktop capability set. Renderer callers cannot path-ingest or export arbitrary local files through the generic Runtime command surface. |
 
+The recovery audit is generated from Git rather than a hand-maintained feature
+list. It enumerates every test title introduced anywhere in #584, every test
+title changed by the cutover and the lost `d36dc81b` snapshot, every path touched
+by the PR, every cutover deletion, and every lost-snapshot path. Exact current
+test titles are accepted only when their assertion bodies are unchanged. Changed
+test bodies require a recorded semantic review, while deleted responsibilities
+require an executable replacement or an explicit retirement in the current
+spec. Evidence rules use semantic word boundaries and exact test titles; broad
+substring matches such as `table` matching `editable` are invalid.
+
+The generated queue contains 2,307 historical responsibilities. Its closed
+disposition is 1,783 current-evidence mappings, 371 stronger replacements, 107
+explicit retirements, and 46 confirmed regressions restored here. The same
+fail-closed audit covers 88 changed test bodies; 239 missing assertions across
+111 same-title groups; 17 production-wiring responsibilities; semantic review
+of all 81 non-byte-identical production paths and six non-source/test document
+paths; all 99 `d36dc81b` paths (41 evolved, 56 byte-identical, and two explicitly
+relocated or retired); and all 26 lost-snapshot paths that overlap later work. A
+zero unclassified queue is required after every edit. Counts alone are
+insufficient if one high-fan-in evidence test does not assert each mapped
+failure boundary, and any future missing `src/**` path fails the audit rather
+than inheriting a default disposition.
+
 ### One Runtime authority with two settlement contracts
 
 The standalone Runtime remains the only writable owner of one live `Core`.
@@ -104,6 +127,10 @@ incremental capture runs outside the mutation queue, sustained typing has a
 maximum dirty-age checkpoint, compaction stays off the foreground path, and a
 durable waiter can force progress. Operation identity and recovery data are
 assigned at acceptance and become externally successful only at durability.
+If fsync succeeds but the process-local acknowledgement fails, an idempotent
+retry must publish the retained Operation Event exactly when durability becomes
+known to the live Runtime; otherwise connected windows can remain permanently
+behind even though restart replay is correct.
 
 ### Desktop command and projection path
 
@@ -133,6 +160,19 @@ one ordered accepted update and focus outcome, not two independently settled
 Runtime calls. Diff/apply remains available for explicitly reviewed or
 destructive field operations, not as an accidental difference between create,
 rename, append, and value editing.
+
+Memory publication planning runs inside the same main-process mutation queue as
+ordinary document mutations. The builder therefore reads the Projection and
+revision only after earlier admitted work has settled, then commits the planned
+ChangeSet before the next queued main-process mutation. Startup definition
+repair uses that same path and treats the fixed name, ID, type, lock state, and
+direct Schema parent as one protected identity.
+
+Private Runtime clients are lifecycle-owned resources. A failed bootstrap sync
+must close the newly connected client, and a connection that completes after
+service shutdown must be rejected and closed rather than reattached. Runtime
+replacement restores personal ranking from the main-process snapshot before an
+incremental update is considered synchronized.
 
 ### Read models, import, lifecycle, and security
 

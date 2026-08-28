@@ -80,3 +80,32 @@ export function clickInstalledFocusTarget(
 ): boolean {
   return activeElement !== null && activeElement !== body && activeElement !== control;
 }
+
+/**
+ * Thread creation finishes asynchronously. Automatic creation may focus the
+ * composer only while nothing else owns focus; explicit creation may also
+ * reclaim the control that initiated it, but never a newer focus target.
+ */
+export function shouldRestoreComposerAfterThreadCreation(
+  mode: 'automatic' | 'explicit',
+  focusAtStart: Element | null,
+  focusAtCompletion: Element | null,
+  body: Element | null,
+): boolean {
+  if (focusAtCompletion === null || focusAtCompletion === body) return true;
+  return mode === 'explicit' && focusAtCompletion === focusAtStart;
+}
+
+/**
+ * A focus request crosses a React render and an animation frame. Apply it only
+ * if no newer interaction replaced the element that made the request eligible.
+ */
+export function composerFocusRequestIsCurrent(
+  expectedActiveElement: Element | null,
+  activeElement: Element | null,
+  body: Element | null,
+): boolean {
+  return activeElement === null
+    || activeElement === body
+    || activeElement === expectedActiveElement;
+}

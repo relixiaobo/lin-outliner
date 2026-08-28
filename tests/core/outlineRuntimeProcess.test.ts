@@ -375,6 +375,16 @@ describe('Outline Runtime process boundary', () => {
         outlineError: { code: 'unauthorized' },
       });
       await expect(desktop.searchDesktopNodes('private search', 10)).resolves.toEqual([]);
+      await expect(external.syncDesktopPersonalAccessRanking({
+        action: 'upsert',
+        entries: [['node:private', { s: 1, tUpdate: 1 }]],
+      })).rejects.toMatchObject({
+        outlineError: { code: 'unauthorized' },
+      });
+      await expect(desktop.syncDesktopPersonalAccessRanking({
+        action: 'replace',
+        entries: [['node:private', { s: 1, tUpdate: 1 }]],
+      })).resolves.toBeUndefined();
 
       const frozen = await desktop.manageDesktopRuntime('freeze');
       expect(frozen).toMatchObject({

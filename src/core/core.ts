@@ -2390,6 +2390,37 @@ export class Core {
     });
   }
 
+  ensureProtectedTagDefinition(name: string, proposedId: string): CommandOutcome {
+    const normalized = name.trim();
+    if (!normalized) throw CoreError.invalidOperation('tag name cannot be empty');
+    return this.mutate(() => {
+      const state = this.snapshot();
+      const sameNameId = findTagByName(state, normalized);
+      if (sameNameId && sameNameId !== proposedId) {
+        throw CoreError.invalidOperation(`tag name is already bound to another ID: ${normalized}`);
+      }
+      const existing = state.nodes[proposedId];
+      if (!existing) return focus(this.createTagDefDirect(normalized, proposedId, true));
+      if (existing.type !== 'tagDef') {
+        throw CoreError.invalidOperation(`protected tag definition identity is invalid: ${proposedId}`);
+      }
+      if (existing.content.text !== normalized
+        || !existing.locked
+        || existing.parentId !== SCHEMA_ID
+        || existing.trashedFromParentId !== undefined) {
+        const protectedNode = clone(existing);
+        protectedNode.content = plainText(normalized);
+        protectedNode.locked = true;
+        delete protectedNode.trashedFromParentId;
+        delete protectedNode.trashedFromIndex;
+        protectedNode.updatedAt = nowMs();
+        this.loro.writeNode(protectedNode);
+        if (existing.parentId !== SCHEMA_ID) this.loro.moveNode(proposedId, SCHEMA_ID, undefined);
+      }
+      return focus(proposedId);
+    });
+  }
+
   applyTag(nodeId: string, tagId: string): CommandOutcome {
     return this.mutate(() => {
       this.applyTagDirect(nodeId, tagId);
@@ -4633,11 +4664,12 @@ export class Core {
     return inlineNodeId;
   }
 
-  private createTagDefDirect(name: string, proposedId?: string) {
+  private createTagDefDirect(name: string, proposedId?: string, locked = false) {
     const id = proposedId ?? this.freshId('tag');
     const color = nextTagColor(this.snapshot());
     this.loro.createNodeWithId(id, SCHEMA_ID, undefined, 'tagDef', (node) => {
       node.content = plainText(name);
+      node.locked = locked;
     });
     // config-as-nodes: the round-robin auto color lives in the defConfig subtree.
     this.setConfigValueDirect(id, { kind: 'scalar', configKey: 'color', text: color });

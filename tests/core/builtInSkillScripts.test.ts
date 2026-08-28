@@ -16,6 +16,7 @@ import {
   type Operation,
 } from '../../src/outline/contract/schemas';
 import { OutlineRuntimeServer } from '../../src/outline/runtime/server';
+import { canonicalSha256 } from '../../src/outline/contract/canonical';
 
 const execFile = promisify(execFileCallback);
 const root = path.resolve(import.meta.dir, '..', '..');
@@ -164,6 +165,98 @@ describe('built-in outline Skill import workflow', () => {
     }
   });
 
+  test('atomically appends normalized import rows to existing and new Daily Notes', async () => {
+    const directory = await temporaryDirectory('outline-import-daily-atomic-');
+    const artifacts = artifactPaths(directory);
+    const normalizedPath = path.join(directory, 'normalized.json');
+    await writeFile(normalizedPath, JSON.stringify(normalizedSource([{
+      title: '2026-01-01',
+      kind: 'date',
+      date: '2026-01-01',
+      nodes: [{ title: 'Imported existing-day row' }],
+    }, {
+      title: '2026-01-02',
+      kind: 'date',
+      date: '2026-01-02',
+      nodes: [{ title: 'Imported new-day row' }],
+    }])), 'utf8');
+    const runtime = await OutlineRuntimeServer.start({
+      root: artifacts.runtime,
+      contentRoot: `${artifacts.runtime}-content`,
+      idleTimeoutMs: 60_000,
+    });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+
+    try {
+      let existingDayId = '';
+      const setupIdentity = { kind: 'daily-import-setup', date: '2026-01-01' };
+      await runtime.workspace.mutate({
+        origin: 'local-user',
+        changeSetHash: canonicalSha256(setupIdentity),
+        diffHash: canonicalSha256({ ...setupIdentity, kind: 'diff' }),
+        summary: 'Created an existing Daily Note fixture.',
+        execute: async (core) => {
+          [existingDayId] = await core.ensureDateNodesYielding([{ year: 2026, month: 1, day: 1 }]);
+          core.createNode(existingDayId!, null, 'Existing Daily Note content');
+        },
+      });
+      const beforeImport = structuredClone(runtime.workspace.documentState());
+      const operationsBefore = (await runtime.workspace.store.operations()).length;
+
+      await runOutlineJson(artifacts.runtime, [
+        'import', 'plan', normalizedPath,
+        '--format', 'normalized',
+        '--output', artifacts.diff,
+        '--evidence-output', artifacts.evidence,
+        '--changeset-output', artifacts.changeSet,
+      ]);
+      const operation = await runOutlineJson(
+        artifacts.runtime,
+        ['apply', '--input', artifacts.diff],
+      ) as Operation;
+      expect((await runtime.workspace.store.operations()).length).toBe(operationsBefore + 1);
+
+      const state = runtime.workspace.documentState();
+      expect(state.nodes[existingDayId]?.children.map((id) => state.nodes[id]?.content.text))
+        .toEqual(['Existing Daily Note content', 'Imported existing-day row']);
+      const newDay = Object.values(state.nodes).find((node) => node.content.text === '2026-01-02');
+      expect(newDay?.children.map((id) => state.nodes[id]?.content.text))
+        .toEqual(['Imported new-day row']);
+
+      const afterFirstImport = structuredClone(state);
+      const secondDiff = path.join(directory, 'second-diff.json');
+      const secondEvidence = path.join(directory, 'second-evidence.json');
+      const secondChangeSet = path.join(directory, 'second-changeset.json');
+      await runOutlineJson(artifacts.runtime, [
+        'import', 'plan', normalizedPath,
+        '--format', 'normalized',
+        '--output', secondDiff,
+        '--evidence-output', secondEvidence,
+        '--changeset-output', secondChangeSet,
+      ]);
+      const secondOperation = await runOutlineJson(
+        artifacts.runtime,
+        ['apply', '--input', secondDiff],
+      ) as Operation;
+      const repeatedState = runtime.workspace.documentState();
+      expect(Object.values(repeatedState.nodes).filter((node) => node.content.text === 'Imported existing-day row'))
+        .toHaveLength(2);
+      expect(Object.values(repeatedState.nodes).filter((node) => node.content.text === 'Imported new-day row'))
+        .toHaveLength(2);
+
+      const revertedSecond = await runOutlineJson(artifacts.runtime, ['revert', secondOperation.operationId]) as Operation;
+      expect(revertedSecond.revertsOperationId).toBe(secondOperation.operationId);
+      expect(runtime.workspace.documentState()).toEqual(afterFirstImport);
+
+      const reverted = await runOutlineJson(artifacts.runtime, ['revert', operation.operationId]) as Operation;
+      expect(reverted.revertsOperationId).toBe(operation.operationId);
+      expect(runtime.workspace.documentState()).toEqual(beforeImport);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   test('rejects import artifact collisions before overwriting the source', async () => {
     const directory = await temporaryDirectory('outline-import-path-collision-');
     const artifacts = artifactPaths(directory);
@@ -188,6 +281,40 @@ describe('built-in outline Skill import workflow', () => {
       },
     });
     expect(await readFile(source, 'utf8')).toBe(sourceText);
+  });
+
+  test('rejects malformed normalized input before Runtime mutation', async () => {
+    const directory = await temporaryDirectory('outline-import-malformed-normalized-');
+    const artifacts = artifactPaths(directory);
+    const source = path.join(directory, 'malformed.json');
+    await writeFile(source, JSON.stringify({ version: 1, sections: [] }), 'utf8');
+    const runtime = await OutlineRuntimeServer.start({
+      root: artifacts.runtime,
+      contentRoot: `${artifacts.runtime}-content`,
+      idleTimeoutMs: 60_000,
+    });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+
+    try {
+      const before = structuredClone(runtime.workspace.documentState());
+      const operationsBefore = await runtime.workspace.store.operations();
+      const result = await runOutlineFailure(artifacts.runtime, [
+        'import', 'plan', source,
+        '--format', 'normalized',
+        '--output', artifacts.diff,
+        '--evidence-output', artifacts.evidence,
+      ]);
+
+      expect(result).toMatchObject({
+        code: 2,
+        response: { ok: false, error: { code: 'invalid_input' } },
+      });
+      expect(runtime.workspace.documentState()).toEqual(before);
+      expect(await runtime.workspace.store.operations()).toEqual(operationsBefore);
+    } finally {
+      await runtime.stop();
+    }
   });
 
   test('rejects an import output redirected to the source through a symlinked parent', async () => {

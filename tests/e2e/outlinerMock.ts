@@ -5,6 +5,7 @@ import type { ManagedSkillCatalogEntryView, ManagedSkillView } from '../../src/c
 import type { AppInfo } from '../../src/core/errorObservability';
 import type { AppUpdateView } from '../../src/core/appUpdate';
 import { SEARCH_QUERY_COMPLEXITY_LIMITS } from '../../src/core/searchQueryCompiler';
+import { assetUrl } from '../../src/core/assets';
 
 export const ids = {
   workspace: 'workspace',
@@ -62,6 +63,8 @@ interface MockFixtureOptions {
   initWorkspaceDelayMs?: number;
   /** Delays provider settings so Settings chrome can be asserted before settings data arrives. */
   providerSettingsDelayMs?: number;
+  /** Delays only the first automatic Thread creation request. */
+  initialThreadStartDelayMs?: number;
   /** Seeds the shared preview-translation target language. */
   translationLanguage?: TranslationLanguage;
   /** Seeds URL/EPUB automatic translation and model preferences. */
@@ -320,7 +323,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
   ]);
   await page.addInitScript({ content: actionBridge });
   await page.addInitScript({ content: viewConfigBridge });
-  await page.addInitScript(({ ids, options, queryChildLimit }) => {
+  await page.addInitScript(({ assetUrlPrefix, ids, options, queryChildLimit }) => {
     type ReferenceTarget =
       | { kind: 'node'; nodeId: string }
       | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory' };
@@ -333,6 +336,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         | { type: 'remove_mark'; from: number; to: number; markType: string }
       >;
     };
+    const mockAssetUrl = (assetId: string) => `${assetUrlPrefix}${encodeURIComponent(assetId)}`;
     const referenceTargetsEqual = (left: ReferenceTarget, right: ReferenceTarget) => {
       if (left.kind !== right.kind) return false;
       if (left.kind === 'node') return left.nodeId === (right as Extract<ReferenceTarget, { kind: 'node' }>).nodeId;
@@ -470,6 +474,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       videoDurationMs?: number;
     }>();
     const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+    let initialThreadStartDelayMs = options.initialThreadStartDelayMs ?? 0;
     let nextThreadStartBehavior: { delayMs: number; error: string | null } | null = null;
     const attachmentUploads = new Map<string, {
       threadId: string;
@@ -4050,7 +4055,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (method === 'thread/start') {
           const behavior = nextThreadStartBehavior;
           nextThreadStartBehavior = null;
-          if (behavior?.delayMs) await delay(behavior.delayMs);
+          const delayMs = behavior?.delayMs ?? initialThreadStartDelayMs;
+          initialThreadStartDelayMs = 0;
+          if (delayMs) await delay(delayMs);
           if (behavior?.error) throw new Error(behavior.error);
           const thread = createMockThread(input);
           emitAgentCoreNotification({ type: 'thread/started', threadId: thread.id, thread });
@@ -5609,7 +5616,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 lastModified: asset.createdAt,
                 streamUrl: epubBytes
                   ? URL.createObjectURL(new Blob([epubBytes], { type: asset.mimeType }))
-                  : `asset://${target.assetId}`,
+                  : mockAssetUrl(target.assetId),
               } : null,
             }) as T;
           }
@@ -6546,6 +6553,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       };
     }
   }, {
+    assetUrlPrefix: assetUrl(''),
     ids,
     options,
     queryChildLimit: SEARCH_QUERY_COMPLEXITY_LIMITS.maxChildrenPerGroup,

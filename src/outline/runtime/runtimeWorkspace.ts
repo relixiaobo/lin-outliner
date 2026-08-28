@@ -4,6 +4,7 @@ import {
   type CoreTransactionPatch,
 } from '../../core/core';
 import { runTransientSearchExpr } from '../../core/searchEngine';
+import type { NodeAccessStats } from '../../core/nodeAccessRanking';
 import { ContentStore, type ContentStoreOptions } from '../../content';
 import { canonicalSha256 } from '../contract/canonical';
 import { OutlineContractError, outlineError } from '../contract/errors';
@@ -30,6 +31,7 @@ import { DocumentReadModel } from './documentReadModel';
 import type { Projection, ProjectionResult } from '../contract/schemas';
 import { createSelectionIndex } from './selector';
 import { projectOutlineFromSelectionIndex } from './projection';
+import { assertProtectedMemoryDefinitionPatch } from './protectedDefinitions';
 
 const MAX_AFFECTED_NODE_ID_SAMPLE = 1_000;
 const DURABILITY_IDLE_DELAY_MS = 700;
@@ -76,6 +78,7 @@ export interface OutlineDurabilityStatus {
   readonly acceptedRevision: number;
   readonly durableRevision: number;
   readonly admissionFrozen: boolean;
+  readonly failure?: { readonly message: string };
 }
 
 class ExistingOperationSettlement extends Error {
@@ -133,6 +136,7 @@ export interface OutlineRuntimeWorkspaceOptions {
 export class OutlineRuntimeWorkspace {
   private mutationChain: Promise<unknown> = Promise.resolve();
   private settlementUnknown = false;
+  private settlementUnknownIdempotencyKey?: string;
   private eventListeners = new Set<(event: OutlineEvent) => void>();
   private readonly now: () => Date;
   private readonly readModel: DocumentReadModel;
@@ -156,6 +160,7 @@ export class OutlineRuntimeWorkspace {
   private lastDirtyAt?: number;
   private mutationAdmissionFrozen = false;
   private mutationAdmissionCommitted = false;
+  private personalAccessRanking = new Map<string, NodeAccessStats>();
 
   private constructor(
     private core: Core,
@@ -276,6 +281,13 @@ export class OutlineRuntimeWorkspace {
       acceptedRevision: this.revision(),
       durableRevision: this.durableRevisionValue,
       admissionFrozen: this.mutationAdmissionFrozen,
+      ...(this.durabilityFailure ? {
+        failure: {
+          message: this.durabilityFailure instanceof Error
+            ? this.durabilityFailure.message
+            : String(this.durabilityFailure),
+        },
+      } : {}),
     };
   }
 
@@ -317,9 +329,28 @@ export class OutlineRuntimeWorkspace {
     const result = runTransientSearchExpr(
       this.readModel.projection,
       { kind: 'rule', op: 'STRING_MATCH', text },
-      { limit, textIndex: this.readModel.textIndex },
+      {
+        limit,
+        textIndex: this.readModel.textIndex,
+        personalAccessRanking: {
+          getNodeAccessStats: (nodeId) => this.personalAccessRanking.get(nodeId),
+          now: this.now().getTime(),
+        },
+      },
     );
     return result.ok ? result.hits : [];
+  }
+
+  replacePersonalAccessRanking(entries: ReadonlyMap<string, NodeAccessStats>): void {
+    this.personalAccessRanking = new Map(entries);
+  }
+
+  upsertPersonalAccessRanking(entries: ReadonlyMap<string, NodeAccessStats>): void {
+    for (const [nodeId, stats] of entries) this.personalAccessRanking.set(nodeId, stats);
+  }
+
+  removePersonalAccessRanking(nodeIds: readonly string[]): void {
+    for (const nodeId of nodeIds) this.personalAccessRanking.delete(nodeId);
   }
 
   selectionIndex() {
@@ -368,11 +399,21 @@ export class OutlineRuntimeWorkspace {
     });
   }
 
-  maintain(options: { readonly compactIfNeeded?: boolean } = {}): Promise<void> {
-    return this.enqueueMutation(async () => {
+  async maintain(options: { readonly compactIfNeeded?: boolean } = {}): Promise<void> {
+    let compaction: Promise<void> | undefined;
+    await this.enqueueMutation(async () => {
       await this.drainDurability();
-      return this.runMaintenance(options.compactIfNeeded === true);
+      const context = { instanceId: this.instanceId, revision: this.revision() };
+      this.publishEvents(await this.store.maintain(context));
+      await this.assets.collectGarbage([...this.assetReferenceCounts.keys()]);
+      if (options.compactIfNeeded === true && await this.store.needsCompaction()) {
+        const snapshot = this.core.serializeState();
+        compaction = this.store.compact(snapshot, context).then((events) => {
+          this.publishEvents(events);
+        });
+      }
     });
+    if (compaction) await compaction;
   }
 
   async mutate(request: OutlineRuntimeMutationRequest): Promise<Operation> {
@@ -452,7 +493,23 @@ export class OutlineRuntimeWorkspace {
       );
       this.publishEvents(admission.maintenanceEvents);
       if (admission.existingOperation) {
+        if (this.settlementUnknown) {
+          if (this.settlementUnknownIdempotencyKey !== idempotencyKey) {
+            throw new OutlineContractError(outlineError(
+              'operation_settlement_unknown',
+              'durability',
+              'A different mutation may have committed; resolve it by its idempotency key or restart before writing again.',
+              { retryable: true },
+            ));
+          }
+          if (!admission.existingEvent) {
+            throw new Error(`Committed idempotent Operation has no retained Event: ${admission.existingOperation.operationId}`);
+          }
+          await this.reloadDurableState(admission.existingOperation.revisionAfter);
+          this.publishEvents([admission.existingEvent]);
+        }
         this.settlementUnknown = false;
+        this.settlementUnknownIdempotencyKey = undefined;
         return admission.existingOperation;
       }
       if (this.settlementUnknown) {
@@ -709,6 +766,7 @@ export class OutlineRuntimeWorkspace {
         'system',
         () => request.execute(this.core),
         async ({ result: transactionResult, patch }): Promise<MutationSettlement> => {
+          assertProtectedMemoryDefinitionPatch(patch);
           if (patch.nodes.length === 0 && !patch.systemChanged) {
             const noChange = request.noChangeResult?.(this.core);
             if (noChange) return { kind: 'no-change', result: noChange, patch };
@@ -877,6 +935,7 @@ export class OutlineRuntimeWorkspace {
             if (error instanceof OutlineContractError
               && error.outlineError.code !== 'durability_failed') throw error;
             this.settlementUnknown = true;
+            this.settlementUnknownIdempotencyKey = request.idempotencyKey;
             throw new OutlineContractError(outlineError(
               'operation_settlement_unknown',
               'durability',
@@ -975,15 +1034,6 @@ export class OutlineRuntimeWorkspace {
     return result;
   }
 
-  private async runMaintenance(compactIfNeeded: boolean): Promise<void> {
-    const context = { instanceId: this.instanceId, revision: this.revision() };
-    this.publishEvents(await this.store.maintain(context));
-    await this.assets.collectGarbage([...this.assetReferenceCounts.keys()]);
-    if (compactIfNeeded && await this.store.needsCompaction()) {
-      this.publishEvents(await this.store.compact(this.core.serializeState(), context));
-    }
-  }
-
   private publishEvents(events: readonly OutlineEvent[]): void {
     for (const event of events) {
       for (const listener of this.eventListeners) {
@@ -993,6 +1043,38 @@ export class OutlineRuntimeWorkspace {
           // Observer failure cannot turn durable maintenance or an Operation into a failed mutation.
         }
       }
+    }
+  }
+
+  private async reloadDurableState(expectedRevision: number): Promise<void> {
+    const loaded = await this.store.load();
+    if (!loaded.snapshot) throw new Error('Durable settlement recovery has no workspace snapshot');
+    if (loaded.inconsistent) throw loaded.inconsistent;
+    const revision = loaded.events.at(-1)?.revision
+      ?? loaded.operations.at(-1)?.revisionAfter
+      ?? 0;
+    if (revision < expectedRevision) {
+      throw new Error(`Durable settlement recovery stopped at revision ${revision}, expected at least ${expectedRevision}`);
+    }
+    const recovered = loaded.replay.length > 0
+      ? Core.fromPersistenceState(loaded.snapshot, loaded.replay, {
+          installationId: loaded.snapshot.local.installationId,
+          revision,
+        })
+      : Core.fromState(loaded.snapshot, {
+          installationId: loaded.snapshot.local.installationId,
+          revision,
+        });
+    if (recovered.requiresInitialPersist()) {
+      throw new Error('Durable settlement recovery requires workspace reconciliation before writes can resume');
+    }
+    await this.assets.reconcileAnchors();
+    this.core = recovered;
+    this.readModel.reseed(recovered.revision(), recovered.projection());
+    this.assetReferenceCounts = countAssetReferences(Object.values(recovered.state().nodes));
+    this.durableRevisionValue = recovered.revision();
+    for (const idempotency of loaded.idempotency) {
+      this.acceptedByIdempotencyKey.set(idempotency.key, { payloadHash: idempotency.payloadHash });
     }
   }
 
@@ -1085,7 +1167,7 @@ export class OutlineRuntimeWorkspace {
       }
       this.core.acknowledgePersistenceMetadata(pending.input.persistence.metadataSequence);
       this.publishEvents(appended.maintenanceEvents);
-      if (!appended.idempotent) this.publishEvents([appended.event]);
+      this.publishEvents([appended.event]);
     }
     this.pendingDurability.splice(0, batch.length);
   }

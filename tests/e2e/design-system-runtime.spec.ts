@@ -642,9 +642,8 @@ const surfaces: SurfaceCase[] = [
       await page.clock.setFixedTime(new Date('2026-05-13T09:00:00'));
     },
     beforeProbe: async (page) => {
-      const draft = page.locator(`[data-trailing-parent-id="${ids.dueEntry}"] .row-editor`);
-      await draft.click();
-      await page.keyboard.press('Space');
+      const draft = page.locator(`[data-trailing-parent-id="${ids.dueEntry}"] .row-editor .ProseMirror`);
+      await draft.press('Space');
       await page.getByRole('dialog', { name: 'Date picker' }).waitFor({ state: 'visible' });
     },
   },

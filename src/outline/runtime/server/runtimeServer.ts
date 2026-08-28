@@ -52,6 +52,7 @@ import {
 } from './runtimePaths';
 import { readChangeSetUpload } from './changeSetSpool';
 import { commitOutlineChangeSetAccepted } from '../changeSet';
+import { normalizeNodeAccessStats, type NodeAccessStats } from '../../../core/nodeAccessRanking';
 
 const MAX_REQUEST_BYTES = 64 * 1024 * 1024;
 
@@ -323,6 +324,39 @@ export class OutlineRuntimeServer {
           data: {
             hits: this.workspace.searchText(body.query, body.limit as number),
           },
+        });
+        return;
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/desktop/personal-access-ranking') {
+        if (optionalHeader(request, OUTLINE_ORIGIN_HEADER) !== 'desktop') {
+          throw new OutlineContractError(outlineError(
+            'unauthorized',
+            'protocol',
+            'The personal-access ranking route is available only to the desktop host.',
+          ));
+        }
+        const body = await readJsonBody(request);
+        if (!isRecord(body)
+          || body.protocolVersion !== OUTLINE_PROTOCOL_VERSION
+          || typeof body.requestId !== 'string'
+          || !/^[A-Za-z0-9:._-]{1,256}$/.test(body.requestId)
+          || !isDesktopPersonalAccessRankingUpdate(body.update)) {
+          throw new Error('Invalid desktop personal-access ranking request.');
+        }
+        const update = body.update;
+        if (update.action === 'remove') {
+          this.workspace.removePersonalAccessRanking(update.nodeIds);
+        } else {
+          const entries = new Map<string, NodeAccessStats>(update.entries.map(([nodeId, stats]) => (
+            [nodeId, normalizeNodeAccessStats(stats)!]
+          )));
+          if (update.action === 'replace') this.workspace.replacePersonalAccessRanking(entries);
+          else this.workspace.upsertPersonalAccessRanking(entries);
+        }
+        writeJson(response, 200, {
+          protocolVersion: OUTLINE_PROTOCOL_VERSION,
+          requestId: body.requestId,
+          data: { synced: true },
         });
         return;
       }
@@ -998,4 +1032,27 @@ async function removeStaleSocket(socketPath: string): Promise<void> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isDesktopPersonalAccessRankingUpdate(value: unknown): value is
+  | { readonly action: 'replace' | 'upsert'; readonly entries: readonly (readonly [string, NodeAccessStats])[] }
+  | { readonly action: 'remove'; readonly nodeIds: readonly string[] } {
+  if (!isRecord(value) || (value.action !== 'replace' && value.action !== 'upsert' && value.action !== 'remove')) {
+    return false;
+  }
+  if (value.action === 'remove') {
+    return Array.isArray(value.nodeIds)
+      && value.nodeIds.length <= 5_000
+      && value.nodeIds.every((nodeId) => typeof nodeId === 'string' && nodeId.length > 0);
+  }
+  return Array.isArray(value.entries)
+    && value.entries.length <= 5_000
+    && value.entries.every((entry) => {
+      if (!Array.isArray(entry)
+        || entry.length !== 2
+        || typeof entry[0] !== 'string'
+        || entry[0].length === 0) return false;
+      const stats = normalizeNodeAccessStats(entry[1]);
+      return stats !== null && stats.s > 0 && stats.tUpdate !== null;
+    });
 }

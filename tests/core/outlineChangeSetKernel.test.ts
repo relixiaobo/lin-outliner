@@ -470,6 +470,42 @@ describe('outline ChangeSet kernel', () => {
     });
     expect(workspace.documentState().nodes[targetId]?.description).toBe('Concurrent');
     expect(await workspace.store.operations()).toHaveLength(operationsBefore);
+
+    const source = await makeWorkspace();
+    const destination = await makeWorkspace();
+    const sharedId = 'node:00000000-0000-4000-8000-000000000031';
+    const createShared = (text: string, idempotencyKey: string): ChangeSet => ({
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      idempotencyKey,
+      operations: [{
+        op: 'create',
+        placement: { kind: 'last', parent: oneAlias('today') },
+        nodes: [draft(text, { id: sharedId })],
+      }],
+    });
+    await commitOutlineChangeSet(source, createShared('Source target', 'test:digest-source'), { origin: 'desktop' });
+    await commitOutlineChangeSet(destination, createShared('Different target', 'test:digest-destination'), { origin: 'desktop' });
+    expect(destination.revision()).toBe(source.revision());
+
+    const crossWorkspaceDiff = await diffKeyed(source, {
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      operations: [{
+        op: 'update',
+        targets: oneId(sharedId),
+        changes: [{ kind: 'description', value: 'Reviewed source state' }],
+      }],
+    });
+    const destinationOperations = await destination.store.operations();
+    await expect(applyOutlineDiff(destination, crossWorkspaceDiff, { origin: 'local-user' })).rejects.toMatchObject({
+      outlineError: { code: 'precondition_failed' },
+    });
+    expect(destination.documentState().nodes[sharedId]).toMatchObject({
+      content: { text: 'Different target' },
+    });
+    expect(destination.documentState().nodes[sharedId]).not.toHaveProperty('description');
+    expect(await destination.store.operations()).toEqual(destinationOperations);
   });
 
   test('rejects ambiguous mutation selectors and forward binding references before preview writes', async () => {

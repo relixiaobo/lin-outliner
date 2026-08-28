@@ -26,6 +26,12 @@ import { Mutex } from '../../Mutex';
 export interface TimelineMemoryHost {
   getProjection(): DocumentProjection;
   runChanges(changes: readonly Change[], options?: OutlineMutationOptions): Promise<unknown>;
+  runPlannedChanges(
+    build: (
+      projection: DocumentProjection,
+    ) => readonly Change[] | null | Promise<readonly Change[] | null>,
+    options?: OutlineMutationOptions,
+  ): Promise<unknown>;
   log(input: { readonly idempotencyKey?: string; readonly limit?: number }): Promise<readonly Operation[]>;
 }
 
@@ -94,20 +100,24 @@ export class TimelineMemoryStore {
 
   async ensureTagDefinitions(): Promise<void> {
     await this.withWriteGate(async () => {
-      const nodes = new Map(this.document.getProjection().nodes.map((node) => [node.id, node]));
-      const missing = MEMORY_TAG_DEFINITIONS.filter((definition) => {
-        const node = nodes.get(definition.tagId);
-        return node?.type !== 'tagDef' || node.content.text.trim() !== definition.name;
-      });
-      if (missing.length === 0) return;
-      await this.document.runChanges(missing.map((definition, index): Change => ({
-        op: 'ensure',
-        resource: 'definition',
-        definitionType: 'tag',
-        id: definition.tagId,
-        name: definition.name,
-        bind: `memoryTag${index + 1}`,
-      })), {
+      await this.document.runPlannedChanges((projection) => {
+        const nodes = new Map(projection.nodes.map((node) => [node.id, node]));
+        const missing = MEMORY_TAG_DEFINITIONS.filter((definition) => {
+          const node = nodes.get(definition.tagId);
+          return node?.type !== 'tagDef'
+            || node.content.text.trim() !== definition.name
+            || !node.locked
+            || node.parentId !== projection.schemaId;
+        });
+        return missing.length === 0 ? null : missing.map((definition, index): Change => ({
+          op: 'ensure',
+          resource: 'definition',
+          definitionType: 'tag',
+          id: definition.tagId,
+          name: definition.name,
+          bind: `memoryTag${index + 1}`,
+        }));
+      }, {
         settlement: 'durable',
         source: { kind: 'automation', label: 'Ensure Memory tag definitions' },
       });
@@ -130,62 +140,64 @@ export class TimelineMemoryStore {
     publication: TimelinePublication,
     beforeCommit?: () => void | Promise<void>,
   ): Promise<void> {
-    await beforeCommit?.();
-    const index = nodeIndex(this.document.getProjection());
-    const operations: Change[] = [publicationMarker()];
-    for (const [dateIndex, date] of publication.dates.entries()) {
-      const dateBinding = `memoryDate${dateIndex + 1}`;
-      operations.push({
-        op: 'ensure', resource: 'date', date: date.sourceDate, bind: dateBinding,
-      });
-      const container = index.get(date.containerId);
-      const containerBinding = `memoryContainer${dateIndex + 1}`;
-      const containerRef = container ? oneId(container.id) : binding(containerBinding);
-      if (!container) {
-        operations.push(createTaggedChange(
-          date.containerId,
-          binding(dateBinding),
-          date.headline,
-          memoryTagId('memory'),
-          containerBinding,
-        ));
-      } else if (date.containerGenerated && container.content.text !== date.headline) {
-        operations.push(updateTextChange(container.id, date.headline));
-      }
-      const episodeBinding = `memoryEpisode${dateIndex + 1}`;
-      const episodeRef = planUpsertTaggedNode(
-        operations,
-        index,
-        containerRef,
-        date.episodeId,
-        date.episode,
-        'episode',
-        episodeBinding,
-      );
-      for (const [position, text] of date.beliefs.entries()) {
-        planUpsertTaggedNode(
-          operations, index, episodeRef, date.beliefIds[position]!, text, 'belief',
-          `memoryBelief${dateIndex + 1}_${position + 1}`,
-        );
-      }
-      for (const [position, text] of date.questions.entries()) {
-        planUpsertTaggedNode(
-          operations, index, episodeRef, date.questionIds[position]!, text, 'question',
-          `memoryQuestion${dateIndex + 1}_${position + 1}`,
-        );
-      }
-      for (const [position, text] of date.guidance.entries()) {
-        planUpsertTaggedNode(
-          operations, index, episodeRef, date.guidanceIds[position]!, text, 'guidance',
-          `memoryGuidance${dateIndex + 1}_${position + 1}`,
-        );
-      }
-    }
     await this.applyPublication(
       publication.operationId,
       publication.generation,
       publication.digest,
-      operations,
+      async (projection) => {
+        await beforeCommit?.();
+        const index = nodeIndex(projection);
+        const operations: Change[] = [publicationMarker()];
+        for (const [dateIndex, date] of publication.dates.entries()) {
+          const dateBinding = `memoryDate${dateIndex + 1}`;
+          operations.push({
+            op: 'ensure', resource: 'date', date: date.sourceDate, bind: dateBinding,
+          });
+          const container = index.get(date.containerId);
+          const containerBinding = `memoryContainer${dateIndex + 1}`;
+          const containerRef = container ? oneId(container.id) : binding(containerBinding);
+          if (!container) {
+            operations.push(createTaggedChange(
+              date.containerId,
+              binding(dateBinding),
+              date.headline,
+              memoryTagId('memory'),
+              containerBinding,
+            ));
+          } else if (date.containerGenerated && container.content.text !== date.headline) {
+            operations.push(updateTextChange(container.id, date.headline));
+          }
+          const episodeBinding = `memoryEpisode${dateIndex + 1}`;
+          const episodeRef = planUpsertTaggedNode(
+            operations,
+            index,
+            containerRef,
+            date.episodeId,
+            date.episode,
+            'episode',
+            episodeBinding,
+          );
+          for (const [position, text] of date.beliefs.entries()) {
+            planUpsertTaggedNode(
+              operations, index, episodeRef, date.beliefIds[position]!, text, 'belief',
+              `memoryBelief${dateIndex + 1}_${position + 1}`,
+            );
+          }
+          for (const [position, text] of date.questions.entries()) {
+            planUpsertTaggedNode(
+              operations, index, episodeRef, date.questionIds[position]!, text, 'question',
+              `memoryQuestion${dateIndex + 1}_${position + 1}`,
+            );
+          }
+          for (const [position, text] of date.guidance.entries()) {
+            planUpsertTaggedNode(
+              operations, index, episodeRef, date.guidanceIds[position]!, text, 'guidance',
+              `memoryGuidance${dateIndex + 1}_${position + 1}`,
+            );
+          }
+        }
+        return operations;
+      },
     );
   }
 
@@ -212,43 +224,45 @@ export class TimelineMemoryStore {
     changes: readonly TimelineConsolidationChange[],
     beforeCommit?: () => void | Promise<void>,
   ): Promise<void> {
-    await beforeCommit?.();
-    const projection = this.document.getProjection();
-    const index = nodeIndex(projection);
-    const operations: Change[] = [publicationMarker()];
-    const pendingCreates = changes.filter((change) => change.action === 'create');
-    const createdBindings = new Map<string, string>();
-    while (createdBindings.size < pendingCreates.length) {
-      let progressed = false;
-      for (const change of pendingCreates) {
-        if (createdBindings.has(change.nodeId)) continue;
-        const parentBinding = createdBindings.get(change.parentId);
-        if (!index.has(change.parentId) && !parentBinding) continue;
-        const bind = `memoryCreated${createdBindings.size + 1}`;
-        operations.push(createTaggedChange(
-          change.nodeId,
-          parentBinding ? binding(parentBinding) : oneId(change.parentId),
-          change.text,
-          memoryTagId(change.category),
-          bind,
-        ));
-        createdBindings.set(change.nodeId, bind);
-        progressed = true;
+    const acknowledgeDestructive = changes.some((change) => change.action === 'delete');
+    await this.applyPublication(operationId, generation, digest, async (projection) => {
+      await beforeCommit?.();
+      const index = nodeIndex(projection);
+      const operations: Change[] = [publicationMarker()];
+      const pendingCreates = changes.filter((change) => change.action === 'create');
+      const createdBindings = new Map<string, string>();
+      while (createdBindings.size < pendingCreates.length) {
+        let progressed = false;
+        for (const change of pendingCreates) {
+          if (createdBindings.has(change.nodeId)) continue;
+          const parentBinding = createdBindings.get(change.parentId);
+          if (!index.has(change.parentId) && !parentBinding) continue;
+          const bind = `memoryCreated${createdBindings.size + 1}`;
+          operations.push(createTaggedChange(
+            change.nodeId,
+            parentBinding ? binding(parentBinding) : oneId(change.parentId),
+            change.text,
+            memoryTagId(change.category),
+            bind,
+          ));
+          createdBindings.set(change.nodeId, bind);
+          progressed = true;
+        }
+        if (!progressed) throw new Error('Memory consolidation create graph has an unresolved parent');
       }
-      if (!progressed) throw new Error('Memory consolidation create graph has an unresolved parent');
-    }
-    for (const change of changes) {
-      if (change.action === 'update' && index.has(change.nodeId)) {
-        operations.push(updateTextChange(change.nodeId, change.text));
+      for (const change of changes) {
+        if (change.action === 'update' && index.has(change.nodeId)) {
+          operations.push(updateTextChange(change.nodeId, change.text));
+        }
       }
-    }
-    const deletes = changes
-      .filter((change) => change.action === 'delete' && index.has(change.nodeId))
-      .sort((left, right) => nodeDepth(right.nodeId, projection) - nodeDepth(left.nodeId, projection));
-    operations.push(...deletes.map((change): Change => ({
-      op: 'lifecycle', action: 'purge', targets: oneId(change.nodeId),
-    })));
-    await this.applyPublication(operationId, generation, digest, operations, deletes.length > 0);
+      const deletes = changes
+        .filter((change) => change.action === 'delete' && index.has(change.nodeId))
+        .sort((left, right) => nodeDepth(right.nodeId, projection) - nodeDepth(left.nodeId, projection));
+      operations.push(...deletes.map((change): Change => ({
+        op: 'lifecycle', action: 'purge', targets: oneId(change.nodeId),
+      })));
+      return operations;
+    }, acknowledgeDestructive);
   }
 
   async reset(operationId: string, generation: number, digest: string, containerIds: readonly string[]): Promise<void> {
@@ -261,15 +275,16 @@ export class TimelineMemoryStore {
     digest: string,
     containerIds: readonly string[],
   ): Promise<void> {
-    const canonicalContainers = new Set(this.graph().containers.map((entry) => entry.node.id));
-    const targets = containerIds.filter((nodeId) => canonicalContainers.has(nodeId));
-    const operations: Change[] = [
-      publicationMarker(),
-      ...targets.map((nodeId): Change => ({
-        op: 'lifecycle', action: 'purge', targets: oneId(nodeId),
-      })),
-    ];
-    await this.applyPublication(operationId, generation, digest, operations, targets.length > 0);
+    await this.applyPublication(operationId, generation, digest, (projection) => {
+      const canonicalContainers = new Set(canonicalMemoryGraph(projection).containers.map((entry) => entry.node.id));
+      const targets = containerIds.filter((nodeId) => canonicalContainers.has(nodeId));
+      return [
+        publicationMarker(),
+        ...targets.map((nodeId): Change => ({
+          op: 'lifecycle', action: 'purge', targets: oneId(nodeId),
+        })),
+      ];
+    }, containerIds.length > 0);
   }
 
   async hasPublication(operationId: string, digest: string): Promise<boolean> {
@@ -289,10 +304,12 @@ export class TimelineMemoryStore {
     operationId: string,
     generation: number,
     digest: string,
-    changes: readonly Change[],
+    build: (
+      projection: DocumentProjection,
+    ) => readonly Change[] | Promise<readonly Change[]>,
     acknowledgeDestructive = false,
   ): Promise<void> {
-    await this.document.runChanges(changes, {
+    await this.document.runPlannedChanges(build, {
       idempotencyKey: operationId,
       settlement: 'durable',
       source: {

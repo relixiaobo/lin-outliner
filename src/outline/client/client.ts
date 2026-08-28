@@ -49,12 +49,22 @@ export interface DesktopRuntimeDurabilityStatus {
   readonly acceptedRevision: number;
   readonly durableRevision: number;
   readonly admissionFrozen: boolean;
+  readonly failure?: { readonly message: string };
 }
 
 export interface DesktopTextSearchHit {
   readonly nodeId: string;
   readonly score: number;
 }
+
+export interface DesktopPersonalAccessStats {
+  readonly s: number;
+  readonly tUpdate: number | null;
+}
+
+export type DesktopPersonalAccessRankingUpdate =
+  | { readonly action: 'replace' | 'upsert'; readonly entries: readonly (readonly [string, DesktopPersonalAccessStats])[] }
+  | { readonly action: 'remove'; readonly nodeIds: readonly string[] };
 
 export class OutlineClient {
   // A watch owns one long-lived socket. Requests and asset transfers must still
@@ -170,6 +180,35 @@ export class OutlineClient {
         throw protocolError('Outline Runtime returned an invalid desktop ranked-search response.');
       }
       return value.data.hits;
+    } catch (error) {
+      throw normalizeRequestError(error, lifetime);
+    } finally {
+      lifetime.cleanup();
+    }
+  }
+
+  async syncDesktopPersonalAccessRanking(
+    update: DesktopPersonalAccessRankingUpdate,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (!isDesktopPersonalAccessRankingUpdate(update)) {
+      throw protocolError('Desktop personal-access ranking sync requires a bounded valid update.');
+    }
+    const lifetime = createRequestLifetime(signal, this.requestTimeoutMs);
+    const requestId = `desktop-ranking:${crypto.randomUUID()}`;
+    try {
+      const value = await this.jsonRequest('/v1/desktop/personal-access-ranking', {
+        protocolVersion: OUTLINE_PROTOCOL_VERSION,
+        requestId,
+        update,
+      }, lifetime.signal);
+      if (!isRecord(value)
+        || value.protocolVersion !== OUTLINE_PROTOCOL_VERSION
+        || value.requestId !== requestId
+        || !isRecord(value.data)
+        || value.data.synced !== true) {
+        throw protocolError('Outline Runtime returned an invalid personal-access ranking response.');
+      }
     } catch (error) {
       throw normalizeRequestError(error, lifetime);
     } finally {
@@ -807,7 +846,9 @@ function isDesktopRuntimeDurabilityStatus(value: unknown): value is DesktopRunti
     && Number.isSafeInteger(value.durableRevision)
     && (value.durableRevision as number) >= 0
     && (value.durableRevision as number) <= (value.acceptedRevision as number)
-    && typeof value.admissionFrozen === 'boolean';
+    && typeof value.admissionFrozen === 'boolean'
+    && (value.failure === undefined
+      || (isRecord(value.failure) && typeof value.failure.message === 'string'));
 }
 
 function isDesktopTextSearchHit(value: unknown): value is DesktopTextSearchHit {
@@ -820,4 +861,30 @@ function isDesktopTextSearchHit(value: unknown): value is DesktopTextSearchHit {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isDesktopPersonalAccessRankingUpdate(value: unknown): value is DesktopPersonalAccessRankingUpdate {
+  if (!isRecord(value) || (value.action !== 'replace' && value.action !== 'upsert' && value.action !== 'remove')) {
+    return false;
+  }
+  if (value.action === 'remove') {
+    return Array.isArray(value.nodeIds)
+      && value.nodeIds.length <= 5_000
+      && value.nodeIds.every((nodeId) => typeof nodeId === 'string' && nodeId.length > 0);
+  }
+  return Array.isArray(value.entries)
+    && value.entries.length <= 5_000
+    && value.entries.every((entry) => (
+      Array.isArray(entry)
+      && entry.length === 2
+      && typeof entry[0] === 'string'
+      && entry[0].length > 0
+      && isRecord(entry[1])
+      && typeof entry[1].s === 'number'
+      && Number.isFinite(entry[1].s)
+      && entry[1].s > 0
+      && typeof entry[1].tUpdate === 'number'
+      && Number.isFinite(entry[1].tUpdate)
+      && entry[1].tUpdate >= 0
+    ));
 }

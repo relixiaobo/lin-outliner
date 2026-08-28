@@ -528,6 +528,43 @@ describe('Core', () => {
     expect(core.projection()).toEqual(projectionBefore);
   });
 
+  test('yielding Daily Note import rolls back date scaffolding and tree chunks together', async () => {
+    const core = Core.new();
+    const before = core.state();
+    let treeYields = 0;
+
+    await expect(core.transactionWithPatch('system', async () => {
+      const [dayNodeId] = await core.ensureDateNodesYielding([
+        { year: 2041, month: 1, day: 1 },
+        { year: 2041, month: 1, day: 2 },
+      ], {
+        yieldEveryDates: 1,
+        commitEveryDates: 1,
+        yield: async () => {},
+      });
+      await core.createNodesFromTreeYieldingFocus(dayNodeId!, [{
+        content: plainText('Imported Daily Note root'),
+        children: Array.from({ length: 5 }, (_value, index) => ({
+          content: plainText(`Imported Daily Note child ${index + 1}`),
+          children: [],
+        })),
+      }], {
+        yieldEveryNodes: 1,
+        commitEveryNodes: 1,
+        yield: async () => {
+          treeYields += 1;
+          if (treeYields === 4) throw new Error('injected Daily Note tree failure');
+        },
+      });
+    }, {
+      operationId: 'op:daily-note-import-failure',
+      command: 'outline_apply',
+    })).rejects.toThrow('injected Daily Note tree failure');
+
+    expect(treeYields).toBe(4);
+    expect(core.state()).toEqual(before);
+  });
+
   test('yielding tree append does not materialize the growing parent per sibling', async () => {
     const core = Core.new();
     const parentId = mustFocus(core.createNode(core.projection().todayId, null, 'Bulk parent'));

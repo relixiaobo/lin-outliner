@@ -20,6 +20,11 @@ export interface NodeAccessStoreOptions {
   onError?: (error: unknown, operation: 'load' | 'flush') => void;
 }
 
+export interface NodeAccessStoreUpdate {
+  readonly upserted: ReadonlyMap<NodeId, NodeAccessStats>;
+  readonly removed: readonly NodeId[];
+}
+
 export class NodeAccessStore {
   private readonly flushDelayMs: number;
   private readonly maxEntries: number;
@@ -54,16 +59,27 @@ export class NodeAccessStore {
     return new Map(this.stats);
   }
 
-  async recordMany(nodeIds: readonly NodeId[], source: NodeAccessSource, now = Date.now()): Promise<void> {
+  async recordMany(
+    nodeIds: readonly NodeId[],
+    source: NodeAccessSource,
+    now = Date.now(),
+  ): Promise<NodeAccessStoreUpdate> {
     await this.load();
     const uniqueNodeIds = [...new Set(nodeIds.filter((nodeId) => typeof nodeId === 'string' && nodeId.length > 0))];
-    if (uniqueNodeIds.length === 0) return;
+    if (uniqueNodeIds.length === 0) return { upserted: new Map(), removed: [] };
     for (const nodeId of uniqueNodeIds) {
       this.stats.set(nodeId, applyNodeAccess(this.stats.get(nodeId), source, now));
     }
-    this.compactInMemory();
+    const removed = this.compactInMemory();
     this.dirty = true;
     this.scheduleFlush();
+    return {
+      upserted: new Map(uniqueNodeIds.flatMap((nodeId) => {
+        const stats = this.stats.get(nodeId);
+        return stats ? [[nodeId, stats] as const] : [];
+      })),
+      removed,
+    };
   }
 
   async deleteMany(nodeIds: readonly NodeId[]): Promise<void> {
@@ -177,9 +193,12 @@ export class NodeAccessStore {
       .map((entry) => [entry.nodeId, entry.stats]);
   }
 
-  private compactInMemory(): void {
-    if (this.stats.size <= this.maxEntries) return;
-    this.stats = new Map(this.compactEntriesForPersistence());
+  private compactInMemory(): NodeId[] {
+    if (this.stats.size <= this.maxEntries) return [];
+    const retained = new Map(this.compactEntriesForPersistence());
+    const removed = [...this.stats.keys()].filter((nodeId) => !retained.has(nodeId));
+    this.stats = retained;
+    return removed;
   }
 
   private reportError(error: unknown, operation: 'load' | 'flush'): void {

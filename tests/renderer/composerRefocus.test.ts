@@ -2,7 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import { parseHTML } from 'linkedom';
 import {
   clickInstalledFocusTarget,
+  composerFocusRequestIsCurrent,
   composerRefocusDecision,
+  shouldRestoreComposerAfterThreadCreation,
   type ComposerRefocusClick,
 } from '../../src/renderer/agent/composerRefocus';
 
@@ -124,5 +126,51 @@ describe('clickInstalledFocusTarget', () => {
   test('a self-focusing surface (popover, dialog, inline editor) keeps its claim', () => {
     expect(clickInstalledFocusTarget(element('popover'), null, body)).toBe(true);
     expect(clickInstalledFocusTarget(element('editor'), element('copy'), body)).toBe(true);
+  });
+});
+
+describe('shouldRestoreComposerAfterThreadCreation', () => {
+  const body = document.body;
+
+  test('automatic creation focuses only when no surface claimed focus', () => {
+    expect(shouldRestoreComposerAfterThreadCreation('automatic', body, body, body)).toBe(true);
+    expect(shouldRestoreComposerAfterThreadCreation(
+      'automatic',
+      body,
+      element('editor'),
+      body,
+    )).toBe(false);
+  });
+
+  test('explicit creation may reclaim its initiating control but not a newer target', () => {
+    expect(shouldRestoreComposerAfterThreadCreation(
+      'explicit',
+      element('copy'),
+      element('copy'),
+      body,
+    )).toBe(true);
+    expect(shouldRestoreComposerAfterThreadCreation(
+      'explicit',
+      element('copy'),
+      element('editor'),
+      body,
+    )).toBe(false);
+  });
+});
+
+describe('composerFocusRequestIsCurrent', () => {
+  const body = document.body;
+
+  test('keeps an eligible request only while no newer surface owns focus', () => {
+    const initiatingControl = element('copy');
+    expect(composerFocusRequestIsCurrent(body, body, body)).toBe(true);
+    expect(composerFocusRequestIsCurrent(initiatingControl, initiatingControl, body)).toBe(true);
+    expect(composerFocusRequestIsCurrent(initiatingControl, body, body)).toBe(true);
+    expect(composerFocusRequestIsCurrent(body, element('editor'), body)).toBe(false);
+    expect(composerFocusRequestIsCurrent(
+      initiatingControl,
+      element('editor'),
+      body,
+    )).toBe(false);
   });
 });

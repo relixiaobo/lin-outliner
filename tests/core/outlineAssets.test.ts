@@ -63,6 +63,97 @@ describe('Outline Runtime assets', () => {
     });
   });
 
+  test('persists immutable logical metadata with verified bytes across Runtime restart', async () => {
+    const workspace = await makeWorkspace();
+    const bytes = pngBytes(18, 12);
+    const lease = await workspace.assets.ingestBytes(bytes, 'persisted.png');
+    const assetId = lease.assetId;
+    (lease.metadata as { mimeType: string }).mimeType = 'application/octet-stream';
+
+    const firstRead = await workspace.assets.show(assetId);
+    expect(firstRead).toMatchObject({
+      assetId,
+      metadata: {
+        mimeType: 'image/png',
+        originalFilename: 'persisted.png',
+        imageWidth: 18,
+        imageHeight: 12,
+      },
+    });
+    (firstRead.metadata as { originalFilename?: string }).originalFilename = 'mutated.png';
+    expect((await workspace.assets.show(assetId)).metadata.originalFilename).toBe('persisted.png');
+
+    const workspaceRoot = workspace.store.workspaceRoot();
+    const contentRoot = workspace.assets.content.root;
+    workspace.close();
+    const restarted = await OutlineRuntimeWorkspace.open(workspaceRoot, { contentRoot });
+    expect((await restarted.assets.readVerified(assetId)).bytes).toEqual(bytes);
+    expect(await restarted.assets.show(assetId)).toMatchObject({
+      assetId,
+      metadata: { mimeType: 'image/png', originalFilename: 'persisted.png' },
+    });
+    restarted.close();
+  });
+
+  test('uses octet-stream for asset bytes without a recognizable type', async () => {
+    const workspace = await makeWorkspace();
+    const lease = await workspace.assets.ingestBytes(new Uint8Array([1, 2, 3, 4]));
+
+    expect(lease.metadata).toMatchObject({
+      mimeType: 'application/octet-stream',
+      byteSize: 4,
+    });
+  });
+
+  test('derives MP4 duration when the movie header follows a large media payload', async () => {
+    const workspace = await makeWorkspace();
+    const lease = await workspace.assets.ingestBytes(mp4BytesWithTrailingMovieHeader(2_500), 'recording.mp4');
+
+    expect(lease.metadata).toMatchObject({
+      mimeType: 'video/mp4',
+      videoDurationMs: 2_500,
+    });
+  });
+
+  test('bounds file reads across dense MP4 boxes and WAV chunks', async () => {
+    const workspace = await makeWorkspace();
+    const mp4 = await workspace.assets.ingestBytes(mp4BytesWithDenseBoxes(2_500), 'dense.mp4');
+    const wav = await workspace.assets.ingestBytes(wavBytesWithDenseChunks(1_250), 'dense.wav');
+
+    expect(mp4.metadata).toMatchObject({ mimeType: 'video/mp4', videoDurationMs: 2_500 });
+    expect(wav.metadata).toMatchObject({ mimeType: 'audio/wav', audioDurationMs: 1_250 });
+  }, 2_000);
+
+  test('derives metadata that follows the bounded ingestion head without loading the whole asset', async () => {
+    const workspace = await makeWorkspace();
+    const pdf = await workspace.assets.ingestBytes(pdfBytesWithTrailingPage(), 'long.pdf');
+    const jpeg = await workspace.assets.ingestBytes(jpegBytesWithTrailingFrame(640, 480), 'long.jpg');
+    const wav = await workspace.assets.ingestBytes(wavBytesWithTrailingData(1_250), 'long.wav');
+
+    expect(pdf.metadata).toMatchObject({ mimeType: 'application/pdf', pdfPageCount: 2 });
+    expect(jpeg.metadata).toMatchObject({ mimeType: 'image/jpeg', imageWidth: 640, imageHeight: 480 });
+    expect(wav.metadata).toMatchObject({ mimeType: 'audio/wav', audioDurationMs: 1_250 });
+  });
+
+  test('bounds file reads while finding a JPEG frame after malformed padding', async () => {
+    const workspace = await makeWorkspace();
+    const [jpeg, markerFillJpeg] = await Promise.all([
+      workspace.assets.ingestBytes(jpegBytesWithMalformedPadding(1_024, 768), 'damaged.jpg'),
+      workspace.assets.ingestBytes(jpegBytesWithMarkerFill(320, 240), 'marker-fill.jpg'),
+    ]);
+
+    expect(jpeg.metadata).toMatchObject({
+      mimeType: 'image/jpeg',
+      imageWidth: 1_024,
+      imageHeight: 768,
+    });
+    expect(markerFillJpeg.metadata).toMatchObject({
+      mimeType: 'image/jpeg',
+      imageWidth: 320,
+      imageHeight: 240,
+    });
+  }, 2_000);
+
   test('charges one physical revision to recovery only after its last live logical record is removed', async () => {
     const workspace = await makeWorkspace();
     const bytes = Buffer.alloc(32 * 1024, 7);
@@ -600,4 +691,155 @@ function pngBytes(width: number, height: number): Uint8Array {
   bytes.writeUInt32BE(width, 16);
   bytes.writeUInt32BE(height, 20);
   return bytes;
+}
+
+function mp4BytesWithTrailingMovieHeader(durationMs: number): Uint8Array {
+  const ftyp = Buffer.alloc(24);
+  ftyp.writeUInt32BE(ftyp.length, 0);
+  ftyp.write('ftyp', 4, 'ascii');
+  ftyp.write('isom', 8, 'ascii');
+
+  const mdat = Buffer.alloc(8 * 1024 * 1024 + 1_024);
+  mdat.writeUInt32BE(mdat.length, 0);
+  mdat.write('mdat', 4, 'ascii');
+
+  const mvhd = Buffer.alloc(28);
+  mvhd.writeUInt32BE(mvhd.length, 0);
+  mvhd.write('mvhd', 4, 'ascii');
+  mvhd.writeUInt32BE(1_000, 20);
+  mvhd.writeUInt32BE(durationMs, 24);
+
+  const moov = Buffer.alloc(8 + mvhd.length);
+  moov.writeUInt32BE(moov.length, 0);
+  moov.write('moov', 4, 'ascii');
+  mvhd.copy(moov, 8);
+  return Buffer.concat([ftyp, mdat, moov]);
+}
+
+function mp4BytesWithDenseBoxes(durationMs: number): Uint8Array {
+  const ftyp = Buffer.alloc(24);
+  ftyp.writeUInt32BE(ftyp.length, 0);
+  ftyp.write('ftyp', 4, 'ascii');
+  ftyp.write('isom', 8, 'ascii');
+  const padding = Buffer.alloc(8 * 1024 * 1024 + 1_024);
+  for (let offset = 0; offset < padding.byteLength; offset += 8) {
+    padding.writeUInt32BE(8, offset);
+    padding.write('free', offset + 4, 'ascii');
+  }
+  const mvhd = Buffer.alloc(28);
+  mvhd.writeUInt32BE(mvhd.length, 0);
+  mvhd.write('mvhd', 4, 'ascii');
+  mvhd.writeUInt32BE(1_000, 20);
+  mvhd.writeUInt32BE(durationMs, 24);
+  const moov = Buffer.alloc(8 + mvhd.length);
+  moov.writeUInt32BE(moov.length, 0);
+  moov.write('moov', 4, 'ascii');
+  mvhd.copy(moov, 8);
+  return Buffer.concat([ftyp, padding, moov]);
+}
+
+function pdfBytesWithTrailingPage(): Uint8Array {
+  const prefix = Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Page >>\nendobj\n');
+  const padding = Buffer.alloc(8 * 1024 * 1024 + 1_024, 0x20);
+  const suffix = Buffer.from('2 0 obj\n<< /Type /Page >>\nendobj\n%%EOF\n');
+  return Buffer.concat([prefix, padding, suffix]);
+}
+
+function jpegBytesWithTrailingFrame(width: number, height: number): Uint8Array {
+  const start = Buffer.from([0xff, 0xd8]);
+  const segments: Buffer[] = [];
+  let retainedBytes = 0;
+  while (retainedBytes <= 8 * 1024 * 1024) {
+    const segment = Buffer.alloc(65_537);
+    segment[0] = 0xff;
+    segment[1] = 0xe1;
+    segment.writeUInt16BE(65_535, 2);
+    segments.push(segment);
+    retainedBytes += segment.byteLength;
+  }
+  const frame = Buffer.alloc(19);
+  frame[0] = 0xff;
+  frame[1] = 0xc0;
+  frame.writeUInt16BE(17, 2);
+  frame[4] = 8;
+  frame.writeUInt16BE(height, 5);
+  frame.writeUInt16BE(width, 7);
+  return Buffer.concat([start, ...segments, frame]);
+}
+
+function jpegBytesWithMalformedPadding(width: number, height: number): Uint8Array {
+  const start = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x02]);
+  const padding = Buffer.alloc(8 * 1024 * 1024 + 256 * 1024);
+  const frame = Buffer.alloc(19);
+  frame[0] = 0xff;
+  frame[1] = 0xc0;
+  frame.writeUInt16BE(17, 2);
+  frame[4] = 8;
+  frame.writeUInt16BE(height, 5);
+  frame.writeUInt16BE(width, 7);
+  return Buffer.concat([start, padding, frame]);
+}
+
+function jpegBytesWithMarkerFill(width: number, height: number): Uint8Array {
+  const start = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x02]);
+  const markerFill = Buffer.alloc(256 * 1024, 0xff);
+  const frame = Buffer.alloc(19);
+  frame[0] = 0xff;
+  frame[1] = 0xc0;
+  frame.writeUInt16BE(17, 2);
+  frame[4] = 8;
+  frame.writeUInt16BE(height, 5);
+  frame.writeUInt16BE(width, 7);
+  return Buffer.concat([start, markerFill, frame]);
+}
+
+function wavBytesWithTrailingData(durationMs: number): Uint8Array {
+  const sampleRate = 8_000;
+  const byteRate = sampleRate * 2;
+  const dataSize = Math.round(byteRate * durationMs / 1_000);
+  const format = Buffer.alloc(24);
+  format.write('fmt ', 0, 'ascii');
+  format.writeUInt32LE(16, 4);
+  format.writeUInt16LE(1, 8);
+  format.writeUInt16LE(1, 10);
+  format.writeUInt32LE(sampleRate, 12);
+  format.writeUInt32LE(byteRate, 16);
+  format.writeUInt16LE(2, 20);
+  format.writeUInt16LE(16, 22);
+  const metadata = Buffer.alloc(8 * 1024 * 1024 + 1_024);
+  metadata.write('LIST', 0, 'ascii');
+  metadata.writeUInt32LE(metadata.byteLength - 8, 4);
+  const data = Buffer.alloc(8 + dataSize);
+  data.write('data', 0, 'ascii');
+  data.writeUInt32LE(dataSize, 4);
+  const riff = Buffer.alloc(12);
+  riff.write('RIFF', 0, 'ascii');
+  riff.writeUInt32LE(4 + format.byteLength + metadata.byteLength + data.byteLength, 4);
+  riff.write('WAVE', 8, 'ascii');
+  return Buffer.concat([riff, format, metadata, data]);
+}
+
+function wavBytesWithDenseChunks(durationMs: number): Uint8Array {
+  const sampleRate = 8_000;
+  const byteRate = sampleRate * 2;
+  const dataSize = Math.round(byteRate * durationMs / 1_000);
+  const format = Buffer.alloc(24);
+  format.write('fmt ', 0, 'ascii');
+  format.writeUInt32LE(16, 4);
+  format.writeUInt16LE(1, 8);
+  format.writeUInt16LE(1, 10);
+  format.writeUInt32LE(sampleRate, 12);
+  format.writeUInt32LE(byteRate, 16);
+  format.writeUInt16LE(2, 20);
+  format.writeUInt16LE(16, 22);
+  const padding = Buffer.alloc(8 * 1024 * 1024 + 1_024);
+  for (let offset = 0; offset < padding.byteLength; offset += 8) padding.write('JUNK', offset, 'ascii');
+  const data = Buffer.alloc(8 + dataSize);
+  data.write('data', 0, 'ascii');
+  data.writeUInt32LE(dataSize, 4);
+  const riff = Buffer.alloc(12);
+  riff.write('RIFF', 0, 'ascii');
+  riff.writeUInt32LE(4 + format.byteLength + padding.byteLength + data.byteLength, 4);
+  riff.write('WAVE', 8, 'ascii');
+  return Buffer.concat([riff, format, padding, data]);
 }

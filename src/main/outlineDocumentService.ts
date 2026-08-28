@@ -11,7 +11,11 @@ import type {
   ProjectionResult,
 } from '../outline/contract/schemas';
 import { OUTLINE_PROTOCOL_VERSION } from '../outline/contract/version';
-import type { OutlineClient, OutlineClientSupervisor } from '../outline/client';
+import type {
+  DesktopPersonalAccessRankingUpdate,
+  OutlineClient,
+  OutlineClientSupervisor,
+} from '../outline/client';
 import {
   applyProjectionUpdate,
   projectionUpdateFromOutlineEvent,
@@ -26,11 +30,13 @@ import type {
   ProjectionUpdate,
   SearchHit,
 } from '../core/types';
+import type { NodeAccessStats } from '../core/nodeAccessRanking';
 
 const EVENT_RECONNECT_MIN_DELAY_MS = 100;
 const EVENT_RECONNECT_MAX_DELAY_MS = 2_000;
 const OPERATION_EVENT_TIMEOUT_MS = 10_000;
 const OPERATION_EVENT_CACHE_LIMIT = 256;
+const DURABILITY_MONITOR_DELAY_MS = 5_100;
 
 export interface OutlineMutationOptions {
   readonly acknowledgeDestructive?: boolean;
@@ -44,6 +50,10 @@ export interface OutlineMutationOptions {
 export interface OutlineProjectionDelivery {
   readonly event: OutlineEvent;
   readonly update: ProjectionUpdate;
+}
+
+export interface OutlineDocumentServiceOptions {
+  readonly durabilityMonitorDelayMs?: number;
 }
 
 type ProjectionListener = (delivery: OutlineProjectionDelivery) => void;
@@ -74,8 +84,20 @@ export class OutlineDocumentService {
   private admissionFrozen = false;
   private admissionCommitted = false;
   private closed = false;
+  private readonly personalAccessRanking = new Map<string, NodeAccessStats>();
+  private personalAccessRankingReady = false;
+  private personalAccessRankingSyncTail = Promise.resolve();
+  private readonly durabilityMonitorDelayMs: number;
+  private durabilityMonitorTimer?: ReturnType<typeof setTimeout>;
+  private durabilityFailureHandler?: (error: Error, revision: number) => void;
+  private durabilityFailureReportedRevision = -1;
 
-  constructor(private readonly supervisor: Pick<OutlineClientSupervisor, 'connect'>) {}
+  constructor(
+    private readonly supervisor: Pick<OutlineClientSupervisor, 'connect'>,
+    options: OutlineDocumentServiceOptions = {},
+  ) {
+    this.durabilityMonitorDelayMs = Math.max(1, options.durabilityMonitorDelayMs ?? DURABILITY_MONITOR_DELAY_MS);
+  }
 
   init(): Promise<ProjectionSnapshot> {
     if (this.snapshot) return Promise.resolve(this.snapshot);
@@ -114,6 +136,10 @@ export class OutlineDocumentService {
     return () => this.listeners.delete(listener);
   }
 
+  setDurabilityFailureHandler(handler: (error: Error, revision: number) => void): void {
+    this.durabilityFailureHandler = handler;
+  }
+
   async searchNodeHits(query: string, limit: number): Promise<SearchHit[]> {
     const boundedLimit = Math.max(1, Math.min(10_000, Math.floor(limit)));
     try {
@@ -123,6 +149,25 @@ export class OutlineDocumentService {
       this.invalidateRequestClient();
       return (await this.connectRequestClient()).searchDesktopNodes(query, boundedLimit);
     }
+  }
+
+  replacePersonalAccessRanking(entries: ReadonlyMap<string, NodeAccessStats>): Promise<void> {
+    this.personalAccessRanking.clear();
+    for (const [nodeId, stats] of entries) this.personalAccessRanking.set(nodeId, stats);
+    this.personalAccessRankingReady = true;
+    return this.enqueuePersonalAccessRankingSync({ action: 'replace', entries: [...entries] });
+  }
+
+  upsertPersonalAccessRanking(entries: ReadonlyMap<string, NodeAccessStats>): Promise<void> {
+    for (const [nodeId, stats] of entries) this.personalAccessRanking.set(nodeId, stats);
+    this.personalAccessRankingReady = true;
+    return this.enqueuePersonalAccessRankingSync({ action: 'upsert', entries: [...entries] });
+  }
+
+  removePersonalAccessRanking(nodeIds: readonly string[]): Promise<void> {
+    for (const nodeId of nodeIds) this.personalAccessRanking.delete(nodeId);
+    this.personalAccessRankingReady = true;
+    return this.enqueuePersonalAccessRankingSync({ action: 'remove', nodeIds });
   }
 
   runChanges(changes: readonly Change[], options: OutlineMutationOptions = {}): Promise<CommandResult> {
@@ -136,44 +181,79 @@ export class OutlineDocumentService {
     }), options);
   }
 
+  runPlannedChanges(
+    build: (
+      projection: DocumentProjection,
+    ) => readonly Change[] | null | Promise<readonly Change[] | null>,
+    options: OutlineMutationOptions = {},
+  ): Promise<CommandResult | undefined> {
+    const idempotencyKey = options.idempotencyKey ?? `desktop:${crypto.randomUUID()}`;
+    return this.enqueueMutation(async () => {
+      if (!this.snapshot) throw new Error('Outline Runtime Projection is not initialized.');
+      const { revision, projection } = this.snapshot;
+      const changes = await build(projection);
+      if (!changes || changes.length === 0) return undefined;
+      return this.executeChangeSet({
+        protocolVersion: OUTLINE_PROTOCOL_VERSION,
+        kind: 'outline.changeset',
+        base: { revision },
+        ...(options.idempotencyKey ? { idempotencyKey: options.idempotencyKey } : {}),
+        ...(options.source ? { source: options.source } : {}),
+        operations: [...changes],
+      }, revision, idempotencyKey, options);
+    });
+  }
+
   runChangeSet(
-    build: (revision: number) => ChangeSet,
+    build: (revision: number) => ChangeSet | Promise<ChangeSet>,
     options: OutlineMutationOptions = {},
   ): Promise<CommandResult> {
-    if (this.admissionFrozen) return Promise.reject(new Error('Outline mutation admission is frozen.'));
     const idempotencyKey = options.idempotencyKey ?? `desktop:${crypto.randomUUID()}`;
-    const result = this.mutationTail.then(async () => {
+    return this.enqueueMutation(async () => {
       const revision = this.revision();
-      const input = build(revision);
-      const changeSet: ChangeSet = {
-        ...input,
-        base: { ...input.base, revision },
-        idempotencyKey: input.idempotencyKey ?? idempotencyKey,
-      };
-      const acceptedReceipt = options.acknowledgeDestructive || options.settlement === 'durable'
-        ? null
-        : await (await this.connectRequestClient()).commitDesktopChangeSet(changeSet, options.undoGroup);
-      const accepted = acceptedReceipt as (typeof acceptedReceipt & { readonly update: ProjectionUpdate });
-      const diff = accepted?.diff ?? await this.request<Diff>('diff', { changeSet });
-      const settlement = accepted?.settlement ?? await this.request<Operation | NoChangeResult>('apply', {
-        diff,
-        ...(options.acknowledgeDestructive ? { acknowledgeDestructive: true } : {}),
-      });
-      const update = accepted?.update ?? (settlement.kind === 'outline.no-change'
-        ? await this.currentFullUpdate(settlement.revision)
-        : await this.updateFromOwnOperation(settlement.operationId));
-      if (accepted) this.acceptOwnUpdate(settlement, update);
-      return {
-        update,
-        ...(options.focus ? {
-          focus: typeof options.focus === 'function'
-            ? options.focus(settlement, diff, update)
-            : options.focus,
-        } : {}),
-      };
+      return this.executeChangeSet(await build(revision), revision, idempotencyKey, options);
     });
+  }
+
+  private enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.admissionFrozen) return Promise.reject(new Error('Outline mutation admission is frozen.'));
+    const result = this.mutationTail.then(operation);
     this.mutationTail = result.then(() => undefined, () => undefined);
     return result;
+  }
+
+  private async executeChangeSet(
+    input: ChangeSet,
+    revision: number,
+    idempotencyKey: string,
+    options: OutlineMutationOptions,
+  ): Promise<CommandResult> {
+    const changeSet: ChangeSet = {
+      ...input,
+      base: { ...input.base, revision },
+      idempotencyKey: input.idempotencyKey ?? idempotencyKey,
+    };
+    const acceptedReceipt = options.acknowledgeDestructive || options.settlement === 'durable'
+      ? null
+      : await (await this.connectRequestClient()).commitDesktopChangeSet(changeSet, options.undoGroup);
+    const accepted = acceptedReceipt as (typeof acceptedReceipt & { readonly update: ProjectionUpdate });
+    const diff = accepted?.diff ?? await this.request<Diff>('diff', { changeSet });
+    const settlement = accepted?.settlement ?? await this.request<Operation | NoChangeResult>('apply', {
+      diff,
+      ...(options.acknowledgeDestructive ? { acknowledgeDestructive: true } : {}),
+    });
+    const update = accepted?.update ?? (settlement.kind === 'outline.no-change'
+      ? await this.currentFullUpdate(settlement.revision)
+      : await this.updateFromOwnOperation(settlement.operationId));
+    if (accepted) this.acceptOwnUpdate(settlement, update);
+    return {
+      update,
+      ...(options.focus ? {
+        focus: typeof options.focus === 'function'
+          ? options.focus(settlement, diff, update)
+          : options.focus,
+      } : {}),
+    };
   }
 
   private currentFullUpdate(revision: number): ProjectionUpdate {
@@ -209,6 +289,7 @@ export class OutlineDocumentService {
       },
       update,
     });
+    this.scheduleDurabilityMonitor();
   }
 
   async log(input: {
@@ -257,6 +338,8 @@ export class OutlineDocumentService {
     this.closed = true;
     this.watchController?.abort();
     this.watchController = null;
+    if (this.durabilityMonitorTimer) clearTimeout(this.durabilityMonitorTimer);
+    this.durabilityMonitorTimer = undefined;
     this.requestClient?.close();
     this.requestClient = null;
     for (const waiters of this.operationWaiters.values()) {
@@ -413,16 +496,71 @@ export class OutlineDocumentService {
   }
 
   private async connectRequestClient(): Promise<OutlineClient> {
+    if (this.closed) throw new Error('Outline document service is closed.');
     if (this.requestClient) return this.requestClient;
     if (!this.requestClientConnecting) {
-      this.requestClientConnecting = this.supervisor.connect().then((client) => {
-        this.requestClient = client;
-        return client;
+      this.requestClientConnecting = this.supervisor.connect().then(async (client) => {
+        try {
+          if (this.closed) throw new Error('Outline document service is closed.');
+          if (this.personalAccessRankingReady) {
+            await client.syncDesktopPersonalAccessRanking({
+              action: 'replace',
+              entries: [...this.personalAccessRanking],
+            });
+          }
+          if (this.closed) throw new Error('Outline document service is closed.');
+          this.requestClient = client;
+          return client;
+        } catch (error) {
+          client.close();
+          throw error;
+        }
       }).finally(() => {
         this.requestClientConnecting = null;
       });
     }
     return this.requestClientConnecting;
+  }
+
+  private enqueuePersonalAccessRankingSync(update: DesktopPersonalAccessRankingUpdate): Promise<void> {
+    const sync = async () => {
+      try {
+        await (await this.connectRequestClient()).syncDesktopPersonalAccessRanking(update);
+      } catch (error) {
+        if (!shouldReconnectRequestClient(error)) throw error;
+        this.invalidateRequestClient();
+        await (await this.connectRequestClient()).syncDesktopPersonalAccessRanking(update);
+      }
+    };
+    const next = this.personalAccessRankingSyncTail.then(sync, sync);
+    this.personalAccessRankingSyncTail = next.then(() => undefined, () => undefined);
+    return next;
+  }
+
+  private scheduleDurabilityMonitor(): void {
+    if (this.closed || this.durabilityMonitorTimer) return;
+    this.durabilityMonitorTimer = setTimeout(() => {
+      this.durabilityMonitorTimer = undefined;
+      void this.monitorDurability();
+    }, this.durabilityMonitorDelayMs);
+    this.durabilityMonitorTimer.unref?.();
+  }
+
+  private async monitorDurability(): Promise<void> {
+    if (this.closed) return;
+    try {
+      const status = await this.manageRuntime('status');
+      if (status.failure) {
+        if (status.acceptedRevision > this.durabilityFailureReportedRevision) {
+          this.durabilityFailureReportedRevision = status.acceptedRevision;
+          this.durabilityFailureHandler?.(new Error(status.failure.message), status.acceptedRevision);
+        }
+        return;
+      }
+      if (status.durableRevision < status.acceptedRevision) this.scheduleDurabilityMonitor();
+    } catch {
+      if (!this.closed) this.scheduleDurabilityMonitor();
+    }
   }
 
   private invalidateRequestClient(): void {

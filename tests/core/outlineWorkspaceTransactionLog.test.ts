@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { appendFile, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { CorePersistenceCapture, CoreTransactionPatch } from '../../src/core/core';
@@ -60,6 +60,113 @@ describe('WorkspaceTransactionLog', () => {
     });
     expect(restored.state()).toEqual(core.state());
     expect(await restarted.recoveryPatch(transaction.operation.operationId)).toEqual(transaction.recoveryPatch);
+  });
+
+  test('rejects a transaction from a different workspace replica identity', async () => {
+    const root = await makeRoot();
+    const core = Core.new({ installationId: crypto.randomUUID() });
+    const store = await initializedStore(root, core);
+    const transaction = await createTransaction(core, 1, (candidate) => {
+      candidate.createNode(candidate.projection().todayId, null, 'Foreign replica row');
+    });
+
+    await expect(store.append({
+      ...transaction,
+      persistence: {
+        ...transaction.persistence,
+        local: {
+          ...transaction.persistence.local,
+          replicaId: crypto.randomUUID(),
+        },
+      },
+    })).rejects.toThrow('workspace replica identity changed');
+
+    expect((await store.load()).operations).toEqual([]);
+  });
+
+  test('rejects persistence coordinates that do not extend the replay baseline', async () => {
+    const root = await makeRoot();
+    const core = Core.new({ installationId: crypto.randomUUID() });
+    const store = await initializedStore(root, core);
+    const snapshot = JSON.parse(await readFile(store.snapshotPath, 'utf8')) as {
+      document: { persistenceRevision: number };
+    };
+    const first = await createTransaction(core, 1, (candidate) => {
+      candidate.createNode(candidate.projection().todayId, null, 'Baseline row');
+    });
+    await expect(store.append({
+      ...first,
+      persistence: {
+        ...first.persistence,
+        persistenceRevision: snapshot.document.persistenceRevision,
+      },
+    })).rejects.toThrow('persistence ordering is not monotonic');
+    await store.append(first);
+
+    const second = await createTransaction(core, 2, (candidate) => {
+      candidate.createNode(candidate.projection().todayId, null, 'Backward metadata row');
+    });
+    await expect(store.append({
+      ...second,
+      persistence: {
+        ...second.persistence,
+        metadataSequence: Math.max(0, first.persistence.metadataSequence - 1),
+      },
+    })).rejects.toThrow('persistence ordering is not monotonic');
+  });
+
+  test('rejects malformed persistence bytes during replay and operation history before append', async () => {
+    const root = await makeRoot();
+    const core = Core.new({ installationId: crypto.randomUUID() });
+    const store = await initializedStore(root, core);
+    const transaction = await createTransaction(core, 1, (candidate) => {
+      candidate.createNode(candidate.projection().todayId, null, 'Malformed persistence row');
+    });
+
+    await expect(store.append({
+      ...transaction,
+      persistence: {
+        ...transaction.persistence,
+        local: {
+          ...transaction.persistence.local,
+          operationHistoryUpserts: [{} as never],
+        },
+      },
+    })).rejects.toThrow('Invalid encoded Core persistence capture');
+    await store.append(transaction);
+    const lines = (await readFile(store.transactionLogPath, 'utf8')).trimEnd().split('\n');
+    const record = JSON.parse(lines[1]!) as Record<string, unknown>;
+    (record.persistence as Record<string, unknown>).update = '***';
+    const { checksum: _checksum, ...body } = record;
+    record.checksum = canonicalSha256(body);
+    await writeFile(store.transactionLogPath, `${lines[0]}\n${JSON.stringify(record)}\n`);
+
+    const loaded = await new WorkspaceTransactionLog(root).load();
+    expect(loaded.inconsistent?.message).toContain('Invalid encoded Core persistence capture');
+    expect(loaded.operations).toEqual([]);
+  });
+
+  test('fails reconstruction when a replay update does not reach its declared Loro version', async () => {
+    const root = await makeRoot();
+    const core = Core.new({ installationId: crypto.randomUUID() });
+    const store = await initializedStore(root, core);
+    const staleVersion = core.replicationVersionVector();
+    const transaction = await createTransaction(core, 1, (candidate) => {
+      candidate.createNode(candidate.projection().todayId, null, 'Version mismatch row');
+    });
+    await store.append(transaction);
+    const lines = (await readFile(store.transactionLogPath, 'utf8')).trimEnd().split('\n');
+    const record = JSON.parse(lines[1]!) as Record<string, unknown>;
+    (record.persistence as Record<string, unknown>).version = Buffer.from(staleVersion).toString('base64');
+    const { checksum: _checksum, ...body } = record;
+    record.checksum = canonicalSha256(body);
+    await writeFile(store.transactionLogPath, `${lines[0]}\n${JSON.stringify(record)}\n`);
+
+    const loaded = await new WorkspaceTransactionLog(root).load();
+    expect(loaded.inconsistent).toBeUndefined();
+    expect(() => Core.fromPersistenceState(loaded.snapshot!, loaded.replay, {
+      installationId: core.persistenceIdentity().installationId,
+    })).toThrow('workspace persistence replay version mismatch');
   });
 
   test('resolves a crash after log fsync and before acknowledgement through the idempotency key', async () => {
@@ -126,6 +233,96 @@ describe('WorkspaceTransactionLog', () => {
       installationId: core.persistenceIdentity().installationId,
     });
     expect(restored.state()).toEqual(core.state());
+  });
+
+  test('rejects a load when the transaction log grows after its bytes are read', async () => {
+    const root = await makeRoot();
+    const core = Core.new({ installationId: crypto.randomUUID() });
+    const initialized = await initializedStore(root, core);
+    const transaction = await createTransaction(core, 1, (candidate) => {
+      candidate.createNode(candidate.projection().todayId, null, 'Committed before concurrent growth');
+    });
+    await initialized.append(transaction);
+    const restarted = new WorkspaceTransactionLog(root, {
+      afterTransactionLogRead: () => appendFile(initialized.transactionLogPath, '{"concurrent":true}\n'),
+    });
+
+    await expect(restarted.load()).rejects.toThrow(
+      'Outline transaction log changed while loading its verified prefix',
+    );
+  });
+
+  test('rejects an append when the active transaction log inode was replaced at the same size', async () => {
+    const root = await makeRoot();
+    const core = Core.new({ installationId: crypto.randomUUID() });
+    const store = await initializedStore(root, core);
+    const original = await readFile(store.transactionLogPath);
+    const replacementPath = `${store.transactionLogPath}.replacement`;
+    await writeFile(replacementPath, original);
+    await rename(replacementPath, store.transactionLogPath);
+    const transaction = await createTransaction(core, 1, (candidate) => {
+      candidate.createNode(candidate.projection().todayId, null, 'Rejected after replacement');
+    });
+
+    await expect(store.append(transaction)).rejects.toMatchObject({
+      outlineError: { code: 'durability_failed', retryable: true },
+    });
+
+    const loaded = await new WorkspaceTransactionLog(root).load();
+    expect(loaded.inconsistent).toBeUndefined();
+    expect(loaded.operations).toEqual([]);
+  });
+
+  test('does not acknowledge an append when the log path is replaced during fsync', async () => {
+    const root = await makeRoot();
+    const core = Core.new({ installationId: crypto.randomUUID() });
+    const logPath = path.join(root, 'outline.transactions.jsonl');
+    let replaceDuringFsync = false;
+    let replacementBytes = Buffer.alloc(0);
+    const store = await initializedStore(root, core, {
+      fsync: async (handle) => {
+        await handle.sync();
+        if (!replaceDuringFsync) return;
+        replaceDuringFsync = false;
+        const replacementPath = `${logPath}.replacement`;
+        await writeFile(replacementPath, replacementBytes);
+        await rename(replacementPath, logPath);
+      },
+    });
+    replacementBytes = await readFile(store.transactionLogPath);
+    const transaction = await createTransaction(core, 1, (candidate) => {
+      candidate.createNode(candidate.projection().todayId, null, 'Unknown replacement settlement');
+    });
+    replaceDuringFsync = true;
+
+    await expect(store.append(transaction)).rejects.toMatchObject({
+      outlineError: { code: 'durability_failed', retryable: true },
+    });
+
+    const loaded = await new WorkspaceTransactionLog(root).load();
+    expect(loaded.inconsistent).toBeUndefined();
+    expect(loaded.operations).toEqual([]);
+  });
+
+  test('uses replayed record count and durable JSONL bytes for compaction thresholds', async () => {
+    const root = await makeRoot();
+    const core = Core.new({ installationId: crypto.randomUUID() });
+    const store = await initializedStore(root, core, { compactionRecords: 100 });
+    const transaction = await createTransaction(core, 1, (candidate) => {
+      candidate.createNode(candidate.projection().todayId, null, 'Count the durable record envelope');
+    });
+    await store.append(transaction);
+
+    const logBytes = (await stat(store.transactionLogPath)).size;
+    expect(logBytes).toBeGreaterThan(transaction.persistence.update.byteLength);
+    const replayCountStore = new WorkspaceTransactionLog(root, { compactionRecords: 1 });
+    expect(await replayCountStore.needsCompaction()).toBe(true);
+
+    const jsonlBytesStore = new WorkspaceTransactionLog(root, {
+      compactionRecords: 100,
+      compactionLogBytes: transaction.persistence.update.byteLength + 1,
+    });
+    expect(await jsonlBytesStore.needsCompaction()).toBe(true);
   });
 
   test('retries every record idempotently after a batched fsync acknowledgement failure', async () => {
@@ -449,6 +646,42 @@ describe('WorkspaceTransactionLog', () => {
     expect(Core.fromState(loaded.snapshot!, {
       installationId: core.persistenceIdentity().installationId,
     }).state()).toEqual(core.state());
+  });
+
+  test('blocks a stale log whose complete records are newer than the snapshot', async () => {
+    const root = await makeRoot();
+    const core = Core.new({ installationId: crypto.randomUUID() });
+    const store = await initializedStore(root, core);
+    const first = await createTransaction(core, 1, (candidate) => {
+      candidate.createNode(candidate.projection().todayId, null, 'First compacted row');
+    });
+    await store.append(first);
+    const second = await createTransaction(core, 2, (candidate) => {
+      candidate.createNode(candidate.projection().todayId, null, 'Second compacted row');
+    });
+    await store.append(second);
+    const staleLines = (await readFile(store.transactionLogPath, 'utf8')).trimEnd().split('\n');
+    await store.compact(core.serializeState());
+    const third = await createTransaction(core, 3, (candidate) => {
+      candidate.createNode(candidate.projection().todayId, null, 'Newer unabsorbed row');
+    });
+    await store.append(third);
+    const currentLines = (await readFile(store.transactionLogPath, 'utf8')).trimEnd().split('\n');
+    await writeFile(store.transactionLogPath, `${[
+      ...staleLines,
+      currentLines[1]!,
+    ].join('\n')}\n`);
+
+    const restarted = new WorkspaceTransactionLog(root);
+    const loaded = await restarted.load();
+    expect(loaded.inconsistent?.message).toContain('cannot be proven absorbed');
+    expect(loaded.operations.map((operation) => operation.operationId)).toEqual([
+      first.operation.operationId,
+      second.operation.operationId,
+    ]);
+    await expect(restarted.append(third)).rejects.toMatchObject({
+      outlineError: { code: 'recovery_inconsistent' },
+    });
   });
 });
 

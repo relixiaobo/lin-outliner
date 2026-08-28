@@ -962,6 +962,34 @@ describe('outline CLI', () => {
         counts: [{ name: 'alpha', count: 1 }, { name: 'beta', count: 1 }],
       });
 
+      const duplicateNames = captureIo(JSON.stringify({
+        ...batchRequest,
+        queries: [
+          { name: 'same', query: { kind: 'rule', op: 'STRING_MATCH', text: 'alpha' } },
+          { name: 'same', query: { kind: 'rule', op: 'STRING_MATCH', text: 'beta' } },
+        ],
+      }));
+      expect(await runOutlineCli(['--json', '--no-start', 'find', '--input', '-'], {
+        runtimeRoot: root,
+        io: duplicateNames.io,
+      })).toBe(2);
+      expect(JSON.parse(duplicateNames.stdout)).toMatchObject({
+        ok: false,
+        error: { code: 'invalid_input', message: expect.stringContaining('names must be unique') },
+      });
+
+      const missingMode = captureIo(JSON.stringify({
+        queries: batchRequest.queries,
+      }));
+      expect(await runOutlineCli(['--json', '--no-start', 'find', '--input', '-'], {
+        runtimeRoot: root,
+        io: missingMode.io,
+      })).toBe(2);
+      expect(JSON.parse(missingMode.stdout)).toMatchObject({
+        ok: false,
+        error: { code: 'invalid_input' },
+      });
+
       const shown = captureIo();
       expect(await runOutlineCli(['--json', '--no-start', 'show', betaId, alphaId], {
         runtimeRoot: root,

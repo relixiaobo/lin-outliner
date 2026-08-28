@@ -121,6 +121,11 @@ Runtime document capabilities. Local `asset://` range serving streams verified
 Runtime bytes and does not pre-read an entire video merely to render it. PDF
 thumbnails are separate logical AssetRecords over ordinary exact revisions; the
 parent relationship protects them through lease, live, recovery, and GC rules.
+The renderer URL is `asset://local/<percent-encoded-logical-id>`. Main accepts
+exactly that authority and one decoded path segment, rejecting credentials,
+ports, query, fragment, separators, controls, and empty or oversized IDs before
+the Runtime asset service is called. Colon-bearing logical IDs therefore never
+enter a URL hostname, where normalization would lowercase them.
 
 Preview translation persistence is a separate local-derived-data boundary, not
 an asset or workspace fact. Electron main owns a bounded cache under `userData`;
@@ -294,6 +299,15 @@ append admits no document state.
 
 Runtime replays the verified prefix at startup, discards only a provably torn
 final record, and fails closed on corruption that could admit an unknown state.
+The loaded transaction-log cursor includes device, inode, and byte length. Log
+loading verifies those coordinates before and after the read and rejects a path
+replacement or byte-length change instead of pairing an unparsed suffix with an
+advanced cursor. Every append and torn-tail repair verifies the opened handle
+and active path against that cursor before mutation and again after fsync;
+replacement or growth during the acknowledgement window invalidates the
+process-local state and reports uncertain durability. A stale log from an older
+snapshot is discarded only when every complete record can be proven no newer
+than the verified snapshot.
 Snapshot compaction never removes retained recovery or asset reachability
 information. Pre-release formats have no compatibility reader. Core forks are
 reserved for preview, reviewed-Diff planning, revert validation, and other
@@ -324,6 +338,11 @@ before a write; recovery expiry is durable and observable before blob unlink.
 Cleanup or compaction failure cannot reverse an already acknowledged Operation.
 A failed compaction invalidates the process-local log cache so the next write
 reloads the authoritative snapshot/log boundary before admission.
+Physical compaction uses a captured durable Core snapshot and runs outside the
+Runtime mutation queue while remaining serialized with transaction-log appends.
+An accepted desktop edit may therefore proceed in memory during compaction; its
+later transaction record extends the replaced snapshot. Restart tests cover both
+successful replacement and failure after the snapshot rename.
 
 Every changed mutation, including desktop editing and history reversal, becomes
 one durable `Operation`. A private desktop Operation may be visible at accepted
@@ -333,6 +352,17 @@ target. Recovery patches retain the complete affected state even when the public
 Operation returns only a bounded ID sample. Purged subtrees, dependent
 references, and referenced asset records remain recoverable until the retention
 boundary expires.
+When transaction fsync succeeds but its process-local acknowledgement fails,
+the idempotent durability retry publishes the retained Operation Event after
+settlement is confirmed. The first failed attempt publishes nothing, and the
+live Runtime cannot remain behind state that restart replay would expose.
+
+After an accepted desktop receipt, the main-process adapter monitors Runtime's
+private durability status outside the input path. Successful coalescing remains
+silent; a background durability failure is reported through the application
+diagnostic log even if the user stops editing before another mutation or quit
+drain exposes it. Public clients receive neither this private status nor its
+failure detail.
 
 The Loro document remains Runtime-internal. It uses a fresh peer for new
 operations, supports compact snapshots and full updates for deep trees, and
@@ -348,12 +378,27 @@ entries. Large ChangeSet/import and search-refresh work yields cooperatively on
 bounded batches without splitting its transaction, revision, Operation, or undo
 intent.
 
+Per-user access ranking is intentionally not document state. The main process
+owns its persisted `userData` store and mirrors at most the bounded retained
+entries into Runtime over a desktop-only private route. The mirror is replaced
+on startup and Runtime reconnect, then updated incrementally after a deliberate
+human landing or projection pruning. Only transient desktop text lookup consumes
+it; public find, saved searches, CLI, and Agent reads remain deterministic from
+document state alone.
+
 Asset ingest admits one exact revision, settles its anchor and logical
 AssetRecord in anchor-first order, and returns a staged Outline lease before a
 document mutation. Apply atomically consumes referenced leases into live asset
 reachability. Runtime recovery and lease policy decides when a logical record is
 unreachable; ContentStore alone decides when an unleased, unanchored revision is
 physically collectible. There is no public physical-delete capability.
+Metadata detection reads a bounded ingestion head first. When valid JPEG frame,
+PDF page, WAV data, or MP4 movie metadata lies later in a verified file, the
+Runtime continues with bounded random or streaming reads instead of loading the
+whole asset. JPEG recovery scans malformed padding in fixed-size chunks so a
+large damaged file cannot cause one asynchronous read per byte. MP4 box and WAV
+chunk headers share a fixed-size read window, so dense containers do not cause
+one asynchronous read per header.
 
 `media add PATH|-` composes staging and media-Node creation as one common CLI
 intent while retaining the same internal lease boundary. `asset ingest` remains
@@ -386,6 +431,10 @@ an atomic private retirement claim makes simultaneous desktop and CLI starts
 converge on one signaler and one writer; a claim whose owner died is recovered.
 Unowned, unverifiable, or live-status drift remains `protocol_incompatible`;
 inspection through `status` and `--no-start` never retires or starts a process.
+The Runtime contract digest covers both the public capability manifest and a
+private desktop-route version. Changing a desktop-only route therefore forces
+authenticated replacement of an older Runtime even when the public CLI schema
+is unchanged.
 The Runtime imports neither Electron nor renderer code.
 
 These are local persistence contracts only. Tenon currently starts no account,

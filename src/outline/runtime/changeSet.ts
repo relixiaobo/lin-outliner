@@ -1,4 +1,5 @@
 import type { Core, CoreTransactionNodePatch, ResolvedContentTree } from '../../core/core';
+import { memoryTagDefinitionForId } from '../../core/memoryDefinitions';
 import { isClientNodeId } from '../../shared/nodeId';
 import type { BatchMoveNodeInput, DocumentProjection, FieldSlotMutation } from '../../core/types';
 import {
@@ -43,6 +44,7 @@ import {
 import { OUTLINE_PROTOCOL_VERSION } from '../contract/version';
 import { checkOutlineSchema, outlineSchemaValidationDetails } from '../contract/validation';
 import { createDeterministicCoreIdFactory, deterministicPublicNodeId } from './deterministicIds';
+import { assertProtectedMemoryDefinitionPatch } from './protectedDefinitions';
 import { projectOutline, resolveTargetRef } from './projection';
 import { semanticAffectedDigest, semanticNodeDigest } from './semanticDigest';
 import {
@@ -92,6 +94,7 @@ export async function diffOutlineChangeSet(
   const { patch } = await candidate.transactionWithPatch('user', async () => {
     execution = await executeOutlineChangeSet(candidate, normalized, assetLeases);
   }, { operationId: `preview:${changeSetHash}`, command: 'outline_diff' });
+  assertProtectedMemoryDefinitionPatch(patch);
   return diffFromPatch(normalized, changeSetHash, execution.bindings, execution.reviewedReplaceTargetIds, patch.nodes);
 }
 
@@ -710,6 +713,20 @@ function executeEnsure(
     const tagId = exactlyOne(resolveTargetRef(baseIndex, change.tag, bindings), 'tag search definition');
     const nodeId = core.ensureTagSearch(tagId).focus?.nodeId;
     if (!nodeId) throw new Error(`Core did not resolve tag search: ${tagId}`);
+    return [nodeId];
+  }
+  const protectedDefinition = change.definitionType === 'tag' && change.id
+    ? memoryTagDefinitionForId(change.id)
+    : undefined;
+  if (protectedDefinition) {
+    if (change.name.trim() !== protectedDefinition.name) {
+      throw usageError(`Protected definition ID has a fixed name: ${change.id}`);
+    }
+    const nodeId = core.ensureProtectedTagDefinition(
+      protectedDefinition.name,
+      protectedDefinition.tagId,
+    ).focus?.nodeId;
+    if (!nodeId) throw new Error(`Core did not resolve protected definition: ${change.id}`);
     return [nodeId];
   }
   const existing = core.projection().nodes.find((node) => (
