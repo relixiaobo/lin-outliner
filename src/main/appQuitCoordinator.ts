@@ -11,11 +11,13 @@ export interface QuitCoordinatorHost {
   drainToRevision(revision: number): Promise<void>;
   showDrainFailure(error: unknown, outcome: QuitDrainOutcome): Promise<QuitDecision>;
   teardown(): Promise<void>;
+  shutdownRuntime(signal: AbortSignal): Promise<void>;
   exit(): void;
 }
 
 export interface QuitCoordinatorOptions {
   drainTimeoutMs?: number;
+  runtimeShutdownTimeoutMs?: number;
 }
 
 interface QuitDrainResult {
@@ -28,12 +30,14 @@ export class AppQuitCoordinator {
   private drainInFlight?: Promise<void>;
   private requestPromise?: Promise<void>;
   private readonly drainTimeoutMs: number;
+  private readonly runtimeShutdownTimeoutMs: number;
 
   constructor(
     private readonly host: QuitCoordinatorHost,
     options: QuitCoordinatorOptions = {},
   ) {
     this.drainTimeoutMs = Math.max(1, options.drainTimeoutMs ?? 2_500);
+    this.runtimeShutdownTimeoutMs = Math.max(1, options.runtimeShutdownTimeoutMs ?? 2_500);
   }
 
   phase(): QuitPhase {
@@ -98,8 +102,16 @@ export class AppQuitCoordinator {
     } catch (error) {
       phaseTwoError ??= error;
     } finally {
-      // Phase 2 is intentionally irreversible: some services may already be
-      // disposed even if a later teardown step fails.
+      try {
+        await shutdownWithTimeout(
+          (signal) => this.host.shutdownRuntime(signal),
+          this.runtimeShutdownTimeoutMs,
+        );
+      } catch (error) {
+        phaseTwoError ??= error;
+      }
+      // Phase 2 is intentionally irreversible: services may already be
+      // disposed even if Runtime shutdown or a later teardown step fails.
       this.phaseValue = 'done';
       this.host.exit();
     }
@@ -142,6 +154,44 @@ export class AppQuitCoordinator {
     }
     return drainWithTimeout(drain, this.drainTimeoutMs);
   }
+}
+
+function shutdownWithTimeout(
+  shutdown: (signal: AbortSignal) => Promise<void>,
+  timeoutMs: number,
+): Promise<void> {
+  const controller = new AbortController();
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const succeed = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    };
+    const timer = setTimeout(() => {
+      const error = new Error('Outline Runtime shutdown timed out.');
+      controller.abort(error);
+      fail(error);
+    }, timeoutMs);
+    let operation: Promise<void>;
+    try {
+      operation = shutdown(controller.signal);
+    } catch (error) {
+      fail(error);
+      return;
+    }
+    void operation.then(
+      succeed,
+      fail,
+    );
+  });
 }
 
 function drainWithTimeout(drain: Promise<void>, timeoutMs: number): Promise<QuitDrainResult> {

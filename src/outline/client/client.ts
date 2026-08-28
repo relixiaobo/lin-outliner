@@ -43,7 +43,8 @@ export type DesktopRuntimeLifecycleAction =
   | 'freeze'
   | 'unfreeze'
   | 'commit-freeze'
-  | 'drain';
+  | 'drain'
+  | 'shutdown';
 
 export interface DesktopRuntimeDurabilityStatus {
   readonly acceptedRevision: number;

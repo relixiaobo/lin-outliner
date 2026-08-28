@@ -1009,6 +1009,55 @@ describe('Outline Runtime process boundary', () => {
     }
   });
 
+  test('restarts a writable packaged-style Runtime after committed quit freeze and shutdown', async () => {
+    const root = await makeRoot();
+    const contentRoot = `${root}-content`;
+    const launch = {
+      command: process.execPath,
+      args: [runtimeEntry, '--root', root, '--content-root', contentRoot],
+      env: { TENON_OUTLINE_RUNTIME_IDLE_MS: '60000' },
+      detached: false,
+    };
+    const firstSupervisor = new OutlineClientSupervisor({
+      root,
+      contentRoot,
+      launch,
+      startupTimeoutMs: 5_000,
+      origin: 'desktop',
+    });
+    const firstClient = await firstSupervisor.connect();
+    const firstInstanceId = firstClient.descriptor.instanceId;
+    let reopenedClient: OutlineClient | undefined;
+    try {
+      await firstClient.commitDesktopChangeSet(createTodayChangeSet('Before packaged restart'));
+      await firstClient.manageDesktopRuntime('freeze');
+      await firstClient.manageDesktopRuntime('commit-freeze');
+      expect(await firstClient.manageDesktopRuntime('status')).toMatchObject({ admissionFrozen: true });
+      firstClient.close();
+
+      await firstSupervisor.shutdown();
+      expect(await readOutlineRuntimeDescriptor(root)).toBeNull();
+
+      const reopenedSupervisor = new OutlineClientSupervisor({
+        root,
+        contentRoot,
+        launch,
+        startupTimeoutMs: 5_000,
+        origin: 'desktop',
+      });
+      reopenedClient = await reopenedSupervisor.connect();
+      expect(reopenedClient.descriptor.instanceId).not.toBe(firstInstanceId);
+      expect(await reopenedClient.manageDesktopRuntime('status')).toMatchObject({ admissionFrozen: false });
+      await expect(
+        reopenedClient.commitDesktopChangeSet(createTodayChangeSet('After packaged restart')),
+      ).resolves.toMatchObject({ settlement: { kind: 'outline.operation' } });
+    } finally {
+      firstClient.close();
+      reopenedClient?.close();
+      await stopRuntimeProcess(root);
+    }
+  });
+
   test('retires only when the replacement development session differs', async () => {
     const root = await makeRoot();
     const currentDevelopmentSessionId = `desktop:${crypto.randomUUID()}`;

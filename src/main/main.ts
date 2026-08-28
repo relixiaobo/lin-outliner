@@ -5008,6 +5008,7 @@ if (!app.requestSingleInstanceLock()) {
       return response.response === 0 ? 'retry' : response.response === 1 ? 'quit-anyway' : 'cancel';
     },
     teardown: teardownForQuit,
+    shutdownRuntime: (signal) => outlineClientSupervisor.shutdown(signal),
     exit: () => app.exit(0),
   });
 

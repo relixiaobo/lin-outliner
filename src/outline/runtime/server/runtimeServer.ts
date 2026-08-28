@@ -385,6 +385,11 @@ export class OutlineRuntimeServer {
           case 'drain':
             await this.workspace.drainDurability(body.targetRevision);
             break;
+          case 'shutdown':
+            response.once('finish', () => {
+              void this.stop().catch(() => undefined);
+            });
+            break;
           case 'status':
             break;
         }
@@ -863,7 +868,7 @@ function isOperation(value: unknown): boolean {
 type DesktopLifecycleRequest = {
   readonly protocolVersion: number;
   readonly requestId: string;
-  readonly action: 'status' | 'freeze' | 'unfreeze' | 'commit-freeze';
+  readonly action: 'status' | 'freeze' | 'unfreeze' | 'commit-freeze' | 'shutdown';
 } | {
   readonly protocolVersion: number;
   readonly requestId: string;
@@ -881,7 +886,7 @@ function isDesktopLifecycleRequest(value: unknown): value is DesktopLifecycleReq
     return Number.isSafeInteger(value.targetRevision) && (value.targetRevision as number) >= 0;
   }
   return value.targetRevision === undefined
-    && ['status', 'freeze', 'unfreeze', 'commit-freeze'].includes(value.action);
+    && ['status', 'freeze', 'unfreeze', 'commit-freeze', 'shutdown'].includes(value.action);
 }
 
 function requiredHeader(request: http.IncomingMessage, name: string): string {

@@ -82,15 +82,22 @@ substring matches such as `table` matching `editable` are invalid.
 The generated queue contains 2,307 historical responsibilities. Its closed
 disposition is 1,783 current-evidence mappings, 371 stronger replacements, 107
 explicit retirements, and 46 confirmed regressions restored here. The same
-fail-closed audit covers 88 changed test bodies; 239 missing assertions across
+fail-closed audit covers 87 changed test bodies; 239 missing assertions across
 111 same-title groups; 17 production-wiring responsibilities; semantic review
-of all 81 non-byte-identical production paths and six non-source/test document
+of all 87 non-byte-identical production paths and nine non-source/test document
 paths; all 99 `d36dc81b` paths (41 evolved, 56 byte-identical, and two explicitly
 relocated or retired); and all 26 lost-snapshot paths that overlap later work. A
 zero unclassified queue is required after every edit. Counts alone are
 insufficient if one high-fan-in evidence test does not assert each mapped
 failure boundary, and any future missing `src/**` path fails the audit rather
 than inheriting a default disposition.
+
+The tracked driver, semantic dispositions, and baseline reconstruction artifacts
+live in `scripts/runtime-recovery-audit/`; generated evidence remains under
+gitignored `tmp/runtime-recovery-audit/`. The driver reconstructs the exact
+`8a1d5855`, `90991b7f`, `519bfd3b`, and `d36dc81b` trees from compressed binary
+patches anchored at their reachable rebased commits or the reachable #584 tip,
+checks every tree hash, and then runs the fail-closed audit.
 
 ### One Runtime authority with two settlement contracts
 
@@ -187,8 +194,13 @@ one transaction and rollback frontier while yielding on bounded work units.
 
 Quit freezes mutation admission at the Runtime, records the latest accepted
 frontier across desktop, CLI, Agent, automation, and import callers, drains that
-frontier to durable, and only then permits Electron teardown. Closing the desktop
-watch or client cannot abort an admitted mutation before the barrier settles.
+frontier to durable, and only then permits Electron teardown. Phase two commits
+the freeze, closes Runtime consumers, requests shutdown of the authenticated
+descriptor instance, and waits for its descriptor and writer lock to be released
+before Electron exits. That final wait is bounded so Quit Anyway cannot hang the
+application. Closing the desktop watch or client cannot abort an admitted
+mutation before the barrier settles, and packaged relaunch cannot inherit a
+permanently frozen Runtime.
 
 Desktop IPC uses an explicit allowlist. Buffer upload, picker-mediated ingest,
 asset lookup/open/reveal, and scoped preview stay available. Path ingest/export
@@ -304,8 +316,9 @@ file-level rebase check before the recovery PR moves from Draft.
 - Prove a large import yields, remains atomic, stays searchable, and is one
   undoable/revertible Operation.
 - Prove quit drains every admitted caller, a cancelled quit leaves services
-  usable, teardown cannot abort an admitted write, and a failed save cannot be
-  reported durable.
+  usable, teardown cannot abort an admitted write, a failed save cannot be
+  reported durable, and packaged relaunch starts a writable Runtime after the
+  committed quit freeze.
 - Prove renderer IPC rejects path ingest/export while CLI and trusted Agent
   paths retain their intended capabilities.
 - Run `bun run typecheck`, `bun run test:core`, `bun run test:renderer`, focused

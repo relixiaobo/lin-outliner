@@ -10,6 +10,7 @@ class FakeQuitHost implements QuitCoordinatorHost {
   durable = 0;
   frozen = false;
   teardownCount = 0;
+  shutdownCount = 0;
   commitFreezeCount = 0;
   exitCount = 0;
   drains = 0;
@@ -35,6 +36,7 @@ class FakeQuitHost implements QuitCoordinatorHost {
     return this.decisions.shift() ?? 'cancel';
   }
   async teardown(): Promise<void> { this.teardownCount += 1; }
+  async shutdownRuntime(_signal: AbortSignal): Promise<void> { this.shutdownCount += 1; }
   exit(): void { this.exitCount += 1; }
 }
 
@@ -64,6 +66,7 @@ describe('AppQuitCoordinator', () => {
     expect(host.teardownCount).toBe(0);
     expect(host.exitCount).toBe(0);
     expect(host.commitFreezeCount).toBe(0);
+    expect(host.shutdownCount).toBe(0);
   });
 
   test('retries and then enters teardown only after the durable barrier', async () => {
@@ -83,6 +86,7 @@ describe('AppQuitCoordinator', () => {
     expect(host.teardownCount).toBe(1);
     expect(host.exitCount).toBe(1);
     expect(host.commitFreezeCount).toBe(1);
+    expect(host.shutdownCount).toBe(1);
   });
 
   test('honors repeated retry decisions until the user cancels', async () => {
@@ -263,6 +267,7 @@ describe('AppQuitCoordinator', () => {
 
     expect(coordinator.phase()).toBe('done');
     expect(host.frozen).toBe(true);
+    expect(host.shutdownCount).toBe(1);
     expect(host.exitCount).toBe(1);
   });
 
@@ -281,6 +286,55 @@ describe('AppQuitCoordinator', () => {
     expect(host.frozen).toBe(true);
     expect(host.commitFreezeCount).toBe(1);
     expect(host.teardownCount).toBe(1);
+    expect(host.shutdownCount).toBe(1);
+    expect(host.exitCount).toBe(1);
+  });
+
+  test('phase two commits, tears down consumers, stops Runtime, and then exits', async () => {
+    const host = new FakeQuitHost();
+    const order: string[] = [];
+    host.durable = host.accepted;
+    host.commitAdmissionFreeze = () => {
+      host.commitFreezeCount += 1;
+      order.push('commit-freeze');
+    };
+    host.teardown = async () => {
+      host.teardownCount += 1;
+      order.push('teardown');
+    };
+    host.shutdownRuntime = async () => {
+      host.shutdownCount += 1;
+      order.push('shutdown-runtime');
+    };
+    host.exit = () => {
+      host.exitCount += 1;
+      order.push('exit');
+    };
+    const coordinator = new AppQuitCoordinator(host, { drainTimeoutMs: 50 });
+
+    await coordinator.requestQuit();
+
+    expect(order).toEqual(['commit-freeze', 'teardown', 'shutdown-runtime', 'exit']);
+  });
+
+  test('bounds Runtime shutdown and exits after the irreversible phase starts', async () => {
+    const host = new FakeQuitHost();
+    host.durable = host.accepted;
+    host.shutdownRuntime = (signal) => {
+      host.shutdownCount += 1;
+      return new Promise<void>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    };
+    const coordinator = new AppQuitCoordinator(host, {
+      drainTimeoutMs: 50,
+      runtimeShutdownTimeoutMs: 5,
+    });
+
+    await expect(coordinator.requestQuit()).rejects.toThrow('Outline Runtime shutdown timed out.');
+
+    expect(coordinator.phase()).toBe('done');
+    expect(host.shutdownCount).toBe(1);
     expect(host.exitCount).toBe(1);
   });
 });

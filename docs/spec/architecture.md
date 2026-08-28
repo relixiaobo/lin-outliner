@@ -290,7 +290,13 @@ delta and enqueue that captured input for ordered durability. Durability waits
 for a 700 ms input-idle window but never lets a dirty epoch exceed five seconds;
 all Operations accumulated for one run retain separate transaction records and
 Event sequences while sharing one transaction-log fsync. An explicit durable
-wait or quit drain bypasses the timers. Append failure
+wait or quit drain bypasses the timers. After a successful quit drain, Electron
+commits the cross-origin admission freeze, disposes Runtime consumers, requests
+authenticated Runtime shutdown, and waits for that exact instance to release
+both its descriptor and writer lock before exiting. Runtime acknowledges the
+shutdown request before running its own freeze, drain, descriptor removal, and
+lock release sequence. The irreversible shutdown wait is bounded; Quit Anyway
+and teardown failures cannot leave Electron waiting indefinitely. Append failure
 cannot retract an accepted UI edit; it freezes further mutation admission and
 must be resolved by drain/retry or an explicit Quit Anyway decision. Public,
 trusted cross-store, and reviewed durable paths keep the same rollback frontier
@@ -423,7 +429,10 @@ writer-lock owner exactly. Development desktop sessions also publish one private
 session identity and replace a same-contract Runtime left by an earlier dev app
 process, so restarting Electron cannot continue executing stale source. Packaged
 clients publish no development identity and retain the normal shared-Runtime
-lifecycle. A current Runtime then retires through its private
+lifecycle while the desktop host is running. Clean desktop quit explicitly
+stops that shared instance after draining it, so a packaged relaunch cannot
+reattach to a process carrying a committed admission freeze. A current Runtime
+then retires through its private
 lifecycle route; a legacy Runtime that predates that route receives `SIGTERM`
 only after the same identity and ownership checks. The client waits for that
 exact instance to release its descriptor before launching one replacement, so
