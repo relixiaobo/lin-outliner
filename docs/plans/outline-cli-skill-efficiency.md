@@ -189,9 +189,14 @@ security tests. This feature relies only on the merged observable interface:
   without affecting command classification or child bytes: live execution gets
   the validated original, while durable replay retains the replayable or
   redacted value and `/stdin` evidence.
-- Payload-backed renderer detail receives only the main process's Item-bound
-  32,000-character argument projection. Complete stdin, storage bindings, and
-  internal references do not cross IPC or enter renderer formatting/caching.
+- Canonical payload-backed history retains its private context and internal-text
+  dependencies, but every renderer-facing Thread, Turn, and Item response or
+  notification passes one main-process projection. The renderer Item contains
+  only a reference-free `{ storage: 'itemBound' }` argument stub, and its
+  Item-bound read receives at most the 32,000-character main-process argument
+  projection using only Thread, Turn, and Item identity. Complete stdin, storage
+  bindings, context/internal-text references, and canonical Items do not cross
+  IPC or enter renderer formatting/caching.
 - Direct `outline add --input -`, `outline commit --input -`, and `outline diff
   --input -` invocations are the registered data consumers this feature uses;
   their existing `outline.edit`, `outline.edit`, and `outline.read` actions come
@@ -541,14 +546,14 @@ Source PR-I owns the final Node draft, field/value, Source, ChangeSet, CLI
 schema, constructor, and fixture baseline that this feature must consume. The
 Bash interface PR #596 owns the generic tool schema, 64 MiB raw-stdin admission,
 private Thread-internal text factoring, durable secret redaction, exact canonical
-replay, bounded main-process presentation, effective-consumer security
-classification, process stdin delivery, and focused transport/lifecycle tests.
-Neither foundation depends on the other, so they may be developed independently,
-but this feature consumes only their merged observable contracts. It rebases
-onto `origin/main` after both land, regenerates its work queue from actual `rg`
-hits and failing tests, and removes every superseded table fixture assumption
-rather than preserving compatibility. Source PR-F is visual-only and is not a
-dependency.
+replay, the reference-free canonical-to-renderer Item boundary, bounded
+main-process presentation, effective-consumer security classification, process
+stdin delivery, and focused transport/lifecycle tests. Neither foundation
+depends on the other, so they may be developed independently, but this feature
+consumes only their merged observable contracts. It rebases onto `origin/main`
+after both land, regenerates its work queue from actual `rg` hits and failing
+tests, and removes every superseded table fixture assumption rather than
+preserving compatibility. Source PR-F is visual-only and is not a dependency.
 
 The collision self-check found no other open PR claim at plan time. The future
 Source PR-I is a deliberate hard dependency and likely overlaps
