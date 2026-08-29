@@ -27,6 +27,7 @@ describe('Outline action commands', () => {
     const input: CreateCaptureInput = {
       destinationParentId: workspace.projection().todayId,
       title: plainText('Captured article'),
+      sourceText: 'https://example.com/article',
       tag: 'article',
       tagExtends: 'capture',
       children: [{
@@ -53,6 +54,12 @@ describe('Outline action commands', () => {
 
     expect(buildConfigIndex(state).tag(articleTag.id)?.extends).toBe(captureTag.id);
     expect(root.tags).toContain(articleTag.id);
+    const sourceEntry = state.nodes[`${root.id}::source`];
+    expect(sourceEntry?.type).toBe('fieldEntry');
+    expect(state.nodes[sourceEntry!.children[0]!]!).toMatchObject({
+      type: 'sourceValue',
+      sourceText: 'https://example.com/article',
+    });
     expect(child.tags).toContain(reviewTag.id);
     expect(nodes.find((node) => node.parentId === fieldEntry.id)?.content.text).toBe('Ready');
     expect((await workspace.store.operations()).length - before.length).toBe(1);

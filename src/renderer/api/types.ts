@@ -40,6 +40,7 @@ export type {
   Backlink,
   BatchMoveNodeInput,
   CommandResult,
+  ContentBearingNodeProjection,
   CreateNodeTree,
   DocumentProjection,
   ProjectionUpdate,
@@ -111,7 +112,12 @@ export interface AgentCapabilitySettingsPatchInput {
   removeBlocks: string[];
 }
 
-export { EMPTY_RICH_TEXT, plainText, replaceAllRichTextPatch } from '../../core/types';
+export {
+  EMPTY_RICH_TEXT,
+  isContentBearingNode,
+  plainText,
+  replaceAllRichTextPatch,
+} from '../../core/types';
 export {
   inlineRefNodeId,
   nodeReferenceTarget,

@@ -2,11 +2,10 @@ import type { ComponentType, CSSProperties } from 'react';
 import type { FieldType } from '../../api/types';
 import { conicColorStyle } from '../tags/tagColors';
 import { ICON_SIZE } from '../icons';
-import { INLINE_FILE_ICON_CLASS } from '../editor/inlineFileIcon';
 import { FieldTypeIcon } from './fieldTypePresentation';
 import { NodeBulletDot } from './NodeBulletDot';
 
-export type RowMarkerVariant = 'content' | 'reference' | 'tag' | 'field' | 'fieldDef' | 'file';
+export type RowMarkerVariant = 'content' | 'reference' | 'tag' | 'field' | 'fieldDef';
 
 interface RowMarkerProps {
   hasChildren: boolean;
@@ -19,9 +18,6 @@ interface RowMarkerProps {
   icon?: ComponentType<{ size?: number }>;
   bulletColors?: readonly string[];
   tagDefColor?: string;
-  // The file-type glyph kind for a `file`-variant bullet (a file node shows its
-  // type icon as the bullet instead of the neutral dot).
-  fileIconKind?: string;
   className?: string;
 }
 
@@ -33,7 +29,6 @@ export function RowMarker({
   icon: Icon,
   bulletColors = [],
   tagDefColor,
-  fileIconKind,
   className,
 }: RowMarkerProps) {
   const bulletClass = [
@@ -59,8 +54,6 @@ export function RowMarker({
         Icon ? <Icon size={ICON_SIZE.rowGlyph} /> : <FieldTypeIcon fieldType={fieldType} />
       ) : variant === 'tag' ? (
         <span aria-hidden="true" className="row-bullet-tag-glyph">#</span>
-      ) : variant === 'file' ? (
-        <span aria-hidden="true" className={INLINE_FILE_ICON_CLASS} data-file-icon-kind={fileIconKind} />
       ) : (
         <NodeBulletDot style={bulletDotStyle} />
       )}

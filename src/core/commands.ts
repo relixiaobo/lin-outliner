@@ -16,9 +16,11 @@ export const DOCUMENT_COMMANDS = [
   'set_node_checkbox_visible',
   'set_code_block',
   'set_code_language',
-  'create_image_node',
-  'create_attachment_node',
-  'set_node_image',
+  'add_source',
+  'replace_source',
+  'reorder_source',
+  'remove_source',
+  'clear_sources',
   'set_view_toolbar_visible',
   'set_view_mode',
   'add_sort_rule',
@@ -162,6 +164,8 @@ export const PREVIEW_COMMANDS = [
   'preview_read_text',
   'preview_read_bytes',
   'preview_list_directory',
+  'preview_authorize_linked_file',
+  'preview_forget_linked_file',
 ] as const;
 
 export type DocumentCommand = typeof DOCUMENT_COMMANDS[number];

@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import type { NodeId } from '../api/types';
+import { isContentBearingNode, type NodeId } from '../api/types';
 import type { DocumentIndex } from '../state/document';
 import { wantsNewPaneFromClick } from '../ui/shared';
 import { inlineReferenceTextColor } from '../ui/tags/tagColors';
@@ -55,6 +55,7 @@ export function threadNodeReferenceDisplayLabel(
   index: DocumentIndex | undefined,
   fallback: string,
 ): string {
-  const title = index?.byId.get(nodeId)?.content.text.trim();
+  const node = index?.byId.get(nodeId);
+  const title = node && isContentBearingNode(node) ? node.content.text.trim() : '';
   return title || label.trim() || fallback;
 }

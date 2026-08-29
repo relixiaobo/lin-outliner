@@ -9,7 +9,13 @@ import { ContentStore, type ContentStoreOptions } from '../../content';
 import { canonicalSha256 } from '../contract/canonical';
 import { OutlineContractError, outlineError } from '../contract/errors';
 import type { Diff, Operation, OutlineEvent, RevertConflictDiff, NoChangeResult } from '../contract/schemas';
-import type { DocumentState, Node, ProjectionUpdate, SearchHit } from '../../core/types';
+import {
+  isContentBearingNode,
+  type DocumentState,
+  type Node,
+  type ProjectionUpdate,
+  type SearchHit,
+} from '../../core/types';
 import { projectNode } from '../../core/projection';
 import { OUTLINE_PROTOCOL_VERSION } from '../contract/version';
 import {
@@ -32,6 +38,7 @@ import type { Projection, ProjectionResult } from '../contract/schemas';
 import { createSelectionIndex } from './selector';
 import { projectOutlineFromSelectionIndex } from './projection';
 import { assertProtectedMemoryDefinitionPatch } from './protectedDefinitions';
+import { parseAssetSourceUri } from '../../core/source';
 
 const MAX_AFFECTED_NODE_ID_SAMPLE = 1_000;
 const DURABILITY_IDLE_DELAY_MS = 700;
@@ -357,6 +364,7 @@ export class OutlineRuntimeWorkspace {
     return createSelectionIndex(this.readModel.projection, {
       nodesById: this.readModel.nodes,
       textIndex: this.readModel.textIndex,
+      assetMetadataById: this.assets.metadataSnapshot(),
     });
   }
 
@@ -1233,10 +1241,14 @@ function operationEvent(
 function assetRecordIdsInNodes(nodes: readonly Node[]): Set<string> {
   const result = new Set<string>();
   for (const node of nodes) {
-    if (node.bannerAssetId) result.add(node.bannerAssetId);
-    if (node.icon && (node.iconKind === 'image' || node.iconKind === 'generated')) result.add(node.icon);
-    if ((node.type === 'image' || node.type === 'attachment') && node.assetId) result.add(node.assetId);
-    if (node.type === 'attachment' && node.thumbnailAssetId) result.add(node.thumbnailAssetId);
+    if (isContentBearingNode(node)) {
+      if (node.bannerAssetId) result.add(node.bannerAssetId);
+      if (node.icon && (node.iconKind === 'image' || node.iconKind === 'generated')) result.add(node.icon);
+    }
+    if (node.type === 'sourceValue') {
+      const assetId = parseAssetSourceUri(node.sourceText);
+      if (assetId) result.add(assetId);
+    }
   }
   return result;
 }

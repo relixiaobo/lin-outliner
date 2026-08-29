@@ -1,5 +1,5 @@
 import { ENUM_DOMAINS } from './configSchema';
-import { TRASH_ID, type DefConfigKey, type NodeId, type NodeType } from './types';
+import { SOURCE_FIELD_ID, TRASH_ID, type DefConfigKey, type NodeId, type NodeType } from './types';
 
 export interface FieldSlotNode {
   readonly id: NodeId;
@@ -165,6 +165,7 @@ export function nodeFieldSlots(source: FieldSlotSource, nodeId: NodeId): readonl
     .filter((child): child is FieldSlotNode => (
       child?.type === 'fieldEntry'
       && Boolean(child.fieldDefId)
+      && child.fieldDefId !== SOURCE_FIELD_ID
       && !fieldSlotNodeIsDeleted(source, child.id)
     ));
   const storedByDefinition = new Map<NodeId, FieldSlotNode[]>();

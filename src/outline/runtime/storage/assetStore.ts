@@ -62,6 +62,7 @@ export class OutlineAssetStore {
   private readonly renderPdfThumbnail: (pdfPath: string) => Promise<Uint8Array | undefined>;
   private readonly hooks: NonNullable<OutlineAssetStoreOptions['hooks']>;
   private namespaceChain: Promise<unknown> = Promise.resolve();
+  private metadataByAssetId = new Map<string, AssetMetadata>();
 
   constructor(
     readonly content: ContentStore,
@@ -95,6 +96,13 @@ export class OutlineAssetStore {
     return verified.record;
   }
 
+  metadataSnapshot(): ReadonlyMap<string, AssetMetadata> {
+    return new Map([...this.metadataByAssetId].map(([assetId, metadata]) => [
+      assetId,
+      structuredClone(metadata),
+    ]));
+  }
+
   async verify(assetId: string): Promise<OutlineVerifiedAsset> {
     const stored = await this.transactions.storedAssetRecord(assetId);
     if (!stored) {
@@ -124,6 +132,11 @@ export class OutlineAssetStore {
     return this.transactions.resolveAssetLeases(leaseIds, this.now());
   }
 
+  async resolveLeasesForAssetIds(assetIds: readonly string[]): Promise<ReadonlyMap<string, AssetLease>> {
+    if (assetIds.length === 0) return new Map();
+    return this.transactions.resolveAssetLeasesForAssetIds(assetIds, this.now());
+  }
+
   async expandAssetIds(assetIds: readonly string[]): Promise<readonly string[]> {
     const result = new Set(assetIds);
     const queue = [...result];
@@ -148,6 +161,7 @@ export class OutlineAssetStore {
   collectGarbage(liveAssetRecordIds: readonly string[]): Promise<readonly string[]> {
     return this.withNamespaceBarrier(async () => {
       const removed = await this.transactions.collectUnprotectedAssetRecords(liveAssetRecordIds, this.now());
+      for (const stored of removed) this.metadataByAssetId.delete(stored.record.assetId);
       await this.hooks.afterAssetRecordsRemoved?.(removed);
       for (const stored of removed) {
         await this.content.releaseAnchor(stored.exactRevision.anchorId).catch(() => undefined);
@@ -161,6 +175,7 @@ export class OutlineAssetStore {
   reconcileAnchors(): Promise<readonly string[]> {
     return this.withNamespaceBarrier(async () => {
       const storedRecords = await this.transactions.verifiedStoredAssetRecords();
+      const records = await this.transactions.assetRecords();
       const expected = new Map(storedRecords.map((stored) => [stored.exactRevision.anchorId, stored]));
       const anchors = await this.content.anchors(OUTLINE_CONTENT_NAMESPACE);
       const actual = new Map(anchors.map((anchor) => [anchor.anchorId, anchor]));
@@ -177,6 +192,10 @@ export class OutlineAssetStore {
         if (expected.has(anchor.anchorId)) continue;
         if (await this.content.releaseAnchor(anchor.anchorId)) released.push(anchor.anchorId);
       }
+      this.metadataByAssetId = new Map(records.map((record) => [
+        record.assetId,
+        structuredClone(record.metadata),
+      ]));
       return released;
     });
   }
@@ -271,6 +290,7 @@ export class OutlineAssetStore {
         expiresAt: new Date(createdAt.getTime() + this.leaseMs).toISOString(),
       };
       await this.settleAssetStage(record, lease, admission);
+      this.metadataByAssetId.set(record.assetId, structuredClone(record.metadata));
       return lease;
     } catch (error) {
       await this.content.releaseAdmissionLease(admission.leaseId).catch(() => undefined);

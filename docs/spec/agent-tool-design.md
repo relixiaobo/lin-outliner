@@ -105,6 +105,16 @@ resources, dependencies, cross-date work, or bounded bulk changes use one
 ChangeSet with bindings. It never substitutes a shell mutation loop or an
 intermediate created-ID query.
 
+Every ordinary content Node owns a protected ordered Source collection. The
+public CLI and ChangeSet surface exposes `source add`, `source replace`,
+`source reorder`, `source remove`, and `source clear`; generic field or tree
+updates cannot mutate direct Source values. Replace preserves value identity and
+position, reorder/removal resolve an owner-local direct value, and clear removes
+only the value IDs observed during normalization so a concurrent unseen add
+survives. Projection returns exact `sourceText` scalars on structural
+`sourceValue` Nodes. Agents must use the dedicated family rather than treating
+`field:source` as an editable generic `uri` field.
+
 The Skill distinguishes explicit create/add from convergent set/configure/ensure,
 patch omission from explicit `replace`, and common STRING_MATCH shorthand from
 canonical structured query input. It uses `@library`, `@saved-searches`, and

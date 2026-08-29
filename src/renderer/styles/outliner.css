@@ -2548,23 +2548,6 @@ button.outliner-table-column-kind:focus-visible {
   color: var(--text-secondary);
 }
 
-/* A non-image file node shows its file-type glyph as the bullet (mask-driven via the
-   shared inline-file-icon, which is 0.95em + currentColor), sized to the bullet box and
-   tinted like a field glyph. The bullet still drills to the node page on click. */
-.row-bullet-shape.file {
-  color: var(--text-secondary);
-  font-size: var(--font-ui-md);
-}
-
-.row-bullet-shape.file > .inline-ref-file-icon {
-  display: block;
-  width: var(--row-bullet-width);
-  height: var(--row-bullet-width);
-  flex: 0 0 var(--row-bullet-width);
-  margin-right: 0;
-  vertical-align: 0;
-}
-
 .row-bullet-dot {
   display: block;
   width: var(--row-bullet-dot-size);

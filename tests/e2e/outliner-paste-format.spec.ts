@@ -1,9 +1,18 @@
 import { expect, test, type Page } from '@playwright/test';
-import { e2eProjection, ids, nodeById, openMockedApp, row, rowEditor, trailingEditor } from './outlinerMock';
+import {
+  e2eProjection,
+  ids,
+  nodeById,
+  openMockedApp,
+  ordinaryChildIds,
+  row,
+  rowEditor,
+  trailingEditor,
+} from './outlinerMock';
 
 async function todayChildren(page: Page) {
   const projection = await e2eProjection(page);
-  return projection.nodes.find((node) => node.id === ids.today)?.children ?? [];
+  return ordinaryChildIds(projection.nodes.find((node) => node.id === ids.today));
 }
 
 // Sibling / child rows materialize through the same async paste command as the
@@ -27,7 +36,7 @@ async function siblingTextsAfter(page: Page, nodeId: string, count: number) {
 
 async function childNodesOf(page: Page, parentId: string) {
   const parent = await nodeById(page, parentId);
-  return Promise.all((parent?.children ?? []).map((cid) => nodeById(page, cid)));
+  return Promise.all(ordinaryChildIds(parent).map((cid) => nodeById(page, cid)));
 }
 
 async function selectEditorContents(page: Page, nodeId: string) {
@@ -148,11 +157,12 @@ test.describe('paste format support', () => {
         && node.type === 'fieldEntry'
         && (node as { fieldDefId?: string }).fieldDefId === ids.statusField
       ));
-      const values = (entry?.children ?? []).map((childId) => (
+      const values = ordinaryChildIds(entry).map((childId) => (
         projection.nodes.find((node) => node.id === childId)
       ));
-      const child = values[0]?.children[0]
-        ? projection.nodes.find((node) => node.id === values[0]!.children[0])
+      const firstValueChildId = ordinaryChildIds(values[0])[0];
+      const child = firstValueChildId
+        ? projection.nodes.find((node) => node.id === firstValueChildId)
         : undefined;
       return {
         child: child?.content.text,
@@ -178,7 +188,7 @@ test.describe('paste format support', () => {
       const byId = new Map(projection.nodes.map((node) => [node.id, node]));
       const owner = byId.get(ids.alpha);
       const tags = (owner?.tags ?? []).map((id) => byId.get(id)?.content.text).filter(Boolean);
-      const fields = (owner?.children ?? []).flatMap((id) => {
+      const fields = ordinaryChildIds(owner).flatMap((id) => {
         const entry = byId.get(id);
         if (entry?.type !== 'fieldEntry' || !entry.fieldDefId) return [];
         return [{

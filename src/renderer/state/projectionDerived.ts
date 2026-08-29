@@ -1,5 +1,5 @@
 import type { NodeId, NodeProjection } from '../api/types';
-import { TRASH_ID } from '../../core/types';
+import { TRASH_ID, isContentBearingNode } from '../../core/types';
 import { SparseProjectionMap } from './sparseProjectionMap';
 
 export interface ProjectionSemanticRevisions {
@@ -298,6 +298,7 @@ function sameTagSlotShape(left: TagSlotShape, right: TagSlotShape): boolean {
 
 function inlineReferenceTargetIds(node: NodeProjection): NodeId[] {
   const targets: NodeId[] = [];
+  if (!isContentBearingNode(node)) return targets;
   for (const inlineRef of node.content.inlineRefs) {
     if (inlineRef.target.kind === 'node') targets.push(inlineRef.target.nodeId);
   }

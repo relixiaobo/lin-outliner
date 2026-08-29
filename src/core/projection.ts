@@ -17,6 +17,7 @@ import {
 // aliasing Core's internal state. Kept as a JSON clone (not structuredClone) so
 // the projected shape stays byte-identical to the historical projection.
 export function projectNode(node: Node): NodeProjection {
+  if (node.type === 'sourceValue') return clone(node);
   const { trashedFromIndex: _trashedFromIndex, ...projection } = node;
   return clone(projection);
 }

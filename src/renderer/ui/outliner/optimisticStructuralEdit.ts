@@ -1,6 +1,11 @@
 import { flushSync } from 'react-dom';
 import { freshNodeId } from '../../../core/nodeId';
-import { nodeReferenceTarget, type NodeId, type NodeProjection, type RichText } from '../../api/types';
+import {
+  nodeReferenceTarget,
+  type ContentBearingNodeProjection,
+  type NodeId,
+  type RichText,
+} from '../../api/types';
 import type {
   CursorPlacement,
   PendingStructuralChange,
@@ -47,12 +52,12 @@ export function createOptimisticStructuralSettlement(): PendingStructuralChange[
 }
 
 export function optimisticMergedNode(params: {
-  target: NodeProjection;
-  source: NodeProjection;
+  target: ContentBearingNodeProjection;
+  source: ContentBearingNodeProjection;
   sourceContent: RichText;
   resolvedReferenceTargetId?: NodeId;
   referenceDisplayName?: string;
-}): NodeProjection {
+}): ContentBearingNodeProjection {
   const { source, sourceContent, target } = params;
   const children = source.parentId === target.id
     ? target.children.flatMap((childId) => childId === source.id ? source.children : [childId])
@@ -92,7 +97,7 @@ export interface BeginOptimisticStructuralEditInput {
   presentation?: PendingStructuralPresentation;
   resolvedFieldDefId?: NodeId;
   content: RichText;
-  nodeOverride?: NodeProjection;
+  nodeOverride?: ContentBearingNodeProjection;
   placement: CursorPlacement;
   preserveFocus?: boolean;
   updateSource?: () => void;

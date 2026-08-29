@@ -12,8 +12,8 @@ import {
 } from 'react';
 import { flushSync } from 'react-dom';
 import { api } from '../../api/client';
-import type { CommandResult, NodeId, NodeProjection } from '../../api/types';
-import { EMPTY_RICH_TEXT, plainText } from '../../api/types';
+import type { CommandResult, ContentBearingNodeProjection, NodeId, NodeProjection } from '../../api/types';
+import { EMPTY_RICH_TEXT, isContentBearingNode, plainText } from '../../api/types';
 import { projectFieldConfig } from '../../../core/configProjection';
 import type { DocumentIndex, PendingStructuralChange, UiState } from '../../state/document';
 import { buildSelectableRows } from '../../state/selectableRows';
@@ -131,7 +131,10 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   const tf = t.outliner.field;
   const slot = props.slot;
   const rowId = slot.id;
-  const projectedEntry = slot.entryId ? props.index.byId.get(slot.entryId) : undefined;
+  const projectedEntryCandidate = slot.entryId ? props.index.byId.get(slot.entryId) : undefined;
+  const projectedEntry = projectedEntryCandidate && isContentBearingNode(projectedEntryCandidate)
+    ? projectedEntryCandidate
+    : undefined;
   const entry = projectedEntry
     ? nodeWithPendingPatch(projectedEntry, props.ui.pendingNodePatches.get(projectedEntry.id))
     : projectedEntry;
@@ -140,11 +143,12 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     : props.optimisticChange?.presentation === 'field'
       ? rowId
       : undefined;
-  const field = props.index.byId.get(slot.fieldDefId);
+  const projectedField = props.index.byId.get(slot.fieldDefId);
+  const field = projectedField && isContentBearingNode(projectedField) ? projectedField : undefined;
   const rowChildIds = outlinerChildren(entry, props.index.byId);
   const primaryValueId = rowChildIds[0];
   const startDoneTransition = (
-    node: NodeProjection,
+    node: ContentBearingNodeProjection,
     transition: 'toggle' | 'cycle',
     command: () => ReturnType<CommandRunner>,
   ) => startOptimisticDoneTransition({
@@ -270,7 +274,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   const systemDisplay = useMemo<SystemFieldDisplay | null>(() => {
     if (!systemFieldId) return null;
     const projectedOwner = props.index.byId.get(props.parentId);
-    if (!projectedOwner) return null;
+    if (!projectedOwner || !isContentBearingNode(projectedOwner)) return null;
     const owner = nodeWithPendingPatch(
       projectedOwner,
       props.ui.pendingNodePatches.get(props.parentId),
@@ -738,7 +742,8 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
 
   // The Done checkbox writes the owner's done state, but a locked owner (e.g. a
   // daily-note date page) rejects `toggle_done` — render it read-only there.
-  const owner = props.index.byId.get(props.parentId);
+  const ownerCandidate = props.index.byId.get(props.parentId);
+  const owner = ownerCandidate && isContentBearingNode(ownerCandidate) ? ownerCandidate : undefined;
   const ownerEditable = !(owner?.locked ?? false);
   const valueControl = systemDisplay ? (
     systemFieldId && isNodeReferenceSystemField(systemFieldId) ? (

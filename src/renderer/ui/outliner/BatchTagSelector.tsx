@@ -2,6 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../../api/client';
 import { freshNodeId } from '../../../core/nodeId';
+import { isContentBearingNode } from '../../api/types';
 import type { NodeId } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
 import { AddIcon, ICON_SIZE } from '../icons';
@@ -112,7 +113,7 @@ export function BatchTagSelector(props: BatchTagSelectorProps) {
   ) => {
     const patches = targetIds.flatMap((nodeId) => {
       const node = props.index.byId.get(nodeId);
-      return node ? [optimisticTagPatch({
+      return node && isContentBearingNode(node) ? [optimisticTagPatch({
         node,
         ui: props.ui,
         tagId,

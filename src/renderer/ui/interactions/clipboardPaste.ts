@@ -24,7 +24,7 @@ export type MediaPasteIntent =
  * call sites:
  *
  * 1. Files — image-only clips keep the dedicated image intent; any mixed or
- *    non-image file clip becomes a file-node paste.
+ *    non-image file clip becomes a Source-backed Node paste.
  * 2. A lone remote image URL — only with no active selection. With a selection
  *    the URL should link the selected text instead, so it falls to `linkUrl`.
  * 3. Any single-line URL — becomes a link.
@@ -39,7 +39,7 @@ export function classifyMediaPaste(
   const allFiles = dataTransferFiles(data);
   if (allFiles.length > 0) {
     // A real File payload wins over accompanying text: copied files should paste
-    // as file nodes even when the source app also places a display name on the clipboard.
+    // as Source-backed Nodes even when the source app also places a display name on the clipboard.
     const imageFiles = allFiles.filter((file) => file.type.startsWith('image/'));
     return imageFiles.length === allFiles.length
       ? { kind: 'images', files: imageFiles }

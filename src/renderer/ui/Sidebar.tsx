@@ -2,7 +2,13 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { formatHotkey } from '../../core/launcher/commands';
-import type { DocumentProjection, NodeId, NodeProjection } from '../api/types';
+import {
+  isContentBearingNode,
+  type ContentBearingNodeProjection,
+  type DocumentProjection,
+  type NodeId,
+  type NodeProjection,
+} from '../api/types';
 import { resolveReferenceTargetId, type DocumentIndex } from '../state/document';
 import {
   CalendarIcon,
@@ -95,7 +101,7 @@ const WorkspaceTreeBranch = memo(function WorkspaceTreeBranch({
   trashId,
 }: WorkspaceTreeBranchProps) {
   const node = index.byId.get(nodeId);
-  if (!node) return null;
+  if (!node || !isContentBearingNode(node)) return null;
   const presentation = sidebarNodePresentation(node, index.byId, labels);
   const childParent = presentation.childParent;
   const childParentId = childParent.id;
@@ -278,11 +284,12 @@ export function Sidebar(props: SidebarProps) {
     recents: props.projection.recentsId,
     schema: props.projection.schemaId,
   } satisfies Record<typeof primaryNavItems[number]['key'], NodeId | null>;
-  const rootNode = props.index.byId.get(props.projection.rootId);
+  const rootCandidate = props.index.byId.get(props.projection.rootId);
+  const rootNode = rootCandidate && isContentBearingNode(rootCandidate) ? rootCandidate : undefined;
   const rootChildren = rootNode?.children
     .map((childId) => props.index.byId.get(childId))
-    .filter((child): child is NodeProjection => (
-      Boolean(child && child.parentId === rootNode.id)
+    .filter((child): child is ContentBearingNodeProjection => (
+      Boolean(child && isContentBearingNode(child) && child.parentId === rootNode.id)
     )) ?? [];
   const rootLabel = rootNode ? textOf(rootNode) || t.common.untitled : '';
   const rootActive = rootNode ? props.rootId === rootNode.id : false;
@@ -558,13 +565,13 @@ function SidebarNodeContextMenu(props: SidebarNodeContextMenuProps) {
 }
 
 interface SidebarNodePresentation {
-  childParent: NodeProjection;
+  childParent: ContentBearingNodeProjection;
   label: string;
   navigateId: NodeId;
 }
 
 function sidebarNodePresentation(
-  node: NodeProjection,
+  node: ContentBearingNodeProjection,
   byId: Map<NodeId, NodeProjection>,
   // Localized fallbacks passed in from the component (this helper runs outside React,
   // so it can't call useT itself).
@@ -582,22 +589,24 @@ function sidebarNodePresentation(
 }
 
 function referenceTargetNode(
-  node: NodeProjection,
+  node: ContentBearingNodeProjection,
   byId: Map<NodeId, NodeProjection>,
-): NodeProjection | null {
+): ContentBearingNodeProjection | null {
   if (node.type !== 'reference' || !node.targetId) return null;
   const targetId = resolveReferenceTargetId(node.targetId, byId);
-  return targetId ? byId.get(targetId) ?? null : null;
+  const target = targetId ? byId.get(targetId) : undefined;
+  return target && isContentBearingNode(target) ? target : null;
 }
 
 function sidebarChildren(
-  parent: NodeProjection,
+  parent: ContentBearingNodeProjection,
   byId: Map<NodeId, NodeProjection>,
-): NodeProjection[] {
+): ContentBearingNodeProjection[] {
   return parent.children
     .map((childId) => byId.get(childId))
-    .filter((child): child is NodeProjection => Boolean(
+    .filter((child): child is ContentBearingNodeProjection => Boolean(
       child
+      && isContentBearingNode(child)
       && child.parentId === parent.id
       && child.type !== 'queryCondition'
       // config-as-nodes: internal config rows + system enum options never
@@ -610,12 +619,12 @@ function sidebarChildren(
 // Workspace-tree rows are text-only. A node's icon (its own emoji, or the fixed
 // glyph the system roots fall back to) renders in the outliner/canvas, but the
 // tree intentionally omits it so the navigation list stays scannable.
-function nodeIconOf(node: NodeProjection) {
+function nodeIconOf(node: ContentBearingNodeProjection) {
   const icon = node.icon;
   return typeof icon === 'string' && icon.trim() ? icon.trim() : null;
 }
 
-function rootAvatar(node: NodeProjection, label: string) {
+function rootAvatar(node: ContentBearingNodeProjection, label: string) {
   return nodeIconOf(node) ?? Array.from(label.trim())[0]?.toUpperCase() ?? 'L';
 }
 

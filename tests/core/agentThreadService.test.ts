@@ -31,7 +31,14 @@ import type {
   ThreadResourceReference,
   Turn,
 } from '../../src/core/agent/protocol';
-import type { AssetMetadata, DocumentProjection, NodeProjection } from '../../src/core/types';
+import {
+  SOURCE_FIELD_ID,
+  sourceEntryNodeId,
+  type AssetMetadata,
+  type DocumentProjection,
+  type NodeProjection,
+} from '../../src/core/types';
+import { formatAssetSourceUri } from '../../src/core/source';
 import type { ErrorReport } from '../../src/core/errorObservability';
 import { ExtensionRegistry } from '../../src/main/agent/ExtensionRegistry';
 import {
@@ -3183,21 +3190,9 @@ describe('ThreadService', () => {
     const projection = contextProjection([
       contextNode('root', 'Authoritative root', { children: ['focus', 'valid', 'corrupt', 'missing'] }),
       contextNode('focus', 'Authoritative title', { parentId: 'root' }),
-      contextNode('valid', 'Authoritative image', {
-        parentId: 'root',
-        type: 'image',
-        assetId: 'asset-valid',
-      }),
-      contextNode('corrupt', 'Corrupt image', {
-        parentId: 'root',
-        type: 'image',
-        assetId: 'asset-corrupt',
-      }),
-      contextNode('missing', 'Missing image', {
-        parentId: 'root',
-        type: 'image',
-        assetId: 'asset-missing',
-      }),
+      ...contextSourceBackedNodes('valid', 'Authoritative image', 'asset-valid'),
+      ...contextSourceBackedNodes('corrupt', 'Corrupt image', 'asset-corrupt'),
+      ...contextSourceBackedNodes('missing', 'Missing image', 'asset-missing'),
     ]);
     const metadata = (id: string, bytes: Buffer, fileName: string): AssetMetadata => ({
       schemaVersion: 1,
@@ -13605,6 +13600,31 @@ function contextProjection(nodes: NodeProjection[]): DocumentProjection {
     todayId: 'root',
     nodes,
   };
+}
+
+function contextSourceBackedNodes(id: string, text: string, assetId: string): NodeProjection[] {
+  const entryId = sourceEntryNodeId(id);
+  const valueId = `${entryId}:value`;
+  return [
+    contextNode(id, text, { parentId: 'root', children: [entryId] }),
+    contextNode(entryId, '', {
+      type: 'fieldEntry',
+      parentId: id,
+      fieldDefId: SOURCE_FIELD_ID,
+      locked: true,
+      children: [valueId],
+    }),
+    {
+      id: valueId,
+      type: 'sourceValue',
+      parentId: entryId,
+      children: [],
+      sourceText: formatAssetSourceUri(assetId),
+      createdAt: 1,
+      updatedAt: 1,
+      locked: true,
+    },
+  ];
 }
 
 async function storageFiles(root: string, prefix = ''): Promise<string[]> {

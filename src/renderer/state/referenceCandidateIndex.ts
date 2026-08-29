@@ -4,6 +4,7 @@ import {
   textSearchLabelWordStarts,
 } from '../../core/textSearchAnalyzer';
 import { isPublicReferenceNodeId } from '../../core/nodeId';
+import { isContentBearingNode } from '../../core/types';
 import type { NodeId, NodeProjection } from '../api/types';
 import { SparseProjectionMap } from './sparseProjectionMap';
 
@@ -12,7 +13,7 @@ const POSTING_OVERLAY_LIMIT = 23;
 const POSTING_BLOCK_SIZE = 128;
 const COOPERATIVE_BUILD_CHUNK_SIZE = 8_192;
 
-export type ReferenceCandidateKind = 'content' | 'file';
+export type ReferenceCandidateKind = 'content';
 
 export interface ReferenceCandidateIndexEntry {
   readonly id: NodeId;
@@ -61,7 +62,6 @@ interface CandidatePostingEntries {
 export interface ReferenceCandidateIndex {
   readonly baseRecords: ReadonlyMap<NodeId, CandidateRecord>;
   readonly content: CandidatePostingForest;
-  readonly files: CandidatePostingForest;
   readonly pending: ReadonlyMap<NodeId, CandidateRecord | null>;
   readonly records: ReadonlyMap<NodeId, CandidateRecord>;
 }
@@ -150,16 +150,14 @@ function* referenceCandidateIndexBuildSteps(
     const record = candidateRecord(node);
     if (!record) continue;
     records.push([node.id, record]);
-    yield* appendRecordEntrySteps(entries[record.entry.kind], record, budget);
+    yield* appendRecordEntrySteps(entries, record, budget);
     if (spendBuildWork(budget)) yield;
   }
   const recordsById = SparseProjectionMap.fromEntries(records);
-  const content = yield* buildForestSteps(entries.content, budget);
-  const files = yield* buildForestSteps(entries.file, budget);
+  const content = yield* buildForestSteps(entries, budget);
   return {
     baseRecords: recordsById,
     content,
-    files,
     pending: SparseProjectionMap.fromEntries<CandidateRecord | null>([]),
     records: recordsById,
   };
@@ -220,20 +218,16 @@ export function queryReferenceCandidateIndex(params: {
   readonly index: ReferenceCandidateIndex;
   readonly query: string;
   readonly untitledLabel: string;
-  readonly includeFileNodes: boolean;
   readonly limit: number;
   readonly publicNodeIdsOnly?: boolean;
   readonly stats?: ReferenceCandidateQueryStats;
 }): readonly ReferenceCandidateIndexEntry[] {
   const normalizedQuery = normalizeSearchText(params.query);
-  const forests = params.includeFileNodes
-    ? [params.index.content, params.index.files]
-    : [params.index.content];
+  const forests = [params.index.content];
   const overlayScores = [...params.index.pending.values()]
     .flatMap((record) => {
       if (
         !record
-        || (!params.includeFileNodes && record.entry.kind === 'file')
         || (params.publicNodeIdsOnly && !isPublicReferenceNodeId(record.entry.id))
       ) return [];
       const label = record.entry.untitled ? params.untitledLabel : record.entry.label;
@@ -348,29 +342,22 @@ function sameCandidateRecord(
 
 function candidateKind(node: NodeProjection): ReferenceCandidateKind | null {
   if (!node.type || node.type === 'codeBlock') return 'content';
-  if (node.type === 'attachment' && node.assetId) return 'file';
-  if (node.type === 'image' && (node.assetId || node.mediaUrl)) return 'file';
   return null;
 }
 
 function candidateLabel(node: NodeProjection, kind: ReferenceCandidateKind): string {
-  if (kind === 'content') return node.content.text;
-  const displayName = node.content.text.trim();
-  if (displayName) return displayName;
-  if (node.type === 'attachment') return node.originalFilename?.trim() ?? '';
-  if (node.type === 'image') return node.mediaUrl?.trim() || node.mediaAlt?.trim() || '';
+  if (kind === 'content' && isContentBearingNode(node)) return node.content.text;
   return '';
 }
 
-function emptyPostingEntries(): Record<ReferenceCandidateKind, CandidatePostingEntries> {
-  const create = (): CandidatePostingEntries => ({
+function emptyPostingEntries(): CandidatePostingEntries {
+  return {
     exactLabels: new Map(),
     labels: [],
     suffixes: [],
     untitled: [],
     words: [],
-  });
-  return { content: create(), file: create() };
+  };
 }
 
 function* appendRecordEntrySteps(

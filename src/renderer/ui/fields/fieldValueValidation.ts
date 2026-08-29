@@ -29,7 +29,7 @@ export function validateFieldValue(
     if (constraints.min != null && num < constraints.min) return `Value should be ≥ ${constraints.min}`;
     if (constraints.max != null && num > constraints.max) return `Value should be ≤ ${constraints.max}`;
   }
-  if (fieldType === 'url' && !looksLikeUrl(trimmed)) return 'Value should be a URL';
+  if (fieldType === 'uri' && !looksLikeUrl(trimmed)) return 'Value should be a URI';
   if (fieldType === 'email' && !EMAIL_PATTERN.test(trimmed)) return 'Value should be an email';
   if (fieldType === 'date' && !parseDateFieldValue(trimmed)) return 'Value should be a date';
   return null;
@@ -52,7 +52,7 @@ function looksLikeUrl(value: string): boolean {
 export function fieldValueOpenHref(fieldType: FieldType | undefined, value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
-  if (fieldType === 'url') {
+  if (fieldType === 'uri') {
     if (!looksLikeUrl(trimmed)) return null;
     return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
   }

@@ -6,7 +6,6 @@ import { textMatchRank } from './candidateRanking';
 import { isNodeInTrash } from './nodeLocation';
 import { getTreeReferenceBlockMessage, getTreeReferenceBlockReason } from './referenceRules';
 import type { TreeReferenceBlockReason } from './referenceRules';
-import { isFileNode } from '../preview/fileNode';
 import {
   buildReferenceCandidateIndex,
   queryReferenceCandidateIndex,
@@ -153,7 +152,6 @@ function nodeCandidates(
   query: string,
   treeReferenceParentId: NodeId | null,
   excludeCurrentNode: boolean,
-  includeFileNodes: boolean,
   labels: ReferenceCandidateLabels,
   resolveTreeReferenceBlockReason: ((targetId: NodeId) => TreeReferenceBlockReason | null) | undefined,
   skipTreeReferenceChecks: boolean,
@@ -171,7 +169,6 @@ function nodeCandidates(
     index: candidateIndex,
     query: normalized,
     untitledLabel: labels.untitled,
-    includeFileNodes,
     limit: DEFAULT_REFERENCE_LIMIT + (excludeCurrentNode ? 1 : 0),
     publicNodeIdsOnly,
     stats,
@@ -179,7 +176,7 @@ function nodeCandidates(
     .flatMap((entry) => {
       const node = index.byId.get(entry.id);
       if (
-        !isReferenceCandidateNode(node, includeFileNodes)
+        !isReferenceCandidateNode(node)
         || (excludeCurrentNode && node.id === currentNodeId)
         || isNodeInTrash(index, node.id)
       ) return [];
@@ -229,11 +226,8 @@ function nodeCandidates(
   });
 }
 
-function isReferenceCandidateNode(
-  node: NodeProjection | undefined,
-  includeFileNodes: boolean,
-): node is NodeProjection {
-  return isContentNode(node) || (includeFileNodes && isFileNode(node));
+function isReferenceCandidateNode(node: NodeProjection | undefined): node is NodeProjection {
+  return isContentNode(node);
 }
 
 export function buildReferenceCandidates(params: {
@@ -247,9 +241,6 @@ export function buildReferenceCandidates(params: {
   // and has no "self" — it passes false so the focused/context node stays
   // mentionable. Defaults to true to preserve the outliner contract.
   excludeCurrentNode?: boolean;
-  // File nodes are only mentionable from the agent composer. The outliner @ picker
-  // creates tree references, and file nodes are not content-reference targets there.
-  includeFileNodes?: boolean;
   // Localized labels; defaults to English so tests/non-localized callers still work.
   labels?: ReferenceCandidateLabels;
   resolveTreeReferenceBlockReason?: (targetId: NodeId) => TreeReferenceBlockReason | null;
@@ -264,7 +255,6 @@ export function buildReferenceCandidates(params: {
     treeReferenceParentId = null,
     allowCreate = true,
     excludeCurrentNode = true,
-    includeFileNodes = false,
     labels = DEFAULT_REFERENCE_LABELS,
     resolveTreeReferenceBlockReason,
     skipTreeReferenceChecks = false,
@@ -280,7 +270,6 @@ export function buildReferenceCandidates(params: {
       normalized,
       treeReferenceParentId,
       excludeCurrentNode,
-      includeFileNodes,
       labels,
       resolveTreeReferenceBlockReason,
       skipTreeReferenceChecks,

@@ -81,8 +81,8 @@ describe('shouldConvertRowToImage', () => {
     expect(shouldConvertRowToImage({ ...base, rowTextEmpty: false })).toBe(false);
   });
 
-  test('always converts an existing image row, even if it carries hidden text', () => {
-    expect(shouldConvertRowToImage({ ...base, nodeType: 'image', rowTextEmpty: false })).toBe(true);
+  test('does not give the retired image Node type special conversion behavior', () => {
+    expect(shouldConvertRowToImage({ ...base, nodeType: 'image', rowTextEmpty: false })).toBe(false);
   });
 
   test('never converts reference rows, rows with children, or non-image typed rows', () => {

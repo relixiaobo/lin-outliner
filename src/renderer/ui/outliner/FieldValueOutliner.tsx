@@ -2,7 +2,7 @@ import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import { api } from '../../api/client';
 import type { NodeId, NodeProjection } from '../../api/types';
 import { projectFieldConfig } from '../../../core/configProjection';
-import { mediaKindForMimeType } from '../../../core/mediaKind';
+import { formatAssetSourceUri } from '../../../core/source';
 import {
   fieldSlotsForIndex,
   type DocumentIndex,
@@ -10,7 +10,6 @@ import {
   type UiState,
 } from '../../state/document';
 import { fieldValueEditor, type FieldValueContext } from '../fields/fieldValueEditors';
-import { attachmentNodeInput } from '../interactions/attachmentIngest';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
 import { OutlinerFlatView } from './OutlinerFlatView';
 import { buildOutlinerRows, viewFieldValuesFor } from './row-model';
@@ -189,29 +188,28 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
           id,
         })
       ),
-      materializeAsset: (id, asset) => (
-        mediaKindForMimeType(asset.mimeType) === 'image'
-          ? updateFieldValue({
-              kind: 'appendImage',
-              assetId: asset.id,
-              width: asset.imageWidth,
-              height: asset.imageHeight,
-              name: asset.originalFilename,
-              id,
-            })
-          : updateFieldValue({
-              kind: 'appendAttachment',
-              ...attachmentNodeInput(asset),
-              id,
-            })
-      ),
-      materializeImageUrl: (id, mediaUrl) => (
-        updateFieldValue({
-          kind: 'appendImage',
-          mediaUrl,
+      materializeAsset: async (id, asset) => {
+        const target = await resolveFieldTarget();
+        return api.appendFieldSource(
+          props.ownerId,
+          target.fieldDefId,
           id,
-        })
-      ),
+          formatAssetSourceUri(asset.id),
+          asset.originalFilename,
+          target.entryId,
+        );
+      },
+      materializeImageUrl: async (id, sourceText) => {
+        const target = await resolveFieldTarget();
+        return api.appendFieldSource(
+          props.ownerId,
+          target.fieldDefId,
+          id,
+          sourceText,
+          '',
+          target.entryId,
+        );
+      },
       onSelectOption: (optionId, id) => (
         updateFieldValue({
           kind: 'selectOption',

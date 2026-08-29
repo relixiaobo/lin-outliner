@@ -163,6 +163,7 @@ import {
   type ClearUrlPreviewDataResult,
 } from '../core/urlPreviewSession';
 import { handlePreviewCommand } from './previewSource';
+import { LinkedFileGrantStore } from './linkedFileGrantStore';
 import { ingestThreadResourceAsset } from './threadResourceAssetIngest';
 import { PageTranslationService, pageTranslationErrorReport } from './pageTranslation';
 import { PreviewTranslationCacheStore } from './previewTranslationCacheStore';
@@ -1371,6 +1372,7 @@ const localFilePreviewStreams = new LocalFilePreviewStreamRegistry(() => [
   agentScratchRoot,
   outlineAssetExportRoot,
 ]);
+const linkedFileGrants = new LinkedFileGrantStore(join(resolvedUserDataDir, 'linked-file-grants.json'));
 
 outlineDocumentService.onProjectionChanged(({ event, update }) => {
   pruneNodeAccessForProjectionUpdate(update);
@@ -2892,6 +2894,19 @@ function registerIpc() {
             }).catch(() => null)
           ),
           threadManagedFileStreamUrl: async (filePath, mimeType) => {
+            const token = await localFilePreviewStreams.issueExactPath(filePath, mimeType);
+            return token ? previewLocalUrl(token) : null;
+          },
+          linkedFileGrant: linkedFileGrants,
+          chooseLinkedFile: async () => {
+            const window = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? mainWindow;
+            const options: Electron.OpenDialogOptions = { properties: ['openFile'] };
+            const result = window
+              ? await dialog.showOpenDialog(window, options)
+              : await dialog.showOpenDialog(options);
+            return result.canceled ? null : result.filePaths[0] ?? null;
+          },
+          linkedFileStreamUrl: async (filePath, mimeType) => {
             const token = await localFilePreviewStreams.issueExactPath(filePath, mimeType);
             return token ? previewLocalUrl(token) : null;
           },

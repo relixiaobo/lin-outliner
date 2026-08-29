@@ -144,8 +144,19 @@ async function openCurrentSafeFile(entry: PreviewLocalFileTokenEntry): Promise<O
   const handle = await open(fileRealPath, OPEN_NOFOLLOW).catch(() => null);
   if (!handle) return null;
   try {
-    const fileStats = await handle.stat();
-    if (!fileStats.isFile() || fileStats.size <= 0) {
+    const [fileStats, freshStats, freshRealPath] = await Promise.all([
+      handle.stat(),
+      stat(fileRealPath).catch(() => null),
+      realpath(entry.path).catch(() => null),
+    ]);
+    if (
+      !fileStats.isFile()
+      || fileStats.size <= 0
+      || !freshStats?.isFile()
+      || freshRealPath !== fileRealPath
+      || fileStats.dev !== freshStats.dev
+      || fileStats.ino !== freshStats.ino
+    ) {
       await handle.close().catch(() => undefined);
       return null;
     }

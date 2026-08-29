@@ -1,7 +1,14 @@
 import { useEffect, useRef } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { api } from '../api/client';
-import { EMPTY_RICH_TEXT, parseIsoLocalDate, todayIsoLocalDate, type NodeId } from '../api/types';
+import {
+  EMPTY_RICH_TEXT,
+  isContentBearingNode,
+  parseIsoLocalDate,
+  todayIsoLocalDate,
+  type NodeId,
+  type RichText,
+} from '../api/types';
 import { resolveReferenceTargetId } from '../state/document';
 import type { DocumentIndex, UiState } from '../state/document';
 import { buildSelectableRows } from '../state/selectableRows';
@@ -76,6 +83,15 @@ function isBracketPageHistoryShortcut(
   return direction === 'back'
     ? event.key === '[' || event.code === 'BracketLeft'
     : event.key === ']' || event.code === 'BracketRight';
+}
+
+function nodeContent(index: DocumentIndex, nodeId: NodeId): RichText {
+  const node = index.byId.get(nodeId);
+  return node && isContentBearingNode(node) ? node.content : EMPTY_RICH_TEXT;
+}
+
+function nodeContentText(index: DocumentIndex, nodeId: NodeId): string {
+  return nodeContent(index, nodeId).text;
 }
 
 function resolveKeyboardSelectionRoot(ui: UiState, index: DocumentIndex, rootId: NodeId): NodeId {
@@ -203,7 +219,7 @@ export function useWorkspaceKeyboard({
             referenceId: singleSelectedId,
             parentId,
             targetId: selectedReferenceTargetId,
-            targetDisplayName: currentIndex.byId.get(selectedReferenceTargetId)?.content.text || undefined,
+            targetDisplayName: nodeContentText(currentIndex, selectedReferenceTargetId) || undefined,
             siblingIds: currentIndex.byId.get(parentId)?.children ?? [],
             panelId,
             selectionRootId,
@@ -330,7 +346,7 @@ export function useWorkspaceKeyboard({
           referenceId: singleSelectedId,
           parentId,
           targetId: selectedReferenceTargetId,
-          targetDisplayName: currentIndex.byId.get(selectedReferenceTargetId)?.content.text || undefined,
+          targetDisplayName: nodeContentText(currentIndex, selectedReferenceTargetId) || undefined,
           siblingIds: currentIndex.byId.get(parentId)?.children ?? [],
           panelId,
           selectionRootId,
@@ -498,7 +514,7 @@ export function useWorkspaceKeyboard({
             sourceParentId: placement.parentId,
             beforeId: placement.beforeId,
             afterId: placement.afterId,
-            content: currentIndex.byId.get(placement.id)?.content ?? EMPTY_RICH_TEXT,
+            content: nodeContent(currentIndex, placement.id),
             placement: cursorEnd(),
             preserveFocus: true,
           })),
@@ -571,7 +587,7 @@ export function useWorkspaceKeyboard({
           const now = Date.now();
           const patches = operationIds.flatMap((id) => {
             const node = currentIndex.byId.get(id);
-            return node ? [optimisticDonePatch({
+            return node && isContentBearingNode(node) ? [optimisticDonePatch({
               index: currentIndex,
               node,
               ui: currentUi,
@@ -595,7 +611,7 @@ export function useWorkspaceKeyboard({
           const placements = orderedIds.flatMap((id) => {
             const node = currentIndex.byId.get(id);
             const sourceParentId = node?.parentId;
-            if (!node || !sourceParentId) return [];
+            if (!node || !isContentBearingNode(node) || !sourceParentId) return [];
             const targetParentId = action === 'batch_indent'
               ? indentTargetParentId(id, currentIndex.byId)
               : currentIndex.byId.get(sourceParentId)?.parentId ?? null;

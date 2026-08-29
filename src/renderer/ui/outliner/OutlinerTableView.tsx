@@ -16,7 +16,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../../api/client';
-import type { FieldType, NodeId, NodeProjection } from '../../api/types';
+import { isContentBearingNode, type FieldType, type NodeId, type NodeProjection } from '../../api/types';
 import type { Messages } from '../../../core/i18n';
 import { projectFieldTypeById } from '../../../core/configProjection';
 import {
@@ -446,7 +446,8 @@ function MeasuredTableRow({
 export function OutlinerTableView(props: OutlinerTableViewProps) {
   const t = useT();
   const tt = t.outliner.table;
-  const parent = props.index.byId.get(props.parentId);
+  const parentCandidate = props.index.byId.get(props.parentId);
+  const parent = parentCandidate && isContentBearingNode(parentCandidate) ? parentCandidate : undefined;
   const selectionRootId = props.selectionRootId ?? props.rootId;
   const view = useMemo(
     () => readViewConfig(parent, props.index.byId),
@@ -646,7 +647,7 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     const ownerId = outlinerChildParentId(rowId, props.index.byId);
     if (!ownerId) return;
     const projectedOwner = props.index.byId.get(ownerId);
-    if (!projectedOwner || projectedOwner.locked) return;
+    if (!projectedOwner || !isContentBearingNode(projectedOwner) || projectedOwner.locked) return;
     const owner = nodeWithPendingPatch(
       projectedOwner,
       props.uiRef.current.pendingNodePatches.get(ownerId),
@@ -905,7 +906,10 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     const activeTitle = effectiveActiveCell?.rowId === row.id
       && effectiveActiveCell.columnId === TABLE_TITLE_COLUMN_ID;
     const ownerId = rowNode ? outlinerChildParentId(row.id, props.index.byId) : null;
-    const childParent = ownerId ? props.index.byId.get(ownerId) : undefined;
+    const childParentCandidate = ownerId ? props.index.byId.get(ownerId) : undefined;
+    const childParent = childParentCandidate && isContentBearingNode(childParentCandidate)
+      ? childParentCandidate
+      : undefined;
     const childReferencePath = ownerId ? [...referencePath, ownerId] : referencePath;
     const referenceCycle = Boolean(ownerId && referencePath.includes(ownerId) && ownerId !== row.id);
     const expanded = !row.draft && props.ui.expanded.has(row.id) && !referenceCycle;
@@ -1277,9 +1281,9 @@ function TableFieldCell(props: TableFieldCellProps) {
     ? outlinerChildParentId(props.rowNode.id, props.index.byId)
     : null;
   const projectedOwner = ownerId ? props.index.byId.get(ownerId) : undefined;
-  const owner = projectedOwner
+  const owner = projectedOwner && isContentBearingNode(projectedOwner)
     ? nodeWithPendingPatch(projectedOwner, props.ui.pendingNodePatches.get(projectedOwner.id))
-    : projectedOwner;
+    : undefined;
   const field = props.index.byId.get(props.column.field);
   const slot = owner && field?.type === 'fieldDef'
     ? fieldSlotForViewCell(props.rowNode!, field.id, props.index.byId) ?? {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import type {
+  ContentBearingNodeProjection,
   DocumentProjection,
   FocusPlacement,
   FocusSurface as CoreFocusSurface,
@@ -685,7 +686,7 @@ export interface PendingStructuralChange {
   phase: 'submitting' | 'failed';
   initialContent: RichText;
   latestContent: { current: RichText };
-  nodeOverride?: { current: NodeProjection };
+  nodeOverride?: { current: ContentBearingNodeProjection };
   stableRenderKey: { current: string | null };
   latestFieldName?: { current: string };
   resolvedFieldDefId?: { current: NodeId | null };

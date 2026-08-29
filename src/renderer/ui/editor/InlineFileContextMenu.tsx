@@ -79,7 +79,7 @@ export function InlineFileContextMenu({
 
   const addToToday = () => {
     // App owns the destination: it ensures today's daily note exists (through the
-    // command runner, so the new node is in the index) and creates the file node
+    // command runner, so the new node is in the index) and creates the Source-backed Node
     // under it, surfacing a failure toast on its own. Fire-and-forget here.
     void requestAddPreviewTargetToOutline({ target });
   };
@@ -128,7 +128,7 @@ export function InlineFileContextMenu({
         role="menuitem"
       />
       {file.entryKind !== 'directory' ? (
-        // A directory can't be ingested into the asset store as a file node, so
+        // A directory can't be ingested into the asset store as a managed Source, so
         // "Add to Today" applies to files only; a directory still opens / reveals.
         <MenuItem
           className="node-context-item"

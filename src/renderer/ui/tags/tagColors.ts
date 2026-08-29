@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import type { NodeProjection } from '../../api/types';
+import { isContentBearingNode, type NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { projectTagConfig, type ConfigNodeMap } from '../../../core/configProjection';
 import { TAG_COLOR_TOKENS, type TagColorToken } from '../../../core/configSchema';
@@ -116,7 +116,7 @@ export function inlineReferenceTextColor(
   index: DocumentIndex,
 ): string | undefined {
   const target = index.byId.get(targetNodeId);
-  const firstTagId = target?.tags[0];
+  const firstTagId = target && isContentBearingNode(target) ? target.tags[0] : undefined;
   if (!firstTagId) return undefined;
   return resolveTagColor(index.byId.get(firstTagId), index.byId).text;
 }

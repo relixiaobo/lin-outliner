@@ -603,23 +603,30 @@ describe('renderer Outline intents', () => {
     expect(harness.applyInputs).toHaveLength(0);
   });
 
-  test('preserves image alt text in the typed NodeDraft metadata', async () => {
+  test('uses ordinary Node content as the accessible name for an image Source', async () => {
     const harness = await createHarness([node('root')]);
 
-    await outlineDocumentApi.createImageNode('root', null, {
-      mediaUrl: 'https://example.com/image.png',
-      alt: 'Architecture diagram',
-      width: 640,
+    await outlineDocumentApi.createSourceNode('root', null, {
+      sourceText: 'https://example.com/image.png',
+      name: 'Architecture diagram',
     });
 
-    expect(harness.changeSets[0]!.operations[0]).toMatchObject({
-      op: 'create',
-      nodes: [expect.objectContaining({
-        type: 'image',
-        mediaUrl: 'https://example.com/image.png',
-        metadata: { alt: 'Architecture diagram', width: 640 },
-      })],
-    });
+    expect(harness.changeSets[0]!.operations).toEqual([
+      expect.objectContaining({
+        op: 'create',
+        nodes: [expect.objectContaining({ content: rich('Architecture diagram') })],
+        bind: 'sourceOwner',
+      }),
+      expect.objectContaining({
+        op: 'update',
+        targets: { binding: 'sourceOwner' },
+        changes: [expect.objectContaining({
+          kind: 'source',
+          action: 'add',
+          sourceText: 'https://example.com/image.png',
+        })],
+      }),
+    ]);
   });
 });
 

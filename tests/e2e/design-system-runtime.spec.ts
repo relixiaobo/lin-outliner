@@ -38,7 +38,8 @@ interface SurfaceCase {
 
 async function todayChildren(page: Page) {
   const projection = await e2eProjection(page);
-  return projection.nodes.find((node) => node.id === ids.today)?.children ?? [];
+  return projection.nodes.find((node) => node.id === ids.today)?.children
+    .filter((nodeId) => nodeId !== `${ids.today}::source`) ?? [];
 }
 
 async function invokeDocumentCommand(page: Page, cmd: string, args: Record<string, unknown>) {
@@ -328,7 +329,7 @@ async function showFloatingTextToolbar(page: Page) {
   await page.locator('body > .floating-editor-toolbar').waitFor({ state: 'visible' });
 }
 
-async function createAttachmentRowPreview(page: Page) {
+async function createNodeSourcePreview(page: Page) {
   const beforeChildren = await todayChildren(page);
   await trailingEditor(page).click();
   await page.keyboard.type('/attachment');
@@ -336,11 +337,12 @@ async function createAttachmentRowPreview(page: Page) {
   await page.keyboard.press('Enter');
   await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
   const attachmentId = (await todayChildren(page)).at(-1);
-  if (!attachmentId) throw new Error('Missing attachment node');
+  if (!attachmentId) throw new Error('Missing Source-backed Node');
   const attachmentRow = row(page, attachmentId);
   await attachmentRow.locator('> .row').first().hover();
-  await attachmentRow.locator('.row-chevron-button').first().click();
-  await attachmentRow.locator('.file-node-row-preview .file-node-preview.collapsed').waitFor({ state: 'visible' });
+  await attachmentRow.locator('.row-bullet-button').first().click();
+  await page.locator('.outline-panel-surface.active-panel .node-source-preview .file-node-preview.collapsed')
+    .waitFor({ state: 'visible' });
 }
 
 async function showComposerAttachmentError(page: Page) {
@@ -404,18 +406,18 @@ async function pasteClipboardFileAndOpenPreview(page: Page, file: { name: string
   await pasteClipboardFile(page, file);
   await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
   const pastedId = (await todayChildren(page)).at(-1);
-  if (!pastedId) throw new Error(`No pasted file node for ${file.name}`);
+  if (!pastedId) throw new Error(`No pasted Source-backed Node for ${file.name}`);
   const pastedRow = row(page, pastedId);
   await pastedRow.locator('> .row').first().hover();
-  await pastedRow.locator('.row-chevron-button').first().click();
-  const previewFrame = pastedRow.locator('.file-node-row-preview .file-node-preview.collapsed');
+  await pastedRow.locator('.row-bullet-button').first().click();
+  const previewFrame = page.locator('.outline-panel-surface.active-panel .node-source-preview .file-node-preview.collapsed');
   await previewFrame.waitFor({ state: 'visible' });
   return previewFrame;
 }
 
 async function showFilePreviewPillMenu(page: Page) {
-  await createAttachmentRowPreview(page);
-  await page.locator('.file-node-row-preview .file-preview-pill-more').click();
+  await createNodeSourcePreview(page);
+  await page.locator('.node-source-preview .file-preview-pill-more').click();
   await page.getByRole('menu', { name: 'Preview actions' }).waitFor({ state: 'visible' });
 }
 
@@ -425,7 +427,7 @@ async function showFilePreviewHeaderMenu(page: Page) {
     mimeType: 'text/markdown',
     text: '# Runtime reader\n\nHeader actions surface.',
   });
-  await page.locator('.file-node-row-preview .file-preview-pill-more').click();
+  await page.locator('.node-source-preview .file-preview-pill-more').click();
   await page.getByRole('menuitem', { name: 'Open in split pane' }).click();
   const readerPane = page.locator('.outline-panel-surface.active-panel');
   await readerPane.locator('.file-preview-panel--reader').waitFor({ state: 'visible' });
@@ -441,7 +443,7 @@ async function showDocumentOutlineRail(page: Page) {
     mimeType: 'application/epub+zip',
     text: 'epub bytes',
   });
-  const epubBody = page.locator('.file-node-row-preview > .file-node-body').last();
+  const epubBody = page.locator('.node-source-preview > .file-node-body').last();
   await epubBody.locator('.file-preview-pill-primary').click();
   const fullPreview = epubBody.locator('.file-node-preview.expanded .file-preview-epub--full');
   const outlineRail = fullPreview.locator('.document-outline-rail');
@@ -450,7 +452,7 @@ async function showDocumentOutlineRail(page: Page) {
   await expect(outlineRail.locator('.document-outline-item-title')).toHaveText(['Start', 'Continue']);
 }
 
-async function showImageRowActionMenu(page: Page) {
+async function createImageSourcePreview(page: Page) {
   const beforeChildren = await todayChildren(page);
   await trailingEditor(page).click();
   await page.keyboard.type('/image');
@@ -458,28 +460,12 @@ async function showImageRowActionMenu(page: Page) {
   await page.keyboard.press('Enter');
   await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
   const imageId = (await todayChildren(page)).at(-1);
-  if (!imageId) throw new Error('Missing image node');
+  if (!imageId) throw new Error('Missing image Source-backed Node');
   const imageRow = row(page, imageId);
-  await imageRow.locator('.file-node-image-button img').waitFor({ state: 'visible' });
-  await imageRow.locator('.file-node-image-actions .file-node-card-menu-trigger').click();
-  await page.getByRole('menu', { name: 'File actions' }).waitFor({ state: 'visible' });
-  await expect(page.getByRole('menuitem', { name: 'Maximize' })).toBeVisible();
-}
-
-async function createImagePreviewPage(page: Page) {
-  const beforeChildren = await todayChildren(page);
-  await trailingEditor(page).click();
-  await page.keyboard.type('/image');
-  await expect(page.getByRole('option', { name: /Image/ })).toBeVisible();
-  await page.keyboard.press('Enter');
-  await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
-  const imageId = (await todayChildren(page)).at(-1);
-  if (!imageId) throw new Error('Missing image node');
-  const imageRow = row(page, imageId);
-  await imageRow.locator('.file-node-image-button img').waitFor({ state: 'visible' });
-  await imageRow.locator('.file-node-image-actions .file-node-card-menu-trigger').click();
-  await page.getByRole('menuitem', { name: 'Maximize' }).click();
-  await page.locator('.outline-panel-surface.active-panel .file-node-body').waitFor({ state: 'visible' });
+  await imageRow.locator('> .row').first().hover();
+  await imageRow.locator('.row-bullet-button').first().click();
+  await page.locator('.outline-panel-surface.active-panel .node-source-preview .file-preview-image img')
+    .waitFor({ state: 'visible' });
 }
 
 
@@ -743,10 +729,10 @@ const surfaces: SurfaceCase[] = [
     beforeProbe: showFloatingTextToolbar,
   },
   {
-    name: 'file row preview',
+    name: 'Node Source preview',
     path: '/',
     waitFor: `[data-node-id="${ids.alpha}"]`,
-    beforeProbe: createAttachmentRowPreview,
+    beforeProbe: createNodeSourcePreview,
   },
   {
     name: 'composer attachment error',
@@ -773,16 +759,10 @@ const surfaces: SurfaceCase[] = [
     beforeProbe: showDocumentOutlineRail,
   },
   {
-    name: 'image row action menu',
+    name: 'image Source preview',
     path: '/',
     waitFor: `[data-node-id="${ids.alpha}"]`,
-    beforeProbe: showImageRowActionMenu,
-  },
-  {
-    name: 'image preview page',
-    path: '/',
-    waitFor: `[data-node-id="${ids.alpha}"]`,
-    beforeProbe: createImagePreviewPage,
+    beforeProbe: createImageSourcePreview,
   },
 ];
 

@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { sourceEntryNodeId } from '../../src/core/types';
 import { runOutlineCli } from '../../src/outline/cli';
 import type { Diff, Operation } from '../../src/outline/contract';
 import { OutlineRuntimeServer } from '../../src/outline/runtime/server';
@@ -240,11 +241,11 @@ describe('outline porcelain CLI', () => {
       });
       await mutateAndRevert(root, runtime, ['duplicate', cId, '--previous'], (operation) => {
         const copyId = returnedIds(operation)[0]!;
-        expect(runtime.workspace.documentState().nodes[sourceId]?.children).toEqual([aId, bId, copyId, cId]);
+        expect(documentChildIds(runtime, sourceId)).toEqual([aId, bId, copyId, cId]);
       });
       await mutateAndRevert(root, runtime, ['duplicate', cId, '--next'], (operation) => {
         const copyId = returnedIds(operation)[0]!;
-        expect(runtime.workspace.documentState().nodes[sourceId]?.children).toEqual([aId, bId, cId, copyId]);
+        expect(documentChildIds(runtime, sourceId)).toEqual([aId, bId, cId, copyId]);
       });
     } finally {
       await runtime.stop();
@@ -368,7 +369,12 @@ async function mutateAndRevert(
 
 function childTexts(runtime: OutlineRuntimeServer, parentId: string): string[] {
   const state = runtime.workspace.documentState();
-  return state.nodes[parentId]!.children.map((id) => state.nodes[id]!.content.text);
+  return documentChildIds(runtime, parentId).map((id) => state.nodes[id]!.content.text);
+}
+
+function documentChildIds(runtime: OutlineRuntimeServer, parentId: string): string[] {
+  return runtime.workspace.documentState().nodes[parentId]!.children
+    .filter((id) => id !== sourceEntryNodeId(parentId));
 }
 
 function nodeIdByText(runtime: OutlineRuntimeServer, text: string): string {

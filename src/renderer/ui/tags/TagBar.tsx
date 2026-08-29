@@ -8,7 +8,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../../api/client';
-import { plainText, type NodeId, type NodeProjection } from '../../api/types';
+import { isContentBearingNode, plainText, type NodeId, type NodeProjection } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
 import { isNodeInTrash } from '../interactions/nodeLocation';
 import { CloseIcon, CopyIcon, ICON_SIZE, SearchIcon, SettingsIcon } from '../icons';
@@ -79,7 +79,7 @@ function TagBadge({ nodeId, tag, index, ui, setUi, run, onRoot }: TagBadgeProps)
 
   const removeTag = () => {
     const node = index.byId.get(nodeId);
-    if (!node) return;
+    if (!node || !isContentBearingNode(node)) return;
     void startOptimisticNodePatch({
       currentUi: ui,
       setUi,

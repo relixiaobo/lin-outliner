@@ -101,11 +101,11 @@ export const OUTLINE_QUERY_OPERATORS = Object.freeze([
   operator('ON_DAY_NODE', 'calendar', 'Match direct children of a Daily Note day Node.', {}),
   operator('FOR_DATE', 'calendar', 'Match Nodes associated with an exact date or date range.', { text: '2026-08-24' }, { value: 'required-text-or-operands' }, dateValue),
   operator('FOR_RELATIVE_DATE', 'calendar', 'Match Nodes associated with a relative calendar range.', { text: 'this week' }, { value: 'required-text-or-operands' }, 'today, yesterday, tomorrow, this/last/next week, month, or year, or a resolvable calendar operand.'),
-  operator('IS_TYPE', 'type', 'Match one or more Node type names.', { text: 'attachment' }, { value: 'required-text-or-operands' }, 'node, tag, field, search, calendar, day, week, year, image, attachment, or code.'),
-  operator('HAS_MEDIA', 'media', 'Match image, audio, or video Nodes.', {}),
-  operator('HAS_IMAGE', 'media', 'Match image Nodes.', {}),
-  operator('HAS_AUDIO', 'media', 'Match attachment Nodes with an audio MIME type.', {}),
-  operator('HAS_VIDEO', 'media', 'Match attachment Nodes with a video MIME type.', {}),
+  operator('IS_TYPE', 'type', 'Match one or more Node type names.', { text: 'code' }, { value: 'required-text-or-operands' }, 'node, tag, field, search, calendar, day, week, year, or code.'),
+  operator('HAS_MEDIA', 'media', 'Match Nodes with an image, audio, or video Source.', {}),
+  operator('HAS_IMAGE', 'media', 'Match Nodes with an image Source.', {}),
+  operator('HAS_AUDIO', 'media', 'Match Nodes with an audio Source.', {}),
+  operator('HAS_VIDEO', 'media', 'Match Nodes with a video Source.', {}),
 ] as const);
 
 export type OutlineQueryOperatorName = (typeof OUTLINE_QUERY_OPERATORS)[number]['name'];

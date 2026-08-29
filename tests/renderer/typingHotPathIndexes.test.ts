@@ -65,7 +65,6 @@ function queryIndex(
     index: index.referenceCandidates,
     query,
     untitledLabel: 'Untitled',
-    includeFileNodes: true,
     limit,
     stats,
   });

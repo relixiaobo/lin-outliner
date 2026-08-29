@@ -74,15 +74,15 @@ function opening(): InvocationOpened {
   };
 }
 
-function attachmentOpening(): InvocationOpened {
-  const attachment = item('Quarterly call recording.wav', 'node', 'ref-file', 'Open');
-  attachment.object = {
-    ...attachment.object,
+function fileSourceOpening(): InvocationOpened {
+  const resource = item('Quarterly call recording.wav', 'node', 'ref-file', 'Open');
+  resource.object = {
+    ...resource.object,
     name: { source: 'literal', value: 'Quarterly call recording.wav' },
     iconId: 'file',
     typeLabel: { en: 'File', 'zh-Hans': '文件' },
   };
-  return { ...opening(), resultItems: [attachment] };
+  return { ...opening(), resultItems: [resource] };
 }
 
 function makeLauncherMock(options: LauncherMockOptions = {}): LauncherMock {
@@ -209,8 +209,8 @@ describe('LauncherApp rows are objects', () => {
     expect(rows(r)).toHaveLength(0);
   });
 
-  test('an attachment node keeps its file glyph and localized type label', async () => {
-    const r = await renderLauncher({ opening: attachmentOpening() });
+  test('a file Source presentation keeps its file glyph and localized type label', async () => {
+    const r = await renderLauncher({ opening: fileSourceOpening() });
     const row = rows(r)[0]!;
     expect(row.querySelector('.launcher-row-title')?.textContent).toBe('Quarterly call recording.wav');
     expect(row.querySelector('.launcher-row-type')?.textContent).toBe('File');

@@ -146,10 +146,10 @@ describe('buildVisualRows depth and extras', () => {
     expect(visualRowNodeIds(rows)).toEqual(['a', 'b']);
   });
 
-  test('expanded attachment rows emit their first-child trailing draft', () => {
+  test('expanded Source-backed ordinary rows emit their first-child trailing draft', () => {
     const byId = byIdOf([
       node('lib', { children: ['file'] }),
-      node('file', { parentId: 'lib', type: 'attachment' } as Partial<NodeProjection>),
+      node('file', { parentId: 'lib' }),
     ]);
     const rows = buildVisualRows('lib', byId, {
       expanded: new Set(['file']),

@@ -6,6 +6,7 @@ import { DONE_FIELD } from '../../src/core/systemFields';
 import { isInternalConfigNode } from '../../src/core/configSchema';
 import { runSearchNode } from '../../src/core/searchEngine';
 import { nodeFieldSlots } from '../../src/core/fieldSlots';
+import { formatAssetSourceUri } from '../../src/core/source';
 import {
   AREAS_ID,
   DAILY_NOTES_ID,
@@ -15,6 +16,7 @@ import {
   RESOURCES_ID,
   SCHEMA_ID,
   SEARCHES_ID,
+  SOURCE_FIELD_ID,
   TAG_DAY_ID,
   TAG_WEEK_ID,
   TAG_YEAR_ID,
@@ -24,6 +26,7 @@ import {
   nodeReferenceTarget,
   plainText,
   replaceAllRichTextPatch,
+  sourceEntryNodeId,
   type CreateNodeTree,
   type FieldEntryNode,
   type FocusHint,
@@ -47,7 +50,13 @@ function fieldEntries(core: Core, ownerId: string): FieldEntryNode[] {
   const state = core.state();
   return state.nodes[ownerId].children
     .map((childId) => state.nodes[childId])
-    .filter((node): node is FieldEntryNode => node?.type === 'fieldEntry');
+    .filter((node): node is FieldEntryNode => (
+      node?.type === 'fieldEntry' && node.fieldDefId !== SOURCE_FIELD_ID
+    ));
+}
+
+function documentChildren(core: Core, ownerId: string): string[] {
+  return core.state().nodes[ownerId].children.filter((childId) => childId !== sourceEntryNodeId(ownerId));
 }
 
 function fieldEntryForDefinition(core: Core, ownerId: string, fieldDefId: string): FieldEntryNode | undefined {
@@ -121,7 +130,7 @@ describe('Core', () => {
     const root = state.nodes[core.projection().rootId]!;
 
     expect(root.content.text).toBe('Tenon');
-    expect(root.children).toEqual([
+    expect(documentChildren(core, root.id)).toEqual([
       DAILY_NOTES_ID,
       LIBRARY_ID,
       SCHEMA_ID,
@@ -148,7 +157,7 @@ describe('Core', () => {
     const state = restored.state();
 
     expect(state.nodes.settings).toBeUndefined();
-    expect(state.nodes[WORKSPACE_ID]!.children).toEqual([
+    expect(documentChildren(restored, WORKSPACE_ID)).toEqual([
       DAILY_NOTES_ID,
       LIBRARY_ID,
       SCHEMA_ID,
@@ -179,8 +188,8 @@ describe('Core', () => {
       parentId: LIBRARY_ID,
       locked: false,
       content: { text: 'Settings' },
-      children: ['settings-child'],
     });
+    expect(documentChildren(restored, 'settings')).toEqual(['settings-child']);
     expect(state.nodes['settings-child']?.parentId).toBe('settings');
     expect(state.nodes[WORKSPACE_ID]!.children).not.toContain('settings');
     expect(state.nodes[LIBRARY_ID]!.children).toContain('settings');
@@ -267,8 +276,8 @@ describe('Core', () => {
       parentId: LIBRARY_ID,
       locked: false,
       content: { text: 'Resources' },
-      children: ['legacy-resource-child'],
     });
+    expect(documentChildren(restored, RESOURCES_ID)).toEqual(['legacy-resource-child']);
     expect(state.nodes['legacy-resource-child']?.parentId).toBe(RESOURCES_ID);
     expect(state.nodes[WORKSPACE_ID]!.children).not.toContain(PROJECTS_ID);
     expect(state.nodes[WORKSPACE_ID]!.children).not.toContain(RESOURCES_ID);
@@ -298,7 +307,7 @@ describe('Core', () => {
 
     expect(core.state().nodes[first].parentId).toBe(today);
     expect(core.state().nodes[second].parentId).toBe(today);
-    expect(core.state().nodes[today].children).toEqual([first, second]);
+    expect(documentChildren(core, today)).toEqual([first, second]);
   });
 
   test('batch indent moves a selected run under the external previous sibling', () => {
@@ -312,8 +321,8 @@ describe('Core', () => {
 
     expect(core.state().nodes[second].parentId).toBe(first);
     expect(core.state().nodes[third].parentId).toBe(first);
-    expect(core.state().nodes[first].children).toEqual([second, third]);
-    expect(core.state().nodes[today].children).toEqual([first]);
+    expect(documentChildren(core, first)).toEqual([second, third]);
+    expect(documentChildren(core, today)).toEqual([first]);
   });
 
   test('focuses the last inserted root when creating a tree batch', () => {
@@ -468,7 +477,7 @@ describe('Core', () => {
     const rootId = outcome.focus!.nodeId;
 
     expect(yields).toBe(3);
-    expect(core.state().nodes[rootId].children).toHaveLength(5);
+    expect(documentChildren(core, rootId)).toHaveLength(5);
   });
 
   test('bulk date resolution keeps 2,000-date yield slices bounded beside 12,000 existing nodes', async () => {
@@ -596,7 +605,7 @@ describe('Core', () => {
     }
 
     expect(materializeNodeCalls).toBeLessThanOrEqual(2);
-    expect(core.state().nodes[parentId].children).toHaveLength(100);
+    expect(documentChildren(core, parentId)).toHaveLength(100);
   });
 
   test('yielding tree materialization can flush commits while remaining one agent undo', async () => {
@@ -625,7 +634,7 @@ describe('Core', () => {
 
     const rootId = focus!.nodeId;
     expect(yields).toBe(3);
-    expect(core.state().nodes[rootId].children).toHaveLength(5);
+    expect(documentChildren(core, rootId)).toHaveLength(5);
 
     const history = core.operationHistory({ action: 'list', origin: 'agent' });
     const item = history.items?.find((entry) => entry.operationId === 'op:import-test');
@@ -673,7 +682,7 @@ describe('Core', () => {
     }
 
     expect(commitCalls).toBeGreaterThan(1);
-    expect(core.state().nodes[rootId].children).toHaveLength(5);
+    expect(documentChildren(core, rootId)).toHaveLength(5);
 
     core.undoUser();
     expect(core.state().nodes[rootId]).toBeUndefined();
@@ -753,11 +762,9 @@ describe('Core', () => {
     const state = core.state();
     const child = Object.values(state.nodes).find((node) => node.content.text === 'Config import child 42');
     expect(child).toBeDefined();
-    const fieldEntries = child!.children
-      .map((childId) => state.nodes[childId])
-      .filter((node): node is FieldEntryNode => node?.type === 'fieldEntry');
-    expect(fieldEntries).toHaveLength(2);
-    const valueTexts = fieldEntries.flatMap((entry) => entry.children.map((childId) => state.nodes[childId]?.content.text));
+    const entries = fieldEntries(core, child!.id);
+    expect(entries).toHaveLength(2);
+    const valueTexts = entries.flatMap((entry) => entry.children.map((childId) => state.nodes[childId]?.content.text));
     expect(valueTexts).toContain('Open');
     expect(valueTexts).toContain('41');
     expect(Object.values(state.nodes).filter((node) =>
@@ -1560,21 +1567,6 @@ describe('Core', () => {
       },
       {
         fieldDefId: notesFieldDefId,
-        mutation: { kind: 'appendImage', id: invalidId, mediaUrl: 'https://example.com/image.png' },
-      },
-      {
-        fieldDefId: notesFieldDefId,
-        mutation: {
-          kind: 'appendAttachment',
-          id: invalidId,
-          assetId: 'asset-report',
-          mimeType: 'application/pdf',
-          originalFilename: 'report.pdf',
-          fileSize: 128,
-        },
-      },
-      {
-        fieldDefId: notesFieldDefId,
         mutation: { kind: 'appendText', id: invalidId, text: 'Value' },
       },
       {
@@ -1648,7 +1640,7 @@ describe('Core', () => {
     });
   });
 
-  test('materializes image and attachment values with renderer-proposed ids', () => {
+  test('materializes Source-backed ordinary values with renderer-proposed ids', () => {
     const core = Core.new();
     const tagId = mustFocus(core.createTag('project'));
     const templateEntryId = mustFocus(core.createFieldDef(tagId, 'Files', 'plain'));
@@ -1659,24 +1651,19 @@ describe('Core', () => {
     core.applyTag(ownerId, tagId);
 
     core.updateFieldSlot(ownerId, fieldDefId, {
-      kind: 'appendImage',
+      kind: 'appendNodes',
       id: imageId,
-      mediaUrl: 'https://example.com/diagram.png',
-      width: 640,
-      height: 480,
-      alt: 'Architecture diagram',
-      name: 'diagram.png',
+      nodes: [{ content: plainText('Architecture diagram'), children: [] }],
     });
     core.updateFieldSlot(ownerId, fieldDefId, {
-      kind: 'appendAttachment',
+      kind: 'appendNodes',
       id: attachmentId,
-      assetId: 'asset-report',
-      mimeType: 'application/pdf',
-      originalFilename: 'report.pdf',
-      fileSize: 4096,
-      thumbnailAssetId: 'asset-report-thumbnail',
-      pdfPageCount: 12,
+      nodes: [{ content: plainText('report.pdf'), children: [] }],
     });
+    const imageSourceId = `source:${crypto.randomUUID()}`;
+    const attachmentSourceId = `source:${crypto.randomUUID()}`;
+    core.addSource(imageId, imageSourceId, 'https://example.com/diagram.png');
+    core.addSource(attachmentId, attachmentSourceId, formatAssetSourceUri('asset-report'));
 
     const entry = fieldEntryForDefinition(core, ownerId, fieldDefId)!;
     expect(entry.children).toEqual([
@@ -1685,23 +1672,21 @@ describe('Core', () => {
     ]);
     expect(core.state().nodes[imageId]).toMatchObject({
       parentId: entry.id,
-      type: 'image',
-      mediaUrl: 'https://example.com/diagram.png',
-      imageWidth: 640,
-      imageHeight: 480,
-      mediaAlt: 'Architecture diagram',
-      content: { text: 'diagram.png' },
+      content: { text: 'Architecture diagram' },
     });
     expect(core.state().nodes[attachmentId]).toMatchObject({
       parentId: entry.id,
-      type: 'attachment',
-      assetId: 'asset-report',
-      mimeType: 'application/pdf',
-      originalFilename: 'report.pdf',
-      fileSize: 4096,
-      thumbnailAssetId: 'asset-report-thumbnail',
-      pdfPageCount: 12,
       content: { text: 'report.pdf' },
+    });
+    expect(core.state().nodes[imageSourceId]).toMatchObject({
+      type: 'sourceValue',
+      parentId: sourceEntryNodeId(imageId),
+      sourceText: 'https://example.com/diagram.png',
+    });
+    expect(core.state().nodes[attachmentSourceId]).toMatchObject({
+      type: 'sourceValue',
+      parentId: sourceEntryNodeId(attachmentId),
+      sourceText: formatAssetSourceUri('asset-report'),
     });
   });
 
@@ -2345,9 +2330,9 @@ describe('Core', () => {
     const draftEntry = mustFocus(core.createInlineField(today, null, '', 'plain'));
 
     expect(() => core.createInlineField(today, null, 'Field', 'plain')).not.toThrow();
-    const fieldEntries = core.state().nodes[today]!.children.filter((childId) => core.state().nodes[childId]?.type === 'fieldEntry');
-    expect(fieldEntries).toHaveLength(2);
-    expect(fieldEntries).toContain(draftEntry);
+    const entries = fieldEntries(core, today).map((entry) => entry.id);
+    expect(entries).toHaveLength(2);
+    expect(entries).toContain(draftEntry);
   });
 
   test('field definition rename rejects duplicate owner field names', () => {
@@ -2916,8 +2901,8 @@ describe('Core', () => {
 
     core.undo();
     expect(core.state().nodes[current].content.text).toBe('Current');
-    expect(core.state().nodes[current].children).toEqual([]);
-    expect(core.state().nodes[today].children).toEqual([current, next]);
+    expect(documentChildren(core, current)).toEqual([]);
+    expect(documentChildren(core, today)).toEqual([current, next]);
   });
 
   test('rejects a pasted reference to Trash without changing the existing row', () => {
@@ -2936,8 +2921,8 @@ describe('Core', () => {
     )).toThrow(`reference target is in Trash: ${target}`);
 
     expect(core.state().nodes[current].content).toEqual(plainText('Current'));
-    expect(core.state().nodes[current].children).toEqual([]);
-    expect(core.state().nodes[today].children).toEqual(todayChildrenBefore);
+    expect(documentChildren(core, current)).toEqual([]);
+    expect(documentChildren(core, today)).toEqual(todayChildrenBefore.filter((id) => id !== sourceEntryNodeId(today)));
   });
 
   test('batch move preserves sibling block order', () => {
@@ -2949,10 +2934,10 @@ describe('Core', () => {
     const fourth = mustFocus(core.createNode(today, null, 'Fourth'));
 
     core.batchMoveNodesDown([second, third]);
-    expect(core.state().nodes[today].children).toEqual([first, fourth, second, third]);
+    expect(documentChildren(core, today)).toEqual([first, fourth, second, third]);
 
     core.batchMoveNodesUp([second, third]);
-    expect(core.state().nodes[today].children).toEqual([first, second, third, fourth]);
+    expect(documentChildren(core, today)).toEqual([first, second, third, fourth]);
   });
 
   test('batch drag move is one undoable operation', () => {
@@ -2967,9 +2952,9 @@ describe('Core', () => {
       { nodeId: first, parentId: today, index: 1 },
     ]);
 
-    expect(core.state().nodes[today].children).toEqual([third, first, second]);
+    expect(documentChildren(core, today)).toEqual([third, first, second]);
     core.undoUser();
-    expect(core.state().nodes[today].children).toEqual([first, second, third]);
+    expect(documentChildren(core, today)).toEqual([first, second, third]);
   });
 
   test('inline field trigger converts the current row in place and undo restores it', () => {
@@ -2983,14 +2968,14 @@ describe('Core', () => {
     const fieldId = core.state().nodes[fieldEntryId].fieldDefId!;
 
     expect(fieldEntryId).toBe(trigger);
-    expect(core.state().nodes[today].children).toEqual([before, trigger, after]);
+    expect(documentChildren(core, today)).toEqual([before, trigger, after]);
     expect(core.state().nodes[fieldEntryId].type).toBe('fieldEntry');
     expect(core.state().nodes[fieldEntryId].content.text).toBe('');
     expect(core.state().nodes[fieldId].type).toBe('fieldDef');
     expect(core.state().nodes[fieldId].parentId).toBe(SCHEMA_ID);
 
     core.undo();
-    expect(core.state().nodes[today].children).toEqual([before, trigger, after]);
+    expect(documentChildren(core, today)).toEqual([before, trigger, after]);
     expect(core.state().nodes[trigger].parentId).toBe(today);
     expect(core.state().nodes[trigger].type).toBeUndefined();
     expect(core.state().nodes[trigger].content.text).toBe('/priority');
@@ -3270,8 +3255,8 @@ describe('Core', () => {
     expect(templateIdsFor(missingBothId)).toEqual([firstTemplateId, secondTemplateId]);
     expect(templateIdsFor(derivedTagId)).toEqual([firstTemplateId, secondTemplateId]);
     expect(templateIdsFor(missingOneId)).toEqual([firstTemplateId, secondTemplateId]);
-    expect(core.state().nodes[lockedId].children).toEqual([]);
-    expect(core.state().nodes[trashedId].children).toEqual([]);
+    expect(documentChildren(core, lockedId)).toEqual([]);
+    expect(documentChildren(core, trashedId)).toEqual([]);
     expect(core.previewTagTemplateBackfill(tagId)).toEqual({
       nodeCount: 0,
       additionCount: 0,
@@ -3286,8 +3271,8 @@ describe('Core', () => {
     expect(templateIdsFor(missingBothId)).toEqual([]);
     expect(templateIdsFor(derivedTagId)).toEqual([]);
     expect(templateIdsFor(missingOneId)).toEqual([firstTemplateId]);
-    expect(core.state().nodes[lockedId].children).toEqual([]);
-    expect(core.state().nodes[trashedId].children).toEqual([]);
+    expect(documentChildren(core, lockedId)).toEqual([]);
+    expect(documentChildren(core, trashedId)).toEqual([]);
   });
 
   test('replace node with reference creates backlinks and remains undoable', () => {
@@ -3308,14 +3293,14 @@ describe('Core', () => {
     expect(core.state().nodes[referenceId].type).toBe('reference');
     expect(core.state().nodes[referenceId].targetId).toBe(target);
     expect(core.state().nodes[trigger].parentId).toBe(TRASH_ID);
-    expect(core.state().nodes[today].children).toEqual([targetParent, referenceId, inlineSource]);
+    expect(documentChildren(core, today)).toEqual([targetParent, referenceId, inlineSource]);
     expect(core.backlinks(target)).toEqual(expect.arrayContaining([
       { sourceId: today, referenceId, kind: 'tree' },
       { sourceId: inlineSource, referenceId: inlineSource, kind: 'inline' },
     ]));
 
     core.undo();
-    expect(core.state().nodes[today].children).toEqual([targetParent, trigger, inlineSource]);
+    expect(documentChildren(core, today)).toEqual([targetParent, trigger, inlineSource]);
     expect(core.state().nodes[trigger].parentId).toBe(today);
     expect(core.state().nodes[referenceId]).toBeUndefined();
   });
@@ -3427,8 +3412,8 @@ describe('Core', () => {
     expect(state.nodes[inlineNode]).toBeUndefined();
     expect(state.nodes[restoredReference].type).toBe('reference');
     expect(state.nodes[restoredReference].targetId).toBe(target);
-    expect(state.nodes[today].children).toEqual([targetParent, nestedReferenceParent, restoredReference]);
-    expect(state.nodes[nestedReferenceParent].children).toEqual([nestedReference]);
+    expect(documentChildren(core, today)).toEqual([targetParent, nestedReferenceParent, restoredReference]);
+    expect(documentChildren(core, nestedReferenceParent)).toEqual([nestedReference]);
 
     const emptyRestoreParent = mustFocus(core.createNode(today, null, 'Empty restore parent'));
     const secondReference = mustFocus(core.addReference(emptyRestoreParent, target, null));
@@ -3470,7 +3455,7 @@ describe('Core', () => {
       marks: [],
       inlineRefs: [{ offset: 0, target: { kind: 'node', nodeId: target }, displayName: 'Target' }],
     });
-    expect(state.nodes[conversionParent].children).toEqual([added, replaced]);
+    expect(documentChildren(core, conversionParent)).toEqual([added, replaced]);
   });
 
   test('blocks duplicate block instances of the same reference target in one parent', () => {
@@ -3562,7 +3547,7 @@ describe('Core', () => {
     core.batchTrashNodes([parent, child]);
 
     expect(core.state().nodes[parent].parentId).toBe(TRASH_ID);
-    expect(core.state().nodes[parent].children).toEqual([child]);
+    expect(documentChildren(core, parent)).toEqual([child]);
     expect(core.state().nodes[child].parentId).toBe(parent);
 
     core.undo();
@@ -3813,7 +3798,7 @@ describe('Core', () => {
     const newChildId = mustFocus(outcome);
 
     expect(core.state().nodes[parentId]!.content.text).toBe('Parent');
-    expect(core.state().nodes[parentId]!.children).toEqual([newChildId, existingChildId]);
+    expect(documentChildren(core, parentId)).toEqual([newChildId, existingChildId]);
     expect(core.state().nodes[newChildId]!.content.text).toBe('Tail');
     expect(outcome.focus).toMatchObject({
       nodeId: newChildId,

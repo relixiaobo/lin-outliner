@@ -9,6 +9,7 @@ import {
   ids,
   nodeById,
   openMockedApp,
+  ordinaryChildIds,
   observeNextRowMoveAnimation,
   row,
   rowBody,
@@ -18,7 +19,7 @@ import {
 
 async function todayChildren(page: Page) {
   const projection = await e2eProjection(page);
-  return projection.nodes.find((node) => node.id === ids.today)?.children ?? [];
+  return ordinaryChildIds(projection.nodes.find((node) => node.id === ids.today));
 }
 
 async function emitCurrentProjection(page: Page) {
@@ -418,7 +419,7 @@ test.describe('outliner row editing parity', () => {
     let childId = '';
     await expect.poll(async () => {
       const value = await nodeById(page, firstValueId);
-      childId = value?.children[0] ?? '';
+      childId = ordinaryChildIds(value)[0] ?? '';
       return childId ? await nodeById(page, childId) : null;
     }).toMatchObject({
       parentId: firstValueId,
@@ -471,14 +472,14 @@ test.describe('outliner row editing parity', () => {
     await page.keyboard.press('Tab');
 
     await expect.poll(async () => (await nodeById(page, secondValueId))?.parentId).toBe(firstValueId);
-    await expect.poll(async () => (await nodeById(page, firstValueId))?.children).toEqual([secondValueId]);
+    await expect.poll(async () => ordinaryChildIds(await nodeById(page, firstValueId))).toEqual([secondValueId]);
     await expect(rowEditor(page, secondValueId)).toBeFocused();
     await expect(row(page, firstValueId)).toHaveClass(/expanded/);
 
     await page.keyboard.press('Shift+Tab');
 
     await expect.poll(async () => (await nodeById(page, secondValueId))?.parentId).toBe(entryId);
-    await expect.poll(async () => (await nodeById(page, entryId))?.children).toEqual([firstValueId, secondValueId]);
+    await expect.poll(async () => ordinaryChildIds(await nodeById(page, entryId))).toEqual([firstValueId, secondValueId]);
     await expect(rowEditor(page, secondValueId)).toBeFocused();
 
     await page.keyboard.press('Shift+Tab');
@@ -507,13 +508,13 @@ test.describe('outliner row editing parity', () => {
     expect(await optimisticChildEditor.evaluate((element) => (
       (window as Window & { __bufferedFieldEditor?: Element }).__bufferedFieldEditor === element
     ))).toBe(true);
-    expect((await nodeById(page, secondValueId))?.children).toEqual([]);
+    expect(ordinaryChildIds(await nodeById(page, secondValueId))).toEqual([]);
 
     await releaseMutation();
     let childId = '';
     await expect.poll(async () => {
       const secondValue = await nodeById(page, secondValueId);
-      childId = secondValue?.children[0] ?? '';
+      childId = ordinaryChildIds(secondValue)[0] ?? '';
       return childId ? await nodeById(page, childId) : null;
     }).toMatchObject({
       parentId: secondValueId,
@@ -568,7 +569,7 @@ test.describe('outliner row editing parity', () => {
     expect(children).toEqual([createdId, ids.alpha, ids.beta, ids.gamma]);
     expect((await nodeById(page, createdId))?.content.text).toBe('');
     expect((await nodeById(page, ids.alpha))?.content.text).toBe('Alpha');
-    expect((await nodeById(page, ids.alpha))?.children).toEqual([childId]);
+    expect(ordinaryChildIds(await nodeById(page, ids.alpha))).toEqual([childId]);
     expect((await nodeById(page, childId))?.parentId).toBe(ids.alpha);
     await expect(rowEditor(page, createdId)).toBeFocused();
   });
@@ -915,7 +916,7 @@ test.describe('outliner row editing parity', () => {
     await expect(trailingEditor(page)).toBeVisible();
 
     const alpha = await nodeById(page, ids.alpha);
-    expect(alpha?.children).toEqual([createdId]);
+    expect(ordinaryChildIds(alpha)).toEqual([createdId]);
   });
 
   test('Shift+Tab on an only child removes the emptied parent trailing draft', async ({ page }) => {
@@ -930,13 +931,13 @@ test.describe('outliner row editing parity', () => {
     await page.keyboard.press('Tab');
 
     await expect.poll(async () => (await nodeById(page, createdId))?.parentId).toBe(ids.alpha);
-    await expect.poll(async () => (await nodeById(page, ids.alpha))?.children).toEqual([createdId]);
+    await expect.poll(async () => ordinaryChildIds(await nodeById(page, ids.alpha))).toEqual([createdId]);
     await expect(trailingEditor(page, ids.alpha)).toHaveCount(0);
 
     await page.keyboard.press('Shift+Tab');
 
     await expect.poll(async () => (await nodeById(page, createdId))?.parentId).toBe(ids.today);
-    await expect.poll(async () => (await nodeById(page, ids.alpha))?.children).toEqual([]);
+    await expect.poll(async () => ordinaryChildIds(await nodeById(page, ids.alpha))).toEqual([]);
     await expect.poll(async () => (await todayChildren(page))).toEqual([ids.alpha, createdId, ids.beta, ids.gamma]);
     await expect(rowEditor(page, createdId)).toBeFocused();
     await expect(trailingEditor(page, ids.alpha)).toHaveCount(0);
@@ -969,7 +970,7 @@ test.describe('outliner row editing parity', () => {
 
     await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.text).toBe('Pasted parent');
     const alpha = await nodeById(page, ids.alpha);
-    const childId = alpha?.children[0];
+    const childId = ordinaryChildIds(alpha)[0];
     expect(childId).toBeTruthy();
     expect((await nodeById(page, childId!))?.content.text).toBe('Pasted child');
 

@@ -42,7 +42,6 @@ export function referenceItems(params: {
   currentNodeId: NodeId | null;
   treeReferenceParentId?: NodeId | null;
   excludeCurrentNode?: boolean;
-  includeFileNodes?: boolean;
   labels?: ReferenceCandidateLabels;
   resolveTreeReferenceBlockReason?: (targetId: NodeId) => TreeReferenceBlockReason | null;
   skipTreeReferenceChecks?: boolean;
@@ -53,7 +52,6 @@ export function referenceItems(params: {
     query: params.query,
     treeReferenceParentId: params.treeReferenceParentId,
     excludeCurrentNode: params.excludeCurrentNode,
-    includeFileNodes: params.includeFileNodes,
     labels: params.labels,
     resolveTreeReferenceBlockReason: params.resolveTreeReferenceBlockReason,
     skipTreeReferenceChecks: params.skipTreeReferenceChecks,

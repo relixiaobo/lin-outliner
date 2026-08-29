@@ -909,6 +909,31 @@ export class WorkspaceTransactionLog {
     });
   }
 
+  async resolveAssetLeasesForAssetIds(
+    assetIds: readonly string[],
+    now = this.now(),
+  ): Promise<ReadonlyMap<string, AssetLease>> {
+    return this.enqueueWrite(async () => {
+      const state = await this.requireWritableState();
+      const requested = new Set(assetIds);
+      const result = new Map<string, AssetLease>();
+      const matched = new Set<string>();
+      for (const [leaseId, lease] of state.assetLeaseById) {
+        if (!requested.has(lease.assetId) || Date.parse(lease.expiresAt) <= now.getTime()) continue;
+        if (matched.has(lease.assetId)) {
+          throw new OutlineContractError(outlineError(
+            'precondition_failed',
+            'conflict',
+            `Multiple active leases name the same AssetRecord: ${lease.assetId}`,
+          ));
+        }
+        matched.add(lease.assetId);
+        result.set(leaseId, clone(lease));
+      }
+      return result;
+    });
+  }
+
   async collectUnprotectedAssetRecords(
     liveAssetRecordIds: readonly string[],
     now = this.now(),

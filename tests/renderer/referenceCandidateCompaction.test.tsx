@@ -136,7 +136,6 @@ describe('reference candidate overlay compaction', () => {
       index: index.referenceCandidates,
       query: 'Streaming 11',
       untitledLabel: 'Untitled',
-      includeFileNodes: true,
       limit: 24,
     }).map((candidate) => candidate.id)).toEqual(['candidate-0']);
   });

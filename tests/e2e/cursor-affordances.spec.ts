@@ -100,10 +100,6 @@ const focusVisibleOutlineSuppressionExceptions = new Map([
     'The time-picker trigger suppresses the UA outline; the keyboard ring renders on the enclosing .time-picker-control:focus-within.',
   ],
   [
-    'src/renderer/styles/file-preview.css|.file-node-image-button:focus-visible',
-    'The hidden image-row anchor transfers keyboard focus to the visible image frame.',
-  ],
-  [
     'src/renderer/styles/input.css|.input-bare:focus-visible',
     'Bare inputs suppress the UA outline while keeping the shared keyboard focus ring available.',
   ],

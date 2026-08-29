@@ -149,12 +149,14 @@ it. Markdown tables, aligned child text, and owner Nodes without a table
 `viewDef` do not satisfy a table request.
 
 `capture add` accepts exactly one parent or local date, ensures the date when
-needed, preserves capture provenance, and creates its typed child tree in the
-same Operation. `media add` accepts a local path or stdin, stages the asset lease,
-and creates the image/attachment Node in one invocation. `asset ingest` remains
-the explicit primitive for automation that deliberately separates staging and
-review. Root `set` patches generic Node properties; `media set` owns media
-source/geometry; `search set` owns Search query/view configuration.
+needed, preserves capture provenance, derives a canonical HTTP(S) Source from the
+capture metadata when present, and creates its typed child tree in the same
+Operation. The dedicated `source add`, `source replace`, `source reorder`,
+`source remove`, and `source clear` commands own direct values under the protected
+Source entry. `asset ingest` remains the explicit primitive for automation that
+deliberately separates staging and review; the reviewed ChangeSet then adds its
+canonical managed Source to an ordinary Node. Root `set` patches generic Node
+properties, while `search set` owns Search query/view configuration.
 
 Create, move, and duplicate use a public placement union rather than loosely
 coupled parent/index fields. Destination placement is `first(parent)`,

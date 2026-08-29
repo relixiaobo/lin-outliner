@@ -38,9 +38,23 @@ settles receipt-bearing Runtime mutations against that control state. The
 control database is not portable workspace content. See
 [`agent-memory.md`](agent-memory.md).
 
-Binary assets are outside the CRDT document. The document stores stable logical
-asset IDs on `image` / `attachment` Nodes. Runtime owns Outline `AssetRecord`
-metadata, staging leases, live-Node and recovery-patch reachability, and the
+Every ordinary content Node atomically owns one permanent protected
+`field:source` entry at `${ownerId}::source`. Its ordered direct children are
+`sourceValue` structural Nodes with stable identity and one exact `sourceText`
+scalar; they have no RichText, tags, fields, or nested Source entry. Zero values
+project as no visible field. Dedicated add, replace, reorder, remove, and
+observed-clear commands are the only public mutation surface for direct Source
+values. Generic field and tree operations cannot create, move, or edit that
+protected structure. The Loro codec stores `sourceText` as an atomic map scalar,
+so concurrent replacement never splices characters; malformed stored structure
+fails closed at codec/admission boundaries and degrades only Source presentation
+during runtime inspection.
+
+Binary assets are outside the CRDT document. An ordinary Node relates to a
+managed logical asset through the canonical
+`asset://local/<percent-encoded-logical-id>` text of a Source value, never through
+a special Node variant or asset scalar. Runtime owns Outline `AssetRecord`
+metadata, staging leases, Source/icon/banner/recovery-patch reachability, and the
 transaction that changes those facts. The neutral `ContentStore` stores immutable
 exact revisions, admission leases, opaque mechanical retention anchors,
 admission-staging/publication/deletion journals, physical-integrity quarantine,
@@ -114,8 +128,9 @@ without exposing its digest key. A revision shared by multiple recovery records
 is charged once, and a revision still retained by a live logical record is not
 charged as recovery-only storage.
 
-Renderer flows stage files through public asset capabilities and reference the
-returned lease in an ordinary ChangeSet. Native pickers, open, Reveal in Finder,
+Renderer flows stage files through public asset capabilities and consume the
+returned lease in the same ChangeSet that creates an ordinary Node and adds its
+canonical managed Source. Native pickers, open, Reveal in Finder,
 copy, and external URL handling remain Electron-main OS effects rather than
 Runtime document capabilities. Local `asset://` range serving streams verified
 Runtime bytes and does not pre-read an entire video merely to render it. PDF
@@ -126,6 +141,18 @@ exactly that authority and one decoded path segment, rejecting credentials,
 ports, query, fragment, separators, controls, and empty or oversized IDs before
 the Runtime asset service is called. Colon-bearing logical IDs therefore never
 enter a URL hostname, where normalization would lowercase them.
+
+Source classification is pure and permission-independent. It recognizes
+`http(s)` remote locators, canonical managed `asset:` locators, and exact linked
+`file:` locators while preserving invalid or unsupported text verbatim. Host
+resolution applies current network policy, verified AssetRecord authority, or a
+profile-private exact-file grant. A linked-file grant is stored atomically under
+active `userData`, authorizes only the selected canonical regular file (never its
+directory or siblings), and is revalidated through the same opened no-follow
+handle used by reads. Grant identity, canonical paths, and device/inode facts do
+not enter document, renderer, or Agent-visible state. Missing, corrupt, revoked,
+or retargeted grants degrade the Source to denied/unavailable without changing
+the stored scalar.
 
 Preview translation persistence is a separate local-derived-data boundary, not
 an asset or workspace fact. Electron main owns a bounded cache under `userData`;

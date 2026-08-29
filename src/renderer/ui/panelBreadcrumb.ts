@@ -1,27 +1,37 @@
-import type { NodeId, NodeProjection } from '../api/types';
+import {
+  isContentBearingNode,
+  type ContentBearingNodeProjection,
+  type NodeId,
+  type NodeProjection,
+} from '../api/types';
 import type { DocumentIndex } from '../state/document';
 
 interface PanelBreadcrumb {
   collapsed: boolean;
-  hiddenNodes: NodeProjection[];
-  nodes: NodeProjection[];
+  hiddenNodes: ContentBearingNodeProjection[];
+  nodes: ContentBearingNodeProjection[];
 }
 
-export function buildPanelBreadcrumb(rootNode: NodeProjection | undefined, index: DocumentIndex): PanelBreadcrumb {
+export function buildPanelBreadcrumb(
+  rootNode: ContentBearingNodeProjection | undefined,
+  index: DocumentIndex,
+): PanelBreadcrumb {
   if (!rootNode) return { collapsed: false, hiddenNodes: [], nodes: [] };
 
   const hiddenAncestorIds = new Set<NodeId>([
     index.projection.workspaceId,
   ]);
-  const chain: NodeProjection[] = [];
+  const chain: ContentBearingNodeProjection[] = [];
   const seen = new Set<NodeId>();
-  let current = rootNode.parentId ? index.byId.get(rootNode.parentId) : undefined;
+  const parent = rootNode.parentId ? index.byId.get(rootNode.parentId) : undefined;
+  let current = parent && isContentBearingNode(parent) ? parent : undefined;
 
   while (current && !seen.has(current.id)) {
     seen.add(current.id);
     chain.unshift(current);
     if (!current.parentId) break;
-    current = index.byId.get(current.parentId);
+    const next = index.byId.get(current.parentId);
+    current = next && isContentBearingNode(next) ? next : undefined;
   }
 
   const visible = chain.filter((node) => !hiddenAncestorIds.has(node.id));

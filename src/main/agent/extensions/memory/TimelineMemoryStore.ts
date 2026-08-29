@@ -9,6 +9,7 @@ import {
   DAILY_NOTES_ID,
   TAG_DAY_ID,
   TRASH_ID,
+  isContentBearingNode,
   plainText,
   type DocumentProjection,
   type NodeProjection,
@@ -58,7 +59,7 @@ export interface TimelinePublication {
 }
 
 export interface CanonicalMemoryNode {
-  readonly node: NodeProjection;
+  readonly node: Exclude<NodeProjection, { type: 'sourceValue' }>;
   readonly category: MemoryCategory;
   readonly sourceDate: string;
   readonly containerId: string;
@@ -153,7 +154,8 @@ export class TimelineMemoryStore {
           operations.push({
             op: 'ensure', resource: 'date', date: date.sourceDate, bind: dateBinding,
           });
-          const container = index.get(date.containerId);
+          const candidate = index.get(date.containerId);
+          const container = candidate && isContentBearingNode(candidate) ? candidate : undefined;
           const containerBinding = `memoryContainer${dateIndex + 1}`;
           const containerRef = container ? oneId(container.id) : binding(containerBinding);
           if (!container) {
@@ -324,7 +326,9 @@ export class TimelineMemoryStore {
 
 export function canonicalMemoryGraph(projection: DocumentProjection): CanonicalMemoryGraph {
   const index = nodeIndex(projection);
-  const tagged = projection.nodes.filter((node) => node.tags.some((tagId) => memoryCategoryForTagId(tagId) !== null));
+  const tagged = projection.nodes.filter((node): node is Exclude<NodeProjection, { type: 'sourceValue' }> => (
+    isContentBearingNode(node) && node.tags.some((tagId) => memoryCategoryForTagId(tagId) !== null)
+  ));
   const containers: CanonicalMemoryNode[] = [];
   const nodes: CanonicalMemoryNode[] = [];
   const canonicalIds = new Set<string>();
@@ -338,7 +342,7 @@ export function canonicalMemoryGraph(projection: DocumentProjection): CanonicalM
 
     for (const episodeId of node.children) {
       const episode = index.get(episodeId);
-      if (!episode) continue;
+      if (!episode || !isContentBearingNode(episode)) continue;
       const episodeEntry = canonicalMemoryNodeFromIndex(episode, index);
       if (
         !episodeEntry
@@ -356,6 +360,7 @@ export function canonicalMemoryGraph(projection: DocumentProjection): CanonicalM
         const child = index.get(childId);
         if (!child) continue;
         stack.push(...child.children);
+        if (!isContentBearingNode(child)) continue;
         const entry = canonicalMemoryNodeFromIndex(child, index);
         if (
           !entry
@@ -377,18 +382,19 @@ export function canonicalMemoryGraph(projection: DocumentProjection): CanonicalM
 }
 
 export function canonicalMemoryNodeFromIndex(
-  node: NodeProjection,
+  node: Exclude<NodeProjection, { type: 'sourceValue' }>,
   index: ReadonlyMap<string, NodeProjection>,
 ): CanonicalMemoryNode | null {
   if (nodeIsInSubtree(index, node.id, TRASH_ID)) return null;
   const directContainer = canonicalMemoryContainer(node, index);
   if (directContainer) return directContainer;
 
-  const path: NodeProjection[] = [node];
+  const path: Array<Exclude<NodeProjection, { type: 'sourceValue' }>> = [node];
   const visited = new Set<string>([node.id]);
   let current = node.parentId ? index.get(node.parentId) : undefined;
   while (current && !visited.has(current.id)) {
     visited.add(current.id);
+    if (!isContentBearingNode(current)) return null;
     path.push(current);
     const container = canonicalMemoryContainer(current, index);
     if (container) {
@@ -425,6 +431,7 @@ export function canonicalMemoryContainerAncestorFromIndex(
   let current: NodeProjection | undefined = node;
   while (current && !visited.has(current.id)) {
     visited.add(current.id);
+    if (!isContentBearingNode(current)) return null;
     const container = canonicalMemoryContainer(current, index);
     if (container) return container;
     current = current.parentId ? index.get(current.parentId) : undefined;
@@ -433,7 +440,7 @@ export function canonicalMemoryContainerAncestorFromIndex(
 }
 
 function canonicalMemoryContainer(
-  node: NodeProjection,
+  node: Exclude<NodeProjection, { type: 'sourceValue' }>,
   index: ReadonlyMap<string, NodeProjection>,
 ): CanonicalMemoryNode | null {
   if (
@@ -444,6 +451,7 @@ function canonicalMemoryContainer(
   const day = index.get(node.parentId);
   if (
     !day
+    || !isContentBearingNode(day)
     || !isDayNodeInsideDailyNotes(day, index)
     || !/^\d{4}-\d{2}-\d{2}$/.test(day.content.text)
   ) return null;
@@ -498,7 +506,7 @@ export function timelineNodeStateFingerprint(
   graph = canonicalMemoryGraph(projection),
 ): string | null {
   const node = nodeIndex(projection).get(nodeId);
-  if (!node) return null;
+  if (!node || !isContentBearingNode(node)) return null;
   const canonical = graph.nodes.find((entry) => entry.node.id === nodeId);
   return timelineDigest({
     id: node.id,
@@ -529,6 +537,7 @@ export function timelineSubtreeFingerprint(nodeId: string, projection: DocumentP
     visited.add(currentId);
     const node = index.get(currentId);
     if (!node) continue;
+    if (!isContentBearingNode(node)) continue;
     nodes.push({
       id: node.id,
       parentId: node.parentId ?? null,
@@ -567,6 +576,7 @@ function planUpsertTaggedNode(
     operations.push(createTaggedChange(nodeId, parent, text, memoryTagId(category), bind));
     return binding(bind);
   }
+  if (!isContentBearingNode(node)) return binding(bind);
   const changes: UpdateInstruction[] = [];
   if (node.content.text !== text) changes.push({ kind: 'content', value: plainText(text) });
   if (!node.tags.includes(memoryTagId(category))) {
@@ -624,7 +634,10 @@ function nodeDepth(nodeId: string, projection: DocumentProjection): number {
   return depth;
 }
 
-function isDayNodeInsideDailyNotes(node: NodeProjection, index: ReadonlyMap<string, NodeProjection>): boolean {
+function isDayNodeInsideDailyNotes(
+  node: Exclude<NodeProjection, { type: 'sourceValue' }>,
+  index: ReadonlyMap<string, NodeProjection>,
+): boolean {
   if (!node.tags.includes(TAG_DAY_ID)) return false;
   let current: NodeProjection | undefined = node;
   const visited = new Set<string>();

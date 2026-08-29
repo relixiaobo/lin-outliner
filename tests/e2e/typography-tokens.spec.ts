@@ -104,7 +104,6 @@ const materialSurfaceSelectors = new Map([
   ['src/renderer/styles/code.css|.code-block-language', 'Floating code-block language trigger.'],
   ['src/renderer/styles/code.css|.code-block-language-menu', 'Code-block language menu.'],
   ['src/renderer/styles/file-preview.css|.document-outline-popover', 'Document outline popover.'],
-  ['src/renderer/styles/file-preview.css|.file-node-image-actions .file-node-card-menu-trigger', 'Floating image-row menu trigger over arbitrary pixels.'],
   ['src/renderer/styles/inline-ref.css|.inline-file-preview-popover', 'Inline file hover preview popover.'],
   ['src/renderer/styles/outliner.css|.batch-tag-selector', 'Batch tag selector popover.'],
   ['src/renderer/styles/outliner.css|.node-context-menu', 'Node context menu.'],

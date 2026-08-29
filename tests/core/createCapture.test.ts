@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { Core } from '../../src/core/core';
-import { plainText } from '../../src/core/types';
+import { plainText, sourceEntryNodeId } from '../../src/core/types';
 import { buildContextCaptureInput, buildManualNoteInput, CAPTURE_FIELD, isCaptureIntent } from '../../src/core/launcher/sources';
 import type { CaptureNodeMetadata } from '../../src/core/launcher/sources';
 import type { ExternalContext } from '../../src/core/launcher/context';
@@ -53,8 +53,9 @@ describe('Core.createCapture', () => {
     expect(node?.description).toBe('clipped from Safari');
     expect(node?.capture).toEqual(sampleMetadata());
 
-    expect(node?.children.length).toBe(1);
-    const child = core.projection().nodes.find((entry) => entry.id === node?.children[0]);
+    const contentChildren = node?.children.filter((childId) => childId !== sourceEntryNodeId(id));
+    expect(contentChildren).toHaveLength(1);
+    const child = core.projection().nodes.find((entry) => entry.id === contentChildren?.[0]);
     expect(child?.content.text).toBe('Local-first software keeps a full copy on device.');
   });
 
@@ -154,9 +155,10 @@ describe('buildContextCaptureInput', () => {
       destinationParentId: 'node:today',
       captureId: 'cap:none',
     });
-    // Basic-info capture: a link + native fields, no body children or body field.
+    // Basic-info capture: a canonical Source, no body children or body field.
     expect(input.children).toBeUndefined();
-    expect(input.fields?.some((f) => f.field.id !== CAPTURE_FIELD.url.id)).toBe(false);
+    expect(input.sourceText).toBe('https://example.com/a');
+    expect(input.fields).toBeUndefined();
   });
 
   test('projects the source into a capture tag + native fields', () => {
@@ -166,17 +168,18 @@ describe('buildContextCaptureInput', () => {
       captureId: 'cap:ctx-1',
     });
     expect(input.title.text).toBe('A great article');
-    expect(input.description).toBeUndefined(); // no user note; the URL is a field, not the description
+    expect(input.description).toBeUndefined();
     expect(input.tag).toBe('article'); // article kind → #article
     expect(input.tagExtends).toBe('capture'); // rolls up to #capture
-    expect(input.fields).toEqual([{ field: CAPTURE_FIELD.url, value: 'https://example.com/a' }]);
+    expect(input.sourceText).toBe('https://example.com/a');
+    expect(input.fields).toBeUndefined();
     expect(input.metadata.providerId).toBe('generic-webpage');
     expect(input.metadata.source.url).toBe('https://example.com/a');
     expect(input.metadata.status).toBe('saved');
     expect(input.metadata.intent).toBe('capture');
   });
 
-  test('Source field prefers the canonical URL; author/published become fields', () => {
+  test('Source prefers the canonical URL; author/published remain ordinary fields', () => {
     const input = buildContextCaptureInput({
       context: webpageContext({
         source: {
@@ -193,8 +196,8 @@ describe('buildContextCaptureInput', () => {
       destinationParentId: 'node:today',
       captureId: 'cap:ctx-canon',
     });
+    expect(input.sourceText).toBe('https://example.com/a');
     expect(input.fields).toEqual([
-      { field: CAPTURE_FIELD.url, value: 'https://example.com/a' },
       { field: CAPTURE_FIELD.author, value: 'Jane Doe' },
       { field: CAPTURE_FIELD.published, value: '2026-05-31' },
     ]);
@@ -255,7 +258,7 @@ describe('buildContextCaptureInput', () => {
     expect(input.tagExtends).toBeUndefined();
   });
 
-  test('a user note nests as a CHILD node, not the description, separate from the Source field', () => {
+  test('a user note nests as a child node, independently from Source', () => {
     const input = buildContextCaptureInput({
       context: webpageContext(),
       destinationParentId: 'node:today',
@@ -268,7 +271,8 @@ describe('buildContextCaptureInput', () => {
     expect(input.children).toHaveLength(1);
     expect(input.children?.[0]?.content.text).toBe('remember this'); // trimmed
     expect(input.children?.[0]?.children).toEqual([]);
-    expect(input.fields).toEqual([{ field: CAPTURE_FIELD.url, value: 'https://example.com/a' }]);
+    expect(input.sourceText).toBe('https://example.com/a');
+    expect(input.fields).toBeUndefined();
   });
 
   test('end-to-end: a source capture with a note materializes the note as a child node', () => {
@@ -285,8 +289,7 @@ describe('buildContextCaptureInput', () => {
     const node = nodes.find((entry) => entry.id === id);
     expect(node?.content.text).toBe('A great article'); // headline = source title
     expect(node?.description).toBeUndefined(); // NOT the description
-    // Children are the projected URL field entry + the note; the note is the
-    // ordinary (non-fieldEntry) child bullet.
+    // The permanent Source entry is structural; the note is the ordinary child bullet.
     const childNodes = node?.children.map((cid) => nodes.find((n) => n.id === cid));
     const noteChild = childNodes?.find((c) => c?.type !== 'fieldEntry');
     expect(noteChild?.content.text).toBe('remember this');
@@ -319,7 +322,7 @@ describe('buildContextCaptureInput', () => {
     expect(input.metadata.source.original).toEqual({ kind: 'app-resource', preview: 'unsupported' });
   });
 
-  test('a context capture persists end-to-end through Core with tag + seeded URL field', () => {
+  test('a context capture persists end-to-end through Core with Source, tag, and fields', () => {
     const core = Core.new();
     const libraryId = core.projection().libraryId;
     const input = buildContextCaptureInput({
@@ -350,43 +353,51 @@ describe('buildContextCaptureInput', () => {
     expect(tagDefs.find((n) => n.content.text === 'capture')).toBeDefined();
     expect(node?.tags).toContain(articleTag!.id);
 
-    // ... and the seeded URL field def (stable id), with a value child = the link.
-    const urlDef = nodes.find((n) => n.id === CAPTURE_FIELD.url.id);
-    expect(urlDef?.type).toBe('fieldDef');
-    expect(urlDef?.content.text).toBe('URL');
-    const fieldEntry = nodes.find(
-      (n) => n.type === 'fieldEntry' && n.parentId === id && n.fieldDefId === CAPTURE_FIELD.url.id,
-    );
-    expect(fieldEntry).toBeDefined();
-    expect(nodes.find((n) => n.parentId === fieldEntry!.id)?.content.text).toBe('https://example.com/a');
-
-    // The URL field is a url type (clickable), seeded by id — not name-matched.
+    // ... the canonical Source value, plus the ordinary Published field.
+    const sourceEntry = nodes.find((n) => n.id === sourceEntryNodeId(id));
+    expect(sourceEntry?.type).toBe('fieldEntry');
+    const sourceValue = nodes.find((n) => n.id === sourceEntry?.children[0]);
+    expect(sourceValue).toMatchObject({
+      type: 'sourceValue',
+      sourceText: 'https://example.com/a',
+    });
     const byId = new Map(nodes.map((n) => [n.id, n]));
-    expect(projectFieldTypeById(byId, CAPTURE_FIELD.url.id)).toBe('url');
     expect(projectFieldTypeById(byId, CAPTURE_FIELD.published.id)).toBe('date');
   });
 
   test('an existing user-customized field def at the same id is respected, not overwritten', () => {
     const core = Core.new();
     const libraryId = core.projection().libraryId;
-    // First capture seeds the URL field (url type).
-    core.createCapture(buildContextCaptureInput({ context: webpageContext(), destinationParentId: libraryId, captureId: 'cap:a' }));
+    const context = webpageContext({
+      source: {
+        ...webpageContext().source!,
+        publishedAt: '2026-05-31',
+      },
+    });
+    // First capture seeds the Published field (date type).
+    core.createCapture(buildContextCaptureInput({ context, destinationParentId: libraryId, captureId: 'cap:a' }));
     // User downgrades it to plain.
-    core.setFieldConfig(CAPTURE_FIELD.url.id, { fieldType: 'plain' });
+    core.setFieldConfig(CAPTURE_FIELD.published.id, { fieldType: 'plain' });
     // A second capture reuses the same def by id without resetting the user's edit.
-    core.createCapture(buildContextCaptureInput({ context: webpageContext(), destinationParentId: libraryId, captureId: 'cap:b' }));
+    core.createCapture(buildContextCaptureInput({ context, destinationParentId: libraryId, captureId: 'cap:b' }));
     const nodes = core.projection().nodes;
-    expect(nodes.filter((n) => n.id === CAPTURE_FIELD.url.id)).toHaveLength(1);
-    expect(projectFieldTypeById(new Map(nodes.map((n) => [n.id, n])), CAPTURE_FIELD.url.id)).toBe('plain');
+    expect(nodes.filter((n) => n.id === CAPTURE_FIELD.published.id)).toHaveLength(1);
+    expect(projectFieldTypeById(new Map(nodes.map((n) => [n.id, n])), CAPTURE_FIELD.published.id)).toBe('plain');
   });
 
   test('capture field defs are stable across captures (one def per id, no duplicates)', () => {
     const core = Core.new();
     const libraryId = core.projection().libraryId;
-    core.createCapture(buildContextCaptureInput({ context: webpageContext(), destinationParentId: libraryId, captureId: 'cap:a' }));
-    core.createCapture(buildContextCaptureInput({ context: webpageContext(), destinationParentId: libraryId, captureId: 'cap:b' }));
+    const context = webpageContext({
+      source: {
+        ...webpageContext().source!,
+        publishedAt: '2026-05-31',
+      },
+    });
+    core.createCapture(buildContextCaptureInput({ context, destinationParentId: libraryId, captureId: 'cap:a' }));
+    core.createCapture(buildContextCaptureInput({ context, destinationParentId: libraryId, captureId: 'cap:b' }));
     const nodes = core.projection().nodes;
-    expect(nodes.filter((n) => n.id === CAPTURE_FIELD.url.id)).toHaveLength(1);
+    expect(nodes.filter((n) => n.id === CAPTURE_FIELD.published.id)).toHaveLength(1);
     expect(nodes.filter((n) => n.type === 'tagDef' && n.content.text === 'article')).toHaveLength(1);
     expect(nodes.filter((n) => n.type === 'tagDef' && n.content.text === 'capture')).toHaveLength(1);
   });

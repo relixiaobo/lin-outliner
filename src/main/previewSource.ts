@@ -1,4 +1,5 @@
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { open, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import type { AssetMetadata } from '../core/types';
 import { assetUrl } from '../core/assets';
@@ -9,6 +10,8 @@ import {
   previewTargetFromUnknown,
   previewTargetKey,
   type PreviewDirectoryEntry,
+  type PreviewAuthorizeLinkedFileResult,
+  type PreviewForgetLinkedFileResult,
   type PreviewListDirectoryResult,
   type PreviewReadBytesResult,
   type PreviewReadTextResult,
@@ -16,6 +19,10 @@ import {
   type PreviewSourceDescriptor,
   type PreviewTarget,
 } from '../core/preview';
+import type {
+  LinkedFileGrantAuthorization,
+  LinkedFileGrantResolution,
+} from './linkedFileGrantStore';
 import {
   resolveTrustedLocalFileReference,
   type TrustedLocalFileReference,
@@ -62,6 +69,13 @@ export interface PreviewCommandContext {
   ) => Promise<ThreadAttachmentPreviewFile | null>;
   threadManagedFileStreamUrl?: (filePath: string, mimeType: string) => Promise<string | null>;
   localFileReferencePreview: (file: TrustedLocalFileReference) => Promise<LocalFilePreviewMetadata>;
+  linkedFileGrant?: {
+    resolve(sourceText: string): Promise<LinkedFileGrantResolution>;
+    authorize(sourceText: string, selectedPath: string): Promise<LinkedFileGrantAuthorization>;
+    revoke(sourceText: string): Promise<boolean>;
+  };
+  chooseLinkedFile?: () => Promise<string | null>;
+  linkedFileStreamUrl?: (filePath: string, mimeType: string) => Promise<string | null>;
 }
 
 const PREVIEW_TEXT_BYTE_LIMIT = 1024 * 1024;
@@ -78,18 +92,39 @@ export async function handlePreviewCommand(
     if (command === 'preview_resolve_source') return { source: null, error: 'invalid-target' } satisfies PreviewResolveSourceResult;
     if (command === 'preview_list_directory') return { entries: null, error: 'invalid-target' } satisfies PreviewListDirectoryResult;
     if (command === 'preview_read_bytes') return { bytes: null, error: 'invalid-target' } satisfies PreviewReadBytesResult;
+    if (command === 'preview_authorize_linked_file') return { authorized: false, error: 'invalid-source' } satisfies PreviewAuthorizeLinkedFileResult;
+    if (command === 'preview_forget_linked_file') return { forgotten: false } satisfies PreviewForgetLinkedFileResult;
     return { text: null, error: 'invalid-target' } satisfies PreviewReadTextResult;
   }
 
   switch (command) {
-    case 'preview_resolve_source':
+    case 'preview_resolve_source': {
+      if (target.kind === 'linked-file') return previewLinkedFileSource(target, context);
       return { source: await previewSourceForTarget(target, context) } satisfies PreviewResolveSourceResult;
+    }
     case 'preview_read_text':
       return previewTextForTarget(target, context);
     case 'preview_read_bytes':
       return previewBytesForTarget(target, context);
     case 'preview_list_directory':
       return previewDirectoryEntriesForTarget(target, context);
+    case 'preview_authorize_linked_file': {
+      if (target.kind !== 'linked-file' || !context.linkedFileGrant || !context.chooseLinkedFile) {
+        return { authorized: false, error: 'invalid-source' } satisfies PreviewAuthorizeLinkedFileResult;
+      }
+      const selectedPath = await context.chooseLinkedFile();
+      if (!selectedPath) return { authorized: false, canceled: true } satisfies PreviewAuthorizeLinkedFileResult;
+      const result = await context.linkedFileGrant.authorize(target.sourceText, selectedPath);
+      return result.authorized
+        ? { authorized: true } satisfies PreviewAuthorizeLinkedFileResult
+        : { authorized: false, error: result.reason } satisfies PreviewAuthorizeLinkedFileResult;
+    }
+    case 'preview_forget_linked_file':
+      return {
+        forgotten: target.kind === 'linked-file'
+          ? await context.linkedFileGrant?.revoke(target.sourceText) ?? false
+          : false,
+      } satisfies PreviewForgetLinkedFileResult;
     default:
       throw new Error(`Unknown preview command: ${command}`);
   }
@@ -162,6 +197,8 @@ async function previewSourceForTarget(
     };
   }
 
+  if (target.kind === 'linked-file') return (await previewLinkedFileSource(target, context)).source;
+
   const url = normalizePreviewHttpUrl(target.url);
   if (!url) return null;
   return {
@@ -170,6 +207,41 @@ async function previewSourceForTarget(
     target: { ...target, url },
     url,
     title: previewLabel(target.label) ?? url,
+  };
+}
+
+async function previewLinkedFileSource(
+  target: Extract<PreviewTarget, { kind: 'linked-file' }>,
+  context: PreviewCommandContext,
+): Promise<PreviewResolveSourceResult> {
+  const resolution = await context.linkedFileGrant?.resolve(target.sourceText)
+    ?? { status: 'denied' as const };
+  if (resolution.status !== 'ready') {
+    return {
+      source: null,
+      error: resolution.status === 'denied' ? 'file-access-denied' : 'file-unavailable',
+    };
+  }
+  const metadata = await context.localFileReferencePreview(resolution.file);
+  const mimeType = metadata.mimeType;
+  const streamUrl = await context.linkedFileStreamUrl?.(resolution.file.path, mimeType) ?? null;
+  const name = previewLabel(target.label) ?? metadata.name;
+  return {
+    source: {
+      kind: 'file',
+      sourceKind: 'linked-file',
+      id: previewTargetKey(target),
+      target,
+      name,
+      ext: previewExtension(metadata.name, mimeType),
+      mimeType,
+      entryKind: 'file',
+      sizeBytes: metadata.sizeBytes,
+      lastModified: metadata.lastModified,
+      ...(streamUrl ? { streamUrl } : {}),
+      ...(metadata.iconDataUrl ? { iconDataUrl: metadata.iconDataUrl } : {}),
+      ...(metadata.thumbnailDataUrl ? { thumbnailDataUrl: metadata.thumbnailDataUrl } : {}),
+    },
   };
 }
 
@@ -223,7 +295,47 @@ async function previewBytesBufferForTarget(
     };
   }
 
+  if (target.kind === 'linked-file') {
+    const resolution = await context.linkedFileGrant?.resolve(target.sourceText)
+      ?? { status: 'denied' as const };
+    if (resolution.status !== 'ready') {
+      return { error: resolution.status === 'denied' ? 'file-access-denied' : 'file-unavailable' };
+    }
+    return readVerifiedExactFile(
+      resolution.file,
+      limitBytes,
+      context.inferMimeType(resolution.file.path),
+    );
+  }
+
   return { error: 'unsupported-target' };
+}
+
+async function readVerifiedExactFile(
+  file: TrustedLocalFileReference,
+  limitBytes: number,
+  mimeType: string,
+): Promise<{ bytes: Buffer; mimeType: string; error?: never } | { error: string }> {
+  const handle = await open(file.path, constants.O_RDONLY | constants.O_NOFOLLOW).catch(() => null);
+  if (!handle) return { error: 'file-unavailable' };
+  try {
+    const [openedStats, freshStats, freshPath] = await Promise.all([
+      handle.stat(),
+      stat(file.path).catch(() => null),
+      realpath(file.path).catch(() => null),
+    ]);
+    if (
+      !openedStats.isFile()
+      || !freshStats?.isFile()
+      || freshPath !== file.path
+      || openedStats.dev !== freshStats.dev
+      || openedStats.ino !== freshStats.ino
+    ) return { error: 'file-unavailable' };
+    if (openedStats.size > limitBytes) return { error: 'too-large' };
+    return { bytes: await handle.readFile(), mimeType };
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
 }
 
 async function previewDirectoryEntriesForTarget(

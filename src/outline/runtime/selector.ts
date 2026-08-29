@@ -1,4 +1,9 @@
-import { buildTextSearchIndex, runSearchNode, runTransientSearchExpr } from '../../core/searchEngine';
+import {
+  buildTextSearchIndex,
+  runSearchNode,
+  runTransientSearchExpr,
+  type SearchAssetMetadata,
+} from '../../core/searchEngine';
 import type { TextSearchIndex } from '../../core/textSearchIndex';
 import {
   DAILY_NOTES_ID,
@@ -6,6 +11,7 @@ import {
   SCHEMA_ID,
   TAG_DAY_ID,
   TRASH_ID,
+  isContentBearingNode,
   type DocumentProjection,
   type NodeProjection,
   type SearchQueryExpr,
@@ -19,11 +25,13 @@ export interface OutlineSelectionIndex {
   readonly documentOrder: readonly string[];
   readonly documentPosition: ReadonlyMap<string, number>;
   readonly textIndex: () => TextSearchIndex;
+  readonly assetMetadataById?: ReadonlyMap<string, SearchAssetMetadata>;
 }
 
 export interface OutlineSelectionIndexOptions {
   readonly nodesById?: ReadonlyMap<string, NodeProjection>;
   readonly textIndex?: TextSearchIndex;
+  readonly assetMetadataById?: ReadonlyMap<string, SearchAssetMetadata>;
 }
 
 export function createSelectionIndex(
@@ -68,6 +76,7 @@ export function createSelectionIndex(
       textIndex ??= options.textIndex ?? buildTextSearchIndex(projection);
       return textIndex;
     },
+    assetMetadataById: options.assetMetadataById,
   };
 }
 
@@ -94,7 +103,8 @@ export function resolveSelector(index: OutlineSelectionIndex, selector: Selector
   }
   if (selector.by === 'date') {
     const node = index.projection.nodes.find((candidate) => (
-      candidate.content.text === selector.date
+      isContentBearingNode(candidate)
+      && candidate.content.text === selector.date
       && candidate.tags.includes(TAG_DAY_ID)
       && isDescendantOf(index, candidate.id, DAILY_NOTES_ID)
     ));
@@ -136,6 +146,7 @@ function queryMatches(
 ): readonly string[] {
   const result = runTransientSearchExpr(index.projection, query as SearchQueryExpr, {
     ...(options.includeTrash ? { includeTrash: true } : { textIndex: index.textIndex() }),
+    assetMetadataById: index.assetMetadataById,
   });
   if (!result.ok) throw searchSelectionError(result.issue);
   const withinIds = options.within
@@ -167,6 +178,7 @@ function savedSearchMatches(
   }
   const result = runSearchNode(index.projection, searchNodeId, {
     textIndex: index.textIndex(),
+    assetMetadataById: index.assetMetadataById,
     ...(limit !== undefined ? { limit } : {}),
   });
   if (!result.ok) throw searchSelectionError(result.issue);
@@ -247,7 +259,9 @@ function compareSelectedNodes(
     const difference = left.updatedAt - right.updatedAt;
     if (difference !== 0) return difference;
   } else {
-    const difference = compareText(left.content.text, right.content.text);
+    const leftText = isContentBearingNode(left) ? left.content.text : left.sourceText;
+    const rightText = isContentBearingNode(right) ? right.content.text : right.sourceText;
+    const difference = compareText(leftText, rightText);
     if (difference !== 0) return difference;
   }
   return compareText(left.id, right.id);

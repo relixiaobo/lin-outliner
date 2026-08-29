@@ -14,11 +14,15 @@ import {
 } from 'loro-crdt';
 import { CoreError } from './errors';
 import {
+  SOURCE_FIELD_ID,
   WORKSPACE_ID,
   createNodeRecord,
   referenceTargetSortKey,
   referenceTargetsEqual,
+  sourceEntryNodeId,
   type DocumentState,
+  type ContentNode,
+  type FieldEntryNode,
   type Node,
   type NodeFieldKey,
   type NodeType,
@@ -27,6 +31,10 @@ import {
   type RichTextPatchOp,
   type TextMark,
 } from './types';
+
+type NodeForType<T extends NodeType | undefined> = T extends undefined
+  ? ContentNode
+  : Extract<Node, { type: T }>;
 
 export type LoroUndoScope = 'all' | 'agent' | 'user';
 
@@ -107,18 +115,7 @@ const NODE_SCALAR_KEYS: NodeFieldKey[] = [
   'queryFieldDefId',
   'queryTargetId',
   'codeLanguage',
-  'assetId',
-  'mediaUrl',
-  'mediaAlt',
-  'imageWidth',
-  'imageHeight',
-  'mimeType',
-  'originalFilename',
-  'fileSize',
-  'thumbnailAssetId',
-  'pdfPageCount',
-  'audioDurationMs',
-  'videoDurationMs',
+  'sourceText',
   'aiSummary',
   // User-only-writable field keys; a string[] that round-trips through the
   // generic clone path (same as `capture`).
@@ -187,6 +184,7 @@ export class LoroOutlinerDocument {
       this.pendingUpdates = retainUnappliedUpdates(updates, this.doc);
     }
     this.rebuildMappings();
+    validateSourceTree(this.tree);
     this.undoManager = this.createUndoManager('all', UNDO_EXCLUDED_ORIGIN_PREFIXES);
     this.aiUndoManager = this.createUndoManager('agent', AGENT_UNDO_EXCLUDED_ORIGIN_PREFIXES);
     this.userUndoManager = this.createUndoManager('user', USER_UNDO_EXCLUDED_ORIGIN_PREFIXES);
@@ -284,6 +282,7 @@ export class LoroOutlinerDocument {
         persistenceChanged: false,
       };
     }
+    validateSourceUpdates(this.doc, updates);
     const candidates = new Map(this.pendingUpdates);
     for (const [encoded, update] of uniqueEncodedUpdates(updates)) candidates.set(encoded, update);
     const affectedNodeIds = new Set<string>();
@@ -510,7 +509,7 @@ export class LoroOutlinerDocument {
   applyNodeTextPatch(
     nodeId: string,
     patch: RichTextPatch,
-    options: { currentNode?: Node; updatedAt?: number } = {},
+    options: { currentNode?: Exclude<Node, { type: 'sourceValue' }>; updatedAt?: number } = {},
   ) {
     const treeNode = this.requiredTreeNode(nodeId);
     const text = ensureLoroText(treeNode.data, 'content');
@@ -539,32 +538,61 @@ export class LoroOutlinerDocument {
     this.touchNode(nodeId);
   }
 
-  createNodeWithId<T extends Node = Node>(
+  createNodeWithId<T extends NodeType | undefined>(
     id: string,
     parentId: string | undefined,
     index: number | null | undefined,
-    type: NodeType | undefined,
-    configure: (node: T) => void,
+    type: T,
+    configure: (node: NodeForType<T>) => void,
   ) {
+    const permanentSourceEntryId = type === undefined ? sourceEntryNodeId(id) : undefined;
+    if (permanentSourceEntryId && this.hasNode(permanentSourceEntryId)) {
+      throw CoreError.invalidOperation(`permanent Source entry already exists: ${permanentSourceEntryId}`);
+    }
     const parentTreeNode = parentId ? this.treeNodeOrUndefined(parentId) : undefined;
     if (parentId && !parentTreeNode) throw CoreError.parentNotFound(parentId);
     const parentTreeId = parentTreeNode?.id;
-    const targetIndex = index === null || index === undefined
-      ? undefined
-      : parentTreeNode
-        ? clampInsertIndex(index, parentTreeNode.children()?.length ?? 0)
+    const targetIndex = parentTreeNode
+      ? sourceAwareInsertIndex(
+          parentTreeNode,
+          parentId!,
+          index,
+          undefined,
+          this.treeNodeOrUndefined(sourceEntryNodeId(parentId!))?.index(),
+        )
+      : index === null || index === undefined
+        ? undefined
         : clampInsertIndex(index, this.tree.roots().length);
     const treeNode = this.tree.createNode(parentTreeId, targetIndex);
     // The caller's `type` argument fixes the variant; `T` lets it set
     // variant-specific fields on the configured node without a local cast.
-    const node = createNodeRecord(id, type, parentId, nowMs()) as T;
+    const node = createNodeRecord(id, type, parentId, nowMs()) as NodeForType<T>;
     configure(node);
     const normalized = normalizeNode(node);
     writeNodeData(treeNode.data, normalized);
     this.nodeIdToTreeId.set(id, treeNode.id);
     this.touchNodeWithSnapshot(id, normalized);
+    if (permanentSourceEntryId) {
+      this.createPermanentSourceEntry(treeNode, normalized, permanentSourceEntryId);
+    }
     if (parentId) this.touchNode(parentId);
     return id;
+  }
+
+  private createPermanentSourceEntry(ownerTreeNode: LoroTreeNode, owner: Node, entryId: string): void {
+    const createdAt = nowMs();
+    const entryTreeNode = this.tree.createNode(ownerTreeNode.id);
+    const entry = createNodeRecord(entryId, 'fieldEntry', owner.id, createdAt) as FieldEntryNode;
+    entry.fieldDefId = SOURCE_FIELD_ID;
+    entry.locked = true;
+    const normalized = normalizeNode(entry);
+    writeNodeData(entryTreeNode.data, normalized);
+    this.nodeIdToTreeId.set(entryId, entryTreeNode.id);
+    this.touchNodeWithSnapshot(entryId, normalized);
+    this.touchNodeWithSnapshot(owner.id, normalizeNode({
+      ...owner,
+      children: [...owner.children, entryId],
+    }));
   }
 
   moveNode(nodeId: string, parentId: string, index: number | null | undefined) {
@@ -574,9 +602,11 @@ export class LoroOutlinerDocument {
     if (!state.nodes[parentId]) throw CoreError.parentNotFound(parentId);
     const treeNode = this.requiredTreeNode(nodeId);
     const parentTreeNode = this.requiredTreeNode(parentId);
-    const targetIndex = index === null || index === undefined
-      ? undefined
-      : clampInsertIndex(index, parentTreeNode.children()?.length ?? 0);
+    const targetIndex = nodeId === sourceEntryNodeId(parentId)
+      ? (index === null || index === undefined
+          ? undefined
+          : clampInsertIndex(index, parentTreeNode.children()?.length ?? 0))
+      : sourceAwareInsertIndex(parentTreeNode, parentId, index, nodeId);
     this.tree.move(treeNode.id, parentTreeNode.id, targetIndex);
     this.touchNode(nodeId);
     if (state.nodes[nodeId]?.parentId) this.touchNode(state.nodes[nodeId]!.parentId!);
@@ -596,6 +626,17 @@ export class LoroOutlinerDocument {
   }
 
   applyNodePatch(entries: readonly { id: string; node: Node | undefined }[]) {
+    const candidate = this.forkForRuntime();
+    try {
+      candidate.applyNodePatchUnchecked(entries);
+      validateSourceTree(candidate.tree);
+    } finally {
+      candidate.doc.free();
+    }
+    this.applyNodePatchUnchecked(entries);
+  }
+
+  private applyNodePatchUnchecked(entries: readonly { id: string; node: Node | undefined }[]) {
     const desired = new Map(entries.map((entry) => [entry.id, entry.node]));
     const state = this.materializeState();
     const deletedIds = new Set(entries.filter((entry) => !entry.node).map((entry) => entry.id));
@@ -768,11 +809,33 @@ export class LoroOutlinerDocument {
     if (!id) return undefined;
     const parentTreeNode = treeNode.parent();
     const parentId = parentTreeNode ? readString(parentTreeNode.data.get('id')) : undefined;
+    const type = readString(data.get('type')) as NodeType | undefined;
+    if (type === 'sourceValue') {
+      if (!parentId) throw CoreError.invalidOperation(`Source value ${id} has no parent.`);
+      const sourceText = readString(data.get('sourceText'));
+      if (sourceText === undefined || data.get('content') !== undefined) {
+        throw CoreError.invalidOperation(`Source value ${id} has an invalid scalar encoding.`);
+      }
+      const children = treeNode.children() ?? [];
+      return {
+        id,
+        type,
+        parentId,
+        children: children.flatMap((child) => {
+          const childId = readString(child.data.get('id'));
+          return childId ? [childId] : [];
+        }),
+        sourceText,
+        createdAt: readNumber(data.get('createdAt')) ?? nowMs(),
+        updatedAt: readNumber(data.get('updatedAt')) ?? nowMs(),
+        locked: readBoolean(data.get('locked')) ?? false,
+      } as Node;
+    }
     const content = readRichText(data);
     const filterValues = data.get('filterValues');
     const node = normalizeNode({
       id,
-      type: readString(data.get('type')) as NodeType | undefined,
+      type,
       parentId,
       children: [],
       content,
@@ -881,6 +944,133 @@ export class LoroOutlinerDocument {
   }
 }
 
+function sourceAwareInsertIndex(
+  parentTreeNode: LoroTreeNode,
+  parentId: string,
+  requestedIndex: number | null | undefined,
+  movingNodeId?: string,
+  sourceEntryIndex?: number,
+): number | undefined {
+  if (movingNodeId === undefined && (requestedIndex === null || requestedIndex === undefined)) {
+    return sourceEntryIndex;
+  }
+  const sourceEntryId = sourceEntryNodeId(parentId);
+  const children = (parentTreeNode.children() ?? []).filter((child) => (
+    readString(child.data.get('id')) !== movingNodeId
+  ));
+  const sourceIndex = children.findIndex((child) => readString(child.data.get('id')) === sourceEntryId);
+  if (sourceIndex < 0) {
+    return requestedIndex === null || requestedIndex === undefined
+      ? undefined
+      : clampInsertIndex(requestedIndex, children.length);
+  }
+  const ordinaryIndexes = children.flatMap((child, index) => (
+    readString(child.data.get('id')) === sourceEntryId ? [] : [index]
+  ));
+  const logicalIndex = requestedIndex === null || requestedIndex === undefined
+    ? ordinaryIndexes.length
+    : clampInsertIndex(requestedIndex, ordinaryIndexes.length) ?? ordinaryIndexes.length;
+  return logicalIndex === ordinaryIndexes.length
+    ? sourceIndex
+    : ordinaryIndexes[logicalIndex] ?? sourceIndex;
+}
+
+const SOURCE_VALUE_SCALAR_KEYS = new Set([
+  'createdAt',
+  'id',
+  'locked',
+  'sourceText',
+  'type',
+  'updatedAt',
+]);
+
+function validateSourceUpdates(doc: LoroDoc, updates: readonly Uint8Array[]): void {
+  const candidate = doc.fork();
+  try {
+    candidate.importBatch(updates.map((update) => update.slice()));
+    validateSourceTree(candidate.getTree(LORO_TREE_NAME));
+  } finally {
+    candidate.free();
+  }
+}
+
+function validateSourceTree(tree: LoroTree): void {
+  const nodes = new Map<string, LoroTreeNode>();
+  for (const treeNode of tree.nodes()) {
+    if (isDeletedTreeNode(treeNode)) continue;
+    const id = readString(treeNode.data.get('id'));
+    if (id) nodes.set(id, treeNode);
+  }
+
+  for (const [id, treeNode] of nodes) {
+    const data = treeNode.data;
+    const type = readString(data.get('type')) as NodeType | undefined;
+    const parent = treeNode.parent();
+    const parentId = parent ? readString(parent.data.get('id')) : undefined;
+
+    if (type === undefined) {
+      const entryId = sourceEntryNodeId(id);
+      const directEntries = (treeNode.children() ?? []).filter((child) => (
+        readString(child.data.get('id')) === entryId
+      ));
+      if (directEntries.length !== 1) {
+        throw CoreError.invalidOperation(`ordinary content Node has no unique permanent Source entry: ${id}`);
+      }
+      const entry = directEntries[0]!;
+      if (
+        readString(entry.data.get('type')) !== 'fieldEntry'
+        || readString(entry.data.get('fieldDefId')) !== SOURCE_FIELD_ID
+        || readBoolean(entry.data.get('locked')) !== true
+      ) {
+        throw CoreError.invalidOperation(`ordinary content Node has an invalid permanent Source entry: ${id}`);
+      }
+      for (const child of entry.children() ?? []) {
+        if (readString(child.data.get('type')) !== 'sourceValue') {
+          throw CoreError.invalidOperation(`Source entry contains a non-Source value: ${entryId}`);
+        }
+      }
+    }
+
+    if (type === 'fieldEntry' && readString(data.get('fieldDefId')) === SOURCE_FIELD_ID) {
+      if (!parentId || id !== sourceEntryNodeId(parentId)) {
+        throw CoreError.invalidOperation(`permanent Source entry has an invalid owner: ${id}`);
+      }
+      const owner = nodes.get(parentId);
+      if (!owner || readString(owner.data.get('type')) !== undefined || readBoolean(data.get('locked')) !== true) {
+        throw CoreError.invalidOperation(`permanent Source entry has an invalid owner: ${id}`);
+      }
+    }
+
+    if (type === 'sourceValue') {
+      if (!parentId || id === sourceEntryNodeId(parentId)) {
+        throw CoreError.invalidOperation(`Source value has an invalid permanent entry parent: ${id}`);
+      }
+      const entry = nodes.get(parentId);
+      const ownerId = entry?.parent() ? readString(entry.parent()!.data.get('id')) : undefined;
+      if (
+        !entry
+        || readString(entry.data.get('type')) !== 'fieldEntry'
+        || readString(entry.data.get('fieldDefId')) !== SOURCE_FIELD_ID
+        || !ownerId
+        || parentId !== sourceEntryNodeId(ownerId)
+        || readBoolean(data.get('locked')) !== true
+      ) {
+        throw CoreError.invalidOperation(`Source value is outside a permanent Source entry: ${id}`);
+      }
+      const keys = data.keys().filter((key): key is string => typeof key === 'string');
+      if (
+        keys.length !== SOURCE_VALUE_SCALAR_KEYS.size
+        || keys.some((key) => !SOURCE_VALUE_SCALAR_KEYS.has(key))
+        || readString(data.get('sourceText')) === undefined
+        || readNumber(data.get('createdAt')) === undefined
+        || readNumber(data.get('updatedAt')) === undefined
+      ) {
+        throw CoreError.invalidOperation(`Source value has an invalid scalar encoding: ${id}`);
+      }
+    }
+  }
+}
+
 function versionVectorEquals(doc: LoroDoc, expectedBytes: Uint8Array): boolean {
   const actual = doc.oplogVersion();
   const expected = VersionVector.decode(expectedBytes);
@@ -927,6 +1117,18 @@ function undoValueOperationId(value: Value): string | undefined {
 }
 
 function normalizeNode(node: Node): Node {
+  if (node.type === 'sourceValue') {
+    return {
+      type: 'sourceValue',
+      id: node.id,
+      parentId: node.parentId,
+      children: node.children ?? [],
+      sourceText: node.sourceText,
+      createdAt: node.createdAt ?? nowMs(),
+      updatedAt: node.updatedAt ?? nowMs(),
+      locked: node.locked ?? false,
+    } as Node;
+  }
   return {
     ...createNodeRecord(node.id, node.type, node.parentId, node.createdAt ?? nowMs()),
     ...node,
@@ -937,7 +1139,7 @@ function normalizeNode(node: Node): Node {
       inlineRefs: node.content?.inlineRefs ?? [],
     },
     tags: node.tags ?? [],
-  };
+  } as Node;
 }
 
 // Read-only contract enforcement (dev/test only). The state cache hands out
@@ -1120,6 +1322,13 @@ function writeNodeData(data: LoroMap, node: Node) {
     const value = (node as unknown as Record<string, unknown>)[key];
     if (value === undefined || value === null) data.delete(key);
     else data.set(key, clone(value) as Value);
+  }
+  if (node.type === 'sourceValue') {
+    data.delete('content');
+    data.delete('contentMarks');
+    data.delete('contentInlineRefs');
+    data.delete('tags');
+    return;
   }
   writeRichText(data, 'content', node.content);
   data.delete('contentMarks');

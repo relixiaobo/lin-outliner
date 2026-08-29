@@ -15,13 +15,13 @@ import {
 } from './outlinerMock';
 
 async function lastTodayChildId(page: import('@playwright/test').Page) {
-  const projection = await e2eProjection(page);
-  return projection.nodes.find((node) => node.id === ids.today)?.children.at(-1);
+  return (await todayChildren(page)).at(-1);
 }
 
 async function todayChildren(page: import('@playwright/test').Page) {
   const projection = await e2eProjection(page);
-  return projection.nodes.find((node) => node.id === ids.today)?.children ?? [];
+  return (projection.nodes.find((node) => node.id === ids.today)?.children ?? [])
+    .filter((nodeId) => nodeId !== `${ids.today}::source`);
 }
 
 async function appliedOperations(page: import('@playwright/test').Page, fromCall = 0) {
@@ -1121,7 +1121,9 @@ test.describe('outliner trigger parity', () => {
       return {
         fieldVisible: fieldName !== null,
         focused: document.activeElement === fieldName,
-        projectedChildren: win.__LIN_E2E__?.projection().nodes.find((node) => node.id === todayId)?.children,
+        projectedChildren: win.__LIN_E2E__?.projection().nodes
+          .find((node) => node.id === todayId)?.children
+          .filter((childId) => childId !== `${todayId}::source`),
         writes: (win.__LIN_E2E__?.calls.slice(beforeCalls) ?? []).filter((call) => {
           const command = (call as { cmd?: string }).cmd;
           return command === 'outline/apply' || command === 'outline/commit';
@@ -1167,7 +1169,9 @@ test.describe('outliner trigger parity', () => {
       return {
         codeVisible: textarea !== null,
         focused: document.activeElement === textarea,
-        projectedChildren: win.__LIN_E2E__?.projection().nodes.find((node) => node.id === todayId)?.children,
+        projectedChildren: win.__LIN_E2E__?.projection().nodes
+          .find((node) => node.id === todayId)?.children
+          .filter((childId) => childId !== `${todayId}::source`),
         calls: win.__LIN_E2E__?.calls.slice(beforeCalls),
         expectedChildren: beforeChildren,
       };
@@ -1243,7 +1247,9 @@ test.describe('outliner trigger parity', () => {
         checked: checkbox?.getAttribute('aria-checked'),
         sameEditor: win.__slashCheckboxEditor?.isConnected === true
           && currentEditor === win.__slashCheckboxEditor,
-        projectedChildren: win.__LIN_E2E__?.projection().nodes.find((node) => node.id === todayId)?.children,
+        projectedChildren: win.__LIN_E2E__?.projection().nodes
+          .find((node) => node.id === todayId)?.children
+          .filter((childId) => childId !== `${todayId}::source`),
         calls: win.__LIN_E2E__?.calls.slice(beforeCalls),
         expectedChildren: beforeChildren,
       };
@@ -1534,7 +1540,9 @@ test.describe('outliner trigger parity', () => {
     await row(page, ids.gamma).locator('.row-chevron-button').click();
     await expect(trailingEditor(page, ids.gamma)).toBeFocused();
     await page.keyboard.type('>');
-    const secondId = (await nodeById(page, ids.gamma))?.children.at(-1);
+    const secondId = (await nodeById(page, ids.gamma))?.children
+      .filter((childId) => childId !== `${ids.gamma}::source`)
+      .at(-1);
     if (!secondId || secondId === firstId) throw new Error('missing second field');
     const secondName = row(page, secondId).locator('.field-name-input');
     await expect(secondName).toBeFocused();
@@ -1633,7 +1641,9 @@ test.describe('outliner trigger parity', () => {
     await row(page, ids.gamma).locator('.row-chevron-button').click();
     await expect(trailingEditor(page, ids.gamma)).toBeFocused();
     await page.keyboard.type('>');
-    const fieldId = (await nodeById(page, ids.gamma))?.children.at(-1);
+    const fieldId = (await nodeById(page, ids.gamma))?.children
+      .filter((childId) => childId !== `${ids.gamma}::source`)
+      .at(-1);
     if (!fieldId) throw new Error('missing field');
     await page.keyboard.type('Done');
     const popover = page.locator('.field-name-reuse-popover');
@@ -1865,7 +1875,9 @@ test.describe('outliner trigger parity', () => {
     let nestedFieldId: string | undefined;
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
-      nestedFieldId = projection.nodes.find((node) => node.id === fieldId)?.children.at(-1);
+      nestedFieldId = projection.nodes.find((node) => node.id === fieldId)?.children
+        .filter((childId) => childId !== `${fieldId}::source`)
+        .at(-1);
       return nestedFieldId;
     }).not.toBeUndefined();
     if (!nestedFieldId) throw new Error('missing nested field');
@@ -1893,10 +1905,12 @@ test.describe('outliner trigger parity', () => {
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
       const fieldEntry = projection.nodes.find((node) => node.id === fieldId);
-      nestedFieldId = fieldEntry?.children.at(-1);
+      const ordinaryChildren = fieldEntry?.children
+        .filter((childId) => childId !== `${fieldId}::source`) ?? [];
+      nestedFieldId = ordinaryChildren.at(-1);
       const nestedField = projection.nodes.find((node) => node.id === nestedFieldId);
       return {
-        childCount: fieldEntry?.children.length ?? 0,
+        childCount: ordinaryChildren.length,
         nestedParentId: nestedField?.parentId,
         nestedType: nestedField?.type,
       };
@@ -1923,7 +1937,9 @@ test.describe('outliner trigger parity', () => {
     let valueNodeId: string | undefined;
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
-      valueNodeId = projection.nodes.find((node) => node.parentId === fieldId)?.id;
+      valueNodeId = projection.nodes.find((node) => (
+        node.parentId === fieldId && node.id !== `${fieldId}::source`
+      ))?.id;
       return valueNodeId;
     }).not.toBeUndefined();
 
@@ -2055,6 +2071,7 @@ test.describe('outliner trigger parity', () => {
       const nextField = projection.nodes.find((node) => (
         node.parentId === ids.today
         && node.type === 'fieldEntry'
+        && node.id !== `${ids.today}::source`
         && !childrenBeforeNextField.includes(node.id)
       ));
       nextFieldId = nextField?.id ?? '';
@@ -2079,7 +2096,9 @@ test.describe('outliner trigger parity', () => {
     let childId = '';
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
-      const child = projection.nodes.find((node) => node.parentId === valueId);
+      const child = projection.nodes.find((node) => (
+        node.parentId === valueId && node.id !== `${valueId}::source`
+      ));
       childId = child?.id ?? '';
       return child?.content.text;
     }).toBe('Boolean detail');
@@ -2725,14 +2744,11 @@ test.describe('tag-projected field slot interactions', () => {
       alphaEntryId = await storedFieldEntryId(page, ids.alpha, ids.statusField) ?? '';
       return alphaEntryId;
     }).not.toBe('');
-    await expect.poll(async () => (await appliedOperations(page)).filter((operation) => (
-      operation.op === 'create'
-      && (operation.placement as { parent?: { target?: { selector?: { by?: string; id?: string } } } } | undefined)
-        ?.parent?.target?.selector?.by === 'id'
-      && (operation.placement as { parent?: { target?: { selector?: { id?: string } } } } | undefined)
-        ?.parent?.target?.selector?.id === alphaEntryId
-      && (operation.nodes as Array<Record<string, unknown>> | undefined)
-        ?.some((draft) => draft.type === 'image')
+    await expect.poll(async () => (await appliedInstructions(page)).filter((instruction) => (
+      instruction.kind === 'source'
+      && instruction.action === 'add'
+      && typeof instruction.sourceText === 'string'
+      && instruction.sourceText.startsWith('asset://local/')
     )).length).toBe(1);
 
     await expect.poll(async () => {
@@ -2740,11 +2756,16 @@ test.describe('tag-projected field slot interactions', () => {
       const entry = projection.nodes.find((node) => node.id === alphaEntryId);
       return (entry?.children ?? []).map((childId) => {
         const child = projection.nodes.find((node) => node.id === childId);
-        return { text: child?.content.text, type: child?.type ?? 'content' };
+        const sourceEntry = projection.nodes.find((node) => node.id === `${childId}::source`);
+        return {
+          sourceCount: sourceEntry?.children.length ?? 0,
+          text: child?.content.text,
+          type: child?.type ?? 'content',
+        };
       });
     }).toEqual([
-      { text: 'Caption', type: 'content' },
-      { text: '', type: 'image' },
+      { sourceCount: 0, text: 'Caption', type: 'content' },
+      { sourceCount: 1, text: 'field-image.png', type: 'content' },
     ]);
 
     const betaSlot = await projectFieldFromTag(page, ids.beta, ids.statusField, 'plain');
@@ -2761,26 +2782,28 @@ test.describe('tag-projected field slot interactions', () => {
       betaEntryId = await storedFieldEntryId(page, ids.beta, ids.statusField) ?? '';
       return betaEntryId;
     }).not.toBe('');
-    await expect.poll(async () => (await appliedOperations(page)).filter((operation) => (
-      operation.op === 'create'
-      && (operation.placement as { parent?: { target?: { selector?: { by?: string; id?: string } } } } | undefined)
-        ?.parent?.target?.selector?.by === 'id'
-      && (operation.placement as { parent?: { target?: { selector?: { id?: string } } } } | undefined)
-        ?.parent?.target?.selector?.id === betaEntryId
-      && (operation.nodes as Array<Record<string, unknown>> | undefined)
-        ?.some((draft) => draft.type === 'attachment')
-    )).length).toBe(1);
+    await expect.poll(async () => (await appliedInstructions(page)).filter((instruction) => (
+      instruction.kind === 'source'
+      && instruction.action === 'add'
+      && typeof instruction.sourceText === 'string'
+      && instruction.sourceText.startsWith('asset://local/')
+    )).length).toBe(2);
 
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
       const entry = projection.nodes.find((node) => node.id === betaEntryId);
       return (entry?.children ?? []).map((childId) => {
         const child = projection.nodes.find((node) => node.id === childId);
-        return { text: child?.content.text, type: child?.type ?? 'content' };
+        const sourceEntry = projection.nodes.find((node) => node.id === `${childId}::source`);
+        return {
+          sourceCount: sourceEntry?.children.length ?? 0,
+          text: child?.content.text,
+          type: child?.type ?? 'content',
+        };
       });
     }).toEqual([
-      { text: 'Report', type: 'content' },
-      { text: 'field-report.pdf', type: 'attachment' },
+      { sourceCount: 0, text: 'Report', type: 'content' },
+      { sourceCount: 1, text: 'field-report.pdf', type: 'content' },
     ]);
   });
 });

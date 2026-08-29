@@ -1,7 +1,8 @@
 import type { CreateCaptureInput } from '../core/launcher/sources';
 import { isActionCommand, type CommandName } from '../core/actions/bindings';
-import type {
-  CreateNodeTree,
+import {
+  isContentBearingNode,
+  type CreateNodeTree,
   DocumentProjection,
   FocusHint,
   NodeProjection,
@@ -195,6 +196,18 @@ function captureChanges(input: CreateCaptureInput, view: ProjectionView): {
     }],
     bind: 'capture',
   });
+  if (input.sourceText !== undefined) {
+    operations.push({
+      op: 'update',
+      targets: binding('capture'),
+      changes: [{
+        kind: 'source',
+        action: 'add',
+        sourceText: input.sourceText,
+        valueId: `node:${crypto.randomUUID()}`,
+      }],
+    });
+  }
   if (input.tag) {
     operations.push({
       op: 'update',
@@ -445,7 +458,9 @@ function requiredNode(view: ProjectionView, nodeId: string): NodeProjection {
 }
 
 function nodeDone(node: NodeProjection): boolean {
-  return typeof node.completedAt === 'number' && node.completedAt > 0;
+  return isContentBearingNode(node)
+    && typeof node.completedAt === 'number'
+    && node.completedAt > 0;
 }
 
 function oneId(id: string): TargetRef {

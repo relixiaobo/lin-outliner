@@ -52,7 +52,7 @@ import { formatDateTime } from '../formatting';
 import { wantsNewPaneFromClick } from '../shared';
 import type { FilePreviewNavigationOptions } from '../workspaceLayoutTypes';
 import type { EpubTranslationDomAdapter } from './epubTranslationDom';
-import { formatBytes } from './fileNode';
+import { formatBytes } from './previewFormatting';
 import { DocumentOutlineRail, type DocumentOutlineItem } from './DocumentOutlineRail';
 import { FilePreviewPill, type FilePreviewMenuAction } from './FilePreviewPill';
 import {
@@ -303,8 +303,8 @@ export interface FilePreviewShellProps {
 /**
  * The shared body of a file preview: the rendered content in an internally-scrolling
  * stage with a single bottom-center floating pill (primary + `⋯`), replacing the old
- * top meta+actions toolbar. Both lifecycle states reuse it so a loose preview reads
- * identically to an ingested file-node preview (same `.file-node-*` CSS). A previewable
+ * top meta+actions toolbar. Both loose previews and selected Node Sources reuse it
+ * (the established `.file-node-*` classes name this preview renderer, not a Node type). A previewable
  * source toggles between a rounded summary strip and an expanded full-scroll reader;
  * a non-previewable one (the metadata card) renders at natural height with
  * Open-with-default-app as the same pill's primary. Callers supply the open action +
@@ -1795,13 +1795,14 @@ export function sourceMeta(source: PreviewSourceDescriptor, labels: FilePreviewL
 }
 
 function sourceKindLabel(kind: PreviewFileSource['sourceKind'], labels: FilePreviewLabels): string {
-  if (kind === 'local-file') return labels.sourceLocalFile;
+  if (kind === 'local-file' || kind === 'linked-file') return labels.sourceLocalFile;
   return labels.sourceAsset;
 }
 
 export function targetTitleFallback(target: PreviewTarget): string {
   if (target.kind === 'local-file') return target.path.split('/').filter(Boolean).at(-1) ?? target.path;
   if (target.kind === 'asset') return target.assetId;
+  if (target.kind === 'linked-file') return target.label ?? target.sourceText;
   return target.url;
 }
 
@@ -1978,5 +1979,15 @@ export async function revealPreviewSource(source: PreviewSourceDescriptor): Prom
         ? { threadId: source.target.threadId, attachmentId: source.target.attachmentId }
         : {}),
     });
+  }
+}
+
+export function canCopyPreviewSource(source: PreviewSourceDescriptor): boolean {
+  return source.kind === 'file' && source.sourceKind === 'asset' && source.target.kind === 'asset';
+}
+
+export async function copyPreviewSource(source: PreviewSourceDescriptor): Promise<void> {
+  if (canCopyPreviewSource(source) && source.target.kind === 'asset') {
+    await api.copyAssetFile(source.target.assetId);
   }
 }

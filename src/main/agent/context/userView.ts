@@ -9,7 +9,14 @@ import {
   richTextToReferenceMarkup,
 } from '../../../core/referenceMarkup';
 import { formatTag } from '../../../core/textSyntax';
-import type { DocumentProjection, NodeProjection } from '../../../core/types';
+import { classifyNodeSource } from '../../../core/source';
+import {
+  SOURCE_FIELD_ID,
+  isContentBearingNode,
+  sourceEntryNodeId,
+  type DocumentProjection,
+  type NodeProjection,
+} from '../../../core/types';
 import { findViewDef } from '../../../core/viewConfig';
 
 const MAX_TITLE_CHARS = 160;
@@ -124,13 +131,8 @@ export function nodeBreadcrumb(
 }
 
 export function nodeTitle(node: NodeProjection): string {
-  const fileName = node.type === 'attachment'
-    ? node.content.text || node.originalFilename
-    : node.type === 'image'
-      ? node.content.text || node.mediaUrl || node.mediaAlt
-      : null;
-  const text = fileName
-    || (node.type === 'reference' && node.targetId
+  if (!isContentBearingNode(node)) return compact(node.sourceText, MAX_TITLE_CHARS) || 'Untitled';
+  const text = (node.type === 'reference' && node.targetId
       ? formatNamedNodeReference(node.targetId, undefined, { unavailable: 'display' })
       : null)
     || richTextToReferenceMarkup(node.content)
@@ -142,6 +144,7 @@ export function outlineText(
   node: NodeProjection,
   byId: ReadonlyMap<string, NodeProjection>,
 ): string {
+  if (!isContentBearingNode(node)) return compact(node.sourceText, MAX_TITLE_CHARS) || 'Untitled';
   if (node.type === 'fieldEntry') {
     const field = node.fieldDefId ? byId.get(node.fieldDefId) : undefined;
     return `${nodeTitle(field ?? node)}::`;
@@ -194,7 +197,9 @@ export function resolvedNodeTitle(
     }
     current = target;
   }
-  return nodeTitle(current);
+  const authoredTitle = nodeTitle(current);
+  if (authoredTitle !== 'Untitled') return authoredTitle;
+  return sourceFallbackTitle(current, byId) ?? authoredTitle;
 }
 
 function panelSnapshot(
@@ -234,7 +239,27 @@ function displayedChildCount(
     seen.add(current.id);
     current = byId.get(current.targetId);
   }
-  return current?.children.length ?? 0;
+  if (!current) return 0;
+  const sourceEntryId = sourceEntryNodeId(current.id);
+  return current.children.filter((childId) => childId !== sourceEntryId).length;
+}
+
+function sourceFallbackTitle(
+  node: NodeProjection,
+  byId: ReadonlyMap<string, NodeProjection>,
+): string | null {
+  const entry = byId.get(sourceEntryNodeId(node.id));
+  if (
+    entry?.type !== 'fieldEntry'
+    || entry.parentId !== node.id
+    || entry.fieldDefId !== SOURCE_FIELD_ID
+  ) return null;
+  for (const valueId of entry.children) {
+    const value = byId.get(valueId);
+    if (value?.type !== 'sourceValue' || value.parentId !== entry.id) continue;
+    return compact(classifyNodeSource(value.sourceText).label, MAX_TITLE_CHARS);
+  }
+  return null;
 }
 
 function validPanelId(

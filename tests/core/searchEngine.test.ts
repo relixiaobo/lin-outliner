@@ -17,6 +17,7 @@ import {
   plainText,
   QUERY_OPS,
   replaceAllRichTextPatch,
+  sourceEntryNodeId,
   type QueryOp,
   type SearchQueryExpr,
 } from '../../src/core/types';
@@ -25,6 +26,7 @@ import {
   compileSearchQueryExpr,
 } from '../../src/core/searchQueryCompiler';
 import { DONE_FIELD, REF_COUNT_FIELD } from '../../src/core/systemFields';
+import { formatAssetSourceUri } from '../../src/core/source';
 
 function mustFocus<T extends { focus?: { nodeId: string } }>(outcome: T) {
   expect(outcome.focus).toBeDefined();
@@ -47,6 +49,12 @@ function addFieldValue(core: Core, nodeId: string, fieldDefId: string, value: st
   const valueId = core.state().nodes[fieldEntryId!]!.children.at(-1);
   expect(valueId).toBeDefined();
   return valueId!;
+}
+
+function createSourceNode(core: Core, parentId: string, content: string, sourceText: string): string {
+  const ownerId = mustFocus(core.createNode(parentId, null, content));
+  core.addSource(ownerId, `source:${crypto.randomUUID()}`, sourceText);
+  return ownerId;
 }
 
 function ensureDateNodeFor(core: Core, date: Date) {
@@ -836,7 +844,7 @@ describe('core search engine', () => {
     core.applyTag(empty, taskTagId);
     addFieldValue(core, active, statusFieldDefId, 'Active');
     addFieldValue(core, waiting, statusFieldDefId, 'Waiting');
-    expect(core.state().nodes[empty]!.children).toEqual([]);
+    expect(core.state().nodes[empty]!.children.filter((childId) => childId !== sourceEntryNodeId(empty))).toEqual([]);
 
     const searchId = mustFocus(core.createNode(core.projection().searchesId, null, 'Field search'));
     const conditionId = mustFocus(core.createNode(searchId, null, 'Active'));
@@ -1370,102 +1378,76 @@ describe('core search engine', () => {
     expect(done.ok ? done.hits.map((hit) => hit.nodeId) : []).not.toContain(doneOld);
   });
 
-  test('executes media facets from image nodes and explicit attachment MIME families', () => {
+  test('executes media facets across every Source with authoritative managed metadata', () => {
     const core = Core.new();
     const today = core.projection().todayId;
-    const image = mustFocus(core.createImageNode(today, null, {
-      mediaUrl: 'https://example.com/screenshot.png',
-      name: 'Screenshot asset',
-    }));
-    const audio = mustFocus(core.createAttachmentNode(today, null, {
-      assetId: 'asset-audio',
-      mimeType: 'audio/flac',
-      originalFilename: 'Call recording.flac',
-      fileSize: 200,
-    }));
-    const video = mustFocus(core.createAttachmentNode(today, null, {
-      assetId: 'asset-video',
-      mimeType: 'video/x-matroska',
-      originalFilename: 'Demo video.mkv',
-      fileSize: 300,
-    }));
-    const genericWithDurations = mustFocus(core.createAttachmentNode(today, null, {
-      assetId: 'asset-generic',
-      mimeType: 'application/octet-stream',
-      originalFilename: 'Unknown media.bin',
-      fileSize: 400,
-      audioDurationMs: 1_000,
-      videoDurationMs: 1_000,
-    }));
-    const pdf = mustFocus(core.createAttachmentNode(today, null, {
-      assetId: 'asset-pdf',
-      mimeType: 'application/pdf',
-      originalFilename: 'Meeting packet.pdf',
-      fileSize: 500,
-      audioDurationMs: 1_000,
-    }));
-    const filenameOnlyAttachment = mustFocus(core.createAttachmentNode(today, null, {
-      assetId: 'asset-image-name',
-      mimeType: 'application/octet-stream',
-      originalFilename: 'Imported image.webp',
-      fileSize: 600,
-    }));
+    const remote = createSourceNode(core, today, 'Remote media', 'https://example.com/screenshot.png');
+    core.addSource(remote, `source:${crypto.randomUUID()}`, 'https://example.com/call.mp3');
+    const audio = createSourceNode(core, today, 'Audio', formatAssetSourceUri('asset-audio'));
+    const video = createSourceNode(core, today, 'Video', formatAssetSourceUri('asset-video'));
+    const generic = createSourceNode(core, today, 'Generic', formatAssetSourceUri('asset-generic'));
+    const pdf = createSourceNode(core, today, 'PDF', formatAssetSourceUri('asset-pdf'));
+    const missingMetadata = createSourceNode(core, today, 'Missing metadata', formatAssetSourceUri('asset-missing'));
     const filenameOnly = mustFocus(core.createNode(today, null, 'Not media.mp3'));
     const state = core.state();
+    const assetMetadataById = new Map([
+      ['asset-audio', { mimeType: 'audio/flac', originalFilename: 'Call recording.flac' }],
+      ['asset-video', { mimeType: 'video/x-matroska', originalFilename: 'Demo video.mkv' }],
+      ['asset-generic', { mimeType: 'application/octet-stream', originalFilename: 'Unknown media.bin' }],
+      ['asset-pdf', { mimeType: 'application/pdf', originalFilename: 'Meeting packet.pdf' }],
+    ]);
 
     const hitsFor = (op: QueryOp) => {
-      const result = runSearchExpr(state, { kind: 'rule', op });
+      const result = runSearchExpr(state, { kind: 'rule', op }, { assetMetadataById });
       expect(result.ok).toBe(true);
       return (result.ok ? result.hits.map((hit) => hit.nodeId) : []).sort();
     };
-    const attachmentIds = [audio, video, genericWithDurations, pdf, filenameOnlyAttachment].sort();
 
-    expect(hitsFor('HAS_IMAGE')).toEqual([image]);
-    expect(hitsFor('HAS_AUDIO')).toEqual([audio]);
+    expect(hitsFor('HAS_IMAGE')).toEqual([remote]);
+    expect(hitsFor('HAS_AUDIO')).toEqual([audio, remote].sort());
     expect(hitsFor('HAS_VIDEO')).toEqual([video]);
-    expect(hitsFor('HAS_MEDIA')).toEqual([image, audio, video].sort());
-    const attachments = runSearchExpr(state, { kind: 'rule', op: 'IS_TYPE', text: 'attachment' });
-    expect(attachments.ok).toBe(true);
-    expect((attachments.ok ? attachments.hits.map((hit) => hit.nodeId) : []).sort()).toEqual(attachmentIds);
+    expect(hitsFor('HAS_MEDIA')).toEqual([remote, audio, video].sort());
     expect(hitsFor('HAS_MEDIA')).not.toContain(pdf);
-    expect(hitsFor('HAS_MEDIA')).not.toContain(genericWithDurations);
-    expect(hitsFor('HAS_MEDIA')).not.toContain(filenameOnlyAttachment);
+    expect(hitsFor('HAS_MEDIA')).not.toContain(generic);
+    expect(hitsFor('HAS_MEDIA')).not.toContain(missingMetadata);
     expect(hitsFor('HAS_MEDIA')).not.toContain(filenameOnly);
   });
 
-  test('searches image nodes by text', () => {
+  test('searches Source-backed ordinary Nodes by authored content', () => {
     const core = Core.new();
-    const image = mustFocus(core.createImageNode(core.projection().todayId, null, {
-      mediaUrl: 'https://example.com/screenshot.png',
-      name: 'Screenshot asset',
-    }));
+    const image = createSourceNode(
+      core,
+      core.projection().todayId,
+      'Screenshot asset',
+      'https://example.com/screenshot.png',
+    );
 
     const keyword = runSearchExpr(core.state(), { kind: 'rule', op: 'STRING_MATCH', text: 'Screenshot' });
     expect(keyword.ok ? keyword.hits.map((hit) => hit.nodeId) : []).toContain(image);
   });
 
-  test('searches attachment nodes by filename text', () => {
+  test('searches a managed Source owner by its authored filename', () => {
     const core = Core.new();
-    const attachment = mustFocus(core.createAttachmentNode(core.projection().todayId, null, {
-      assetId: 'asset-report',
-      mimeType: 'application/pdf',
-      originalFilename: 'Quarterly tax return 2025.pdf',
-      fileSize: 700,
-    }));
+    const attachment = createSourceNode(
+      core,
+      core.projection().todayId,
+      'Quarterly tax return 2025.pdf',
+      formatAssetSourceUri('asset-report'),
+    );
 
     const keyword = runSearchExpr(core.state(), { kind: 'rule', op: 'STRING_MATCH', text: 'tax return 2025' });
     expect(keyword.ok ? keyword.hits.map((hit) => hit.nodeId) : []).toEqual([attachment]);
   });
 
-  test('evaluates applicable general rules for attachment candidates', () => {
+  test('evaluates applicable general rules for Source-backed ordinary candidates', () => {
     const core = Core.new();
     const tagId = mustFocus(core.createTag('reference-material'));
-    const attachment = mustFocus(core.createAttachmentNode(core.projection().todayId, null, {
-      assetId: 'asset-reference',
-      mimeType: 'application/pdf',
-      originalFilename: 'Reference material.pdf',
-      fileSize: 700,
-    }));
+    const attachment = createSourceNode(
+      core,
+      core.projection().todayId,
+      'Reference material.pdf',
+      formatAssetSourceUri('asset-reference'),
+    );
     core.applyTag(attachment, tagId);
 
     const tagged = runSearchExpr(core.state(), { kind: 'rule', op: 'HAS_TAG', tagDefId: tagId });
@@ -1477,18 +1459,8 @@ describe('core search engine', () => {
     const today = core.projection().todayId;
     const tagId = mustFocus(core.createTag('legacy-media-match'));
     const tagged = mustFocus(core.createNode(today, null, 'Tagged note'));
-    const audio = mustFocus(core.createAttachmentNode(today, null, {
-      assetId: 'asset-audio',
-      mimeType: 'audio/wav',
-      originalFilename: 'Call recording.wav',
-      fileSize: 200,
-    }));
-    const video = mustFocus(core.createAttachmentNode(today, null, {
-      assetId: 'asset-video',
-      mimeType: 'video/mp4',
-      originalFilename: 'Demo video.mp4',
-      fileSize: 300,
-    }));
+    const audio = createSourceNode(core, today, 'Call recording', 'https://example.com/call.wav');
+    const video = createSourceNode(core, today, 'Demo video', 'https://example.com/demo.mp4');
     core.applyTag(tagged, tagId);
     core.applyTag(audio, tagId);
 

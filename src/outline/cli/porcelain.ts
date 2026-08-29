@@ -4,6 +4,7 @@ import type {
   ChangeSet,
   DestinationPlacement,
   NodeDraft,
+  OneTargetRef,
   Projection,
   ProjectionResult,
   Placement,
@@ -183,18 +184,7 @@ async function buildChangesFromInput(
     op: 'ensure', resource: 'date', date: String(input.date), bind: String(input.bind ?? 'date'),
   }];
   if (command === 'capture add') return captureChanges(input);
-  if (command === 'media add') return mediaAddChanges(input, context);
-  if (command === 'media set') return [{
-    op: 'update',
-    targets: input.target as TargetRef,
-    changes: [{
-      kind: 'image',
-      ...(input.assetLeaseId ? { assetLeaseId: String(input.assetLeaseId) } : {}),
-      ...(input.mediaUrl ? { mediaUrl: String(input.mediaUrl) } : {}),
-      ...(input.width !== undefined ? { width: Number(input.width) } : {}),
-      ...(input.height !== undefined ? { height: Number(input.height) } : {}),
-    }],
-  }];
+  if (command.startsWith('source ')) return [sourceChangeFromInput(command, input)];
   if (command === 'trash' || command === 'restore' || command === 'purge') return [{
     op: 'lifecycle', action: command, targets: input.target as TargetRef,
   }];
@@ -211,7 +201,6 @@ function setChangeFromInput(input: Record<string, unknown>): Change {
     kind: 'icon', value: input.icon as string | null, ...(input.iconKind ? { iconKind: String(input.iconKind) } : {}),
   });
   if (Object.hasOwn(input, 'bannerLeaseId')) changes.push({ kind: 'banner', assetLeaseId: input.bannerLeaseId as string | null });
-  if (isRecord(input.image)) changes.push({ kind: 'image', ...input.image });
   if (changes.length === 0) throw usageError('set input requires at least one property.');
   return { op: 'update', targets: input.target as TargetRef, changes };
 }
@@ -375,26 +364,62 @@ function captureChanges(input: Record<string, unknown>): readonly Change[] {
       children: (input.children ?? []) as NodeDraft[],
     })],
   });
+  const sourceText = captureSourceText(input.provenance as Record<string, unknown>);
+  if (sourceText !== undefined) {
+    changes.push({
+      op: 'update',
+      targets: { binding: bind },
+      changes: [{ kind: 'source', action: 'add', sourceText }],
+    });
+  }
   return changes;
 }
 
-async function mediaAddChanges(input: Record<string, unknown>, context: PorcelainBuildContext): Promise<readonly Change[]> {
-  const source = input.source as { kind: 'path'; path: string } | { kind: 'stdin' } | undefined;
-  const lease = source ? await context.ingestAsset(source.kind === 'stdin' ? '-' : source.path) : undefined;
-  const assetLeaseId = lease?.leaseId ?? (input.assetLeaseId ? String(input.assetLeaseId) : undefined);
-  const mediaType = input.mediaType as 'image' | 'attachment';
-  if (mediaType === 'attachment' && !assetLeaseId) throw usageError('attachment media requires source or assetLeaseId.');
-  if (!assetLeaseId && !input.mediaUrl) throw usageError('media add requires source, assetLeaseId, or mediaUrl.');
-  if (mediaType === 'attachment' && input.mediaUrl) throw usageError('attachments cannot use mediaUrl.');
-  return [{
-    op: 'create', placement: { kind: 'last', parent: input.parent as TargetRef }, bind: String(input.bind ?? 'media'),
-    nodes: [draft(String(input.name ?? lease?.metadata.originalFilename ?? ''), {
-      type: mediaType,
-      ...(assetLeaseId ? { assetLeaseId } : {}),
-      ...(input.mediaUrl ? { mediaUrl: String(input.mediaUrl) } : {}),
-      ...(input.metadata ? { metadata: input.metadata as Record<string, unknown> } : {}),
-    })],
-  }];
+function captureSourceText(provenance: Record<string, unknown>): string | undefined {
+  const source = provenance.source;
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return undefined;
+  const record = source as Record<string, unknown>;
+  const original = record.original;
+  const originalUrl = original && typeof original === 'object' && !Array.isArray(original)
+    && (original as Record<string, unknown>).kind === 'remote-url'
+    ? (original as Record<string, unknown>).url
+    : undefined;
+  for (const candidate of [record.canonicalUrl, record.url, originalUrl]) {
+    if (typeof candidate !== 'string') continue;
+    try {
+      const parsed = new URL(candidate);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return candidate;
+    } catch {
+      // Invalid provenance remains in its sidecar but does not become a Source.
+    }
+  }
+  return undefined;
+}
+
+function sourceChangeFromInput(command: string, input: Record<string, unknown>): Change {
+  const targets = input.target as OneTargetRef;
+  const action = command.slice('source '.length);
+  if (action === 'add') return {
+    op: 'update', targets, changes: [{
+      kind: 'source', action: 'add', sourceText: String(input.sourceText),
+      ...(input.valueId ? { valueId: String(input.valueId) } : {}),
+      ...(Object.hasOwn(input, 'after') ? { after: input.after as OneTargetRef | null } : {}),
+    }],
+  };
+  if (action === 'replace') return {
+    op: 'update', targets, changes: [{
+      kind: 'source', action: 'replace', value: input.value as OneTargetRef, sourceText: String(input.sourceText),
+    }],
+  };
+  if (action === 'reorder') return {
+    op: 'update', targets, changes: [{
+      kind: 'source', action: 'reorder', value: input.value as OneTargetRef, after: input.after as OneTargetRef | null,
+    }],
+  };
+  if (action === 'remove') return {
+    op: 'update', targets, changes: [{ kind: 'source', action: 'remove', value: input.value as OneTargetRef }],
+  };
+  return { op: 'update', targets, changes: [{ kind: 'source', action: 'clear' }] };
 }
 
 function queryFromInput(input: Record<string, unknown>) {
@@ -751,8 +776,7 @@ async function buildChanges(
   if (command === 'template apply') return [await buildTemplate(parsed, context)];
   if (command === 'daily ensure') return [buildDailyEnsure(parsed)];
   if (command === 'capture add') return buildCapture(parsed, context);
-  if (command === 'media add') return [await buildMediaAdd(parsed, context)];
-  if (command === 'media set') return [await buildMediaSet(parsed, context)];
+  if (command.startsWith('source ')) return [await buildSource(command, parsed, context)];
   if (command === 'trash' || command === 'restore' || command === 'purge') {
     return [await buildLifecycle(command, parsed, context)];
   }
@@ -788,7 +812,7 @@ async function buildAdd(parsed: ParsedOptions, context: PorcelainBuildContext): 
 async function buildSet(parsed: ParsedOptions, context: PorcelainBuildContext): Promise<Change> {
   allow(parsed, [
     'target', 'text', 'content', 'description', 'code', 'checkbox', 'icon', 'icon-kind',
-    'banner', 'image', 'media-url', 'width', 'height',
+    'banner',
   ]);
   const targets = await targetRef(takeTargetToken(parsed, 'target'), context.read);
   const changes: UpdateInstruction[] = [];
@@ -806,13 +830,6 @@ async function buildSet(parsed: ParsedOptions, context: PorcelainBuildContext): 
     ...(option(parsed, 'icon-kind') ? { iconKind: option(parsed, 'icon-kind') } : {}),
   });
   if (has(parsed, 'banner')) changes.push({ kind: 'banner', assetLeaseId: nullable(option(parsed, 'banner')!) });
-  if (has(parsed, 'image') || has(parsed, 'media-url')) changes.push({
-    kind: 'image',
-    ...(option(parsed, 'image') ? { assetLeaseId: option(parsed, 'image') } : {}),
-    ...(option(parsed, 'media-url') ? { mediaUrl: option(parsed, 'media-url') } : {}),
-    ...(option(parsed, 'width') ? { width: number(option(parsed, 'width')!, '--width') } : {}),
-    ...(option(parsed, 'height') ? { height: number(option(parsed, 'height')!, '--height') } : {}),
-  });
   if (changes.length === 0) throw usageError('set requires at least one property option.');
   return { op: 'update', targets, changes };
 }
@@ -1295,44 +1312,30 @@ async function buildCapture(parsed: ParsedOptions, context: PorcelainBuildContex
   });
 }
 
-async function buildMediaAdd(parsed: ParsedOptions, context: PorcelainBuildContext): Promise<Change> {
-  allow(parsed, ['parent', 'type', 'name', 'source', 'lease', 'url', 'metadata', 'bind']);
-  const parent = option(parsed, 'parent') ?? parsed.positional.shift();
-  const type = option(parsed, 'type') ?? parsed.positional.shift();
-  const source = option(parsed, 'source') ?? parsed.positional.shift();
-  const name = option(parsed, 'name') ?? '';
-  if (!parent || (type !== 'image' && type !== 'attachment') || parsed.positional.length > 0) {
-    throw usageError('media add requires PARENT, TYPE(image|attachment), and a source/lease/url.');
+async function buildSource(command: string, parsed: ParsedOptions, context: PorcelainBuildContext): Promise<Change> {
+  allow(parsed, ['target', 'source', 'value', 'value-id', 'after']);
+  const targetToken = option(parsed, 'target') ?? parsed.positional.shift();
+  if (!targetToken) throw usageError(`${command} requires TARGET.`);
+  const target = await oneTargetRef(targetToken, context.read);
+  const action = command.slice('source '.length);
+  if (action === 'clear') {
+    if (parsed.positional.length > 0) throw usageError('source clear accepts only TARGET.');
+    return sourceChangeFromInput(command, { target });
   }
-  const metadataSource = option(parsed, 'metadata');
-  const changes = await mediaAddChanges({
-    parent: await targetRef(parent, context.read),
-    mediaType: type,
-    name,
-    ...(source ? { source: source === '-' ? { kind: 'stdin' } : { kind: 'path', path: source } } : {}),
-    ...(option(parsed, 'lease') ? { assetLeaseId: option(parsed, 'lease') } : {}),
-    ...(option(parsed, 'url') ? { mediaUrl: option(parsed, 'url') } : {}),
-    ...(metadataSource ? { metadata: parseJson(await context.read(metadataSource), '--metadata') } : {}),
-    bind: option(parsed, 'bind') ?? 'media',
-  }, context);
-  return changes[0]!;
-}
-
-async function buildMediaSet(parsed: ParsedOptions, context: PorcelainBuildContext): Promise<Change> {
-  allow(parsed, ['target', 'lease', 'url', 'width', 'height']);
-  const target = option(parsed, 'target') ?? parsed.positional.shift();
-  if (!target || parsed.positional.length > 0) throw usageError('media set requires TARGET.');
-  return {
-    op: 'update',
-    targets: await targetRef(target, context.read),
-    changes: [{
-      kind: 'image',
-      ...(option(parsed, 'lease') ? { assetLeaseId: option(parsed, 'lease') } : {}),
-      ...(option(parsed, 'url') ? { mediaUrl: option(parsed, 'url') } : {}),
-      ...(option(parsed, 'width') ? { width: number(option(parsed, 'width')!, '--width') } : {}),
-      ...(option(parsed, 'height') ? { height: number(option(parsed, 'height')!, '--height') } : {}),
-    }],
-  };
+  const valueToken = option(parsed, 'value') ?? (action === 'add' ? undefined : parsed.positional.shift());
+  const sourceText = option(parsed, 'source') ?? (action === 'add' || action === 'replace' ? parsed.positional.shift() : undefined);
+  const afterToken = option(parsed, 'after');
+  if (parsed.positional.length > 0) throw usageError(`${command} received unexpected arguments.`);
+  if (action !== 'add' && !valueToken) throw usageError(`${command} requires VALUE.`);
+  if ((action === 'add' || action === 'replace') && sourceText === undefined) throw usageError(`${command} requires SOURCE.`);
+  if (action === 'reorder' && afterToken === undefined) throw usageError('source reorder requires --after VALUE|null.');
+  return sourceChangeFromInput(command, {
+    target,
+    ...(valueToken ? { value: await oneTargetRef(valueToken, context.read) } : {}),
+    ...(sourceText !== undefined ? { sourceText } : {}),
+    ...(option(parsed, 'value-id') ? { valueId: option(parsed, 'value-id') } : {}),
+    ...(afterToken !== undefined ? { after: afterToken === 'null' ? null : await oneTargetRef(afterToken, context.read) } : {}),
+  });
 }
 
 async function buildLifecycle(command: string, parsed: ParsedOptions, context: PorcelainBuildContext): Promise<Change> {
@@ -1355,6 +1358,15 @@ async function targetRef(token: string, read: StructuredReader): Promise<TargetR
   if (isRecord(value) && ('binding' in value || 'target' in value)) return value as TargetRef;
   if (isRecord(value) && isRecord(value.selector)) return { target: value as unknown as TargetSpec };
   return { target: { selector: value as Selector, cardinality: 'one' } };
+}
+
+async function oneTargetRef(token: string, read: StructuredReader): Promise<OneTargetRef> {
+  const reference = await targetRef(token, read);
+  if ('binding' in reference) return reference;
+  if (reference.target.cardinality !== 'one' || reference.target.max !== undefined) {
+    throw usageError('Source operations require a cardinality-one target without max.');
+  }
+  return { target: { selector: reference.target.selector, cardinality: 'one' } };
 }
 
 function selectorFromExactTarget(reference: TargetRef): Selector {
@@ -1471,10 +1483,10 @@ function scalarValue(value: string, label: string): string | number | boolean | 
 }
 
 const FIELD_TYPES = new Set([
-  'plain', 'options', 'options_from_supertag', 'date', 'number', 'url', 'email', 'checkbox',
+  'plain', 'options', 'options_from_supertag', 'date', 'number', 'uri', 'email', 'checkbox',
 ] as const);
 
-function fieldType(value: string): 'plain' | 'options' | 'options_from_supertag' | 'date' | 'number' | 'url' | 'email' | 'checkbox' {
+function fieldType(value: string): 'plain' | 'options' | 'options_from_supertag' | 'date' | 'number' | 'uri' | 'email' | 'checkbox' {
   if (!FIELD_TYPES.has(value as never)) throw usageError(`Unknown field type: ${value}`);
   return value as ReturnType<typeof fieldType>;
 }

@@ -2,15 +2,14 @@ import type { AssetMetadata } from '../../api/types';
 import type { PreviewTarget } from '../../../core/preview';
 import { api } from '../../api/client';
 
-// "Save this previewed non-node source into the outline." A non-node file preview
-// (local file / url) can be turned into a first-class file node:
-// copy its bytes into the asset store, then create an attachment/image node. After
-// that it is the ingested state of the same unified file surface.
+// "Save this previewed non-node source into the outline." An ingestible loose file
+// preview can be copied into the asset store and attached as the Source of a new
+// ordinary Node. The mounted preview then binds to that owner without changing bodies.
 
 /**
  * True when a resolved non-node source can be copied into the asset store: a trusted
  * live local file, a materialized Thread image artifact, or a Thread-owned resource.
- * An `asset` is already a node, and a remote `url` is not fetchable yet.
+ * An `asset` is already managed, and a remote `url` is not fetchable yet.
  */
 export function canAddPreviewTargetToOutline(target: PreviewTarget): boolean {
   if (target.kind !== 'local-file' || target.entryKind !== 'file') return false;

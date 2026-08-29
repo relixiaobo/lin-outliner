@@ -7,6 +7,7 @@ import {
   ids,
   multiSelect,
   openMockedApp,
+  ordinaryChildIds,
   row,
   rowBody,
   rowEditor,
@@ -73,7 +74,7 @@ async function dispatchNodeDragEnd(page: Page, sourceId: string) {
 
 async function todayChildren(page: Page) {
   const projection = await e2eProjection(page);
-  return projection.nodes.find((node) => node.id === ids.today)?.children ?? [];
+  return ordinaryChildIds(projection.nodes.find((node) => node.id === ids.today));
 }
 
 async function expectNoDropIndicator(page: Page) {

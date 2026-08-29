@@ -26,10 +26,10 @@ export const DAY_FIELD = 'sys:day';
 export interface SysFieldNode {
   id: NodeId;
   type?: NodeType;
-  content: RichText;
+  content?: RichText;
   description?: string;
   children: readonly NodeId[];
-  tags: readonly NodeId[];
+  tags?: readonly NodeId[];
   parentId?: NodeId | null;
   completedAt?: number;
   createdAt?: number;
@@ -81,7 +81,7 @@ export interface SystemFieldRef {
 }
 
 function nodeTitle(node: SysFieldNode | undefined): string {
-  return node?.content.text || 'Untitled';
+  return node?.content?.text || 'Untitled';
 }
 
 /** A reference node resolves to (displays) its target; everything else is itself. */
@@ -99,7 +99,7 @@ function nearestDayNode(node: SysFieldNode, byId: SysFieldNodeMap): SysFieldNode
   const seen = new Set<NodeId>();
   while (current && !seen.has(current.id)) {
     seen.add(current.id);
-    if (current.tags.some((tagId) => byId.get(tagId)?.content.text.trim().toLowerCase() === 'day')) {
+    if (current.tags?.some((tagId) => byId.get(tagId)?.content?.text.trim().toLowerCase() === 'day')) {
       return current;
     }
     current = current.parentId ? byId.get(current.parentId) : undefined;
@@ -179,14 +179,14 @@ export function resolveSystemField(
   if (fieldId === CREATED_FIELD) return { kind: 'date', ms: node.createdAt ?? null };
   if (fieldId === UPDATED_FIELD) return { kind: 'date', ms: node.updatedAt ?? null };
   if (fieldId === DONE_AT_FIELD) return { kind: 'date', ms: node.completedAt && node.completedAt > 0 ? node.completedAt : null };
-  if (fieldId === TAGS_FIELD) return { kind: 'tags', tagIds: [...node.tags] };
+  if (fieldId === TAGS_FIELD) return { kind: 'tags', tagIds: [...(node.tags ?? [])] };
   if (fieldId === OWNER_FIELD) {
     const parent = node.parentId ? byId.get(node.parentId) : undefined;
     return { kind: 'nodeRefs', refs: parent ? [{ id: parent.id, label: nodeTitle(parent) }] : [], count: parent ? 1 : 0 };
   }
   if (fieldId === DAY_FIELD) {
     const day = nearestDayNode(node, byId);
-    return { kind: 'dayRef', nodeId: day?.id ?? null, text: day ? day.content.text.trim() : '' };
+    return { kind: 'dayRef', nodeId: day?.id ?? null, text: day?.content?.text.trim() ?? '' };
   }
   if (fieldId === REF_COUNT_FIELD) {
     const { sources, count } = resolveBacklinks(node, byId, context);
@@ -213,7 +213,7 @@ export function systemFieldValues(
     case 'date':
       return resolved.ms === null ? [] : [String(resolved.ms)];
     case 'tags':
-      return resolved.tagIds.map((tagId) => byId.get(tagId)?.content.text || tagId);
+      return resolved.tagIds.map((tagId) => byId.get(tagId)?.content?.text || tagId);
     case 'nodeRefs':
       // References sorts/groups by its raw count; Owner reports the parent's title.
       return fieldId === REF_COUNT_FIELD

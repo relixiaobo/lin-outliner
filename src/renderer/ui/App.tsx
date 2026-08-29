@@ -55,7 +55,6 @@ import { useT } from '../i18n/I18nProvider';
 import { InlineFilePreviewLayer } from './editor/InlineFilePreviewLayer';
 import { onPreviewTargetOpen } from './preview/previewEvents';
 import type { FilePreviewNavigationOptions } from './workspaceLayoutTypes';
-import { fileNodeTarget, isFileNode } from './preview/fileNode';
 import {
   persistOutlineViewState,
   restoreOutlineExpansionForRoot,
@@ -386,31 +385,7 @@ export function App() {
     });
   }, [index, setUi]);
 
-  const filePreviewTargetForNode = useCallback((nodeId: NodeId): PreviewTarget | null => {
-    const node = index?.byId.get(nodeId);
-    return isFileNode(node) ? fileNodeTarget(node) : null;
-  }, [index]);
-
-  const openFilePreviewForNode = useCallback((
-    nodeId: NodeId,
-    options?: NavigateRootOptions & { panelId?: string; presentation?: FilePreviewNavigationOptions['presentation'] },
-  ): boolean => {
-    const fileTarget = filePreviewTargetForNode(nodeId);
-    if (!fileTarget) return false;
-    if (options?.panelId) {
-      setPanelPreview(options.panelId, fileTarget, { newPane: options.newPane, nodeId, presentation: options.presentation });
-    } else {
-      openPreview(fileTarget, { newPane: options?.newPane, nodeId, presentation: options?.presentation });
-    }
-    restoreNodeInOutliner(nodeId);
-    return true;
-  }, [filePreviewTargetForNode, openPreview, restoreNodeInOutliner, setPanelPreview]);
-
   const navigateRoot = useCallback((nodeId: NodeId, options?: NavigateRootOptions) => {
-    if (openFilePreviewForNode(nodeId, options)) {
-      recordNodeLanding(nodeId);
-      return;
-    }
     if (options?.newPane) {
       openPanel(nodeId);
       restoreNodeInOutliner(nodeId);
@@ -420,7 +395,7 @@ export function App() {
     setActivePanelRoot(nodeId, options);
     restoreNodeInOutliner(nodeId);
     recordNodeLanding(nodeId);
-  }, [openFilePreviewForNode, openPanel, recordNodeLanding, restoreNodeInOutliner, setActivePanelRoot]);
+  }, [openPanel, recordNodeLanding, restoreNodeInOutliner, setActivePanelRoot]);
 
   const ensureTodayNode = useCallback(async (): Promise<NodeId | null> => {
     const today = parseIsoLocalDate(todayIsoLocalDate());
@@ -499,10 +474,6 @@ export function App() {
   }), [openPreview]);
 
   const navigatePanelRoot = useCallback((panelId: string, nodeId: NodeId, options?: NavigateRootOptions) => {
-    if (openFilePreviewForNode(nodeId, { ...options, panelId })) {
-      recordNodeLanding(nodeId);
-      return;
-    }
     if (options?.newPane) {
       openPanel(nodeId);
       restoreNodeInOutliner(nodeId);
@@ -512,7 +483,7 @@ export function App() {
     setPanelRoot(panelId, nodeId, options);
     restoreNodeInOutliner(nodeId);
     recordNodeLanding(nodeId);
-  }, [openFilePreviewForNode, openPanel, recordNodeLanding, restoreNodeInOutliner, setPanelRoot]);
+  }, [openPanel, recordNodeLanding, restoreNodeInOutliner, setPanelRoot]);
 
   const navigatePanelPreview = useCallback((panelId: string, target: PreviewTarget, options?: FilePreviewNavigationOptions) => {
     setPanelPreview(panelId, target, options);
@@ -541,14 +512,10 @@ export function App() {
   }, [navigatePanelForward, pageHistoryPanel]);
 
   const openRootInPanel = useCallback((nodeId: NodeId) => {
-    if (openFilePreviewForNode(nodeId, { newPane: true })) {
-      recordNodeLanding(nodeId);
-      return;
-    }
     openPanel(nodeId);
     restoreNodeInOutliner(nodeId);
     recordNodeLanding(nodeId);
-  }, [openFilePreviewForNode, openPanel, recordNodeLanding, restoreNodeInOutliner]);
+  }, [openPanel, recordNodeLanding, restoreNodeInOutliner]);
 
   const openNodeReferenceFromAgent = useCallback((nodeId: NodeId, options?: NavigateRootOptions) => {
     navigateRoot(nodeId, { focus: false, newPane: options?.newPane });
@@ -621,7 +588,7 @@ export function App() {
   }, []);
 
   // The non-node preview "Add to outline" bridge: copy the previewed source into an
-  // asset and create a file node under Today. Both callers (the pane "Add to outline"
+  // asset and create an ordinary Source-backed Node under Today. Both callers (the pane "Add to outline"
   // and a transcript chip's "Add to Today") land it under today's daily note; the
   // pane path (`panelId`) also binds the requesting file surface to the new node in
   // place. Ensure-today goes through `run()` — App's command runner folds the create

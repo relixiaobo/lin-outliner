@@ -1,10 +1,16 @@
 import type { Core, CoreTransactionNodePatch, ResolvedContentTree } from '../../core/core';
 import { memoryTagDefinitionForId } from '../../core/memoryDefinitions';
 import { isClientNodeId } from '../../shared/nodeId';
-import type { BatchMoveNodeInput, DocumentProjection, FieldSlotMutation } from '../../core/types';
+import {
+  isContentBearingNode,
+  type BatchMoveNodeInput,
+  type DocumentProjection,
+  type FieldSlotMutation,
+} from '../../core/types';
 import {
   TRASH_ID,
   plainText,
+  sourceEntryNodeId,
   type CreateNodeTree,
   type FieldType,
   type FilterOperator,
@@ -61,6 +67,7 @@ import type {
 import { isSystemFieldId } from '../../core/systemFields';
 import { buildConfigIndex } from '../../core/configProjection';
 import { searchNodeToQueryExpr } from '../../core/searchEngine';
+import { parseAssetSourceUri } from '../../core/source';
 
 interface ExecuteResult {
   readonly bindings: Readonly<Record<string, readonly string[]>>;
@@ -308,6 +315,24 @@ function normalizeOutlineChangeSetFromSelectionIndex(
   const normalized = clone(input);
   const publicIdSeed = canonicalSha256(input);
   normalized.operations = normalized.operations.map((change, operationIndex) => {
+    if (change.op === 'update') {
+      const hasSourceInstruction = change.changes.some((instruction) => instruction.kind === 'source');
+      if (hasSourceInstruction && 'target' in change.targets && change.targets.target.cardinality !== 'one') {
+        throw usageError(`Source update ${operationIndex} requires an owner reference with cardinality one.`);
+      }
+      return {
+        ...change,
+        changes: change.changes.map((instruction, instructionIndex) => (
+          instruction.kind === 'source' && instruction.action === 'add'
+            ? {
+                ...instruction,
+                valueId: instruction.valueId
+                  ?? deterministicPublicNodeId(publicIdSeed, `${operationIndex}:source:${instructionIndex}`),
+              }
+            : instruction
+        )),
+      };
+    }
     if (change.op !== 'create') return change;
     if ('resource' in change) {
       const drafts = change.definitionType === 'tag' ? change.template : change.options;
@@ -344,7 +369,19 @@ function normalizeOutlineChangeSetFromSelectionIndex(
     expected.set(nodeId, digest);
   }
   const bindings = new Set<string>();
+  const sourceValueIds = new Set<string>();
   for (const [operationIndex, change] of normalized.operations.entries()) {
+    if (change.op === 'update') {
+      for (const instruction of change.changes) {
+        if (instruction.kind !== 'source' || instruction.action !== 'add') continue;
+        const valueId = instruction.valueId!;
+        if (!isClientNodeId(valueId)) throw usageError(`Source valueId must be a node:<uuid> identifier: ${valueId}`);
+        if (index.byId.has(valueId) || sourceValueIds.has(valueId)) {
+          throw usageError(`Source valueId is already in use: ${valueId}`);
+        }
+        sourceValueIds.add(valueId);
+      }
+    }
     for (const reference of changeTargetRefs(change)) {
       if ('binding' in reference) {
         if (!bindings.has(reference.binding)) {
@@ -485,6 +522,9 @@ async function executeChange(
     }
     case 'update': {
       const targetIds = resolveTargetRef(baseIndex, change.targets, bindings);
+      if (change.changes.some((instruction) => instruction.kind === 'source') && targetIds.length !== 1) {
+        throw usageError(`Source update owner must resolve to exactly one Node; received ${targetIds.length}`);
+      }
       for (const targetId of targetIds) {
         for (const instruction of change.changes) executeUpdate(
           core,
@@ -574,6 +614,7 @@ async function executeChange(
       const targetIds = resolveTargetRef(baseIndex, change.targets, bindings);
       const effectiveTargets = change.action === 'purge' && change.contents && targetIds.includes(TRASH_ID)
         ? [...core.state().nodes[TRASH_ID]?.children ?? []]
+            .filter((targetId) => targetId !== sourceEntryNodeId(TRASH_ID))
         : targetIds;
       if (change.action === 'trash') core.batchTrashNodes([...effectiveTargets]);
       else if (change.action === 'restore') for (const targetId of effectiveTargets) core.restoreNode(targetId);
@@ -780,32 +821,6 @@ function createDraft(
   } else if (draft.type === 'reference') {
     if (!draft.referenceTargetId) throw new Error('Reference draft requires referenceTargetId');
     core.addReference(parentId, draft.referenceTargetId, index, id);
-  } else if (draft.type === 'image') {
-    const lease = draft.assetLeaseId ? requiredAssetLease(draft.assetLeaseId, assetLeases) : undefined;
-    core.createImageNode(parentId, index, {
-      ...(lease ? { assetId: lease.assetId } : {}),
-      ...(draft.mediaUrl ? { mediaUrl: draft.mediaUrl } : {}),
-      ...(typeof metadata.width === 'number'
-        ? { width: metadata.width }
-        : lease?.metadata.imageWidth !== undefined ? { width: lease.metadata.imageWidth } : {}),
-      ...(typeof metadata.height === 'number'
-        ? { height: metadata.height }
-        : lease?.metadata.imageHeight !== undefined ? { height: lease.metadata.imageHeight } : {}),
-      ...(typeof metadata.alt === 'string' ? { alt: metadata.alt } : {}),
-      name: draft.content.text,
-    }, id);
-  } else if (draft.type === 'attachment') {
-    const lease = requiredAssetLease(draft.assetLeaseId, assetLeases);
-    core.createAttachmentNode(parentId, index, {
-      assetId: lease.assetId,
-      mimeType: lease.metadata.mimeType,
-      originalFilename: lease.metadata.originalFilename ?? draft.content.text,
-      fileSize: lease.metadata.byteSize,
-      thumbnailAssetId: lease.metadata.thumbnailAssetId,
-      pdfPageCount: lease.metadata.pdfPageCount,
-      audioDurationMs: lease.metadata.audioDurationMs,
-      videoDurationMs: lease.metadata.videoDurationMs,
-    }, id);
   } else if (draft.type === 'search') {
     if (!isRecord(metadata.query)) throw new Error('Search draft requires metadata.query');
     core.createSearchNode(parentId, index, {
@@ -877,7 +892,8 @@ function executeUpdate(
 ): void {
   // Tag commands are already idempotent in Core. Avoid cloning the complete
   // document merely to preflight each tag edit in a large ChangeSet.
-  const current = instruction.kind === 'tag' ? undefined : core.state().nodes[targetId];
+  const candidate = instruction.kind === 'tag' ? undefined : core.state().nodes[targetId];
+  const current = candidate && isContentBearingNode(candidate) ? candidate : undefined;
   if (instruction.kind === 'content') {
     if (current && canonicalJson(current.content) === canonicalJson(instruction.value)) return;
     core.applyNodeTextPatch(targetId, { ops: [{ type: 'replace_all', content: instruction.value }] });
@@ -887,8 +903,8 @@ function executeUpdate(
   } else if (instruction.kind === 'text-patch') {
     if (instruction.field === 'content') core.applyNodeTextPatch(targetId, instruction.patch);
     else {
-      const current = core.state().nodes[targetId]?.description ?? '';
-      core.updateNodeDescription(targetId, `${current.slice(0, instruction.from)}${instruction.value}${current.slice(instruction.to)}`);
+      const description = current?.description ?? '';
+      core.updateNodeDescription(targetId, `${description.slice(0, instruction.from)}${instruction.value}${description.slice(instruction.to)}`);
     }
   } else if (instruction.kind === 'code') {
     const node = current;
@@ -900,7 +916,7 @@ function executeUpdate(
     if (visible === instruction.visible) return;
     core.setNodeCheckboxVisible(targetId, instruction.visible);
   } else if (instruction.kind === 'done') {
-    const done = (core.state().nodes[targetId]?.completedAt ?? 0) > 0;
+    const done = (current?.completedAt ?? 0) > 0;
     if (done !== instruction.value) core.toggleDone(targetId);
   } else if (instruction.kind === 'tag') {
     const tagId = exactlyOne(resolveTargetRef(baseIndex, instruction.tag, bindings), 'tag definition');
@@ -910,6 +926,8 @@ function executeUpdate(
     executeFieldUpdate(core, baseIndex, bindings, targetId, instruction);
   } else if (instruction.kind === 'field-slot') {
     executeFieldSlotUpdate(core, baseIndex, bindings, targetId, instruction, assetLeases);
+  } else if (instruction.kind === 'source') {
+    executeSourceUpdate(core, baseIndex, bindings, targetId, instruction);
   } else if (instruction.kind === 'definition') {
     if (!definitionPatchChanges(core, targetId, instruction)) return;
     if (instruction.definitionType === 'tag') core.setTagConfig(targetId, instruction.patch as TagConfigPatch);
@@ -966,13 +984,6 @@ function executeUpdate(
       instruction.assetLeaseId ? requiredAssetLease(instruction.assetLeaseId, assetLeases).assetId : null,
       instruction.position,
     );
-  } else {
-    core.setNodeImage(targetId, {
-      ...(instruction.assetLeaseId ? { assetId: requiredAssetLease(instruction.assetLeaseId, assetLeases).assetId } : {}),
-      ...(instruction.mediaUrl ? { mediaUrl: instruction.mediaUrl } : {}),
-      width: instruction.width,
-      height: instruction.height,
-    });
   }
 }
 
@@ -981,14 +992,28 @@ async function resolveChangeSetAssetLeases(
   changeSet: ChangeSet,
 ): Promise<Readonly<Record<string, AssetLease>>> {
   const leaseIds = collectChangeSetAssetLeaseIds(changeSet);
-  const leases = await workspace.assets.resolveLeases(leaseIds);
-  return Object.fromEntries(leases);
+  const directLeases = await workspace.assets.resolveLeases(leaseIds);
+  const sourceLeases = await workspace.assets.resolveLeasesForAssetIds(collectChangeSetAssetIds(changeSet));
+  return Object.fromEntries([...directLeases, ...sourceLeases]);
+}
+
+function collectChangeSetAssetIds(changeSet: ChangeSet): readonly string[] {
+  const result = new Set<string>();
+  for (const change of changeSet.operations) {
+    if (change.op !== 'update') continue;
+    for (const instruction of change.changes) {
+      if (instruction.kind !== 'source'
+        || (instruction.action !== 'add' && instruction.action !== 'replace')) continue;
+      const assetId = parseAssetSourceUri(instruction.sourceText);
+      if (assetId) result.add(assetId);
+    }
+  }
+  return [...result].sort();
 }
 
 function collectChangeSetAssetLeaseIds(changeSet: ChangeSet): readonly string[] {
   const result = new Set<string>();
   const visitDraft = (draft: NodeDraft) => {
-    if (draft.assetLeaseId) result.add(draft.assetLeaseId);
     for (const child of draft.children) visitDraft(child);
     for (const field of draft.fields ?? []) for (const value of field.values) visitDraft(value);
   };
@@ -1002,12 +1027,6 @@ function collectChangeSetAssetLeaseIds(changeSet: ChangeSet): readonly string[] 
     if (change.op !== 'update') continue;
     for (const instruction of change.changes) {
       if (instruction.kind === 'banner' && instruction.assetLeaseId) result.add(instruction.assetLeaseId);
-      if (instruction.kind === 'image' && instruction.assetLeaseId) result.add(instruction.assetLeaseId);
-      if (instruction.kind === 'field-slot'
-        && (instruction.mutation.action === 'append-image' || instruction.mutation.action === 'append-attachment')
-        && instruction.mutation.assetLeaseId) {
-        result.add(instruction.mutation.assetLeaseId);
-      }
       if (instruction.kind === 'icon'
         && instruction.value
         && (instruction.iconKind === 'image' || instruction.iconKind === 'generated')) {
@@ -1079,40 +1098,49 @@ function executeFieldSlotUpdate(
       ...(mutation.id ? { id: mutation.id } : {}),
       ...common,
     };
-  } else if (mutation.action === 'append-image') {
-    const lease = mutation.assetLeaseId
-      ? requiredAssetLease(mutation.assetLeaseId, assetLeases)
-      : undefined;
-    lowered = {
-      kind: 'appendImage',
-      ...(lease ? { assetId: lease.assetId } : {}),
-      ...(mutation.mediaUrl ? { mediaUrl: mutation.mediaUrl } : {}),
-      width: mutation.width,
-      height: mutation.height,
-      alt: mutation.alt,
-      name: mutation.name,
-      ...(mutation.id ? { id: mutation.id } : {}),
-      ...common,
-    };
-  } else if (mutation.action === 'append-attachment') {
-    const lease = requiredAssetLease(mutation.assetLeaseId, assetLeases);
-    lowered = {
-      kind: 'appendAttachment',
-      assetId: lease.assetId,
-      mimeType: lease.metadata.mimeType,
-      originalFilename: lease.metadata.originalFilename,
-      fileSize: lease.metadata.byteSize,
-      thumbnailAssetId: lease.metadata.thumbnailAssetId,
-      pdfPageCount: lease.metadata.pdfPageCount,
-      audioDurationMs: lease.metadata.audioDurationMs,
-      videoDurationMs: lease.metadata.videoDurationMs,
-      ...(mutation.id ? { id: mutation.id } : {}),
-      ...common,
-    };
   } else {
     lowered = { kind: 'commit', ...common };
   }
   core.updateFieldSlot(ownerId, fieldDefId, lowered);
+}
+
+function executeSourceUpdate(
+  core: Core,
+  baseIndex: ReturnType<typeof createSelectionIndex>,
+  bindings: Readonly<Record<string, readonly string[]>>,
+  ownerId: string,
+  instruction: Extract<Extract<Change, { op: 'update' }>['changes'][number], { kind: 'source' }>,
+): void {
+  const one = (reference: import('../contract/schemas').OneTargetRef, label: string): string => (
+    exactlyOne(resolveTargetRef(baseIndex, reference, bindings), label)
+  );
+  if (instruction.action === 'add') {
+    const afterValueId = instruction.after === undefined
+      ? undefined
+      : instruction.after === null
+        ? null
+        : one(instruction.after, 'Source anchor');
+    core.addSource(ownerId, instruction.valueId!, instruction.sourceText, afterValueId);
+    return;
+  }
+  if (instruction.action === 'clear') {
+    const state = core.state();
+    const entry = state.nodes[`${ownerId}::source`];
+    const observedValueIds = entry?.type === 'fieldEntry'
+      ? entry.children.filter((nodeId) => state.nodes[nodeId]?.type === 'sourceValue')
+      : [];
+    core.clearSources(ownerId, observedValueIds);
+    return;
+  }
+  const valueId = one(instruction.value, 'Source value');
+  if (instruction.action === 'replace') {
+    core.replaceSource(ownerId, valueId, instruction.sourceText);
+  } else if (instruction.action === 'remove') {
+    core.removeSource(ownerId, valueId);
+  } else {
+    const afterValueId = instruction.after === null ? null : one(instruction.after, 'Source anchor');
+    core.reorderSource(ownerId, valueId, afterValueId);
+  }
 }
 
 function requiredAssetLease(
@@ -1181,7 +1209,9 @@ function executeFieldUpdate(
   } else if (value !== undefined) {
     if (entry) {
       const state = core.state();
-      const values = entry.children.map((id) => state.nodes[id]).filter(Boolean);
+      const values = entry.children
+        .map((id) => state.nodes[id])
+        .filter((node) => node && isContentBearingNode(node));
       if (values.length === 1 && values[0]?.content.text === fieldValueText(value)) return;
     }
     if (entry) core.clearFieldValue(entry.id);
@@ -1584,6 +1614,12 @@ function changeTargetRefs(change: Change): readonly TargetRef[] {
           if (instruction.mutation.action === 'append-reference') refs.push(instruction.mutation.target);
           if (instruction.mutation.action === 'select-option') refs.push(instruction.mutation.option);
           if (instruction.mutation.action === 'append-nodes') refs.push(...instruction.mutation.firstTags ?? []);
+          return refs;
+        }
+        if (instruction.kind === 'source') {
+          const refs: TargetRef[] = [];
+          if ('value' in instruction) refs.push(instruction.value);
+          if ('after' in instruction && instruction.after) refs.push(instruction.after);
           return refs;
         }
         if (instruction.kind === 'view'

@@ -2,11 +2,21 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
-import { normalizePreviewHttpUrl, type PreviewListDirectoryResult, type PreviewReadBytesResult, type PreviewReadTextResult, type PreviewResolveSourceResult } from '../../src/core/preview';
+import { pathToFileURL } from 'node:url';
+import {
+  normalizePreviewHttpUrl,
+  type PreviewAuthorizeLinkedFileResult,
+  type PreviewForgetLinkedFileResult,
+  type PreviewListDirectoryResult,
+  type PreviewReadBytesResult,
+  type PreviewReadTextResult,
+  type PreviewResolveSourceResult,
+} from '../../src/core/preview';
 import { PREVIEW_LOCAL_URL_SCHEME } from '../../src/core/assets';
 import { handlePreviewCommand, type PreviewCommandContext } from '../../src/main/previewSource';
 import type { TrustedLocalFileReference } from '../../src/main/localFileReferenceSecurity';
 import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
+import { LinkedFileGrantStore } from '../../src/main/linkedFileGrantStore';
 
 describe('preview source commands', () => {
   let root: string;
@@ -360,6 +370,97 @@ describe('preview source commands', () => {
       target: { kind: 'url', url: 'file:///tmp/report.html' },
     }, previewContext()) as PreviewResolveSourceResult;
     expect(rejected.source).toBeNull();
+  });
+
+  test('authorizes, resolves, reads, forgets, and revalidates one exact linked file', async () => {
+    const filePath = join(root, 'linked.md');
+    const otherPath = join(root, 'other.md');
+    await writeFile(filePath, '# Linked source');
+    await writeFile(otherPath, '# Other source');
+    const sourceText = pathToFileURL(filePath).href;
+    const target = {
+      kind: 'linked-file' as const,
+      sourceValueId: 'source:linked',
+      sourceText,
+      label: 'Linked note',
+    };
+    const grants = new LinkedFileGrantStore(join(root, 'linked-file-grants.json'));
+    const streamCalls: string[] = [];
+    const baseContext = previewContext({
+      linkedFileGrant: grants,
+      linkedFileStreamUrl: async (resolvedPath) => {
+        streamCalls.push(resolvedPath);
+        return `${PREVIEW_LOCAL_URL_SCHEME}://linked-file-token`;
+      },
+    });
+
+    const denied = await handlePreviewCommand(
+      'preview_resolve_source',
+      { target },
+      baseContext,
+    ) as PreviewResolveSourceResult;
+    expect(denied).toEqual({ source: null, error: 'file-access-denied' });
+
+    const mismatch = await handlePreviewCommand(
+      'preview_authorize_linked_file',
+      { target },
+      { ...baseContext, chooseLinkedFile: async () => otherPath },
+    ) as PreviewAuthorizeLinkedFileResult;
+    expect(mismatch).toEqual({ authorized: false, error: 'different-file' });
+
+    const authorized = await handlePreviewCommand(
+      'preview_authorize_linked_file',
+      { target },
+      { ...baseContext, chooseLinkedFile: async () => filePath },
+    ) as PreviewAuthorizeLinkedFileResult;
+    expect(authorized).toEqual({ authorized: true });
+
+    const ready = await handlePreviewCommand(
+      'preview_resolve_source',
+      { target },
+      baseContext,
+    ) as PreviewResolveSourceResult;
+    expect(ready.source).toMatchObject({
+      kind: 'file',
+      sourceKind: 'linked-file',
+      name: 'Linked note',
+      streamUrl: `${PREVIEW_LOCAL_URL_SCHEME}://linked-file-token`,
+      target,
+    });
+    expect(ready.source && 'displayPath' in ready.source ? ready.source.displayPath : undefined).toBeUndefined();
+    expect(JSON.stringify(ready)).not.toContain('canonicalPath');
+    expect(JSON.stringify(ready)).not.toContain('device');
+    expect(JSON.stringify(ready)).not.toContain('inode');
+    expect(streamCalls).toEqual([await realpath(filePath)]);
+
+    const bytes = await handlePreviewCommand(
+      'preview_read_bytes',
+      { target },
+      baseContext,
+    ) as PreviewReadBytesResult;
+    expect(Buffer.from(bytes.bytes!)).toEqual(Buffer.from('# Linked source'));
+
+    const forgotten = await handlePreviewCommand(
+      'preview_forget_linked_file',
+      { target },
+      baseContext,
+    ) as PreviewForgetLinkedFileResult;
+    expect(forgotten).toEqual({ forgotten: true });
+    expect(await handlePreviewCommand('preview_resolve_source', { target }, baseContext))
+      .toEqual({ source: null, error: 'file-access-denied' });
+
+    expect((await grants.authorize(sourceText, filePath)).authorized).toBe(true);
+    await rm(filePath);
+    expect(await handlePreviewCommand('preview_resolve_source', { target }, baseContext))
+      .toEqual({ source: null, error: 'file-unavailable' });
+  });
+
+  test('returns bounded command results for invalid linked-file targets', async () => {
+    const context = previewContext();
+    expect(await handlePreviewCommand('preview_authorize_linked_file', { target: {} }, context))
+      .toEqual({ authorized: false, error: 'invalid-source' });
+    expect(await handlePreviewCommand('preview_forget_linked_file', { target: {} }, context))
+      .toEqual({ forgotten: false });
   });
 
   function previewContext(overrides: Partial<PreviewCommandContext> = {}): PreviewCommandContext {

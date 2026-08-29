@@ -128,7 +128,7 @@ export function inferFieldTypeFromValues(values: readonly FieldResolutionValue[]
   const texts = nonEmpty.map((value) => value.text.trim());
   if (texts.every((text) => parseDateFieldValue(text))) return 'date';
   if (texts.every((text) => Number.isFinite(Number(text)))) return 'number';
-  if (texts.every(looksLikeUrl)) return 'url';
+  if (texts.every(looksLikeUrl)) return 'uri';
   if (texts.every((text) => EMAIL_PATTERN.test(text))) return 'email';
   if (texts.every((text) => ['true', 'false'].includes(text.toLowerCase()))) return 'checkbox';
   return 'plain';
@@ -182,10 +182,10 @@ export function validateFieldValuesForType(
       instructions: 'Use a finite numeric value, or write to a plain field.',
     };
   }
-  if (fieldType === 'url' && texts.some((text) => !looksLikeUrl(text))) {
+  if (fieldType === 'uri' && texts.some((text) => !looksLikeUrl(text))) {
     return {
       ok: false,
-      error: `Field "${label}" is a URL field and received a non-URL value.`,
+      error: `Field "${label}" is a URI field and received a non-URI value.`,
       instructions: 'Use an http(s) URL or a scheme-less host such as example.com/path.',
     };
   }

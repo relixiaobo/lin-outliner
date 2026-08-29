@@ -47,9 +47,9 @@ export const FIELD_TYPE_REGISTRY = {
     interaction: 'numberInput',
     exposedInConfig: true,
   },
-  url: {
-    id: 'url',
-    label: 'url',
+  uri: {
+    id: 'uri',
+    label: 'uri',
     interaction: 'urlLink',
     exposedInConfig: true,
   },

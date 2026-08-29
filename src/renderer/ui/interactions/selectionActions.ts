@@ -1,4 +1,4 @@
-import type { NodeId, NodeProjection, RichText } from '../../api/types';
+import { isContentBearingNode, type NodeId, type NodeProjection, type RichText } from '../../api/types';
 import type { UiState } from '../../state/document';
 import { buildSelectableRows } from '../../state/selectableRows';
 import { formatTag } from '../../../core/textSyntax';
@@ -166,35 +166,38 @@ function rowClipboardLabel(
   byId: Map<NodeId, NodeProjection>,
   selectedIds: ReadonlySet<NodeId>,
 ): string {
+  const contentText = (candidate: NodeProjection | undefined) => (
+    candidate && isContentBearingNode(candidate) ? candidate.content.text : ''
+  );
   const node = byId.get(nodeId);
   if (!node) {
     const slot = nodeFieldSlotById(byId, nodeId);
     if (!slot) return nodeId;
-    const fieldName = byId.get(slot.fieldDefId)?.content.text || 'Field';
+    const fieldName = contentText(byId.get(slot.fieldDefId)) || 'Field';
     const entry = slot.entryId ? byId.get(slot.entryId) : undefined;
     if (entry?.children.some((childId) => selectedIds.has(childId))) {
       return `>${fieldName}`;
     }
     const values = (entry?.children ?? [])
-      .map((childId) => byId.get(childId)?.content.text)
+      .map((childId) => contentText(byId.get(childId)))
       .filter((text): text is string => Boolean(text));
     return `>${fieldName}${values.length > 0 ? `: ${values.join(', ')}` : ''}`;
   }
   if (node.type === 'fieldEntry') {
-    const fieldName = node.fieldDefId ? byId.get(node.fieldDefId)?.content.text : undefined;
+    const fieldName = node.fieldDefId ? contentText(byId.get(node.fieldDefId)) : undefined;
     if (node.children.some((childId) => selectedIds.has(childId))) {
       return `>${fieldName || 'Field'}`;
     }
     const values = node.children
-      .map((childId) => byId.get(childId)?.content.text)
+      .map((childId) => contentText(byId.get(childId)))
       .filter((text): text is string => Boolean(text));
     return `>${fieldName || 'Field'}${values.length > 0 ? `: ${values.join(', ')}` : ''}`;
   }
   if (node.type === 'reference' && node.targetId) {
-    return `@${byId.get(node.targetId)?.content.text || node.targetId}`;
+    return `@${contentText(byId.get(node.targetId)) || node.targetId}`;
   }
   if (node.type === 'tagDef') {
     return formatTag(node.content.text || 'Untitled');
   }
-  return node.content.text || 'Untitled';
+  return isContentBearingNode(node) ? node.content.text || 'Untitled' : 'Untitled';
 }

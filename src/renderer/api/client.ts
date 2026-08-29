@@ -60,6 +60,8 @@ import type {
   AutomationResponseByMethod,
 } from '../../core/agent/automation';
 import type {
+  PreviewAuthorizeLinkedFileResult,
+  PreviewForgetLinkedFileResult,
   PreviewListDirectoryResult,
   PreviewReadBytesResult,
   PreviewReadTextResult,
@@ -158,6 +160,10 @@ export const api = {
     command<PreviewReadBytesResult>('preview_read_bytes', { target }),
   listPreviewDirectory: (target: PreviewTarget) =>
     command<PreviewListDirectoryResult>('preview_list_directory', { target }),
+  authorizeLinkedFile: (target: Extract<PreviewTarget, { kind: 'linked-file' }>) =>
+    command<PreviewAuthorizeLinkedFileResult>('preview_authorize_linked_file', { target }),
+  forgetLinkedFile: (target: Extract<PreviewTarget, { kind: 'linked-file' }>) =>
+    command<PreviewForgetLinkedFileResult>('preview_forget_linked_file', { target }),
   agentGetProviderSettings: () =>
     command<AgentProviderSettingsView>('agent_get_provider_settings'),
   memorySettings: (threadId?: string) =>

@@ -1,6 +1,7 @@
 import { memoryTagId } from '../../../../core/agent/memory';
 import {
   TAG_DAY_ID,
+  isContentBearingNode,
   type DocumentProjection,
   type NodeId,
   type NodeProjection,
@@ -188,6 +189,7 @@ export class MemoryMutationIndex {
 
   private addDerivedState(node: NodeProjection): void {
     if (this.canonicalContainerAncestor(node.id)) this.owned.add(node.id);
+    if (!isContentBearingNode(node)) return;
     const canonical = canonicalMemoryNodeFromIndex(node, this.nodes);
     if (canonical) this.addCanonicalEntry(canonical);
   }
@@ -230,6 +232,7 @@ export class MemoryMutationIndex {
 function subtreeIdentityChanged(before: NodeProjection | undefined, after: NodeProjection | undefined): boolean {
   if (!before || !after) return true;
   if (before.parentId !== after.parentId) return true;
+  if (!isContentBearingNode(before) || !isContentBearingNode(after)) return false;
   if (before.content.text !== after.content.text && (before.tags.includes(TAG_DAY_ID) || after.tags.includes(TAG_DAY_ID))) {
     return true;
   }

@@ -200,7 +200,6 @@ export interface CaptureFieldDef {
 export const CAPTURE_FIELD = {
   // Names follow the terse, past-tense style of the system fields ("Created",
   // "Last edited"): "Published", not "Publish Date".
-  url: { id: 'field:url', name: 'URL', type: 'url' },
   published: { id: 'field:published', name: 'Published', type: 'date' },
   author: { id: 'field:author', name: 'Author', type: 'plain' },
 } as const satisfies Record<string, CaptureFieldDef>;
@@ -218,7 +217,8 @@ export interface CaptureFieldInput {
  * Input to the atomic `create_capture` document command: one root node (title +
  * optional description) projected into native outline shape — an optional `tag`
  * (the most specific capture-kind tag, rolling up to `tagExtends`) and `fields`
- * (`Source::`, `Author::`, …) — plus bounded visible child nodes. Created in a
+ * (canonical Source plus ordinary fields such as `Author::`) and bounded visible
+ * child nodes. Created in a
  * single transaction so undo/redo stays coherent. The outline is the
  * readable/searchable projection; the hidden `capture` sidecar (when present)
  * carries provider/resolver metadata only.
@@ -230,8 +230,10 @@ export interface CreateCaptureInput {
   destinationParentId: NodeId;
   index?: number | null;
   title: RichText;
-  /** Optional short user note (NOT the URL — the link is projected to the URL field). */
+  /** Optional short user note. */
   description?: string;
+  /** Exact canonical page locator to add through the protected Source model. */
+  sourceText?: string;
   /** Tag to apply (most specific capture kind, e.g. 'article' or 'capture'). */
   tag?: string;
   /** Supertag the tag should extend (typically 'capture'); set up if missing. */
@@ -327,11 +329,11 @@ export function buildContextCaptureInput(args: {
   const tagExtends = specificTag ? 'capture' : undefined;
 
   const fields: CaptureFieldInput[] = [];
-  // A remote http(s) link → the typed URL field (clickable). Non-http sources
-  // (local file / app) get NO link field today — no provider emits one yet (that
-  // arrives with local-file capture); the raw value always stays in the sidecar.
+  // A remote http(s) link becomes the Node's canonical Source. Non-http sources
+  // (local file / app) get no Source today because no provider emits one yet; the
+  // raw value always stays in the provenance sidecar.
   const link = source.canonicalUrl ?? source.url;
-  if (link && /^https?:\/\//i.test(link)) fields.push({ field: CAPTURE_FIELD.url, value: link });
+  const sourceText = link && /^https?:\/\//i.test(link) ? link : undefined;
   const author = source.author?.handle ?? source.author?.name;
   if (author) fields.push({ field: CAPTURE_FIELD.author, value: singleLine(author) });
   if (source.publishedAt) {
@@ -352,6 +354,7 @@ export function buildContextCaptureInput(args: {
     title: plainText(title),
     tag,
     ...(tagExtends ? { tagExtends } : {}),
+    ...(sourceText ? { sourceText } : {}),
     ...(fields.length > 0 ? { fields } : {}),
     // The user's annotation on a source capture nests UNDER the captured node as
     // its own child bullet (the outliner metaphor: "this source, and my note on

@@ -1,5 +1,5 @@
 import { normalizedIsoLocalDate } from '../../core/localDate';
-import { TAG_DAY_ID } from '../../core/types';
+import { TAG_DAY_ID, isContentBearingNode, sourceEntryNodeId } from '../../core/types';
 import type { NodeId, NodeProjection } from '../api/types';
 
 const DAY_NOTE_COUNT_WINDOW_CACHE_LIMIT = 128;
@@ -242,6 +242,7 @@ export function buildDayNoteCountIndex(byId: ReadonlyMap<NodeId, NodeProjection>
     nodeOrderById.set(node.id, order);
     order += 1;
     if (isFallbackDayTagNode(node)) dayTagIds.add(node.id);
+    if (!isContentBearingNode(node)) continue;
     for (const tagId of node.tags) {
       let members = tagMembersByTagId.get(tagId);
       if (!members) {
@@ -270,7 +271,7 @@ export function buildDayNoteCountIndex(byId: ReadonlyMap<NodeId, NodeProjection>
     const winnerId = nodeIds.at(-1);
     const winner = winnerId ? byId.get(winnerId) : undefined;
     if (!winnerId || !winner) continue;
-    countsByDate.set(isoDate, winner.children.length);
+    countsByDate.set(isoDate, dayNoteContentChildCount(winner));
     dateRevisionByDate.set(isoDate, 1);
     winningNodeIdByDate.set(isoDate, winnerId);
   }
@@ -339,7 +340,12 @@ export function patchDayNoteCountIndex({
       for (const memberId of previous.tagMembersByTagId.get(id) ?? []) affectedNodeIds.add(memberId);
     }
 
-    patchTagMembership(draft, id, previousNode?.tags ?? [], nextNode?.tags ?? []);
+    patchTagMembership(
+      draft,
+      id,
+      previousNode && isContentBearingNode(previousNode) ? previousNode.tags : [],
+      nextNode && isContentBearingNode(nextNode) ? nextNode.tags : [],
+    );
 
     if (previousIsDayTag !== nextIsDayTag) {
       for (const memberId of getTagMembers(draft, id)) affectedNodeIds.add(memberId);
@@ -460,6 +466,7 @@ function materializePatchDraft(draft: DayNoteCountPatchDraft, visibleChanged: bo
 }
 
 function dayNoteIsoDateForTags(node: NodeProjection, dayTagIds: ReadonlySet<NodeId>): string | null {
+  if (!isContentBearingNode(node)) return null;
   if (!node.tags.some((tagId) => dayTagIds.has(tagId))) return null;
   return parseDayNodeIsoDate(node.content.text);
 }
@@ -473,6 +480,7 @@ function isFallbackDayTagNode(node: NodeProjection | undefined): boolean {
 }
 
 function dayNoteIsoDateForDraft(node: NodeProjection, draft: DayNoteCountPatchDraft): string | null {
+  if (!isContentBearingNode(node)) return null;
   if (!node.tags.some((tagId) => hasSetPatchValue(draft.dayTagIds, tagId))) return null;
   return parseDayNodeIsoDate(node.content.text);
 }
@@ -606,7 +614,8 @@ function recomputeDateCount(
   const previousCount = draft.previous.countsByDate.get(isoDate);
   const previousWinner = draft.previous.winningNodeIdByDate.get(isoDate);
   const winner = liveNodeIds.at(-1);
-  const nextCount = winner ? nextById.get(winner)?.children.length : undefined;
+  const nextWinner = winner ? nextById.get(winner) : undefined;
+  const nextCount = nextWinner ? dayNoteContentChildCount(nextWinner) : undefined;
 
   if (!winner || nextCount === undefined) {
     if (deleteMapPatchValue(countsByDate, isoDate)) draft.changed = true;
@@ -627,6 +636,10 @@ function recomputeDateCount(
     }
   }
   return changed;
+}
+
+function dayNoteContentChildCount(node: NodeProjection): number {
+  return node.children.filter((childId) => childId !== sourceEntryNodeId(node.id)).length;
 }
 
 function createMapPatchDraft<TKey extends string, TValue>(

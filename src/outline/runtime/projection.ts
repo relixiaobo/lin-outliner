@@ -1,6 +1,11 @@
 import type { Core } from '../../core/core';
 import { buildReferenceSummary } from '../../core/references';
-import type { NodeProjection } from '../../core/types';
+import {
+  SOURCE_FIELD_ID,
+  isContentBearingNode,
+  sourceEntryNodeId,
+  type NodeProjection,
+} from '../../core/types';
 import { canonicalSha256 } from '../contract/canonical';
 import { OutlineContractError, outlineError } from '../contract/errors';
 import type { Projection, ProjectionResult, TargetRef } from '../contract/schemas';
@@ -27,7 +32,12 @@ export function projectOutlineFromSelectionIndex(
   const document = index.projection;
   const targetIds = resolveTargetRef(index, projection.targets, bindings);
   const selectedIds = projection.kind === 'outline' || projection.kind === 'export'
-    ? collectOutlineIds(index, targetIds, projection.depth ?? 3)
+    ? collectOutlineIds(
+        index,
+        targetIds,
+        projection.depth ?? 3,
+        projection.include?.includes('fields') === true,
+      )
     : targetIds;
   const projectionHash = canonicalSha256(projectionCursorIdentity(projection));
   const offset = decodePageCursor(projection.page?.cursor, projectionHash, revision);
@@ -107,7 +117,12 @@ export function resolveTargetRef(
   return resolveTargetSpec(index, reference.target);
 }
 
-function collectOutlineIds(index: OutlineSelectionIndex, roots: readonly string[], depth: number): string[] {
+function collectOutlineIds(
+  index: OutlineSelectionIndex,
+  roots: readonly string[],
+  depth: number,
+  includeSourceStructure: boolean,
+): string[] {
   const result: string[] = [];
   const seen = new Set<string>();
   for (const rootId of roots) {
@@ -120,23 +135,37 @@ function collectOutlineIds(index: OutlineSelectionIndex, roots: readonly string[
       seen.add(current.id);
       result.push(current.id);
       if (current.depth >= depth) continue;
-      for (let index = node.children.length - 1; index >= 0; index -= 1) {
-        stack.push({ id: node.children[index]!, depth: current.depth + 1 });
+      const children = outlineProjectionChildIds(node, index.byId, includeSourceStructure);
+      for (let childIndex = children.length - 1; childIndex >= 0; childIndex -= 1) {
+        stack.push({ id: children[childIndex]!, depth: current.depth + 1 });
       }
     }
   }
   return result;
 }
 
+function outlineProjectionChildIds(
+  node: NodeProjection,
+  byId: ReadonlyMap<string, NodeProjection>,
+  includeSourceStructure: boolean,
+): readonly string[] {
+  if (includeSourceStructure || node.type !== undefined) return node.children;
+  const entryId = sourceEntryNodeId(node.id);
+  const entry = byId.get(entryId);
+  if (entry?.type !== 'fieldEntry' || entry.fieldDefId !== SOURCE_FIELD_ID) return node.children;
+  return node.children.filter((childId) => childId !== entryId);
+}
+
 function projectNode(node: NodeProjection, projection: Projection): Record<string, unknown> {
   if (projection.kind === 'summary') {
+    const content = isContentBearingNode(node) ? node : undefined;
     return {
       id: node.id,
       type: node.type ?? 'plain',
-      text: node.content.text,
+      text: content?.content.text ?? (node.type === 'sourceValue' ? node.sourceText : ''),
       parentId: node.parentId ?? null,
       childCount: node.children.length,
-      done: typeof node.completedAt === 'number' && node.completedAt > 0,
+      done: typeof content?.completedAt === 'number' && content.completedAt > 0,
     };
   }
   const include = new Set(projection.include ?? []);

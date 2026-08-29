@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import type { NodeId, NodeProjection, RichText } from '../../api/types';
+import type { ContentBearingNodeProjection, NodeId, NodeProjection, RichText } from '../../api/types';
 import { EMPTY_RICH_TEXT } from '../../api/types';
 import { freshNodeId } from '../../../core/nodeId';
 
@@ -21,7 +21,7 @@ export function makeDraftNode(
   id: NodeId,
   parentId: NodeId,
   content: RichText = EMPTY_RICH_TEXT,
-): NodeProjection {
+): ContentBearingNodeProjection {
   const now = Date.now();
   return {
     id,
