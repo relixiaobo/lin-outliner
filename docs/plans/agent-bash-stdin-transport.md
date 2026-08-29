@@ -116,13 +116,21 @@ quoting layer, or other byte is added.
   a bounded ordered set of exact structural bindings. Each
   binding declares a canonical RFC 6901 JSON Pointer, `kind: 'internalText'`, a
   raw UTF-8 byte ceiling, and one approved durable-text history policy. The
-  contract also declares maximum binding count and aggregate logical text bytes,
-  both at or below the shared 64 MiB logical-text ceiling per canonical call;
-  every individual binding is also capped at 64 MiB. The generic admission layer
-  validates that every pointer is canonical, unique, pairwise non-overlapping,
-  resolves to a string in the exact canonical value, and remains within the
-  per-binding and aggregate limits. Invalid policy output fails before
-  persistence or execution.
+  contract also declares maximum binding count and aggregate logical text bytes.
+  `MAX_TOOL_ARGUMENT_TEXT_BINDINGS` is the fixed shared ceiling of 256 bindings
+  per canonical call; a tool must declare at most 256 and may declare less. The
+  aggregate logical-text ceiling is the separate 64 MiB UTF-8 invariant per
+  canonical call, and every individual binding is also capped at 64 MiB.
+
+  Generic admission first proves every selected string is well-formed Unicode,
+  rejecting any unpaired high or low UTF-16 surrogate before byte measurement,
+  history-policy application, persistence, or execution. It then validates that
+  every pointer is canonical, unique, pairwise non-overlapping, resolves to a
+  string in the exact canonical value, and remains within the shared and
+  tool-specific count and byte limits. Invalid policy output fails before
+  persistence or execution. This generic check owns the exact UTF-8 round-trip
+  invariant; Bash retains its matching public validation error but is not the
+  invariant owner.
   Tools without this contract retain current thresholds and observable behavior;
   after the pre-release clean reset their payload codec uses the new generic
   envelope with no bindings.
@@ -482,11 +490,14 @@ widening this PR.
 ## Open questions
 
 There are no unresolved product questions. Ratification accepts a generic,
-tool-owned, plural RFC 6901 binding contract with shared count/byte ceilings;
-Thread-internal exact-text dependencies; an unchanged 16 MiB skeleton-envelope
-budget; exact or redacted canonical replay; reference-free renderer Item
-projections; and bounded multi-binding main-process presentation. It also accepts
-Bash `/stdin` as the first registered path with a 64 MiB raw UTF-8 bound and
+tool-owned, plural RFC 6901 binding contract with the fixed shared
+`MAX_TOOL_ARGUMENT_TEXT_BINDINGS = 256` ceiling and a separate 64 MiB aggregate
+logical UTF-8 ceiling; generic rejection of unpaired UTF-16 surrogates before
+measurement, policy, persistence, or execution; Thread-internal exact-text
+dependencies; an unchanged 16 MiB skeleton-envelope budget; exact or redacted
+canonical replay; reference-free renderer Item projections; and bounded
+multi-binding main-process presentation. It also accepts Bash `/stdin` as the
+first registered path with a one-binding, 64 MiB raw UTF-8 contract and
 standalone secret-history scanning, the data-driven four-state stdin-consumer
 registry with the initial three Outline entries, constrained-policy failure,
 Full Access behavior, and foreground-only delivery. Exact private helper names
@@ -511,7 +522,10 @@ selected from the rebased tree.
   second fixture proves two paths with identical bytes reuse one physical
   content-addressed value while still counting both logical values for admission.
   A payload-backed tool without a large-text contract uses an empty binding array
-  and retains exact replay and current observable behavior.
+  and retains exact replay and current observable behavior. A synthetic non-Bash
+  tool whose selected value contains an unpaired high or low surrogate fails
+  before byte measurement, scanning, publication, or execution and leaves the
+  payload store unchanged.
 - [ ] **AC-3:** Empty input, quotes, multiline text, backticks, literal `$()`
   expressions, Unicode, NUL, and candidate heredoc delimiters arrive with the
   exact UTF-8 bytes and execute no payload content as shell syntax. Unpaired
@@ -566,8 +580,11 @@ selected from the rebased tree.
   settlement rather than reconstructing those boundaries in a helper. Separate
   tests reject non-canonical, duplicate, overlapping, reordered, non-string,
   excessive-count, excessive-byte, undeclared, extra, and skeleton-mismatched
-  paths or references. Lifecycle tests cover interruption after each text
-  publication, context publication, and Item commit; fork/copy; child
+  paths or references. Exact count-boundary tests accept a contract and call at
+  the shared 256-binding limit and reject 257; separate fixtures for a tool with
+  maximum two bindings accept two and reject three even though both are below the
+  shared ceiling. Lifecycle tests cover interruption after each text publication,
+  context publication, and Item commit; fork/copy; child
   inheritance; Retry; rollback; pruning; deletion; startup orphan reconciliation;
   missing/corrupt text; shared references; and redacted replay.
 
