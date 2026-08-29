@@ -16,7 +16,7 @@ and end-to-end acceptance evidence. None of those parts ships independently:
 guidance without the compact `add --input` form leaves the model generating the
 same verbose ChangeSet, while a command form the Skill does not select does not
 improve the observed workflow. The feature starts only after its external Bash
-stdin and Source PR-I dependencies merge; it consumes their public contracts
+stdin and `outline-source-model` dependencies merge; it consumes their public contracts
 without defining or implementing either foundation in this plan.
 
 The objectives are:
@@ -43,7 +43,7 @@ The objectives are:
   Provider cache behavior.
 - Do not add or modify generic Bash transport in this feature. A separate
   ratified plan, [PR #596](https://github.com/relixiaobo/lin-outliner/pull/596),
-  own the bounded stdin channel and its security contract. This feature consumes
+  owns the bounded stdin channel and its security contract. This feature consumes
   that merged interface while its own diff continues to reject every product
   change under `src/main/agent/**`.
 - Do not make the Outline Skill `execution: isolated`. It remains inline so the
@@ -68,8 +68,8 @@ The objectives are:
   document storage, or parse routine Outline results. They remain available
   when a non-Outline task genuinely requires them.
 - Do not implement Source resources, Agent resource references, preview UI, or
-  file lifecycle. Source PR-I is a dependency because it owns the final Node and
-  CLI contracts; Source PR-F is not part of this feature.
+  file lifecycle. `outline-source-model` is a dependency because it owns the final Node and
+  CLI contracts; `outline-source-preview` is not part of this feature.
 - Do not add migration, compatibility, dual-read, or legacy fixture paths. This
   pre-release contract follows the repository's clean-reset policy.
 
@@ -313,7 +313,7 @@ interface KeyedViewCreateInput {
 }
 ```
 
-The names above may align mechanically with the final Source PR-I schemas, but
+The names above may align mechanically with the final `outline-source-model` schemas, but
 the behavioral contract is fixed:
 
 - **FR-10:** Local field keys match the existing binding-name grammar, are
@@ -517,7 +517,7 @@ execution boundary.
   `show`/`find` requests. Runtime routing, storage, and mutation code remain
   byte-for-byte unchanged, and cross-request revision drift never produces a
   mixed summary.
-- **NFR-7:** Source PR-I's ordinary-Node constructor, protected Source entry,
+- **NFR-7:** `outline-source-model`'s ordinary-Node constructor, protected Source entry,
   Source mutation restrictions, and retired special-Node rules remain intact in
   every lowered row and owner. No pre-Source draft shape survives in fixtures or
   tests.
@@ -528,9 +528,9 @@ Two independent foundations must merge before implementation begins:
 
 1. the independently planned Bash stdin transport in
    [PR #596](https://github.com/relixiaobo/lin-outliner/pull/596); and
-2. Source PR-I from `outline-source-resource-unification`.
+2. `outline-source-model`.
 
-Source PR-I owns the final Node draft, field/value, Source, ChangeSet, CLI
+`outline-source-model` owns the final Node draft, field/value, Source, ChangeSet, CLI
 schema, constructor, and fixture baseline that this feature must consume. The
 Bash interface PR #596 owns optional `stdin: string`, its 64 MiB raw UTF-8
 admission and exact foreground child delivery, the immutable
@@ -540,30 +540,30 @@ mechanics are intentionally not a consumed interface. This feature owns
 compatibility between the public Bash limit and real Outline schemas, including
 the two-Node worst-case escaping fixture and actual three-command workflows.
 The two observable contracts are semantically independent. Their implementation
-order is not: Source PR-I precedes Host composition, and #596 then targets that
+order is not: `outline-source-model` precedes Host composition, and #596 then targets that
 final Host/renderer seam. This feature consumes only the two merged observable
 contracts. It rebases onto
 `origin/main` after both land, regenerates its work queue from actual `rg` hits
 and failing tests, and removes every superseded table fixture assumption rather
-than preserving compatibility. Source PR-F is visual-only and is not a
+than preserving compatibility. `outline-source-preview` is visual-only and is not a
 dependency.
 
 The collision self-check found no other open PR claim at plan time. The future
-Source PR-I is a deliberate hard dependency and likely overlaps
+`outline-source-model` is a deliberate hard dependency and likely overlaps
 `src/outline/contract/schemas.ts`, `src/outline/contract/porcelain.ts`,
 `src/outline/contract/capabilities.ts`, `src/outline/cli/porcelain.ts`,
 `src/outline/cli/runner.ts`, generated command references, fixtures, and CLI
 tests. Those files are not edited in parallel. PR #596 is a second deliberate
 dependency under generic Agent capability/process code, but it claims no
 Outline file. Its merged commit is prerequisite evidence, not part of this
-feature's diff. By then the complete Host composition set is already an
+feature's diff. By then `desktop-host-cutover` is already an
 inherited foundation of #596. It does not enter this feature's diff because
 generic Agent projection, file tools, Subagent behavior, and usage UI remain
 outside this Outline-only scope.
 
 ### 11. Implementation Boundary
 
-Expected implementation ownership after Source PR-I:
+Expected implementation ownership after `outline-source-model`:
 
 - `src/outline/contract/porcelain.ts` for the viewed-tree `add` input union and
   exact `view inspect` help;
@@ -603,7 +603,7 @@ return that interface decision to PM review instead of expanding this PR.
 There are no unresolved product questions in this plan. Ratification accepts the
 mode-neutral viewed-tree `add` form, compact `view inspect`, direct-commit routing,
 and 4 KiB human-receipt contract together. Exact private type names may align with
-Source PR-I during implementation without changing those observable behaviors.
+`outline-source-model` during implementation without changing those observable behaviors.
 
 ## Acceptance criteria
 

@@ -378,13 +378,14 @@ storage fixtures in this feature.
 
 This foundation is a prerequisite of the separately planned
 [`outline-cli-skill-efficiency`](https://github.com/relixiaobo/lin-outliner/pull/595)
-feature. Its behavior does not depend on that feature or Source PR-I, and it
-modifies no Outline path. Its implementation starts after the complete
-`host-runtime-composition` delivery set: this plan adds Agent IPC projection,
-registrations, service dependencies, and `main.ts` wiring that must target the
-final Agent Host and transport owners rather than today's implicit composition
-root. This is an A7 architecture-order edge, not a Source or Bash semantic
-dependency. The consumer PR rebases after this foundation merges and verifies
+feature. Its behavior does not depend on that feature or
+`outline-source-model`, and it modifies no Outline path. Its implementation
+starts after the Host chain ending in `desktop-host-cutover`: this plan adds
+Agent IPC projection, registrations, service dependencies, and `main.ts` wiring
+that must target the final Agent Host and transport owners rather than today's
+implicit composition root. This is an A7 architecture-order edge, not a Source
+or Bash semantic dependency. The consumer PR rebases after this foundation
+merges and verifies
 the public `stdin` and effective-consumer interfaces against real Outline schema
 maxima. It owns the two-Node escaping/capacity and three-command end-to-end
 fixtures. The plural structural binding envelope, internal-text dependency set,

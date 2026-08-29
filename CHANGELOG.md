@@ -144,6 +144,26 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
+- **The primary delivery chain now maps one substantial plan to one PR claim** —
+  five aggregate plans were preserved in the archive and replaced by 12 claim-
+  sized plans, while Computer Pilot gained its own plan. Together with five
+  existing single-PR plans, they form an 18-PR executable chain over Source,
+  four balanced Host ownership/cutover changes, Agent large-text and resource
+  lifecycle, root and delegated failure recovery, preview readers, Skill
+  maintenance, and Computer Pilot. Internal build stages that do not form useful
+  releases stay inside their owning PR: Agent resource references, workspaces/
+  citations, and delegated handoff remain one atomic feature. Three planless
+  tails were reconciled rather than duplicated: image alt editing becomes
+  ordinary Source Node accessible naming after `mediaAlt` retires, exact Skill-
+  directory identity joins script authoring before curation, and Computer Pilot
+  waits for final Host/resource contracts instead of targeting an about-to-be-
+  replaced artifact shape. A source-fidelity audit then made each active plan
+  self-contained: it restored the exact Source field/value/codec and resolver
+  contracts, paste/capture settlement and mature-preview inventory, reproducible
+  Host ownership audit and real-desktop matrix, plus Provider Retry, Rerun
+  refusal, rebuild, and generic renderability acceptance. Archived aggregates
+  remain provenance rather than required execution inputs.
+
 - **Active plans and the integration board now describe one executable system
   rather than overlapping histories** — the 19-plan audit checked recent Host,
   Source, Agent-resource, cross-Thread, large-text, and Outline-CLI designs

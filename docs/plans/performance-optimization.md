@@ -50,9 +50,9 @@ material cost, add transaction-maintained indexes so:
   repeatedly requesting equivalent state.
 
 The indexes are derived, rebuilt from canonical state, and updated from sparse
-transaction facts. They are never a second authority. This unit follows Source
-PR-I because that cut changes Core Node variants, Source commands, deletion
-closure, and schema invariants on the same files.
+transaction facts. They are never a second authority. This unit follows
+`outline-source-model` because that cut changes Core Node variants, Source
+commands, deletion closure, and schema invariants on the same files.
 
 ### Unit 2: Local filename fallback reuse
 
@@ -108,7 +108,7 @@ the observable contracts above.
 
 - [ ] Regenerate each unit's queue from current symbols and a failing/expensive
       probe, not the historical catalog.
-- [ ] Land Source PR-I before the Core mutation-index unit.
+- [ ] Land `outline-source-model` before the Core mutation-index unit.
 - [ ] Ship each measured optimization independently with before/after evidence.
 - [ ] Fold any changed performance invariant into the owning current spec.
 - [ ] Run typecheck, relevant tests, docs check, diff check, and the unit's

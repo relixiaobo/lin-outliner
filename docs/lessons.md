@@ -1981,3 +1981,35 @@ claim time, regenerate the exact files from the merged dependency tip and live
 PR scopes. When the predecessor is a foundation refactor, downstream work starts
 after the complete mechanism lands rather than paying to implement and relocate
 the same behavior twice.
+
+## Plan and queue granularity must match the merge claim
+
+The first dependency cleanup still left one board node pointing at a plan with
+two, three, or six future PRs. Status then had no stable meaning: a plan could be
+partly shipped while still `draft`, and an agent claiming the plan name did not
+identify the diff it owned. Mechanically splitting every subsection was not the
+answer either; Host composition would have become six serial review handoffs,
+while Agent resource lifecycle's reference, workspace/citation, and delegated-
+handoff stages are only truthful as one complete cut.
+
+**A primary delivery-queue row, active plan, Draft-PR topic, implementation
+claim, and archive action use the same unit. Size that unit by coherent
+settlement, not heading count or file count.** Split independent user outcomes
+and refactors whose merged state is useful and verifiable. Combine adjacent
+changes when separating them would publish scaffolding, preserve a mechanism
+known to be replaced next, or repeat the same protocol/ownership rewrite.
+
+Before boarding a multi-part design, ask for each proposed PR: what complete
+behavior or ownership problem is finished when it merges, what can be verified
+without the next PR, and which spec truth can be folded immediately? If those
+answers exist only for the set, keep the stages inside one PR. If each answer is
+independent, give each its own plan and status.
+
+The new active plan must also remain the complete execution authority. Archive
+is provenance, not an include mechanism: requiring an implementer to recover a
+load-bearing type shape, security boundary, user-flow branch, responsibility
+inventory, or acceptance criterion from the archived aggregate creates two
+conflicting authorities and makes semantic coverage invisible to docs guards.
+Run a one-time source-fidelity audit when splitting, copy every load-bearing
+constraint into its owning active plan, and leave only history, rejected options,
+and superseded delivery structure behind.

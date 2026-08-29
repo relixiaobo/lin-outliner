@@ -2,7 +2,7 @@
 
 **Shape:** (a) ONE complete feature in one PR.
 
-Implementation follows the complete `host-runtime-composition` delivery set and
+Implementation follows `desktop-host-cutover` and
 uses its final `DesktopHost.start()`, readiness, lifecycle-arbitration, and
 transport boundaries. It does not add window-first readiness to the implicit
 `main.ts` graph and then move that behavior during composition.

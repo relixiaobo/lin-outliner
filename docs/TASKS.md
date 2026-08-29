@@ -17,67 +17,120 @@ None. A merged plan PR records ratified design; it does not mean the feature
 shipped. The six recent plan PRs (#588/#589, #591, #593, #595, and #596) remain
 active below until their implementation, spec fold, and archive move complete.
 
-## Integration Order
+## Primary Delivery Queue
 
-Two edge types matter:
+This queue is executable: **every row is one substantial, independently
+reviewable PR and one active plan**. Internal build stages stay inside that PR.
+The critical mechanism lane is linear; named consumers fan out only after their
+last predecessor merges.
 
-- **Contract**: the consumer needs the predecessor's final public or Host
-  mechanism.
-- **Collision**: behavior may be independent, but both plans rewrite the same
-  authority surface; ordering avoids building against a mechanism already
-  scheduled for replacement (A7).
+Each linked active plan is the complete execution authority for its claim.
+Archived aggregate plans serve only as provenance records; an implementation
+never depends on their retained detail or rejected reasoning to recover a
+protocol, security rule, user flow, or acceptance criterion.
+
+- `->` is a contract or same-plan predecessor: the successor consumes the
+  predecessor's merged result.
+- `~>` is a selected A7 collision order: the behavior may be independent, but
+  the successor must target the predecessor's final shared mechanism.
 
 ```text
-Outline Source PR-I
-  -> [contract] complete Host composition set
-       -> [collision] Agent large-text arguments / Bash stdin
-            |- [contract] Outline CLI Skill workflow (+ Source PR-I)
-            `- [collision] Agent result/resource lifecycle (+ Source PR-I)
-                  |- [contract] Cross-Thread reference
-                  `- [collision] Agent failure recovery features
-       -> [contract] Startup Window First
-       -> [contract] File Preview extensions (+ Source PR-I)
+Critical mechanism lane:
+  outline-source-model
+    -> host-transport-ownership
+    -> host-domain-composition
+    -> host-platform-composition
+    -> desktop-host-cutover
+    ~> agent-bash-stdin-transport
+    ~> agent-result-and-file-lifecycle
 
-Outline Source PR-I
-  -> [contract] Source PR-F (independent visual enhancement)
+Parallel after outline-source-model:
+  outline-source-preview
+
+Parallel after desktop-host-cutover:
+  startup-window-first
+  file-preview-office
+  url-static-reader
+  agent-skill-authoring-foundation -> agent-skill-curation-report
+  agent-bash-stdin-transport (continues the critical lane)
+
+Parallel after agent-bash-stdin-transport:
+  outline-cli-skill-efficiency
+  agent-result-and-file-lifecycle (continues the critical lane)
+
+Parallel after agent-result-and-file-lifecycle:
+  agent-cross-thread-reference
+  agent-root-turn-recovery ~> agent-delegated-failure-truth
+  computer-pilot-managed-skill
 ```
 
-After Host composition, Startup Window First can run in parallel with the Agent
-chain. After Agent large-text lands, Outline CLI can run in parallel with Agent
-resource lifecycle. Source PR-F is independently orderable after Source PR-I,
-but it must not overlap a live file-preview or interaction-jank claim on the
-same preview shell files.
+| Priority | Plan / PR claim | Status | Eligible after |
+| --- | --- | --- | --- |
+| P1 | [outline-source-model](plans/outline-source-model.md) | `draft`, ratified in #593 | **Now; next architectural claim** |
+| P2 | [outline-source-preview](plans/outline-source-preview.md) | `draft`, ratified in #593 | `outline-source-model` |
+| P1 | [host-transport-ownership](plans/host-transport-ownership.md) | `draft`, ratified in #591 | `outline-source-model` |
+| P1 | [host-domain-composition](plans/host-domain-composition.md) | `draft`, ratified in #591 | `host-transport-ownership` |
+| P1 | [host-platform-composition](plans/host-platform-composition.md) | `draft`, ratified in #591 | `host-domain-composition` |
+| P1 | [desktop-host-cutover](plans/desktop-host-cutover.md) | `draft`, ratified in #591 | `host-platform-composition` |
+| P1 | [agent-bash-stdin-transport](plans/agent-bash-stdin-transport.md) | `draft`, ratified in #596 | `desktop-host-cutover` by A7 collision order |
+| P1 | [outline-cli-skill-efficiency](plans/outline-cli-skill-efficiency.md) | `draft`, ratified in #595 | `agent-bash-stdin-transport` |
+| P1 | [agent-result-and-file-lifecycle](plans/agent-result-and-file-lifecycle.md) | `draft`, ratified in #588/#589 | `agent-bash-stdin-transport` by A7 collision order; all three build stages stay inside this PR |
+| P1 | [agent-cross-thread-reference](plans/agent-cross-thread-reference.md) | `draft`, ratified in #589 | `agent-result-and-file-lifecycle` |
+| P1 | [agent-root-turn-recovery](plans/agent-root-turn-recovery.md) | `draft` | `agent-result-and-file-lifecycle` by A7 collision order |
+| P1 | [agent-delegated-failure-truth](plans/agent-delegated-failure-truth.md) | `draft` | `agent-root-turn-recovery` claim serialization |
+| P2 | [startup-window-first](plans/startup-window-first.md) | `draft` | `desktop-host-cutover` |
+| P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | `desktop-host-cutover`; preview-shell lane clear |
+| P2 | [url-static-reader](plans/url-static-reader.md) | `draft` | `desktop-host-cutover`; preview-shell lane clear |
+| P2 | [agent-skill-authoring-foundation](plans/agent-skill-authoring-foundation.md) | `draft` | `desktop-host-cutover` |
+| P3 | [agent-skill-curation-report](plans/agent-skill-curation-report.md) | `draft` | `agent-skill-authoring-foundation` |
+| P3 | [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | `draft` | `agent-result-and-file-lifecycle` |
 
-The large-text plan remains semantically separate from Source, ContentStore,
-and file resources. Its ordering after Host and before Agent resource lifecycle
-is about shared implementation ownership: Agent protocol/codec,
-`ToolPayloadStore`, context dependencies, Thread lifecycle, canonical-to-
-renderer projection, preload, and `main.ts`. Internal text remains a private
-Item dependency and never becomes a file resource.
+Only `outline-source-model` is eligible now **inside the primary delivery
+queue**. Build-ready work outside this queue remains independently claimable
+under its own collision boundary. The Host chain has four substantial serial
+PRs: owned transport, backend domain composition, native platform composition,
+and final DesktopHost/lifecycle cutover. Agent resource references, conversation
+workspaces/final citations, and delegated handoff remain three foundation-first
+build stages inside one atomic feature PR rather than three partial releases.
 
-## Active Plans
+The split also absorbs three former planless tasks without losing their intent:
 
-Priority is relative inside this board. `draft` means the design exists but no
-implementation claim is open; `in-progress` appears only while an implementation
-claim is live.
+- `inline-media-alt-text` becomes the editable Node-content accessibility rule
+  in `outline-source-model` and `outline-source-preview`; the retired
+  `mediaAlt` field does not receive a new command.
+- `skill-directory-is-itself-a-skill` becomes the explicit binding identity in
+  `agent-skill-authoring-foundation`, before script authoring consumes it.
+- `computer-pilot-managed-skill` now has its own complete plan and waits for the
+  final Host plus Agent resource lifecycle instead of targeting the #582 shape
+  immediately before that shape is replaced.
+
+Collision lanes remain claim-time constraints, not hidden graph edges:
+
+- `outline-source-preview`, `file-preview-office`, `url-static-reader`, and the
+  preview/translation units in Interaction Jank must not overlap on shared
+  preview shell files.
+- `agent-bash-stdin-transport` precedes Agent resource lifecycle because both
+  rewrite Agent protocol/codec, `ToolPayloadStore`, context dependencies, Thread
+  lifecycle, canonical-to-renderer projection, preload, and Host transport.
+  Internal text remains a private Item dependency and never becomes a file
+  resource.
+- Cross-Thread Reference and Failure Recovery repeat the live file check after
+  Agent resource lifecycle; a collision serializes claims but does not invent a
+  semantic dependency between the two features.
+
+## Other Active Plans
+
+These plans are outside the primary chain. Any multi-PR aggregate here is
+reshaped to claim-sized plans before implementation; this first pass deliberately
+does not mix their product decisions into the architectural queue above.
 
 | Priority | Plan | Status | Start condition and collision boundary |
 | --- | --- | --- | --- |
-| P1 | [outline-source-resource-unification](plans/outline-source-resource-unification.md) | `draft`, ratified in #593 | **Next architectural claim.** PR-I ships final Source protocol plus a complete desktop baseline. PR-F follows independently and changes no shared protocol. |
-| P1 | [host-runtime-composition](plans/host-runtime-composition.md) | `draft`, ratified in #591 | Blocked by Source PR-I. Six serial complete refactors establish final Host composition, transport, lifecycle, resource preview, and safe quit. |
-| P1 | [agent-bash-stdin-transport](plans/agent-bash-stdin-transport.md) | `draft`, ratified in #596 | Follows the complete Host set by collision order. Blocks Outline CLI and precedes Agent resource lifecycle on shared Agent projection/lifecycle files. |
-| P1 | [agent-result-and-file-lifecycle](plans/agent-result-and-file-lifecycle.md) | `draft`, ratified in #588/#589 | Blocked by Source PR-I, Host composition, and Agent large-text. Keeps internal text out of ContentStore and establishes canonical file references, working sets, citations, and bounded delegated projection. |
-| P1 | [outline-cli-skill-efficiency](plans/outline-cli-skill-efficiency.md) | `draft`, ratified in #595 | Blocked by Source PR-I and Agent large-text. Outline-only implementation; may run beside Agent resource lifecycle after both foundations merge. |
-| P1 | [agent-cross-thread-reference](plans/agent-cross-thread-reference.md) | `draft`, ratified in #589 | Blocked by Agent resource lifecycle. Historical text is lazy/untrusted; selected citations reuse the lifecycle resolver without profile-wide scans or grants. |
-| P1 | [agent-failure-recovery-experience](plans/agent-failure-recovery-experience.md) | `draft` | Follows Agent resource lifecycle by collision order. Its three complete features land one at a time; it consumes final canonical projection, workspace, and resource behavior. |
-| P1 | [agent-skills-authoring](plans/agent-skills-authoring.md) | `draft` | Two independent security/curation features after Host composition. Current source model includes `built-in`, `managed`, `user`, and `project`; managed content is immutable here. |
-| P2 | [startup-window-first](plans/startup-window-first.md) | `draft` | Blocked by Host composition. Consumes final `DesktopHost.start()` and readiness/lifecycle owners; independent of Agent resource lifecycle. |
-| P2 | [file-preview](plans/file-preview.md) | `draft` | Blocked by Source PR-I and Host composition. Office and static Reader features reuse shared extraction services; do not overlap Source PR-F or translation-geometry work on the same files. |
-| P2 | [interaction-jank-cleanups](plans/interaction-jank-cleanups.md) | `draft` | Four independent units. Definition-cache and Runtime-index units follow Source PR-I; preview scroll/translation units use live collision ordering with Source PR-F and File Preview. |
+| P2 | [interaction-jank-cleanups](plans/interaction-jank-cleanups.md) | `draft` | Definition-cache and Runtime-index units follow `outline-source-model`; preview units use the live preview-shell lane. |
 | P2 | [semantic-working-state](plans/semantic-working-state.md) | `draft` | Build-ready Settings-only tail. Thread/Plan `WorkingText` shipped in #531; this plan contains only Provider and managed-Skill consumers. |
-| P3 | [floating-toolbar-polish](plans/floating-toolbar-polish.md) | `draft` | Heading toggle is build-ready and renderer-only. Atomic tagged extraction follows Source PR-I because it changes Core types/commands and Node invariants. |
+| P3 | [floating-toolbar-polish](plans/floating-toolbar-polish.md) | `draft` | Heading toggle is build-ready and renderer-only. Atomic tagged extraction follows `outline-source-model`. |
 | P3 | [icon-semantics](plans/icon-semantics.md) | `draft` | Build-ready renderer mapping cleanup. Update action menu, launcher, picker, and attachment mappings together; status color is out of scope. |
-| P3 | [performance-optimization](plans/performance-optimization.md) | `draft` | Three measured tails only. Core mutation indexes follow Source PR-I; filename-fallback reuse and text normalization are independent. Runtime selector reuse belongs to Interaction Jank. |
+| P3 | [performance-optimization](plans/performance-optimization.md) | `draft` | Three measured tails only. Core mutation indexes follow `outline-source-model`; filename-fallback reuse and text normalization are independent. |
 | P3 | [dark-mode-contrast-pass](plans/dark-mode-contrast-pass.md) | `draft` | Runs last after active visual consumers. #377's tertiary lift is shipped; only rendered failures justify further token changes. |
 
 ## Small And Release Work
@@ -100,16 +153,8 @@ contract or user-visible decision.
 - **dual-auth-clarity** (P3) — use the existing dual-auth provider capability
   set to show an explicit API key/OAuth segmented choice; single credential
   ownership remains unchanged.
-- **skill-directory-is-itself-a-skill** (P3) — with Skill path ownership shipped
-  in #513, settle directory identity/loading so selecting a Skill directory does
-  not depend on ordered parent/child guesses.
 - **agent-hygiene-checks** (P3) — add untrusted-data framing to current web-fetch
   model input and a bounded same-action/same-result repetition notice.
-- **computer-pilot-managed-skill** (P3) — after Host composition, add the managed
-  Skill/environment contributor; durable output already uses the tool-artifact
-  resource contract from #582.
-- **inline-media-alt-text** (P3) — edit `mediaAlt` after creation through the
-  canonical document command surface.
 - **i18n-followups** (P3) — add plural rules, route remaining date/number sites
   through locale-threaded formatters, then add languages only with complete
   surface coverage.
@@ -164,7 +209,7 @@ contract or user-visible decision.
   [agent-generative-ui](plans/archive/agent-generative-ui.md).
 - **launcher-provider-expansion** (`shelved`) — URL-only labels for authenticated
   apps are not automatically valuable, native readers have separate TCC and
-  product boundaries, and Source PR-I replaces the capture resource contract.
+  product boundaries, and `outline-source-model` replaces the capture resource contract.
   Choose one complete provider capability before rewriting:
   [launcher-provider-expansion](plans/archive/launcher-provider-expansion.md).
 - **signed-builds-and-auto-update** (`shelved`, external gate) — requires Apple

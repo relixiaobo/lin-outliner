@@ -2,18 +2,16 @@
 
 **Shape:** (a) ONE complete feature in one PR after the reference URI foundation
 and neutral ContentStore/Outline consumer (shipped in #590 and #584), the complete
-PR-I interface/baseline unit of `outline-source-resource-unification`, the
-complete `host-runtime-composition` delivery set, and
-`agent-bash-stdin-transport`. Source PR-I and Host composition are contract and
-architecture foundations. The large-text feature is an implementation-order
+`outline-source-model`, the Host chain ending in `desktop-host-cutover`, and
+`agent-bash-stdin-transport`. Outline Source Model and Desktop Host are contract
+and architecture foundations. The large-text feature is an implementation-order
 foundation: it settles canonical/renderer Item projection and private internal-
 text dependencies on the same Agent surfaces this feature changes. Internal
 text remains in `ToolPayloadStore` and never becomes a canonical file resource.
-The
-Composer input-history contract established by #587 is already part of the
-baseline rather than a future delivery dependency. The visual-only PR-F
-preview-first enhancement is independently orderable and is not an Agent
-consumer dependency. The Agent resource-reference cutover, conversation
+The Composer input-history contract established by #587 is already part of the
+baseline rather than a future delivery dependency. The visual-only
+`outline-source-preview` enhancement is independently orderable and is not an
+Agent consumer dependency. The Agent resource-reference cutover, conversation
 workspace and final-citation contract, and delegated-handoff projection are
 foundation-first build stages in this PR. #584 separately established the shared
 exact-revision store as part of its complete Outliner Runtime feature; the #587
@@ -207,7 +205,7 @@ An Outline AssetRecord is Outline's canonical reference. An Agent
 `ResourceReferenceRecord` is a Host-private Agent reference carrying display
 metadata and zero or one representation of each kind:
 
-After `outline-source-resource-unification` PR-I, an ordinary Outline Node relates
+After `outline-source-model`, an ordinary Outline Node relates
 to zero or more AssetRecords through its ordered
 `field:source` URI values. Every managed value is independently live whether or
 not it is the locally selected preview. The AssetRecord stays Outline's canonical
@@ -607,11 +605,12 @@ The dependency order is fixed where an edge is stated:
    retention anchors;
 4. use #592's final Outliner Runtime and preview architecture as the Outline
    consumer baseline;
-5. land the human-led PR-I interface and truthful desktop baseline from
-   `outline-source-resource-unification`; it establishes ordinary Nodes with
-   ordered Source values as the complete usable Outline consumer. Its PR-F
-   preview-first visual enhancement has no dependency edge to this plan;
-6. complete `host-runtime-composition`, then land
+5. land the coordinated interface and truthful desktop baseline from
+   `outline-source-model`; it establishes ordinary Nodes with
+   ordered Source values as the complete usable Outline consumer. The
+   `outline-source-preview` visual enhancement has no dependency edge to this
+   plan;
+6. complete the Host chain through `desktop-host-cutover`, then land
    `agent-bash-stdin-transport` against its final Agent Host and renderer seam;
 7. after those foundations are on `main`, implement this plan's three internal
    stages in one complete PR while consuming the #587 Composer history baseline;
