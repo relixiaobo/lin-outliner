@@ -108,38 +108,46 @@ that replace the surfaces being composed land first:
 
 ```text
 Outline Source PR-I
-  -> Agent Result And Resource Reference Lifecycle
-       -> Host composition delivery set
+  -> Host composition delivery set
+       |- Agent Result And Resource Reference Lifecycle
+       |    `- Agent Cross-Thread Reference
+       `- Startup Window First
 ```
 
 Source PR-I is a hard dependency because it owns the final Source protocol,
 Host-private exact-file grant, selected preview host, current preview consumers,
-and native-file authorization boundary. The Agent resource lifecycle then owns
-the final Host resolver, conversation workspaces, ContentStore links, citation
-settlement, and cleanup barriers. Extracting either pre-cutover graph would make
-this refactor move and test code that the product work immediately replaces.
+and native-file authorization boundary. The Host delivery set then establishes
+the final `DesktopHost`, `createAgentHost()`, `createResourcePreviewHost()`,
+lifecycle arbiter, reversible-effect ownership, and explicit quit adapters.
+Agent Resource Lifecycle adds its resolver, conversation workspaces,
+ContentStore links, citation settlement, and cleanup barriers as typed consumers
+inside that graph instead of first extending today's implicit `main.ts` graph and
+relocating them afterward.
 
 Source PR-F is an independent renderer composition enhancement and has no
-architectural dependency edge to this plan. Agent Cross-Thread Reference depends
-on the Agent resource lifecycle, not on `DesktopHost`, and may proceed without
-waiting for these internal refactors. Merge order between either independent
-feature and an extraction unit is decided only by the live file collision check.
+architectural dependency edge after Source PR-I. Agent Cross-Thread Reference
+remains after Agent Resource Lifecycle. `startup-window-first` consumes the final
+`DesktopHost.start()` boundary rather than introducing readiness behavior that a
+later composition refactor must move. Agent Resource Lifecycle and
+`startup-window-first` have no dependency edge between them; their merge order is
+decided by the live file collision check after Host composition lands.
 
-The current open-plan collision result is:
+The current collision result is:
 
-- #593 has no direct file overlap with this plan-only PR, but its future Source
-  PR-I overlaps the resource/preview/native-file implementation surface and must
-  merge first.
-- Agent Result And Resource Reference Lifecycle overlaps Agent construction,
-  Host resource resolution, ContentStore relationships, cleanup, and quit
-  barriers and must merge before the extraction set.
+- #593 has merged this design into `main`; no Source implementation claim is
+  currently open. Its future PR-I overlaps the resource/preview/native-file
+  implementation surface and must merge before the Host delivery set.
+- Agent Result And Resource Reference Lifecycle has no open implementation claim.
+  It overlaps Agent construction, Host resource resolution, ContentStore
+  relationships, cleanup, and quit barriers and starts after the Host set.
 - #594 is plan-only. Its future Agent execution/context work has no required
   dependency edge, but the Agent Host unit repeats a file-level collision check
   before claiming implementation.
-- Source PR-F and Cross-Thread Reference repeat their own checks but are not
-  serialized behind Host composition by design.
+- Source PR-F is independent after Source PR-I. Cross-Thread Reference follows
+  Agent Resource Lifecycle. Startup Window First follows Host composition and
+  repeats its collision check against any live Agent lifecycle work.
 
-After the dependencies merge, the first implementation owner runs `gh pr list`,
+After Source PR-I merges, the first Host implementation owner runs `gh pr list`,
 scans `docs/TASKS.md`, compares every intended file with live PR claims, and
 records the exact result in that implementation PR. No implementation unit starts
 against an unmerged future contract.
@@ -288,18 +296,22 @@ constructed -> starting -> started
       |            |          |
       |            `----------+-> quitting -> disposed
       `-----------------------'
+                                  |
+                                  `- Cancel before teardown -> started
 
 starting -> failed -> disposed
 ```
 
-`start()` and `requestQuit()` are single-flight operations with cached promises.
-Only the transition winner owns terminal cleanup:
+`start()` is a permanently single-flight operation with one cached promise.
+`requestQuit()` is single-flight only within the current quit attempt. Only the
+transition winner owns that attempt:
 
 - `start()` may be called only from `constructed`. It records every completed
   startup milestone and every producer that reached its started state.
 - `requestQuit()` synchronously changes `constructed`, `starting`, or `started`
   to `quitting`, closes publication admission, and sets a quit-requested flag
-  before returning its shared promise.
+  before returning the current attempt promise. Concurrent callers join that
+  promise.
 - Startup checks that flag before and after every awaited boundary, before
   starting another producer, and before publishing protocols, IPC, windows,
   timers, hotkeys, or activation listeners. It never begins another step after
@@ -311,6 +323,10 @@ Only the transition winner owns terminal cleanup:
 - If startup failure wins the transition first, failed-start rollback owns all
   cleanup and a later quit request joins it. If quit wins first, the quit path
   owns cleanup and exit while the startup error is diagnostic context only.
+- A reversible Cancel restores `started` and clears the completed quit-attempt
+  promise. A later OS quit creates a new attempt, freezes and drains again, and
+  may proceed to teardown and exit. An irreversible attempt reaches `disposed`;
+  later calls are terminal no-ops.
 
 If quit arrives before `OutlineDocumentService.init()` succeeds, no renderer or
 mutation-capable producer has been published or started. The Host joins the
@@ -418,9 +434,12 @@ before-quit
 
 Cancel is available only before irreversible teardown. It restores the exact
 local and Runtime admission state and transitions `quitting` back to `started`;
-no service has been disposed at that point. This is the sole deliberate
-non-monotonic user-decision edge. A quit that interrupted startup has no window
-or user decision surface and cannot cancel back into a partially started Host.
+no service has been disposed at that point. The Host clears that attempt's
+single-flight promise only after restoration completes, so concurrent callers
+still share one decision while a later quit drains again. This is the sole
+deliberate non-monotonic user-decision edge. A quit that interrupted startup has
+no window or user decision surface and cannot cancel back into a partially
+started Host.
 
 ### Desktop Transport Ownership
 
@@ -524,6 +543,8 @@ Focused tests prove:
   and preserves the original startup error;
 - quit at every startup await boundary prevents later producer start or
   publication and yields one terminal cleanup owner;
+- concurrent callers share one current quit attempt, while Cancel restores
+  `started`, clears that attempt, and a later quit performs a new drain and exits;
 - concurrent/repeated scope disposal joins one completion, releases children in
   reverse ownership order, continues after failure, and aggregates errors;
 - the exact dependency-tip startup order has no duplicate starts or hidden
@@ -562,6 +583,8 @@ descriptor, held writer lock, or residual desktop process.
   shutdown remain separate and inspectable.
 - Startup failure and ordinary quit cannot concurrently start and tear down the
   same producer, publish transport after quit, or clean up one resource twice.
+- Concurrent quit callers share only the active attempt; Cancel permits a later
+  attempt to drain, tear down, and exit.
 - Failed-start rollback never treats authenticated Runtime identity as Host
   ownership and never issues Runtime shutdown without an explicit future lease.
 - `OutlineDocumentService` retains every recovered desktop-adapter
@@ -585,13 +608,15 @@ contract.
 
 ## Checklist
 
-- [ ] Merge Source PR-I and Agent Result And Resource Reference Lifecycle; rebase
-      on that exact dependency tip.
+- [ ] Merge Source PR-I; rebase the first Host unit on that exact dependency tip.
 - [ ] Repeat the open-PR/file collision check before every delivery unit.
 - [ ] In the first unit, add the tracked audit driver, baseline manifest,
       inventory, dispositions, and clean-clone reproduction.
 - [ ] Ship owned transport, Agent Host, Outline desktop, resource/preview,
       native-window/application, and final DesktopHost units as complete PRs.
+- [ ] After the Host set, let Agent Resource Lifecycle and Startup Window First
+      claim their independent work in live-collision order; keep Cross-Thread
+      Reference after Agent Resource Lifecycle.
 - [ ] Add lifecycle race, failed-start non-shutdown, startup/quit order,
       sender-admission, Runtime-relaunch, and ownership guards with their units.
 - [ ] Remove a global, forwarding helper, or registration only after the audit
