@@ -6,8 +6,8 @@ Give the existing `bash` tool one bounded, durable, literal stdin channel so a
 model can pass structured text to a CLI without placing data in shell grammar,
 process arguments, the environment, or a temporary file. The immediate consumer
 is the public `outline add|commit|diff --input -` workflow, but the transport,
-durable argument budget, and security classification belong to the generic
-Agent boundary.
+durable argument representation, and security classification belong to the
+generic Agent boundary.
 
 This plan is shape **(a): one complete feature in one PR**. The public tool
 field, canonical admission, effective-consumer classification, foreground
@@ -31,9 +31,13 @@ The objectives are:
 - Do not change the Outline CLI, Outline contract, built-in Outline Skill,
   Runtime, document storage, renderer, or Core document protocol. The separate
   `outline-cli-skill-efficiency` feature consumes this interface after merge.
-- Do not raise the budget for every Thread context payload. Only canonical
-  `toolCallArguments` receives the larger bound required by exact replay; every
-  other context payload kind retains its current 16 MiB ceiling.
+- Do not raise the 16 MiB Thread context-payload budget. Large stdin uses one
+  typed internal-text dependency instead of making any JSON context envelope
+  absorb nested escaping overhead.
+- Do not turn stdin into an Agent file resource, ContentStore revision, source,
+  workspace file, or public digest-bearing handle. Internal argument text stays
+  under the existing Thread payload lifecycle and is not addressable by the
+  model or a file tool.
 - Do not add or invoke a file tool, temporary input artifact, named pipe, helper
   executable, environment variable, or shell heredoc as transport.
 - Do not parse, scan, classify, redact, summarize, or authorize from the stdin
@@ -49,8 +53,8 @@ The objectives are:
 - Do not change the generic Bash output projection, artifact retention,
   capability-block syntax, confirmation model, or retry policy.
 - Do not add migration, compatibility, or legacy tool-call readers. The optional
-  field extends the current pre-release schema without changing stored calls
-  that omit it.
+  field and internal representation extend the current pre-release schema;
+  clean-reset verification replaces old readers.
 
 ## Design
 
@@ -80,35 +84,65 @@ quoting layer, or other byte is added.
 ### 2. Public Tool Requirements And Admission Contract
 
 - **FR-1:** `BASH_PARAMETERS` and `BashParams` expose optional
-  `stdin: string`. Unknown fields, non-string values, and invalid bounds keep the
-  existing schema/normalization failure path and never spawn a process.
+  `stdin: string`. Admission rejects non-strings, more than 64 MiB of UTF-8, and
+  strings containing unpaired UTF-16 surrogates before persistence or spawn.
+  The well-formed-Unicode rule makes the admitted string exactly recoverable
+  from its UTF-8 bytes instead of silently replacing isolated surrogates.
 - **FR-2:** The admitted UTF-8 bytes are exactly `Buffer.from(stdin, 'utf8')`.
   Empty input is distinct from omitted input; line endings and Unicode are not
   normalized.
-- **FR-3:** Canonical tool-call arguments have one dedicated
-  `MAX_TOOL_CALL_ARGUMENT_PAYLOAD_BYTES` limit of 32 MiB. The existing
-  `MAX_THREAD_CONTEXT_PAYLOAD_BYTES` 16 MiB limit continues to govern every
-  other context payload kind. Codec reference admission and `ToolPayloadStore`
-  write, read, copy, and verification select the limit from the declared
-  payload kind; they do not globally widen unrelated context evidence.
-- **FR-4:** Bash admission measures the UTF-8 byte length of the complete
-  canonical `ToolCallArgumentsContextPayload` produced by the real encoder and
-  rejects it before spawn when it exceeds 32 MiB. The accepted range includes a
-  legal Outline request whose one 4,194,304-code-unit scalar contains the
-  worst-case JSON-escaped value. With the current encoder, a minimum legal add
-  request containing 4,194,304 NUL code units produces a 29,360,440-byte
-  payload, leaving 4,193,992 bytes below the new limit. Tests derive and assert
-  the encoded size through the production codec instead of duplicating this
-  arithmetic.
-- **FR-5:** Canonical model-call history retains the admitted argument through
-  the existing inline-or-payload mechanism and existing structural secret
-  redaction. Bash adds no duplicate stdin logging, output echo, command summary,
-  environment copy, or persisted temporary input.
+- **FR-3:** Bash admission measures the raw UTF-8 stdin bytes independently of
+  JSON serialization and accepts up to 64 MiB. This covers every registered
+  Outline stdin artifact within the current Runtime request/upload authority
+  without promising that a later CLI normalization cannot produce its own
+  typed size rejection. A schema-valid two-node add fixture containing two
+  4,194,304-code-unit NUL values is 50,331,901 raw bytes and must be admitted;
+  its roughly 58.7 MiB nested argument JSON is evidence that serialized size is
+  not the transport authority.
+- **FR-4:** Exact arguments up to the existing 32 KiB inline threshold keep the
+  current representation. For a payload-backed Bash call with stdin, canonical
+  admission stores the durable stdin value once as content-addressed UTF-8 under
+  a new private `ThreadInternalTextPayloadReference`. The bounded
+  `toolCallArguments` context payload stores the remaining JSON object plus one
+  typed top-level `stdin` binding to that reference; it never stores a sentinel
+  inside user JSON. The `ModelToolCallArguments` payload form declares the same
+  internal-text dependency on its owning Tool Item. Publication writes and
+  verifies internal text first, then the context envelope, then commits the
+  owning Item. An interrupted admission may leave reclaimable unowned payloads
+  but cannot commit an Item whose declared dependency was never published. All
+  context payloads retain the existing 16 MiB limit.
+- **FR-5:** History, main-process transcript and trajectory projection, Turn
+  replay, fork, Retry, rollback, deletion, pruning, and child inheritance
+  resolve or copy the argument context and its declared internal-text dependency
+  as one logical unit. Resolution verifies digest, byte length, strict UTF-8,
+  binding uniqueness, an object skeleton, declaration of every bound reference,
+  and absence of the bound field before reconstructing the exact logical
+  arguments. JSON object key order is not identity; the reconstructed `JsonValue`
+  must be logically exact. A missing or corrupt dependency yields the existing
+  typed unavailable/evidence behavior and never a partial argument object.
+  Existing structural secret redaction remains authoritative: replayable calls
+  may stream the retained exact text, while redacted-replay calls retain only
+  redacted durable text and use the transient admitted source for that one live
+  execution. Bash adds no duplicate log, output echo, command summary,
+  environment copy, or temporary input file.
 
-The dedicated argument budget is a generic durable-history fact consumed by
-Bash stdin. It does not modify or narrow any downstream CLI schema. A
-downstream command may continue to accept larger files or other native input
-channels outside the Agent Bash tool.
+The private representation has one narrow shape. A
+`ThreadInternalTextPayloadReference` carries only a content digest, byte length,
+and fixed UTF-8 encoding. A stored tool-argument envelope carries a JSON object
+skeleton and at most one `{ field: 'stdin', ref }` binding outside that object.
+The payload-backed `ModelToolCallArguments` carries the context reference plus
+the same declared internal-text reference, making the Tool Item the retention
+owner. The new reference is not a `ThreadItemOutputReference`, does not carry a
+presentation summary or filename, and is unavailable through output, resource,
+file-tool, or model-facing read APIs. The raw storage envelope remains private;
+history and detail readers receive either the rehydrated logical arguments or
+typed unavailability, never the binding metadata. Existing Thread-private
+publication mechanics may be shared, but input text and tool output remain
+distinct semantic types.
+
+This is a storage representation split, not a larger generic JSON payload. It
+does not modify any downstream CLI schema, expose a second model-facing input,
+or route the workflow through file tools.
 
 ### 3. One Effective-consumer Classification
 
@@ -233,10 +267,11 @@ This foundation is a prerequisite of the separately planned
 [`outline-cli-skill-efficiency`](https://github.com/relixiaobo/lin-outliner/pull/595)
 feature. It does not depend on that feature or Source PR-I, and it modifies no
 Outline path. The consumer PR rebases after this foundation merges and verifies
-only the public `stdin` interface end to end. The 32 MiB
-`toolCallArguments` budget is a shared Core Agent persistence-interface change,
-so this revised plan returns to PM ratification before implementation. It does
-not alter the Core document protocol or any Outline schema.
+only the public `stdin` interface end to end. The internal-text dependency and
+rehydration contract are a shared Core Agent persistence-interface change, so
+this revised plan returns to PM ratification before implementation. It does not
+alter the Core document protocol, an Outline schema, or the Agent file-resource
+model.
 
 The collision self-check found one open PR, `outline-cli-skill-efficiency`, whose
 current plan discusses this missing interface but claims no generic Agent file.
@@ -248,10 +283,22 @@ and actual-diff check run again immediately before implementation.
 
 Expected implementation ownership:
 
-- `src/core/agent/protocol.ts` and `src/core/agent/codec.ts` for the dedicated
-  tool-call argument limit and kind-aware context-reference admission;
-- `src/main/agent/persistence/ToolPayloadStore.ts` for the same kind-aware limit
-  across context write, read, copy, and verification;
+- `src/core/agent/protocol.ts` and `src/core/agent/codec.ts` for the private
+  internal-text reference, compact argument binding, declared dependency, and
+  strict decode contract;
+- `src/core/agent/modelCallHistory.ts`,
+  `src/main/agent/runtime/toolCallHistory.ts`, and
+  `src/main/agent/runtime/types.ts` for factoring, declaring dependencies, and
+  rehydrating one logical argument value;
+- `src/main/agent/persistence/ToolPayloadStore.ts` for content-addressed internal
+  text publication, verified reads/streams, copy, pruning, and cleanup;
+- `src/main/agent/context/contextDependencies.ts`, `ContextCompaction.ts`, and
+  `ContextProjector.ts` for dependency verification, inherited history, and
+  replay projection;
+- `src/main/agent/thread/ThreadCatalogOps.ts`, `ThreadResourceOps.ts`,
+  `ThreadTrajectoryProjection.ts`, `TranscriptRenderer.ts`, and
+  `TurnLifecycle.ts` for Thread inventory, fork/copy, Retry/rollback,
+  reader-facing projection, orphan reconciliation, and deletion;
 - `src/main/agent/capabilities/agentLocalTools.ts` for the public parameter,
   byte admission, foreground writer, and background rejection;
 - `src/main/agent/capabilities/agentCapabilities.ts` for the single parsed
@@ -260,14 +307,15 @@ Expected implementation ownership:
   `src/main/agent/runtime/ToolRuntime.ts` for consuming that same classification
   at constrained execution;
 - `docs/spec/agent-tool-design.md` and
-  `docs/spec/agent-integration.md` for current behavior; and
+  `docs/spec/agent-integration.md` for current behavior;
 - `tests/core/agentLocalTools.test.ts`,
   `tests/core/agentCapabilities.test.ts`,
   `tests/core/agentSubagentToolPolicy.test.ts`, and one focused existing
   ToolRuntime/Thread integration test file for the real composition boundary;
-- `tests/core/agentToolPayloadStore.test.ts` and the focused Core codec/history
-  tests that prove kind-aware limits and worst-case canonical argument replay;
-  and
+- `tests/core/agentToolPayloadStore.test.ts` and the focused Core codec/history,
+  context-dependency, ContextProjector/compaction, ThreadService,
+  transcript/trajectory, and fork tests that prove exact rehydration and
+  lifecycle settlement; and
 - `tests/core/agentToolCatalogStability.test.ts` and
   `tests/fixtures/__snapshots__/agentToolCatalogStability.test.ts.snap` for the
   intentional public Bash schema addition.
@@ -275,21 +323,22 @@ Expected implementation ownership:
 This feature does not modify `src/core/agent/tools.ts`, Core document protocol,
 file tools, Outline code or fixtures, another built-in Skill, renderer code,
 dependency manifests, workflows, `docs/TASKS.md`, or `CHANGELOG.md`. The named
-Core Agent protocol, codec, payload-store, and schema-snapshot files are the
-complete intentional expansion from the previous draft. If a new action kind,
-public capability protocol, generic result projection, larger non-argument
-context budget, or broader process abstraction proves necessary, stop and
-return that interface decision to PM review instead of widening this PR.
+Core Agent protocol, codec, history, dependency, payload-store, lifecycle, and
+schema-snapshot files are the complete intentional expansion from the previous
+draft. If a new action kind, public capability protocol, generic result
+projection, larger context budget, ContentStore/file-resource integration, or
+broader process abstraction proves necessary, stop and return that interface
+decision to PM review instead of widening this PR.
 
 ## Open questions
 
 There are no unresolved product questions. Ratification accepts the optional
-UTF-8 string field, dedicated 32 MiB canonical tool-call argument budget,
-unchanged 16 MiB budget for every other context kind, exact three-form Outline
-data registry, four-state consumer model, constrained-policy failure, Full
-Access behavior, and foreground-only lifecycle together. Exact private helper
-names and the focused integration test file are reversible implementation
-details selected from the rebased tree.
+well-formed-Unicode string field with a 64 MiB raw UTF-8 bound, Thread-internal
+text factoring for payload-backed Bash calls, unchanged 16 MiB context-payload
+budget, exact three-form Outline data registry, four-state consumer model,
+constrained-policy failure, Full Access behavior, and foreground-only lifecycle
+together. Exact private helper names and the focused integration test file are
+reversible implementation details selected from the rebased tree.
 
 ## Acceptance criteria
 
@@ -299,22 +348,24 @@ details selected from the rebased tree.
   `stdin: string`; calls that omit it retain byte-for-byte current execution and
   stored argument behavior.
 - [ ] **AC-2:** A legal structured payload larger than macOS `ARG_MAX`, including
-  one 4,194,304-code-unit NUL scalar, round-trips through the production
-  `encodeThreadContextPayload` and `ToolPayloadStore`, reaches child stdin intact,
-  and remains below the dedicated 32 MiB bound. Command argv, environment,
-  stdout/stderr, and the child workspace contain no transport copy; canonical
-  tool-call history is the only retained argument copy.
+  two 4,194,304-code-unit NUL-valued Nodes, passes the production Outline add
+  schema, measures 50,331,901 raw stdin bytes, factors into one verified internal
+  text dependency plus a context envelope below 16 MiB, reconstructs the exact
+  logical arguments, and reaches child stdin intact. Command argv, environment,
+  stdout/stderr, and the child workspace contain no transport copy.
 - [ ] **AC-3:** Empty input, quotes, multiline text, backticks, literal `$()`
   expressions, Unicode, NUL, and candidate heredoc delimiters arrive with the
-  exact UTF-8 bytes and execute no payload content as shell syntax.
+  exact UTF-8 bytes and execute no payload content as shell syntax. Unpaired
+  surrogates fail before persistence or spawn rather than changing on UTF-8
+  round-trip.
 - [ ] **AC-4:** Complete write, forced backpressure, early child exit, stdin
   error, abort, and timeout each settle once, close or stop the writer, leave no
   unhandled stream error, and preserve native exit/interruption evidence.
-- [ ] **AC-5:** Oversized canonical Bash arguments, non-string stdin, and
+- [ ] **AC-5:** Oversized raw Bash stdin, non-string stdin, and
   `stdin + run_in_background` fail before spawn; a stdin-bearing foreground call
-  never auto-backgrounds. A `toolCallArguments` reference of 32 MiB plus one
-  byte fails while every non-argument context reference still fails at 16 MiB
-  plus one byte, across codec and payload-store write/read/copy paths.
+  never auto-backgrounds. Raw stdin of 64 MiB is accepted and 64 MiB plus one
+  byte is rejected independently of JSON escaping, while every context payload
+  still fails at 16 MiB plus one byte.
 
 ### Classification And Authority
 
@@ -348,15 +399,22 @@ details selected from the rebased tree.
 ### Repository Gates
 
 - [ ] **AC-12:** A production-composition test crosses canonical argument
-  admission, capability evaluation, constrained policy, child input, and final
-  settlement rather than reconstructing those boundaries in a test helper.
+  admission, internal-text factoring, Item dependency publication, capability
+  evaluation, constrained policy, verified child input, and final settlement
+  rather than reconstructing those boundaries in a test helper. Separate
+  lifecycle tests prove interrupted publication, fork/copy, child inheritance,
+  Retry, rollback, pruning, deletion, startup orphan reconciliation, missing
+  text, corrupt text, undeclared or duplicate bindings, and redacted-replay
+  behavior.
 - [ ] **AC-13:** Focused `agentLocalTools`, `agentCapabilities`,
-  `agentSubagentToolPolicy`, `agentToolPayloadStore`, Core codec/history,
-  catalog-stability, and ToolRuntime/Thread integration tests pass.
+  `agentSubagentToolPolicy`, `agentToolPayloadStore`, Core codec/history and
+  context-dependency, Thread lifecycle, catalog-stability, and
+  ToolRuntime/Thread integration tests pass.
 - [ ] **AC-14:** `bun run typecheck`, `bun run test:core`, `bun run docs:check`,
   and `git diff --check` pass.
 - [ ] **AC-15:** An executable diff allow-list proves the PR changes only the
-  named Core Agent protocol/codec, generic Bash/capability/policy/runtime,
-  payload-store, specs, focused tests, and Bash schema snapshot above; it
-  contains no Outline, file-tool, renderer, Core document protocol or action-kind,
-  dependency, workflow, board, or changelog change.
+  named Core Agent protocol/codec/history/dependency, generic
+  Bash/capability/policy/runtime, Thread payload/lifecycle owners, specs, focused
+  tests, and Bash schema snapshot above; it contains no Outline, file-tool,
+  ContentStore, renderer, Core document protocol or action-kind, dependency,
+  workflow, board, or changelog change.
