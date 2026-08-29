@@ -146,6 +146,10 @@ preview visibility, and ordinary children become independent:
   `field:source`. It remains a tree Node so ordinary descendants retain identity,
   but it has no RichText `content`, cannot own fields or tags, and never receives
   a protected Source entry of its own.
+- **FR-17:** Require every public Source update to target exactly one ordinary
+  owner and every value/anchor reference to target exactly one live direct
+  `SourceValueNode` under that owner. Bulk work uses explicit per-owner
+  operations, never generic update fan-out or inferred anchor pairing.
 - **NFR-1:** Invalid, unsupported, missing, denied, or temporarily unavailable
   committed sources degrade locally with a distinct reason and recovery where
   one exists. They never remove Source, rewrite content, or abort an otherwise
@@ -235,24 +239,46 @@ of `content`; projection mirrors the fields above. Runtime projection degrades
 only the affected Source presentation if an impossible malformed value somehow
 reaches inspection, while persistence/write admission fails closed.
 
-The public ChangeSet adds this exact instruction union inside an `update` whose
-`targets` resolve the ordinary owner Node:
+The public ChangeSet adds this exact instruction union inside an `update`. Source
+instructions deliberately do not inherit the generic update loop's bulk
+cardinality. They use a restricted reference:
+
+```ts
+type OneTargetRef =
+  | { target: TargetSpec & { cardinality: 'one'; max?: never } }
+  | { binding: BindingName }; // only a statically single-result binding
+```
+
+A binding is eligible only when its producing operation is statically guaranteed
+to bind exactly one Node; a binding from a many/zero-or-one result or a
+multi-Node create is rejected during ChangeSet normalization. Resolution still
+asserts exactly one live result so stale or malformed input cannot bypass the
+declared cardinality.
+
+The enclosing `update.targets` must be a `OneTargetRef` resolving exactly one
+ordinary content owner. `value` and non-null `after` use the same restricted
+shape and must each resolve exactly one live direct `SourceValueNode` under that
+owner's protected Source entry:
 
 ```ts
 type SourceInstruction =
   | { kind: 'source'; action: 'add'; sourceText: string;
-      valueId?: NodeId; after?: TargetRef | null }
-  | { kind: 'source'; action: 'replace'; value: TargetRef;
+      valueId?: NodeId; after?: OneTargetRef | null }
+  | { kind: 'source'; action: 'replace'; value: OneTargetRef;
       sourceText: string }
-  | { kind: 'source'; action: 'reorder'; value: TargetRef;
-      after: TargetRef | null }
-  | { kind: 'source'; action: 'remove'; value: TargetRef }
+  | { kind: 'source'; action: 'reorder'; value: OneTargetRef;
+      after: OneTargetRef | null }
+  | { kind: 'source'; action: 'remove'; value: OneTargetRef }
   | { kind: 'source'; action: 'clear' };
 ```
 
-Omitted `after` appends; `after: null` means first position. Lowering resolves
-every target and allocates an omitted `valueId` before creating one of the final
-Core commands:
+Omitted add `after` appends; `after: null` means first position. Reorder rejects
+an anchor equal to its value. Add rejects a caller-supplied `valueId` already in
+use anywhere. Any `many`, zero-result, cross-owner, non-Source, indirect
+descendant, deleted, or otherwise invalid owner/value/anchor reference rejects
+the whole ChangeSet before mutation. Lowering resolves this one owner/reference
+set once and allocates an omitted `valueId` before creating one of the final Core
+commands:
 
 ```ts
 type SourceCommand =
@@ -270,7 +296,10 @@ type SourceCommand =
 `clear` captures the currently observed direct value IDs during lowering so an
 unseen concurrent add survives replay. Replace preserves value identity,
 position, descendants, and local selection. The Runtime/preload and CLI expose
-the ChangeSet instruction above rather than a second Source mutation shape.
+the ChangeSet instruction above rather than a second Source mutation shape. Bulk
+Source work requires one explicit single-owner update operation per owner inside
+the same ChangeSet, each with its own value ID and owner-local anchors; there is
+no implicit owner-to-value pairing or inherited generic update fan-out.
 
 The CRDT owns deterministic order and scalar conflict resolution. Concurrent
 adds retain both unique values in converged order. Concurrent add/reorder retains
@@ -921,10 +950,12 @@ retirement. Discovering that a shared interface is missing stops PR-F and sends 
 human-led correction through the interface owner; it is not filled in as a
 feature-PR drive-by.
 
-Only after PR-F lands may `agent-result-and-file-lifecycle` build its Outline
-consumer. That later plan may share or clone exact revisions into Outline
-AssetRecords, but it must create ordinary Nodes with ordered managed Source
-values rather than special attachment/image Nodes.
+After PR-I lands, `agent-result-and-file-lifecycle` may build its Outline
+consumer once its Agent-side prerequisites are satisfied. PR-F has no dependency
+edge to that consumer and is independently orderable after PR-I. The later Agent
+plan may share or clone exact revisions into Outline AssetRecords, but it must
+create ordinary Nodes with ordered managed Source values rather than special
+attachment/image Nodes.
 
 Expected implementation areas are re-derived per unit rather than treated as a
 fixed file checklist. PR-I owns shared Core commands/types, field and Runtime
@@ -1072,6 +1103,13 @@ below.
   selection, previews or explains each value, and can edit, reorder, remove, and
   clear them without another CLI operation; no first-value-only adapter is
   present.
+- **AC-31:** Public schema/normalization/lowering tests accept Source owner,
+  value, and non-null anchor references only through `OneTargetRef` with exactly
+  one resolved result. They reject declared or bound many/zero-or-one results,
+  zero results, reused add IDs, self-anchors, cross-owner anchors, indirect
+  descendants, and non-Source targets before any mutation. A multi-owner request
+  succeeds only as explicit per-owner operations with independently paired IDs
+  and anchors in one atomic ChangeSet.
 
 ## Open questions
 
@@ -1079,14 +1117,15 @@ None. `Source`, `field:source`, fixed ordered multi-value `uri`, the exact
 content-free `SourceValueNode`/`sourceText` protocol, pure permission-independent
 classification, Host-authorized resolution with distinct reasons, first-value
 default with local source selection, one causally seeded permanent entry per
-ordinary content Node, atomic/convergent Source values, the producer-generated
-post-#592 canonical `asset://local/{encodedAssetId}` form, managed capture by
-default, denied-but-durable file locators, exact-file verified-handle actions,
-omission of unsafe external Open/Reveal, a complete content-first PR-I surface,
-preview-first PR-F enhancement, recoverable local Hide/Show, and PR-I retirement
-of Outline `image`/`attachment` are coordinated design decisions. A redirect on
-any of them changes protocol, security, or product behavior and must happen
-during plan review rather than being guessed during build.
+ordinary content Node, single-owner `OneTargetRef` Source instructions,
+atomic/convergent Source values, the producer-generated post-#592 canonical
+`asset://local/{encodedAssetId}` form, managed capture by default,
+denied-but-durable file locators, exact-file verified-handle actions, omission of
+unsafe external Open/Reveal, a complete content-first PR-I surface, independently
+orderable preview-first PR-F enhancement, recoverable local Hide/Show, and PR-I
+retirement of Outline `image`/`attachment` are coordinated design decisions. A
+redirect on any of them changes protocol, security, or product behavior and must
+happen during plan review rather than being guessed during build.
 
 ## Build Checklist
 
@@ -1094,9 +1133,10 @@ during plan review rather than being guessed during build.
       PR/file collision check; coordinate ownership of Core protocol files.
 - [ ] PR-I: cut `url` to `uri`; land protected ordered multi-value Source, final
       structural/RichText base split, exact `SourceValueNode`/Projection,
-      scalar-map codec, command/ChangeSet payloads, permanent-entry/convergence
-      semantics, lossless write admission, pure classification, Host resolution,
-      settlement guards, and public CLI/ChangeSet contract tests.
+      scalar-map codec, single-owner `OneTargetRef` command/ChangeSet payloads,
+      permanent-entry/convergence semantics, lossless write admission, pure
+      classification, Host resolution, settlement guards, and public
+      CLI/ChangeSet contract tests.
 - [ ] PR-I: land exact-file grant persistence, revoke/relink/replace semantics,
       verified-handle preview/read/copy, external Open/Reveal omission, corruption
       degradation, and adversarial replacement/restart/security tests.

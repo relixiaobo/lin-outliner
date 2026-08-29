@@ -1,13 +1,15 @@
 # Agent Result And Resource Reference Lifecycle
 
 **Shape:** (a) ONE complete feature in one PR after the reference URI foundation
-and neutral ContentStore/Outline consumer (shipped in #590 and #584), both ordered
-delivery units of `outline-source-resource-unification`, and #587 land. The Agent
-resource-reference cutover, conversation workspace and final-citation contract,
-and delegated-handoff projection are foundation-first build stages in that PR.
-#584 separately established the shared exact-revision store as part of its
-complete Outliner Runtime feature; #587 remains a complete composer-history
-feature over an opaque current resource handle.
+and neutral ContentStore/Outline consumer (shipped in #590 and #584), the complete
+PR-I interface/baseline unit of `outline-source-resource-unification`, and #587
+land. Its visual-only PR-F preview-first enhancement is independently orderable
+and is not an Agent consumer dependency. The Agent resource-reference cutover,
+conversation workspace and final-citation contract, and delegated-handoff
+projection are foundation-first build stages in this PR. #584 separately
+established the shared exact-revision store as part of its complete Outliner
+Runtime feature; #587 remains a complete composer-history feature over an opaque
+current resource handle.
 
 ## Goal
 
@@ -196,8 +198,8 @@ An Outline AssetRecord is Outline's canonical reference. An Agent
 `ResourceReferenceRecord` is a Host-private Agent reference carrying display
 metadata and zero or one representation of each kind:
 
-After both `outline-source-resource-unification` delivery units, an ordinary
-Outline Node relates to zero or more AssetRecords through its ordered
+After `outline-source-resource-unification` PR-I, an ordinary Outline Node relates
+to zero or more AssetRecords through its ordered
 `field:source` URI values. Every managed value is independently live whether or
 not it is the locally selected preview. The AssetRecord stays Outline's canonical
 exact-revision metadata record; the Node has no special `image`/`attachment` type
@@ -595,12 +597,13 @@ The dependency order is fixed where an edge is stated:
    retention anchors;
 4. use #592's final Outliner Runtime and preview architecture as the Outline
    consumer baseline;
-5. land the human-led interface PR from `outline-source-resource-unification`,
-   then its complete resource cutover PR; only the latter establishes ordinary
-   Nodes with ordered Source values as the usable Outline consumer;
+5. land the human-led PR-I interface and truthful desktop baseline from
+   `outline-source-resource-unification`; it establishes ordinary Nodes with
+   ordered Source values as the complete usable Outline consumer. Its PR-F
+   preview-first visual enhancement has no dependency edge to this plan;
 6. #587 independently finishes Composer history over the current opaque resource
    handle without inventing the later store;
-7. after the complete Outline cutover and #587 are on `main`, implement this
+7. after Source PR-I and #587 are on `main`, implement this
    plan's three internal stages in one complete PR; and
 8. implement `agent-cross-thread-reference` only after this plan's resolver,
    working-set, and canonical citation contracts are on `main`.
