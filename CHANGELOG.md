@@ -144,6 +144,17 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
+- **Outline resources now have one execution-ready Source architecture (PR #593,
+  codex-4)** — URLs, images, and files converge on ordinary content Nodes with one
+  protected ordered `uri` Source field, exact content-free `SourceValueNode`
+  values, convergent single-owner commands, lossless classification, and
+  Host-private exact-file grants. A complete content-first management baseline
+  owns every public Source state before the independent preview-first visual
+  enhancement; the later Agent resource lifecycle depends only on that baseline,
+  not on UI composition. Repeated plan review closed exact-file scope and TOCTOU,
+  replica convergence, write admission, protocol ownership and cardinality,
+  independently complete delivery, and stale dependency findings before approval.
+
 - **Reference URIs and historical Thread access now have one execution-ready
   architecture (PR #589, main)** — Node and file citations use canonical
   URI-only markers with resolver-owned labels; ordinary internal `node:<uuid>`
