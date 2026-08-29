@@ -15,7 +15,9 @@ human-readable receipts, executable fixtures, current-behavior specifications,
 and end-to-end acceptance evidence. None of those parts ships independently:
 guidance without the compact `add --input` form leaves the model generating the
 same verbose ChangeSet, while a command form the Skill does not select does not
-improve the observed workflow.
+improve the observed workflow. The feature consumes two independently complete
+foundations, the Bash stdin transport interface and Source PR-I, after they
+merge; it does not absorb either foundation into its implementation PR.
 
 The objectives are:
 
@@ -39,6 +41,10 @@ The objectives are:
 - Do not change Web tools, untrusted-content framing, loop control, Subagent
   execution or settlement, token accounting, usage UI, context composition, or
   Provider cache behavior.
+- Do not add or modify generic Bash transport in this feature. A separate
+  interface PR must first add the bounded stdin channel described below. This
+  feature consumes that merged interface while its own diff continues to reject
+  every product change under `src/main/agent/**`.
 - Do not make the Outline Skill `execution: isolated`. It remains inline so the
   current Turn retains user intent, inspected document state, and mutation
   settlement without a second child Turn or result boundary.
@@ -101,8 +107,8 @@ whose executable is `outline`, with at most four Provider tool calls:
 1. one invocation that loads the built-in `outline` Skill;
 2. zero or one Bash invocation of a bounded `outline --human show` or `find`
    when the destination is not already exact;
-3. one Bash invocation of `outline --human add --input -` whose stdin is the
-   literal structured payload; and
+3. one Bash invocation whose `command` is `outline --human add --input -` and
+   whose separate `stdin` argument is the literal structured payload; and
 4. one Bash invocation of `outline --human view inspect OWNER_ID`.
 
 The common exact-destination case therefore uses three calls. It performs zero
@@ -153,14 +159,75 @@ This routing is authoritative:
   file tools, Python, Node, `jq`, `sed`, `grep`, or a shell program to discover
   schema, generate bindings, assemble routine ChangeSets, or summarize a
   successful CLI result. Bash is transport for the `outline` executable and
-  literal stdin only, not a second document-processing layer.
+  literal stdin only, not a second document-processing layer. The `command`
+  argument contains only the direct `outline` invocation; JSON belongs in the
+  Bash tool's separate `stdin` argument. Heredocs, shell quoting, pipelines,
+  command substitutions, and temporary input files are not accepted transports.
 
 The exact-help recovery path remains important. A validation failure may reveal
 that the Skill's concise route is stale; the model calls the one exact command
 schema through `outline`, corrects the input once, and returns to the primary
 path. It does not launch an open-ended schema investigation.
 
-### 3. Direct Commit Is The Normal Non-destructive ChangeSet Path
+### 3. Required Bash Stdin Transport Foundation
+
+Current Bash accepts only a `command` string and spawns the shell with stdin
+ignored. Embedding JSON in `zsh -c` through a heredoc or quoting is not a stdin
+interface: it makes valid Outline data subject to the operating system's
+process-argument limit and shell grammar before `outline` starts. It also cannot
+prove an arbitrary delimiter absent from user content.
+
+A separate shared-interface PR must land before this feature starts. That PR is
+an independently useful Bash capability and owns only the generic transport and
+its focused tests. It does not add an Outline exception, document-aware tool,
+file-tool dependency, temporary-file protocol, or new permission class.
+
+The prerequisite contract is fixed:
+
+- **IF-1:** Bash exposes one optional `stdin: string` parameter beside
+  `command`. Its exact UTF-8 encoding is written directly to the spawned
+  child's stdin and never enters the command string, shell argv, environment,
+  process description, output, or a temporary file.
+- **IF-2:** Admission enforces one documented UTF-8 byte ceiling before spawn.
+  The ceiling must align with durable tool-argument persistence and must carry a
+  legal structured request containing one current maximum-length 4,194,304-
+  character Outline scalar plus its JSON envelope. It must not reduce any
+  Outline CLI schema bound.
+- **IF-3:** The writer honors Node stream backpressure, closes stdin exactly
+  once after the complete payload, and treats write, drain, early-close, and
+  child-stdin errors as settled typed Bash failures. It must not leave an
+  unhandled rejection or convert an input-delivery failure into an apparently
+  successful command.
+- **IF-4:** Abort and timeout stop both input delivery and the child process
+  through the existing interruption path. A child that exits before consuming
+  stdin settles once with its real exit/interruption evidence; retry guidance
+  and existing foreground command semantics do not change.
+- **IF-5:** Capability and permission classification continue to inspect only
+  `command`. `stdin` is opaque data: it cannot grant, remove, or rewrite
+  `outline.read`, `outline.edit`, `outline.delete`, or shell authority, even
+  when it contains shell metacharacters or text that resembles another command.
+- **IF-6:** `stdin` with explicit `run_in_background: true` is rejected before
+  spawn, and a foreground command carrying stdin is not auto-backgrounded.
+  This keeps input delivery and settlement in one foreground tool call instead
+  of inventing a durable background-input lifecycle for this foundation.
+- **IF-7:** Focused tests send quotes, newlines, backticks, `$()` text, and
+  candidate heredoc delimiter lines byte-for-byte without expansion or
+  execution. A payload larger than macOS `ARG_MAX`, including the maximum-length
+  scalar, must start and complete through stdin rather than fail with `E2BIG`.
+
+The Outline Skill's representative invocation after that interface merges is:
+
+```json
+{
+  "command": "outline --human add --input -",
+  "stdin": "{\"kind\":\"viewed-tree\",\"placement\":{...},\"title\":\"Prices\",...}"
+}
+```
+
+No helper executable or shell syntax appears around `outline`. This plan tests
+the merged interface end to end but does not edit its implementation.
+
+### 4. Direct Commit Is The Normal Non-destructive ChangeSet Path
 
 The public `outline commit --input FILE|-` command already accepts one canonical
 non-destructive ChangeSet and settles it atomically without a reviewed Diff.
@@ -186,7 +253,7 @@ ChangeSet and exact Diff review, even if the Runtime does not classify Trash as
 permanent destruction. A request that only creates a new table below an exact
 parent uses the compact `add --input` form directly.
 
-### 4. Compact View-backed `add --input`
+### 5. Compact View-backed `add --input`
 
 A table is not an Outline resource. It is one ordinary owner Node whose view
 configuration has `mode: table`; its rows are ordinary direct child Nodes and
@@ -305,7 +372,7 @@ is not linked as an Agent runtime instruction and is never read by the model.
 The old generic `table-view-changeset.json` is removed so the test and
 documentation surface cannot preserve the verbose per-row binding topology.
 
-### 5. Public `view inspect` Verification
+### 6. Public `view inspect` Verification
 
 Add `view inspect TARGET` to the existing `view` family as the bounded read
 companion for every view mode. It uses existing public projection and
@@ -364,7 +431,7 @@ model to parse a large generic `show` Projection. For a table request, success
 requires `mode: table` plus the expected ordinary item and display-field counts;
 the summary never invents a separate table resource.
 
-### 6. Deterministic Human Receipts
+### 7. Deterministic Human Receipts
 
 Non-interactive CLI execution currently defaults to a JSON envelope, and most
 `--human` commands still pretty-print the complete JSON result. Through `bash`,
@@ -407,7 +474,7 @@ uses `--json` only when a test explicitly validates the JSON contract. Exact
 Diff artifacts travel directly from `outline diff --output PATH` to `outline
 apply --input PATH`; neither the model nor a file tool opens or echoes them.
 
-### 7. Skill And Reference Rewrite
+### 8. Skill And Reference Rewrite
 
 The Outline Skill remains a concise router, not a copy of the complete command
 registry. Mandatory runtime guidance is self-contained in `SKILL.md` or
@@ -434,8 +501,9 @@ The Skill must say explicitly:
 1. load inline once through the `skill` tool and preserve the user's exact task;
 2. inspect only state required to prove target and cardinality;
 3. select the primary path from the router;
-4. use Bash only to execute `outline`, with literal structured input streamed to
-   `--input -` rather than written or read through a file tool;
+4. use Bash only to execute `outline`, with literal structured input supplied by
+   the separate Bash `stdin` argument to `--input -`, never command quoting,
+   heredoc, pipeline, helper process, or a file tool;
 5. run one mutation command;
 6. preserve the compact Operation/no-change receipt; and
 7. verify consequential work with one narrow independent `outline` read.
@@ -445,7 +513,7 @@ no execution override, shell command, allowed-tools list, model, or effort. The
 existing inline invocation and argument-authority tests remain the governing
 execution boundary.
 
-### 8. Safety, Correctness, And Recovery
+### 9. Safety, Correctness, And Recovery
 
 - **NFR-1:** One accepted viewed-tree `add` produces exactly one Operation and one
   contiguous document revision. A validation or lowering failure produces no
@@ -473,13 +541,20 @@ execution boundary.
   every lowered row and owner. No pre-Source draft shape survives in fixtures or
   tests.
 
-### 9. Dependency And Collision Boundary
+### 10. Dependency And Collision Boundary
 
-Source PR-I from `outline-source-resource-unification` must merge before
-implementation begins. It owns the final Node draft, field/value, Source,
-ChangeSet, CLI schema, constructor, and fixture baseline that this feature must
-consume. After it lands, this branch rebases onto `origin/main`, regenerates its
-work queue from actual `rg` hits and failing tests, and removes every superseded
+Two independent foundations must merge before implementation begins:
+
+1. the Bash stdin transport interface PR described by IF-1 through IF-7; and
+2. Source PR-I from `outline-source-resource-unification`.
+
+Source PR-I owns the final Node draft, field/value, Source, ChangeSet, CLI
+schema, constructor, and fixture baseline that this feature must consume. The
+Bash interface PR owns the generic tool schema, process stdin delivery, and
+focused transport tests. Neither foundation depends on the other, so they may
+be developed independently, but this feature consumes only their merged
+contracts. It rebases onto `origin/main` after both land, regenerates its work
+queue from actual `rg` hits and failing tests, and removes every superseded
 table fixture assumption rather than preserving compatibility. Source PR-F is
 visual-only and is not a dependency.
 
@@ -488,11 +563,14 @@ Source PR-I is a deliberate hard dependency and likely overlaps
 `src/outline/contract/schemas.ts`, `src/outline/contract/porcelain.ts`,
 `src/outline/contract/capabilities.ts`, `src/outline/cli/porcelain.ts`,
 `src/outline/cli/runner.ts`, generated command references, fixtures, and CLI
-tests. Those files are not edited in parallel. The merged host-composition plan
-does not overlap after generic Agent projection, file tools, Subagent behavior,
-and usage UI are removed from this scope.
+tests. Those files are not edited in parallel. The Bash stdin interface PR is a
+second deliberate dependency under generic Agent capability/process code, but
+it does not claim any Outline file. Its merged commit is prerequisite evidence,
+not part of this feature's diff. The merged host-composition plan does not
+overlap after generic Agent projection, file tools, Subagent behavior, and usage
+UI are removed from this scope.
 
-### 10. Implementation Boundary
+### 11. Implementation Boundary
 
 Expected implementation ownership after Source PR-I:
 
@@ -523,10 +601,11 @@ Agent runtime/context files, `src/outline/runtime/**`, renderer files, another
 built-in Skill, `package.json`, `bun.lock`, `.github/workflows/**`,
 `docs/TASKS.md`, or `CHANGELOG.md`. The only shared test-file exception is the
 existing Outline-specific block in `tests/core/agentSkills.test.ts`; no generic
-Skill behavior may change. If implementation proves a Runtime, Core, or generic
-Agent change is required rather than CLI lowering over the final Source
-contract, stop and return that interface decision to PM review instead of
-expanding this PR.
+Skill behavior may change. The merged Bash stdin dependency does not add its
+generic Agent files to this allow-list. If that interface is absent or if
+implementation proves another Runtime, Core, or generic Agent change is
+required rather than CLI lowering over the final Source contract, stop and
+return that interface decision to PM review instead of expanding this PR.
 
 ## Open questions
 
@@ -613,3 +692,29 @@ Source PR-I during implementation without changing those observable behaviors.
   under `src/main/agent/**`, `src/outline/runtime/**`, `src/renderer/**`, another
   built-in Skill, Core protocol files, dependency manifests, workflows, or
   main-owned board/changelog files fails the gate.
+
+### Prerequisite Interface Gate
+
+These criteria are completed by the separate Bash stdin interface PR and linked
+as merged evidence in this PR before Outline implementation starts. They do not
+authorize generic Agent changes in this feature branch.
+
+- [ ] **AC-21:** The merged Bash tool exposes optional bounded `stdin: string`,
+  writes its exact UTF-8 bytes directly to child stdin, and rejects an oversized
+  value before spawning. The accepted bound carries a legal Outline request
+  containing one 4,194,304-character scalar without changing an Outline schema.
+- [ ] **AC-22:** A legal structured payload larger than macOS `ARG_MAX`, including
+  that maximum-length scalar, reaches the child intact and completes without
+  putting payload bytes in shell argv, the environment, output, or a temporary
+  file.
+- [ ] **AC-23:** Quotes, multiline text, backticks, literal `$()` expressions,
+  and candidate heredoc delimiter lines arrive byte-for-byte and execute no
+  payload content as shell syntax.
+- [ ] **AC-24:** Focused transport tests cover backpressure, complete close,
+  early child exit, stdin error, abort, and timeout. Every path settles once,
+  leaves no unhandled stream error, and preserves the existing Bash
+  interruption, result, and retry contract.
+- [ ] **AC-25:** Capability tests prove that permission/action classification is
+  derived only from `command` and is invariant under adversarial stdin. The
+  foundation rejects `stdin` with explicit background execution before spawn
+  and never auto-backgrounds a foreground stdin command.
