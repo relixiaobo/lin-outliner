@@ -29,8 +29,10 @@ The objectives are:
 ## Non-goals
 
 - Do not change the Outline CLI, Outline contract, built-in Outline Skill,
-  Runtime, document storage, renderer, or Core document protocol. The separate
-  `outline-cli-skill-efficiency` feature consumes this interface after merge.
+  Runtime, document storage, document renderer, Agent UI components, or Core
+  document protocol. The separate `outline-cli-skill-efficiency` feature
+  consumes this interface after merge. One Agent renderer store adapter changes
+  only to consume the main process's already-bounded argument projection.
 - Do not raise the 16 MiB Thread context-payload budget. Large stdin uses one
   typed internal-text dependency instead of making any JSON context envelope
   absorb nested escaping overhead.
@@ -40,9 +42,11 @@ The objectives are:
   model or a file tool.
 - Do not add or invoke a file tool, temporary input artifact, named pipe, helper
   executable, environment variable, or shell heredoc as transport.
-- Do not parse, scan, classify, redact, summarize, or authorize from the stdin
-  payload's program or document text. Authority derives from the parsed command,
-  the effective stdin consumer, and existing policy.
+- Do not parse, inspect, or summarize stdin text for consumer classification,
+  action derivation, authorization, or routing. Authority derives from the
+  parsed command, the effective stdin consumer, and existing policy. The
+  existing admission-time secret scan is mandatory but affects only the durable
+  history copy; it cannot change the consumer class or live execution bytes.
 - Do not add a new action kind or broaden `shell.local_code_execution` in
   worktrees. Ordinary worktree project scripts and local code execution without
   stdin preserve their current behavior.
@@ -99,31 +103,47 @@ quoting layer, or other byte is added.
   4,194,304-code-unit NUL values is 50,331,901 raw bytes and must be admitted;
   its roughly 58.7 MiB nested argument JSON is evidence that serialized size is
   not the transport authority.
-- **FR-4:** Exact arguments up to the existing 32 KiB inline threshold keep the
-  current representation. For a payload-backed Bash call with stdin, canonical
-  admission stores the durable stdin value once as content-addressed UTF-8 under
-  a new private `ThreadInternalTextPayloadReference`. The bounded
-  `toolCallArguments` context payload stores the remaining JSON object plus one
-  typed top-level `stdin` binding to that reference; it never stores a sentinel
-  inside user JSON. The `ModelToolCallArguments` payload form declares the same
-  internal-text dependency on its owning Tool Item. Publication writes and
-  verifies internal text first, then the context envelope, then commits the
-  owning Item. An interrupted admission may leave reclaimable unowned payloads
-  but cannot commit an Item whose declared dependency was never published. All
-  context payloads retain the existing 16 MiB limit.
-- **FR-5:** History, main-process transcript and trajectory projection, Turn
-  replay, fork, Retry, rollback, deletion, pruning, and child inheritance
-  resolve or copy the argument context and its declared internal-text dependency
-  as one logical unit. Resolution verifies digest, byte length, strict UTF-8,
-  binding uniqueness, an object skeleton, declaration of every bound reference,
-  and absence of the bound field before reconstructing the exact logical
-  arguments. JSON object key order is not identity; the reconstructed `JsonValue`
-  must be logically exact. A missing or corrupt dependency yields the existing
+- **FR-4:** After raw-value validation, canonical admission applies the existing
+  structural durable-history secret policy before persistence. It scans the
+  standalone `stdin` string once, without nesting or serializing it into the
+  complete argument envelope first, and records `/stdin` when that durable value
+  changes. The validated provider-authored stdin remains a transient live-call
+  overlay and reaches the child unchanged; only the replayable or redacted
+  durable value is factored. Secret-scanner failure retains the existing
+  fail-closed durable behavior. Classification and capability policy never read
+  either the raw or redacted text.
+
+  Exact arguments up to the existing 32 KiB inline threshold keep the current
+  representation. For a payload-backed Bash call with stdin, canonical admission
+  stores the durable stdin value once as content-addressed UTF-8 under a new
+  private `ThreadInternalTextPayloadReference`. The bounded `toolCallArguments`
+  context payload stores the remaining JSON object plus one typed top-level
+  `stdin` binding to that reference; it never stores a sentinel inside user JSON.
+  The `ModelToolCallArguments` payload form declares the same internal-text
+  dependency on its owning Tool Item. Publication writes and verifies internal
+  text first, then the context envelope, then commits the owning Item. An
+  interrupted admission may leave reclaimable unowned payloads but cannot commit
+  an Item whose declared dependency was never published. All context payloads
+  retain the existing 16 MiB limit.
+- **FR-5:** Canonical consumers and presentation consumers are separate. Provider
+  replay and internal recovery may reconstruct exact logical arguments after
+  verifying digest, byte length, strict UTF-8, binding uniqueness, an object
+  skeleton, declaration of every bound reference, and absence of the bound field.
+  Fork and child inheritance copy the verified dependency without rehydrating
+  it. JSON object key order is not identity; an exact reconstruction must preserve
+  the logical `JsonValue`. A missing or corrupt dependency yields the existing
   typed unavailable/evidence behavior and never a partial argument object.
-  Existing structural secret redaction remains authoritative: replayable calls
-  may stream the retained exact text, while redacted-replay calls retain only
-  redacted durable text and use the transient admitted source for that one live
-  execution. Bash adds no duplicate log, output echo, command summary,
+
+  Renderer detail, Turn copy, transcript, trajectory, and compaction use one
+  field-aware main-process projection capped at the existing 32,000-character
+  argument-display bound. For an internal-text binding, that projector combines
+  the small skeleton with a verified bounded stream/prefix and length metadata;
+  it never constructs or `JSON.stringify`s the complete stdin-bearing value.
+  Payload-backed renderer reads move from `thread/context/read` to one dedicated
+  Item-bound `thread/item/arguments/read` response; the old context read refuses
+  tool-argument storage envelopes. Raw envelopes, internal references, and
+  complete stdin never cross IPC. Renderer caching and formatting receive only
+  the bounded value. Bash adds no duplicate log, output echo, command summary,
   environment copy, or temporary input file.
 
 The private representation has one narrow shape. A
@@ -135,10 +155,11 @@ the same declared internal-text reference, making the Tool Item the retention
 owner. The new reference is not a `ThreadItemOutputReference`, does not carry a
 presentation summary or filename, and is unavailable through output, resource,
 file-tool, or model-facing read APIs. The raw storage envelope remains private;
-history and detail readers receive either the rehydrated logical arguments or
-typed unavailability, never the binding metadata. Existing Thread-private
-publication mechanics may be shared, but input text and tool output remain
-distinct semantic types.
+exact Provider history receives the verified logical arguments, while every
+presentation reader receives only the bounded projection or typed unavailability.
+Neither path exposes binding metadata. Existing Thread-private publication
+mechanics may be shared, but input text and tool output remain distinct semantic
+types.
 
 This is a storage representation split, not a larger generic JSON payload. It
 does not modify any downstream CLI schema, expose a second model-facing input,
@@ -284,8 +305,8 @@ and actual-diff check run again immediately before implementation.
 Expected implementation ownership:
 
 - `src/core/agent/protocol.ts` and `src/core/agent/codec.ts` for the private
-  internal-text reference, compact argument binding, declared dependency, and
-  strict decode contract;
+  internal-text reference, compact argument binding, declared dependency, strict
+  decode contract, and Item-bound bounded-arguments read protocol;
 - `src/core/agent/modelCallHistory.ts`,
   `src/main/agent/runtime/toolCallHistory.ts`, and
   `src/main/agent/runtime/types.ts` for factoring, declaring dependencies, and
@@ -299,6 +320,8 @@ Expected implementation ownership:
   `ThreadTrajectoryProjection.ts`, `TranscriptRenderer.ts`, and
   `TurnLifecycle.ts` for Thread inventory, fork/copy, Retry/rollback,
   reader-facing projection, orphan reconciliation, and deletion;
+- `src/main/agent/ThreadService.ts` for the bounded Item-argument read route and
+  rejection of raw tool-argument context reads;
 - `src/main/agent/capabilities/agentLocalTools.ts` for the public parameter,
   byte admission, foreground writer, and background rejection;
 - `src/main/agent/capabilities/agentCapabilities.ts` for the single parsed
@@ -306,8 +329,13 @@ Expected implementation ownership:
 - `src/main/agent/capabilities/subagentToolPolicy.ts` and
   `src/main/agent/runtime/ToolRuntime.ts` for consuming that same classification
   at constrained execution;
-- `docs/spec/agent-tool-design.md` and
-  `docs/spec/agent-integration.md` for current behavior;
+- `src/renderer/agent/store/threadStore.ts` for consuming and caching only the
+  already-bounded main-process projection, with no Agent component or document
+  renderer change;
+- `docs/spec/agent-core.md`, `docs/spec/agent-integration.md`,
+  `docs/spec/agent-tool-design.md`, and `docs/spec/agent-tool-permissions.md` for
+  canonical argument ownership, dependency/presentation boundaries, stdin
+  classification, and current behavior;
 - `tests/core/agentLocalTools.test.ts`,
   `tests/core/agentCapabilities.test.ts`,
   `tests/core/agentSubagentToolPolicy.test.ts`, and one focused existing
@@ -315,15 +343,18 @@ Expected implementation ownership:
 - `tests/core/agentToolPayloadStore.test.ts` and the focused Core codec/history,
   context-dependency, ContextProjector/compaction, ThreadService,
   transcript/trajectory, and fork tests that prove exact rehydration and
-  lifecycle settlement; and
+  lifecycle settlement;
+- `tests/renderer/threadStore.test.ts` for bounded-before-IPC argument detail and
+  cache behavior; and
 - `tests/core/agentToolCatalogStability.test.ts` and
   `tests/fixtures/__snapshots__/agentToolCatalogStability.test.ts.snap` for the
   intentional public Bash schema addition.
 
 This feature does not modify `src/core/agent/tools.ts`, Core document protocol,
-file tools, Outline code or fixtures, another built-in Skill, renderer code,
-dependency manifests, workflows, `docs/TASKS.md`, or `CHANGELOG.md`. The named
-Core Agent protocol, codec, history, dependency, payload-store, lifecycle, and
+file tools, Outline code or fixtures, another built-in Skill, Agent UI
+components, document renderer code, dependency manifests, workflows,
+`docs/TASKS.md`, or `CHANGELOG.md`. The named Core Agent protocol, codec,
+history, dependency, payload-store, lifecycle, renderer-store, spec, and
 schema-snapshot files are the complete intentional expansion from the previous
 draft. If a new action kind, public capability protocol, generic result
 projection, larger context budget, ContentStore/file-resource integration, or
@@ -335,10 +366,12 @@ decision to PM review instead of widening this PR.
 There are no unresolved product questions. Ratification accepts the optional
 well-formed-Unicode string field with a 64 MiB raw UTF-8 bound, Thread-internal
 text factoring for payload-backed Bash calls, unchanged 16 MiB context-payload
-budget, exact three-form Outline data registry, four-state consumer model,
-constrained-policy failure, Full Access behavior, and foreground-only lifecycle
-together. Exact private helper names and the focused integration test file are
-reversible implementation details selected from the rebased tree.
+budget, admission-time durable secret scanning, exact canonical replay, bounded
+main-process presentation, exact three-form Outline data registry, four-state
+consumer model, constrained-policy failure, Full Access behavior, and
+foreground-only lifecycle together. Exact private helper names and the focused
+integration test file are reversible implementation details selected from the
+rebased tree.
 
 ## Acceptance criteria
 
@@ -357,7 +390,9 @@ reversible implementation details selected from the rebased tree.
   expressions, Unicode, NUL, and candidate heredoc delimiters arrive with the
   exact UTF-8 bytes and execute no payload content as shell syntax. Unpaired
   surrogates fail before persistence or spawn rather than changing on UTF-8
-  round-trip.
+  round-trip. A private key and token inside stdin reach the child unchanged and
+  do not change consumer classification, while durable internal text and history
+  contain only the redacted value and record `/stdin` redaction evidence.
 - [ ] **AC-4:** Complete write, forced backpressure, early child exit, stdin
   error, abort, and timeout each settle once, close or stop the writer, leave no
   unhandled stream error, and preserve native exit/interruption evidence.
@@ -405,16 +440,21 @@ reversible implementation details selected from the rebased tree.
   lifecycle tests prove interrupted publication, fork/copy, child inheritance,
   Retry, rollback, pruning, deletion, startup orphan reconciliation, missing
   text, corrupt text, undeclared or duplicate bindings, and redacted-replay
-  behavior.
+  behavior. A maximum admitted stdin fixture proves provider replay can resolve
+  exact arguments while renderer detail, Turn copy, transcript, trajectory, and
+  compaction each receive at most 32,000 characters without moving binding
+  metadata or complete stdin across IPC and without whole-value renderer
+  stringification.
 - [ ] **AC-13:** Focused `agentLocalTools`, `agentCapabilities`,
   `agentSubagentToolPolicy`, `agentToolPayloadStore`, Core codec/history and
-  context-dependency, Thread lifecycle, catalog-stability, and
-  ToolRuntime/Thread integration tests pass.
-- [ ] **AC-14:** `bun run typecheck`, `bun run test:core`, `bun run docs:check`,
-  and `git diff --check` pass.
+  context-dependency, Thread lifecycle/projection, renderer `threadStore`,
+  catalog-stability, and ToolRuntime/Thread integration tests pass.
+- [ ] **AC-14:** `bun run typecheck`, `bun run test:core`,
+  `bun run test:renderer`, `bun run docs:check`, and `git diff --check` pass.
 - [ ] **AC-15:** An executable diff allow-list proves the PR changes only the
   named Core Agent protocol/codec/history/dependency, generic
-  Bash/capability/policy/runtime, Thread payload/lifecycle owners, specs, focused
-  tests, and Bash schema snapshot above; it contains no Outline, file-tool,
-  ContentStore, renderer, Core document protocol or action-kind, dependency,
-  workflow, board, or changelog change.
+  Bash/capability/policy/runtime, Thread payload/lifecycle/projection owners, the
+  single Agent renderer store adapter, four named specs, focused tests, and Bash
+  schema snapshot above; it contains no Outline, file-tool, ContentStore, Agent
+  UI component, document renderer, Core document protocol or action-kind,
+  dependency, workflow, board, or changelog change.
