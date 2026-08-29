@@ -2,14 +2,15 @@
 
 **Shape:** (a) ONE complete feature in one PR after the reference URI foundation
 and neutral ContentStore/Outline consumer (shipped in #590 and #584), the complete
-PR-I interface/baseline unit of `outline-source-resource-unification`, and #587
-land. Its visual-only PR-F preview-first enhancement is independently orderable
-and is not an Agent consumer dependency. The Agent resource-reference cutover,
-conversation workspace and final-citation contract, and delegated-handoff
-projection are foundation-first build stages in this PR. #584 separately
-established the shared exact-revision store as part of its complete Outliner
-Runtime feature; #587 remains a complete composer-history feature over an opaque
-current resource handle.
+PR-I interface/baseline unit of `outline-source-resource-unification`. The
+Composer input-history contract established by #587 is already part of the
+baseline rather than a future delivery dependency. The visual-only PR-F
+preview-first enhancement is independently orderable and is not an Agent
+consumer dependency. The Agent resource-reference cutover, conversation
+workspace and final-citation contract, and delegated-handoff projection are
+foundation-first build stages in this PR. #584 separately established the shared
+exact-revision store as part of its complete Outliner Runtime feature; the #587
+baseline keeps Composer history over an opaque current resource handle.
 
 ## Goal
 
@@ -167,7 +168,8 @@ version and availability semantics?
   working directory. Explicit project/automation bindings remain supported.
 - **CON-4:** Read-only delegated roles must complete without filesystem writes.
 - **CON-5:** #584 shipped as the first production consumer of the exact-revision
-  kernel; #587 must not wait for the later Agent reference cutover.
+  kernel. Composer input history established by #587 keeps its current resource
+  handle opaque until this plan's final Agent reference cutover.
 - **CON-6:** Tenon currently has one local user profile. A future multi-profile,
   shared-machine, or remote-user product must introduce its own principal
   boundary rather than repurposing Thread identity as one.
@@ -447,9 +449,10 @@ registry.
 
 #### Build Stage 1: Agent Resource-Reference Cutover
 
-After #587 lands, reuse the #584 `src/content/` exact-revision store. Add
-the Agent resource-reference store and resolver; replace binary-resource methods
-in `ToolPayloadStore`,
+Starting from #587's Composer input-history contract, preserve current resource
+handles opaquely and reuse the #584 `src/content/` exact-revision store. Add the
+Agent resource-reference store and resolver; replace binary-resource methods in
+`ToolPayloadStore`,
 `ThreadResourceOps`, and `ToolArtifactSink`; and cut over Composer admissions,
 large paste, durable Outline references, generated images, retained web/Browser
 Pilot/Skill/tool files, and provider materialization.
@@ -601,17 +604,16 @@ The dependency order is fixed where an edge is stated:
    `outline-source-resource-unification`; it establishes ordinary Nodes with
    ordered Source values as the complete usable Outline consumer. Its PR-F
    preview-first visual enhancement has no dependency edge to this plan;
-6. #587 independently finishes Composer history over the current opaque resource
-   handle without inventing the later store;
-7. after Source PR-I and #587 are on `main`, implement this
-   plan's three internal stages in one complete PR; and
-8. implement `agent-cross-thread-reference` only after this plan's resolver,
+6. after Source PR-I is on `main`, implement this plan's three internal stages in
+   one complete PR while consuming the #587 Composer history baseline; and
+7. implement `agent-cross-thread-reference` only after this plan's resolver,
    working-set, and canonical citation contracts are on `main`.
 
 #584 deliberately did not implement Agent resource records, final citations, or
 handoff.
-#587 must not create a new physical store, inspect its digest-shaped handle, or
-add physical copies for history navigation.
+The #587 Composer-history baseline keeps its current resource handle opaque. This
+plan does not inspect that digest-shaped handle, add history-navigation byte
+copies, or introduce a separate physical store before the final cutover.
 
 Verification includes:
 
@@ -716,12 +718,8 @@ decision.
 
 ## Implementation Checklist
 
-- [x] Implement the neutral exact-revision/retention-anchor kernel in #584
-  and align Outline AssetRecords without public physical authority.
-- [ ] Consume the shipped Source-backed ordinary-Node/AssetRecord relationship;
+- [ ] Consume the Source-backed ordinary-Node/AssetRecord relationship;
   do not create or restore Outline `image`/`attachment` Node variants.
-- [ ] Rebase #587 on the #584 foundation and preserve current Agent handles
-  opaquely with no navigation-time byte copy or later-store implementation.
 - [ ] Add Agent resource-reference records, canonical links, resolver intents,
   exact capture, materialization, reconciliation, and focused crash/concurrency
   tests; delete per-Thread binary storage and digest-bearing public handles.
