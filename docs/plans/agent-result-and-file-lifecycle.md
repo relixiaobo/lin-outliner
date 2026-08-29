@@ -1,13 +1,16 @@
 # Agent Result And Resource Reference Lifecycle
 
-**Shape:** (a) ONE complete feature in one PR after the reference URI foundation,
-neutral ContentStore/Outline consumer, and Composer history shipped in #590,
-#584, and #587. The Agent resource-reference
-cutover, conversation workspace and final-citation contract, and delegated-
-handoff projection are foundation-first build stages in that PR. #584 separately
-established the shared exact-revision store as part of its complete Outliner
-Runtime feature; #587 shipped as a complete composer-history feature over an
-opaque current resource handle.
+**Shape:** (a) ONE complete feature in one PR after the reference URI foundation
+and neutral ContentStore/Outline consumer (shipped in #590 and #584), the complete
+PR-I interface/baseline unit of `outline-source-resource-unification`. The
+Composer input-history contract established by #587 is already part of the
+baseline rather than a future delivery dependency. The visual-only PR-F
+preview-first enhancement is independently orderable and is not an Agent
+consumer dependency. The Agent resource-reference cutover, conversation
+workspace and final-citation contract, and delegated-handoff projection are
+foundation-first build stages in this PR. #584 separately established the shared
+exact-revision store as part of its complete Outliner Runtime feature; the #587
+baseline keeps Composer history over an opaque current resource handle.
 
 ## Goal
 
@@ -104,8 +107,9 @@ version and availability semantics?
 - **FR-5:** Derive final-citation requests only from unescaped
   `[[file:///...]]` reference URIs in terminal assistant text. Persist Host
   binding metadata without rewriting the model-authored text.
-- **FR-6:** Capture exact revisions when stable replay is required: Outline
-  attachments, submitted Composer bytes without a durable source, submitted
+- **FR-6:** Capture exact revisions when stable replay is required: managed
+  Outline Source assets, submitted Composer bytes without a durable source,
+  submitted
   local attachments, canonical generated/web/Browser Pilot/Skill/tool file
   results, final regular-file delivery, and cross-domain reference creation.
 - **FR-7:** Give each ordinary root conversation an isolated managed workspace;
@@ -164,7 +168,8 @@ version and availability semantics?
   working directory. Explicit project/automation bindings remain supported.
 - **CON-4:** Read-only delegated roles must complete without filesystem writes.
 - **CON-5:** #584 shipped as the first production consumer of the exact-revision
-  kernel; #587 must not wait for the later Agent reference cutover.
+  kernel. Composer input history established by #587 keeps its current resource
+  handle opaque until this plan's final Agent reference cutover.
 - **CON-6:** Tenon currently has one local user profile. A future multi-profile,
   shared-machine, or remote-user product must introduce its own principal
   boundary rather than repurposing Thread identity as one.
@@ -194,6 +199,14 @@ Source representation ------------------------+--> scoped filesystem location
 An Outline AssetRecord is Outline's canonical reference. An Agent
 `ResourceReferenceRecord` is a Host-private Agent reference carrying display
 metadata and zero or one representation of each kind:
+
+After `outline-source-resource-unification` PR-I, an ordinary Outline Node relates
+to zero or more AssetRecords through its ordered
+`field:source` URI values. Every managed value is independently live whether or
+not it is the locally selected preview. The AssetRecord stays Outline's canonical
+exact-revision metadata record; the Node has no special `image`/`attachment` type
+or asset scalar. Cross-domain addition creates or appends that Source-backed
+ordinary Node relationship and never restores the retired shape.
 
 ```ts
 interface SourceLocator {
@@ -411,7 +424,7 @@ Every known producer and consumer follows the same reference rules:
 | `file_write`, `file_edit`, shell/Skill file in execution directory | source in the current working set | none until submitted, retained by a canonical tool result, or finally cited | current-work intent resolves source; container cleanup removes it |
 | Composer picker/drop/local mention | source while selecting when available | successful submission captures an exact revision and links the Item | replay/model use resolves revision; Reveal/Edit Source resolves source if retained |
 | Clipboard image, browser `File`, large paste | transient bytes | capture during bounded admission | draft/Item links retain revision; discard releases its link |
-| Outline attachment/imported media | source or incoming bytes | capture before AssetRecord settlement | Outline replay resolves revision; source locator is optional metadata |
+| Managed Outline Source/imported media | source or incoming bytes | capture before AssetRecord settlement, then commit an ordinary Node with its managed Source URI | Outline preview/replay resolves the AssetRecord revision; source locator is optional metadata |
 | Remote URL | external link or fetch input, not a filesystem source locator | capture and create a resource reference only when the product action requires stable/offline bytes | ordinary link opening follows URL policy; replayable bytes resolve through the exact revision |
 | Generated image, retained web binary/image | scratch/transient bytes | canonical tool result captures and links | observation materializes from exact revision |
 | Browser Pilot screenshot/download | scratch or execution output | capture only when retained by canonical tool result or final citation | uncaptured output follows scratch/operation cleanup |
@@ -436,15 +449,18 @@ registry.
 
 #### Build Stage 1: Agent Resource-Reference Cutover
 
-Reuse #587's history contract and the #584 `src/content/` exact-revision store. Add
-the Agent resource-reference store and resolver; replace binary-resource methods
-in `ToolPayloadStore`,
+Starting from #587's Composer input-history contract, preserve current resource
+handles opaquely and reuse the #584 `src/content/` exact-revision store. Add the
+Agent resource-reference store and resolver; replace binary-resource methods in
+`ToolPayloadStore`,
 `ThreadResourceOps`, and `ToolArtifactSink`; and cut over Composer admissions,
 large paste, durable Outline references, generated images, retained web/Browser
 Pilot/Skill/tool files, and provider materialization.
 
 Canonical Items, settled drafts, tool results, history, fork, Retry, rollback,
-deletion, and quota retain reference links rather than physical copies. Remove
+deletion, and quota retain reference links rather than physical copies. Adding a
+result to Outline uses the shipped Source-backed ordinary-Node constructor and
+its AssetRecord settlement boundary. Remove
 digest-bearing public/renderer handles and all per-Thread binary directories.
 Keep internal text/context/diagnostic payloads, mutable execution files,
 installed tools, caches, and transient materializations outside ContentStore.
@@ -575,24 +591,29 @@ exhausted-settlement degradation.
 
 ### 8. Sequencing And Verification
 
-The dependency order is fixed:
+The dependency order is fixed where an edge is stated:
 
 1. merge this architecture plan;
 2. use the reference URI foundation shipped in #590; its cutover deleted the
    retired marker grammar;
 3. #584 shipped neutral exact revisions plus Outline AssetRecord references and
    retention anchors;
-4. #587 shipped Composer history over the current opaque resource handle without
-   inventing the later store; and
-5. with those prerequisites on `main`, implement this plan's three internal
-   stages in one complete PR; and
-6. implement `agent-cross-thread-reference` only after this plan's resolver,
+4. use #592's final Outliner Runtime and preview architecture as the Outline
+   consumer baseline;
+5. land the human-led PR-I interface and truthful desktop baseline from
+   `outline-source-resource-unification`; it establishes ordinary Nodes with
+   ordered Source values as the complete usable Outline consumer. Its PR-F
+   preview-first visual enhancement has no dependency edge to this plan;
+6. after Source PR-I is on `main`, implement this plan's three internal stages in
+   one complete PR while consuming the #587 Composer history baseline; and
+7. implement `agent-cross-thread-reference` only after this plan's resolver,
    working-set, and canonical citation contracts are on `main`.
 
 #584 deliberately did not implement Agent resource records, final citations, or
 handoff.
-#587 created no new physical store, did not inspect its digest-shaped handle,
-and added no physical copies for history navigation.
+The #587 Composer-history baseline keeps its current resource handle opaque. This
+plan does not inspect that digest-shaped handle, add history-navigation byte
+copies, or introduce a separate physical store before the final cutover.
 
 Verification includes:
 
@@ -697,10 +718,8 @@ decision.
 
 ## Implementation Checklist
 
-- [x] Implement the neutral exact-revision/retention-anchor kernel in #584
-  and align Outline AssetRecords without public physical authority.
-- [x] Rebase #587 on the #584 foundation and preserve current Agent handles
-  opaquely with no navigation-time byte copy or later-store implementation.
+- [ ] Consume the Source-backed ordinary-Node/AssetRecord relationship;
+  do not create or restore Outline `image`/`attachment` Node variants.
 - [ ] Add Agent resource-reference records, canonical links, resolver intents,
   exact capture, materialization, reconciliation, and focused crash/concurrency
   tests; delete per-Thread binary storage and digest-bearing public handles.

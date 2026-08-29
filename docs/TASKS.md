@@ -45,8 +45,10 @@ theme-section entry below; this list is the ordering, not a second record):
   over the neutral ContentStore; desktop and the `outline` CLI are equal
   versioned clients, and the old main-process authority, native Node tools,
   import writer, and asset paths are retired. Agent Composer history then shipped
-  in #587; `agent-result-and-file-lifecycle` is the next dependency-cleared step
-  after a fresh collision check.
+  in #587. [`outline-source-resource-unification`](plans/outline-source-resource-unification.md)
+  is next: its PR-I establishes the final Source protocol and complete desktop
+  baseline. `agent-result-and-file-lifecycle` follows PR-I after a fresh collision
+  check; the visual-only Source PR-F is independently orderable.
 - **Lane A — build-ready quick wins** (fast-track, parallelize freely; small items
   don't count against the review-queue cap): `floating-toolbar-polish` (**unblocked
   2026-08-10** — its `core/types.ts` dependency landed with #510; rebase and go),
@@ -187,8 +189,10 @@ before any directional/security-sensitive build.
   The PM-ratified pre-release cut manually resets installed and clone-scoped
   stores; no migration, legacy reader, or automatic deletion path ships.
   Sequence is fixed: reference-URI unification shipped #590, the neutral
-  ContentStore/Outline consumer shipped #584, and Composer history shipped #587.
-  Recheck the live collision surface, then start this implementation.
+  ContentStore/Outline consumer shipped #584, and Composer history shipped #587;
+  Source PR-I from `outline-source-resource-unification` lands next and is the
+  only Source dependency. Recheck the live collision surface after PR-I, then
+  start this implementation without waiting for visual-only Source PR-F.
 - **[agent-cross-thread-reference](plans/agent-cross-thread-reference.md)**
   (`draft`; plan PR #589; one complete feature PR after the file lifecycle) — let users mention
   prior conversations through `[[thread://<uuidv7>]]` and let Agents search/read
@@ -624,6 +628,15 @@ The file-node + preview foundation shipped — `file-attachments` (#204/#206), `
 F1–F4 (#224/#229/#237/#238), `file-preview-unification` (#262), and `file-as-node` (#241) are all
 archived `done` (see Recently completed). Remaining active work:
 
+- **[outline-source-resource-unification](plans/outline-source-resource-unification.md)**
+  (P1, `draft`; plan PR #593, PM-ratified 2026-08-29; shape (b), two complete
+  units) — replace Outline's separate URL/image/file shapes with ordinary content
+  Nodes plus one protected ordered `uri` Source field. PR-I owns the final
+  `SourceValueNode`, Source commands, convergent CRDT semantics, exact-file grants,
+  special-Node retirement, and a complete content-first desktop management
+  surface; PR-F independently adds the preview-first visual composition without
+  changing shared protocol. `agent-result-and-file-lifecycle` depends on PR-I
+  only.
 - **file-preview** (P2, plan refreshed PR #209) — in-app preview panel for every file-shaped
   source via a source-owned `PreviewTarget` (`local-file` / `asset` / `agent-payload` / `url`):
   one shell + renderer registry, per-source main-process byte authority. **PR 1 shipped (#210,
