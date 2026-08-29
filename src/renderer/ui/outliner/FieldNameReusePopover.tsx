@@ -1,15 +1,17 @@
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useLayoutEffect, useRef, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import type { FieldReuseCandidate } from '../interactions/fieldReuseCandidates';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { PopoverBulletIcon, PopoverEmpty, PopoverListbox, PopoverListItem } from './PopoverList';
 import { useT } from '../../i18n/I18nProvider';
+import { usePopoverSelection } from './usePopoverSelection';
 
 interface FieldNameReusePopoverProps {
   anchorRef: RefObject<HTMLElement | null>;
   candidates: FieldReuseCandidate[];
   open: boolean;
+  query: string;
   onOpenChange: (open: boolean) => void;
   onSelect: (candidate: FieldReuseCandidate) => void;
 }
@@ -25,7 +27,6 @@ interface FieldNameReusePopoverProps {
 export function FieldNameReusePopover(props: FieldNameReusePopoverProps) {
   const tf = useT().outliner.field;
   const count = props.candidates.length;
-  const [activeIndex, setActiveIndex] = useState(-1);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const menuStyle = useAnchoredOverlay(menuRef, {
     anchorRef: props.anchorRef,
@@ -35,16 +36,32 @@ export function FieldNameReusePopover(props: FieldNameReusePopoverProps) {
     placement: 'bottom-start',
     width: 280,
   });
+  const [activeIndex, setActiveIndex] = usePopoverSelection({
+    initialIndex: -1,
+    itemCount: count,
+    listRef: menuRef,
+    open: props.open,
+    selectionKey: `${props.query}:${props.candidates.map((candidate) => candidate.id).join('|')}`,
+  });
 
-  // Reset the highlight whenever the candidate set changes under the cursor.
-  useEffect(() => {
-    setActiveIndex(-1);
-  }, [count]);
+  const stateRef = useRef({
+    open: props.open,
+    count,
+    activeIndex,
+    candidates: props.candidates,
+    onOpenChange: props.onOpenChange,
+    onSelect: props.onSelect,
+  });
+  stateRef.current = {
+    open: props.open,
+    count,
+    activeIndex,
+    candidates: props.candidates,
+    onOpenChange: props.onOpenChange,
+    onSelect: props.onSelect,
+  };
 
-  const stateRef = useRef({ open: props.open, count, activeIndex, candidates: props.candidates });
-  stateRef.current = { open: props.open, count, activeIndex, candidates: props.candidates };
-
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!props.open) return;
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (isImeComposingEvent(event)) return;
@@ -53,7 +70,7 @@ export function FieldNameReusePopover(props: FieldNameReusePopoverProps) {
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopPropagation();
-        props.onOpenChange(false);
+        state.onOpenChange(false);
         return;
       }
       if (event.key === 'ArrowDown') {
@@ -77,7 +94,7 @@ export function FieldNameReusePopover(props: FieldNameReusePopoverProps) {
       if (!candidate) return;
       event.preventDefault();
       event.stopPropagation();
-      props.onSelect(candidate);
+      state.onSelect(candidate);
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);

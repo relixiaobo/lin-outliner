@@ -12,6 +12,7 @@ import {
   idsAllowedForStructuralOutdentBatch,
   idsEnabledForSelectionAction,
   planSelectionDelete,
+  planSelectionSiblingMoves,
   runSelectionDelete,
   runSelectionDuplicate,
   runSelectionMove,
@@ -277,5 +278,37 @@ describe('selection batch action policy', () => {
       byId,
       rowMap,
     })).toBe(commandRunnerNoop());
+  });
+
+  test('plans stable optimistic sibling placements for a selected block', () => {
+    const byId = byIdOf([
+      node('root', { children: ['a', 'b', 'c', 'd'] }),
+      node('a', { parentId: 'root' }),
+      node('b', { parentId: 'root' }),
+      node('c', { parentId: 'root' }),
+      node('d', { parentId: 'root' }),
+    ]);
+    const rowMap = selectableRowMap(buildSelectableRows('root', byId, { expanded: new Set() }));
+
+    expect(planSelectionSiblingMoves({
+      ids: ['b', 'c'],
+      direction: 'up',
+      panelRootId: 'root',
+      byId,
+      rowMap,
+    })).toEqual([
+      { id: 'b', parentId: 'root', beforeId: 'a' },
+      { id: 'c', parentId: 'root', afterId: 'b' },
+    ]);
+    expect(planSelectionSiblingMoves({
+      ids: ['b', 'c'],
+      direction: 'down',
+      panelRootId: 'root',
+      byId,
+      rowMap,
+    })).toEqual([
+      { id: 'b', parentId: 'root', afterId: 'd' },
+      { id: 'c', parentId: 'root', afterId: 'b' },
+    ]);
   });
 });

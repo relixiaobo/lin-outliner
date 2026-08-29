@@ -63,10 +63,24 @@ deduplicated host-only manifest returned by its tool. The manifest is never copi
 the provider `ToolResultMessage` and is independent of `outputRef`, which remains the
 complete textual/JSON result.
 
-Every `userMessage` stores its admission-time `acceptedAt`. The initial Item uses
-the Turn start instant; steering records one instant for both Item persistence and
-recorder completion. Replay and forks preserve that timestamp instead of substituting
-the current clock.
+Every `userMessage` stores its admission-time `acceptedAt` and one required semantic
+`ThreadInputAuthor`. The author is exactly `reader`, `agent(threadId)`, `host`, or
+`feature(feature, optional ref)`; there is no unclassified variant. `userMessage`
+continues to mean provider role, while author names who is accountable for the input's
+words. `ItemProvenance` remains physical copy lineage and `TurnTrigger` remains the
+reason a Turn began. No consumer infers one of these four facts from another.
+
+Main is the author authority. Renderer start and steer requests carry no author and
+their dedicated lifecycle paths mint `reader`. Privileged start and steer requests
+must supply an explicit non-reader author: Agent messages name the source Thread,
+host framing uses `host`, and Automation, Goal, Memory, and other generated prompts
+name their feature and an existing stable reference when available. The common Item
+constructor has no default. Retry replays each source Item's exact author, and fork
+copies it with the rest of the canonical Item.
+
+The initial Item uses the Turn start instant for `acceptedAt`; steering records one
+instant for both Item persistence and recorder completion. Replay and forks preserve
+that timestamp instead of substituting the current clock.
 
 Context Items are the canonical protocol for hidden model input. `contextEvidence`
 names one semantic kind and a content-addressed payload; `contextReset` names an exact
@@ -465,7 +479,7 @@ or attempts to undo external effects. Any future world-state revert is a
 separate explicit capability with preview, conflict detection, and its own audit
 record.
 
-Forked user Items retain `acceptedAt`. Context cursors are rewritten to the copied
+Forked user Items retain `author` and `acceptedAt`. Context cursors are rewritten to the copied
 Turn/Item identities. Every context payload and every dependency listed by the owning
 Item's `contextRefs`, `resourceRefs`, and `outputRefs` is copied into the fork before
 publication, including a tool Item's canonical argument payload; failure deletes the
@@ -542,6 +556,16 @@ degrades (A12). Skipping an undecodable Item is not available as a fallback: it 
 change a Turn's Item count against the terminal-Turn mutation check, and the projected
 rollout snapshot is what `restoreMissing` writes back before `rebuildThread` cascades
 the old rows away, so omitting a row there destroys its last copy.
+
+Admission, rollout append/read, projection apply/read/rebuild, rollout restoration,
+Retry, and fork all use the same strict Item decoder. A missing or invalid
+`userMessage.author` is therefore unreadable new-format history and follows the Thread
+quarantine below; no persisted decoder recognizes the superseded authorless shape,
+infers an author, or rewrites rollout or projection data. Before this pre-release
+cutover is verified, every Tenon process is stopped and the installed
+`~/Library/Application Support/Tenon/` plus clone-scoped `~/.lin-outliner-*` stores
+are reset manually. Startup never detects or deletes those stores automatically, and
+fresh development and packaged stores write only required-author Items.
 
 Startup therefore decides readability per Thread. After reconciling each Thread,
 initialization pages that Thread's complete recorded history and discards it — decoding

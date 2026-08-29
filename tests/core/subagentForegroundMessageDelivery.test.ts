@@ -322,7 +322,7 @@ describe('foreground Agent main-message delivery', () => {
             ? 'second-turn'
             : null,
         isActiveTurnFinishing: () => false,
-        steerTurn: async () => { steerCalls += 1; },
+        steerPrivilegedTurn: async () => { steerCalls += 1; },
         interruptTurn: async () => { interruptCalls += 1; },
       } as never,
       {} as never,
@@ -417,7 +417,7 @@ describe('foreground Agent main-message delivery', () => {
         requireActiveTurn: () => undefined,
         activeTurnId: () => 'first-turn',
         isActiveTurnFinishing: () => false,
-        steerTurn: async () => { steerCalls += 1; },
+        steerPrivilegedTurn: async () => { steerCalls += 1; },
         interruptTurn: async () => { interruptCalls += 1; },
       } as never,
       {} as never,
@@ -2533,7 +2533,7 @@ describe('foreground Agent main-message delivery', () => {
       hasActiveTurn: (threadId: string) => activeAgents.has(threadId),
       activeTurnId: (threadId: string) => threadId === PARENT_ID && parentActive ? 'parent-turn' : null,
       isActiveTurnFinishing: () => false,
-      steerTurn: async (request: { readonly clientUserMessageId?: string }) => {
+      steerPrivilegedTurn: async (request: { readonly clientUserMessageId?: string }) => {
         deliveredIds.push(request.clientUserMessageId ?? '');
       },
     };
@@ -2657,7 +2657,7 @@ describe('foreground Agent main-message delivery', () => {
         hasActiveTurn: () => false,
         activeTurnId: (threadId: string) => threadId === PARENT_ID ? 'parent-turn' : null,
         isActiveTurnFinishing: () => false,
-        steerTurn: async (request: { readonly clientUserMessageId?: string }) => {
+        steerPrivilegedTurn: async (request: { readonly clientUserMessageId?: string }) => {
           delivered.push(request.clientUserMessageId ?? '');
         },
       } as never,

@@ -15,13 +15,25 @@ import {
 import { api } from '../../api/client';
 import type { NodeId, NodeProjection } from '../../api/types';
 import { freshNodeId } from '../../../core/nodeId';
-import { outlinerChildParentId, type DocumentIndex, type UiState } from '../../state/document';
+import {
+  outlinerChildParentId,
+  type DocumentIndex,
+  type PendingStructuralChange,
+  type UiState,
+} from '../../state/document';
 import {
   buildVisualRowsIncrementally,
   type VisualRow,
   type VisualRowsSnapshot,
 } from '../../state/visualRows';
+import {
+  applyPendingRowPlacement,
+  applyPendingRowsPlacement,
+  pendingStructuralRowIsDraft,
+  resolvePendingRowPlacement,
+} from '../../state/trailingDraftPlacement';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
+import type { FieldValueContext } from '../fields/fieldValueEditors';
 import { outlinerChildren } from '../shared';
 import { hiddenFieldKey, readViewConfig } from './row-model';
 import { RENDER_PROBE_ENABLED } from './renderProbe';
@@ -32,24 +44,13 @@ import { FilteredOutHeading, HiddenFieldReveal, ViewGroupHeading } from './Outli
 import { OutlinerEmptyState } from './OutlinerEmptyState';
 import { OutlinerTableView } from './OutlinerTableView';
 import { IndentGuide } from './IndentGuide';
+import { shouldMintNextDraftId, type PendingDraftPolicy } from './draftRow';
 import {
   captureDisclosureScrollAnchor,
   nearestScrollContainer,
   usePendingDisclosureAnchor,
 } from '../interactions/disclosureScrollAnchor';
 import { MAX_OUTLINE_INDENT_DEPTH } from '../workspaceResponsiveLayout';
-
-// The flat renderer is the default outliner path. The old recursive renderer is
-// retained as a reload-scoped diagnostic fallback while parity work settles.
-function readRecursiveFallbackFlag(): boolean {
-  try {
-    return typeof window !== 'undefined' && window.localStorage.getItem('lin:recursive-outliner') === '1';
-  } catch {
-    return false;
-  }
-}
-
-export const RECURSIVE_OUTLINER_FALLBACK_ENABLED = readRecursiveFallbackFlag();
 
 // Below this many rows, windowing overhead is not worth it: render the whole flat
 // list in normal flow (rows are direct `.outliner` children, like the recursive
@@ -100,6 +101,122 @@ function descendantEndIndexFor(rows: readonly VisualRow[], rowIndex: number): nu
     endIndex += 1;
   }
   return endIndex;
+}
+
+function insertPendingStructuralChange(
+  rows: readonly VisualRow[],
+  change: PendingStructuralChange | null,
+): readonly VisualRow[] {
+  if (!change) return rows;
+  const sourceIndex = change.sourceParentId
+    ? rows.findIndex((row) => (
+        (row.kind === 'content' || row.kind === 'field')
+        && row.nodeId === change.id
+        && row.parentId === change.sourceParentId
+      ))
+    : -1;
+  const sourceEndIndex = sourceIndex >= 0 ? descendantEndIndexFor(rows, sourceIndex) : sourceIndex;
+  const sourceRows = sourceIndex >= 0 ? rows.slice(sourceIndex, sourceEndIndex) : [];
+  const placementRows = sourceIndex >= 0
+    ? [...rows.slice(0, sourceIndex), ...rows.slice(sourceEndIndex)]
+    : rows;
+  const placement = resolvePendingRowPlacement({
+    rows: placementRows,
+    change,
+    matches: (row, id, parentId) => (
+      (row.kind === 'content' || row.kind === 'field')
+      && row.nodeId === id
+      && row.parentId === parentId
+    ),
+    fallbackIndex: (currentRows, parentId) => {
+      const index = currentRows.findIndex((row) => (
+        row.kind === 'content' && row.draft && row.parentId === parentId
+      ));
+      return index >= 0 ? index : null;
+    },
+    afterAnchorIndex: (currentRows, anchorIndex) => descendantEndIndexFor(currentRows, anchorIndex),
+  });
+  if (!placement) return rows;
+  const anchor = placement.referenceIndex === null ? undefined : placementRows[placement.referenceIndex];
+  if (!anchor || (anchor.kind !== 'content' && anchor.kind !== 'field')) return rows;
+  const separator = anchor.key.lastIndexOf('>');
+  const key = change.stableRenderKey.current
+    ?? sourceRows[0]?.key
+    ?? (separator >= 0 ? `${anchor.key.slice(0, separator + 1)}${change.id}` : change.id);
+  change.stableRenderKey.current = key;
+  const common = {
+    key,
+    nodeId: change.id,
+    depth: anchor.depth,
+    parentId: change.parentId,
+    referencePath: anchor.referencePath,
+  };
+  const pendingRow: VisualRow = change.presentation === 'field'
+    ? {
+        kind: 'field',
+        ...common,
+        slot: {
+          id: change.id,
+          fieldDefId: change.resolvedFieldDefId?.current ?? `pending-field-def:${change.id}`,
+          source: 'own',
+          entryId: change.id,
+        },
+        isFirstInFieldGroup: true,
+        isLastInFieldGroup: true,
+      }
+    : {
+        kind: 'content',
+        ...common,
+        ...(pendingStructuralRowIsDraft(
+          change,
+          placement.kind === 'insert' || (anchor.kind === 'content' && anchor.draft === true),
+        )
+          ? { draft: true }
+          : {}),
+        afterId: change.afterId,
+      };
+  const placedRows = sourceRows.length <= 1
+    ? applyPendingRowPlacement(placementRows, pendingRow, placement)
+    : (() => {
+        const sourceRoot = sourceRows[0]!;
+        const depthDelta = pendingRow.depth - sourceRoot.depth;
+        const relocatedDescendants = sourceRows.slice(1).map((row) => ({
+          ...row,
+          depth: row.depth + depthDelta,
+        }));
+        return applyPendingRowsPlacement(
+          placementRows,
+          [pendingRow, ...relocatedDescendants],
+          placement,
+        );
+      })();
+  if (!change.originatesFromDraft) return placedRows;
+
+  const nextDraftIndex = placedRows.findIndex((row) => (
+    row.kind === 'content'
+    && row.draft
+    && row.parentId === change.parentId
+    && row.nodeId !== change.id
+  ));
+  if (nextDraftIndex < 0) return placedRows;
+  const nextDraft = placedRows[nextDraftIndex]!;
+  if (nextDraft.kind !== 'content') return placedRows;
+  const withoutNextDraft = [
+    ...placedRows.slice(0, nextDraftIndex),
+    ...placedRows.slice(nextDraftIndex + 1),
+  ];
+  const pendingIndex = withoutNextDraft.findIndex((row) => (
+    (row.kind === 'content' || row.kind === 'field')
+    && row.nodeId === change.id
+    && row.parentId === change.parentId
+  ));
+  if (pendingIndex < 0) return placedRows;
+  const nextDraftPlacement = descendantEndIndexFor(withoutNextDraft, pendingIndex);
+  return [
+    ...withoutNextDraft.slice(0, nextDraftPlacement),
+    { ...nextDraft, afterId: change.id },
+    ...withoutNextDraft.slice(nextDraftPlacement),
+  ];
 }
 
 function rowCanAnchorGuide(row: VisualRow): row is Extract<VisualRow, { kind: 'content' | 'field' }> {
@@ -184,22 +301,46 @@ interface OutlinerFlatViewProps {
   draftPlaceholder?: string;
   // The panel's scroll container (NodePanel's <main>). Windowing measures the
   // flat list's offset within it to decide which rows fall in the viewport.
-  scrollParentRef: RefObject<HTMLElement | null>;
+  scrollParentRef?: RefObject<HTMLElement | null>;
+  // Embedded field values use the same flat structural renderer as body rows.
+  // Only root-level rows route creates through the field command adapter;
+  // descendants remain ordinary outline nodes.
+  fieldValue?: FieldValueContext;
+  draftOwnerKey?: NodeId;
+  pendingDraftPolicy?: PendingDraftPolicy;
+  rowSemanticRole?: 'treeitem' | 'presentation';
+  referencePath?: readonly NodeId[];
+  rootParent?: NodeProjection;
+  suppressRootFieldEntries?: boolean;
+  // Embedded outlines stay in normal flow instead of enabling windowing. They
+  // still use the shared flat-flow shells, measurement, guides, and row keys.
+  embeddedFlow?: boolean;
 }
 
 // Multi-parent trailing-draft id minter. Mirrors useTrailingDraftId, but a single
 // flat view hosts the drafts for many expanded subtrees, so ids are keyed by
 // parent: each parent keeps a stable id until that draft materializes (the id
 // shows up in `byId`), at which point the next draft for that parent is fresh.
-function useFlatDraftIds(byId: Map<NodeId, NodeProjection>): (parentId: NodeId) => NodeId {
+function useFlatDraftIds(
+  byId: Map<NodeId, NodeProjection>,
+  reservedChanges: readonly PendingStructuralChange[],
+  rootParentId: NodeId,
+  rootOwnerKey?: NodeId,
+  rootPendingPolicy: PendingDraftPolicy = 'advance',
+): (parentId: NodeId) => NodeId {
   const mapRef = useRef<Map<NodeId, NodeId>>(new Map());
   return useCallback((parentId: NodeId): NodeId => {
-    const existing = mapRef.current.get(parentId);
-    if (existing && !byId.has(existing)) return existing;
+    const ownerKey = parentId === rootParentId ? rootOwnerKey ?? parentId : parentId;
+    const pendingPolicy = parentId === rootParentId ? rootPendingPolicy : 'advance';
+    const existing = mapRef.current.get(ownerKey);
+    const reserved = existing
+      ? reservedChanges.some((change) => change.parentId === parentId && change.id === existing)
+      : false;
+    if (existing && !shouldMintNextDraftId(existing, byId, reserved, pendingPolicy)) return existing;
     const fresh = freshNodeId();
-    mapRef.current.set(parentId, fresh);
+    mapRef.current.set(ownerKey, fresh);
     return fresh;
-  }, [byId]);
+  }, [byId, reservedChanges, rootOwnerKey, rootParentId, rootPendingPolicy]);
 }
 
 // A measured, absolutely-positioned wrapper for one windowed row. Reports its
@@ -275,11 +416,39 @@ function FlowRowShell({
 }
 
 export function OutlinerFlatView(props: OutlinerFlatViewProps) {
-  const { index, ui } = props;
+  const { ui } = props;
+  const index = useMemo(() => {
+    const rootParent = props.rootParent;
+    if (!rootParent || props.index.byId.get(rootParent.id) === rootParent) return props.index;
+    const byId = new Map(props.index.byId);
+    byId.set(rootParent.id, rootParent);
+    return { ...props.index, byId };
+  }, [props.index, props.rootParent]);
   const byId = index.byId;
   const parent = byId.get(props.parentId);
   const selectionRootId = props.selectionRootId ?? props.rootId;
-  const draftIdFor = useFlatDraftIds(byId);
+  const pendingChanges = useMemo(
+    () => ui.pendingStructuralChanges.filter((change) => (
+      change.panelId === props.panelId && !ui.pendingRemovalIds.has(change.id)
+    )),
+    [props.panelId, ui.pendingRemovalIds, ui.pendingStructuralChanges],
+  );
+  const optimisticIndex = useMemo(() => {
+    const overrides = pendingChanges.flatMap((change) => (
+      change.nodeOverride ? [change.nodeOverride.current] : []
+    ));
+    if (overrides.length === 0) return index;
+    const optimisticById = new Map(index.byId);
+    for (const node of overrides) optimisticById.set(node.id, node);
+    return { ...index, byId: optimisticById };
+  }, [index, pendingChanges]);
+  const draftIdFor = useFlatDraftIds(
+    byId,
+    pendingChanges,
+    props.parentId,
+    props.draftOwnerKey,
+    props.pendingDraftPolicy,
+  );
   const [rootSearchRefreshing, setRootSearchRefreshing] = useState(false);
   const visualRowsSnapshotRef = useRef<VisualRowsSnapshot | null>(null);
 
@@ -298,12 +467,12 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
     ? ui.trailingDraftPlacement
     : null;
 
-  const rows = useMemo(
+  const projectedRows = useMemo(
     () => {
       const snapshot = buildVisualRowsIncrementally(
         visualRowsSnapshotRef.current,
         props.parentId,
-        index,
+        optimisticIndex,
         {
           expanded: ui.expanded,
           expandedHiddenFields: ui.expandedHiddenFields,
@@ -313,7 +482,10 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
           trailingFocusedParentId,
           draftFocusedParentId,
           trailingDraftPlacement,
-          systemFieldContext: { referenceSummary: index.referenceSummary },
+          pendingRemovalIds: ui.pendingRemovalIds,
+          systemFieldContext: { referenceSummary: optimisticIndex.referenceSummary },
+          rootReferencePath: props.referencePath,
+          suppressRootFieldEntries: props.suppressRootFieldEntries,
         },
       );
       visualRowsSnapshotRef.current = snapshot;
@@ -321,7 +493,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
     },
     [
       props.parentId,
-      index,
+      optimisticIndex,
       ui.expanded,
       ui.expandedHiddenFields,
       props.showViewToolbar,
@@ -330,10 +502,21 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
       trailingFocusedParentId,
       draftFocusedParentId,
       trailingDraftPlacement,
+      ui.pendingRemovalIds,
+      props.referencePath,
+      props.suppressRootFieldEntries,
     ],
   );
+  const rows = useMemo(
+    () => pendingChanges.reduce(insertPendingStructuralChange, projectedRows),
+    [pendingChanges, projectedRows],
+  );
+  const optimisticChangesById = useMemo(
+    () => new Map(pendingChanges.map((change) => [change.id, change])),
+    [pendingChanges],
+  );
 
-  const virtualize = rows.length > VIRTUALIZE_MIN_ROWS;
+  const virtualize = !props.embeddedFlow && rows.length > VIRTUALIZE_MIN_ROWS;
   const rootChildCount = useMemo(
     () => rows.reduce((count, row) => {
       if (row.parentId !== props.parentId || row.kind === 'toolbar') return count;
@@ -371,7 +554,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
   const scrollerRef = useRef<HTMLElement | null>(null);
   const resolveScroller = useCallback((): HTMLElement | null => {
     if (scrollerRef.current) return scrollerRef.current;
-    scrollerRef.current = nearestScrollContainer(listRef.current, props.scrollParentRef.current);
+    scrollerRef.current = nearestScrollContainer(listRef.current, props.scrollParentRef?.current);
     return scrollerRef.current;
   }, [props.scrollParentRef]);
 
@@ -614,7 +797,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
 
   // ── Live-search refresh ────────────────────────────────────────────────────
   // A search node recomputes its results whenever they are visible — when it is
-  // the panel root, or an expanded content row. Mirrors OutlinerView's per-node
+  // the panel root, or an expanded content row. This gathers the former per-node
   // effect, gathered across the whole flattened tree.
   const searchParentIds = useMemo(() => {
     const ids = new Set<NodeId>();
@@ -754,6 +937,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
             setDragId={props.setDragId}
             isFirstInFieldGroup={row.isFirstInFieldGroup}
             isLastInFieldGroup={row.isLastInFieldGroup}
+            optimisticChange={optimisticChangesById.get(row.nodeId)}
           />
         );
       case 'content':
@@ -780,8 +964,17 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
             referencePath={row.referencePath}
             draft={row.draft}
             draftAfterId={row.draft ? row.afterId ?? null : undefined}
+            optimisticChange={optimisticChangesById.get(row.nodeId)}
             draftPlaceholder={row.draft && row.parentId === props.parentId ? props.draftPlaceholder : undefined}
-            flat
+            fieldValue={row.parentId === props.parentId ? props.fieldValue : undefined}
+            optionField={row.parentId === props.parentId ? props.fieldValue?.optionField : undefined}
+            onSelectOption={row.parentId === props.parentId && props.fieldValue
+              ? (optionId, id) => props.run(
+                  () => props.fieldValue!.onSelectOption(optionId, id),
+                  { applyFocus: false },
+                )
+              : undefined}
+            semanticRole={row.parentId === props.parentId ? props.rowSemanticRole : undefined}
             onDisclosureToggleAnchor={captureDisclosureAnchor}
           />
         );
@@ -806,7 +999,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
           parent={parent}
           parentId={props.parentId}
           projection={index.projection}
-          rootLevel={props.parentId === props.rootId}
+          rootLevel={props.parentId === props.rootId && !props.fieldValue}
           searchLoading={rootSearchRefreshing}
         />
       </>
@@ -833,7 +1026,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
         parent={parent}
         parentId={props.parentId}
         projection={index.projection}
-        rootLevel={props.parentId === props.rootId}
+        rootLevel={props.parentId === props.rootId && !props.fieldValue}
         searchLoading={rootSearchRefreshing}
       />
     </>

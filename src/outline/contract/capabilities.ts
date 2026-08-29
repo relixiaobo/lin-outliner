@@ -32,6 +32,7 @@ import {
 } from './porcelain';
 import { canonicalSha256 } from './canonical';
 import { OUTLINE_QUERY_OPERATORS } from './queryOperators';
+import { OUTLINE_PRIVATE_RUNTIME_CONTRACT_VERSION } from './version';
 
 export type OutlineCapabilityKind = 'local' | 'read' | 'mutate' | 'observe' | 'asset';
 
@@ -468,7 +469,10 @@ const QUERY_INPUT_COMMANDS = new Set(['find', 'text replace', 'search create', '
 let capabilityContractDigest: string | undefined;
 
 export function outlineCapabilityContractDigest(): string {
-  capabilityContractDigest ??= canonicalSha256(outlineCapabilityManifest());
+  capabilityContractDigest ??= canonicalSha256({
+    capabilities: outlineCapabilityManifest(),
+    privateRuntimeContractVersion: OUTLINE_PRIVATE_RUNTIME_CONTRACT_VERSION,
+  });
   return capabilityContractDigest;
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent, type RefObject } from 'react';
+import { useLayoutEffect, useRef, type KeyboardEvent, type RefObject } from 'react';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { focusableElements } from './focusable';
 
@@ -93,7 +93,7 @@ export function useMenuKeyboard({
   // Restore lifecycle: capture the pre-open focus on open, return focus to the
   // trigger (or that fallback) on close. Keyed on `active` only, so an in-place
   // content swap (`focusKey`) never triggers a spurious restore-then-refocus.
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!active) return undefined;
     const restoreFallback = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     return () => {
@@ -107,7 +107,7 @@ export function useMenuKeyboard({
 
   // Focus-in: pull focus into the surface on open and again whenever `focusKey`
   // changes (content swapped in place), unless a child already holds it.
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!active) return;
     const surface = surfaceRef.current;
     if (!surface) return;

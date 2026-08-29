@@ -7,10 +7,34 @@
  */
 export const ASSET_URL_SCHEME = 'asset';
 export const PREVIEW_LOCAL_URL_SCHEME = 'preview-local';
+const ASSET_URL_HOST = 'local';
 
-/** Build the `asset://<id>` URL a local asset is loaded through. */
+/** Build the URL a local asset is loaded through. */
 export function assetUrl(assetId: string): string {
-  return `${ASSET_URL_SCHEME}://${assetId}`;
+  return `${ASSET_URL_SCHEME}://${ASSET_URL_HOST}/${encodeURIComponent(assetId)}`;
+}
+
+export function assetIdFromUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== `${ASSET_URL_SCHEME}:`
+      || url.hostname !== ASSET_URL_HOST
+      || url.username !== ''
+      || url.password !== ''
+      || url.port !== ''
+      || url.search !== ''
+      || url.hash !== ''
+      || !url.pathname.startsWith('/')
+      || url.pathname.slice(1).includes('/')) {
+      return null;
+    }
+    const assetId = decodeURIComponent(url.pathname.slice(1));
+    return assetId.length > 0 && assetId.length <= 255 && !/[\\/\u0000-\u001f\u007f]/u.test(assetId)
+      ? assetId
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Build the `preview-local://<token>` URL a trusted local-file preview streams through. */

@@ -1,10 +1,14 @@
 import type {
+  AcceptedDesktopChangeSetMutation,
+  ChangeSet,
+  OperationUndoGroup,
   OutlineResponse,
   OutlineStreamRecord,
   WatchRequest,
 } from '../../outline/contract/schemas';
 
 export const OUTLINE_DESKTOP_REQUEST_CHANNEL = 'outline:request';
+export const OUTLINE_DESKTOP_COMMIT_CHANNEL = 'outline:commit';
 export const OUTLINE_DESKTOP_CANCEL_CHANNEL = 'outline:cancel';
 export const OUTLINE_DESKTOP_SUBSCRIBE_CHANNEL = 'outline:subscribe';
 export const OUTLINE_DESKTOP_UNSUBSCRIBE_CHANNEL = 'outline:unsubscribe';
@@ -14,6 +18,12 @@ export interface OutlineDesktopRequest {
   readonly requestId: string;
   readonly command: string;
   readonly input: unknown;
+}
+
+export interface OutlineDesktopCommitRequest {
+  readonly requestId: string;
+  readonly changeSet: ChangeSet;
+  readonly undoGroup?: OperationUndoGroup;
 }
 
 export interface OutlineDesktopSubscription {
@@ -27,6 +37,17 @@ export interface OutlineDesktopStreamMessage {
 }
 
 export type OutlineDesktopResponse = OutlineResponse;
+export type OutlineDesktopCommitResponse = AcceptedDesktopChangeSetMutation;
+
+const DESKTOP_REQUEST_COMMANDS = new Set([
+  'find',
+  'show',
+  'diff',
+  'apply',
+  'undo',
+  'redo',
+  'asset ingest',
+]);
 
 export function decodeOutlineDesktopRequest(value: unknown): OutlineDesktopRequest {
   if (!isRecord(value)
@@ -37,10 +58,31 @@ export function decodeOutlineDesktopRequest(value: unknown): OutlineDesktopReque
     || !Object.hasOwn(value, 'input')) {
     throw new Error('Invalid desktop Outline request.');
   }
+  if (!DESKTOP_REQUEST_COMMANDS.has(value.command)) {
+    throw new Error(`Outline command is unavailable to the desktop renderer: ${value.command}`);
+  }
+  if (value.command === 'asset ingest'
+    && (!isRecord(value.input) || value.input.source !== 'bytes')) {
+    throw new Error('The desktop renderer can ingest Outline assets only from bytes.');
+  }
   return {
     requestId: value.requestId,
     command: value.command,
     input: value.input,
+  };
+}
+
+export function decodeOutlineDesktopCommitRequest(value: unknown): OutlineDesktopCommitRequest {
+  if (!isRecord(value)
+    || !validDesktopId(value.requestId)
+    || !isRecord(value.changeSet)
+    || (value.undoGroup !== undefined && !isRecord(value.undoGroup))) {
+    throw new Error('Invalid desktop Outline commit request.');
+  }
+  return {
+    requestId: value.requestId,
+    changeSet: value.changeSet as unknown as ChangeSet,
+    ...(value.undoGroup ? { undoGroup: value.undoGroup as unknown as OperationUndoGroup } : {}),
   };
 }
 

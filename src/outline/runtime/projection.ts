@@ -15,12 +15,22 @@ export function projectOutline(
 ): ProjectionResult {
   const document = core.projection();
   const index = createSelectionIndex(document);
+  return projectOutlineFromSelectionIndex(core.revision(), index, projection, bindings);
+}
+
+export function projectOutlineFromSelectionIndex(
+  revision: number,
+  index: OutlineSelectionIndex,
+  projection: Projection,
+  bindings: Readonly<Record<string, readonly string[]>> = {},
+): ProjectionResult {
+  const document = index.projection;
   const targetIds = resolveTargetRef(index, projection.targets, bindings);
   const selectedIds = projection.kind === 'outline' || projection.kind === 'export'
     ? collectOutlineIds(index, targetIds, projection.depth ?? 3)
     : targetIds;
   const projectionHash = canonicalSha256(projectionCursorIdentity(projection));
-  const offset = decodePageCursor(projection.page?.cursor, projectionHash, core.revision());
+  const offset = decodePageCursor(projection.page?.cursor, projectionHash, revision);
   const limit = projection.page?.limit ?? DEFAULT_PAGE_LIMIT;
   const pageIds = selectedIds.slice(offset, offset + limit);
   const includeBacklinks = projection.kind === 'backlinks' || projection.include?.includes('backlinks') === true;
@@ -46,7 +56,7 @@ export function projectOutline(
   const totalWidth = Math.max(projection.kind === 'backlinks' ? 0 : selectedIds.length, allBacklinks?.length ?? 0);
   return {
     projection,
-    revision: core.revision(),
+    revision,
     anchors: {
       workspaceId: document.workspaceId,
       rootId: document.rootId,
@@ -61,7 +71,7 @@ export function projectOutline(
     nodes,
     ...(backlinks ? { backlinks } : {}),
     ...(nextOffset < totalWidth ? {
-      cursor: encodePageCursor({ projectionHash, revision: core.revision(), offset: nextOffset }),
+      cursor: encodePageCursor({ projectionHash, revision, offset: nextOffset }),
       truncated: true,
     } : {}),
   };

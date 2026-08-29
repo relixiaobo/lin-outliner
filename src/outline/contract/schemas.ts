@@ -735,14 +735,21 @@ export const UpdateInstructionSchema = Type.Union([
     mutation: FieldSlotMutationSchema,
   }, closed),
   DefinitionInstructionSchema,
-  Type.Object({
-    kind: Type.Literal('reference'),
-    action: Type.Union([
-      Type.Literal('add'), Type.Literal('retarget'), Type.Literal('replace'),
-      Type.Literal('inline'), Type.Literal('restore'),
-    ]),
-    target: TargetRefSchema,
-  }, closed),
+  Type.Union([
+    Type.Object({
+      kind: Type.Literal('reference'),
+      action: Type.Union([
+        Type.Literal('add'), Type.Literal('retarget'), Type.Literal('replace'),
+      ]),
+      target: TargetRefSchema,
+    }, closed),
+    Type.Object({
+      kind: Type.Literal('reference'),
+      action: Type.Union([Type.Literal('inline'), Type.Literal('restore')]),
+      target: TargetRefSchema,
+      replacementId: Type.Optional(Identifier),
+    }, closed),
+  ]),
   ViewInstructionSchema,
   SearchInstructionSchema,
   Type.Object({ kind: Type.Literal('icon'), value: Type.Union([Type.String({ maxLength: 4_096 }), Type.Null()]), iconKind: Type.Optional(Type.String({ maxLength: 128 })) }, closed),
@@ -952,6 +959,25 @@ export const OperationSchema = Type.Object({
   result: Type.Optional(Type.Array(ProjectionResultSchema, { maxItems: 32 })),
 }, { ...closed, $id: 'Operation' });
 
+export const AcceptedDesktopChangeSetMutationSchema = Type.Object({
+  settlement: Type.Union([OperationSchema, NoChangeResultSchema]),
+  update: Type.Union([
+    Type.Object({
+      kind: Type.Literal('delta'),
+      revision: Type.Integer({ minimum: 0 }),
+      todayId: Identifier,
+      changedNodes: Type.Array(JsonValue, { maxItems: 100_000 }),
+      removedIds: Type.Array(Identifier, { maxItems: 100_000 }),
+    }, closed),
+    Type.Object({
+      kind: Type.Literal('full'),
+      revision: Type.Integer({ minimum: 0 }),
+      projection: JsonValue,
+    }, closed),
+  ]),
+  diff: DiffSchema,
+}, closed);
+
 export const OperationLogPageSchema = Type.Object({
   operations: Type.Array(OperationSchema, { maxItems: 1_000 }),
   affectedNodeIds: Type.Optional(Type.Object({
@@ -1074,6 +1100,7 @@ export const RuntimeDescriptorSchema = Type.Object({
   protocolMajors: Type.Tuple([Type.Literal(OUTLINE_PROTOCOL_VERSION)]),
   contractDigest: Digest,
   runtimeVersion: Type.String({ minLength: 1, maxLength: 128 }),
+  developmentSessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
   storageVersion: Type.Literal(OUTLINE_STORAGE_VERSION),
   createdAt: Timestamp,
 }, { ...closed, $id: 'RuntimeDescriptor' });
@@ -1352,6 +1379,7 @@ export type Diff = Static<typeof DiffSchema>;
 export type NoChangeResult = Static<typeof NoChangeResultSchema>;
 export type OperationUndoGroup = Static<typeof OperationUndoGroupSchema>;
 export type Operation = Static<typeof OperationSchema>;
+export type AcceptedDesktopChangeSetMutation = Static<typeof AcceptedDesktopChangeSetMutationSchema>;
 export type OperationLogPage = Static<typeof OperationLogPageSchema>;
 export type ImportOptions = Static<typeof ImportOptionsSchema>;
 export type ImportStats = Static<typeof ImportStatsSchema>;

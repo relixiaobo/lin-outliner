@@ -3,7 +3,11 @@ import type { CSSProperties } from 'react';
 import type { RendererUserViewHints } from '../../core/agent/protocol';
 import type { PreviewTarget } from '../../core/preview';
 import { api } from '../api/client';
-import { readDesktopProjection, subscribeDesktopProjection } from '../api/outline';
+import {
+  noteDesktopProjectionApplied,
+  readDesktopProjection,
+  subscribeDesktopProjection,
+} from '../api/outline';
 import { installDesktopProjectionReader } from '../api/outlineIntents';
 import { parseIsoLocalDate, todayIsoLocalDate, type AssetMetadata, type FocusHint, type NodeId } from '../api/types';
 import { flattenVisibleRows, useProjectionStore, useUiState } from '../state/document';
@@ -71,7 +75,9 @@ const EMPTY_AGENT_USER_VIEW: RendererUserViewHints = {
 export function App() {
   const t = useT();
   const [ui, setUi] = useUiState();
-  const { index, indexStore, applyProjectionUpdate } = useProjectionStore(readDesktopProjection, setUi);
+  const { index, indexStore, applyProjectionUpdate } = useProjectionStore(readDesktopProjection, setUi, {
+    onProjectionApplied: noteDesktopProjectionApplied,
+  });
   const [sidebarOpen, setSidebarOpen] = useState(true);
   // Agent rail is a 3-state model: collapsed seed (bare icon) -> hover glass chip
   // (CSS-only, no React state) -> open full panel. We persist only the binary
@@ -596,6 +602,7 @@ export function App() {
     onNavigateBack: navigateActivePanelBack,
     onNavigateForward: navigateActivePanelForward,
     onOpenPanel: openActiveRootInPanel,
+    panelId: activeOutlinerPanel?.id ?? null,
     requestEditFocus,
     rootId,
     run,
@@ -775,6 +782,8 @@ export function App() {
         open={ui.batchTagSelectorOpen}
         selectedIds={ui.selectedIds}
         index={index}
+        ui={ui}
+        setUi={setUi}
         run={run}
         close={() => setUi((prev) => ({ ...prev, batchTagSelectorOpen: false }))}
         clearSelection={() => setUi((prev) => ({

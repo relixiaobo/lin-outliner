@@ -45,6 +45,7 @@ describe('renderer Thread structured input', () => {
       id: 'turn-1',
       items: [{
         type: 'userMessage',
+        author: { kind: 'reader' },
         id: 'item-1',
         provenance: { originThreadId: 'thread-1', originTurnId: 'turn-1', originItemId: 'item-1' },
         clientId: null,

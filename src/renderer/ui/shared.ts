@@ -16,7 +16,7 @@ export interface CommandRunnerOptions {
   applyFocus?: boolean;
   // Run local renderer state updates in the same synchronous commit as the
   // projection update, so structural commands do not expose an intermediate DOM.
-  beforeApply?: () => void;
+  beforeApply?: (result: CommandResult | ProjectionSnapshot) => void;
 }
 
 export interface CommandRunnerNoop {
@@ -148,13 +148,13 @@ export function useCommandRunner(
       // refresh returns a `ProjectionSnapshot` (apply as a full reseed).
       if ('update' in result) {
         measureRender(() => flushSync(() => {
-          options?.beforeApply?.();
+          options?.beforeApply?.(result);
           applyProjectionUpdate(result.update);
           setFocus(options?.applyFocus === false ? null : result.focus ?? null);
         }));
       } else {
         measureRender(() => flushSync(() => {
-          options?.beforeApply?.();
+          options?.beforeApply?.(result);
           applyProjectionUpdate({ kind: 'full', revision: result.revision, projection: result.projection });
           setFocus(null);
         }));

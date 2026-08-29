@@ -38,12 +38,15 @@ theme-section entry below; this list is the ordering, not a second record):
 - **Lane 0 — standalone Outliner Runtime shipped**:
   [`reference-uri-unification`](plans/archive/reference-uri-unification.md)
   shipped in #590, then [`outliner-runtime-cli`](plans/archive/outliner-runtime-cli.md)
-  shipped in #584. The standalone Runtime now owns document state, transactional
-  recovery, persistence, events, and Outline AssetRecords over the neutral
-  ContentStore; desktop and the `outline` CLI are equal versioned clients, and
-  the old main-process authority, native Node tools, import writer, and asset
-  paths are retired. The shared-file claim is released. Next, #587 rebases on
-  current `main`; `agent-result-and-file-lifecycle` follows after it.
+  shipped in #584; [`outliner-runtime-recovery`](plans/archive/outliner-runtime-recovery.md)
+  then restored the mature desktop, persistence, Memory, asset, ranking, and
+  lifecycle responsibilities in #592. The standalone Runtime now owns document
+  state, transactional recovery, persistence, events, and Outline AssetRecords
+  over the neutral ContentStore; desktop and the `outline` CLI are equal
+  versioned clients, and the old main-process authority, native Node tools,
+  import writer, and asset paths are retired. Agent Composer history then shipped
+  in #587; `agent-result-and-file-lifecycle` is the next dependency-cleared step
+  after a fresh collision check.
 - **Lane A — build-ready quick wins** (fast-track, parallelize freely; small items
   don't count against the review-queue cap): `floating-toolbar-polish` (**unblocked
   2026-08-10** — its `core/types.ts` dependency landed with #510; rebase and go),
@@ -169,6 +172,11 @@ before any directional/security-sensitive build.
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/reference/agent-program.md`.
+- **agent-input-history-cutover-verification** (*release gate, no plan file*) —
+  before the next packaged train, stop every Tenon process, manually reset
+  installed and clone-scoped pre-#587 stores, then verify fresh packaged and dev
+  first launches. The PM authorized #587's merge before this destructive gate;
+  do not call the train release-ready until it passes.
 - **[agent-result-and-file-lifecycle](plans/agent-result-and-file-lifecycle.md)**
   (`draft`; plan PR #588 + architecture follow-up #589; one complete feature PR) — make final Agent results
   plain text with explicit `[[file:///...]]` citations; represent content through
@@ -178,9 +186,9 @@ before any directional/security-sensitive build.
   budget only the child-output projection injected into a parent's context.
   The PM-ratified pre-release cut manually resets installed and clone-scoped
   stores; no migration, legacy reader, or automatic deletion path ships.
-  Sequence is fixed: reference-URI unification shipped #590 and the neutral
-  ContentStore/Outline consumer shipped #584; rebase/land #587, then start this
-  implementation. Scope is rechecked after the remaining dependency lands.
+  Sequence is fixed: reference-URI unification shipped #590, the neutral
+  ContentStore/Outline consumer shipped #584, and Composer history shipped #587.
+  Recheck the live collision surface, then start this implementation.
 - **[agent-cross-thread-reference](plans/agent-cross-thread-reference.md)**
   (`draft`; plan PR #589; one complete feature PR after the file lifecycle) — let users mention
   prior conversations through `[[thread://<uuidv7>]]` and let Agents search/read
@@ -581,23 +589,15 @@ Standalone agent items (not part of the program):
   linked inline-marker and tray experience, with projected attachment budgets,
   pending-upload submission guards, and identity-safe replacement recovery.
   Design folded into the Agent runtime, Thread rendering, and design-system specs.
-- **[agent-composer-input-history](plans/agent-composer-input-history.md)**
-  (`in-progress`, ratified 2026-08-25; plan PR #585, Draft implementation PR
-  #587, codex-3; reference-URI foundation shipped #590 and #584 shipped; rebase
-  on current `main` before Ready) — every editable Agent composer
-  recalls reader-authored structured inputs from its exact Thread through
-  visual-boundary Up/Down navigation while preserving scratch, selection,
-  references, attachments, and reference liveness.
-  One canonical input-author contract keeps provider role separate from speaker
-  trust; the PM-ratified pre-release clean cut manually resets installed and
-  clone-scoped stores before validation, so every persisted Item uses the strict
-  required-author schema with no `unknown` variant or compatibility reader. The
-  one complete implementation PR must rebase onto current `main`,
-  preserve structured Node/file references plus attachment history through a
-  narrow opaque current-resource adapter without byte copies or digest
-  interpretation, and rerun the collision check before finishing shared Agent
-  files. Agent resource-reference records and the intent-aware resolver land
-  later in `agent-result-and-file-lifecycle`, not in #587.
+- **[agent-failure-recovery-experience](plans/agent-failure-recovery-experience.md)**
+  (P1, `draft`; three independent complete features; #587 and #592 shipped) — use
+  canonical projected history as the only continuation checkpoint; rename the
+  existing input-only whole-Turn replacement to explicit Rerun; and separate
+  stable Agent liveness from immutable generation outcome and direct-parent
+  notification facts. #587 is the sole author/renderability fix for blank
+  delegated speakers. No checkpoint ledger, tool-retry engine, attempt graph,
+  or OS-notification work is in scope. The review queue is full, so claims wait
+  for capacity and a regenerated collision check.
 - **agent-dream-followups** — **REMOVED 2026-08-03.** Seven polish items for a subsystem
   that no longer exists: `dream-channel-and-memory-retire` retired Dream in full (#324, #328,
   #329) and `rg -i dream src/` is empty. It survived the retirement because nothing links a
@@ -1168,6 +1168,16 @@ CHANGELOG entry and any merged PR, distilled rules in [`lessons.md`](lessons.md)
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **[agent-composer-input-history](plans/archive/agent-composer-input-history.md)**
+  (codex-3, PR #587, merged 2026-08-29) — every editable Agent composer now
+  recalls exact-Thread reader input with terminal Up/Down behavior, structured
+  references, attachments, working drafts, and canonical author-based trust;
+  repeated gate review closed one High and two Medium findings.
+- **[outliner-runtime-recovery](plans/archive/outliner-runtime-recovery.md)**
+  (codex, PR #592, merged 2026-08-28) — recovered the mature desktop editor,
+  durability, Memory, asset, ranking, and lifecycle responsibilities omitted by
+  the Runtime cutover; the tracked 2,307-responsibility audit closes with zero
+  unclassified, and repeated gate review closed every ordering and relaunch gap.
 - **[outliner-runtime-cli](plans/archive/outliner-runtime-cli.md)** (codex, PR
   #584, merged 2026-08-27) — one standalone Runtime now owns document state,
   transactional Operation/Event recovery, persistence, and Outline AssetRecords

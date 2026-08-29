@@ -123,6 +123,29 @@ describe('useMenuKeyboard', () => {
     dispatchClick(rendered, 'bump');
     expect(focused.at(-1)).toBe(0);
   });
+
+  test('captures fallback restore focus before layout focus enters the menu', () => {
+    const rendered = render(<RestoreFallbackFixture />);
+    const trigger = rendered.document.querySelector<HTMLElement>('[data-testid="trigger"]');
+    if (!trigger) throw new Error('Missing trigger');
+    let activeElement: Element | null = trigger;
+    Object.defineProperty(rendered.document, 'activeElement', {
+      configurable: true,
+      get: () => activeElement,
+    });
+    const focusPrototype = rendered.window.HTMLElement.prototype.focus;
+    let restoreCount = 0;
+    rendered.window.HTMLElement.prototype.focus = function focus() {
+      activeElement = this;
+      if (this === trigger) restoreCount += 1;
+    };
+
+    dispatchClick(rendered, 'trigger');
+    dispatchKey(rendered, 'surface', 'Escape');
+
+    expect(restoreCount).toBe(1);
+    rendered.window.HTMLElement.prototype.focus = focusPrototype;
+  });
 });
 
 function FocusKeyFixture() {
@@ -137,6 +160,27 @@ function FocusKeyFixture() {
           <button key={i} data-index={i} type="button">item {i}</button>
         ))}
       </div>
+    </>
+  );
+}
+
+function RestoreFallbackFixture() {
+  const [open, setOpen] = useState(false);
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const { onKeyDown } = useMenuKeyboard({
+    active: open,
+    surfaceRef,
+    onClose: () => setOpen(false),
+    kind: 'menu',
+  });
+  return (
+    <>
+      <button data-testid="trigger" onClick={() => setOpen(true)} type="button">open</button>
+      {open && (
+        <div ref={surfaceRef} role="menu" onKeyDown={onKeyDown} data-testid="surface">
+          <button type="button">item</button>
+        </div>
+      )}
     </>
   );
 }

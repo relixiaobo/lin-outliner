@@ -19,7 +19,7 @@ import {
   getTreeReferenceBlockReasonFromReachability,
   type TreeReferenceBlockReason,
 } from '../interactions/referenceRules';
-import { commandRunnerNoop, type CommandRunner, type CommandRunnerOperationResult } from '../shared';
+import type { CommandRunner, CommandRunnerOperationResult } from '../shared';
 import { NodeReferenceMenuIcon } from './NodeReferenceMenuIcon';
 import { PopoverEmpty, PopoverListItem } from './PopoverList';
 import { useT } from '../../i18n/I18nProvider';
@@ -33,8 +33,7 @@ interface ReferenceSelectorProps {
   setSelectedIndex: (index: number | ((current: number) => number)) => void;
   run: CommandRunner;
   close: () => void;
-  clearTriggerText: () => Promise<void>;
-  applyReference?: (target: NodeProjection) => Promise<CommandRunnerOperationResult>;
+  applyReference: (target: NodeProjection) => Promise<CommandRunnerOperationResult>;
 }
 
 export function referenceItems(params: {
@@ -93,13 +92,12 @@ export function ReferenceSelector(props: ReferenceSelectorProps) {
     let cancelled = false;
     void displayReachabilityForParent(latestIndexRef.current, treeReferenceParentId).then((value) => {
       if (cancelled) return;
-      props.setSelectedIndex(0);
       setReachabilityState({ cacheKey: displayGraphCacheKey, parentId: treeReferenceParentId, value });
     });
     return () => {
       cancelled = true;
     };
-  }, [displayGraphCacheKey, props.setSelectedIndex, treeReferenceParentId]);
+  }, [displayGraphCacheKey, treeReferenceParentId]);
 
   const labels = useMemo(() => referenceCandidateLabels(t), [t]);
   const items = useMemo(() => referenceItems({
@@ -139,30 +137,22 @@ export function ReferenceSelector(props: ReferenceSelectorProps) {
 
   const selectTarget = (target: NodeProjection) => {
     props.close();
-    void props.run(async () => {
-      if (props.applyReference) {
-        const result = await props.applyReference(target);
-        return result ?? commandRunnerNoop();
-      }
-      await props.clearTriggerText();
-      return api.addReference(props.currentNodeId, target.id);
-    });
+    void props.applyReference(target);
   };
 
   const createAndSelect = (label: string) => {
     props.close();
-    void props.run(async () => {
-      const created = await api.createNode(props.index.projection.libraryId, null, label);
+    void (async () => {
+      const created = await props.run(
+        () => api.createNode(props.index.projection.libraryId, null, label),
+        { applyFocus: false },
+      );
+      if (!created || !('update' in created)) return;
       const targetId = created.focus?.nodeId;
       const target = targetId ? nodeFromOutcome(created, targetId) : undefined;
-      if (!target) return created;
-      if (props.applyReference) {
-        const result = await props.applyReference(target);
-        return result ?? created;
-      }
-      await props.clearTriggerText();
-      return api.addReference(props.currentNodeId, target.id);
-    });
+      if (!target) return;
+      await props.applyReference(target);
+    })();
   };
 
   if (items.length === 0) {

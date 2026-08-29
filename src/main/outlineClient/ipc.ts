@@ -1,14 +1,20 @@
 import type { IpcMain, IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { Value } from 'typebox/value';
-import { WatchRequestSchema } from '../../outline/contract/schemas';
+import {
+  ChangeSetSchema,
+  OperationUndoGroupSchema,
+  WatchRequestSchema,
+} from '../../outline/contract/schemas';
 import type { DesktopOutlineClient } from './desktopOutlineClient';
 import {
   OUTLINE_DESKTOP_CANCEL_CHANNEL,
+  OUTLINE_DESKTOP_COMMIT_CHANNEL,
   OUTLINE_DESKTOP_REQUEST_CHANNEL,
   OUTLINE_DESKTOP_STREAM_CHANNEL,
   OUTLINE_DESKTOP_SUBSCRIBE_CHANNEL,
   OUTLINE_DESKTOP_UNSUBSCRIBE_CHANNEL,
   decodeOutlineDesktopId,
+  decodeOutlineDesktopCommitRequest,
   decodeOutlineDesktopRequest,
   decodeOutlineDesktopSubscription,
   type OutlineDesktopStreamMessage,
@@ -29,6 +35,21 @@ export function registerDesktopOutlineIpc(options: DesktopOutlineIpcOptions): vo
       request.requestId,
       request.command,
       request.input,
+    );
+  });
+
+  options.ipcMain.handle(OUTLINE_DESKTOP_COMMIT_CHANNEL, (event, raw: unknown) => {
+    options.authorize(event);
+    const request = decodeOutlineDesktopCommitRequest(raw);
+    if (!Value.Check(ChangeSetSchema, request.changeSet)
+      || (request.undoGroup !== undefined && !Value.Check(OperationUndoGroupSchema, request.undoGroup))) {
+      throw new Error('Invalid desktop Outline accepted-mutation payload.');
+    }
+    return options.client.commit(
+      event.sender.id,
+      request.requestId,
+      request.changeSet,
+      request.undoGroup,
     );
   });
 

@@ -15,7 +15,7 @@ import {
   type SlashCommandDefinition,
   type SlashCommandId,
 } from '../interactions/slashCommands';
-import { commandRunnerNoop, type CommandRunner, type CommandRunnerOperationResult } from '../shared';
+import type { CommandRunnerOperationResult } from '../shared';
 import { PopoverEmpty, PopoverListItem } from './PopoverList';
 import { useT } from '../../i18n/I18nProvider';
 
@@ -24,7 +24,6 @@ interface SlashCommandMenuProps {
   selectedIndex: number;
   setSelectedIndex: (index: number | ((current: number) => number)) => void;
   enabledSlashCommandIds?: SlashCommandId[];
-  run: CommandRunner;
   executeSlashCommand: (commandId: SlashCommandId) => Promise<CommandRunnerOperationResult>;
   close: () => void;
 }
@@ -69,10 +68,7 @@ export function SlashCommandMenu(props: SlashCommandMenuProps) {
           onMouseEnter={() => props.setSelectedIndex(index)}
           onClick={() => {
             props.close();
-            void props.run(async () => {
-              const result = await props.executeSlashCommand(command.id);
-              return result ?? commandRunnerNoop();
-            });
+            void props.executeSlashCommand(command.id);
           }}
         />
       ))}

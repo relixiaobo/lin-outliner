@@ -25,6 +25,7 @@ import type {
   ThreadUserContent,
   ThreadTurnsListResponse,
   Turn,
+  TurnSubmitResponse,
 } from '../../../core/agent/protocol';
 import {
   boundedToolArgumentsForDisplay,
@@ -417,7 +418,7 @@ export class ThreadStore {
     contentInput: readonly ThreadUserContent[],
     userView?: RendererUserViewHints,
     clientMessageId?: string,
-  ): Promise<Turn | null> {
+  ): Promise<TurnSubmitResponse | null> {
     const threadId = this.snapshot.selectedThreadId;
     if (!threadId) return null;
     const content = normalizeUserContent(contentInput);
@@ -456,7 +457,7 @@ export class ThreadStore {
     // Minted by the caller when it needs to recognize the Item this send
     // becomes before `turn/submit` answers — the transcript anchors on it.
     clientMessageId?: string,
-  ): Promise<Turn | null> {
+  ): Promise<TurnSubmitResponse | null> {
     const content = normalizeUserContent(contentInput);
     if (content.length === 0) return null;
     const withContext = Object.keys(additionalContext).length > 0 ? { additionalContext } : {};
@@ -468,7 +469,7 @@ export class ThreadStore {
       ...withContext,
     });
     this.refreshIdentityCatalogAfterTurnAdmission(threadId);
-    return response.turn;
+    return response;
   }
 
   async setThreadConfiguration(

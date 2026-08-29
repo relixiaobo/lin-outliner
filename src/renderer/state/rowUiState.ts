@@ -5,7 +5,6 @@ import type {
   FocusTarget,
   PendingInputChar,
   PendingReferenceConversion,
-  PendingReferenceTypeAhead,
   UiState,
 } from './document';
 
@@ -28,7 +27,6 @@ export interface RowMemoState {
   focusRequest: FocusRequest | null;
   pendingInput: PendingInputChar | null;
   pendingRefConversion: PendingReferenceConversion | null;
-  pendingRefTypeAhead: PendingReferenceTypeAhead | null;
   trigger: TriggerState | null;
 }
 
@@ -62,7 +60,6 @@ export function deriveRowMemoState(
     focusRequest: ui.focusRequest && targetsRow(ui.focusRequest.target) ? ui.focusRequest : null,
     pendingInput: ui.pendingInputChar && targetsRow(ui.pendingInputChar.target) ? ui.pendingInputChar : null,
     pendingRefConversion: ui.pendingReferenceConversion?.nodeId === rowId ? ui.pendingReferenceConversion : null,
-    pendingRefTypeAhead: ui.pendingReferenceTypeAhead?.nodeId === rowId ? ui.pendingReferenceTypeAhead : null,
     trigger: trigger?.nodeId === rowId ? trigger : null,
   };
 }
@@ -77,6 +74,5 @@ export function rowMemoStateEqual(a: RowMemoState, b: RowMemoState): boolean {
     && a.focusRequest === b.focusRequest
     && a.pendingInput === b.pendingInput
     && a.pendingRefConversion === b.pendingRefConversion
-    && a.pendingRefTypeAhead === b.pendingRefTypeAhead
     && a.trigger === b.trigger;
 }

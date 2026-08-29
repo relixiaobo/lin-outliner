@@ -182,6 +182,7 @@ export class GoalExtension implements AgentCoreExtension {
 
     let turn: Turn | null;
     try {
+      const authorRef = continuationRef(record.generation, reservation.kind);
       turn = await this.host.tryStartTurnIfIdle({
         threadId: thread.id,
         turnId: reservation.turnId,
@@ -189,10 +190,15 @@ export class GoalExtension implements AgentCoreExtension {
           type: 'text',
           text: goalContinuationPrompt(record.goal, reservation.number, reservation.kind),
         }],
+        author: {
+          kind: 'feature',
+          feature: GOAL_CONTINUATION_FEATURE,
+          ref: authorRef,
+        },
         trigger: {
           kind: 'feature',
           feature: GOAL_CONTINUATION_FEATURE,
-          ref: continuationRef(record.generation, reservation.kind),
+          ref: authorRef,
         },
       });
     } catch (error) {

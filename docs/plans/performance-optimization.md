@@ -164,16 +164,26 @@ Before this slice, the default path was the recursive `OutlinerView → Outliner
 OutlinerView`, which **mounts every expanded node** (full `RichTextEditor` +
 effects + interaction hook). The windowed renderer exists
 (`OutlinerFlatView.tsx`, `VIRTUALIZE_MIN_ROWS = 60`); after this slice it is the
-default and the recursive path is retained only as the diagnostic fallback
-`localStorage('lin:recursive-outliner') === '1'`. Per-row `React.memo` keeps *re-renders* cheap,
+exclusive editing path, including embedded Table subtrees and system-reference
+values. Per-row `React.memo` keeps *re-renders* cheap,
 but mount cost, DOM size, and memory scale with **total expanded rows**, not the
 viewport — the main scaling cliff for large docs (load/expand/scroll).
 
-- Fix: verify parity, then make flat/virtual the default; keep the recursive
-  path as a debug fallback flag.
-- Bonus: with flat-view, rows are built once in a single `useMemo`, which
-  retires P3-1 (`OutlinerView`/`OutlinerFieldRow` not memoized →
-  `buildOutlinerRows` re-runs per subtree per keystroke, `OutlinerView.tsx`).
+- Fix: verify parity, then make flat/virtual the only normal-editing path.
+- Bonus: with flat-view, rows are built once in a single incremental projection,
+  which retires P3-1 (the deleted recursive renderer rebuilt each subtree per
+  keystroke).
+- Input latency stays one mechanism across the flat renderer, embedded field
+  values, and Table-hosted nodes: structural changes render optimistically in the
+  initiating turn, while focus, pending input, external draft reconciliation,
+  and query-selection reconciliation complete in the layout phase. Only the
+  targeted `RichTextEditor` constructs its `EditorView` there; untargeted editors
+  retain passive construction so this rule does not move the whole outline onto
+  the initial layout critical path.
+- Draft IDs are keyed by semantic owner (including owner/field-definition for a
+  virtual field slot), not a backing entry that may appear during materialization.
+  The same React/editor identity therefore survives virtual-slot creation and
+  Runtime settlement.
 - Watch when enabling: `FlatRowShell` measures each windowed row via
   `getBoundingClientRect().height` + a `ResizeObserver`, and a height correction
   adjusts `scrollTop` synchronously in a `useLayoutEffect` (`OutlinerFlatView.tsx`)
@@ -242,7 +252,7 @@ across keystrokes); they are listed so nothing is lost, but should be revisited
 
 | ID | Finding | Location | Note |
 |----|---------|----------|------|
-| P3-1 | `OutlinerView`/`OutlinerFieldRow` not memoized → `buildOutlinerRows` (filter/sort/group, recursive `childText`) re-runs per subtree per keystroke | `OutlinerView.tsx`, `OutlinerFieldRow.tsx`, `outlinerRows.ts` | retired by **P2-1**; else add memo + cache field-value primitives per build (Codex #4/#5) |
+| P3-1 | The retired recursive renderer rebuilt `buildOutlinerRows` (filter/sort/group, recursive `childText`) per subtree per keystroke | `OutlinerFieldRow.tsx`, `outlinerRows.ts` | retired by **P2-1**; the flat incremental projection is now the only editing path |
 | P3-2 | References display re-runs an O(N) backlink scan every keystroke (memo keyed on per-frame `byId`) | `systemFields.ts` via `OutlinerFieldRow.tsx` | designed in `typing-hot-path` PR-C (incremental referenceSummary over the #121 `ReverseEdges` index) |
 | P3-23 | Delta reducer copies the **whole** `byId` (`new Map(prev.byId)`) and rebuilds the **whole** `nextRevisions` map every keystroke — both O(N), immutability-driven (the residual #119/#121 left) | `renderer/state/document.ts` (`reduceProjection`), `renderRev.ts` (`nextRevisions`) | persistent/HAMT-style structural sharing, or mutate-with-version-stamp; measure with `tmp/bench-reverse-edges.ts` before trading immutability for throughput (perception-first, `AGENTS.md` A9) |
 | P3-3 | `@`/reference & field picker filter+map+rank+sort the **whole** projection per keystroke, with per-candidate ancestor walks | `referenceCandidates.ts`, `useFieldNameReuse.ts` | the field-picker half landed with #426's field-name reuse index; the `@` picker half is designed in `typing-hot-path` PR-C (queryable label shortlist) |

@@ -10,12 +10,16 @@ import { canonicalJsonChunks } from '../../contract/canonical';
 import { OutlineContractError, outlineError } from '../../contract/errors';
 import { checkOutlineSchema } from '../../contract/validation';
 import {
+  ChangeSetSchema,
   OutlineRequestSchema,
+  OperationUndoGroupSchema,
   RuntimeDescriptorSchema,
   WatchRequestSchema,
   type EventFilter,
+  type ChangeSet,
   type OutlineEvent,
   type OutlineRequest,
+  type OperationUndoGroup,
   type OutlineStreamRecord,
   type Projection,
   type RuntimeDescriptor,
@@ -31,7 +35,6 @@ import {
 import { OutlineRuntimeWorkspace, type OutlineRuntimeWorkspaceOptions } from '../runtimeWorkspace';
 import { decodeEventCursor, encodeEventCursor } from '../eventCursor';
 import { formatOutlineExport } from '../export';
-import { projectOutline } from '../projection';
 import { OutlineRuntimeRouter } from './runtimeRouter';
 import { requestCanMutate } from './runtimeRouter';
 import {
@@ -48,6 +51,8 @@ import {
   type OutlineRuntimePaths,
 } from './runtimePaths';
 import { readChangeSetUpload } from './changeSetSpool';
+import { commitOutlineChangeSetAccepted } from '../changeSet';
+import { normalizeNodeAccessStats, type NodeAccessStats } from '../../../core/nodeAccessRanking';
 
 const MAX_REQUEST_BYTES = 64 * 1024 * 1024;
 
@@ -55,6 +60,7 @@ export interface OutlineRuntimeServerOptions {
   readonly root: string;
   readonly contentRoot: string;
   readonly idleTimeoutMs?: number;
+  readonly developmentSessionId?: string;
   readonly workspaceOptions?: OutlineRuntimeWorkspaceOptions;
   readonly onIdle?: () => void | Promise<void>;
 }
@@ -76,6 +82,7 @@ export class OutlineRuntimeServer {
   private activeForegroundRequests = 0;
   private idleDrainActive = false;
   private stopping = false;
+  private stopPromise?: Promise<void>;
   private readonly agentAttestations = new AgentAttestationRegistry();
 
   private constructor(
@@ -103,6 +110,7 @@ export class OutlineRuntimeServer {
   }
 
   static async start(options: OutlineRuntimeServerOptions): Promise<OutlineRuntimeServer | null> {
+    assertDevelopmentSessionId(options.developmentSessionId);
     const paths = resolveOutlineRuntimePaths(options.root);
     const instanceId = options.workspaceOptions?.instanceId ?? `runtime:${crypto.randomUUID()}`;
     const owner = { pid: process.pid, instanceId, createdAt: new Date().toISOString() };
@@ -128,6 +136,7 @@ export class OutlineRuntimeServer {
         protocolMajors: [OUTLINE_PROTOCOL_VERSION],
         contractDigest: outlineCapabilityContractDigest(),
         runtimeVersion: OUTLINE_CLI_VERSION,
+        ...(options.developmentSessionId ? { developmentSessionId: options.developmentSessionId } : {}),
         storageVersion: OUTLINE_STORAGE_VERSION,
         createdAt: owner.createdAt,
       };
@@ -149,9 +158,30 @@ export class OutlineRuntimeServer {
   }
 
   async stop(): Promise<void> {
-    if (this.stopping) return;
+    if (this.stopPromise) return this.stopPromise;
+    const stopping = this.stopInternal();
+    this.stopPromise = stopping;
+    try {
+      await stopping;
+    } catch (error) {
+      if (this.stopPromise === stopping) this.stopPromise = undefined;
+      throw error;
+    }
+  }
+
+  private async stopInternal(): Promise<void> {
     this.stopping = true;
     this.clearIdleTimer();
+    try {
+      const targetRevision = await this.workspace.freezeMutationAdmission();
+      await this.workspace.drainDurability(targetRevision);
+      this.workspace.commitMutationAdmissionFreeze();
+    } catch (error) {
+      this.workspace.unfreezeMutationAdmission();
+      this.stopping = false;
+      this.scheduleIdle();
+      throw error;
+    }
     for (const connection of this.connections) connection.destroy();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
     await this.removeOwnedDescriptor();
@@ -215,7 +245,11 @@ export class OutlineRuntimeServer {
           || body.instanceId !== this.descriptor.instanceId
           || typeof body.replacementContractDigest !== 'string'
           || !/^[a-f0-9]{64}$/.test(body.replacementContractDigest)
-          || body.replacementContractDigest === this.descriptor.contractDigest) {
+          || (body.replacementDevelopmentSessionId !== undefined
+            && !validDevelopmentSessionId(body.replacementDevelopmentSessionId))
+          || (body.replacementContractDigest === this.descriptor.contractDigest
+            && (typeof body.replacementDevelopmentSessionId !== 'string'
+              || body.replacementDevelopmentSessionId === this.descriptor.developmentSessionId))) {
           throw new Error('Invalid Outline Runtime retirement request.');
         }
         response.once('finish', () => {
@@ -224,6 +258,145 @@ export class OutlineRuntimeServer {
         writeJson(response, 200, {
           retiring: true,
           instanceId: this.descriptor.instanceId,
+        });
+        return;
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/desktop/commit') {
+        if (optionalHeader(request, OUTLINE_ORIGIN_HEADER) !== 'desktop') {
+          throw new OutlineContractError(outlineError(
+            'unauthorized',
+            'protocol',
+            'The accepted mutation route is available only to the desktop host.',
+          ));
+        }
+        const body = await readJsonBody(request);
+        if (!isRecord(body)
+          || body.protocolVersion !== OUTLINE_PROTOCOL_VERSION
+          || typeof body.requestId !== 'string'
+          || !/^[A-Za-z0-9:._-]{1,256}$/.test(body.requestId)
+          || !checkOutlineSchema(ChangeSetSchema, body.changeSet)
+          || (body.undoGroup !== undefined
+            && !checkOutlineSchema(OperationUndoGroupSchema, body.undoGroup))) {
+          throw new Error('Invalid desktop accepted-mutation request.');
+        }
+        const accepted = await commitOutlineChangeSetAccepted(
+          this.workspace,
+          body.changeSet as ChangeSet,
+          { origin: 'desktop' },
+          body.undoGroup ? { undoGroup: body.undoGroup as OperationUndoGroup } : {},
+        );
+        writeJson(response, 200, {
+          protocolVersion: OUTLINE_PROTOCOL_VERSION,
+          requestId: body.requestId,
+          revision: this.workspace.revision(),
+          data: {
+            settlement: accepted.settlement,
+            update: accepted.update,
+            diff: accepted.diff,
+          },
+        });
+        return;
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/desktop/search') {
+        if (optionalHeader(request, OUTLINE_ORIGIN_HEADER) !== 'desktop') {
+          throw new OutlineContractError(outlineError(
+            'unauthorized',
+            'protocol',
+            'The ranked search route is available only to the desktop host.',
+          ));
+        }
+        const body = await readJsonBody(request);
+        if (!isRecord(body)
+          || body.protocolVersion !== OUTLINE_PROTOCOL_VERSION
+          || typeof body.requestId !== 'string'
+          || !/^[A-Za-z0-9:._-]{1,256}$/.test(body.requestId)
+          || typeof body.query !== 'string'
+          || body.query.length > 10_000
+          || !Number.isSafeInteger(body.limit)
+          || (body.limit as number) < 1
+          || (body.limit as number) > 10_000) {
+          throw new Error('Invalid desktop ranked-search request.');
+        }
+        writeJson(response, 200, {
+          protocolVersion: OUTLINE_PROTOCOL_VERSION,
+          requestId: body.requestId,
+          revision: this.workspace.revision(),
+          data: {
+            hits: this.workspace.searchText(body.query, body.limit as number),
+          },
+        });
+        return;
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/desktop/personal-access-ranking') {
+        if (optionalHeader(request, OUTLINE_ORIGIN_HEADER) !== 'desktop') {
+          throw new OutlineContractError(outlineError(
+            'unauthorized',
+            'protocol',
+            'The personal-access ranking route is available only to the desktop host.',
+          ));
+        }
+        const body = await readJsonBody(request);
+        if (!isRecord(body)
+          || body.protocolVersion !== OUTLINE_PROTOCOL_VERSION
+          || typeof body.requestId !== 'string'
+          || !/^[A-Za-z0-9:._-]{1,256}$/.test(body.requestId)
+          || !isDesktopPersonalAccessRankingUpdate(body.update)) {
+          throw new Error('Invalid desktop personal-access ranking request.');
+        }
+        const update = body.update;
+        if (update.action === 'remove') {
+          this.workspace.removePersonalAccessRanking(update.nodeIds);
+        } else {
+          const entries = new Map<string, NodeAccessStats>(update.entries.map(([nodeId, stats]) => (
+            [nodeId, normalizeNodeAccessStats(stats)!]
+          )));
+          if (update.action === 'replace') this.workspace.replacePersonalAccessRanking(entries);
+          else this.workspace.upsertPersonalAccessRanking(entries);
+        }
+        writeJson(response, 200, {
+          protocolVersion: OUTLINE_PROTOCOL_VERSION,
+          requestId: body.requestId,
+          data: { synced: true },
+        });
+        return;
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/desktop/lifecycle') {
+        if (optionalHeader(request, OUTLINE_ORIGIN_HEADER) !== 'desktop') {
+          throw new OutlineContractError(outlineError(
+            'unauthorized',
+            'protocol',
+            'The Runtime lifecycle route is available only to the desktop host.',
+          ));
+        }
+        const body = await readJsonBody(request);
+        if (!isDesktopLifecycleRequest(body)) {
+          throw new Error('Invalid desktop Runtime lifecycle request.');
+        }
+        switch (body.action) {
+          case 'freeze':
+            await this.workspace.freezeMutationAdmission();
+            break;
+          case 'unfreeze':
+            this.workspace.unfreezeMutationAdmission();
+            break;
+          case 'commit-freeze':
+            this.workspace.commitMutationAdmissionFreeze();
+            break;
+          case 'drain':
+            await this.workspace.drainDurability(body.targetRevision);
+            break;
+          case 'shutdown':
+            response.once('finish', () => {
+              void this.stop().catch(() => undefined);
+            });
+            break;
+          case 'status':
+            break;
+        }
+        writeJson(response, 200, {
+          protocolVersion: OUTLINE_PROTOCOL_VERSION,
+          requestId: body.requestId,
+          data: this.workspace.durabilityStatus(),
         });
         return;
       }
@@ -643,6 +816,16 @@ function serverError(error: unknown) {
   );
 }
 
+function assertDevelopmentSessionId(value: string | undefined): void {
+  if (value !== undefined && !validDevelopmentSessionId(value)) {
+    throw new RangeError('Outline Runtime development session ID must contain between 1 and 128 characters.');
+  }
+}
+
+function validDevelopmentSessionId(value: unknown): value is string {
+  return typeof value === 'string' && value.length >= 1 && value.length <= 128;
+}
+
 class AgentAttestationRegistry {
   private readonly claimed = new Set<string>();
   private readonly consumed = new Map<string, number>();
@@ -680,6 +863,30 @@ class AgentAttestationRegistry {
 
 function isOperation(value: unknown): boolean {
   return isRecord(value) && value.kind === 'outline.operation';
+}
+
+type DesktopLifecycleRequest = {
+  readonly protocolVersion: number;
+  readonly requestId: string;
+  readonly action: 'status' | 'freeze' | 'unfreeze' | 'commit-freeze' | 'shutdown';
+} | {
+  readonly protocolVersion: number;
+  readonly requestId: string;
+  readonly action: 'drain';
+  readonly targetRevision: number;
+};
+
+function isDesktopLifecycleRequest(value: unknown): value is DesktopLifecycleRequest {
+  if (!isRecord(value)
+    || value.protocolVersion !== OUTLINE_PROTOCOL_VERSION
+    || typeof value.requestId !== 'string'
+    || !/^[A-Za-z0-9:._-]{1,256}$/.test(value.requestId)
+    || typeof value.action !== 'string') return false;
+  if (value.action === 'drain') {
+    return Number.isSafeInteger(value.targetRevision) && (value.targetRevision as number) >= 0;
+  }
+  return value.targetRevision === undefined
+    && ['status', 'freeze', 'unfreeze', 'commit-freeze', 'shutdown'].includes(value.action);
 }
 
 function requiredHeader(request: http.IncomingMessage, name: string): string {
@@ -757,7 +964,7 @@ function eventForWatch(
   return {
     ...event,
     cursor,
-    ...(projection ? { projection: projectOutline(workspace.forkCore(), projection) } : {}),
+    ...(projection ? { projection: workspace.project(projection) } : {}),
   };
 }
 
@@ -830,4 +1037,27 @@ async function removeStaleSocket(socketPath: string): Promise<void> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isDesktopPersonalAccessRankingUpdate(value: unknown): value is
+  | { readonly action: 'replace' | 'upsert'; readonly entries: readonly (readonly [string, NodeAccessStats])[] }
+  | { readonly action: 'remove'; readonly nodeIds: readonly string[] } {
+  if (!isRecord(value) || (value.action !== 'replace' && value.action !== 'upsert' && value.action !== 'remove')) {
+    return false;
+  }
+  if (value.action === 'remove') {
+    return Array.isArray(value.nodeIds)
+      && value.nodeIds.length <= 5_000
+      && value.nodeIds.every((nodeId) => typeof nodeId === 'string' && nodeId.length > 0);
+  }
+  return Array.isArray(value.entries)
+    && value.entries.length <= 5_000
+    && value.entries.every((entry) => {
+      if (!Array.isArray(entry)
+        || entry.length !== 2
+        || typeof entry[0] !== 'string'
+        || entry[0].length === 0) return false;
+      const stats = normalizeNodeAccessStats(entry[1]);
+      return stats !== null && stats.s > 0 && stats.tUpdate !== null;
+    });
 }

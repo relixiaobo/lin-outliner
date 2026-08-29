@@ -343,9 +343,9 @@ test.describe('outliner field row visual parity', () => {
       const leading = element.querySelector(':scope > .row-leading')?.getBoundingClientRect();
       const name = element.querySelector('.field-name-input')?.getBoundingClientRect();
       const firstValueLeading = element
-        .querySelector('.field-value-outliner > .row-wrap:first-child > .row > .row-leading')
+        .querySelector('.field-value-outliner > .outliner-flat-flow > .outliner-flat-flow-row > .row-wrap > .row > .row-leading')
         ?.getBoundingClientRect();
-      const firstValueRow = element.querySelector('.field-value-outliner > .row-wrap:first-child > .row');
+      const firstValueRow = element.querySelector('.field-value-outliner > .outliner-flat-flow > .outliner-flat-flow-row > .row-wrap > .row');
       const firstValueChevron = firstValueRow?.querySelector('.row-chevron-button')?.getBoundingClientRect();
       const firstValueBullet = firstValueRow?.querySelector('.row-bullet-button')?.getBoundingClientRect();
       const firstValueContent = firstValueRow?.querySelector('.row-content-line')?.getBoundingClientRect();

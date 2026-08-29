@@ -4,6 +4,7 @@ import {
   e2eInlineRefNodeId,
   e2eNodeInlineRef,
   e2eProjection,
+  holdOutlineMutation,
   ids,
   nodeById,
   openMockedApp,
@@ -254,7 +255,6 @@ async function delayMockApply(
     };
   }, { matches, delayMs });
 }
-
 test.describe('outliner trigger parity', () => {
   test.beforeEach(async ({ page }) => {
     await openMockedApp(page);
@@ -319,24 +319,135 @@ test.describe('outliner trigger parity', () => {
       .toEqual(['ensure', 'create', 'update']);
   });
 
-  test('# in trailing input keeps the draft visible until the tagged node materializes', async ({ page }) => {
-    await delayMockApply(page, { op: 'create' }, 800);
+  test('# resolves through the shared structural transaction without remounting the editor', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
 
-    await trailingEditor(page).click();
+    const draftEditor = trailingEditor(page);
+    await draftEditor.click();
     await page.keyboard.type('#project');
+    const draftId = await draftEditor.evaluate((element) => {
+      (window as Window & { __tagDraftEditor?: Element }).__tagDraftEditor = element;
+      return element.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId ?? '';
+    });
+    expect(draftId).not.toBe('');
+    const releaseMutation = await holdOutlineMutation(page, { op: 'create' });
     await page.keyboard.press('Enter');
 
-    await page.waitForTimeout(40);
     await expect(page.locator('.trigger-popover')).toHaveCount(0);
     await expect(trailingEditor(page)).toBeVisible();
-    await expect(trailingEditor(page)).toHaveText('#project');
+    const pendingEditor = rowEditor(page, draftId);
+    expect(await pendingEditor.evaluate((element) => {
+      const clone = element.cloneNode(true) as HTMLElement;
+      clone.querySelector('.row-inline-tag-slot')?.remove();
+      return clone.textContent;
+    })).toBe('');
+    await expect(pendingEditor).toBeFocused();
+    await expect(row(page, draftId).locator('.tag-badge-label')).toContainText('project');
+    expect(await pendingEditor.evaluate((element) => (
+      (window as Window & { __tagDraftEditor?: Element }).__tagDraftEditor === element
+    ))).toBe(true);
     expect(await todayChildren(page)).toEqual(beforeChildren);
+    await page.keyboard.type('Task');
+    await expect(pendingEditor).toHaveText(/Task/);
 
+    await releaseMutation();
     await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
-    const createdRowId = await lastTodayChildId(page);
-    expect(createdRowId).toBeTruthy();
-    await expect(row(page, createdRowId!).locator('.tag-badge-label')).toContainText('project');
+    expect(await lastTodayChildId(page)).toBe(draftId);
+    await expect.poll(async () => (await nodeById(page, draftId))?.content.text).toBe('Task');
+    await expect(row(page, draftId).locator('.tag-badge-label')).toContainText('project');
+    expect(await rowEditor(page, draftId).evaluate((element) => (
+      (window as Window & { __tagDraftEditor?: Element }).__tagDraftEditor === element
+    ))).toBe(true);
+  });
+
+  test('# on an existing row clears the trigger and shows the tag before Runtime settles', async ({ page }) => {
+    await placeCursor(page, ids.alpha, 'end');
+    await page.keyboard.press('Meta+A');
+    await page.keyboard.type('Task #project');
+    await expect(page.getByRole('listbox', { name: 'Tag suggestions' })).toBeVisible();
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.text).toBe('Task #project');
+    const beforeCalls = (await commandCalls(page)).length;
+    const releaseMutation = await holdOutlineMutation(page, {
+      op: 'update',
+      instructionKind: 'tag',
+    });
+
+    await page.keyboard.press('Enter');
+
+    await expect(page.locator('.trigger-popover')).toHaveCount(0);
+    await expect(row(page, ids.alpha).locator('.tag-badge-label')).toContainText('project');
+    expect(await rowEditor(page, ids.alpha).evaluate((element) => {
+      const clone = element.cloneNode(true) as HTMLElement;
+      clone.querySelector('.row-inline-tag-slot')?.remove();
+      return clone.textContent;
+    })).toBe('Task ');
+    expect((await nodeById(page, ids.alpha))?.content.text).toBe('Task #project');
+    expect((await nodeById(page, ids.alpha))?.tags).not.toContain(ids.projectTag);
+    expect((await commandCalls(page)).slice(beforeCalls)).toEqual([]);
+
+    await releaseMutation();
+    await expect.poll(async () => {
+      const target = await nodeById(page, ids.alpha);
+      return { content: target?.content.text, tags: target?.tags };
+    }).toEqual({ content: 'Task ', tags: [ids.projectTag] });
+    const operations = await appliedOperations(page, beforeCalls);
+    expect(operations).toHaveLength(1);
+    expect(operations[0]?.changes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'content' }),
+      expect.objectContaining({ kind: 'tag', action: 'add' }),
+    ]));
+  });
+
+  test('# on a title clears the trigger and shows the tag before Runtime settles', async ({ page }) => {
+    await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
+    const panel = page.locator('.outline-panel-surface.active-panel');
+    const titleEditor = panel.locator('.panel-title-editor .ProseMirror');
+    await titleEditor.click();
+    await page.keyboard.press('Meta+A');
+    await page.keyboard.type('Title #project');
+    await expect(page.getByRole('listbox', { name: 'Tag suggestions' })).toBeVisible();
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.text).toBe('Title #project');
+    const releaseMutation = await holdOutlineMutation(page, {
+      op: 'update',
+      instructionKind: 'tag',
+    });
+
+    await page.keyboard.press('Enter');
+
+    await expect(titleEditor).toHaveText('Title ');
+    await expect(panel.locator('.panel-title-toolbar-row .tag-badge-label')).toContainText('project');
+    expect((await nodeById(page, ids.alpha))?.content.text).toBe('Title #project');
+    expect((await nodeById(page, ids.alpha))?.tags).not.toContain(ids.projectTag);
+
+    await releaseMutation();
+    await expect.poll(async () => {
+      const target = await nodeById(page, ids.alpha);
+      return { content: target?.content.text, tags: target?.tags };
+    }).toEqual({ content: 'Title ', tags: [ids.projectTag] });
+  });
+
+  test('creating a tag on an existing row shows its stable chip before one ChangeSet settles', async ({ page }) => {
+    await placeCursor(page, ids.alpha, 'end');
+    await page.keyboard.press('Meta+A');
+    await page.keyboard.type('#brand-new-row-tag');
+    await expect(page.getByRole('option', { name: 'Create brand-new-row-tag' })).toBeVisible();
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.text).toBe('#brand-new-row-tag');
+    const beforeCalls = (await commandCalls(page)).length;
+    const releaseMutation = await holdOutlineMutation(page, { op: 'ensure' });
+
+    await page.keyboard.press('Enter');
+
+    const pendingBadge = row(page, ids.alpha).locator('.tag-badge').filter({ hasText: 'brand-new-row-tag' });
+    await expect(pendingBadge).toBeVisible();
+    const pendingBadgeKey = await pendingBadge.locator('.tag-badge-label').getAttribute('title');
+    expect(pendingBadgeKey).toBe('brand-new-row-tag');
+    expect((await nodeById(page, ids.alpha))?.content.text).toBe('#brand-new-row-tag');
+
+    await releaseMutation();
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.text).toBe('');
+    await expect(pendingBadge).toBeVisible();
+    expect((await appliedOperations(page, beforeCalls)).map((operation) => operation.op))
+      .toEqual(['ensure', 'update']);
   });
 
   test('# trigger in trailing input closes when navigating to Recents', async ({ page }) => {
@@ -504,31 +615,44 @@ test.describe('outliner trigger parity', () => {
     }));
   });
 
-  test('@ in trailing input keeps the draft visible until the conversion row materializes', async ({ page }) => {
+  test('@ resolves through the shared structural transaction without remounting the editor', async ({ page }) => {
     await invokeMockCommand(page, 'create_node', {
       parentId: ids.library,
       index: null,
       text: 'RemoteTarget',
     });
-    await delayMockApply(page, { op: 'create' }, 800);
     const beforeChildren = await todayChildren(page);
     const beforeCalls = (await commandCalls(page)).length;
 
-    await trailingEditor(page).click();
+    const draftEditor = trailingEditor(page);
+    await draftEditor.click();
     await page.keyboard.type('@RemoteTarget');
+    const draftId = await draftEditor.evaluate((element) => {
+      (window as Window & { __referenceDraftEditor?: Element }).__referenceDraftEditor = element;
+      return element.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId ?? '';
+    });
+    expect(draftId).not.toBe('');
     await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
     await expect(page.getByRole('option', { name: 'RemoteTarget', exact: true })).toBeVisible();
+    const releaseMutation = await holdOutlineMutation(page, { op: 'create' });
     await page.keyboard.press('Enter');
 
-    await page.waitForTimeout(40);
     await expect(page.locator('.trigger-popover')).toHaveCount(0);
     await expect(trailingEditor(page)).toBeVisible();
-    await expect(trailingEditor(page)).toHaveText('@RemoteTarget');
+    const pendingEditor = rowEditor(page, draftId);
+    await expect(pendingEditor).toBeFocused();
+    await expect(rowBody(page, draftId)).toHaveClass(/ref-converting/);
+    await expect(row(page, draftId).locator('.inline-ref')).toHaveText('RemoteTarget');
+    expect(await pendingEditor.evaluate((element) => (
+      (window as Window & { __referenceDraftEditor?: Element }).__referenceDraftEditor === element
+    ))).toBe(true);
     expect(await todayChildren(page)).toEqual(beforeChildren);
+    await page.keyboard.type('!');
 
+    await releaseMutation();
     await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
     const createdRowId = await lastTodayChildId(page);
-    expect(createdRowId).toBeTruthy();
+    expect(createdRowId).toBe(draftId);
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
       const created = projection.nodes.find((node) => node.id === createdRowId);
@@ -539,13 +663,56 @@ test.describe('outliner trigger parity', () => {
         text: created?.content.text ?? null,
         type: created?.type ?? null,
       };
-    }).toEqual({ inlineTargetText: 'RemoteTarget', text: '', type: null });
+    }).toEqual({ inlineTargetText: 'RemoteTarget', text: '!', type: null });
     await expect(rowBody(page, createdRowId!)).toHaveClass(/ref-converting/);
     await expect(rowEditor(page, createdRowId!)).toBeFocused();
     await expect(row(page, createdRowId!)).toContainText('RemoteTarget');
+    expect(await rowEditor(page, draftId).evaluate((element) => (
+      (window as Window & { __referenceDraftEditor?: Element }).__referenceDraftEditor === element
+    ))).toBe(true);
 
     expect((await appliedOperations(page, beforeCalls)).filter((operation) => operation.op === 'create'))
       .toHaveLength(1);
+  });
+
+  test('@ replaces an existing empty row before the Runtime mutation settles', async ({ page }) => {
+    await invokeMockCommand(page, 'create_node', {
+      parentId: ids.library,
+      index: null,
+      text: 'RemoteTarget',
+    });
+    await invokeMockCommand(page, 'create_node', {
+      parentId: ids.today,
+      index: null,
+      text: '',
+    });
+    const emptyRowId = await lastTodayChildId(page);
+    expect(emptyRowId).toBeTruthy();
+    const beforeChildren = await todayChildren(page);
+
+    await rowEditor(page, emptyRowId!).click();
+    await page.keyboard.type('@RemoteTarget');
+    await expect(page.getByRole('option', { name: 'RemoteTarget', exact: true })).toBeVisible();
+    const releaseMutation = await holdOutlineMutation(page, { op: 'create' });
+    await page.keyboard.press('Enter');
+
+    await expect(row(page, emptyRowId!)).toHaveCount(0);
+    const pendingRow = page.locator('[data-node-id]').filter({
+      has: page.locator('.inline-ref', { hasText: 'RemoteTarget' }),
+    }).first();
+    const pendingId = await pendingRow.getAttribute('data-node-id');
+    expect(pendingId).toBeTruthy();
+    await expect(rowBody(page, pendingId!)).toHaveClass(/ref-converting/);
+    await expect(rowEditor(page, pendingId!)).toBeFocused();
+    expect(await todayChildren(page)).toEqual(beforeChildren);
+    await page.keyboard.type('!');
+    await expect(rowEditor(page, pendingId!)).toContainText('RemoteTarget');
+    await expect(rowEditor(page, pendingId!)).toContainText('!');
+
+    await releaseMutation();
+    await expect.poll(async () => (await todayChildren(page)).at(-1)).toBe(pendingId);
+    await expect.poll(async () => (await nodeById(page, pendingId!))?.content.text).toBe('!');
+    await expect(rowEditor(page, pendingId!)).toBeFocused();
   });
 
   test('@ existing different-parent reference in trailing input can continue as inline text', async ({ page }) => {
@@ -790,8 +957,6 @@ test.describe('outliner trigger parity', () => {
     const projectionWithTarget = await e2eProjection(page);
     const targetId = projectionWithTarget.nodes.find((node) => node.content.text === 'RemoteTarget')?.id;
     expect(targetId).toBeTruthy();
-    await delayMockApply(page, { op: 'create' }, 220);
-
     await trailingEditor(page).click();
     await page.keyboard.type('@RemoteTarget');
     await chooseSelectedReferenceSuggestion(page);
@@ -924,9 +1089,236 @@ test.describe('outliner trigger parity', () => {
     await page.keyboard.press('Enter');
 
     await expect.poll(async () => (await appliedInstructions(page)).some((instruction) => (
-      instruction.kind === 'field' && instruction.action === 'define'
+      instruction.kind === 'field' && instruction.action === 'convert'
     ))).toBe(true);
     await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+  });
+
+  test('/field switches a trailing draft to the shared field transaction before Runtime settles', async ({ page }) => {
+    const beforeChildren = await todayChildren(page);
+    const editor = trailingEditor(page);
+    await editor.click();
+    await page.keyboard.type('/field');
+    const draftId = await editor.evaluate((element) => (
+      element.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId ?? ''
+    ));
+    expect(draftId).not.toBe('');
+    const beforeCalls = (await commandCalls(page)).length;
+    const releaseMutation = await holdOutlineMutation(page, { op: 'create' });
+
+    await page.getByRole('option', { name: /Field/ }).click();
+
+    const firstFrame = await page.evaluate(({ beforeCalls, beforeChildren, draftId, todayId }) => {
+      const win = window as Window & {
+        __LIN_E2E__?: {
+          calls: unknown[];
+          projection: () => { nodes: Array<{ id: string; children: string[] }> };
+        };
+      };
+      const fieldName = document.querySelector<HTMLElement>(
+        `[data-node-id="${CSS.escape(draftId)}"] .field-name-input`,
+      );
+      return {
+        fieldVisible: fieldName !== null,
+        focused: document.activeElement === fieldName,
+        projectedChildren: win.__LIN_E2E__?.projection().nodes.find((node) => node.id === todayId)?.children,
+        writes: (win.__LIN_E2E__?.calls.slice(beforeCalls) ?? []).filter((call) => {
+          const command = (call as { cmd?: string }).cmd;
+          return command === 'outline/apply' || command === 'outline/commit';
+        }),
+        expectedChildren: beforeChildren,
+      };
+    }, { beforeCalls, beforeChildren, draftId, todayId: ids.today });
+    expect(firstFrame).toEqual({
+      fieldVisible: true,
+      focused: true,
+      projectedChildren: beforeChildren,
+      writes: [],
+      expectedChildren: beforeChildren,
+    });
+    await releaseMutation();
+    await expect.poll(async () => (await nodeById(page, draftId))?.type).toBe('fieldEntry');
+  });
+
+  test('/code switches a trailing draft to the shared code transaction before Runtime settles', async ({ page }) => {
+    const beforeChildren = await todayChildren(page);
+    const editor = trailingEditor(page);
+    await editor.click();
+    await page.keyboard.type('/code');
+    const draftId = await editor.evaluate((element) => (
+      element.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId ?? ''
+    ));
+    expect(draftId).not.toBe('');
+    const beforeCalls = (await commandCalls(page)).length;
+    const releaseMutation = await holdOutlineMutation(page, { op: 'create' });
+
+    await page.getByRole('option', { name: /Code block/ }).click();
+
+    const firstFrame = await page.evaluate(({ beforeCalls, beforeChildren, draftId, todayId }) => {
+      const win = window as Window & {
+        __LIN_E2E__?: {
+          calls: unknown[];
+          projection: () => { nodes: Array<{ id: string; children: string[] }> };
+        };
+      };
+      const textarea = document.querySelector<HTMLElement>(
+        `[data-node-id="${CSS.escape(draftId)}"] .code-block-textarea`,
+      );
+      return {
+        codeVisible: textarea !== null,
+        focused: document.activeElement === textarea,
+        projectedChildren: win.__LIN_E2E__?.projection().nodes.find((node) => node.id === todayId)?.children,
+        calls: win.__LIN_E2E__?.calls.slice(beforeCalls),
+        expectedChildren: beforeChildren,
+      };
+    }, { beforeCalls, beforeChildren, draftId, todayId: ids.today });
+    expect(firstFrame).toEqual({
+      codeVisible: true,
+      focused: true,
+      projectedChildren: beforeChildren,
+      calls: [],
+      expectedChildren: beforeChildren,
+    });
+    await releaseMutation();
+    await expect.poll(async () => (await nodeById(page, draftId))?.type).toBe('codeBlock');
+  });
+
+  test('/heading clears through the shared transaction without remounting the editor', async ({ page }) => {
+    const beforeChildren = await todayChildren(page);
+    const editor = trailingEditor(page);
+    await editor.click();
+    await page.keyboard.type('/heading');
+    const draftId = await editor.evaluate((element) => {
+      (window as Window & { __slashHeadingEditor?: Element }).__slashHeadingEditor = element;
+      return element.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId ?? '';
+    });
+    expect(draftId).not.toBe('');
+    const releaseMutation = await holdOutlineMutation(page, { op: 'create' });
+
+    await page.getByRole('option', { name: /Heading/ }).click();
+
+    const pendingEditor = rowEditor(page, draftId);
+    await expect(pendingEditor).toHaveText('');
+    await expect(pendingEditor).toBeFocused();
+    expect(await pendingEditor.evaluate((element) => (
+      (window as Window & { __slashHeadingEditor?: Element }).__slashHeadingEditor === element
+    ))).toBe(true);
+    expect(await todayChildren(page)).toEqual(beforeChildren);
+
+    await releaseMutation();
+    await expect.poll(async () => (await nodeById(page, draftId))?.content.text).toBe('');
+    expect(await rowEditor(page, draftId).evaluate((element) => (
+      (window as Window & { __slashHeadingEditor?: Element }).__slashHeadingEditor === element
+    ))).toBe(true);
+  });
+
+  test('/checkbox keeps the trailing editor identity while the checkbox transaction settles', async ({ page }) => {
+    const beforeChildren = await todayChildren(page);
+    const editor = trailingEditor(page);
+    await editor.click();
+    await page.keyboard.type('/checkbox');
+    const draftId = await editor.evaluate((element) => {
+      (window as Window & { __slashCheckboxEditor?: Element }).__slashCheckboxEditor = element;
+      return element.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId ?? '';
+    });
+    expect(draftId).not.toBe('');
+    const beforeCalls = (await commandCalls(page)).length;
+    const releaseMutation = await holdOutlineMutation(page, { op: 'create' });
+
+    await page.getByRole('option', { name: /Checkbox/ }).click();
+
+    const firstFrame = await page.evaluate(({ beforeCalls, beforeChildren, draftId, todayId }) => {
+      const win = window as Window & {
+        __slashCheckboxEditor?: Element;
+        __LIN_E2E__?: {
+          calls: unknown[];
+          projection: () => { nodes: Array<{ id: string; children: string[] }> };
+        };
+      };
+      const row = document.querySelector(`[data-node-id="${CSS.escape(draftId)}"]`);
+      const checkbox = row?.querySelector<HTMLElement>('[role="checkbox"]');
+      const currentEditor = row?.querySelector('.ProseMirror');
+      return {
+        checkboxVisible: checkbox !== null,
+        checked: checkbox?.getAttribute('aria-checked'),
+        sameEditor: win.__slashCheckboxEditor?.isConnected === true
+          && currentEditor === win.__slashCheckboxEditor,
+        projectedChildren: win.__LIN_E2E__?.projection().nodes.find((node) => node.id === todayId)?.children,
+        calls: win.__LIN_E2E__?.calls.slice(beforeCalls),
+        expectedChildren: beforeChildren,
+      };
+    }, { beforeCalls, beforeChildren, draftId, todayId: ids.today });
+    expect(firstFrame).toEqual({
+      checkboxVisible: true,
+      checked: 'false',
+      sameEditor: true,
+      projectedChildren: beforeChildren,
+      calls: [],
+      expectedChildren: beforeChildren,
+    });
+    await releaseMutation();
+    await expect.poll(async () => (await nodeById(page, draftId))?.completedAt).toBe(0);
+  });
+
+  test('title /checkbox updates content and checkbox state before Runtime settles', async ({ page }) => {
+    await invokeMockCommand(page, 'create_node', {
+      parentId: ids.today,
+      index: null,
+      text: 'Plain title',
+    });
+    const targetId = await lastTodayChildId(page);
+    if (!targetId) throw new Error('missing title checkbox target');
+    await row(page, targetId).getByRole('button', { name: 'Open' }).click();
+    const panel = page.locator('.outline-panel-surface.active-panel');
+    const titleEditor = panel.locator('.panel-title-editor .ProseMirror');
+    await titleEditor.click();
+    await page.keyboard.press('Meta+A');
+    await page.keyboard.type('/checkbox');
+    await titleEditor.evaluate((element) => {
+      (window as Window & { __slashTitleEditor?: Element }).__slashTitleEditor = element;
+    });
+    const beforeCalls = (await commandCalls(page)).length;
+    const releaseMutation = await holdOutlineMutation(page, { op: 'update', instructionKind: 'checkbox' });
+
+    await page.getByRole('option', { name: /Checkbox/ }).click();
+
+    const firstFrame = await page.evaluate(({ beforeCalls, nodeId }) => {
+      const win = window as Window & {
+        __slashTitleEditor?: Element;
+        __LIN_E2E__?: {
+          calls: unknown[];
+          projection: () => { nodes: Array<{ id: string; content: { text: string }; completedAt?: number }> };
+        };
+      };
+      const panel = document.querySelector('.outline-panel-surface.active-panel');
+      const currentEditor = panel?.querySelector('.panel-title-editor .ProseMirror');
+      const checkbox = panel?.querySelector<HTMLElement>('.panel-title-editor [role="checkbox"]');
+      const projected = win.__LIN_E2E__?.projection().nodes.find((node) => node.id === nodeId);
+      return {
+        title: currentEditor?.textContent,
+        checkboxVisible: checkbox !== null,
+        checked: checkbox?.getAttribute('aria-checked'),
+        sameEditor: win.__slashTitleEditor?.isConnected === true
+          && currentEditor === win.__slashTitleEditor,
+        projectedTitle: projected?.content.text,
+        projectedCompletedAt: projected?.completedAt,
+        calls: win.__LIN_E2E__?.calls.slice(beforeCalls),
+      };
+    }, { beforeCalls, nodeId: targetId });
+    expect(firstFrame).toEqual({
+      title: '',
+      checkboxVisible: true,
+      checked: 'false',
+      sameEditor: true,
+      projectedTitle: '/checkbox',
+      projectedCompletedAt: undefined,
+      calls: [],
+    });
+    await releaseMutation();
+    await expect.poll(async () => {
+      const target = await nodeById(page, targetId);
+      return { content: target?.content.text, completedAt: target?.completedAt };
+    }).toEqual({ content: '', completedAt: 0 });
   });
 
   test('/ Reference in trailing input switches to local @ suggestions without a temporary row', async ({ page }) => {
@@ -967,6 +1359,43 @@ test.describe('outliner trigger parity', () => {
     }).toBe(true);
     await expect(rowEditor(page, createdRowId!)).toBeFocused();
     await expect(rowBody(page, createdRowId!)).toHaveClass(/ref-converting/);
+  });
+
+  test('/ Reference opens local suggestions before an existing-row patch settles', async ({ page }) => {
+    await placeCursor(page, ids.alpha, 'end');
+    await page.keyboard.press('Meta+A');
+    await page.keyboard.type('/ref');
+    await expect(page.getByRole('listbox', { name: 'Slash commands' })).toBeVisible();
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.text).toBe('/ref');
+    const releaseMutation = await holdOutlineMutation(page, { op: 'update', instructionKind: 'content' });
+
+    await page.keyboard.press('Enter');
+
+    await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
+    await expect(rowEditor(page, ids.alpha)).toHaveText('@');
+    expect((await nodeById(page, ids.alpha))?.content.text).toBe('/ref');
+    await releaseMutation();
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.text).toBe('@');
+  });
+
+  test('title / Reference opens local suggestions before its patch settles', async ({ page }) => {
+    await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
+    const panel = page.locator('.outline-panel-surface.active-panel');
+    const titleEditor = panel.locator('.panel-title-editor .ProseMirror');
+    await titleEditor.click();
+    await page.keyboard.press('Meta+A');
+    await page.keyboard.type('/ref');
+    await expect(page.getByRole('listbox', { name: 'Slash commands' })).toBeVisible();
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.text).toBe('/ref');
+    const releaseMutation = await holdOutlineMutation(page, { op: 'update', instructionKind: 'content' });
+
+    await page.keyboard.press('Enter');
+
+    await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
+    await expect(titleEditor).toHaveText('@');
+    expect((await nodeById(page, ids.alpha))?.content.text).toBe('/ref');
+    await releaseMutation();
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.text).toBe('@');
   });
 
   test('@ and # suggestion popovers anchor to the caret inside transformed outliner rows', async ({ page }) => {
@@ -1041,7 +1470,7 @@ test.describe('outliner trigger parity', () => {
     await page.keyboard.type('>');
 
     await expect.poll(async () => (await appliedInstructions(page)).some((instruction) => (
-      instruction.kind === 'field' && instruction.action === 'define'
+      instruction.kind === 'field' && instruction.action === 'convert'
     ))).toBe(true);
     const fieldId = await lastTodayChildId(page);
     expect(fieldId).toBeTruthy();
@@ -1559,8 +1988,36 @@ test.describe('outliner trigger parity', () => {
     await expect(mark).toHaveCSS('height', '16px');
     await expect(mark).toHaveCSS('border-radius', '3px');
 
+    await checkbox.evaluate((element) => {
+      (window as Window & { __checkboxFieldControl?: Element }).__checkboxFieldControl = element;
+    });
+    const beforeToggleCalls = (await commandCalls(page)).length;
+    const releaseMutation = await holdOutlineMutation(page, { op: 'update', instructionKind: 'field-slot' });
     await checkbox.click();
-    await expect(mark).toHaveClass(/checked/);
+    const firstFrame = await page.evaluate((input) => {
+      const win = window as Window & {
+        __checkboxFieldControl?: Element;
+        __LIN_E2E__?: {
+          calls: unknown[];
+          projection: () => { nodes: Array<{ id: string; children: string[] }> };
+        };
+      };
+      const element = win.__checkboxFieldControl;
+      return {
+        checked: element?.querySelector('.checkbox-mark')?.classList.contains('checked') === true,
+        sameElement: element?.isConnected === true
+          && document.querySelector(`[data-node-id="${CSS.escape(input.fieldId)}"] [role="checkbox"]`) === element,
+        children: win.__LIN_E2E__?.projection().nodes.find((node) => node.id === input.fieldId)?.children,
+        calls: win.__LIN_E2E__?.calls.slice(input.beforeToggleCalls),
+      };
+    }, { fieldId, beforeToggleCalls });
+    expect(firstFrame).toEqual({
+      checked: true,
+      sameElement: true,
+      children: [],
+      calls: [],
+    });
+    await releaseMutation();
     let valueId = '';
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
@@ -1572,6 +2029,9 @@ test.describe('outliner trigger parity', () => {
     const valueRow = rowBody(page, valueId);
     const storedCheckbox = valueRow.getByRole('checkbox');
     await expect(storedCheckbox).toBeFocused();
+    expect(await storedCheckbox.evaluate((element) => (
+      (window as Window & { __checkboxFieldControl?: Element }).__checkboxFieldControl === element
+    ))).toBe(true);
     await expect(valueRow.locator(':scope > .row-leading')).toHaveCount(1);
 
     await page.keyboard.press('Escape');
@@ -1673,14 +2133,31 @@ test.describe('outliner options field inline value', () => {
 
   test('options field value selects an existing option from the inline listbox', async ({ page }) => {
     const valuePreview = row(page, ids.priorityEntry).locator('.field-value-node-preview');
-    await priorityValueEditor(page).click();
+    const editor = priorityValueEditor(page);
+    await editor.click();
+    const pendingValueId = await editor.evaluate((element) => (
+      element.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId ?? ''
+    ));
+    expect(pendingValueId).not.toBe('');
+    const beforeChildren = (await nodeById(page, ids.priorityEntry))?.children ?? [];
 
     const listbox = page.getByRole('listbox', { name: 'Field options' });
     await expect(listbox).toBeVisible();
     await expect(listbox.getByRole('option', { name: 'High' })).toBeVisible();
 
+    const releaseSelection = await holdOutlineMutation(page, {
+      op: 'update',
+      instructionKind: 'field-slot',
+    });
     await listbox.getByRole('option', { name: 'Low' }).click();
     await expect(valuePreview).toHaveText(/Low/);
+    await expect(row(page, pendingValueId).locator('.reference-row')).toBeVisible();
+    await expect(priorityValueEditor(page)).toBeFocused();
+    expect((await nodeById(page, ids.priorityEntry))?.children ?? []).toEqual(beforeChildren);
+
+    await releaseSelection();
+    await expect.poll(async () => (await nodeById(page, ids.priorityEntry))?.children).toContain(pendingValueId);
+    await expect(priorityValueEditor(page)).toBeFocused();
   });
 
   test('options field appends multiple selected values instead of replacing', async ({ page }) => {
@@ -1719,10 +2196,26 @@ test.describe('outliner options field inline value', () => {
 
     await page.keyboard.press('ArrowUp');
     await expect(listbox.getByRole('option', { name: 'High' })).toHaveAttribute('aria-selected', 'true');
+    const beforeChildren = (await nodeById(page, ids.priorityEntry))?.children ?? [];
+    const releaseSelection = await holdOutlineMutation(page, {
+      op: 'update',
+      instructionKind: 'field-slot',
+    });
     await page.keyboard.press('Enter');
 
     await expect(listbox).toHaveCount(0);
     await expect(valuePreview).toHaveText(/High/);
+    const pendingHigh = valuePreview.locator('.row.reference-row').filter({ hasText: 'High' }).last();
+    const highValueId = await pendingHigh.evaluate((element) => (
+      element.parentElement?.dataset.nodeId ?? ''
+    ));
+    expect(highValueId).not.toBe('');
+    expect((await nodeById(page, ids.priorityEntry))?.children ?? []).toEqual(beforeChildren);
+    await expect(rowBody(page, valueId)).toHaveClass(/ref-click-selected/);
+
+    await releaseSelection();
+    await expect.poll(async () => (await nodeById(page, ids.priorityEntry))?.children).toContain(highValueId);
+    await expect(rowBody(page, valueId)).toHaveClass(/ref-click-selected/);
   });
 
   test('Escape closes selected option list before clearing row selection', async ({ page }) => {
@@ -1982,8 +2475,9 @@ test.describe('tag-projected field slot interactions', () => {
       expect(colors.actual).toBe(colors.expected);
     }
 
-    await trailingEditor(page, alphaSlotId).click();
-    await expect(trailingEditor(page, alphaSlotId)).toBeFocused();
+    const valueEditor = trailingEditor(page, alphaSlotId);
+    await valueEditor.click();
+    await expect(valueEditor).toBeFocused();
     await expect(ghost).toHaveCSS('visibility', 'hidden');
     await expect.poll(() => emptyEditor.evaluate((element) => {
       const style = getComputedStyle(element, '::before');
@@ -1996,13 +2490,35 @@ test.describe('tag-projected field slot interactions', () => {
     await expect.poll(() => storedFieldEntryId(page, ids.alpha, ids.statusField)).toBeUndefined();
     await page.keyboard.type('Blocked');
     await expect.poll(() => storedFieldEntryId(page, ids.alpha, ids.statusField)).toBeUndefined();
+    const valueId = await valueEditor.evaluate((element) => (
+      element.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId ?? ''
+    ));
+    expect(valueId).not.toBe('');
+    const releaseMaterialization = await holdOutlineMutation(page, {
+      op: 'update',
+      instructionKind: 'field-slot',
+    });
     await page.keyboard.press('Enter');
+
+    const pendingValueEditor = rowEditor(page, valueId);
+    const nextDraftEditor = trailingEditor(page, alphaSlotId);
+    await expect(pendingValueEditor).toHaveText('Blocked');
+    await expect(nextDraftEditor).toBeFocused();
+    await nextDraftEditor.evaluate((element) => {
+      (window as Window & { __fieldValueContinuation?: Element }).__fieldValueContinuation = element;
+    });
+    expect(await storedFieldEntryId(page, ids.alpha, ids.statusField)).toBeUndefined();
+    await releaseMaterialization();
 
     let alphaEntryId = '';
     await expect.poll(async () => {
       alphaEntryId = await storedFieldEntryId(page, ids.alpha, ids.statusField) ?? '';
       return alphaEntryId;
     }).not.toBe('');
+    await expect(trailingEditor(page, alphaEntryId)).toBeFocused();
+    expect(await trailingEditor(page, alphaEntryId).evaluate((element) => (
+      (window as Window & { __fieldValueContinuation?: Element }).__fieldValueContinuation === element
+    ))).toBe(true);
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
       const entry = projection.nodes.find((node) => node.id === alphaEntryId);
@@ -2073,8 +2589,26 @@ test.describe('tag-projected field slot interactions', () => {
 
   test('virtual slots materialize nested fields, tags, and code blocks through field-slot commands', async ({ page }) => {
     const alphaSlot = await projectFieldFromTag(page, ids.alpha, ids.statusField, 'plain');
-    await trailingEditor(page, alphaSlot).click();
+    const alphaEditor = trailingEditor(page, alphaSlot);
+    await alphaEditor.click();
+    const pendingNestedFieldId = await alphaEditor.evaluate((element) => (
+      element.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId ?? ''
+    ));
+    expect(pendingNestedFieldId).not.toBe('');
+    const releaseMaterialization = await holdOutlineMutation(page, {
+      op: 'update',
+      instructionKind: 'field-slot',
+    });
     await page.keyboard.type('>');
+
+    const pendingFieldName = row(page, pendingNestedFieldId).locator('.field-name-input');
+    await expect(pendingFieldName).toBeVisible();
+    await expect(pendingFieldName).toBeFocused();
+    await pendingFieldName.evaluate((element) => {
+      (window as Window & { __nestedFieldName?: Element }).__nestedFieldName = element;
+    });
+    expect(await storedFieldEntryId(page, ids.alpha, ids.statusField)).toBeUndefined();
+    await releaseMaterialization();
 
     let nestedFieldId = '';
     await expect.poll(async () => {
@@ -2087,7 +2621,11 @@ test.describe('tag-projected field slot interactions', () => {
       nestedFieldId = nested?.id ?? '';
       return nestedFieldId;
     }).not.toBe('');
+    expect(nestedFieldId).toBe(pendingNestedFieldId);
     await expect(row(page, nestedFieldId).locator('.field-name-input')).toBeFocused();
+    expect(await row(page, nestedFieldId).locator('.field-name-input').evaluate((element) => (
+      (window as Window & { __nestedFieldName?: Element }).__nestedFieldName === element
+    ))).toBe(true);
     await page.keyboard.type('Nested');
     await page.keyboard.press('Escape');
 

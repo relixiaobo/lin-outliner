@@ -140,8 +140,10 @@ state, not text completion. The composer keeps four logical values:
 
 1. the current editable draft bundle;
 2. the ordered canonical history entries for the current Thread;
-3. the stable `userMessage` Item selected during navigation; and
-4. the scratch bundle captured immediately before navigation began.
+3. the navigation cursor, which identifies either a stable `userMessage` Item
+   or the scratch position after the newest entry; and
+4. the editable scratch working bundle first captured immediately before
+   navigation began.
 
 A draft bundle contains the ProseMirror document and selection, the ordered
 structured draft content, the settled `ThreadAttachmentContent` values, and the
@@ -312,6 +314,14 @@ and `isReaderAuthoredUserMessage`, so a delegated brief, peer message, host
 envelope, feature prompt, or machine steer can never become a reader-authored
 rollback submission.
 
+Renderability follows the same structured Item boundary for every author. A
+`userMessage` with no attachment or Node reference and only empty or
+whitespace text produces no bubble, speaker run, copy target, accessibility
+output, or spacing. Attachment-only and Node-reference-only reader Items remain
+visible. When a resolved `SubagentReport` replaces a delivery Item, the report
+is that Item's visible projection; the underlying content does not suppress the
+replacement.
+
 ### Navigation state machine
 
 The idle state has no history cursor. On the first eligible Up:
@@ -325,21 +335,25 @@ The idle state has no history cursor. On the first eligible Up:
 
 Further eligible Up events select older entries. Eligible Down events select
 newer entries. Down past the newest entry restores the scratch bundle, including
-its original selection, and returns to idle. Moving beyond the oldest entry is
-a handled no-op so the caret does not unexpectedly leave history navigation.
+its current working document and selection, but keeps the navigation session at
+the scratch position. A subsequent eligible Up restores the newest entry's
+working copy rather than rematerializing its canonical content. Moving beyond
+the oldest entry is a handled no-op so the caret does not unexpectedly leave
+history navigation.
 
 Before leaving any slot, retain its current working bundle for the lifetime of
-that navigation session. Returning to the slot restores edits made during the
-same session without changing the canonical Item. This includes settled
-attachments or references added after recall. If any serialized attachment
-operation is queued or running in the visible slot, navigation pauses in place:
-plain Up and Down keep their native editor behavior and no slot is snapshotted,
-hidden, or replaced. This covers operations without an inline pending atom as
-well as generated large-paste requests. Navigation becomes eligible again after
-the operation settles, cancels, or fails, so a late result cannot commit into a
-different history slot. The session ends when the reader returns to scratch,
-submits, clears the editor through an established product path, or the owning
-ThreadView unmounts.
+that navigation session, including scratch. Returning to the slot restores edits
+made during the same session without changing the canonical Item. This includes
+settled attachments or references added after recall. If any serialized
+attachment operation is queued or running in the visible slot, navigation
+pauses in place: plain Up and Down keep their native editor behavior and no slot
+is snapshotted, hidden, or replaced. This covers operations without an inline
+pending atom as well as generated large-paste requests. Navigation becomes
+eligible again after the operation settles, cancels, or fails, so a late result
+cannot commit into a different history slot. The session ends when the reader
+submits, clears the editor through an established product path, the owning
+ThreadView unmounts, or a removed selected Item has no surviving history entry
+to navigate back to.
 
 A submit exits history mode before admission. A refused initial send or steer
 restores the submitted bundle through the existing failure path as an ordinary
@@ -426,9 +440,18 @@ Preserve the exact ordered `ThreadUserContent[]` shape:
 - attachments retain canonical source and artifact metadata but receive fresh
   composer attachment IDs, so a recalled copy never aliases the original
   message-part identity; and
-- recalled attachment atoms and tray cards use the established generic
-  name/type/size presentation when renderer-only thumbnail or pasted-text
-  excerpt data is unavailable.
+- a successful send retains any already-admitted image preview as renderer-only
+  canonical-session UI state, so a recalled copy aliases that preview lease
+  under its fresh attachment ID without reading or copying source bytes. When
+  thumbnail or pasted-text excerpt data is unavailable, recalled atoms and tray
+  cards use the established generic name/type/size presentation.
+
+The renderer send boundary preserves the complete admission result. Its
+`deduplicated` disposition determines whether submitted attachment identities
+became canonical; the nullable `turn` field determines only whether main opened
+a new Turn for layout and anchoring. A successful steer has `turn: null` and
+still transfers every already-known submitted preview lease to its accepted
+canonical attachment identity.
 
 Canonical history does not persist renderer-only pasted-text excerpts. A
 recalled `Pasted*.txt` therefore degrades to the ordinary text/file tray card
@@ -477,6 +500,10 @@ visible-slot-only and are never moved into the retention registry. While a slot
 remains recoverable, preserve its renderer-only object URLs, source keys, and
 pasted-text excerpts. The tray's removal preview is interaction state rather
 than draft state and is cleared on every history swap instead of being restored.
+An accepted canonical attachment retains only its already-known preview lease
+for the lifetime of the mounted Thread view. Fresh recalled IDs share that lease;
+removing the canonical Item or the last draft alias revokes it, and navigation
+never invokes file preview or materialization code.
 
 When the session ends, release every inactive slot. Revoke its renderer-only UI
 state and request discard for managed content references with no surviving
@@ -648,8 +675,9 @@ interface PR. This plan-only PR edits no main-owned board or changelog file.
   soft-wrapped draft, Up and Down retain native cursor movement and do not
   replace the draft.
 - **AC-3:** When Down advances past the newest history entry, the composer
-  restores the exact pre-navigation document, selection, references,
-  attachments, and attachment UI state.
+  restores the latest scratch working document, selection, references,
+  attachments, and attachment UI state without ending the navigation session;
+  a subsequent Up restores the newest entry's edited working copy.
 - **AC-4:** While slash or mention suggestions are open, including with an empty
   result list, the menu receives Up and Down before history, the history callback
   is not invoked, and the menu alone decides whether to consume the key.
@@ -723,9 +751,10 @@ interface PR. This plan-only PR edits no main-owned board or changelog file.
   `preventDefault`, makes no editor mutation, and native editor behavior receives
   the key.
 - **AC-25:** While history owns a recalled slot, Up at the oldest entry consumes
-  the key as a performed boundary no-op; Down past the newest, and a
-  missing-anchor reconciliation with no surviving entries, consume the key only
-  after restoring scratch and returning to idle.
+  the key as a performed boundary no-op; Down past the newest consumes the key
+  after restoring scratch while retaining the session, and a missing-anchor
+  reconciliation with no surviving entries consumes the key only after
+  restoring scratch and returning to idle.
 - **AC-26:** With all Tenon processes stopped, the documented one-time manual
   reset removes the installed and clone-scoped authorless stores. The first
   subsequent packaged and development launches create only required-author

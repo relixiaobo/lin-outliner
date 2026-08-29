@@ -4,6 +4,7 @@ import {
   useEffect,
   useId,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
   type InputHTMLAttributes,
@@ -56,7 +57,7 @@ export const TimePickerControl = forwardRef<HTMLInputElement, TimePickerControlP
 
   useImperativeHandle(forwardedRef, () => inputRef.current as HTMLInputElement);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setDraft(value);
   }, [value]);
 
@@ -77,12 +78,9 @@ export const TimePickerControl = forwardRef<HTMLInputElement, TimePickerControlP
     getRestoreTarget: () => restoreTargetRef.current,
   });
 
-  useEffect(() => {
-    if (!open) return undefined;
-    const frame = requestFrame(() => {
-      hourListRef.current?.focus({ preventScroll: true });
-    });
-    return () => cancelFrame(frame);
+  useLayoutEffect(() => {
+    if (!open) return;
+    hourListRef.current?.focus({ preventScroll: true });
   }, [open]);
 
   useEffect(() => {
@@ -242,12 +240,9 @@ function TimePickerColumn({
   const listId = `time-picker-${reactId}`;
   const wheelRemainderRef = useRef(0);
 
-  useEffect(() => {
-    const frame = requestFrame(() => {
-      listRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')
-        ?.scrollIntoView?.({ block: 'center' });
-    });
-    return () => cancelFrame(frame);
+  useLayoutEffect(() => {
+    listRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')
+      ?.scrollIntoView?.({ block: 'center' });
   }, [listRef, selected]);
 
   function select(nextValue: number): void {
@@ -348,16 +343,6 @@ function parseTimeValue(value: string): { hour: number; minute: number } | null 
 
 function formatTime(hour: number, minute: number): string {
   return `${formatTwoDigits(hour)}:${formatTwoDigits(minute)}`;
-}
-
-function requestFrame(callback: FrameRequestCallback): number {
-  return window.requestAnimationFrame?.(callback)
-    ?? window.setTimeout(() => callback(Date.now()), 0);
-}
-
-function cancelFrame(handle: number): void {
-  if (window.cancelAnimationFrame) window.cancelAnimationFrame(handle);
-  else window.clearTimeout(handle);
 }
 
 function formatTwoDigits(value: number): string {

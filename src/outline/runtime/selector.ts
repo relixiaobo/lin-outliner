@@ -21,30 +21,51 @@ export interface OutlineSelectionIndex {
   readonly textIndex: () => TextSearchIndex;
 }
 
-export function createSelectionIndex(projection: DocumentProjection): OutlineSelectionIndex {
-  const byId = new Map(projection.nodes.map((node) => [node.id, node]));
-  const documentOrder: string[] = [];
-  const visited = new Set<string>();
-  const stack = [projection.rootId];
-  while (stack.length > 0) {
-    const nodeId = stack.pop()!;
-    if (visited.has(nodeId) || !byId.has(nodeId)) continue;
-    visited.add(nodeId);
-    documentOrder.push(nodeId);
-    const children = byId.get(nodeId)?.children ?? [];
-    for (let index = children.length - 1; index >= 0; index -= 1) stack.push(children[index]!);
-  }
-  for (const nodeId of [...byId.keys()].sort(compareText)) {
-    if (!visited.has(nodeId)) documentOrder.push(nodeId);
-  }
+export interface OutlineSelectionIndexOptions {
+  readonly nodesById?: ReadonlyMap<string, NodeProjection>;
+  readonly textIndex?: TextSearchIndex;
+}
+
+export function createSelectionIndex(
+  projection: DocumentProjection,
+  options: OutlineSelectionIndexOptions = {},
+): OutlineSelectionIndex {
+  const byId = options.nodesById ?? new Map(projection.nodes.map((node) => [node.id, node]));
+  let documentOrder: readonly string[] | undefined;
+  let documentPosition: ReadonlyMap<string, number> | undefined;
+  const ensureDocumentOrder = () => {
+    if (documentOrder && documentPosition) return;
+    const ordered: string[] = [];
+    const visited = new Set<string>();
+    const stack = [projection.rootId];
+    while (stack.length > 0) {
+      const nodeId = stack.pop()!;
+      if (visited.has(nodeId) || !byId.has(nodeId)) continue;
+      visited.add(nodeId);
+      ordered.push(nodeId);
+      const children = byId.get(nodeId)?.children ?? [];
+      for (let index = children.length - 1; index >= 0; index -= 1) stack.push(children[index]!);
+    }
+    for (const nodeId of [...byId.keys()].sort(compareText)) {
+      if (!visited.has(nodeId)) ordered.push(nodeId);
+    }
+    documentOrder = ordered;
+    documentPosition = new Map(ordered.map((nodeId, index) => [nodeId, index]));
+  };
   let textIndex: TextSearchIndex | undefined;
   return {
     projection,
     byId,
-    documentOrder,
-    documentPosition: new Map(documentOrder.map((nodeId, index) => [nodeId, index])),
+    get documentOrder() {
+      ensureDocumentOrder();
+      return documentOrder!;
+    },
+    get documentPosition() {
+      ensureDocumentOrder();
+      return documentPosition!;
+    },
     textIndex: () => {
-      textIndex ??= buildTextSearchIndex(projection);
+      textIndex ??= options.textIndex ?? buildTextSearchIndex(projection);
       return textIndex;
     },
   };

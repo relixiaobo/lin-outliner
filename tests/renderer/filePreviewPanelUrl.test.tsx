@@ -448,7 +448,6 @@ function emptyUi(): UiState {
     focusRequest: null,
     pendingInputChar: null,
     pendingReferenceConversion: null,
-    pendingReferenceTypeAhead: null,
     trailingDraftPlacement: null,
     expanded: new Set(),
     expandedHiddenFields: new Set(),

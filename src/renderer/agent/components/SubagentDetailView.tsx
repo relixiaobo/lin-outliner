@@ -7,7 +7,6 @@ import { IconButton } from '../../ui/primitives/IconButton';
 import { api } from '../../api/client';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
 import { threadStore, useThreadStore } from '../store/threadStore';
-import { MAIN_IDENTITY_KEY } from '../agentIdentity';
 import type { ThreadSpeaker } from './ThreadSpeaker';
 import { subagentSpeakerName, type SubagentConversationProjection } from '../subagentPresentation';
 import { useSubagentActions, useSubagentEntry } from './SubagentRegistryContext';
@@ -87,20 +86,6 @@ export function SubagentDetailView({
     await onOpenThread(target);
   }, [actions, onOpenThread, subagentProjection]);
 
-  // Whose words the host-authored Items here are: the Agent that delegated
-  // this one, or the conversation itself when the delegator IS the conversation.
-  const parentThreadId = entry?.parentThreadId ?? null;
-  const parentEntry = parentThreadId === null
-    ? null
-    : subagentProjection.byAgentId.get(parentThreadId) ?? null;
-  // Named exactly as the conversation names them, so one Agent does not answer
-  // to `general-purpose` out there and to its task description in here — the
-  // avatar is drawn from that name, so the disc would change letter too.
-  //
-  // The conversation itself is keyed as `main` rather than by its Thread id,
-  // the way every other surface keys it: keyed by id, the one participant that
-  // is always there wore a different hue inside a pushed view than it wore in
-  // the conversation the reader had just left.
   // Every one of these is stable across renders on purpose: this view
   // re-renders on each store patch, and an inline handler or speaker object
   // handed the memoized `ThreadTurnView` a new identity per streaming frame,
@@ -134,20 +119,6 @@ export function SubagentDetailView({
     avatarKey: speakerName ?? agentId,
     name: speakerName ?? t.agent.thread.untitled,
   }), [agentId, speakerName, t]);
-  const parentSpeakerName = parentEntry === null ? null : subagentSpeakerName(parentEntry);
-  const hostSpeaker: ThreadSpeaker = useMemo(() => (
-    parentEntry === null
-      ? {
-        participantId: MAIN_IDENTITY_KEY,
-        avatarKey: MAIN_IDENTITY_KEY,
-        name: t.agent.thread.agent.main,
-      }
-      : {
-        participantId: parentEntry.agentId,
-        avatarKey: parentSpeakerName ?? MAIN_IDENTITY_KEY,
-        name: parentSpeakerName ?? t.agent.thread.agent.main,
-      }
-  ), [parentEntry, parentSpeakerName, t]);
   // Only an Agent takes direction. An isolated Skill's result belongs to the
   // `skill` call that invoked it, so there is nothing here for a message to do.
   const composerEnabled = entry?.form !== 'isolatedSkill' && thread?.source === 'collaboration';
@@ -162,6 +133,7 @@ export function SubagentDetailView({
           <ThreadView
             active
             composerEnabled={composerEnabled}
+            composerFocusExpectedActiveElement={null}
             composerFocusToken={0}
             composerPlaceholder={entry?.stoppedByUser
               ? t.agent.thread.agent.composerResumePlaceholder
@@ -192,7 +164,6 @@ export function SubagentDetailView({
             providerSettingsLoaded={false}
             slashCommands={[]}
             agentTranscript
-            hostSpeaker={hostSpeaker}
             selfSpeaker={selfSpeaker}
             subagentProjection={subagentProjection}
             threadCreationBlocked

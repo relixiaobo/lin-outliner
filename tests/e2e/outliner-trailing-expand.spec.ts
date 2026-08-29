@@ -4,6 +4,7 @@ import {
   commandCalls,
   e2eProjection,
   emitDocumentEvent,
+  holdOutlineMutation,
   ids,
   nodeById,
   nodeByText,
@@ -493,7 +494,7 @@ test.describe('outliner trailing input and expansion parity', () => {
   });
 
   test('fast panel trailing typing does not create partial sibling nodes before commit', async ({ page }) => {
-    await delayCreateNode(page);
+    const releaseCreate = await holdOutlineMutation(page, { op: 'create' });
     const text = 'helo';
     const editor = trailingEditor(page);
     await editor.click();
@@ -503,6 +504,7 @@ test.describe('outliner trailing input and expansion parity', () => {
     expect(await nodeByText(page, text)).toBeUndefined();
 
     await page.keyboard.press('Enter');
+    await releaseCreate();
 
     await expect.poll(async () => (await nodeByText(page, text))?.parentId).toBe(ids.today);
     const projection = await e2eProjection(page);
@@ -545,7 +547,7 @@ test.describe('outliner trailing input and expansion parity', () => {
   });
 
   test('field value trailing input stays local until Enter commits the value node', async ({ page }) => {
-    await delayCreateNode(page);
+    const releaseCreate = await holdOutlineMutation(page, { op: 'create' });
     const text = '字段中文';
 
     await trailingEditor(page).click();
@@ -560,6 +562,7 @@ test.describe('outliner trailing input and expansion parity', () => {
     expect(await nodeByText(page, text)).toBeUndefined();
 
     await page.keyboard.press('Enter');
+    await releaseCreate();
 
     await expect.poll(async () => (await nodeByText(page, text))?.content.text).toBe(text);
     const projection = await e2eProjection(page);
@@ -933,7 +936,7 @@ test.describe('outliner trailing input and expansion parity', () => {
   });
 
   test('switching between trailing inputs commits each editor once without replaying partial text', async ({ page }) => {
-    await delayCreateNode(page, 160);
+    const releaseFirstCreate = await holdOutlineMutation(page, { op: 'create' });
     await rowBody(page, ids.gamma).hover();
     await row(page, ids.gamma).locator('.row-chevron-button').click();
     await expect(trailingEditor(page, ids.gamma)).toBeFocused();
@@ -950,6 +953,7 @@ test.describe('outliner trailing input and expansion parity', () => {
     await expect.poll(() => trailingTextOrCommittedParentId(page, ids.gamma, secondText)).toBe(ids.gamma);
 
     await page.keyboard.press('Enter');
+    await releaseFirstCreate();
 
     await expect.poll(async () => (await nodeByText(page, firstText))?.parentId).toBe(ids.today);
     await expect.poll(async () => (await nodeByText(page, secondText))?.parentId).toBe(ids.gamma);

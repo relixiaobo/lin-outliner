@@ -396,6 +396,16 @@ submits an ordinary ChangeSet. Desktop reads use Projection and desktop updates
 arrive as Event records. There is no second renderer document protocol after
 cutover.
 
+The renderer has one input-settlement mechanism across body rows, field values,
+Table-hosted nodes, code, descriptions, and checkbox controls. Structural
+transactions present their exact submitted IDs optimistically; semantic draft
+ownership preserves editor identity when a virtual field slot materializes; and
+matching focus requests, pending characters, authoritative draft sync, and
+suggestion selection reconcile before paint. A focus-targeted `EditorView` mounts
+in the layout phase, while ordinary untargeted editors remain passive to keep
+large-outline startup bounded. Async candidate checks may change availability but
+never reset a user's current selection.
+
 The following invariants are release blockers:
 
 1. Every persisted mutation, including desktop editing, maps to one Core
@@ -1098,6 +1108,7 @@ interface RuntimeDescriptor {
   protocolMajors: readonly [1];
   contractDigest: string;
   runtimeVersion: string;
+  developmentSessionId?: string;
   storageVersion: number;
   createdAt: string;
 }
@@ -1105,6 +1116,10 @@ interface RuntimeDescriptor {
 
 The socket path, descriptor, bearer token, and request envelope are private
 implementation details, not public schemas or supported integration points.
+`developmentSessionId` is present only when an unpackaged Electron host launches
+Runtime. A new dev host requires its own session ID and retires an authenticated,
+owned Runtime from an earlier dev session even when the public contract digest is
+unchanged; packaged and ordinary CLI clients do not require this field.
 The CLI, domain schemas, response envelope, and stream records are public. The
 bearer token proves same-user descriptor access; it is never logged, persisted
 in Operation metadata, or accepted from argv. The server validates authorization
@@ -1148,11 +1163,13 @@ CLI discovery rules are deterministic:
    `ELECTRON_USER_DATA_DIR` for isolated development and tests.
 2. Read and validate the descriptor, compare its exact contract digest, connect,
    authenticate, and compare the live status digest under a bounded attach probe.
-3. If automatic start finds an older authenticated bundled Runtime, require its
-   descriptor to match the private writer-lock owner, retire that exact instance,
-   and wait for its descriptor release. Current Runtimes use a private lifecycle
-   route; legacy Runtimes receive `SIGTERM` only after the same checks. An atomic
-   private retirement claim selects one signaler and recovers if its owner dies.
+3. If automatic start finds an older authenticated bundled Runtime, or an
+   unpackaged desktop finds a same-contract Runtime from another development
+   session, require its descriptor to match the private writer-lock owner, retire
+   that exact instance, and wait for its descriptor release. Current Runtimes use
+   a private lifecycle route; legacy Runtimes receive `SIGTERM` only after the
+   same checks. An atomic private retirement claim selects one signaler and
+   recovers if its owner dies.
 4. If the descriptor is absent or the authenticated old instance retired, start
    the standalone Runtime unless `--no-start` is present. Concurrent starters
    converge through the writer lock.
@@ -1789,8 +1806,11 @@ atomicity, attribution, or durability.
 Performance probes cover cold Runtime start, warm reads, a single-intent porcelain
 mutation, 10,000-result export, 100-date apply, and a large tree ChangeSet.
 Capture event-loop stall distribution and memory high-water marks before tuning
-chunk sizes. Cooperative chunking may improve responsiveness but may not create
-multiple public transactions or expose intermediate persistence.
+chunk sizes. Foreground mutation candidates use Loro's native document fork plus
+copied incremental Core caches; a regression guard fails if candidate creation
+calls workspace serialization. Cooperative chunking may improve responsiveness
+but may not create multiple public transactions or expose intermediate
+persistence.
 
 The final branch runs:
 
@@ -1825,8 +1845,15 @@ The final branch runs:
   and keep Electron's UI single-instance lock unrelated.
 - **Desktop interaction latency:** Moving authority out of Electron main adds a
   process hop and durable commit boundary. Keep editor drafts optimistic, batch
-  only at measured semantic boundaries, stream Events, and reject any design
-  that restores in-process document authority as a latency shortcut.
+  only at measured semantic boundaries, stream Events, create isolated mutation
+  candidates without a full persistence round trip, and present ordinary create,
+  split, and removal structure optimistically using the exact submitted Node ID.
+  Pending structure never mutates the renderer Projection, and settlement swaps
+  pending presentation for the authoritative row in one render commit. Apply the
+  same transaction, semantic draft identity, and pre-paint focus/input rules to
+  body, field-value, and Table-hosted editing; do not create surface-specific
+  settlement paths. Reject any design that restores in-process document authority
+  as a latency shortcut.
 - **Runtime crash visibility:** A separate process can exit while desktop is
   open. The client reports unavailable state, preserves local drafts, restarts
   through the common supervisor, and resumes from verified revision/cursor.

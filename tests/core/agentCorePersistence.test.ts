@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { appendFile, mkdtemp, rm, truncate } from 'node:fs/promises';
+import { appendFile, mkdtemp, readFile, rm, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Database } from 'bun:sqlite';
@@ -343,6 +343,72 @@ describe('Agent Core persistence', () => {
     expect((await store.read(threadId)).map((entry) => entry.ordinal)).toEqual([0, 1]);
     await store.append(threadId, notifications[2]!);
     expect((await store.read(threadId)).map((entry) => entry.ordinal)).toEqual([0, 1, 2]);
+  });
+
+  test('rejects authorless rollout, restoration, retry, and projection records', async () => {
+    const root = await tempRoot();
+    const threadId = uuidV7(1_050);
+    const rollout = trackedRolloutStore(join(root, 'strict-author-rollouts'));
+    const original = lifecycle(threadId, 5_000);
+    const replacement = lifecycle(threadId, 5_100)[0];
+    if (replacement?.type !== 'turn/started') throw new Error('Missing retry replacement fixture');
+
+    await expect(rollout.append(
+      threadId,
+      withoutUserMessageAuthors(original[0]!) as AgentCoreNotification,
+    )).rejects.toThrow('item.author');
+
+    const restoredRollout = trackedRolloutStore(join(root, 'strict-author-restored-rollouts'));
+    await expect(restoredRollout.restoreMissing(threadId, [{
+      event: withoutUserMessageAuthors(original[0]!) as AgentCoreNotification,
+      recordedAt: 5_000,
+    }])).rejects.toThrow('item.author');
+
+    for (const notification of original) await rollout.append(threadId, notification);
+    await rollout.appendHistoryRetry(createThreadHistoryRollbackContext(
+      uuidV7(5_200),
+      threadId,
+      [original[0]!.turnId!],
+      original.length,
+      original.length + 1,
+    ), replacement);
+    await rollout.flush();
+
+    const strictEntries = await rollout.read(threadId);
+    const projectionPath = join(root, 'strict-author-history.sqlite');
+    const projection = new ThreadHistoryProjectionStore(projectionPath, testDatabase(projectionPath));
+    projection.rebuildThread(threadId, strictEntries);
+    projection.close();
+
+    const projectionDatabase = testDatabase(projectionPath);
+    const rows = projectionDatabase.prepare(
+      'SELECT item_id, item_json FROM thread_items WHERE thread_id = ? AND item_type = ?',
+    ).all(threadId, 'userMessage') as Array<{ item_id: string; item_json: string }>;
+    for (const row of rows) {
+      projectionDatabase.prepare(
+        'UPDATE thread_items SET item_json = ? WHERE thread_id = ? AND item_id = ?',
+      ).run(
+        JSON.stringify(withoutUserMessageAuthors(JSON.parse(row.item_json))),
+        threadId,
+        row.item_id,
+      );
+    }
+    projectionDatabase.close();
+
+    const reopenedProjection = new ThreadHistoryProjectionStore(
+      projectionPath,
+      testDatabase(projectionPath),
+    );
+    expect(() => reopenedProjection.listItems({ threadId })).toThrow('item.author');
+    expect(() => reopenedProjection.rolloutSnapshot(threadId)).toThrow('item.author');
+    reopenedProjection.close();
+
+    const rolloutPath = rollout.pathFor(threadId);
+    const authorlessLines = (await readFile(rolloutPath, 'utf8')).trimEnd().split('\n').map((line) => (
+      JSON.stringify(withoutUserMessageAuthors(JSON.parse(line)))
+    ));
+    await writeFile(rolloutPath, `${authorlessLines.join('\n')}\n`, 'utf8');
+    await expect(rollout.read(threadId)).rejects.toThrow('item.author');
   });
 
   test('group-commits streamed rollout writes and syncs lifecycle barriers', async () => {
@@ -1116,6 +1182,7 @@ function lifecycle(threadId: string, seed = 4_000): AgentCoreNotification[] {
       originTurnId: turnId,
       originItemId: `item-user-${seed}`,
     },
+    author: { kind: 'reader' },
     clientId: 'submit-1',
     acceptedAt: seed,
     content: [{ type: 'text', text: 'Start' }],
@@ -1140,6 +1207,7 @@ function lifecycle(threadId: string, seed = 4_000): AgentCoreNotification[] {
       originTurnId: turnId,
       originItemId: `item-steer-${seed}`,
     },
+    author: { kind: 'reader' },
     clientId: null,
     acceptedAt: 4_005,
     content: [{ type: 'text', text: 'Steer' }],
@@ -1261,6 +1329,7 @@ function interruptedLifecycle(
       originTurnId: turnId,
       originItemId: 'item-interrupted-user',
     },
+    author: { kind: 'reader' },
     clientId: null,
     acceptedAt: 4_500,
     content: [{ type: 'text', text: 'Start streaming' }],
@@ -1337,4 +1406,20 @@ function interruptedLifecycle(
       },
     },
   ];
+}
+
+function withoutUserMessageAuthors<T>(value: T): T {
+  const clone = structuredClone(value);
+  const visit = (candidate: unknown): void => {
+    if (typeof candidate !== 'object' || candidate === null) return;
+    if (Array.isArray(candidate)) {
+      for (const entry of candidate) visit(entry);
+      return;
+    }
+    const record = candidate as Record<string, unknown>;
+    if (record.type === 'userMessage') delete record.author;
+    for (const entry of Object.values(record)) visit(entry);
+  };
+  visit(clone);
+  return clone;
 }

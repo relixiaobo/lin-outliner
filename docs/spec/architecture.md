@@ -121,6 +121,11 @@ Runtime document capabilities. Local `asset://` range serving streams verified
 Runtime bytes and does not pre-read an entire video merely to render it. PDF
 thumbnails are separate logical AssetRecords over ordinary exact revisions; the
 parent relationship protects them through lease, live, recovery, and GC rules.
+The renderer URL is `asset://local/<percent-encoded-logical-id>`. Main accepts
+exactly that authority and one decoded path segment, rejecting credentials,
+ports, query, fragment, separators, controls, and empty or oversized IDs before
+the Runtime asset service is called. Colon-bearing logical IDs therefore never
+enter a URL hostname, where normalization would lowercase them.
 
 Preview translation persistence is a separate local-derived-data boundary, not
 an asset or workspace fact. Electron main owns a bounded cache under `userData`;
@@ -182,11 +187,12 @@ materialization; the renderer never receives a ContentStore path.
 ```txt
 React interaction
   -> desktop intent builds a public ChangeSet
-  -> preload forwards a versioned Runtime request
+  -> preload forwards a versioned private desktop request
   -> Electron main authenticates and forwards without document logic
-  -> Runtime direct commit for ordinary non-destructive writes, or reviewed Diff apply
-  -> one durable Operation and ordered projection Event
-  -> renderer folds the Event delta into its projection index
+  -> Runtime commits ordinary non-destructive writes against its live Core
+  -> accepted receipt returns the exact projection delta and focus result
+  -> renderer folds that delta before clearing its optimistic mirror
+  -> background durability publishes one ordered Operation Event
 
 terminal or Agent intent
   -> registry-derived outline parser/help/schema contract
@@ -217,11 +223,15 @@ right-click / summon
 A renderer may NAME an action; it may never author one. Effect plans travel
 main -> renderer only.
 
-The Runtime publishes no successful mutation before one fsynced transaction-log
-commit contains the document update, Operation metadata, recovery patch,
-idempotency result, asset-reference delta, and Event sequence. A client timeout
-or disconnect never retries a mutation automatically; it resolves unknown
-settlement through the idempotency key or Operation log.
+Public CLI mutations, trusted cross-store writes, and reviewed destructive
+applies publish success only after one fsynced transaction-log commit contains
+the document update, Operation metadata, recovery patch, idempotency result,
+asset-reference delta, and Event sequence. The private desktop route may return
+an accepted receipt first for an ordinary non-destructive edit. That receipt
+contains the exact in-memory projection delta; it is not a durability claim.
+A client timeout or disconnect never retries a mutation automatically; it
+resolves unknown durable settlement through the idempotency key or Operation
+log.
 
 The CLI is a formal client boundary, not a thin exposure of the Runtime's generic
 MutationInput. One resource uses one porcelain command; complex state for that
@@ -233,11 +243,23 @@ No client uses a shell mutation loop or intermediate created-ID query to replace
 ChangeSet composition.
 
 Desktop mutation admission is serialized around the latest projected revision.
-Ordinary non-destructive edits use direct commit; destructive or review-bound
-work applies an exact Diff. The adapter then waits for the matching Operation
-Event. A missing or discontinuous Event triggers a bounded full Projection
-resync. Quit freezes new desktop admissions and drains accepted requests;
-Runtime durability is already complete before each response.
+Ordinary non-destructive edits commit their ChangeSet directly; destructive,
+review-bound, or Diff-result-dependent work previews and applies the exact
+reviewed artifact. The direct private path returns its accepted delta without
+waiting for fsync or the matching Operation Event. The initiating renderer folds
+that delta first; the later durable Event is deduplicated there and propagates
+the revision to other windows. A missing or discontinuous Event triggers a
+bounded full Projection resync. Public, trusted cross-store, and reviewed paths
+continue to wait for durable settlement. Quit freezes Runtime mutation admission
+and drains the latest accepted revision to the durable frontier before teardown.
+
+Renderer structure presentation does not wait for that durable boundary. Direct
+editing intents may render a pending created row or hide a pending removal while
+the Runtime request is in flight, but they never mutate the renderer Projection
+or invent a revision. Created rows use the exact Node ID submitted in the
+ChangeSet, so the pending and committed forms share one component identity. The
+successful Projection fold and pending-state removal happen in one synchronous
+renderer commit; rejection rolls the presentation back.
 
 ## Workspace Persistence And Replication Boundary
 
@@ -260,12 +282,43 @@ interface WorkspaceTransactionRecord {
 }
 ```
 
-Apply keeps Core's rollback frontier live until this record is encoded, written,
-and fsynced. A write, encode, or recovery-capacity failure therefore admits no
-document state. Runtime replays the verified prefix at startup, discards only a
-provably torn final record, and fails closed on corruption that could admit an
-unknown state. Snapshot compaction never removes retained recovery or asset
-reachability information. Pre-release formats have no compatibility reader.
+Runtime owns one live Core. Its transaction keeps the Core rollback frontier
+live while validation, execution, projection-delta construction, recovery
+capture, and persistence-input capture run. Failure before acceptance rolls the
+transaction back. Ordinary private desktop edits then publish the accepted
+delta and enqueue that captured input for ordered durability. Durability waits
+for a 700 ms input-idle window but never lets a dirty epoch exceed five seconds;
+all Operations accumulated for one run retain separate transaction records and
+Event sequences while sharing one transaction-log fsync. An explicit durable
+wait or quit drain bypasses the timers. After a successful quit drain, Electron
+commits the cross-origin admission freeze, disposes Runtime consumers, requests
+authenticated Runtime shutdown, and waits for that exact instance to release
+both its descriptor and writer lock before exiting. Runtime acknowledges the
+shutdown request before running its own freeze, drain, descriptor removal, and
+lock release sequence. The irreversible shutdown wait is bounded; Quit Anyway
+and teardown failures cannot leave Electron waiting indefinitely. Append failure
+cannot retract an accepted UI edit; it freezes further mutation admission and
+must be resolved by drain/retry or an explicit Quit Anyway decision. Public,
+trusted cross-store, and reviewed durable paths keep the same rollback frontier
+until the transaction record is encoded, written, and fsynced, so their failed
+append admits no document state.
+
+Runtime replays the verified prefix at startup, discards only a provably torn
+final record, and fails closed on corruption that could admit an unknown state.
+The loaded transaction-log cursor includes device, inode, and byte length. Log
+loading verifies those coordinates before and after the read and rejects a path
+replacement or byte-length change instead of pairing an unparsed suffix with an
+advanced cursor. Every append and torn-tail repair verifies the opened handle
+and active path against that cursor before mutation and again after fsync;
+replacement or growth during the acknowledgement window invalidates the
+process-local state and reports uncertain durability. A stale log from an older
+snapshot is discarded only when every complete record can be proven no newer
+than the verified snapshot.
+Snapshot compaction never removes retained recovery or asset reachability
+information. Pre-release formats have no compatibility reader. Core forks are
+reserved for preview, reviewed-Diff planning, revert validation, and other
+deterministic inspection; ordinary direct commits never fork, serialize, or
+re-import the complete workspace.
 
 Core startup reconciliation can create durable system state, such as the current
 local-date Daily Note. When `requiresInitialPersist()` reports that condition,
@@ -291,13 +344,31 @@ before a write; recovery expiry is durable and observable before blob unlink.
 Cleanup or compaction failure cannot reverse an already acknowledged Operation.
 A failed compaction invalidates the process-local log cache so the next write
 reloads the authoritative snapshot/log boundary before admission.
+Physical compaction uses a captured durable Core snapshot and runs outside the
+Runtime mutation queue while remaining serialized with transaction-log appends.
+An accepted desktop edit may therefore proceed in memory during compaction; its
+later transaction record extends the replaced snapshot. Restart tests cover both
+successful replacement and failure after the snapshot rename.
 
-Every successful mutation, including desktop editing and history reversal,
-creates one durable `Operation`. A revert is a new guarded Operation and never
-erases its target. Recovery patches retain the complete affected state even when
-the public Operation returns only a bounded ID sample. Purged subtrees,
-dependent references, and referenced asset records remain recoverable until the
-retention boundary expires.
+Every changed mutation, including desktop editing and history reversal, becomes
+one durable `Operation`. A private desktop Operation may be visible at accepted
+before that durable frontier advances. Semantic no-change creates neither an
+Operation nor an Event. A revert is a new guarded Operation and never erases its
+target. Recovery patches retain the complete affected state even when the public
+Operation returns only a bounded ID sample. Purged subtrees, dependent
+references, and referenced asset records remain recoverable until the retention
+boundary expires.
+When transaction fsync succeeds but its process-local acknowledgement fails,
+the idempotent durability retry publishes the retained Operation Event after
+settlement is confirmed. The first failed attempt publishes nothing, and the
+live Runtime cannot remain behind state that restart replay would expose.
+
+After an accepted desktop receipt, the main-process adapter monitors Runtime's
+private durability status outside the input path. Successful coalescing remains
+silent; a background durability failure is reported through the application
+diagnostic log even if the user stops editing before another mutation or quit
+drain exposes it. Public clients receive neither this private status nor its
+failure detail.
 
 The Loro document remains Runtime-internal. It uses a fresh peer for new
 operations, supports compact snapshots and full updates for deep trees, and
@@ -305,12 +376,35 @@ materializes and deletes with explicit work stacks rather than recursive JS
 traversal. Neither its snapshot bytes nor Core commands cross the public
 protocol.
 
+A long-lived `DocumentReadModel` folds each accepted Core delta once and owns the
+incremental projection and text-search generations. Sparse Node reads delegate
+to Core's ID projection, while launcher, Agent, Saved Search, Trash, restore, and
+dependency refreshes reuse the read model and update only affected search-index
+entries. Large ChangeSet/import and search-refresh work yields cooperatively on
+bounded batches without splitting its transaction, revision, Operation, or undo
+intent.
+
+Per-user access ranking is intentionally not document state. The main process
+owns its persisted `userData` store and mirrors at most the bounded retained
+entries into Runtime over a desktop-only private route. The mirror is replaced
+on startup and Runtime reconnect, then updated incrementally after a deliberate
+human landing or projection pruning. Only transient desktop text lookup consumes
+it; public find, saved searches, CLI, and Agent reads remain deterministic from
+document state alone.
+
 Asset ingest admits one exact revision, settles its anchor and logical
 AssetRecord in anchor-first order, and returns a staged Outline lease before a
 document mutation. Apply atomically consumes referenced leases into live asset
 reachability. Runtime recovery and lease policy decides when a logical record is
 unreachable; ContentStore alone decides when an unleased, unanchored revision is
 physically collectible. There is no public physical-delete capability.
+Metadata detection reads a bounded ingestion head first. When valid JPEG frame,
+PDF page, WAV data, or MP4 movie metadata lies later in a verified file, the
+Runtime continues with bounded random or streaming reads instead of loading the
+whole asset. JPEG recovery scans malformed padding in fixed-size chunks so a
+large damaged file cannot cause one asynchronous read per byte. MP4 box and WAV
+chunk headers share a fixed-size read window, so dense containers do not cause
+one asynchronous read per header.
 
 `media add PATH|-` composes staging and media-Node creation as one common CLI
 intent while retaining the same internal lease boundary. `asset ingest` remains
@@ -331,7 +425,14 @@ client depend on Runtime implementation. An ordinary desktop or CLI request may
 start the bundled Runtime; `--no-start` returns a stable unavailable error. If
 automatic start finds an older bundled contract, the client first authenticates
 the private Runtime identity and requires the descriptor to match the private
-writer-lock owner exactly. A current Runtime then retires through its private
+writer-lock owner exactly. Development desktop sessions also publish one private
+session identity and replace a same-contract Runtime left by an earlier dev app
+process, so restarting Electron cannot continue executing stale source. Packaged
+clients publish no development identity and retain the normal shared-Runtime
+lifecycle while the desktop host is running. Clean desktop quit explicitly
+stops that shared instance after draining it, so a packaged relaunch cannot
+reattach to a process carrying a committed admission freeze. A current Runtime
+then retires through its private
 lifecycle route; a legacy Runtime that predates that route receives `SIGTERM`
 only after the same identity and ownership checks. The client waits for that
 exact instance to release its descriptor before launching one replacement, so
@@ -339,6 +440,10 @@ an atomic private retirement claim makes simultaneous desktop and CLI starts
 converge on one signaler and one writer; a claim whose owner died is recovered.
 Unowned, unverifiable, or live-status drift remains `protocol_incompatible`;
 inspection through `status` and `--no-start` never retires or starts a process.
+The Runtime contract digest covers both the public capability manifest and a
+private desktop-route version. Changing a desktop-only route therefore forces
+authenticated replacement of an older Runtime even when the public CLI schema
+is unchanged.
 The Runtime imports neither Electron nor renderer code.
 
 These are local persistence contracts only. Tenon currently starts no account,

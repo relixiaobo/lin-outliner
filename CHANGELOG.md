@@ -12,6 +12,27 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Agent composers now recall complete prior inputs (PR #587, codex-3)** — plain
+  Up and Down at the first or last visual line navigate only canonical
+  reader-authored messages from the exact Thread, while preserving the unsent
+  scratch draft, per-entry working edits, selection, Node/file references,
+  attachments, and session-known image previews. Menus, IME composition,
+  modified arrows, multiline movement, and pending attachment admission keep
+  their existing keyboard ownership. Every canonical provider-role user Item now
+  carries an explicit `reader`, `agent`, `host`, or `feature` author through
+  admission, persistence, rebuild, Retry, fork, projection, and transcript
+  rendering; only reader-authored terminal input is editable or enters history,
+  and content-free machine input creates no empty speaker or accessibility row.
+  The pre-release persisted-schema cut is intentionally strict, with no migration
+  or compatibility reader: pre-#587 installed and clone-scoped Agent stores must
+  be reset with every Tenon process stopped before packaged/development
+  first-launch verification. Gate review found one High author-admission failure
+  and two Medium specification/preview-retention defects; all three were fixed,
+  and the final review found no new reportable issue. Verified with typecheck,
+  `docs:check`, 1,448 renderer tests, 2,651 passing Core tests with 6 skipped, 7
+  focused Chromium history tests, whitespace checks, and all five GitHub E2E
+  samples plus baseline subtraction.
+
 - **The Outliner now runs behind one standalone Runtime and public `outline` CLI
   (PR #584, codex)** — desktop and CLI are equal versioned clients of the same
   Selector, Projection, ChangeSet, Diff, Operation, Event, recovery, and
@@ -96,6 +117,30 @@ Entries reference the pull request that introduced them when one exists.
   passed, 6 skipped, 0 failed), whitespace checks, and all five GitHub E2E samples;
   the comparison retained one unrelated 1/5 workspace-layout signal on this
   renderer-free diff under the repository's non-gating E2E policy.
+
+### Fixed
+
+- **The standalone Outliner Runtime again carries the complete mature desktop
+  experience (PR #592, codex)** — coalesced and optimistic text, structural, and
+  field editing now preserve first-frame focus, editor identity, IME continuity,
+  middle-Enter splits, mixed selection deletion, and the full keyboard contract
+  over one flat incremental projection. Runtime durability restores accepted
+  versus durable settlement, held-Event ordering, a 700 ms idle / five-second
+  maximum dirty window, batched transaction records under one fsync, replay-safe
+  cursors, and a linearizable quit barrier. Memory definition protection,
+  publication and citation ordering, personal ranking synchronization, immutable
+  asset metadata and URL authority, bounded media parsing, thumbnail retention,
+  Runtime replacement, and cross-frame Agent/Outliner focus ownership are also
+  restored. Clean quit now stops the exact authenticated Runtime instance after
+  draining it, so a packaged relaunch cannot inherit permanently frozen mutation
+  admission. A tracked clean-clone audit reconstructs four lost historical trees
+  and classifies all 2,307 retained responsibilities with zero unclassified.
+  Gate review found two High ordering defects, two Medium recovery omissions, a
+  later High packaged-relaunch defect, and an unreproducible audit boundary; all
+  were fixed before the final no-findings review. Verified with typecheck,
+  `docs:check`, 2,644 passing Core tests with 6 skipped, 1,436 renderer tests, 59
+  focused lifecycle/process tests, local and single-branch recovery audits,
+  whitespace checks, and all five GitHub E2E samples plus baseline subtraction.
 
 ### Internal
 

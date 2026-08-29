@@ -22,6 +22,10 @@ The host owns five deterministic protected tag definitions:
 Their identities, names, definition type, lock state, and Schema ownership are
 host-controlled. Public commands may apply or remove these tags from content
 Nodes but cannot mutate, move, trash, delete, merge, or replace the definitions.
+Startup re-ensures all five definitions through the ordinary Runtime ChangeSet
+boundary. A definition with the fixed ID but the wrong lock state or parent is
+repaired to a locked direct Schema child; a conflicting name or identity fails
+closed instead of silently creating a second definition.
 
 A canonical generated graph has this shape:
 
@@ -238,6 +242,13 @@ Trajectory. Deleting a source Thread does not delete already published Memory
 Nodes or their retained evidence; those Nodes remain user-editable until
 ordinary editing, consolidation, or Reset changes them.
 
+Citation ranking records only a bounded set of canonical Memory Nodes returned
+by a successful foreground `outline show` in the same eligible Turn. Find
+results, ordinary Nodes, failed or background shell calls, malformed output, and
+uncited reads do not count. At terminal completion, the extension parses only
+rendered final-answer Markdown and records usage when it contains the exact Node
+reference; literal markers inside code or existing Markdown links are excluded.
+
 ## Rollback And Reset
 
 Completed history remains auditable. Editing the latest user input appends a
@@ -292,6 +303,11 @@ but never duplicates.
 
 The Runtime serializes renderer, Agent, and Memory mutations. Memory holds its
 additional write gate from final validation through SQLite finalization.
+Document-dependent planning additionally runs inside the main-process document
+mutation queue: it reads Projection and revision only after earlier admitted
+document work, then submits that plan before the next queued main-process
+mutation. Runtime admission remains the cross-process authority for concurrent
+CLI or other-client writes.
 Projection delivery carries the originating Operation; Memory publications are
 not mistaken for user edits between Runtime commit and control-store
 finalization.

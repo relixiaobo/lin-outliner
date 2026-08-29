@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { api } from '../../api/client';
 import type { NodeId, NodeProjection } from '../../api/types';
 import type { FocusRequest, FocusTarget, PendingInputChar } from '../../state/document';
@@ -44,20 +44,13 @@ export function NodeDescription({
   const [draft, setDraft] = useState(node.description ?? '');
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const skipCommitRef = useRef(false);
-  const blurCommitTimerRef = useRef<number | null>(null);
-  const shouldRender = editing || Boolean(node.description);
+  const shouldRender = editing || Boolean(draft);
 
-  useEffect(() => () => {
-    if (blurCommitTimerRef.current !== null) {
-      window.clearTimeout(blurCommitTimerRef.current);
-    }
-  }, []);
-
-  useEffect(() => {
+  useLayoutEffect(() => {
     setDraft(node.description ?? '');
   }, [node.id, node.description]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (editing) skipCommitRef.current = false;
   }, [editing]);
 
@@ -69,41 +62,42 @@ export function NodeDescription({
     input.style.height = `${input.scrollHeight}px`;
   }, [draft, editing]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!focusTarget || !focusRequest || !focusTargetMatches(focusRequest.target, focusTarget)) return;
     // A live IME composition parks the request (issue #176); the composing
     // editor relays it at compositionend.
     if (isCompositionLive()) return;
-    onEditingChange(true);
-    window.requestAnimationFrame(() => {
-      const input = inputRef.current;
-      if (!input) return;
-      input.focus();
-      setTextControlCursor(input, focusRequest.placement);
-      onFocusRequestConsumed?.(focusRequest);
-    });
-  }, [focusRequest, focusTarget, onEditingChange, onFocusRequestConsumed]);
+    if (!editing) {
+      onEditingChange(true);
+      return;
+    }
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus();
+    setTextControlCursor(input, focusRequest.placement);
+    onFocusRequestConsumed?.(focusRequest);
+  }, [editing, focusRequest, focusTarget, onEditingChange, onFocusRequestConsumed]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!focusTarget || !pendingInput || !focusTargetMatches(pendingInput.target, focusTarget)) return;
-    onEditingChange(true);
-    window.requestAnimationFrame(() => {
-      const input = inputRef.current;
-      if (!input) return;
-      input.focus();
-      const next = insertTextIntoControlValue({
-        value: input.value,
-        selectionStart: input.selectionStart,
-        selectionEnd: input.selectionEnd,
-        text: pendingInput.char,
-      });
-      setDraft(next.value);
-      window.requestAnimationFrame(() => {
-        inputRef.current?.setSelectionRange(next.cursor, next.cursor);
-      });
-      onPendingInputConsumed?.(pendingInput);
+    if (!editing) {
+      onEditingChange(true);
+      return;
+    }
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus();
+    const next = insertTextIntoControlValue({
+      value: input.value,
+      selectionStart: input.selectionStart,
+      selectionEnd: input.selectionEnd,
+      text: pendingInput.char,
     });
-  }, [focusTarget, onEditingChange, onPendingInputConsumed, pendingInput]);
+    input.value = next.value;
+    setDraft(next.value);
+    input.setSelectionRange(next.cursor, next.cursor);
+    onPendingInputConsumed?.(pendingInput);
+  }, [editing, focusTarget, onEditingChange, onPendingInputConsumed, pendingInput]);
 
   if (!shouldRender) return null;
 
@@ -118,13 +112,8 @@ export function NodeDescription({
       skipCommitRef.current = false;
       return;
     }
-    if (blurCommitTimerRef.current !== null) window.clearTimeout(blurCommitTimerRef.current);
-    blurCommitTimerRef.current = window.setTimeout(() => {
-      blurCommitTimerRef.current = null;
-      void persistDraft().then(() => {
-        onEditingChange(false);
-      });
-    }, 0);
+    onEditingChange(false);
+    void persistDraft();
   };
 
   return (
@@ -157,10 +146,9 @@ export function NodeDescription({
         ) {
           event.preventDefault();
           skipCommitRef.current = true;
-          void persistDraft().then(() => {
-            if (onReturnToSource) onReturnToSource();
-            else onEditingChange(false);
-          });
+          if (onReturnToSource) onReturnToSource();
+          else onEditingChange(false);
+          void persistDraft();
           return;
         }
         if (event.key === 'Enter' && !event.shiftKey) {

@@ -12,15 +12,13 @@ import type { NodeId } from '../api/types';
 import { useT } from '../i18n/I18nProvider';
 import type { DocumentIndex, UiState } from '../state/document';
 import { ChevronLeftIcon, CloseIcon } from './icons';
-import { RECURSIVE_OUTLINER_FALLBACK_ENABLED, OutlinerFlatView } from './outliner/OutlinerFlatView';
-import { OutlinerView } from './outliner/OutlinerView';
+import { OutlinerFlatView } from './outliner/OutlinerFlatView';
 import { OutlinerTableView } from './outliner/OutlinerTableView';
 import { readViewConfig } from './outliner/row-model';
 import { IconButton } from './primitives/IconButton';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from './shared';
 
 type FlatOutlinerProps = ComponentProps<typeof OutlinerFlatView>;
-type TreeOutlinerProps = ComponentProps<typeof OutlinerView>;
 
 export function usePanelTitleDock() {
   const mainPanelRef = useRef<HTMLElement | null>(null);
@@ -187,7 +185,6 @@ interface PanelChildrenOutlineProps {
   panelId: string;
   parentId: NodeId;
   rootId: NodeId;
-  rows?: TreeOutlinerProps['rows'];
   run: CommandRunner;
   scrollParentRef: FlatOutlinerProps['scrollParentRef'];
   setDragId: (nodeId: NodeId | null) => void;
@@ -242,29 +239,6 @@ export function PanelChildrenOutline(props: PanelChildrenOutlineProps) {
           draftPlaceholder={props.draftPlaceholder}
           showViewToolbar={props.showViewToolbar}
           scrollParentRef={props.scrollParentRef}
-        />
-      ) : RECURSIVE_OUTLINER_FALLBACK_ENABLED ? (
-        <OutlinerView
-          panelId={props.panelId}
-          parentId={props.parentId}
-          rootId={props.rootId}
-          onRoot={props.onRoot}
-          depth={0}
-          index={props.index}
-          isNodePinned={props.isNodePinned}
-          ui={props.ui}
-          uiRef={props.uiRef}
-          setUi={props.setUi}
-          run={props.run}
-          onTogglePin={props.onTogglePin}
-          trigger={props.trigger}
-          setTrigger={props.setTrigger}
-          dragId={props.dragId}
-          setDragId={props.setDragId}
-          rows={props.rows}
-          showViewToolbar={props.showViewToolbar}
-          trailingDraft={props.trailingDraft}
-          draftPlaceholder={props.draftPlaceholder}
         />
       ) : (
         <OutlinerFlatView

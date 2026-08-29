@@ -423,6 +423,34 @@ describe('Core', () => {
     expect(core.revision()).toBe(revision);
   });
 
+  test('yielding resolved content trees roll back every committed chunk after a late failure', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const before = core.state();
+    const ids = Array.from({ length: 8 }, () => `node:${crypto.randomUUID()}`);
+    let yields = 0;
+
+    await expect(core.transactionWithPatch('system', () => (
+      core.tryCreateResolvedContentTreesYielding(today, null, ids.map((id, index) => ({
+        id,
+        content: plainText(`Resolved transient ${index}`),
+        children: [],
+      })), {
+        yieldEveryNodes: 1,
+        commitEveryNodes: 1,
+        yield: async () => {
+          yields += 1;
+          if (yields === 11) throw new Error('injected resolved-tree failure');
+        },
+      })
+    ), { operationId: 'op:resolved-tree-failure', command: 'outline_apply' }))
+      .rejects.toThrow('injected resolved-tree failure');
+
+    expect(yields).toBe(11);
+    expect(core.state()).toEqual(before);
+    expect(ids.every((id) => core.state().nodes[id] === undefined)).toBe(true);
+  });
+
   test('yielding tree materialization gives large creates cooperative breaks', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
@@ -498,6 +526,43 @@ describe('Core', () => {
 
     expect(yields).toBe(2);
     expect(core.projection()).toEqual(projectionBefore);
+  });
+
+  test('yielding Daily Note import rolls back date scaffolding and tree chunks together', async () => {
+    const core = Core.new();
+    const before = core.state();
+    let treeYields = 0;
+
+    await expect(core.transactionWithPatch('system', async () => {
+      const [dayNodeId] = await core.ensureDateNodesYielding([
+        { year: 2041, month: 1, day: 1 },
+        { year: 2041, month: 1, day: 2 },
+      ], {
+        yieldEveryDates: 1,
+        commitEveryDates: 1,
+        yield: async () => {},
+      });
+      await core.createNodesFromTreeYieldingFocus(dayNodeId!, [{
+        content: plainText('Imported Daily Note root'),
+        children: Array.from({ length: 5 }, (_value, index) => ({
+          content: plainText(`Imported Daily Note child ${index + 1}`),
+          children: [],
+        })),
+      }], {
+        yieldEveryNodes: 1,
+        commitEveryNodes: 1,
+        yield: async () => {
+          treeYields += 1;
+          if (treeYields === 4) throw new Error('injected Daily Note tree failure');
+        },
+      });
+    }, {
+      operationId: 'op:daily-note-import-failure',
+      command: 'outline_apply',
+    })).rejects.toThrow('injected Daily Note tree failure');
+
+    expect(treeYields).toBe(4);
+    expect(core.state()).toEqual(before);
   });
 
   test('yielding tree append does not materialize the growing parent per sibling', async () => {
@@ -3341,7 +3406,8 @@ describe('Core', () => {
 
     expect(core.state().nodes[nestedReference].targetId).toBe(target);
 
-    const inlineNode = mustFocus(core.convertReferenceToInlineNode(reference));
+    const inlineNode = 'node:00000000-0000-4000-8000-000000000001';
+    expect(mustFocus(core.convertReferenceToInlineNode(reference, inlineNode))).toBe(inlineNode);
     let state = core.state();
     expect(state.nodes[reference]).toBeUndefined();
     expect(state.nodes[inlineNode].parentId).toBe(today);
@@ -3351,7 +3417,12 @@ describe('Core', () => {
       inlineRefs: [{ offset: 0, target: { kind: 'node', nodeId: target }, displayName: 'Target' }],
     });
 
-    const restoredReference = mustFocus(core.restoreInlineReferenceNodeToReference(inlineNode, target));
+    const restoredReference = 'node:00000000-0000-4000-8000-000000000002';
+    expect(mustFocus(core.restoreInlineReferenceNodeToReference(
+      inlineNode,
+      target,
+      restoredReference,
+    ))).toBe(restoredReference);
     state = core.state();
     expect(state.nodes[inlineNode]).toBeUndefined();
     expect(state.nodes[restoredReference].type).toBe('reference');

@@ -10,10 +10,11 @@ import {
   type SetStateAction,
 } from 'react';
 import { api } from '../../api/client';
-import type { NodeId } from '../../api/types';
+import { EMPTY_RICH_TEXT, type NodeId } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
 import {
   OUTLINER_NODE_DRAG_MIME,
+  optimisticBatchMovePlacements,
   resolveOutlinerDropAnchor,
   resolveOutlinerDropBatchMove,
 } from '../interactions/dragDrop';
@@ -40,6 +41,7 @@ import {
 import { buildOutlinerRows } from './row-model';
 import { trailingDraftPlacementEquals } from '../../state/trailingDraftPlacement';
 import { MAX_OUTLINE_INDENT_DEPTH } from '../workspaceResponsiveLayout';
+import { startOptimisticStructuralBatch } from './optimisticStructuralEdit';
 
 interface UseOutlinerRowInteractionOptions {
   rowId: NodeId;
@@ -470,7 +472,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     setDropPosition(nextPosition);
   }, [draft, dragId, dropTargetKey, resolveDropMove]);
 
-  const onDrop = useCallback(async (event: DragEvent<HTMLDivElement>) => {
+  const onDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.stopPropagation();
     const position = dropPosition ?? 'before';
@@ -489,17 +491,42 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
       });
     }
 
-    try {
-      if (move.moves.length === 1) {
-        const single = move.moves[0]!;
-        await run(() => api.moveNode(single.nodeId, single.parentId, single.index), { applyFocus: false });
-      } else {
-        await run(() => api.batchMoveNodes(move.moves), { applyFocus: false });
-      }
-    } finally {
+    const placements = optimisticBatchMovePlacements({
+      moves: move.moves,
+      parentIdForNode: (nodeId) => byId.get(nodeId)?.parentId,
+      childrenForParent: (nodeId) => byId.get(nodeId)?.children ?? [],
+    });
+    if (placements.length === 0) {
       clearDropState();
+      return;
     }
-  }, [clearDropState, dropPosition, dropTargetNodeId, resolveDropMove, rowId, run, setUi]);
+    startOptimisticStructuralBatch({
+      panelId,
+      setUi,
+      inputs: placements.map((placement) => {
+        const node = byId.get(placement.id);
+        return {
+          id: placement.id,
+          sourceParentId: placement.sourceParentId,
+          parentId: placement.targetParentId,
+          beforeId: placement.beforeId,
+          afterId: placement.afterId,
+          presentation: node?.type === 'fieldEntry' ? 'field' as const : 'content' as const,
+          resolvedFieldDefId: node?.type === 'fieldEntry' ? node.fieldDefId : undefined,
+          content: node?.content ?? EMPTY_RICH_TEXT,
+          placement: cursorEnd(),
+          preserveFocus: true,
+        };
+      }),
+      command: () => move.moves.length === 1
+        ? run(() => {
+            const single = move.moves[0]!;
+            return api.moveNode(single.nodeId, single.parentId, single.index);
+          }, { applyFocus: false })
+        : run(() => api.batchMoveNodes(move.moves), { applyFocus: false }),
+    });
+    clearDropState();
+  }, [byId, clearDropState, dropPosition, dropTargetNodeId, panelId, resolveDropMove, rowId, run, setUi]);
 
   const wrapStyle: CSSProperties = { marginLeft: Math.min(depth, MAX_OUTLINE_INDENT_DEPTH) * 28 };
 

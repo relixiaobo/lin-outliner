@@ -3,6 +3,7 @@ export const OUTLINE_DESCRIPTOR_VERSION = 1 as const;
 export const OUTLINE_STORAGE_VERSION = 2 as const;
 export const OUTLINE_CLI_VERSION = '1.0.0' as const;
 export const OUTLINE_APP_VERSION = '0.8.0' as const;
+export const OUTLINE_PRIVATE_RUNTIME_CONTRACT_VERSION = 3 as const;
 
 export const OUTLINE_DEFAULT_STARTUP_TIMEOUT_MS = 10_000;
 export const OUTLINE_DEFAULT_COMMAND_TIMEOUT_MS = 60_000;

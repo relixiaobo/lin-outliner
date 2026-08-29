@@ -38,6 +38,7 @@ import { resolveUsableActiveProvider } from '../../ui/agent/providerUsability';
 import { reportActionError } from '../../ui/interactions/actionSteps';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
 import { runtimeSlashCommands, slashCommandsFromSkills } from '../threadComposerCommands';
+import { shouldRestoreComposerAfterThreadCreation } from '../composerRefocus';
 
 const AutomationsView = lazy(async () => {
   const module = await import('../automations/AutomationsView');
@@ -85,7 +86,10 @@ export const ThreadDock = memo(function ThreadDock({
   const [providerSettings, setProviderSettings] = useState<AgentProviderSettingsView | null>(null);
   const [providerSettingsLoaded, setProviderSettingsLoaded] = useState(false);
   const [providerError, setProviderError] = useState<string | null>(null);
-  const [composerFocusToken, setComposerFocusToken] = useState(0);
+  const [composerFocusRequest, setComposerFocusRequest] = useState<{
+    readonly token: number;
+    readonly expectedActiveElement: Element | null;
+  }>({ token: 0, expectedActiveElement: null });
   const [slashCommands, setSlashCommands] = useState<AgentSlashCommandView[]>([]);
   const renameTitleId = useId();
   const renameInputRef = useRef<HTMLInputElement | null>(null);
@@ -173,7 +177,12 @@ export const ThreadDock = memo(function ThreadDock({
   const providerBlocksCreation = providerSettingsLoaded
     && (!providerSettings || !resolveUsableActiveProvider(providerSettings));
   useEffect(() => {
-    if (open && !openRef.current) setComposerFocusToken((token) => token + 1);
+    if (open && !openRef.current) {
+      setComposerFocusRequest((current) => ({
+        token: current.token + 1,
+        expectedActiveElement: document.activeElement,
+      }));
+    }
     openRef.current = open;
   }, [open]);
 
@@ -324,14 +333,28 @@ export const ThreadDock = memo(function ThreadDock({
     }
   }, [t]);
 
-  const createThread = useCallback(async () => {
+  const createThread = useCallback(async (
+    focusMode: 'automatic' | 'explicit' = 'explicit',
+  ) => {
     if (creatingRef.current || providerBlocksCreation) return false;
+    const focusAtStart = document.activeElement;
     creatingRef.current = true;
     setCreating(true);
     try {
       await threadStore.createThread();
+      const restoreComposerFocus = shouldRestoreComposerAfterThreadCreation(
+        focusMode,
+        focusAtStart,
+        document.activeElement,
+        document.body,
+      );
       setListOpen(false);
-      setComposerFocusToken((token) => token + 1);
+      if (restoreComposerFocus) {
+        setComposerFocusRequest((current) => ({
+          token: current.token + 1,
+          expectedActiveElement: document.activeElement,
+        }));
+      }
       return true;
     } catch (error) {
       reportActionError(errorMessage(error));
@@ -355,7 +378,7 @@ export const ThreadDock = memo(function ThreadDock({
       || autoCreateAttemptedRef.current
     ) return;
     autoCreateAttemptedRef.current = true;
-    void createThread();
+    void createThread('automatic');
   }, [createThread, providerBlocksCreation, providerSettingsLoaded, snapshot.error, snapshot.loading, thread]);
 
   function beginRename(target: Thread) {
@@ -521,7 +544,8 @@ export const ThreadDock = memo(function ThreadDock({
               // reason to keep re-deriving a document index nobody can see.
               active={open && openAgentId === null}
               composerEnabled={thread.parentThreadId === null && thread.threadSource === 'user'}
-              composerFocusToken={composerFocusToken}
+              composerFocusExpectedActiveElement={composerFocusRequest.expectedActiveElement}
+              composerFocusToken={composerFocusRequest.token}
               selfSpeaker={conversationSpeaker}
               configuration={configuration}
               getUserView={getUserView}

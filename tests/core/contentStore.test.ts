@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -296,6 +296,24 @@ describe('ContentStore', () => {
     expect((await store.anchors('outline')).map((entry) => entry.anchorId))
       .toEqual(['anchor:record-a', 'anchor:record-b']);
     expect((await readdir(path.join(root, 'quarantine'))).length).toBe(1);
+    store.close();
+  });
+
+  test('rejects a revision symlink without reading outside the ContentStore', async () => {
+    const root = await makeRoot();
+    const outsidePath = path.join(await makeRoot(), 'outside.txt');
+    await writeFile(outsidePath, 'outside bytes');
+    const store = await ContentStore.open(root);
+    const lease = await store.admitBytes(Buffer.from('trusted bytes'));
+    const anchor = await store.createAnchor(lease.leaseId, 'outline', 'record:symlink', 'anchor:symlink');
+    const reference = { anchorId: anchor.anchorId, byteLength: anchor.byteLength };
+    const revisionPath = await store.verifiedPath(reference, 'outline', 'record:symlink');
+    await rm(revisionPath);
+    await symlink(outsidePath, revisionPath);
+
+    await expect(store.readVerified(reference, 'outline', 'record:symlink'))
+      .rejects.toBeInstanceOf(ContentIntegrityError);
+    expect(await readFile(outsidePath, 'utf8')).toBe('outside bytes');
     store.close();
   });
 

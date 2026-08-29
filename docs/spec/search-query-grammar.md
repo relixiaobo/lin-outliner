@@ -183,8 +183,13 @@ same linked reference count displayed by the References system field.
 Transient node lookup surfaces can opt into personal access ranking on top of
 the default relevance order. Personal access is stored outside the Loro document
 in per-user `userData` (`node-access-stats.json`) as one time-decayed accumulator
-per node, updated by deliberate human landings. It is never encoded as a
-search-node rule, never
+per node, updated by deliberate human landings. The main process owns that
+persistent store and synchronizes a bounded, non-persistent mirror into Runtime
+through a desktop-only private route at startup, after Runtime replacement, and
+incrementally after access or projection pruning. Runtime-ranked launcher lookup
+reads the in-memory mirror, so a query does not transfer the complete access
+history. External clients and built-in Agents cannot read or mutate the mirror.
+Personal access is never encoded as a search-node rule, never
 written into saved search results, and never participates in saved-search
 materialization unless a caller explicitly opts into ranking. Explicit
 sorts remain authoritative and do not use personal access.

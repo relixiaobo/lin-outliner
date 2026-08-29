@@ -13,8 +13,7 @@ import type { TrailingDraftPlacement } from './document';
 import { resolveTrailingDraftAfterId } from './trailingDraftPlacement';
 import type { NodeFieldSlot } from '../../core/fieldSlots';
 
-// A single flattened, depth-aware outliner row. The recursive
-// OutlinerView/OutlinerItem render is being replaced by one windowed flat list,
+// A single flattened, depth-aware outliner row. One windowed flat list owns the
 // so the whole visible tree is flattened into this ordered array up front.
 // `buildVisualRows` is the pure producer; it reuses `buildOutlinerRows` per level
 // (so grouping/sort/filter/hidden-field behaviour is identical) and descends
@@ -56,21 +55,29 @@ export interface VisualRowsOptions {
   // Depth assigned to the root's direct children (indentation = depth * step).
   rootDepth?: number;
   // The panel body shows a toolbar only when the root view opts in; nested levels
-  // mirror OutlinerView's default (show whenever the view's toolbar is visible).
+  // mirror nested outline defaults (show whenever the view's toolbar is visible).
   showRootToolbar?: boolean;
   // Trailing-draft behaviour at the root level; nested levels use 'auto' (or
-  // 'none' inside a reference cycle), matching OutlinerItem's nested OutlinerView.
+  // 'none' inside a reference cycle), matching ordinary nested rows.
   rootTrailingDraft?: TrailingDraftMode;
   // Stable per-parent draft id (renderer-minted, survives until materialization).
   // Returning null suppresses the draft for that parent.
   draftIdFor?: (parentId: NodeId) => NodeId | null;
   // Parent whose trailing surface currently holds keyboard focus (drives the
-  // 'auto' trailing draft just like OutlinerView's `trailingFocused`).
+  // 'auto' trailing draft using the same settled trailing-focus signal.
   trailingFocusedParentId?: NodeId | null;
   // Parent whose renderer-only draft row currently holds settled row focus.
   draftFocusedParentId?: NodeId | null;
   trailingDraftPlacement?: TrailingDraftPlacement | null;
+  pendingRemovalIds?: ReadonlySet<NodeId>;
   systemFieldContext?: SystemFieldContext;
+  // Embedded projections can enter below an existing reference path. Preserve
+  // that ancestry so cycle detection matches the panel-level flat renderer.
+  rootReferencePath?: readonly NodeId[];
+  // A nested Table row already renders its configured fields as columns. Hide
+  // those field rows at the embedded root without suppressing fields deeper in
+  // the expanded subtree.
+  suppressRootFieldEntries?: boolean;
 }
 
 interface VisualRowsBuildInstrumentation {
@@ -102,11 +109,10 @@ export function buildVisualRows(
   const expanded = options.expanded;
   const expandedHiddenFields = options.expandedHiddenFields ?? new Set<string>();
 
-  // referencePath: chain of resolved child-parent ids, used only for the
-  // reference cycle guard (matches flattenVisibleRows). keyPath: chain of the
-  // actual rendered row ids from the root, used for stable, unique React keys
-  // (two sibling references to the same target resolve to the same parent but
-  // have distinct row ids, so keys must key off the rows, not the targets).
+  // referencePath is the resolved parent chain used by the cycle guard. An owned
+  // node's globally unique id is its React key, so reparenting never remounts its
+  // editor. Only transcluded rows need the actual rendered path: two sibling
+  // references can expose the same target children at the same time.
   const visit = (
     parentId: NodeId,
     depth: number,
@@ -117,8 +123,11 @@ export function buildVisualRows(
     const parent = byId.get(parentId);
     if (!parent) return;
     const prefix = keyPath.join('>');
+    const ownedScope = referencePath.length === keyPath.length
+      && referencePath.every((id, index) => id === keyPath[index]);
+    const rowKey = (rowId: NodeId) => ownedScope ? rowId : `${prefix}>${rowId}`;
 
-    const isRoot = referencePath.length === 1;
+    const isRoot = keyPath.length === 1;
     const view = readViewConfig(parent, byId);
     if (showsResultViewControls(parent, view) && (!isRoot || options.showRootToolbar !== false)) {
       out.push({
@@ -133,7 +142,9 @@ export function buildVisualRows(
 
     const builtRows = buildOutlinerRows(parent, byId, {
       expandedHiddenFields,
+      pendingRemovalIds: options.pendingRemovalIds,
       systemFieldContext: options.systemFieldContext,
+      suppressFieldEntries: isRoot ? options.suppressRootFieldEntries : false,
       fieldSlots,
     });
     instrumentation?.onLevelBuilt(parent, view, builtRows);
@@ -160,7 +171,7 @@ export function buildVisualRows(
       // across materialization, so eager input is never interrupted.
       out.push({
         kind: 'content',
-        key: `${prefix}>${draftId}`,
+        key: rowKey(draftId),
         nodeId: draftId,
         depth,
         parentId,
@@ -216,7 +227,7 @@ export function buildVisualRows(
         if (row.type === 'field') {
           out.push({
             kind: 'field',
-            key: `${rowPrefix}>${row.id}`,
+            key: rowKey(row.id),
             nodeId: row.id,
             slot: row.slot,
             depth: rowDepth,
@@ -231,7 +242,7 @@ export function buildVisualRows(
         }
         out.push({
           kind: 'content',
-          key: `${rowPrefix}>${row.id}`,
+          key: rowKey(row.id),
           nodeId: row.id,
           depth: rowDepth,
           parentId,
@@ -266,7 +277,13 @@ export function buildVisualRows(
     visit(childParentId, depth + 1, nextReferencePath, nextKeyPath, 'auto');
   };
 
-  visit(rootId, options.rootDepth ?? 0, [rootId], [rootId], options.rootTrailingDraft ?? 'none');
+  visit(
+    rootId,
+    options.rootDepth ?? 0,
+    options.rootReferencePath ? [...options.rootReferencePath] : [rootId],
+    [rootId],
+    options.rootTrailingDraft ?? 'none',
+  );
   return out;
 }
 
@@ -389,7 +406,10 @@ function sameVisualRowsOptions(left: VisualRowsOptions, right: VisualRowsOptions
     && left.draftIdFor === right.draftIdFor
     && left.trailingFocusedParentId === right.trailingFocusedParentId
     && left.draftFocusedParentId === right.draftFocusedParentId
-    && left.trailingDraftPlacement === right.trailingDraftPlacement;
+    && left.trailingDraftPlacement === right.trailingDraftPlacement
+    && left.pendingRemovalIds === right.pendingRemovalIds
+    && left.suppressRootFieldEntries === right.suppressRootFieldEntries
+    && sameStrings(left.rootReferencePath ?? [], right.rootReferencePath ?? []);
 }
 
 function modelFieldIds(view: ViewConfig): Set<string> {

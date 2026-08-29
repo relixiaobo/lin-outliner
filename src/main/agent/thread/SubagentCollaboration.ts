@@ -809,9 +809,10 @@ export class SubagentCollaboration {
       if (this.turnLifecycle.isActiveTurnFinishing(execution.agentId)) {
         this.turnLifecycle.assertSubagentBudgetAvailable(execution.agentId);
       }
-      await this.turnLifecycle.steerTurn({
+      await this.turnLifecycle.steerPrivilegedTurn({
         threadId: execution.agentId,
         expectedTurnId: activeTurnId,
+        author: { kind: 'agent', threadId: senderThreadId },
         input: content,
       }, 'advisory');
       return agentMessageQueuedResult(execution.agentId);
@@ -840,9 +841,10 @@ export class SubagentCollaboration {
         if (this.turnLifecycle.isActiveTurnFinishing(current.agentId)) {
           this.turnLifecycle.assertSubagentBudgetAvailable(current.agentId);
         }
-        await this.turnLifecycle.steerTurn({
+        await this.turnLifecycle.steerPrivilegedTurn({
           threadId: current.agentId,
           expectedTurnId: resumedTurnId,
+          author: { kind: 'agent', threadId: senderThreadId },
           input: content,
         }, 'advisory');
         return agentMessageQueuedResult(current.agentId);
@@ -878,6 +880,7 @@ export class SubagentCollaboration {
           threadId: current.agentId,
           turnId: nextTurnId,
           input: content,
+          author: { kind: 'agent', threadId: senderThreadId },
           trigger: { kind: 'subagent', parentThreadId: senderThreadId, parentItemId: itemId },
         }, prepareAdmission);
       } catch (error) {
@@ -1198,6 +1201,7 @@ export class SubagentCollaboration {
               threadId: thread.id,
               turnId,
               input: [{ type: 'text', text: input.prompt }],
+              author: { kind: 'agent', threadId: parent.thread.id },
               trigger: {
                 kind: 'subagent',
                 parentThreadId: parent.thread.id,
@@ -2415,6 +2419,7 @@ export class SubagentCollaboration {
           },
           additionalContextSource: `subagent-settlement:${batchId}`,
           clientUserMessageId: `subagent-settlement:${batchId}`,
+          author: { kind: 'host' },
           trigger: {
             kind: 'subagent',
             parentThreadId: current.parentThreadId,
@@ -2620,6 +2625,7 @@ export class SubagentCollaboration {
           additionalContext: taskNotificationContext({ execution, notification, turn, outputFile }),
           additionalContextSource: `subagent:${execution.agentId}`,
           clientUserMessageId,
+          author: { kind: 'agent', threadId: notification.agentId },
           trigger: {
             kind: 'subagent',
             parentThreadId: execution.parentThreadId,
@@ -2750,13 +2756,14 @@ export class SubagentCollaboration {
           );
           const activeTurnId = this.turnLifecycle.activeTurnId(parentThreadId);
           if (activeTurnId) {
-            await this.turnLifecycle.steerTurn({
+            await this.turnLifecycle.steerPrivilegedTurn({
               threadId: parentThreadId,
               expectedTurnId: activeTurnId,
               input: [],
               additionalContext: context,
               additionalContextSource: `subagent:${message.senderAgentId}`,
               clientUserMessageId: message.id,
+              author: { kind: 'agent', threadId: message.senderAgentId },
             }, 'advisory');
           } else if (directRootForeground) {
             // A foreground envelope belongs to the invoking parent Turn. If
@@ -2773,6 +2780,7 @@ export class SubagentCollaboration {
               additionalContext: context,
               additionalContextSource: `subagent:${message.senderAgentId}`,
               clientUserMessageId: message.id,
+              author: { kind: 'agent', threadId: message.senderAgentId },
               trigger: {
                 kind: 'subagent',
                 parentThreadId: message.senderAgentId,

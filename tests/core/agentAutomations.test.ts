@@ -825,6 +825,7 @@ describe('Automation Thread dispatch', () => {
     expect(standaloneHost.turnCalls[0]).toMatchObject({
       threadId: standaloneRun.threadId,
       clientUserMessageId: standaloneRun.id,
+      author: { kind: 'feature', feature: 'automation', ref: standaloneRun.id },
       trigger: { kind: 'feature', feature: 'automation', ref: standaloneRun.id },
     });
     expect(JSON.parse(standaloneHost.turnCalls[0]!.additionalContext.automation_info.value)).toMatchObject({
@@ -1471,6 +1472,7 @@ function automationServiceFor(
 interface TurnCall {
   readonly threadId: string;
   readonly clientUserMessageId: string;
+  readonly author: { readonly kind: 'feature'; readonly feature: 'automation'; readonly ref: string };
   readonly trigger: { readonly kind: 'feature'; readonly feature: string; readonly ref: string };
   readonly additionalContext: { readonly automation_info: { readonly kind: 'application'; readonly value: string } };
   readonly returnedTurnId: string;

@@ -1,24 +1,20 @@
-import { api } from '../../api/client';
 import type { NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { AddIcon, ICON_SIZE } from '../icons';
 import { tagSelectorItemLabel, tagSelectorItems } from '../interactions/tagSelector';
-import { commandRunnerNoop, type CommandRunner, type CommandRunnerOperationResult } from '../shared';
+import type { CommandRunnerOperationResult } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
 import { PopoverListItem } from './PopoverList';
 
 interface TagSelectorProps {
   query: string;
   index: DocumentIndex;
-  nodeId: NodeId;
   existingTagIds: readonly NodeId[];
   selectedIndex: number;
   setSelectedIndex: (index: number | ((current: number) => number)) => void;
-  run: CommandRunner;
   close: () => void;
-  clearTriggerText: () => Promise<void>;
-  applyTag?: (tag: NodeProjection) => Promise<CommandRunnerOperationResult>;
-  createTagAndApply?: (name: string) => Promise<CommandRunnerOperationResult>;
+  applyTag: (tag: NodeProjection) => Promise<CommandRunnerOperationResult>;
+  createTagAndApply: (name: string) => Promise<CommandRunnerOperationResult>;
 }
 
 export function TagSelector(props: TagSelectorProps) {
@@ -40,17 +36,7 @@ export function TagSelector(props: TagSelectorProps) {
         ),
         action: () => {
           props.close();
-          if (props.applyTag) {
-            void props.run(async () => {
-              const result = await props.applyTag?.(tag);
-              return result ?? commandRunnerNoop();
-            });
-            return;
-          }
-          void props.run(async () => {
-            await props.clearTriggerText();
-            return api.applyTag(props.nodeId, tag.id);
-          });
+          void props.applyTag(tag);
         },
         create: false,
       };
@@ -61,18 +47,7 @@ export function TagSelector(props: TagSelectorProps) {
       icon: <AddIcon size={ICON_SIZE.menu} />,
       action: () => {
         props.close();
-        if (props.createTagAndApply) {
-          void props.run(async () => {
-            const result = await props.createTagAndApply?.(item.name);
-            return result ?? commandRunnerNoop();
-          });
-          return;
-        }
-        void props.run(async () => {
-          const outcome = await api.createTag(item.name);
-          await props.clearTriggerText();
-          return api.applyTag(props.nodeId, outcome.focus?.nodeId ?? '');
-        });
+        void props.createTagAndApply(item.name);
       },
       create: true,
     };

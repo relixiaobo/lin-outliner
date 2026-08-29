@@ -722,6 +722,7 @@ function contextEvidenceRef(
 function userMessage(text: string, id: string): ThreadItem {
   return {
     type: 'userMessage',
+    author: { kind: 'reader' },
     id,
     provenance: provenance(id),
     clientId: null,

@@ -15,11 +15,11 @@ import type { FieldValueConstraints } from './fieldValueValidation';
 // is always an editable row that materializes through the injected field create
 // command (IME-safe). Field types only add ADDITIVE layers on top of that row —
 // an overlay trigger (date picker / options popover), a non-blocking validation
-// hint, a link affordance — never a separate editing mode. Checkbox uses a
-// whole-field control only while empty; its stored boolean uses a standard row.
+// hint, a link affordance — never a separate editing mode. Checkbox keeps the
+// same boolean control inside the shared draft/value row for its entire lifecycle.
 export interface FieldValueEditorDescriptor {
   interaction: FieldValueInteraction;
-  // Provides a dedicated control while the field has no stored value row.
+  // Replaces the row's text surface with a dedicated whole-value control.
   isWholeFieldControl: boolean;
   // The value text is validated non-blockingly (a hint, never a rejection).
   validates: boolean;
@@ -43,7 +43,7 @@ export function fieldValueEditor(fieldType: FieldType | undefined): FieldValueEd
 }
 
 // Runtime context threaded through the prop-drilled tree (there is no React
-// context) so OutlinerView / OutlinerItem can make a field value editable like
+// context) so OutlinerFlatView / OutlinerItem can make a field value editable like
 // body content while routing creates/selects to the field-aware command set.
 //
 // The editing path is NOT forked: a field value's trailing draft materializes
@@ -54,8 +54,9 @@ export function fieldValueEditor(fieldType: FieldType | undefined): FieldValueEd
 // that matches an existing option is deduped into a reference in core.
 export interface FieldValueContext {
   ownerId: NodeId;
+  fieldDefId: NodeId;
   entryId?: NodeId;
-  optionField: NodeProjection;
+  optionField?: NodeProjection;
   descriptor: FieldValueEditorDescriptor;
   // The concrete field type + numeric constraints, threaded so a value row can
   // drive its additive validation hint / link affordance without re-projecting
@@ -64,6 +65,8 @@ export interface FieldValueContext {
   constraints: FieldValueConstraints;
   autocollect: boolean;
   placeholder: string;
+  displayValue?: string;
+  inheritedDisplayValue?: boolean;
   // Materialize the trailing draft as a field value under `id` carrying `text`.
   // Mirrors api.materializeDraftNode so OutlinerItem's materializeDraft can call
   // it through the same code path with no field-value branch.
@@ -78,6 +81,6 @@ export interface FieldValueContext {
   materializeAsset: (id: NodeId, asset: AssetMetadata) => Promise<CommandResult>;
   materializeImageUrl: (id: NodeId, mediaUrl: string) => Promise<CommandResult>;
   // Append a reference to an existing pool option (the additive options overlay).
-  onSelectOption: (optionId: NodeId) => Promise<CommandResult>;
+  onSelectOption: (optionId: NodeId, id?: NodeId) => Promise<CommandResult>;
   commitSlot: () => Promise<CommandResult>;
 }

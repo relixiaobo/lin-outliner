@@ -3,6 +3,7 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import { makeDraftNode, useTrailingDraftId } from '../../src/renderer/ui/outliner/draftRow';
+import type { PendingDraftPolicy } from '../../src/renderer/ui/outliner/draftRow';
 import { isClientNodeId } from '../../src/core/nodeId';
 import type { NodeId, NodeProjection } from '../../src/renderer/api/types';
 
@@ -13,26 +14,37 @@ afterEach(() => {
 
 // Drive the hook through a tiny probe component and capture the id it returns
 // on every render, plus a setter to change the inputs.
-function renderHook(initialParent: NodeId, initialById: Map<NodeId, NodeProjection>) {
+interface HookInputs {
+  parentId: NodeId;
+  byId: Map<NodeId, NodeProjection>;
+  reservedIds?: ReadonlySet<NodeId>;
+  pendingPolicy?: PendingDraftPolicy;
+}
+
+function renderHook(initialInputs: HookInputs) {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   Object.assign(globalThis, { document, window, HTMLElement: window.HTMLElement, Node: window.Node });
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
   const ids: NodeId[] = [];
-  let setInputs: (next: { parentId: NodeId; byId: Map<NodeId, NodeProjection> }) => void = () => {};
+  let setInputs: (next: HookInputs) => void = () => {};
 
-  const Probe = (props: { parentId: NodeId; byId: Map<NodeId, NodeProjection> }) => {
-    const id = useTrailingDraftId(props.parentId, props.byId);
+  const Probe = (props: HookInputs) => {
+    const id = useTrailingDraftId(
+      props.parentId,
+      props.byId,
+      props.reservedIds,
+      props.pendingPolicy,
+    );
     ids.push(id);
     return null;
   };
   const Harness = () => {
     const [inputs, setState] = (require('react') as typeof import('react')).useState({
-      parentId: initialParent,
-      byId: initialById,
+      ...initialInputs,
     });
     setInputs = setState;
-    return <Probe parentId={inputs.parentId} byId={inputs.byId} />;
+    return <Probe {...inputs} />;
   };
 
   const root = createRoot(document.getElementById('root')!);
@@ -40,7 +52,7 @@ function renderHook(initialParent: NodeId, initialById: Map<NodeId, NodeProjecti
   mounted.push(() => act(() => root.unmount()));
   return {
     ids,
-    rerender: (next: { parentId: NodeId; byId: Map<NodeId, NodeProjection> }) => act(() => setInputs(next)),
+    rerender: (next: HookInputs) => act(() => setInputs(next)),
   };
 }
 
@@ -59,8 +71,8 @@ describe('makeDraftNode', () => {
 describe('useTrailingDraftId', () => {
   test('returns a stable client id across re-renders', () => {
     const byId = new Map<NodeId, NodeProjection>();
-    const { ids, rerender } = renderHook('parent:1', byId);
-    const first = ids[0];
+    const { ids, rerender } = renderHook({ parentId: 'parent:1', byId });
+    const first = ids[ids.length - 1]!;
     expect(isClientNodeId(first)).toBe(true);
     rerender({ parentId: 'parent:1', byId });
     expect(ids[ids.length - 1]).toBe(first);
@@ -68,8 +80,8 @@ describe('useTrailingDraftId', () => {
 
   test('mints a fresh id once the draft materializes (its id appears in byId)', () => {
     const byId = new Map<NodeId, NodeProjection>();
-    const { ids, rerender } = renderHook('parent:1', byId);
-    const draftId = ids[0];
+    const { ids, rerender } = renderHook({ parentId: 'parent:1', byId });
+    const draftId = ids[ids.length - 1]!;
     // Materialize: the projection now contains the draft id.
     const next = new Map(byId);
     next.set(draftId, makeDraftNode(draftId, 'parent:1'));
@@ -81,9 +93,52 @@ describe('useTrailingDraftId', () => {
 
   test('resets the id when the owning parent changes', () => {
     const byId = new Map<NodeId, NodeProjection>();
-    const { ids, rerender } = renderHook('parent:1', byId);
-    const first = ids[0];
+    const { ids, rerender } = renderHook({ parentId: 'parent:1', byId });
+    const first = ids[ids.length - 1]!;
     rerender({ parentId: 'parent:2', byId });
+    expect(ids[ids.length - 1]).not.toBe(first);
+  });
+
+  test('advances past a reserved id for additive trailing drafts', () => {
+    const byId = new Map<NodeId, NodeProjection>();
+    const { ids, rerender } = renderHook({ parentId: 'parent:1', byId });
+    const first = ids[ids.length - 1]!;
+
+    rerender({
+      parentId: 'parent:1',
+      byId,
+      reservedIds: new Set([first]),
+      pendingPolicy: 'advance',
+    });
+
+    expect(ids[ids.length - 1]).not.toBe(first);
+  });
+
+  test('retains a reserved id until a whole-value draft reaches Projection', () => {
+    const byId = new Map<NodeId, NodeProjection>();
+    const { ids, rerender } = renderHook({
+      parentId: 'parent:1',
+      byId,
+      pendingPolicy: 'retain',
+    });
+    const first = ids[ids.length - 1]!;
+
+    rerender({
+      parentId: 'parent:1',
+      byId,
+      reservedIds: new Set([first]),
+      pendingPolicy: 'retain',
+    });
+    expect(ids[ids.length - 1]).toBe(first);
+
+    const projected = new Map(byId);
+    projected.set(first, makeDraftNode(first, 'parent:1'));
+    rerender({
+      parentId: 'parent:1',
+      byId: projected,
+      reservedIds: new Set([first]),
+      pendingPolicy: 'retain',
+    });
     expect(ids[ids.length - 1]).not.toBe(first);
   });
 });

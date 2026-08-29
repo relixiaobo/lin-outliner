@@ -5,6 +5,7 @@ import type { ManagedSkillCatalogEntryView, ManagedSkillView } from '../../src/c
 import type { AppInfo } from '../../src/core/errorObservability';
 import type { AppUpdateView } from '../../src/core/appUpdate';
 import { SEARCH_QUERY_COMPLEXITY_LIMITS } from '../../src/core/searchQueryCompiler';
+import { assetUrl } from '../../src/core/assets';
 
 export const ids = {
   workspace: 'workspace',
@@ -62,6 +63,8 @@ interface MockFixtureOptions {
   initWorkspaceDelayMs?: number;
   /** Delays provider settings so Settings chrome can be asserted before settings data arrives. */
   providerSettingsDelayMs?: number;
+  /** Delays only the first automatic Thread creation request. */
+  initialThreadStartDelayMs?: number;
   /** Seeds the shared preview-translation target language. */
   translationLanguage?: TranslationLanguage;
   /** Seeds URL/EPUB automatic translation and model preferences. */
@@ -146,6 +149,11 @@ type E2EWindow = Window & {
     onAutomationNotification: (listener: (notification: unknown) => void) => () => void;
     onDocumentEvent: (listener: (event: unknown) => void) => () => void;
     outline: {
+      commit: (request: {
+        requestId: string;
+        changeSet: MockChangeSet;
+        undoGroup?: Record<string, unknown>;
+      }) => Promise<unknown>;
       request: (request: { requestId: string; command: string; input: unknown }) => Promise<{
         protocolVersion: 1;
         requestId: string;
@@ -315,7 +323,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
   ]);
   await page.addInitScript({ content: actionBridge });
   await page.addInitScript({ content: viewConfigBridge });
-  await page.addInitScript(({ ids, options, queryChildLimit }) => {
+  await page.addInitScript(({ assetUrlPrefix, ids, options, queryChildLimit }) => {
     type ReferenceTarget =
       | { kind: 'node'; nodeId: string }
       | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory' };
@@ -328,6 +336,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         | { type: 'remove_mark'; from: number; to: number; markType: string }
       >;
     };
+    const mockAssetUrl = (assetId: string) => `${assetUrlPrefix}${encodeURIComponent(assetId)}`;
     const referenceTargetsEqual = (left: ReferenceTarget, right: ReferenceTarget) => {
       if (left.kind !== right.kind) return false;
       if (left.kind === 'node') return left.nodeId === (right as Extract<ReferenceTarget, { kind: 'node' }>).nodeId;
@@ -465,6 +474,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       videoDurationMs?: number;
     }>();
     const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+    let initialThreadStartDelayMs = options.initialThreadStartDelayMs ?? 0;
     let nextThreadStartBehavior: { delayMs: number; error: string | null } | null = null;
     const attachmentUploads = new Map<string, {
       threadId: string;
@@ -801,33 +811,48 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       manualError: null,
     } satisfies AppUpdateView);
     const delay = (ms: number) => new Promise((resolve) => { window.setTimeout(resolve, ms); });
-    type MockThreadItem = {
+    type MockThreadInputAuthor =
+      | { kind: 'reader' }
+      | { kind: 'agent'; threadId: string }
+      | { kind: 'host' }
+      | { kind: 'feature'; feature: string; ref?: string }
+      | { kind: 'unknown' };
+    type MockThreadUserContent = Array<
+      | { type: 'text'; text: string }
+      | { type: 'nodeReference'; nodeId: string; note?: string }
+      | {
+          type: 'attachment';
+          id: string;
+          name: string;
+          mimeType: string;
+          sizeBytes: number;
+          source:
+            | { kind: 'localFile'; path: string }
+            | {
+                kind: 'threadPayload';
+                ref: { id: string; mimeType: string; byteLength: number; fileName: string };
+              };
+        }
+    >;
+    type MockThreadItemBase = {
       id: string;
-      type: 'userMessage' | 'agentMessage';
       provenance: { originThreadId: string; originTurnId: string; originItemId: string };
-      clientId?: string | null;
-      acceptedAt?: number;
-      content?: Array<
-        | { type: 'text'; text: string }
-        | { type: 'nodeReference'; nodeId: string; note?: string }
-        | {
-            type: 'attachment';
-            id: string;
-            name: string;
-            mimeType: string;
-            sizeBytes: number;
-            source:
-              | { kind: 'localFile'; path: string }
-              | {
-                  kind: 'threadPayload';
-                  ref: { id: string; mimeType: string; byteLength: number; fileName: string };
-                };
-          }
-      >;
-      text?: string;
-      phase?: 'commentary' | 'final_answer' | 'interrupted' | null;
-      memoryCitation?: null;
     };
+    type MockThreadItem = MockThreadItemBase & (
+      | {
+          type: 'userMessage';
+          author: MockThreadInputAuthor;
+          clientId: string | null;
+          acceptedAt: number;
+          content: MockThreadUserContent;
+        }
+      | {
+          type: 'agentMessage';
+          text: string;
+          phase: 'commentary' | 'final_answer' | 'interrupted' | null;
+          memoryCitation: null;
+        }
+    );
     type MockTurn = {
       id: string;
       items: MockThreadItem[];
@@ -3032,7 +3057,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           if (!node.parentId) return;
           const parent = nodes.get(node.parentId);
           const index = parent?.children.indexOf(node.id) ?? -1;
-          const inlineId = createNode(node.parentId, index < 0 ? null : index, '', { showCheckbox: false });
+          const inlineId = createNode(
+            node.parentId,
+            index < 0 ? null : index,
+            '',
+            { showCheckbox: false },
+            typeof instruction.replacementId === 'string' ? instruction.replacementId : undefined,
+          );
           const inline = nodes.get(inlineId)!;
           inline.content = {
             text: '', marks: [],
@@ -3045,7 +3076,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const index = parent?.children.indexOf(node.id) ?? -1;
           createNode(node.parentId, index < 0 ? null : index, referenceTarget?.content.text ?? '', {
             type: 'reference', targetId: referenceTarget?.id ?? referenceTargetId, showCheckbox: false,
-          });
+          }, typeof instruction.replacementId === 'string' ? instruction.replacementId : undefined);
           removeNode(node.id);
         }
       } else if (instruction.kind === 'view') {
@@ -3537,6 +3568,17 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             applyMockDiff(input.diff as MockDiff, input.acknowledgeDestructive === true),
           );
         }
+        if (request.command === 'commit') {
+          const diff = previewMockChangeSet(input.changeSet as MockChangeSet);
+          if (diff.destructive.length > 0) {
+            throw new Error('Direct commit does not accept destructive ChangeSets.');
+          }
+          return outlineSuccess(
+            request.requestId,
+            request.command,
+            applyMockDiff(diff, false),
+          );
+        }
         if (request.command === 'undo' || request.command === 'redo') {
           return outlineSuccess(
             request.requestId,
@@ -3681,6 +3723,42 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       initialTranslationLanguage: translationLanguage,
       initialUrlPageTranslationPreferences: clone(translationPreferences),
       outline: {
+        commit: async (request) => {
+          const before = projection();
+          const diff = previewMockChangeSet(request.changeSet);
+          const response = await win.lin!.outline.request({
+            requestId: request.requestId,
+            command: 'commit',
+            input: {
+              changeSet: request.changeSet,
+              ...(request.undoGroup ? { undoGroup: request.undoGroup } : {}),
+            },
+          });
+          if (!response.ok) {
+            const error = response.error && typeof response.error === 'object'
+              ? response.error as { message?: unknown }
+              : undefined;
+            throw new Error(typeof error?.message === 'string' ? error.message : 'Mock Outline commit failed.');
+          }
+          const after = projection();
+          const beforeById = new Map(before.nodes.map((node) => [node.id, node]));
+          const afterById = new Map(after.nodes.map((node) => [node.id, node]));
+          return clone({
+            settlement: response.data,
+            update: {
+              kind: 'delta',
+              revision,
+              todayId: after.todayId,
+              changedNodes: after.nodes.filter((node) => (
+                JSON.stringify(beforeById.get(node.id)) !== JSON.stringify(node)
+              )),
+              removedIds: before.nodes
+                .filter((node) => !afterById.has(node.id))
+                .map((node) => node.id),
+            },
+            diff,
+          });
+        },
         request: requestMockOutline,
         cancel: () => undefined,
         subscribe: (subscription, listener) => {
@@ -3834,6 +3912,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               {
                 id: userItemId,
                 type: 'userMessage',
+                author: { kind: 'feature', feature: 'automation', ref: automationRunId },
                 provenance: itemProvenance(thread.id, turnId, userItemId),
                 clientId: automationRunId,
                 acceptedAt: timestamp,
@@ -3992,7 +4071,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (method === 'thread/start') {
           const behavior = nextThreadStartBehavior;
           nextThreadStartBehavior = null;
-          if (behavior?.delayMs) await delay(behavior.delayMs);
+          const delayMs = behavior?.delayMs ?? initialThreadStartDelayMs;
+          initialThreadStartDelayMs = 0;
+          if (delayMs) await delay(delayMs);
           if (behavior?.error) throw new Error(behavior.error);
           const thread = createMockThread(input);
           emitAgentCoreNotification({ type: 'thread/started', threadId: thread.id, thread });
@@ -4753,6 +4834,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const userItem: MockThreadItem = {
             id: userItemId,
             type: 'userMessage',
+            author: { kind: 'reader' },
             provenance: itemProvenance(thread.id, turnId, userItemId),
             clientId: typeof input.clientUserMessageId === 'string' ? input.clientUserMessageId : null,
             acceptedAt: startedAt,
@@ -4860,6 +4942,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const item: MockThreadItem = {
             id: acceptedItemId,
             type: 'userMessage',
+            author: { kind: 'reader' },
             provenance: itemProvenance(threadId, turnId, acceptedItemId),
             clientId: typeof input.clientUserMessageId === 'string' ? input.clientUserMessageId : null,
             acceptedAt,
@@ -5551,7 +5634,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 lastModified: asset.createdAt,
                 streamUrl: epubBytes
                   ? URL.createObjectURL(new Blob([epubBytes], { type: asset.mimeType }))
-                  : `asset://${target.assetId}`,
+                  : mockAssetUrl(target.assetId),
               } : null,
             }) as T;
           }
@@ -6488,6 +6571,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       };
     }
   }, {
+    assetUrlPrefix: assetUrl(''),
     ids,
     options,
     queryChildLimit: SEARCH_QUERY_COMPLEXITY_LIMITS.maxChildrenPerGroup,
@@ -6664,6 +6748,124 @@ export async function appliedOutlineOperations(page: Page, fromCall = 0): Promis
     if (call.cmd === 'outline/commit') return input.changeSet?.operations ?? [];
     return [];
   });
+}
+
+export interface OutlineMutationMatch {
+  instructionKind?: string;
+  op?: string;
+}
+
+/**
+ * Holds the first matching renderer mutation before it reaches the mock
+ * Runtime. Tests can assert the complete optimistic frame, then release the
+ * exact request and verify authoritative settlement without timing windows.
+ */
+export async function holdOutlineMutation(
+  page: Page,
+  match: OutlineMutationMatch = {},
+): Promise<() => Promise<void>> {
+  const gateId = `outline-mutation-${Date.now()}-${Math.random()}`;
+  await page.evaluate(({ gateId, match }) => {
+    const win = window as E2EWindow & {
+      __outlineMutationGates?: Record<string, () => void>;
+    };
+    const outline = win.lin?.outline;
+    if (!outline) throw new Error('Missing Outline bridge');
+    const originalRequest = outline.request;
+    let releaseGate = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    win.__outlineMutationGates ??= {};
+    win.__outlineMutationGates[gateId] = releaseGate;
+    let held = false;
+
+    outline.request = async (request) => {
+      const input = request.input as {
+        changeSet?: { operations?: Array<Record<string, unknown>> };
+        diff?: { normalizedChangeSet?: { operations?: Array<Record<string, unknown>> } };
+      };
+      const operations = request.command === 'commit'
+        ? input.changeSet?.operations ?? []
+        : input.diff?.normalizedChangeSet?.operations ?? [];
+      const matches = !held
+        && (request.command === 'apply' || request.command === 'commit')
+        && operations.some((operation) => (
+          (!match.op || operation.op === match.op)
+          && (!match.instructionKind || (
+            Array.isArray(operation.changes)
+            && operation.changes.some((change) => (
+              typeof change === 'object'
+              && change !== null
+              && (change as Record<string, unknown>).kind === match.instructionKind
+            ))
+          ))
+        ));
+      if (matches) {
+        held = true;
+        await gate;
+      }
+      return originalRequest(request);
+    };
+  }, { gateId, match });
+
+  return async () => {
+    await page.evaluate((id) => {
+      const win = window as E2EWindow & {
+        __outlineMutationGates?: Record<string, () => void>;
+      };
+      win.__outlineMutationGates?.[id]?.();
+      if (win.__outlineMutationGates) delete win.__outlineMutationGates[id];
+    }, gateId);
+  };
+}
+
+export async function observeNextRowMoveAnimation(page: Page, nodeId: string): Promise<void> {
+  await page.evaluate((targetNodeId) => {
+    type RowMoveObservation = {
+      nodeId: string;
+      observed: boolean;
+      observer: MutationObserver;
+    };
+    const win = window as Window & {
+      __rowMoveAnimationObservation?: RowMoveObservation;
+    };
+    win.__rowMoveAnimationObservation?.observer.disconnect();
+
+    let observation: RowMoveObservation;
+    const inspect = () => {
+      const animated = [...document.querySelectorAll<HTMLElement>('[data-node-id][data-parent-id] > .row')]
+        .some((row) => (
+          row.parentElement?.dataset.nodeId === targetNodeId
+          && row.classList.contains('row-move-animating')
+        ));
+      if (!animated) return;
+      observation.observed = true;
+      observation.observer.disconnect();
+    };
+    observation = {
+      nodeId: targetNodeId,
+      observed: false,
+      observer: new MutationObserver(inspect),
+    };
+    win.__rowMoveAnimationObservation = observation;
+    observation.observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class'],
+      childList: true,
+      subtree: true,
+    });
+    inspect();
+  }, nodeId);
+}
+
+export async function expectRowMoveAnimationObserved(page: Page, nodeId: string): Promise<void> {
+  await expect.poll(() => page.evaluate((targetNodeId) => {
+    const observation = (window as Window & {
+      __rowMoveAnimationObservation?: { nodeId: string; observed: boolean };
+    }).__rowMoveAnimationObservation;
+    return observation?.nodeId === targetNodeId && observation.observed;
+  }, nodeId), { timeout: 1000 }).toBe(true);
 }
 
 export async function clipboardText(page: Page) {

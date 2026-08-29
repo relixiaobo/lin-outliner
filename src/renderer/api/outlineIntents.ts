@@ -8,6 +8,7 @@ import type {
   TargetRef,
   UpdateInstruction,
 } from '../../outline/contract';
+import { freshNodeId } from '../../core/nodeId';
 import type {
   Backlink,
   AssetMetadata,
@@ -35,6 +36,8 @@ import type {
   ViewMode,
 } from './types';
 import { parseSearchQueryOutline } from '../../core/searchQueryOutline';
+import { nextCompletedAt } from '../../core/doneState';
+import { tagDrivenShowCheckbox } from '../../core/configProjection';
 import {
   previewDesktopMutation,
   readDesktopProjection,
@@ -68,6 +71,7 @@ export const outlineDocumentApi = {
   initWorkspace: readDesktopProjection,
   getProjection: readDesktopProjection,
   createNode,
+  createNodeRelativeTo,
   materializeDraftNode,
   createRichTextNode,
   createTaggedNode,
@@ -79,7 +83,11 @@ export const outlineDocumentApi = {
   replaceNodeText,
   updateNodeDescription,
   setNodeCheckboxVisible,
+  convertNodeToCheckbox,
+  createCheckboxNode,
   setCodeBlock,
+  convertNodeToCodeBlock,
+  createCodeBlock,
   setCodeLanguage,
   createImageNode,
   createAttachmentNode,
@@ -109,6 +117,7 @@ export const outlineDocumentApi = {
   outdentNode,
   trashNode,
   batchTrashNodes,
+  batchDeleteRows,
   batchIndentNodes,
   batchOutdentNodes,
   batchToggleDone,
@@ -117,11 +126,14 @@ export const outlineDocumentApi = {
   batchMoveNodesUp,
   batchMoveNodesDown,
   batchApplyTag,
+  createTagAndBatchApply,
   restoreNode,
   deleteNode,
   toggleDone,
   cycleDoneState,
   createTag,
+  applyTagWithContent,
+  createTagAndApplyWithContent,
   previewTagTemplateBackfill,
   applyTemplateToTaggedNodes,
   applyTag,
@@ -177,6 +189,21 @@ function createNode(
   }], focus(id, parentId, { kind: 'end' }), options);
 }
 
+function createNodeRelativeTo(
+  siblingId: string,
+  parentId: string,
+  side: 'before' | 'after',
+  content: RichText,
+  id = freshId('node'),
+  options?: MutationOptions,
+): Promise<CommandResult> {
+  return mutate(() => [{
+    op: 'create',
+    placement: { kind: side, sibling: oneId(siblingId) },
+    nodes: [draft(content, id)],
+  }], focus(id, parentId, { kind: 'end' }), options);
+}
+
 function materializeDraftNode(
   parentId: string,
   index: number | null,
@@ -187,8 +214,12 @@ function materializeDraftNode(
   return createNode(parentId, index, text, id, undoGroup ? { undoGroup } : undefined);
 }
 
-function createRichTextNode(parentId: string, index: number | null, content: RichText): Promise<CommandResult> {
-  const id = freshId('node');
+function createRichTextNode(
+  parentId: string,
+  index: number | null,
+  content: RichText,
+  id = freshId('node'),
+): Promise<CommandResult> {
   return mutate(() => [{
     op: 'create',
     placement: structuralPlacement(oneId(parentId), index),
@@ -196,20 +227,30 @@ function createRichTextNode(parentId: string, index: number | null, content: Ric
   }], focus(id, parentId, { kind: 'end' }));
 }
 
-function createTaggedNode(parentId: string, content: RichText, tagId: string): Promise<CommandResult> {
-  const id = freshId('node');
+function createTaggedNode(
+  parentId: string,
+  content: RichText,
+  tagId: string,
+  index: number | null = null,
+  id = freshId('node'),
+): Promise<CommandResult> {
   return mutate(() => [{
     op: 'create',
-    placement: { kind: 'last', parent: oneId(parentId) },
+    placement: structuralPlacement(oneId(parentId), index),
     nodes: [draft(content, id, { tags: [tagId] })],
   }], focus(id, parentId, { kind: 'end' }));
 }
 
-function createTagAndTaggedNode(parentId: string, content: RichText, name: string): Promise<CommandResult> {
-  const id = freshId('node');
+function createTagAndTaggedNode(
+  parentId: string,
+  content: RichText,
+  name: string,
+  index: number | null = null,
+  id = freshId('node'),
+): Promise<CommandResult> {
   return mutate(() => [
     { op: 'ensure', resource: 'definition', definitionType: 'tag', name, bind: 'tag' },
-    { op: 'create', placement: { kind: 'last', parent: oneId(parentId) }, nodes: [draft(content, id)], bind: 'created' },
+    { op: 'create', placement: structuralPlacement(oneId(parentId), index), nodes: [draft(content, id)], bind: 'created' },
     {
       op: 'update',
       targets: binding('created'),
@@ -260,8 +301,8 @@ function splitNode(
   before: RichText,
   after: RichText,
   options: SplitNodeOptions = {},
+  createdId = freshId('node'),
 ): Promise<CommandResult> {
-  const createdId = freshId('node');
   let targetParentId: string | null = null;
   return mutate(() => {
     const view = requireProjection();
@@ -306,8 +347,49 @@ function setNodeCheckboxVisible(nodeId: string, visible: boolean): Promise<Comma
   return update(nodeId, [{ kind: 'checkbox', visible }], focus(nodeId));
 }
 
+function convertNodeToCheckbox(nodeId: string, content: RichText): Promise<CommandResult> {
+  return update(nodeId, [
+    { kind: 'content', value: content },
+    { kind: 'checkbox', visible: true },
+  ], focus(nodeId));
+}
+
+function createCheckboxNode(
+  parentId: string,
+  index: number | null,
+  content: RichText,
+  id = freshId('node'),
+): Promise<CommandResult> {
+  return mutate(() => [{
+    op: 'create',
+    placement: structuralPlacement(oneId(parentId), index),
+    nodes: [draft(content, id, { checkbox: true, done: false })],
+  }], focus(id, parentId, { kind: 'end' }));
+}
+
 function setCodeBlock(nodeId: string, codeLanguage = ''): Promise<CommandResult> {
   return update(nodeId, [{ kind: 'code', language: codeLanguage }], focus(nodeId));
+}
+
+function convertNodeToCodeBlock(nodeId: string, content: RichText, codeLanguage = ''): Promise<CommandResult> {
+  return update(nodeId, [
+    { kind: 'content', value: content },
+    { kind: 'code', language: codeLanguage },
+  ], focus(nodeId));
+}
+
+function createCodeBlock(
+  parentId: string,
+  index: number | null,
+  content: RichText,
+  id = freshId('node'),
+  codeLanguage = '',
+): Promise<CommandResult> {
+  return mutate(() => [{
+    op: 'create',
+    placement: structuralPlacement(oneId(parentId), index),
+    nodes: [draft(content, id, { type: 'codeBlock', codeLanguage })],
+  }], focus(id, parentId, { kind: 'end' }));
 }
 
 function setCodeLanguage(nodeId: string, codeLanguage: string): Promise<CommandResult> {
@@ -636,16 +718,20 @@ function batchOutdentNodes(nodeIds: string[]): Promise<CommandResult> {
 function batchToggleDone(nodeIds: string[]): Promise<CommandResult> {
   return mutate(() => {
     const view = requireProjection();
-    return nodeIds.map((nodeId) => updateChange(nodeId, [{
-      kind: 'done', value: !nodeDone(requiredNode(view, nodeId)),
-    }]));
+    return nodeIds.map((nodeId) => updateChange(
+      nodeId,
+      doneTransitionInstructions(view, requiredNode(view, nodeId), 'toggle'),
+    ));
   });
 }
 
 function batchCycleDoneState(nodeIds: string[]): Promise<CommandResult> {
   return mutate(() => {
     const view = requireProjection();
-    return nodeIds.map((nodeId) => updateChange(nodeId, cycleDoneInstructions(view, requiredNode(view, nodeId))));
+    return nodeIds.map((nodeId) => updateChange(
+      nodeId,
+      doneTransitionInstructions(view, requiredNode(view, nodeId), 'cycle'),
+    ));
   });
 }
 
@@ -677,6 +763,26 @@ function batchApplyTag(nodeIds: string[], tagId: string): Promise<CommandResult>
   }])));
 }
 
+function createTagAndBatchApply(
+  nodeIds: string[],
+  name: string,
+  tagId = freshId('node'),
+): Promise<CommandResult> {
+  return mutate(() => [
+    {
+      op: 'ensure',
+      resource: 'definition',
+      definitionType: 'tag',
+      id: tagId,
+      name,
+      bind: 'tag',
+    },
+    ...nodeIds.map((nodeId) => updateChange(nodeId, [{
+      kind: 'tag', action: 'add', tag: binding('tag'),
+    }])),
+  ]);
+}
+
 function restoreNode(nodeId: string): Promise<CommandResult> {
   return lifecycle('restore', [nodeId], focus(nodeId));
 }
@@ -687,15 +793,21 @@ function deleteNode(nodeId: string): Promise<CommandResult> {
 
 function toggleDone(nodeId: string): Promise<CommandResult> {
   return mutate(() => {
-    const node = requiredNode(requireProjection(), nodeId);
-    return [updateChange(nodeId, [{ kind: 'done', value: !nodeDone(node) }])];
+    const view = requireProjection();
+    return [updateChange(
+      nodeId,
+      doneTransitionInstructions(view, requiredNode(view, nodeId), 'toggle'),
+    )];
   }, focus(nodeId));
 }
 
 function cycleDoneState(nodeId: string): Promise<CommandResult> {
   return mutate(() => {
     const view = requireProjection();
-    return [updateChange(nodeId, cycleDoneInstructions(view, requiredNode(view, nodeId)))];
+    return [updateChange(
+      nodeId,
+      doneTransitionInstructions(view, requiredNode(view, nodeId), 'cycle'),
+    )];
   }, focus(nodeId));
 }
 
@@ -716,6 +828,43 @@ function applyTemplateToTaggedNodes(tagId: string): Promise<CommandResult> {
 
 function applyTag(nodeId: string, tagId: string): Promise<CommandResult> {
   return update(nodeId, [{ kind: 'tag', action: 'add', tag: oneId(tagId) }], focus(nodeId));
+}
+
+function applyTagWithContent(
+  nodeId: string,
+  tagId: string,
+  content: RichText,
+): Promise<CommandResult> {
+  return update(nodeId, [
+    { kind: 'content', value: content },
+    { kind: 'tag', action: 'add', tag: oneId(tagId) },
+  ], focus(nodeId));
+}
+
+function createTagAndApplyWithContent(
+  nodeId: string,
+  name: string,
+  content: RichText,
+  tagId = freshId('node'),
+): Promise<CommandResult> {
+  return mutate(() => [
+    {
+      op: 'ensure',
+      resource: 'definition',
+      definitionType: 'tag',
+      id: tagId,
+      name,
+      bind: 'tag',
+    },
+    {
+      op: 'update',
+      targets: oneId(nodeId),
+      changes: [
+        { kind: 'content', value: content },
+        { kind: 'tag', action: 'add', tag: binding('tag') },
+      ],
+    },
+  ], focus(nodeId));
 }
 
 function removeTag(nodeId: string, tagId: string): Promise<CommandResult> {
@@ -746,7 +895,23 @@ function createInlineField(
   name: string,
   fieldType: FieldType,
   targetDefId?: string,
+  id?: string,
 ): Promise<CommandResult> {
+  if (id && !targetDefId) {
+    return mutate(() => [
+      {
+        op: 'create',
+        placement: structuralPlacement(oneId(parentId), index),
+        nodes: [draft({ text: '', marks: [], inlineRefs: [] }, id)],
+        bind: 'field-entry',
+      },
+      {
+        op: 'update',
+        targets: binding('field-entry'),
+        changes: [{ kind: 'field', action: 'convert', name, fieldType }],
+      },
+    ], focus(id, parentId, { kind: 'all' }, 'field-name'), { requiresDiff: true });
+  }
   const instruction: Extract<UpdateInstruction, { kind: 'field' }> = targetDefId
     ? { kind: 'field', action: 'attach', field: oneId(targetDefId), index }
     : { kind: 'field', action: 'define', name, fieldType, index };
@@ -838,6 +1003,30 @@ function removeFieldValue(valueId: string): Promise<CommandResult> {
   }], focus(value.parentId));
 }
 
+function batchDeleteRows(trashIds: string[], fieldValueIds: string[]): Promise<CommandResult> {
+  return mutate(() => {
+    const view = requireProjection();
+    const fieldChangesByOwner = new Map<string, UpdateInstruction[]>();
+    for (const valueId of fieldValueIds) {
+      const value = requiredNode(view, valueId);
+      if (!value.parentId) throw new Error('Field value is unavailable.');
+      const entryId = value.parentId;
+      const { ownerId, fieldDefId } = fieldEntryContext(entryId);
+      const changes = fieldChangesByOwner.get(ownerId) ?? [];
+      changes.push({
+        kind: 'field-slot',
+        field: oneId(fieldDefId),
+        mutation: { action: 'remove-value', value: oneId(valueId), entryId },
+      });
+      fieldChangesByOwner.set(ownerId, changes);
+    }
+    return [
+      ...[...fieldChangesByOwner].map(([ownerId, changes]) => updateChange(ownerId, changes)),
+      ...trashIds.map((nodeId): Change => ({ op: 'lifecycle', action: 'trash', targets: oneId(nodeId) })),
+    ];
+  });
+}
+
 function addReference(parentId: string, targetId: string, index: number | null = null): Promise<CommandResult> {
   const id = freshId('ref');
   return mutate(() => [{
@@ -854,8 +1043,8 @@ function addReferenceConversion(
   targetId: string,
   index: number | null = null,
   displayName?: string,
+  id = freshId('node'),
 ): Promise<CommandResult> {
-  const id = freshId('node');
   return mutate(() => [{
     op: 'create',
     placement: structuralPlacement(oneId(parentId), index),
@@ -878,8 +1067,8 @@ function replaceNodeWithReferenceConversion(
   nodeId: string,
   targetId: string,
   displayName?: string,
+  inlineId = freshId('node'),
 ): Promise<CommandResult> {
-  const inlineId = freshId('node');
   return replaceNode(nodeId, inlineId, draft(inlineReferenceContent(targetId, displayName), inlineId), {
     kind: 'text-offset', offset: 0, inlineRefBias: 'after',
   });
@@ -889,16 +1078,25 @@ function replaceNodeWithInlineReference(nodeId: string, targetId: string): Promi
   return replaceNodeWithReferenceConversion(nodeId, targetId);
 }
 
-function convertReferenceToInlineNode(referenceId: string): Promise<CommandResult> {
+function convertReferenceToInlineNode(
+  referenceId: string,
+  replacementId = freshNodeId(),
+): Promise<CommandResult> {
   return update(referenceId, [{
     kind: 'reference', action: 'inline', target: oneId(requiredReferenceTarget(referenceId)),
-  }], createdFocus(undefined, { kind: 'text-offset', offset: 0, inlineRefBias: 'after' }), { requiresDiff: true });
+    replacementId,
+  }], createdFocus(replacementId, { kind: 'text-offset', offset: 0, inlineRefBias: 'after' }), { requiresDiff: true });
 }
 
-function restoreInlineReferenceNodeToReference(nodeId: string, targetId: string): Promise<CommandResult> {
+function restoreInlineReferenceNodeToReference(
+  nodeId: string,
+  targetId: string,
+  replacementId = freshNodeId(),
+): Promise<CommandResult> {
   return update(nodeId, [{
     kind: 'reference', action: 'restore', target: oneId(targetId),
-  }], createdFocus(undefined), { requiresDiff: true });
+    replacementId,
+  }], createdFocus(replacementId), { requiresDiff: true });
 }
 
 function ensureDateNode(year: number, month: number, day: number): Promise<CommandResult> {
@@ -1329,42 +1527,26 @@ function moveSelectedSiblings(nodeIds: string[], direction: 'up' | 'down'): Prom
   });
 }
 
-function nodeDone(node: NodeProjection): boolean {
-  return typeof node.completedAt === 'number' && node.completedAt > 0;
-}
-
-function cycleDoneInstructions(view: DesktopProjectionView, node: NodeProjection): UpdateInstruction[] {
-  if (node.tags.some((tagId) => tagShowsCheckbox(view, tagId))) {
-    return [{ kind: 'done', value: !nodeDone(node) }];
+function doneTransitionInstructions(
+  view: DesktopProjectionView,
+  node: NodeProjection,
+  transition: 'toggle' | 'cycle',
+): UpdateInstruction[] {
+  const tagDriven = tagDrivenShowCheckbox(view.byId, node);
+  const completedAt = nextCompletedAt({
+    completedAt: node.completedAt,
+    tagDriven,
+    transition,
+  });
+  if (transition === 'toggle') {
+    return [{ kind: 'done', value: typeof completedAt === 'number' && completedAt > 0 }];
   }
-  if (node.completedAt === undefined) return [{ kind: 'checkbox', visible: true }];
-  if (node.completedAt === 0) return [{ kind: 'done', value: true }];
-  return [{ kind: 'checkbox', visible: false }];
-}
-
-function tagShowsCheckbox(view: DesktopProjectionView, tagId: string): boolean {
-  const visited = new Set<string>();
-  let current: string | undefined = tagId;
-  while (current && !visited.has(current)) {
-    visited.add(current);
-    const tag = view.byId.get(current);
-    if (!tag || tag.type !== 'tagDef') return false;
-    let next: string | undefined;
-    for (const childId of tag.children) {
-      const config = view.byId.get(childId);
-      if (config?.type !== 'defConfig') continue;
-      if (config.configKey === 'showCheckbox') {
-        const value = config.children.map((id) => view.byId.get(id)?.content.text).find(Boolean);
-        if (value === 'true') return true;
-      }
-      if (config.configKey === 'extends') {
-        const reference = config.children.map((id) => view.byId.get(id)).find((node) => node?.type === 'reference');
-        if (reference?.type === 'reference') next = reference.targetId;
-      }
-    }
-    current = next;
+  if (tagDriven) return [{ kind: 'done', value: typeof completedAt === 'number' && completedAt > 0 }];
+  if (completedAt === undefined) return [{ kind: 'checkbox', visible: false }];
+  if (node.completedAt === undefined && completedAt === 0) {
+    return [{ kind: 'checkbox', visible: true }];
   }
-  return false;
+  return [{ kind: 'done', value: completedAt > 0 }];
 }
 
 function lowerFieldSlotMutation(

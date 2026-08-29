@@ -1,6 +1,10 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { decodeAgentCoreRecordedNotification, decodeThreadItem, decodeTurn } from '../../../core/agent/codec';
+import {
+  decodeAgentCoreRecordedNotification,
+  decodeThreadItem,
+  decodeTurn,
+} from '../../../core/agent/codec';
 import type {
   AgentCoreRecordedNotification,
   ThreadId,
@@ -711,10 +715,7 @@ export class ThreadHistoryProjectionStore {
     for (const [index, item] of items.entries()) {
       const row = rows[index]!;
       // Compare canonical decoded forms, not stored bytes. The invariant is
-      // "this terminal Item did not change" — a row written before the protocol
-      // gained an optional field is the same Item, and byte equality would call
-      // it a mutation and wedge the Thread at startup (A12: the check belongs
-      // on the Item, not on its serialization).
+      // "this terminal Item did not change", independent of JSON formatting.
       const stored = JSON.stringify(decodeThreadItem(JSON.parse(row.item_json)));
       if (row.item_id !== item.id || stored !== JSON.stringify(decodeThreadItem(item))) {
         throw new Error(`Terminal Turn Item mutation is not allowed: ${item.id}`);
