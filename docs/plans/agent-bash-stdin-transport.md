@@ -206,10 +206,11 @@ The fixture proves positive and negative authority:
 
 ## Dependency And Collision Boundary
 
-This foundation is a prerequisite of the Draft
-`outline-cli-skill-efficiency` PR. It does not depend on that feature or Source
-PR-I, and it modifies no Outline path. The consumer PR rebases after this
-foundation merges and verifies only the public `stdin` interface end to end.
+This foundation is a prerequisite of the separately planned
+[`outline-cli-skill-efficiency`](https://github.com/relixiaobo/lin-outliner/pull/595)
+feature. It does not depend on that feature or Source PR-I, and it modifies no
+Outline path. The consumer PR rebases after this foundation merges and verifies
+only the public `stdin` interface end to end.
 
 The collision self-check found one open PR, `outline-cli-skill-efficiency`, whose
 current plan discusses this missing interface but claims no generic Agent file.
