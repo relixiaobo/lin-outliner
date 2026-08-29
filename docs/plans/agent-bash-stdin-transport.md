@@ -177,10 +177,12 @@ quoting layer, or other byte is added.
   `item/started`, `item/completed`, and `items/completed` notifications all cross
   the same fail-closed boundary. Methods and events without Items still pass the
   exhaustive envelope projector so a future protocol addition cannot bypass it.
-  Raw tool-argument envelopes, canonical model-call payload references,
-  internal-text references, and complete stdin never cross IPC. Renderer caching
-  and formatting receive only the bounded value. Bash adds no duplicate log,
-  output echo, command summary, environment copy, or temporary input file.
+  Raw payload-backed tool-argument envelopes, canonical model-call payload
+  references, internal-text references, and complete payload-backed stdin never
+  cross IPC. Renderer caching and formatting for Item-bound arguments receive
+  only the bounded value; admitted inline arguments, including inline Bash stdin,
+  cross unchanged as specified above. Bash adds no duplicate log, output echo,
+  command summary, environment copy, or temporary input file.
 
 The private canonical representation has one narrow shape. A
 `ThreadInternalTextPayloadReference` carries only a content digest, byte length,
@@ -193,10 +195,11 @@ presentation summary or filename, and is unavailable through output, resource,
 file-tool, renderer, or model-facing read APIs. The renderer Item stub carries
 neither reference and is not a retention owner. The raw storage envelope remains
 private; exact Provider history receives the verified logical arguments, while
-every presentation reader receives only the bounded projection or typed
-unavailability. Neither path exposes binding metadata. Existing Thread-private
-publication mechanics may be shared, but input text and tool output remain
-distinct semantic types.
+every payload-backed presentation reader receives only the bounded projection or
+typed unavailability. Neither payload-backed path exposes binding metadata.
+Inline arguments do not use this private representation and retain the exact
+renderer behavior defined by FR-5. Existing Thread-private publication mechanics
+may be shared, but input text and tool output remain distinct semantic types.
 
 This is a storage representation split, not a larger generic JSON payload. It
 does not modify any downstream CLI schema, expose a second model-facing input,
@@ -502,11 +505,14 @@ reversible implementation details selected from the rebased tree.
   behavior. A maximum admitted stdin fixture proves provider replay can resolve
   exact arguments while its payload-backed renderer detail, Turn copy,
   transcript, trajectory, and compaction each receive at most 32,000 characters
-  without moving binding metadata or complete stdin across IPC and without
-  whole-value renderer stringification. The existing inline fixture whose
-  pretty-printed 8,000-element array exceeds 32,768 characters remains complete
-  in renderer projection, disclosure, and Turn copy. Canonical-to-renderer
-  fixtures containing the private internal-text dependency prove that every
+  without moving binding metadata or complete payload-backed stdin across IPC
+  and without whole-value renderer stringification. One admitted inline Bash
+  `stdin` fixture remains complete in renderer projection, disclosure, and Turn
+  copy. The
+  existing generic inline fixture whose pretty-printed 8,000-element array
+  exceeds 32,768 characters also remains complete across those paths.
+  Canonical-to-renderer fixtures containing the private internal-text dependency
+  prove that every
   paged Thread/Turn/Item read, every Thread- or Turn-returning
   start/resume/fork/rollback/retry/configuration/detail response, and every full
   Thread/Turn/Item live notification returns the same Item-bound stub. Deep scans
@@ -519,8 +525,8 @@ reversible implementation details selected from the rebased tree.
   `agentSubagentToolPolicy`, `agentToolPayloadStore`, Core codec/history and
   context-dependency, Thread lifecycle/projection, renderer transport,
   `threadStore`, Item-bound detail identity, Item-bound Turn copy, preserved
-  complete-inline disclosure/copy, catalog-stability, and ToolRuntime/Thread
-  integration tests pass.
+  complete-inline Bash stdin and generic disclosure/copy, catalog-stability, and
+  ToolRuntime/Thread integration tests pass.
 - [ ] **AC-14:** `bun run typecheck`, `bun run test:core`,
   `bun run test:renderer`, `bun run docs:check`, and `git diff --check` pass.
 - [ ] **AC-15:** An executable diff allow-list proves the PR changes only the
