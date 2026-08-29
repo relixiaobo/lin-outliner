@@ -1937,3 +1937,23 @@ Regression coverage must include a successful admission that returns no new
 container, then exercise the retained resource again. Cover the deduplicated and
 rejected branches separately so cleanup is not made permissive to fix the
 accepted path.
+
+## A shared foundation must prove a shape beyond its first consumer
+
+PR #596 initially changed Core persistence, lifecycle, and renderer projection
+for one top-level Bash `stdin` field. The first consumer worked, but a second tool
+with multiple or nested large text values would have required another protocol
+rewrite after the shared cost had already landed.
+
+**Define shared representation from the class of values, not the motivating
+field.** Keep consumer-specific delivery and policy at the consumer boundary;
+make the foundation own structural selection, generic admission, persistence,
+dependency ownership, replay, projection, and cleanup. Registry entries are data,
+not architecture. Encoding validity and count/byte ceilings belong at generic
+admission, where every future consumer receives the same invariant.
+
+Acceptance must include a synthetic non-primary consumer with multiple nested
+values, duplicate-content deduplication, malformed paths, generic encoding
+failures, and shared versus tool-specific bounds. Keep production schema maxima
+and end-to-end fixtures in the consumer plan so the first use case proves its own
+compatibility without defining the shared envelope.

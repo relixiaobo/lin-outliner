@@ -563,6 +563,17 @@ see *Recently completed*.
   **agent-tool-artifact-resources** (#582).
 Standalone agent items (not part of the program):
 
+- **[agent-bash-stdin-transport](plans/agent-bash-stdin-transport.md)**
+  (P1, `draft`; plan PR #596, PM-ratified 2026-08-29; one complete feature PR) —
+  add one generic Thread-private representation for bounded large textual tool
+  arguments: tool-owned plural RFC 6901 bindings, exact UTF-8 replay, canonical
+  Item dependency ownership, complete lifecycle handling, bounded presentation,
+  and a reference-free renderer projection. Bash `stdin` is the first public
+  consumer, with foreground-only delivery and one data-driven effective-consumer
+  classifier; Outline entries are registry data rather than storage architecture.
+  Implement this foundation before `outline-cli-skill-efficiency`; it remains
+  separate from file tools, Source resources, ContentStore, and Agent file
+  resources.
 - **responses-tool-contract-hardening** (P1, `done` 2026-08-11; plan PR #526,
   implementation PR #527, codex-2) — the dead-Turn class observed on an
   OpenAI-Responses relay is closed by three layers that only hold together: an
@@ -676,6 +687,15 @@ archived `done` (see Recently completed). Remaining active work:
 
 ### Outliner & UI polish
 
+- **[outline-cli-skill-efficiency](plans/outline-cli-skill-efficiency.md)**
+  (P1, `draft`; plan PR #595, PM-ratified 2026-08-29; one complete feature PR
+  after #596 implementation and Source PR-I) — make the built-in Outline Skill
+  choose the shortest correct public CLI route, including compact mode-neutral
+  view-backed `add --input -`, direct non-destructive commit, bounded
+  `view inspect`, and deterministic human receipts. The feature owns real
+  Outline schema/capacity and three-command stdin evidence while consuming only
+  #596's public Bash and effective-consumer behavior; its implementation remains
+  Outline-only and introduces no file or private Agent transport path.
 - **tag-schema-projection** (P1, `done` 2026-08-18, **PM-ratified 2026-08-13**) —
   fixes the PM-reported bug that template edits never reach already-tagged nodes,
   by making fields a read-time projection of the tag chain (nodes store values

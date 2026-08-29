@@ -144,6 +144,23 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
+- **Large Agent text and efficient Outline workflows now have two execution-ready
+  plans (PR #596 and PR #595, codex)** — the shared foundation stores one or more
+  tool-selected textual argument paths as typed Thread-private dependencies over
+  a bounded JSON skeleton, with exact replay, canonical Item ownership, lifecycle
+  settlement, bounded presentation, and no renderer-visible reference. Bash
+  `stdin` is only the first consumer: literal foreground delivery and effective
+  consumer classification stay public, while Outline command registrations are
+  immutable policy data. The dependent Outline plan then uses only that public
+  boundary to replace schema exploration, verbose ChangeSet construction, and
+  unbounded receipts with a compact mode-neutral view-backed input, direct safe
+  commit, bounded inspection, and consumer-owned capacity evidence. Review
+  rejected a top-level `stdin`-specific Core envelope, moved the mechanism to
+  plural RFC 6901 bindings, separated file/resource identity from internal text,
+  and fixed generic Unicode and binding-count admission before approval. The
+  implementation order is the large-text/Bash foundation first; the Outline
+  feature follows it and Source PR-I.
+
 - **Desktop Host composition now has one execution-ready ownership architecture
   (PR #591, codex-2)** — six complete serial refactors replace the implicit
   `main.ts` graph with static typed domain factories, explicit startup
