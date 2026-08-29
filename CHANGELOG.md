@@ -144,6 +144,21 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
+- **Desktop Host composition now has one execution-ready ownership architecture
+  (PR #591, codex-2)** — six complete serial refactors replace the implicit
+  `main.ts` graph with static typed domain factories, explicit startup
+  orchestration, private lifecycle arbitration, reversible effect ownership,
+  capability-grouped transport, and the existing safe-quit authority. Failed
+  startup drains accepted local work without claiming ownership of or shutting
+  down an authenticated shared Runtime; ordinary quit remains the sole durability
+  and irreversible-exit path. Concurrent quit callers share only one attempt, so
+  Cancel can restore `started` before a later quit drains again. The final
+  dependency order is Source PR-I, the complete Host set, then Agent resource
+  lifecycle and Cross-Thread, while Startup Window First independently consumes
+  the final `DesktopHost.start()` boundary. Two review rounds corrected stale
+  Runtime premises, duplicate readiness authority, consumer-before-foundation
+  ordering, and permanent quit-promise caching before approval.
+
 - **Outline resources now have one execution-ready Source architecture (PR #593,
   codex-4)** — URLs, images, and files converge on ordinary content Nodes with one
   protected ordered `uri` Source field, exact content-free `SourceValueNode`

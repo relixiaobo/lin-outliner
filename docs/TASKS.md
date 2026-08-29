@@ -47,8 +47,10 @@ theme-section entry below; this list is the ordering, not a second record):
   import writer, and asset paths are retired. Agent Composer history then shipped
   in #587. [`outline-source-resource-unification`](plans/outline-source-resource-unification.md)
   is next: its PR-I establishes the final Source protocol and complete desktop
-  baseline. `agent-result-and-file-lifecycle` follows PR-I after a fresh collision
-  check; the visual-only Source PR-F is independently orderable.
+  baseline. [`host-runtime-composition`](plans/host-runtime-composition.md) then
+  establishes the final Host mechanism consumed by `agent-result-and-file-lifecycle`
+  and `startup-window-first`; Cross-Thread follows Agent lifecycle. The visual-only
+  Source PR-F is independently orderable after PR-I.
 - **Lane A — build-ready quick wins** (fast-track, parallelize freely; small items
   don't count against the review-queue cap): `floating-toolbar-polish` (**unblocked
   2026-08-10** — its `core/types.ts` dependency landed with #510; rebase and go),
@@ -190,9 +192,10 @@ before any directional/security-sensitive build.
   stores; no migration, legacy reader, or automatic deletion path ships.
   Sequence is fixed: reference-URI unification shipped #590, the neutral
   ContentStore/Outline consumer shipped #584, and Composer history shipped #587;
-  Source PR-I from `outline-source-resource-unification` lands next and is the
-  only Source dependency. Recheck the live collision surface after PR-I, then
-  start this implementation without waiting for visual-only Source PR-F.
+  Source PR-I from `outline-source-resource-unification` lands next, followed by
+  the complete `host-runtime-composition` delivery set. Recheck the live collision
+  surface after Host composition, then start this implementation without waiting
+  for visual-only Source PR-F or `startup-window-first`.
 - **[agent-cross-thread-reference](plans/agent-cross-thread-reference.md)**
   (`draft`; plan PR #589; one complete feature PR after the file lifecycle) — let users mention
   prior conversations through `[[thread://<uuidv7>]]` and let Agents search/read
@@ -622,6 +625,18 @@ Standalone agent items (not part of the program):
   joins Lane A. i18n en/zh + `i18nCoverage`; design-system neutral tokens (B3/B4), UI
   gate = light/dark visual.
 
+### Host architecture
+
+- **[host-runtime-composition](plans/host-runtime-composition.md)** (`draft`;
+  plan PR #591, PM-ratified 2026-08-29; shape (b), six complete serial internal
+  refactors) — replace the implicit `main.ts` object graph with static typed Host
+  factories, explicit startup orchestration, private lifecycle arbitration,
+  reversible effect ownership, capability-grouped transport, and the existing
+  safe-quit authority. Source PR-I lands first; the complete Host set then becomes
+  the foundation for Agent Result And Resource Reference Lifecycle and Startup
+  Window First, which have no dependency edge between them. Cross-Thread follows
+  Agent lifecycle; Source PR-F remains independent after PR-I.
+
 ### Files & media
 
 The file-node + preview foundation shipped — `file-attachments` (#204/#206), `agent-file-model`
@@ -635,8 +650,9 @@ archived `done` (see Recently completed). Remaining active work:
   `SourceValueNode`, Source commands, convergent CRDT semantics, exact-file grants,
   special-Node retirement, and a complete content-first desktop management
   surface; PR-F independently adds the preview-first visual composition without
-  changing shared protocol. `agent-result-and-file-lifecycle` depends on PR-I
-  only.
+  changing shared protocol. After PR-I, the Host composition set establishes the
+  final mechanism consumed by `agent-result-and-file-lifecycle`; PR-F remains
+  independent of both.
 - **file-preview** (P2, plan refreshed PR #209) — in-app preview panel for every file-shaped
   source via a source-owned `PreviewTarget` (`local-file` / `asset` / `agent-payload` / `url`):
   one shell + renderer registry, per-source main-process byte authority. **PR 1 shipped (#210,
@@ -936,7 +952,8 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   DAG-ordered service bring-up, single-flight `prepareForTurnAdmission`, and a
   persistent startup-failure surface. `OutlineDocumentService.init()` is already
   retryable single-flight, and Runtime search indexing is lazy rather than a
-  startup phase. One PR.
+  startup phase. One PR, after `host-runtime-composition`; it consumes the final
+  `DesktopHost.start()` boundary and has no dependency edge with Agent lifecycle.
   Design: [`startup-window-first`](plans/startup-window-first.md).
   **#584 retirement sweep 2026-08-27:** the old workspace snapshot/update-log,
   import-server, eager BM25, `saveCore()`, and `WorkspaceSaver` premises are gone.
