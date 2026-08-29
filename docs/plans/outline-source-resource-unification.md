@@ -18,11 +18,11 @@ Give URLs, images, and other files one Outline model and one interaction:
 
 ```text
 Node: content = editable RichText, possibly empty
-|- Source field entry: ordered URI values
+|- Source field entry: ordered text values, fieldType = uri
 |- other field entries
 `- ordinary child Nodes
 
-preview = derive(Source URI, resolved metadata, local view state)
+preview = derive(Source text, classification, Host resolution, local view state)
 ```
 
 `Node` above is the object represented by the content row; it is not an extra
@@ -31,7 +31,7 @@ entries may be represented structurally below the Node, but they are typed field
 slots rather than ordinary child Nodes. A preview is presentation only and never
 occupies an Outline level.
 
-A Node with at least one valid Source value is informally a resource Node, but it
+A Node with at least one Source value is informally a resource Node, but it
 remains an ordinary content Node. Adding or removing Source values changes its
 derived presentation, not its Node type. This lets a user paste a URL, image, or
 file; edit or clear the title; collect multiple related sources in one Node;
@@ -91,14 +91,18 @@ preview visibility, and ordinary children become independent:
   projects as no visible Source field. Users may add, replace, reorder, or remove
   values but cannot change the definition's type, entry, or cardinality.
 - **FR-3:** Represent every Outline resource as an ordinary content Node whose
-  canonical source relationships are the Source field values. Delete the Outline
+  authoritative source relationships are the Source field values. Delete the Outline
   `image` and `attachment` Node variants and their dedicated mutation paths.
-- **FR-4:** Store one absolute canonical URI in each Source value. Support web sources,
-  managed Outline assets, and explicitly linked local filesystem sources without
-  treating those representations as equivalent authorities.
-- **FR-5:** Derive preview kind, readable source label, metadata, available
-  actions, and availability from the Source URI through one resolver shared by
-  list rows, Node pages, search classification, and preview opening.
+- **FR-4:** Store each Source value as the exact text scalar supplied by its
+  author or producer. Syntax validity, scheme support, normalization, and current
+  authority are derived concerns rather than write-admission rules. Automatic
+  producers may supply canonical web, managed-asset, or local-file URIs, while
+  manual edits remain lossless.
+- **FR-5:** Purely classify stored Source text before Host resolution. Derive
+  preview kind, readable label, metadata, available actions, availability, and a
+  usable failure reason from the classification plus current Host authority;
+  share that boundary across list rows, Node pages, search classification, and
+  preview opening.
 - **FR-6:** Keep preview visibility and the selected Source value in per-user
   local view state, separate from document state and child disclosure. Persist
   both across navigation and restart, and fall back deterministically when Nodes
@@ -130,12 +134,15 @@ preview visibility, and ordinary children become independent:
 - **FR-14:** Make Source creation, value identity, order, replacement, removal,
   and clearing converge under valid concurrent offline edits. Replication never
   rejects or disables a state produced by two valid Source commands.
-- **FR-15:** Commit only syntactically canonical absolute URI values. A canonical
-  `file:` URI may be stored without authorization and resolves as denied; an
-  invalid edit remains local draft state until corrected or cancelled.
-- **NFR-1:** Invalid URI drafts and unsupported, missing, denied, or temporarily
-  unavailable committed sources degrade locally. They never remove Source,
-  rewrite content, or abort an otherwise valid Outline projection.
+- **FR-15:** Permit `add-source` and `replace-source` to commit any Source text.
+  Classification is pure and permission-independent; authorization occurs only
+  when the Host resolves a recognized supported locator. Invalid, unsupported,
+  denied, missing, and temporarily unavailable values remain durable and
+  editable.
+- **NFR-1:** Invalid, unsupported, missing, denied, or temporarily unavailable
+  committed sources degrade locally with a distinct reason and recovery where
+  one exists. They never remove Source, rewrite content, or abort an otherwise
+  valid Outline projection.
 - **NFR-2:** Managed-asset admission and Source settlement cannot expose a Node
   referencing uncommitted bytes or collect bytes referenced by document state,
   undo history, or an in-flight transaction.
@@ -161,7 +168,7 @@ Source definition identifies the slot by ID, never by its rendered label. A
 resource predicate conceptually means:
 
 ```ts
-isResourceNode(node, index) = hasAnyUsableSourceValue(node.id, 'field:source')
+isResourceNode(node, index) = hasAnySourceValue(node.id, 'field:source')
 ```
 
 It does not inspect tags, title text, file extensions in `content`, capture
@@ -179,7 +186,7 @@ creating duplicate field entries. The projection hides an empty entry, so this
 storage invariant does not create a visible empty field.
 
 Each direct value row has a globally unique ID allocated by its originating
-command and stores its canonical URI as one atomic scalar register, not
+command and stores its Source text losslessly as one atomic scalar register, not
 character-level RichText. The first value in converged CRDT order is the default
 selected Source; local view state may select another value ID without mutating
 the document. Descendants of a value row keep their ordinary Node semantics but
@@ -190,7 +197,7 @@ the built-in field as a generic append-only slot:
 
 - `add-source` inserts one newly identified value into the existing Source entry,
   appending by default or using an explicit adjacent value anchor;
-- `replace-source` targets one direct value ID and atomically replaces its URI
+- `replace-source` targets one direct value ID and atomically replaces its Source
   scalar while preserving value identity, position, descendants, and selection;
 - `reorder-source` moves one direct value within the ordered slot;
 - `remove-source` tombstones one targeted value but never its Source entry; and
@@ -202,26 +209,26 @@ adds retain both unique values in converged order. Concurrent add/reorder retain
 the added value and converges on the CRDT move result. Remove wins over a
 concurrent reorder of the same value; it never removes a concurrently added
 different value. Concurrent replacements of the same value converge through the
-atomic scalar register and never splice two URI strings. Replaying or delivering
-any of these valid changes in either order produces identical Source values and
-order.
+atomic scalar register and never splice two Source strings. Replaying or
+delivering any of these valid changes in either order produces identical Source
+values and order.
 
 The invariant is enforced below renderer helpers, at every public and persisted
 mutation boundary:
 
 - generic field-slot `append-text`, `append-reference`, `append-nodes`, and
   `append-field` actions reject `field:source`;
-- generic content editing rejects a direct Source value row, so URI edits are
+- generic content editing rejects a direct Source value row, so Source edits are
   lowered to `replace-source` rather than bypassing managed-asset settlement;
 - generic create-tree, direct value duplication, move-into-slot, paste/import,
   template/default/auto-init, and field-copy paths cannot synthesize Source;
 - cloning or duplicating an entire valid owner Node may reproduce its ordered
-  Source relationships under the clone's newly created canonical Source entry,
+  Source relationships under the clone's newly created protected Source entry,
   but copying only a Source value must use the dedicated add operation;
 - command replay, undo/redo, restore, and replication apply valid Source CRDT
   operations without post-merge rejection; persistence/change admission rejects
   only states that no valid command can produce, such as a missing/second Source
-  entry, a non-URI child, or a non-atomic value representation; and
+  entry, a non-value direct child, or a non-atomic value representation; and
 - importers and other bulk producers create the owner first and emit the same
   dedicated Source mutation rather than constructing a privileged field tree.
 
@@ -233,8 +240,9 @@ or off screen. After concurrent scalar writes converge, reconciliation retains
 the winning managed URI and conservatively releases a losing revision only when
 no live document/history/transaction relationship still names it.
 
-Multiple direct URI values and every merge of valid Source commands are valid;
-duplicate/missing Source entries, non-value direct children, and generic
+Multiple direct Source values, including invalid or unsupported text, and every
+merge of valid Source commands are valid; duplicate/missing Source entries,
+non-value direct children, and generic
 mutations that bypass settlement are not. Runtime projection encountering one of
 those impossible structures never chooses an arbitrary entry: the Node remains
 usable and Source presentation becomes unavailable. Persistence, command
@@ -256,16 +264,32 @@ Later metadata never overwrites that initial or user-edited content.
 ### 2. URI Field And Source URI Families
 
 `uri` is the clean replacement for `url`, not an additional field type. Generic
-URI fields retain the ordinary editable value-row model with inline validation
-and safe link affordances. A syntactically canonical absolute URI may
-use an unsupported scheme and remain stored/editable with an unsupported state;
-only a supported Source family activates a resource preview. Text that cannot
-parse and normalize as one absolute URI is an editor-local draft, not durable
-document state: failed Enter/blur keeps the draft visible with validation, Escape
-restores the last committed value, and navigation/restart does not claim it was
-saved.
+URI fields retain the ordinary editable value-row model with inline status and
+safe link affordances. The field type describes how the product interprets the
+value; it does not reject text at the document boundary. Every committed Source
+keeps the exact supplied scalar across navigation, restart, replication, and
+undo/redo.
 
-The Source resolver admits these persistent families:
+`classifySource(text)` is a pure, permission-independent operation with three
+outcomes:
+
+- **supported locator:** the text matches a recognized Source family and yields
+  a normalized locator for derived use without rewriting stored text;
+- **unsupported URI:** the text is a syntactically valid absolute URI whose
+  scheme or shape has no Source adapter; and
+- **invalid text:** the text is not an absolute URI, or it names a reserved
+  supported scheme such as `asset:` without that scheme's required shape.
+
+Classification performs no filesystem access, network request, grant lookup, or
+document mutation. Host resolution consumes the classification plus current
+authority. A supported locator resolves to `ready`, `denied`, or `unavailable`;
+the other classifications resolve directly to `unsupported` or `invalid`.
+Permission therefore changes resolution, never parsing or stored Source text.
+Only a ready supported family activates its full resource preview; every other
+selected value shows its specific reason and available recovery instead of
+silently selecting another Source.
+
+The classifier recognizes these supported families when their syntax matches:
 
 | Source value | Meaning | Resolution |
 | --- | --- | --- |
@@ -288,11 +312,13 @@ surface. It can no longer change independently without a document-format cut.
 That coupling is preferable to inventing a second managed-asset URI which would
 resolve to the same AssetRecord and transport.
 
-A raw local path is never a Source value. File choosers and path-aware importers
-encode an absolute standard `file:` URI. A syntactically valid file URI still
-grants no access. Manually entered, pasted, or edited file URIs without a matching
-exact-file grant show a permission-required state with a Choose File recovery
-action; they do not silently gain ambient access.
+A raw local path may remain stored as Source text, but it classifies as invalid
+rather than acquiring ambient filesystem meaning. File choosers and path-aware
+importers produce an absolute standard `file:` URI. A syntactically valid file
+URI still grants no access. Manually entered, pasted, or edited file URIs without
+a matching exact-file grant resolve as denied with a Choose File recovery action;
+they do not silently gain ambient access. Invalid path text instead offers Edit
+or Replace Source because there is no parsed target to authorize.
 
 #### Exact Local-file Authorization
 
@@ -307,9 +333,9 @@ never recorded as an admitted root.
 
 Grant and resolution rules are exact:
 
-- `add-source` and `replace-source` may commit a canonical absolute `file:` URI
-  without a grant. This records a locator, not authority; resolution and all byte
-  actions return denied until an exact matching grant exists;
+- `add-source` and `replace-source` may commit any Source text without a grant.
+  When that text classifies as a supported `file:` locator, resolution and all
+  byte actions return denied until an exact matching grant exists;
 - chooser-driven add/replace resolves the selected locator, requires a regular
   file, and persists the exact-file grant before committing the corresponding
   file URI. This is transaction ordering for a smooth authorized result, not a
@@ -317,8 +343,9 @@ Grant and resolution rules are exact:
 - a grant may be reused by another Source only when its locator again resolves to
   the same canonical file; a separately admitted exact grant for another file is
   independently reusable;
-- manually editing `Documents/a.pdf` to `Documents/b.pdf` remains denied unless
-  `b.pdf` already has its own exact grant, even though both share a directory;
+- manually editing a `file:` URI from `Documents/a.pdf` to `Documents/b.pdf`
+  remains denied unless `b.pdf` already has its own exact grant, even though both
+  share a directory;
 - **Choose File** on a denied current Source is a relink action: the chosen file
   must resolve to that Source's exact canonical target, otherwise nothing changes;
 - **Replace Source...** may select a different file; main persists its new grant
@@ -351,19 +378,20 @@ Exact-file grants are profile authorization, not revision identity. They grant
 only verified-handle Source preview/read/copy operations defined by the Host
 action policy. They do not grant Agent ambient filesystem access, expand an
 Agent external-root capability, admit directories, weaken dangerous-open checks,
-or act as ownership. URI parsing remains pure and side-effect free.
+or act as ownership. Classification remains pure and side-effect free.
 
-Scheme parsing is pure and has no side effects. Resolution returns a descriptor,
-not a universal product object:
+Resolution returns a descriptor, not a universal product object:
 
 ```ts
 type ResolvedNodeSource = {
   sourceValueId: string;
-  uri: string;
-  kind: 'web' | 'image' | 'document' | 'audio' | 'video' | 'file';
+  sourceText: string;
+  normalizedUri?: string;
+  kind?: 'web' | 'image' | 'document' | 'audio' | 'video' | 'file';
   label: string;
   previewTarget?: PreviewTarget;
-  availability: 'ready' | 'loading' | 'unavailable' | 'denied' | 'unsupported';
+  availability: 'ready' | 'invalid' | 'unavailable' | 'denied' | 'unsupported';
+  reason?: SourceResolutionReason;
   actions: readonly SourceAction[];
 };
 ```
@@ -374,17 +402,26 @@ duration. Remote classification uses the same provider/URL/observed-metadata
 rules as preview rendering; unsupported or unknown remote kinds remain web
 sources rather than guessed files.
 
+`loading` is transient preview-request state layered over a descriptor, not a
+classification/resolution outcome. `SourceResolutionReason` supplies stable
+reason codes and concise presentation copy so invalid syntax, unsupported
+families, missing resources, denied authority, and load failures are not
+collapsed into one generic error. Recovery is state-specific: edit/replace for
+invalid text, an authorized chooser for a denied local file, retry for a
+temporary unavailable result, and an allowed external-open action where an
+unsupported but valid URI can still be navigated safely.
+
 The resolver returns one descriptor per direct Source value in document order.
 The presentation layer joins those descriptors with the local selected-value ID;
 if that ID no longer exists it selects the first value. Resolution never writes
 selection into the document or silently skips an unavailable selected value.
 
 Source presentation remains truthful without exposing internal noise by default:
-web sources show the canonical URL, `file:` sources show the decoded path, and
-managed assets show their AssetRecord filename plus a quiet managed-copy cue.
-Editing or **Copy URI** exposes the exact stored value. Presentation labels never
-become a second stored locator, and a user may add or replace a Source value
-through paste, editing, or the appropriate chooser.
+recognized web sources show a readable normalized URL, `file:` sources show the
+decoded path, and managed assets show their AssetRecord filename plus a quiet
+managed-copy cue. Editing or **Copy URI** exposes the exact stored value.
+Presentation labels never become a second stored locator, and a user may add or
+replace a Source value through paste, editing, or the appropriate chooser.
 
 ### 3. Resource Preview Interaction
 
@@ -416,12 +453,12 @@ delegates opening to that retained control instead of adding a duplicate
 upper-left command. Interactive media and document controls retain their own
 input handling.
 
-The Source field renders one typed value row per URI. The selected row uses a
-neutral indicator, not an accent fill. Each non-selected row exposes an icon
-action named **Preview this source**; activating it selects the value and shows
-the preview if hidden. Existing field-value ordering gestures reorder Source
-values. Switching, hiding, and showing remain usable from the keyboard and do not
-move focus into an interactive preview body.
+The Source field renders one typed value row per committed Source scalar. The
+selected row uses a neutral indicator, not an accent fill. Each non-selected row
+exposes an icon action named **Preview this source**; activating it selects the
+value and shows the preview if hidden. Existing field-value ordering gestures
+reorder Source values. Switching, hiding, and showing remain usable from the
+keyboard and do not move focus into an interactive preview body.
 
 When hidden, the resource returns to an ordinary content-and-fields outline:
 
@@ -435,9 +472,10 @@ When hidden, the resource returns to an ordinary content-and-fields outline:
 
 The Source field is always rendered while at least one value exists, even when
 other optional field-display rules would hide it. A trailing **Show preview**
-icon is present on the selected/default preview-capable or retryable value. Other
-values expose **Preview this source**. This is the recovery path missing from the
-observed Tana interaction.
+icon is present on the selected/default value; for a non-ready value it restores
+the preview region with the specific reason and recovery rather than an empty
+body. Other values expose **Preview this source**. This is the recovery path
+missing from the observed Tana interaction.
 
 Visibility rules are deterministic:
 
@@ -551,22 +589,22 @@ availability, actions, and switcher state without mounting preview bodies:
 | Image | Bounded inline image using known aspect metadata when available |
 | PDF/document | Existing compact document summary; activation enters the full reader |
 | Audio/video file | Existing themed player controls |
-| Unsupported file | Compact filename/type/size summary with only the actions authorized for that source family |
+| Unpreviewable file type | Compact filename/type/size summary with only the actions authorized for that source family |
 
-Provider adapters parse canonical IDs and build embed targets; they never store
-provider-specific Node types. YouTube navigation and playback remain inside the
-existing guest/sandbox and external-navigation policy. An ordinary web summary
-must render a usable host/URL fallback immediately and may enrich through the
-existing unprivileged preview path; this feature adds no privileged arbitrary-URL
-fetcher.
+Provider adapters consume classified normalized locators and build embed
+targets; they never store provider-specific Node types. YouTube navigation and
+playback remain inside the existing guest/sandbox and external-navigation policy.
+An ordinary web summary must render a usable host/URL fallback immediately and
+may enrich through the existing unprivileged preview path; this feature adds no
+privileged arbitrary-URL fetcher.
 
 Loading uses a stable aspect ratio or bounded summary height. Failure replaces
-only the selected preview body with compact unavailable/retry actions. An invalid
-editor draft shows that value row's validation hint while the last canonical
-value and preview remain committed; cancelling restores that value. A missing
-managed AssetRecord, denied file source, failed remote metadata load, or embed
-failure never deletes or rewrites any Source value or silently selects a
-different one.
+only the selected preview body with a compact reason and state-specific recovery.
+Committed invalid Source text replaces the previous preview with an invalid-value
+reason and remains editable; it does not retain a stale preview for the previous
+text. A missing managed AssetRecord, denied file source, failed remote metadata
+load, unsupported family, or embed failure never deletes or rewrites any Source
+value or silently selects a different one.
 
 ### 6. Paste, Drop, Picker, And Capture Flows
 
@@ -575,8 +613,9 @@ different one.
 1. The editor receives exactly one bare `http:`, `https:`, or normalizable `www.`
    URL with no additional prose or files.
 2. If the target content is empty, the paste command atomically writes the
-   normalized URL as content and appends the canonical URL to Source. It creates
-   the Source slot when absent and never replaces an existing value implicitly.
+   normalized URL as content and appends that producer-normalized text to Source.
+   It creates the Source slot when absent and never replaces an existing value
+   implicitly.
 3. The Node keeps its existing ID, tags, other fields, and children. A draft row
    materializes through the normal stable-draft path.
 4. The preview appears by default when this is the first Source. Otherwise the
@@ -621,6 +660,9 @@ remains managed capture so ordinary attachments are replayable.
 #### FLOW-4: Select, Edit, Reorder, Or Remove Sources
 
 - Selecting a Source updates only local view state and the derived preview/actions.
+- Editing commits the supplied Source text losslessly, then reclassifies and
+  resolves it. Invalid text shows its reason instead of preserving the old
+  preview; correcting it re-resolves without replacing the value-row identity.
 - Replacing a web value re-runs its provider/renderer selection; if it is not
   selected, the visible preview does not change.
 - Replacing a managed value or local link settles the new relationship before
@@ -668,7 +710,7 @@ projection failure.
 
 The two ordered delivery units converge on one clean target with no migration,
 legacy reader, alias, or dual writer. PR-I removes `FieldType` value `url` and
-lands its final `uri` registry, validation, icon, config, search, import,
+lands its final `uri` registry, classification, icon, config, search, import,
 launcher, and tests. It also lands the protected Source definition, dedicated
 ordered Source mutations, structural admission guards, URI codecs, exact-file
 grant/resolver contracts, and the complete final Node/command/Runtime shape. The
@@ -727,8 +769,8 @@ behavior-preserving main:
 
 - replace `url` with the final `uri` field contract;
 - make every ordinary Node constructor seed its permanent Source entry; land
-  atomic URI values, convergent value identity/order semantics,
-  `asset://local/...`, and file/web parser/formatter contracts;
+  atomic Source text values, convergent value identity/order semantics,
+  `asset://local/...`, and file/web classifier/formatter contracts;
 - land public `add-source`, `replace-source`, `reorder-source`, `remove-source`,
   and `clear-sources` commands plus Core/Runtime structural and settlement guards;
 - land the Host-private exact-file grant store, grant/revoke/relink resolver, safe
@@ -783,10 +825,11 @@ still references it; source selection leaking into document or child disclosure;
 async work from an old selection replacing the current preview; a file chooser
 grant widening to a sibling or surviving revocation; malformed generic mutations
 bypassing Source settlement; valid offline commands being rejected after merge;
-path-only actions racing after validation; field values being counted as ordinary
-children; metadata destabilizing projection/search; and accidental retirement of
-Agent attachment/image types. Each risk has an explicit guard or acceptance
-criterion below.
+path-only actions racing after validation; classification being conflated with
+Host authority; field values being counted as ordinary children; metadata
+destabilizing projection/search; and accidental retirement of Agent
+attachment/image types. Each risk has an explicit guard or acceptance criterion
+below.
 
 ### Acceptance Criteria
 
@@ -816,15 +859,16 @@ criterion below.
 - **AC-9:** When a visible Source is selected or edited, async work from the old
   selection/value cannot overwrite the new preview. When hidden, replacement and
   reordering remain hidden.
-- **AC-10:** If a committed selected Source is unsupported, missing, denied, or
-  fails to load, that canonical value stays editable and selected with usable
-  recovery; the product does not silently choose another value. If an edit is
-  syntactically invalid, Enter/blur commits nothing and preserves the local draft
-  plus error until correction or Escape restores the last committed URI.
+- **AC-10:** When any Source text is committed, including syntactically invalid
+  text, its exact scalar remains editable, selected, and durable across restart.
+  Classification and resolution show `invalid`, `unsupported`, `denied`, or
+  `unavailable` with a distinct reason and usable recovery; the product neither
+  restores the prior text/preview nor silently chooses another value.
 - **AC-11:** A managed Source resolves only through its AssetRecord and scoped
   transport. A `file:` Source resolves only through an exact-file grant; editing
   an admitted `Documents/a.pdf` URI to an unadmitted sibling remains denied. Raw
-  paths and non-canonical forms of the reserved `asset:` scheme cannot commit.
+  paths and malformed reserved `asset:` forms remain stored but classify as
+  invalid, expose no managed/file authority, and recover through edit or replace.
 - **AC-12:** Removing, replacing, clearing, or cloning managed Source values
   updates each relationship only after commit; every selected and non-selected
   live value plus undo/redo and crash recovery retains bytes needed by a
@@ -856,7 +900,7 @@ criterion below.
   Source-backed evidence; absence from the new Node scalar shape is not a valid
   retirement reason.
 - **AC-20:** Public CLI/ChangeSet tests prove dedicated Source operations preserve
-  each ordinary Node's one permanent Source entry with ordered direct atomic URI
+  each ordinary Node's one permanent Source entry with ordered direct atomic text
   values, while generic `append-text`, `append-reference`, `append-nodes`,
   `append-field`, and direct content mutation cannot target Source or bypass asset
   settlement.
@@ -892,27 +936,35 @@ criterion below.
   special create/set command, or public ChangeSet/CLI variant remains and current
   producers/preview compile against only final Source interfaces. PR-F's guard
   proves it changes none of the named shared protocol files or public schemas.
+- **AC-28:** Given the same stored supported `file:` Source text, classification
+  is identical with or without an exact-file grant. Host resolution is `denied`
+  without the grant and becomes `ready` after chooser authorization without a
+  Source document mutation; malformed URI text remains `invalid` regardless of
+  grants.
 
 ## Open questions
 
-None. `Source`, `field:source`, fixed ordered multi-value `uri`, first-value
-default with local source selection, one causally seeded permanent entry per
-ordinary Node, atomic/convergent URI values, the post-#592 canonical
+None. `Source`, `field:source`, fixed ordered multi-value `uri`, exact durable
+Source text, pure permission-independent classification, Host-authorized
+resolution with distinct reasons, first-value default with local source
+selection, one causally seeded permanent entry per ordinary Node,
+atomic/convergent Source values, the producer-generated post-#592 canonical
 `asset://local/{encodedAssetId}` form, managed capture by default, denied-but-
-durable canonical file locators, exact-file verified-handle actions, omission of
-unsafe external Open/Reveal, preview-first layout, recoverable local Hide/Show,
-and PR-I retirement of Outline `image`/`attachment` are coordinated design
-decisions. A redirect on any of them changes protocol, security, or product
-behavior and must happen during plan review rather than being guessed during
-build.
+durable file locators, exact-file verified-handle actions, omission of unsafe
+external Open/Reveal, preview-first layout, recoverable local Hide/Show, and PR-I
+retirement of Outline `image`/`attachment` are coordinated design decisions. A
+redirect on any of them changes protocol, security, or product behavior and must
+happen during plan review rather than being guessed during build.
 
 ## Build Checklist
 
 - [ ] PR-I: claim the shared interface from current main after repeating the open
       PR/file collision check; coordinate ownership of Core protocol files.
 - [ ] PR-I: cut `url` to `uri`; land protected ordered multi-value Source, final
-      permanent-entry/atomic-value/convergence semantics, mutations/codecs,
-      structural and settlement guards, and public CLI/ChangeSet contract tests.
+      permanent-entry/atomic-text/convergence semantics, lossless write admission,
+      pure classification, Host resolution with structured reasons,
+      mutations/codecs, structural and settlement guards, and public
+      CLI/ChangeSet contract tests.
 - [ ] PR-I: land exact-file grant persistence, revoke/relink/replace semantics,
       verified-handle preview/read/copy, external Open/Reveal omission, corruption
       degradation, and adversarial replacement/restart/security tests.
