@@ -145,6 +145,7 @@ export class AutomationDispatcher {
         input: [{ type: 'text', text: snapshot.prompt }],
         clientUserMessageId: prepared.id,
         additionalContext: await automationContext(prepared, executionCwd, this.continuity),
+        author: { kind: 'feature', feature: 'automation', ref: prepared.id },
         trigger: { kind: 'feature', feature: 'automation', ref: prepared.id },
       });
       if (!turn) return prepared;

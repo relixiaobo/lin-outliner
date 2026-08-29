@@ -370,6 +370,7 @@ describe('renderer Thread store', () => {
     const items: ThreadItem[] = [
       {
         type: 'userMessage',
+        author: { kind: 'reader' },
         id: 'turn-1-steer',
         provenance: { originThreadId: owner.id, originTurnId: active.id, originItemId: 'turn-1-steer' },
         clientId: 'steer-1',
@@ -525,7 +526,7 @@ describe('renderer Thread store', () => {
       source: { kind: 'localFile' as const, path: '/workspace/report.pdf' },
     };
 
-    const acceptedTurn = await store.send([
+    const submission = await store.send([
       { type: 'text', text: '  Compare ' },
       { type: 'nodeReference', nodeId: 'node-1', note: 'Plan' },
       { type: 'text', text: ' with ' },
@@ -540,7 +541,12 @@ describe('renderer Thread store', () => {
       attachment,
       { type: 'text', text: ' before deciding.' },
     ]);
-    expect(acceptedTurn).toEqual(startedTurn);
+    expect(submission).toEqual({
+      acceptedItemId: 'item-accepted',
+      deduplicated: false,
+      turn: startedTurn,
+      turnId: startedTurn.id,
+    });
   });
 
   test('submits user input for an active child without renderer-side Turn routing', async () => {
@@ -580,7 +586,12 @@ describe('renderer Thread store', () => {
     const userView = rendererUserView();
 
     expect(await store.sendToThread(child.id, [{ type: 'text', text: '  Check logs next.  ' }], userView))
-      .toBeNull();
+      .toEqual({
+        turn: null,
+        turnId: active.id,
+        acceptedItemId: 'steer-item',
+        deduplicated: false,
+      });
 
     const submit = calls.find((call) => call.method === 'turn/submit');
     expect(submit?.input).toMatchObject({
@@ -632,7 +643,12 @@ describe('renderer Thread store', () => {
     const userView = rendererUserView();
 
     expect(await store.sendToThread(child.id, [{ type: 'text', text: 'Continue.' }], userView))
-      .toEqual(started);
+      .toEqual({
+        acceptedItemId: 'start-item',
+        deduplicated: false,
+        turn: started,
+        turnId: started.id,
+      });
 
     const submit = calls.find((call) => call.method === 'turn/submit');
     expect(submit?.input).toMatchObject({
@@ -862,6 +878,7 @@ describe('renderer Thread store', () => {
       ...active,
       items: [{
         type: 'userMessage',
+        author: { kind: 'reader' },
         id: userItemId,
         provenance: {
           originThreadId: unloaded.id,
@@ -1035,6 +1052,7 @@ describe('renderer Thread store', () => {
       ...active,
       items: [{
         type: 'userMessage',
+        author: { kind: 'reader' },
         id: userItemId,
         provenance: {
           originThreadId: owner.id,

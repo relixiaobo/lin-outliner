@@ -27,6 +27,7 @@ JsonValue,
 AgentIdentityEntry,
 PrivilegedTurnStartRequest,
 RendererTurnStartRequest,
+RendererTurnSteerRequest,
 RendererTurnSubmitRequest,
 RequestUserInputResponse,
 RoleCatalogContextPayload,
@@ -76,7 +77,6 @@ Turn,
 TurnId,
 TurnStartResponse,
 TurnSubmitResponse,
-TurnSteerRequest,
 TurnSteerResponse,
 TurnRetryRequest,
 TurnRetryResponse
@@ -1932,7 +1932,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         const activeTurnId = this.turnLifecycle.activeTurnId(request.threadId);
         if (activeTurnId !== null) {
           try {
-            const response = await this.turnLifecycle.steerTurn({
+            const response = await this.turnLifecycle.steerRendererTurn({
               ...request,
               expectedTurnId: activeTurnId,
             }, 'fatal', () => this.assertRendererSubmissionOpen());
@@ -2031,6 +2031,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
             });
           }
           inputBatches.push({
+            author: item.author,
             input: item.content,
             clientUserMessageId: item.clientId,
             acceptedAt: item.acceptedAt,
@@ -2067,11 +2068,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
     return this.turnLifecycle.tryStartTurnIfIdle(request);
   }
   async steerTurn(
-    request: TurnSteerRequest,
+    request: RendererTurnSteerRequest,
     deliveryFailureMode: 'fatal' | 'advisory' = 'fatal',
   ): Promise<TurnSteerResponse> {
     this.assertStartupThreadAvailable(request.threadId);
-    return this.turnLifecycle.steerTurn(request, deliveryFailureMode);
+    return this.turnLifecycle.steerRendererTurn(request, deliveryFailureMode);
   }
   /**
    * The user pressed Stop. One entry point for both affordances — the composer

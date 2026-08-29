@@ -38,7 +38,9 @@ import type {
   ThreadResourceReference,
   ThreadUserContent,
   Turn,
+  TurnSubmitResponse,
 } from '../../../core/agent/protocol';
+import { isReaderAuthoredUserMessage } from '../../../core/agent/protocol';
 import type { ThreadGoal } from '../../../core/agent/goal';
 import {
   boundedToolArgumentsForDisplay,
@@ -85,8 +87,12 @@ import { UserInputRequest } from './UserInputRequest';
 import {
   ThreadComposerEditor,
   type ThreadComposerDraft,
+  type ThreadComposerDraftContent,
   type ThreadComposerEditorHandle,
+  type ThreadComposerEditorSnapshot,
   type ThreadComposerFileReference,
+  type ThreadComposerHistoryActionRequest,
+  type ThreadComposerHistoryActionResult,
   type ThreadComposerLocalFileCandidate,
   type ThreadComposerPendingFileReference,
 } from './ThreadComposerEditor';
@@ -150,12 +156,28 @@ import {
   subagentSpeakerName,
   type SubagentConversationProjection,
   type SubagentDelivery,
+  type SubagentRegistryEntry,
   type SubagentTurnAnchors,
 } from '../subagentPresentation';
 import { SubagentReport } from './SubagentReport';
 import { ThreadSpeakerGroup, type ThreadSpeaker } from './ThreadSpeaker';
-import { MAIN_IDENTITY_KEY } from '../agentIdentity';
 import type { MarkMood } from '../agentMarkGeometry';
+import { MAIN_IDENTITY_KEY } from '../agentIdentity';
+import { textOf } from '../../ui/shared';
+import {
+  IDLE_THREAD_COMPOSER_HISTORY_STATE,
+  navigateThreadComposerHistory,
+  selectReaderComposerHistoryEntries,
+  type ThreadComposerHistoryState,
+} from '../threadComposerHistory';
+import {
+  ComposerHistoryResourceRegistry,
+  currentThreadResourceAdapter,
+} from '../composerHistoryResourceRegistry';
+import {
+  ComposerAttachmentUiStateRegistry,
+  type ComposerAttachmentUiState,
+} from '../composerAttachmentUiStateRegistry';
 
 /**
  * The speaker id for a host notice the renderer could not attribute. Distinct
@@ -196,8 +218,6 @@ interface ThreadViewProps {
   readonly composerPlaceholder?: string;
   /** This transcript belongs to one Agent, so its Turns are generations. */
   readonly agentTranscript?: boolean;
-  /** Who authored the host-written Items here — this Agent's delegator. */
-  readonly hostSpeaker?: ThreadSpeaker;
   /**
    * The participant whose transcript this is: the conversation's own `main`, or
    * the Agent whose pushed view this is. Every response here is it speaking.
@@ -234,7 +254,7 @@ interface ThreadViewProps {
   readonly onSend: (
     content: readonly ThreadUserContent[],
     clientMessageId: string,
-  ) => Promise<Turn | null>;
+  ) => Promise<TurnSubmitResponse | null>;
   readonly onSubmitUserInput: (answers: readonly RequestUserInputAnswer[]) => Promise<void>;
 }
 
@@ -289,6 +309,34 @@ const EMPTY_COMPOSER_DRAFT: ThreadComposerDraft = {
   pendingFileRefs: [],
   text: '',
 };
+
+type ComposerHistoryBundle =
+  | {
+      readonly attachments: readonly ThreadAttachmentContent[];
+      readonly content: null;
+      readonly snapshot: ThreadComposerEditorSnapshot;
+      readonly uiState: readonly ComposerAttachmentUiState[];
+    }
+  | {
+      readonly attachments: readonly ThreadAttachmentContent[];
+      readonly content: readonly ThreadComposerDraftContent[];
+      readonly snapshot: null;
+      readonly uiState: readonly ComposerAttachmentUiState[];
+    };
+
+type ComposerHistoryResources = ComposerHistoryResourceRegistry<
+  string,
+  ComposerHistoryBundle,
+  ThreadAttachmentContent,
+  ThreadResourceReference
+>;
+
+interface ComposerHistorySession {
+  readonly resources: ComposerHistoryResources;
+  state: ThreadComposerHistoryState;
+}
+
+const COMPOSER_HISTORY_SCRATCH_SLOT = 'scratch';
 
 type NewThreadValidation = 'providerRequired' | 'structuredContent' | null;
 
@@ -489,6 +537,7 @@ function optimisticSendTurn(
       id: itemId,
       type: 'userMessage',
       provenance: { originThreadId: threadId, originTurnId: id, originItemId: itemId },
+      author: { kind: 'reader' },
       clientId: clientMessageId,
       content,
       acceptedAt: startedAt,
@@ -653,7 +702,6 @@ export function ThreadView({
   subagentProjection,
   composerPlaceholder,
   agentTranscript = false,
-  hostSpeaker,
   selfSpeaker,
   inputRequest,
   waitingOnUserInput,
@@ -678,6 +726,15 @@ export function ThreadView({
 }: ThreadViewProps) {
   const t = useT();
   const waitingForInput = Boolean(inputRequest);
+  const rootThreadId = useMemo(
+    () => conversationRootThreadId(threadId, threadsById, subagentProjection.byAgentId),
+    [subagentProjection.byAgentId, threadId, threadsById],
+  );
+  const rootSpeaker = useMemo<ThreadSpeaker>(() => ({
+    participantId: MAIN_IDENTITY_KEY,
+    avatarKey: MAIN_IDENTITY_KEY,
+    name: t.agent.thread.agent.main,
+  }), [t]);
   const initialScrollSnapshot = threadScrollSnapshots.get(threadId);
   const [draft, setDraft] = useState<ThreadComposerDraft>(EMPTY_COMPOSER_DRAFT);
   const [sending, setSending] = useState(false);
@@ -734,14 +791,21 @@ export function ThreadView({
   );
   const attachmentsRef = useRef<ThreadAttachmentContent[]>([]);
   const attachmentOperationTailRef = useRef<Promise<void>>(Promise.resolve());
+  const attachmentOperationActivityRef = useRef(0);
   const attachmentLifecycleControllerRef = useRef<AbortController | null>(null);
-  const attachmentPreviewUrlsRef = useRef(new Map<string, string>());
-  const attachmentSourceKeysRef = useRef(new Map<string, string>());
-  const attachmentTextExcerptsRef = useRef(new Map<string, string>());
+  const attachmentUiStateRef = useRef<ComposerAttachmentUiStateRegistry | null>(null);
+  if (attachmentUiStateRef.current === null) {
+    attachmentUiStateRef.current = new ComposerAttachmentUiStateRegistry((previewUrl) => {
+      URL.revokeObjectURL(previewUrl);
+    });
+  }
+  const attachmentUiState = attachmentUiStateRef.current;
   const pendingPasteRequestsRef = useRef(new Map<string, PendingComposerPasteRequest>());
   const pastedTextOrdinalRef = useRef(0);
   const attachmentAdmissionEnabledRef = useRef(false);
   const draftRef = useRef<ThreadComposerDraft>(EMPTY_COMPOSER_DRAFT);
+  const composerHistorySessionRef = useRef<ComposerHistorySession | null>(null);
+  const composerHistorySwapRef = useRef(false);
   const handledFocusTokenRef = useRef(0);
   const handledFailedThreadCreationFocusTokenRef = useRef(0);
   const sendingRef = useRef(false);
@@ -2025,6 +2089,11 @@ export function ThreadView({
       if (attachmentLifecycleControllerRef.current === controller) {
         attachmentLifecycleControllerRef.current = null;
       }
+      const historySession = composerHistorySessionRef.current;
+      if (historySession) {
+        composerHistorySessionRef.current = null;
+        releaseComposerHistoryUiState(historySession.resources.releaseAll(attachmentsRef.current));
+      }
       for (const attachment of attachmentsRef.current) discardManagedAttachment(threadId, attachment);
       for (const request of pendingPasteRequestsRef.current.values()) {
         request.controller.abort();
@@ -2032,12 +2101,14 @@ export function ThreadView({
         releaseReplacedPasteAttachments(request);
       }
       pendingPasteRequestsRef.current.clear();
-      for (const previewUrl of attachmentPreviewUrlsRef.current.values()) URL.revokeObjectURL(previewUrl);
-      attachmentPreviewUrlsRef.current.clear();
-      attachmentTextExcerptsRef.current.clear();
+      attachmentUiState.clear();
       pastedTextOrdinalRef.current = 0;
     };
-  }, [threadId]);
+  }, [attachmentUiState, threadId]);
+
+  useEffect(() => {
+    attachmentUiState.reconcileCanonical(canonicalThreadAttachmentIds(turns));
+  }, [attachmentUiState, turns]);
 
   useEffect(() => {
     if (!error) return undefined;
@@ -2116,6 +2187,151 @@ export function ThreadView({
     };
   }, []);
 
+  function captureVisibleComposerBundle(): ComposerHistoryBundle | null {
+    const snapshot = composerRef.current?.snapshot() ?? null;
+    return snapshot === null ? null : {
+      attachments: [...attachmentsRef.current],
+      content: null,
+      snapshot,
+      uiState: attachmentUiState.capture(attachmentsRef.current.map((attachment) => attachment.id)),
+    };
+  }
+
+  function mountComposerBundle(bundle: ComposerHistoryBundle): ComposerHistoryBundle | null {
+    const editor = composerRef.current;
+    if (!editor) return null;
+    composerHistorySwapRef.current = true;
+    editor.setFileRemovalPreview(null);
+    try {
+      flushSync(() => {
+        const nextAttachments = [...bundle.attachments];
+        attachmentUiState.mount(bundle.uiState);
+        attachmentsRef.current = nextAttachments;
+        setAttachments(nextAttachments);
+        if (bundle.snapshot) editor.restore(bundle.snapshot);
+        else editor.setContent(bundle.content, { selection: 'end' });
+      });
+      return captureVisibleComposerBundle();
+    } finally {
+      composerHistorySwapRef.current = false;
+    }
+  }
+
+  function releaseComposerHistoryUiState(released: readonly ThreadAttachmentContent[]): void {
+    const releasedIds = new Set<string>();
+    for (const attachment of released) {
+      if (releasedIds.has(attachment.id)) continue;
+      releasedIds.add(attachment.id);
+      attachmentUiState.releaseDraft(attachment.id);
+    }
+  }
+
+  function createComposerHistoryResources(): ComposerHistoryResources {
+    return new ComposerHistoryResourceRegistry<string, ComposerHistoryBundle, ThreadAttachmentContent, ThreadResourceReference>(
+      currentThreadResourceAdapter({
+        requestDiscardIfUnlinked: (handle) => discardManagedResourceHandle(threadId, handle),
+      }),
+      (bundle: ComposerHistoryBundle) => bundle.attachments,
+    );
+  }
+
+  function hiddenComposerHistoryAttachments(): ThreadAttachmentContent[] {
+    return composerHistorySessionRef.current?.resources.attachments() ?? [];
+  }
+
+  function endComposerHistorySession(): void {
+    const session = composerHistorySessionRef.current;
+    if (!session) return;
+    composerHistorySessionRef.current = null;
+    releaseComposerHistoryUiState(session.resources.releaseAll(attachmentsRef.current));
+  }
+
+  function handleComposerHistoryAction(
+    request: ThreadComposerHistoryActionRequest,
+  ): ThreadComposerHistoryActionResult {
+    if (
+      !request.editorFocused
+      || !request.plainArrow
+      || !request.textSelection
+      || !request.atVisualBoundary
+      || attachmentOperationActivityRef.current > 0
+      || draftRef.current.pendingFileRefs.length > 0
+    ) return 'declined';
+
+    const entries = selectReaderComposerHistoryEntries(turns);
+    const existingSession = composerHistorySessionRef.current;
+    const transition = navigateThreadComposerHistory(
+      existingSession?.state ?? IDLE_THREAD_COMPOSER_HISTORY_STATE,
+      entries,
+      request.direction,
+    );
+    if (transition.kind === 'declined') return 'declined';
+    if (transition.kind === 'boundary') return 'performed';
+
+    let session = existingSession;
+    if (!session) {
+      const scratch = captureVisibleComposerBundle();
+      if (!scratch || transition.kind !== 'select') return 'declined';
+      const resources = createComposerHistoryResources();
+      resources.set(COMPOSER_HISTORY_SCRATCH_SLOT, scratch);
+      session = {
+        resources,
+        state: IDLE_THREAD_COMPOSER_HISTORY_STATE,
+      };
+      composerHistorySessionRef.current = session;
+    } else if (session.state.kind === 'browsing' || session.state.kind === 'scratch') {
+      const current = captureVisibleComposerBundle();
+      if (!current) return 'declined';
+      const currentSlot = session.state.kind === 'browsing'
+        ? composerHistoryItemSlot(session.state.selectedItemId)
+        : COMPOSER_HISTORY_SCRATCH_SLOT;
+      session.resources.set(currentSlot, current);
+    }
+    if (!session) return 'declined';
+
+    if (transition.kind === 'restoreScratch') {
+      const scratch = session.resources.take(COMPOSER_HISTORY_SCRATCH_SLOT);
+      if (!scratch) return 'declined';
+      const mountedScratch = mountComposerBundle(scratch);
+      if (!mountedScratch) {
+        session.resources.set(COMPOSER_HISTORY_SCRATCH_SLOT, scratch);
+        return 'declined';
+      }
+      session.state = transition.state;
+      if (transition.state.kind === 'idle') {
+        composerHistorySessionRef.current = null;
+        releaseComposerHistoryUiState(session.resources.releaseAll(mountedScratch.attachments));
+      }
+      return 'performed';
+    }
+
+    const departedItemId = session.state.kind === 'browsing'
+      ? session.state.selectedItemId
+      : null;
+    const targetSlot = composerHistoryItemSlot(transition.entry.id);
+    const retainedTarget = session.resources.take(targetSlot);
+    const target = retainedTarget
+      ?? composerHistoryBundleFromContent(
+        transition.entry.content,
+        indexStore.getCurrent(),
+        (attachmentId) => attachmentUiState.canonicalPreviewFor(attachmentId),
+      );
+    const mounted = mountComposerBundle(target);
+    if (!mounted) {
+      if (retainedTarget) session.resources.set(targetSlot, retainedTarget);
+      return 'declined';
+    }
+    session.state = transition.state;
+
+    if (transition.reanchored && departedItemId !== null && departedItemId !== transition.entry.id) {
+      releaseComposerHistoryUiState(session.resources.release(
+        composerHistoryItemSlot(departedItemId),
+        attachmentsRef.current,
+      ));
+    }
+    return 'performed';
+  }
+
   async function submit() {
     const currentDraft = draftRef.current;
     if (!composerEnabled
@@ -2124,6 +2340,7 @@ export function ThreadView({
       || sending
       || threadCreationPending
       || waitingForInput) return;
+    endComposerHistorySession();
     const commandState = classifyNewThreadCommand(currentDraft);
     if (commandState === 'blockedByStructuredContent') {
       setNewThreadValidation('structuredContent');
@@ -2226,7 +2443,12 @@ export function ThreadView({
     composerRef.current?.clear();
     updateAttachments((current) => current.filter((attachment) => !submittedAttachmentIds.has(attachment.id)));
     try {
-      const acceptedTurn = await onSend(submittedContent, pendingSend.clientMessageId);
+      const submission = await onSend(submittedContent, pendingSend.clientMessageId);
+      const acceptedTurn = submission?.turn ?? null;
+      // A steer is accepted into the active Turn and therefore has no new Turn
+      // in the response. Admission disposition, not nullable layout data, owns
+      // the preview lease transfer for the exact submitted attachment IDs.
+      const attachmentsAccepted = submission !== null && !submission.deduplicated;
       const ourThread = pendingSend.threadId === threadId;
       if (acceptedTurn && ourThread) {
         // Which Turn the host made of this send. Usually the anchor has already
@@ -2250,12 +2472,13 @@ export function ThreadView({
           scheduleBottomPin();
         }
       }
-      for (const attachmentId of submittedAttachmentIds) releaseAttachmentUiState(
-        attachmentId,
-        attachmentPreviewUrlsRef.current,
-        attachmentSourceKeysRef.current,
-        attachmentTextExcerptsRef.current,
-      );
+      for (const attachmentId of submittedAttachmentIds) {
+        if (attachmentsAccepted) {
+          attachmentUiState.rememberCanonicalPreview(attachmentId);
+        } else {
+          attachmentUiState.releaseDraft(attachmentId);
+        }
+      }
       pastedTextOrdinalRef.current = 0;
     } catch (sendError) {
       if (pendingSendScrollRef.current === pendingSend) {
@@ -2302,11 +2525,22 @@ export function ThreadView({
   }
 
   function enqueueAttachmentOperation<T>(operation: () => Promise<T>): Promise<T> {
+    attachmentOperationActivityRef.current += 1;
     const result = attachmentOperationTailRef.current
       .catch(() => undefined)
       .then(operation);
-    attachmentOperationTailRef.current = result.then(() => undefined, () => undefined);
-    return result;
+    const settled = result.then(
+      (value) => {
+        attachmentOperationActivityRef.current -= 1;
+        return value;
+      },
+      (error) => {
+        attachmentOperationActivityRef.current -= 1;
+        throw error;
+      },
+    );
+    attachmentOperationTailRef.current = settled.then(() => undefined, () => undefined);
+    return settled;
   }
 
   function admitLargeTextPaste(
@@ -2368,14 +2602,14 @@ export function ThreadView({
         discardPreparedAttachment(threadId, prepared);
         return;
       }
-      attachmentTextExcerptsRef.current.set(prepared.content.id, request.excerpt);
+      attachmentUiState.patch(prepared.content.id, { textExcerpt: request.excerpt });
       commitPreparedAttachments([prepared], { insertReferences: false });
       request.settling = true;
       if (!composerRef.current.settlePendingFileReference(requestId, prepared.reference)) {
         request.settling = false;
         updateAttachments((current) => current.filter((attachment) => attachment.id !== prepared.content.id));
-        attachmentTextExcerptsRef.current.delete(prepared.content.id);
-        discardPreparedAttachment(threadId, prepared);
+        attachmentUiState.releaseDraft(prepared.content.id);
+        discardManagedAttachment(threadId, prepared.content);
       }
     } catch {
       if (!controller.signal.aborted && composerRef.current?.hasPendingFileReference(requestId)) {
@@ -2421,22 +2655,20 @@ export function ThreadView({
         .filter((candidate) => candidate !== request)
         .flatMap((candidate) => candidate.replacedAttachments),
     ];
+    const historyResources = composerHistorySessionRef.current?.resources;
     const releasedResources: ThreadAttachmentContent[] = [];
     for (const attachment of request.replacedAttachments) {
       if (retained.some((candidate) => candidate.id === attachment.id)) continue;
-      if (
+      if (historyResources) {
+        historyResources.releaseUnlinked([attachment], retained);
+      } else if (
         !retained.some((candidate) => sameManagedResource(candidate, attachment))
         && !releasedResources.some((candidate) => sameManagedResource(candidate, attachment))
       ) {
         discardManagedAttachment(threadId, attachment);
         releasedResources.push(attachment);
       }
-      releaseAttachmentUiState(
-        attachment.id,
-        attachmentPreviewUrlsRef.current,
-        attachmentSourceKeysRef.current,
-        attachmentTextExcerptsRef.current,
-      );
+      attachmentUiState.releaseDraft(attachment.id);
     }
     request.replacedAttachments = [];
   }
@@ -2470,7 +2702,7 @@ export function ThreadView({
         if (signal.aborted) return;
         if (!result.canceled) {
           const next: PreparedComposerAttachment[] = [];
-          const existingKeys = currentAttachmentSourceKeys(attachmentsRef.current, attachmentSourceKeysRef.current);
+          const existingKeys = currentAttachmentSourceKeys(attachmentsRef.current, attachmentUiState.sourceKeys);
           let skippedDuplicates = 0;
           let skippedOverflow = result.skippedCount ?? 0;
           let skippedImageOverflow = 0;
@@ -2546,7 +2778,7 @@ export function ThreadView({
     }
     setError(null);
     const next: PreparedComposerAttachment[] = [];
-    const existingKeys = currentAttachmentSourceKeys(attachmentsRef.current, attachmentSourceKeysRef.current);
+    const existingKeys = currentAttachmentSourceKeys(attachmentsRef.current, attachmentUiState.sourceKeys);
     let skippedDuplicates = 0;
     let skippedOverflow = 0;
     let skippedImageOverflow = 0;
@@ -2641,8 +2873,10 @@ export function ThreadView({
   ) {
     if (incoming.length === 0) return;
     for (const attachment of incoming) {
-      attachmentSourceKeysRef.current.set(attachment.content.id, attachment.sourceKey);
-      if (attachment.previewUrl) attachmentPreviewUrlsRef.current.set(attachment.content.id, attachment.previewUrl);
+      attachmentUiState.patch(attachment.content.id, {
+        ...(attachment.previewUrl ? { previewUrl: attachment.previewUrl } : {}),
+        sourceKey: attachment.sourceKey,
+      });
     }
     updateAttachments((current) => [...current, ...incoming.map((attachment) => attachment.content)]);
     if (options.insertReferences !== false) {
@@ -2695,7 +2929,7 @@ export function ThreadView({
         thumbnailDataUrl: prepared.file.thumbnailDataUrl ?? file.thumbnailDataUrl,
       });
       if (signal.aborted) return null;
-      const existingKeys = currentAttachmentSourceKeys(attachmentsRef.current, attachmentSourceKeysRef.current);
+      const existingKeys = currentAttachmentSourceKeys(attachmentsRef.current, attachmentUiState.sourceKeys);
       if (existingKeys.has(attachment.sourceKey)) {
         setError(t.agent.composer.skippedDuplicates({ count: 1 }));
         return null;
@@ -2718,6 +2952,7 @@ export function ThreadView({
       if (current === 'providerRequired' && nextCommandState === 'ready' && threadCreationBlocked) return current;
       return null;
     });
+    if (composerHistorySwapRef.current) return;
     const retainedPendingRequests = new Set(next.pendingFileRefs.map((reference) => reference.requestId));
     for (const requestId of pendingPasteRequestsRef.current.keys()) {
       if (retainedPendingRequests.has(requestId)) continue;
@@ -2729,21 +2964,23 @@ export function ThreadView({
     const referencedIds = new Set(next.fileRefs.map((ref) => ref.attachmentId));
     const heldAttachmentIds = new Set(Array.from(pendingPasteRequestsRef.current.values())
       .flatMap((request) => request.replacedAttachments.map((attachment) => attachment.id)));
+    const hiddenHistoryAttachments = hiddenComposerHistoryAttachments();
+    const historyResources = composerHistorySessionRef.current?.resources;
     const current = attachmentsRef.current;
     const retained = current.filter((attachment) => referencedIds.has(attachment.id));
     if (retained.length === current.length) return;
     for (const attachment of current) {
       if (!referencedIds.has(attachment.id)) {
         if (heldAttachmentIds.has(attachment.id)) continue;
-        if (!retained.some((candidate) => sameManagedResource(candidate, attachment))) {
+        if (hiddenHistoryAttachments.some((candidate) => candidate.id === attachment.id)) continue;
+        if (historyResources) {
+          historyResources.releaseUnlinked([attachment], retained);
+        } else if (
+          !retained.some((candidate) => sameManagedResource(candidate, attachment))
+        ) {
           discardManagedAttachment(threadId, attachment);
         }
-        releaseAttachmentUiState(
-          attachment.id,
-          attachmentPreviewUrlsRef.current,
-          attachmentSourceKeysRef.current,
-          attachmentTextExcerptsRef.current,
-        );
+        attachmentUiState.releaseDraft(attachment.id);
       }
     }
     updateAttachments(() => retained);
@@ -2870,7 +3107,9 @@ export function ThreadView({
                         onContinueInNewChat={onContinueInNewChat}
                         onOpenSubagentTurnDetails={onOpenSubagentTurnDetails}
                         agentTranscript={agentTranscript}
-                        {...(hostSpeaker === undefined ? {} : { hostSpeaker })}
+                        agentEntries={subagentProjection.byAgentId}
+                        rootSpeaker={rootSpeaker}
+                        rootThreadId={rootThreadId}
                         selfSpeaker={selfSpeaker}
                         onOpenNodeReference={onOpenNodeReference}
                         onOpenThread={onOpenThread}
@@ -2990,8 +3229,8 @@ export function ThreadView({
                 onRemoveAttachment={(attachmentId) => composerRef.current?.removeFileReferences([attachmentId])}
                 onRemovePending={(requestId) => composerRef.current?.removePendingFileReferences([requestId])}
                 pending={pendingPastes}
-                previewUrls={attachmentPreviewUrlsRef.current}
-                textExcerpts={attachmentTextExcerptsRef.current}
+                previewUrls={attachmentUiState.previewUrls}
+                textExcerpts={attachmentUiState.textExcerpts}
                 threadId={threadId}
               />
               <ThreadComposerEditor
@@ -3005,6 +3244,7 @@ export function ThreadView({
                 onChange={handleDraftChange}
                 onFilesPasted={(files) => void addBrowserFiles(files)}
                 onLargeTextPaste={admitLargeTextPaste}
+                onHistoryAction={handleComposerHistoryAction}
                 onLocalFilePreview={previewLocalFile}
                 onLocalFileSearch={searchLocalFiles}
                 onLocalFileSelect={selectLocalFile}
@@ -3134,6 +3374,7 @@ function ThreadTranscriptTurnShell({
 
 export const ThreadTurnView = memo(function ThreadTurnView({
   active,
+  agentEntries,
   canEditUserMessage,
   composerEnabled,
   isLastTurn,
@@ -3150,12 +3391,13 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   onOpenThread,
   onOpenSubagentTurnDetails,
   agentTranscript,
-  hostSpeaker,
   selfSpeaker,
   onOpenTurnDetails,
   onReadToolArguments,
   onReadToolOutput,
   providerRetry,
+  rootSpeaker,
+  rootThreadId,
   threadId,
   threadCwd,
   threadsById,
@@ -3166,6 +3408,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   waitingOnUserInput,
 }: {
   readonly active: boolean;
+  readonly agentEntries: ReadonlyMap<ThreadId, SubagentRegistryEntry>;
   readonly canEditUserMessage: boolean;
   readonly composerEnabled: boolean;
   readonly expandState: ThreadDisclosureState;
@@ -3190,14 +3433,15 @@ export const ThreadTurnView = memo(function ThreadTurnView({
    * transcript has no composer and can still be forked.
    */
   readonly agentTranscript: boolean;
-  /** Who authored the host-written Items here — this Agent's delegator. */
-  readonly hostSpeaker?: ThreadSpeaker;
   /** The participant whose transcript this is — it speaks every response here. */
   readonly selfSpeaker: ThreadSpeaker;
   readonly onOpenTurnDetails: (turn: Turn) => void;
   readonly onReadToolArguments: (turnId: string, item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
   readonly providerRetry: ProviderRetryStatus | null;
+  /** The conversation Agent, addressed canonically by its root Thread id. */
+  readonly rootSpeaker: ThreadSpeaker;
+  readonly rootThreadId: ThreadId;
   readonly threadId: string;
   readonly threadCwd: string;
   readonly threadsById: ReadonlyMap<ThreadId, Thread>;
@@ -3233,35 +3477,15 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   };
   const standaloneContextBoundary = turn.status !== 'inProgress'
     && isStandaloneContextBoundaryTurn(turn);
-  const hostAuthoredEvent = turn.provenance.trigger.kind === 'subagent'
-    && turn.provenance.originThreadId === threadId;
-  // A peer Agent that messaged this Thread directly: the continuation Turn its
-  // `agent_message` started names the SENDER as its parent, which is not a
-  // delegation of ours, so no delivery resolves for it. Naming the sender is
-  // still exactly possible — and rendering it as an unnamed `?` disc, which is
-  // what an empty fallback produced, is not.
-  const peerSenderId = hostAuthoredEvent && turn.provenance.trigger.kind === 'subagent'
-    && turn.provenance.trigger.parentThreadId !== threadId
-    ? turn.provenance.trigger.parentThreadId
-    : null;
-  const peerEntry = useSubagentEntry(peerSenderId);
-  const peerSpeaker: ThreadSpeaker | null = peerEntry === null ? null : {
-    participantId: peerEntry.agentId,
-    avatarKey: subagentSpeakerName(peerEntry),
-    name: subagentSpeakerName(peerEntry),
-  };
   // The child that delivered into this Turn, if any: it speaks its own report.
   const reportEntry = useSubagentEntry(delivery?.agentId ?? null);
-  // WHICH Item the host wrote to wake the model: the Turn's first user-role
-  // Item. A steering message typed while the continuation is still running is
-  // admitted into this same Turn as another one, and it belongs to the READER —
-  // it is not the host's, it is not the delegator's, and treating it as either
-  // rendered the Agent's report twice or put the reader's words in somebody
-  // else's mouth.
-  const hostNoticeItemId = !hostAuthoredEvent
+  const deliveryNoticeItemId = delivery === null
     ? null
-    : turn.items.find((item) => item.type === 'userMessage')?.id ?? null;
-  const deliveryNoticeItemId = delivery === null ? null : hostNoticeItemId;
+    : turn.items.find((item) => (
+      item.type === 'userMessage'
+      && item.author.kind === 'agent'
+      && item.author.threadId === delivery.agentId
+    ))?.id ?? null;
   const reportSpeaker: ThreadSpeaker | null = delivery !== null && reportEntry !== null
     ? {
       participantId: delivery.agentId,
@@ -3398,14 +3622,22 @@ export const ThreadTurnView = memo(function ThreadTurnView({
       workingTextOwnsMotion,
     ],
   );
+  const visibleItemReplacement = delivery !== null
+    && reportEntry !== null
+    && deliveryNoticeItemId !== null
+    ? { delivery, itemId: deliveryNoticeItemId }
+    : null;
+  const itemHasVisibleReplacement = (item: ThreadItem): boolean => (
+    item.id === visibleItemReplacement?.itemId
+  );
   const renderItem = (item: ThreadItem, showMessageActions: boolean) => (
     // The host's own notification text is not a message to the reader. Where
     // this Turn exists because an Agent's result arrived, the Agent's own
     // report replaces it — folded, as a message from that Agent — instead of
     // the wall of task-notification framing addressed to the model.
-    delivery !== null && item.id === deliveryNoticeItemId ? (
+    visibleItemReplacement !== null && item.id === visibleItemReplacement.itemId ? (
       <SubagentReport
-        delivery={delivery}
+        delivery={visibleItemReplacement.delivery}
         index={index}
         key={item.id}
         onOpenNodeReference={onOpenNodeReference}
@@ -3420,7 +3652,6 @@ export const ThreadTurnView = memo(function ThreadTurnView({
         index={index}
         indexStore={indexStore}
         item={item}
-        hostAuthoredEvent={hostAuthoredEvent && item.id === hostNoticeItemId}
         key={item.id}
         onAgentMessageContextMenu={item.id === responseItem?.id ? handleResponseContextMenu : undefined}
         onEditUserMessage={editUserMessage}
@@ -3447,10 +3678,9 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   // own message), a child delivering a result, and this transcript's own agent
   // reading that result and answering.
   //
-  // A delivery whose Agent is no longer in the registry has no report to show
-  // and no speaker to name, so its block is DROPPED rather than handed to this
-  // Turn's host author: that produced a header standing over nothing, which
-  // reads as a participant who said something the reader cannot see.
+  // A delivery whose Agent is no longer in the registry falls back to its
+  // canonical Item under the neutral event speaker. The report cannot resolve,
+  // but the accepted provider input remains durable transcript history.
   // The Turn's own state, on the face that owns the Turn. Live work reads as
   // working (or needs-you while an input request blocks it); a failure stays a
   // failure — the header is the honest record of how that Turn went, the same
@@ -3462,25 +3692,22 @@ export const ThreadTurnView = memo(function ThreadTurnView({
       : turn.status === 'interrupted' ? 'stopped'
         : 'idle';
   const moodedSelf: ThreadSpeaker = { ...selfSpeaker, mood: selfMood };
-  const speakerOf = (block: ThreadContentBlock): ThreadSpeaker | null | 'drop' => {
+  const neutralEventSpeaker: ThreadSpeaker = {
+    participantId: UNATTRIBUTED_PARTICIPANT_ID,
+    avatarKey: '',
+    name: t.agent.thread.agentEvent,
+  };
+  const speakerOf = (block: ThreadContentBlock): ThreadSpeaker | null => {
     if (block.kind === 'process') return moodedSelf;
     if (block.item.type !== 'userMessage') return moodedSelf;
-    if (block.item.id === deliveryNoticeItemId) return reportSpeaker ?? 'drop';
-    // Only the Turn's own notice is somebody else's; anything the reader typed
-    // into it afterwards is theirs, wherever the Turn came from.
-    if (block.item.id !== hostNoticeItemId) return null;
-    // Nobody could be named for this notice. It must NOT borrow `main`'s
-    // identity: `resolveAgentIdentity` resolves a known type's persona over
-    // the caller's name, so `avatarKey: main` signed an unattributable event
-    // with the conversation's own persona and mark — and left the deliberately
-    // non-committal string dead in every locale. An empty key resolves to
-    // nothing, which is what falls through to that string and to a colour
-    // derived from it.
-    return hostSpeaker ?? peerSpeaker ?? {
-      participantId: UNATTRIBUTED_PARTICIPANT_ID,
-      avatarKey: '',
-      name: t.agent.thread.agentEvent,
-    };
+    if (block.item.id === deliveryNoticeItemId && reportSpeaker !== null) return reportSpeaker;
+    if (isReaderAuthoredUserMessage(block.item)) return null;
+    if (block.item.author.kind !== 'agent') return neutralEventSpeaker;
+    if (block.item.author.threadId === rootThreadId) return rootSpeaker;
+    const entry = agentEntries.get(block.item.author.threadId);
+    if (!entry) return neutralEventSpeaker;
+    const name = subagentSpeakerName(entry);
+    return { participantId: entry.agentId, avatarKey: name, name };
   };
   const runs: Array<{
     readonly speaker: ThreadSpeaker | null;
@@ -3497,12 +3724,15 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     // Turn starts with a settled activity Item and three `contextEvidence`
     // rows, which put a named `main` over an empty box before the child that
     // actually spoke.
-    if (block.kind === 'item' && threadItemRendersNothing(
-      block.item,
-      anchors.anchorByItemId.has(block.item.id),
-    )) continue;
+    if (
+      block.kind === 'item'
+      && !itemHasVisibleReplacement(block.item)
+      && threadItemRendersNothing(
+        block.item,
+        anchors.anchorByItemId.has(block.item.id),
+      )
+    ) continue;
     const speaker = speakerOf(block);
-    if (speaker === 'drop') continue;
     if (block.kind === 'process') {
       // The summary goes on this speaker's own line; only the rows stay here.
       emit(speaker, processView.timelineVisible ? (
@@ -4059,10 +4289,27 @@ function findActiveTurn(turns: readonly Turn[]): Turn | null {
 function latestUserMessageTurnId(turns: readonly Turn[]): string | null {
   for (let index = turns.length - 1; index >= 0; index -= 1) {
     const turn = turns[index];
-    if (turn?.provenance.trigger.kind === 'user'
-      && turn.items.some((item) => item.type === 'userMessage')) return turn.id;
+    if (turn?.items.some(isReaderAuthoredUserMessage)) return turn.id;
   }
   return null;
+}
+
+function conversationRootThreadId(
+  threadId: ThreadId,
+  threadsById: ReadonlyMap<ThreadId, Thread>,
+  agentEntries: ReadonlyMap<ThreadId, SubagentRegistryEntry>,
+): ThreadId {
+  const visited = new Set<ThreadId>();
+  let current = threadId;
+  while (!visited.has(current)) {
+    visited.add(current);
+    const parentThreadId = threadsById.get(current)?.parentThreadId
+      ?? agentEntries.get(current)?.parentThreadId
+      ?? null;
+    if (parentThreadId === null) return current;
+    current = parentThreadId;
+  }
+  return threadId;
 }
 
 /**
@@ -4589,6 +4836,7 @@ function attachmentFromPickedFile(file: {
   };
   return {
     content,
+    ...(file.thumbnailDataUrl ? { previewUrl: file.thumbnailDataUrl } : {}),
     reference: attachmentToComposerReference(content, file),
     sourceKey: `path:${file.path}`,
   };
@@ -4744,26 +4992,18 @@ function sameManagedResource(
 }
 
 function discardManagedAttachment(threadId: string, attachment: ThreadAttachmentContent): void {
-  if (attachment.source.kind !== 'threadPayload' || !window.lin?.discardAttachmentResource) return;
-  void window.lin.discardAttachmentResource({ threadId, ref: attachment.source.ref }).catch(() => undefined);
+  if (attachment.source.kind !== 'threadPayload') return;
+  discardManagedResourceHandle(threadId, attachment.source.ref);
+}
+
+function discardManagedResourceHandle(threadId: string, handle: ThreadResourceReference): void {
+  if (!window.lin?.discardAttachmentResource) return;
+  void window.lin.discardAttachmentResource({ threadId, ref: handle }).catch(() => undefined);
 }
 
 function discardPreparedAttachment(threadId: string, attachment: PreparedComposerAttachment): void {
   discardManagedAttachment(threadId, attachment.content);
   if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
-}
-
-function releaseAttachmentUiState(
-  attachmentId: string,
-  previewUrls: Map<string, string>,
-  sourceKeys: Map<string, string>,
-  textExcerpts: Map<string, string>,
-): void {
-  const previewUrl = previewUrls.get(attachmentId);
-  if (previewUrl) URL.revokeObjectURL(previewUrl);
-  previewUrls.delete(attachmentId);
-  sourceKeys.delete(attachmentId);
-  textExcerpts.delete(attachmentId);
 }
 
 function duplicateAttachmentMessage(count: number, labels: Messages['agent']['composer']): string | null {
@@ -4824,6 +5064,58 @@ function pastedTextFileName(ordinal: number): string {
 
 function pastedTextExcerpt(text: string): string {
   return text.replace(/\s+/gu, ' ').trim().slice(0, 256);
+}
+
+function composerHistoryBundleFromContent(
+  content: readonly ThreadUserContent[],
+  index: DocumentIndex,
+  canonicalPreviewFor: (attachmentId: string) => string | undefined,
+): ComposerHistoryBundle {
+  const attachments: ThreadAttachmentContent[] = [];
+  const uiState: ComposerAttachmentUiState[] = [];
+  const draftContent = content.map((part): ThreadComposerDraftContent => {
+    if (part.type === 'text') return { type: 'text', text: part.text };
+    if (part.type === 'nodeReference') {
+      const currentLabel = textOf(index.byId.get(part.nodeId)).trim();
+      return {
+        type: 'nodeReference',
+        reference: {
+          nodeId: part.nodeId,
+          title: currentLabel || part.note || 'Referenced node',
+        },
+      };
+    }
+    const canonicalAttachmentId = part.id;
+    const attachment: ThreadAttachmentContent = { ...part, id: crypto.randomUUID() };
+    const previewUrl = canonicalPreviewFor(canonicalAttachmentId);
+    attachments.push(attachment);
+    if (previewUrl) uiState.push({ attachmentId: attachment.id, previewUrl });
+    return {
+      type: 'fileReference',
+      reference: attachmentToComposerReference(
+        attachment,
+        previewUrl ? { thumbnailDataUrl: previewUrl } : undefined,
+      ),
+    };
+  });
+  return { attachments, content: draftContent, snapshot: null, uiState };
+}
+
+function canonicalThreadAttachmentIds(turns: readonly Turn[]): Set<string> {
+  const attachmentIds = new Set<string>();
+  for (const turn of turns) {
+    for (const item of turn.items) {
+      if (item.type !== 'userMessage') continue;
+      for (const content of item.content) {
+        if (content.type === 'attachment') attachmentIds.add(content.id);
+      }
+    }
+  }
+  return attachmentIds;
+}
+
+function composerHistoryItemSlot(itemId: string): string {
+  return `item:${itemId}`;
 }
 
 function threadContentFromDraft(

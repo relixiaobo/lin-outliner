@@ -402,6 +402,7 @@ function userMessage(text: string): ThreadItem {
   return {
     ...itemBase('user-message'),
     type: 'userMessage',
+    author: { kind: 'reader' },
     clientId: null,
     acceptedAt: 1,
     content: [{ type: 'text', text }],

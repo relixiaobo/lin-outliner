@@ -1249,6 +1249,7 @@ describe('PiTurnExecutor event normalization', () => {
       acceptedAt: 1_720_000_000_150,
       items: [{
         type: 'userMessage',
+        author: { kind: 'reader' },
         id: steeringItemId,
         provenance: fixture.recorder.localProvenance(steeringItemId),
         clientId: 'late-steering',
@@ -1313,6 +1314,7 @@ describe('PiTurnExecutor event normalization', () => {
     const steeringItemId = uuidV7(acceptedAt);
     const steeringItem: ThreadItem = {
       type: 'userMessage',
+      author: { kind: 'reader' },
       id: steeringItemId,
       provenance: fixture.recorder.localProvenance(steeringItemId),
       clientId: 'in-flight-steering',
@@ -1346,6 +1348,7 @@ describe('PiTurnExecutor event normalization', () => {
       ...fixture.context.turn,
       items: [...fixture.context.turn.items, {
         type: 'userMessage',
+        author: { kind: 'reader' },
         id: steeringItemId,
         provenance: fixture.recorder.localProvenance(steeringItemId),
         clientId: 'retried-steering-input',
@@ -1431,6 +1434,7 @@ describe('PiTurnExecutor event normalization', () => {
       outputRefs: [],
     }, {
       type: 'userMessage',
+      author: { kind: 'reader' },
       id: historyUserId,
       provenance: {
         originThreadId: fixture.context.thread.id,
@@ -1501,6 +1505,7 @@ describe('PiTurnExecutor event normalization', () => {
     const userId = uuidV7(1_719_999_998_510);
     const userItem: ThreadItem = {
       type: 'userMessage',
+      author: { kind: 'reader' },
       id: userId,
       provenance: {
         originThreadId: fixture.context.thread.id,
@@ -1597,6 +1602,7 @@ describe('PiTurnExecutor event normalization', () => {
     const projectionItemId = uuidV7(1_719_999_998_030);
     const history = completedTurn(fixture.context.turn, historyTurnId, [{
       type: 'userMessage',
+      author: { kind: 'reader' },
       id: historyUserId,
       provenance: {
         originThreadId: fixture.context.thread.id,
@@ -1701,6 +1707,7 @@ describe('PiTurnExecutor event normalization', () => {
     const sourceProjectionId = uuidV7(1_719_999_996_040);
     const sourceTurn = completedTurn(fixture.context.turn, sourceTurnId, [{
       type: 'userMessage',
+      author: { kind: 'reader' },
       id: sourceUserId,
       provenance: { originThreadId: sourceThreadId, originTurnId: sourceTurnId, originItemId: sourceUserId },
       clientId: null,
@@ -1769,6 +1776,7 @@ describe('PiTurnExecutor event normalization', () => {
       outputRefs: [outputRef],
     }, {
       type: 'userMessage',
+      author: { kind: 'reader' },
       id: outerUserId,
       provenance: {
         originThreadId: fixture.context.thread.id,
@@ -1841,6 +1849,7 @@ describe('PiTurnExecutor event normalization', () => {
     const userId = uuidV7(1_719_999_997_010);
     const userItem: ThreadItem = {
       type: 'userMessage',
+      author: { kind: 'reader' },
       id: userId,
       provenance: {
         originThreadId: fixture.context.thread.id,
@@ -1939,6 +1948,7 @@ describe('PiTurnExecutor event normalization', () => {
         ...fixture.context.turn,
         items: [{
           type: 'userMessage',
+          author: { kind: 'reader' },
           id: userItemId,
           provenance: fixture.recorder.localProvenance(userItemId),
           clientId: null,
@@ -2247,6 +2257,7 @@ describe('PiTurnExecutor event normalization', () => {
       additionalItem,
       {
         type: 'userMessage',
+        author: { kind: 'reader' },
         id: priorUserId,
         provenance: {
           originThreadId: fixture.context.thread.id,
@@ -2446,6 +2457,7 @@ describe('PiTurnExecutor event normalization', () => {
       items: [
         {
           type: 'userMessage',
+          author: { kind: 'reader' },
           id: priorUserId,
           provenance: {
             originThreadId: fixture.context.thread.id,
@@ -2488,6 +2500,7 @@ describe('PiTurnExecutor event normalization', () => {
       items: [
         {
           type: 'userMessage',
+          author: { kind: 'reader' },
           id: recentUserId,
           provenance: {
             originThreadId: fixture.context.thread.id,
@@ -2617,6 +2630,7 @@ describe('PiTurnExecutor event normalization', () => {
       return completedTurn(fixture.context.turn, turnId, [
         {
           type: 'userMessage',
+          author: { kind: 'reader' },
           id: userId,
           provenance: {
             originThreadId: fixture.context.thread.id,
@@ -2801,6 +2815,7 @@ describe('PiTurnExecutor event normalization', () => {
         },
         {
           type: 'userMessage',
+          author: { kind: 'reader' },
           id: sourceUserId,
           provenance: { originThreadId: sourceThreadId, originTurnId: sourceTurnId, originItemId: sourceUserId },
           clientId: null,
@@ -2859,6 +2874,7 @@ describe('PiTurnExecutor event normalization', () => {
         },
         {
           type: 'userMessage',
+          author: { kind: 'agent', threadId: sourceThreadId },
           id: currentUserId,
           provenance: fixture.recorder.localProvenance(currentUserId),
           clientId: null,
@@ -3405,6 +3421,7 @@ describe('PiTurnExecutor event normalization', () => {
         ...fixture.context.turn,
         items: [{
           type: 'userMessage',
+          author: { kind: 'feature', feature: 'memory' },
           id: userItemId,
           provenance: fixture.recorder.localProvenance(userItemId),
           clientId: null,
@@ -3519,7 +3536,7 @@ describe('PiTurnExecutor event normalization', () => {
         completedAt: 1_720_000_000_200,
         durationMs: 100,
         items: [
-          { type: 'userMessage', id: 'user-1', provenance: provenance('user-1'), clientId: null, acceptedAt: 1_720_000_000_000, content: [{ type: 'text', text: 'Inspect it' }] },
+          { type: 'userMessage', author: { kind: 'reader' }, id: 'user-1', provenance: provenance('user-1'), clientId: null, acceptedAt: 1_720_000_000_000, content: [{ type: 'text', text: 'Inspect it' }] },
           { type: 'agentMessage', id: 'agent-1', provenance: provenance('agent-1'), text: 'Checking.', phase: 'commentary', memoryCitation: null },
           { type: 'reasoning', id: 'reason-1', provenance: provenance('reason-1'), summary: ['Need evidence'], content: ['Inspect the workspace'] },
           {
@@ -4627,6 +4644,7 @@ describe('PiTurnExecutor Thread naming', () => {
       items: [
         {
           type: 'userMessage',
+          author: { kind: 'reader' },
           id: userItemId,
           provenance: fixture.recorder.localProvenance(userItemId),
           clientId: null,
@@ -4836,6 +4854,7 @@ function createContext(): {
     id: turnId,
     items: [{
       type: 'userMessage',
+      author: { kind: 'reader' },
       id: userItemId,
       provenance: {
         originThreadId: threadId,

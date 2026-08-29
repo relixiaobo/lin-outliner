@@ -32,6 +32,7 @@ describe('provider cache topology', () => {
     const threadId = '0199a000-0000-7000-8000-000000000001';
     const ordinaryTurn = turn('turn-before', [{
       type: 'userMessage',
+      author: { kind: 'reader' },
       id: 'user-before',
       provenance: provenance(threadId, 'turn-before', 'user-before'),
       clientId: null,
@@ -61,6 +62,7 @@ describe('provider cache topology', () => {
     }]);
     const afterTurn = turn('turn-after', [{
       type: 'userMessage',
+      author: { kind: 'reader' },
       id: 'user-after',
       provenance: provenance(threadId, 'turn-after', 'user-after'),
       clientId: null,

@@ -40,7 +40,9 @@ import {
   type MemoryCitation,
   type ModelToolCallArguments,
   type ModelToolCallHistory,
+  type PrivilegedThreadInputAuthor,
   type PrivilegedTurnStartRequest,
+  type PrivilegedTurnSteerRequest,
   type RequestUserInputRequest,
   type RequestUserInputQuestion,
   type RendererTurnStartRequest,
@@ -54,6 +56,7 @@ import {
   type ThreadItemDelta,
   type ThreadItemOutputReference,
   type ThreadImageArtifactReference,
+  type ThreadInputAuthor,
   type ThreadNodeReferenceContent,
   type ThreadSource,
   type ThreadStatus,
@@ -234,10 +237,11 @@ export function decodeThreadItem(value: unknown): ThreadItem {
   let result: ThreadItem;
   switch (type) {
     case 'userMessage':
-      exactKeys(record, ['type', 'id', 'provenance', 'clientId', 'content', 'acceptedAt'], 'item');
+      exactKeys(record, ['type', 'id', 'provenance', 'author', 'clientId', 'content', 'acceptedAt'], 'item');
       result = {
         ...base,
         type,
+        author: decodeThreadInputAuthor(record.author),
         clientId: nullableString(record.clientId, 'item.clientId'),
         content: arrayValue(record.content, 'item.content').map(decodeUserContent),
         acceptedAt: nonNegativeNumber(record.acceptedAt, 'item.acceptedAt'),
@@ -253,6 +257,50 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         memoryCitation: decodeMemoryCitation(record.memoryCitation),
       };
       break;
+    default:
+      return decodeNonMessageThreadItem(record, type, base);
+  }
+  return deepFreeze(result);
+}
+
+function decodeThreadInputAuthor(value: unknown, path = 'item.author'): ThreadInputAuthor {
+  const record = recordValue(value, path);
+  const kind = enumValue(record.kind, ['reader', 'agent', 'host', 'feature'], `${path}.kind`);
+  switch (kind) {
+    case 'reader':
+    case 'host':
+      exactKeys(record, ['kind'], path);
+      return { kind };
+    case 'agent':
+      exactKeys(record, ['kind', 'threadId'], path);
+      return { kind, threadId: uuidV7(record.threadId, `${path}.threadId`) };
+    case 'feature':
+      exactKeys(record, ['kind', 'feature', 'ref'], path);
+      return {
+        kind,
+        feature: nonEmptyTrimmedString(record.feature, `${path}.feature`),
+        ...(record.ref === undefined ? {} : { ref: nonEmptyTrimmedString(record.ref, `${path}.ref`) }),
+      };
+    default:
+      return assertNever(kind);
+  }
+}
+
+function decodePrivilegedThreadInputAuthor(value: unknown, path: string): PrivilegedThreadInputAuthor {
+  const author = decodeThreadInputAuthor(value, path);
+  if (author.kind === 'reader') {
+    fail(path, 'privileged input requires an explicit non-reader author');
+  }
+  return author;
+}
+
+function decodeNonMessageThreadItem(
+  record: Record<string, unknown>,
+  type: Exclude<ThreadItem['type'], 'userMessage' | 'agentMessage'>,
+  base: Pick<ThreadItem, 'id' | 'provenance'>,
+): ThreadItem {
+  let result: ThreadItem;
+  switch (type) {
     case 'reasoning':
       exactKeys(record, ['type', 'id', 'provenance', 'summary', 'content'], 'item');
       result = {
@@ -567,7 +615,7 @@ export function decodePrivilegedTurnStartRequest(value: unknown): PrivilegedTurn
   const record = recordValue(value, 'privilegedTurnStart');
   exactKeys(record, [
     'threadId', 'turnId', 'input', 'clientUserMessageId', 'additionalContext', 'additionalContextSource',
-    'userView', 'trigger',
+    'userView', 'author', 'trigger',
   ], 'privilegedTurnStart');
   return deepFreeze({
     threadId: uuidV7(record.threadId, 'privilegedTurnStart.threadId'),
@@ -583,7 +631,38 @@ export function decodePrivilegedTurnStartRequest(value: unknown): PrivilegedTurn
       ? {}
       : { additionalContextSource: stringValue(record.additionalContextSource, 'privilegedTurnStart.additionalContextSource', true) }),
     ...(record.userView === undefined ? {} : { userView: decodeRendererUserViewHints(record.userView) }),
+    author: decodePrivilegedThreadInputAuthor(record.author, 'privilegedTurnStart.author'),
     trigger: decodeTurnTrigger(record.trigger),
+  });
+}
+
+export function decodePrivilegedTurnSteerRequest(value: unknown): PrivilegedTurnSteerRequest {
+  const record = recordValue(value, 'privilegedTurnSteer');
+  exactKeys(record, [
+    'threadId', 'expectedTurnId', 'input', 'clientUserMessageId', 'additionalContext', 'additionalContextSource',
+    'userView', 'author',
+  ], 'privilegedTurnSteer');
+  return deepFreeze({
+    threadId: uuidV7(record.threadId, 'privilegedTurnSteer.threadId'),
+    expectedTurnId: uuidV7(record.expectedTurnId, 'privilegedTurnSteer.expectedTurnId'),
+    input: arrayValue(record.input, 'privilegedTurnSteer.input').map(decodeUserContent),
+    ...(record.clientUserMessageId === undefined
+      ? {}
+      : { clientUserMessageId: nullableString(record.clientUserMessageId, 'privilegedTurnSteer.clientUserMessageId') }),
+    ...(record.additionalContext === undefined
+      ? {}
+      : { additionalContext: decodeAdditionalContext(record.additionalContext, true) }),
+    ...(record.additionalContextSource === undefined
+      ? {}
+      : {
+          additionalContextSource: stringValue(
+            record.additionalContextSource,
+            'privilegedTurnSteer.additionalContextSource',
+            true,
+          ),
+        }),
+    ...(record.userView === undefined ? {} : { userView: decodeRendererUserViewHints(record.userView) }),
+    author: decodePrivilegedThreadInputAuthor(record.author, 'privilegedTurnSteer.author'),
   });
 }
 

@@ -514,6 +514,7 @@ describe('Turn diagnostics', () => {
     } as Extract<ThreadItem, { type: 'contextCompaction' }>, 12);
     const steeringItem: Extract<ThreadItem, { type: 'userMessage' }> = {
       type: 'userMessage',
+      author: { kind: 'reader' },
       id: 'steering-user',
       provenance: { originThreadId: 'thread', originTurnId: 'turn', originItemId: 'steering-user' },
       clientId: null,

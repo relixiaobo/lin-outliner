@@ -573,7 +573,7 @@ or main-owned release file change is expected from any feature PR.
 
 ### Collision result
 
-- PR #587 (`agent-composer-input-history`) is a hard dependency for all three
+- PR #587 is a hard dependency for all three
   features. It changes protocol and lifecycle author preservation used by
   Continuation and Rerun, and it owns `SubagentCollaboration`, `ThreadView`,
   `ThreadItemView`, Agent specs, and the main Agent test suites used by Feature

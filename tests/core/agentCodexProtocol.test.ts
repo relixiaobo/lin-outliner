@@ -14,6 +14,7 @@ import {
   decodeAgentCoreRecordedNotification,
   decodeAgentCoreTransientNotification,
   decodePrivilegedTurnStartRequest,
+  decodePrivilegedTurnSteerRequest,
   decodeRendererTurnStartRequest,
   decodeThread,
   decodeThreadContextPayload,
@@ -129,6 +130,7 @@ const allItems: readonly ThreadItem[] = [
     type: 'userMessage',
     id: 'item-1',
     provenance: itemProvenance,
+    author: { kind: 'reader' },
     clientId: 'client-1',
     acceptedAt: 100,
     content: [
@@ -513,6 +515,56 @@ describe('Codex Agent Core protocol codec', () => {
       expect(decoded).toEqual(item);
       expect(Object.isFrozen(decoded)).toBe(true);
       expect(Object.isFrozen(decoded.provenance)).toBe(true);
+    }
+  });
+
+  test('requires one strict canonical input-author schema', () => {
+    const user = allItems[0];
+    if (user?.type !== 'userMessage') throw new Error('Missing userMessage fixture');
+    const authors = [
+      { kind: 'reader' as const },
+      { kind: 'agent' as const, threadId: CHILD_THREAD_ID },
+      { kind: 'host' as const },
+      { kind: 'feature' as const, feature: 'automation', ref: 'run-1' },
+    ];
+    for (const author of authors) {
+      expect(decodeThreadItem({ ...user, author })).toMatchObject({ type: 'userMessage', author });
+    }
+
+    const historical = { ...user } as Record<string, unknown>;
+    delete historical.author;
+    expect(() => decodeThreadItem(historical)).toThrow('item.author');
+    expect(() => decodeThreadItem({ ...historical, author: { kind: 'unknown' } })).toThrow('item.author.kind');
+    expect(() => decodeThreadItem({ ...historical, author: { kind: 'agent', threadId: 'invalid' } }))
+      .toThrow('item.author.threadId');
+    expect(() => decodeThreadItem({ ...historical, author: { kind: 'feature', feature: ' ' } }))
+      .toThrow('item.author.feature');
+  });
+
+  test('rejects missing authors through every recorded-notification Item carrier', () => {
+    const user = allItems[0];
+    if (user?.type !== 'userMessage') throw new Error('Missing userMessage fixture');
+    const historical = { ...user } as Record<string, unknown>;
+    delete historical.author;
+    const inProgressTurn = {
+      ...completedTurn,
+      items: [historical],
+      status: 'inProgress',
+      completedAt: null,
+      durationMs: null,
+    };
+    const terminalTurn = { ...completedTurn, items: [historical] };
+    const carriers: unknown[] = [
+      { type: 'thread/started', threadId: THREAD_ID, thread: { ...thread, turns: [terminalTurn] } },
+      { type: 'turn/started', threadId: THREAD_ID, turnId: TURN_ID, turn: inProgressTurn },
+      { type: 'turn/completed', threadId: THREAD_ID, turnId: TURN_ID, turn: terminalTurn },
+      { type: 'item/started', threadId: THREAD_ID, turnId: TURN_ID, itemId: user.id, item: historical, startedAt: 100 },
+      { type: 'item/completed', threadId: THREAD_ID, turnId: TURN_ID, itemId: user.id, item: historical, completedAt: 101 },
+      { type: 'items/completed', threadId: THREAD_ID, turnId: TURN_ID, items: [historical], completedAt: 101 },
+    ];
+
+    for (const carrier of carriers) {
+      expect(() => decodeAgentCoreRecordedNotification(carrier)).toThrow('item.author');
     }
   });
 
@@ -1122,6 +1174,7 @@ describe('Codex Agent Core protocol codec', () => {
       type: 'userMessage',
       id: 'managed-message',
       provenance: { ...itemProvenance, originItemId: 'managed-message' },
+      author: { kind: 'reader' },
       clientId: null,
       acceptedAt: 250,
       content: [{
@@ -1141,6 +1194,7 @@ describe('Codex Agent Core protocol codec', () => {
       type: 'userMessage',
       id: 'legacy-message',
       provenance: { ...itemProvenance, originItemId: 'legacy-message' },
+      author: { kind: 'reader' },
       clientId: null,
       acceptedAt: 250,
       content: [{
@@ -1213,6 +1267,11 @@ describe('Codex Agent Core protocol codec', () => {
       input: [{ type: 'text', text: 'Hi' }],
       approvalPolicy: 'never',
     })).toThrow('unknown fields');
+    expect(() => decodeRendererTurnStartRequest({
+      threadId: THREAD_ID,
+      input: [{ type: 'text', text: 'Forged reader authority' }],
+      author: { kind: 'reader' },
+    })).toThrow('unknown fields: author');
   });
 
   test('uses plain feature labels and rejects feature-prefixed aliases', () => {
@@ -1224,6 +1283,7 @@ describe('Codex Agent Core protocol codec', () => {
     expect(() => decodePrivilegedTurnStartRequest({
       threadId: THREAD_ID,
       input: [{ type: 'text', text: 'Scheduled work' }],
+      author: { kind: 'feature', feature: 'automation' },
       trigger: { kind: 'feature', feature: 'feature:automation' },
     })).toThrow('plain canonical feature label');
   });
@@ -1248,8 +1308,44 @@ describe('Codex Agent Core protocol codec', () => {
       threadId: THREAD_ID,
       input: [{ type: 'text', text: 'Scheduled work' }],
       additionalContext: { automation_info: { kind: 'application', value: 'Trusted' } },
+      author: { kind: 'feature', feature: 'automation', ref: 'automation-run-1' },
       trigger: { kind: 'feature', feature: 'automation', ref: 'automation-run-1' },
     }).additionalContext?.automation_info?.kind).toBe('application');
+
+    expect(() => decodePrivilegedTurnStartRequest({
+      threadId: THREAD_ID,
+      input: [{ type: 'text', text: 'Forged reader input' }],
+      author: { kind: 'reader' },
+      trigger: { kind: 'feature', feature: 'automation' },
+    })).toThrow('non-reader author');
+    expect(() => decodePrivilegedTurnSteerRequest({
+      threadId: THREAD_ID,
+      expectedTurnId: TURN_ID,
+      input: [{ type: 'text', text: 'Forbidden privileged steer' }],
+      author: { kind: 'reader' },
+    })).toThrow('non-reader author');
+    expect(() => decodePrivilegedTurnSteerRequest({
+      threadId: THREAD_ID,
+      expectedTurnId: TURN_ID,
+      input: [{ type: 'text', text: 'Unknown privileged steer' }],
+      author: { kind: 'unknown' },
+    })).toThrow('privilegedTurnSteer.author.kind');
+    expect(() => decodePrivilegedTurnSteerRequest({
+      threadId: THREAD_ID,
+      expectedTurnId: TURN_ID,
+      input: [{ type: 'text', text: 'Unattributed steer' }],
+      trigger: { kind: 'feature', feature: 'automation' },
+    })).toThrow('unknown fields');
+    expect(decodePrivilegedTurnSteerRequest({
+      threadId: THREAD_ID,
+      expectedTurnId: TURN_ID,
+      input: [{ type: 'text', text: 'Peer steer' }],
+      additionalContextSource: `subagent:${CHILD_THREAD_ID}`,
+      author: { kind: 'agent', threadId: CHILD_THREAD_ID },
+    })).toMatchObject({
+      additionalContextSource: `subagent:${CHILD_THREAD_ID}`,
+      author: { kind: 'agent', threadId: CHILD_THREAD_ID },
+    });
   });
 
   test('accepts only bounded structural renderer user-view hints', () => {

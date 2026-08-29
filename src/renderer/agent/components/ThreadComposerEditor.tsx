@@ -10,7 +10,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { Fragment, Schema, Slice, type Node as PMNode } from 'prosemirror-model';
-import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
+import { EditorState, NodeSelection, Selection, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import type { AgentSlashCommandView, NodeId } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
@@ -110,7 +110,18 @@ export type ThreadComposerDraftContent =
 
 export interface ThreadComposerEditorSnapshot {
   doc: unknown;
+  selection: unknown;
 }
+
+export interface ThreadComposerHistoryActionRequest {
+  readonly atVisualBoundary: boolean;
+  readonly direction: 'older' | 'newer';
+  readonly editorFocused: boolean;
+  readonly plainArrow: boolean;
+  readonly textSelection: boolean;
+}
+
+export type ThreadComposerHistoryActionResult = 'performed' | 'declined';
 
 export interface ThreadComposerEditorHandle {
   clear: () => void;
@@ -122,6 +133,10 @@ export interface ThreadComposerEditorHandle {
   removePendingFileReferences: (requestIds: readonly string[]) => void;
   restorePendingFileReference: (requestId: string) => boolean;
   restore: (snapshot: ThreadComposerEditorSnapshot) => void;
+  setContent: (
+    content: readonly ThreadComposerDraftContent[],
+    options?: { readonly selection?: 'end' },
+  ) => void;
   setFileRemovalPreview: (identity: string | null) => void;
   setPlainText: (text: string) => void;
   settlePendingFileReference: (requestId: string, ref: ThreadComposerFileReference) => boolean;
@@ -145,6 +160,7 @@ interface ThreadComposerEditorProps {
     text: string,
     replacedAttachmentIds: readonly string[],
   ) => string | null;
+  onHistoryAction?: (request: ThreadComposerHistoryActionRequest) => ThreadComposerHistoryActionResult;
   onLocalFilePreview: (file: ThreadComposerLocalFileCandidate) => Promise<ThreadComposerLocalFileCandidate | null>;
   onLocalFileSearch: (query: string) => Promise<ThreadComposerLocalFileCandidate[]>;
   onLocalFileSelect: (file: ThreadComposerLocalFileCandidate) => Promise<ThreadComposerFileReference | null>;
@@ -515,6 +531,18 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
         updateTrigger(view);
         view.focus();
       },
+      setContent(content, options) {
+        const view = viewRef.current;
+        if (!view) return;
+        view.updateState(editorStateFromContent(
+          content,
+          propsRef.current.indexStore.getCurrent(),
+          options?.selection,
+        ));
+        syncDraft(view);
+        updateTrigger(view);
+        view.focus();
+      },
       setFileRemovalPreview(identity) {
         const view = viewRef.current;
         if (view) setFileRemovalPreviewOnView(view, identity);
@@ -531,7 +559,10 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
       },
       snapshot() {
         const view = viewRef.current;
-        return view ? { doc: view.state.doc.toJSON() } : null;
+        return view ? {
+          doc: view.state.doc.toJSON(),
+          selection: view.state.selection.toJSON(),
+        } : null;
       },
       settlePendingFileReference(requestId, fileRef) {
         const view = viewRef.current;
@@ -822,6 +853,27 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
             return deleteAdjacentAtom(viewInstance, event.key);
           }
 
+          if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+            const textSelection = viewInstance.state.selection instanceof TextSelection
+              && viewInstance.state.selection.empty;
+            const plainArrow = !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey;
+            const direction = event.key === 'ArrowUp' ? 'older' : 'newer';
+            const atVisualBoundary = textSelection && plainArrow
+              ? viewInstance.endOfTextblock(direction === 'older' ? 'up' : 'down')
+              : false;
+            const result = propsRef.current.onHistoryAction?.({
+              atVisualBoundary,
+              direction,
+              editorFocused: viewInstance.hasFocus(),
+              plainArrow,
+              textSelection,
+            }) ?? 'declined';
+            if (result === 'performed') {
+              event.preventDefault();
+              return true;
+            }
+          }
+
           return false;
         },
       });
@@ -1009,13 +1061,47 @@ function editorStateFromText(text: string): EditorState {
 
 function editorStateFromSnapshot(snapshot: ThreadComposerEditorSnapshot): EditorState {
   try {
+    const doc = threadComposerSchema.nodeFromJSON(snapshot.doc);
     return EditorState.create({
-      doc: threadComposerSchema.nodeFromJSON(snapshot.doc),
+      doc,
       schema: threadComposerSchema,
+      selection: Selection.fromJSON(doc, snapshot.selection),
     });
   } catch {
     return emptyEditorState();
   }
+}
+
+function editorStateFromContent(
+  content: readonly ThreadComposerDraftContent[],
+  index: DocumentIndex,
+  selection?: 'end',
+): EditorState {
+  const nodes = content.flatMap((part): PMNode[] => {
+    if (part.type === 'text') return linesToInlineNodes(part.text);
+    if (part.type === 'nodeReference') {
+      return [threadComposerSchema.nodes.nodeReference.create({
+        targetNodeId: part.reference.nodeId,
+        title: part.reference.title,
+        color: inlineReferenceTextColor(part.reference.nodeId, index) ?? '',
+      })];
+    }
+    if (part.type === 'fileReference') return [fileReferenceNode(part.reference)];
+    return [threadComposerSchema.nodes.pendingFileReference.create({
+      requestId: part.reference.requestId,
+      name: part.reference.name,
+      ariaLabel: part.reference.name,
+    })];
+  });
+  const doc = threadComposerSchema.nodes.doc.create(
+    null,
+    threadComposerSchema.nodes.paragraph.create(null, nodes.length > 0 ? nodes : undefined),
+  );
+  return EditorState.create({
+    doc,
+    schema: threadComposerSchema,
+    ...(selection === 'end' ? { selection: TextSelection.atEnd(doc) } : {}),
+  });
 }
 
 function resolveComposerTrigger(view: EditorView): ComposerTrigger | null {

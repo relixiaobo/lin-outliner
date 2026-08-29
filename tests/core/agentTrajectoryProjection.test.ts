@@ -550,6 +550,7 @@ describe('ThreadTrajectoryProjection', () => {
       ...inputEnvelopeTurn(),
       items: [{
         type: 'userMessage',
+        author: { kind: 'reader' },
         id: 'user-message-rich',
         provenance: itemProvenance('user-message-rich'),
         clientId: null,
@@ -1598,6 +1599,7 @@ function inputEnvelopeTurn(): Turn {
       toolOutputProjectionItem(),
       {
         type: 'userMessage',
+        author: { kind: 'reader' },
         id: 'user-message-1',
         provenance: itemProvenance('user-message-1'),
         clientId: null,
@@ -1616,6 +1618,7 @@ function trajectoryTurnWithInput(index: number): Turn {
     id: turnId,
     items: [{
       type: 'userMessage',
+      author: { kind: 'reader' },
       id: itemId,
       provenance: {
         originThreadId: THREAD_ID,

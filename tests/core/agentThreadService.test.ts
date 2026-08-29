@@ -98,6 +98,7 @@ import {
 } from '../../src/main/agent/worktree/AgentWorktree';
 import { uuidV7 } from '../../src/main/agent/uuid';
 import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
+import { resolveUserDataDir } from '../../src/main/userDataPath';
 import { replayableModelCall, toolAdmissionEvent } from '../fixtures/agentToolCallHistory';
 
 const roots: string[] = [];
@@ -1085,11 +1086,59 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
-  test('quarantines a Thread whose recorded history the protocol can no longer read, and starts anyway', async () => {
-    // The shape a retired Item type or narrowed tool enum leaves in a userData
-    // directory that is never wiped: history is append-only, so the row is never
-    // rewritten and the decode fails on every launch. Startup must cost that one
-    // Thread, not the launch — including on the extension fan-out, which reads
+  test('writes only required-author Items on fresh development and packaged roots', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-strict-author-first-launch-'));
+    roots.push(root);
+    let now = 1_720_000_000_000;
+    const modes = [
+      { isPackaged: false, label: 'development' },
+      { isPackaged: true, label: 'packaged' },
+    ] as const;
+
+    for (const mode of modes) {
+      const userData = resolveUserDataDir({
+        envOverride: undefined,
+        isPackaged: mode.isPackaged,
+        home: join(root, mode.label, 'home'),
+        appData: join(root, mode.label, 'app-data'),
+        appName: 'Tenon',
+      });
+      await mkdir(userData, { recursive: true });
+      const executor = new ControlledExecutor();
+      const opened = await openFixture(userData, executor, () => ++now);
+      await opened.service.initialize();
+      const thread = (await opened.service.startThread({
+        source: 'app',
+        threadSource: 'user',
+        modelProvider: 'openai',
+        cwd: root,
+      })).thread;
+      await opened.service.startRendererTurn({
+        threadId: thread.id,
+        input: [{ type: 'text', text: `${mode.label} first input` }],
+      });
+      await executor.waitUntilWaiting(0);
+      executor.finish(0);
+      await opened.service.waitForIdle(thread.id);
+      await opened.service.close();
+
+      const rollout = await readFile(
+        join(userData, 'agent', 'rollouts', `${thread.id}.jsonl`),
+        'utf8',
+      );
+      const authors = rollout.trimEnd().split('\n').flatMap((line) => (
+        userMessageAuthors(JSON.parse(line))
+      ));
+      expect(authors.length).toBeGreaterThan(0);
+      expect(authors.every((author) => (
+        JSON.stringify(author) === JSON.stringify({ kind: 'reader' })
+      ))).toBe(true);
+    }
+  });
+
+  test('quarantines authorless persisted history under the strict schema, and starts anyway', async () => {
+    // A missing required author is malformed new-store data. Startup must cost
+    // that one Thread, not the launch, including on extension fan-out that reads
     // every root Thread's Turns inside `initialize` with no per-Thread guard.
     const root = await mkdtemp(join(tmpdir(), 'tenon-unreadable-thread-'));
     roots.push(root);
@@ -1119,17 +1168,16 @@ describe('ThreadService', () => {
     const [readableId, unreadableId] = threadIds as [string, string];
     await first.service.close();
 
-    // Retire an Item type out from under the recorded history. Both stores carry
-    // it, exactly as a shipped rename does: the rollout is the source of truth
-    // and the projection was built from it.
+    // Remove the required author from both persisted authorities. No reader may
+    // infer it from the renderer client id, Turn trigger, or surrounding Items.
     const rolloutPath = join(root, 'agent', 'rollouts', `${unreadableId}.jsonl`);
     await writeFile(
       rolloutPath,
-      (await readFile(rolloutPath, 'utf8')).replaceAll('"type":"userMessage"', '"type":"retiredItemKind"'),
+      stripUserMessageAuthors(await readFile(rolloutPath, 'utf8')),
     );
     const historyDb = database(join(root, 'agent', 'thread_history.sqlite'));
     historyDb.prepare(
-      `UPDATE thread_items SET item_json = replace(item_json, '"type":"userMessage"', '"type":"retiredItemKind"')
+      `UPDATE thread_items SET item_json = json_remove(item_json, '$.author')
        WHERE thread_id = ?`,
     ).run(unreadableId);
     historyDb.close();
@@ -1841,6 +1889,7 @@ describe('ThreadService', () => {
       { source: { kind: 'localFile', path: join(fixture.root, 'resolved', 'start.pdf') } },
       { source: { kind: 'localFile', path: join(fixture.root, 'resolved', 'steer.txt') } },
     ]);
+    expect(userItems.map((item) => item.author)).toEqual([{ kind: 'reader' }, { kind: 'reader' }]);
     expect(resolvedPaths).toHaveLength(2);
     await fixture.service.close();
   });
@@ -3312,6 +3361,7 @@ describe('ThreadService', () => {
     await fixture.service.startPrivilegedTurn({
       threadId: thread.id,
       input: [{ type: 'text', text: 'Run scheduled work' }],
+      author: { kind: 'feature', feature: 'automation', ref: 'automation-1' },
       additionalContext: {
         automation_info: { kind: 'application', value: 'Host schedule guidance' },
       },
@@ -3474,6 +3524,7 @@ describe('ThreadService', () => {
     const turnId = uuidV7(fixture.clock());
     const userItem: ThreadItem = {
       type: 'userMessage',
+      author: { kind: 'reader' },
       id: 'restart-user',
       provenance: { originThreadId: thread.id, originTurnId: turnId, originItemId: 'restart-user' },
       clientId: null,
@@ -5129,6 +5180,7 @@ describe('ThreadService', () => {
       threadId: thread.id,
       input: [{ type: 'text', text: '[Agent finished] Canonical host notice' }],
       clientUserMessageId: 'agent-notification-stable-id',
+      author: { kind: 'host' },
       trigger,
     });
     await fixture.executor.waitUntilWaiting(0);
@@ -5141,6 +5193,7 @@ describe('ThreadService', () => {
     });
     expect(retried.turn.provenance.trigger).toEqual(trigger);
     expect(retried.turn.items.find((item) => item.type === 'userMessage')).toMatchObject({
+      author: { kind: 'host' },
       clientId: 'agent-notification-stable-id',
       content: [{ type: 'text', text: '[Agent finished] Canonical host notice' }],
     });
@@ -6096,11 +6149,13 @@ describe('ThreadService', () => {
         () => fixture.service.startPrivilegedTurn({
           threadId: child.thread.id,
           input: [{ type: 'text', text: 'Privileged retry must be rejected' }],
+          author: { kind: 'feature' as const, feature: 'automation' as const },
           trigger: { kind: 'feature' as const, feature: 'automation' as const },
         }),
         () => fixture.service.tryStartTurnIfIdle({
           threadId: child.thread.id,
           input: [{ type: 'text', text: 'Idle retry must be rejected' }],
+          author: { kind: 'feature' as const, feature: 'automation' as const },
           trigger: { kind: 'feature' as const, feature: 'automation' as const },
         }),
         () => fixture.service.steerTurn({
@@ -8794,6 +8849,7 @@ describe('ThreadService', () => {
     await fixture.service.startPrivilegedTurn({
       threadId: child.thread.id,
       input: [{ type: 'text', text: 'Resume with current configuration' }],
+      author: { kind: 'agent', threadId: root.id },
       trigger: { kind: 'subagent', parentThreadId: root.id, parentItemId: 'followup-item' },
     });
     await fixture.executor.waitUntilWaiting(2);
@@ -8938,6 +8994,7 @@ describe('ThreadService', () => {
     await fixture.service.startPrivilegedTurn({
       threadId: resumed.thread.id,
       input: [{ type: 'text', text: 'Resume without reloading Role Skills' }],
+      author: { kind: 'agent', threadId: root.id },
       trigger: { kind: 'subagent', parentThreadId: root.id, parentItemId: 'preload-resume' },
     });
     await fixture.executor.waitUntilWaiting(3);
@@ -10468,6 +10525,11 @@ describe('ThreadService', () => {
       threadId: thread.id,
       turnId: reservedTurnId,
       input: [{ type: 'text', text: 'Persist the reserved continuation' }],
+      author: {
+        kind: 'feature',
+        feature: 'goal_continuation',
+        ref: String(record.generation),
+      },
       trigger: { kind: 'feature', feature: 'goal_continuation', ref: String(record.generation) },
     });
     await fixture.executor.waitUntilWaiting();
@@ -11750,6 +11812,7 @@ describe('ThreadService', () => {
     await expect(fixture.service.tryStartTurnIfIdle({
       threadId: child.thread.id,
       input: [{ type: 'text', text: 'Automation work after the user stopped' }],
+      author: { kind: 'feature', feature: 'automation', ref: 'closed-request-run' },
       trigger: { kind: 'feature', feature: 'automation', ref: 'closed-request-run' },
     })).rejects.toBeInstanceOf(SubagentRequestClosedError);
     // ...while the user bright line is untouched.
@@ -11778,6 +11841,7 @@ describe('ThreadService', () => {
     const featureTurn = await fixture.service.tryStartTurnIfIdle({
       threadId: feature.id,
       input: [{ type: 'text', text: 'Internal work' }],
+      author: { kind: 'feature', feature: 'memory', ref: 'consolidation' },
       trigger: { kind: 'feature', feature: 'memory', ref: 'consolidation' },
     });
     expect(featureTurn).not.toBeNull();
@@ -12387,6 +12451,7 @@ describe('ThreadService', () => {
     const turn = await fixture.service.tryStartTurnIfIdle({
       threadId: root.id,
       input: [{ type: 'text', text: 'Run root automation work' }],
+      author: { kind: 'feature', feature: 'automation', ref: 'root-budget-run' },
       trigger: { kind: 'feature', feature: 'automation', ref: 'root-budget-run' },
     });
     expect(turn).not.toBeNull();
@@ -13852,6 +13917,7 @@ describe('Thread transcript artifact', () => {
     const automationTurn = await fixture.service.tryStartTurnIfIdle({
       threadId: automation.id,
       input: [{ type: 'text', text: 'Review what yesterday left behind' }],
+      author: { kind: 'feature', feature: 'automation', ref: 'run-a' },
       trigger: { kind: 'feature', feature: 'automation', ref: 'run-a' },
     });
     expect(automationTurn).not.toBeNull();
@@ -14150,6 +14216,7 @@ describe('Thread transcript artifact', () => {
     await fixture.service.tryStartTurnIfIdle({
       threadId: automation.id,
       input: [{ type: 'text', text: 'Sweep' }],
+      author: { kind: 'feature', feature: 'automation', ref: 'run-b' },
       trigger: { kind: 'feature', feature: 'automation', ref: 'run-b' },
     });
     await fixture.executor.waitUntilWaiting(0);
@@ -14813,4 +14880,32 @@ function serializedConsoleCalls(calls: readonly (readonly unknown[])[]): string 
     if (typeof value === 'string') return value;
     return JSON.stringify(value);
   }).join(' ')).join('\n');
+}
+
+function userMessageAuthors(value: unknown): unknown[] {
+  if (!value || typeof value !== 'object') return [];
+  if (Array.isArray(value)) return value.flatMap(userMessageAuthors);
+  const record = value as Record<string, unknown>;
+  return [
+    ...(record.type === 'userMessage' ? [record.author] : []),
+    ...Object.values(record).flatMap(userMessageAuthors),
+  ];
+}
+
+function stripUserMessageAuthors(jsonl: string): string {
+  const strip = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return;
+    if (Array.isArray(value)) {
+      for (const entry of value) strip(entry);
+      return;
+    }
+    const record = value as Record<string, unknown>;
+    if (record.type === 'userMessage') delete record.author;
+    for (const entry of Object.values(record)) strip(entry);
+  };
+  return `${jsonl.trimEnd().split('\n').map((line) => {
+    const record = JSON.parse(line) as unknown;
+    strip(record);
+    return JSON.stringify(record);
+  }).join('\n')}\n`;
 }

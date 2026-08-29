@@ -120,6 +120,14 @@ three `contextEvidence` rows, none of which the transcript renders, and all of
 which belong to this Thread's own agent — so ungrouped they put a named `main`
 above an empty box before the child that actually spoke.
 
+That renderability boundary is structural and author-independent. A
+`userMessage` with no attachment or Node reference and only empty or
+whitespace text contributes no bubble, speaker, copy target, accessibility
+output, or spacing. Attachment-only and Node-reference-only messages remain
+visible. A resolved `SubagentReport` is the visible projection of its delivery
+Item, so the replacement remains visible even when the underlying provider-role
+content is empty.
+
 Content under a speaker is PLAIN PROSE, never a bubble. The avatar and name
 above already say who is talking, and a second container would draw the same
 fact twice. That is what retires the `From <name>` label the report and the
@@ -130,6 +138,14 @@ right-hand bubble and get no avatar. Which side a message is on is the fastest
 identity signal in the stream, and Tenon has no user profile to draw a face
 from — so `I asked this` stays a matter of position, and `main asked this` a
 matter of the name above it. Neither is ever left to a hover.
+
+That position comes from each `userMessage` Item's canonical author, never from its
+provider role, Turn position, trigger, provenance, or client ID. Only `reader` uses the
+reader bubble and may expose Edit. `agent(threadId)` resolves that source Thread's
+identity and opens a speaker run. `host`, `feature`, and an Agent whose identity cannot
+be resolved use the neutral Agent-event presentation and never borrow either the reader
+or the transcript's own Agent identity. Mixed reader and machine steering inside one
+Turn is classified Item by Item.
 
 A participant is named by its PERSONA everywhere it SPEAKS — in the
 conversation and inside its own pushed view alike — with the Agent TYPE beside
@@ -1435,6 +1451,59 @@ the click (self-focusing popovers, dialogs, the inline message editor).
 Keyboard-activated clicks are never intercepted, and an active
 `request_user_input` suspends the hand-back entirely.
 
+The same terminal model governs input history. A focused composer offers plain Up at
+its first visual line and plain Down at its last visual line as semantic history
+actions, but only for a collapsed text selection. Shift/Control/Option/Command arrows,
+ordinary movement inside wrapped or multi-line content, and arrows owned by an open
+slash/mention menu or IME keep their established behavior. The editor consumes an
+offered arrow only when history reports `performed`; a declined action falls through to
+ProseMirror and the browser.
+
+History is derived lazily from canonical `reader`-authored `userMessage` Items in the
+exact Thread, preserving Turn and within-Turn Item order. The first eligible Up captures
+the complete unsent scratch bundle, selects the newest entry, creates an editable draft
+copy, and places the caret at its end. Up selects older entries, Down selects newer
+entries, Down past the newest restores the current scratch working document and selection,
+and Up past the oldest is a handled no-op. Scratch remains part of the active navigation
+session: a subsequent Up restores the newest entry's edited working copy, and leaving
+scratch again first preserves any edits made there. Each visited slot retains its working
+edits for that navigation session. The session ends on submit, established clear,
+Thread-view unmount, or a removed selected Item with no surviving history. If a selected
+canonical Item disappears, the next arrow is consumed by one deterministic re-anchor:
+the entry at its prior chronological index, otherwise the newest predecessor, otherwise
+scratch and idle.
+
+A bundle contains the ProseMirror document and selection, ordered structured text/Node/
+file atoms, settled attachments, and renderer-only preview/source/excerpt metadata.
+History never reparses marker text: Node and file atoms continue through recall, resend,
+transcript reload, and provider projection as structured values, producing only
+`[[node://...]]` and `[[file:///...]]`. A recalled submission uses the ordinary
+admission/send path with fresh draft attachment identities. Missing or unreadable
+managed content produces the established recoverable composer error and restores the
+complete draft rather than crashing navigation or dropping one part.
+When the mounted renderer already admitted an image preview, a successful send retains
+that preview lease against the accepted canonical attachment. Recall aliases the same
+lease under the fresh draft identity without rereading or copying source bytes; an
+attachment whose thumbnail is unavailable keeps the generic name/type/size card.
+The renderer preserves the complete `turn/submit` result across its send boundary:
+`deduplicated` says whether the submitted attachment identities became canonical, while
+the nullable `turn` field says only whether main opened a new Turn for layout and
+anchoring. A successful active-Turn steer therefore retains submitted preview leases
+even though its response has `turn: null`.
+
+Picker, paste, drop, browser-file, mention, and generated-paste admissions remain in the
+single serialized queue and never move into a history slot. While any such admission is
+queued or running, history declines Up and Down until it settles, cancels, or fails.
+Hidden scratch and working slots retain complete current managed-resource handles plus
+renderer-only UI metadata in a session registry. Attachment limits count only the
+visible slot and pending admissions. Navigation creates no storage, copies no bytes,
+and never interprets the current handle's digest-shaped field. Session cleanup asks the
+existing main-process resource authority to discard only when no visible or hidden
+session link remains; canonical Thread links are checked independently by that authority,
+so releasing one slot cannot invalidate a surviving Item or another slot. Renderer-only
+preview leases are revoked separately when neither a canonical attachment nor any draft
+slot retains them.
+
 Typing `/` opens the established composer command menu. It keeps `/compact` as
 the default entry, followed by `/clear` and `/new`, then appends the current
 user-invocable Skill catalog. Runtime names are reserved case-insensitively, so
@@ -1497,9 +1566,10 @@ reference markup into text. Edit replaces only the message text while preserving
 the complete original structured input. An attachment-only or Node-reference-only
 Turn can add text through Edit without losing its structured content.
 
-Only the latest user message in a terminal Turn exposes Edit; earlier messages
-remain copyable, and an active Turn cannot be edited while its response is
-running. Editing autofocuses the existing edit field. Escape cancels and
+Only the latest reader-authored user message in a terminal Turn exposes Edit; earlier
+messages and every Agent-, host-, or feature-authored provider input remain copyable but
+not editable, and an active Turn cannot be edited while its response is running.
+Editing autofocuses the existing edit field. Escape cancels and
 Cmd/Ctrl+Enter saves. Saving appends a `thread/rollback` marker for the final
 Turn, then resubmits the original structured content with only its text replaced
 as a fresh Turn in the same Thread. It does not mutate the sealed source Turn or
@@ -1660,13 +1730,14 @@ Each new target measurement advances the anchor to a later pre-paint layout
 pass; only then are its runway spacer and target coverage committed before the
 scroll that uses them. An uncovered target or a pass whose own measurements do
 not yet place the message at the top defers the write rather than exposing a
-position it will have to correct. The `turn/submit` response returns the exact newly
-accepted Turn when main started one and `null` when main steered or deduplicated
-the submission, so a concurrently loaded history page cannot be mistaken for the
-new send; it remains the anchor's fallback for a send whose Item never arrives
-by notification, and a submission with nothing anchorable falls back to the
-tail. Main, not the renderer's cached snapshot, owns that start-or-steer
-decision. Steering an existing active Turn keeps the bottom-follow path: the
+position it will have to correct. The `turn/submit` response's `turn` field contains
+the exact newly accepted Turn when main started one and is `null` when main steered or
+deduplicated the submission, so a concurrently loaded history page cannot be mistaken
+for the new send; it remains the anchor's fallback for a send whose Item never arrives
+by notification, and a submission with nothing anchorable falls back to the tail. This
+layout signal is independent from the response's admission disposition. Main,
+not the renderer's cached snapshot, owns the start-or-steer decision. Steering
+an existing active Turn keeps the bottom-follow path: the
 transcript reads the steer off the Item landing in the Turn that was already the
 tail at click time, and never anchors a reply the reader is in the middle of.
 The renderer does not alter notification order.

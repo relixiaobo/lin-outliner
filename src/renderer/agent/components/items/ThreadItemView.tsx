@@ -21,6 +21,7 @@ import type {
   ThreadUserContent,
   UserMessageThreadItem,
 } from '../../../../core/agent/protocol';
+import { isReaderAuthoredUserMessage } from '../../../../core/agent/protocol';
 import type { Messages } from '../../../../core/i18n';
 import { useT } from '../../../i18n/I18nProvider';
 import type { DocumentIndex } from '../../../state/document';
@@ -108,13 +109,6 @@ interface ThreadItemViewProps {
   readonly index: DocumentIndex;
   readonly indexStore: DocumentIndexStore;
   readonly item: ThreadItem;
-  /** This user-role Item was authored by the host, as proven by its Turn. */
-  readonly hostAuthoredEvent?: boolean;
-  /**
-   * Who wrote a host-authored user-role Item: `main` for the conversation
-   * itself, otherwise the delegating Agent. Absent in a conversation, where a
-   * host event has no single author to name.
-   */
   readonly showMessageActions: boolean;
   readonly streaming: boolean;
   /** This Item is where a delegation happened, so a chip takes its slot. */
@@ -157,6 +151,8 @@ export function isThreadToolItem(item: ThreadItem): item is ThreadToolItem {
     || item.type === 'webSearch';
 }
 
+const emptyUserMessageProjectionByItem = new WeakMap<UserMessageThreadItem, boolean>();
+
 /**
  * Items the transcript deliberately draws as nothing at all.
  *
@@ -171,6 +167,16 @@ export function threadItemRendersNothing(item: ThreadItem, anchored: boolean): b
   if (item.type === 'subAgentActivity') return !anchored;
   // Inspection-only: what the context carried, for Turn Details to explain.
   if (item.type === 'contextEvidence') return true;
+  // User input is structured: attachments and Node references are visible even
+  // without prose, while an empty array or whitespace-only text has no ordinary
+  // transcript projection for any author kind.
+  if (item.type === 'userMessage') {
+    const cached = emptyUserMessageProjectionByItem.get(item);
+    if (cached !== undefined) return cached;
+    const empty = !item.content.some((part) => part.type !== 'text' || part.text.trim().length > 0);
+    emptyUserMessageProjectionByItem.set(item, empty);
+    return empty;
+  }
   return item.type === 'agentMessage' && item.phase === 'commentary' && !item.text.trim();
 }
 
@@ -360,13 +366,13 @@ function UserMessageItem({
   index,
   indexStore,
   item,
-  hostAuthoredEvent = false,
   onEditUserMessage,
   onOpenNodeReference,
   showMessageActions,
   threadId,
 }: Omit<ThreadItemViewProps, 'item'> & { readonly item: UserMessageThreadItem }) {
   const t = useT();
+  const readerAuthored = isReaderAuthoredUserMessage(item);
   const textEditable = canEditUserContentText(item.content);
   const textParts = item.content.flatMap((content) => content.type === 'text' ? [content.text] : []);
   const [editing, setEditing] = useState(false);
@@ -396,7 +402,7 @@ function UserMessageItem({
     // which put two different senders in one place and left the difference to a
     // hover. The attribution itself lives in the speaker header above this, so
     // one participant saying three things in a row is named once, not thrice.
-    <article className={`thread-item thread-user-message${hostAuthoredEvent ? ' thread-host-event' : ''}`}>
+    <article className={`thread-item thread-user-message${readerAuthored ? '' : ' thread-host-event'}`}>
       {editing ? (
         <div className="thread-message-editor">
           <textarea
@@ -434,7 +440,7 @@ function UserMessageItem({
           <div className="thread-message-actions-slot">
             {showMessageActions ? (
               <div className="thread-message-actions">
-                {!hostAuthoredEvent && canEditUserMessage && textEditable ? (
+                {readerAuthored && canEditUserMessage && textEditable ? (
                   <IconButton
                     icon={PencilIcon}
                     iconSize={ICON_SIZE.menu}

@@ -45,6 +45,7 @@ describe('ThreadItemView user message presentation', () => {
         originItemId: 'message-1',
       },
       type: 'userMessage',
+      author: { kind: 'reader' },
       clientId: 'client-1',
       content: [
         { type: 'text', text: 'Compare ' },
@@ -88,6 +89,7 @@ describe('ThreadItemView user message presentation', () => {
         originItemId: 'message-host-event',
       },
       type: 'userMessage',
+      author: { kind: 'host' },
       clientId: null,
       content: [{ type: 'text', text: 'Investigate the deployment story.' }],
       acceptedAt: 1,
