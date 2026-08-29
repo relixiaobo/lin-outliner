@@ -178,7 +178,13 @@ classification, constrained-Agent policy, stream settlement, and its focused
 security tests. This feature relies only on the merged observable interface:
 
 - Bash accepts one bounded `stdin: string` beside `command` and delivers its
-  exact UTF-8 bytes directly to child stdin.
+  exact UTF-8 bytes directly to child stdin. The public bound is 64 MiB of raw
+  stdin measured before JSON escaping; unpaired UTF-16 surrogates fail admission
+  instead of changing during UTF-8 conversion.
+- Payload-backed Bash history retains large stdin as one private Thread-internal
+  text dependency plus a bounded argument envelope. This is transparent to the
+  Outline call, preserves exact logical replay, and does not raise the 16 MiB
+  context-payload ceiling or create a file/resource reference.
 - Direct `outline add --input -`, `outline commit --input -`, and `outline diff
   --input -` invocations are the registered data consumers this feature uses;
   their existing `outline.edit`, `outline.edit`, and `outline.read` actions come
@@ -526,13 +532,15 @@ Two independent foundations must merge before implementation begins:
 
 Source PR-I owns the final Node draft, field/value, Source, ChangeSet, CLI
 schema, constructor, and fixture baseline that this feature must consume. The
-Bash interface PR #596 owns the generic tool schema, effective-consumer security
-classification, process stdin delivery, and focused transport tests. Neither
-foundation depends on the other, so they may be developed independently, but
-this feature consumes only their merged contracts. It rebases onto `origin/main`
-after both land, regenerates its work queue from actual `rg` hits and failing
-tests, and removes every superseded table fixture assumption rather than
-preserving compatibility. Source PR-F is visual-only and is not a dependency.
+Bash interface PR #596 owns the generic tool schema, 64 MiB raw-stdin admission,
+private Thread-internal text factoring, effective-consumer security
+classification, process stdin delivery, and focused transport/lifecycle tests.
+Neither foundation depends on the other, so they may be developed
+independently, but this feature consumes only their merged observable contracts.
+It rebases onto `origin/main` after both land, regenerates its work queue from
+actual `rg` hits and failing tests, and removes every superseded table fixture
+assumption rather than preserving compatibility. Source PR-F is visual-only and
+is not a dependency.
 
 The collision self-check found no other open PR claim at plan time. The future
 Source PR-I is a deliberate hard dependency and likely overlaps
@@ -640,10 +648,10 @@ Source PR-I during implementation without changing those observable behaviors.
   scripts, zero full Diff/Operation reads, and zero generic full-table `show`
   projections.
 - [ ] **AC-13:** One valid 10,000-row viewed-tree payload larger than macOS
-  `ARG_MAX` reaches the real CLI through the merged Bash stdin field, produces
-  the correct table, and leaves the shell argv free of payload bytes. Human
-  mutation, Diff, and view receipts remain at or below 4 KiB and expose explicit
-  omitted counts/digests at the boundary.
+  `ARG_MAX` and below the merged 64 MiB raw-stdin bound reaches the real CLI
+  through the Bash stdin field, produces the correct table, and leaves the shell
+  argv free of payload bytes. Human mutation, Diff, and view receipts remain at
+  or below 4 KiB and expose explicit omitted counts/digests at the boundary.
 - [ ] **AC-14:** `--json` golden responses and exact Diff artifacts retain their complete
   public schemas; `--human` output contains no nested JSON envelope or ANSI
   control sequences.
