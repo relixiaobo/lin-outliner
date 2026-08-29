@@ -131,8 +131,8 @@ The clean model is a lazy canonical reference:
   the current unbounded `includeTurns` read.
 - **CON-2:** `ThreadHistoryProjectionStore` already provides a rebuildable local
   projection, while canonical Thread and Item stores remain the read authority.
-- **CON-3:** #584 shipped; the implementation follows #587 and
-  `agent-result-and-file-lifecycle`; it consumes their exact-revision, resource-
+- **CON-3:** #584 and #587 shipped; the implementation follows
+  `agent-result-and-file-lifecycle` and consumes their exact-revision, resource-
   link, working-set, and Composer-history contracts without duplicating them.
 
 ### 1. Five Operations Stay Distinct
@@ -404,10 +404,10 @@ codec without silently making Thread references valid Outline inline refs. It
 must also preserve structured Thread atoms through the complete Composer History
 round trip introduced by #587.
 
-Collision check refreshed 2026-08-27: PR #584 shipped the ContentStore and
-retired overlapping Agent runtime/specification surfaces. PR #587 still overlaps
-Composer protocol, codec, editor, history, and specifications. This feature
-starts only after #587 and `agent-result-and-file-lifecycle` merge, then reruns
+Collision check refreshed after #587: #584 shipped the ContentStore and retired
+overlapping Agent runtime/specification surfaces; #587 shipped the Composer
+protocol, codec, editor, history, and specification foundation. This feature
+starts only after `agent-result-and-file-lifecycle` merges, then reruns
 `gh pr list`, the board scan, and exact file-scope comparison before
 implementation.
 
@@ -417,7 +417,7 @@ The dependency order is fixed:
 
 1. PR #590 shipped the shared URI codec and Node/file cutover.
 2. #584 shipped the neutral exact-revision ContentStore and Outline references.
-3. #587 rebases and ships exact-Thread Composer input history.
+3. #587 shipped exact-Thread Composer input history.
 4. `agent-result-and-file-lifecycle` ships Agent resource references, the
    resolver, working sets, final citations, and delegated projection.
 5. This feature ships cross-Thread reference, search, read, and historical-file

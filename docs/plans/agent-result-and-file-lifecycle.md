@@ -1,13 +1,13 @@
 # Agent Result And Resource Reference Lifecycle
 
-**Shape:** (a) ONE complete feature in one PR after the reference URI foundation
-and neutral ContentStore/Outline consumer (shipped in #590 and #584), and #587
-lands. The Agent resource-reference
+**Shape:** (a) ONE complete feature in one PR after the reference URI foundation,
+neutral ContentStore/Outline consumer, and Composer history shipped in #590,
+#584, and #587. The Agent resource-reference
 cutover, conversation workspace and final-citation contract, and delegated-
 handoff projection are foundation-first build stages in that PR. #584 separately
 established the shared exact-revision store as part of its complete Outliner
-Runtime feature; #587 remains a complete composer-history feature over an opaque
-current resource handle.
+Runtime feature; #587 shipped as a complete composer-history feature over an
+opaque current resource handle.
 
 ## Goal
 
@@ -436,7 +436,7 @@ registry.
 
 #### Build Stage 1: Agent Resource-Reference Cutover
 
-After #587 lands, reuse the #584 `src/content/` exact-revision store. Add
+Reuse #587's history contract and the #584 `src/content/` exact-revision store. Add
 the Agent resource-reference store and resolver; replace binary-resource methods
 in `ToolPayloadStore`,
 `ThreadResourceOps`, and `ToolArtifactSink`; and cut over Composer admissions,
@@ -582,17 +582,17 @@ The dependency order is fixed:
    retired marker grammar;
 3. #584 shipped neutral exact revisions plus Outline AssetRecord references and
    retention anchors;
-4. #587 rebases on current `main` and finishes Composer history over the
-   current opaque resource handle without inventing the later store; and
-5. after both are on `main`, implement this plan's three internal stages in one
-   complete PR; and
+4. #587 shipped Composer history over the current opaque resource handle without
+   inventing the later store; and
+5. with those prerequisites on `main`, implement this plan's three internal
+   stages in one complete PR; and
 6. implement `agent-cross-thread-reference` only after this plan's resolver,
    working-set, and canonical citation contracts are on `main`.
 
 #584 deliberately did not implement Agent resource records, final citations, or
 handoff.
-#587 must not create a new physical store, inspect its digest-shaped handle, or
-add physical copies for history navigation.
+#587 created no new physical store, did not inspect its digest-shaped handle,
+and added no physical copies for history navigation.
 
 Verification includes:
 
@@ -699,7 +699,7 @@ decision.
 
 - [x] Implement the neutral exact-revision/retention-anchor kernel in #584
   and align Outline AssetRecords without public physical authority.
-- [ ] Rebase #587 on the #584 foundation and preserve current Agent handles
+- [x] Rebase #587 on the #584 foundation and preserve current Agent handles
   opaquely with no navigation-time byte copy or later-store implementation.
 - [ ] Add Agent resource-reference records, canonical links, resolver intents,
   exact capture, materialization, reconciliation, and focused crash/concurrency

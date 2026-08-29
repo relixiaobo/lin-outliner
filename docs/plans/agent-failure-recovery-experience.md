@@ -573,22 +573,20 @@ or main-owned release file change is expected from any feature PR.
 
 ### Collision result
 
-- PR #587 is a hard dependency for all three
-  features. It changes protocol and lifecycle author preservation used by
+- PR #587 shipped the hard dependency for all three
+  features. It changed protocol and lifecycle author preservation used by
   Continuation and Rerun, and it owns `SubagentCollaboration`, `ThreadView`,
   `ThreadItemView`, Agent specs, and the main Agent test suites used by Feature
-  3. This plan must consume its canonical author and renderability contracts
-  after merge.
-- PR #592 (`outliner-runtime-recovery`) overlaps `ThreadView`,
-  `SubagentDetailView`, Agent rendering specs, and the shared E2E mock. All
-  three features wait for it; each must rebase and regenerate its file queue
-  from the resulting tree.
+  3. This plan consumes its canonical author and renderability contracts.
+- PR #592 (`outliner-runtime-recovery`) shipped its overlapping `ThreadView`,
+  `SubagentDetailView`, Agent rendering spec, and shared E2E mock changes. Each
+  feature must rebase and regenerate its file queue from the resulting tree.
 - PR #591 is currently plan-only. Its later host composition implementation may
   overlap lifecycle ownership, so each feature repeats the collision check when
   it claims work.
-- The current review queue already contains two significant implementation
-  changes. No feature in this plan opens an implementation claim until that
-  queue has capacity and its dependencies have landed.
+- The current review queue already contains two significant plan-track claims.
+  No feature in this plan opens an implementation claim until that queue has
+  capacity.
 - The three features touch shared Agent surfaces. Land one complete feature at
   a time; rebase and rerun the file-level claim check before the next claim.
 
@@ -597,7 +595,7 @@ or main-owned release file change is expected from any feature PR.
 There are no unresolved product-direction questions in this plan. The following
 are empirical gates, not invitations to invent new mechanisms:
 
-- **OQ-1:** After #587 lands, does the captured failing delivery fixture already
+- **OQ-1:** On current `main`, does the captured failing delivery fixture already
   satisfy AC-19 and AC-20? If yes, Feature 3 adds/keeps the regression evidence
   and makes no second blank-message implementation.
 - **OQ-2:** Does the current canonical projector expose enough source-Turn
@@ -638,7 +636,7 @@ are empirical gates, not invitations to invent new mechanisms:
 
 ### Feature 3 checklist
 
-1. Rebase after #587 and #592 and replay the original delegated failure fixture
+1. Rebase onto current `main` and replay the original delegated failure fixture
    before editing production code.
 2. Add end-to-end busy-parent, restart, failed-generation, and exactly-once
    direct-parent delivery evidence around the existing ledger.

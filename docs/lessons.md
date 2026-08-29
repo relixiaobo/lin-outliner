@@ -1895,7 +1895,7 @@ the exact capacity while a partially selected multi-marker identity still counts
 and attempt a failing replacement over an unsettled operation while asserting no
 new request starts and no orphaned marker can return.
 
-## A persisted upgrade must cover every authority that can restore the other
+## A persisted upgrade or clean cut must cover every recovery authority
 
 PR #585's first authorship design made a new field strict everywhere and offered
 only a clone-scoped dev-data wipe. That would have quarantined installed Threads
@@ -1903,13 +1903,37 @@ whose append-only rollout and SQLite projection both contained the valid previou
 shape. Fixing only the ordinary read path would still fail when either store later
 rebuilt the other.
 
-**Keep new admission and writes strict, but apply one exact-schema upgrade at
-every persisted read seam that can become recovery authority.** Materialize one
-explicit conservative value such as `unknown`, then let canonical validation and
-all downstream recovery operate on that value. Do not recursively rewrite raw
-JSON, infer trust from surrounding records, or let the compatibility rule become
-a default for new callers.
+**When old data must survive, keep new admission and writes strict but apply one
+exact-schema upgrade at every persisted read seam that can become recovery
+authority.** Materialize one explicit conservative value such as `unknown`, then
+let canonical validation and all downstream recovery operate on that value. Do
+not recursively rewrite raw JSON, infer trust from surrounding records, or let
+the compatibility rule become a default for new callers.
+
+When the PM instead selects a destructive pre-release clean cut, do not ship a
+partial migration. Stop every process, reset every installed and clone-scoped
+store that can restore the old shape, and verify fresh packaged and development
+launches before release. Keep that reset manual and explicit; product startup
+must neither infer nor delete old user data automatically.
 
 Regression coverage must exercise both recovery directions, every nested event
 carrier, and a malformed near-match that still fails closed. A compatibility test
 that covers only the primary store proves normal startup, not durable recovery.
+
+## Resource ownership follows admission disposition, not optional layout data
+
+PR #587 initially collapsed `TurnSubmitResponse` to `Turn | null` in the
+renderer. A new Turn returned layout data, but an accepted active-Turn steer
+returned `turn: null`; treating that nullable field as the admission result
+revoked an image preview lease even though the attachment had become canonical.
+
+**Preserve the complete admission envelope across consumer boundaries.** Drive
+resource ownership, cleanup, and retry decisions from explicit acceptance or
+deduplication fields. Optional entities such as a newly created Turn may drive
+presentation and anchoring only; their absence cannot mean that no mutation was
+accepted.
+
+Regression coverage must include a successful admission that returns no new
+container, then exercise the retained resource again. Cover the deduplicated and
+rejected branches separately so cleanup is not made permissive to fix the
+accepted path.
