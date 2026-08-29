@@ -553,7 +553,8 @@ Skills are part of capability and bind to the **agent identity, not the conversa
 in [[agent-skills-authoring]]; two facts this plan relies on:
 
 - **One unified library, many bindings.** Skills live in shared stores
-  (`built-in` / `user` / `project` / `dynamic`), not per-agent folders; an agent
+  (`built-in` / `managed` / `user` / `project`) plus explicitly bound local
+  directories, not per-agent folders; an agent
   *binds* the ones it carries by name (`AgentDefinition.skills`, `agentSubagents.ts`).
   A Channel that needs skill X staffs a member who binds X — never a room-owned skill
   bag (that would reintroduce per-session config). So the coordinator's "who can do X?"
@@ -562,13 +563,12 @@ in [[agent-skills-authoring]]; two facts this plan relies on:
   shared `user` store under review / audit / rollback, never the `built-in` floor,
   never self-escalating tools — see [[agent-skills-authoring]].
 
-**Agent self-/cross-configuration (directional, owned here, not yet pinned).** The same
-governed-write pattern as the memory line and skills extends to an agent editing its
-own capability (prompt / model / effort / bound skills) and — at least the main agent —
-configuring others. The single-agent `config` tool is built in
-[[agent-self-modification]]; the **multi-agent "configure each other"** angle is this
-plan's (it needs multiple agents → P3). Unresolved cut: **main-agent-first vs every
-specialist self-configuring from the start** (Open questions).
+**Agent self-/cross-configuration is shelved.** Tenon has Settings-owned
+configuration and validated Host loaders/writers, but no model-visible `config`
+tool and no ratified authority for one agent to reconfigure another. The archived
+[agent-self-modification](../archive/agent-self-modification.md) record is a path
+not taken, not a forward contract. Reopening the capability requires a PM decision
+on who may configure whom plus a complete validation, trust, and recovery design.
 
 ### Runtime — the per-turn engine stays below this redesign
 
@@ -1137,10 +1137,10 @@ floor-aware delivery in Channels + `needs-input` wake ride **P3** (they need the
 coordinator/floor). The **hooks** subsystem is out of this plan (forward-pointer in
 §Background tasks).
 
-**Skills** (structure + self-authoring) are built in [[agent-skills-authoring]] across
-the same milestones (its `built-in` source is a program-M0 protocol add; authoring
-lands at M1). **Agent self-/cross-configuration** is gated on the *who-configures-whom*
-decision (Open questions); the single-agent `config` tool is [[agent-self-modification]].
+**Skills** (structure + self-authoring) are built in [[agent-skills-authoring]]
+across the same milestones. Model-visible self-/cross-configuration is shelved;
+the archived [agent-self-modification](../archive/agent-self-modification.md)
+record carries no current tool or protocol commitment.
 
 ## Rejected / reconsidered (decision record)
 

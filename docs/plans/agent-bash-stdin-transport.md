@@ -378,8 +378,13 @@ storage fixtures in this feature.
 
 This foundation is a prerequisite of the separately planned
 [`outline-cli-skill-efficiency`](https://github.com/relixiaobo/lin-outliner/pull/595)
-feature. It does not depend on that feature or Source PR-I, and it modifies no
-Outline path. The consumer PR rebases after this foundation merges and verifies
+feature. Its behavior does not depend on that feature or Source PR-I, and it
+modifies no Outline path. Its implementation starts after the complete
+`host-runtime-composition` delivery set: this plan adds Agent IPC projection,
+registrations, service dependencies, and `main.ts` wiring that must target the
+final Agent Host and transport owners rather than today's implicit composition
+root. This is an A7 architecture-order edge, not a Source or Bash semantic
+dependency. The consumer PR rebases after this foundation merges and verifies
 the public `stdin` and effective-consumer interfaces against real Outline schema
 maxima. It owns the two-Node escaping/capacity and three-command end-to-end
 fixtures. The plural structural binding envelope, internal-text dependency set,
@@ -388,12 +393,14 @@ persistence and IPC-interface changes, so this generalized plan returns to PM
 ratification before implementation. It does not alter the Core document
 protocol, an Outline schema, or the Agent file-resource model.
 
-The collision self-check found one open PR, `outline-cli-skill-efficiency`, whose
-current plan discusses this missing interface but claims no generic Agent file.
-That PR will retain only the observable Bash/consumer-registry dependency and its
-own Outline evidence. No other open PR currently claims the expected files
-below. A fresh `gh pr list` and actual-diff check run again immediately before
-implementation.
+The 2026-08-29 collision refresh found no open PR. The Host plan overlaps
+`src/main/main.ts`, Agent construction, transport ownership, lifecycle, and the
+renderer projection seam and therefore lands first. Agent Result And Resource
+Reference Lifecycle and Agent Failure Recovery overlap this plan's protocol,
+codec, payload, context, Thread, and renderer files and follow this feature in
+that order. The Outline consumer retains only the observable Bash/consumer-
+registry dependency and its own Outline evidence. A fresh `gh pr list` and
+actual-diff check run again immediately before implementation.
 
 ## Implementation Boundary
 

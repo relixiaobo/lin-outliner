@@ -6,11 +6,11 @@ owns what no single feature plan should own alone: the shared **L0 foundation**,
 **dependency graph**, and the **release milestones M0–M3**. Member feature plans
 *reference* this doc; they must not re-describe the foundation.
 
-This is a **`meta`** plan — a standing reference (like `performance-optimization.md`
-and `ui-quality-roadmap.md`), not a unit of work. It exists because analyzing
-[[agent-conversation-model]] and [[agent-self-modification]] together revealed they are
-**not two plans but one program over a shared foundation** — and that foundation is
-mostly the *same* set of seams every agent plan was independently planning to cut.
+This is a **`meta`** plan — a standing reference, not a unit of work. It exists
+because the conversation, data, memory, Skill, question, and scheduling designs
+share the same persistence, identity, event, and runtime seams. Current runtime
+facts live in `docs/spec/`; current execution status and integration order live
+only in `docs/TASKS.md`.
 
 ## Member plans
 
@@ -20,11 +20,11 @@ mostly the *same* set of seams every agent plan was independently planning to cu
 | [[agent-conversation-model]] | Agent identity, DM/Channel conversations, the memory line, background tasks, multi-agent + coordinator routing | M0–M3 (the spine) |
 | [[agent-memory-model]] | The **render** projection of distilled memory + **Dream** consolidation semantics + the **user-as-agent** proposal (a thin layer atop data-model) | M1–M3 |
 | [[agent-skills-authoring]] | Skill **structure** (unified library + binding + `built-in` floor) and **governed self-authoring** | M0–M2 |
-| [[agent-self-modification]] | Self-observation, the `config` tool, **hooks**, config recovery, curation policy | M1–M3 |
+| [agent-self-modification](../archive/agent-self-modification.md) | Shelved decision record for model-visible configuration editing and hooks; it owns no current protocol | Outside the active program |
 | [[agent-ask-user-question-tool]] | The `ask_user_question` tool (structured pause/resume) | M1 — **done**: v1 #153, full version (refs/attachments + discuss action) **#198** |
 | [[agent-import-skill]] | Data import from other products (consumer of skills + ask_user_question) | M1–M2 |
 | [[agent-scheduled-routines]] | `command` NodeType + anacron scheduler + triggered runs | **done (#165)** |
-| [[agent-generative-ui]] | Inline HTML/SVG widgets in chat | M1–M2 (P3 priority) |
+| [agent-generative-ui](../archive/agent-generative-ui.md) | Shelved decision record for inline HTML/SVG widgets; it owns no current protocol | Outside the active program |
 | `docs/plans/archive/agent-tool-permissions-hardening.md` | Post-#60 permission correctness/hardening | done (#154) |
 | `agent-tool-result-trim` | Model-visible tool-result trimming | done (#128) |
 
@@ -53,8 +53,9 @@ Already real; the rebuild sits **on top**, it does not re-implement these:
 - **Compaction** — manual / automatic / reactive + tool-output slimming + recent-file
   restore; `compaction.completed` already records a summary over a **retained**
   range (the distillation backbone).
-- **Skills** — discovery + invocation from `built-in` / `user` / `project` /
-  additional / `dynamic` sources; path-conditional; embedded shell; `allowed-tools`
+- **Skills** — discovery + invocation from `built-in` / `managed` / `user` /
+  `project` sources plus explicitly bound local directories; path-conditional;
+  embedded shell; `allowed-tools`
   run-scoped preapproval; `model`/`effort` override; `context: fork`; slash-only
   built-in `/skillify`; governed file-tool self-authoring with hot-reload and
   `skill.*` audit events (`docs/spec/agent-skills.md`).
@@ -81,15 +82,15 @@ Already real; the rebuild sits **on top**, it does not re-implement these:
   definitions (Form⇄Raw editor, hot-reload, disable-by-identity) + subagent system-prompt
   unification (#167).
 
-**Not shipped (the remaining build surface, as of 2026-06-12):** prompt-only hook
-policy/execution; config recovery/rollback; skill curation; **main-agent registry
-unification** (the multi-agent coordinator #179 and per-agent POV #212 shipped — only
-registry unification remains); the **user-as-agent** exploration ([[agent-memory-model]]
-§4 — cross-agent memory sharing itself shipped #200). The one *active* build lane is the
-skill-system tail is now security/curation only (executable support-file sandbox
-ratification + opt-in curation dry-run); the data-gated automatic associative retrieval
-stays deferred. Mid-run **`needs-input` is deferred by decision** — subagents surface
-clarifications via their terminal result, not a mid-run ask.
+**Not shipped:** skill curation; **main-agent registry unification** (the
+multi-agent coordinator #179 and per-agent POV #212 shipped); and the
+**user-as-agent** exploration ([[agent-memory-model]] §4 — cross-agent memory sharing
+itself shipped #200). The active Skill tail is security/curation only (executable
+support-file sandbox ratification + opt-in curation dry-run); data-gated automatic
+associative retrieval remains deferred. Mid-run **`needs-input` is deferred by
+decision** — subagents surface clarifications through their terminal result. Model-
+visible configuration editing, hooks, and generative UI are shelved product
+directions, not unfinished milestones or reserved interfaces.
 
 ## Execution policy — pre-release clean cut
 
@@ -120,43 +121,37 @@ that consume it — proof it belongs here, not inside one feature plan.
 
 | # | Seam | What | Consumers |
 |---|---|---|---|
-| F1 | **Agent identity record** | Stable `agentId` + persisted identity record exist for the built-in assistant; registry unification and multi-agent identity management stay in M3 | conversation-model (memory), self-modification (config/status), skills (binding) |
+| F1 | **Agent identity record** | Stable `agentId` + persisted identity record exist for the built-in assistant; registry unification and multi-agent identity management stay in M3 | conversation-model (memory), skills (binding) |
 | F2 | **session → `{conversation, run}` (+ minimal join)** | Storage is re-keyed to conversation/run/agent families, run meta anchors execution to one conversation, conversation meta/cursors are separate files, and the current read seam joins target logs back into the reducer/runtime. Mixed-resolution (old segments → summaries) remains the **M1** enhancement. | conversation-model, scheduled-routines (persistence), single `recall` tool + internal evidence search, ask-question (events) |
 | F3 | **`actor` on message records** | `AgentEventMessageRecord.actor` is required; runtime-authored events use the stable assistant principal instead of a hardcoded `'pi-mono'` author | conversation-model (notifications, multi-agent POV, forwarding), task delivery |
-| F4 | **Internal domain-event bus + taxonomy** | The M0 bus exists with persisted-log, renderer-projection, trusted-observer, and hook-interceptor lanes. Consumer-specific notification/hook policy remains later work. | **notifications** (conv-model, trusted observer) + **hooks** (self-mod, untrusted) + ask-question + gen-ui + scheduled + config + skills |
+| F4 | **Internal domain-event bus + taxonomy** | The M0 bus exists with persisted-log, renderer-projection, and trusted-observer lanes. A future interceptor or widget surface requires a newly ratified trust and protocol design. | notifications (conv-model, trusted observer) + ask-question + scheduled + skills |
 | F5 | **`AgentSessionState` split** | Active-run state is structurally separated from the runtime session object and aligns with the F2 run log. Remaining session-shaped runtime fields are internal bridge debt, not a protocol shape for new consumers. | background tasks, scheduled routines, multi-agent channels |
-| F6 | **Protocol-surface type adds (consolidated)** | Consolidated event/type reservations landed for task, notification, config, review-card, skill audit, user-question/widget state, run meta, payload scope, and command nodes. The obsolete safety-mode and folder-capability protocol was later removed by the Full Access-only clean cut. | all plans |
+| F6 | **Protocol-surface type adds (consolidated)** | Consolidated types landed for task, notification, skill audit, user-question, run meta, payload scope, and command nodes. The obsolete safety-mode and folder-capability protocol was later removed by the Full Access-only clean cut. Shelved configuration and widget concepts have no reservation here. | active consumers only |
 
 ### Cross-plan event taxonomy (design ONCE)
 
-Every member plan independently planned to add events to `agentEventLog.ts` /
-`agentTypes.ts`. **Reconcile them into one taxonomy here**, then each plan emits/consumes
-its slice. cc-2.1's hook-event vocabulary (from self-modification) is the reference
-naming; align lifecycle points to it rather than inventing variants.
+The original member plans independently proposed additions to `agentEventLog.ts` /
+`agentTypes.ts`. The table below records the families that survived into current
+authority. It does not reserve event names for shelved features; a reopened feature
+must reconcile its interface against the current Agent Core protocol.
 
 | Event family | Emitted by | Consumed by | Notes |
 |---|---|---|---|
-| **Lifecycle** (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PreCompact`, `PostCompact`, `Stop`) | runtime | hooks (self-mod), notifications | cc-2.1 names; the hook event surface |
+| **Lifecycle** | runtime | runtime diagnostics, notifications | Current lifecycle facts are owned by `docs/spec/agent-core.md`; no public hook event vocabulary is reserved. |
 | **Run / execution** (`run.started/completed/failed`, `*_message.delta`, `thinking.delta`, `tool_call.*`, `tool_result.created`) | the run loop | run log, debug panel | live in the **run log** (F2), not the conversation log — keeps `tool_call ↔ tool_result` pairs off the shared channel stream |
 | **Capability audit** (`tool.capability.checked` → `tool.capability.resolved`, keyed by request id) | capability evaluator | run log, debug tooling | Synchronous `allow | unavailable` audit around default Full Access and explicit user blocks. There is no approval UI or `needs-input` branch. |
 | **Distillation** (`compaction.completed`, generalized) | compaction / consolidation | context assembly, navigation, recall, Dream span location | a recorded summary over a **retained** range; carries the addressable `source` down-pointer; Dream uses summaries as locators, then reads raw conversation/run evidence before writing memory ([[agent-data-model]]) |
-| **Task** (`TaskCreated`, `TaskCompleted`, `needs-input`) | task plane (conv-model) | task panel, notifications, hooks | self-mod's `TaskCreated/Completed` hooks **depend on conv-model building this** |
+| **Task** (`TaskCreated`, `TaskCompleted`) | task plane (conv-model) | task panel, notifications | Mid-run `needs-input` is deferred and no hook consumer is active. |
 | **Notification / attention** | task plane, runs | immediate origin target; visible conversations own in-stream + unread/OS projection | Issue children route first to their direct parent Agent Session; trusted internal observer; reuses **F3 `actor`** |
 | **`user_question.*`** (requested / answered / cancelled) | ask_user_question | ask-question UI, `needs-input` tasks | [[agent-ask-user-question-tool]] |
-| **`widget_state.updated`** | generative-ui | widget renderer, next-turn context | [[agent-generative-ui]] |
-| **`ConfigChange`** | config tool | config recovery, hooks, audit | [[agent-self-modification]] |
 | **`skill.*`** (create / patch / replace / enable / disable / rollback / curation) | skills authoring | skill audit, curation, hooks | [[agent-skills-authoring]] |
 | **`sys:lastRunAt`** (schedule fire cache) | scheduler | catch-up decision | [[agent-scheduled-routines]] |
 
-**Trust split (shared bus, separate dispatch).** Notifications are **trusted async
-observers**; hooks are an **untrusted extension surface** with interceptors
-(synchronous, can block/mutate, e.g. `PreToolUse`-deny) needing a sandbox/trust gate.
-Both ride the same F4 bus; they differ in dispatch + trust, not in the event taxonomy.
-Hook trust precedence: `system/admin > user > project > skill > model-suggested
-session hook` (self-modification). Caution (from cc-2.1 + hermes): both fragmented into
-per-consumer registries — "design the taxonomy once" is the cleaner target, but the
-fragmentation pressure is real; keep the *event definitions* unified even if dispatch
-is per-consumer.
+**Trust boundary.** Notifications are trusted asynchronous observers. A future hook
+system would be an untrusted extension surface whose interceptors could block or
+mutate execution. Sharing an internal bus does not authorize that surface and does
+not make old hook names part of the current protocol. Reopening hooks requires a
+separate trust, dispatch, failure, and sandbox decision before any event types land.
 
 ### Consolidated protocol-surface changes (A4 / A7, interface-first)
 
@@ -177,13 +172,12 @@ list — `src/core/types.ts`, `commands.ts`, `agentEventLog.ts`):
   pass reconciled the `checked/resolved` + `approval.*` dual-track).
 - `'built-in'` on `SkillDefinition.source` ([[agent-skills-authoring]]).
 - Pending-interaction types for `user_question.*` ([[agent-ask-user-question-tool]]) — **landed #153**.
-- `widget_state.updated` event ([[agent-generative-ui]]) — still reserved (gen-ui not built).
 - `command` NodeType + protected-field property + `sys:lastRunAt`
   (`CommandNode.sysLastRunAt`) ([[agent-scheduled-routines]]) — **landed #165**.
-- Review/approval-card + `ConfigChange` event types ([[agent-self-modification]]).
 
-(Not every item must land in one PR — but the **event taxonomy and naming** are decided
-together, here, so consumers don't diverge.)
+Shelved widget and self-configuration proposals reserve no event, review-card, or
+renderer protocol. Any future proposal must add only the interface its complete
+feature consumes.
 
 ## Dependency graph
 
@@ -199,23 +193,26 @@ L0.5 CLEAN CUT (pre-M1)
         │
 L1 SINGLE-AGENT CAPABILITY (M1)
    memory foundation (conv-model) · skills self-authoring (skills-authoring)
-   · self-observation + config tool (self-mod) · ask_user_question (its plan)
+   · ask_user_question (its plan)
         │
 L2 OFF-FLOOR + EXTENSION (M2)
    background task panel + notifications + needs-input (conv-model)
-   · prompt-only hooks (self-mod) · single recall tool + Dream extraction
+   · single recall tool + Dream extraction
      (raw-record evidence, no foreground inline memory writer, no model-visible past_chats)
-   · config recovery + curation
+   · skill curation
         │
 L3 MULTI-AGENT (M3)
    sequential Channels + coordinator (conv-model) · per-agent POV derivation
-   · cross-agent configuration · command hooks (self-mod) · memory v3 · registry unification
+   · memory v3 · registry unification
+
+SHELVED OUTSIDE THE GRAPH
+   model-visible configuration editing · hooks · generative UI
 ```
 
-Feature consumers slot where their deps land: [[agent-import-skill]] at M1 (needs
-skills save-as-adapter + ask_user_question), [[agent-scheduled-routines]] at M2 (needs
-F5 split + triggered runs), [[agent-generative-ui]] at M1/M2 (needs F4 bus; P3 priority,
-mostly independent).
+Feature consumers slot where their dependencies land: [[agent-import-skill]] at M1
+(needs the Skills save-as adapter + ask_user_question) and
+[[agent-scheduled-routines]] at M2 (needs the F5 split + triggered runs). The
+archived generative-UI proposal has no slot in this graph.
 
 ## Release milestones
 
@@ -223,9 +220,9 @@ mostly independent).
 |---|---|---|
 | **M0 — Foundation** · ✅ #150 | F1–F6: identity · session→`{conversation, run}` (+ `Principal`/`members`, no stored `kind`, **+ minimal run-log-join assembly**) · actor · **internal domain bus** + taxonomy (canonical permission names) · AgentSessionState split · consolidated protocol-surface adds | none directly — unblocks the whole program, one design pass, no rework |
 | **M0.5 — Clean cut** · ✅ #151 | Rename/remove remaining agent `session*` protocol/index/API bridge debt; update consumers to `conversationId`/`runId`/`agentId`; delete old aliases instead of preserving compatibility; event store deletes obsolete `sessions/` + derived `indexes/` after the format cut | none directly — prevents M1 from building on transitional names or stale storage assumptions |
-| **M1 — Single-agent "self"** · ✅ #152–#156 | memory foundation (global-default + **opt-in isolation**; **runtime-owned append surface**, not file_write; profile UI; reminder injection) · **mixed-resolution enhancement** (old segments render as compaction summaries — the run-log join itself ships in M0) · canonical DM + user-creatable Channels · skills self-authoring · config tool + runtime_status + doctor · ask_user_question | the agent can **use remembered context**, can be **configured**, can **author its own skills**, can **ask structured questions** — the bulk of perceived value |
-| **M2 — Off-floor + extension** · ▣ mostly landed #157–#167 (remaining: prompt-only hooks · config recovery · skill curation) | background task panel + notifications + needs-input · prompt-only hooks · clean-cut removal of foreground inline memory writes and model-visible `past_chats` · single read-only `recall` tool over active memory entries with optional nested evidence expansion · memory v2 Dream extraction over raw conversation/run records, with summaries/search only as locators · config recovery + skill curation | long tasks **don't go silent**, work is **observable**, memory becomes **automatic and less overfit**, runtime self-heals; old conversations not distilled into memory are intentionally not foreground-recallable |
-| **M3 — Multi-agent** · ▣ core sequence landed (#179 M3-A Channel + coordinator · #200 M3-B cross-agent memory + isolation gate · #202 parallel execution · #212 M3-C per-agent POV) — **the M3 multi-agent sequence is complete** | sequential→parallel Channels + coordinator ✅ · per-agent POV ✅ · cross-agent memory ✅ · **remaining (deferred/follow-up): cross-agent configuration · command hooks · memory v3 consolidation · main-agent registry unification** | **IM-native multi-agent** collaboration |
+| **M1 — Single-agent "self"** · ✅ #152–#156 | memory foundation (global-default + **opt-in isolation**; **runtime-owned append surface**, not file_write; profile UI; reminder injection) · **mixed-resolution enhancement** (old segments render as compaction summaries — the run-log join itself ships in M0) · canonical DM + user-creatable Channels · skills self-authoring · ask_user_question | the agent can **use remembered context**, **author its own skills**, and **ask structured questions** |
+| **M2 — Off-floor + extension** · ▣ mostly landed #157–#167 (remaining active tail: skill curation) | background task panel + notifications · clean-cut removal of foreground inline memory writes and model-visible `past_chats` · single read-only `recall` tool over active memory entries with optional nested evidence expansion · memory v2 Dream extraction over raw conversation/run records, with summaries/search only as locators · skill curation | long tasks **do not go silent**, work is **observable**, and memory becomes **automatic and less overfit**; old conversations not distilled into memory are intentionally not foreground-recallable |
+| **M3 — Multi-agent** · ▣ core sequence landed (#179 M3-A Channel + coordinator · #200 M3-B cross-agent memory + isolation gate · #202 parallel execution · #212 M3-C per-agent POV) — **the M3 multi-agent sequence is complete** | sequential→parallel Channels + coordinator ✅ · per-agent POV ✅ · cross-agent memory ✅ · **remaining architectural tails: memory v3 consolidation · main-agent registry unification** | **IM-native multi-agent** collaboration |
 
 **Cross-milestone note — per-agent identity started early (2026-06-07, #164).** Agent-owned
 subagent memory (an M2 slice on top of the Dream milestone) gives every fresh typed subagent its
@@ -342,14 +339,13 @@ reinvent.
   **sequencing, the unified event taxonomy, and protocol-change coordination** (so
   consumers don't diverge). It remains the owner of conversations / memory / tasks /
   multi-agent.
-- **[[agent-self-modification]]** — slimmed: §7 Skill Maintenance + §8 Curation move to
-  [[agent-skills-authoring]]; its hook system references the **F4 event bus** here; its
-  `TaskCreated/TaskCompleted/TeammateIdle/Notification` hooks are explicitly **gated on
-  conv-model's task/channel layer (M2/M3)**.
+- **[agent-self-modification](../archive/agent-self-modification.md)** — archived as
+  a shelved decision record. Its old configuration and hook surfaces are not members
+  of the current protocol or milestone graph.
 - **[[agent-skills-authoring]]** — new; the single home for skill structure + authoring.
-- The remaining plans (**ask-user-question, generative-ui, scheduled-routines,
-  import-skill, permissions-hardening**) stay as feature plans; their event additions
-  are reconciled into the taxonomy above; their build slots into the milestones.
+- Ask-user-question, scheduled-routines, import-skill, and permissions-hardening
+  retain their historical program relationships. Generative UI is shelved and has
+  no event reservation or build slot.
 
 ## Convergence: delegation run record → agent-data-model contract
 
@@ -398,8 +394,9 @@ the M-series is free to design it.
 
 - **Milestone granularity for PRs.** M0 landed as one foundation implementation;
   later milestones should prefer feature-sized PRs now that the shared seams exist.
-- **Who configures whom** (cross-agent configuration scope: main-agent-first vs every
-  specialist) — directional, owned by [[agent-conversation-model]] / [[agent-self-modification]].
+- **Agent configuration authority.** Model-visible self-/cross-configuration is
+  shelved. Reopening it requires a new PM decision on who may configure whom and a
+  complete validated write design; this program makes no default choice.
 - **Event taxonomy ownership after M0.** Current event/type facts live in
   `docs/spec/agent-core.md` and `docs/spec/agent-model-runtime.md`; this meta plan
   remains the milestone map rather than the runtime contract.

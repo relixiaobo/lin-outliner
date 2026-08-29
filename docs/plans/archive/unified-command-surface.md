@@ -2478,7 +2478,7 @@ only pin state remains in `workspace`. Two presentation decisions are also close
   this change. One correction remains outstanding: **the filename says "extension"
   while its own non-goals exclude one**, and renaming breaks the `docs/TASKS.md`
   link, so it needs the main agent.
-- `reference/agent-conversation-model.md` / `reference/agent-data-model.md` — authorities for the
+- `archive/agent-conversation-model.md` / `archive/agent-data-model.md` — historical authorities for the
   handoff content shape in D9.
 
 ## Collision self-check

@@ -1,206 +1,163 @@
 # File Preview Extensions
 
+**Shape:** (b) A SET of two independent complete user-visible features: Office
+preview and static URL reading. Each ships in its own PR after the shared Host
+and Source foundations.
+
 ## Goal
 
-Complete the remaining high-value readers on top of the existing unified file
-preview surface:
+Complete the two remaining high-value readers on the unified preview surface:
 
-- best-effort DOCX, XLSX, and PPTX rendering for `local-file` and `asset`
-  targets; and
-- an optional static reader for `http(s)` URL targets when a readable,
-  non-interactive representation is preferable to the hardened webview.
+- bounded, best-effort DOCX, XLSX, and PPTX preview; and
+- a static readable presentation for an explicit `http(s)` Source alongside
+  the existing hardened interactive webview.
 
-This plan has shape **(b): a set of two independent complete features**. Office
-preview and static URL reading are separate PRs. Each must be useful, secure,
-and reviewable on its own; neither is groundwork that waits for the other.
+Both features consume the final Source selection/resolution contract from
+Source PR-I and the final `createResourcePreviewHost()` ownership from
+`host-runtime-composition`. They must not extend the old special file/image Node
+model or add work to the implicit `main.ts` composition root.
 
 ## Non-goals
 
-- No annotation, comments, quote insertion, or bidirectional anchors.
-- No editable artifact surface. Preview remains read-only.
-- No QuickLook, LibreOffice, or other OS-specific/external conversion runtime.
-- No replacement for inline `ImageRow` or `AttachmentRow` rendering.
-- No browser automation, DOM control, upload, capture, or network interception.
-- No new Agent persistence or preview authority. Thread content uses the same
-  `PreviewTarget` sources as every other product surface.
-- No compatibility reader for removed development data.
+- No editing, annotations, comments, quote anchoring, or Office formula/macro
+  execution.
+- No new preview target, file store, Agent resource kind, or renderer filesystem
+  authority.
+- No QuickLook, LibreOffice, browser automation, authenticated-page scraping,
+  or persistent webview-cookie transfer into static reading.
+- No third Office or webpage extraction implementation beside existing product
+  readers.
+- No compatibility reader for retired development formats.
 
 ## Design
 
-### Canonical target and source model
+### Requirements
 
-`PreviewTarget` remains the shared routing contract:
+- **FR-1:** Every preview begins from the final selected Source and Host resolver;
+  renderer never receives filesystem or network authority.
+- **FR-2:** Office preview and Agent Office reading consume one bounded extraction
+  service and one archive/security policy.
+- **FR-3:** Static preview and Agent webpage reading consume one explicit page
+  reader and one network/sanitization policy.
+- **FR-4:** Partial, unsupported, denied, and failed reads remain distinguishable
+  and preserve an authorized fallback action.
+- **FR-5:** Neither feature creates a new persistence store, target kind, pane
+  type, or compatibility path.
 
-```ts
-type PreviewTarget =
-  | {
-      kind: 'local-file';
-      path: string;
-      entryKind: 'file' | 'directory';
-      label?: string;
-    }
-  | {
-      kind: 'asset';
-      assetId: string;
-      label?: string;
-    }
-  | {
-      kind: 'url';
-      url: string;
-      label?: string;
-    };
-```
+### Shared Source and preview boundary
 
-The main process resolves a target to either a file descriptor or a normalized
-URL descriptor. File descriptors identify their authority as `local-file` or
-`asset`; renderer code never infers a filesystem path for an asset.
+The selected resolved Source remains the only entry to preview. `PreviewTarget`
+continues to identify local-file, AssetRecord, or URL authority; main resolves it
+to a typed descriptor and the renderer chooses the first matching
+`PreviewRendererEntry` by registry order. The existing `FilePreviewShell`,
+panel history, Open/Reveal/Copy actions, error states, and metadata fallback stay
+authoritative.
 
-Agent Core does not add another target kind:
+Loose Thread and Agent references reach the same target resolver. They do not
+add an `agent-payload` target or expose managed paths to renderer. Agent Result
+And Resource Reference Lifecycle may later supply another canonical reference,
+but it resolves through this same Host boundary.
 
-- a `ThreadAttachmentContent` with `source.kind === 'localFile'` routes to a
-  Thread-authorized `local-file` target for its canonical live path;
-- a `ThreadAttachmentContent` with `source.kind === 'threadPayload'` routes to a
-  Thread-authorized `local-file` target resolved from managed storage; and
-- file paths and images referenced by command/tool Items route through the same
-  local-file or asset authority as equivalent Outliner content.
+### Feature 1: Office preview
 
-The identity chain is therefore `ThreadItem -> source-owned PreviewTarget`, not
-a preview-specific file store. A forked Thread keeps Item history/provenance,
-retains external live paths, and copies only inherited Thread-managed payloads
-into the fork's existing payload store.
+Create one Host-owned Office extraction service used by both preview and Agent
+file reading. Consolidate the existing hardened PPTX structural parser and the
+current DOCX/XLSX conversion path behind that service before adding a renderer;
+preview must not become a third parser with different limits or security rules.
 
-### Shared panel shell and registry
+The service returns a bounded typed document:
 
-Every target opens the existing `file-preview` panel view. The shell owns:
+- DOCX: headings, paragraphs, lists, tables, safe links, and bounded images;
+- XLSX: sheet metadata and bounded rows/columns with cached values; and
+- PPTX: slide order, text, bounded images, notes where admitted, and basic
+  geometry sufficient for a readable slide view.
 
-- Back through panel history;
-- source identity and type;
-- source-aware Open Original, Reveal, or Copy actions;
-- loading, parse failure, unsupported, and oversized states; and
-- a compact renderer toolbar slot.
+One archive policy owns compressed size, entry count, decompressed bytes,
+relationships, embedded media, sheets/rows/columns, slides, and timeouts.
+Macros, OLE, external relationships, formula execution, scripts, and active
+content remain inert. Unsupported constructs produce explicit partial-coverage
+facts rather than disappearing silently.
 
-Renderer selection remains registry-driven:
+Renderer output uses React data structures, not unsanitized generated HTML.
+Object URLs for admitted embedded media are component-owned and revoked on
+teardown. Parse failure and partial coverage retain Open Original and the
+metadata fallback.
 
-```ts
-interface PreviewRendererEntry {
-  id: string;
-  priority: number;
-  match(source: PreviewSourceDescriptor): boolean;
-  component: PreviewRendererComponent;
-  toolbar?: PreviewToolbarComponent;
-}
-```
+### Feature 2: static URL reader
 
-The fallback metadata card is the lowest-priority registry entry. A failed
-Office/static-reader parse falls back to that card or the existing URL webview;
-it never creates a separate navigation surface.
+Factor the existing Defuddle-based page extraction used by Agent web fetch into
+a Host-owned `ExplicitPageReader`. The Agent tool and preview presentation both
+consume that service; neither wraps the other and neither duplicates network or
+sanitization policy.
 
-### Office reader feature
+The reader is invoked only from an explicit selected URL Source. It enforces
+scheme, redirect, private-address, timeout, byte, content-type, encoding, and
+image budgets in main and returns a bounded typed reader document with title,
+byline, canonical source URL, semantic blocks, safe links, and admitted images.
+It uses no persistent preview cookies and does not claim access to signed-in
+content.
 
-One complete Office PR adds three best-effort readers after a dependency and
-license review:
+The URL preview offers Interactive and Reader presentations through one compact
+mode control. Failure in Reader leaves the interactive webview available; it
+does not create a second pane type or navigation history. Remote images follow
+one shared proxy/cache/strip policy and never enter renderer as unrestricted
+URLs.
 
-| Format | Preferred output | Required behavior |
-| --- | --- | --- |
-| DOCX | semantic HTML | headings, paragraphs, lists, tables, images, and links |
-| XLSX | bounded table view | sheet selector, row/column bounds, values, and basic formatting |
-| PPTX | bounded slide view | slide selector, text, images, and basic geometry |
+### Dependencies and collisions
 
-The implementation must:
-
-- operate on bytes delivered by existing preview commands;
-- cap input size, decompressed entry count, decompressed bytes, sheets, rows,
-  columns, slides, and embedded media;
-- sanitize every generated HTML fragment before it reaches React;
-- keep scripts, macros, external relationships, and active content inert;
-- proxy embedded images through object URLs owned by the preview component and
-  revoke them on teardown;
-- expose a useful parse error and preserve Open Original; and
-- avoid adding a dependency to the main bundle when parsing can remain in the
-  sandboxed renderer without Node access.
-
-DOCX semantic fidelity is preferred over page-perfect imitation. XLSX and PPTX
-may be deliberately partial, but unsupported constructs must degrade visibly
-rather than disappear silently.
-
-### Static URL reader feature
-
-The optional URL-reader PR adds a second presentation for an existing `url`
-target. The hardened webview remains available for interactive pages and signed-
-in content.
-
-Main performs the network read so redirects, byte limits, timeouts, content
-type, and address policy are enforced outside the renderer. Extraction produces
-a typed, bounded reader document containing title, byline, source URL, text,
-safe links, and optional images. Renderer sanitizes the final HTML again before
-display.
-
-The request policy must reject non-HTTP schemes, loopback/private-network
-destinations unless an existing product policy explicitly allows them, redirect
-escapes, oversized bodies, and unsupported content encodings. Cookies and the
-persistent Preview webview session are not copied into the static fetch path.
-
-Remote images use one ratified policy for the whole reader document: proxy and
-cache with strict limits, inline already-fetched safe bytes, or strip. Renderer
-HTML never receives unrestricted remote image URLs.
-
-### Routing and interaction
-
-The common click router continues to distinguish Node navigation from preview:
-
-```text
-node       -> Outliner navigation
-local-file -> file-preview
-asset      -> file-preview
-url        -> URL preview
-```
-
-Plain click opens in the current workspace panel and preserves Back. Cmd/Ctrl-
-click opens beside the current panel. A click originating in `ThreadDock` uses
-the focused workspace panel, falling back to the first panel; it does not turn
-the dock into a second preview container.
-
-Composer/editor attachment controls remain editing controls. Preview opens from
-the rendered `userMessage` Item or an explicit attachment action, never from a
-caret interaction.
-
-### Security and process ownership
-
-- Treat local files, assets, Office archives, extracted HTML, and remote pages
-  as untrusted input.
-- Keep Node out of renderer. All filesystem and network authority stays in main
-  or existing internal protocols/preload commands.
-- Validate realpaths and asset IDs before minting internal URLs; never place a
-  raw local path in a fetch URL.
-- Render SVG as an image, not inline executable markup.
-- Block Office macros, OLE objects, external relationships, formula execution,
-  and script-bearing HTML.
-- Keep `shell.openPath` and `shell.openExternal` source-aware and main-owned.
-- Preserve the packaged renderer CSP. A reader must not widen global
-  `script-src`, `connect-src`, or `frame-src`.
-- Apply reduced motion/transparency/contrast behavior and the existing neutral
-  focus/selection system to new controls.
+Source PR-I and the complete Host composition set land before either feature.
+Source PR-F may land independently after PR-I; a preview feature does not depend
+on its layout, but it must not implement concurrently against the same preview
+shell/toolbar files. The translation-geometry unit in
+`interaction-jank-cleanups` also touches URL/preview scheduling and must be
+ordered by the live file check rather than developed in parallel.
 
 ### Verification
 
-Each feature PR includes focused parser limits and malformed-input tests,
-renderer routing/fallback tests, and light/dark visual verification. Office
-fixtures cover valid examples, encrypted/macro-bearing files, archive bombs,
-broken relationships, and oversized content. URL fixtures cover redirects,
-timeouts, private addresses, malformed HTML, remote images, and sanitization.
+Office fixtures cover valid files, malformed/encrypted/macro-bearing packages,
+archive bombs, external relationships, oversized content, partial coverage, and
+Agent/preview parity. URL fixtures cover redirects, private addresses, timeout,
+malformed HTML, sanitization, remote images, cancellation, and interactive
+fallback. Both features include light/dark, narrow-pane, keyboard, reduced-
+motion, and renderer-without-Node evidence.
 
-Run the repository-required typecheck, relevant Core and renderer suites,
-focused E2E coverage, docs check, and diff check before marking either PR ready.
+## Acceptance Criteria
+
+- **AC-1:** DOCX, XLSX, and PPTX fixtures render useful bounded content from the
+  same extraction result Agent file reading consumes.
+- **AC-2:** Archive bombs, macros, OLE, external relationships, formula execution,
+  scripts, oversized media, and malformed Office files cannot execute or bypass
+  the shared limits.
+- **AC-3:** Reader mode returns a bounded semantic document for an explicit
+  public URL and rejects private-address/redirect/size/timeout policy failures
+  without affecting interactive preview.
+- **AC-4:** Interactive and Reader presentations share one URL target and panel
+  history; switching mode creates no second navigation or storage authority.
+- **AC-5:** Renderer receives typed data/object URLs only, revokes owned media on
+  teardown, and remains free of Node/filesystem/network authority.
+- **AC-6:** Source PR-F, Office/Reader work, and translation-geometry work have no
+  concurrent claim on overlapping preview shell files.
 
 ## Open questions
 
-- DOCX library: semantic `mammoth` output or a more visual renderer after bundle,
-  CSP, and sanitization comparison?
-- Which maintained PPTX parser meets the archive-limit and no-script contract?
-- Should XLSX display formulas as source text, cached values, or both? Formula
-  execution is out of scope regardless.
-- Which single remote-image policy should the static URL reader use? (Whether the
-  reader is valuable beside the hardened webview is **settled: yes** — it gained a
-  second consumer when `unified-command-surface.md` made explicit page reading the
-  approved path for capture and agent context. It is invoked there through
-  `ExplicitPageReader`, never from the ambient hotkey capture seam.)
+- Which maintained pure TypeScript DOCX/XLSX libraries best satisfy the shared
+  typed-output and archive-budget contract? Resolve with a dependency/license
+  spike inside the Office PR; reject a candidate that requires a second parser
+  or packaged external runtime.
+- Which bounded remote-image policy should `ExplicitPageReader` use? Choose one
+  policy for both Agent and preview consumers and record it in the current spec.
+
+These are implementation selections inside fixed security and ownership
+boundaries, not permission to change the feature shape.
+
+## Implementation checklist
+
+- [ ] Land Source PR-I and Host composition; regenerate exact preview and
+      extraction ownership from current symbols.
+- [ ] Consolidate Office extraction before adding Office renderers.
+- [ ] Factor `ExplicitPageReader` before adding the Reader presentation.
+- [ ] Keep each feature independent and avoid overlap with Source PR-F or
+      translation-geometry work.
+- [ ] Update current preview, workspace, Agent-tool, and security specs.
+- [ ] Run typecheck, relevant Core/renderer/E2E suites, docs check, diff check,
+      and light/dark accessibility verification per feature.

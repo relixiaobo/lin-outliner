@@ -249,8 +249,9 @@ that can become split-brain.
 
 ### Feature 2: Make whole-Turn Rerun explicit
 
-This is one complete feature PR and may land before Feature 1 after #587 and
-#592 have landed.
+This is one complete feature PR and may land before Feature 1 after the complete
+foundation chain in **Collision result** has landed. #587 and #592 are already
+part of that baseline; they are not the only prerequisites.
 
 **FR-5: One semantic name.** Rename every product and code surface that means
 "replay the accepted input from the beginning" from Retry to Rerun. This
@@ -282,9 +283,10 @@ side effects.
 
 ### Feature 3: Generation-scoped delegated failure truth
 
-This is one complete feature PR after #587 and #592. It includes the original
-blank-transcript regression closure because both symptoms arise on delegated
-delivery surfaces, while reusing #587's mechanism.
+This is one complete feature PR after the complete foundation chain in
+**Collision result**. It includes the original blank-transcript regression
+closure because both symptoms arise on delegated delivery surfaces, while
+reusing #587's mechanism.
 
 **FR-7: Existing delivery path is authoritative.** A terminal background child
 generation writes one notification row through the existing settlement
@@ -573,7 +575,7 @@ or main-owned release file change is expected from any feature PR.
 
 ### Collision result
 
-- PR #587 shipped the hard dependency for all three
+- PR #587 shipped the historical input foundation for all three
   features. It changed protocol and lifecycle author preservation used by
   Continuation and Rerun, and it owns `SubagentCollaboration`, `ThreadView`,
   `ThreadItemView`, Agent specs, and the main Agent test suites used by Feature
@@ -581,12 +583,14 @@ or main-owned release file change is expected from any feature PR.
 - PR #592 (`outliner-runtime-recovery`) shipped its overlapping `ThreadView`,
   `SubagentDetailView`, Agent rendering spec, and shared E2E mock changes. Each
   feature must rebase and regenerate its file queue from the resulting tree.
-- PR #591 is currently plan-only. Its later host composition implementation may
-  overlap lifecycle ownership, so each feature repeats the collision check when
-  it claims work.
-- The current review queue already contains two significant plan-track claims.
-  No feature in this plan opens an implementation claim until that queue has
-  capacity.
+- The complete Host composition set, Agent large-text argument foundation, and
+  Agent Result And Resource Reference Lifecycle land first. The first two settle
+  the final Agent Host/transport and canonical-to-renderer projection mechanism;
+  the resource lifecycle then changes the same protocol, codec, ContextProjector,
+  Thread lifecycle, renderer store, and Thread surfaces this plan consumes.
+  Building recovery against any earlier shape would knowingly create rework and
+  duplicate authority at the next cut.
+- No implementation PR is open at the 2026-08-29 refresh.
 - The three features touch shared Agent surfaces. Land one complete feature at
   a time; rebase and rerun the file-level claim check before the next claim.
 

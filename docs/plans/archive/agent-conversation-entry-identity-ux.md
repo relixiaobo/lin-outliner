@@ -10,13 +10,13 @@ direction. Implementation owners are unassigned.
 This plan is the UX layer over already-ratified conversation semantics. It
 introduces no new conversation primitives. Read first:
 
-- `docs/plans/reference/agent-conversation-model.md` — canonical DM per agent
+- `docs/plans/archive/agent-conversation-model.md` — canonical DM per agent
   (find-or-create, continuous), Channels as named rooms, derived (not stored)
   kind, "a DM never converts in place", `@` scoped to roster, capability binds
   to the agent identity.
 - `docs/spec/agent-core.md` — current Thread/Turn/Item and delivery foundation
   while running, whole reply lands on completion, drill-in to run panel).
-- `docs/plans/reference/agent-program.md` — M3 sequencing; M3-A (#179) shipped the
+- `docs/plans/archive/agent-program.md` — M3 sequencing; M3-A (#179) shipped the
   `actor` field and channel routing this plan renders.
 
 **Load-bearing semantic fact (ratified, already in the runtime):** same-round

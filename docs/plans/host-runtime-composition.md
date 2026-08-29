@@ -35,7 +35,7 @@ It makes no startup-speed, interaction-latency, memory-use, or line-count claim.
   service replacement.
 - No user-installable Host or renderer plugins, feature enable/disable system,
   third-party module loading, or plugin trust and permission model.
-- No generic `ServiceModule<T> { service; close() }`. Construction, readiness,
+- No generic `ServiceModule` wrapper with only `service` and `close` members. Construction, readiness,
   admission, durability, ordered quiescence, effect release, and process exit
   remain different protocols.
 - No `StartupCoordinator`, startup DAG framework, first-window reorder,
@@ -57,6 +57,29 @@ It makes no startup-speed, interaction-latency, memory-use, or line-count claim.
 - No visual, menu, notification-copy, or settings change.
 
 ## Design
+
+### Requirements
+
+- **FR-1:** The final winning Electron instance owns exactly one statically
+  typed `DesktopHost`; `main.ts` retains only pre-ready bootstrap and native
+  process-event forwarding.
+- **FR-2:** Every long-lived listener, timer, subscription, protocol, IPC
+  handler, worker, store, client, and child-process relationship has one named
+  owner and one idempotent release path.
+- **FR-3:** Construction, startup readiness, lifecycle arbitration, reversible
+  cleanup, durability, ordered domain shutdown, Runtime shutdown, and process
+  exit remain explicit distinct protocols.
+- **FR-4:** Startup failure and quit share one lifecycle authority so a producer
+  cannot start after teardown begins and a resource cannot be released twice.
+- **FR-5:** Ordinary quit preserves accepted-work settlement, user
+  Retry/Cancel/Quit Anyway decisions, Runtime freeze/drain, authenticated
+  shutdown, descriptor and writer-lock release, and exit ordering.
+- **FR-6:** Electron main composes Outline, Agent, Memory, Automation, resource,
+  preview, settings, and native-window authorities without duplicating their
+  state or protocols.
+- **FR-7:** The six delivery units land serially after Source PR-I; each is a
+  complete behavior-preserving refactor with a reproducible responsibility
+  audit and no unused scaffold.
 
 ### Delivery Shape
 
@@ -109,8 +132,11 @@ that replace the surfaces being composed land first:
 ```text
 Outline Source PR-I
   -> Host composition delivery set
-       |- Agent Result And Resource Reference Lifecycle
-       |    `- Agent Cross-Thread Reference
+       |- Agent Large-Text Arguments And Bash Stdin
+       |    |- Agent Result And Resource Reference Lifecycle
+       |    |    |- Agent Cross-Thread Reference
+       |    |    `- Agent Failure Recovery Experience
+       |    `- Outline CLI Skill Workflow Efficiency (+ Source PR-I)
        `- Startup Window First
 ```
 
@@ -119,14 +145,26 @@ Host-private exact-file grant, selected preview host, current preview consumers,
 and native-file authorization boundary. The Host delivery set then establishes
 the final `DesktopHost`, `createAgentHost()`, `createResourcePreviewHost()`,
 lifecycle arbiter, reversible-effect ownership, and explicit quit adapters.
+Agent Large-Text Arguments then adds its canonical/renderer Item split and its
+Agent IPC projection against the final Agent Host and transport registrars. It
+has no semantic dependency on Source, but implementing it before this Host cut
+would knowingly add new registration and projection work to the implicit
+`main.ts` graph only for this plan to relocate it. This is therefore an
+architecture-order edge under A7, not a product-contract edge.
+
 Agent Resource Lifecycle adds its resolver, conversation workspaces,
 ContentStore links, citation settlement, and cleanup barriers as typed consumers
 inside that graph instead of first extending today's implicit `main.ts` graph and
-relocating them afterward.
+relocating them afterward. It follows the large-text cut because both features
+change Agent protocol/codec, Item projection, context dependencies,
+`ToolPayloadStore`, Thread lifecycle, and the renderer bridge. Internal textual
+bindings remain private Item dependencies and never become file resources.
 
 Source PR-F is an independent renderer composition enhancement and has no
 architectural dependency edge after Source PR-I. Agent Cross-Thread Reference
-remains after Agent Resource Lifecycle. `startup-window-first` consumes the final
+and Agent Failure Recovery remain after Agent Resource Lifecycle. The latter is
+an implementation-order edge over shared Agent history/lifecycle surfaces, not a
+new file-lifecycle behavior dependency. `startup-window-first` consumes the final
 `DesktopHost.start()` boundary rather than introducing readiness behavior that a
 later composition refactor must move. Agent Resource Lifecycle and
 `startup-window-first` have no dependency edge between them; their merge order is
@@ -134,18 +172,19 @@ decided by the live file collision check after Host composition lands.
 
 The current collision result is:
 
-- #593 has merged this design into `main`; no Source implementation claim is
-  currently open. Its future PR-I overlaps the resource/preview/native-file
+- No implementation PR is open at this audit. Source PR-I overlaps the
+  resource/preview/native-file
   implementation surface and must merge before the Host delivery set.
 - Agent Result And Resource Reference Lifecycle has no open implementation claim.
   It overlaps Agent construction, Host resource resolution, ContentStore
   relationships, cleanup, and quit barriers and starts after the Host set.
-- #594 is plan-only. Its future Agent execution/context work has no required
-  dependency edge, but the Agent Host unit repeats a file-level collision check
-  before claiming implementation.
+- Agent Large-Text Arguments has no product-contract dependency on this plan,
+  but its implementation follows the Host set because it overlaps `main.ts`,
+  Agent transport/projection, service construction, and lifecycle ownership.
 - Source PR-F is independent after Source PR-I. Cross-Thread Reference follows
-  Agent Resource Lifecycle. Startup Window First follows Host composition and
-  repeats its collision check against any live Agent lifecycle work.
+  Agent Resource Lifecycle. Agent Failure Recovery also follows that lifecycle
+  cut. Startup Window First follows Host composition and repeats its collision
+  check against any live Agent lifecycle work.
 
 After Source PR-I merges, the first Host implementation owner runs `gh pr list`,
 scans `docs/TASKS.md`, compares every intended file with live PR claims, and
@@ -369,16 +408,10 @@ made by this refactor.
 
 ### ResourceScope Owns Effects, Not Protocols
 
-The final cutover introduces a thin owner for reversible process-lifetime
-effects already exposed by the extraction units:
-
-```ts
-interface ResourceScope {
-  defer(dispose: () => void | Promise<void>): void;
-  child(name: string): ResourceScope;
-  dispose(): Promise<void>;
-}
-```
+The final cutover introduces a thin `ResourceScope` owner for reversible
+process-lifetime effects already exposed by the extraction units. It registers
+synchronous or asynchronous disposers through `defer`, creates named child
+scopes through `child`, and exposes one asynchronous `dispose` settlement.
 
 It owns cancellation or unregistration for Electron/process/WebContents
 listeners, timers, watchers, subscriptions, global hotkeys, protocol handlers,
@@ -574,29 +607,29 @@ descriptor, held writer lock, or residual desktop process.
 
 ### Acceptance Criteria
 
-- Every delivery unit is independently shippable, keeps one composition root,
+- **AC-1:** Every delivery unit is independently shippable, keeps one composition root,
   and has a clean-clone zero-unclassified audit for its claimed surface.
-- The final winning Electron instance has one typed `DesktopHost` composition
+- **AC-2:** The final winning Electron instance has one typed `DesktopHost` composition
   root; `main.ts` contains only fixed bootstrap and narrow native event entry.
-- Dependency composition, startup orchestration, lifecycle arbitration,
+- **AC-3:** Dependency composition, startup orchestration, lifecycle arbitration,
   reversible disposal, ordered domain shutdown, safe quit, and Runtime process
   shutdown remain separate and inspectable.
-- Startup failure and ordinary quit cannot concurrently start and tear down the
+- **AC-4:** Startup failure and ordinary quit cannot concurrently start and tear down the
   same producer, publish transport after quit, or clean up one resource twice.
-- Concurrent quit callers share only the active attempt; Cancel permits a later
+- **AC-5:** Concurrent quit callers share only the active attempt; Cancel permits a later
   attempt to drain, tear down, and exit.
-- Failed-start rollback never treats authenticated Runtime identity as Host
+- **AC-6:** Failed-start rollback never treats authenticated Runtime identity as Host
   ownership and never issues Runtime shutdown without an explicit future lease.
-- `OutlineDocumentService` retains every recovered desktop-adapter
+- **AC-7:** `OutlineDocumentService` retains every recovered desktop-adapter
   responsibility; the standalone Runtime retains document/data authority.
-- Every reversible effect has one named owner and disposer; every ordered domain
+- **AC-8:** Every reversible effect has one named owner and disposer; every ordered domain
   protocol remains outside generic disposal.
-- Current Source, Agent resource, preview, file authorization, Memory, and
+- **AC-9:** Current Source, Agent resource, preview, file authorization, Memory, and
   Automation contracts are composed without duplicate stores or compatibility
   layers.
-- No Cordis dependency, dynamic plugin runtime, service bag, generic service
+- **AC-10:** No Cordis dependency, dynamic plugin runtime, service bag, generic service
   wrapper, alternate data store, or renderer plugin system lands.
-- Current specs describe the resulting ownership and lifecycle graph, and the
+- **AC-11:** Current specs describe the resulting ownership and lifecycle graph, and the
   durable audit reports no unclassified or duplicate owner.
 
 ## Open questions
@@ -614,9 +647,10 @@ contract.
       inventory, dispositions, and clean-clone reproduction.
 - [ ] Ship owned transport, Agent Host, Outline desktop, resource/preview,
       native-window/application, and final DesktopHost units as complete PRs.
-- [ ] After the Host set, let Agent Resource Lifecycle and Startup Window First
-      claim their independent work in live-collision order; keep Cross-Thread
-      Reference after Agent Resource Lifecycle.
+- [ ] After the Host set, let Agent Large-Text Arguments and Startup Window First
+      claim their independent work in live-collision order; keep Agent Resource
+      Lifecycle after Large-Text, then keep Cross-Thread Reference and Agent
+      Failure Recovery after Resource Lifecycle.
 - [ ] Add lifecycle race, failed-start non-shutdown, startup/quit order,
       sender-admission, Runtime-relaunch, and ownership guards with their units.
 - [ ] Remove a global, forwarding helper, or registration only after the audit

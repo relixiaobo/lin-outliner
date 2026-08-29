@@ -42,7 +42,7 @@ The objectives are:
   execution or settlement, token accounting, usage UI, context composition, or
   Provider cache behavior.
 - Do not add or modify generic Bash transport in this feature. A separate
-  plan and Draft claim, [PR #596](https://github.com/relixiaobo/lin-outliner/pull/596),
+  ratified plan, [PR #596](https://github.com/relixiaobo/lin-outliner/pull/596),
   own the bounded stdin channel and its security contract. This feature consumes
   that merged interface while its own diff continues to reject every product
   change under `src/main/agent/**`.
@@ -173,7 +173,7 @@ path. It does not launch an open-ended schema investigation.
 ### 3. Consumed Bash Stdin Interface
 
 [PR #596](https://github.com/relixiaobo/lin-outliner/pull/596) is the sole design
-and implementation authority for the public Bash stdin transport and
+authority for the public Bash stdin transport and
 effective-consumer classification. This feature relies only on these merged
 observable interfaces:
 
@@ -539,8 +539,10 @@ and public failure behavior. Its generic large-text persistence and renderer
 mechanics are intentionally not a consumed interface. This feature owns
 compatibility between the public Bash limit and real Outline schemas, including
 the two-Node worst-case escaping fixture and actual three-command workflows.
-Neither foundation depends on the other, so they may be developed independently,
-but this feature consumes only their merged observable contracts. It rebases onto
+The two observable contracts are semantically independent. Their implementation
+order is not: Source PR-I precedes Host composition, and #596 then targets that
+final Host/renderer seam. This feature consumes only the two merged observable
+contracts. It rebases onto
 `origin/main` after both land, regenerates its work queue from actual `rg` hits
 and failing tests, and removes every superseded table fixture assumption rather
 than preserving compatibility. Source PR-F is visual-only and is not a
@@ -554,9 +556,10 @@ Source PR-I is a deliberate hard dependency and likely overlaps
 tests. Those files are not edited in parallel. PR #596 is a second deliberate
 dependency under generic Agent capability/process code, but it claims no
 Outline file. Its merged commit is prerequisite evidence, not part of this
-feature's diff. The merged host-composition plan does not overlap after generic
-Agent projection, file tools, Subagent behavior, and usage UI are removed from
-this scope.
+feature's diff. By then the complete Host composition set is already an
+inherited foundation of #596. It does not enter this feature's diff because
+generic Agent projection, file tools, Subagent behavior, and usage UI remain
+outside this Outline-only scope.
 
 ### 11. Implementation Boundary
 

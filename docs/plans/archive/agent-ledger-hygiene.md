@@ -11,7 +11,7 @@ conversation). Verdict there: the core model (7 primitives, 3 ledgers, derived
 kind, bipartite parentage) is clean and needs NO restructuring — this plan
 clears the residue the audit surfaced, all of it pre-Channel debt or
 documented-compat leftovers. Read first:
-`docs/plans/reference/agent-data-model.md` (historical write/read invariants) and
+`docs/plans/archive/agent-data-model.md` (historical write/read invariants) and
 `docs/spec/agent-core.md` (current persistence and lifecycle contracts).
 Historical implementation symbols were `appendSplitEvents` and
 `isRunLogEvent` in `src/main/agentEventStore.ts`.

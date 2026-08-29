@@ -550,14 +550,14 @@ can steer it: "make it shorter").
 
 **User visibility — target UI.** Each fire appends to the routine's
 **conversation** (a routine owns one durable conversation that anchors its runs —
-see [agent-data-model.md](../reference/agent-data-model.md) §3–§4), which shows up in
+see [agent-data-model.md](agent-data-model.md) §3–§4), which shows up in
 `AgentChatPanel` (`src/renderer/ui/AgentDock.tsx` → `AgentChatPanel`) like any
 other chat. This plan builds only on conversation/channel IPC; it must not preserve
 `agent_*_session` aliases or add a scheduled-run compatibility path over the old
 session surface. The agent can also recall durable facts it has remembered via
 the read-only `recall` tool; raw past-conversation search is internal-only (no
 model-visible `past_chats` tool — see
-[agent-conversation-model.md](../reference/agent-conversation-model.md)
+[agent-conversation-model.md](agent-conversation-model.md)
 §Memory).
 
 **Deletion semantics.** Deleting the routine's conversation clears its

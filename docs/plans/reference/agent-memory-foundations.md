@@ -1,167 +1,120 @@
-# Memory foundations — the academic model that binds our docs, prompts, and tools
+# Memory Foundations — Binding Vocabulary
 
-A standing reference (like `nodex-parity-decisions.md`), not a unit of work.
-**PM directive 2026-06-10:** the memory subsystem follows the academic
-definitions of memory; PM examples are illustrative, never requirements. This
-document is the binding glossary: every memory-related doc, prompt, and tool
-description uses these terms with these meanings. The implementation mapping
-lives in `agent-data-model.md` § *Canonical memory vocabulary*; this file owns
-the definitions and the authoring rules. Rewritten 2026-06-10 per the
-memory-theory realignment charter (`agent-memory-realignment` D-1/D-4/D-6) —
-the previous revision equated the episodic store with the raw ledgers and
-filed gist under the index; both were category errors, corrected below.
+This standing reference defines the academic terms used by Memory documents,
+prompts, and tools. It is not a unit of work and it does not own runtime status.
+Current behavior and implementation authority live in
+`docs/spec/agent-memory.md`; active work, if any, lives only in
+`docs/TASKS.md`.
 
-It is an engineering-binding glossary, not a literature review — each entry is
-the textbook consensus plus the one source worth naming.
+The product mapping below follows the current Daily Timeline Memory model. The
+superseded Conversation/Run memory program, `MemoryEntry` pools, resident Memory
+briefing, and model-visible `recall` tool are historical designs and reserve no
+current protocol.
 
-## 0. The ground truth is below memory
+## Evidence Is Below Memory
 
-The raw conversation + run ledgers are the **world record** — the immutable,
-event-sourced ground truth of what happened. They are *not* a memory store:
-memory is **constructed over** the record, never identical with it (a person's
-episodic memory is not the universe's history; it is their organized,
-addressable take on it). Everything in the memory system — episodes, gist,
-facts, schema nodes — is a derived, rebuildable structure whose down-pointers
-bottom out in the record. This is the 源 (source) → 索引 (index) → 萃取
-(distillation) frame: the source is below memory; the memory system starts at
-the index.
+Canonical Thread, Turn, and Item history is the record of what happened. It is
+evidence, not memory. Memory is constructed from eligible evidence and published
+as ordinary editable Nodes on the Daily Notes timeline.
 
-## 1. Taxonomy of stores
+This separation is load-bearing:
 
-The standard taxonomy (Squire's long-term memory taxonomy; Atkinson–Shiffrin
-for the short/long split; Baddeley for working memory):
+- raw Items remain canonical evidence;
+- generated Memory Nodes are a public, editable interpretation of that evidence;
+- exact `originItemId` lineage connects each generated statement to its support;
+- private SQLite rows coordinate extraction, consolidation, ranking, rollback,
+  and crash recovery, but contain no second public knowledge graph;
+- compaction summaries exist to continue a Turn under a context budget and are
+  not a substitute for source evidence.
 
-| Store | Definition | Key source | Ours |
-|---|---|---|---|
-| **Working memory** | the small-capacity active workspace holding what is currently in use; not a durable store | Baddeley & Hitch | the assembled context of one turn — the resident briefing is memory's slice of it |
-| **Episodic memory** | declarative memory for specific experienced events, bound to their context ("what happened, when, where") | Tulving (1972) | the **episodic layer**: `AgentMemoryEpisode` units + their memory-owned gist, constructed over raw conversation/run ledgers |
-| **Semantic memory** | declarative memory for context-free knowledge ("what I know"), detached from the episode that taught it | Tulving (1972) | `MemoryEntry` pools per Principal — a pool is one principal's **self-model**, keyed by its owner/believer (D-1) |
-| **Procedural memory** | nondeclarative memory for skills and procedures ("what I can do"), expressed in performance rather than recollection | Squire | skills |
+## Store Taxonomy
 
-Structural models we adopt at the architecture level:
+The vocabulary follows the standard long-term-memory taxonomy (Squire), the
+short/long distinction (Atkinson–Shiffrin), and working memory (Baddeley and
+Hitch).
 
-- **Hippocampal memory indexing** (Teyler & DiScenna 1986): the hippocampus
-  stores an *index* binding distributed neocortical detail traces, not the
-  details themselves; retrieval is pattern completion through the index. →
-  our index layer is **pure bidirectional pointers** binding semantic facts to
-  episodic evidence: `MemoryEntry.sources[]` fact→episode downward, episode →
-  citing-facts reverse lookup upward. The index points; it never copies
-  — and it never *holds content*: summaries/gist are episodic-layer content,
-  not index (the previous revision's misfiling).
-- **Autobiographical memory hierarchy / Self-Memory System** (Conway 2000):
-  knowledge at graded abstraction — themes → general events → event-specific
-  detail — with retrieval descending the hierarchy (generative retrieval) or
-  jumping straight to a level (direct retrieval). → our **zoom ladder**
-  (D-6): schema node → fact → episode gist → raw span, down-pointers at every
-  step. Model-visible provenance zoom covers the lower three; full raw replay
-  stays runtime-internal.
-- **Complementary Learning Systems** (McClelland, McNaughton & O'Reilly 1995):
-  a fast instance-learning store (hippocampus) and a slow generalizing store
-  (neocortex), integrated by offline replay. This is *why* there are two stores
-  and why consolidation is a background process, not a foreground action.
-- **Transactive memory** (Wegner 1985): a group remembers by knowing *who
-  knows what* and retrieving from each other, rather than every member copying
-  everything. → the membership read: co-members subscribe to each other's
-  semantic stores; nothing is copied across pools.
+| Store | Academic meaning | Tenon mapping |
+| --- | --- | --- |
+| **Working memory** | The small-capacity active workspace holding what is in use now; not a durable store. | One Turn's assembled model context. Memory contributes compact routing instructions and, only when the model deliberately retrieves them, bounded Outline CLI results. |
+| **Episodic memory** | Declarative memory for specific experienced events bound to context: what happened, when, and where. | Ordinary `#d-episode` Nodes under a canonical daily `#d-memory` container, with exact statement-level lineage to source Items. |
+| **Semantic memory** | Declarative, context-reduced knowledge such as stable facts and preferences. | Ordinary `#d-belief` Nodes distilled from one or more supported episodes. |
+| **Procedural memory** | Nondeclarative knowledge expressed as skills and procedures. | Skills. Procedural memory is outside the Memory extension and follows `docs/spec/agent-skills.md`. |
 
-## 2. Two kinds of summary — production motive decides what is memory
+`#d-question` and `#d-guidance` are useful product categories inside an episode;
+they are not additional academic memory stores. A question preserves unresolved
+uncertainty. Guidance records a supported instruction for future handling.
 
-Summary-shaped artifacts exist on both sides of the memory boundary; what
-separates them is **why they were written** (R2/R6, PM-confirmed 2026-06-10):
+## Processes
 
-- **Context-management artifacts** (compaction summaries, segment summaries)
-  are **working-memory artifacts** — written to *continue a task* within a
-  context budget. They live below memory, beside the raw record. They may
-  serve as **locators** (a map to find candidate spans) but are **never
-  evidence**: consolidating from them trains the system on a model's
-  interpretation of a model's interpretation, amplifying omissions and topic
-  bleed.
-- **Episode gist** is **memory's own product** — written by the memory system
-  to *remember* (autobiographical motive), and it is the consolidated evidence
-  carrier. One node shape may serve both producers; only memory-owned
-  production is part of the memory system. (The #178 "Dream reads compaction
-  summaries as evidence" path had exactly this flaw and is replaced by
-  fact → episode gist → raw span provenance.)
+| Process | Academic meaning | Tenon mapping |
+| --- | --- | --- |
+| **Encoding** | Forming a trace from experience; depth, novelty, and prediction error influence selection. | Phase 1 selects durable signal from eligible canonical Items and produces bounded, source-dated episode groups. |
+| **Consolidation** | Offline replay and integration that stabilizes or generalizes memory. | Phase 2 reconciles the bounded Daily Timeline Memory graph, merges duplicate generated episodes, preserves exact support, and never overwrites user-authoritative Nodes. |
+| **Semanticization** | Repeated episodic content becoming context-reduced knowledge. | Supported episode statements may become or update `#d-belief` Nodes while retaining lineage. |
+| **Retrieval** | Reactivating memory from a cue; cue quality depends on encoding context. | An eligible root Turn receives routing guidance and deliberately uses public `outline find` and `outline show`; no Memory-specific tool or passive prose injection exists. |
+| **Reconsolidation** | An accessed trace becoming available for correction before restabilization. | Direct user edits are immediately authoritative; later model consolidation may modify only still-generated content from a newly validated snapshot. |
+| **Forgetting** | Reduced access or deliberate removal of retained information. | Users can edit, move, trash, or delete ordinary Memory Nodes. Consolidation may remove unsupported generated subtrees, and confirmed Reset deletes canonical generated Memory containers. |
 
-## 3. Processes
+Retrieval practice, associative recall, metamemory, and strength-decay models are
+research concepts, not implied product capabilities. They require an explicit
+plan and evidence before acquiring runtime state or protocol.
 
-| Process | Definition | Key source | Ours |
-|---|---|---|---|
-| **Encoding** | the formation of a trace at experience time; depth of processing and *prediction error / novelty* modulate what gets encoded | Craik & Lockhart (levels of processing); novelty/PE-modulated encoding | what Dream's extraction instructions select from the evidence span |
-| **Consolidation** | the offline (sleep-associated) process by which episodic traces are replayed and integrated into the semantic store; *systems consolidation* over time makes knowledge hippocampus-independent | CLS; sleep-replay literature | Dream: scheduled offline replay distilling into the semantic store; watermark = the consolidation frontier. Dream records memory-owned episode gist and facts cite the episode, never context-management summaries |
-| **Semanticization** | the gradual transformation of repeated episodic content into context-free semantic knowledge | Tulving lineage | repeated evidence consolidating into a stable `fact` (we keep the receipts; see §5) |
-| **Retrieval** | reactivating a trace from a cue: *cued recall* (cue → trace), *recognition*, *pattern completion* through the index; governed by **encoding specificity** (a cue works when it matches the encoding context) | Tulving & Thomson (encoding specificity) | three modes ([[agent-memory-realignment]] usage contract): chronic activation (the resident briefing), deliberate cued retrieval (`recall`, with source access down the index), automatic association (deferred — current turn as cue, runtime-surfaced) |
-| **Forgetting** | loss of *access*, not erasure: an item's **storage strength** (how well learned) never decreases; its **retrieval strength** (current accessibility) decays with disuse | Bjork & Bjork, New Theory of Disuse | injection ranking by retrieval strength; entries fall out of the working set, never get deleted |
-| **Retrieval practice (testing effect)** | the act of retrieval itself strengthens future retrievability — substantially more than re-exposure/restudy | Roediger & Karpicke (2006) | a `recall` hit strengthens an entry strongly; passive briefing injection weakly; both append `memory.accessed` events — the data the deferred associative mode needs |
-| **Reconsolidation** | an accessed trace becomes temporarily labile and can be updated before re-stabilizing | Nader et al. (2000) | the update/invalidate path when review or new evidence touches an existing entry — updating on access is the *expected* dynamic, not corruption |
-| **Metamemory** | knowing what one knows (feeling-of-knowing) before attempting retrieval | Nelson & Narens | the schema/overview layer: the briefing's breadth axis tells the model what it knows before it decides to dig; no-query `recall` returns the same overview |
-| **Reconstructive retrieval** | human recall *reconstructs* from schemas + fragments and confabulates details | Bartlett (1932) | what we deliberately do NOT do — see §5 |
+## Structural Models
 
-## 4. Agent-memory lineage (the bridge literature)
+Three research models explain the chosen architecture without becoming extra
+product entities:
 
-How the cognitive model has been carried into agent systems — the works our
-mapping is consistent with:
+- **Hippocampal indexing** (Teyler and DiScenna, 1986): an index binds detail
+  traces rather than copying them. Tenon keeps bounded lineage from public
+  Memory statements to canonical source Items.
+- **Autobiographical hierarchy** (Conway, 2000): memory can move from specific
+  events toward more general knowledge. Tenon's episode-to-belief hierarchy
+  reflects that direction while preserving source links.
+- **Complementary Learning Systems** (McClelland, McNaughton, and O'Reilly,
+  1995): fast experience recording and slower generalization are distinct.
+  Tenon's bounded Phase 1 extraction and Phase 2 consolidation preserve that
+  separation.
 
-- **CoALA** (Sumers et al. 2023): working / episodic / semantic / procedural as
-  the standard agent-memory decomposition — our four stores follow it.
-- **Generative Agents** (Park et al. 2023): memory stream + retrieval +
-  *reflection* citing its supporting observations — Dream's shape, including
-  provenance.
-- **MemGPT** (Packer et al. 2023): explicit in-context vs external memory with
-  paged retrieval — the resident-briefing vs `recall` split.
-- **Sleep-time compute** (Letta 2025): background consolidation on idle —
-  Dream's scheduling model.
-- **HippoRAG** (2024): hippocampal indexing implemented over a corpus —
-  validates index-not-copy as an engineering pattern.
+Transactive memory and per-agent belief pools are not part of the current
+single-product-agent Agent Core architecture. Do not infer either from the
+academic literature.
 
-## 5. Deliberate divergences from human memory (engineering, intentional)
+## Engineering Divergences
 
-State these in any doc that compares us to the human system; they are features:
+Human-memory analogy stops where product correctness requires stronger rules:
 
-1. **No reconstructive retrieval.** Human downward retrieval reconstructs and
-   confabulates (Bartlett; misinformation effects). Ours is *lookup*: the raw
-   record is immutable, `sources[]` dereference returns the original bytes or
-   fails loud. Memory for an unreliable rememberer must be auditable.
-2. **Receipts survive semanticization.** Humans typically lose the source
-   episode once knowledge is semanticized; we keep `sources[]` forever, because
-   an LLM's facts need verifiable provenance.
-3. **Forgetting never deletes.** Bjork taken literally: only retrieval strength
-   decays; removal from the pool is an explicit, logged `invalidate`.
-4. **Pools are principal-isolated by construction.** Human memories blur
-   together; our cross-principal boundary is a hard gate (distilled facts may
-   cross by membership; raw evidence never does).
-5. **Organization is projection, never stored state.** Strength, confidence,
-   salience, episodes, schema nodes — anything organizational is a derived,
-   rebuildable structure over the event log, not a stored field on an entry.
+1. **Public memory is inspectable.** Memory prose is ordinary outline content,
+   not a hidden model state.
+2. **Support remains auditable.** Generated statements retain exact Item
+   lineage; the model may not invent or reconstruct evidence during retrieval.
+3. **User edits outrank generation.** Editing text, category, tags, date, or
+   parent identity relinquishes generated ownership rather than inviting a
+   background overwrite.
+4. **Forgetting may be destructive.** Ordinary deletion and confirmed Reset
+   intentionally remove public Memory Nodes. Do not reuse the older
+   "forgetting never deletes" rule.
+5. **Retrieval is pull-based.** The model receives routing instructions, not a
+   resident briefing, automatic associative injection, or a private recall API.
+6. **Control state is not knowledge.** Eligibility, fingerprints, lineage,
+   ranking, journals, and rollback rows remain private coordination data; they
+   never become a second editable Memory store.
 
-## 6. Binding authoring rules (docs, prompts, tools)
+## Authoring Rules
 
-1. **Use the literature's exact term or none.** No invented near-academic
-   vocabulary (banned by example: "heat tiers", "proves relevant"; corrected:
-   "spacing effect" misused for the retrieval-practice effect).
-2. **Every design anchor is one of:** an academic concept (cite it), a
-   PM-ratified decision (link it), or verified code (`file:line`). A PM
-   illustration may motivate a design; it may never *specify* one.
-3. **Prompts speak the process they implement.** The Dream prompt is
-   *consolidation* instructions and frames selection as *encoding* policy
-   (what deserves a durable trace, with novelty/prediction-error weighting);
-   the briefing presents itself as the *working-memory* slice of the semantic
-   store; `recall`'s description is *cued retrieval* with optional *source
-   access* — not ad-hoc phrases like "durable memory entries".
-4. **Forgetting language never says delete.** User-facing copy says an entry
-   is inactive/invalidated or has fallen out of the working set.
-5. **Anthropomorphic framing is bounded by §5.** Docs may use the human-memory
-   vocabulary precisely because the divergences are stated; never imply we
-   reconstruct, blend, or irreversibly forget.
-6. **One phrasing rule for stored facts** ([[agent-memory-realignment]] D-2):
-   third-person-singular, subject-elided predicates in every pool; the subject
-   stays normalized in the pool key; render is zone-tagged bullet lists — no
-   subject prepending, no conjugation, no fully-named sentences (denormalizing
-   the subject stales every fact on a rename).
-
-The language-surface alignment to these rules shipped as
-`agent-memory-academic-alignment` (#181, subsuming the former D2
-encoding-signal delta). Realigning production/storage/use to the layering above
-is the **`agent-memory-realignment`** program (PR-1 person rule + read
-surfaces; PR-2 episodic layer; PR-3 forgetting + PR-5 schema/overview; PR-4
-retrieval engine; automatic association deferred on a data gate).
+1. Use an academic term only with its standard meaning. Do not invent
+   near-academic labels or present a metaphor as implemented behavior.
+2. Separate evidence, Memory content, and control state in every design. Items
+   are evidence; Daily Timeline Nodes are public Memory; SQLite is coordination.
+3. Describe extraction as encoding and offline graph reconciliation as
+   consolidation. Do not call compaction, prompt assembly, or ordinary search
+   consolidation.
+4. Describe retrieval as the current public Outline CLI flow. Do not mention a
+   resident Memory briefing, `recall`, principal pool, or automatic association
+   unless a future approved plan deliberately reintroduces one.
+5. Say `#d-episode`, `#d-belief`, `#d-question`, and `#d-guidance` when the
+   product category matters. Do not flatten all four into generic facts.
+6. State provenance precisely: generated statements cite exact source Items;
+   user-authored or user-edited Nodes are authoritative even when no generated
+   lineage remains.
+7. Treat `docs/spec/agent-memory.md` as the behavior authority. This glossary
+   constrains language and conceptual boundaries, not implementation details.

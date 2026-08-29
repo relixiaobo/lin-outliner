@@ -2,7 +2,14 @@
 
 **Shape:** (a) ONE complete feature in one PR after the reference URI foundation
 and neutral ContentStore/Outline consumer (shipped in #590 and #584), the complete
-PR-I interface/baseline unit of `outline-source-resource-unification`. The
+PR-I interface/baseline unit of `outline-source-resource-unification`, the
+complete `host-runtime-composition` delivery set, and
+`agent-bash-stdin-transport`. Source PR-I and Host composition are contract and
+architecture foundations. The large-text feature is an implementation-order
+foundation: it settles canonical/renderer Item projection and private internal-
+text dependencies on the same Agent surfaces this feature changes. Internal
+text remains in `ToolPayloadStore` and never becomes a canonical file resource.
+The
 Composer input-history contract established by #587 is already part of the
 baseline rather than a future delivery dependency. The visual-only PR-F
 preview-first enhancement is independently orderable and is not an Agent
@@ -604,9 +611,13 @@ The dependency order is fixed where an edge is stated:
    `outline-source-resource-unification`; it establishes ordinary Nodes with
    ordered Source values as the complete usable Outline consumer. Its PR-F
    preview-first visual enhancement has no dependency edge to this plan;
-6. after Source PR-I is on `main`, implement this plan's three internal stages in
-   one complete PR while consuming the #587 Composer history baseline; and
-7. implement `agent-cross-thread-reference` only after this plan's resolver,
+6. complete `host-runtime-composition`, then land
+   `agent-bash-stdin-transport` against its final Agent Host and renderer seam;
+7. after those foundations are on `main`, implement this plan's three internal
+   stages in one complete PR while consuming the #587 Composer history baseline;
+   and
+8. implement `agent-cross-thread-reference` and the overlapping Agent Failure
+   Recovery features only after this plan's resolver,
    working-set, and canonical citation contracts are on `main`.
 
 #584 deliberately did not implement Agent resource records, final citations, or

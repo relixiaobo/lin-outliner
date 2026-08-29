@@ -2,6 +2,11 @@
 
 **Shape:** (a) ONE complete feature in one PR.
 
+Implementation follows the complete `host-runtime-composition` delivery set and
+uses its final `DesktopHost.start()`, readiness, lifecycle-arbitration, and
+transport boundaries. It does not add window-first readiness to the implicit
+`main.ts` graph and then move that behavior during composition.
+
 ## Goal
 
 First paint must not wait for the world. Today `app.whenReady` awaits, in
@@ -29,6 +34,24 @@ plan.
 - No service semantic changes; only when they start relative to the window.
 
 ## Design
+
+### Requirements
+
+- **FR-1:** The native window becomes visible after fixed ready-path essentials
+  and before document, Agent, Memory, Automation, or node-access initialization
+  completes.
+- **FR-2:** Document initialization and Turn-admission preparation are each
+  single-flight; all concurrent callers share one outcome and a failed attempt
+  permits a clean retry.
+- **FR-3:** Every projection-, Agent-, or ranking-dependent IPC request awaits
+  its owning service's readiness instead of racing uninitialized state.
+- **FR-4:** Bring-up follows the explicit dependency DAG: provider configuration
+  and document readiness precede Thread initialization; Memory and Automation
+  may start together only after Threads; node access may load beside document
+  readiness.
+- **FR-5:** Startup failure remains visible until the user chooses Retry or Quit.
+- **FR-6:** Runtime text indexing remains lazy and no second readiness or startup
+  coordination authority is introduced.
 
 - **Create the window first.** After the ready-path essentials (userData
   resolution, single-instance lock, protocol/security wiring),
@@ -88,6 +111,24 @@ plan.
   early personal-ranked search also waits for node-access readiness.
 - Manual: kill the workspace file → persistent failure surface with working
   Retry.
+
+## Acceptance Criteria
+
+- **AC-1:** Delayed-document E2E proves the window is visible before
+  `init_workspace` resolves, and cold-start evidence records improved
+  time-to-first-paint without claiming unrelated service speedups.
+- **AC-2:** Concurrent `OutlineDocumentService.init()` callers perform one
+  connect/read/watch sequence; failure rejects all waiters and the next retry
+  succeeds.
+- **AC-3:** Concurrent `prepareForTurnAdmission` callers execute one preparation
+  and receive the same settlement.
+- **AC-4:** Early document, Agent, and personally ranked search requests wait for
+  the exact owning readiness promise and then complete normally.
+- **AC-5:** Tests pin the startup DAG and prove Memory or Automation cannot run
+  before Thread initialization while node-access loading remains independent.
+- **AC-6:** A document-start failure renders one persistent failure state whose
+  Retry and Quit actions work; existing boot smoke and lazy indexing remain
+  green.
 
 ## Open questions
 

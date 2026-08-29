@@ -1,104 +1,110 @@
-# Floating Toolbar Polish
+# Floating Toolbar Additions
 
-Two small additions to `src/renderer/ui/editor/FloatingEditorToolbar.tsx`
-that nodex's `FloatingToolbar.tsx` carries today.
-
-Independent of asset work.
+**Shape:** (b) A SET of two independent complete features. The heading-mark
+toggle is a renderer-only PR. Selection extraction is a coordinated Core and
+renderer feature in a later PR.
 
 ## Goal
 
-1. **Heading-mark toggle** — sixth button in the toolbar that toggles the
-   existing `headingMark` text mark over the current selection. The mark
-   type already exists in `TextMarkKind` (`src/core/types.ts`); the
-   PM schema already knows it. Only the toolbar UI is missing.
-2. **`#` selection-extract** — small button that, given a non-empty text
-   selection, creates a new tagged node in the user's chosen "extracts"
-   destination with the selected text as content and a tag applied. nodex
-   wires this to a Library extraction; Tenon's destination policy needs
-   deciding (see open questions).
+Expose the existing heading mark in the selection toolbar and add one atomic
+workflow that extracts selected rich text into a tagged destination Node while
+replacing the source selection with an inline reference.
 
 ## Non-goals
 
-- A full hover toolbar redesign.
-- Color picker, font-size picker, more marks. v1 keeps the toolbar narrow.
-- Persistent toolbar (sticky / pinned). Stay floating.
+- No toolbar redesign, color/font-size controls, heading levels, or persistent
+  toolbar mode.
+- No global Extracts bucket or implicit destination.
+- No renderer sequence of partially committed mutations and no hidden fallback
+  when a tag has no configured destination.
+- No change to the ordinary at-caret `#` tag trigger.
 
 ## Design
 
-### Heading toggle
+### Requirements
 
-Add `'headingMark'` to the `ToolbarMark` union and the `BUTTONS` array in
-`FloatingEditorToolbar.tsx`. The mark already round-trips through
-`apply_node_text_patch` with `add_mark / remove_mark` patch ops, so no core
-change required.
+- **FR-1:** Heading toggle uses the current rich-text mark patch path and adds no
+  Core protocol.
+- **FR-2:** Extraction is admitted only for a non-empty valid rich-text range and
+  a tag with one live configured destination.
+- **FR-3:** Destination creation, tag application, and inline replacement commit
+  in one Core transaction or not at all.
+- **FR-4:** Extracted content preserves supported marks and references without
+  splitting an inline-reference boundary.
+- **FR-5:** One Undo/Redo treats extraction as one user action.
 
-Icon: reuse the `Heading` icon from the existing icon set (already imported
-by `AgentMarkdown.tsx`).
+### Feature 1: heading-mark toggle
 
-### `#` selection-extract
+Add `headingMark` to the toolbar mark union and button registry, using the
+existing `HeadingIcon`. It follows the same add/remove mark path as bold,
+italic, strike, code, and highlight. Update the toolbar's stable width/geometry
+for the extra fixed-size control so selection or active state cannot resize the
+overlay.
 
-UX:
+This feature touches only renderer toolbar/editor code and focused tests. The
+mark already round-trips through the current rich-text codec and patch runtime.
 
-1. User selects text in a row's rich text editor.
-2. Floating toolbar appears with a `#` button.
-3. Clicking opens an inline tag picker (existing `TagSelector.tsx`).
-4. On tag pick: create a new node containing the selected text, tagged
-   with the chosen tag, in the destination. Replace the original selection
-   with an inline reference to the new node.
+### Feature 2: selection extraction
 
-The "replace selection with inline reference" path already exists for the
-`@` trigger (`replace_node_with_inline_reference` command). The new
-extract flow reuses it but injects a tag application step in the middle.
+The destination policy is the ratified per-tag relationship: a tag definition
+may hold one `defaultExtractParentId`. The configuration UI validates and stores
+that relationship through the canonical document command surface.
 
-Wire-up: floating toolbar callback `onExtractWithTag(tagId)` → renderer
-runs `extract_selection_as_tagged_node({ rowId, from, to, tagId })`. This
-is a new compound command; consider whether it can be a renderer-side
-sequence of existing commands wrapped in a single Loro transaction via
-the scoped UndoManager so undo treats it as one step.
+For a non-empty selection:
 
-### Destination policy
+1. `#` opens the existing tag selector using the action registry's current
+   create-then-apply candidate policy.
+2. Selecting a tag with a live destination submits one compound Core command
+   containing the source Node, exact rich-text range/revision, tag, and resolved
+   destination.
+3. Core validates all identities and the stale range before mutation, creates
+   one destination Node from the selected rich-text slice, applies the tag, and
+   replaces the source slice with one inline reference in the same transaction.
+4. One Undo reverses the entire operation. Any failed validation commits
+   nothing.
 
-Two options, decide before implementing:
+The extracted Node preserves supported marks and inline references through the
+canonical rich-text slice codec. A selection that would split an inline
+reference boundary is rejected using the existing text-patch rules rather than
+silently flattening content.
 
-- **A. Per-tag destination** — tagDef has a `defaultExtractParentId` field;
-  the extract creates the new node under that parent. Allows different
-  tags to file extracts in different places.
-- **B. Global "extracts" bucket** — one designated workspace bucket (like
-  the deleted `STASH` system node from nodex) holds all extracts. Simpler;
-  less flexible.
+Source PR-I lands before Feature 2 because it changes `src/core/types.ts`,
+`src/core/commands.ts`, Node structural variants, and create/clone invariants on
+the exact shared protocol surface. Feature 1 has no such dependency.
 
-Recommendation: **A** — fits Tenon's "no special buckets" stance better than
-B and matches the PARA-removal direction (commit `ab971d7`).
+### Verification
 
-**Decided: option A** (PM-ratified 2026-08-06). Build against per-tag
-`defaultExtractParentId`; option B is recorded above as the path not taken.
+Feature 1 tests toggle on/off, mixed selection state, keyboard focus, overlay
+geometry, and one-step Undo. Feature 2 tests exact rich-text preservation,
+destination/tag application, inline-reference replacement, stale range,
+missing/deleted destination, invalid boundaries, concurrent edits, atomic
+failure, and one-step Undo/Redo. Visual evidence covers the toolbar and tag
+picker in light/dark and narrow panes.
+
+## Acceptance Criteria
+
+- **AC-1:** Selecting text and toggling Heading adds/removes `headingMark`
+  through the existing patch path with stable toolbar geometry.
+- **AC-2:** Selecting a configured tag creates one tagged Node under its live
+  destination and replaces the exact source slice with one inline reference.
+- **AC-3:** Stale range, deleted destination/tag, invalid reference boundary, or
+  concurrent conflict commits no partial mutation.
+- **AC-4:** One Undo restores the original source and removes the created Node;
+  one Redo reproduces the same logical result through canonical command replay.
+- **AC-5:** Feature 2 begins only after Source PR-I and changes no special/legacy
+  Node or Source path.
 
 ## Open questions
 
-- Should the `#` button be available with no text selection? Probably not —
-  if there's no selection, the regular `#` trigger in trailing input
-  already handles "add a tag".
-- Heading levels (H1/H2/H3) — `headingMark` is currently a single mark
-  with no level attribute. Adding levels would require schema work that's
-  out of scope here.
+None. Heading levels remain out of scope, no-selection hides the extract action,
+and per-tag destination is the ratified policy.
 
-## Implementation sketch
+## Implementation checklist
 
-1. Add heading button to `FloatingEditorToolbar.tsx`. Wire to existing
-   `add_mark / remove_mark` flow.
-2. Add `#` button conditional on `props.activeMarks` plus a new
-   `hasSelection` flag.
-3. Either: extend `tagDef` with `defaultExtractParentId` (option A) and add
-   a config UI in `DefinitionConfigPanel.tsx`.
-4. New core command `extract_selection_as_tagged_node`.
-5. Tag picker on click; on confirm, run the command.
-6. E2E test for both buttons.
-
-## Test plan
-
-- E2E: select text, click heading button, verify the selection range gets
-  a `headingMark`.
-- E2E: select text, click `#`, pick a tag with a configured extract
-  destination, verify a new tagged node exists at the destination with the
-  selected text, and the source row now shows an inline reference.
-- Undo: single Cmd+Z reverses the whole extract.
+- [ ] Ship the renderer-only heading toggle independently.
+- [ ] Land Source PR-I before claiming the coordinated extraction protocol.
+- [ ] Add the per-tag destination field, configuration surface, and one atomic
+      extraction command without renderer-side mutation sequencing.
+- [ ] Update current rich-text, command, and UI specs.
+- [ ] Run typecheck, relevant Core/renderer/E2E tests, docs check, diff check,
+      and light/dark visual verification for each feature.

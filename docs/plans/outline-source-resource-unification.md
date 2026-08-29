@@ -950,12 +950,14 @@ retirement. Discovering that a shared interface is missing stops PR-F and sends 
 human-led correction through the interface owner; it is not filled in as a
 feature-PR drive-by.
 
-After PR-I lands, `agent-result-and-file-lifecycle` may build its Outline
-consumer once its Agent-side prerequisites are satisfied. PR-F has no dependency
-edge to that consumer and is independently orderable after PR-I. The later Agent
-plan may share or clone exact revisions into Outline AssetRecords, but it must
-create ordinary Nodes with ordered managed Source values rather than special
-attachment/image Nodes.
+After PR-I lands, the complete Host composition set establishes the final
+resource/preview/Agent Host ownership. Agent Large-Text Arguments then settles
+the overlapping canonical-to-renderer Agent projection seam, after which
+`agent-result-and-file-lifecycle` may build its Outline consumer. PR-F has no
+dependency edge to those Agent/Host consumers and is independently orderable
+after PR-I. The later Agent plan may share or clone exact revisions into Outline
+AssetRecords, but it must create ordinary Nodes with ordered managed Source
+values rather than special attachment/image Nodes.
 
 Expected implementation areas are re-derived per unit rather than treated as a
 fixed file checklist. PR-I owns shared Core commands/types, field and Runtime

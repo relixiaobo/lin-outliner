@@ -23,7 +23,7 @@ once through #463's extraction.
   `send_message`, `followup_task`, `list_agents`, `interrupt_agent`) or their
   model-facing semantics; this plan changes what the *user* sees and can do.
 - No lifting of the `request_user_input` root-Thread scope. The "a child
-  cannot ask the user" deferral in `docs/plans/reference/agent-program.md` stands;
+  cannot ask the user" deferral in `docs/plans/archive/agent-program.md` stands;
   this plan only makes the blocked state visible.
 - No child composer. Child Threads stay read-only per the child-Trajectory
   contract in `docs/spec/agent-thread-rendering.md`; user control is limited to

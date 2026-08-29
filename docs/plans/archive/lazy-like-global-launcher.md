@@ -4,7 +4,7 @@
 > behavior is the authority in [`launcher.md`](../../spec/launcher.md). Every
 > *remaining* ambition has been re-homed: command-surface evolution →
 > `unified-command-surface.md` (cmd+k + launcher convergence); capture-content
-> breadth → `launcher-provider-expansion.md`; rich extraction backend →
+> breadth → `archive/launcher-provider-expansion.md`; rich extraction backend →
 > `browser-extension-integration.md`. The follow-ups `launcher-ai-actions` and
 > `launcher-capture-destinations` are **superseded** by `unified-command-surface`.
 > No live work remains under this plan; kept as history.
@@ -122,7 +122,7 @@ Relevant current files:
 Known dirty worktree at document creation time:
 
 - `docs/plans/README.md` modified by someone else.
-- `docs/plans/agent-self-modification.md` untracked by someone else.
+- `docs/plans/archive/agent-self-modification.md` was untracked by someone else.
 
 Do not overwrite those files unless explicitly asked.
 

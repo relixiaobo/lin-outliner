@@ -1,235 +1,102 @@
-# Dark-mode Contrast Pass
+# Dark-Mode Contrast Verification
 
-The dark-mode token mechanism is sound — the static review (`tmp/ui-review/A-dark-mode-visual-risk.md`)
-confirmed **no hardcoded hex outside `tokens.css` / `theme-dark.css`** (the only
-`#…` in component CSS is a GitHub-issue number in a comment), every classic
-invert-trap already carries an explicit fix (white tick on green via
-`--text-on-accent`; `pm-highlight` forcing `color: inherit`;
-`--status-success-strong` lifted for dark; the agent-dock
-rail icons bumped off the 0.30 tier because 0.30 read "blurry" on the dark rail).
-So this is **not** a mechanism change. It is a **visual confirm + nudge pass**:
-run the app in both themes, eyeball the residual contrast risks the static review
-could only *flag*, and where the run confirms a problem, apply a **dark-only,
-one-token nudge** in `theme-dark.css` (or `tokens.css` where the issue is
-theme-identical) — never per-site edits.
-
-This pass **runs late**, after Layer 1 (`design-system-consistency`,
-`composition-rhythm`) and Layer 2 (`button-primitive`, `input-primitive`,
-`feedback-states`) land, so it verifies the *final* rendered state rather than an
-interim one. The core deliverable cannot be fully specified statically — the
-report's risk table is the **checklist of what to confirm on the real run**, and
-the actual edits are decided at the keyboard with both themes open.
-
-The fix shape is already proven twice in the repo:
-- **`agent-dock.css` `.agent-menu-button`** — rail icons moved off `--text-faint` (0.30) onto
-  `--text-secondary` (0.55) *because 0.30 read blurry on the dark rail*. This is
-  the precedent and the canary: if icon strokes at 0.30 needed lifting, body text
-  at 0.30 likely does too.
-- **`a11y.css` `prefers-contrast: more`** — lifts the exact text tiers
-  (`--text-tertiary` 0.30→0.52, `--text-quaternary` 0.16→0.38) and separators
-  (0.10→0.32) via a single `:root` token redefinition. That block is the
-  **template** for a dark-only lift: same tokens, same one-place redefinition,
-  scoped to `@media (prefers-color-scheme: dark)` instead.
+**Shape:** (a) ONE complete visual-verification feature in one PR.
 
 ## Goal
 
-- Run `bun run dev:cc-2` under both light and dark (in-app Settings › General ›
-  Theme, and/or a dark OS) **after Layer 1/2 land**, and walk every surface in the
-  report's "must-confirm" list.
-- For each confirmed contrast/legibility problem, apply a **targeted, dark-only,
-  single-token nudge** in `theme-dark.css` — mirroring the rail-icon precedent and
-  the `a11y.css` lift template — so the whole alpha-on-ink system inverts the fix
-  for free with no per-site CSS.
-- Keep light mode untouched: alphas are theme-identical by design, so any nudge
-  that would help dark but hurt light is scoped to the dark `@media` block, never
-  pushed into the shared `:root`.
-- Update `docs/spec/design-system.md` in the same change **only if** a token value
-  actually moves (e.g. record a lifted dark text tier), per A6.
+Run a final light/dark product walk after the active visual plans land and fix
+only contrast failures confirmed in the rendered application. The alpha-on-ink
+theme mechanism is already correct, and #377 already lifted dark
+`--text-tertiary` to its current value. The remaining work is evidence-driven
+verification plus the smallest token-level corrections that the run proves are
+necessary.
 
 ## Non-goals
 
-- **No mechanism change.** The two-themes-over-one-ink model, the
-  `@media (prefers-color-scheme)` driver, and the `a11y.css` override layer all
-  stay exactly as they are.
-- **No new hardcoded hex** outside `tokens.css` / `theme-dark.css`. Fixes are
-  token redefinitions, not per-site color literals.
-- **No per-site color edits.** If a single site genuinely needs a different ink
-  level than its tier, that is a tier-assignment bug to flag, not a job for this
-  pass — prefer moving the site to an existing tier over inventing a one-off.
-- **No icon/control shape or fill work** (owned by `design-system-consistency` /
-  `button-primitive`), **no text-input/placeholder styling** (owned by
-  `input-primitive`), **no empty-state copy** (owned by `feedback-states`). This
-  pass only touches color/contrast *values*.
-- **No `settings-*.css` edits** (see Collision check) — status-color fixes there,
-  if any, land as token nudges in `theme-dark.css`. (#118 is merged; its tokens —
-  added `--inset-hairline`, routed through `--separator` — don't affect this pass's
-  targets.)
-- Not a WCAG-AA certification effort — the bar is "reads cleanly in the product on
-  a real dark screen", judged by eye, consistent with the design system's
-  perceptual-over-benchmark stance (A9).
+- No renderer theme bridge, `[data-theme]` selector, new palette, or theming
+  mechanism.
+- No speculative token movement based only on static ratios.
+- No per-site raw colors, broad component restyling, icon changes, or layout
+  work.
+- No claim of WCAG certification; accessibility preference paths still require
+  explicit verification.
 
 ## Design
 
-### Fix mechanism (decided)
+### Requirements
 
-Every confirmed fix is one of two shapes, in priority order:
+- **FR-1:** Every candidate correction is preceded by a rendered light/dark
+  comparison on the actual affected surface.
+- **FR-2:** A repeated contrast failure is corrected at the narrowest semantic
+  token authority; raw site colors are forbidden.
+- **FR-3:** Reduced motion, increased contrast, and reduced transparency remain
+  independently testable after every token change.
+- **FR-4:** The PR records both unchanged confirmations and changed tokens so a
+  quiet diff cannot masquerade as an incomplete walk.
 
-1. **Tier-level dark lift (preferred).** Add a token redefinition inside the
-   `@media (prefers-color-scheme: dark)` block in `theme-dark.css`, e.g.
-   `--text-tertiary: rgb(var(--ink) / 0.40)`. One line fixes every consumer of
-   that tier in dark, light is untouched. This is the `a11y.css` template scoped
-   to dark. Use for the high-volume text-tier and separator risks.
-2. **Single-token dark literal lift.** For a per-theme literal already living in
-   the dark block (status colors, materials), add/raise its dark value the way
-   `--status-success-strong` → `#5fc88a` is already done. Use for status colors
-   and any material/scrollbar adjustment.
+### Verification order
 
-A site-level edit is the fix **only** when the run shows a single misassigned tier
-(a body label wearing `--text-quaternary`), and even then the edit is "move it to
-the right existing tier", not "give it a custom color".
+Run this plan after Settings working states, icon semantics, Source preview
+composition, and other active visual work so it evaluates the surface that will
+ship. Walk the same content in light and dark, then repeat the critical cases
+with increased contrast, reduced motion, and reduced transparency.
 
-### Candidate risk table
+Confirm these current risks:
 
-The checklist for the run. Columns: token pair · usage evidence · static
-reasoning · proposed nudge (if confirmed) · needs-visual-confirm. **Every row is
-`needs-visual-confirm: yes`** — nothing here is applied without seeing it. Use
-selector/token evidence instead of brittle `file:line` references; re-grep the
-selectors at run time.
+| Surface | Current token question | Allowed correction |
+| --- | --- | --- |
+| Load-bearing faint text and disabled labels | Does `--text-tertiary` / `--text-quaternary` remain readable without flattening hierarchy? | Reassign a mis-tiered site first; lift a dark tier only when several correct consumers fail. |
+| Plain success, warning, and danger text | `--status-success-strong` has a dark lift while plain `--status-success` does not. | Adjust the dark status token, never a component literal. |
+| Menus and captions over material | Does backdrop variation make faint text disappear? | Fix the shared tier or material token, not one menu. |
+| Selected inverse controls | Is the neutral keyboard focus ring visible against the inverse fill? | Use a narrowly scoped neutral ring; do not weaken the global focus token. |
+| Separators, scrollbar thumb, and mark highlight | Are quiet structural cues still perceivable? | Small dark token nudge only when the real run confirms failure. |
+| Overlay elevation | Do menus and dialogs remain distinct from the dark content floor? | Correct the shared elevated-surface/material token before shadows. |
 
-| Sev | Surface / where | Token pair | Usage evidence | Static reasoning | Proposed nudge (if confirmed) |
-|---|---|---|---|---|---|
-| S2 | code captions, Thread metadata, sidebar secondary, canvas hints | `--text-faint` = `--text-tertiary` (light 0.30; dark 0.40 ink) | `code.css` captions/chrome, `canvas.css` hints, `thread.css` metadata, `sidebar.css` secondary lines | The light-mode 0.30 tier read around 2.6–2.7:1 on dark content/material surfaces; rail icons were already moved off the faint tier in `agent-dock.css`. | Dark-only `--text-tertiary` lift is the central fix. Visual pass should confirm it reads as a faint tier without collapsing into `--text-secondary`. |
-| S2 | outliner dimmed bullet / placeholder + faint labels | `--text-quaternary` (0.16 ink) | `outliner.css` dimmed bullet / placeholder / faint label selectors | 0.16 alpha is far below AA in both themes; legible only as decoration. Confirm it isn't load-bearing copy in dark. | If load-bearing: lift `--text-quaternary` in dark, e.g. 0.16 → **0.22–0.26**. If purely decorative: leave. |
-| S2 | settings success result line, other plain-success text | `--status-success` `#3f9e6a` (NOT lifted in dark) | `settings-provider-sheet.css` success/result selectors using `--status-success` | `theme-dark.css` lifts `--status-success-strong`→`#5fc88a` *expressly because the dark green read too dark*; the **plain** `--status-success` keeps `#3f9e6a` — the same too-dark green the lift fixed. | Add a dark `--status-success` lift in `theme-dark.css` (mirror the `-strong` lift), e.g. → **`#5fc88a`-ish mid green**. Token-only; does **not** touch `settings-*.css` (#118-safe). |
-| S2 | validation warning glyph; danger reset/remove labels | `--status-warning` `#d99a1c` / `--status-danger` `#e5484d` (no dark lift) | warning/danger selectors in `outliner.css` and settings sheets | Amber on near-black usually OK; `#e5484d` red on `#1e1e1e` is borderline — confirm it doesn't muddy. | Only if confirmed muddy: small dark lift of `--status-danger` (and/or `-warning`) in `theme-dark.css`. Likely leave amber. |
-| S2 | faint text inside Thread controls, open menus, popovers, and sidebar | `--text-faint` = `--text-tertiary` (dark 0.40) over `--material-popover` (0.72) / `--material-sidebar` (0.55) | `thread.css`, agent dock menus, `popover-command.css`, and sidebar menus | Text floor is translucent, so effective contrast varies with backdrop bleed-through even after the central dark lift. Captions in menus remain the main confirmation target. | Largely covered by the `--text-tertiary` dark lift above. If still weak, adjust the shared tier rather than special-casing a menu. |
-| S2 | keyboard focus ring on a selected inverse pill | `--focus-ring-shadow` around a control on `--surface-inverse` | selected calendar days and inverse controls in current settings/shell surfaces | In dark the outset ring and selected pill may both be light, making keyboard focus hard to see. | If confirmed, use an ink-based ring scoped to the inverse control context; do not change the global focus token. |
-| S3 | hairline dividers throughout | `--separator` = 0.10 ink | `thread.css`, `agent-dock.css`, `settings-provider-sheet.css`, and other current `--separator` consumers | 0.10 white on dark is very faint where it divides near-equal surfaces. | If invisible where it matters, lift `--separator` in the dark block to 0.14–0.16. |
-| S3 | editor `<mark>` highlight | `--highlight-mark` dark `rgba(120,100,30,0.55)` under `color: inherit` body text | `outliner.css` mark styling and `theme-dark.css` `--highlight-mark` override | Black-text trap already fixed (`color: inherit`); the olive-over-dark *fill* + inherited ~0.88 white text needs an eye for legibility/aesthetics. | If murky: adjust the dark `--highlight-mark` literal (lighter/less-olive) in `theme-dark.css`. Token-only. |
-| S3 | launcher row bullet (a *filled dot*, not text) | `background: var(--text-tertiary)` (dark 0.40) | `launcher.css` row bullet dot | A 5px dot painted with the faint text tier can still read softer than text on the launcher's `--bg-elevated` in dark; small size can hurt findability even when nominal contrast improves. | Auto-improves with the `--text-tertiary` dark lift. If still faint at dot size, that is a tier-assignment call (point the dot at `--text-secondary`) — flag, don't custom-color. |
-| S3 | scrollbar thumb on translucent rails | `--scrollbar-thumb` 0.22 ink over `--material-*` | `base.css` scrollbar thumb token | 0.22 white thumb on see-through dark material — confirm it's visible at all before the 0.34 hover fade-in. | If invisible at rest: small dark lift of `--scrollbar-thumb` (e.g. 0.22 → 0.28) in `theme-dark.css`. |
-| S3 | disabled labels/controls | `--text-quaternary` (0.16 ink) | disabled selectors in `breadcrumb.css`, `shell.css`, settings, and Thread controls | 0.16 white on dark is near-invisible. Acceptable as disabled, but flag any spot where a disabled value must still be read. | Leave at the disabled floor unless a load-bearing label is found. |
-| S3 (likely-OK) | drop shadows on dark floor | `--shadow-rail` / `--overlay-shadow-level-*` (deepened in dark) | shadow tokens in `tokens.css` and dark overrides in `theme-dark.css` | Dark shadow on near-black floor adds little; elevation reads via the lighter elevated *surface* step (`#2e2e30` vs `#1e1e1e`). | Confirm floating chrome still reads as raised. If flat: nudge the elevated-surface step, not the shadow. Probably no change. |
-| S4 (likely-OK) | inverse-on-fill hover color flip | `color: var(--surface-inverse)` on `background: var(--control-hover)` | current inverse controls in `code.css`, shell, and related surfaces | Deliberate label flip; readable in both themes by construction. | None expected. |
+### Correction rules
 
-### What "done" looks like
+1. A site wearing the wrong semantic tier moves to an existing token.
+2. A repeated failure across correct consumers gets one dark token override in
+   `theme-dark.css`.
+3. A theme-independent failure changes the shared token only when both themes
+   need it.
+4. Raw color literals remain confined to token declarations, and every changed
+   value is folded into the current design-system specification.
 
-- A short walk recorded in the PR body: surface · "reads fine" / "lifted X from a
-  to b" — the ephemeral finding, not a committed doc.
-- A diff that is, in the typical case, a handful of added lines inside the dark
-  `@media` block of `theme-dark.css` (plus a `tokens.css` line only if a
-  theme-identical value like `--separator` is lifted in both — which it should
-  not be unless light needs it too).
-- `docs/spec/design-system.md` updated **iff** a token value moved (A6).
-- `bun run typecheck` + the guard tests green (the token/hex guard must still pass
-  — fixes are token redefinitions, so it will).
+The PR body records the ephemeral walk as surface, result, and any token change;
+the repository keeps only the resulting current behavior and spec.
 
-## Open questions (defaults if the PM doesn't weigh in)
+### Verification
 
-These are taste calls best made with both themes on screen; recorded here with a
-default so the pass isn't blocked.
+Cover Agent transcript and Settings metadata, launcher and menus, Outliner
+empty/loading hints and disabled controls, selected keyboard-focused controls, status
+messages, separators, scrollbars, highlighted text, chrome material, and both
+menu/dialog elevation levels. Run the design guards and focused E2E visual
+assertions after any token change.
 
-- **How far to lift the 0.30 `--text-tertiary` tier in dark.** Default: the
-  *smallest* lift that resolves the blur — start at **0.38**, go up toward the
-  a11y `more` value (0.52) only if 0.38 still reads soft. Do not match `more`
-  wholesale; that tier is meant to be quiet.
-- **Whether to lift the 0.16 `--text-quaternary` tier at all.** Default:
-  **leave it** (it is the disabled/decorative floor); lift only if the run finds a
-  load-bearing label wearing it. Prefer re-tiering that one site.
-- **Lift status colors globally vs per-use.** Default: **globally, in the token**
-  — add a dark `--status-success` lift mirroring `-success-strong`, so every
-  plain-success text site fixes at once and stays consistent with the already-
-  lifted strong variant. Per-use color literals are out (would add hex outside the
-  token files).
-- **Separator / scrollbar / highlight nudges.** Default: lift only the ones the
-  run shows are genuinely invisible *where it matters*; leave the rest. These are
-  S3 — opportunistic.
-- **Focus-ring-on-inverse-pill.** Default: narrowest fix that works — an ink-based
-  focus ring scoped to selected-inverse controls — decided at the keyboard; do not
-  change the global `--focus-ring-shadow` (that would weaken focus everywhere).
+## Acceptance Criteria
 
-## Collision check
+- **AC-1:** The PR body contains a result for every risk family in light, dark,
+  and the applicable accessibility-preference paths.
+- **AC-2:** Every changed color is a token declaration or a semantic reassignment
+  to an existing token; component CSS gains no raw color.
+- **AC-3:** Changed token values are reflected in the current design-system spec
+  and all token/design guards pass.
+- **AC-4:** Keyboard focus, status meaning, text hierarchy, and overlay elevation
+  remain distinguishable after the smallest confirmed corrections.
 
-- Last refreshed 2026-07-01: no open PR currently claims this dark-mode contrast
-  pass. The historical adjacent PRs #119 (cc/incremental-projection — core↔renderer
-  projection protocol, no CSS) and #118 (codex/settings-macOS-clarity) are both
-  merged; #118's tokens (added `--inset-hairline`, routed through `--separator`) don't
-  affect this pass's targets.
-- **Settings sites:** the report cites `settings-provider-sheet.css`
-  plain-success text selectors and other `settings-*.css` sites. This pass's fix
-  is a **token nudge in `theme-dark.css`** — it does **not** edit any
-  `settings-*.css` regardless. Re-grep cited selectors against `main` (#118
-  reshaped the settings CSS).
-- **Sequence after Layer 1/2** (`archive/ui-quality-roadmap.md`): this pass verifies the
-  *final* state. Running it before `design-system-consistency`, `composition-rhythm`,
-  `button-primitive`, `input-primitive`, `feedback-states` land would re-confirm a
-  surface those plans then change. Pull this plan **last** (it is P3 and explicitly
-  scheduled "(4) `dark-mode-contrast-pass` last" in the roadmap).
-- **No overlap** with `design-system-consistency` (icon shape/fill, overlay
-  radius, focus *neutrality*) — that owns focus-ring *neutrality*, this owns focus-ring
-  *contrast on a specific inverse-pill context*; coordinate only if both touch the
-  focus-ring token (they should not — that plan keeps it neutral, this scopes a
-  context-specific ring).
+## Open questions
 
-## Risks
+None before the visual run. Exact numeric token changes are evidence-derived
+implementation values: start with the smallest correction that preserves the
+existing hierarchy and record the measured/rendered reason in the PR.
 
-- **Over-lifting hurts light mode.** Alphas are theme-identical by design, so any
-  lift placed in the shared `:root` would also brighten light, where these tiers
-  already pass. **Mitigation:** every text-tier / separator / scrollbar nudge goes
-  inside the `@media (prefers-color-scheme: dark)` block in `theme-dark.css`, never
-  in `tokens.css` `:root`. Light mode tokens stay byte-for-byte unchanged. (Status
-  colors and materials already live only in the dark block, so they are dark-only
-  for free.)
-- **Lifting the quiet tiers too far flattens the hierarchy.** The whole point of
-  0.30/0.16 is a *quiet* label; pushing toward 0.55 erases the step from
-  `--text-secondary`. **Mitigation:** smallest lift that resolves the blur; keep
-  the inter-tier gap visible (secondary 0.55 must still read clearly above a lifted
-  tertiary).
-- **a11y override interaction.** `a11y.css` is `@import`ed AFTER `theme-dark.css`
-  and re-redefines these tokens under `prefers-contrast`/`reduced-transparency`. A
-  dark lift sits *below* it in source order, so the `more` block still wins when
-  both match — verify the high-contrast path still reads correct after the nudge
-  (it lifts further, so it will, but confirm no regression).
-- **Token guard tests.** `theme-dark.css` is one of the two files allowed to carry
-  literals; status-color hex there is fine. Confirm the renderer guard's exception
-  set still covers any new line (it should — same file, same shape as existing
-  lifts).
-- **Reference drift.** Layer 1/2 will move some cited implementation details. The table is
-  a checklist of *tokens × surfaces*, not a patch — re-grep each token's consumers
-  at run time rather than trusting an old location.
+## Implementation checklist
 
-## Checklist — the light + dark visual walk (per surface)
-
-Run `bun run dev:cc-2`, toggle Settings › General › Theme between Light and Dark
-(and ideally also flip the OS appearance to confirm the no-JS-bridge path). Walk
-in priority order; for each, note "fine" or the nudge applied.
-
-- [ ] **Every 0.30 / 0.16 text site in dark** (risks 1, 2, 11): agent transcript
-      meta, code-block captions, sidebar secondary lines, outliner dimmed bullet /
-      placeholder, disabled labels. The rail-icon precedent is the canary.
-- [ ] **Plain status colors as text in dark** (risks 3, 4): settings
-      success/error result line, validation warning glyph, danger reset/remove
-      labels. Specifically check `--status-success` `#3f9e6a` vs the already-lifted
-      `-success-strong`.
-- [ ] **Faint text inside open menus / popovers in dark** (risk 5): model menu
-      caption, Thread menu, command popover, settings menus — text-over-glass.
-- [ ] **Keyboard-focus a *selected* item in dark** (risk 6): tab to a selected
-      calendar day / inverse chip; confirm the focus ring is visible on the light
-      inverse pill.
-- [ ] **Hairline dividers in dark** (risk 7): agent tool rows / run detail /
-      debug / settings list separators where content meets elevated surface — do
-      they read at all?
-- [ ] **Editor `<mark>` highlight in dark** (risk 8): legibility of body text over
-      the olive fill.
-- [ ] **Launcher bullet dot in dark** (risk 9): findable at 5px?
-- [ ] **Scrollbar thumb on a translucent rail in dark** (risk 10): visible at rest
-      before hover?
-- [ ] **Elevation read in dark** (risk 12): does a floating rail / menu still read
-      as raised, or flat against the floor?
-- [ ] **Re-walk LIGHT** after any dark nudge: confirm the light surfaces are
-      byte-for-byte unchanged (no shared-`:root` leakage).
-- [ ] **High-contrast + dark** (`prefers-contrast: more` under dark OS): confirm
-      the `a11y.css` `more` lift still wins and reads correct over the new dark
-      values.
-- [ ] `bun run typecheck` + `bun run test:renderer` (token/hex guard) green.
-- [ ] Update `docs/spec/design-system.md` iff a token value moved.
+- [ ] Land after the active visual consumers and regenerate the surface queue
+      from current token usage.
+- [ ] Capture light/dark and accessibility-preference evidence for every risk
+      family.
+- [ ] Apply only confirmed token or semantic-tier corrections.
+- [ ] Update the design-system spec for every changed token.
+- [ ] Run typecheck, renderer/design guards, focused E2E, docs check, and diff
+      check.

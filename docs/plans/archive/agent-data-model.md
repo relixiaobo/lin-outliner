@@ -248,23 +248,20 @@ type RunEvent =
       status: 'available' | 'unavailable';
       resolvedBy: 'default' | 'user_blocklist';
       reason?: 'user_blocked' })
-  // ── run-scoped INTERACTION / UI-STATE (consumed by ask-user + gen-ui; persisted here so a paused run / widget restores) ──
+  // ── run-scoped INTERACTION (persisted here so a paused run restores) ──
   | (RunEventBase & { type: 'user_question.requested';                              // [[agent-ask-user-question-tool]] §7 UserQuestionRunEvent
       requestId: string; toolCallId: string; request: AgentUserQuestionRequestView })
   | (RunEventBase & { type: 'user_question.answered'; requestId: string; result: AskUserQuestionResult })
-  | (RunEventBase & { type: 'user_question.cancelled'; requestId: string; reason?: string })
-  | (RunEventBase & { type: 'widget_state.updated';                                 // [[agent-generative-ui]] — emitted during a tool call
-      toolCallId: string; messageId: string; currentState: unknown });
+  | (RunEventBase & { type: 'user_question.cancelled'; requestId: string; reason?: string });
 ```
 
-**Where the interaction / widget events live.** `user_question.*` and `widget_state.updated`
-are **run-scoped** — they occur *during* a run (a paused-for-input run, or a widget-emitting
-tool call), so they persist in the **run log** anchored to `runId` (and transitively to
-`conversationId` via the run anchor + the producing `messageId`/`toolCallId`), and **project
-to renderer UI state** for restore. They are NOT conversation-log events (not communication)
-and NOT a separate store. A blocking `user_question` survives restart because the run log is
-durable; the renderer rebuilds the pending interaction / widget from it. (The program M0
-taxonomy lists these families; this is the anchor decision they were missing.)
+**Where interaction events live.** `user_question.*` is **run-scoped** because
+the interaction occurs during a paused run. It persists in the run log anchored
+to `runId` and transitively to `conversationId`, then projects to renderer UI
+state for restore. It is not a conversation-log event and does not use a
+separate store. The archived generative-UI proposal reserves no widget event;
+any reopened design must define its state authority against the then-current
+Thread Item protocol.
 
 There are **no conversation-less runs** — a scheduled routine fired by an outline
 `command` node still anchors to a delivery conversation (the agent's DM, or an

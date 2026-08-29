@@ -67,6 +67,21 @@ Verified items (2026-08-11 audit):
 
 ## Design
 
+### Requirements
+
+- **FR-1:** Chrome scroll handling coalesces geometry work per frame and filters
+  unrelated scroll targets before any layout read, without changing anchor,
+  panel-title, view-scroll, or keyboard behavior.
+- **FR-2:** Definition and action-projection caches invalidate only on the
+  semantic revision that changes their inputs, never on every unrelated
+  Projection delivery.
+- **FR-3:** Translation scheduling removes the O(all blocks) geometry scan from
+  the scroll path while preserving far jumps, dynamic block changes, priority,
+  and in-flight preemption.
+- **FR-4:** One immutable revision-keyed `OutlineSelectionIndex` is reused across
+  Runtime reads, while query-local virtual nodes remain isolated from its shared
+  base maps.
+
 Per item, the smallest fix that removes the cost:
 
 1. `useAnchoredOverlay.update` runs through one shared rAF (coalescing all
@@ -110,6 +125,25 @@ Per item, the smallest fix that removes the cost:
 8. Drop the unnecessary effect deps; the handler already reads live state
    through `latestStateRef`.
 
+### Dependency And Collision Order
+
+The four units do not share one global dependency:
+
+- PR-1 and PR-3 touch preview panels, overlay placement, and URL/EPUB reader
+  scheduling. They do not run concurrently with Source PR-F or either
+  `file-preview` feature when the live file scopes overlap. This is collision
+  ordering, not a semantic dependency on Office or Reader functionality.
+- PR-2 follows Source PR-I because that cut replaces Node variants and field
+  projections used by the definition caches. It then keys only final
+  definition-relevant revisions.
+- PR-4 follows Source PR-I because it caches the Runtime selection index over
+  the final Source-aware projection and query schema. It may run in parallel
+  with Host composition because Runtime index authority is outside the Host
+  composition root.
+
+No unit starts from the historical file list. It regenerates its queue from the
+named symbols on the merged dependency tip and a current trace/probe.
+
 ## Verification
 
 - Unit where the fix is a cache: revision-keyed hit/miss tests (items 4, 6, 7);
@@ -125,6 +159,25 @@ Per item, the smallest fix that removes the cost:
   numbers in the PR body (A9).
 - Existing outliner/table/launcher/translation suites stay green — every change
   is cost-only.
+
+## Acceptance Criteria
+
+- **AC-1:** PR-1 reduces scroll handling to one shared animation-frame batch,
+  performs no geometry read for unrelated targets, routes title-dock measurement
+  through its existing scheduler, and keeps one registered view dispatcher.
+- **AC-2:** PR-1 removes the projection-delta keyboard re-subscription without
+  changing shortcut or focus behavior.
+- **AC-3:** PR-2 proves definition-option caches survive unrelated deltas and
+  invalidate on the next relevant field/tag definition change; the action-
+  projection candidate changes only if measurement justifies it.
+- **AC-4:** PR-3 bounds scroll-path rectangle reads by the near-viewport
+  candidate set and passes parity tests for far jumps, inserted/removed blocks,
+  priority, and preemption.
+- **AC-5:** PR-4 proves repeated reads at one Runtime revision share both the
+  selection and lazy text indexes, a new revision replaces them, and virtual
+  condition nodes never mutate the shared base.
+- **AC-6:** Each unit records before/after evidence for its claimed cost and
+  keeps existing behavior and relevant suites unchanged.
 
 ## Open questions
 

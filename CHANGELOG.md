@@ -144,6 +144,24 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
+- **Active plans and the integration board now describe one executable system
+  rather than overlapping histories** — the 19-plan audit checked recent Host,
+  Source, Agent-resource, cross-Thread, large-text, and Outline-CLI designs
+  against current `main`, then separated contract dependencies from file-level
+  collision ordering. The clean chain is Source PR-I, complete Host composition,
+  Agent large-text projection, and Agent resource lifecycle; Outline CLI,
+  Startup Window First, Source PR-F, cross-Thread reference, and recovery branch
+  only where their real contracts require it. Partially shipped File Preview,
+  Settings working-state, performance, Skill authoring, floating-toolbar, icon,
+  and contrast plans now contain only remaining work. Three unapproved or
+  premise-drifted directional plans moved to `archive/` as `shelved`. The board
+  dropped duplicated shipped retrospectives while retaining every active plan,
+  fast-track tail, release gate, standing decision, and recent completion. The
+  shipped Conversation/Run/EventStore program and its data-model authority moved
+  from `reference/` to `archive/` as `superseded` because Agent Core's
+  Thread/Turn/Item specs replaced them; the remaining Memory glossary now maps
+  only to the current Daily Timeline model.
+
 - **Large Agent text and efficient Outline workflows now have two execution-ready
   plans (PR #596 and PR #595, codex)** — the shared foundation stores one or more
   tool-selected textual argument paths as typed Thread-private dependencies over

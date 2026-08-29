@@ -1957,3 +1957,27 @@ values, duplicate-content deduplication, malformed paths, generic encoding
 failures, and shared versus tool-specific bounds. Keep production schema maxima
 and end-to-end fixtures in the consumer plan so the first use case proves its own
 compatibility without defining the shared envelope.
+
+## Dependency graphs need contract edges and collision edges
+
+The 2026-08-29 plan audit found features correctly described as semantically
+independent while their implementations all changed Agent protocol, payload
+storage, Context projection, Thread lifecycle, renderer transport, and
+`main.ts`. A contract-only graph therefore allowed each plan to be locally true
+and the combined execution order to be wrong: new work could land on the
+implicit Host graph or canonical renderer shape immediately before another
+approved plan replaced it.
+
+**Record both kinds of ordering.** A contract edge says a consumer needs a
+predecessor's observable behavior or public interface. A collision edge says two
+features are behaviorally independent but must be serialized because they
+rewrite the same authority or one establishes the mechanism the other should
+target. Do not invent a semantic dependency to explain a file collision, and do
+not call work parallelizable merely because its product concepts are
+orthogonal.
+
+At plan time, list the shared symbols/owners that justify a collision edge. At
+claim time, regenerate the exact files from the merged dependency tip and live
+PR scopes. When the predecessor is a foundation refactor, downstream work starts
+after the complete mechanism lands rather than paying to implement and relocate
+the same behavior twice.

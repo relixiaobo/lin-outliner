@@ -50,7 +50,7 @@ the full plan covers all `computer-pilot` capabilities.
   tracked files into `build/generated/built-in-skills`, and the packaged app
   loads them from `Resources/built-in-skills`.
 - No active code PR was found claiming macOS desktop-control agent tools.
-- `docs/plans/launcher-provider-expansion.md` is adjacent because it discusses
+- `docs/plans/archive/launcher-provider-expansion.md` is adjacent because it discusses
   app-provider expansion, but this plan owns interactive computer control rather
   than launcher capture.
 - Implementation will touch shared agent tool registration, permission classes,
