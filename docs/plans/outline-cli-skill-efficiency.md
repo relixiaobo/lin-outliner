@@ -179,9 +179,11 @@ security tests. This feature relies only on the merged observable interface:
 
 - Bash accepts one bounded `stdin: string` beside `command` and delivers its
   exact UTF-8 bytes directly to child stdin.
-- A direct `outline ... --input -` invocation is a registered data consumer;
-  its existing `outline.read`, `outline.edit`, or `outline.delete` action comes
-  from the parsed command while document payload text remains opaque.
+- Direct `outline add --input -`, `outline commit --input -`, and `outline diff
+  --input -` invocations are the registered data consumers this feature uses;
+  their existing `outline.edit`, `outline.edit`, and `outline.read` actions come
+  from the parsed command while document payload text remains opaque. Other
+  stdin consumers remain outside this feature's dependency contract.
 - Executable and unknown stdin consumers fail closed in constrained Agents;
   user blocks continue to apply through the shared consumer classification.
 - Input-bearing calls are foreground-only and create no temporary input file,
