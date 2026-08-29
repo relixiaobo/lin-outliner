@@ -3,14 +3,15 @@
 **Shape:** (b) A SET with two ordered delivery units. **PR-I** is the
 repository-required, human-led interface cut: it lands the complete final
 URI/Source protocol, removes the special Node/command protocol, moves every
-current producer and non-visual consumer to the new model, and includes the
-minimal private presentation adapter needed to preserve current user behavior
-while main remains buildable. **PR-F** then ships one complete user-visible
-feature entirely on those merged interfaces: multi-Source editing and selection,
-preview-first composition, independent Hide/Show, current UI specifications, and
-end-to-end evidence. PR-I is the A10 shared-interface prerequisite, not a partial
-product slice or an interim/dual contract; PR-F changes no Core command/type or
-public Runtime/preload schema.
+current producer and consumer to the new model, and includes a complete
+content-first desktop management surface for every Source state its public
+contract can create. **PR-F** then ships one independent user-visible enhancement
+entirely on those merged interfaces: Tana-inspired preview-first composition,
+compact toolbar switching, refined Hide/Show placement, current UI
+specifications, and end-to-end evidence. PR-I is the A10 shared-interface
+prerequisite and a complete truthful baseline rather than groundwork; PR-F
+changes no Core command/type or public Runtime/preload schema and is not required
+to explain or repair PR-I state.
 
 ## Goal
 
@@ -91,8 +92,9 @@ preview visibility, and ordinary children become independent:
   projects as no visible Source field. Users may add, replace, reorder, or remove
   values but cannot change the definition's type, entry, or cardinality.
 - **FR-3:** Represent every Outline resource as an ordinary content Node whose
-  authoritative source relationships are the Source field values. Delete the Outline
-  `image` and `attachment` Node variants and their dedicated mutation paths.
+  authoritative source relationships are the Source field values. Delete the
+  Outline `image` and `attachment` Node variants and their dedicated mutation
+  paths.
 - **FR-4:** Store each Source value as the exact text scalar supplied by its
   author or producer. Syntax validity, scheme support, normalization, and current
   authority are derived concerns rather than write-admission rules. Automatic
@@ -134,11 +136,16 @@ preview visibility, and ordinary children become independent:
 - **FR-14:** Make Source creation, value identity, order, replacement, removal,
   and clearing converge under valid concurrent offline edits. Replication never
   rejects or disables a state produced by two valid Source commands.
-- **FR-15:** Permit `add-source` and `replace-source` to commit any Source text.
+- **FR-15:** Permit `add_source` and `replace_source` to commit any Source text.
   Classification is pure and permission-independent; authorization occurs only
   when the Host resolves a recognized supported locator. Invalid, unsupported,
   denied, missing, and temporarily unavailable values remain durable and
   editable.
+- **FR-16:** Add one final `sourceValue` Node variant whose required
+  `sourceText` string is the only direct value representation below
+  `field:source`. It remains a tree Node so ordinary descendants retain identity,
+  but it has no RichText `content`, cannot own fields or tags, and never receives
+  a protected Source entry of its own.
 - **NFR-1:** Invalid, unsupported, missing, denied, or temporarily unavailable
   committed sources degrade locally with a distinct reason and recovery where
   one exists. They never remove Source, rewrite content, or abort an otherwise
@@ -163,9 +170,10 @@ The Node's own line is its `content`:
   - Notes from the first minute       ordinary child Node
 ```
 
-The stored shape uses the existing field-entry/value-node mechanism. The stable
-Source definition identifies the slot by ID, never by its rendered label. A
-resource predicate conceptually means:
+The stored shape keeps the existing `FieldEntryNode` for the protected slot but
+uses one specialized direct-value variant rather than pretending Source text is
+RichText content. The stable Source definition identifies the slot by ID, never
+by its rendered label. A resource predicate conceptually means:
 
 ```ts
 isResourceNode(node, index) = hasAnySourceValue(node.id, 'field:source')
@@ -185,24 +193,84 @@ targets the same causally established CRDT entry rather than independently
 creating duplicate field entries. The projection hides an empty entry, so this
 storage invariant does not create a visible empty field.
 
-Each direct value row has a globally unique ID allocated by its originating
-command and stores its Source text losslessly as one atomic scalar register, not
-character-level RichText. The first value in converged CRDT order is the default
-selected Source; local view state may select another value ID without mutating
-the document. Descendants of a value row keep their ordinary Node semantics but
-do not become additional Source values.
+The final stored and projected variant is exact:
 
-The public protocol exposes final, Source-aware operations rather than treating
-the built-in field as a generic append-only slot:
+```ts
+interface SourceValueNode {
+  type: 'sourceValue';
+  id: NodeId;
+  parentId: NodeId;
+  children: NodeId[];
+  sourceText: string;
+  createdAt: number;
+  updatedAt: number;
+  locked: boolean;
+}
 
-- `add-source` inserts one newly identified value into the existing Source entry,
-  appending by default or using an explicit adjacent value anchor;
-- `replace-source` targets one direct value ID and atomically replaces its Source
-  scalar while preserving value identity, position, descendants, and selection;
-- `reorder-source` moves one direct value within the ordered slot;
-- `remove-source` tombstones one targeted value but never its Source entry; and
-- `clear-sources` observed-removes every value visible in the command's causal
-  snapshot, so an unseen concurrent add survives.
+type SourceValueProjection = SourceValueNode;
+```
+
+PR-I splits the current monolithic `NodeBase` into a structural base and the
+existing RichText-bearing base so `content` remains required on every content
+variant instead of becoming globally optional. `SourceValueNode` implements only
+the structural contract shown above.
+
+Those are the complete public fields for this variant. It has no `content`,
+description, tags, fields, capture metadata, asset metadata, or separate URI
+property. `parentId` must name the one permanent `FieldEntryNode` for
+`field:source`; that entry's direct children must all be `sourceValue` Nodes, and
+`sourceValue` cannot appear elsewhere. A Source value remains a tree Node only so
+ordinary content descendants can attach through `children`, retain their normal
+identity and editing semantics, and disappear/return with Source remove/undo.
+Those descendant content Nodes receive their own protected Source entry normally;
+the `SourceValueNode` itself is not a content or field owner and is never seeded
+with another Source entry.
+
+The Loro codec stores `type` and `sourceText` as scalar keys in the value Node's
+map. It never creates a `LoroText` container or `content` key for this variant, so
+concurrent replacement of `sourceText` is one atomic map-register conflict rather
+than character-level text merging. Decode and non-replication admission require
+the exact discriminator, a string `sourceText`, the protected parent, and absence
+of `content`; projection mirrors the fields above. Runtime projection degrades
+only the affected Source presentation if an impossible malformed value somehow
+reaches inspection, while persistence/write admission fails closed.
+
+The public ChangeSet adds this exact instruction union inside an `update` whose
+`targets` resolve the ordinary owner Node:
+
+```ts
+type SourceInstruction =
+  | { kind: 'source'; action: 'add'; sourceText: string;
+      valueId?: NodeId; after?: TargetRef | null }
+  | { kind: 'source'; action: 'replace'; value: TargetRef;
+      sourceText: string }
+  | { kind: 'source'; action: 'reorder'; value: TargetRef;
+      after: TargetRef | null }
+  | { kind: 'source'; action: 'remove'; value: TargetRef }
+  | { kind: 'source'; action: 'clear' };
+```
+
+Omitted `after` appends; `after: null` means first position. Lowering resolves
+every target and allocates an omitted `valueId` before creating one of the final
+Core commands:
+
+```ts
+type SourceCommand =
+  | { type: 'add_source'; ownerId: NodeId; valueId: NodeId;
+      sourceText: string; afterValueId?: NodeId | null }
+  | { type: 'replace_source'; ownerId: NodeId; valueId: NodeId;
+      sourceText: string }
+  | { type: 'reorder_source'; ownerId: NodeId; valueId: NodeId;
+      afterValueId: NodeId | null }
+  | { type: 'remove_source'; ownerId: NodeId; valueId: NodeId }
+  | { type: 'clear_sources'; ownerId: NodeId;
+      observedValueIds: readonly NodeId[] };
+```
+
+`clear` captures the currently observed direct value IDs during lowering so an
+unseen concurrent add survives replay. Replace preserves value identity,
+position, descendants, and local selection. The Runtime/preload and CLI expose
+the ChangeSet instruction above rather than a second Source mutation shape.
 
 The CRDT owns deterministic order and scalar conflict resolution. Concurrent
 adds retain both unique values in converged order. Concurrent add/reorder retains
@@ -219,7 +287,7 @@ mutation boundary:
 - generic field-slot `append-text`, `append-reference`, `append-nodes`, and
   `append-field` actions reject `field:source`;
 - generic content editing rejects a direct Source value row, so Source edits are
-  lowered to `replace-source` rather than bypassing managed-asset settlement;
+  lowered to `replace_source` rather than bypassing managed-asset settlement;
 - generic create-tree, direct value duplication, move-into-slot, paste/import,
   template/default/auto-init, and field-copy paths cannot synthesize Source;
 - cloning or duplicating an entire valid owner Node may reproduce its ordered
@@ -228,7 +296,8 @@ mutation boundary:
 - command replay, undo/redo, restore, and replication apply valid Source CRDT
   operations without post-merge rejection; persistence/change admission rejects
   only states that no valid command can produce, such as a missing/second Source
-  entry, a non-value direct child, or a non-atomic value representation; and
+  entry, a non-`sourceValue` direct child, or a non-atomic value representation;
+  and
 - importers and other bulk producers create the owner first and emit the same
   dedicated Source mutation rather than constructing a privileged field tree.
 
@@ -242,8 +311,8 @@ no live document/history/transaction relationship still names it.
 
 Multiple direct Source values, including invalid or unsupported text, and every
 merge of valid Source commands are valid; duplicate/missing Source entries,
-non-value direct children, and generic
-mutations that bypass settlement are not. Runtime projection encountering one of
+non-`sourceValue` direct children, and generic mutations that bypass settlement
+are not. Runtime projection encountering one of
 those impossible structures never chooses an arbitrary entry: the Node remains
 usable and Source presentation becomes unavailable. Persistence, command
 decoding, and non-replication change admission reject such malformed structure
@@ -333,7 +402,7 @@ never recorded as an admitted root.
 
 Grant and resolution rules are exact:
 
-- `add-source` and `replace-source` may commit any Source text without a grant.
+- `add_source` and `replace_source` may commit any Source text without a grant.
   When that text classifies as a supported `file:` locator, resolution and all
   byte actions return denied until an exact matching grant exists;
 - chooser-driven add/replace resolves the selected locator, requires a regular
@@ -424,6 +493,24 @@ Presentation labels never become a second stored locator, and a user may add or
 replace a Source value through paste, editing, or the appropriate chooser.
 
 ### 3. Resource Preview Interaction
+
+PR-I ships a complete, truthful content-first baseline before the visual
+enhancement begins. It keeps the preview in the current host position, but the
+Source field lists every direct value in converged order and never derives the UI
+from only the first value. Each row shows its readable label plus
+`ready`/`invalid`/`unsupported`/`denied`/`unavailable` status and reason, and
+provides keyboard-accessible Select/Preview, Edit, reorder, and Remove actions.
+The field exposes Add source and Remove all; chooser-backed actions retain their
+authorization rules. Selecting a row persists its value ID in final local view
+state and drives the current preview host. Show/Hide preview uses the final local
+visibility state and remains independent of child disclosure. A Source committed
+through CLI/ChangeSet appears immediately and can be selected, edited, reordered,
+removed, or cleared in the desktop without using the CLI again.
+
+That baseline is intentionally visually conservative, not temporary or
+first-value-only. PR-F may move and compact the same complete controls, but it
+cannot make previously hidden state visible, add a missing management operation,
+or repair state that PR-I could create but not explain.
 
 An expanded resource presentation follows the Tana-inspired order while keeping
 Tenon's Node and field semantics:
@@ -676,6 +763,21 @@ remains managed capture so ordinary attachments are replayable.
   the final value clears Source preview state. Undo retains or restores every
   affected AssetRecord through the Runtime's protected-history contract.
 
+#### FLOW-5: Manage A Source Created Outside The Desktop
+
+1. A public CLI/ChangeSet commits an additional valid, invalid, unsupported, or
+   unauthorized Source against an ordinary owner while PR-I is the shipped UI.
+2. The next projection update inserts that exact value in the desktop Source
+   field at its converged order and derives its status/reason without rewriting
+   text or selecting a different value.
+3. The user may select it to preview or inspect the failure reason, edit it,
+   reorder it, remove it, or clear all Sources through the same content-first
+   controls used for desktop-created values.
+4. Selection and visibility survive navigation/restart; removing the selected
+   value follows the normal fallback rule. A transient resolution failure offers
+   Retry, denied local files offer the chooser, and invalid text offers Edit or
+   Replace Source.
+
 ### 7. Managed Asset Liveness And Derived Classification
 
 AssetRecord remains Outline's canonical exact-revision metadata record. The
@@ -717,6 +819,8 @@ grant/resolver contracts, and the complete final Node/command/Runtime shape. The
 same coordinated PR-I cut removes:
 
 - Outline `ImageNode` and `AttachmentNode` variants and their discriminants;
+- the assumption that every Node variant owns RichText `content`, while adding
+  only the final `sourceValue` discriminator and `sourceText` scalar;
 - `assetId`, `mediaUrl`, `mediaAlt`, file metadata, and thumbnail fields from the
   Node union;
 - image/attachment create, set, paste-tree, ChangeSet, CLI, and renderer command
@@ -733,13 +837,15 @@ asset-liveness consumer, query/search path, and renderer input adapter through
 those final operations so its head has no special protocol consumer left to
 compile against.
 
-Current UI behavior stays buildable through a private, behavior-preserving
-presentation adapter that derives the existing neutral `PreviewTarget` and row
-label inputs from the first Source value plus AssetRecord metadata. It is neither
-a legacy Node reader nor a public compatibility type: it reads only the final
-ordinary-Node/Source model and exposes only existing preview-domain inputs. PR-F
-replaces this temporary composition point with the approved multi-Source UI; it
-does not delete or alter protocol.
+The retained UI composition stays buildable through the complete content-first
+Source surface defined above. Its renderer-local presentation adapter resolves
+the locally selected value into the existing neutral `PreviewTarget`; it never
+truncates the field or semantics to the first Source. Every value and failure
+reason remains visible and all public mutations remain manageable before PR-I
+merges. The adapter is neither a legacy Node reader nor a public compatibility
+type: it reads only final `SourceValueNode` projections and resolved descriptors.
+PR-F rearranges this already complete surface into the approved preview-first
+composition; it does not reveal previously hidden state or alter protocol.
 
 The cut does not remove:
 
@@ -761,43 +867,51 @@ preview, UI-state, and quit/recovery architecture. Each delivery unit starts fro
 current main and regenerates its exact file queue from repository searches; no
 consumer is written against an interim protocol.
 
-#### PR-I: Final Shared Interfaces
+#### PR-I: Final Shared Interfaces And Truthful Baseline
 
 This human-led interface cut owns the coordinated shared/protocol change required
-by A4 and A10 plus the minimal mechanical adaptations required for a buildable,
-behavior-preserving main:
+by A4 and A10 plus the complete management adaptation required for a buildable,
+behavior-preserving, and independently usable main:
 
 - replace `url` with the final `uri` field contract;
-- make every ordinary Node constructor seed its permanent Source entry; land
-  atomic Source text values, convergent value identity/order semantics,
-  `asset://local/...`, and file/web classifier/formatter contracts;
-- land public `add-source`, `replace-source`, `reorder-source`, `remove-source`,
-  and `clear-sources` commands plus Core/Runtime structural and settlement guards;
+- split the structural Node base from RichText-bearing variants, add the exact
+  `SourceValueNode`/Projection and scalar Loro codec, and make every ordinary
+  content-Node constructor seed its permanent Source entry;
+- land convergent value identity/order semantics, `asset://local/...`, and
+  file/web classifier/formatter contracts;
+- land the public `SourceInstruction` union and five final `SourceCommand`
+  variants plus Core/Runtime structural and settlement guards;
 - land the Host-private exact-file grant store, grant/revoke/relink resolver, safe
   verified-handle action boundary, and final preload/Runtime DTOs;
 - remove special Outline Node types and commands from Core and every public
   Runtime/ChangeSet/CLI schema in this same interface cut;
 - mechanically route all current producers, managed-asset liveness/history,
-  classification/query/search, and preview inputs to final Source APIs; and
+  classification/query/search, and preview inputs to final Source APIs;
+- ship the content-first desktop Source field with every value/status visible,
+  persistent selection and visibility, all five management operations, and the
+  selected descriptor bound to the retained preview host; and
 - prove protocol encoding, public CLI/ChangeSet admission, two-replica
   convergence, clone-owner behavior, impossible-state degradation, grant
-  persistence, external action narrowing, and exact-file denial through tests.
+  persistence, external action narrowing, exact-file denial, and CLI-created
+  secondary/invalid Source management through tests.
 
 PR-I creates no dual Source writer, special-Node reader, deprecated protocol
-alias, or interim DTO. Its private presentation adapter consumes final Source
-descriptors only and preserves the current UI until PR-F. This is the required
+alias, interim DTO, first-value-only adapter, or unreachable mutation. Its
+content-first presentation consumes final Source descriptors and is complete for
+all public state even if PR-F never ships. This is the required
 shared-interface-first claim; no later consumer begins before it merges.
 
-#### PR-F: Complete Resource Cutover
+#### PR-F: Complete Preview-first Enhancement
 
 After PR-I merges, one complete user-visible PR:
 
-- adds bare-URL resource paste and exposes add/replace/reorder/remove Source
-  editing on the already final data model;
-- composes preview-first rows, selected-source switching, recoverable Hide/Show,
-  Source editing/order controls, and all failure states in Outliner and Node page;
-- replaces PR-I's private current-layout adapter while reusing the complete
-  existing preview/reader responsibility inventory; and
+- adds bare-URL resource paste and context-menu Source-entry commands on the
+  already manageable final data model;
+- moves the retained preview before content, adds the compact toolbar switcher,
+  and refines recoverable Hide/Show placement in Outliner and Node page;
+- re-composes PR-I's complete Source controls and failure states without changing
+  their semantics, while reusing the complete existing preview/reader
+  responsibility inventory; and
 - folds the final interaction into current UI/design/preview specs and provides
   renderer, E2E, clean-userData, accessibility, and light/dark visual evidence.
 
@@ -816,9 +930,11 @@ Expected implementation areas are re-derived per unit rather than treated as a
 fixed file checklist. PR-I owns shared Core commands/types, field and Runtime
 schemas, Source codecs/admission, special-protocol retirement, every mechanical
 producer/non-visual consumer cutover, Host grant persistence/resolution, the
-private current-layout adapter, current architecture/protocol specs, and contract
-tests. PR-F owns renderer Source controls/composition/view state, preview-host
-replacement, current UI/design/preview specs, and user-visible verification.
+content-first Source controls/selection/view state/current preview adapter,
+current architecture/protocol specs, and contract plus baseline renderer/E2E
+tests. PR-F owns preview-first composition, compact toolbar placement,
+preview-host layout replacement, current UI/design/preview specs, and enhancement
+verification.
 
 Primary risks are a managed asset being collected while any non-selected Source
 still references it; source selection leaking into document or child disclosure;
@@ -826,7 +942,8 @@ async work from an old selection replacing the current preview; a file chooser
 grant widening to a sibling or surviving revocation; malformed generic mutations
 bypassing Source settlement; valid offline commands being rejected after merge;
 path-only actions racing after validation; classification being conflated with
-Host authority; field values being counted as ordinary children; metadata
+Host authority; `sourceValue` being decoded as RichText or recursively receiving
+another Source entry; field values being counted as ordinary children; metadata
 destabilizing projection/search; and accidental retirement of Agent
 attachment/image types. Each risk has an explicit guard or acceptance criterion
 below.
@@ -900,15 +1017,17 @@ below.
   Source-backed evidence; absence from the new Node scalar shape is not a valid
   retirement reason.
 - **AC-20:** Public CLI/ChangeSet tests prove dedicated Source operations preserve
-  each ordinary Node's one permanent Source entry with ordered direct atomic text
-  values, while generic `append-text`, `append-reference`, `append-nodes`,
-  `append-field`, and direct content mutation cannot target Source or bypass asset
-  settlement.
+  each ordinary Node's one permanent Source entry with ordered direct
+  `SourceValueNode` values, while generic `append-text`, `append-reference`,
+  `append-nodes`, `append-field`, and direct content mutation cannot target Source
+  or bypass asset settlement.
 - **AC-21:** Create, move, direct-value clone, paste/import, template/default,
   restore, undo/redo, and non-replication change admission reject Source
   structures no valid command can produce. Cloning a complete owner creates one
-  new permanent entry and preserves ordered values; runtime projection of an
-  impossible missing/duplicate entry degrades Source only and chooses none.
+  new permanent entry and preserves ordered values; a `sourceValue` outside the
+  protected entry or any other direct-child type inside it is invalid. Runtime
+  projection of an impossible missing/duplicate entry degrades Source only and
+  chooses none.
 - **AC-22:** After an exact-file chooser grant and restart, the same Source
   remains usable; Forget local-file access revokes only that exact grant, leaves
   its committed URI intact, and makes every dependent value denied without
@@ -925,7 +1044,7 @@ below.
   shell dispatch. A missing, unreadable, or corrupt grant store denies external
   file Sources without aborting Outline or authorizing any path.
 - **AC-25:** Two replicas that share an owner and concurrently perform the first
-  `add-source` converge on its pre-existing Source entry with both unique values
+  `add_source` converge on its pre-existing Source entry with both unique values
   in the same order regardless of update delivery order; neither update is
   rejected and Source never becomes unavailable.
 - **AC-26:** Two-replica tests deliver concurrent add/reorder, add/remove,
@@ -941,47 +1060,61 @@ below.
   without the grant and becomes `ready` after chooser authorization without a
   Source document mutation; malformed URI text remains `invalid` regardless of
   grants.
+- **AC-29:** Codec, command, persistence, and Projection tests round-trip
+  `SourceValueNode` with exactly `type`, `id`, `parentId`, `children`,
+  `sourceText`, timestamps, and `locked`; no `content`/`LoroText` exists. Only
+  the Source payload lives in the atomic `sourceText` Loro map register;
+  concurrent replace converges on one whole scalar, the value receives no Source
+  entry, and its ordinary content descendants do receive their own entries.
+- **AC-30:** On the PR-I merge candidate, an E2E fixture creates a second valid
+  Source and one invalid Source through the public CLI/ChangeSet. The desktop
+  immediately lists every value in order with truthful status/reason, persists
+  selection, previews or explains each value, and can edit, reorder, remove, and
+  clear them without another CLI operation; no first-value-only adapter is
+  present.
 
 ## Open questions
 
-None. `Source`, `field:source`, fixed ordered multi-value `uri`, exact durable
-Source text, pure permission-independent classification, Host-authorized
-resolution with distinct reasons, first-value default with local source
-selection, one causally seeded permanent entry per ordinary Node,
-atomic/convergent Source values, the producer-generated post-#592 canonical
-`asset://local/{encodedAssetId}` form, managed capture by default, denied-but-
-durable file locators, exact-file verified-handle actions, omission of unsafe
-external Open/Reveal, preview-first layout, recoverable local Hide/Show, and PR-I
-retirement of Outline `image`/`attachment` are coordinated design decisions. A
-redirect on any of them changes protocol, security, or product behavior and must
-happen during plan review rather than being guessed during build.
+None. `Source`, `field:source`, fixed ordered multi-value `uri`, the exact
+content-free `SourceValueNode`/`sourceText` protocol, pure permission-independent
+classification, Host-authorized resolution with distinct reasons, first-value
+default with local source selection, one causally seeded permanent entry per
+ordinary content Node, atomic/convergent Source values, the producer-generated
+post-#592 canonical `asset://local/{encodedAssetId}` form, managed capture by
+default, denied-but-durable file locators, exact-file verified-handle actions,
+omission of unsafe external Open/Reveal, a complete content-first PR-I surface,
+preview-first PR-F enhancement, recoverable local Hide/Show, and PR-I retirement
+of Outline `image`/`attachment` are coordinated design decisions. A redirect on
+any of them changes protocol, security, or product behavior and must happen
+during plan review rather than being guessed during build.
 
 ## Build Checklist
 
 - [ ] PR-I: claim the shared interface from current main after repeating the open
       PR/file collision check; coordinate ownership of Core protocol files.
 - [ ] PR-I: cut `url` to `uri`; land protected ordered multi-value Source, final
-      permanent-entry/atomic-text/convergence semantics, lossless write admission,
-      pure classification, Host resolution with structured reasons,
-      mutations/codecs, structural and settlement guards, and public
-      CLI/ChangeSet contract tests.
+      structural/RichText base split, exact `SourceValueNode`/Projection,
+      scalar-map codec, command/ChangeSet payloads, permanent-entry/convergence
+      semantics, lossless write admission, pure classification, Host resolution,
+      settlement guards, and public CLI/ChangeSet contract tests.
 - [ ] PR-I: land exact-file grant persistence, revoke/relink/replace semantics,
       verified-handle preview/read/copy, external Open/Reveal omission, corruption
       degradation, and adversarial replacement/restart/security tests.
 - [ ] PR-I: retire special Node/command/Runtime protocol; mechanically cut every
       current producer, liveness/history/query/search consumer, and preview input
-      to Source plus the private current-layout adapter.
+      to Source and generate/disposition the file-preview responsibility inventory.
+- [ ] PR-I: ship the complete content-first Source field, selected preview host,
+      local selection/visibility, status/recovery, and all management actions;
+      prove CLI-created secondary/invalid values are manageable in desktop.
 - [ ] PR-I: keep current behavior buildable without dual protocol; run typecheck,
-      core/renderer/contract and two-replica tests, source guards, current
-      architecture/protocol spec checks, and docs checks.
-- [ ] PR-F: regenerate the Source controls, preview composition, paste-URL,
-      selection-view-state, and UI specification queues from merged interfaces.
-- [ ] PR-F: generate and disposition the current file-preview responsibility
-      inventory; preserve all renderer/control/reader behavior except the
-      explicit external Open/Reveal security narrowing and replaced host layout.
-- [ ] PR-F: implement preview-first composition, persistent Source selection,
-      recoverable Hide/Show, switching/reordering/editing, renderer selection,
-      and failure recovery.
+      core/renderer/contract/E2E and two-replica tests, source guards, current
+      architecture/protocol/UI spec checks, light/dark evidence, and docs checks.
+- [ ] PR-F: regenerate only preview-first composition, paste-URL convenience,
+      compact-toolbar, and UI-specification queues from the complete merged
+      baseline.
+- [ ] PR-F: implement preview-first placement, compact switching, and refined
+      recoverable Hide/Show while preserving PR-I management, renderer selection,
+      failure recovery, and the complete preview responsibility inventory.
 - [ ] PR-F: enforce the no-shared-protocol diff guard; fold interaction into
       current UI/design/preview specs; run `bun run typecheck`,
       `bun run test:core`, `bun run test:renderer`, relevant E2E, light/dark
