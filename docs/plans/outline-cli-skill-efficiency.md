@@ -173,35 +173,20 @@ path. It does not launch an open-ended schema investigation.
 ### 3. Consumed Bash Stdin Interface
 
 [PR #596](https://github.com/relixiaobo/lin-outliner/pull/596) is the sole design
-and implementation authority for Bash stdin transport, effective-consumer
-classification, constrained-Agent policy, stream settlement, and its focused
-security tests. This feature relies only on the merged observable interface:
+and implementation authority for the public Bash stdin transport and
+effective-consumer classification. This feature relies only on these merged
+observable interfaces:
 
 - Bash accepts one bounded `stdin: string` beside `command` and delivers its
   exact UTF-8 bytes directly to child stdin. The public bound is 64 MiB of raw
   stdin measured before JSON escaping; unpaired UTF-16 surrogates fail admission
   instead of changing during UTF-8 conversion.
-- Payload-backed Bash history retains large stdin as one private Thread-internal
-  text dependency plus a bounded argument envelope. This is transparent to the
-  Outline call, preserves exact logical replay, and does not raise the 16 MiB
-  context-payload ceiling or create a file/resource reference.
-- Existing admission-time secret scanning applies to the durable stdin copy
-  without affecting command classification or child bytes: live execution gets
-  the validated original, while durable replay retains the replayable or
-  redacted value and `/stdin` evidence.
-- Canonical payload-backed history retains its private context and internal-text
-  dependencies, but every renderer-facing Thread, Turn, and Item response or
-  notification passes one main-process projection. The renderer Item contains
-  only a reference-free `{ storage: 'itemBound' }` argument stub, and its
-  Item-bound read receives at most the 32,000-character main-process argument
-  projection using only Thread, Turn, and Item identity. Complete stdin, storage
-  bindings, context/internal-text references, and canonical Items do not cross
-  IPC or enter renderer formatting/caching.
 - Direct `outline add --input -`, `outline commit --input -`, and `outline diff
-  --input -` invocations are the registered data consumers this feature uses;
-  their existing `outline.edit`, `outline.edit`, and `outline.read` actions come
-  from the parsed command while document payload text remains opaque. Other
-  stdin consumers remain outside this feature's dependency contract.
+  --input -` invocations are immutable `StdinConsumerContract` registry entries
+  and the only registered data consumers this feature uses. Their existing
+  `outline.edit`, `outline.edit`, and `outline.read` actions come from the parsed
+  command while document payload text remains opaque. Other stdin consumers
+  remain outside this feature's dependency contract.
 - Executable and unknown stdin consumers fail closed in constrained Agents;
   user blocks continue to apply through the shared consumer classification.
 - Input-bearing calls are foreground-only and create no temporary input file,
@@ -217,8 +202,11 @@ The Outline Skill's representative invocation after #596 merges is:
 ```
 
 No helper executable or shell syntax appears around `outline`. This plan tests
-the merged interface with real Outline input and capability actions end to end,
-but it does not restate or edit the foundation's generic contract.
+the merged public interface with real Outline schema maxima and capability
+actions end to end. The generic large-text storage envelope, binding paths,
+history representation, dependency lifecycle, replay, and renderer projection
+remain private implementation concerns of #596; this plan neither restates nor
+edits them.
 
 ### 4. Direct Commit Is The Normal Non-destructive ChangeSet Path
 
@@ -544,16 +532,19 @@ Two independent foundations must merge before implementation begins:
 
 Source PR-I owns the final Node draft, field/value, Source, ChangeSet, CLI
 schema, constructor, and fixture baseline that this feature must consume. The
-Bash interface PR #596 owns the generic tool schema, 64 MiB raw-stdin admission,
-private Thread-internal text factoring, durable secret redaction, exact canonical
-replay, the reference-free canonical-to-renderer Item boundary, bounded
-main-process presentation, effective-consumer security classification, process
-stdin delivery, and focused transport/lifecycle tests. Neither foundation
-depends on the other, so they may be developed independently, but this feature
-consumes only their merged observable contracts. It rebases onto `origin/main`
-after both land, regenerates its work queue from actual `rg` hits and failing
-tests, and removes every superseded table fixture assumption rather than
-preserving compatibility. Source PR-F is visual-only and is not a dependency.
+Bash interface PR #596 owns optional `stdin: string`, its 64 MiB raw UTF-8
+admission and exact foreground child delivery, the immutable
+`StdinConsumerContract` registry, effective-consumer security classification,
+and public failure behavior. Its generic large-text persistence and renderer
+mechanics are intentionally not a consumed interface. This feature owns
+compatibility between the public Bash limit and real Outline schemas, including
+the two-Node worst-case escaping fixture and actual three-command workflows.
+Neither foundation depends on the other, so they may be developed independently,
+but this feature consumes only their merged observable contracts. It rebases onto
+`origin/main` after both land, regenerates its work queue from actual `rg` hits
+and failing tests, and removes every superseded table fixture assumption rather
+than preserving compatibility. Source PR-F is visual-only and is not a
+dependency.
 
 The collision self-check found no other open PR claim at plan time. The future
 Source PR-I is a deliberate hard dependency and likely overlaps
@@ -664,7 +655,12 @@ Source PR-I during implementation without changing those observable behaviors.
   `ARG_MAX` and below the merged 64 MiB raw-stdin bound reaches the real CLI
   through the Bash stdin field, produces the correct table, and leaves the shell
   argv free of payload bytes. Human mutation, Diff, and view receipts remain at
-  or below 4 KiB and expose explicit omitted counts/digests at the boundary.
+  or below 4 KiB and expose explicit omitted counts/digests at the boundary. A
+  separate production-schema-valid `outline add --input -` fixture with two
+  4,194,304-code-unit NUL-valued Nodes measures 50,331,901 raw stdin bytes,
+  remains below the Bash limit despite worst-case nested JSON escaping, reaches
+  the real CLI intact, and preserves both exact values; #596 contains no Outline
+  schema or capacity fixture.
 - [ ] **AC-14:** `--json` golden responses and exact Diff artifacts retain their complete
   public schemas; `--human` output contains no nested JSON envelope or ANSI
   control sequences.
