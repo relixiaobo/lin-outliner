@@ -29,10 +29,12 @@ The objectives are:
 ## Non-goals
 
 - Do not change the Outline CLI, Outline contract, built-in Outline Skill,
-  Runtime, document storage, document renderer, Agent UI components, or Core
+  Runtime, document storage, document renderer, Agent visual behavior, or Core
   document protocol. The separate `outline-cli-skill-efficiency` feature
-  consumes this interface after merge. One Agent renderer store adapter changes
-  only to consume the main process's already-bounded argument projection.
+  consumes this interface after merge. Renderer changes are limited to the IPC
+  protocol types, one store adapter, and the existing tool-detail identity helper
+  needed to consume an Item-bound argument projection without a storage
+  reference; no component layout, copy, interaction, or rendering policy changes.
 - Do not raise the 16 MiB Thread context-payload budget. Large stdin uses one
   typed internal-text dependency instead of making any JSON context envelope
   absorb nested escaping overhead.
@@ -119,12 +121,12 @@ quoting layer, or other byte is added.
   private `ThreadInternalTextPayloadReference`. The bounded `toolCallArguments`
   context payload stores the remaining JSON object plus one typed top-level
   `stdin` binding to that reference; it never stores a sentinel inside user JSON.
-  The `ModelToolCallArguments` payload form declares the same internal-text
-  dependency on its owning Tool Item. Publication writes and verifies internal
-  text first, then the context envelope, then commits the owning Item. An
-  interrupted admission may leave reclaimable unowned payloads but cannot commit
-  an Item whose declared dependency was never published. All context payloads
-  retain the existing 16 MiB limit.
+  The canonical Host-only `ModelToolCallArguments` payload form declares the same
+  internal-text dependency on its owning Tool Item. Publication writes and
+  verifies internal text first, then the context envelope, then commits the
+  owning Item. An interrupted admission may leave reclaimable unowned payloads
+  but cannot commit an Item whose declared dependency was never published. All
+  context payloads retain the existing 16 MiB limit.
 - **FR-5:** Canonical consumers and presentation consumers are separate. Provider
   replay and internal recovery may reconstruct exact logical arguments after
   verifying digest, byte length, strict UTF-8, binding uniqueness, an object
@@ -140,13 +142,43 @@ quoting layer, or other byte is added.
   the small skeleton with a verified bounded stream/prefix and length metadata;
   it never constructs or `JSON.stringify`s the complete stdin-bearing value.
   Payload-backed renderer reads move from `thread/context/read` to one dedicated
-  Item-bound `thread/item/arguments/read` response; the old context read refuses
-  tool-argument storage envelopes. Raw envelopes, internal references, and
-  complete stdin never cross IPC. Renderer caching and formatting receive only
-  the bounded value. Bash adds no duplicate log, output echo, command summary,
-  environment copy, or temporary input file.
+  Item-bound `thread/item/arguments/read` request containing only `threadId`,
+  `turnId`, and `itemId`; the old context read refuses tool-argument storage
+  envelopes. Its response is exactly `{ arguments: JsonValue | null }`, where a
+  non-null value is already bounded and `null` is unavailable.
 
-The private representation has one narrow shape. A
+  Canonical `Thread`, `Turn`, `ThreadItem`, `ModelToolCallHistory`, response, and
+  notification types remain the Host/persistence authority. Distinct renderer
+  `Thread`, `Turn`, and `ThreadItem` projection types replace every nested
+  canonical Item recursively. Renderer model-call arguments have only two exact
+  forms: `{ storage: 'inline', value: JsonValue }`, whose value is bounded in
+  main before IPC, or `{ storage: 'itemBound' }`. A canonical payload-backed
+  argument becomes the latter stub with no context reference, internal-text
+  reference, digest, byte length, or storage path. The enclosing `threadId`,
+  `turnId`, and `item.id` are the complete read authority; renderer caches and
+  disclosure state use that identity rather than a payload id.
+
+  One exhaustive main-process projection module owns the only canonical-to-
+  renderer Item conversion. Its shared Thread/Turn/Item primitives feed two
+  typed envelope projectors: one mapped by every Agent Core response method and
+  one exhaustive over every Agent Core notification. The main-window IPC request
+  handler projects every response after `ThreadService` returns canonical state,
+  and the single notification sender projects every event after Host-only
+  subscribers have observed the canonical event. Renderer/preload codecs accept
+  only renderer projection types and reject private fields. Thus `thread/list`,
+  `thread/descendants`, `thread/read`, `thread/start`, `thread/resume`,
+  `thread/fork`, `thread/rollback`, configuration and Turn-detail responses,
+  `thread/turns/list`, `thread/items/list`, `turn/submit`, `turn/start`,
+  `turn/retry`, and `thread/started`, `turn/started`, `turn/completed`,
+  `item/started`, `item/completed`, and `items/completed` notifications all cross
+  the same fail-closed boundary. Methods and events without Items still pass the
+  exhaustive envelope projector so a future protocol addition cannot bypass it.
+  Raw tool-argument envelopes, canonical model-call payload references,
+  internal-text references, and complete stdin never cross IPC. Renderer caching
+  and formatting receive only the bounded value. Bash adds no duplicate log,
+  output echo, command summary, environment copy, or temporary input file.
+
+The private canonical representation has one narrow shape. A
 `ThreadInternalTextPayloadReference` carries only a content digest, byte length,
 and fixed UTF-8 encoding. A stored tool-argument envelope carries a JSON object
 skeleton and at most one `{ field: 'stdin', ref }` binding outside that object.
@@ -154,12 +186,13 @@ The payload-backed `ModelToolCallArguments` carries the context reference plus
 the same declared internal-text reference, making the Tool Item the retention
 owner. The new reference is not a `ThreadItemOutputReference`, does not carry a
 presentation summary or filename, and is unavailable through output, resource,
-file-tool, or model-facing read APIs. The raw storage envelope remains private;
-exact Provider history receives the verified logical arguments, while every
-presentation reader receives only the bounded projection or typed unavailability.
-Neither path exposes binding metadata. Existing Thread-private publication
-mechanics may be shared, but input text and tool output remain distinct semantic
-types.
+file-tool, renderer, or model-facing read APIs. The renderer Item stub carries
+neither reference and is not a retention owner. The raw storage envelope remains
+private; exact Provider history receives the verified logical arguments, while
+every presentation reader receives only the bounded projection or typed
+unavailability. Neither path exposes binding metadata. Existing Thread-private
+publication mechanics may be shared, but input text and tool output remain
+distinct semantic types.
 
 This is a storage representation split, not a larger generic JSON payload. It
 does not modify any downstream CLI schema, expose a second model-facing input,
@@ -288,11 +321,11 @@ This foundation is a prerequisite of the separately planned
 [`outline-cli-skill-efficiency`](https://github.com/relixiaobo/lin-outliner/pull/595)
 feature. It does not depend on that feature or Source PR-I, and it modifies no
 Outline path. The consumer PR rebases after this foundation merges and verifies
-only the public `stdin` interface end to end. The internal-text dependency and
-rehydration contract are a shared Core Agent persistence-interface change, so
-this revised plan returns to PM ratification before implementation. It does not
-alter the Core document protocol, an Outline schema, or the Agent file-resource
-model.
+only the public `stdin` interface end to end. The internal-text dependency,
+canonical/renderer Item split, and rehydration contract are a shared Core Agent
+persistence and IPC-interface change, so this revised plan returns to PM
+ratification before implementation. It does not alter the Core document
+protocol, an Outline schema, or the Agent file-resource model.
 
 The collision self-check found one open PR, `outline-cli-skill-efficiency`, whose
 current plan discusses this missing interface but claims no generic Agent file.
@@ -304,11 +337,12 @@ and actual-diff check run again immediately before implementation.
 
 Expected implementation ownership:
 
-- `src/core/agent/protocol.ts` and `src/core/agent/codec.ts` for the private
-  internal-text reference, compact argument binding, declared dependency, strict
-  decode contract, and Item-bound bounded-arguments read protocol;
-- `src/core/agent/modelCallHistory.ts`,
-  `src/main/agent/runtime/toolCallHistory.ts`, and
+- `src/core/agent/protocol.ts`, `src/core/agent/codec.ts`, and
+  `src/core/agent/modelCallHistory.ts` for the private internal-text reference,
+  compact argument binding, declared dependency, distinct canonical and
+  renderer Thread/Turn/Item/model-call contracts, strict codecs, and Item-bound
+  bounded-arguments read protocol;
+- `src/main/agent/runtime/toolCallHistory.ts` and
   `src/main/agent/runtime/types.ts` for factoring, declaring dependencies, and
   rehydrating one logical argument value;
 - `src/main/agent/persistence/ToolPayloadStore.ts` for content-addressed internal
@@ -320,8 +354,12 @@ Expected implementation ownership:
   `ThreadTrajectoryProjection.ts`, `TranscriptRenderer.ts`, and
   `TurnLifecycle.ts` for Thread inventory, fork/copy, Retry/rollback,
   reader-facing projection, orphan reconciliation, and deletion;
-- `src/main/agent/ThreadService.ts` for the bounded Item-argument read route and
-  rejection of raw tool-argument context reads;
+- `src/main/agent/ThreadService.ts` for canonical Agent Core responses, the
+  bounded Item-argument read route, and rejection of raw tool-argument context
+  reads;
+- one new main-process Agent renderer-projection module and `src/main/main.ts`
+  for the exhaustive response/notification envelopes and the only two IPC
+  crossings, both backed by the same recursive canonical Item projector;
 - `src/main/agent/capabilities/agentLocalTools.ts` for the public parameter,
   byte admission, foreground writer, and background rejection;
 - `src/main/agent/capabilities/agentCapabilities.ts` for the single parsed
@@ -329,9 +367,19 @@ Expected implementation ownership:
 - `src/main/agent/capabilities/subagentToolPolicy.ts` and
   `src/main/agent/runtime/ToolRuntime.ts` for consuming that same classification
   at constrained execution;
-- `src/renderer/agent/store/threadStore.ts` for consuming and caching only the
-  already-bounded main-process projection, with no Agent component or document
-  renderer change;
+- `src/preload/index.ts`, `src/renderer/api/client.ts`, and
+  `src/renderer/api/types.ts` for exposing and decoding only renderer projection
+  contracts across the bridge;
+- one renderer-local Agent projection type barrel plus the existing Agent files
+  whose signatures consume full Thread, Turn, or Item records for replacing
+  canonical type imports with renderer projection types only; behavioral edits
+  are limited to `src/renderer/agent/store/threadStore.ts` and the payload-detail
+  identity helper in
+  `src/renderer/agent/components/items/ThreadItemView.tsx`, which consume and
+  cache the already-bounded Item-bound projection without changing visual
+  behavior or the document renderer. The type-only work queue is derived from
+  repository imports of canonical full-record types and is complete only when
+  that renderer search is empty;
 - `docs/spec/agent-core.md`, `docs/spec/agent-integration.md`,
   `docs/spec/agent-tool-design.md`, and `docs/spec/agent-tool-permissions.md` for
   canonical argument ownership, dependency/presentation boundaries, stdin
@@ -342,36 +390,40 @@ Expected implementation ownership:
   ToolRuntime/Thread integration test file for the real composition boundary;
 - `tests/core/agentToolPayloadStore.test.ts` and the focused Core codec/history,
   context-dependency, ContextProjector/compaction, ThreadService,
-  transcript/trajectory, and fork tests that prove exact rehydration and
-  lifecycle settlement;
-- `tests/renderer/threadStore.test.ts` for bounded-before-IPC argument detail and
-  cache behavior; and
+  transcript/trajectory, fork, and canonical-to-renderer projection tests that
+  prove exact rehydration, lifecycle settlement, exhaustive transport coverage,
+  and rejection of private fields by renderer codecs;
+- `tests/renderer/threadStore.test.ts`,
+  `tests/renderer/threadItemView.test.tsx`, and
+  `tests/renderer/threadToolCopy.test.ts` for Item-bound identity,
+  bounded-before-IPC argument detail, cache, disclosure, and copy behavior; and
 - `tests/core/agentToolCatalogStability.test.ts` and
   `tests/fixtures/__snapshots__/agentToolCatalogStability.test.ts.snap` for the
   intentional public Bash schema addition.
 
 This feature does not modify `src/core/agent/tools.ts`, Core document protocol,
-file tools, Outline code or fixtures, another built-in Skill, Agent UI
-components, document renderer code, dependency manifests, workflows,
+file tools, Outline code or fixtures, another built-in Skill, Agent visual
+behavior, document renderer code, dependency manifests, workflows,
 `docs/TASKS.md`, or `CHANGELOG.md`. The named Core Agent protocol, codec,
-history, dependency, payload-store, lifecycle, renderer-store, spec, and
-schema-snapshot files are the complete intentional expansion from the previous
-draft. If a new action kind, public capability protocol, generic result
-projection, larger context budget, ContentStore/file-resource integration, or
-broader process abstraction proves necessary, stop and return that interface
-decision to PM review instead of widening this PR.
+history, dependency, payload-store, lifecycle, renderer transport/projection,
+spec, and schema-snapshot files are the complete intentional expansion from the
+previous draft. If a new action kind, public capability protocol, generic result
+projection beyond the Agent renderer seam, larger context budget,
+ContentStore/file-resource integration, or broader process abstraction proves
+necessary, stop and return that interface decision to PM review instead of
+widening this PR.
 
 ## Open questions
 
 There are no unresolved product questions. Ratification accepts the optional
 well-formed-Unicode string field with a 64 MiB raw UTF-8 bound, Thread-internal
 text factoring for payload-backed Bash calls, unchanged 16 MiB context-payload
-budget, admission-time durable secret scanning, exact canonical replay, bounded
-main-process presentation, exact three-form Outline data registry, four-state
-consumer model, constrained-policy failure, Full Access behavior, and
-foreground-only lifecycle together. Exact private helper names and the focused
-integration test file are reversible implementation details selected from the
-rebased tree.
+budget, admission-time durable secret scanning, exact canonical replay,
+reference-free renderer Item projections, bounded main-process presentation,
+exact three-form Outline data registry, four-state consumer model,
+constrained-policy failure, Full Access behavior, and foreground-only lifecycle
+together. Exact private helper names and the focused integration test file are
+reversible implementation details selected from the rebased tree.
 
 ## Acceptance criteria
 
@@ -444,17 +496,27 @@ rebased tree.
   exact arguments while renderer detail, Turn copy, transcript, trajectory, and
   compaction each receive at most 32,000 characters without moving binding
   metadata or complete stdin across IPC and without whole-value renderer
-  stringification.
+  stringification. Canonical-to-renderer fixtures containing the private
+  internal-text dependency prove that every paged Thread/Turn/Item read, every
+  Thread- or Turn-returning start/resume/fork/rollback/retry/configuration/detail
+  response, and every full Thread/Turn/Item live notification returns the same
+  Item-bound stub. Deep scans of every projected envelope prove that neither the
+  context reference from canonical model-call arguments nor the internal-text
+  reference itself crosses IPC. Renderer codecs reject either private reference,
+  and an exhaustiveness guard fails when a new response method or notification
+  can carry canonical Items without a projection case.
 - [ ] **AC-13:** Focused `agentLocalTools`, `agentCapabilities`,
   `agentSubagentToolPolicy`, `agentToolPayloadStore`, Core codec/history and
-  context-dependency, Thread lifecycle/projection, renderer `threadStore`,
-  catalog-stability, and ToolRuntime/Thread integration tests pass.
+  context-dependency, Thread lifecycle/projection, renderer transport,
+  `threadStore` and Item-bound detail identity, catalog-stability, and
+  ToolRuntime/Thread integration tests pass.
 - [ ] **AC-14:** `bun run typecheck`, `bun run test:core`,
   `bun run test:renderer`, `bun run docs:check`, and `git diff --check` pass.
 - [ ] **AC-15:** An executable diff allow-list proves the PR changes only the
   named Core Agent protocol/codec/history/dependency, generic
   Bash/capability/policy/runtime, Thread payload/lifecycle/projection owners, the
-  single Agent renderer store adapter, four named specs, focused tests, and Bash
-  schema snapshot above; it contains no Outline, file-tool, ContentStore, Agent
-  UI component, document renderer, Core document protocol or action-kind,
-  dependency, workflow, board, or changelog change.
+  main/preload Agent renderer seam, renderer API/projection type consumers,
+  store and Item-bound identity adapter, four named specs, focused tests, and
+  Bash schema snapshot above; it contains no Outline, file-tool, ContentStore,
+  Agent visual-behavior, document renderer, Core document protocol or
+  action-kind, dependency, workflow, board, or changelog change.
