@@ -4,6 +4,7 @@ import {
   configurePreviewTranslationMock,
   emitDocumentEvent,
   e2eProjection,
+  holdOutlineMutation,
   ids,
   openMockedApp,
   row,
@@ -1115,8 +1116,29 @@ test.describe('file attachments', () => {
 
     const ownerChildrenBeforeEnter = (await e2eProjection(page)).nodes
       .find((node) => node.id === attachmentId)?.children.length ?? 0;
+    const guideSelector = `.outliner-flat-guides .indent-guide[data-guide-node-id="${attachmentId}"]`;
+    await expect(page.locator(guideSelector)).toHaveCount(1);
+    await page.evaluate((selector) => {
+      const win = window as Window & {
+        __sourceGuideSampler?: { frame: number; samples: number[] };
+      };
+      const sampler = { frame: 0, samples: [] as number[] };
+      const sample = () => {
+        sampler.samples.push(document.querySelectorAll(selector).length);
+        sampler.frame = window.requestAnimationFrame(sample);
+      };
+      sample();
+      win.__sourceGuideSampler = sampler;
+    }, guideSelector);
+    const releaseFieldCreate = await holdOutlineMutation(page, { op: 'create' });
     await fieldName.focus();
     await page.keyboard.press('Enter');
+    const optimisticSibling = page.locator('.row.node-pending-structure .ProseMirror');
+    await expect(optimisticSibling).toBeFocused();
+    expect((await e2eProjection(page)).nodes
+      .find((node) => node.id === attachmentId)?.children.length).toBe(ownerChildrenBeforeEnter);
+    await expect(page.locator(guideSelector)).toHaveCount(1);
+    await releaseFieldCreate();
     await expect.poll(async () => (
       (await e2eProjection(page)).nodes.find((node) => node.id === attachmentId)?.children.length
     )).toBe(ownerChildrenBeforeEnter + 1);
@@ -1125,6 +1147,20 @@ test.describe('file attachments', () => {
     const createdAfterFieldId = ownerChildren[ownerChildren.indexOf(sourceEntry!.id) + 1];
     expect(createdAfterFieldId).toBeTruthy();
     await expect(rowEditor(page, createdAfterFieldId!)).toBeFocused();
+    const guideSamples = await page.evaluate(async () => {
+      const win = window as Window & {
+        __sourceGuideSampler?: { frame: number; samples: number[] };
+      };
+      await new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()));
+      });
+      const sampler = win.__sourceGuideSampler;
+      if (!sampler) return [];
+      window.cancelAnimationFrame(sampler.frame);
+      return sampler.samples;
+    });
+    expect(guideSamples.length).toBeGreaterThan(0);
+    expect(guideSamples).not.toContain(0);
 
     await fieldName.focus();
     await page.keyboard.press('Meta+A');
@@ -1225,7 +1261,7 @@ test.describe('file attachments', () => {
     const attachmentRow = row(page, attachmentId);
 
     await attachmentRow.locator('> .row').first().hover();
-    await expect(attachmentRow).toHaveAttribute('aria-expanded', 'true');
+    await expect(attachmentRow).not.toHaveAttribute('aria-expanded', 'true');
     await page.evaluate(async ({ parentId }) => {
       const win = window as Window & {
         lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
@@ -1238,6 +1274,7 @@ test.describe('file attachments', () => {
       projection: await e2eProjection(page),
       timestamp: Date.now(),
     });
+    await expect(attachmentRow).toHaveAttribute('aria-expanded', 'true');
 
     await expect.poll(async () => page.evaluate((nodeId) => {
       const owner = document.querySelector(`[data-node-id="${nodeId}"]`);

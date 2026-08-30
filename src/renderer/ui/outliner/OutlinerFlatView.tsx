@@ -52,6 +52,12 @@ import {
   usePendingDisclosureAnchor,
 } from '../interactions/disclosureScrollAnchor';
 import { MAX_OUTLINE_INDENT_DEPTH } from '../workspaceResponsiveLayout';
+import {
+  resolveFlatGuideMeasurements,
+  sameFlatGuides,
+  type FlatGuideGeometry,
+  type FlatGuideMeasurement,
+} from './flatGuideGeometry';
 
 // Below this many rows, windowing overhead is not worth it: render the whole flat
 // list in normal flow (rows are direct `.outliner` children, like the recursive
@@ -73,14 +79,6 @@ interface RowLayoutItem {
 interface RowLayout {
   items: RowLayoutItem[];
   totalHeight: number;
-}
-
-interface FlatGuideGeometry {
-  key: string;
-  nodeId: NodeId;
-  left: number;
-  top: number;
-  height: number;
 }
 
 function buildRowLayout(rows: readonly VisualRow[], measured: Map<string, number>): RowLayout {
@@ -226,19 +224,6 @@ function rowCanAnchorGuide(row: VisualRow): row is Extract<VisualRow, { kind: 'c
 
 function flatDepthStyle(depth: number): CSSProperties {
   return { marginLeft: Math.min(depth, MAX_OUTLINE_INDENT_DEPTH) * 28 };
-}
-
-function sameFlatGuides(a: readonly FlatGuideGeometry[], b: readonly FlatGuideGeometry[]): boolean {
-  if (a.length !== b.length) return false;
-  return a.every((guide, index) => {
-    const other = b[index];
-    return other !== undefined
-      && guide.key === other.key
-      && guide.nodeId === other.nodeId
-      && Math.abs(guide.left - other.left) < 0.5
-      && Math.abs(guide.top - other.top) < 0.5
-      && Math.abs(guide.height - other.height) < 0.5;
-  });
 }
 
 // First index whose row ends at or after `y` (rows are sorted by top, contiguous).
@@ -387,32 +372,151 @@ function FlatRowShell({
 
 function FlowRowShell({
   children,
-  onMeasure,
   rowKey,
 }: {
   children: ReactNode;
-  onMeasure: (rowKey: string, height: number) => void;
   rowKey: string;
 }) {
-  const rowRef = useRef<HTMLDivElement | null>(null);
-  useLayoutEffect(() => {
-    const element = rowRef.current;
-    if (!element) return undefined;
-    const measure = () => onMeasure(rowKey, element.getBoundingClientRect().height);
-    measure();
-    if (typeof ResizeObserver === 'undefined') return undefined;
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [onMeasure, rowKey]);
   return (
     <div
       className="outliner-flat-flow-row"
       role="presentation"
       data-flat-row-key={rowKey}
-      ref={rowRef}
     >
       {children}
+    </div>
+  );
+}
+
+interface FlatGuideOverlayProps {
+  byId: Map<NodeId, NodeProjection>;
+  listRef: RefObject<HTMLDivElement | null>;
+  measurementVersion: number;
+  onToggleChildren: (nodeId: NodeId, anchorElement: HTMLElement | null) => void;
+  renderIndices: readonly number[] | null;
+  resolveScroller: () => HTMLElement | null;
+  rows: readonly VisualRow[];
+  scrollHeight: number;
+  scrollTop: number;
+  virtualize: boolean;
+}
+
+function FlatGuideOverlay(props: FlatGuideOverlayProps) {
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+  const [flatGuides, setFlatGuides] = useState<FlatGuideGeometry[]>([]);
+  const [flowResizeVersion, setFlowResizeVersion] = useState(0);
+
+  useLayoutEffect(() => {
+    if (props.virtualize || typeof ResizeObserver === 'undefined') return undefined;
+    const list = props.listRef.current;
+    if (!list) return undefined;
+    const observer = new ResizeObserver(() => {
+      setFlowResizeVersion((version) => version + 1);
+    });
+    list.querySelectorAll<HTMLElement>('[data-flat-row-key]').forEach((shell) => observer.observe(shell));
+    return () => observer.disconnect();
+  }, [props.listRef, props.rows, props.virtualize]);
+
+  useLayoutEffect(() => {
+    const list = props.listRef.current;
+    const overlay = overlayRef.current;
+    if (!list || !overlay) {
+      setFlatGuides((current) => (current.length === 0 ? current : []));
+      return;
+    }
+
+    const overlayRect = overlay.getBoundingClientRect();
+    const viewportRect = props.resolveScroller()?.getBoundingClientRect() ?? overlayRect;
+    const markerByRowKey = new Map<string, HTMLElement>();
+    list.querySelectorAll<HTMLElement>('[data-flat-row-key]').forEach((shell) => {
+      const key = shell.dataset.flatRowKey;
+      const marker = shell.querySelector<HTMLElement>('.row-bullet-button');
+      if (key && marker) markerByRowKey.set(key, marker);
+    });
+
+    const renderedIndices = props.virtualize && props.renderIndices
+      ? new Set(props.renderIndices)
+      : null;
+    const measurements: FlatGuideMeasurement[] = [];
+    for (let i = 0; i < props.rows.length; i += 1) {
+      const row = props.rows[i];
+      if (!row || row.kind !== 'content' || row.draft) continue;
+      if (renderedIndices && !renderedIndices.has(i)) continue;
+      const endIndex = descendantEndIndexFor(props.rows, i);
+      if (endIndex <= i + 1) continue;
+
+      let lastAnchorIndex = -1;
+      for (let j = endIndex - 1; j > i; j -= 1) {
+        const descendant = props.rows[j];
+        if (!descendant || !rowCanAnchorGuide(descendant)) continue;
+        if (renderedIndices && !renderedIndices.has(j)) continue;
+        lastAnchorIndex = j;
+        break;
+      }
+      if (lastAnchorIndex < 0) continue;
+
+      const parentMarker = markerByRowKey.get(row.key);
+      const lastAnchor = props.rows[lastAnchorIndex]!;
+      const lastMarker = markerByRowKey.get(lastAnchor.key);
+      if (!parentMarker || !lastMarker) {
+        // The row structure still owns a guide, but preview resize, optimistic
+        // insertion, and virtualization can briefly commit before every marker
+        // is measurable. Keep the prior geometry for that incomplete frame.
+        measurements.push({ key: row.key, nodeId: row.nodeId });
+        continue;
+      }
+
+      const parentRect = parentMarker.getBoundingClientRect();
+      const lastRect = lastMarker.getBoundingClientRect();
+      if (parentRect.bottom < viewportRect.top || parentRect.top > viewportRect.bottom) continue;
+      const topAbs = parentRect.top + parentRect.height / 2;
+      const bottomAbs = lastRect.top + lastRect.height / 2;
+      if (bottomAbs <= topAbs) {
+        measurements.push({ key: row.key, nodeId: row.nodeId });
+        continue;
+      }
+      if (bottomAbs < viewportRect.top || topAbs > viewportRect.bottom) continue;
+
+      measurements.push({
+        key: row.key,
+        nodeId: row.nodeId,
+        geometry: {
+          key: row.key,
+          nodeId: row.nodeId,
+          left: parentRect.left + parentRect.width / 2 - overlayRect.left,
+          top: topAbs - overlayRect.top,
+          height: bottomAbs - topAbs,
+        },
+      });
+    }
+
+    setFlatGuides((current) => {
+      const nextGuides = resolveFlatGuideMeasurements(current, measurements);
+      return sameFlatGuides(current, nextGuides) ? current : nextGuides;
+    });
+  }, [
+    flowResizeVersion,
+    props.listRef,
+    props.measurementVersion,
+    props.renderIndices,
+    props.resolveScroller,
+    props.rows,
+    props.scrollHeight,
+    props.scrollTop,
+    props.virtualize,
+  ]);
+
+  return (
+    <div className="outliner-flat-guides" role="presentation" ref={overlayRef}>
+      {flatGuides.map((guide) => (
+        <IndentGuide
+          key={`guide>${guide.key}`}
+          guideFor={guide.nodeId}
+          reference={props.byId.get(guide.nodeId)?.type === 'reference'}
+          flatMetrics={guide}
+          onToggleChildren={(anchorElement) => props.onToggleChildren(guide.nodeId, anchorElement ?? null)}
+        />
+      ))}
     </div>
   );
 }
@@ -531,11 +635,9 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
 
   // ── Measurement + layout ──────────────────────────────────────────────────
   const listRef = useRef<HTMLDivElement | null>(null);
-  const guideOverlayRef = useRef<HTMLDivElement | null>(null);
   const rowHeightsRef = useRef(new Map<string, number>());
   const [measureVersion, setMeasureVersion] = useState(0);
   const [scrollMetrics, setScrollMetrics] = useState({ top: 0, height: 0 });
-  const [flatGuides, setFlatGuides] = useState<FlatGuideGeometry[]>([]);
 
   const measureRow = useCallback((rowKey: string, height: number) => {
     const current = rowHeightsRef.current.get(rowKey);
@@ -700,72 +802,6 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
     return [...set].sort((a, b) => a - b);
   }, [virtualize, layout, scrollMetrics.top, scrollMetrics.height, forcedIndices]);
 
-  useLayoutEffect(() => {
-    const list = listRef.current;
-    const overlay = guideOverlayRef.current;
-    if (!list || !overlay) {
-      setFlatGuides((current) => (current.length === 0 ? current : []));
-      return;
-    }
-
-    const overlayRect = overlay.getBoundingClientRect();
-    const viewportRect = resolveScroller()?.getBoundingClientRect() ?? overlayRect;
-    const markerByRowKey = new Map<string, HTMLElement>();
-    list.querySelectorAll<HTMLElement>('[data-flat-row-key]').forEach((shell) => {
-      const key = shell.dataset.flatRowKey;
-      const marker = shell.querySelector<HTMLElement>('.row-bullet-button');
-      if (key && marker) markerByRowKey.set(key, marker);
-    });
-
-    const renderedIndices = virtualize && renderIndices ? new Set(renderIndices) : null;
-    const nextGuides: FlatGuideGeometry[] = [];
-    for (let i = 0; i < rows.length; i += 1) {
-      const row = rows[i];
-      if (!row || row.kind !== 'content' || row.draft) continue;
-      if (renderedIndices && !renderedIndices.has(i)) continue;
-      const endIndex = descendantEndIndexFor(rows, i);
-      if (endIndex <= i + 1) continue;
-
-      const parentMarker = markerByRowKey.get(row.key);
-      if (!parentMarker) continue;
-      let lastMarker: HTMLElement | undefined;
-      for (let j = endIndex - 1; j > i; j -= 1) {
-        const descendant = rows[j];
-        if (!descendant || !rowCanAnchorGuide(descendant)) continue;
-        if (renderedIndices && !renderedIndices.has(j)) continue;
-        lastMarker = markerByRowKey.get(descendant.key);
-        if (lastMarker) break;
-      }
-      if (!lastMarker) continue;
-
-      const parentRect = parentMarker.getBoundingClientRect();
-      const lastRect = lastMarker.getBoundingClientRect();
-      if (parentRect.bottom < viewportRect.top || parentRect.top > viewportRect.bottom) continue;
-      const topAbs = parentRect.top + parentRect.height / 2;
-      const bottomAbs = lastRect.top + lastRect.height / 2;
-      if (bottomAbs <= topAbs) continue;
-      if (bottomAbs < viewportRect.top || topAbs > viewportRect.bottom) continue;
-
-      nextGuides.push({
-        key: row.key,
-        nodeId: row.nodeId,
-        left: parentRect.left + parentRect.width / 2 - overlayRect.left,
-        top: topAbs - overlayRect.top,
-        height: bottomAbs - topAbs,
-      });
-    }
-
-    setFlatGuides((current) => (sameFlatGuides(current, nextGuides) ? current : nextGuides));
-  }, [
-    measureVersion,
-    renderIndices,
-    resolveScroller,
-    rows,
-    scrollMetrics.height,
-    scrollMetrics.top,
-    virtualize,
-  ]);
-
   const toggleDirectChildrenExpansion = useCallback((rowId: NodeId, anchorElement?: HTMLElement | null) => {
     const childParentId = outlinerChildParentId(rowId, byId);
     const childParentNode = childParentId ? byId.get(childParentId) : undefined;
@@ -783,18 +819,19 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
     });
   }, [byId, captureDisclosureAnchor, props.setUi]);
 
-  const renderFlatGuides = () => (
-    <div className="outliner-flat-guides" role="presentation" ref={guideOverlayRef}>
-      {flatGuides.map((guide) => (
-        <IndentGuide
-          key={`guide>${guide.key}`}
-          guideFor={guide.nodeId}
-          reference={byId.get(guide.nodeId)?.type === 'reference'}
-          flatMetrics={guide}
-          onToggleChildren={(anchorElement) => toggleDirectChildrenExpansion(guide.nodeId, anchorElement)}
-        />
-      ))}
-    </div>
+  const flatGuideOverlay = (
+    <FlatGuideOverlay
+      byId={byId}
+      listRef={listRef}
+      measurementVersion={measureVersion}
+      onToggleChildren={toggleDirectChildrenExpansion}
+      renderIndices={renderIndices}
+      resolveScroller={resolveScroller}
+      rows={rows}
+      scrollHeight={scrollMetrics.height}
+      scrollTop={scrollMetrics.top}
+      virtualize={virtualize}
+    />
   );
 
   // ── Live-search refresh ────────────────────────────────────────────────────
@@ -999,9 +1036,9 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
     return (
       <>
         <div className="outliner-flat-flow" role="presentation" ref={listRef}>
-          {renderFlatGuides()}
+          {flatGuideOverlay}
           {rows.map((row, i) => (
-            <FlowRowShell key={row.key} onMeasure={measureRow} rowKey={row.key}>
+            <FlowRowShell key={row.key} rowKey={row.key}>
               {renderRow(row, i)}
             </FlowRowShell>
           ))}
@@ -1022,7 +1059,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
   return (
     <>
       <div className="outliner-flat" role="presentation" ref={listRef} style={containerStyle}>
-        {renderFlatGuides()}
+        {flatGuideOverlay}
         {renderIndices.map((i) => {
           const row = rows[i]!;
           const item = layout.items[i]!;

@@ -36,6 +36,12 @@ below that real marker and runs through the preview composition to the final
 visible descendant marker. Hiding the preview returns the same marker to the
 title row. Preview visibility is independent from ordinary child disclosure and
 is controlled exclusively by the selected URI value's preview affordance.
+Guide geometry remains continuous across preview resize, optimistic insertion,
+and focus transfer: an incomplete DOM measurement retains the last valid
+geometry, while structural collapse/removal or definitive viewport exit removes
+it. Non-windowed guide resize work stays inside the overlay so it does not
+re-render ordinary rows. Enter on the URI field name exposes and focuses its
+ordinary optimistic sibling before Runtime settlement.
 
 On the Node page, the upper-right close action changes only local visibility and
 the Source toolbar label opens an ordered switcher when multiple values exist.
@@ -146,6 +152,8 @@ accessibility naming, and light/dark presentation.
 - Failure states preserve the Source text and expose an appropriate recovery.
 - Existing mature preview capabilities and security boundaries remain intact.
 - Image accessible naming follows editable Node content without `mediaAlt`.
+- Source guides have no painted empty frame during preview resize or optimistic
+  URI-adjacent insertion, and that insertion focuses before Runtime settlement.
 
 ## Open questions
 
