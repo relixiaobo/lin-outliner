@@ -156,7 +156,7 @@ import {
 import { noteOutlinerItemRender } from './renderProbe';
 import { useT } from '../../i18n/I18nProvider';
 import { usePopoverSelection } from './usePopoverSelection';
-import { SourcePreviewAffordance } from '../preview/NodeSourcesSection';
+import { OutlineSourcePreview, SourcePreviewAffordance } from '../preview/NodeSourcesSection';
 import {
   addOptimisticRemovals,
   clearOptimisticRemovals,
@@ -224,6 +224,7 @@ interface OutlinerItemProps {
   semanticRole?: 'treeitem' | 'presentation';
   hideDisplayFields?: boolean;
   suppressChildFieldEntries?: boolean;
+  outlineSourcePreviewKey?: string;
   tableNextRowId?: NodeId | null;
   onDisclosureToggleAnchor?: (anchorElement: HTMLElement | null) => void;
 }
@@ -1085,12 +1086,27 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     for (const asset of assets) {
       // Clipboard images are admitted as managed image Sources by construction
       // (filtered on the declared type upstream), so do not re-sniff the bytes.
-      await props.run(() => api.createSourceNode(parentId, insertIndex, {
+      const result = await props.run(() => api.createSourceNode(parentId, insertIndex, {
         assetId: asset.id,
         name: asset.originalFilename,
       }));
+      expandCreatedSourceOwner(result);
       if (insertIndex !== null) insertIndex += 1;
     }
+  };
+
+  const expandSourceOwner = (ownerId: NodeId) => {
+    props.setUi((previous) => {
+      if (previous.expanded.has(ownerId)) return previous;
+      const expanded = new Set(previous.expanded);
+      expanded.add(ownerId);
+      return { ...previous, expanded };
+    });
+  };
+
+  const expandCreatedSourceOwner = (result: CommandRunnerOperationResult) => {
+    if (!result || !('focus' in result) || !result.focus?.nodeId) return;
+    expandSourceOwner(result.focus.nodeId);
   };
 
   const insertAssetNodesAt = async (
@@ -1101,7 +1117,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   ) => {
     let insertIndex = initialIndex;
     for (const asset of assets) {
-      await createAssetNode(props.run, parentId, insertIndex, asset, options);
+      const result = await createAssetNode(props.run, parentId, insertIndex, asset, options);
+      expandCreatedSourceOwner(result);
       if (insertIndex !== null) insertIndex += 1;
     }
   };
@@ -1163,7 +1180,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     });
     if (canConvertInPlace) {
       const [first, ...rest] = assets;
-      await props.run(() => api.addSource(targetEditId, formatAssetSourceUri(first.id)));
+      const result = await props.run(() => api.addSource(targetEditId, formatAssetSourceUri(first.id)));
+      if (result) expandSourceOwner(targetEditId);
       await insertImagesFromAssets(rest);
     } else {
       await insertImagesFromAssets(assets);
@@ -1202,7 +1220,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       await insertAssetNodesAfterCurrentRow(assets, options);
       return;
     }
-    await props.run(() => api.addSource(targetEditId, formatAssetSourceUri(first.id)), options);
+    const result = await props.run(() => api.addSource(targetEditId, formatAssetSourceUri(first.id)), options);
+    if (result) expandSourceOwner(targetEditId);
     const siblings = props.index.byId.get(props.parentId)?.children ?? [];
     const rowIndex = siblings.indexOf(props.nodeId);
     await insertAssetNodesAt(rest, rowIndex >= 0 ? rowIndex + 1 : null, props.parentId, options);
@@ -1292,6 +1311,16 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     if (props.draft && !realNode) {
       startOptimisticDraftMaterialization({
         content,
+        updateUi: (previous) => {
+          const expanded = new Set(previous.expanded);
+          expanded.add(props.nodeId);
+          return { ...previous, expanded };
+        },
+        rollbackUi: (previous) => {
+          const expanded = new Set(previous.expanded);
+          expanded.delete(props.nodeId);
+          return { ...previous, expanded };
+        },
         command: () => api.createSourceNode(
           props.parentId,
           currentDraftCreateIndex(),
@@ -1306,10 +1335,14 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       currentUi: props.uiRef.current,
       setUi: props.setUi,
       patch: pendingNodePatch(targetEditId, { content }),
-      command: () => props.run(
-        () => api.setNodeContentAndAddSource(targetEditId, content, url),
-        { applyFocus: false },
-      ),
+      command: async () => {
+        const result = await props.run(
+          () => api.setNodeContentAndAddSource(targetEditId, content, url),
+          { applyFocus: false },
+        );
+        if (result) expandSourceOwner(targetEditId);
+        return result;
+      },
       onRejected: () => replaceLocalDraftContent(previousContent),
     });
   };
@@ -2905,11 +2938,23 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // empty draft is guided by its "Press Space…" placeholder instead, so it shows
   // no button (avoids a redundant icon beside the placeholder).
   const showDateTrigger = dateFieldValue && Boolean(realNode);
-  const sourcePreviewAction = realNode && props.fieldValue?.fieldDefId === SOURCE_FIELD_ID ? (
+  const sourcePreviewPlacement = props.fieldValue?.sourcePreviewPlacement;
+  const sourcePreviewAction = realNode
+    && props.fieldValue?.fieldDefId === SOURCE_FIELD_ID
+    && sourcePreviewPlacement !== 'none' ? (
     <SourcePreviewAffordance
       index={props.index}
       ownerId={props.fieldValue.ownerId}
       valueId={realNode.id}
+      allowHide={sourcePreviewPlacement === 'outline'}
+    />
+  ) : null;
+  const outlineSourcePreview = realNode && props.outlineSourcePreviewKey ? (
+    <OutlineSourcePreview
+      accessibleName={realNode.content.text.trim() || undefined}
+      index={props.index}
+      ownerId={realNode.id}
+      run={props.run}
     />
   ) : null;
 
@@ -3143,6 +3188,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       ].filter(Boolean).join(' '))}
       onSelectFromPointer={row.selectFromPointer}
       onContextMenu={virtualFieldValueDraft ? undefined : openContextMenu}
+      beforeRow={outlineSourcePreview}
       rowContent={(
         <>
         <RowLeading
@@ -3616,8 +3662,10 @@ function outlinerItemPropsEqual(prev: OutlinerItemProps, next: OutlinerItemProps
   if (prev.semanticRole !== next.semanticRole) return false;
   if (prev.hideDisplayFields !== next.hideDisplayFields) return false;
   if (prev.suppressChildFieldEntries !== next.suppressChildFieldEntries) return false;
+  if (prev.outlineSourcePreviewKey !== next.outlineSourcePreviewKey) return false;
   if (prev.tableNextRowId !== next.tableNextRowId) return false;
   if (prev.optimisticChange !== next.optimisticChange) return false;
+  if (prev.fieldValue?.sourcePreviewPlacement !== next.fieldValue?.sourcePreviewPlacement) return false;
   // Drag start/end is infrequent; re-render every row so drag handlers close over
   // the current dragId and the dragged row picks up its 'dragging' class.
   if (prev.dragId !== next.dragId) return false;

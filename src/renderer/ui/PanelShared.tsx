@@ -185,6 +185,7 @@ interface PanelChildrenOutlineProps {
   panelId: string;
   parentId: NodeId;
   rootId: NodeId;
+  rootSourcePreview?: boolean;
   run: CommandRunner;
   scrollParentRef: FlatOutlinerProps['scrollParentRef'];
   setDragId: (nodeId: NodeId | null) => void;
@@ -245,6 +246,7 @@ export function PanelChildrenOutline(props: PanelChildrenOutlineProps) {
           panelId={props.panelId}
           parentId={props.parentId}
           rootId={props.rootId}
+          rootSourcePreview={props.rootSourcePreview}
           onRoot={props.onRoot}
           index={props.index}
           isNodePinned={props.isNodePinned}

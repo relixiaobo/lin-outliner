@@ -44,6 +44,7 @@ import { FilteredOutHeading, HiddenFieldReveal, ViewGroupHeading } from './Outli
 import { OutlinerEmptyState } from './OutlinerEmptyState';
 import { OutlinerTableView } from './OutlinerTableView';
 import { IndentGuide } from './IndentGuide';
+import { nodeSourceValues } from '../preview/nodeSources';
 import { shouldMintNextDraftId, type PendingDraftPolicy } from './draftRow';
 import {
   captureDisclosureScrollAnchor,
@@ -281,6 +282,7 @@ interface OutlinerFlatViewProps {
   panelId: string;
   parentId: NodeId;
   rootId: NodeId;
+  rootSourcePreview?: boolean;
   selectionRootId?: NodeId;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   index: DocumentIndex;
@@ -921,6 +923,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
             slot={row.slot}
             parentId={row.parentId}
             rootId={props.rootId}
+            pagePreviewOwnerId={props.rootSourcePreview && row.depth === 0 ? row.parentId : undefined}
             selectionRootId={selectionRootId}
             onRoot={props.onRoot}
             depth={row.depth}
@@ -941,6 +944,14 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
           />
         );
       case 'content':
+        const fieldValue = row.parentId === props.parentId ? props.fieldValue : undefined;
+        const sourceOwner = index.byId.get(row.nodeId);
+        const sourceValues = fieldValue || sourceOwner?.type !== undefined
+          ? []
+          : nodeSourceValues(row.nodeId, index.byId);
+        const outlineSourcePreviewKey = sourceValues.length > 0
+          ? sourceValues.map((value) => `${value.sourceValueId}\0${value.sourceText}`).join('\x01')
+          : undefined;
         return (
           <OutlinerItem
             panelId={props.panelId}
@@ -966,7 +977,8 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
             draftAfterId={row.draft ? row.afterId ?? null : undefined}
             optimisticChange={optimisticChangesById.get(row.nodeId)}
             draftPlaceholder={row.draft && row.parentId === props.parentId ? props.draftPlaceholder : undefined}
-            fieldValue={row.parentId === props.parentId ? props.fieldValue : undefined}
+            fieldValue={fieldValue}
+            outlineSourcePreviewKey={outlineSourcePreviewKey}
             optionField={row.parentId === props.parentId ? props.fieldValue?.optionField : undefined}
             onSelectOption={row.parentId === props.parentId && props.fieldValue
               ? (optionId, id) => props.run(

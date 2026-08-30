@@ -15,6 +15,7 @@ import { OutlinerFlatView } from './OutlinerFlatView';
 import { buildOutlinerRows, viewFieldValuesFor } from './row-model';
 import { useT } from '../../i18n/I18nProvider';
 import { fieldSlotHasInheritedDefault, fieldSlotId, type NodeFieldSlot } from '../../../core/fieldSlots';
+import { SOURCE_FIELD_ID } from '../../../core/types';
 import { EMPTY_RICH_TEXT } from '../../api/types';
 import { CheckIcon, ICON_SIZE } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
@@ -23,6 +24,7 @@ interface FieldValueOutlinerProps {
   panelId: string;
   slot: NodeFieldSlot;
   ownerId: NodeId;
+  pagePreviewOwnerId?: NodeId;
   selectionRootId: NodeId;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   index: DocumentIndex;
@@ -164,6 +166,13 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
       placeholder: valuePlaceholder,
       displayValue: inheritedDefaultText || undefined,
       inheritedDisplayValue: Boolean(inheritedDefaultText),
+      sourcePreviewPlacement: props.slot.fieldDefId === SOURCE_FIELD_ID
+        ? props.embeddedInGridCell
+          ? 'none'
+          : props.ownerId === props.pagePreviewOwnerId
+            ? 'page'
+            : 'outline'
+        : undefined,
       materializeValue,
       materializeReference: (id, targetId) => (
         updateFieldValue({

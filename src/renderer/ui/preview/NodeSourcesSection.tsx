@@ -37,10 +37,17 @@ interface NodeSourcesSectionProps {
   index: DocumentIndex;
   ownerId: NodeId;
   run: CommandRunner;
+  showToolbar?: boolean;
 }
 
 /** Preview-first presentation for the selected URI of an ordinary Node. */
-export function NodeSourcesSection({ accessibleName, index, ownerId, run }: NodeSourcesSectionProps) {
+export function NodeSourcesSection({
+  accessibleName,
+  index,
+  ownerId,
+  run,
+  showToolbar = true,
+}: NodeSourcesSectionProps) {
   const labels = useT().nodePanel.sources;
   const values = useMemo(
     () => nodeSourceValues(ownerId, index.byId),
@@ -58,30 +65,32 @@ export function NodeSourcesSection({ accessibleName, index, ownerId, run }: Node
 
   return (
     <section className="node-source-preview-region" aria-label={labels.previewRegion}>
-      <div className="node-source-preview-toolbar">
-        <SourceSwitcher
-          labels={labels}
-          selected={selected}
-          values={resolvedValues}
-          onSelect={(valueId) => view.show(valueId)}
-        />
-        <div className="node-source-preview-toolbar-actions">
-          <SourceActionsMenu
+      {showToolbar ? (
+        <div className="node-source-preview-toolbar">
+          <SourceSwitcher
             labels={labels}
-            ownerId={ownerId}
-            run={run}
             selected={selected}
-            total={resolvedValues.length}
-            onResolutionChanged={() => setResolutionGeneration((current) => current + 1)}
+            values={resolvedValues}
+            onSelect={(valueId) => view.show(valueId)}
           />
-          <IconButton
-            icon={HideIcon}
-            label={labels.hidePreview}
-            onClick={() => view.setPreviewVisible(false)}
-            variant="panel"
-          />
+          <div className="node-source-preview-toolbar-actions">
+            <SourceActionsMenu
+              labels={labels}
+              ownerId={ownerId}
+              run={run}
+              selected={selected}
+              total={resolvedValues.length}
+              onResolutionChanged={() => setResolutionGeneration((current) => current + 1)}
+            />
+            <IconButton
+              icon={HideIcon}
+              label={labels.hidePreview}
+              onClick={() => view.setPreviewVisible(false)}
+              variant="panel"
+            />
+          </div>
         </div>
-      </div>
+      ) : null}
       {selected.availability === 'ready' && selected.previewTarget ? (
         <div
           key={`${selected.sourceValueId}:${resolutionGeneration}`}
@@ -109,14 +118,44 @@ export function NodeSourcesSection({ accessibleName, index, ownerId, run }: Node
   );
 }
 
+/** Mount the selected Source preview before its ordinary owner row. */
+export function OutlineSourcePreview({
+  accessibleName,
+  index,
+  ownerId,
+  run,
+}: NodeSourcesSectionProps) {
+  const values = useMemo(
+    () => nodeSourceValues(ownerId, index.byId),
+    [index.byId, index.revision, ownerId],
+  );
+  const valueIds = useMemo(() => values.map((value) => value.sourceValueId), [values]);
+  const view = useNodeSourceViewState(ownerId, valueIds);
+  if (!view.previewVisible || !view.selectedValueId) return null;
+
+  return (
+    <div className="outline-source-preview" data-preserve-selection>
+      <NodeSourcesSection
+        accessibleName={accessibleName}
+        index={index}
+        ownerId={ownerId}
+        run={run}
+        showToolbar={false}
+      />
+    </div>
+  );
+}
+
 export function SourcePreviewAffordance({
   index,
   ownerId,
   valueId,
+  allowHide = false,
 }: {
   index: DocumentIndex;
   ownerId: NodeId;
   valueId: NodeId;
+  allowHide?: boolean;
 }) {
   const labels = useT().nodePanel.sources;
   const values = useMemo(
@@ -126,18 +165,23 @@ export function SourcePreviewAffordance({
   const valueIds = useMemo(() => values.map((value) => value.sourceValueId), [values]);
   const view = useNodeSourceViewState(ownerId, valueIds);
   const selected = view.selectedValueId === valueId;
-  if (selected && view.previewVisible) return null;
-  const label = selected ? labels.showPreview : labels.previewThisSource;
+  if (selected && view.previewVisible && !allowHide) return null;
+  const hiding = selected && view.previewVisible;
+  const label = hiding
+    ? labels.hidePreview
+    : selected ? labels.showPreview : labels.previewThisSource;
   return (
     <ButtonControl
       aria-label={label}
       className="field-value-affordance source-preview-affordance"
       data-preserve-selection
       onMouseDown={(event) => event.preventDefault()}
-      onClick={() => view.show(valueId)}
+      onClick={() => hiding ? view.setPreviewVisible(false) : view.show(valueId)}
       title={label}
     >
-      <ShowIcon size={13} strokeWidth={1.8} />
+      {hiding
+        ? <HideIcon size={13} strokeWidth={1.8} />
+        : <ShowIcon size={13} strokeWidth={1.8} />}
     </ButtonControl>
   );
 }

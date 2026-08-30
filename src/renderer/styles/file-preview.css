@@ -21,6 +21,19 @@
   margin: 0 0 var(--space-6);
 }
 
+/* Tana-style owner composition: preview, then editable Node content, then URI
+   field. The preview shares the Node's content axis without occupying an
+   Outline level or changing its marker and disclosure controls. */
+.outline-source-preview {
+  min-width: 0;
+  padding-right: var(--space-3);
+  padding-left: calc(var(--row-edge) + var(--row-leading-width));
+}
+
+.outline-source-preview > .node-source-preview-region {
+  margin: var(--space-2) 0 var(--space-3);
+}
+
 .node-source-preview-toolbar,
 .node-source-preview-toolbar-actions {
   display: flex;

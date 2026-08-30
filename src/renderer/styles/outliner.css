@@ -1,6 +1,7 @@
 .outliner {
   display: flex;
   flex-direction: column;
+  container-type: inline-size;
   --outliner-leading-bleed: var(--row-bullet-start);
   /* The row wrapper bleeds left to expose its marker gutter. Add back the
      remaining leading grid width to recover the row's content-text axis. */
@@ -1703,6 +1704,52 @@ button.outliner-table-column-kind:focus-visible {
   column-gap: var(--space-5);
   row-gap: var(--space-1);
   align-items: start;
+}
+
+/* URI values use their in-value preview affordance instead of an Outline
+   marker. Removing the redundant marker gives URI text and controls the full
+   value column while leaving the owner Node's bullet and chevron untouched. */
+.row.source-field-row
+  > .outliner-field-grid
+  .field-value-outliner
+  > .outliner-flat-flow
+  > .outliner-flat-flow-row
+  > .row-wrap
+  > .row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.row.source-field-row
+  > .outliner-field-grid
+  .field-value-outliner
+  > .outliner-flat-flow
+  > .outliner-flat-flow-row
+  > .row-wrap
+  > .row
+  > .row-leading {
+  display: none;
+}
+
+/* At the supported minimum window width, the center pane can be narrower than
+   the ordinary two-column field grid. Keep Source URI text and its affordance
+   visible by stacking this field presentation, and compact the owner preview's
+   mature controls inside the same pane. */
+@container (max-width: 360px) {
+  .row.source-field-row > .outliner-field-grid {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: var(--space-2);
+  }
+
+  .outline-source-preview .file-preview-pill {
+    gap: var(--space-1);
+    --file-preview-primary-width: 64px;
+    --file-preview-action-size: 30px;
+  }
+
+  .outline-source-preview .file-preview-pill-primary {
+    font-size: var(--font-ui-xs);
+    padding: 0 var(--space-3);
+  }
 }
 
 .row.field-row-inline > .outliner-field-grid::before,

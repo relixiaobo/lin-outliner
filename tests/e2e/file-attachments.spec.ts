@@ -1058,14 +1058,15 @@ test.describe('file attachments', () => {
     const attachmentRow = row(page, attachmentId);
 
     await attachmentRow.locator('> .row').first().hover();
-    await attachmentRow.locator('> .row .row-chevron-button').first().click();
-    await expect(attachmentRow.locator('.node-source-preview, .file-node-row-preview')).toHaveCount(0);
+    await expect(attachmentRow).toHaveAttribute('aria-expanded', 'true');
 
     const expandedProjection = await e2eProjection(page);
     const sourceEntry = sourceFieldEntries(expandedProjection, attachmentId)[0];
     const sourceValue = sourceFieldValues(expandedProjection, attachmentId)[0];
     expect(sourceEntry).toBeTruthy();
     expect(sourceValue).toBeTruthy();
+    await expect(attachmentRow.locator(':scope > .outline-source-preview .node-source-preview')).toBeVisible();
+    await expect(attachmentRow.locator('.file-node-row-preview')).toHaveCount(0);
     const fieldName = row(page, sourceEntry!.id).locator('.field-name-input');
     await expect(fieldName).toHaveValue('URI');
     await expect(fieldName).toHaveAttribute('readonly', '');
@@ -1166,7 +1167,7 @@ test.describe('file attachments', () => {
     const attachmentRow = row(page, attachmentId);
 
     await attachmentRow.locator('> .row').first().hover();
-    await attachmentRow.locator('.row-chevron-button').first().click();
+    await expect(attachmentRow).toHaveAttribute('aria-expanded', 'true');
     await page.evaluate(async ({ parentId }) => {
       const win = window as Window & {
         lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
@@ -1240,7 +1241,52 @@ test.describe('file attachments', () => {
     const imageRow = row(page, imageId!);
     const imageTitle = rowEditor(page, imageId!);
     await expect(imageTitle).toContainText('picked-image.png');
-    await expect(imageRow.locator('.file-node-image, .file-node-card')).toHaveCount(0);
+    await expect(imageRow.locator(':scope > .row .file-node-image, :scope > .row .file-node-card')).toHaveCount(0);
+    const imageProjection = await e2eProjection(page);
+    const imageSourceEntry = sourceFieldEntries(imageProjection, imageId!)[0];
+    const imageSource = sourceFieldValues(imageProjection, imageId!)[0];
+    expect(imageSourceEntry).toBeTruthy();
+    expect(imageSource).toBeTruthy();
+    const imageSourceRow = row(page, imageSource!.id);
+    const outlineImagePreview = imageRow.locator(':scope > .outline-source-preview .file-preview-image img');
+    await expect(outlineImagePreview).toBeVisible();
+    await expect(outlineImagePreview).toHaveAttribute('alt', 'picked-image.png');
+    await expect.poll(async () => imageRow.evaluate((ownerRow, sourceEntryId) => {
+      const title = ownerRow.querySelector<HTMLElement>(':scope > .row .row-content-line');
+      const preview = ownerRow.querySelector<HTMLElement>(':scope > .outline-source-preview .node-source-preview');
+      const sourceField = document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(String(sourceEntryId))}"] > .row`);
+      if (!title || !preview || !sourceField) return false;
+      const titleRect = title.getBoundingClientRect();
+      const previewRect = preview.getBoundingClientRect();
+      const sourceFieldRect = sourceField.getBoundingClientRect();
+      return Math.abs(titleRect.left - previewRect.left) <= 1
+        && previewRect.bottom <= titleRect.top
+        && titleRect.bottom <= sourceFieldRect.top;
+    }, imageSourceEntry!.id)).toBe(true);
+
+    const hideOutlinePreview = imageSourceRow.getByRole('button', { name: 'Hide preview' });
+    await expect(hideOutlinePreview).toBeVisible();
+    await hideOutlinePreview.click();
+    await expect(imageRow.locator(':scope > .outline-source-preview')).toHaveCount(0);
+    const showOutlinePreview = imageSourceRow.getByRole('button', { name: 'Show preview' });
+    await expect(showOutlinePreview).toBeVisible();
+    await showOutlinePreview.click();
+    await expect(outlineImagePreview).toBeVisible();
+    await page.setViewportSize({ width: 760, height: 800 });
+    await expect(hideOutlinePreview).toBeVisible();
+    await expect.poll(async () => {
+      const [previewRect, controlsRect, affordanceRect, sourceRowRect] = await Promise.all([
+        imageRow.locator(':scope > .outline-source-preview .file-node-preview').boundingBox(),
+        imageRow.locator(':scope > .outline-source-preview .file-preview-pill').boundingBox(),
+        imageSourceRow.locator('.source-preview-affordance').boundingBox(),
+        imageSourceRow.boundingBox(),
+      ]);
+      if (!previewRect || !controlsRect || !affordanceRect || !sourceRowRect) return false;
+      return controlsRect.x >= previewRect.x
+        && controlsRect.x + controlsRect.width <= previewRect.x + previewRect.width
+        && affordanceRect.x + affordanceRect.width <= sourceRowRect.x + sourceRowRect.width;
+    }).toBe(true);
+    await page.setViewportSize({ width: 1280, height: 800 });
     await page.evaluate(({ nodeId, tagId }) => {
       const win = window as typeof window & {
         __LIN_E2E__?: {
@@ -1265,6 +1311,7 @@ test.describe('file attachments', () => {
     await expect.poll(async () => (
       (await e2eProjection(page)).nodes.find((node) => node.id === imageId)?.content.text
     )).toBe(imageName);
+    await expect(outlineImagePreview).toHaveAttribute('alt', imageName);
 
     await imageRow.locator('> .row').first().hover();
     await imageRow.locator('> .row .row-bullet-button').first().click();
@@ -1321,14 +1368,14 @@ test.describe('file attachments', () => {
     }));
   });
 
-  test('Cmd+V pastes clipboard files as ordinary Source-backed Nodes', async ({ page }) => {
+  test('Cmd+V pastes clipboard images as ordinary Source-backed Nodes with previews', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
 
     await pasteClipboardFile(page, {
-      name: 'clipboard-report.pdf',
-      mimeType: 'application/pdf',
-      text: '%PDF clipboard report',
+      name: 'clipboard-image.png',
+      mimeType: 'image/png',
+      text: 'clipboard image bytes',
     });
 
     await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
@@ -1344,19 +1391,24 @@ test.describe('file attachments', () => {
         type: pasted?.type ?? null,
       };
     }).toEqual({
-      name: 'clipboard-report.pdf',
+      name: 'clipboard-image.png',
       sourceText: expect.stringMatching(/^asset:\/\/local\//),
       type: null,
     });
     const pastedRow = row(page, pastedId!);
-    await expect(rowEditor(page, pastedId!)).toContainText('clipboard-report.pdf');
+    await expect(rowEditor(page, pastedId!)).toContainText('clipboard-image.png');
     await expect(pastedRow.locator('.file-node-keyboard-anchor, .file-node-row-main')).toHaveCount(0);
+    await expect(pastedRow.locator(':scope > .outline-source-preview .file-preview-image img'))
+      .toHaveAttribute('alt', 'clipboard-image.png');
+    const pastedSource = sourceFieldValues(await e2eProjection(page), pastedId!)[0];
+    expect(pastedSource).toBeTruthy();
+    await expect(row(page, pastedSource!.id).getByRole('button', { name: 'Hide preview' })).toBeVisible();
 
     const calls = await commandCalls(page);
     expect(calls.some((call) => call.cmd === 'outline/asset ingest')).toBe(true);
     expect(await appliedSourceCreates(page)).toContainEqual(expect.objectContaining({
       draft: expect.objectContaining({
-        content: expect.objectContaining({ text: 'clipboard-report.pdf' }),
+        content: expect.objectContaining({ text: 'clipboard-image.png' }),
       }),
       sourceText: expect.stringMatching(/^asset:\/\/local\//),
     }));

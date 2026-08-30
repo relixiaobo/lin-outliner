@@ -966,6 +966,7 @@ export function NodePanel(props: NodePanelProps) {
             panelId={props.panelId}
             parentId={resolvedRootId}
             rootId={resolvedRootId}
+            rootSourcePreview={rootNode?.type === undefined}
             run={props.run}
             scrollParentRef={mainPanelRef}
             setDragId={props.setDragId}

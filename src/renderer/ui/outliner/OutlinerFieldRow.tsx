@@ -67,6 +67,7 @@ import { RowLeading } from './RowLeading';
 import { useOutlinerRowInteraction } from './useOutlinerRowInteraction';
 import { useT } from '../../i18n/I18nProvider';
 import type { NodeFieldSlot } from '../../../core/fieldSlots';
+import { SOURCE_FIELD_ID } from '../../../core/types';
 import {
   startOptimisticStructuralEdit,
   startOptimisticRelocation,
@@ -82,6 +83,7 @@ interface OutlinerFieldRowProps {
   slot: NodeFieldSlot;
   parentId: NodeId;
   rootId: NodeId;
+  pagePreviewOwnerId?: NodeId;
   selectionRootId: NodeId;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   depth: number;
@@ -788,6 +790,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
         panelId={props.panelId}
         slot={slot}
         ownerId={props.parentId}
+        pagePreviewOwnerId={props.pagePreviewOwnerId}
         selectionRootId={props.selectionRootId}
         onRoot={props.onRoot}
         index={props.index}
@@ -851,6 +854,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       wrapProps={row.wrapProps}
       rowClassName={row.rowClassName([
         'field-row-inline',
+        props.slot.fieldDefId === SOURCE_FIELD_ID ? 'source-field-row' : '',
         props.isFirstInFieldGroup ? 'field-group-start' : '',
         props.isLastInFieldGroup ? 'field-group-end' : '',
       ].filter(Boolean).join(' '))}

@@ -67,6 +67,9 @@ export interface FieldValueContext {
   placeholder: string;
   displayValue?: string;
   inheritedDisplayValue?: boolean;
+  // Source previews belong either to the drilled root page, the ordinary
+  // Outline field value, or no rich surface (dense table/calendar cells).
+  sourcePreviewPlacement?: 'page' | 'outline' | 'none';
   // Materialize the trailing draft as a field value under `id` carrying `text`.
   // Mirrors api.materializeDraftNode so OutlinerItem's materializeDraft can call
   // it through the same code path with no field-value branch.

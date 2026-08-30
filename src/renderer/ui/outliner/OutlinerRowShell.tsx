@@ -16,6 +16,7 @@ interface OutlinerRowShellProps {
   rowClassName: string;
   onSelectFromPointer: MouseEventHandler<HTMLDivElement>;
   onContextMenu?: MouseEventHandler<HTMLDivElement>;
+  beforeRow?: ReactNode;
   rowContent: ReactNode;
   semanticRole?: 'treeitem' | 'presentation';
   children?: ReactNode;
@@ -32,6 +33,7 @@ export function OutlinerRowShell({
   rowClassName,
   onSelectFromPointer,
   onContextMenu,
+  beforeRow,
   rowContent,
   semanticRole = 'treeitem',
   children,
@@ -50,6 +52,7 @@ export function OutlinerRowShell({
       aria-expanded={treeSemantic && isExpandable ? expanded : undefined}
       aria-selected={treeSemantic ? selected : undefined}
     >
+      {beforeRow}
       <div
         className={rowClassName}
         onMouseDownCapture={onSelectFromPointer}

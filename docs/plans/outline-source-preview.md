@@ -22,20 +22,30 @@ field surface.
 
 ### Preview-first composition
 
-Within the same ordinary Node scope, render selected preview, compact preview
-toolbar, editable content/tags, the ordinary URI field, other fields, and ordinary
-children in that order. The preview is presentation only and never occupies an
-Outline level or becomes a card containing the Node.
+On the drilled root Node page, render the selected preview and compact preview
+toolbar before editable content. In an ordinary Outline, render the selected
+preview above the owner Node's editable content, followed by its ordinary URI
+field. This matches Tana's visible order: preview, title/content, then URI. The
+preview aligns with the owner content column, is presentation only, and never
+occupies an Outline level or becomes a child or card containing the Node.
 
-The upper-right close action is **Hide preview** and changes only local
-visibility. The Source toolbar label opens an ordered switcher when multiple
-values exist. Mature preview bodies retain their existing Open, Expand, reader,
-media, translation, and file actions rather than receiving duplicates.
+On the Node page, the upper-right close action changes only local visibility and
+the Source toolbar label opens an ordered switcher when multiple values exist.
+In the Outline, no duplicate toolbar appears: the selected URI value's inline
+affordance owns **Hide preview**, while other URI values own preview switching.
+URI values use these in-value affordances without a redundant value-row marker;
+the owner Node's ordinary bullet and chevron remain unchanged. At the minimum
+supported pane width, the URI field stacks its name above the value, and the
+owner preview compacts mature preview controls inside the available width.
+Mature preview bodies retain
+their existing Open, Expand, reader, media, translation, and file actions rather
+than receiving duplicates. The ordinary Node bullet and chevron keep only their
+navigation and child-disclosure responsibilities.
 
 ### Hidden and failure states
 
-When hidden, the selected/default Source row exposes **Show preview** and other
-rows expose **Preview this source**. Restoring a non-ready value shows its
+When hidden, the selected/default URI value exposes **Show preview** and other
+values expose **Preview this source** in the value row itself. Restoring a non-ready value shows its
 specific invalid, unsupported, denied, unavailable, or retryable state rather
 than an empty body. Switching Source restores the preview but does not move
 keyboard focus into interactive media.
@@ -111,7 +121,8 @@ system during visual verification without changing the interaction contract.
 ## Implementation checklist
 
 - [ ] Rebase on the merged Source model and regenerate preview-shell collisions.
-- [ ] Implement preview-first layout and compact switching on final descriptors.
+- [ ] Implement Node-page preview-first layout plus Tana-style URI-value preview
+      controls and compact switching on final descriptors.
 - [ ] Preserve every baseline management and mature-preview responsibility.
 - [ ] Update current UI/preview specs and run renderer/E2E/accessibility/light-
       dark verification.
