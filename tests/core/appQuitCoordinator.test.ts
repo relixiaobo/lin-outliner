@@ -74,6 +74,35 @@ describe('AppQuitCoordinator', () => {
     expect(host.shutdownCount).toBe(0);
   });
 
+  test('does not report cancellation until admission is confirmed unfrozen', async () => {
+    const host = new FakeQuitHost();
+    host.drainToRevision = async () => {
+      host.drains += 1;
+      throw new Error('disk offline');
+    };
+    host.decisions = ['cancel'];
+    let unfreezeAttempts = 0;
+    host.unfreezeAdmission = async () => {
+      unfreezeAttempts += 1;
+      if (unfreezeAttempts === 1) throw new Error('Runtime unfreeze failed');
+      host.frozen = false;
+    };
+    const coordinator = new AppQuitCoordinator(host, { drainTimeoutMs: 50 });
+
+    await expect(coordinator.requestQuit()).rejects.toThrow('Runtime unfreeze failed');
+
+    expect(coordinator.phase()).toBe('draining');
+    expect(host.frozen).toBe(true);
+    expect(host.teardownCount).toBe(0);
+    expect(host.exitCount).toBe(0);
+
+    host.decisions = ['cancel'];
+    await coordinator.requestQuit();
+    expect(coordinator.phase()).toBe('idle');
+    expect(host.frozen).toBe(false);
+    expect(unfreezeAttempts).toBe(2);
+  });
+
   test('retries and then enters teardown only after the durable barrier', async () => {
     const host = new FakeQuitHost();
     host.drainToRevision = async (revision) => {

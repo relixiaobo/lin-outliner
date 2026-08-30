@@ -1,9 +1,13 @@
 export type DesktopHostPhase = 'constructed' | 'starting' | 'started' | 'quitting' | 'disposed';
 export type DesktopHostQuitOutcome = 'cancelled' | 'disposed';
 
+export interface DesktopHostStartContext {
+  readonly assertActive: () => void;
+}
+
 export interface DesktopHostStartStep {
   readonly name: string;
-  readonly run: () => void | Promise<void>;
+  readonly run: (context: DesktopHostStartContext) => void | Promise<void>;
 }
 
 export interface DesktopHostLifecycleOptions {
@@ -29,6 +33,9 @@ export class DesktopHostLifecycle {
   private currentPhase: DesktopHostPhase = 'constructed';
   private readonly milestones = new Set<string>();
   private startSettlement: Promise<void> | null = null;
+  private startAttemptSettlement: Promise<void> | null = null;
+  private resolveStart: (() => void) | null = null;
+  private rejectStart: ((error: unknown) => void) | null = null;
   private quitSettlement: Promise<void> | null = null;
 
   constructor(private readonly options: DesktopHostLifecycleOptions) {}
@@ -47,7 +54,11 @@ export class DesktopHostLifecycle {
       return Promise.reject(new Error(`Desktop Host cannot start from ${this.currentPhase}.`));
     }
     this.currentPhase = 'starting';
-    this.startSettlement = this.runStart();
+    this.startSettlement = new Promise<void>((resolve, reject) => {
+      this.resolveStart = resolve;
+      this.rejectStart = reject;
+    });
+    this.beginStartAttempt();
     return this.startSettlement;
   }
 
@@ -59,20 +70,31 @@ export class DesktopHostLifecycle {
     this.options.closeAdmission();
     const attempt = this.runQuitAttempt();
     this.quitSettlement = attempt.finally(() => {
-      if (this.currentPhase === 'started') this.quitSettlement = null;
+      if (this.currentPhase !== 'disposed') this.quitSettlement = null;
     });
     return this.quitSettlement;
+  }
+
+  private beginStartAttempt(): void {
+    const attempt = this.runStart();
+    this.startAttemptSettlement = attempt;
+    void attempt.finally(() => {
+      if (this.startAttemptSettlement === attempt) this.startAttemptSettlement = null;
+    });
   }
 
   private async runStart(): Promise<void> {
     try {
       for (const step of this.options.startSteps) {
+        if (this.milestones.has(step.name)) continue;
         this.assertStartupStillOwnsLifecycle();
-        await step.run();
+        await step.run({ assertActive: () => this.assertStartupStillOwnsLifecycle() });
         this.milestones.add(step.name);
         this.assertStartupStillOwnsLifecycle();
       }
       this.currentPhase = 'started';
+      this.resolveStart?.();
+      this.clearStartCompletion();
     } catch (error) {
       if (error instanceof QuitWonStartupRace) return;
       this.currentPhase = 'quitting';
@@ -85,34 +107,40 @@ export class DesktopHostLifecycle {
       this.currentPhase = 'disposed';
       this.options.exitAfterStartupFailure();
       if (rollbackError !== undefined) {
-        throw new AggregateError(
+        this.rejectStart?.(new AggregateError(
           [error, rollbackError],
           'Desktop Host startup and failed-start rollback both failed.',
-        );
+        ));
+        this.clearStartCompletion();
+        return;
       }
-      throw error;
+      this.rejectStart?.(error);
+      this.clearStartCompletion();
     }
   }
 
   private async runQuitAttempt(): Promise<void> {
-    if (this.startSettlement) {
-      try {
-        await this.startSettlement;
-      } catch {
-        return;
-      }
-      if (this.currentPhase === 'disposed') return;
-    }
+    await this.startAttemptSettlement;
+    if (this.currentPhase === 'disposed') return;
 
     if (!this.milestones.has('outline-documents')) {
       await this.options.rollback(this.completedMilestones(), 'quit-before-start');
       this.currentPhase = 'disposed';
       this.options.exitAfterEarlyQuit();
+      this.resolveStart?.();
+      this.clearStartCompletion();
       return;
     }
 
     const outcome = await this.options.ordinaryQuit(this.completedMilestones());
-    this.currentPhase = outcome === 'cancelled' ? 'started' : 'disposed';
+    if (outcome === 'cancelled') {
+      this.currentPhase = 'starting';
+      this.beginStartAttempt();
+      return;
+    }
+    this.currentPhase = 'disposed';
+    this.resolveStart?.();
+    this.clearStartCompletion();
   }
 
   private assertStartupStillOwnsLifecycle(): void {
@@ -120,5 +148,10 @@ export class DesktopHostLifecycle {
     if (this.currentPhase !== 'starting') {
       throw new Error(`Desktop Host startup lost lifecycle ownership in ${this.currentPhase}.`);
     }
+  }
+
+  private clearStartCompletion(): void {
+    this.resolveStart = null;
+    this.rejectStart = null;
   }
 }

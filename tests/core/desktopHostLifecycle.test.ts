@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'bun:test';
+import type { DocumentProjection } from '../../src/core/types';
 import {
   DesktopHostLifecycle,
   type DesktopHostLifecycleOptions,
   type DesktopHostQuitOutcome,
 } from '../../src/main/desktopHostLifecycle';
+import { createAgentHostLifecycle } from '../../src/main/hostDomain/compositionLifecycle';
 
 function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
   let resolve!: () => void;
@@ -105,6 +107,109 @@ describe('DesktopHostLifecycle', () => {
     }
   });
 
+  test('quit reaches every nested Agent boundary before any later producer starts', async () => {
+    const boundaryNames = ['threads', 'memory', 'automations'] as const;
+    for (const boundaryName of boundaryNames) {
+      const boundary = deferred();
+      const events: string[] = [];
+      const pauseAt = async (name: typeof boundaryNames[number]) => {
+        events.push(`agent:${name}`);
+        if (name === boundaryName) await boundary.promise;
+      };
+      const agent = createAgentHostLifecycle({
+        memory: {
+          initializeMutationIndex: () => { events.push('agent:index'); },
+          startWorker: () => pauseAt('memory'),
+          stopWorker: async () => undefined,
+          closeStore: () => undefined,
+        },
+        threads: {
+          initialize: () => pauseAt('threads'),
+          close: async () => undefined,
+        },
+        automations: {
+          start: () => pauseAt('automations'),
+          stop: async () => undefined,
+          closeStore: () => undefined,
+        },
+      });
+      const lifecycle = new DesktopHostLifecycle({
+        startSteps: [
+          { name: 'outline-documents', run: () => { events.push('documents'); } },
+          {
+            name: 'agent',
+            run: ({ assertActive }) => agent.initialize({} as DocumentProjection, assertActive),
+          },
+          { name: 'publication', run: () => { events.push('publication'); } },
+        ],
+        closeAdmission: () => { events.push('freeze'); },
+        ordinaryQuit: async () => {
+          events.push('ordinary-quit');
+          return 'disposed';
+        },
+        rollback: async () => undefined,
+        exitAfterStartupFailure: () => undefined,
+        exitAfterEarlyQuit: () => undefined,
+      });
+
+      const startup = lifecycle.start();
+      while (!events.includes(`agent:${boundaryName}`)) await Promise.resolve();
+      const quitting = lifecycle.requestQuit();
+      boundary.resolve();
+      await Promise.all([startup, quitting]);
+
+      const boundaryIndex = boundaryNames.indexOf(boundaryName);
+      expect(events).toEqual([
+        'documents',
+        'agent:index',
+        ...boundaryNames.slice(0, boundaryIndex + 1).map((name) => `agent:${name}`),
+        'freeze',
+        'ordinary-quit',
+      ]);
+      expect(events).not.toContain('publication');
+      expect(lifecycle.phase()).toBe('disposed');
+    }
+  });
+
+  test('Cancel during startup resumes every remaining startup step before reporting started', async () => {
+    const boundary = deferred();
+    const { events, lifecycle, setQuitOutcome } = createHarness({
+      startSteps: [
+        { name: 'outline-documents', run: () => { events.push('documents'); } },
+        {
+          name: 'agent',
+          run: async () => {
+            events.push('agent');
+            await boundary.promise;
+          },
+        },
+        { name: 'publication', run: () => { events.push('publication'); } },
+      ],
+    });
+    setQuitOutcome('cancelled');
+
+    const startup = lifecycle.start();
+    while (!events.includes('agent')) await Promise.resolve();
+    const quitting = lifecycle.requestQuit();
+    boundary.resolve();
+
+    await quitting;
+    await startup;
+    expect(lifecycle.phase()).toBe('started');
+    expect([...lifecycle.completedMilestones()]).toEqual([
+      'outline-documents',
+      'agent',
+      'publication',
+    ]);
+    expect(events).toEqual([
+      'documents',
+      'agent',
+      'freeze',
+      'ordinary-quit',
+      'publication',
+    ]);
+  });
+
   test('quit before document startup uses rollback without Runtime shutdown', async () => {
     const { events, lifecycle } = createHarness();
     await lifecycle.requestQuit();
@@ -170,5 +275,41 @@ describe('DesktopHostLifecycle', () => {
     expect(events.filter((event) => event === 'ordinary-quit')).toHaveLength(2);
     expect(events.filter((event) => event === 'freeze')).toHaveLength(2);
     expect(lifecycle.phase()).toBe('disposed');
+  });
+
+  test('a reversible quit failure is not cached and a later request can recover', async () => {
+    const events: string[] = [];
+    let quitAttempts = 0;
+    const lifecycle = new DesktopHostLifecycle({
+      startSteps: [
+        { name: 'outline-documents', run: () => { events.push('documents'); } },
+        { name: 'publication', run: () => { events.push('publication'); } },
+      ],
+      closeAdmission: () => { events.push('freeze'); },
+      ordinaryQuit: async () => {
+        quitAttempts += 1;
+        events.push(`ordinary-quit:${quitAttempts}`);
+        if (quitAttempts === 1) throw new Error('unfreeze failed');
+        return 'cancelled';
+      },
+      rollback: async () => undefined,
+      exitAfterStartupFailure: () => undefined,
+      exitAfterEarlyQuit: () => undefined,
+    });
+    await lifecycle.start();
+
+    await expect(lifecycle.requestQuit()).rejects.toThrow('unfreeze failed');
+    expect(lifecycle.phase()).toBe('quitting');
+
+    await lifecycle.requestQuit();
+    expect(lifecycle.phase()).toBe('started');
+    expect(events).toEqual([
+      'documents',
+      'publication',
+      'freeze',
+      'ordinary-quit:1',
+      'freeze',
+      'ordinary-quit:2',
+    ]);
   });
 });

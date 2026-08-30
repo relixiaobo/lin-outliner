@@ -22,19 +22,37 @@ export interface AgentHostLifecycleDependencies {
 }
 
 export interface AgentHostLifecycle {
-  initialize(projection: DocumentProjection): Promise<void>;
+  initialize(projection: DocumentProjection, assertActive?: () => void): Promise<void>;
   close(): Promise<void>;
 }
 
 export function createAgentHostLifecycle(
   dependencies: AgentHostLifecycleDependencies,
 ): AgentHostLifecycle {
+  const completed = new Set<string>();
   return {
-    initialize: async (projection) => {
-      dependencies.memory.initializeMutationIndex(projection);
-      await dependencies.threads.initialize();
-      await dependencies.memory.startWorker();
-      await dependencies.automations.start();
+    initialize: async (projection, assertActive = () => undefined) => {
+      assertActive();
+      if (!completed.has('memory-index')) {
+        dependencies.memory.initializeMutationIndex(projection);
+        completed.add('memory-index');
+        assertActive();
+      }
+      if (!completed.has('threads')) {
+        await dependencies.threads.initialize();
+        completed.add('threads');
+        assertActive();
+      }
+      if (!completed.has('memory-worker')) {
+        await dependencies.memory.startWorker();
+        completed.add('memory-worker');
+        assertActive();
+      }
+      if (!completed.has('automations')) {
+        await dependencies.automations.start();
+        completed.add('automations');
+        assertActive();
+      }
     },
     close: () => closeAgentServices(
       dependencies.memory,

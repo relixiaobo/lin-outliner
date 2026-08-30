@@ -77,14 +77,14 @@ export class AppQuitCoordinator {
           result.outcome,
         );
       } catch (error) {
-        this.phaseValue = 'idle';
         await this.host.unfreezeAdmission();
+        this.phaseValue = 'idle';
         throw error;
       }
       if (decision === 'retry') continue;
       if (decision === 'cancel') {
-        this.phaseValue = 'idle';
         await this.host.unfreezeAdmission();
+        this.phaseValue = 'idle';
         return;
       }
       break;

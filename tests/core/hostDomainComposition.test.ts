@@ -108,6 +108,53 @@ describe('Host domain composition', () => {
     ]);
   });
 
+  test('Agent lifecycle stops at each async startup boundary and resumes without duplicate work', async () => {
+    const boundaryNames = ['threads:start', 'memory:start', 'automations:start'] as const;
+    for (const boundaryName of boundaryNames) {
+      let release!: () => void;
+      const boundary = new Promise<void>((resolve) => { release = resolve; });
+      const events: string[] = [];
+      let active = true;
+      const pauseAt = async (name: typeof boundaryNames[number]) => {
+        events.push(name);
+        if (name === boundaryName) await boundary;
+      };
+      const lifecycle = createAgentHostLifecycle({
+        memory: {
+          initializeMutationIndex: () => { events.push('memory:index'); },
+          startWorker: () => pauseAt('memory:start'),
+          stopWorker: async () => undefined,
+          closeStore: () => undefined,
+        },
+        threads: {
+          initialize: () => pauseAt('threads:start'),
+          close: async () => undefined,
+        },
+        automations: {
+          start: () => pauseAt('automations:start'),
+          stop: async () => undefined,
+          closeStore: () => undefined,
+        },
+      });
+      const assertActive = () => {
+        if (!active) throw new Error('startup ownership lost');
+      };
+
+      const interrupted = lifecycle.initialize({} as DocumentProjection, assertActive);
+      while (!events.includes(boundaryName)) await Promise.resolve();
+      active = false;
+      release();
+      await expect(interrupted).rejects.toThrow('startup ownership lost');
+
+      const boundaryIndex = boundaryNames.indexOf(boundaryName);
+      expect(events).toEqual(['memory:index', ...boundaryNames.slice(0, boundaryIndex + 1)]);
+
+      active = true;
+      await lifecycle.initialize({} as DocumentProjection, assertActive);
+      expect(events).toEqual(['memory:index', ...boundaryNames]);
+    }
+  });
+
   test('Outline lifecycle degrades ranking load and keeps explicit close order', async () => {
     const events: string[] = [];
     const reports: string[] = [];

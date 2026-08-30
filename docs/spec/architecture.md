@@ -288,11 +288,15 @@ unpublished until their existing prerequisites settle; this cutover does not
 move the first-window boundary or create a second service readiness authority.
 
 A quit request synchronously closes Outline mutation admission and wins before
-the next awaited startup step may begin. Concurrent requests share only the
-current attempt. The request joins an in-flight step, then either enters ordinary
-safe quit after Outline initialization or performs early rollback without an
-authenticated Runtime shutdown. Cancel is possible only in the reversible
-drain/decision phase; it restores admission and `started`, clears the completed
+the next awaited startup step may begin. Agent startup applies the same ownership
+check between Thread, Memory-worker, and Automation initialization, and records
+those internal milestones so a reversible interruption never duplicates settled
+work. Concurrent requests share only the current attempt. The request joins an
+in-flight step, then either enters ordinary safe quit after Outline initialization
+or performs early rollback without an authenticated Runtime shutdown. Cancel is
+possible only in the reversible drain/decision phase; it reports cancellation
+only after both Runtime and local admission are confirmed unfrozen, resumes any
+remaining startup milestones before reporting `started`, clears the completed
 attempt, and lets the next OS quit perform a new drain.
 
 `ResourceScope` owns reversible Desktop effects in named child scopes. It closes

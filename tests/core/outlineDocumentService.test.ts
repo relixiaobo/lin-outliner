@@ -70,6 +70,21 @@ describe('OutlineDocumentService', () => {
     document.close();
   });
 
+  test('rejects an unfreeze that the Runtime does not confirm', async () => {
+    const document = new OutlineDocumentService({
+      connect: async () => ({
+        manageDesktopRuntime: async () => ({ admissionFrozen: true }),
+        close: () => undefined,
+      }) as unknown as OutlineClient,
+    });
+    document.freezeMutationAdmission();
+
+    await expect(document.unfreezeMutationAdmission()).rejects.toThrow(
+      'Outline Runtime did not confirm mutation admission was unfrozen.',
+    );
+    document.close();
+  });
+
   test('tracks mutation settlement and resyncs through a Runtime restart', async () => {
     const root = await makeRoot();
     let runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });

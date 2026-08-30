@@ -2698,7 +2698,13 @@ const lifecycle = new DesktopHostLifecycle({
       },
     },
     { name: 'outline-documents', run: () => outlineHost.initializeDocuments().then(() => undefined) },
-    { name: 'agent', run: () => agentHost.initialize(outlineHost.document.liveProjection()) },
+    {
+      name: 'agent',
+      run: ({ assertActive }) => agentHost.initialize(
+        outlineHost.document.liveProjection(),
+        assertActive,
+      ),
+    },
     { name: 'personal-ranking', run: () => outlineHost.initializePersonalAccessRanking() },
     {
       name: 'native-application',
