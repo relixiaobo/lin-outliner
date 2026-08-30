@@ -378,11 +378,10 @@ function runNegativeFixtures(): void {
   if (missing.length !== 1) throw new Error('Negative fixture failed to detect a missing baseline handler.');
 
   const unreleasedSource = [
-    'const releasedActivate = () => undefined;',
-    'const leakedActivate = () => undefined;',
-    "app.on('activate', releasedActivate);",
-    "app.on('activate', leakedActivate);",
-    "app.removeListener('activate', releasedActivate);",
+    'const handleActivate = () => undefined;',
+    "app.on('activate', handleActivate);",
+    "app.on('activate', handleActivate);",
+    "app.removeListener('activate', handleActivate);",
   ].join('\n');
   const unreleasedSources = [{ path: 'src/main/fixture.ts', source: unreleasedSource }];
   const fixtureReleaseCounts = collectListenerReleaseCounts(unreleasedSources);
