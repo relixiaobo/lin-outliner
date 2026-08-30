@@ -22,7 +22,7 @@ import {
 
 export interface DesktopOutlineIpcOptions {
   readonly ipcMain: Pick<IpcMain, 'handle' | 'on'>;
-  readonly client: DesktopOutlineClient;
+  readonly client: Pick<DesktopOutlineClient, 'request' | 'commit' | 'subscribe' | 'cancel'>;
   readonly authorize: (event: IpcMainInvokeEvent | IpcMainEvent) => void;
 }
 

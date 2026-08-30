@@ -119,12 +119,11 @@ const requiredDomainConstructions = new Map<string, string>([
   ['OutlineDesktopAssetService', 'outline-desktop-host'],
   ['NodeAccessStore', 'outline-desktop-host'],
 ]);
-const currentDomainFactoryCalls = collectCurrentDomainFactoryCalls(currentSources);
-const domainConstructions = [...currentInventory, ...currentDomainFactoryCalls]
-  .filter((effect) => effect.kind === 'construction'
-    && effect.path.startsWith('src/main/hostDomain/')
-    && requiredDomainConstructions.has(effect.expression))
-  .map((effect) => ({ ...effect, owner: currentDomainOwner(effect) }));
+const domainConstructions = collectDomainConstructions(
+  currentInventory,
+  currentSources,
+  requiredDomainConstructions,
+);
 const unownedDomain = domainConstructions.filter((effect) => effect.owner === null);
 const duplicateDomain = duplicateDomainConstructions(domainConstructions);
 const missingDomain = [...requiredDomainConstructions.entries()]
@@ -206,12 +205,11 @@ function collectEffects(source: string, path: string): Effect[] {
   return effects.sort((left, right) => left.line - right.line || left.kind.localeCompare(right.kind));
 }
 
-function collectCurrentDomainFactoryCalls(
+function collectDomainFactoryCalls(
   sources: readonly { path: string; source: string }[],
 ): Effect[] {
   const effects: Effect[] = [];
   for (const { path, source } of sources) {
-    if (!path.startsWith('src/main/hostDomain/')) continue;
     const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
     const visit = (node: ts.Node): void => {
       if (ts.isCallExpression(node) && node.expression.getText(file) === 'ThreadService.open') {
@@ -230,6 +228,16 @@ function collectCurrentDomainFactoryCalls(
     visit(file);
   }
   return effects;
+}
+
+function collectDomainConstructions(
+  inventory: readonly Effect[],
+  sources: readonly { path: string; source: string }[],
+  required: ReadonlyMap<string, string>,
+): Array<Effect & { readonly owner: string | null }> {
+  return [...inventory, ...collectDomainFactoryCalls(sources)]
+    .filter((effect) => effect.kind === 'construction' && required.has(effect.expression))
+    .map((effect) => ({ ...effect, owner: currentDomainOwner(effect) }));
 }
 
 function ownerDeclaredByFunction(node: ts.Node): string | null {
@@ -356,7 +364,7 @@ function duplicateDomainConstructions(
 ): string[] {
   const counts = new Map<string, number>();
   for (const effect of effects) {
-    const key = `${effect.owner ?? 'unowned'}:${effect.expression}`;
+    const key = effect.expression;
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   return [...counts.entries()]
@@ -519,6 +527,30 @@ function runNegativeFixtures(): void {
     .filter((entry) => entry.transport && entry.owner === null && !entry.disposition.startsWith('retained:'));
   if (scopedUnreleased.length !== 1) {
     throw new Error('Negative fixture failed to detect an owned-scope app listener without a release.');
+  }
+
+  const duplicateDomainSources = [
+    {
+      path: 'src/main/hostDomain/outlineDesktopHost.ts',
+      source: "const nodeAccess = new NodeAccessStore('owned');",
+    },
+    {
+      path: 'src/main/main.ts',
+      source: "const duplicate = new NodeAccessStore('duplicate-domain-construction');",
+    },
+  ];
+  const duplicateDomainInventory = duplicateDomainSources.flatMap(({ path, source }) => (
+    collectEffects(source, path)
+  ));
+  const duplicateDomainEffects = collectDomainConstructions(
+    duplicateDomainInventory,
+    duplicateDomainSources,
+    requiredDomainConstructions,
+  );
+  const unownedDomainEffects = duplicateDomainEffects.filter((effect) => effect.owner === null);
+  const duplicateDomainKeys = duplicateDomainConstructions(duplicateDomainEffects);
+  if (unownedDomainEffects.length !== 1 || duplicateDomainKeys[0] !== 'NodeAccessStore') {
+    throw new Error('Negative fixture failed to detect an unowned duplicate domain construction.');
   }
 }
 

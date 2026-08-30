@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import type { DocumentProjection, ProjectionSnapshot } from '../../src/core/types';
 import {
   assignOnce,
@@ -8,6 +10,54 @@ import {
 } from '../../src/main/hostDomain/compositionLifecycle';
 
 describe('Host domain composition', () => {
+  test('exports narrow capabilities without leaking domain services or runtime maps', () => {
+    const mainSource = readFileSync(path.join(import.meta.dir, '../../src/main/main.ts'), 'utf8');
+    const outlineSource = readFileSync(
+      path.join(import.meta.dir, '../../src/main/hostDomain/outlineDesktopHost.ts'),
+      'utf8',
+    );
+    const agentSource = readFileSync(
+      path.join(import.meta.dir, '../../src/main/hostDomain/agentHost.ts'),
+      'utf8',
+    );
+    const managedSkillsSource = readFileSync(
+      path.join(import.meta.dir, '../../src/main/hostDomain/managedSkillsHost.ts'),
+      'utf8',
+    );
+
+    expect(outlineSource).not.toMatch(/readonly (?:supervisor|client|documents|nodeAccess):/u);
+    expect(agentSource).not.toMatch(
+      /readonly (?:configurationLoader|configurationWriter|worktree|threadService|automationService|toolRuntime|managedSkills):/u,
+    );
+    expect(managedSkillsSource).not.toMatch(
+      /readonly (?:browserPilot|service|shellEnvironment|primaryRuntime|turnRuntimes|turnRuntimeInitializations):/u,
+    );
+    expect(managedSkillsSource).toContain('const turnRuntimes = new Map<string, AgentSkillRuntime>();');
+    const concreteServiceBindings = [
+      'outlineDocumentService',
+      'desktopOutlineClient',
+      'outlineClientSupervisor',
+      'nodeAccessStore',
+      'agentConfigurationLoader',
+      'agentConfigurationWriter',
+      'memoryExtension',
+      'automationService',
+      'managedSkillService',
+      'threadService',
+      'toolRuntime',
+      'turnSkillRuntimes',
+      'turnSkillRuntimeInitializations',
+    ].join('|');
+    expect(mainSource).not.toMatch(
+      new RegExp(
+        `\\b(?:const|let)\\s+(?:(?:${concreteServiceBindings})\\b|\\{[^}]*\\b(?:${concreteServiceBindings})\\b)`,
+        'su',
+      ),
+    );
+    expect(mainSource).toContain('agentHost.threads');
+    expect(mainSource).toContain('outlineHost.document');
+  });
+
   test('assign-once callbacks reject incomplete and duplicate composition', () => {
     const reference = assignOnce<object>('fixture');
     expect(() => reference.get()).toThrow('fixture is unavailable before Agent Host composition completes.');

@@ -40,8 +40,9 @@ describe('OutlineDocumentService', () => {
     expect(COMPOSITION_LIFECYCLE_SOURCE).toContain(
       'dependencies.documents.replacePersonalAccessRanking(dependencies.nodeAccess.snapshot())',
     );
-    expect(MAIN_SOURCE).toContain('outlineDocumentService.upsertPersonalAccessRanking(update.upserted)');
-    expect(MAIN_SOURCE).toContain('outlineDocumentService.removePersonalAccessRanking(');
+    expect(OUTLINE_HOST_SOURCE).toContain('documents.upsertPersonalAccessRanking(update.upserted)');
+    expect(OUTLINE_HOST_SOURCE).toContain('documents.removePersonalAccessRanking(');
+    expect(MAIN_SOURCE).not.toContain('outlineDocumentService');
   });
 
   test('closes request clients whose personal ranking bootstrap fails', async () => {

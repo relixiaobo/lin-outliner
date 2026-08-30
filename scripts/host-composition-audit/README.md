@@ -22,6 +22,10 @@ duplicate domain constructions: 0
 missing domain constructions: 0
 ```
 
+Domain constructions are collected across the complete current `src/main` tree;
+only the typed Host files assign an owner. A required construction outside those
+files therefore fails as unowned and also participates in duplicate detection.
+
 Reports are written to `tmp/host-composition-audit/`. To reproduce in a GitHub
 single-branch clone, fetch the PR branch normally; the pinned baseline is its
 reachable ancestor. If Git omitted it, fetch the exact object before running:
