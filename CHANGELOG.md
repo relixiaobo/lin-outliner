@@ -163,6 +163,22 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
+- **Desktop Host transport now has explicit, disposable ownership (PR #600,
+  codex)** — all 60 IPC channels, custom protocols, session policy, Automation
+  resume, and app/process lifecycle listeners are grouped behind named owners
+  with duplicate claims, registration rollback, reverse-order idempotent
+  disposal, and aggregate release diagnostics. Quit preserves fail-closed
+  permission handlers and the renderer CSP until process exit, while chained
+  IPC listener registration stays inside the owned facade. A pinned exact-tree
+  Host audit records 2,338 baseline effects and rejects unowned, duplicate, or
+  missing transport effects, including listener registrations without a
+  one-for-one matching release. Gate review found one High permission teardown
+  regression and four audit/facade ownership gaps across repeated passes; all
+  were fixed before the final no-findings review. Verified with typecheck,
+  `docs:check`, build, 39 focused Host/quit/URL-preview tests, the Host audit,
+  whitespace checks, and GitHub E2E sampling under the repository's non-gating
+  signal policy.
+
 - **The primary delivery chain now maps one substantial plan to one PR claim** —
   five aggregate plans were preserved in the archive and replaced by 12 claim-
   sized plans, while Computer Pilot gained its own plan. Together with five

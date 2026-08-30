@@ -2034,3 +2034,23 @@ protected AssetRecord set.
 Regression coverage must exercise dedicated and generic mutation paths, a lease
 that expires before garbage collection, converged structures, and recovery that
 restores a protected asset after its staging lease has already been consumed.
+
+## Ownership audits must pair effects and releases by cardinality
+
+PR #600's first lifecycle audit treated the existence of one matching
+`removeListener` as proof for every identical registration. Counting releases
+closed that gap, but the next version still let an AST-inherited owner bypass
+the count entirely. Both versions reported a false zero-unowned result for a
+listener that remained live.
+
+**A declared owner and a release edge prove different facts.** For every
+reversible effect, validate ownership and cleanup independently, match the exact
+target/event/callback identity, and consume one release for each registration.
+Do not use set membership where runtime cardinality matters, and do not let a
+syntactic owner annotation short-circuit release validation.
+
+Negative fixtures must reproduce the partial cases, not only total absence:
+duplicate registrations with one release, and a registration inside an owned
+scope with its release removed. Run those fixtures through the same inventory,
+classification, and completion path as the real tree so the guard proves its
+own failure behavior.
