@@ -127,6 +127,23 @@ async function expectInsidePreviewBoundary(menu: Locator, preview: Locator): Pro
   }).toBe(true);
 }
 
+async function expectUsableMenuInsidePane(menu: Locator, pane: Locator): Promise<void> {
+  await expect.poll(async () => menu.evaluate((element) => (
+    element.clientHeight >= Math.min(element.scrollHeight, 120)
+  ))).toBe(true);
+  await expect.poll(async () => menu.boundingBox().then((rect) => rect?.width ?? 0))
+    .toBeGreaterThanOrEqual(219);
+  await expect.poll(async () => {
+    const [menuRect, paneRect] = await Promise.all([menu.boundingBox(), pane.boundingBox()]);
+    if (!menuRect || !paneRect) return false;
+    const tolerance = 0.5;
+    return menuRect.x >= paneRect.x - tolerance
+      && menuRect.y >= paneRect.y - tolerance
+      && menuRect.x + menuRect.width <= paneRect.x + paneRect.width + tolerance
+      && menuRect.y + menuRect.height <= paneRect.y + paneRect.height + tolerance;
+  }).toBe(true);
+}
+
 type ExternalFileDropPosition = 'before' | 'inside' | 'after';
 
 async function startExternalFileDrag(page: Parameters<typeof trailingEditor>[0], file: { name: string; mimeType: string; text: string }) {
@@ -1715,6 +1732,84 @@ test.describe('file attachments', () => {
     }));
   });
 
+  test('short audio previews fall back to the pane for a usable Source actions menu', async ({ page }) => {
+    const beforeChildren = await todayChildren(page);
+    await trailingEditor(page).click();
+    await pasteClipboardFile(page, {
+      name: 'short-preview.wav',
+      mimeType: 'audio/wav',
+      text: 'audio bytes',
+    });
+
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+    const pastedId = (await todayChildren(page)).at(-1)!;
+    const pastedRow = row(page, pastedId);
+    const preview = pastedRow.locator(
+      ':scope > .outline-source-preview-row .file-node-preview--media-audio',
+    );
+    await expect(preview).toBeVisible();
+    await expect.poll(async () => preview.boundingBox().then((rect) => rect?.height ?? 0))
+      .toBeLessThan(120);
+
+    await pastedRow
+      .locator(':scope > .outline-source-preview-row')
+      .getByRole('button', { name: 'Preview actions' })
+      .click();
+    const menu = page.getByRole('menu', { name: 'Preview actions' });
+    await expect(menu).toBeVisible();
+    await expectUsableMenuInsidePane(menu, page.locator('.outline-panel-surface.active-panel'));
+    await expect.poll(async () => {
+      const [menuRect, previewRect] = await Promise.all([menu.boundingBox(), preview.boundingBox()]);
+      return Boolean(menuRect && previewRect && menuRect.height > previewRect.height);
+    }).toBe(true);
+  });
+
+  test('tiny image previews contain corner controls and use the pane for the Source actions menu', async ({ page }) => {
+    const beforeChildren = await todayChildren(page);
+    await trailingEditor(page).click();
+    await pasteClipboardFile(page, {
+      name: 'small-preview.png',
+      mimeType: 'image/png',
+      text: 'image bytes',
+    });
+
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+    const pastedId = (await todayChildren(page)).at(-1)!;
+    const pastedRow = row(page, pastedId);
+    const preview = pastedRow.locator(
+      ':scope > .outline-source-preview-row .file-node-preview--image',
+    );
+    const image = preview.locator('img');
+    const actions = pastedRow.locator(
+      ':scope > .outline-source-preview-row .outline-source-preview-actions',
+    );
+    await expect(image).toBeVisible();
+    await expect.poll(async () => image.evaluate((element) => {
+      const imageElement = element as HTMLImageElement;
+      const rect = imageElement.getBoundingClientRect();
+      return {
+        naturalHeight: imageElement.naturalHeight,
+        naturalWidth: imageElement.naturalWidth,
+        renderedHeight: rect.height,
+        renderedWidth: rect.width,
+      };
+    })).toEqual({ naturalHeight: 1, naturalWidth: 1, renderedHeight: 1, renderedWidth: 1 });
+    await expect.poll(async () => {
+      const [actionsRect, previewRect] = await Promise.all([actions.boundingBox(), preview.boundingBox()]);
+      if (!actionsRect || !previewRect) return false;
+      const tolerance = 0.5;
+      return actionsRect.x >= previewRect.x - tolerance
+        && actionsRect.y >= previewRect.y - tolerance
+        && actionsRect.x + actionsRect.width <= previewRect.x + previewRect.width + tolerance
+        && actionsRect.y + actionsRect.height <= previewRect.y + previewRect.height + tolerance;
+    }).toBe(true);
+
+    await actions.getByRole('button', { name: 'Preview actions' }).click();
+    const menu = page.getByRole('menu', { name: 'Preview actions' });
+    await expect(menu).toBeVisible();
+    await expectUsableMenuInsidePane(menu, page.locator('.outline-panel-surface.active-panel'));
+  });
+
   test('a bare URL on an empty row atomically writes content and Source while non-empty content keeps an inline link', async ({ page }) => {
     const url = 'https://example.com/article/with-a-long-path-that-wraps-inside-the-field-value-without-moving-its-open-and-preview-controls-onto-a-separate-line';
     const beforeChildren = await todayChildren(page);
@@ -2474,9 +2569,12 @@ test.describe('file attachments', () => {
     await expect(attachmentRow.locator('.tag-badge-label')).toHaveText('project');
     await expect(titleEditor).toContainText('Renamed report');
 
-    const countBeforeEnter = (await todayChildren(page)).length;
+    const childCountBeforeEnter = outlineChildIds(await e2eProjection(page), attachmentId).length;
     await titleEditor.click();
+    await page.keyboard.press('Meta+ArrowRight');
     await page.keyboard.press('Enter');
-    await expect.poll(async () => (await todayChildren(page)).length).toBe(countBeforeEnter + 1);
+    await expect.poll(async () => (
+      outlineChildIds(await e2eProjection(page), attachmentId).length
+    )).toBe(childCountBeforeEnter + 1);
   });
 });

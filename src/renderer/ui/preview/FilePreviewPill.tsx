@@ -49,6 +49,7 @@ export function FilePreviewPill({
   const [menuInitialFocus, setMenuInitialFocus] = useState<MenuInitialFocus>('surface');
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuBoundaryRef = useRef<HTMLElement | null>(null);
+  const menuFallbackBoundaryRef = useRef<HTMLElement | null>(null);
   const dismissIgnoreRefs = useMemo(() => [triggerRef], []);
 
   const allMenuActions: FilePreviewMenuAction[] = previewable && primaryOpen
@@ -62,10 +63,13 @@ export function FilePreviewPill({
   const primaryTitle = primaryMode === 'toggle' ? primaryLabel : primaryOpen?.label ?? labels.open;
   const onPrimary = primaryMode === 'toggle' ? onToggleExpand : primaryOpen?.run ?? (() => undefined);
   const prepareMenuBoundary = () => {
+    const trigger = triggerRef.current;
     menuBoundaryRef.current = placement === 'source-corner'
-      ? triggerRef.current
-        ?.closest('.file-node-body')
+      ? trigger?.closest('.file-node-body')
         ?.querySelector<HTMLElement>(':scope > .file-node-preview') ?? null
+      : null;
+    menuFallbackBoundaryRef.current = placement === 'source-corner'
+      ? trigger?.closest<HTMLElement>('.outline-panel-surface') ?? null
       : null;
   };
 
@@ -140,6 +144,7 @@ export function FilePreviewPill({
               boundaryRef={placement === 'source-corner' ? menuBoundaryRef : undefined}
               dismissIgnoreRefs={dismissIgnoreRefs}
               initialFocus={menuInitialFocus}
+              fallbackBoundaryRef={placement === 'source-corner' ? menuFallbackBoundaryRef : undefined}
               meta={meta}
               onClose={() => setOpen(false)}
               placement={placement === 'source-corner' ? 'bottom-end' : 'top-end'}
@@ -158,6 +163,7 @@ function PillMenu({
   ariaLabel,
   boundaryRef,
   dismissIgnoreRefs,
+  fallbackBoundaryRef,
   initialFocus,
   meta,
   onClose,
@@ -169,6 +175,7 @@ function PillMenu({
   ariaLabel: string;
   boundaryRef?: RefObject<HTMLElement | null>;
   dismissIgnoreRefs: Array<RefObject<HTMLElement | null>>;
+  fallbackBoundaryRef?: RefObject<HTMLElement | null>;
   initialFocus: MenuInitialFocus;
   meta: string | null;
   onClose: () => void;
@@ -179,6 +186,7 @@ function PillMenu({
   const style = useAnchoredOverlay(menuRef, {
     anchorRef,
     boundaryRef,
+    fallbackBoundaryRef,
     maxHeight: 280,
     placement,
     width: 220,

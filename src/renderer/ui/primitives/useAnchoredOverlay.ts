@@ -25,6 +25,7 @@ interface UseAnchoredOverlayOptions {
   anchorRect?: OverlayAnchorRect | null;
   anchorRef?: RefObject<OverlayAnchorElement | null>;
   boundaryRef?: RefObject<OverlayAnchorElement | null>;
+  fallbackBoundaryRef?: RefObject<OverlayAnchorElement | null>;
   disabled?: boolean;
   fallbackStyle?: CSSProperties;
   gap?: number;
@@ -47,6 +48,23 @@ const CONTENT_MEASUREMENT_STYLE: CSSProperties = {
 };
 
 const UNMEASURED_CONTENT = Symbol('unmeasured-content');
+const MIN_USABLE_OVERLAY_HEIGHT = 120;
+
+function availableBoundarySize(
+  boundary: DOMRect,
+  margin: number,
+  viewportWidth: number,
+  viewportHeight: number,
+) {
+  const left = Math.max(margin, boundary.left + margin);
+  const top = Math.max(margin, boundary.top + margin);
+  const right = Math.min(viewportWidth - margin, boundary.right - margin);
+  const bottom = Math.min(viewportHeight - margin, boundary.bottom - margin);
+  return {
+    height: Math.max(0, bottom - top),
+    width: Math.max(0, right - left),
+  };
+}
 
 function readAnchorRect(options: UseAnchoredOverlayOptions): OverlayAnchorRect | null {
   if (options.anchorRect) return options.anchorRect;
@@ -98,7 +116,31 @@ export function useAnchoredOverlay(
       const margin = options.margin ?? 8;
       const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1024;
       const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 768;
-      const boundary = options.boundaryRef?.current?.getBoundingClientRect();
+      const overlay = overlayRef.current;
+      const intrinsicWidth = options.width === 'content' && overlay
+        ? overlay.getBoundingClientRect().width || overlay.scrollWidth
+        : 0;
+      const requestedWidth = options.width === 'content'
+        ? Math.max(anchor.width ?? 0, intrinsicWidth)
+        : options.width ?? Math.max(anchor.width ?? 0, 220);
+      const requestedMaxHeight = options.maxHeight ?? 440;
+      const contentHeight = overlay?.scrollHeight ?? overlay?.offsetHeight ?? requestedMaxHeight;
+      const minimumUsableHeight = Math.min(
+        contentHeight,
+        requestedMaxHeight,
+        MIN_USABLE_OVERLAY_HEIGHT,
+      );
+      const primaryBoundary = options.boundaryRef?.current?.getBoundingClientRect();
+      const primaryBoundarySize = primaryBoundary
+        ? availableBoundarySize(primaryBoundary, margin, viewportWidth, viewportHeight)
+        : null;
+      const primaryBoundaryFits = primaryBoundarySize
+        ? primaryBoundarySize.width >= requestedWidth
+          && primaryBoundarySize.height >= minimumUsableHeight
+        : false;
+      const boundary = primaryBoundary && primaryBoundaryFits
+        ? primaryBoundary
+        : options.fallbackBoundaryRef?.current?.getBoundingClientRect();
       const boundaryInset = boundary ? margin : 0;
       const leftLimit = Math.max(margin, (boundary?.left ?? 0) + boundaryInset);
       const topLimit = Math.max(margin, (boundary?.top ?? 0) + boundaryInset);
@@ -111,19 +153,11 @@ export function useAnchoredOverlay(
         (boundary?.bottom ?? viewportHeight) - boundaryInset,
       );
       const maxWidth = Math.max(1, rightLimit - leftLimit);
-      const overlay = overlayRef.current;
-      const intrinsicWidth = options.width === 'content' && overlay
-        ? overlay.getBoundingClientRect().width || overlay.scrollWidth
-        : 0;
-      const requestedWidth = options.width === 'content'
-        ? Math.max(anchor.width ?? 0, intrinsicWidth)
-        : options.width ?? Math.max(anchor.width ?? 0, 220);
       const width = Math.min(requestedWidth, maxWidth);
       const availableHeight = Math.max(1, bottomLimit - topLimit);
-      const maxHeight = Math.min(options.maxHeight ?? 440, boundary
+      const maxHeight = Math.min(requestedMaxHeight, boundary
         ? availableHeight
-        : Math.max(120, availableHeight));
-      const contentHeight = overlayRef.current?.scrollHeight ?? overlayRef.current?.offsetHeight ?? maxHeight;
+        : Math.max(MIN_USABLE_OVERLAY_HEIGHT, availableHeight));
       const height = Math.min(contentHeight, maxHeight);
       const anchorRight = anchor.right ?? anchor.left + (anchor.width ?? 0);
       const placement = options.placement ?? 'bottom-start';
@@ -173,6 +207,7 @@ export function useAnchoredOverlay(
     options.anchorRef,
     options.boundaryRef,
     options.disabled,
+    options.fallbackBoundaryRef,
     options.gap,
     options.layoutKey,
     options.margin,

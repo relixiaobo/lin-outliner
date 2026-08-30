@@ -57,8 +57,12 @@ change only icon intensity, while keyboard focus keeps the ordinary circular
 focus ring. The complete 24px control boxes sit beyond the shared document-page
 inset instead of straddling its inner edge. `More` owns Source/file actions and
 `Close` owns **Hide preview**.
-The More menu opens below the trigger and clamps all four edges to the visible
-preview boundary.
+The More menu opens below the trigger and prefers to clamp all four edges to the
+visible preview boundary. When a short or narrow preview cannot provide the
+menu's minimum usable size, the menu falls back to the owning pane boundary and
+then to the viewport when no pane exists. Tiny image previews reserve only the
+transparent geometry required to keep the corner controls inside their preview;
+the image itself remains at its intrinsic size.
 Type-specific bodies keep only content controls:
 players retain playback chrome and documents retain Expand/Collapse. URI value
 affordances own preview restoration and switching.
