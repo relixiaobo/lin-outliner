@@ -627,10 +627,10 @@ describe('URL page translation guest runtime', () => {
     )).not.toBeNull();
   });
 
-  test('loads YouTube timed text in the isolated runtime and renders model output as text', async () => {
+  test('loads YouTube embed timed text in the isolated runtime and renders model output as text', async () => {
     const fixture = createFixture();
     const timedTextUrl = 'https://www.youtube.com/api/timedtext?v=video123&lang=en';
-    setWindowLocation(fixture.window, 'https://www.youtube.com/watch?v=video123');
+    setWindowLocation(fixture.window, 'https://www.youtube.com/embed/video123?autoplay=0&playsinline=1');
     const player = fixture.document.createElement('div');
     player.id = 'movie_player';
     fixture.document.body.append(player);

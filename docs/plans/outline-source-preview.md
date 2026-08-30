@@ -99,9 +99,13 @@ shell. Documents (PDF, EPUB, HTML, Markdown, code, plain text, delimited tables,
 and directories) retain summary/full reading chrome, `Expand`/`Collapse`, and
 resize. Images render directly at their intrinsic aspect ratio with no document
 frame, expansion control, or resize handle; their authorized file operations
-remain in an ellipsis overlay. Audio and video own their playback surface and
-same-layer actions. URLs remain a direct web surface. Unsupported binaries use
-the bounded metadata presentation and its open/actions control.
+remain in an ellipsis overlay, and inline previews stay within a bounded
+inspection size while a dedicated reader may use the larger viewport. Audio and
+video own their playback surface and same-layer actions. Ordinary URLs remain a
+direct web surface. YouTube watch, short, live, and short links use a bounded
+16:9 embed with click-to-play behavior and never inherit an autoplay request
+from the source URL. Unsupported binaries use the bounded metadata presentation
+and its open/actions control.
 
 ### Dependencies and collisions
 

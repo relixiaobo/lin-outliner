@@ -1271,6 +1271,10 @@ test.describe('file attachments', () => {
         width: element.naturalWidth,
       };
     })).toEqual({ complete: true, height: 360, width: 600 });
+    await expect.poll(async () => outlineImagePreview.evaluate((image) => {
+      const rect = image.getBoundingClientRect();
+      return rect.width <= 720 && rect.height <= 520;
+    })).toBe(true);
     await expect.poll(async () => imageRow.evaluate((ownerRow, sourceEntryId) => {
       const title = ownerRow.querySelector<HTMLElement>(':scope > .row .row-content-line');
       const preview = ownerRow.querySelector<HTMLElement>(':scope > .outline-source-preview-row .node-source-preview');
@@ -1283,6 +1287,37 @@ test.describe('file attachments', () => {
         && previewRect.bottom <= titleRect.top
         && titleRect.bottom <= sourceFieldRect.top;
     }, imageSourceEntry!.id)).toBe(true);
+    await expect.poll(async () => imageRow.evaluate((ownerRow, sourceEntryId) => {
+      const nodeId = ownerRow.dataset.nodeId;
+      const marker = ownerRow.querySelector<HTMLElement>(
+        ':scope > .outline-source-preview-row .row-bullet-button',
+      );
+      const preview = ownerRow.querySelector<HTMLElement>(
+        ':scope > .outline-source-preview-row .node-source-preview',
+      );
+      const sourceMarker = document.querySelector<HTMLElement>(
+        `[data-node-id="${CSS.escape(String(sourceEntryId))}"] .row-bullet-button`,
+      );
+      const guideLine = document.querySelector<HTMLElement>(
+        `.outliner-flat-guides .indent-guide[data-guide-node-id="${CSS.escape(String(nodeId))}"] .indent-guide-line`,
+      );
+      if (!marker || !preview || !sourceMarker || !guideLine) return null;
+      const markerRect = marker.getBoundingClientRect();
+      const previewRect = preview.getBoundingClientRect();
+      const sourceMarkerRect = sourceMarker.getBoundingClientRect();
+      const guideLineRect = guideLine.getBoundingClientRect();
+      return {
+        endsAtSourceMarker: Math.abs(
+          guideLineRect.bottom - (sourceMarkerRect.top + sourceMarkerRect.height / 2),
+        ) <= 1,
+        runsPastPreview: guideLineRect.bottom >= previewRect.bottom,
+        startsBelowMarker: guideLineRect.top > markerRect.bottom,
+      };
+    }, imageSourceEntry!.id)).toEqual({
+      endsAtSourceMarker: true,
+      runsPastPreview: true,
+      startsBelowMarker: true,
+    });
 
     const hideOutlinePreview = imageSourceRow.getByRole('button', { name: 'Hide preview' });
     await expect(hideOutlinePreview).toBeVisible();
@@ -1485,6 +1520,34 @@ test.describe('file attachments', () => {
         sourceCount: sourceFieldValues(projection, ids.alpha).length,
       };
     }).toEqual({ links: ['https://www.example.com/linked'], sourceCount: 0 });
+  });
+
+  test('a YouTube Source uses a bounded click-to-play player', async ({ page }) => {
+    const url = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&autoplay=1';
+    const beforeChildren = await todayChildren(page);
+    await trailingEditor(page).click();
+    await pasteClipboardText(page, url);
+
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+    const createdId = (await todayChildren(page)).at(-1);
+    expect(createdId).toBeTruthy();
+    const player = row(page, createdId!).locator(':scope > .outline-source-preview-row .file-preview-youtube');
+    const webview = player.locator('webview.file-preview-youtube-webview');
+    await expect(player).toBeVisible();
+    await expect(webview).toHaveAttribute(
+      'src',
+      'https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=0&playsinline=1',
+    );
+    await expect(row(page, createdId!).locator(
+      ':scope > .outline-source-preview-row .file-node-preview--url',
+    )).toHaveCount(0);
+    await expect.poll(async () => player.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        bounded: rect.width <= 760,
+        ratio: Math.round((rect.width / rect.height) * 100) / 100,
+      };
+    })).toEqual({ bounded: true, ratio: 1.78 });
   });
 
   test('text-like file previews keep content and horizontal scrollbars inside the preview inset', async ({ page }) => {

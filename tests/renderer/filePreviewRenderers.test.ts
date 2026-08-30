@@ -34,6 +34,19 @@ describe('file preview renderers', () => {
     expect(previewPresentationForSource(source)).toBe('web');
   });
 
+  test('gives YouTube URLs a dedicated player presentation', () => {
+    const source: PreviewSourceDescriptor = {
+      kind: 'url',
+      id: 'url:youtube',
+      target: { kind: 'url', url: 'https://youtu.be/dQw4w9WgXcQ' },
+      title: 'Video',
+      url: 'https://youtu.be/dQw4w9WgXcQ',
+    };
+
+    expect(previewPresentationForSource(source)).toBe('youtube');
+    expect(isPreviewableSource(source)).toBe(true);
+  });
+
   test('treats HTML as previewable', () => {
     expect(isPreviewableSource(fileSource({
       name: 'index.html',

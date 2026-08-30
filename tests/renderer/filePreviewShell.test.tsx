@@ -203,6 +203,26 @@ describe('FilePreviewShell URL previews', () => {
     expect(rendered.document.querySelector('.file-preview-resize-handle')).toBeNull();
   });
 
+  test('renders YouTube as a bounded click-to-play player', () => {
+    const rendered = render(
+      <FilePreviewShell
+        state={{ status: 'ready', source: youtubeSource() }}
+        onOpenTarget={() => undefined}
+        menuActions={[menuAction('open')]}
+      />,
+    );
+
+    const webview = rendered.document.querySelector('.file-preview-youtube-webview');
+    expect(webview?.getAttribute('src'))
+      .toBe('https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=0&playsinline=1');
+    expect(rendered.document.querySelector('.file-preview-youtube')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-node-body--youtube')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-node-preview--youtube')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-node-preview--url')).toBeNull();
+    expect(rendered.document.querySelector('.file-preview-pill')).toBeNull();
+    expect(rendered.document.querySelector('.file-preview-resize-handle')).toBeNull();
+  });
+
   test('marks HTML previews so reader panes can fill the available height', async () => {
     const rendered = render(
       <FilePreviewShell
@@ -401,6 +421,16 @@ function urlSource(): PreviewUrlSource {
     target: { kind: 'url', url: 'https://example.com/docs', label: 'Example docs' },
     title: 'Example docs',
     url: 'https://example.com/docs',
+  };
+}
+
+function youtubeSource(): PreviewUrlSource {
+  return {
+    kind: 'url',
+    id: 'url:youtube',
+    target: { kind: 'url', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&autoplay=1' },
+    title: 'YouTube video',
+    url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&autoplay=1',
   };
 }
 

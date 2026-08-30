@@ -1504,7 +1504,11 @@ export function installUrlPageTranslationRuntime(
     if (!youtubeHost()) return null;
     try {
       const url = new URL(host.location.href);
-      const videoId = url.searchParams.get('v')?.trim() ?? '';
+      let videoId = url.searchParams.get('v')?.trim() ?? '';
+      if (!videoId) {
+        const path = url.pathname.split('/');
+        if (path[1] === 'embed' || path[1] === 'shorts' || path[1] === 'live') videoId = path[2] ?? '';
+      }
       if (!/^[A-Za-z0-9_-]{6,32}$/.test(videoId)) return null;
       return { key: `youtube:${videoId}`, videoId };
     } catch {

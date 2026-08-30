@@ -14,6 +14,11 @@ describe('input modality CSS guards', () => {
     expect(outlinerCss).not.toMatch(/(?:^|\n)\.definition-text-input\.input-bare:focus-visible\s*\{/);
   });
 
+  test('keeps structural outline guides visible without changing layout', () => {
+    expect(outlinerCss).toMatch(/\.indent-guide-line\s*\{[^}]*width:\s*1px;[^}]*background:\s*var\(--text-tertiary\);/s);
+    expect(outlinerCss).toMatch(/\.indent-guide:hover > \.indent-guide-line\s*\{[^}]*width:\s*2px;[^}]*background:\s*var\(--text-secondary\);/s);
+  });
+
   test('keeps flat media previews and controls on one stable surface', () => {
     expect(filePreviewCss).toContain('width: var(--file-preview-media-width, min(760px, 100%));');
     expect(filePreviewCss).toContain('.file-node-body--media-audio');
@@ -67,6 +72,11 @@ describe('input modality CSS guards', () => {
     expect(filePreviewCss).toMatch(/\.file-preview-url\s*\{[^}]*clip-path:\s*inset\(0 round var\(--file-preview-frame-radius\)\);/s);
     expect(filePreviewCss).toMatch(/\.file-preview-url-webview\s*\{[^}]*border-radius:\s*inherit;/s);
     expect(filePreviewCss).toMatch(/\.file-preview-url-favicon\s*\{[^}]*width:\s*13px;[^}]*height:\s*13px;/s);
+    expect(filePreviewCss).toMatch(/\.file-node-body--image:not\(\.file-node-body--reader\)\s*\{[^}]*max-width:\s*min\(720px, 100%\);/s);
+    expect(filePreviewCss).toMatch(/\.file-node-body--image:not\(\.file-node-body--reader\) \.file-preview-image img\s*\{[^}]*max-height:\s*min\(60vh, 520px\);/s);
+    expect(filePreviewCss).toMatch(/\.file-node-body--youtube\s*\{[^}]*width:\s*min\(760px, 100%\);/s);
+    expect(filePreviewCss).toMatch(/\.file-node-body--reader\.file-node-body--youtube\s*\{[^}]*flex:\s*0 1 auto;[^}]*align-self:\s*flex-start;/s);
+    expect(filePreviewCss).toMatch(/\.file-preview-youtube\s*\{[^}]*aspect-ratio:\s*16 \/ 9;[^}]*border-radius:\s*var\(--radius-md\);/s);
     expect(filePreviewCss).toMatch(/\.file-node-body--reader:is\(\.file-node-body--epub, \.file-node-body--html, \.file-node-body--pdf\)\s*\{[^}]*flex:\s*1 1 auto;/s);
     expect(filePreviewCss).toMatch(/\.file-node-preview--reader\.expanded:is\(\.file-node-preview--epub, \.file-node-preview--html, \.file-node-preview--pdf, \.file-node-preview--url\)\s*\{[^}]*height:\s*100%;/s);
     expect(filePreviewCss).toMatch(/\.file-node-preview--reader:is\(\.file-node-preview--epub, \.file-node-preview--html, \.file-node-preview--pdf\)\s*\{[^}]*display:\s*flex;[^}]*flex:\s*1 1 auto;[^}]*flex-direction:\s*column;/s);

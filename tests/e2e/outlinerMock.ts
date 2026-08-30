@@ -5680,6 +5680,17 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               },
             }) as T;
           }
+          if (target?.kind === 'url' && target.url) {
+            return clone({
+              source: {
+                kind: 'url',
+                id: `url:${target.url}`,
+                target,
+                title: target.label || target.url,
+                url: target.url,
+              },
+            }) as T;
+          }
           return clone({ source: null, error: 'missing' }) as T;
         }
         if (cmd === 'preview_read_text') {

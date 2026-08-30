@@ -62,7 +62,7 @@ import {
   writePdfReadingPosition,
   type PdfReadingPosition,
 } from './readingPositionStore';
-import { openUrlPreviewFromClick } from './urlPreviewRouting';
+import { openUrlPreviewFromClick, youtubePreviewRouteForUrl } from './urlPreviewRouting';
 import { usePreviewObjectUrl } from './usePreviewObjectUrl';
 
 type FilePreviewLabels = ReturnType<typeof useT>['shell']['filePreview'];
@@ -204,7 +204,7 @@ interface PreviewRendererEntry {
   presentation: PreviewPresentation;
 }
 
-export type PreviewPresentation = 'document' | 'image' | 'media' | 'metadata' | 'web';
+export type PreviewPresentation = 'document' | 'image' | 'media' | 'metadata' | 'web' | 'youtube';
 
 const METADATA_PREVIEW_RENDERER: PreviewRendererEntry = {
   match: () => true,
@@ -231,7 +231,7 @@ const FILE_PREVIEW_RENDERERS: PreviewRendererEntry[] = [
  * matching stays in the renderer entries; shells consume only the presentation.
  */
 export function previewPresentationForSource(source: PreviewSourceDescriptor): PreviewPresentation {
-  if (source.kind === 'url') return 'web';
+  if (source.kind === 'url') return youtubePreviewRouteForUrl(source.url) ? 'youtube' : 'web';
   return previewRendererEntryForFile(source).presentation;
 }
 
@@ -325,7 +325,8 @@ export interface FilePreviewShellProps {
  * Shared preview body for loose previews and selected Node Sources. The renderer
  * registry resolves a presentation policy: documents own summary/full chrome,
  * images render directly with an action-only menu, media owns playback controls,
- * webpages stay single-layer, and unsupported files use metadata actions.
+ * webpages stay single-layer, YouTube uses a bounded player, and unsupported files
+ * use metadata actions.
  */
 export function FilePreviewShell({
   accessibleName,
@@ -351,7 +352,8 @@ export function FilePreviewShell({
   const imagePreview = presentation === 'image';
   const passivePlayback = presentation === 'media';
   const mediaKind = state.status === 'ready' ? mediaKindForSource(state.source) : null;
-  const urlPreview = presentation === 'web';
+  const webPreview = presentation === 'web';
+  const youtubePreview = presentation === 'youtube';
   const documentKind = state.status === 'ready' && state.source.kind === 'file'
     ? documentKindForSource(state.source)
     : null;
@@ -403,14 +405,15 @@ export function FilePreviewShell({
   };
   const expansionClass = documentPreview
     ? (effectiveExpanded ? 'expanded' : 'collapsed')
-    : readerMode || urlPreview ? 'expanded' : '';
+    : readerMode || webPreview ? 'expanded' : '';
   const stageClass = [
     'file-node-preview',
     `file-node-preview--${displayMode}`,
     metadataFallback ? 'file-node-preview--metadata' : '',
     imagePreview ? 'file-node-preview--image' : '',
     passivePlayback ? 'file-node-preview--media' : '',
-    urlPreview ? 'file-node-preview--url' : '',
+    webPreview ? 'file-node-preview--url' : '',
+    youtubePreview ? 'file-node-preview--youtube' : '',
     documentKind ? `file-node-preview--${documentKind}` : '',
     mediaKind ? `file-node-preview--media-${mediaKind}` : '',
     readerMode ? 'file-node-preview--reader' : '',
@@ -425,7 +428,8 @@ export function FilePreviewShell({
     metadataFallback ? 'file-node-body--metadata' : '',
     imagePreview ? 'file-node-body--image' : '',
     passivePlayback ? 'file-node-body--media' : '',
-    urlPreview ? 'file-node-body--url' : '',
+    webPreview ? 'file-node-body--url' : '',
+    youtubePreview ? 'file-node-body--youtube' : '',
     documentKind ? `file-node-body--${documentKind}` : '',
     mediaKind ? `file-node-body--media-${mediaKind}` : '',
     readerMode ? 'file-node-body--reader' : '',
@@ -614,6 +618,8 @@ function UrlPreview({
   onWebviewChange?: (webview: Electron.WebviewTag | null) => void;
   source: PreviewUrlSource;
 }) {
+  const youtubeRoute = youtubePreviewRouteForUrl(source.url);
+  const previewUrl = youtubeRoute?.embedUrl ?? source.url;
   const webviewRef = useRef<Electron.WebviewTag | null>(null);
   const setWebviewRef = useCallback((webview: Electron.WebviewTag | null) => {
     webviewRef.current = webview;
@@ -646,13 +652,18 @@ function UrlPreview({
   }, [onMetadataChange]);
 
   return (
-    <div className="file-preview-url" data-preserve-selection>
+    <div
+      className={youtubeRoute ? 'file-preview-youtube' : 'file-preview-url'}
+      data-preserve-selection
+    >
       <webview
         allowpopups={ENABLE_WEBVIEW_POPUPS}
-        className="file-preview-url-webview"
+        className={youtubeRoute
+          ? 'file-preview-url-webview file-preview-youtube-webview'
+          : 'file-preview-url-webview'}
         partition={URL_PREVIEW_WEBVIEW_PARTITION}
         ref={setWebviewRef}
-        src={source.url}
+        src={previewUrl}
         title={source.title}
       />
     </div>

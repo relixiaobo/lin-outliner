@@ -400,6 +400,10 @@
   object-fit: contain;
 }
 
+.file-node-body--image:not(.file-node-body--reader) .file-preview-image img {
+  max-height: min(60vh, 520px);
+}
+
 .file-preview-image figcaption {
   color: var(--text-tertiary);
   font-size: var(--font-ui-sm);
@@ -436,6 +440,19 @@
   border: 0;
   border-radius: inherit;
   background: var(--bg-content);
+}
+
+.file-preview-youtube {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background: var(--bg-content);
+  box-shadow: var(--inset-hairline);
+  clip-path: inset(0 round var(--radius-md));
 }
 
 /* Audio / video players in a media Source preview. */
@@ -1163,6 +1180,10 @@
   margin-bottom: var(--space-4);
 }
 
+.file-node-body--image:not(.file-node-body--reader) {
+  max-width: min(720px, 100%);
+}
+
 .file-node-body--media {
   display: inline-block;
   width: var(--file-preview-media-width, min(760px, 100%));
@@ -1186,12 +1207,24 @@
   margin-bottom: 0;
 }
 
+.file-node-body--youtube {
+  display: inline-block;
+  width: min(760px, 100%);
+  max-width: 100%;
+  margin-bottom: var(--space-4);
+}
+
 .file-node-body--reader {
   display: flex;
   min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
   margin-bottom: 0;
+}
+
+.file-node-body--reader.file-node-body--youtube {
+  flex: 0 1 auto;
+  align-self: flex-start;
 }
 
 /* The preview stage is one rounded viewport. Previewable sources toggle between a
@@ -1328,6 +1361,21 @@
 .file-node-preview.file-node-preview--url {
   max-height: none;
   padding-bottom: 0;
+}
+
+.file-node-preview--youtube {
+  display: block;
+  width: 100%;
+  max-height: none;
+  overflow: visible;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.file-node-preview.file-node-preview--youtube {
+  padding: 0;
 }
 
 .file-node-preview--reader.file-node-preview--url {

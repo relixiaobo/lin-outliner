@@ -1422,14 +1422,14 @@ button.outliner-table-column-kind:focus-visible {
   left: var(--indent-guide-line-offset);
   width: 1px;
   border-radius: var(--radius-pill);
-  background: var(--separator);
+  background: var(--text-tertiary);
   transform: translateX(-50%);
   transition: background var(--motion-fast), width var(--motion-fast);
 }
 
 .indent-guide:hover > .indent-guide-line {
   width: 2px;
-  background: var(--border-emphasis);
+  background: var(--text-secondary);
 }
 
 .indent-guide--flat > .indent-guide-line {
