@@ -349,6 +349,13 @@ import {
 } from '../core/appUpdate';
 import { AppUpdateStore } from './appUpdateStore';
 import { AppUpdateService } from './appUpdateService';
+import {
+  HostTransportComposition,
+  createTransportOwner,
+  disposeTransportOwners,
+  type OwnedIpcMain,
+  type TransportOwner,
+} from './hostTransport/ownership';
 
 // App identity for menus / "About" / notifications. Kept deliberately separate
 // from the userData directory, which we resolve EXPLICITLY below instead of
@@ -379,40 +386,46 @@ function reportError(report: ErrorReport): void {
   });
 }
 
-function installMainErrorHandlers(): void {
-  process.on('unhandledRejection', (reason) => {
-    const serialized = serializeUnknownError(reason);
-    reportError({
-      domain: 'uncaught',
-      severity: 'fatal',
-      code: 'unhandled-rejection',
-      message: serialized.message ?? 'Unhandled promise rejection',
-      context: { operation: 'unhandledRejection' },
-      error: reason,
-    });
-  });
+function installMainErrorHandlers(): TransportOwner {
+  return createTransportOwner('main-error-handlers', (owner) => {
+    const handleUnhandledRejection = (reason: unknown) => {
+      const serialized = serializeUnknownError(reason);
+      reportError({
+        domain: 'uncaught',
+        severity: 'fatal',
+        code: 'unhandled-rejection',
+        message: serialized.message ?? 'Unhandled promise rejection',
+        context: { operation: 'unhandledRejection' },
+        error: reason,
+      });
+    };
+    process.on('unhandledRejection', handleUnhandledRejection);
+    owner.add(() => process.removeListener('unhandledRejection', handleUnhandledRejection));
 
-  process.on('uncaughtException', (error) => {
-    console.error(error);
-    void Promise.race([
-      diagnosticLog
-        .reportError({
-          domain: 'uncaught',
-          severity: 'fatal',
-          code: 'uncaught-exception',
-          message: error.message || 'Uncaught exception',
-          context: { operation: 'uncaughtException' },
-          error,
-        })
-        .then(() =>
-          diagnosticLog.flushNow({ reason: 'fatal', timeoutMs: 750 }).catch(() => undefined),
-        ),
-      new Promise((resolve) => setTimeout(resolve, 750)),
-    ]).finally(() => app.exit(1));
+    const handleUncaughtException = (error: Error) => {
+      console.error(error);
+      void Promise.race([
+        diagnosticLog
+          .reportError({
+            domain: 'uncaught',
+            severity: 'fatal',
+            code: 'uncaught-exception',
+            message: error.message || 'Uncaught exception',
+            context: { operation: 'uncaughtException' },
+            error,
+          })
+          .then(() =>
+            diagnosticLog.flushNow({ reason: 'fatal', timeoutMs: 750 }).catch(() => undefined),
+          ),
+        new Promise((resolve) => setTimeout(resolve, 750)),
+      ]).finally(() => app.exit(1));
+    };
+    process.on('uncaughtException', handleUncaughtException);
+    owner.add(() => process.removeListener('uncaughtException', handleUncaughtException));
   });
 }
 
-installMainErrorHandlers();
+const mainErrorTransport = installMainErrorHandlers();
 
 // Unsigned local/dev builds (`mac.identity: null`) can't present a stable code
 // signature to the macOS Keychain, so Chromium's os_crypt (cookie / network-state
@@ -563,6 +576,7 @@ const appUpdateService = new AppUpdateService({
 let urlPreviewSession: Electron.Session | null = null;
 const urlPreviewGuests = new Set<Electron.WebContents>();
 let quitCoordinator: AppQuitCoordinator;
+let mainTransport: TransportOwner | null = null;
 let lastAttachmentPickerDirectory: string | null = null;
 const DEFAULT_ATTACHMENT_PICKER_LIMIT = 6;
 const DEFAULT_LOCAL_FILE_SEARCH_LIMIT = 8;
@@ -1594,7 +1608,7 @@ function hardenWebContents(contents: Electron.WebContents) {
   });
 }
 
-function configureSessionSecurity() {
+function configureSessionSecurity(): () => void {
   const ses = session.defaultSession;
   ses.setPermissionRequestHandler((_contents, permission, callback) => {
     callback(isRendererPermissionAllowed(permission));
@@ -1623,6 +1637,13 @@ function configureSessionSecurity() {
       },
     });
   });
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    ses.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+    ses.setPermissionCheckHandler(() => false);
+  };
 }
 
 // Opaque pre-paint frame colour for non-material windows. Mirrors the renderer
@@ -2671,7 +2692,52 @@ const actionInvocationService = new ActionInvocationService({
   },
 });
 
-function registerIpc() {
+function registerMainTransport(previewSession: Electron.Session): HostTransportComposition {
+  const transport = new HostTransportComposition('desktop-host', { ipcMain, protocol });
+  try {
+    transport.registerOwner('automation-resume', (owner) => {
+      powerMonitor.on('resume', wakeAutomationsOnResume);
+      owner.add(() => powerMonitor.removeListener('resume', wakeAutomationsOnResume));
+    });
+    transport.registerOwner('default-session-security', (owner) => {
+      owner.add(configureSessionSecurity());
+    });
+    transport.registerOwner('url-preview-session-security', (owner) => {
+      owner.add(configureUrlPreviewSession(previewSession));
+    });
+    transport.registerProtocolOwner('source-preview-protocols', (protocol) => {
+      protocol.handle(ASSET_URL_SCHEME, (request) => {
+        const assetId = assetIdFromUrl(request.url);
+        return assetId
+          ? assetService.serve(assetId, request)
+          : new Response('Asset not found', { status: 404, headers: { 'content-type': 'text/plain' } });
+      });
+      protocol.handle(PREVIEW_LOCAL_URL_SCHEME, (request) => {
+        const token = new URL(request.url).hostname;
+        return localFilePreviewStreams.serve(token, request);
+      });
+    });
+    transport.registerIpcOwner('outline', registerOutlineTransport);
+    transport.registerIpcOwner('updates', registerUpdateTransport);
+    transport.registerIpcOwner('actions', registerActionTransport);
+    transport.registerIpcOwner('agent-memory-automation', registerAgentTransport);
+    transport.registerIpcOwner('source-assets-preview', registerSourcePreviewTransport);
+    transport.registerIpcOwner('windows-settings-launcher-providers', registerWindowSettingsTransport);
+    transport.registerIpcOwner('diagnostics', registerDiagnosticsTransport);
+    transport.registerIpcOwner('native-files', registerNativeFileTransport);
+    transport.registerIpcOwner('agent-resources', registerAgentResourceTransport);
+    return transport;
+  } catch (error) {
+    try {
+      transport.dispose();
+    } catch (rollbackError) {
+      throw new AggregateError([error, rollbackError], 'Desktop Host transport registration and rollback both failed.');
+    }
+    throw error;
+  }
+}
+
+function registerOutlineTransport(ipcMain: OwnedIpcMain): void {
   registerDesktopOutlineIpc({
     ipcMain,
     client: desktopOutlineClient,
@@ -2681,7 +2747,9 @@ function registerIpc() {
       }
     },
   });
+}
 
+function registerUpdateTransport(ipcMain: OwnedIpcMain): void {
   ipcMain.handle(LIN_APP_UPDATE_GET_CHANNEL, (event): Promise<AppUpdateView> => {
     assertSettingsRenderer(event, 'App update status');
     return appUpdateService.view();
@@ -2702,7 +2770,9 @@ function registerIpc() {
     assertSettingsRenderer(event, 'Opening an app update');
     return appUpdateService.openAvailableUpdate();
   });
+}
 
+function registerActionTransport(ipcMain: OwnedIpcMain): void {
   // Every action channel is main-renderer only. The seed carries renderer FACTS
   // — anchored row, selection, panel identity, pin and expansion — and main
   // constructs the objects, mints the refs and owns the lifetime.
@@ -2767,7 +2837,9 @@ function registerIpc() {
     if (ack.status !== 'ok' && ack.status !== 'reported') return;
     pendingActionStepAcks.get(ack.token)?.(ack);
   });
+}
 
+function registerAgentTransport(ipcMain: OwnedIpcMain): void {
   ipcMain.handle(AUTOMATION_REQUEST_CHANNEL, async (event, method: unknown, input: unknown) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) {
       throw new Error('Automations are available only to the main application window.');
@@ -2783,45 +2855,51 @@ function registerIpc() {
     }
     return threadService.request(method, input as AgentCoreRequestByMethod[AgentCoreMethod]);
   });
-  ipcMain.handle(THREAD_MESSAGE_CONTEXT_MENU_CHANNEL, async (
-    event,
-    request?: Partial<ThreadMessageContextMenuRequest>,
-  ): Promise<ThreadMessageContextMenuAction | null> => {
-    if (!mainWindow || event.sender !== mainWindow.webContents) return null;
-    const messages = getMessages(effectiveLocale()).agent;
-    let settled = false;
-    return new Promise<ThreadMessageContextMenuAction | null>((resolve) => {
-      const pick = (action: ThreadMessageContextMenuAction) => {
-        settled = true;
-        resolve(action);
-      };
-      const template: Electron.MenuItemConstructorOptions[] = [];
-      if (request?.canCopy === true) {
-        template.push({ label: messages.message.copyMessage, click: () => pick('copy') });
-      }
-      if (request?.canContinueInNewChat === true) {
-        if (template.length > 0) template.push({ type: 'separator' });
-        template.push({
-          label: messages.thread.continueInNewChat,
-          click: () => pick('continueInNewChat'),
+  ipcMain.handle(
+    THREAD_MESSAGE_CONTEXT_MENU_CHANNEL,
+    async (
+      event,
+      request?: Partial<ThreadMessageContextMenuRequest>,
+    ): Promise<ThreadMessageContextMenuAction | null> => {
+      if (!mainWindow || event.sender !== mainWindow.webContents) return null;
+      const messages = getMessages(effectiveLocale()).agent;
+      let settled = false;
+      return new Promise<ThreadMessageContextMenuAction | null>((resolve) => {
+        const pick = (action: ThreadMessageContextMenuAction) => {
+          settled = true;
+          resolve(action);
+        };
+        const template: Electron.MenuItemConstructorOptions[] = [];
+        if (request?.canCopy === true) {
+          template.push({ label: messages.message.copyMessage, click: () => pick('copy') });
+        }
+        if (request?.canContinueInNewChat === true) {
+          if (template.length > 0) template.push({ type: 'separator' });
+          template.push({
+            label: messages.thread.continueInNewChat,
+            click: () => pick('continueInNewChat'),
+          });
+        }
+        if (request?.canShowDetails === true) {
+          if (template.length > 0) template.push({ type: 'separator' });
+          template.push({ label: messages.message.openTrajectory, click: () => pick('details') });
+        }
+        if (template.length === 0) {
+          resolve(null);
+          return;
+        }
+        Menu.buildFromTemplate(template).popup({
+          window: mainWindow!,
+          callback: () => {
+            if (!settled) resolve(null);
+          },
         });
-      }
-      if (request?.canShowDetails === true) {
-        if (template.length > 0) template.push({ type: 'separator' });
-        template.push({ label: messages.message.openTrajectory, click: () => pick('details') });
-      }
-      if (template.length === 0) {
-        resolve(null);
-        return;
-      }
-      Menu.buildFromTemplate(template).popup({
-        window: mainWindow!,
-        callback: () => {
-          if (!settled) resolve(null);
-        },
       });
-    });
-  });
+    },
+  );
+}
+
+function registerSourcePreviewTransport(ipcMain: OwnedIpcMain): void {
   ipcMain.handle('lin:invoke', async (event, command: string, args?: Record<string, unknown>) => {
     // BEFORE dispatch, not inside it: the launcher must not reach
     // `get_projection` or `delete_node` by any command name, and a renderer
@@ -2854,83 +2932,97 @@ function registerIpc() {
             const token = await localFilePreviewStreams.issue(file, mimeType);
             return token ? previewLocalUrl(token) : null;
           },
-          threadAttachmentFile: async (threadId, attachmentId) => (
-            threadService.resolveAttachmentFile(threadId, attachmentId).then(async (resolved) => {
-              if (!resolved) return null;
-              return {
-                ...resolved,
-                ...(resolved.attachment.artifactRef
-                  ? { mimeType: await sniffPreviewFileMimeType(resolved.path, resolved.attachment.mimeType) }
-                  : {}),
-                acceptedPathHints: resolved.attachment.source.kind === 'localFile'
-                  ? [resolved.attachment.source.path]
-                  : [resolved.attachment.name, resolved.attachment.source.ref.fileName],
-              };
-            }).catch(() => null)
-          ),
-          threadResourceFile: async (threadId, ref) => (
-            threadService.resolveThreadResourceFile(threadId, ref).then((resolved) => {
-              if (!resolved) return null;
-              return {
-                ...resolved,
-                acceptedPathHints: [resolved.ref.fileName],
-              };
-            }).catch(() => null)
-          ),
-          threadImageArtifactFile: async (threadId, artifact) => (
-            threadService.resolveImageArtifactFile(threadId, artifact).then(async (resolved) => {
-              if (!resolved) return null;
-              return {
-                ...resolved,
-                mimeType: await sniffPreviewFileMimeType(resolved.path, resolved.artifact.observation.mimeType),
-                acceptedPathHints: [
-                  resolved.artifact.id,
-                  resolved.artifact.observation.fileName,
-                  ...(resolved.artifact.original?.kind === 'threadPayload'
-                    ? [resolved.artifact.original.ref.fileName]
-                    : []),
-                ],
-              };
-            }).catch(() => null)
-          ),
+          threadAttachmentFile: async (threadId, attachmentId) =>
+            threadService
+              .resolveAttachmentFile(threadId, attachmentId)
+              .then(async (resolved) => {
+                if (!resolved) return null;
+                return {
+                  ...resolved,
+                  ...(resolved.attachment.artifactRef
+                    ? { mimeType: await sniffPreviewFileMimeType(resolved.path, resolved.attachment.mimeType) }
+                    : {}),
+                  acceptedPathHints:
+                    resolved.attachment.source.kind === 'localFile'
+                      ? [resolved.attachment.source.path]
+                      : [resolved.attachment.name, resolved.attachment.source.ref.fileName],
+                };
+              })
+              .catch(() => null),
+          threadResourceFile: async (threadId, ref) =>
+            threadService
+              .resolveThreadResourceFile(threadId, ref)
+              .then((resolved) => {
+                if (!resolved) return null;
+                return {
+                  ...resolved,
+                  acceptedPathHints: [resolved.ref.fileName],
+                };
+              })
+              .catch(() => null),
+          threadImageArtifactFile: async (threadId, artifact) =>
+            threadService
+              .resolveImageArtifactFile(threadId, artifact)
+              .then(async (resolved) => {
+                if (!resolved) return null;
+                return {
+                  ...resolved,
+                  mimeType: await sniffPreviewFileMimeType(resolved.path, resolved.artifact.observation.mimeType),
+                  acceptedPathHints: [
+                    resolved.artifact.id,
+                    resolved.artifact.observation.fileName,
+                    ...(resolved.artifact.original?.kind === 'threadPayload'
+                      ? [resolved.artifact.original.ref.fileName]
+                      : []),
+                  ],
+                };
+              })
+              .catch(() => null),
           threadManagedFileStreamUrl: async (filePath, mimeType) => {
             const token = await localFilePreviewStreams.issueExactPath(filePath, mimeType);
             return token ? previewLocalUrl(token) : null;
           },
           linkedFileGrant: linkedFileGrants,
           chooseLinkedFile: async () => {
-            const window = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? mainWindow;
+            const window =
+              BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? mainWindow;
             const options: Electron.OpenDialogOptions = { properties: ['openFile'] };
-            const result = window
-              ? await dialog.showOpenDialog(window, options)
-              : await dialog.showOpenDialog(options);
-            return result.canceled ? null : result.filePaths[0] ?? null;
+            const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
+            return result.canceled ? null : (result.filePaths[0] ?? null);
           },
           linkedFileStreamUrl: async (file, mimeType) => {
             const token = await localFilePreviewStreams.issueExactFile(file, mimeType);
             return token ? previewLocalUrl(token) : null;
           },
-          mutateLinkedFileSource: (input) => outlineDocumentService.runChanges([{
-            op: 'update',
-            targets: {
-              target: { selector: { by: 'id', id: input.ownerId }, cardinality: 'one' },
-            },
-            changes: [input.kind === 'add'
-              ? {
-                  kind: 'source',
-                  action: 'add',
-                  sourceText: input.sourceText,
-                  valueId: `node:${randomUUID()}`,
-                }
-              : {
-                  kind: 'source',
-                  action: 'replace',
-                  value: {
-                    target: { selector: { by: 'id', id: input.sourceValueId }, cardinality: 'one' },
+          mutateLinkedFileSource: (input) =>
+            outlineDocumentService.runChanges(
+              [
+                {
+                  op: 'update',
+                  targets: {
+                    target: { selector: { by: 'id', id: input.ownerId }, cardinality: 'one' },
                   },
-                  sourceText: input.sourceText,
-                }],
-          }], { focus: { nodeId: input.ownerId, selectAll: false } }),
+                  changes: [
+                    input.kind === 'add'
+                      ? {
+                          kind: 'source',
+                          action: 'add',
+                          sourceText: input.sourceText,
+                          valueId: `node:${randomUUID()}`,
+                        }
+                      : {
+                          kind: 'source',
+                          action: 'replace',
+                          value: {
+                            target: { selector: { by: 'id', id: input.sourceValueId }, cardinality: 'one' },
+                          },
+                          sourceText: input.sourceText,
+                        },
+                  ],
+                },
+              ],
+              { focus: { nodeId: input.ownerId, selectAll: false } },
+            ),
           localFileReferencePreview,
         });
       }
@@ -2954,7 +3046,9 @@ function registerIpc() {
     }
     return executeUrlPageTranslationGuestCommand(event.sender, raw);
   });
+}
 
+function registerWindowSettingsTransport(ipcMain: OwnedIpcMain): void {
   ipcMain.handle('lin:window', (_event, command: string) => {
     const window = BrowserWindow.getFocusedWindow() ?? mainWindow;
     if (!window) return;
@@ -2966,7 +3060,9 @@ function registerIpc() {
     if (command === 'close') window.close();
   });
 
-  ipcMain.handle('lin:open-settings', (_event, target?: unknown) => openSettingsWindow(sanitizeSettingsOpenTarget(target)));
+  ipcMain.handle('lin:open-settings', (_event, target?: unknown) =>
+    openSettingsWindow(sanitizeSettingsOpenTarget(target)),
+  );
   // Only the settings surface may close the settings window. Every sibling
   // privileged handler checks its sender; this one did not, so any renderer could
   // close it.
@@ -3095,7 +3191,9 @@ function registerIpc() {
   ipcMain.handle('lin:settings-changed', (event) => {
     notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
   });
+}
 
+function registerDiagnosticsTransport(ipcMain: OwnedIpcMain): void {
   ipcMain.handle(LIN_REPORT_RENDERER_ERROR_CHANNEL, (_event, raw: unknown) => {
     reportError(errorReportFromIpc(raw, 'render'));
   });
@@ -3125,8 +3223,12 @@ function registerIpc() {
 
   ipcMain.handle(LIN_EXPORT_DIAGNOSTICS_CHANNEL, async (event): Promise<DiagnosticsActionResult> => {
     try {
-      const window = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? settingsWindow ?? mainWindow;
-      const defaultPath = join(app.getPath('desktop'), `tenon-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+      const window =
+        BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? settingsWindow ?? mainWindow;
+      const defaultPath = join(
+        app.getPath('desktop'),
+        `tenon-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}.json`,
+      );
       const result = window
         ? await dialog.showSaveDialog(window, {
             defaultPath,
@@ -3143,76 +3245,88 @@ function registerIpc() {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
   });
+}
 
-  ipcMain.handle('lin:pick-local-files', async (event, rawOptions?: {
-    maxFiles?: unknown;
-  }) => {
-    const maxFiles = clampPickerLimit(rawOptions?.maxFiles);
-    const window = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? mainWindow;
-    const defaultPath = attachmentPickerDefaultPath();
-    const multiSelections = maxFiles > 1;
-    const options: Electron.OpenDialogOptions = {
-      ...(defaultPath.path ? { defaultPath: defaultPath.path } : {}),
-      properties: multiSelections
-        ? ['openFile', 'openDirectory', 'multiSelections']
-        : ['openFile', 'openDirectory'],
-    };
-    const result = window
-      ? await dialog.showOpenDialog(window, options)
-      : await dialog.showOpenDialog(options);
-    if (result.canceled || result.filePaths.length === 0) {
-      return {
-        canceled: true,
-        files: [],
+function registerNativeFileTransport(ipcMain: OwnedIpcMain): void {
+  ipcMain.handle(
+    'lin:pick-local-files',
+    async (
+      event,
+      rawOptions?: {
+        maxFiles?: unknown;
+      },
+    ) => {
+      const maxFiles = clampPickerLimit(rawOptions?.maxFiles);
+      const window = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? mainWindow;
+      const defaultPath = attachmentPickerDefaultPath();
+      const multiSelections = maxFiles > 1;
+      const options: Electron.OpenDialogOptions = {
+        ...(defaultPath.path ? { defaultPath: defaultPath.path } : {}),
+        properties: multiSelections ? ['openFile', 'openDirectory', 'multiSelections'] : ['openFile', 'openDirectory'],
       };
-    }
-    lastAttachmentPickerDirectory = dirname(result.filePaths[0]!);
-    let skippedCount = 0;
-    const files: NonNullable<Awaited<ReturnType<typeof localPickedFile>>>[] = [];
-    const rejectedFiles: Array<{
-      name: string;
-      reason: 'officeOwnershipFile';
-      suggestedName?: string;
-    }> = [];
-    for (const filePath of result.filePaths) {
-      const rejected = await rejectedOfficeOwnershipFile(filePath);
-      if (rejected) {
-        rejectedFiles.push(rejected);
-        continue;
+      const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
+      if (result.canceled || result.filePaths.length === 0) {
+        return {
+          canceled: true,
+          files: [],
+        };
       }
-      if (files.length >= maxFiles) {
-        skippedCount += 1;
-        continue;
+      lastAttachmentPickerDirectory = dirname(result.filePaths[0]!);
+      let skippedCount = 0;
+      const files: NonNullable<Awaited<ReturnType<typeof localPickedFile>>>[] = [];
+      const rejectedFiles: Array<{
+        name: string;
+        reason: 'officeOwnershipFile';
+        suggestedName?: string;
+      }> = [];
+      for (const filePath of result.filePaths) {
+        const rejected = await rejectedOfficeOwnershipFile(filePath);
+        if (rejected) {
+          rejectedFiles.push(rejected);
+          continue;
+        }
+        if (files.length >= maxFiles) {
+          skippedCount += 1;
+          continue;
+        }
+        const file = await localPickedFile(filePath);
+        if (file) files.push(file);
       }
-      const file = await localPickedFile(filePath);
-      if (file) files.push(file);
-    }
-    return {
-      canceled: false,
-      files,
-      ...(rejectedFiles.length > 0 ? { rejectedFiles } : {}),
-      ...(skippedCount > 0 ? { skippedCount } : {}),
-    };
-  });
+      return {
+        canceled: false,
+        files,
+        ...(rejectedFiles.length > 0 ? { rejectedFiles } : {}),
+        ...(skippedCount > 0 ? { skippedCount } : {}),
+      };
+    },
+  );
 
-  ipcMain.handle('lin:search-local-files', async (_event, rawOptions?: {
-    limit?: unknown;
-    query?: unknown;
-  }) => {
-    const query = normalizeLocalFileQuery(rawOptions?.query);
-    const limit = clampLocalFileSearchLimit(rawOptions?.limit);
-    if (!query) return { files: [], query };
-    const paths = await searchLocalFilePaths(query, limit * 6);
-    const files = await localFileSearchResults(paths, query, limit);
-    return { files, query };
-  });
+  ipcMain.handle(
+    'lin:search-local-files',
+    async (
+      _event,
+      rawOptions?: {
+        limit?: unknown;
+        query?: unknown;
+      },
+    ) => {
+      const query = normalizeLocalFileQuery(rawOptions?.query);
+      const limit = clampLocalFileSearchLimit(rawOptions?.limit);
+      if (!query) return { files: [], query };
+      const paths = await searchLocalFilePaths(query, limit * 6);
+      const files = await localFileSearchResults(paths, query, limit);
+      return { files, query };
+    },
+  );
 
   ipcMain.handle('lin:recent-local-files', async (_event, rawOptions?: { limit?: unknown }) => {
     const limit = clampRecentLocalFileLimit(rawOptions?.limit);
     const paths = await recentLocalFilePaths(limit * 12);
-    const files = await withLocalFileIcons((await localFileMetadataResults(paths, limit * 12))
-      .sort((left, right) => right.lastModified - left.lastModified)
-      .slice(0, limit));
+    const files = await withLocalFileIcons(
+      (await localFileMetadataResults(paths, limit * 12))
+        .sort((left, right) => right.lastModified - left.lastModified)
+        .slice(0, limit),
+    );
     return { files };
   });
 
@@ -3269,7 +3383,9 @@ function registerIpc() {
     shell.showItemInFolder(file.path);
     return { revealed: true };
   });
+}
 
+function registerAgentResourceTransport(ipcMain: OwnedIpcMain): void {
   ipcMain.handle('lin:attachment-upload/begin', async (event, raw?: Record<string, unknown>) => {
     assertMainRenderer(event, 'Attachment upload');
     const expectedBytes = Number(raw?.sizeBytes);
@@ -3345,22 +3461,27 @@ async function handleMemoryCommand(command: string, args: Record<string, unknown
       );
     case 'memory_open':
       {
-        const outcome = await outlineDocumentService.runChanges([{
-          op: 'ensure',
-          resource: 'tag-search',
-          tag: {
-            target: {
-              selector: { by: 'id', id: memoryTagId('memory') },
-              cardinality: 'one',
+        const outcome = await outlineDocumentService.runChanges(
+          [
+            {
+              op: 'ensure',
+              resource: 'tag-search',
+              tag: {
+                target: {
+                  selector: { by: 'id', id: memoryTagId('memory') },
+                  cardinality: 'one',
+                },
+              },
+              bind: 'search',
+            },
+          ],
+          {
+            focus: (_operation, diff) => {
+              const nodeId = diff.bindings.search?.[0];
+              return nodeId ? { nodeId, selectAll: false } : undefined;
             },
           },
-          bind: 'search',
-        }], {
-          focus: (_operation, diff) => {
-            const nodeId = diff.bindings.search?.[0];
-            return nodeId ? { nodeId, selectAll: false } : undefined;
-          },
-        });
+        );
         navigateMainToNode(outcome.focus?.nodeId ?? DAILY_NOTES_ID);
       }
       return memoryExtension.settings();
@@ -4966,9 +5087,14 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
 // does not). If we don't hold the lock, another instance owns the session — let
 // it surface its window and exit immediately.
 if (!app.requestSingleInstanceLock()) {
+  mainErrorTransport.dispose();
   app.quit();
 } else {
-  app.on('second-instance', focusMainWindow);
+  const appLifecycleTransport = createTransportOwner('app-lifecycle', (owner) => {
+    app.on('second-instance', focusMainWindow);
+    owner.add(() => app.removeListener('second-instance', focusMainWindow));
+  });
+  let devParentTransport: TransportOwner | null = null;
 
   // Dev only: electron-vite spawns this GUI process as a child of the dev server
   // (`spawn(electron, …, { stdio: 'inherit' })`) and only binds child→parent exit
@@ -4985,26 +5111,48 @@ if (!app.requestSingleInstanceLock()) {
   // launched this way, so it is gated to dev. The signal handlers stay as a
   // best-effort fast path for the cases where a signal *does* arrive.
   if (!app.isPackaged) {
-    for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-      process.on(signal, () => app.quit());
-    }
-    const devServerPid = process.ppid;
-    const watchDevServer = setInterval(() => {
-      try {
-        process.kill(devServerPid, 0);
-      } catch {
-        clearInterval(watchDevServer);
-        app.quit();
+    devParentTransport = createTransportOwner('dev-parent-lifecycle', (owner) => {
+      for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+        const handleSignal = () => app.quit();
+        process.on(signal, handleSignal);
+        owner.add(() => process.removeListener(signal, handleSignal));
       }
-    }, 1000);
-    // Don't let the watchdog timer itself keep the event loop (and the app) alive.
-    watchDevServer.unref();
+      const devServerPid = process.ppid;
+      const watchDevServer = setInterval(() => {
+        try {
+          process.kill(devServerPid, 0);
+        } catch {
+          clearInterval(watchDevServer);
+          app.quit();
+        }
+      }, 1000);
+      owner.add(() => clearInterval(watchDevServer));
+      // Don't let the watchdog timer itself keep the event loop (and the app) alive.
+      watchDevServer.unref();
+    });
   }
 
   const teardownForQuit = async () => {
     if (app.isReady()) {
       unregisterLauncherHotkeys();
-      powerMonitor.removeListener('resume', wakeAutomationsOnResume);
+    }
+    try {
+      disposeTransportOwners('desktop-host-runtime', [
+        mainTransport,
+        appLifecycleTransport,
+        devParentTransport,
+      ]);
+    } catch (error) {
+      reportError({
+        domain: 'lifecycle',
+        severity: 'error',
+        code: 'transport-dispose-failed',
+        message: 'Desktop Host transport disposal failed',
+        context: { operation: 'transport-dispose' },
+        error,
+      });
+    } finally {
+      mainTransport = null;
     }
     pageTranslationService.dispose();
     await Promise.race([
@@ -5020,6 +5168,11 @@ if (!app.requestSingleInstanceLock()) {
     ]);
     desktopOutlineClient.close();
     outlineDocumentService.close();
+    try {
+      mainErrorTransport.dispose();
+    } catch (error) {
+      console.error(error);
+    }
   };
   quitCoordinator = new AppQuitCoordinator({
     freezeAdmission: () => outlineDocumentService.freezeMutationAdmission(),
@@ -5060,7 +5213,6 @@ if (!app.requestSingleInstanceLock()) {
     await threadService.initialize();
     await memoryExtension.startWorker();
     await automationService.start();
-    powerMonitor.on('resume', wakeAutomationsOnResume);
     await nodeAccessStore.load().catch((error) => {
       reportError({
         domain: 'node-access',
@@ -5089,24 +5241,12 @@ if (!app.requestSingleInstanceLock()) {
       copyright: '© 2026 Lin Lab',
       ...(icon.isEmpty() ? {} : { iconPath: APP_ICON_PNG_PATH }),
     });
-    protocol.handle(ASSET_URL_SCHEME, (request) => {
-      const assetId = assetIdFromUrl(request.url);
-      return assetId
-        ? assetService.serve(assetId, request)
-        : new Response('Asset not found', { status: 404, headers: { 'content-type': 'text/plain' } });
-    });
-    protocol.handle(PREVIEW_LOCAL_URL_SCHEME, (request) => {
-      const token = new URL(request.url).hostname;
-      return localFilePreviewStreams.serve(token, request);
-    });
     // Apply the persisted appearance preference before any window is created, so
     // the first paint (prePaintBackgroundColor → shouldUseDarkColors) already
     // matches the chosen theme rather than the OS default.
     nativeTheme.themeSource = loadAppPreferences().theme;
-    configureSessionSecurity();
     urlPreviewSession = session.fromPartition(URL_PREVIEW_WEBVIEW_PARTITION);
-    configureUrlPreviewSession(urlPreviewSession);
-    registerIpc();
+    mainTransport = registerMainTransport(urlPreviewSession);
     createWindow();
     scheduleAppUpdateCheck();
     scheduleManagedSkillUpdateCheck();
@@ -5141,20 +5281,31 @@ if (!app.requestSingleInstanceLock()) {
     Menu.setApplicationMenu(buildApplicationMenu());
     // The prewarmed launcher window is always present (hidden), so check for the
     // main window specifically rather than "no windows at all".
-    app.on('activate', () => {
+    const handleActivate = () => {
       if (!mainWindow) createWindow();
-    });
+    };
+    app.on('activate', handleActivate);
+    appLifecycleTransport.add(() => app.removeListener('activate', handleActivate));
   }).catch((error) => {
     console.error(error);
+    try {
+      mainTransport?.dispose();
+    } catch (disposeError) {
+      console.error(disposeError);
+    } finally {
+      mainTransport = null;
+    }
     if (quitCoordinator.phase() !== 'idle') return;
     app.exit(1);
   });
 
-  app.on('window-all-closed', () => {
+  const handleAllWindowsClosed = () => {
     if (process.platform !== 'darwin') app.quit();
-  });
+  };
+  app.on('window-all-closed', handleAllWindowsClosed);
+  appLifecycleTransport.add(() => app.removeListener('window-all-closed', handleAllWindowsClosed));
 
-  app.on('before-quit', (event) => {
+  const handleBeforeQuit = (event: Electron.Event) => {
     event.preventDefault();
     void quitCoordinator.requestQuit().catch((error) => {
       reportError({
@@ -5169,5 +5320,7 @@ if (!app.requestSingleInstanceLock()) {
       // must not reopen document admission after services have started closing.
       if (quitCoordinator.phase() === 'idle') void outlineDocumentService.unfreezeMutationAdmission();
     });
-  });
+  };
+  app.on('before-quit', handleBeforeQuit);
+  appLifecycleTransport.add(() => app.removeListener('before-quit', handleBeforeQuit));
 }
