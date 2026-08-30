@@ -13,9 +13,10 @@ latest published train is `v0.7.0`.
 
 ## In Flight
 
-None. A merged plan PR records ratified design; it does not mean the feature
-shipped. The remaining plans from #588/#589, #591, #593, #595, and #596 stay
-active below until their implementation, spec fold, and archive move complete.
+`host-platform-composition` is in review as PR #602. A merged plan PR records
+ratified design; it does not mean the feature shipped. The remaining plans from
+#588/#589, #591, #595, and #596 stay active below until their implementation,
+spec fold, and archive move complete.
 
 ## Primary Delivery Queue
 
@@ -41,9 +42,6 @@ Critical mechanism lane:
     ~> agent-bash-stdin-transport
     ~> agent-result-and-file-lifecycle
 
-Parallel now that outline-source-model shipped in #598:
-  outline-source-preview
-
 Parallel after desktop-host-cutover:
   startup-window-first
   file-preview-office
@@ -63,7 +61,6 @@ Parallel after agent-result-and-file-lifecycle:
 
 | Priority | Plan / PR claim | Status | Eligible after |
 | --- | --- | --- | --- |
-| P2 | [outline-source-preview](plans/outline-source-preview.md) | `draft`, ratified in #593 | **Now; Source model shipped in #598** |
 | P1 | [host-platform-composition](plans/host-platform-composition.md) | `draft`, ratified in #591 | **Now; domain composition shipped in #601** |
 | P1 | [desktop-host-cutover](plans/desktop-host-cutover.md) | `draft`, ratified in #591 | `host-platform-composition` |
 | P1 | [agent-bash-stdin-transport](plans/agent-bash-stdin-transport.md) | `draft`, ratified in #596 | `desktop-host-cutover` by A7 collision order |
@@ -79,19 +76,19 @@ Parallel after agent-result-and-file-lifecycle:
 | P3 | [agent-skill-curation-report](plans/agent-skill-curation-report.md) | `draft` | `agent-skill-authoring-foundation` |
 | P3 | [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | `draft` | `agent-result-and-file-lifecycle` |
 
-`outline-source-preview` and `host-platform-composition` are now eligible in
-parallel **inside the primary delivery queue**. Build-ready work outside this
-queue remains independently claimable under its own collision boundary. The
-remaining Host chain has two substantial serial PRs: native platform composition
-and final DesktopHost/lifecycle cutover. Agent resource references, conversation
-workspaces/final citations, and delegated handoff remain three foundation-first
-build stages inside one atomic feature PR rather than three partial releases.
+`host-platform-composition` is the active primary-queue claim in #602.
+Build-ready work outside this queue remains independently claimable under its own
+collision boundary. The remaining Host chain has two substantial serial PRs:
+native platform composition and final DesktopHost/lifecycle cutover. Agent
+resource references, conversation workspaces/final citations, and delegated
+handoff remain three foundation-first build stages inside one atomic feature PR
+rather than three partial releases.
 
 The split also absorbs three former planless tasks without losing their intent:
 
-- `inline-media-alt-text` shipped as the editable Node-content accessibility
-  rule in #598; `outline-source-preview` owns the remaining presentation work,
-  and the retired `mediaAlt` field receives no replacement command.
+- `inline-media-alt-text` shipped across #598 and #599 as editable Node content
+  plus direct intrinsic image presentation; the retired `mediaAlt` field receives
+  no replacement command.
 - `skill-directory-is-itself-a-skill` becomes the explicit binding identity in
   `agent-skill-authoring-foundation`, before script authoring consumes it.
 - `computer-pilot-managed-skill` now has its own complete plan and waits for the
@@ -100,9 +97,9 @@ The split also absorbs three former planless tasks without losing their intent:
 
 Collision lanes remain claim-time constraints, not hidden graph edges:
 
-- `outline-source-preview`, `file-preview-office`, `url-static-reader`, and the
-  preview/translation units in Interaction Jank must not overlap on shared
-  preview shell files.
+- `file-preview-office`, `url-static-reader`, and the preview/translation units
+  in Interaction Jank must not overlap on shared preview shell files; #599 is the
+  merged baseline for every later claim.
 - `agent-bash-stdin-transport` precedes Agent resource lifecycle because both
   rewrite Agent protocol/codec, `ToolPayloadStore`, context dependencies, Thread
   lifecycle, canonical-to-renderer projection, preload, and Host transport.
@@ -233,6 +230,10 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **outline-source-preview** (`done`, #599, 2026-08-31) — ordinary Outline
+  Sources gained preview-first composition, type-specific image/media/web
+  presentation, stable marker/guide geometry, and exact bare-URL paste; plan
+  archived at [outline-source-preview](plans/archive/outline-source-preview.md).
 - **host-domain-composition** (`done`, #601, 2026-08-30) — Agent and Outline
   backend graphs moved behind narrow typed Hosts with explicit lifecycle and a
   complete-tree construction audit; plan archived at

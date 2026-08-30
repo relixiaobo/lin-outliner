@@ -38,9 +38,10 @@ Node projection; explicit selection and public-network policy remain mandatory.
 
 ### Dependencies and collisions
 
-`outline-source-model` and `desktop-host-cutover` must merge first. This plan is
-independent of `outline-source-preview`, but it serializes live claims on shared
-preview shell/toolbar files and URL translation scheduling.
+`outline-source-model`, `outline-source-preview`, and `desktop-host-cutover` must
+merge first. The first two shipped in #598 and #599, so implementation starts
+from their final Source and preview contracts. This plan serializes live claims
+on shared preview shell/toolbar files and URL translation scheduling.
 
 ### Verification
 

@@ -130,9 +130,10 @@ Per item, the smallest fix that removes the cost:
 The four units do not share one global dependency:
 
 - PR-1 and PR-3 touch preview panels, overlay placement, and URL/EPUB reader
-  scheduling. They do not run concurrently with `outline-source-preview` or either
-  `file-preview` feature when the live file scopes overlap. This is collision
-  ordering, not a semantic dependency on Office or Reader functionality.
+  scheduling. They start from the merged #599 preview baseline and do not run
+  concurrently with either remaining `file-preview` feature when the live file
+  scopes overlap. This is collision ordering, not a semantic dependency on
+  Office or Reader functionality.
 - PR-2 follows `outline-source-model` because that cut replaces Node variants and field
   projections used by the definition caches. It then keys only final
   definition-relevant revisions.

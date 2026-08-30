@@ -41,10 +41,11 @@ an `agent-payload` target or requiring an Outline Node projection.
 
 ### Dependencies and collisions
 
-`outline-source-model` and `desktop-host-cutover` must merge first. This plan is
-independent of `outline-source-preview`, but only one claim may own shared
-preview registry/shell files at a time. It also serializes with relevant
-translation-geometry work.
+`outline-source-model`, `outline-source-preview`, and `desktop-host-cutover` must
+merge first. The first two shipped in #598 and #599, so implementation starts
+from their final Source and preview contracts. Only one claim may own shared
+preview registry/shell files at a time, and this plan also serializes with
+relevant translation-geometry work.
 
 ### Verification
 

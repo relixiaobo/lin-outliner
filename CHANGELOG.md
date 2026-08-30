@@ -12,6 +12,25 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Outline Sources now present previews as part of the ordinary row flow (PR
+  #599, codex-2)** — the selected preview renders before editable Node content
+  and its ordinary URI field, with one marker/guide rail and independent child
+  disclosure, preview visibility, and Source selection. Images keep intrinsic
+  pixels, media keeps native playback chrome, documents keep reader controls,
+  recognized YouTube links use bounded click-to-play embeds, and unsupported
+  files retain actionable metadata. The shared More + Close group stays inside
+  each preview while short or narrow previews fall back to the owning pane for a
+  usable action menu. Exact single-line bare-URL paste into an empty ordinary
+  Node atomically creates content plus Source without converting prose,
+  multiline input, protected text, or non-empty rows. Repeated gate review fixed
+  optimistic-row height flashes, Source-value row parity, disclosure ownership,
+  stale guide measurement, ready-preview remounts, global focus modality,
+  newline URL classification, and short-preview menu collapse; final review
+  found no reportable issue. Verified with typecheck, `docs:check`, 22 focused
+  renderer tests, 22 attachment E2E tests, whitespace and synthetic-merge
+  checks, light/dark evidence, real Electron YouTube verification, and the
+  non-gating five-sample GitHub E2E signal plus baseline subtraction.
+
 - **URLs, files, and managed media now share one ordinary Outline Source model
   (PR #598, codex)** — captures, imports, paste/drop, previews, search, Agent
   context, and the public CLI now use ordinary content Nodes plus editable URI

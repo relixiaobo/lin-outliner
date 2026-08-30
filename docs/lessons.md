@@ -2070,3 +2070,22 @@ ownership fact, not an inventory filter. A negative fixture must place one valid
 instance inside the owner and one invalid instance outside it; for critical
 audits, also inject that violation into a real-tree checkout and verify a nonzero
 exit so helper-level fixtures cannot merely agree with their own blind spot.
+
+## Overlay ownership does not prove overlay capacity
+
+PR #599 first clamped the Source action menu to its owning preview. That was
+correct for large documents and images but collapsed a 169 px menu to a 16 px
+strip on a naturally 32 px audio preview; tiny intrinsic images could also
+compress its width and place corner controls outside the preview.
+
+**Treat a local overlay boundary as a preference only after it proves the
+overlay's minimum usable width and height.** Measure the rendered content and
+the visible intersection of the candidate boundary, then fall back through the
+owning pane to the viewport when the local surface cannot contain a usable
+overlay. Keep the trigger inside its visual owner even when the portalled overlay
+uses a wider boundary.
+
+Regression coverage must use the narrowest and shortest real presentation types,
+assert intrinsic content remains unscaled, assert local controls remain contained,
+and compare client size with scroll size so a visible menu frame cannot hide
+clipped actions.

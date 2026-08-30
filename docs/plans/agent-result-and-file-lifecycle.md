@@ -10,8 +10,9 @@ text dependencies on the same Agent surfaces this feature changes. Internal
 text remains in `ToolPayloadStore` and never becomes a canonical file resource.
 The Composer input-history contract established by #587 is already part of the
 baseline rather than a future delivery dependency. The visual-only
-`outline-source-preview` enhancement is independently orderable and is not an
-Agent consumer dependency. The Agent resource-reference cutover, conversation
+`outline-source-preview` enhancement shipped in #599 as part of the renderer
+baseline and is not an Agent consumer dependency. The Agent resource-reference
+cutover, conversation
 workspace and final-citation contract, and delegated-handoff projection are
 foundation-first build stages in this PR. #584 separately established the shared
 exact-revision store as part of its complete Outliner Runtime feature; the #587
@@ -607,8 +608,8 @@ The dependency order is fixed where an edge is stated:
    consumer baseline;
 5. land the coordinated interface and truthful desktop baseline from
    `outline-source-model`; it establishes ordinary Nodes with
-   ordered Source values as the complete usable Outline consumer. The
-   `outline-source-preview` visual enhancement has no dependency edge to this
+   ordered Source values as the complete usable Outline consumer. The visual
+   enhancement shipped separately in #599 and has no dependency edge to this
    plan;
 6. complete the Host chain through `desktop-host-cutover`, then land
    `agent-bash-stdin-transport` against its final Agent Host and renderer seam;

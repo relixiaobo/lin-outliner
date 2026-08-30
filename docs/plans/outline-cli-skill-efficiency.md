@@ -69,7 +69,8 @@ The objectives are:
   when a non-Outline task genuinely requires them.
 - Do not implement Source resources, Agent resource references, preview UI, or
   file lifecycle. `outline-source-model` is a dependency because it owns the final Node and
-  CLI contracts; `outline-source-preview` is not part of this feature.
+  CLI contracts; the preview UI shipped separately in #599 and is not part of
+  this feature.
 - Do not add migration, compatibility, dual-read, or legacy fixture paths. This
   pre-release contract follows the repository's clean-reset policy.
 
@@ -544,11 +545,12 @@ final Host/renderer seam. This feature consumes only the two merged observable
 contracts. It rebases onto
 `origin/main` after both land, regenerates its work queue from actual `rg` hits
 and failing tests, and removes every superseded table fixture assumption rather
-than preserving compatibility. `outline-source-preview` is visual-only and is not a
-dependency.
+than preserving compatibility. The visual-only preview enhancement shipped in
+#599 and is not a dependency.
 
-The collision self-check found no other open PR claim at plan time. The future
-`outline-source-model` is a deliberate hard dependency and likely overlaps
+The collision self-check found no other open PR claim at plan time. The
+`outline-source-model` shipped in #598 as a deliberate hard dependency and
+overlapped
 `src/outline/contract/schemas.ts`, `src/outline/contract/porcelain.ts`,
 `src/outline/contract/capabilities.ts`, `src/outline/cli/porcelain.ts`,
 `src/outline/cli/runner.ts`, generated command references, fixtures, and CLI
