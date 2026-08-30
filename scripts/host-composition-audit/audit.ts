@@ -223,7 +223,12 @@ function dispositionForBaseline(effect: Effect): Disposition {
 }
 
 function dispositionForCurrent(effect: Effect, listenerReleaseCounts: Map<string, number>): Disposition {
-  const inferredOwner = effect.owner ?? currentTypedEdgeOwner(effect, listenerReleaseCounts);
+  const lifecycleListener = isLifecycleListener(effect);
+  const inferredOwner = lifecycleListener
+    ? consumeLifecycleListenerRelease(effect, listenerReleaseCounts)
+      ? effect.owner ?? inferredLifecycleOwner(effect)
+      : null
+    : effect.owner ?? currentTypedEdgeOwner(effect);
   if (effect.kind === 'ipc' || effect.kind === 'protocol' || effect.kind === 'session') {
     const retained = effect.expression.includes('registerSchemesAsPrivileged');
     return {
@@ -234,7 +239,6 @@ function dispositionForCurrent(effect: Effect, listenerReleaseCounts: Map<string
     };
   }
   if (effect.kind === 'listener') {
-    const lifecycle = /^(?:app|process|powerMonitor)\./.test(effect.expression);
     const retainedBaselineEffect = baselineEffectKeys.has(effectKey(effect));
     return {
       ...effect,
@@ -242,7 +246,7 @@ function dispositionForCurrent(effect: Effect, listenerReleaseCounts: Map<string
       transport: true,
       disposition: inferredOwner
         ? `owner:${inferredOwner}`
-        : lifecycle || !retainedBaselineEffect ? 'unclassified' : 'retained:capability-or-window-surface',
+        : lifecycleListener || !retainedBaselineEffect ? 'unclassified' : 'retained:capability-or-window-surface',
     };
   }
   return dispositionForBaseline(effect);
@@ -252,23 +256,31 @@ function effectKey(effect: Effect): string {
   return `${effect.path}:${effect.kind}:${effect.expression}`;
 }
 
-function currentTypedEdgeOwner(effect: Effect, listenerReleaseCounts: Map<string, number>): string | null {
+function currentTypedEdgeOwner(effect: Effect): string | null {
   if (effect.path === 'src/main/outlineClient/ipc.ts') return 'outline';
   if (effect.path === 'src/main/urlPreviewSession.ts') return 'url-preview-session-security';
   if (effect.path === 'src/main/hostTransport/ownership.ts') return 'typed-registration-edge';
   if (effect.path === 'src/main/agent/capabilities/agentTools.ts' && effect.kind === 'session') {
     return 'agent-web-fetch-capability';
   }
-  if (effect.kind !== 'listener') return null;
-  if (effect.expression.startsWith("app.on('") && effect[listenerRegistrationIdentity]) {
-    const identity = effect[listenerRegistrationIdentity];
-    const releaseCount = listenerReleaseCounts.get(identity) ?? 0;
-    if (releaseCount > 0) {
-      listenerReleaseCounts.set(identity, releaseCount - 1);
-      return 'app-lifecycle';
-    }
-  }
   return null;
+}
+
+function isLifecycleListener(effect: Effect): boolean {
+  return effect.kind === 'listener' && /^(?:app|process|powerMonitor)\./.test(effect.expression);
+}
+
+function inferredLifecycleOwner(effect: Effect): string | null {
+  return effect.expression.startsWith("app.on('") ? 'app-lifecycle' : null;
+}
+
+function consumeLifecycleListenerRelease(effect: Effect, listenerReleaseCounts: Map<string, number>): boolean {
+  const identity = effect[listenerRegistrationIdentity];
+  if (!identity) return false;
+  const releaseCount = listenerReleaseCounts.get(identity) ?? 0;
+  if (releaseCount === 0) return false;
+  listenerReleaseCounts.set(identity, releaseCount - 1);
+  return true;
 }
 
 function listenerIdentity(path: string, node: ts.CallExpression, file: ts.SourceFile): string | null {
@@ -389,6 +401,26 @@ function runNegativeFixtures(): void {
     .map((effect) => dispositionForCurrent(effect, fixtureReleaseCounts))
     .filter((entry) => entry.transport && entry.owner === null && !entry.disposition.startsWith('retained:'));
   if (unreleased.length !== 1) throw new Error('Negative fixture failed to detect an unreleased app listener.');
+
+  const scopedUnreleasedSource = [
+    "createTransportOwner('app-lifecycle', () => {",
+    '  const focusMainWindow = () => undefined;',
+    "  app.on('second-instance', focusMainWindow);",
+    '});',
+  ].join('\n');
+  const scopedUnreleasedSources = [{ path: 'src/main/fixture.ts', source: scopedUnreleasedSource }];
+  const scopedReleaseCounts = collectListenerReleaseCounts(scopedUnreleasedSources);
+  const scopedEffects = collectEffects(scopedUnreleasedSource, scopedUnreleasedSources[0]!.path);
+  const scopedListener = scopedEffects.find(isLifecycleListener);
+  if (scopedListener?.owner !== 'app-lifecycle') {
+    throw new Error('Negative fixture failed to inherit the declared lifecycle owner.');
+  }
+  const scopedUnreleased = scopedEffects
+    .map((effect) => dispositionForCurrent(effect, scopedReleaseCounts))
+    .filter((entry) => entry.transport && entry.owner === null && !entry.disposition.startsWith('retained:'));
+  if (scopedUnreleased.length !== 1) {
+    throw new Error('Negative fixture failed to detect an owned-scope app listener without a release.');
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
