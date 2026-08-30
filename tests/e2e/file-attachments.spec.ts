@@ -1082,6 +1082,9 @@ test.describe('file attachments', () => {
     await expect(fieldName).toHaveValue('URI');
     await expect(fieldName).toHaveAttribute('readonly', '');
 
+    const uriValueRow = row(page, sourceValue!.id);
+    await expect(uriValueRow.locator(':scope > .row > .row-leading > .row-bullet-button')).toBeVisible();
+    await expect(uriValueRow.locator(':scope > .row .row-bullet-shape.content')).toBeVisible();
     const uriEditor = rowEditor(page, sourceValue!.id);
     await uriEditor.click();
     await page.keyboard.press('Meta+A');
@@ -1294,8 +1297,10 @@ test.describe('file attachments', () => {
       const titleRect = title.getBoundingClientRect();
       const previewRect = preview.getBoundingClientRect();
       const sourceFieldRect = sourceField.getBoundingClientRect();
+      const previewToTitleGap = titleRect.top - previewRect.bottom;
       return Math.abs(titleRect.left - previewRect.left) <= 1
-        && previewRect.bottom <= titleRect.top
+        && previewToTitleGap >= 0
+        && previewToTitleGap <= 16
         && titleRect.bottom <= sourceFieldRect.top;
     }, imageSourceEntry!.id)).toBe(true);
     await expect.poll(async () => imageRow.evaluate((ownerRow, sourceEntryId) => {
@@ -1560,6 +1565,15 @@ test.describe('file attachments', () => {
         ratio: Math.round((rect.width / rect.height) * 100) / 100,
       };
     })).toEqual({ bounded: true, ratio: 1.78 });
+    await expect.poll(async () => row(page, createdId!).evaluate((ownerRow) => {
+      const preview = ownerRow.querySelector<HTMLElement>(
+        ':scope > .outline-source-preview-row .file-preview-youtube',
+      );
+      const title = ownerRow.querySelector<HTMLElement>(':scope > .row .row-content-line');
+      if (!preview || !title) return false;
+      const gap = title.getBoundingClientRect().top - preview.getBoundingClientRect().bottom;
+      return gap >= 0 && gap <= 16;
+    })).toBe(true);
   });
 
   test('text-like file previews keep content and horizontal scrollbars inside the preview inset', async ({ page }) => {

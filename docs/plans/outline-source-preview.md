@@ -28,6 +28,8 @@ preview above the owner Node's editable content, followed by its ordinary URI
 field. This matches Tana's visible order: preview, title/content, then URI. The
 preview aligns with the owner content column, is presentation only, and never
 occupies an Outline level or becomes a child or card containing the Node.
+The Outline composition owns one compact preview-to-title gap; preview-body
+margins used by standalone and Node-page surfaces do not accumulate inside it.
 While the preview is visible, the ordinary Node marker occupies the rail beside
 the preview's upper edge rather than repeating beside the title. Its expanded
 guide begins below that real marker and runs through the preview composition to
@@ -39,10 +41,12 @@ On the Node page, the upper-right close action changes only local visibility and
 the Source toolbar label opens an ordered switcher when multiple values exist.
 In the Outline, no duplicate toolbar appears: the selected URI value's inline
 affordance owns **Hide preview**, while other URI values own preview switching.
-URI values use these in-value affordances without a redundant value-row marker;
-the owner Node's ordinary bullet and chevron remain unchanged. At the minimum
-supported pane width, the URI field stacks its name above the value, and the
-owner preview compacts mature preview controls inside the available width.
+URI values remain ordinary field value Nodes with their normal marker and
+disclosure; the in-value affordance controls preview state without replacing
+that Node chrome. The owner Node's ordinary bullet and chevron also remain
+unchanged. At the minimum supported pane width, the URI field stacks its name
+above the value, and the owner preview compacts mature preview controls inside
+the available width.
 Mature preview bodies retain
 their existing Open, Expand, reader, media, translation, and file actions rather
 than receiving duplicates. The ordinary Node bullet and chevron keep only their

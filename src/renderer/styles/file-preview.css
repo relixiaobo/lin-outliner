@@ -1227,6 +1227,12 @@
   align-self: flex-start;
 }
 
+/* The Outline composition owns the one gap between its preview and title.
+   Shared preview-body margins belong to standalone and Node-page surfaces. */
+.outline-source-preview .file-node-body {
+  margin-bottom: 0;
+}
+
 /* The preview stage is one rounded viewport. Previewable sources toggle between a
    summary strip and the full-scroll renderer; non-previewable metadata keeps its
    natural height inside the same frame. */

@@ -26,6 +26,12 @@ describe('input modality CSS guards', () => {
     );
   });
 
+  test('gives Outline Source composition one preview-to-title gap', () => {
+    expect(filePreviewCss).toMatch(
+      /\.outline-source-preview \.file-node-body\s*\{[^}]*margin-bottom:\s*0;/s,
+    );
+  });
+
   test('keeps flat media previews and controls on one stable surface', () => {
     expect(filePreviewCss).toContain('width: var(--file-preview-media-width, min(760px, 100%));');
     expect(filePreviewCss).toContain('.file-node-body--media-audio');

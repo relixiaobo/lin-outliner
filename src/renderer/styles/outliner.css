@@ -1741,30 +1741,6 @@ button.outliner-table-column-kind:focus-visible {
   align-items: start;
 }
 
-/* URI values use their in-value preview affordance instead of an Outline
-   marker. Removing the redundant marker gives URI text and controls the full
-   value column while leaving the owner Node's bullet and chevron untouched. */
-.row.source-field-row
-  > .outliner-field-grid
-  .field-value-outliner
-  > .outliner-flat-flow
-  > .outliner-flat-flow-row
-  > .row-wrap
-  > .row {
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-
-.row.source-field-row
-  > .outliner-field-grid
-  .field-value-outliner
-  > .outliner-flat-flow
-  > .outliner-flat-flow-row
-  > .row-wrap
-  > .row
-  > .row-leading {
-  display: none;
-}
-
 /* At the supported minimum window width, the center pane can be narrower than
    the ordinary two-column field grid. Keep Source URI text and its affordance
    visible by stacking this field presentation, and compact the owner preview's
