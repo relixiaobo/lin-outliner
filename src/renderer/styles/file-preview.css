@@ -143,6 +143,89 @@
   min-width: 0;
 }
 
+.node-source-message-wrap {
+  position: relative;
+  min-width: 0;
+}
+
+.outline-source-preview-actions {
+  position: absolute;
+  inset-block-start: calc(var(--file-preview-frame-padding-block) + var(--space-1));
+  inset-inline-end: calc(var(--file-preview-frame-padding-inline) + var(--space-1));
+  z-index: var(--z-raised);
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  background: transparent;
+  color: var(--media-hud-fg);
+  user-select: none;
+}
+
+.node-context-menu.file-preview-menu--source-contained {
+  min-width: 0;
+}
+
+.file-preview-pill.file-preview-pill--source-corner {
+  position: static;
+  inset: auto;
+  transform: none;
+}
+
+.file-preview-pill--source-corner .file-preview-pill-more,
+.outline-source-preview-close.icon-button {
+  width: var(--control-size-md);
+  height: var(--control-size-md);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+  color: var(--media-hud-fg);
+  opacity: 0.82;
+  transition: color var(--motion-fast), opacity var(--motion-fast);
+}
+
+.outline-source-preview-close.icon-button {
+  position: static;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.file-preview-pill--source-corner .file-preview-pill-more > svg,
+.outline-source-preview-close.icon-button > svg {
+  filter:
+    drop-shadow(0 1px 2px var(--media-hud-active-bg))
+    drop-shadow(0 0 1px var(--media-hud-active-bg));
+}
+
+.file-preview-pill--source-corner .file-preview-pill-more:hover,
+.file-preview-pill--source-corner .file-preview-pill-more[aria-expanded='true'],
+.outline-source-preview-close.icon-button:hover {
+  background: transparent;
+  color: var(--media-hud-fg);
+  opacity: 1;
+}
+
+.file-preview-pill--source-corner .file-preview-pill-more:active,
+.outline-source-preview-close.icon-button:active {
+  background: transparent;
+  opacity: 0.72;
+}
+
+.file-preview-pill--source-corner .file-preview-pill-more:focus-visible,
+.outline-source-preview-close.icon-button:focus-visible {
+  background: transparent;
+  outline: none;
+  box-shadow: none;
+}
+
+:root[data-input-modality="keyboard"] .file-preview-pill--source-corner .file-preview-pill-more:focus-visible,
+:root[data-input-modality="keyboard"] .outline-source-preview-close.icon-button:focus-visible {
+  box-shadow: var(--focus-ring-shadow);
+}
+
 .node-source-message {
   min-height: var(--control-size-xl);
   padding: var(--space-4) 0;
@@ -449,10 +532,10 @@
   min-width: 0;
   aspect-ratio: 16 / 9;
   overflow: hidden;
-  border-radius: var(--radius-md);
+  border-radius: var(--file-preview-frame-radius);
   background: var(--bg-content);
   box-shadow: var(--inset-hairline);
-  clip-path: inset(0 round var(--radius-md));
+  clip-path: inset(0 round var(--file-preview-frame-radius));
 }
 
 /* Audio / video players in a media Source preview. */
@@ -1160,11 +1243,10 @@
   --file-preview-content-inset: var(--space-4);
   --file-preview-frame-padding-block: var(--space-4);
   --file-preview-frame-padding-inline: var(--file-preview-frame-padding-block);
-  --file-preview-frame-radius: var(--radius-xl);
-  --file-preview-page-radius: max(
-    var(--radius-2xs),
-    calc(var(--file-preview-frame-radius) - var(--file-preview-frame-padding-block))
-  );
+  /* The 8px frame radius matches its 8px inset, placing each square inner-page
+     corner at the center of the corresponding outer arc. */
+  --file-preview-frame-radius: var(--radius-md);
+  --file-preview-page-radius: 0;
   --file-preview-scrollbar-gutter: var(--space-4);
 }
 
@@ -1231,6 +1313,7 @@
    Shared preview-body margins belong to standalone and Node-page surfaces. */
 .outline-source-preview .file-node-body {
   margin-bottom: 0;
+  vertical-align: top;
 }
 
 /* The preview stage is one rounded viewport. Previewable sources toggle between a
@@ -1328,8 +1411,8 @@
   width: fit-content;
   max-width: 100%;
   max-height: none;
-  overflow: visible;
-  border-radius: 0;
+  overflow: hidden;
+  border-radius: var(--file-preview-frame-radius);
   background: transparent;
   box-shadow: none;
   padding: 0;
@@ -1486,21 +1569,8 @@
   touch-action: none;
 }
 
-.file-preview-resize-handle::before {
-  position: absolute;
-  right: 0;
-  bottom: var(--space-1);
-  left: 0;
-  height: 2px;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  content: "";
-  transition: background var(--motion-fast);
-}
-
-.file-preview-resize-handle:hover::before,
-.file-preview-resize-handle:focus-visible::before {
-  background: var(--drop-line);
+.file-node-body:has(> .file-preview-resize-handle:focus-visible) .file-node-preview {
+  box-shadow: var(--focus-ring-shadow), var(--inset-hairline);
 }
 
 .file-preview-pill-primary {

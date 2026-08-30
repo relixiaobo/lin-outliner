@@ -115,6 +115,18 @@ async function contrastAgainstWhitePreview(locator: Locator): Promise<number> {
   });
 }
 
+async function expectInsidePreviewBoundary(menu: Locator, preview: Locator): Promise<void> {
+  await expect.poll(async () => {
+    const [menuRect, previewRect] = await Promise.all([menu.boundingBox(), preview.boundingBox()]);
+    if (!menuRect || !previewRect) return false;
+    const tolerance = 0.5;
+    return menuRect.x >= previewRect.x - tolerance
+      && menuRect.y >= previewRect.y - tolerance
+      && menuRect.x + menuRect.width <= previewRect.x + previewRect.width + tolerance
+      && menuRect.y + menuRect.height <= previewRect.y + previewRect.height + tolerance;
+  }).toBe(true);
+}
+
 type ExternalFileDropPosition = 'before' | 'inside' | 'after';
 
 async function startExternalFileDrag(page: Parameters<typeof trailingEditor>[0], file: { name: string; mimeType: string; text: string }) {
@@ -521,7 +533,7 @@ async function openEpubSplitReader(
   return { chapter, readerPane };
 }
 
-async function expectConcentricPreviewCorners(previewFrame: Locator, contentSelector: string) {
+async function expectCenteredSquarePreviewCorners(previewFrame: Locator, contentSelector: string) {
   await expect.poll(async () => previewFrame.evaluate((element, selector) => {
     const content = element.querySelector<HTMLElement>(selector);
     if (!content) return null;
@@ -533,17 +545,20 @@ async function expectConcentricPreviewCorners(previewFrame: Locator, contentSele
     const paddingLeft = Number.parseFloat(frameStyle.paddingLeft);
     return {
       frameHasHairlineEdge: frameStyle.borderTopWidth === '0px' && frameStyle.boxShadow !== 'none',
+      frameRadius,
       contentClipPath: contentStyle.clipPath,
-      contentHasRadius: contentRadius > 0,
+      contentIsSquare: contentRadius === 0,
       inlinePaddingMatchesBlock: Math.abs(paddingLeft - paddingTop) <= 1,
-      innerRadiusFromOuter: Math.abs(contentRadius - Math.max(2, frameRadius - paddingTop)) <= 1,
+      innerCornerAtArcCenter: Math.abs(frameRadius - paddingTop) <= 1
+        && Math.abs(frameRadius - paddingLeft) <= 1,
     };
   }, contentSelector)).toEqual({
     frameHasHairlineEdge: true,
-    contentClipPath: 'inset(0px round 8px)',
-    contentHasRadius: true,
+    frameRadius: 8,
+    contentClipPath: 'inset(0px)',
+    contentIsSquare: true,
     inlinePaddingMatchesBlock: true,
-    innerRadiusFromOuter: true,
+    innerCornerAtArcCenter: true,
   });
 }
 
@@ -649,7 +664,7 @@ test.describe('file attachments', () => {
 
     const inlinePreviewFrame = nodePage.locator('.node-source-preview .file-node-preview.collapsed');
     await expect(inlinePreviewFrame).toBeVisible();
-    await expectConcentricPreviewCorners(inlinePreviewFrame, '.file-preview-pdf--summary');
+    await expectCenteredSquarePreviewCorners(inlinePreviewFrame, '.file-preview-pdf--summary');
     await expect.poll(async () => inlinePreviewFrame.evaluate((element) => {
       const style = getComputedStyle(element);
       const summaryStrip = element.querySelector<HTMLElement>('.file-preview-pdf--summary');
@@ -661,7 +676,6 @@ test.describe('file attachments', () => {
       const frameRect = element.getBoundingClientRect();
       const firstRect = firstCanvas?.getBoundingClientRect();
       const secondRect = secondCanvas?.getBoundingClientRect();
-      const frameRadius = Number.parseFloat(style.borderTopLeftRadius);
       const paddingLeft = Number.parseFloat(style.paddingLeft);
       const paddingTop = Number.parseFloat(style.paddingTop);
       const canvasRadius = firstCanvas ? Number.parseFloat(getComputedStyle(firstCanvas).borderTopLeftRadius) : 0;
@@ -682,7 +696,7 @@ test.describe('file attachments', () => {
         edgeInset: firstRect ? firstRect.left - frameRect.left >= 7 && firstRect.top - frameRect.top >= 7 : false,
         horizontalSummary: style.overflowX === 'hidden' && summaryStyle?.overflowX === 'auto',
         noScrollBleed: edgeHit ? !edgeHit.closest('.file-preview-pdf-page, .file-preview-pdf-stage, .file-preview-pdf-canvas') : false,
-        pageRadius: canvasRadius >= 6 && canvasRadius <= frameRadius,
+        pageIsSquare: canvasRadius === 0,
         scrollbarBelowPage: firstRect && summaryRect ? summaryRect.bottom - firstRect.bottom >= scrollbarGutter - 1 : false,
         symmetricInset: firstRect ? Math.abs((firstRect.left - frameRect.left) - (firstRect.top - frameRect.top)) <= 1 : false,
       };
@@ -693,7 +707,7 @@ test.describe('file attachments', () => {
       edgeInset: true,
       horizontalSummary: true,
       noScrollBleed: true,
-      pageRadius: true,
+      pageIsSquare: true,
       scrollbarBelowPage: true,
       symmetricInset: true,
     });
@@ -775,7 +789,7 @@ test.describe('file attachments', () => {
       Math.round(element.getBoundingClientRect().width));
     await nodePage.locator('.file-node-preview.collapsed .file-preview-pdf-page').nth(1).click();
     await expect(previewStage).toHaveClass(/expanded/);
-    await expectConcentricPreviewCorners(previewStage, '.file-preview-pdf--full');
+    await expectCenteredSquarePreviewCorners(previewStage, '.file-preview-pdf--full');
     await expect(pill.locator('.file-preview-pill-primary')).toHaveText('Collapse');
     const collapseButtonWidth = await pill.locator('.file-preview-pill-primary').evaluate((element) =>
       Math.round(element.getBoundingClientRect().width));
@@ -1411,7 +1425,7 @@ test.describe('file attachments', () => {
     })).toBe(true);
     await expect.poll(async () => imageRow.evaluate((ownerRow, sourceEntryId) => {
       const title = ownerRow.querySelector<HTMLElement>(':scope > .row .row-content-line');
-      const preview = ownerRow.querySelector<HTMLElement>(':scope > .outline-source-preview-row .node-source-preview');
+      const preview = ownerRow.querySelector<HTMLElement>(':scope > .outline-source-preview-row .file-node-preview');
       const sourceField = document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(String(sourceEntryId))}"] > .row`);
       if (!title || !preview || !sourceField) return false;
       const titleRect = title.getBoundingClientRect();
@@ -1419,8 +1433,8 @@ test.describe('file attachments', () => {
       const sourceFieldRect = sourceField.getBoundingClientRect();
       const previewToTitleGap = titleRect.top - previewRect.bottom;
       return Math.abs(titleRect.left - previewRect.left) <= 1
-        && previewToTitleGap >= 0
-        && previewToTitleGap <= 16
+        && previewToTitleGap >= 6
+        && previewToTitleGap <= 8
         && titleRect.bottom <= sourceFieldRect.top;
     }, imageSourceEntry!.id)).toBe(true);
     await expect.poll(async () => imageRow.evaluate((ownerRow, sourceEntryId) => {
@@ -1484,8 +1498,46 @@ test.describe('file attachments', () => {
     expect(await previewResolveCount()).toBe(resolvesBeforeEnter);
     await expect(outlineImagePreview).toBeVisible();
 
-    const hideOutlinePreview = imageSourceRow.getByRole('button', { name: 'Hide preview' });
+    await expect(imageSourceRow.getByRole('button', { name: 'Hide preview' })).toHaveCount(0);
+    const hideOutlinePreview = imageRow
+      .locator(':scope > .outline-source-preview-row')
+      .getByRole('button', { name: 'Hide preview' });
     await expect(hideOutlinePreview).toBeVisible();
+    await expect.poll(async () => {
+      const [previewRect, closeRect] = await Promise.all([
+        imageRow.locator(':scope > .outline-source-preview-row .file-node-preview').boundingBox(),
+        hideOutlinePreview.boundingBox(),
+      ]);
+      if (!previewRect || !closeRect) return false;
+      const previewRight = previewRect.x + previewRect.width;
+      return closeRect.x >= previewRect.x
+        && closeRect.x + closeRect.width <= previewRight
+        && closeRect.y >= previewRect.y
+        && closeRect.y + closeRect.height <= previewRect.y + previewRect.height;
+    }).toBe(true);
+    const outlinePreviewActions = imageRow
+      .locator(':scope > .outline-source-preview-row .outline-source-preview-actions');
+    await expect(outlinePreviewActions).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await expect.poll(async () => outlinePreviewActions.locator('button').evaluateAll((buttons) => (
+      buttons.map((button) => getComputedStyle(button).backgroundColor)
+    ))).toEqual(['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0)']);
+    await outlinePreviewActions.hover();
+    await expect(outlinePreviewActions).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await expect.poll(async () => outlinePreviewActions.locator('button').evaluateAll((buttons) => (
+      buttons.map((button) => getComputedStyle(button).backgroundColor)
+    ))).toEqual(['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0)']);
+    await outlinePreviewActions.getByRole('button', { name: 'Preview actions' }).click();
+    const outlinePreviewMenu = page.getByRole('menu', { name: 'Preview actions' });
+    await expect(outlinePreviewMenu).toBeVisible();
+    await expect(outlinePreviewMenu).toHaveClass(/file-preview-menu--source-contained/);
+    await expectInsidePreviewBoundary(
+      outlinePreviewMenu,
+      imageRow.locator(':scope > .outline-source-preview-row .file-node-preview'),
+    );
+    await outlinePreviewActions.getByRole('button', { name: 'Preview actions' }).click();
+    await expect(outlinePreviewMenu).toBeHidden();
+    await expect(outlinePreviewActions.getByRole('button', { name: 'Preview actions' }))
+      .toHaveCSS('box-shadow', 'none');
     await hideOutlinePreview.click();
     await expect(imageRow.locator(':scope > .outline-source-preview-row > .outline-source-preview')).toHaveCount(0);
     await expect.poll(async () => imageRow.evaluate((ownerRow) => {
@@ -1505,21 +1557,24 @@ test.describe('file attachments', () => {
     const imagePreviewStage = imageRow.locator(':scope > .outline-source-preview-row .file-node-preview--image');
     await expect(imagePreviewStage).toBeVisible();
     await expect(imagePreviewStage.locator('.file-preview-pill-primary')).toHaveCount(0);
+    await expect(imagePreviewStage.locator('.file-preview-pill--image')).toHaveCount(0);
+    await expect(
+      imageRow.locator(':scope > .outline-source-preview-row .outline-source-preview-actions button'),
+    ).toHaveCount(2);
     await expect(imageRow.locator(':scope > .outline-source-preview-row .file-preview-resize-handle')).toHaveCount(0);
     await expect(imagePreviewStage).not.toHaveClass(/collapsed|expanded/);
     await page.setViewportSize({ width: 760, height: 800 });
     await expect(hideOutlinePreview).toBeVisible();
     await expect.poll(async () => {
-      const [previewRect, controlsRect, affordanceRect, sourceRowRect] = await Promise.all([
+      const [previewRect, controlsRect] = await Promise.all([
         imageRow.locator(':scope > .outline-source-preview-row .file-node-preview').boundingBox(),
-        imageRow.locator(':scope > .outline-source-preview-row .file-preview-pill--image').boundingBox(),
-        imageSourceRow.locator('.source-preview-affordance').boundingBox(),
-        imageSourceRow.boundingBox(),
+        imageRow.locator(':scope > .outline-source-preview-row .outline-source-preview-actions').boundingBox(),
       ]);
-      if (!previewRect || !controlsRect || !affordanceRect || !sourceRowRect) return false;
+      if (!previewRect || !controlsRect) return false;
       return controlsRect.x >= previewRect.x
         && controlsRect.x + controlsRect.width <= previewRect.x + previewRect.width
-        && affordanceRect.x + affordanceRect.width <= sourceRowRect.x + sourceRowRect.width;
+        && controlsRect.y >= previewRect.y
+        && controlsRect.y + controlsRect.height <= previewRect.y + previewRect.height;
     }).toBe(true);
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.evaluate(({ nodeId, tagId }) => {
@@ -1637,7 +1692,10 @@ test.describe('file attachments', () => {
       .toHaveAttribute('alt', 'clipboard-image.png');
     const pastedSource = sourceFieldValues(await e2eProjection(page), pastedId!)[0];
     expect(pastedSource).toBeTruthy();
-    await expect(row(page, pastedSource!.id).getByRole('button', { name: 'Hide preview' })).toBeVisible();
+    await expect(row(page, pastedSource!.id).getByRole('button', { name: 'Hide preview' })).toHaveCount(0);
+    await expect(
+      pastedRow.locator(':scope > .outline-source-preview-row').getByRole('button', { name: 'Hide preview' }),
+    ).toBeVisible();
 
     const calls = await commandCalls(page);
     expect(calls.some((call) => call.cmd === 'outline/asset ingest')).toBe(true);
@@ -1680,7 +1738,8 @@ test.describe('file attachments', () => {
     expect(createdSourceValue).toBeTruthy();
     const sourceFieldRow = row(page, createdSourceEntry!.id);
     const sourceValueRow = row(page, createdSourceValue!.id);
-    await expect(sourceValueRow.locator('.row-inline-content-slot .source-preview-affordance')).toBeVisible();
+    await expect(sourceValueRow.locator('.row-inline-content-slot .field-value-open')).toBeVisible();
+    await expect(sourceValueRow.locator('.row-inline-content-slot .source-preview-affordance')).toHaveCount(0);
     await expect.poll(async () => sourceValueRow.evaluate((valueRow) => {
       const editor = valueRow.querySelector<HTMLElement>('.row-editor');
       const affordances = valueRow.querySelector<HTMLElement>('.field-value-affordances');
@@ -1692,18 +1751,16 @@ test.describe('file attachments', () => {
       const finalCharacter = document.createRange();
       finalCharacter.setStart(textNode, textNode.textContent.length - 1);
       finalCharacter.setEnd(textNode, textNode.textContent.length);
-      const editorRect = editor.getBoundingClientRect();
-      const editorParentRect = editor.parentElement?.getBoundingClientRect();
       const finalTextRect = finalCharacter.getBoundingClientRect();
       const affordanceRect = affordances.getBoundingClientRect();
+      const inlineGap = affordanceRect.left - finalTextRect.right;
       return {
-        editorUsesAvailableWidth: Boolean(editorParentRect)
-          && Math.abs(editorRect.width - editorParentRect.width) <= 1,
+        followsFinalText: inlineGap >= 0 && inlineGap <= 8,
         sharesLastTextLine: finalTextRect.top < affordanceRect.bottom
           && finalTextRect.bottom > affordanceRect.top,
       };
     })).toEqual({
-      editorUsesAvailableWidth: true,
+      followsFinalText: true,
       sharesLastTextLine: true,
     });
     await expect.poll(async () => sourceFieldRow.evaluate((field, rootId) => {
@@ -1746,6 +1803,14 @@ test.describe('file attachments', () => {
     const player = row(page, createdId!).locator(':scope > .outline-source-preview-row .file-preview-youtube');
     const webview = player.locator('webview.file-preview-youtube-webview');
     await expect(player).toBeVisible();
+    const sourceActions = row(page, createdId!)
+      .locator(':scope > .outline-source-preview-row .outline-source-preview-actions');
+    await expect(sourceActions.locator('button')).toHaveCount(2);
+    await expect(sourceActions.getByRole('button', { name: 'Preview actions' })).toBeVisible();
+    await expect(sourceActions.getByRole('button', { name: 'Hide preview' })).toBeVisible();
+    await expect(row(page, createdId!).locator(
+      ':scope > .outline-source-preview-row .file-preview-pill:not(.file-preview-pill--source-corner)',
+    )).toHaveCount(0);
     await expect(webview).toHaveAttribute(
       'src',
       'https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=0&playsinline=1',
@@ -1768,8 +1833,15 @@ test.describe('file attachments', () => {
       const title = ownerRow.querySelector<HTMLElement>(':scope > .row .row-content-line');
       if (!preview || !title) return false;
       const gap = title.getBoundingClientRect().top - preview.getBoundingClientRect().bottom;
-      return gap >= 0 && gap <= 16;
+      return gap >= 6 && gap <= 8;
     })).toBe(true);
+    await sourceActions.getByRole('button', { name: 'Preview actions' }).click();
+    const sourceMenu = page.getByRole('menu', { name: 'Preview actions' });
+    await expect(sourceMenu).toBeVisible();
+    await expectInsidePreviewBoundary(
+      sourceMenu,
+      row(page, createdId!).locator(':scope > .outline-source-preview-row .file-node-preview'),
+    );
   });
 
   test('text-like file previews keep content and horizontal scrollbars inside the preview inset', async ({ page }) => {
@@ -1912,11 +1984,14 @@ test.describe('file attachments', () => {
     expect(previewCalls.some((call) => call.cmd === 'preview_read_bytes')).toBe(false);
 
     const epubBody = page.locator('.node-source-preview > .file-node-body').last();
-    await expectConcentricPreviewCorners(epubPreview, '.file-preview-epub-host');
+    await expectCenteredSquarePreviewCorners(epubPreview, '.file-preview-epub-host');
     await epubBody.locator('.file-preview-pill-primary').click();
     const fullPreview = epubBody.locator('.file-node-preview.expanded .file-preview-epub--full');
     const fullReader = fullPreview.locator('.file-preview-epub-host');
-    await expectConcentricPreviewCorners(epubBody.locator('.file-node-preview.expanded'), '.file-preview-epub-host');
+    await expectCenteredSquarePreviewCorners(
+      epubBody.locator('.file-node-preview.expanded'),
+      '.file-preview-epub-host',
+    );
     await expect(fullReader).toHaveAttribute('data-epub-continuous-reader', 'true');
     await expect(fullReader).toHaveAttribute('data-epub-section-count', '2');
     await expect(fullReader.locator('.file-preview-epub-section')).toHaveCount(2);
@@ -1968,10 +2043,10 @@ test.describe('file attachments', () => {
       backgroundColor: 'rgb(255, 255, 255)',
       boxShadow: 'none',
       hostBackgroundColor: 'rgba(0, 0, 0, 0)',
-      hostRadius: '8px',
-      iframeRadius: '8px',
+      hostRadius: '0px',
+      iframeRadius: '0px',
       minHeight: '0px',
-      pageRadius: '8px',
+      pageRadius: '0px',
     });
 
     await outlineMarkers.nth(1).click();

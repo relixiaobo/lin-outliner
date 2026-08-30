@@ -11,6 +11,7 @@ import {
   type KeyboardEvent,
   type PointerEvent,
   type ReactElement,
+  type ReactNode,
   type RefObject,
 } from 'react';
 import Markdown from 'react-markdown';
@@ -313,6 +314,8 @@ export function PreviewRenderer({
 export interface FilePreviewShellProps {
   /** User-authored Node content used to name an image-backed Source. */
   accessibleName?: string;
+  /** Optional shared action group anchored to the preview body's upper-right corner. */
+  cornerAction?: ReactNode;
   state: PreviewSourceState;
   onOpenTarget: (target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
   /** The OS-default-app open action (asset / local file / url). Null when not openable. */
@@ -335,10 +338,12 @@ export interface FilePreviewShellProps {
  * registry resolves a presentation policy: documents own summary/full chrome,
  * images render directly with an action-only menu, media owns playback controls,
  * webpages stay single-layer, YouTube uses a bounded player, and unsupported files
- * use metadata actions.
+ * use metadata actions. A Source surface can provide shared corner chrome; when it
+ * does, presentation-specific controls keep content actions only.
  */
 export function FilePreviewShell({
   accessibleName,
+  cornerAction,
   state,
   onOpenTarget,
   primaryOpen = null,
@@ -451,12 +456,12 @@ export function FilePreviewShell({
       expanded={expanded}
       onToggleExpand={toggleExpanded}
       primaryMode="toggle"
-      primaryOpen={primaryOpen}
-      menuActions={menuActions}
+      primaryOpen={cornerAction ? null : primaryOpen}
+      menuActions={cornerAction ? [] : menuActions}
       meta={meta}
     />
   ) : null;
-  const imageActions = !readerMode && imagePreview ? (
+  const imageActions = !readerMode && imagePreview && !cornerAction ? (
     <FilePreviewPill
       previewable
       expanded
@@ -468,7 +473,7 @@ export function FilePreviewShell({
       placement="image"
     />
   ) : null;
-  const metadataActions = state.status !== 'loading' && !readerMode
+  const metadataActions = state.status !== 'loading' && !readerMode && !cornerAction
     && (metadataFallback || state.status === 'missing') ? (
       <FilePreviewPill
         previewable={false}
@@ -481,7 +486,7 @@ export function FilePreviewShell({
         placement="footer"
       />
     ) : null;
-  const mediaActions = state.status !== 'loading' && !readerMode && passivePlayback ? (
+  const mediaActions = state.status !== 'loading' && !readerMode && passivePlayback && !cornerAction ? (
     <FilePreviewPill
       previewable={previewable}
       expanded={expanded}
@@ -518,6 +523,7 @@ export function FilePreviewShell({
         )}
         {metadataActions}
       </div>
+      {cornerAction}
       {documentActions}
       {imageActions}
       {documentPreview && !readerMode ? (

@@ -566,7 +566,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       index={props.index}
       ownerId={props.fieldValue.ownerId}
       valueId={realNode.id}
-      allowHide={sourcePreviewPlacement === 'outline'}
     />
   ) : null;
   const hasFieldValueAffordances = Boolean(

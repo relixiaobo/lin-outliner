@@ -9,8 +9,8 @@ import {
   AttachmentIcon,
   CheckIcon,
   ChevronDownIcon,
+  CloseIcon,
   CopyIcon,
-  HideIcon,
   MoreIcon,
   ShowIcon,
   TrashIcon,
@@ -83,7 +83,7 @@ export function NodeSourcesSection({
               onResolutionChanged={() => setResolutionGeneration((current) => current + 1)}
             />
             <IconButton
-              icon={HideIcon}
+              icon={CloseIcon}
               label={labels.hidePreview}
               onClick={() => view.setPreviewVisible(false)}
               variant="panel"
@@ -99,6 +99,10 @@ export function NodeSourcesSection({
         >
           <FilePreviewBody
             accessibleName={accessibleName}
+            dismiss={!showToolbar ? {
+              label: labels.hidePreview,
+              run: () => view.setPreviewVisible(false),
+            } : undefined}
             ownerId={ownerId}
             target={selected.previewTarget}
             onOpenTarget={(target, options) => dispatchPreviewTargetOpen({
@@ -110,8 +114,21 @@ export function NodeSourcesSection({
           />
         </div>
       ) : (
-        <div className="node-source-message" role="status">
-          {selected.resolving ? labels.loading : sourceReasonLabel(selected, labels)}
+        <div className="node-source-message-wrap">
+          <div className="node-source-message" role="status">
+            {selected.resolving ? labels.loading : sourceReasonLabel(selected, labels)}
+          </div>
+          {!showToolbar ? (
+            <div className="outline-source-preview-actions" data-preserve-selection>
+              <IconButton
+                className="outline-source-preview-close"
+                icon={CloseIcon}
+                label={labels.hidePreview}
+                onClick={() => view.setPreviewVisible(false)}
+                variant="panel"
+              />
+            </div>
+          ) : null}
         </div>
       )}
     </section>
@@ -150,12 +167,10 @@ export function SourcePreviewAffordance({
   index,
   ownerId,
   valueId,
-  allowHide = false,
 }: {
   index: DocumentIndex;
   ownerId: NodeId;
   valueId: NodeId;
-  allowHide?: boolean;
 }) {
   const labels = useT().nodePanel.sources;
   const values = useMemo(
@@ -165,23 +180,18 @@ export function SourcePreviewAffordance({
   const valueIds = useMemo(() => values.map((value) => value.sourceValueId), [values]);
   const view = useNodeSourceViewState(ownerId, valueIds);
   const selected = view.selectedValueId === valueId;
-  if (selected && view.previewVisible && !allowHide) return null;
-  const hiding = selected && view.previewVisible;
-  const label = hiding
-    ? labels.hidePreview
-    : selected ? labels.showPreview : labels.previewThisSource;
+  if (selected && view.previewVisible) return null;
+  const label = selected ? labels.showPreview : labels.previewThisSource;
   return (
     <ButtonControl
       aria-label={label}
       className="field-value-affordance source-preview-affordance"
       data-preserve-selection
       onMouseDown={(event) => event.preventDefault()}
-      onClick={() => hiding ? view.setPreviewVisible(false) : view.show(valueId)}
+      onClick={() => view.show(valueId)}
       title={label}
     >
-      {hiding
-        ? <HideIcon size={13} strokeWidth={1.8} />
-        : <ShowIcon size={13} strokeWidth={1.8} />}
+      <ShowIcon size={13} strokeWidth={1.8} />
     </ButtonControl>
   );
 }

@@ -2011,16 +2011,14 @@ button.outliner-table-column-kind:focus-visible {
   min-width: 0;
 }
 
-/* Additive affordances inside the editable value's inline trailing slot: a
-   validation hint, an open-link button, a calendar trigger, and optional
-   preview control. They remain outside editable text without reserving a row. */
+/* Additive affordances follow the editable value's final text inside its inline
+   slot. They stay outside editable content and wrap only when the line is full. */
 .field-value-affordances {
-  position: absolute;
-  inset-block-end: 0;
-  inset-inline-end: 0;
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
+  margin-inline-start: var(--space-1);
+  vertical-align: top;
   user-select: none;
 }
 
@@ -2784,13 +2782,6 @@ button.outliner-table-column-kind:focus-visible {
   vertical-align: top;
 }
 
-/* Inline field affordances need the editor's full available measure so long
-   values wrap before the trailing controls instead of orphaning those controls
-   on a separate line. This applies to every field type that adds an affordance. */
-.row-content-line > .row-editor:has(.field-value-affordances) {
-  width: 100%;
-}
-
 /* A done checkbox sits inline before the editor (16px box + --space-3 gap).
    The editor is an inline-block capped at max-width:100%, so without reserving
    that gutter it cannot share the first line with the checkbox and drops onto
@@ -2971,8 +2962,8 @@ button.outliner-table-column-kind:focus-visible {
 }
 
 /* The editor renders this as a non-editable widget at the end of the final text
-   block (see RichTextEditor inlineSlotEl). Tags stay in ordinary inline flow;
-   field affordances use the reserved final-line measure below. */
+   block (see RichTextEditor inlineSlotEl). Tags and field affordances stay in
+   ordinary inline flow. */
 .row-inline-content-slot {
   display: inline-flex;
   /* Single-line chips stay centered in the text line; wrapped chips expand the
@@ -2982,22 +2973,6 @@ button.outliner-table-column-kind:focus-visible {
   vertical-align: top;
   white-space: normal;
   user-select: none;
-}
-
-/* Reserve the exact trailing control measure inside the final editable block.
-   Long values wrap before the controls, which stay on the value's final line
-   instead of becoming their own row. The selectors are field-type agnostic. */
-.row-editor .ProseMirror p:has(.field-value-affordances) {
-  --field-value-affordance-reserve: calc(var(--field-value-control-height) + var(--space-2));
-
-  position: relative;
-  width: 100%;
-  box-sizing: border-box;
-  padding-inline-end: var(--field-value-affordance-reserve);
-}
-
-.row-editor .ProseMirror p:has(.field-value-affordances > :nth-child(2)) {
-  --field-value-affordance-reserve: calc(2 * var(--field-value-control-height) + 2 * var(--space-2));
 }
 
 .tag-bar {

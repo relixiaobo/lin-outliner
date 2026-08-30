@@ -29,14 +29,11 @@ interface FilePreviewPillProps {
   menuActions?: FilePreviewMenuAction[];
   /** A quiet caption (type · size · pages) shown as the `⋯` menu header. */
   meta?: string | null;
-  /** Overlay documents by default; image/media/footer select their native surface. */
-  placement?: 'overlay' | 'footer' | 'image' | 'media-control';
+  /** Overlay documents by default; other placements select their owning surface. */
+  placement?: 'overlay' | 'footer' | 'image' | 'media-control' | 'source-corner';
 }
 
-/**
- * Shared document/metadata action control. Image and media presentations reuse its
- * menu mechanics with no primary button and place the ellipsis on their own surface.
- */
+/** Shared preview action control, placed by the surface that owns the action. */
 export function FilePreviewPill({
   previewable,
   expanded,
@@ -51,6 +48,7 @@ export function FilePreviewPill({
   const [open, setOpen] = useState(false);
   const [menuInitialFocus, setMenuInitialFocus] = useState<MenuInitialFocus>('surface');
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuBoundaryRef = useRef<HTMLElement | null>(null);
   const dismissIgnoreRefs = useMemo(() => [triggerRef], []);
 
   const allMenuActions: FilePreviewMenuAction[] = previewable && primaryOpen
@@ -63,6 +61,13 @@ export function FilePreviewPill({
   const primaryLabel = primaryMode === 'toggle' ? (expanded ? labels.collapse : labels.expand) : labels.open;
   const primaryTitle = primaryMode === 'toggle' ? primaryLabel : primaryOpen?.label ?? labels.open;
   const onPrimary = primaryMode === 'toggle' ? onToggleExpand : primaryOpen?.run ?? (() => undefined);
+  const prepareMenuBoundary = () => {
+    menuBoundaryRef.current = placement === 'source-corner'
+      ? triggerRef.current
+        ?.closest('.file-node-body')
+        ?.querySelector<HTMLElement>(':scope > .file-node-preview') ?? null
+      : null;
+  };
 
   // Float over content inside an outliner row, so swallow the pointer: it must not
   // steal edit focus or move the row selection, and the trigger keeps its own
@@ -79,6 +84,7 @@ export function FilePreviewPill({
         placement === 'footer' ? 'file-preview-pill--footer' : '',
         placement === 'image' ? 'file-preview-pill--image' : '',
         placement === 'media-control' ? 'file-preview-pill--media-control' : '',
+        placement === 'source-corner' ? 'file-preview-pill--source-corner' : '',
       ].filter(Boolean).join(' ')}
       data-preserve-selection
       onMouseDown={(event) => event.stopPropagation()}
@@ -110,6 +116,7 @@ export function FilePreviewPill({
               if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
               event.preventDefault();
               event.stopPropagation();
+              prepareMenuBoundary();
               setMenuInitialFocus('auto');
               setOpen(true);
             }}
@@ -117,6 +124,7 @@ export function FilePreviewPill({
               event.stopPropagation();
               const nextOpen = !open;
               if (nextOpen) {
+                prepareMenuBoundary();
                 setMenuInitialFocus(event.nativeEvent.detail === 0 ? 'auto' : 'surface');
               }
               setOpen(nextOpen);
@@ -129,10 +137,13 @@ export function FilePreviewPill({
               actions={allMenuActions}
               anchorRef={triggerRef}
               ariaLabel={labels.actions}
+              boundaryRef={placement === 'source-corner' ? menuBoundaryRef : undefined}
               dismissIgnoreRefs={dismissIgnoreRefs}
               initialFocus={menuInitialFocus}
               meta={meta}
               onClose={() => setOpen(false)}
+              placement={placement === 'source-corner' ? 'bottom-end' : 'top-end'}
+              sourceContained={placement === 'source-corner'}
             />
           ) : null}
         </>
@@ -145,24 +156,31 @@ function PillMenu({
   actions,
   anchorRef,
   ariaLabel,
+  boundaryRef,
   dismissIgnoreRefs,
   initialFocus,
   meta,
   onClose,
+  placement,
+  sourceContained,
 }: {
   actions: FilePreviewMenuAction[];
   anchorRef: RefObject<HTMLElement | null>;
   ariaLabel: string;
+  boundaryRef?: RefObject<HTMLElement | null>;
   dismissIgnoreRefs: Array<RefObject<HTMLElement | null>>;
   initialFocus: MenuInitialFocus;
   meta: string | null;
   onClose: () => void;
+  placement: 'bottom-end' | 'top-end';
+  sourceContained: boolean;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const style = useAnchoredOverlay(menuRef, {
     anchorRef,
+    boundaryRef,
     maxHeight: 280,
-    placement: 'top-end',
+    placement,
     width: 220,
   });
   // Outside-pointer dismissal; Escape + roving Arrow/Home/End + focus-in/restore come
@@ -179,7 +197,7 @@ function PillMenu({
   return createPortal(
     <MenuSurface
       aria-label={ariaLabel}
-      className="node-context-menu"
+      className={`node-context-menu${sourceContained ? ' file-preview-menu--source-contained' : ''}`}
       preserveSelection
       onKeyDown={onKeyDown}
       onMouseDown={(event) => event.stopPropagation()}

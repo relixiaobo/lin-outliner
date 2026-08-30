@@ -35,7 +35,7 @@ the preview's upper edge rather than repeating beside the title. Its guide begin
 below that real marker and runs through the preview composition to the final
 visible descendant marker. Hiding the preview returns the same marker to the
 title row. Preview visibility is independent from ordinary child disclosure and
-is controlled exclusively by the selected URI value's preview affordance.
+is controlled by preview chrome rather than the disclosure chevron.
 Guide geometry remains continuous across preview resize, optimistic insertion,
 and focus transfer: an incomplete DOM measurement retains the last valid
 geometry, while structural collapse/removal or definitive viewport exit removes
@@ -50,21 +50,37 @@ the optimistic and authoritative list heights differ only by the inserted row.
 
 On the Node page, the upper-right close action changes only local visibility and
 the Source toolbar label opens an ordered switcher when multiple values exist.
-In the Outline, no duplicate toolbar appears: the selected URI value's inline
-affordance owns **Hide preview**, while other URI values own preview switching.
+In the Outline, no duplicate toolbar appears: every presentation uses one shared
+upper-right `More + Close` action group inset inside the preview boundary. Its
+background stays transparent in every pointer state; hover, active, and open
+change only icon intensity, while keyboard focus keeps the ordinary circular
+focus ring. The complete 24px control boxes sit beyond the shared document-page
+inset instead of straddling its inner edge. `More` owns Source/file actions and
+`Close` owns **Hide preview**.
+The More menu opens below the trigger and clamps all four edges to the visible
+preview boundary.
+Type-specific bodies keep only content controls:
+players retain playback chrome and documents retain Expand/Collapse. URI value
+affordances own preview restoration and switching.
 URI values remain ordinary field value Nodes with their normal marker and
-disclosure; the preview affordance follows the value's final text inside the
+disclosure; open and preview affordances immediately follow the value's final text inside the
 ordinary editor flow without replacing that Node chrome or creating a separate
 control row. The owner Node's ordinary bullet and chevron also remain unchanged:
 the chevron reflects authored content children only and never treats a URI field
-or preview as a child.
+or preview as a child. Image, YouTube, media, URL, document, and metadata
+presentations use the same compact visible outer frame radius even when their
+inner content and controls differ. Document-like frames use an inset equal to
+that radius and square inner pages, so each inner corner lands at the center of
+the corresponding outer arc.
 The URI field keeps the same responsive layout, validation, ordering, and draft
 placement as every other URI field; only the owner preview compacts mature
 preview controls inside the available width.
 Mature preview bodies retain
 their existing Open, Expand, reader, media, translation, and file actions rather
-than receiving duplicates. The ordinary Node bullet and chevron keep only their
-navigation and child-disclosure responsibilities.
+than receiving duplicates. Document resize keeps an invisible bottom-edge hit
+area with the resize cursor and keyboard support; it paints no separate drag bar,
+while keyboard focus is carried by the preview frame. The ordinary Node bullet
+and chevron keep only their navigation and child-disclosure responsibilities.
 
 ### Hidden and failure states
 

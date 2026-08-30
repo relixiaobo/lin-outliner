@@ -32,15 +32,48 @@ describe('input modality CSS guards', () => {
     expect(filePreviewCss).toMatch(
       /\.outline-source-preview \.file-node-body\s*\{[^}]*margin-bottom:\s*0;/s,
     );
+    expect(filePreviewCss).toMatch(
+      /\.outline-source-preview \.file-node-body\s*\{[^}]*vertical-align:\s*top;/s,
+    );
     expect(outlinerCss).not.toContain('.source-field-row');
     expect(outlinerCss).toMatch(
       /\.row-inline-content-slot\s*\{[^}]*display:\s*inline-flex;/s,
     );
     expect(outlinerCss).toMatch(
-      /\.row-editor \.ProseMirror p:has\(\.field-value-affordances\)\s*\{[^}]*padding-inline-end:\s*var\(--field-value-affordance-reserve\);/s,
+      /\.field-value-affordances\s*\{[^}]*display:\s*inline-flex;[^}]*margin-inline-start:\s*var\(--space-1\);/s,
     );
-    expect(outlinerCss).toMatch(
-      /\.row-content-line > \.row-editor:has\(\.field-value-affordances\)\s*\{[^}]*width:\s*100%;/s,
+    expect(outlinerCss).not.toMatch(/\.field-value-affordances\s*\{[^}]*position:\s*absolute;/s);
+    expect(outlinerCss).not.toContain('.ProseMirror p:has(.field-value-affordances)');
+    expect(filePreviewCss).toMatch(
+      /\.outline-source-preview-actions\s*\{[^}]*position:\s*absolute;[^}]*inset-block-start:\s*calc\(var\(--file-preview-frame-padding-block\) \+ var\(--space-1\)\);[^}]*inset-inline-end:\s*calc\(var\(--file-preview-frame-padding-inline\) \+ var\(--space-1\)\);[^}]*display:\s*inline-flex;/s,
+    );
+    expect(filePreviewCss).toMatch(
+      /\.file-preview-pill--source-corner \.file-preview-pill-more,[\s\S]*?\.outline-source-preview-close\.icon-button\s*\{[^}]*border-radius:\s*var\(--radius-pill\);/s,
+    );
+    expect(filePreviewCss).toMatch(
+      /\.file-preview-pill--source-corner \.file-preview-pill-more,[\s\S]*?\.outline-source-preview-close\.icon-button\s*\{[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/s,
+    );
+    expect(filePreviewCss).toMatch(
+      /\.outline-source-preview-actions\s*\{[^}]*background:\s*transparent;/s,
+    );
+    expect(filePreviewCss).not.toMatch(/\.outline-source-preview-actions:(?:hover|focus-within|has)/);
+    expect(filePreviewCss).toMatch(
+      /\.file-preview-pill--source-corner \.file-preview-pill-more,[\s\S]*?\.outline-source-preview-close\.icon-button\s*\{[^}]*opacity:\s*0\.82;/s,
+    );
+    expect(filePreviewCss).toMatch(
+      /\.file-preview-pill--source-corner \.file-preview-pill-more:hover,[\s\S]*?\.outline-source-preview-close\.icon-button:hover\s*\{[^}]*background:\s*transparent;[^}]*opacity:\s*1;/s,
+    );
+    expect(filePreviewCss).toMatch(
+      /\.file-preview-pill--source-corner \.file-preview-pill-more:focus-visible,[\s\S]*?\.outline-source-preview-close\.icon-button:focus-visible\s*\{[^}]*box-shadow:\s*none;/s,
+    );
+    expect(filePreviewCss).toContain(
+      ':root[data-input-modality="keyboard"] .file-preview-pill--source-corner .file-preview-pill-more:focus-visible',
+    );
+    expect(filePreviewCss).toContain(
+      ':root[data-input-modality="keyboard"] .outline-source-preview-close.icon-button:focus-visible',
+    );
+    expect(filePreviewCss).toMatch(
+      /\.node-context-menu\.file-preview-menu--source-contained\s*\{[^}]*min-width:\s*0;/s,
     );
   });
 
@@ -73,11 +106,17 @@ describe('input modality CSS guards', () => {
     expect(filePreviewCss).toMatch(/\.file-preview-pill--media-control \.file-preview-pill-more:hover,[\s\S]*?background:\s*transparent;[\s\S]*?color:\s*var\(--text-primary\);/);
     expect(filePreviewCss).toMatch(/\.file-preview-pill--media-control \.file-preview-pill-more svg\s*\{[^}]*width:\s*var\(--icon-size-md\);[^}]*height:\s*var\(--icon-size-md\);/s);
     expect(filePreviewCss).not.toContain('right: calc(-1 *');
+    expect(filePreviewCss).not.toContain('.file-preview-resize-handle::before');
+    expect(filePreviewCss).toMatch(
+      /\.file-node-body:has\(> \.file-preview-resize-handle:focus-visible\) \.file-node-preview\s*\{[^}]*box-shadow:\s*var\(--focus-ring-shadow\), var\(--inset-hairline\);/s,
+    );
   });
 
   test('keeps image previews direct while retaining an ellipsis action', () => {
     expect(filePreviewCss).toMatch(/\.file-node-body--image\s*\{[^}]*width:\s*fit-content;[^}]*max-width:\s*100%;/s);
     expect(filePreviewCss).toMatch(/\.file-node-preview--image\s*\{[^}]*width:\s*fit-content;/s);
+    expect(filePreviewCss).toMatch(/\.file-node-preview--image\s*\{[^}]*overflow:\s*hidden;/s);
+    expect(filePreviewCss).toMatch(/\.file-node-preview--image\s*\{[^}]*border-radius:\s*var\(--file-preview-frame-radius\);/s);
     expect(filePreviewCss).toMatch(/\.file-node-preview--image\s*\{[^}]*background:\s*transparent;/s);
     expect(filePreviewCss).toMatch(/\.file-node-preview--image\s*\{[^}]*box-shadow:\s*none;/s);
     expect(filePreviewCss).toMatch(/\.file-node-preview\.file-node-preview--image\s*\{[^}]*padding:\s*0;/s);
@@ -85,6 +124,9 @@ describe('input modality CSS guards', () => {
   });
 
   test('keeps URL previews single-layer without the document preview frame', () => {
+    expect(filePreviewCss).toMatch(/\.file-node-body\s*\{[^}]*--file-preview-frame-padding-block:\s*var\(--space-4\);/s);
+    expect(filePreviewCss).toMatch(/\.file-node-body\s*\{[^}]*--file-preview-frame-radius:\s*var\(--radius-md\);/s);
+    expect(filePreviewCss).toMatch(/\.file-node-body\s*\{[^}]*--file-preview-page-radius:\s*0;/s);
     expect(filePreviewCss).toMatch(/\.outline-panel-surface \.file-preview-panel--fill\s*\{[^}]*overflow:\s*hidden;[^}]*padding-bottom:\s*0;/s);
     expect(filePreviewCss).toMatch(/\.file-preview-panel--fill \.file-preview-content\s*\{[^}]*height:\s*100%;[^}]*flex:\s*1 1 auto;/s);
     expect(filePreviewCss).toMatch(/\.file-node-preview--url\s*\{[^}]*background:\s*transparent;/s);
@@ -101,7 +143,8 @@ describe('input modality CSS guards', () => {
     expect(filePreviewCss).toMatch(/\.file-node-body--image:not\(\.file-node-body--reader\) \.file-preview-image img\s*\{[^}]*max-height:\s*min\(60vh, 520px\);/s);
     expect(filePreviewCss).toMatch(/\.file-node-body--youtube\s*\{[^}]*width:\s*min\(760px, 100%\);/s);
     expect(filePreviewCss).toMatch(/\.file-node-body--reader\.file-node-body--youtube\s*\{[^}]*flex:\s*0 1 auto;[^}]*align-self:\s*flex-start;/s);
-    expect(filePreviewCss).toMatch(/\.file-preview-youtube\s*\{[^}]*aspect-ratio:\s*16 \/ 9;[^}]*border-radius:\s*var\(--radius-md\);/s);
+    expect(filePreviewCss).toMatch(/\.file-preview-youtube\s*\{[^}]*aspect-ratio:\s*16 \/ 9;[^}]*border-radius:\s*var\(--file-preview-frame-radius\);/s);
+    expect(filePreviewCss).toMatch(/\.file-preview-youtube\s*\{[^}]*clip-path:\s*inset\(0 round var\(--file-preview-frame-radius\)\);/s);
     expect(filePreviewCss).toMatch(/\.file-node-body--reader:is\(\.file-node-body--epub, \.file-node-body--html, \.file-node-body--pdf\)\s*\{[^}]*flex:\s*1 1 auto;/s);
     expect(filePreviewCss).toMatch(/\.file-node-preview--reader\.expanded:is\(\.file-node-preview--epub, \.file-node-preview--html, \.file-node-preview--pdf, \.file-node-preview--url\)\s*\{[^}]*height:\s*100%;/s);
     expect(filePreviewCss).toMatch(/\.file-node-preview--reader:is\(\.file-node-preview--epub, \.file-node-preview--html, \.file-node-preview--pdf\)\s*\{[^}]*display:\s*flex;[^}]*flex:\s*1 1 auto;[^}]*flex-direction:\s*column;/s);
