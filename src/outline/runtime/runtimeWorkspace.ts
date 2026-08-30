@@ -805,7 +805,12 @@ export class OutlineRuntimeWorkspace {
             nextAssetReferenceCounts,
             (before, after) => before === 0 && after > 0,
           );
-          const implicitlyConsumedLeases = await this.assets.resolveLeasesForAssetIds(liveAddedAssetRecordIds);
+          const recoveryProtectedAssetRecordIds = new Set(
+            request.revertsOperationId ? request.protectedAssetRecordIds ?? [] : [],
+          );
+          const implicitlyConsumedLeases = await this.assets.resolveLeasesForAssetIds(
+            liveAddedAssetRecordIds.filter((assetId) => !recoveryProtectedAssetRecordIds.has(assetId)),
+          );
           const consumedLeaseIds = [...new Set([
             ...Object.keys(request.assetLeases ?? {}),
             ...implicitlyConsumedLeases.keys(),

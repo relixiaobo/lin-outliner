@@ -138,7 +138,13 @@ charged as recovery-only storage.
 
 Renderer flows stage files through public asset capabilities and consume the
 returned lease in the same ChangeSet that creates an ordinary Node and adds its
-canonical managed Source. Native pickers, open, Reveal in Finder,
+canonical managed Source. Every AssetRecord that transitions from zero live URI
+references to one or more through an ordinary mutation must resolve exactly one
+unexpired staging lease during settlement; a missing or expired lease rejects
+publication even while its record still exists before garbage collection. Source
+convenience changes and generic URI field mutations share this settlement rule.
+Revert, undo, and redo may instead restore assets protected by the retained
+recovery patch they consume. Native pickers, open, Reveal in Finder,
 copy, and external URL handling remain Electron-main OS effects rather than
 Runtime document capabilities. Local `asset://` range serving streams verified
 Runtime bytes and does not pre-read an entire video merely to render it. PDF

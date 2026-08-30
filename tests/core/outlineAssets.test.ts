@@ -301,6 +301,37 @@ describe('Outline Runtime assets', () => {
     });
   });
 
+  test('rejects publishing an expired staged asset before garbage collection removes its record', async () => {
+    let nowMs = Date.parse('2030-01-01T00:00:00.000Z');
+    const workspace = await makeWorkspace({
+      now: () => new Date(nowMs),
+      assetStoreOptions: { leaseMs: 1_000 },
+    });
+    const lease = await workspace.assets.ingestBytes(Buffer.from('expired field bytes'), 'expired.txt');
+    const ownerId = workspace.forkCore().projection().todayId;
+    nowMs += 2_000;
+
+    await expect(applyChangeSet(workspace, {
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      operations: [{
+        op: 'update',
+        targets: oneId(ownerId),
+        changes: [{
+          kind: 'field',
+          action: 'set',
+          field: oneId(SOURCE_FIELD_ID),
+          value: formatAssetSourceUri(lease.assetId),
+        }],
+      }],
+    })).rejects.toMatchObject({
+      outlineError: { code: 'precondition_failed' },
+    });
+
+    expect(sourceOwnerIdForAsset(workspace, lease.assetId)).toBeUndefined();
+    expect(await workspace.assets.show(lease.assetId)).toMatchObject({ assetId: lease.assetId });
+  });
+
   test('keeps a staged lease after a stale Diff and collects it only after expiry', async () => {
     let nowMs = Date.parse('2030-01-01T00:00:00.000Z');
     const workspace = await makeWorkspace({

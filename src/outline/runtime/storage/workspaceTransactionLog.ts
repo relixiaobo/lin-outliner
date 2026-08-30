@@ -930,6 +930,14 @@ export class WorkspaceTransactionLog {
         matched.add(lease.assetId);
         result.set(leaseId, clone(lease));
       }
+      for (const assetId of requested) {
+        if (matched.has(assetId)) continue;
+        throw new OutlineContractError(outlineError(
+          'precondition_failed',
+          'conflict',
+          `No active asset lease is available for publication: ${assetId}`,
+        ));
+      }
       return result;
     });
   }
