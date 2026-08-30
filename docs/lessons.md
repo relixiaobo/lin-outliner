@@ -2013,3 +2013,24 @@ conflicting authorities and makes semantic coverage invisible to docs guards.
 Run a one-time source-fidelity audit when splitting, copy every load-bearing
 constraint into its owning active plan, and leave only history, rejected options,
 and superseded delivery structure behind.
+
+## Publication authority belongs to the settled resource delta
+
+PR #598 first consumed managed-asset leases only from dedicated Source commands.
+Once the built-in URI field became ordinary, a generic field mutation could make
+the same AssetRecord live without consuming its lease. Moving the check to
+Runtime settlement closed that syntax-specific bypass, but the first resolver
+then silently ignored expired leases and allowed publication until maintenance
+garbage collection happened to remove the staged record.
+
+**Derive publication authority from the transaction's post-mutation resource
+delta, not from the command family that requested it or the continued existence
+of staged bytes.** For every AssetRecord that transitions from zero live
+references to one or more, settlement must resolve exactly one active lease and
+consume it atomically; a missing or expired lease fails publication. Revert,
+undo, and redo use a separate explicit authority: the retained recovery patch's
+protected AssetRecord set.
+
+Regression coverage must exercise dedicated and generic mutation paths, a lease
+that expires before garbage collection, converged structures, and recovery that
+restores a protected asset after its staging lease has already been consumed.

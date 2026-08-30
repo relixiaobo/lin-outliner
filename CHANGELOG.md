@@ -12,6 +12,25 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **URLs, files, and managed media now share one ordinary Outline Source model
+  (PR #598, codex)** — captures, imports, paste/drop, previews, search, Agent
+  context, and the public CLI now use ordinary content Nodes plus editable URI
+  field values under the stable built-in `field:source` identity. New Nodes have
+  no automatic URI entry; entries and values remain normal movable, nestable,
+  clonable, and deletable Nodes, while labels named `Source` or `URI` gain no
+  special behavior. Managed assets become live only through atomic lease
+  settlement, and external files resolve through persistent exact-file grants
+  bound to verified open handles, so path or symlink races cannot widen access.
+  Preview selection remains local view state, and the retired image/attachment
+  Node variants, URL field type, media commands, scalar metadata, and dedicated
+  renderer branches are removed in one pre-release protocol cut. Repeated gate
+  review fixed verified-handle authority, managed-media search consistency,
+  Link/Replace File rollback, generic URI lease consumption, converged-entry
+  ordering, stale specs, and expired-before-GC asset publication; final review
+  found no reportable issue. Verified with typecheck, `docs:check`, 1,437
+  renderer tests, focused Source/asset/Runtime and Playwright suites, whitespace
+  checks, and all five GitHub E2E samples plus baseline subtraction.
+
 - **Agent composers now recall complete prior inputs (PR #587, codex-3)** — plain
   Up and Down at the first or last visual line navigate only canonical
   reader-authored messages from the exact Thread, while preserving the unsent

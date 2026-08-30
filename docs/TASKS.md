@@ -14,7 +14,7 @@ latest published train is `v0.7.0`.
 ## In Flight
 
 None. A merged plan PR records ratified design; it does not mean the feature
-shipped. The six recent plan PRs (#588/#589, #591, #593, #595, and #596) remain
+shipped. The remaining plans from #588/#589, #591, #593, #595, and #596 stay
 active below until their implementation, spec fold, and archive move complete.
 
 ## Primary Delivery Queue
@@ -36,15 +36,14 @@ protocol, security rule, user flow, or acceptance criterion.
 
 ```text
 Critical mechanism lane:
-  outline-source-model
-    -> host-transport-ownership
+  host-transport-ownership
     -> host-domain-composition
     -> host-platform-composition
     -> desktop-host-cutover
     ~> agent-bash-stdin-transport
     ~> agent-result-and-file-lifecycle
 
-Parallel after outline-source-model:
+Parallel now that outline-source-model shipped in #598:
   outline-source-preview
 
 Parallel after desktop-host-cutover:
@@ -66,9 +65,8 @@ Parallel after agent-result-and-file-lifecycle:
 
 | Priority | Plan / PR claim | Status | Eligible after |
 | --- | --- | --- | --- |
-| P1 | [outline-source-model](plans/outline-source-model.md) | `draft`, ratified in #593 | **Now; next architectural claim** |
-| P2 | [outline-source-preview](plans/outline-source-preview.md) | `draft`, ratified in #593 | `outline-source-model` |
-| P1 | [host-transport-ownership](plans/host-transport-ownership.md) | `draft`, ratified in #591 | `outline-source-model` |
+| P2 | [outline-source-preview](plans/outline-source-preview.md) | `draft`, ratified in #593 | **Now; Source model shipped in #598** |
+| P1 | [host-transport-ownership](plans/host-transport-ownership.md) | `draft`, ratified in #591 | **Now; Source model shipped in #598** |
 | P1 | [host-domain-composition](plans/host-domain-composition.md) | `draft`, ratified in #591 | `host-transport-ownership` |
 | P1 | [host-platform-composition](plans/host-platform-composition.md) | `draft`, ratified in #591 | `host-domain-composition` |
 | P1 | [desktop-host-cutover](plans/desktop-host-cutover.md) | `draft`, ratified in #591 | `host-platform-composition` |
@@ -85,19 +83,20 @@ Parallel after agent-result-and-file-lifecycle:
 | P3 | [agent-skill-curation-report](plans/agent-skill-curation-report.md) | `draft` | `agent-skill-authoring-foundation` |
 | P3 | [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | `draft` | `agent-result-and-file-lifecycle` |
 
-Only `outline-source-model` is eligible now **inside the primary delivery
-queue**. Build-ready work outside this queue remains independently claimable
-under its own collision boundary. The Host chain has four substantial serial
-PRs: owned transport, backend domain composition, native platform composition,
-and final DesktopHost/lifecycle cutover. Agent resource references, conversation
-workspaces/final citations, and delegated handoff remain three foundation-first
-build stages inside one atomic feature PR rather than three partial releases.
+`outline-source-preview` and `host-transport-ownership` are now eligible in
+parallel **inside the primary delivery queue**. Build-ready work outside this
+queue remains independently claimable under its own collision boundary. The
+Host chain has four substantial serial PRs: owned transport, backend domain
+composition, native platform composition, and final DesktopHost/lifecycle
+cutover. Agent resource references, conversation workspaces/final citations,
+and delegated handoff remain three foundation-first build stages inside one
+atomic feature PR rather than three partial releases.
 
 The split also absorbs three former planless tasks without losing their intent:
 
-- `inline-media-alt-text` becomes the editable Node-content accessibility rule
-  in `outline-source-model` and `outline-source-preview`; the retired
-  `mediaAlt` field does not receive a new command.
+- `inline-media-alt-text` shipped as the editable Node-content accessibility
+  rule in #598; `outline-source-preview` owns the remaining presentation work,
+  and the retired `mediaAlt` field receives no replacement command.
 - `skill-directory-is-itself-a-skill` becomes the explicit binding identity in
   `agent-skill-authoring-foundation`, before script authoring consumes it.
 - `computer-pilot-managed-skill` now has its own complete plan and waits for the
@@ -126,11 +125,11 @@ does not mix their product decisions into the architectural queue above.
 
 | Priority | Plan | Status | Start condition and collision boundary |
 | --- | --- | --- | --- |
-| P2 | [interaction-jank-cleanups](plans/interaction-jank-cleanups.md) | `draft` | Definition-cache and Runtime-index units follow `outline-source-model`; preview units use the live preview-shell lane. |
+| P2 | [interaction-jank-cleanups](plans/interaction-jank-cleanups.md) | `draft` | Definition-cache and Runtime-index units are eligible after #598; preview units use the live preview-shell lane. |
 | P2 | [semantic-working-state](plans/semantic-working-state.md) | `draft` | Build-ready Settings-only tail. Thread/Plan `WorkingText` shipped in #531; this plan contains only Provider and managed-Skill consumers. |
-| P3 | [floating-toolbar-polish](plans/floating-toolbar-polish.md) | `draft` | Heading toggle is build-ready and renderer-only. Atomic tagged extraction follows `outline-source-model`. |
+| P3 | [floating-toolbar-polish](plans/floating-toolbar-polish.md) | `draft` | Heading toggle is build-ready and renderer-only. Atomic tagged extraction is eligible after #598. |
 | P3 | [icon-semantics](plans/icon-semantics.md) | `draft` | Build-ready renderer mapping cleanup. Update action menu, launcher, picker, and attachment mappings together; status color is out of scope. |
-| P3 | [performance-optimization](plans/performance-optimization.md) | `draft` | Three measured tails only. Core mutation indexes follow `outline-source-model`; filename-fallback reuse and text normalization are independent. |
+| P3 | [performance-optimization](plans/performance-optimization.md) | `draft` | Three measured tails only. Core mutation indexes are eligible after #598; filename-fallback reuse and text normalization are independent. |
 | P3 | [dark-mode-contrast-pass](plans/dark-mode-contrast-pass.md) | `draft` | Runs last after active visual consumers. #377's tertiary lift is shipped; only rendered failures justify further token changes. |
 
 ## Small And Release Work
@@ -209,7 +208,7 @@ contract or user-visible decision.
   [agent-generative-ui](plans/archive/agent-generative-ui.md).
 - **launcher-provider-expansion** (`shelved`) — URL-only labels for authenticated
   apps are not automatically valuable, native readers have separate TCC and
-  product boundaries, and `outline-source-model` replaces the capture resource contract.
+  product boundaries, and #598 replaced the capture resource contract.
   Choose one complete provider capability before rewriting:
   [launcher-provider-expansion](plans/archive/launcher-provider-expansion.md).
 - **signed-builds-and-auto-update** (`shelved`, external gate) — requires Apple
@@ -239,6 +238,10 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **outline-source-model** (`done`, #598, 2026-08-30) — URLs, files, and managed
+  media became ordinary Nodes with editable built-in URI field values and exact
+  Host/asset authority; plan archived at
+  [outline-source-model](plans/archive/outline-source-model.md).
 - **agent-composer-input-history** (`done`, #587, 2026-08-29) — exact-Thread
   reader input recall, structured references/attachments, author trust, and
   renderability shipped; plan archived at
