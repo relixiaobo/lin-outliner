@@ -31,11 +31,11 @@ occupies an Outline level or becomes a child or card containing the Node.
 The Outline composition owns one compact preview-to-title gap; preview-body
 margins used by standalone and Node-page surfaces do not accumulate inside it.
 While the preview is visible, the ordinary Node marker occupies the rail beside
-the preview's upper edge rather than repeating beside the title. Its expanded
-guide begins below that real marker and runs through the preview composition to
-the final visible descendant marker. Hiding the preview or collapsing the Node
-returns the same marker to the title row. The shown preview participates in the
-ordinary child/field disclosure instead of creating a second expansion model.
+the preview's upper edge rather than repeating beside the title. Its guide begins
+below that real marker and runs through the preview composition to the final
+visible descendant marker. Hiding the preview returns the same marker to the
+title row. Preview visibility is independent from ordinary child disclosure and
+is controlled exclusively by the selected URI value's preview affordance.
 
 On the Node page, the upper-right close action changes only local visibility and
 the Source toolbar label opens an ordered switcher when multiple values exist.
@@ -44,7 +44,9 @@ affordance owns **Hide preview**, while other URI values own preview switching.
 URI values remain ordinary field value Nodes with their normal marker and
 disclosure; the preview affordance follows the value's final text inside the
 ordinary editor flow without replacing that Node chrome or creating a separate
-control row. The owner Node's ordinary bullet and chevron also remain unchanged.
+control row. The owner Node's ordinary bullet and chevron also remain unchanged:
+the chevron reflects authored content children only and never treats a URI field
+or preview as a child.
 The URI field keeps the same responsive layout, validation, ordering, and draft
 placement as every other URI field; only the owner preview compacts mature
 preview controls inside the available width.
@@ -68,9 +70,10 @@ projections render ordered URI values without mounting rich previews.
 
 Selection, the stored preview preference, preview-body reader state, and child
 disclosure remain independent state axes. Effective Outline visibility requires
-both a shown Source preference and an expanded owner Node. Stable value identity
-preserves selection through reorder; removal follows the baseline fallback
-rules. Async work from an old selection cannot replace the current preview.
+a shown Source preference and does not depend on owner disclosure. Stable value
+identity preserves selection through reorder; removal follows the baseline
+fallback rules. Async work from an old selection cannot replace the current
+preview.
 
 The first newly added Source is selected and shown by default. Adding another
 preserves current selection and visibility. Editing the selected visible value

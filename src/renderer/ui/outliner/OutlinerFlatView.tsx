@@ -949,7 +949,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
         const sourceValues = fieldValue || sourceOwner?.type !== undefined
           ? []
           : nodeSourceValues(row.nodeId, index.byId);
-        const outlineSourcePreviewKey = ui.expanded.has(row.nodeId) && sourceValues.length > 0
+        const outlineSourcePreviewKey = sourceValues.length > 0
           ? sourceValues.map((value) => `${value.sourceValueId}\0${value.sourceText}`).join('\x01')
           : undefined;
         return (

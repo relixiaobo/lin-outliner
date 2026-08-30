@@ -326,12 +326,18 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const referenceCycle = node?.type === 'reference'
     && Boolean(referenceTargetId)
     && props.referencePath.includes(childParentId);
-  const rowChildIds = referenceCycle ? [] : outlinerChildren(childParentNode, props.index.byId).filter((childId) => {
+  const rowScopeChildIds = referenceCycle ? [] : outlinerChildren(childParentNode, props.index.byId).filter((childId) => {
     const child = props.index.byId.get(childId);
-    return child?.type !== 'fieldEntry'
-      || !props.suppressChildFieldEntries
-      || !isActiveTableFieldEntry(child, props.index.byId);
+    if (!child || !isContentBearingNode(child)) return false;
+    return !props.suppressChildFieldEntries || !isActiveTableFieldEntry(child, props.index.byId);
   });
+  const rowChildIds = rowScopeChildIds.filter((childId) => (
+    props.index.byId.get(childId)?.type !== 'fieldEntry'
+  ));
+  const firstContentChildId = rowChildIds[0];
+  const firstContentChildIndex = firstContentChildId
+    ? childParentNode?.children.indexOf(firstContentChildId) ?? -1
+    : -1;
   const parentView = readViewConfig(parentNode, props.index.byId);
   const referenceSummary = referenceSummaryForIndex(props.index);
   const displayValues = realNode && displayed && !props.draft && !props.fieldValue
@@ -1207,7 +1213,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     const canConvertInPlace = shouldConvertRowToImage({
       referenceLikeRow,
       nodeType: displayed.type,
-      hasChildren: row.hasChildren,
+      hasChildren: rowScopeChildIds.length > 0,
       rowTextEmpty,
     });
     if (canConvertInPlace) {
@@ -1245,7 +1251,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     const canConvertFirstImage = first.mimeType.startsWith('image/') && shouldConvertRowToImage({
       referenceLikeRow,
       nodeType: displayed.type,
-      hasChildren: row.hasChildren,
+      hasChildren: rowScopeChildIds.length > 0,
       rowTextEmpty,
     });
     if (!canConvertFirstImage) {
@@ -2309,14 +2315,16 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       const contentBeforeSplit = draftContentRef.current;
       const splitIntoChildren = node.type !== 'reference'
         && row.expanded
-        && row.hasChildren;
+        && rowScopeChildIds.length > 0;
       const targetParentId = splitIntoChildren ? props.nodeId : props.parentId;
-      const targetIndex = splitIntoChildren ? 0 : rowIndex >= 0 ? rowIndex + 1 : null;
+      const targetIndex = splitIntoChildren
+        ? firstContentChildIndex >= 0 ? firstContentChildIndex : null
+        : rowIndex >= 0 ? rowIndex + 1 : null;
       await startPendingStructuralCommand(
         {
           parentId: targetParentId,
           ...(splitIntoChildren
-            ? { beforeId: rowChildIds[0] ?? null }
+            ? { beforeId: firstContentChildId ?? null }
             : { afterId: props.nodeId }),
           content: payload.after,
           placement: cursorStart(),
@@ -2328,7 +2336,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             ...(node.type === 'reference'
               ? { targetParentId: props.parentId, targetIndex: rowIndex >= 0 ? rowIndex + 1 : null }
               : splitIntoChildren
-                ? { targetParentId: props.nodeId, targetIndex: 0 }
+                ? { targetParentId: props.nodeId, targetIndex }
                 : {}),
             focusPlacement: { kind: 'start' },
           }, pendingDraft.id), { applyFocus: false });
@@ -2346,14 +2354,16 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       );
       return;
     }
-    const createAsFirstChild = row.expanded && row.hasChildren;
-    const targetParentId = createAsFirstChild ? childParentId : props.parentId;
-    const targetIndex = createAsFirstChild ? 0 : rowIndex >= 0 ? rowIndex + 1 : null;
+    const createInExpandedScope = row.expanded && rowScopeChildIds.length > 0;
+    const targetParentId = createInExpandedScope ? childParentId : props.parentId;
+    const targetIndex = createInExpandedScope
+      ? firstContentChildIndex >= 0 ? firstContentChildIndex : null
+      : rowIndex >= 0 ? rowIndex + 1 : null;
     await startPendingStructuralCommand(
       {
         parentId: targetParentId,
-        ...(createAsFirstChild
-          ? { beforeId: rowChildIds[0] ?? null }
+        ...(createInExpandedScope
+          ? { beforeId: firstContentChildId ?? null }
           : { afterId: props.nodeId }),
         content: EMPTY_RICH_TEXT,
         placement: cursorEnd(),
@@ -2438,7 +2448,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     }
     const intent = resolveContentRowBackspaceAtStartIntent({
       isEmpty,
-      hasChildren: row.hasChildren,
+      hasChildren: rowScopeChildIds.length > 0,
     });
     if (intent === 'block_delete_parent') {
       return;

@@ -265,7 +265,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     draftDefId: field?.id,
     trashId: props.index.projection.trashId,
     nameDraft,
-    disabled: Boolean(systemFieldId) || field?.locked === true || slot.source === 'tag',
+    disabled: Boolean(systemFieldId) || slot.source === 'tag',
   });
 
   // Each read-only system field renders by its real type, not as bare text — the
@@ -307,6 +307,14 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       const restored = field?.content.text ?? '';
       nameDraftRef.current = restored;
       setNameDraft(restored);
+      return;
+    }
+    // A definition lock protects the shared definition, not entries that point
+    // at it. Keep the entry editable for reuse while refusing an implicit global
+    // rename when the user leaves the current locked definition selected.
+    if (field?.locked) {
+      nameDraftRef.current = field.content.text;
+      setNameDraft(field.content.text);
       return;
     }
     if (props.optimisticChange?.latestFieldName) {
@@ -699,7 +707,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       data-focus-node-id={rowId}
       label={tf.fieldNameLabel}
       value={systemFieldId ? systemFieldLabel : nameDraft}
-      readOnly={Boolean(systemFieldId) || field?.locked === true}
+      readOnly={Boolean(systemFieldId)}
       placeholder={tf.fieldNameLabel}
       title={systemFieldId
         ? tf.systemFieldTitle({ name: systemFieldLabel })

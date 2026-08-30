@@ -1047,7 +1047,7 @@ test.describe('file attachments', () => {
     await expect(readerMenu.getByRole('menuitem', { name: 'Open in split pane' })).toHaveCount(0);
   });
 
-  test('URI fields use ordinary disclosure, value editing, and entry deletion', async ({ page }) => {
+  test('URI fields stay editable while preview visibility ignores child disclosure', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
     await page.keyboard.type('/attachment');
@@ -1057,7 +1057,6 @@ test.describe('file attachments', () => {
     const attachmentId = (await todayChildren(page)).at(-1)!;
     const attachmentRow = row(page, attachmentId);
 
-    await expect(attachmentRow).toHaveAttribute('aria-expanded', 'true');
     const previewChevron = attachmentRow.locator(
       ':scope > .outline-source-preview-row .row-chevron-button',
     );
@@ -1066,10 +1065,8 @@ test.describe('file attachments', () => {
     await attachmentRow.locator(':scope > .row').first().hover();
     await expect(previewChevron).toHaveCSS('opacity', '1');
     await previewChevron.click();
-    await expect(attachmentRow).toHaveAttribute('aria-expanded', 'false');
-    await expect(attachmentRow.locator(':scope > .outline-source-preview-row')).toHaveCount(0);
-    await attachmentRow.locator(':scope > .row .row-chevron-button').click({ force: true });
-    await expect(attachmentRow).toHaveAttribute('aria-expanded', 'true');
+    await expect(attachmentRow.locator(':scope > .outline-source-preview-row .node-source-preview')).toBeVisible();
+    await previewChevron.click();
 
     const expandedProjection = await e2eProjection(page);
     const sourceEntry = sourceFieldEntries(expandedProjection, attachmentId)[0];
@@ -1080,7 +1077,29 @@ test.describe('file attachments', () => {
     await expect(attachmentRow.locator('.file-node-row-preview')).toHaveCount(0);
     const fieldName = row(page, sourceEntry!.id).locator('.field-name-input');
     await expect(fieldName).toHaveValue('URI');
-    await expect(fieldName).toHaveAttribute('readonly', '');
+    await expect(fieldName).not.toHaveAttribute('readonly', '');
+    await fieldName.focus();
+    await expect(fieldName).toBeFocused();
+
+    const ownerChildrenBeforeTitleEnter = expandedProjection.nodes
+      .find((node) => node.id === attachmentId)?.children.length ?? 0;
+    await rowEditor(page, attachmentId).click();
+    await page.keyboard.press('End');
+    await page.keyboard.press('Enter');
+    await expect.poll(async () => (
+      (await e2eProjection(page)).nodes.find((node) => node.id === attachmentId)?.children.length
+    )).toBe(ownerChildrenBeforeTitleEnter + 1);
+    const afterTitleEnter = await e2eProjection(page);
+    const childrenAfterTitleEnter = afterTitleEnter.nodes
+      .find((node) => node.id === attachmentId)?.children ?? [];
+    const createdAfterSourceId = childrenAfterTitleEnter[childrenAfterTitleEnter.indexOf(sourceEntry!.id) + 1];
+    expect(createdAfterSourceId).toBeTruthy();
+    await expect(rowEditor(page, createdAfterSourceId!)).toBeFocused();
+    await previewChevron.click();
+    await expect(row(page, createdAfterSourceId!)).toHaveCount(0);
+    await expect(attachmentRow.locator(':scope > .outline-source-preview-row .node-source-preview')).toBeVisible();
+    await previewChevron.click();
+    await expect(row(page, createdAfterSourceId!)).toBeVisible();
 
     const uriValueRow = row(page, sourceValue!.id);
     await expect(uriValueRow.locator(':scope > .row > .row-leading > .row-bullet-button')).toBeVisible();
@@ -1094,10 +1113,35 @@ test.describe('file attachments', () => {
       return sourceFieldValues(projection, attachmentId)[0]?.content.text;
     }).toBe('https://www.youtub.com/watch?v=abc123');
 
+    const ownerChildrenBeforeEnter = (await e2eProjection(page)).nodes
+      .find((node) => node.id === attachmentId)?.children.length ?? 0;
+    await fieldName.focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(async () => (
+      (await e2eProjection(page)).nodes.find((node) => node.id === attachmentId)?.children.length
+    )).toBe(ownerChildrenBeforeEnter + 1);
+    const afterFieldEnter = await e2eProjection(page);
+    const ownerChildren = afterFieldEnter.nodes.find((node) => node.id === attachmentId)?.children ?? [];
+    const createdAfterFieldId = ownerChildren[ownerChildren.indexOf(sourceEntry!.id) + 1];
+    expect(createdAfterFieldId).toBeTruthy();
+    await expect(rowEditor(page, createdAfterFieldId!)).toBeFocused();
+
+    await fieldName.focus();
+    await page.keyboard.press('Meta+A');
+    await page.keyboard.type('Stat');
+    const reusePopover = page.locator('.field-name-reuse-popover');
+    await expect(reusePopover.getByText('Status', { exact: true })).toBeVisible();
+    await reusePopover.getByText('Status', { exact: true }).click();
+    await expect.poll(async () => (
+      (await e2eProjection(page)).nodes.find((node) => node.id === sourceEntry!.id)?.fieldDefId
+    )).toBe(ids.statusField);
+
     await fieldName.focus();
     await fieldName.evaluate((element) => element.setSelectionRange(0, 0));
     await page.keyboard.press('Backspace');
-    await expect.poll(async () => sourceFieldEntries(await e2eProjection(page), attachmentId).length).toBe(0);
+    await expect.poll(async () => (
+      (await e2eProjection(page)).nodes.find((node) => node.id === attachmentId)?.children.includes(sourceEntry!.id)
+    )).toBe(false);
     await expect(row(page, attachmentId)).toBeVisible();
     expect(await todayChildren(page)).toHaveLength(beforeChildren.length + 1);
   });
