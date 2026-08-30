@@ -45,8 +45,8 @@ describe('URL Preview persistent session', () => {
       },
     } as unknown as PreviewSession;
 
-    configureUrlPreviewSession(previewSession);
-    configureUrlPreviewSession(previewSession);
+    const release = configureUrlPreviewSession(previewSession);
+    expect(configureUrlPreviewSession(previewSession)).toBe(release);
 
     expect(requestConfigCount).toBe(1);
     expect(checkConfigCount).toBe(1);
@@ -57,6 +57,13 @@ describe('URL Preview persistent session', () => {
     expect(requested).toEqual([true, true, false]);
     expect(checkHandler?.(null, 'fullscreen')).toBe(true);
     expect(checkHandler?.(null, 'geolocation')).toBe(false);
+
+    release();
+    release();
+    expect(requestConfigCount).toBe(2);
+    expect(checkConfigCount).toBe(2);
+    expect(requestHandler).toBeNull();
+    expect(checkHandler).toBeNull();
   });
 
   test('routes an HTTP GET new-window request back into the same guest', async () => {

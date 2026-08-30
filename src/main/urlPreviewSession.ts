@@ -21,11 +21,11 @@ type PreviewSession = Pick<
 
 type PreviewGuest = Pick<WebContents, 'isDestroyed' | 'loadURL'>;
 
-const configuredSessions = new WeakSet<object>();
+const configuredSessions = new WeakMap<object, () => void>();
 
-export function configureUrlPreviewSession(previewSession: PreviewSession): void {
-  if (configuredSessions.has(previewSession)) return;
-  configuredSessions.add(previewSession);
+export function configureUrlPreviewSession(previewSession: PreviewSession): () => void {
+  const existingRelease = configuredSessions.get(previewSession);
+  if (existingRelease) return existingRelease;
 
   previewSession.setPermissionRequestHandler((_contents, permission, callback) => {
     callback(isRendererPermissionAllowed(permission));
@@ -33,6 +33,16 @@ export function configureUrlPreviewSession(previewSession: PreviewSession): void
   previewSession.setPermissionCheckHandler((_contents, permission) => (
     isRendererPermissionAllowed(permission)
   ));
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    previewSession.setPermissionRequestHandler(null);
+    previewSession.setPermissionCheckHandler(null);
+    if (configuredSessions.get(previewSession) === release) configuredSessions.delete(previewSession);
+  };
+  configuredSessions.set(previewSession, release);
+  return release;
 }
 
 export function createUrlPreviewWindowOpenHandler(

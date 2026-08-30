@@ -224,6 +224,47 @@ and exact-revision coordinate, then ContentStore verifies the bytes. Electron
 main system actions consume that verified stream through a private
 materialization; the renderer never receives a ContentStore path.
 
+## Desktop Transport Ownership
+
+Electron main registers native transport through explicit capability owners.
+`registerMainTransport` remains in the current `main.ts` composition root and
+combines distinct owners for Outline, updates, actions, Agent/Memory/Automation,
+Source/assets/preview, windows/settings/launcher/providers, diagnostics, native
+files, and Agent resources. Each named registrar receives only the owned
+`handle`/`on` surface; channel names, payload decoders, sender admission, return
+values, and error envelopes remain the contracts of their existing handlers.
+
+The transport composition rejects duplicate IPC or protocol claims before they
+can replace a live handler. A registration failure rolls back every earlier
+registration in that owner, then the composition rolls back earlier owners.
+Disposal is idempotent, runs owners and their effects in reverse registration
+order, continues after an individual release failure, and reports the collected
+failures as one aggregate. IPC release uses `removeHandler` or `removeListener`;
+custom protocol release uses `unhandle` because protocol lifetime is distinct
+from IPC lifetime.
+
+Default-session permission/CSP handlers, the URL-preview partition permission
+handlers, the Automation resume listener, application lifecycle listeners,
+development parent-process signals/watchdog, and fatal process listeners also
+have explicit release paths. Window and WebContents listeners remain with the
+window or capability surface that creates them, so destroying that surface is
+their lifetime boundary. The pre-ready `registerSchemesAsPrivileged` declaration
+is retained bootstrap because Electron provides no corresponding unregister
+operation after readiness.
+
+Quit first disposes the combined runtime transport and records aggregate release
+failure without skipping the remaining service flush/close sequence. Fatal error
+listeners remain installed through that service close sequence and are removed
+at the end of teardown.
+Startup failure disposes any partially completed main transport before exiting.
+
+The tracked `scripts/host-composition-audit/` driver pins the exact dependency-tip
+commit and tree, enumerates the complete `src/main/**/*.ts` baseline directly
+from Git, and generates its inventory and disposition ledger. Current reports are
+derived under `tmp/host-composition-audit/`; the transport slice is complete only
+when both unowned and duplicate queues are empty. Later Host composition work
+extends this same baseline rather than regenerating history from a newer tree.
+
 ## Command Flow
 
 ```txt

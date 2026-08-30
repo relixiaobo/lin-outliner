@@ -63,7 +63,7 @@ describe('URL preview webview security posture', () => {
     expect(MAIN_SRC).toContain('params.partition = URL_PREVIEW_WEBVIEW_PARTITION');
     expect(MAIN_SRC).not.toContain('params.partition !== URL_PREVIEW_WEBVIEW_PARTITION');
     expect(MAIN_SRC).toContain('webContents.session !== urlPreviewSession');
-    expect(MAIN_SRC).toContain('configureUrlPreviewSession(urlPreviewSession)');
+    expect(MAIN_SRC).toContain('owner.add(configureUrlPreviewSession(previewSession))');
     expect(URL_PREVIEW_SESSION_CORE_SRC).toContain("'persist:url-preview'");
     expect(URL_PREVIEW_SESSION_MAIN_SRC).toContain('previewSession.setPermissionRequestHandler');
     expect(URL_PREVIEW_SESSION_MAIN_SRC).toContain('previewSession.setPermissionCheckHandler');
