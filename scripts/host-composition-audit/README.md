@@ -20,11 +20,26 @@ missing baseline transport effects: 0
 unowned domain constructions: 0
 duplicate domain constructions: 0
 missing domain constructions: 0
+unowned platform constructions: 0
+mismatched platform constructions: 0
+unowned platform effects: 0
+mismatched platform effects: 0
 ```
 
 Domain constructions are collected across the complete current `src/main` tree;
 only the typed Host files assign an owner. A required construction outside those
 files therefore fails as unowned and also participates in duplicate detection.
+Platform constructions are collected across the complete current tree and then
+checked against a path-scoped manifest with explicit expected counts. The three
+application window constructors, launcher constructor, and two retained Agent
+web-capability windows remain distinct legitimate owners while any additional
+managed construction still fails.
+Resource/session effects belong to `resource-preview-host`; window, update,
+action, menu, hotkey, listener, and timer effects belong to
+`window-application-host`. The effect manifest pins path-and-kind counts, while
+the unowned queue catches duplicate effect identities outside those owners.
+Listener and timer duplicate identities include the complete call arguments, so
+different callbacks or delay policies do not collide.
 
 Reports are written to `tmp/host-composition-audit/`. To reproduce in a GitHub
 single-branch clone, fetch the PR branch normally; the pinned baseline is its

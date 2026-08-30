@@ -1,12 +1,10 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, protocol, shell } from 'electron';
 import type { IpcMainInvokeEvent, NativeImage } from 'electron';
-import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
-import { mkdir, open, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, extname, join, resolve } from 'node:path';
+import { open, readFile, stat, writeFile } from 'node:fs/promises';
+import { basename, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pathToFileURL } from 'node:url';
 import { registerDesktopOutlineIpc } from './outlineClient';
 import { runOutlineActionCommand } from './outlineActionCommands';
 import { AppQuitCoordinator, type QuitDecision } from './appQuitCoordinator';
@@ -47,7 +45,6 @@ import {
   type AgentLocalWorkspaceContext,
   type AgentWorkspaceWriteBoundary,
 } from './agent/capabilities/agentLocalTools';
-import { AgentWorktree } from './agent/worktree/AgentWorktree';
 import type { AgentImageGenerationRuntime } from './agent/capabilities/agentImageGenerationTool';
 import {
   piFindImageModel,
@@ -60,7 +57,6 @@ import type {
   AgentCoreRequestByMethod,
   SubagentExecutionProjection,
   ThreadAttachmentContent,
-  ThreadUserContent,
   ThreadMessageContextMenuAction,
   ThreadMessageContextMenuRequest,
 } from '../core/agent/protocol';
@@ -78,65 +74,24 @@ import {
   ManagedSkillServiceError,
   managedSkillErrorView,
 } from './managedSkillService';
-import { isRendererPermissionAllowed } from './rendererPermissions';
-import {
-  clearUrlPreviewSessionData,
-  configureUrlPreviewSession,
-  createUrlPreviewWindowOpenHandler,
-  flushUrlPreviewSession,
-} from './urlPreviewSession';
-import { MAC_TRAFFIC_LIGHT_POSITION, MAC_WINDOW_CORNER_RADIUS } from '../core/chromeGeometry';
-import { windowMaterialKind } from '../core/windowMaterial';
-import { applyMacWindowCorner } from './nativeWindowCorner';
-import {
-  LIN_SETTINGS_CHANGED_CHANNEL,
-  LIN_SETTINGS_NAVIGATE_CHANNEL,
-  SETTINGS_ANCHOR_PARAM,
-  SETTINGS_CATEGORY_PARAM,
-  PROVIDER_CONFIG_MODE_PARAM,
-  PROVIDER_CONFIG_PROVIDER_PARAM,
-  WINDOW_SURFACE_QUERY_PARAM,
-  isSettingsAnchorTarget,
-  isSettingsCategoryTarget,
-  isSettingsPageTarget,
-  settingsTargetPath,
-  type ProviderConfigMode,
-  type SettingsOpenTarget,
-} from '../core/settingsWindow';
-import { LIN_WINDOW_ACTIVE_CHANNEL } from '../core/windowActivity';
+import type { ProviderConfigMode } from '../core/settingsWindow';
 import {
   ASSET_URL_SCHEME,
   PREVIEW_LOCAL_URL_SCHEME,
   assetIdFromUrl,
   previewLocalUrl,
 } from '../core/assets';
-import { normalizePreviewHttpUrl } from '../core/preview';
-import { officeOwnershipFileInfo } from '../core/officeFiles';
 import {
   isUrlPageTranslationCommand,
-  isUrlPageTranslationPreferences,
   LIN_CLEAR_PREVIEW_TRANSLATION_CACHE_CHANNEL,
-  LIN_URL_PAGE_TRANSLATION_PREFERENCES_CHANGED_CHANNEL,
-  LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL,
-  type ClearPreviewTranslationCacheResult,
-  type UrlPageTranslationPreferences,
 } from '../core/urlPageTranslation';
 import { LIN_URL_PAGE_TRANSLATION_GUEST_CHANNEL } from '../core/urlPageTranslationGuest';
 import {
-  httpReferrerForUrlPreview,
   LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL,
-  URL_PREVIEW_WEBVIEW_PARTITION,
-  type ClearUrlPreviewDataResult,
 } from '../core/urlPreviewSession';
 import { handlePreviewCommand } from './previewSource';
-import { LinkedFileGrantStore } from './linkedFileGrantStore';
 import { ingestThreadResourceAsset } from './threadResourceAssetIngest';
-import { PageTranslationService, pageTranslationErrorReport } from './pageTranslation';
-import { PreviewTranslationCacheStore } from './previewTranslationCacheStore';
-import { clearPreviewTranslationCacheFromSettings } from './previewTranslationCacheClear';
 import { executeUrlPageTranslationGuestCommand } from './urlPageTranslationGuest';
-import { setBoundedMapEntry } from './boundedMap';
-import { LocalFilePreviewStreamRegistry } from './localFilePreviewStream';
 import {
   LIN_AGENT_OAUTH_EVENT_CHANNEL,
   DAILY_NOTES_ID,
@@ -191,12 +146,9 @@ import {
   isPreviewCommand,
   type AgentCommand,
   type AssetCommand,
-  type PreviewCommand,
 } from '../core/commands';
 import { oauthLoginManager } from './agent/capabilities/agentOAuthManager';
 import { IPC_TRACE_ENABLED, traceIpc } from './ipcTrace';
-import { resolveRipgrepCommand } from './agent/capabilities/agentRipgrep';
-import { buildAgentLocalToolProcessEnv } from './agent/capabilities/agentToolProcess';
 import type {
   AgentImageGenerationSettingsInput,
   AgentProviderConfigInput,
@@ -205,23 +157,12 @@ import type {
   AgentProviderSettingsView,
   ManagedSkillCommandResult,
 } from '../core/types';
-import { loadWindowState, trackWindowState } from './windowState';
 import {
   clearLastAgentThreadConfiguration,
   loadAppPreferences,
   saveLastAgentThreadConfiguration,
-  saveLanguagePreference,
-  saveThemePreference,
-  saveTranslationLanguagePreference,
-  saveUrlPageTranslationPreferences,
 } from './appPreferences';
-import { isThemeMode, type ThemeMode } from '../core/theme';
-import { isLocale, LIN_LANGUAGE_CHANGED_CHANNEL, resolveSystemLocale, type Locale } from '../core/locale';
-import {
-  isTranslationLanguage,
-  LIN_TRANSLATION_LANGUAGE_CHANGED_CHANNEL,
-  type TranslationLanguage,
-} from '../core/translationLanguage';
+import type { ThemeMode } from '../core/theme';
 import { getMessages } from '../core/i18n';
 import { APP_NAME } from '../core/brand';
 import {
@@ -230,66 +171,27 @@ import {
   MAX_PROMPT_IMAGE_BYTES,
   MAX_PROMPT_IMAGE_DIMENSION,
 } from '../core/agentAttachmentLimits';
-import { safeAttachmentFileName } from '../core/agentAttachmentPaths';
 import { isPathInside } from './agent/capabilities/agentAttachmentMaterialization';
 import {
-  isSafeLocalFileOpenTarget,
-  resolveTrustedLocalFileReference,
-  type TrustedLocalFileReference,
-} from './localFileReferenceSecurity';
-import {
-  createLauncherWindow,
-  getLauncherWindow,
-  hideLauncherWindow,
-  showLauncherWindow,
-} from './launcher/launcherWindow';
-import { registerLauncherHotkey, unregisterLauncherHotkeys } from './launcher/launcherHotkey';
-import { ActionInvocationService, type RendererStepAck } from './actionInvocationService';
-import {
-  APP_RENDERER_CAPABILITIES,
-  LAUNCHER_RENDERER_CAPABILITIES,
-  registerRendererCapabilities,
   rendererHasCapability,
 } from './rendererCapabilities';
-import type { EffectStep } from '../core/actions/bindings';
 import {
-  ACTION_AMBIENT_CHANGED_CHANNEL,
-  ACTION_AMBIENT_SEED_REQUEST_CHANNEL,
   ACTION_AMBIENT_SEED_RESPONSE_CHANNEL,
-  ACTION_AMBIENT_SEED_TIMEOUT_MS,
   ACTION_EVENT_CHANNEL,
   ACTION_OBJECT_QUERY_CHANNEL,
   ACTION_OPEN_CHANNEL,
-  ACTION_OPENED_CHANNEL,
   ACTION_PARAMETER_QUERY_CHANNEL,
   ACTION_REQUEST_CHANNEL,
   ACTION_STEP_ACK_CHANNEL,
-  ACTION_STEP_ACK_TIMEOUT_MS,
-  ACTION_STEP_CHANNEL,
-  type ActionStepAck,
 } from '../core/actions/transport';
 import type {
   ActionRequest,
   InvocationEvent,
-  InvocationRef,
   InvocationSeed,
   ObjectQueryRequest,
   ParameterObjectQueryRequest,
 } from '../core/actions/types';
-import {
-  LAUNCHER_REMEDIATION_CHANNEL,
-  LAUNCHER_NAVIGATE_TO_NODE_CHANNEL,
-  type LauncherInitialState,
-} from '../core/launcher/commands';
-import { remediationForContext } from '../core/launcher/remediation';
-import { externalPageLabel } from '../core/actions/registry';
-import { rankTextSearchLabel } from '../core/textSearchAnalyzer';
-import { captureExternalContext } from './context/contextCapture';
-import { isAccessibilityTrusted, promptAccessibility } from './context/nativeBrowserTab';
-import { getFrontmostApp } from './context/providers/browser';
-import type { FrontmostApp } from './context/providers/browser';
-import type { ExternalContext } from '../core/launcher/context';
-import type { SearchHit } from '../core/types';
+import type { LauncherInitialState } from '../core/launcher/commands';
 import {
   hasExplicitAgentLocalRoot,
   resolveAgentScratchRoot,
@@ -298,15 +200,12 @@ import {
 import { DiagnosticLogStore } from './diagnosticLog';
 import { resolveUserDataDir } from './userDataPath';
 import {
-  LIN_APP_UPDATE_CHANGED_CHANNEL,
   LIN_APP_UPDATE_CHECK_CHANNEL,
   LIN_APP_UPDATE_GET_CHANNEL,
   LIN_APP_UPDATE_OPEN_CHANNEL,
   LIN_APP_UPDATE_SET_AUTOMATIC_CHANNEL,
   type AppUpdateView,
 } from '../core/appUpdate';
-import { AppUpdateStore } from './appUpdateStore';
-import { AppUpdateService } from './appUpdateService';
 import {
   HostTransportComposition,
   createTransportOwner,
@@ -316,6 +215,9 @@ import {
 } from './hostTransport/ownership';
 import { createOutlineDesktopHost } from './hostDomain/outlineDesktopHost';
 import { createAgentHost } from './hostDomain/agentHost';
+import { createResourcePreviewHost } from './hostPlatform/resourcePreviewHost';
+import type { LocalFileOperationInput } from './hostPlatform/nativeLocalFileHost';
+import { createWindowApplicationHost } from './hostPlatform/windowApplicationHost';
 
 // App identity for menus / "About" / notifications. Kept deliberately separate
 // from the userData directory, which we resolve EXPLICITLY below instead of
@@ -436,60 +338,8 @@ const {
   assetExportRoot: outlineAssetExportRoot,
 } = outlineHost;
 
-let mainWindow: BrowserWindow | null = null;
-let settingsWindow: BrowserWindow | null = null;
-let providerConfigWindow: BrowserWindow | null = null;
-const appUpdateStore = new AppUpdateStore(resolvedUserDataDir, {
-  onError: (error, operation) => reportError({
-    domain: 'app-update',
-    severity: 'warn',
-    code: `app-update-store-${operation}`,
-    message: `App update state ${operation} failed`,
-    context: { operation },
-    error,
-  }),
-});
-const appUpdateService = new AppUpdateService({
-  currentVersion: app.getVersion(),
-  defaultAutomaticChecksEnabled: app.isPackaged,
-  store: appUpdateStore,
-  openExternal: (url) => shell.openExternal(url),
-  onChanged: (view) => {
-    const target = liveWindow(settingsWindow);
-    if (target && !target.webContents.isDestroyed()) {
-      target.webContents.send(LIN_APP_UPDATE_CHANGED_CHANNEL, view);
-    }
-  },
-  onError: (error, operation) => reportError({
-    domain: 'app-update',
-    severity: 'warn',
-    code: `app-update-${operation}`,
-    message: `App update ${operation} failed`,
-    context: { operation },
-    error,
-  }),
-});
-let urlPreviewSession: Electron.Session | null = null;
-const urlPreviewGuests = new Set<Electron.WebContents>();
 let quitCoordinator: AppQuitCoordinator;
 let mainTransport: TransportOwner | null = null;
-let lastAttachmentPickerDirectory: string | null = null;
-const DEFAULT_ATTACHMENT_PICKER_LIMIT = 6;
-const DEFAULT_LOCAL_FILE_SEARCH_LIMIT = 8;
-const DEFAULT_RECENT_LOCAL_FILE_LIMIT = 6;
-const LOCAL_FILE_SEARCH_TIMEOUT_MS = 1200;
-const LOCAL_FILE_ICON_TIMEOUT_MS = 250;
-const LOCAL_FILE_ICON_SIZE: Electron.FileIconOptions['size'] = 'normal';
-const LOCAL_FILE_PREVIEW_TIMEOUT_MS = 1600;
-const LOCAL_FILE_THUMBNAIL_TIMEOUT_MS = 350;
-const LOCAL_FILE_THUMBNAIL_SIZE = 512;
-const RECENT_LOCAL_FILE_TIMEOUT_MS = 900;
-const LOCAL_FILE_CACHE_LIMIT = 1000;
-const localFileSearchCache = new Map<string, string>();
-const localFileIconCache = new Map<string, string | null>();
-const localFileThumbnailCache = new Map<string, string | null>();
-const pendingLocalFileIconLoads = new Map<string, Promise<string | null>>();
-const pendingLocalFileThumbnailLoads = new Map<string, Promise<string | null>>();
 const agentLocalFileRoot = resolveAgentWorkdir({
   envLocalRoot: process.env.LIN_AGENT_LOCAL_ROOT,
   userDataPath: app.getPath('userData'),
@@ -511,6 +361,14 @@ if (!hasExplicitAgentLocalRoot(process.env.LIN_AGENT_LOCAL_ROOT)) {
   ensureAgentDir(agentLocalFileRoot);
 }
 ensureAgentDir(agentScratchRoot);
+const resourcePreviewHost = createResourcePreviewHost({
+  userDataDir: resolvedUserDataDir,
+  rendererDevUrl: process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL,
+  previewRoots: () => [agentLocalFileRoot, agentScratchRoot, outlineAssetExportRoot],
+  localFileRoots: () => [agentLocalFileRoot, agentScratchRoot],
+  resolveAttachmentFile: (threadId, attachmentId) => agentHost.threads.resolveAttachmentFile(threadId, attachmentId),
+  reportError,
+});
 // An available Skill update should be visible without going looking for it, but
 // nothing about that is urgent enough to spend the launch path on. So: one
 // throttled sweep per launch, deferred until after first paint, fire-and-forget.
@@ -536,7 +394,7 @@ function scheduleManagedSkillUpdateCheck(): void {
 
 function scheduleAppUpdateCheck(): void {
   const timer = setTimeout(() => {
-    void appUpdateService.checkInBackground();
+    void windowApplicationHost.updates.checkInBackground();
   }, APP_UPDATE_STARTUP_DELAY_MS);
   timer.unref?.();
 }
@@ -623,7 +481,7 @@ const agentHost = createAgentHost({
     reportError,
     writeTrajectoryExport: async ({ defaultFileName, bundle }) => {
       try {
-        const window = mainWindow ?? BrowserWindow.getFocusedWindow();
+        const window = windowApplicationHost.windows.main() ?? BrowserWindow.getFocusedWindow();
         const result = window
           ? await dialog.showSaveDialog(window, {
               defaultPath: join(app.getPath('desktop'), defaultFileName),
@@ -813,6 +671,20 @@ const agentHost = createAgentHost({
   },
   validateAutomationConfiguration: validateAutomationEffectiveConfiguration,
 });
+const windowApplicationHost = createWindowApplicationHost({
+  userDataDir: resolvedUserDataDir,
+  moduleDir: __dirname,
+  appIconPath: APP_ICON_PNG_PATH,
+  rendererDevUrl: resourcePreviewHost.rendererDevUrl,
+  hardenWebContents: resourcePreviewHost.hardenWebContents,
+  disposeTranslation: resourcePreviewHost.translation.dispose,
+  releaseOutlineRenderer: outlineHost.renderer.releaseOwner,
+  projection: () => outlineHost.document.liveProjection(),
+  runActionCommand: (command, args) => runOutlineActionCommand(outlineHost.document, command, args),
+  searchNodes: (query, limit) => outlineHost.document.searchNodeHits(query, limit),
+  sanitizeInvocationSeed,
+  reportError,
+});
 function parseSkillReasoningEffort(value: string): ReasoningEffort {
   const normalized = value.trim().toLowerCase();
   if ((REASONING_EFFORTS as readonly string[]).includes(normalized)) return normalized as ReasoningEffort;
@@ -845,7 +717,7 @@ agentHost.threads.subscribe((notification) => {
   if (notification.type === 'subagent/execution/changed') {
     notifyTerminalBackgroundAgent(notification.execution);
   }
-  liveWindow(mainWindow)?.webContents.send(AGENT_CORE_NOTIFICATION_CHANNEL, notification);
+  windowApplicationHost.windows.main()?.webContents.send(AGENT_CORE_NOTIFICATION_CHANNEL, notification);
 });
 
 /**
@@ -873,7 +745,7 @@ function notifyTerminalBackgroundAgent(execution: SubagentExecutionProjection): 
   if (execution.runMode !== 'background' || execution.terminalStatus === null) return;
   const key = `${execution.agentId}:${execution.generation}`;
   if (announcedAgentGenerations.has(key)) return;
-  const window = liveWindow(mainWindow);
+  const window = windowApplicationHost.windows.main();
   // No window yet — the terminal write landed during startup — is the one case
   // that must NOT be marked: there was nobody to tell, and the generation can
   // still be announced once a window exists.
@@ -892,14 +764,14 @@ function notifyTerminalBackgroundAgent(execution: SubagentExecutionProjection): 
   try {
     new Notification({
       title: APP_NAME,
-      body: getMessages(effectiveLocale()).agent.thread.agent.backgroundFinished,
+      body: getMessages(windowApplicationHost.effectiveLocale()).agent.thread.agent.backgroundFinished,
     }).show();
   } catch (error) {
     console.warn('[agent] Background Agent notification unavailable', error);
   }
 }
 agentHost.automations.subscribe((notification) => {
-  liveWindow(mainWindow)?.webContents.send(AUTOMATION_NOTIFICATION_CHANNEL, notification);
+  windowApplicationHost.windows.main()?.webContents.send(AUTOMATION_NOTIFICATION_CHANNEL, notification);
 });
 
 function createThreadImageGenerationRuntime(
@@ -996,1265 +868,8 @@ function generatedImageExtension(mimeType: string): string {
   return '.png';
 }
 
-const previewTranslationCache = new PreviewTranslationCacheStore(
-  join(app.getPath('userData'), 'preview-translation-cache'),
-  {
-    onError: (operation) => reportError({
-      domain: 'page-translation',
-      severity: 'warn',
-      code: `preview-translation-cache-${operation}-failed`,
-      message: 'Preview translation cache operation failed.',
-      context: { operation: `translation-cache-${operation}` },
-    }),
-  },
-);
-const pageTranslationService = new PageTranslationService({
-  cache: previewTranslationCache,
-  onError: () => reportError(pageTranslationErrorReport()),
-});
-const localFilePreviewStreams = new LocalFilePreviewStreamRegistry(() => [
-  agentLocalFileRoot,
-  agentScratchRoot,
-  outlineAssetExportRoot,
-]);
-const linkedFileGrants = new LinkedFileGrantStore(join(resolvedUserDataDir, 'linked-file-grants.json'));
-
 outlineHost.observeProjection(({ event, update }) => {
   agentHost.projectionChanged(update, event.operation);
-});
-
-// ─── Security shell (the native host owns navigation + capabilities) ───
-
-const RENDERER_DEV_URL = process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL;
-const RENDERER_DEV_ORIGIN = RENDERER_DEV_URL ? safeOrigin(RENDERER_DEV_URL) : null;
-const RENDERER_SCRIPT_SRC = "script-src 'self'";
-// Hash of @vitejs/plugin-react's dev preamble for base "/". Recompute if the
-// plugin changes that injected module script.
-const VITE_REACT_REFRESH_PREAMBLE_CSP_HASH =
-  "'sha256-Z2/iFzh9VMlVkEOar1f/oSHWwQk3ve1qk/C2WdsC4Xk='";
-
-// The renderer is locked to its own resources.
-// 'unsafe-inline' styles cover Shiki's inline color spans + React style props;
-// remote http(s) is allowed only as <img>/<video> sources. The renderer makes
-// no direct network calls (everything else goes through IPC) and runs no
-// WebAssembly (loro-crdt lives in the main process), so script-src and
-// connect-src stay tight.
-const RENDERER_CSP_DIRECTIVES = [
-  "default-src 'self'",
-  RENDERER_SCRIPT_SRC,
-  "style-src 'self' 'unsafe-inline'",
-  `img-src 'self' data: blob: https: http: ${ASSET_URL_SCHEME}: ${PREVIEW_LOCAL_URL_SCHEME}:`,
-  `media-src 'self' data: blob: https: http: ${ASSET_URL_SCHEME}: ${PREVIEW_LOCAL_URL_SCHEME}:`,
-  "font-src 'self' data:",
-  "object-src 'none'",
-  // EPUB preview renders book sections in blob: iframes; packaged script-src
-  // stays 'self', while dev admits only Vite's hashed React-refresh preamble.
-  "frame-src blob:",
-  "base-uri 'self'",
-  "form-action 'none'",
-];
-
-const RENDERER_DEV_CSP_DIRECTIVES = RENDERER_CSP_DIRECTIVES.map((directive) =>
-  directive === RENDERER_SCRIPT_SRC
-    ? `${RENDERER_SCRIPT_SRC} ${VITE_REACT_REFRESH_PREAMBLE_CSP_HASH}`
-    : directive,
-);
-
-const RENDERER_CSP = [
-  ...RENDERER_CSP_DIRECTIVES,
-  `connect-src 'self' ${ASSET_URL_SCHEME}: ${PREVIEW_LOCAL_URL_SCHEME}:`,
-].join('; ');
-
-const RENDERER_DEV_CSP = RENDERER_DEV_ORIGIN ? [
-  ...RENDERER_DEV_CSP_DIRECTIVES,
-  `connect-src 'self' ${ASSET_URL_SCHEME}: ${PREVIEW_LOCAL_URL_SCHEME}: ${RENDERER_DEV_ORIGIN} ${RENDERER_DEV_ORIGIN.replace(/^http/i, 'ws')}`,
-].join('; ') : null;
-
-function safeOrigin(url: string): string | null {
-  try {
-    return new URL(url).origin;
-  } catch {
-    return null;
-  }
-}
-
-// Only http(s) may reach the OS browser — never file:// or a custom scheme.
-function openExternalUrl(url: string): boolean {
-  if (!/^https?:\/\//i.test(url)) return false;
-  void shell.openExternal(url).catch(() => {});
-  return true;
-}
-
-function isAppDocumentUrl(url: string): boolean {
-  if (url.startsWith('file:')) return true; // packaged renderer
-  return RENDERER_DEV_ORIGIN != null && safeOrigin(url) === RENDERER_DEV_ORIGIN; // vite dev
-}
-
-// The renderer is a fixed local surface. Block any attempt to navigate it away
-// (clicked links, injected redirects) or to spawn child windows; real http(s)
-// links open in the OS browser instead.
-function hardenWebContents(contents: Electron.WebContents) {
-  contents.setWindowOpenHandler(({ url }) => {
-    openExternalUrl(url);
-    return { action: 'deny' };
-  });
-  const guardNavigation = (event: Electron.Event, url: string) => {
-    if (isAppDocumentUrl(url)) return;
-    event.preventDefault();
-    openExternalUrl(url);
-  };
-  contents.on('will-navigate', guardNavigation);
-  contents.on('will-redirect', guardNavigation);
-  contents.on('will-attach-webview', (event, webPreferences, params) => {
-    const src = typeof params.src === 'string' ? params.src : '';
-    const normalizedSrc = normalizePreviewHttpUrl(src);
-    if (!normalizedSrc) {
-      event.preventDefault();
-      return;
-    }
-    delete params.preload;
-    delete params.webpreferences;
-    delete params.httpreferrer;
-    delete webPreferences.preload;
-    webPreferences.contextIsolation = true;
-    webPreferences.nodeIntegration = false;
-    webPreferences.nodeIntegrationInSubFrames = false;
-    webPreferences.nodeIntegrationInWorker = false;
-    webPreferences.partition = URL_PREVIEW_WEBVIEW_PARTITION;
-    webPreferences.sandbox = true;
-    webPreferences.webSecurity = true;
-    webPreferences.allowRunningInsecureContent = false;
-    webPreferences.plugins = false;
-    webPreferences.safeDialogs = true;
-    webPreferences.disableDialogs = true;
-    webPreferences.navigateOnDragDrop = false;
-    params.partition = URL_PREVIEW_WEBVIEW_PARTITION;
-    params.src = normalizedSrc;
-    const trustedHttpReferrer = httpReferrerForUrlPreview(normalizedSrc);
-    if (trustedHttpReferrer) params.httpreferrer = trustedHttpReferrer;
-  });
-  contents.on('did-attach-webview', (_event, webContents) => {
-    if (!urlPreviewSession || webContents.session !== urlPreviewSession) {
-      webContents.close();
-      return;
-    }
-    urlPreviewGuests.add(webContents);
-    webContents.once('destroyed', () => urlPreviewGuests.delete(webContents));
-    webContents.setWindowOpenHandler(createUrlPreviewWindowOpenHandler(webContents, (error) => {
-      reportError({
-        domain: 'url-preview',
-        severity: 'warn',
-        code: 'url-preview-popup-navigation',
-        message: 'URL Preview could not route a new-window request in place',
-        context: { operation: 'popup-navigation' },
-        error,
-      });
-    }));
-    const guardWebviewNavigation = (event: Electron.Event, url: string) => {
-      if (normalizePreviewHttpUrl(url)) return;
-      event.preventDefault();
-    };
-    webContents.on('will-navigate', guardWebviewNavigation);
-    webContents.on('will-redirect', guardWebviewNavigation);
-    webContents.on('before-input-event', (event, input) => {
-      const isTranslationShortcut = input.type === 'keyDown'
-        && !input.isAutoRepeat
-        && input.alt
-        && !input.control
-        && !input.meta
-        && !input.shift
-        && (input.code === 'KeyA' || input.key.toLowerCase() === 'a');
-      if (!isTranslationShortcut) return;
-      event.preventDefault();
-      if (!contents.isDestroyed()) {
-        contents.send(LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL, webContents.id);
-      }
-    });
-  });
-}
-
-function configureSessionSecurity(): () => void {
-  const ses = session.defaultSession;
-  ses.setPermissionRequestHandler((_contents, permission, callback) => {
-    callback(isRendererPermissionAllowed(permission));
-  });
-  ses.setPermissionCheckHandler((_contents, permission) => isRendererPermissionAllowed(permission));
-  // Enforce CSP on app renderer documents. Dev admits only Vite React refresh's
-  // exact inline preamble by hash and widens connect-src for Vite HMR.
-  ses.webRequest.onHeadersReceived((details, callback) => {
-    if (details.resourceType !== 'mainFrame') {
-      callback({});
-      return;
-    }
-    const csp = details.url.startsWith('file:')
-      ? RENDERER_CSP
-      : RENDERER_DEV_ORIGIN && safeOrigin(details.url) === RENDERER_DEV_ORIGIN
-        ? RENDERER_DEV_CSP
-        : null;
-    if (!csp) {
-      callback({});
-      return;
-    }
-    callback({
-      responseHeaders: {
-        ...details.responseHeaders,
-        'Content-Security-Policy': [csp],
-      },
-    });
-  });
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    ses.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
-    ses.setPermissionCheckHandler(() => false);
-  };
-}
-
-// Opaque pre-paint frame colour for non-material windows. Mirrors the renderer
-// deck colour per OS scheme (light `--bg-window` = #ececec, dark #2a2a2c) so a
-// launch never flashes a mismatched backing behind the first paint. Dark/light
-// follows the OS via @media (prefers-color-scheme) in the renderer (no
-// [data-theme] bridge), so this only backs the window before React mounts;
-// keeping it scheme-matched to --bg-window closes the residual seam.
-function prePaintBackgroundColor(): string {
-  return nativeTheme.shouldUseDarkColors ? '#2a2a2c' : '#ececec';
-}
-
-// Native right-click menu (design-system B10 — native OS menus, not a web-style
-// context menu). The renderer's command menus (NodeContextMenu, tag menus, the
-// page-title menu) already call event.preventDefault() on the DOM contextmenu
-// event in the regions they own, and Electron only emits this main-process
-// 'context-menu' event when the renderer did NOT preventDefault (verified on
-// Electron 42). So this never double-pops over a custom React menu — it fires
-// only for the bare right-clicks those menus leave alone: an editable field
-// (e.g. the agent composer) gets the text-editing menu (with spelling
-// suggestions when the word is flagged), a text selection gets Copy, and inert
-// chrome gets nothing at all.
-function attachNativeContextMenu(contents: Electron.WebContents): void {
-  contents.on('context-menu', (_event, params) => {
-    const template: Electron.MenuItemConstructorOptions[] = [];
-
-    if (params.isEditable) {
-      if (params.misspelledWord && params.dictionarySuggestions.length > 0) {
-        for (const suggestion of params.dictionarySuggestions) {
-          template.push({ label: suggestion, click: () => contents.replaceMisspelling(suggestion) });
-        }
-        template.push({
-          label: getMessages(effectiveLocale()).menu.addToDictionary,
-          click: () => contents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
-        });
-        template.push({ type: 'separator' });
-      }
-      template.push(
-        { role: 'undo' },
-        { role: 'redo' },
-        { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
-        { role: 'pasteAndMatchStyle' },
-        { role: 'delete' },
-        { type: 'separator' },
-        { role: 'selectAll' },
-      );
-    } else if (params.selectionText.trim().length > 0) {
-      template.push({ role: 'copy' });
-    }
-
-    if (template.length === 0) return;
-    const window = BrowserWindow.fromWebContents(contents);
-    Menu.buildFromTemplate(template).popup(window ? { window } : {});
-  });
-}
-
-// Forward the window's OS focus state to its renderer so the chrome can
-// desaturate while the window is inactive — the macOS convention where an
-// unfocused window's toolbars / sidebars lose their tint. This is UI state, not
-// a document mutation, so it rides its own channel (see core/windowActivity.ts).
-function forwardWindowActivity(window: BrowserWindow): void {
-  const send = (active: boolean) => {
-    if (window.isDestroyed()) return;
-    window.webContents.send(LIN_WINDOW_ACTIVE_CHANNEL, active);
-  };
-  window.on('focus', () => send(true));
-  window.on('blur', () => send(false));
-  // Seed the initial state once the renderer is listening, so a window that
-  // launches unfocused starts correct without waiting for the first toggle.
-  window.webContents.on('did-finish-load', () => send(window.isFocused()));
-}
-
-// The effective UI language: the user's explicit pick, else the nearest supported
-// OS locale (core/locale.ts). Cached in-memory because the ~8 hot-path callers
-// (right-click context menu, every window create, launcher node-search, menu rebuild)
-// would otherwise each do a sync readFileSync + JSON.parse for a value that only
-// changes via lin:set-language. That handler refreshes the cache to the broadcast
-// value — the in-session source of truth, the same way theme rides
-// nativeTheme.themeSource in memory rather than re-reading the file. The OS locale is
-// fixed for the session, so first read resolves it once.
-let cachedLocale: Locale | null = null;
-function effectiveLocale(): Locale {
-  cachedLocale ??= loadAppPreferences().language ?? resolveSystemLocale(app.getLocale());
-  return cachedLocale;
-}
-
-function effectiveTranslationLanguage(): TranslationLanguage {
-  return loadAppPreferences().translationLanguage ?? effectiveLocale();
-}
-
-function urlPageTranslationPreferences(): UrlPageTranslationPreferences {
-  const { translationModel, autoTranslateEpubs, autoTranslateUrls } = loadAppPreferences();
-  return { translationModel, autoTranslateEpubs, autoTranslateUrls };
-}
-
-// Standard application menu (A2b). macOS gets the conventional App / Edit / View
-// / Window / Help bar with Preferences on Cmd+,; other platforms drop the App
-// menu and surface Settings under File (no app menu exists there). Dev-only View
-// items (reload, devtools) are gated on a source run.
-//
-// Roles still carry the native behavior, accelerators, and enable state, but a
-// role's *label* defaults to the OS language, not the app's. So we expand the
-// role-based bars (Edit / Window) into explicit role+label items and give View's
-// standard items + the Help-menu title explicit labels too — the whole bar then
-// follows the effective locale (PM decision 2026-06-04: in-app language wins over
-// the macOS-native OS-language convention, since we expose an in-app picker). The
-// lone exception is `togglefullscreen`: its role title is dynamic ("Enter" vs
-// "Exit Full Screen"), which a static label would freeze, so it stays role-only.
-// The menu is rebuilt on language change (see the set-language IPC).
-function buildApplicationMenu(): Electron.Menu {
-  const isMac = process.platform === 'darwin';
-  const isDev = !app.isPackaged;
-  const t = getMessages(effectiveLocale()).menu;
-
-  const viewSubmenu: Electron.MenuItemConstructorOptions[] = [
-    ...(isDev
-      ? ([
-          { role: 'reload', label: t.reload },
-          { role: 'forceReload', label: t.forceReload },
-          { role: 'toggleDevTools', label: t.toggleDevTools },
-          { type: 'separator' },
-        ] satisfies Electron.MenuItemConstructorOptions[])
-      : []),
-    { role: 'resetZoom', label: t.resetZoom },
-    { role: 'zoomIn', label: t.zoomIn },
-    { role: 'zoomOut', label: t.zoomOut },
-    { type: 'separator' },
-    // role-only by design: keeps macOS's dynamic "Enter/Exit Full Screen" title.
-    { role: 'togglefullscreen' },
-  ];
-
-  const template: Electron.MenuItemConstructorOptions[] = [];
-
-  if (isMac) {
-    // macOS draws some app-menu strings itself, from the running bundle, NOT from
-    // this template:
-    //   • the bold app-menu title and the ⌘, Settings item are OS-managed — in a
-    //     dev run (Electron.app, CFBundleName "Electron") they read "Electron" /
-    //     "Preferences…" no matter what label we pass; a packaged build supplies
-    //     CFBundleName from productName ("Tenon") and the macOS-13+ "Settings…".
-    //   • About / Hide / Quit are ordinary items, so an explicit label DOES win —
-    //     set them off APP_NAME so even a dev run reads "About Tenon" etc.
-    // We still pass label: APP_NAME on the first submenu as the packaged-correct
-    // value even though macOS overrides the dev rendering.
-    template.push({
-      label: APP_NAME,
-      submenu: [
-        {
-          label: t.about({ app: APP_NAME }),
-          click: () => openSettingsWindow({ page: 'about' }),
-        },
-        { type: 'separator' },
-        { label: t.settings, accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
-        { type: 'separator' },
-        { role: 'services' },
-        { type: 'separator' },
-        { role: 'hide', label: t.hide({ app: APP_NAME }) },
-        { role: 'hideOthers' },
-        { role: 'unhide' },
-        { type: 'separator' },
-        { role: 'quit', label: t.quit({ app: APP_NAME }) },
-      ],
-    });
-  } else {
-    template.push({
-      label: t.file,
-      submenu: [
-        { label: t.settings, accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
-        { type: 'separator' },
-        { role: 'quit' },
-      ],
-    });
-  }
-
-  // Manual equivalent of `role: 'editMenu'` (Electron's documented expansion) with
-  // explicit labels. macOS still auto-injects Emoji & Symbols / Start Dictation at
-  // the bottom; those stay OS-localized.
-  template.push({
-    label: t.edit,
-    submenu: [
-      { role: 'undo', label: t.undo },
-      { role: 'redo', label: t.redo },
-      { type: 'separator' },
-      { role: 'cut', label: t.cut },
-      { role: 'copy', label: t.copy },
-      { role: 'paste', label: t.paste },
-      ...(isMac
-        ? ([
-            { role: 'pasteAndMatchStyle', label: t.pasteAndMatchStyle },
-            { role: 'delete', label: t.delete },
-            { role: 'selectAll', label: t.selectAll },
-            { type: 'separator' },
-            {
-              label: t.speech,
-              submenu: [
-                { role: 'startSpeaking', label: t.startSpeaking },
-                { role: 'stopSpeaking', label: t.stopSpeaking },
-              ],
-            },
-          ] satisfies Electron.MenuItemConstructorOptions[])
-        : ([
-            { role: 'delete', label: t.delete },
-            { type: 'separator' },
-            { role: 'selectAll', label: t.selectAll },
-          ] satisfies Electron.MenuItemConstructorOptions[])),
-    ],
-  });
-  template.push({ label: t.view, submenu: viewSubmenu });
-  // Manual equivalent of `role: 'windowMenu'`; the trailing `role: 'window'` keeps
-  // macOS appending the live window list under the localized title.
-  template.push({
-    label: t.window,
-    submenu: isMac
-      ? [
-          { role: 'minimize', label: t.minimize },
-          { role: 'zoom', label: t.zoom },
-          { type: 'separator' },
-          { role: 'front', label: t.front },
-          { type: 'separator' },
-          { role: 'window' },
-        ]
-      : [
-          { role: 'minimize', label: t.minimize },
-          { role: 'zoom', label: t.zoom },
-          { type: 'separator' },
-          { role: 'close' },
-        ],
-  });
-  template.push({
-    role: 'help',
-    label: t.helpTitle,
-    submenu: [
-      {
-        label: t.help({ app: APP_NAME }),
-        click: () => void shell.openExternal('https://github.com/relixiaobo/lin-outliner'),
-      },
-      {
-        label: t.reportIssue,
-        click: () => void shell.openExternal('https://github.com/relixiaobo/lin-outliner/issues'),
-      },
-    ],
-  });
-
-  return Menu.buildFromTemplate(template);
-}
-
-function createWindow() {
-  const windowState = loadWindowState();
-  const material = windowMaterialKind(process.platform);
-  const icon = nativeImage.createFromPath(APP_ICON_PNG_PATH);
-  mainWindow = new BrowserWindow({
-    title: APP_NAME,
-    width: windowState.bounds?.width ?? 1120,
-    height: windowState.bounds?.height ?? 820,
-    ...(windowState.bounds ? { x: windowState.bounds.x, y: windowState.bounds.y } : {}),
-    minWidth: 760,
-    minHeight: 560,
-    // Create hidden and reveal on first paint so launch never flashes an empty
-    // white frame; the platform animates the show.
-    show: false,
-    // With a window material the background must be transparent so the OS
-    // material (vibrancy / mica) shows through; otherwise keep the opaque deck
-    // colour as the pre-paint frame.
-    backgroundColor: material ? '#00000000' : prePaintBackgroundColor(),
-    ...(material === 'vibrancy' ? { vibrancy: 'under-window' as const } : {}),
-    ...(material === 'mica' ? { backgroundMaterial: 'mica' as const } : {}),
-    ...(icon.isEmpty() ? {} : { icon }),
-    // Standard window: hiddenInset keeps the native traffic lights (the OS draws
-    // and manages close/minimize/zoom — focus graying, ⌥-zoom, real fullscreen —
-    // exactly like Raycast, which repositions standardWindowButton rather than
-    // self-drawing). The corner radius is set on the window's *native* corner by
-    // the window_corner addon below (see applyMacWindowCorner), so the OS still
-    // owns the corner clip + shadow and the native chrome is preserved.
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: MAC_TRAFFIC_LIGHT_POSITION,
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      webviewTag: true,
-    },
-  });
-
-  if (windowState.maximized) mainWindow.maximize();
-  hardenWebContents(mainWindow.webContents);
-  attachNativeContextMenu(mainWindow.webContents);
-  forwardWindowActivity(mainWindow);
-  trackWindowState(mainWindow);
-
-  // Custom window corner via the native window_corner addon (no-op off macOS /
-  // if unbuilt): it sets MAC_WINDOW_CORNER_RADIUS on the window's native corner
-  // (macOS 26 reads the private _cornerRadius selectors; older macOS the
-  // _cornerMask) so the standard window keeps its native traffic lights, OS
-  // shadow, and vibrancy. Apply once before show (so the first paint is already
-  // rounded, no default-corner flash) and again on ready-to-show; drop to 0 in
-  // fullscreen, where a rounded corner would clip content into empty triangles.
-  applyMacWindowCorner(mainWindow, MAC_WINDOW_CORNER_RADIUS);
-  mainWindow.once('ready-to-show', () => {
-    if (!mainWindow) return;
-    applyMacWindowCorner(mainWindow, MAC_WINDOW_CORNER_RADIUS);
-    mainWindow.show();
-  });
-  mainWindow.on('enter-full-screen', () => mainWindow && applyMacWindowCorner(mainWindow, 0));
-  mainWindow.on('leave-full-screen', () =>
-    mainWindow && applyMacWindowCorner(mainWindow, MAC_WINDOW_CORNER_RADIUS),
-  );
-
-  if (RENDERER_DEV_URL) {
-    void mainWindow.loadURL(RENDERER_DEV_URL);
-  } else {
-    void mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
-  }
-
-  registerRendererCapabilities(mainWindow.webContents, APP_RENDERER_CAPABILITIES);
-  const outlineOwnerId = mainWindow.webContents.id;
-  mainWindow.webContents.once('destroyed', () => outlineHost.renderer.releaseOwner(outlineOwnerId));
-
-  mainWindow.on('closed', () => {
-    pageTranslationService.dispose();
-    actionInvocationService.invalidateRenderer(mainWindow?.webContents.id ?? -1);
-    mainWindow = null;
-  });
-  mainWindow.webContents.on('did-start-loading', () => pageTranslationService.dispose());
-  // A reload invalidates the renderer's ATTESTATIONS rather than leaving a
-  // stale `view`/`workspace` bit admissible against the reloaded surface.
-  mainWindow.webContents.on('did-start-navigation', (_event, _url, _isInPlace, isMainFrame) => {
-    if (isMainFrame) actionInvocationService.invalidateRenderer(mainWindow!.webContents.id);
-  });
-  // A launcher "open node" that had to spin up the main window — or that arrived
-  // during a renderer reload — waits for the renderer to load before the navigate
-  // can land. `on` (not `once`) so it re-arms across reloads (dev HMR full reload,
-  // in-app reload); a spent `once` would silently drop a later deferred navigate.
-  mainWindow.webContents.on('did-finish-load', () => {
-    flushPendingNavigates();
-  });
-}
-
-function focusMainWindow() {
-  if (!mainWindow) return;
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
-}
-
-// Node ids the launcher asked to open before the main window's renderer had
-// finished loading; flushed on each `did-finish-load` (see createWindow). A queue,
-// not a single slot, so two rapid cold opens before load don't clobber each other.
-let pendingNavigateNodeIds: string[] = [];
-
-function flushPendingNavigates(): void {
-  if (pendingNavigateNodeIds.length === 0) return;
-  const ids = pendingNavigateNodeIds;
-  pendingNavigateNodeIds = [];
-  for (const id of ids) {
-    mainWindow?.webContents.send(LAUNCHER_NAVIGATE_TO_NODE_CHANNEL, id);
-  }
-}
-
-/**
- * Open a document node in the main window (from a launcher inline search result):
- * bring the window up and tell the renderer to navigate + focus. If the window
- * isn't created yet, or its renderer hasn't finished loading, defer the navigate
- * until the next `did-finish-load` flush (re-armable across reloads).
- */
-function navigateMainToNode(nodeId: string): void {
-  if (!mainWindow) {
-    pendingNavigateNodeIds.push(nodeId);
-    createWindow();
-  } else if (mainWindow.webContents.isLoading()) {
-    // Window exists but its renderer hasn't finished loading — defer; the
-    // did-finish-load handler flushes the queue.
-    pendingNavigateNodeIds.push(nodeId);
-  } else {
-    mainWindow.webContents.send(LAUNCHER_NAVIGATE_TO_NODE_CHANNEL, nodeId);
-  }
-  focusMainWindow();
-}
-
-
-// The accelerator the launcher hotkey actually registered under (or null if none
-// was free), surfaced to the launcher renderer so it can reflect/repair it later.
-let launcherHotkeyAccelerator: string | null = null;
-
-// The external context captured for the CURRENT launcher open (what app/page the
-// user was looking at when the hotkey fired). Main holds the authoritative copy;
-// the renderer gets a pushed view for display, and "Capture page" saves from
-// this — so the saved metadata can't be tampered with from the renderer. Cleared
-// on each open and on hide.
-let launcherContext: ExternalContext | null = null;
-// Monotonic id per launcher open. An in-flight async context capture stamps the
-// open it belongs to and is dropped if the launcher was dismissed or re-opened
-// before it resolved — so a slow capture can never repopulate a stale/next open.
-let launcherOpenSeq = 0;
-// The invocation main created for the CURRENT launcher opening. Ambient
-// resolution names it explicitly so a capture that lands after a dismiss or a
-// re-open cannot install a page into the wrong opening.
-let launcherInvocationRef: InvocationRef | null = null;
-
-/**
- * Dismiss the launcher and forget its captured context. EVERY hide path routes
- * here — including clicking away (window blur) — so the previous page's metadata
- * can't linger and be saved into a later open. Bumping the open-seq also
- * invalidates any context capture still in flight for the dismissed open.
- */
-function dismissLauncher(): void {
-  hideLauncherWindow();
-  launcherContext = null;
-  // EVERY dismissal releases the invocation, not just the Escape path the
-  // renderer owns: otherwise a click-away leaves a live, consumable record —
-  // and its object refs executable — for the full TTL.
-  actionInvocationService.releaseOpening(launcherInvocationRef);
-  launcherInvocationRef = null;
-  launcherOpenSeq++;
-}
-
-// Request Accessibility at most once per app run (the first browser capture
-// without it). The system prompt both shows the dialog and registers the app in
-// Privacy & Security → Accessibility, so the user can enable the reliable AX
-// capture path; without this the unsigned dev binary never appears in the list.
-let accessibilityPrompted = false;
-
-/**
- * Hotkey handler: toggle the launcher, capturing what the user was looking at.
- *
- * Order matters — the launcher steals focus on show, after which the frontmost
- * app is us. So we read the frontmost app in the `beforeFocus` window (while the
- * old app is still active), then finish the slower tab/page reads after focus
- * (those target the browser by name, so focus having moved is fine) and push the
- * result to the renderer.
- */
-/** Resolve once the main renderer can receive steps, or give up. */
-async function waitForMainRendererLoad(): Promise<boolean> {
-  const contents = mainWindow?.webContents;
-  if (!contents || contents.isDestroyed()) return false;
-  if (!contents.isLoading()) return true;
-  return new Promise<boolean>((resolve) => {
-    const timer = setTimeout(() => resolve(false), MAIN_RENDERER_LOAD_TIMEOUT_MS);
-    contents.once('did-finish-load', () => {
-      clearTimeout(timer);
-      resolve(true);
-    });
-  });
-}
-
-const MAIN_RENDERER_LOAD_TIMEOUT_MS = 8_000;
-
-// In-flight in-app seed requests, by one-shot token.
-const pendingAmbientSeeds = new Map<string, (seed: unknown) => void>();
-
-/**
- * Ask the MAIN renderer what the user had focused. It is the only surface that
- * knows, and the answer is sender-checked and re-validated on the way in — main
- * builds the object itself rather than accepting a finished one. No answer
- * inside the window means no chip; the summon never waits on it.
- */
-async function requestInAppAmbientSeed(openSeq: number): Promise<InvocationSeed | null> {
-  const target = liveWindow(mainWindow)?.webContents;
-  if (!target || target.isDestroyed()) return null;
-  const token = randomUUID();
-  const raw = await new Promise<unknown>((resolve) => {
-    const timer = setTimeout(() => {
-      pendingAmbientSeeds.delete(token);
-      resolve(null);
-    }, ACTION_AMBIENT_SEED_TIMEOUT_MS);
-    pendingAmbientSeeds.set(token, (seed) => {
-      clearTimeout(timer);
-      pendingAmbientSeeds.delete(token);
-      resolve(seed);
-    });
-    try {
-      target.send(ACTION_AMBIENT_SEED_REQUEST_CHANNEL, { token });
-    } catch {
-      clearTimeout(timer);
-      pendingAmbientSeeds.delete(token);
-      resolve(null);
-    }
-  });
-  if (openSeq !== launcherOpenSeq) return null;
-  return sanitizeInvocationSeed(raw);
-}
-
-async function toggleLauncher(): Promise<void> {
-  const win = getLauncherWindow();
-  if (win?.isVisible()) {
-    dismissLauncher();
-    return;
-  }
-  const openSeq = ++launcherOpenSeq;
-  launcherContext = null;
-  const contextId = `ctx:${randomUUID()}`;
-  const capturedAt = new Date().toISOString();
-  // Holder (not a bare `let`) so the value assigned inside the async beforeFocus
-  // callback keeps its declared type for later reads — TS control flow does not
-  // track assignments made through a callback.
-  const front: { app: FrontmostApp | null } = { app: null };
-  await showLauncherWindow(async () => {
-    front.app = await getFrontmostApp();
-  });
-  // The invocation is created SYNCHRONOUSLY for this open, with its ambient slot
-  // pending: the panel accepts input and can already act on the stable objects
-  // before external capture resolves. That is what closes the show->context race
-  // at its source rather than making the renderer wait.
-  const launcherContents = getLauncherWindow()?.webContents;
-  if (launcherContents && !launcherContents.isDestroyed()) {
-    const opened = actionInvocationService.openLauncher({
-      openSeq,
-      consumerId: launcherContents.id,
-    });
-    launcherInvocationRef = opened.invocationRef;
-    launcherContents.send(ACTION_OPENED_CHANNEL, opened);
-  }
-  // In-app summon must not read external context. When Tenon itself was
-  // frontmost there is no page to capture — the ambient object is what the user
-  // had focused, which only the main renderer can attest. Asking IT rather than
-  // classifying ourselves as `unknown-app` and capturing nothing.
-  if (front.app?.name === APP_NAME) {
-    const seeded = await requestInAppAmbientSeed(openSeq);
-    if (launcherContents && !launcherContents.isDestroyed() && launcherInvocationRef) {
-      launcherContents.send(ACTION_AMBIENT_CHANGED_CHANNEL, actionInvocationService.resolveAmbient({
-        invocationRef: launcherInvocationRef,
-        openSeq,
-        resolution: seeded ? { kind: 'inApp', seed: seeded } : { kind: 'none' },
-      }));
-    }
-    return;
-  }
-  try {
-    const context = await captureExternalContext({
-      id: contextId,
-      capturedAt,
-      captureOrigin: 'global-hotkey',
-      frontmost: front.app,
-    });
-    // Drop if this open was dismissed (click-away / Esc) or superseded by a newer
-    // open while we were capturing — never repopulate a stale or already-closed open.
-    if (openSeq !== launcherOpenSeq || !getLauncherWindow()?.isVisible()) return;
-    launcherContext = context;
-    // Dev diagnostic: surface what each capture layer resolved to, so a
-    // wrong-page capture (e.g. the browser's "front window" ≠ the visible tab)
-    // can be pinpointed from the dev terminal. Quiet in packaged builds.
-    if (!app.isPackaged) {
-      console.log('[launcher] captured context', {
-        frontmostApp: front.app?.name ?? null,
-        pid: front.app?.pid ?? null,
-        axTrusted: isAccessibilityTrusted(),
-        providerId: context.providerId,
-        confidence: context.confidence,
-        browser: context.browser?.name ?? null,
-        url: context.browser?.url ?? null,
-        title: context.source?.title ?? null,
-        warnings: context.warnings.map((w) => w.code),
-      });
-    }
-    // The raw ExternalContext no longer crosses to the locked-down renderer:
-    // main derives the one view it needs (the capture-degraded hint) and pushes
-    // that. The page itself arrives as an OBJECT through the action seam.
-    const contents = getLauncherWindow()?.webContents;
-    contents?.send(
-      LAUNCHER_REMEDIATION_CHANNEL,
-      remediationForContext(context, getMessages(effectiveLocale()), APP_NAME),
-    );
-    if (contents && launcherInvocationRef) {
-      contents.send(ACTION_AMBIENT_CHANGED_CHANNEL, actionInvocationService.resolveAmbient({
-        invocationRef: launcherInvocationRef,
-        openSeq,
-        resolution: { kind: 'externalPage', contextId: context.id as never },
-      }));
-    }
-    // First browser capture without Accessibility → request it once (shows the
-    // system prompt and registers the app in the Privacy list).
-    if (!accessibilityPrompted && context.providerId === 'generic-webpage' && !isAccessibilityTrusted()) {
-      accessibilityPrompted = true;
-      promptAccessibility();
-    }
-  } catch (error) {
-    console.error('[launcher] context capture failed', error);
-  }
-}
-
-// Settings open in their own window — the native "Preferences" convention —
-// reusing the single renderer bundle via a ?surface=settings query. Like the main
-// window it is frameless with inset traffic lights (the lights sit over the
-// settings rail, no separate title-bar strip); the renderer draws its own top drag
-// region. It isn't persisted across launches.
-function sanitizeSettingsOpenTarget(raw: unknown): SettingsOpenTarget {
-  if (!raw || typeof raw !== 'object') return {};
-  const input = raw as { category?: unknown; page?: unknown; anchor?: unknown };
-  const category = isSettingsCategoryTarget(input.category) ? input.category : undefined;
-  const page = isSettingsPageTarget(input.page) ? input.page : undefined;
-  const anchor = (category || page) && isSettingsAnchorTarget(input.anchor) ? input.anchor : undefined;
-  return {
-    ...(category ? { category } : {}),
-    ...(page ? { page } : {}),
-    ...(anchor ? { anchor } : {}),
-  };
-}
-
-function settingsWindowQuery(target: SettingsOpenTarget = {}): Record<string, string> {
-  const path = settingsTargetPath(target);
-  return {
-    [WINDOW_SURFACE_QUERY_PARAM]: 'settings',
-    ...(path ? { [SETTINGS_CATEGORY_PARAM]: path } : {}),
-    ...(path && target.anchor ? { [SETTINGS_ANCHOR_PARAM]: target.anchor } : {}),
-  };
-}
-
-function settingsWindowSearch(target: SettingsOpenTarget = {}): string {
-  return new URLSearchParams(settingsWindowQuery(target)).toString();
-}
-
-function openSettingsWindow(openTarget: SettingsOpenTarget = {}) {
-  // `liveWindow`, not a truthiness check: `settingsWindow` is cleared on 'closed',
-  // so a ⌘, landing between 'close' and 'closed' found a destroyed window and threw
-  // inside the ipcMain handler — an unhandled rejection, and no window opened.
-  const existing = liveWindow(settingsWindow);
-  if (existing) {
-    if (existing.isMinimized()) existing.restore();
-    existing.show();
-    existing.focus();
-    // An untargeted Cmd+, must not yank a user who is already somewhere else back
-    // to General. A page names its own category, so it is independently explicit.
-    if (openTarget.category || openTarget.page) {
-      existing.webContents.send(LIN_SETTINGS_NAVIGATE_CHANNEL, openTarget);
-    }
-    return;
-  }
-  // A utilitarian Preferences window: opaque content, no OS material (unlike the
-  // main window). Frameless with inset traffic lights (titleBarStyle: hiddenInset)
-  // so the lights sit over the settings rail and there is no native title-bar
-  // strip — the renderer provides the top drag region. Security defaults (A3) are
-  // unchanged.
-  settingsWindow = new BrowserWindow({
-    title: getMessages(effectiveLocale()).window.settingsTitle({ app: APP_NAME }),
-    width: 760,
-    height: 620,
-    minWidth: 560,
-    minHeight: 480,
-    show: false,
-    backgroundColor: prePaintBackgroundColor(),
-    ...(() => {
-      const icon = nativeImage.createFromPath(APP_ICON_PNG_PATH);
-      return icon.isEmpty() ? {} : { icon };
-    })(),
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: MAC_TRAFFIC_LIGHT_POSITION,
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
-
-  const window = settingsWindow;
-  // Settings keeps the app preload, so it keeps the app capabilities its
-  // `api/client` path uses.
-  registerRendererCapabilities(window.webContents, APP_RENDERER_CAPABILITIES);
-  hardenWebContents(window.webContents);
-  attachNativeContextMenu(window.webContents);
-  // Match the main window's custom native corner (MAC_WINDOW_CORNER_RADIUS) so the
-  // frameless settings window has the SAME rounded corners — not the smaller macOS
-  // default (16pt on Tahoe). Apply before show (no default-corner flash) and again
-  // on ready-to-show; reset to 0 in fullscreen where a rounded corner clips content.
-  applyMacWindowCorner(window, MAC_WINDOW_CORNER_RADIUS);
-  window.once('ready-to-show', () => {
-    applyMacWindowCorner(window, MAC_WINDOW_CORNER_RADIUS);
-    window.show();
-  });
-  window.on('enter-full-screen', () => applyMacWindowCorner(window, 0));
-  window.on('leave-full-screen', () => applyMacWindowCorner(window, MAC_WINDOW_CORNER_RADIUS));
-
-  if (RENDERER_DEV_URL) {
-    void window.loadURL(`${RENDERER_DEV_URL}?${settingsWindowSearch(openTarget)}`);
-  } else {
-    void window.loadFile(join(__dirname, '../renderer/index.html'), {
-      query: settingsWindowQuery(openTarget),
-    });
-  }
-
-  window.on('closed', () => {
-    settingsWindow = null;
-  });
-}
-
-async function clearUrlPreviewWebsiteData(
-  event: IpcMainInvokeEvent,
-): Promise<ClearUrlPreviewDataResult> {
-  const window = liveWindow(settingsWindow);
-  if (!window || event.sender !== window.webContents || !urlPreviewSession) {
-    return { status: 'failed', error: 'unavailable' };
-  }
-
-  const labels = getMessages(effectiveLocale()).settings.general;
-  const confirmation = await dialog.showMessageBox(window, {
-    type: 'warning',
-    title: labels.websiteDataClearConfirmTitle,
-    message: labels.websiteDataClearConfirmMessage,
-    detail: labels.websiteDataClearConfirmDetail,
-    buttons: [labels.websiteDataClearConfirmAction, labels.websiteDataCancelAction],
-    defaultId: 1,
-    cancelId: 1,
-    noLink: true,
-  });
-  if (confirmation.response !== 0) return { status: 'canceled' };
-
-  try {
-    await clearUrlPreviewSessionData(urlPreviewSession);
-    for (const guest of [...urlPreviewGuests]) {
-      if (guest.isDestroyed()) {
-        urlPreviewGuests.delete(guest);
-        continue;
-      }
-      guest.reloadIgnoringCache();
-    }
-    return { status: 'cleared' };
-  } catch (error) {
-    reportError({
-      domain: 'url-preview',
-      severity: 'error',
-      code: 'url-preview-clear-data',
-      message: 'URL Preview website data could not be cleared',
-      context: { operation: 'clear-data' },
-      error,
-    });
-    return { status: 'failed', error: 'clear-failed' };
-  }
-}
-
-function clearPreviewTranslationCache(
-  event: IpcMainInvokeEvent,
-): Promise<ClearPreviewTranslationCacheResult> {
-  return clearPreviewTranslationCacheFromSettings(event, {
-    cache: previewTranslationCache,
-    getSettingsWindow: () => liveWindow(settingsWindow) ?? null,
-    labels: () => getMessages(effectiveLocale()).settings.general,
-    showMessageBox: (window, options) => dialog.showMessageBox(window, options),
-  });
-}
-
-// The per-provider API-key form opens as its OWN native window — a modal child of
-// the settings window (the macOS System Settings idiom: a list row pushes its
-// detail into a real attached dialog, not an in-renderer overlay). It reuses the
-// single renderer bundle via ?surface=provider-config and is told which provider /
-// mode through the query. Frameless (no traffic lights — it is a dialog, closed by
-// its own Cancel / Save), opaque, fixed-size, centred over the parent. Security
-// defaults (A3) match every other window.
-function openProviderConfigWindow(providerId: string, mode: ProviderConfigMode) {
-  // Replace any open config window (clicking another provider re-targets it).
-  if (isLiveWindow(providerConfigWindow)) {
-    // Abort any in-flight sign-in tied to the window we're replacing, so its
-    // loopback server / parked prompts don't leak and stale events can't reach
-    // the new window. (Only this provider's login can be in flight here.)
-    oauthLoginManager.cancelAll();
-    providerConfigWindow.close();
-  }
-  providerConfigWindow = null;
-
-  const width = 460;
-  const height = 384;
-  const target = createConfigChildWindow({
-    title: getMessages(effectiveLocale()).window.providerConfigTitle,
-    width,
-    height,
-    resizable: false,
-    parent: liveWindow(settingsWindow),
-    query: {
-      [WINDOW_SURFACE_QUERY_PARAM]: 'provider-config',
-      [PROVIDER_CONFIG_PROVIDER_PARAM]: providerId,
-      [PROVIDER_CONFIG_MODE_PARAM]: mode,
-    },
-  });
-  providerConfigWindow = target;
-
-  target.on('closed', () => {
-    // Act only on a genuine close of the *current* window — a re-target already
-    // cancelled the old login and reassigned the ref. Closing the live window
-    // must abort its in-flight sign-in (loopback server / parked prompts).
-    if (providerConfigWindow === target) {
-      oauthLoginManager.cancelAll();
-      providerConfigWindow = null;
-    }
-  });
-}
-
-function isLiveWindow(window: BrowserWindow | null | undefined): window is BrowserWindow {
-  return Boolean(window && !window.isDestroyed());
-}
-
-function liveWindow(window: BrowserWindow | null | undefined): BrowserWindow | undefined {
-  return isLiveWindow(window) ? window : undefined;
-}
-
-function isProviderConfigSender(event: IpcMainInvokeEvent): boolean {
-  const target = liveWindow(providerConfigWindow);
-  return Boolean(target && event.sender === target.webContents);
-}
-
-function assertSettingsRenderer(event: IpcMainInvokeEvent, capability: string): void {
-  const target = liveWindow(settingsWindow);
-  if (!target || event.sender !== target.webContents) {
-    throw new Error(`${capability} is only available from Settings.`);
-  }
-}
-
-function centeredChildWindowPosition(parent: BrowserWindow | null | undefined, width: number, height: number) {
-  const bounds = isLiveWindow(parent) ? parent.getBounds() : undefined;
-  return bounds
-    ? {
-        x: Math.round(bounds.x + (bounds.width - width) / 2),
-        y: Math.round(bounds.y + Math.max(48, (bounds.height - height) / 2)),
-      }
-    : {};
-}
-
-function loadRendererSurface(
-  target: BrowserWindow,
-  query: Record<string, string>,
-) {
-  if (RENDERER_DEV_URL) {
-    const url = new URL(RENDERER_DEV_URL);
-    for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
-    void target.loadURL(url.toString());
-  } else {
-    void target.loadFile(join(__dirname, '../renderer/index.html'), { query });
-  }
-}
-
-function createConfigChildWindow(options: {
-  title: string;
-  width: number;
-  height: number;
-  minWidth?: number;
-  minHeight?: number;
-  parent?: BrowserWindow;
-  query: Record<string, string>;
-  resizable: boolean;
-}): BrowserWindow {
-  const { width, height, parent } = options;
-  const target = new BrowserWindow({
-    title: options.title,
-    width,
-    height,
-    ...(options.minWidth ? { minWidth: options.minWidth } : {}),
-    ...(options.minHeight ? { minHeight: options.minHeight } : {}),
-    ...centeredChildWindowPosition(parent, width, height),
-    parent,
-    modal: Boolean(parent),
-    show: false,
-    resizable: options.resizable,
-    minimizable: false,
-    maximizable: false,
-    fullscreenable: false,
-    backgroundColor: prePaintBackgroundColor(),
-    frame: false,
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
-
-  // Provider-config child windows likewise keep the app bridge.
-  registerRendererCapabilities(target.webContents, APP_RENDERER_CAPABILITIES);
-  hardenWebContents(target.webContents);
-  attachNativeContextMenu(target.webContents);
-  applyMacWindowCorner(target, MAC_WINDOW_CORNER_RADIUS);
-  target.once('ready-to-show', () => {
-    applyMacWindowCorner(target, MAC_WINDOW_CORNER_RADIUS);
-    target.show();
-  });
-  loadRendererSurface(target, options.query);
-  return target;
-}
-
-function configChildWindowParent(excluded: BrowserWindow | null = null): BrowserWindow | undefined {
-  const focused = BrowserWindow.getFocusedWindow();
-  if (isLiveWindow(focused) && focused !== excluded) {
-    if (focused === providerConfigWindow) {
-      return liveWindow(focused.getParentWindow()) ?? liveWindow(settingsWindow) ?? liveWindow(mainWindow);
-    }
-    return focused;
-  }
-  return liveWindow(settingsWindow) ?? liveWindow(mainWindow);
-}
-
-interface LocalFileOperationInput {
-  readonly path?: unknown;
-  readonly threadId?: unknown;
-  readonly attachmentId?: unknown;
-}
-
-async function resolveLocalFileOperation(
-  raw: LocalFileOperationInput | undefined,
-  allowAttachmentPathHint = false,
-): Promise<TrustedLocalFileReference | null> {
-  const threadId = typeof raw?.threadId === 'string' && raw.threadId.trim() ? raw.threadId : null;
-  const attachmentId = typeof raw?.attachmentId === 'string' && raw.attachmentId.trim()
-    ? raw.attachmentId
-    : null;
-  if (Boolean(threadId) !== Boolean(attachmentId)) return null;
-  if (!threadId || !attachmentId) {
-    return resolveTrustedLocalFileReference(
-      raw?.path,
-      [agentLocalFileRoot, agentScratchRoot],
-    );
-  }
-  const attachment = await agentHost.threads.resolveAttachmentFile(threadId, attachmentId).catch(() => null);
-  if (!attachment) return null;
-  if (attachment.entryKind === 'directory') {
-    return resolveTrustedLocalFileReference(
-      raw?.path,
-      [attachment.path],
-    );
-  }
-  if (allowAttachmentPathHint) {
-    const requestedPath = typeof raw?.path === 'string' ? raw.path : '';
-    const acceptedHints = attachment.attachment.source.kind === 'localFile'
-      ? [attachment.path, attachment.attachment.source.path]
-      : [
-          attachment.path,
-          attachment.attachment.name,
-          attachment.attachment.source.ref.fileName,
-        ];
-    return acceptedHints.includes(requestedPath) ? attachment : null;
-  }
-  if (typeof raw?.path !== 'string') return null;
-  const requestedPath = await realpath(raw.path).catch(() => null);
-  return requestedPath === attachment.path ? attachment : null;
-}
-
-// ---------------------------------------------------------------------------
-// The action seam (docs/plans/unified-command-surface.md D1b)
-// ---------------------------------------------------------------------------
-
-// Renderer steps in flight, by one-shot token. Main emits a renderer step only
-// after the preceding main step succeeded, and waits for this ack before the
-// next one — without it main cannot know a renderer step failed.
-const pendingActionStepAcks = new Map<string, (ack: ActionStepAck) => void>();
-
-async function routeActionRendererStep(
-  step: EffectStep,
-  invocationRef: string,
-): Promise<RendererStepAck> {
-  // The launcher's whole point is working when the main window is closed, so a
-  // missing window is a case to SERVE, not to report `gone` for. A navigate
-  // reuses the shipped deferred path; anything else brings the window up and
-  // waits for its renderer before dispatching.
-  if (step.on === 'mainRenderer' && step.kind === 'navigate' && typeof step.nodeId === 'string') {
-    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isLoading()) {
-      navigateMainToNode(step.nodeId);
-      return { status: 'ok' };
-    }
-  }
-  if (step.on === 'mainRenderer' && (!mainWindow || mainWindow.isDestroyed())) {
-    createWindow();
-    const ready = await waitForMainRendererLoad();
-    if (!ready) return { status: 'gone' };
-  }
-  const target = mainWindow?.webContents;
-  if (!target || target.isDestroyed()) return { status: 'gone' };
-  // The launcher is a NON-ACTIVATING panel, so summoning it never brings Tenon
-  // forward. A step that lands the user somewhere must therefore focus the
-  // window itself — the deleted `launcher:openNode` always did, and without it
-  // the navigation happens invisibly behind whatever app they were in.
-  if (step.on === 'mainRenderer' && (step.kind === 'navigate' || step.kind === 'workspace')) {
-    focusMainWindow();
-  }
-  const token = randomUUID();
-  return new Promise<RendererStepAck>((resolve) => {
-    const timer = setTimeout(() => {
-      pendingActionStepAcks.delete(token);
-      // A missing ack does NOT prove the step did not run.
-      resolve({ status: 'timeout' });
-    }, ACTION_STEP_ACK_TIMEOUT_MS);
-    pendingActionStepAcks.set(token, (ack) => {
-      clearTimeout(timer);
-      pendingActionStepAcks.delete(token);
-      resolve(ack.status === 'ok' ? { status: 'ok' } : { status: 'reported', code: ack.code });
-    });
-    try {
-      target.send(ACTION_STEP_CHANNEL, { token, invocationRef, step });
-    } catch {
-      clearTimeout(timer);
-      pendingActionStepAcks.delete(token);
-      resolve({ status: 'notDelivered' });
-    }
-  });
-}
-
-const actionInvocationService = new ActionInvocationService({
-  projection: () => outlineHost.document.liveProjection(),
-  runCommand: (command, args) => runOutlineActionCommand(outlineHost.document, command, args),
-  searchNodes: (query, limit) => outlineHost.document.searchNodeHits(query, limit),
-  executeRendererStep: routeActionRendererStep,
-  activateAppSurface: async (surface) => {
-    if (surface === 'settings') {
-      openSettingsWindow();
-      return;
-    }
-    if (!mainWindow || mainWindow.isDestroyed()) createWindow();
-    else focusMainWindow();
-  },
-  writeClipboard: (text) => clipboard.writeText(text),
-  untitled: () => getMessages(effectiveLocale()).common.untitled,
-  now: () => Date.now(),
-  // Main holds the authoritative captured context; the registry reads it, and
-  // only its PRESENTATION ever crosses to a renderer.
-  externalContext: (contextId) => (
-    launcherContext && launcherContext.id === contextId ? launcherContext : null
-  ),
-  describeExternalPage: (contextId) => {
-    const context = launcherContext && launcherContext.id === contextId ? launcherContext : null;
-    if (!context) return null;
-    // One derivation of the page's title, shared with the registry's own
-    // composer handoff — two copies drifted the moment either changed.
-    const subtitle = context.browser?.hostname ?? context.app.name;
-    return { title: externalPageLabel(context), ...(subtitle ? { subtitle } : {}) };
-  },
-  newCaptureId: () => `cap:${randomUUID()}`,
-  // Flow B. Main raises its own sheet and observes the answer; no token exists
-  // for a renderer to redeem. Parented to whichever window is in front so the
-  // sheet is modal to what the user is actually looking at — including the
-  // launcher, which is where the compromised-renderer threat lives.
-  confirmNatively: async (spec) => {
-    const locale = effectiveLocale();
-    // The same Cancel the in-app ConfirmDialog used, so the two confirmation
-    // styles do not disagree about what the escape hatch is called.
-    const strings = getMessages(locale).dialog;
-    const parent = liveWindow(getLauncherWindow())?.isVisible()
-      ? liveWindow(getLauncherWindow())
-      : liveWindow(mainWindow);
-    const response = await dialog.showMessageBox(parent ?? undefined as never, {
-      type: 'warning',
-      buttons: [spec.confirmLabel[locale] ?? spec.confirmLabel.en, strings.cancel],
-      defaultId: 1,
-      cancelId: 1,
-      message: spec.title[locale] ?? spec.title.en,
-      detail: spec.message[locale] ?? spec.message.en,
-    });
-    return response.response === 0;
-  },
 });
 
 function registerMainTransport(previewSession: Electron.Session): HostTransportComposition {
@@ -2265,10 +880,10 @@ function registerMainTransport(previewSession: Electron.Session): HostTransportC
       owner.add(() => powerMonitor.removeListener('resume', wakeAutomationsOnResume));
     });
     transport.registerOwner('default-session-security', (owner) => {
-      owner.add(configureSessionSecurity());
+      owner.add(resourcePreviewHost.configureDefaultSessionSecurity());
     });
     transport.registerOwner('url-preview-session-security', (owner) => {
-      owner.add(configureUrlPreviewSession(previewSession));
+      owner.add(resourcePreviewHost.configurePreviewSession());
     });
     transport.registerProtocolOwner('source-preview-protocols', (protocol) => {
       protocol.handle(ASSET_URL_SCHEME, (request) => {
@@ -2279,7 +894,7 @@ function registerMainTransport(previewSession: Electron.Session): HostTransportC
       });
       protocol.handle(PREVIEW_LOCAL_URL_SCHEME, (request) => {
         const token = new URL(request.url).hostname;
-        return localFilePreviewStreams.serve(token, request);
+        return resourcePreviewHost.streams.serve(token, request);
       });
     });
     transport.registerIpcOwner('outline', registerOutlineTransport);
@@ -2306,34 +921,30 @@ function registerOutlineTransport(ipcMain: OwnedIpcMain): void {
   registerDesktopOutlineIpc({
     ipcMain,
     client: outlineHost.renderer,
-    authorize: (event) => {
-      if (!mainWindow || event.sender !== mainWindow.webContents) {
-        throw new Error('Outline Runtime is available only to the main application window.');
-      }
-    },
+    authorize: (event) => windowApplicationHost.assertMainSender(event, 'Outline Runtime'),
   });
 }
 
 function registerUpdateTransport(ipcMain: OwnedIpcMain): void {
   ipcMain.handle(LIN_APP_UPDATE_GET_CHANNEL, (event): Promise<AppUpdateView> => {
-    assertSettingsRenderer(event, 'App update status');
-    return appUpdateService.view();
+    windowApplicationHost.assertSettingsSender(event, 'App update status');
+    return windowApplicationHost.updates.view();
   });
 
   ipcMain.handle(LIN_APP_UPDATE_CHECK_CHANNEL, (event): Promise<AppUpdateView> => {
-    assertSettingsRenderer(event, 'App update checks');
-    return appUpdateService.checkExplicitly();
+    windowApplicationHost.assertSettingsSender(event, 'App update checks');
+    return windowApplicationHost.updates.checkExplicitly();
   });
 
   ipcMain.handle(LIN_APP_UPDATE_SET_AUTOMATIC_CHANNEL, (event, enabled: unknown): Promise<AppUpdateView> => {
-    assertSettingsRenderer(event, 'Automatic app update checks');
+    windowApplicationHost.assertSettingsSender(event, 'Automatic app update checks');
     if (typeof enabled !== 'boolean') throw new Error('Automatic update-check preference must be a boolean.');
-    return appUpdateService.setAutomaticChecksEnabled(enabled);
+    return windowApplicationHost.updates.setAutomaticChecksEnabled(enabled);
   });
 
   ipcMain.handle(LIN_APP_UPDATE_OPEN_CHANNEL, (event) => {
-    assertSettingsRenderer(event, 'Opening an app update');
-    return appUpdateService.openAvailableUpdate();
+    windowApplicationHost.assertSettingsSender(event, 'Opening an app update');
+    return windowApplicationHost.updates.openAvailableUpdate();
   });
 }
 
@@ -2351,7 +962,7 @@ function registerActionTransport(ipcMain: OwnedIpcMain): void {
     assertMainRenderer(event, 'Action invocations');
     const seed = sanitizeInvocationSeed(raw);
     if (!seed) return null;
-    return actionInvocationService.openFromSeed(seed, {
+    return windowApplicationHost.actions.openFromSeed(seed, {
       webContentsId: event.sender.id,
       renderGeneration: event.sender.getProcessId(),
     });
@@ -2361,14 +972,14 @@ function registerActionTransport(ipcMain: OwnedIpcMain): void {
     assertActionRequester(event);
     const request = sanitizeObjectQuery(raw);
     if (!request) return null;
-    return actionInvocationService.queryObjects(request, event.sender.id);
+    return windowApplicationHost.actions.queryObjects(request, event.sender.id);
   });
 
   ipcMain.handle(ACTION_PARAMETER_QUERY_CHANNEL, (event, raw: unknown) => {
     assertActionRequester(event);
     const request = sanitizeParameterQuery(raw);
     if (!request) return null;
-    return actionInvocationService.queryParameterObjects(request, event.sender.id);
+    return windowApplicationHost.actions.queryParameterObjects(request, event.sender.id);
   });
 
   ipcMain.handle(ACTION_REQUEST_CHANNEL, (event, raw: unknown) => {
@@ -2376,37 +987,32 @@ function registerActionTransport(ipcMain: OwnedIpcMain): void {
     const request = sanitizeActionRequest(raw);
     // A malformed request is not "stale" — it never named anything.
     if (!request) return { status: 'stale', reason: 'invocation' };
-    return actionInvocationService.request(request, event.sender.id);
+    return windowApplicationHost.actions.request(request, event.sender.id);
   });
 
   ipcMain.handle(ACTION_EVENT_CHANNEL, (event, raw: unknown) => {
     assertActionRequester(event);
     const invocationEvent = sanitizeInvocationEvent(raw);
     if (!invocationEvent) return { status: 'spent' };
-    return actionInvocationService.event(invocationEvent, event.sender.id);
+    return windowApplicationHost.actions.event(invocationEvent, event.sender.id);
   });
 
   ipcMain.handle(ACTION_AMBIENT_SEED_RESPONSE_CHANNEL, (event, raw: unknown) => {
     // Only the main renderer may answer, and only a request main issued.
     assertMainRenderer(event, 'Action invocations');
-    const response = raw as { token?: unknown; seed?: unknown } | undefined;
-    if (typeof response?.token !== 'string') return;
-    pendingAmbientSeeds.get(response.token)?.(response.seed ?? null);
+    windowApplicationHost.actions.acceptAmbientSeed(raw);
   });
 
   ipcMain.handle(ACTION_STEP_ACK_CHANNEL, (event, raw: unknown) => {
     // Renderer steps only ever route to the MAIN renderer, so only it can ack.
     assertMainRenderer(event, 'Action invocations');
-    const ack = raw as ActionStepAck | undefined;
-    if (typeof ack?.token !== 'string') return;
-    if (ack.status !== 'ok' && ack.status !== 'reported') return;
-    pendingActionStepAcks.get(ack.token)?.(ack);
+    windowApplicationHost.actions.acceptStepAck(raw);
   });
 }
 
 function registerAgentTransport(ipcMain: OwnedIpcMain): void {
   ipcMain.handle(AUTOMATION_REQUEST_CHANNEL, async (event, method: unknown, input: unknown) => {
-    if (!mainWindow || event.sender !== mainWindow.webContents) {
+    if (!windowApplicationHost.isMainSender(event)) {
       throw new Error('Automations are available only to the main application window.');
     }
     if (typeof method !== 'string' || !(AUTOMATION_METHODS as readonly string[]).includes(method)) {
@@ -2415,7 +1021,7 @@ function registerAgentTransport(ipcMain: OwnedIpcMain): void {
     return agentHost.automations.request(method as AutomationMethod, input);
   });
   ipcMain.handle(AGENT_CORE_REQUEST_CHANNEL, async (event, method: AgentCoreMethod, input: unknown) => {
-    if (!mainWindow || event.sender !== mainWindow.webContents) {
+    if (!windowApplicationHost.isMainSender(event)) {
       throw new Error('Agent Core is available only to the main application window.');
     }
     return agentHost.threads.request(method, input as AgentCoreRequestByMethod[AgentCoreMethod]);
@@ -2426,8 +1032,9 @@ function registerAgentTransport(ipcMain: OwnedIpcMain): void {
       event,
       request?: Partial<ThreadMessageContextMenuRequest>,
     ): Promise<ThreadMessageContextMenuAction | null> => {
+      const mainWindow = windowApplicationHost.windows.main();
       if (!mainWindow || event.sender !== mainWindow.webContents) return null;
-      const messages = getMessages(effectiveLocale()).agent;
+      const messages = getMessages(windowApplicationHost.effectiveLocale()).agent;
       let settled = false;
       return new Promise<ThreadMessageContextMenuAction | null>((resolve) => {
         const pick = (action: ThreadMessageContextMenuAction) => {
@@ -2478,10 +1085,10 @@ function registerSourcePreviewTransport(ipcMain: OwnedIpcMain): void {
       if (isAgentCommand(command)) return handleAgentCommand(event, command, args ?? {});
       if (isAssetCommand(command)) return handleAssetCommand(event, command, args ?? {});
       if (isUrlPageTranslationCommand(command)) {
-        if (!mainWindow || event.sender !== mainWindow.webContents) {
+        if (!windowApplicationHost.isMainSender(event)) {
           throw new Error('Page translation is only available to the main window.');
         }
-        return pageTranslationService.handle(command, args ?? {});
+        return resourcePreviewHost.translation.handle(command, args ?? {});
       }
       if (isPreviewCommand(command)) {
         assertMainRenderer(event, 'Preview');
@@ -2489,12 +1096,12 @@ function registerSourcePreviewTransport(ipcMain: OwnedIpcMain): void {
           agentLocalFileRoots: [agentLocalFileRoot, agentScratchRoot],
           assetService: outlineHost.assets,
           assetFileStreamUrl: async (filePath, mimeType) => {
-            const token = await localFilePreviewStreams.issuePath(filePath, mimeType);
+            const token = await resourcePreviewHost.streams.issuePath(filePath, mimeType);
             return token ? previewLocalUrl(token) : null;
           },
           inferMimeType,
           localFileStreamUrl: async (file, mimeType) => {
-            const token = await localFilePreviewStreams.issue(file, mimeType);
+            const token = await resourcePreviewHost.streams.issue(file, mimeType);
             return token ? previewLocalUrl(token) : null;
           },
           threadAttachmentFile: async (threadId, attachmentId) =>
@@ -2544,19 +1151,21 @@ function registerSourcePreviewTransport(ipcMain: OwnedIpcMain): void {
               })
               .catch(() => null),
           threadManagedFileStreamUrl: async (filePath, mimeType) => {
-            const token = await localFilePreviewStreams.issueExactPath(filePath, mimeType);
+            const token = await resourcePreviewHost.streams.issueExactPath(filePath, mimeType);
             return token ? previewLocalUrl(token) : null;
           },
-          linkedFileGrant: linkedFileGrants,
+          linkedFileGrant: resourcePreviewHost.linkedFileGrant,
           chooseLinkedFile: async () => {
             const window =
-              BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? mainWindow;
+              BrowserWindow.fromWebContents(event.sender)
+              ?? BrowserWindow.getFocusedWindow()
+              ?? windowApplicationHost.windows.main();
             const options: Electron.OpenDialogOptions = { properties: ['openFile'] };
-            const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
-            return result.canceled ? null : (result.filePaths[0] ?? null);
+            const paths = await resourcePreviewHost.localFiles.pickPaths(window, options);
+            return paths[0] ?? null;
           },
           linkedFileStreamUrl: async (file, mimeType) => {
-            const token = await localFilePreviewStreams.issueExactFile(file, mimeType);
+            const token = await resourcePreviewHost.streams.issueExactFile(file, mimeType);
             return token ? previewLocalUrl(token) : null;
           },
           mutateLinkedFileSource: (input) =>
@@ -2588,7 +1197,7 @@ function registerSourcePreviewTransport(ipcMain: OwnedIpcMain): void {
               ],
               { focus: { nodeId: input.ownerId, selectAll: false } },
             ),
-          localFileReferencePreview,
+          localFileReferencePreview: resourcePreviewHost.localFiles.metadata,
         });
       }
       throw new Error(`Unknown command: ${command}`);
@@ -2606,7 +1215,7 @@ function registerSourcePreviewTransport(ipcMain: OwnedIpcMain): void {
   });
 
   ipcMain.handle(LIN_URL_PAGE_TRANSLATION_GUEST_CHANNEL, (event, raw: unknown) => {
-    if (!mainWindow || event.sender !== mainWindow.webContents) {
+    if (!windowApplicationHost.isMainSender(event)) {
       throw new Error('Page translation guest access is only available to the main window.');
     }
     return executeUrlPageTranslationGuestCommand(event.sender, raw);
@@ -2614,147 +1223,70 @@ function registerSourcePreviewTransport(ipcMain: OwnedIpcMain): void {
 }
 
 function registerWindowSettingsTransport(ipcMain: OwnedIpcMain): void {
-  ipcMain.handle('lin:window', (_event, command: string) => {
-    const window = BrowserWindow.getFocusedWindow() ?? mainWindow;
-    if (!window) return;
-    if (command === 'minimize') window.minimize();
-    if (command === 'toggle_maximize') {
-      if (window.isMaximized()) window.unmaximize();
-      else window.maximize();
-    }
-    if (command === 'close') window.close();
-  });
+  ipcMain.handle('lin:window', (_event, command: string) => windowApplicationHost.windowCommand(command));
+  ipcMain.handle('lin:open-settings', (_event, target?: unknown) => windowApplicationHost.openSettings(target));
+  ipcMain.handle('lin:close-settings', (event) => windowApplicationHost.closeSettingsFrom(event));
+  ipcMain.handle(LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL, (event) => resourcePreviewHost.clearWebsiteData(
+    event,
+    windowApplicationHost.windows.settings(),
+    windowApplicationHost.effectiveLocale(),
+  ));
+  ipcMain.handle(LIN_CLEAR_PREVIEW_TRANSLATION_CACHE_CHANNEL, (event) => resourcePreviewHost.clearTranslationCache(
+    event,
+    windowApplicationHost.windows.settings(),
+    windowApplicationHost.effectiveLocale(),
+  ));
 
-  ipcMain.handle('lin:open-settings', (_event, target?: unknown) =>
-    openSettingsWindow(sanitizeSettingsOpenTarget(target)),
-  );
-  // Only the settings surface may close the settings window. Every sibling
-  // privileged handler checks its sender; this one did not, so any renderer could
-  // close it.
-  ipcMain.handle('lin:close-settings', (event) => {
-    const window = liveWindow(settingsWindow);
-    if (window && BrowserWindow.fromWebContents(event.sender) === window) window.close();
-  });
-  ipcMain.handle(LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL, clearUrlPreviewWebsiteData);
-  ipcMain.handle(LIN_CLEAR_PREVIEW_TRANSLATION_CACHE_CHANNEL, clearPreviewTranslationCache);
-  // Launcher window IPC (the prewarmed global launcher). Every handler below is
-  // sender-checked: `launcher:*` is the launcher's own bridge, and a non-launcher
-  // renderer naming these channels is refused rather than served.
-  function assertLauncherRenderer(event: IpcMainInvokeEvent): void {
+  const assertLauncherRenderer = (event: IpcMainInvokeEvent): void => {
     if (!rendererHasCapability(event.sender.id, 'launcher')) {
       throw new Error('The launcher bridge is available only to the launcher window.');
     }
-  }
-
-  // The in-app entry points (the sidebar Search row, the `/`-menu row) summon
-  // the SAME panel the hotkey does. The ⌘K binding retires; the entry points do
-  // not — a surface that teaches its own keystroke must still be reachable by
-  // someone who has not learned it.
+  };
   ipcMain.handle('lin:show-launcher', async (event) => {
-    assertMainRenderer(event, 'Summoning the command surface');
-    await toggleLauncher();
+    windowApplicationHost.assertMainSender(event, 'Summoning the command surface');
+    await windowApplicationHost.toggleLauncher();
   });
   ipcMain.handle('launcher:hide', (event) => {
     assertLauncherRenderer(event);
-    dismissLauncher();
+    windowApplicationHost.dismissLauncher();
   });
-  // Bootstrap: only the summon accelerator, so the panel's identity zone can
-  // teach the keystroke. The result list is no longer a static command set —
-  // it is the object generation main installs on the invocation.
   ipcMain.handle('launcher:getInitialState', (event): LauncherInitialState => {
     assertLauncherRenderer(event);
-    return { hotkey: launcherHotkeyAccelerator };
+    return { hotkey: windowApplicationHost.launcherHotkey() };
   });
-  // Open a node search result: bring up the main window and navigate to it.
-  // Appearance preference. Setting nativeTheme.themeSource rewrites
-  // prefers-color-scheme in every renderer, so the @media rules in theme-dark.css
-  // flip all windows at once — no per-window broadcast needed. We mirror the stored
-  // mode (not the resolved scheme) so the settings control reflects the user's pick.
-  ipcMain.handle('lin:get-theme', (): ThemeMode => nativeTheme.themeSource);
-  // Read-only view of the accelerator the launcher hotkey registered under (null
-  // when every candidate was taken), so Settings → General can state it. No args,
-  // no mutation: registration stays main's.
-  ipcMain.handle('lin:launcher-hotkey', (): string | null => launcherHotkeyAccelerator);
-  ipcMain.handle('lin:set-theme', (_event, mode: unknown): void => {
-    if (!isThemeMode(mode)) return;
-    nativeTheme.themeSource = mode;
-    saveThemePreference(mode);
-  });
-  // Language preference. Read synchronously so preload can seed the renderer's first
-  // paint without a flash; setting it persists, broadcasts to every window (open
-  // windows re-render via I18nProvider without a reload), and rebuilds the native
-  // menu in the new locale. Language has no nativeTheme-style free broadcast, so we
-  // push it ourselves. See core/locale.ts.
+  ipcMain.handle('lin:get-theme', (): ThemeMode => windowApplicationHost.theme());
+  ipcMain.handle('lin:launcher-hotkey', (): string | null => windowApplicationHost.launcherHotkey());
+  ipcMain.handle('lin:set-theme', (_event, mode: unknown) => windowApplicationHost.setTheme(mode));
   ipcMain.on('lin:get-language-sync', (event) => {
-    event.returnValue = effectiveLocale();
+    event.returnValue = windowApplicationHost.effectiveLocale();
   });
   ipcMain.on('lin:get-translation-language-sync', (event) => {
-    event.returnValue = effectiveTranslationLanguage();
+    event.returnValue = windowApplicationHost.effectiveTranslationLanguage();
   });
   ipcMain.on('lin:get-url-page-translation-preferences-sync', (event) => {
-    event.returnValue = urlPageTranslationPreferences();
+    event.returnValue = windowApplicationHost.urlPageTranslationPreferences();
   });
-  ipcMain.handle('lin:set-translation-language', (_event, raw: unknown): void => {
-    if (!isTranslationLanguage(raw)) return;
-    saveTranslationLanguagePreference(raw);
-    for (const window of BrowserWindow.getAllWindows()) {
-      window.webContents.send(LIN_TRANSLATION_LANGUAGE_CHANGED_CHANNEL, raw);
-    }
-  });
-  ipcMain.handle('lin:set-url-page-translation-preferences', (_event, raw: unknown): UrlPageTranslationPreferences => {
-    if (!isUrlPageTranslationPreferences(raw)) return urlPageTranslationPreferences();
-    saveUrlPageTranslationPreferences(raw);
-    for (const window of BrowserWindow.getAllWindows()) {
-      window.webContents.send(LIN_URL_PAGE_TRANSLATION_PREFERENCES_CHANGED_CHANNEL, raw);
-    }
-    return raw;
-  });
-  ipcMain.handle('lin:set-language', (_event, raw: unknown): void => {
-    if (!isLocale(raw)) return;
-    saveLanguagePreference(raw); // best-effort persistence (see appPreferences.ts)
-    // The broadcast value is the in-session source of truth — persistence can fail
-    // silently. Refresh the cache from it so the native menu + window titles rebuilt
-    // below agree with the locale the windows switch to, even if the file write failed
-    // (otherwise effectiveLocale() would re-read the stale file and the menu would lag).
-    cachedLocale = raw;
-    for (const window of BrowserWindow.getAllWindows()) {
-      window.webContents.send(LIN_LANGUAGE_CHANGED_CHANNEL, raw);
-      if (loadAppPreferences().translationLanguage === null) {
-        window.webContents.send(LIN_TRANSLATION_LANGUAGE_CHANGED_CHANNEL, raw);
-      }
-    }
-    Menu.setApplicationMenu(buildApplicationMenu());
-    // Open windows localize their native title bar once at construction; their content
-    // re-renders via I18nProvider, but the OS title bar would otherwise stay stale.
-    const messages = getMessages(raw);
-    liveWindow(settingsWindow)?.setTitle(messages.window.settingsTitle({ app: APP_NAME }));
-    liveWindow(providerConfigWindow)?.setTitle(messages.window.providerConfigTitle);
-  });
-  // Open the per-provider config as its own native (modal child) window.
+  ipcMain.handle('lin:set-translation-language', (_event, raw: unknown) => (
+    windowApplicationHost.setTranslationLanguage(raw)
+  ));
+  ipcMain.handle('lin:set-url-page-translation-preferences', (_event, raw: unknown) => (
+    windowApplicationHost.setUrlPageTranslationPreferences(raw)
+  ));
+  ipcMain.handle('lin:set-language', (_event, raw: unknown) => windowApplicationHost.setLocale(raw));
   ipcMain.handle('lin:open-provider-config', (_event, args?: { providerId?: unknown; mode?: unknown }) => {
     const providerId = typeof args?.providerId === 'string' ? args.providerId : '';
     const mode: ProviderConfigMode = args?.mode === 'custom' ? 'custom' : 'configure';
-    openProviderConfigWindow(providerId, mode);
+    windowApplicationHost.openProviderConfig(providerId, mode);
   });
-  ipcMain.handle('lin:close-provider-config', () => liveWindow(providerConfigWindow)?.close());
+  ipcMain.handle('lin:close-provider-config', () => windowApplicationHost.closeProviderConfig());
   ipcMain.handle('lin:get-provider-api-key', (event, args?: { providerId?: unknown }) => {
-    if (!isProviderConfigSender(event)) {
+    if (!windowApplicationHost.isProviderConfigSender(event)) {
       throw new Error('Provider API keys are only available to the provider config window.');
     }
     return getStoredProviderApiKey(String(args?.providerId ?? ''));
   });
-  // A provider setting changed in the settings window or its config child.
-  // Tell the main window (stale provider state) and the settings window (its list
-  // reflects the new configured provider row) to re-fetch — but never the window
-  // that just wrote.
-  //
-  // Fanning it back to the sender was a real defect, not just waste: the settings
-  // window's listener refetches and reapplies wholesale, so a write made there
-  // reverted the user's other pending toggles. Deleting the draft removed the
-  // damage; excluding the sender removes the cause, and with it a full settings
-  // round-trip plus a list re-render on every instant toggle.
   ipcMain.handle('lin:settings-changed', (event) => {
-    notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
+    windowApplicationHost.notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
   });
 }
 
@@ -2789,7 +1321,9 @@ function registerDiagnosticsTransport(ipcMain: OwnedIpcMain): void {
   ipcMain.handle(LIN_EXPORT_DIAGNOSTICS_CHANNEL, async (event): Promise<DiagnosticsActionResult> => {
     try {
       const window =
-        BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? settingsWindow ?? mainWindow;
+        BrowserWindow.fromWebContents(event.sender)
+        ?? BrowserWindow.getFocusedWindow()
+        ?? windowApplicationHost.windows.settingsOrMain();
       const defaultPath = join(
         app.getPath('desktop'),
         `tenon-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}.json`,
@@ -2813,129 +1347,35 @@ function registerDiagnosticsTransport(ipcMain: OwnedIpcMain): void {
 }
 
 function registerNativeFileTransport(ipcMain: OwnedIpcMain): void {
-  ipcMain.handle(
-    'lin:pick-local-files',
-    async (
-      event,
-      rawOptions?: {
-        maxFiles?: unknown;
-      },
-    ) => {
-      const maxFiles = clampPickerLimit(rawOptions?.maxFiles);
-      const window = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? mainWindow;
-      const defaultPath = attachmentPickerDefaultPath();
-      const multiSelections = maxFiles > 1;
-      const options: Electron.OpenDialogOptions = {
-        ...(defaultPath.path ? { defaultPath: defaultPath.path } : {}),
-        properties: multiSelections ? ['openFile', 'openDirectory', 'multiSelections'] : ['openFile', 'openDirectory'],
-      };
-      const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
-      if (result.canceled || result.filePaths.length === 0) {
-        return {
-          canceled: true,
-          files: [],
-        };
-      }
-      lastAttachmentPickerDirectory = dirname(result.filePaths[0]!);
-      let skippedCount = 0;
-      const files: NonNullable<Awaited<ReturnType<typeof localPickedFile>>>[] = [];
-      const rejectedFiles: Array<{
-        name: string;
-        reason: 'officeOwnershipFile';
-        suggestedName?: string;
-      }> = [];
-      for (const filePath of result.filePaths) {
-        const rejected = await rejectedOfficeOwnershipFile(filePath);
-        if (rejected) {
-          rejectedFiles.push(rejected);
-          continue;
-        }
-        if (files.length >= maxFiles) {
-          skippedCount += 1;
-          continue;
-        }
-        const file = await localPickedFile(filePath);
-        if (file) files.push(file);
-      }
-      return {
-        canceled: false,
-        files,
-        ...(rejectedFiles.length > 0 ? { rejectedFiles } : {}),
-        ...(skippedCount > 0 ? { skippedCount } : {}),
-      };
-    },
-  );
-
-  ipcMain.handle(
-    'lin:search-local-files',
-    async (
-      _event,
-      rawOptions?: {
-        limit?: unknown;
-        query?: unknown;
-      },
-    ) => {
-      const query = normalizeLocalFileQuery(rawOptions?.query);
-      const limit = clampLocalFileSearchLimit(rawOptions?.limit);
-      if (!query) return { files: [], query };
-      const paths = await searchLocalFilePaths(query, limit * 6);
-      const files = await localFileSearchResults(paths, query, limit);
-      return { files, query };
-    },
-  );
-
-  ipcMain.handle('lin:recent-local-files', async (_event, rawOptions?: { limit?: unknown }) => {
-    const limit = clampRecentLocalFileLimit(rawOptions?.limit);
-    const paths = await recentLocalFilePaths(limit * 12);
-    const files = await withLocalFileIcons(
-      (await localFileMetadataResults(paths, limit * 12))
-        .sort((left, right) => right.lastModified - left.lastModified)
-        .slice(0, limit),
-    );
-    return { files };
-  });
-
-  ipcMain.handle('lin:prepare-local-file', async (_event, rawOptions?: { id?: unknown }) => {
-    const id = typeof rawOptions?.id === 'string' ? rawOptions.id : '';
-    const filePath = localFileSearchCache.get(id);
-    if (!filePath) return { file: null };
-    return { file: await localPickedFile(filePath) };
-  });
-
-  ipcMain.handle('lin:preview-local-file', async (_event, rawOptions?: { id?: unknown }) => {
-    const id = typeof rawOptions?.id === 'string' ? rawOptions.id : '';
-    const filePath = localFileSearchCache.get(id);
-    if (!filePath) return { thumbnailDataUrl: null };
-    try {
-      const fileStat = await stat(filePath);
-      if (!fileStat.isFile()) return { thumbnailDataUrl: null };
-      const file = {
-        entryKind: 'file',
-        mimeType: inferMimeType(filePath),
-        name: basename(filePath),
-      };
-      if (!shouldLoadLocalFileThumbnail(file)) return { thumbnailDataUrl: null };
-      return {
-        thumbnailDataUrl: await localFileThumbnailDataUrl(filePath, LOCAL_FILE_PREVIEW_TIMEOUT_MS),
-      };
-    } catch {
-      return { thumbnailDataUrl: null };
-    }
-  });
+  ipcMain.handle('lin:pick-local-files', (event, rawOptions?: { maxFiles?: unknown }) => (
+    resourcePreviewHost.localFiles.pick(
+      BrowserWindow.fromWebContents(event.sender)
+        ?? BrowserWindow.getFocusedWindow()
+        ?? windowApplicationHost.windows.main(),
+      rawOptions,
+    )
+  ));
+  ipcMain.handle('lin:search-local-files', (_event, rawOptions?: { limit?: unknown; query?: unknown }) => (
+    resourcePreviewHost.localFiles.search(rawOptions)
+  ));
+  ipcMain.handle('lin:recent-local-files', (_event, rawOptions?: { limit?: unknown }) => (
+    resourcePreviewHost.localFiles.recent(rawOptions)
+  ));
+  ipcMain.handle('lin:prepare-local-file', (_event, rawOptions?: { id?: unknown }) => (
+    resourcePreviewHost.localFiles.prepare(rawOptions)
+  ));
+  ipcMain.handle('lin:preview-local-file', (_event, rawOptions?: { id?: unknown }) => (
+    resourcePreviewHost.localFiles.preview(rawOptions)
+  ));
 
   ipcMain.handle('lin:preview-local-file-reference', async (event, rawOptions?: LocalFileOperationInput) => {
     assertAttachmentFileOperationRenderer(event, rawOptions, 'Attachment preview');
-    const file = await resolveLocalFileOperation(rawOptions, true);
-    if (!file) return { file: null };
-    return { file: await localFileReferencePreview(file) };
+    return resourcePreviewHost.localFiles.previewReference(rawOptions);
   });
 
   ipcMain.handle('lin:open-local-file', async (event, rawOptions?: LocalFileOperationInput) => {
     assertAttachmentFileOperationRenderer(event, rawOptions, 'Attachment open');
-    const file = await resolveLocalFileOperation(rawOptions, true);
-    if (!file || !isSafeLocalFileOpenTarget(file)) return { opened: false };
-    const error = await shell.openPath(file.path);
-    return { opened: error.length === 0 };
+    return resourcePreviewHost.localFiles.openReference(rawOptions);
   });
 
   ipcMain.handle('lin:reveal-local-file', async (event, rawOptions?: LocalFileOperationInput) => {
@@ -2943,10 +1383,7 @@ function registerNativeFileTransport(ipcMain: OwnedIpcMain): void {
     // gate (an app/script that can't be opened can still be revealed); the same trusted-root
     // boundary as `lin:open-local-file` is the authority.
     assertAttachmentFileOperationRenderer(event, rawOptions, 'Attachment reveal');
-    const file = await resolveLocalFileOperation(rawOptions, true);
-    if (!file) return { revealed: false };
-    shell.showItemInFolder(file.path);
-    return { revealed: true };
+    return resourcePreviewHost.localFiles.revealReference(rawOptions);
   });
 }
 
@@ -3047,7 +1484,7 @@ async function handleMemoryCommand(command: string, args: Record<string, unknown
             },
           },
         );
-        navigateMainToNode(outcome.focus?.nodeId ?? DAILY_NOTES_ID);
+        windowApplicationHost.navigateMainToNode(outcome.focus?.nodeId ?? DAILY_NOTES_ID);
       }
       return agentHost.memory.settings();
     case 'memory_reset':
@@ -3178,9 +1615,7 @@ function assertActionRequester(event: IpcMainInvokeEvent): void {
 }
 
 function assertMainRenderer(event: IpcMainInvokeEvent, capability: string): void {
-  if (!mainWindow || event.sender !== mainWindow.webContents) {
-    throw new Error(`${capability} is available only to the main application window.`);
-  }
+  windowApplicationHost.assertMainSender(event, capability);
 }
 
 function assertAttachmentFileOperationRenderer(
@@ -3222,10 +1657,7 @@ async function handleAssetCommand(
       // these chips. The renderer can only name a file it could already preview, so
       // this does NOT reopen the arbitrary-local-file read primitive that
       // ingest_asset's buffer-only rule guards against. Directories are rejected.
-      const file = await resolveTrustedLocalFileReference(
-        (args as { path?: unknown }).path,
-        [agentLocalFileRoot, agentScratchRoot],
-      );
+      const file = await resourcePreviewHost.localFiles.resolve({ path: (args as { path?: unknown }).path });
       if (!file || file.entryKind !== 'file') return null;
       return outlineHost.assets.ingest({ kind: 'path', path: file.path });
     }
@@ -3246,106 +1678,52 @@ async function handleAssetCommand(
     case 'lookup_asset':
       return outlineHost.assets.lookup(String(args.id));
     case 'pick_image_files': {
-      const window = BrowserWindow.getFocusedWindow() ?? mainWindow;
-      const dialogStrings = getMessages(effectiveLocale()).window;
+      const window = windowApplicationHost.windows.focusedOrMain();
+      const dialogStrings = getMessages(windowApplicationHost.effectiveLocale()).window;
       const options = {
         title: dialogStrings.insertImageTitle,
         properties: ['openFile', 'multiSelections'] as Array<'openFile' | 'multiSelections'>,
         filters: [{ name: dialogStrings.imageFilesFilter, extensions: IMAGE_FILE_EXTENSIONS }],
       };
-      const result = window
-        ? await dialog.showOpenDialog(window, options)
-        : await dialog.showOpenDialog(options);
-      if (result.canceled) return [];
-      return Promise.all(result.filePaths.map((path) => outlineHost.assets.ingest({ kind: 'path', path })));
+      const paths = await resourcePreviewHost.localFiles.pickPaths(window, options);
+      return Promise.all(paths.map((path) => outlineHost.assets.ingest({ kind: 'path', path })));
     }
     case 'pick_attachment_files': {
-      const window = BrowserWindow.getFocusedWindow() ?? mainWindow;
-      const dialogStrings = getMessages(effectiveLocale()).window;
+      const window = windowApplicationHost.windows.focusedOrMain();
+      const dialogStrings = getMessages(windowApplicationHost.effectiveLocale()).window;
       const options = {
         title: dialogStrings.insertAttachmentTitle,
         properties: ['openFile', 'multiSelections'] as Array<'openFile' | 'multiSelections'>,
       };
-      const result = window
-        ? await dialog.showOpenDialog(window, options)
-        : await dialog.showOpenDialog(options);
-      if (result.canceled) return [];
-      return Promise.all(result.filePaths.map((path) => outlineHost.assets.ingest({ kind: 'path', path })));
+      const paths = await resourcePreviewHost.localFiles.pickPaths(window, options);
+      return Promise.all(paths.map((path) => outlineHost.assets.ingest({ kind: 'path', path })));
     }
     case 'open_asset': {
       const path = await outlineHost.assets.pathFor(String(args.id));
       if (!path) return { opened: false };
       const pathStat = await stat(path);
-      if (!isSafeLocalFileOpenTarget({ entryKind: 'file', path, stats: pathStat })) return { opened: false };
-      await shell.openPath(path);
-      return { opened: true };
+      return { opened: await resourcePreviewHost.localFiles.open({ entryKind: 'file', path, stats: pathStat }) };
     }
     case 'reveal_asset': {
       const path = await outlineHost.assets.pathFor(String(args.id));
-      if (path) shell.showItemInFolder(path);
+      if (path) resourcePreviewHost.localFiles.reveal(path);
       return { revealed: Boolean(path) };
     }
     case 'copy_asset_file': {
       const path = await outlineHost.assets.pathFor(String(args.id));
       if (!path) return { copied: false };
-      copyFilePathToClipboard(path);
+      resourcePreviewHost.localFiles.copy(path);
       return { copied: true };
     }
     case 'open_external_url': {
       // Opens a remote media node's source in the OS default browser. Only
       // http(s) is allowed so a node can never smuggle a file:// or other
       // scheme into shell.openExternal.
-      return { opened: openExternalUrl(String(args.url)) };
+      return { opened: resourcePreviewHost.openExternal(String(args.url)) };
     }
     default:
       throw new Error(`Unknown asset command: ${command}`);
   }
-}
-
-function copyFilePathToClipboard(path: string): void {
-  clipboard.writeText(path);
-  if (process.platform !== 'darwin') return;
-  const fileUrl = pathToFileURL(path).toString();
-  clipboard.writeBuffer('public.file-url', Buffer.from(fileUrl, 'utf8'));
-  clipboard.writeBuffer('NSFilenamesPboardType', Buffer.from(
-    `<?xml version="1.0" encoding="UTF-8"?>` +
-    `<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">` +
-    `<plist version="1.0"><array><string>${escapeXml(path)}</string></array></plist>`,
-    'utf8',
-  ));
-}
-
-function escapeXml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
-
-function attachmentPickerDefaultPath(): { path?: string; source: string } {
-  const mode = process.env.LIN_ATTACHMENT_PICKER_DEFAULT_PATH ?? 'last';
-  if (mode === 'none' || mode === 'system') return { source: 'system' };
-  if (mode === 'last') {
-    if (lastAttachmentPickerDirectory) return { path: lastAttachmentPickerDirectory, source: 'last' };
-    const downloads = safeAppPath('downloads');
-    if (downloads) return { path: downloads, source: 'downloads-fallback' };
-    return { source: 'system' };
-  }
-  if (mode === 'downloads') {
-    const downloads = safeAppPath('downloads');
-    return downloads ? { path: downloads, source: 'downloads' } : { source: 'system' };
-  }
-  if (mode === 'documents') {
-    const documents = safeAppPath('documents');
-    return documents ? { path: documents, source: 'documents' } : { source: 'system' };
-  }
-  if (mode === 'home') {
-    const home = safeAppPath('home');
-    return home ? { path: home, source: 'home' } : { source: 'system' };
-  }
-  return { source: 'system' };
 }
 
 function errorReportFromIpc(raw: unknown, defaultDomain: string): ErrorReport {
@@ -3427,9 +1805,7 @@ async function diagnosticEnvironment(): Promise<DiagnosticEnvironment> {
  * writer, in which case every window hears it.
  */
 function notifySettingsChanged(origin?: BrowserWindow | null): void {
-  for (const target of [liveWindow(mainWindow), liveWindow(settingsWindow)]) {
-    if (target && target !== origin) target.webContents.send(LIN_SETTINGS_CHANGED_CHANNEL);
-  }
+  windowApplicationHost.notifySettingsChanged(origin);
 }
 
 /**
@@ -3596,406 +1972,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function clampPickerLimit(value: unknown): number {
-  const numeric = typeof value === 'number' && Number.isFinite(value)
-    ? Math.trunc(value)
-    : DEFAULT_ATTACHMENT_PICKER_LIMIT;
-  return Math.min(50, Math.max(1, numeric));
-}
-
-function clampLocalFileSearchLimit(value: unknown): number {
-  const numeric = typeof value === 'number' && Number.isFinite(value)
-    ? Math.trunc(value)
-    : DEFAULT_LOCAL_FILE_SEARCH_LIMIT;
-  return Math.min(24, Math.max(1, numeric));
-}
-
-function clampRecentLocalFileLimit(value: unknown): number {
-  const numeric = typeof value === 'number' && Number.isFinite(value)
-    ? Math.trunc(value)
-    : DEFAULT_RECENT_LOCAL_FILE_LIMIT;
-  return Math.min(18, Math.max(1, numeric));
-}
-
-function normalizeLocalFileQuery(value: unknown): string {
-  if (typeof value !== 'string') return '';
-  return value.replace(/\s+/g, ' ').trim().slice(0, 80);
-}
-
-async function searchLocalFilePaths(query: string, limit: number): Promise<string[]> {
-  if (process.platform === 'darwin') {
-    const spotlight = await mdfindFileNameMatches(query, limit);
-    if (spotlight.length > 0) return spotlight;
-  }
-  return rgFileNameMatches(query, limit);
-}
-
-function mdfindFileNameMatches(query: string, limit: number): Promise<string[]> {
-  return collectNullDelimitedProcess('/usr/bin/mdfind', ['-0', '-name', query], limit, LOCAL_FILE_SEARCH_TIMEOUT_MS);
-}
-
-async function recentLocalFilePaths(limit: number): Promise<string[]> {
-  if (process.platform === 'darwin') {
-    const spotlight = await collectNullDelimitedProcess(
-      '/usr/bin/mdfind',
-      ['-0', 'kMDItemFSContentChangeDate >= $time.today(-30)'],
-      limit,
-      RECENT_LOCAL_FILE_TIMEOUT_MS,
-    );
-    if (spotlight.length > 0) return spotlight;
-  }
-  return commonDirectoryRecentFilePaths(limit);
-}
-
-async function commonDirectoryRecentFilePaths(limit: number): Promise<string[]> {
-  const roots = ['desktop', 'documents', 'downloads']
-    .map((name) => safeAppPath(name as Parameters<typeof app.getPath>[0]))
-    .filter((path): path is string => Boolean(path));
-  const paths: string[] = [];
-  for (const root of roots) {
-    try {
-      const entries = await readdir(root, { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isFile() && !entry.isDirectory()) continue;
-        paths.push(join(root, entry.name));
-        if (paths.length >= limit) return paths;
-      }
-    } catch {
-      // Ignore folders that are unavailable to the current OS account or do not exist.
-    }
-  }
-  return paths;
-}
-
-async function rgFileNameMatches(query: string, limit: number): Promise<string[]> {
-  const home = safeAppPath('home');
-  if (!home) return [];
-  const ripgrep = await resolveRipgrepCommand(home).catch(() => null);
-  if (!ripgrep) return [];
-  return new Promise((resolve) => {
-    const results: string[] = [];
-    const seen = new Set<string>();
-    const lowerQuery = query.toLowerCase();
-    const child = spawn(ripgrep.command, [...ripgrep.argsPrefix,
-      '--files',
-      '--hidden',
-      '--glob', '!**/.git/**',
-      '--glob', '!**/node_modules/**',
-      '--glob', '!**/Library/**',
-      home,
-    ], { env: buildAgentLocalToolProcessEnv(), stdio: ['ignore', 'pipe', 'ignore'] });
-    let buffer = '';
-    let settled = false;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(results);
-    };
-    const timer = setTimeout(() => {
-      child.kill();
-      finish();
-    }, LOCAL_FILE_SEARCH_TIMEOUT_MS);
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => {
-      buffer += chunk;
-      let newline = buffer.indexOf('\n');
-      while (newline >= 0) {
-        const filePath = buffer.slice(0, newline).trim();
-        buffer = buffer.slice(newline + 1);
-        if (basename(filePath).toLowerCase().includes(lowerQuery) && !seen.has(filePath)) {
-          seen.add(filePath);
-          results.push(filePath);
-          if (results.length >= limit) {
-            child.kill();
-            finish();
-            return;
-          }
-        }
-        newline = buffer.indexOf('\n');
-      }
-    });
-    child.on('error', finish);
-    child.on('close', finish);
-  });
-}
-
-function collectNullDelimitedProcess(
-  command: string,
-  args: string[],
-  limit: number,
-  timeoutMs: number,
-): Promise<string[]> {
-  return new Promise((resolve) => {
-    const results: string[] = [];
-    const seen = new Set<string>();
-    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'ignore'] });
-    let buffer = Buffer.alloc(0);
-    let settled = false;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(results);
-    };
-    const timer = setTimeout(() => {
-      child.kill();
-      finish();
-    }, timeoutMs);
-    child.stdout.on('data', (chunk: Buffer) => {
-      buffer = Buffer.concat([buffer, chunk]);
-      let delimiter = buffer.indexOf(0);
-      while (delimiter >= 0) {
-        const filePath = buffer.subarray(0, delimiter).toString('utf8');
-        buffer = buffer.subarray(delimiter + 1);
-        if (filePath && !seen.has(filePath)) {
-          seen.add(filePath);
-          results.push(filePath);
-          if (results.length >= limit) {
-            child.kill();
-            finish();
-            return;
-          }
-        }
-        delimiter = buffer.indexOf(0);
-      }
-    });
-    child.on('error', finish);
-    child.on('close', finish);
-  });
-}
-
-async function localFileSearchResults(paths: string[], query: string, limit: number) {
-  const rankedPaths = [...paths].sort((left, right) =>
-    localFilePathRank(left, query) - localFilePathRank(right, query));
-  return withLocalFileIcons(await localFileMetadataResults(rankedPaths, limit));
-}
-
-async function localFileMetadataResults(paths: string[], limit: number) {
-  const files = [];
-  for (const filePath of paths) {
-    if (files.length >= limit) break;
-    if (officeOwnershipFileInfo(filePath)) continue;
-    try {
-      const fileStat = await stat(filePath);
-      const entryKind = fileStat.isDirectory() ? 'directory' : fileStat.isFile() ? 'file' : null;
-      if (!entryKind) continue;
-      files.push({
-        entryKind,
-        id: cacheLocalFileSearchPath(filePath),
-        path: filePath,
-        name: basename(filePath),
-        parentPath: dirname(filePath),
-        mimeType: entryKind === 'directory' ? 'inode/directory' : inferMimeType(filePath),
-        sizeBytes: entryKind === 'directory' ? 0 : fileStat.size,
-        lastModified: fileStat.mtimeMs,
-      });
-    } catch {
-      // Spotlight can return stale paths; ignore entries that no longer stat.
-    }
-  }
-  return files;
-}
-
-async function rejectedOfficeOwnershipFile(filePath: string): Promise<{
-  name: string;
-  reason: 'officeOwnershipFile';
-  suggestedName?: string;
-} | null> {
-  const ownershipFile = officeOwnershipFileInfo(filePath);
-  if (!ownershipFile) return null;
-  const suggestedPath = join(dirname(filePath), ownershipFile.suggestedName);
-  const suggestedName = await stat(suggestedPath)
-    .then((candidate) => candidate.isFile() ? ownershipFile.suggestedName : undefined)
-    .catch(() => undefined);
-  return {
-    name: ownershipFile.name,
-    reason: 'officeOwnershipFile',
-    ...(suggestedName ? { suggestedName } : {}),
-  };
-}
-
-async function localFileReferencePreview(file: TrustedLocalFileReference) {
-  const mimeType = file.entryKind === 'directory' ? 'inode/directory' : inferMimeType(file.path);
-  const [visual] = await withLocalFileIcons([{
-    entryKind: file.entryKind,
-    mimeType,
-    name: basename(file.path),
-    path: file.path,
-  }]);
-  return {
-    entryKind: file.entryKind,
-    path: file.path,
-    name: basename(file.path),
-    parentPath: dirname(file.path),
-    mimeType,
-    sizeBytes: file.entryKind === 'directory' ? 0 : file.stats.size,
-    lastModified: file.stats.mtimeMs,
-    ...(visual?.iconDataUrl ? { iconDataUrl: visual.iconDataUrl } : {}),
-    ...(visual?.thumbnailDataUrl ? { thumbnailDataUrl: visual.thumbnailDataUrl } : {}),
-  };
-}
-
-function withLocalFileIcons<T extends {
-  entryKind?: string;
-  mimeType?: string;
-  name?: string;
-  path: string;
-}>(files: T[]): Promise<Array<T & { iconDataUrl?: string; thumbnailDataUrl?: string }>> {
-  return Promise.all(files.map(async (file) => {
-    const [iconDataUrl, thumbnailDataUrl] = await Promise.all([
-      localFileIconDataUrl(file.path),
-      shouldLoadLocalFileThumbnail(file) ? localFileThumbnailDataUrl(file.path, LOCAL_FILE_THUMBNAIL_TIMEOUT_MS) : Promise.resolve(null),
-    ]);
-    return {
-      ...file,
-      ...(iconDataUrl ? { iconDataUrl } : {}),
-      ...(thumbnailDataUrl ? { thumbnailDataUrl } : {}),
-    };
-  }));
-}
-
-function shouldLoadLocalFileThumbnail(file: { entryKind?: string; mimeType?: string; name?: string }): boolean {
-  if (file.entryKind === 'directory' || file.mimeType === 'inode/directory') return false;
-  const mimeType = (file.mimeType ?? '').toLowerCase();
-  if (mimeType.startsWith('image/')) return true;
-  const extension = extname(file.name ?? '').toLowerCase();
-  return [
-    '.avif',
-    '.bmp',
-    '.gif',
-    '.heic',
-    '.jpeg',
-    '.jpg',
-    '.png',
-    '.svg',
-    '.tif',
-    '.tiff',
-    '.webp',
-  ].includes(extension);
-}
-
-function localFilePathRank(filePath: string, query: string): number {
-  const match = rankTextSearchLabel(basename(filePath), query);
-  return match ? match.rank + match.index / 1000 : 10;
-}
-
-// Bounded LRU-ish insert: re-touch the key so it stays fresh and evict the
-// oldest entries when over the cap, instead of clearing the whole map. Wholesale
-// clearing would drop ids that prepare/preview still need for the visible
-// results, leaving recently surfaced files unselectable mid-session.
-function setBoundedLocalFileCache<V>(cache: Map<string, V>, key: string, value: V): void {
-  setBoundedMapEntry(cache, key, value, LOCAL_FILE_CACHE_LIMIT);
-}
-
-function cacheLocalFileSearchPath(filePath: string): string {
-  const id = createHash('sha256').update(filePath).digest('hex').slice(0, 24);
-  setBoundedLocalFileCache(localFileSearchCache, id, filePath);
-  return id;
-}
-
-async function localFileIconDataUrl(filePath: string): Promise<string | null> {
-  const cached = localFileIconCache.get(filePath);
-  if (cached !== undefined) return cached;
-  let pending = pendingLocalFileIconLoads.get(filePath);
-  if (!pending) {
-    pending = loadLocalFileIconDataUrl(filePath)
-      .finally(() => pendingLocalFileIconLoads.delete(filePath));
-    pendingLocalFileIconLoads.set(filePath, pending);
-  }
-  return promiseWithTimeout(pending, LOCAL_FILE_ICON_TIMEOUT_MS, null);
-}
-
-async function loadLocalFileIconDataUrl(filePath: string): Promise<string | null> {
-  try {
-    const image = await app.getFileIcon(filePath, { size: LOCAL_FILE_ICON_SIZE });
-    const iconDataUrl = image.isEmpty() ? null : image.toDataURL();
-    setBoundedLocalFileCache(localFileIconCache, filePath, iconDataUrl);
-    return iconDataUrl;
-  } catch {
-    setBoundedLocalFileCache(localFileIconCache, filePath, null);
-    return null;
-  }
-}
-
-async function localFileThumbnailDataUrl(filePath: string, timeoutMs: number): Promise<string | null> {
-  const cached = localFileThumbnailCache.get(filePath);
-  if (cached !== undefined) return cached;
-  let pending = pendingLocalFileThumbnailLoads.get(filePath);
-  if (!pending) {
-    pending = loadLocalFileThumbnailDataUrl(filePath)
-      .finally(() => pendingLocalFileThumbnailLoads.delete(filePath));
-    pendingLocalFileThumbnailLoads.set(filePath, pending);
-  }
-  return promiseWithTimeout(pending, timeoutMs, null);
-}
-
-async function loadLocalFileThumbnailDataUrl(filePath: string): Promise<string | null> {
-  try {
-    const image = await nativeImage.createThumbnailFromPath(filePath, {
-      width: LOCAL_FILE_THUMBNAIL_SIZE,
-      height: LOCAL_FILE_THUMBNAIL_SIZE,
-    });
-    const thumbnailDataUrl = image.isEmpty() ? null : image.toDataURL();
-    setBoundedLocalFileCache(localFileThumbnailCache, filePath, thumbnailDataUrl);
-    return thumbnailDataUrl;
-  } catch {
-    setBoundedLocalFileCache(localFileThumbnailCache, filePath, null);
-    return null;
-  }
-}
-
-function promiseWithTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      resolve(fallback);
-    }, timeoutMs);
-    promise
-      .then((value) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve(value);
-      })
-      .catch(() => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve(fallback);
-      });
-  });
-}
-
-async function localPickedFile(filePath: string) {
-  try {
-    const fileStat = await stat(filePath);
-    const entryKind = fileStat.isDirectory() ? 'directory' : fileStat.isFile() ? 'file' : null;
-    if (!entryKind) return null;
-    const mimeType = entryKind === 'directory' ? 'inode/directory' : inferMimeType(filePath);
-    const [visual] = await withLocalFileIcons([{
-      entryKind,
-      mimeType,
-      name: basename(filePath),
-      path: filePath,
-    }]);
-    return {
-      entryKind,
-      path: filePath,
-      name: basename(filePath),
-      mimeType,
-      sizeBytes: entryKind === 'directory' ? 0 : fileStat.size,
-      lastModified: fileStat.mtimeMs,
-      ...(visual?.iconDataUrl ? { iconDataUrl: visual.iconDataUrl } : {}),
-      ...(visual?.thumbnailDataUrl ? { thumbnailDataUrl: visual.thumbnailDataUrl } : {}),
-    };
-  } catch {
-    return null;
-  }
-}
-
 async function prepareAttachmentPromptImage(
   attachment: ThreadAttachmentContent,
   sourcePath: string,
@@ -4144,14 +2120,6 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KiB`;
   if (bytes < 1024 * 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))} MiB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GiB`;
-}
-
-function safeAppPath(name: Parameters<typeof app.getPath>[0]): string | null {
-  try {
-    return app.getPath(name);
-  } catch {
-    return null;
-  }
 }
 
 function inferMimeType(filePath: string): string {
@@ -4303,9 +2271,9 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       // Tenon points at the directory; it never copies it in. The picker returns
       // a path the caller stores in additionalSkillDirectories, so the user's
       // files stay where they are and stay live.
-      const window = BrowserWindow.getFocusedWindow() ?? mainWindow;
+      const window = windowApplicationHost.windows.focusedOrMain();
       const options = {
-        title: getMessages(effectiveLocale()).window.chooseSkillDirectoryTitle,
+        title: getMessages(windowApplicationHost.effectiveLocale()).window.chooseSkillDirectoryTitle,
         properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'>,
       };
       const result = window
@@ -4473,7 +2441,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       // Route events to the window that initiated this sign-in, so a re-target to
       // another provider can't deliver them to the wrong window (where they'd be
       // dropped, leaving the interactive step unanswerable and login() hung).
-      const loginWindow = providerConfigWindow;
+      const loginWindow = windowApplicationHost.windows.providerConfig();
       const providerId = String(args.providerId);
       const settings = withCanonicalSkillDirectories(await oauthLoginManager.startLogin(providerId, (envelope) => {
         if (loginWindow && !loginWindow.isDestroyed()) {
@@ -4649,8 +2617,9 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   const appLifecycleTransport = createTransportOwner('app-lifecycle', (owner) => {
-    app.on('second-instance', focusMainWindow);
-    owner.add(() => app.removeListener('second-instance', focusMainWindow));
+    const handleSecondInstance = () => windowApplicationHost.focusMainWindow();
+    app.on('second-instance', handleSecondInstance);
+    owner.add(() => app.removeListener('second-instance', handleSecondInstance));
   });
   let devParentTransport: TransportOwner | null = null;
 
@@ -4691,9 +2660,7 @@ if (!app.requestSingleInstanceLock()) {
   }
 
   const teardownForQuit = async () => {
-    if (app.isReady()) {
-      unregisterLauncherHotkeys();
-    }
+    windowApplicationHost.release();
     try {
       disposeTransportOwners('desktop-host-runtime', [
         mainTransport,
@@ -4712,15 +2679,12 @@ if (!app.requestSingleInstanceLock()) {
     } finally {
       mainTransport = null;
     }
-    pageTranslationService.dispose();
     await Promise.race([
       Promise.allSettled([
         outlineHost.flushDerivedState(),
-        previewTranslationCache.flushNow(),
         agentHost.close(),
         diagnosticLog.flushNow({ reason: 'before-quit' }),
-        flushUrlPreviewSession(urlPreviewSession),
-        localFilePreviewStreams.close(),
+        resourcePreviewHost.close(),
       ]),
       new Promise((resolve) => setTimeout(resolve, 2_500)),
     ]);
@@ -4739,8 +2703,8 @@ if (!app.requestSingleInstanceLock()) {
     durableRevision: () => outlineHost.quit.durableRevision(),
     drainToRevision: (revision) => outlineHost.quit.drainToRevision(revision),
     showDrainFailure: async (error, outcome): Promise<QuitDecision> => {
-      const strings = getMessages(effectiveLocale()).dialog;
-      const parent = liveWindow(mainWindow);
+      const strings = getMessages(windowApplicationHost.effectiveLocale()).dialog;
+      const parent = windowApplicationHost.windows.main();
       const options: Electron.MessageBoxOptions = {
         type: 'error',
         buttons: [strings.retrySave, strings.quitAnyway, strings.cancel],
@@ -4776,51 +2740,11 @@ if (!app.requestSingleInstanceLock()) {
       copyright: '© 2026 Lin Lab',
       ...(icon.isEmpty() ? {} : { iconPath: APP_ICON_PNG_PATH }),
     });
-    // Apply the persisted appearance preference before any window is created, so
-    // the first paint (prePaintBackgroundColor → shouldUseDarkColors) already
-    // matches the chosen theme rather than the OS default.
-    nativeTheme.themeSource = loadAppPreferences().theme;
-    urlPreviewSession = session.fromPartition(URL_PREVIEW_WEBVIEW_PARTITION);
-    mainTransport = registerMainTransport(urlPreviewSession);
-    createWindow();
+    const previewSession = resourcePreviewHost.initializeSession();
+    mainTransport = registerMainTransport(previewSession);
+    windowApplicationHost.initialize();
     scheduleAppUpdateCheck();
     scheduleManagedSkillUpdateCheck();
-    // Prewarm the hidden launcher window and bind the global toggle hotkey.
-    const launcherWindow = createLauncherWindow({
-      preloadPath: join(__dirname, '../preload/index.cjs'),
-      devUrl: RENDERER_DEV_ORIGIN ? `${RENDERER_DEV_ORIGIN}/launcher.html` : null,
-      packagedHtmlPath: join(__dirname, '../renderer/launcher.html'),
-      harden: hardenWebContents,
-      onBlurHide: dismissLauncher,
-    });
-    // Least privilege at the seam, not only in the preload bundle: no
-    // `appCommands` (so `lin:invoke` is refused before dispatch) and no
-    // `actionAttestation` (so `view` / `workspace` facts stay the main
-    // renderer's to attest).
-    registerRendererCapabilities(launcherWindow.webContents, LAUNCHER_RENDERER_CAPABILITIES);
-    // Tenon is a regular foreground app (dock icon + menu bar). In dev, launching
-    // the binary straight from the terminal (not via LaunchServices) can leave the
-    // app in macOS "accessory" activation policy (background-only → no dock icon, no
-    // ⌘Tab); `app.dock.show()` does NOT reliably restore it (it only un-does an
-    // explicit `dock.hide()`), so we assert the regular policy here. This is
-    // idempotent for a normally-launched packaged app. (The separate packaged
-    // dock-hiding bug — the launcher's all-Spaces behavior transforming the app to
-    // an accessory process, electron#26350 — is fixed in launcherWindow.ts via the
-    // `skipTransformProcessType` option on setVisibleOnAllWorkspaces.) Does not
-    // affect the launcher panel's per-window non-activating behavior.
-    if (process.platform === 'darwin') app.setActivationPolicy('regular');
-    const hotkey = registerLauncherHotkey(() => void toggleLauncher());
-    launcherHotkeyAccelerator = hotkey.accelerator;
-    if (hotkey.accelerator) console.log(`[launcher] global hotkey: ${hotkey.accelerator}`);
-    else console.warn(`[launcher] no global hotkey registered; tried: ${hotkey.attempted.join(', ')}`);
-    Menu.setApplicationMenu(buildApplicationMenu());
-    // The prewarmed launcher window is always present (hidden), so check for the
-    // main window specifically rather than "no windows at all".
-    const handleActivate = () => {
-      if (!mainWindow) createWindow();
-    };
-    app.on('activate', handleActivate);
-    appLifecycleTransport.add(() => app.removeListener('activate', handleActivate));
   }).catch((error) => {
     console.error(error);
     try {
