@@ -632,6 +632,7 @@ test.describe('file attachments', () => {
     const sourceValue = sourceFieldValues(drilledProjection, attachmentId!)[0];
     expect(sourceValue).toBeTruthy();
     await expect(rowEditor(page, sourceValue!.id)).toContainText(/^asset:\/\/local\//);
+    await expect(row(page, sourceValue!.id).locator('.field-value-hint')).toHaveCount(0);
     await expect(nodePage.getByRole('region', { name: 'Source preview' })).toBeVisible();
     await expect.poll(async () => nodePage.evaluate((panel) => {
       const preview = panel.querySelector('.node-source-preview-region');

@@ -128,7 +128,11 @@ import { makeDraftNode } from './draftRow';
 import { TrailingOptionsPopover } from './TrailingOptionsPopover';
 import { DateValuePicker } from './DateValuePicker';
 import type { FieldValueContext } from '../fields/fieldValueEditors';
-import { fieldValueOpenHref, validateFieldValue } from '../fields/fieldValueValidation';
+import {
+  fieldValueOpenHref,
+  validateFieldValue,
+  validateSourceFieldValue,
+} from '../fields/fieldValueValidation';
 import { CalendarIcon, ICON_SIZE, OpenIcon, WarningIcon } from '../icons';
 import {
   createPlaceholderInlineField,
@@ -2890,7 +2894,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // precedence — a malformed value shows the hint, not a broken link.
   const fieldValueText = realNode ? displayed.content.text : '';
   const fieldValueHint = props.fieldValue && fieldDescriptor?.validates && realNode
-    ? validateFieldValue(props.fieldValue.fieldType, fieldValueText, props.fieldValue.constraints)
+    ? props.fieldValue.fieldDefId === SOURCE_FIELD_ID
+      ? validateSourceFieldValue(fieldValueText)
+      : validateFieldValue(props.fieldValue.fieldType, fieldValueText, props.fieldValue.constraints)
     : null;
   const fieldValueHref = props.fieldValue && fieldDescriptor?.isLink && realNode && !fieldValueHint
     ? fieldValueOpenHref(props.fieldValue.fieldType, fieldValueText)

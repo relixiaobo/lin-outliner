@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { validateFieldValue } from '../../src/renderer/ui/fields/fieldValueValidation';
+import {
+  validateFieldValue,
+  validateSourceFieldValue,
+} from '../../src/renderer/ui/fields/fieldValueValidation';
 
 describe('validateFieldValue (non-blocking)', () => {
   test('empty value never warns', () => {
@@ -32,5 +35,20 @@ describe('validateFieldValue (non-blocking)', () => {
   test('non-number field types are not range-validated', () => {
     expect(validateFieldValue('plain', 'anything', { min: 1, max: 5 })).toBeNull();
     expect(validateFieldValue(undefined, '999', { max: 5 })).toBeNull();
+  });
+});
+
+describe('validateSourceFieldValue', () => {
+  test('accepts canonical managed assets and supported or unsupported absolute URIs', () => {
+    expect(validateSourceFieldValue('asset://local/asset%3Aimage')).toBeNull();
+    expect(validateSourceFieldValue('file:///Users/example/image.png')).toBeNull();
+    expect(validateSourceFieldValue('https://example.com/image.png')).toBeNull();
+    expect(validateSourceFieldValue('ftp://example.com/image.png')).toBeNull();
+  });
+
+  test('warns only when the Source classifier reports a malformed URI', () => {
+    expect(validateSourceFieldValue('not a URI')).toBe('Value should be a URI');
+    expect(validateSourceFieldValue('asset://local/')).toBe('Value should be a URI');
+    expect(validateSourceFieldValue('')).toBeNull();
   });
 });

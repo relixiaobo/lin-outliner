@@ -1,5 +1,6 @@
 import type { FieldType } from '../../api/types';
 import { parseDateFieldValue } from '../../api/types';
+import { classifyNodeSource } from '../../../core/source';
 
 export interface FieldValueConstraints {
   min?: number;
@@ -33,6 +34,12 @@ export function validateFieldValue(
   if (fieldType === 'email' && !EMAIL_PATTERN.test(trimmed)) return 'Value should be an email';
   if (fieldType === 'date' && !parseDateFieldValue(trimmed)) return 'Value should be a date';
   return null;
+}
+
+/** Uses the built-in Source classifier so internal and non-Web URI schemes do not receive a false warning. */
+export function validateSourceFieldValue(value: string): string | null {
+  if (!value.trim()) return null;
+  return classifyNodeSource(value).availability === 'invalid' ? 'Value should be a URI' : null;
 }
 
 function looksLikeUrl(value: string): boolean {
