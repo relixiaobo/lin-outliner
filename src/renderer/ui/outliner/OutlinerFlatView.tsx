@@ -562,10 +562,16 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
   const trailingFocusedParentId = ui.focusSurface === 'trailing' && focusTargetsPanel
     ? ui.focusedId
     : null;
+  const focusedPendingChange = ui.focusedId
+    ? pendingChanges.find((change) => change.id === ui.focusedId)
+    : undefined;
   const draftFocusedParentId = ui.focusSurface === 'row'
     && focusTargetsPanel
     && ui.focusedId
     && !byId.has(ui.focusedId)
+    // A newly created optimistic sibling is already the row accepting input.
+    // Only materializing an actual trailing draft should advance another draft.
+    && (!focusedPendingChange || focusedPendingChange.originatesFromDraft)
     ? ui.focusedParentId
     : null;
   const trailingDraftPlacement = ui.trailingDraftPlacement

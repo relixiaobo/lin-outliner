@@ -44,7 +44,9 @@ re-render ordinary rows. Equivalent preview targets created by ordinary owner
 re-renders retain the ready preview body instead of restarting source resolution,
 so its height does not collapse during focus or structural changes. Enter on the
 URI field name exposes and focuses its ordinary optimistic sibling before Runtime
-settlement.
+settlement. That pending sibling is not mistaken for a trailing draft: only a
+change that actually materializes a trailing draft advances the next draft, so
+the optimistic and authoritative list heights differ only by the inserted row.
 
 On the Node page, the upper-right close action changes only local visibility and
 the Source toolbar label opens an ordered switcher when multiple values exist.

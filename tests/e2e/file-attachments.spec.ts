@@ -1125,6 +1125,7 @@ test.describe('file attachments', () => {
           samples: Array<{
             fieldTop: number | null;
             guideCount: number;
+            listHeight: number | null;
             ownerTop: number | null;
             scrollTop: number | null;
           }>;
@@ -1135,9 +1136,11 @@ test.describe('file attachments', () => {
         const scroller = document.querySelector<HTMLElement>('.outline-panel-surface.active-panel .main-panel');
         const owner = document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(ownerId)}"]`);
         const field = document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(fieldId)}"]`);
+        const list = owner?.closest<HTMLElement>('.outliner-flat-flow');
         sampler.samples.push({
           fieldTop: field?.getBoundingClientRect().top ?? null,
           guideCount: document.querySelectorAll(selector).length,
+          listHeight: list?.getBoundingClientRect().height ?? null,
           ownerTop: owner?.getBoundingClientRect().top ?? null,
           scrollTop: scroller?.scrollTop ?? null,
         });
@@ -1170,6 +1173,7 @@ test.describe('file attachments', () => {
           samples: Array<{
             fieldTop: number | null;
             guideCount: number;
+            listHeight: number | null;
             ownerTop: number | null;
             scrollTop: number | null;
           }>;
@@ -1190,6 +1194,12 @@ test.describe('file attachments', () => {
       expect(positions.length).toBeGreaterThan(0);
       expect(Math.max(...positions) - Math.min(...positions)).toBeLessThanOrEqual(1);
     }
+    const listHeights = guideSamples.flatMap((sample) => (
+      sample.listHeight === null ? [] : [sample.listHeight]
+    ));
+    expect(listHeights.length).toBeGreaterThan(0);
+    expect(listHeights.at(-1)! - listHeights[0]!).toBeGreaterThan(0);
+    expect(Math.max(...listHeights) - listHeights.at(-1)!).toBeLessThanOrEqual(1);
 
     await fieldName.focus();
     await page.keyboard.press('Meta+A');
