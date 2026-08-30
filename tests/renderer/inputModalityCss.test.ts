@@ -19,6 +19,13 @@ describe('input modality CSS guards', () => {
     expect(outlinerCss).toMatch(/\.indent-guide:hover > \.indent-guide-line\s*\{[^}]*width:\s*2px;[^}]*background:\s*color-mix\(in srgb, var\(--text-primary\) 28%, transparent\);/s);
   });
 
+  test('keeps Source owner disclosure on ordinary row-hover visibility', () => {
+    expect(outlinerCss).toContain('.row-wrap:has(> .row:hover):not(:has(> .row .row:hover))');
+    expect(outlinerCss).not.toMatch(
+      /(?:^|\n)\.outline-source-preview-row > \.row-leading > \.row-chevron-button\s*\{[^}]*opacity:\s*1;/s,
+    );
+  });
+
   test('keeps flat media previews and controls on one stable surface', () => {
     expect(filePreviewCss).toContain('width: var(--file-preview-media-width, min(760px, 100%));');
     expect(filePreviewCss).toContain('.file-node-body--media-audio');

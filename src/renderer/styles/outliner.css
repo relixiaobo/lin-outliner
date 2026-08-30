@@ -2528,18 +2528,10 @@ button.outliner-table-column-kind:focus-visible {
 }
 
 .outline-source-preview-row:hover > .row-leading > .row-chevron-button,
-.row-wrap:has(> .row:hover:not(:has(.row:hover)))
+.row-wrap:has(> .row:hover):not(:has(> .row .row:hover))
   > .outline-source-preview-row
   > .row-leading
   > .row-chevron-button {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-/* A tall Source surface can sit under the guide hit band for most of its
-   height. Keep its ordinary Node disclosure visible instead of making a
-   long-distance hover the only way to discover it. */
-.outline-source-preview-row > .row-leading > .row-chevron-button {
   opacity: 1;
   pointer-events: auto;
 }

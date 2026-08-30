@@ -2,9 +2,8 @@ import type { HTMLAttributes, MouseEventHandler, ReactNode } from 'react';
 
 interface OutlinerRowShellProps {
   hasChildren: boolean;
-  // Whether the row exposes an expand/collapse toggle at all. Defaults to
-  // `hasChildren`, but a file row's chevron toggles its inline preview, so it is
-  // expandable even with no children — `aria-expanded` must then be announced.
+  // Whether the row exposes an expand/collapse toggle to assistive technology.
+  // Defaults to `hasChildren`; callers can opt a leaf into disclosure semantics.
   expandable?: boolean;
   expanded: boolean;
   // 1-based depth for `aria-level` (root rows are level 1).

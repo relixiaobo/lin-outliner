@@ -1057,12 +1057,14 @@ test.describe('file attachments', () => {
     const attachmentId = (await todayChildren(page)).at(-1)!;
     const attachmentRow = row(page, attachmentId);
 
-    await attachmentRow.locator('> .row').first().hover();
     await expect(attachmentRow).toHaveAttribute('aria-expanded', 'true');
     const previewChevron = attachmentRow.locator(
       ':scope > .outline-source-preview-row .row-chevron-button',
     );
-    await expect(previewChevron).toBeVisible();
+    await page.mouse.move(0, 0);
+    await expect(previewChevron).toHaveCSS('opacity', '0');
+    await attachmentRow.locator(':scope > .row').first().hover();
+    await expect(previewChevron).toHaveCSS('opacity', '1');
     await previewChevron.click();
     await expect(attachmentRow).toHaveAttribute('aria-expanded', 'false');
     await expect(attachmentRow.locator(':scope > .outline-source-preview-row')).toHaveCount(0);
