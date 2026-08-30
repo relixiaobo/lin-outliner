@@ -1,5 +1,5 @@
 import { app, clipboard, dialog, nativeImage, shell, type BrowserWindow } from 'electron';
-import { spawn } from 'node:child_process';
+import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdir, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
@@ -16,6 +16,7 @@ import {
   resolveTrustedLocalFileReference,
   type TrustedLocalFileReference,
 } from '../localFileReferenceSecurity';
+import { createLocalFileProcessTracker } from './localFileProcessTracker';
 
 const DEFAULT_ATTACHMENT_PICKER_LIMIT = 6;
 const DEFAULT_LOCAL_FILE_SEARCH_LIMIT = 8;
@@ -64,8 +65,14 @@ export interface NativeLocalFileHost {
   open(file: TrustedLocalFileReference): Promise<boolean>;
   reveal(path: string): void;
   copy(path: string): void;
-  close(): void;
+  close(): Promise<void>;
 }
+
+type TrackedLocalFileSpawn = (
+  command: string,
+  args: readonly string[],
+  options: SpawnOptions,
+) => ChildProcess | null;
 
 export function createNativeLocalFileHost(options: NativeLocalFileHostOptions): NativeLocalFileHost {
   const searchCache = new Map<string, string>();
@@ -73,7 +80,9 @@ export function createNativeLocalFileHost(options: NativeLocalFileHostOptions): 
   const thumbnailCache = new Map<string, string | null>();
   const pendingIconLoads = new Map<string, Promise<string | null>>();
   const pendingThumbnailLoads = new Map<string, Promise<string | null>>();
+  const processTracker = createLocalFileProcessTracker();
   let lastPickerDirectory: string | null = null;
+  let closePromise: Promise<void> | null = null;
 
   const setCache = <V>(cache: Map<string, V>, key: string, value: V): void => {
     setBoundedMapEntry(cache, key, value, LOCAL_FILE_CACHE_LIMIT);
@@ -286,13 +295,13 @@ export function createNativeLocalFileHost(options: NativeLocalFileHostOptions): 
       const query = normalizeQuery(rawOptions?.query);
       const limit = clampLimit(rawOptions?.limit, DEFAULT_LOCAL_FILE_SEARCH_LIMIT, 24);
       if (!query) return { files: [], query };
-      const paths = await searchLocalFilePaths(query, limit * 6);
+      const paths = await searchLocalFilePaths(query, limit * 6, processTracker.spawn);
       const rankedPaths = [...paths].sort((left, right) => localFilePathRank(left, query) - localFilePathRank(right, query));
       return { files: await withIcons(await metadataResults(rankedPaths, limit)), query };
     },
     recent: async (rawOptions) => {
       const limit = clampLimit(rawOptions?.limit, DEFAULT_RECENT_LOCAL_FILE_LIMIT, 18);
-      const paths = await recentLocalFilePaths(limit * 12);
+      const paths = await recentLocalFilePaths(limit * 12, processTracker.spawn);
       const files = await withIcons(
         (await metadataResults(paths, limit * 12))
           .sort((left, right) => right.lastModified - left.lastModified)
@@ -348,12 +357,15 @@ export function createNativeLocalFileHost(options: NativeLocalFileHostOptions): 
     reveal: (path) => shell.showItemInFolder(path),
     copy: copyFilePathToClipboard,
     close: () => {
+      if (closePromise) return closePromise;
       searchCache.clear();
       iconCache.clear();
       thumbnailCache.clear();
       pendingIconLoads.clear();
       pendingThumbnailLoads.clear();
       lastPickerDirectory = null;
+      closePromise = processTracker.close();
+      return closePromise;
     },
   };
   return host;
@@ -380,23 +392,31 @@ function normalizeQuery(value: unknown): string {
   return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, 80) : '';
 }
 
-async function searchLocalFilePaths(query: string, limit: number): Promise<string[]> {
+async function searchLocalFilePaths(
+  query: string,
+  limit: number,
+  spawnProcess: TrackedLocalFileSpawn,
+): Promise<string[]> {
   if (process.platform === 'darwin') {
     const spotlight = await collectNullDelimitedProcess(
-      '/usr/bin/mdfind', ['-0', '-name', query], limit, LOCAL_FILE_SEARCH_TIMEOUT_MS,
+      '/usr/bin/mdfind', ['-0', '-name', query], limit, LOCAL_FILE_SEARCH_TIMEOUT_MS, spawnProcess,
     );
     if (spotlight.length > 0) return spotlight;
   }
-  return rgFileNameMatches(query, limit);
+  return rgFileNameMatches(query, limit, spawnProcess);
 }
 
-async function recentLocalFilePaths(limit: number): Promise<string[]> {
+async function recentLocalFilePaths(
+  limit: number,
+  spawnProcess: TrackedLocalFileSpawn,
+): Promise<string[]> {
   if (process.platform === 'darwin') {
     const spotlight = await collectNullDelimitedProcess(
       '/usr/bin/mdfind',
       ['-0', 'kMDItemFSContentChangeDate >= $time.today(-30)'],
       limit,
       RECENT_LOCAL_FILE_TIMEOUT_MS,
+      spawnProcess,
     );
     if (spotlight.length > 0) return spotlight;
   }
@@ -419,19 +439,25 @@ async function recentLocalFilePaths(limit: number): Promise<string[]> {
   return paths;
 }
 
-async function rgFileNameMatches(query: string, limit: number): Promise<string[]> {
+async function rgFileNameMatches(
+  query: string,
+  limit: number,
+  spawnProcess: TrackedLocalFileSpawn,
+): Promise<string[]> {
   const home = safeAppPath('home');
   if (!home) return [];
   const ripgrep = await resolveRipgrepCommand(home).catch(() => null);
   if (!ripgrep) return [];
+  const child = spawnProcess(ripgrep.command, [...ripgrep.argsPrefix,
+    '--files', '--hidden', '--glob', '!**/.git/**', '--glob', '!**/node_modules/**',
+    '--glob', '!**/Library/**', home,
+  ], { env: buildAgentLocalToolProcessEnv(), stdio: ['ignore', 'pipe', 'ignore'] });
+  const stdout = child?.stdout;
+  if (!stdout) return [];
   return new Promise((resolve) => {
     const results: string[] = [];
     const seen = new Set<string>();
     const lowerQuery = query.toLowerCase();
-    const child = spawn(ripgrep.command, [...ripgrep.argsPrefix,
-      '--files', '--hidden', '--glob', '!**/.git/**', '--glob', '!**/node_modules/**',
-      '--glob', '!**/Library/**', home,
-    ], { env: buildAgentLocalToolProcessEnv(), stdio: ['ignore', 'pipe', 'ignore'] });
     let buffer = '';
     let settled = false;
     const finish = () => {
@@ -444,8 +470,8 @@ async function rgFileNameMatches(query: string, limit: number): Promise<string[]
       child.kill();
       finish();
     }, LOCAL_FILE_SEARCH_TIMEOUT_MS);
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => {
+    stdout.setEncoding('utf8');
+    stdout.on('data', (chunk: string) => {
       buffer += chunk;
       let newline = buffer.indexOf('\n');
       while (newline >= 0) {
@@ -470,14 +496,17 @@ async function rgFileNameMatches(query: string, limit: number): Promise<string[]
 
 function collectNullDelimitedProcess(
   command: string,
-  args: string[],
+  args: readonly string[],
   limit: number,
   timeoutMs: number,
+  spawnProcess: TrackedLocalFileSpawn,
 ): Promise<string[]> {
+  const child = spawnProcess(command, args, { stdio: ['ignore', 'pipe', 'ignore'] });
+  const stdout = child?.stdout;
+  if (!stdout) return Promise.resolve([]);
   return new Promise((resolve) => {
     const results: string[] = [];
     const seen = new Set<string>();
-    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'ignore'] });
     let buffer = Buffer.alloc(0);
     let settled = false;
     const finish = () => {
@@ -490,7 +519,7 @@ function collectNullDelimitedProcess(
       child.kill();
       finish();
     }, timeoutMs);
-    child.stdout.on('data', (chunk: Buffer) => {
+    stdout.on('data', (chunk: Buffer) => {
       buffer = Buffer.concat([buffer, chunk]);
       let delimiter = buffer.indexOf(0);
       while (delimiter >= 0) {

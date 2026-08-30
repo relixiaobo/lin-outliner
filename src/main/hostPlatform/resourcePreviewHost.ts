@@ -141,8 +141,8 @@ export function createResourcePreviewHost(options: ResourcePreviewHostOptions): 
   const close = (): Promise<void> => {
     if (closePromise) return closePromise;
     pageTranslation.dispose();
-    localFiles.close();
     closePromise = Promise.all([
+      localFiles.close(),
       previewTranslationCache.flushNow(),
       flushUrlPreviewSession(previewSession),
       streams.close(),

@@ -256,7 +256,9 @@ native local-file boundary. Its nested `createNativeLocalFileHost` owns native
 pickers, search and recent-file discovery, metadata/icon/thumbnail caches,
 attachment-exact reference resolution, and open/reveal/copy actions. The Host
 exports narrow resource capabilities; it does not expose its concrete stores,
-registries, cache maps, or pending native-file work.
+registries, cache maps, or pending native-file work. Search subprocesses are
+tracked until `error` or `close`; idempotent Resource Host shutdown prevents new
+scans, terminates and detaches active children, and awaits their settlement.
 
 `createWindowApplicationHost` owns the Main, Settings, Provider Config, and
 Launcher windows; app-update and action-invocation services; locale, theme, and
@@ -280,15 +282,17 @@ domain and platform construction manifests. Every declared Agent or Outline
 service must be constructed under its typed domain Host exactly once. Required
 platform services are path-scoped with explicit expected counts, including the
 three direct `BrowserWindow` constructors; the Launcher constructor remains
-owned through its dedicated window helper. Resource/session effects must resolve
+owned through its dedicated window helper, while the two Agent web-capability
+windows remain explicit retained owners. Resource/session effects must resolve
 to the Resource Preview Host, while window, update, action, menu, hotkey,
 listener, and timer effects must resolve to the Window Application Host.
 Constructions are collected across the complete `src/main` tree before ownership
 is assigned, so a second construction outside its Host enters the unowned or
-mismatched queues. Platform effect path-and-kind counts are also pinned, and a
-duplicate effect identity outside its Host enters the unowned queue. Unowned,
-duplicate, missing, or count-mismatched construction and platform-effect queues
-fail the audit alongside the transport queues.
+mismatched queues. Platform effect path-and-kind counts are also pinned. Listener
+and timer identities include their complete argument lists, so an exact duplicate
+outside its Host enters the unowned queue without conflating different callbacks
+or delay policies. Unowned, duplicate, missing, or count-mismatched construction
+and platform-effect queues fail the audit alongside the transport queues.
 
 ## Desktop Transport Ownership
 

@@ -10,6 +10,7 @@ const readMainSource = (path: string): string => readFileSync(
 const MAIN_SRC = readMainSource('main.ts');
 const RESOURCE_HOST_SRC = readMainSource('hostPlatform/resourcePreviewHost.ts');
 const LOCAL_FILE_HOST_SRC = readMainSource('hostPlatform/nativeLocalFileHost.ts');
+const LOCAL_FILE_PROCESS_TRACKER_SRC = readMainSource('hostPlatform/localFileProcessTracker.ts');
 const WINDOW_HOST_SRC = readMainSource('hostPlatform/windowApplicationHost.ts');
 
 describe('Host platform composition', () => {
@@ -34,10 +35,17 @@ describe('Host platform composition', () => {
     expect(RESOURCE_HOST_SRC).toContain('createNativeLocalFileHost({');
     expect(RESOURCE_HOST_SRC).toContain('configureUrlPreviewSession(previewSession)');
     expect(RESOURCE_HOST_SRC).toContain('configureDefaultSessionSecurity(');
-    expect(RESOURCE_HOST_SRC).toContain('localFiles.close();');
+    expect(RESOURCE_HOST_SRC).toContain('localFiles.close(),');
     expect(RESOURCE_HOST_SRC).toContain('streams.close()');
     expect(RESOURCE_HOST_SRC).toContain('if (closePromise) return closePromise;');
     expect(RESOURCE_HOST_SRC).toContain('closePromise = Promise.all([');
+    expect(LOCAL_FILE_HOST_SRC).toContain('searchLocalFilePaths(query, limit * 6, processTracker.spawn)');
+    expect(LOCAL_FILE_HOST_SRC).toContain('recentLocalFilePaths(limit * 12, processTracker.spawn)');
+    expect(LOCAL_FILE_HOST_SRC).toContain('closePromise = processTracker.close();');
+    expect(LOCAL_FILE_HOST_SRC).toContain('if (closePromise) return closePromise;');
+    expect(LOCAL_FILE_PROCESS_TRACKER_SRC).toContain('activeProcesses = new Map<ChildProcess, Promise<void>>()');
+    expect(LOCAL_FILE_PROCESS_TRACKER_SRC).toContain('if (closePromise) return closePromise;');
+    expect(LOCAL_FILE_PROCESS_TRACKER_SRC).toContain('child.unref();');
 
     for (const owner of [
       'searchCache',

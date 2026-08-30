@@ -13,6 +13,7 @@ interface Baseline {
 
 type EffectKind = 'construction' | 'ipc' | 'listener' | 'mutable-global' | 'protocol' | 'session' | 'timer';
 const listenerRegistrationIdentity = Symbol('listenerRegistrationIdentity');
+const platformDuplicateIdentity = Symbol('platformDuplicateIdentity');
 
 interface Effect {
   readonly id: string;
@@ -22,6 +23,7 @@ interface Effect {
   readonly expression: string;
   readonly owner: string | null;
   readonly [listenerRegistrationIdentity]?: string;
+  readonly [platformDuplicateIdentity]?: string;
 }
 
 interface Disposition extends Effect {
@@ -33,6 +35,13 @@ interface BaselineEquivalence {
   readonly baselineKey: string;
   readonly currentKey: string | null;
   readonly disposition: string;
+}
+
+interface PlatformConstructionRequirement {
+  readonly path: string;
+  readonly expression: string;
+  readonly owner: string;
+  readonly count: number;
 }
 
 const root = resolve(import.meta.dir, '../..');
@@ -131,7 +140,7 @@ const missingDomain = [...requiredDomainConstructions.entries()]
     effect.expression === expression && effect.owner === owner
   )))
   .map(([expression, owner]) => ({ expression, owner }));
-const requiredPlatformConstructions = [
+const requiredPlatformConstructions: ReadonlyArray<PlatformConstructionRequirement> = [
   { path: 'src/main/hostPlatform/resourcePreviewHost.ts', expression: 'PreviewTranslationCacheStore', owner: 'resource-preview-host', count: 1 },
   { path: 'src/main/hostPlatform/resourcePreviewHost.ts', expression: 'PageTranslationService', owner: 'resource-preview-host', count: 1 },
   { path: 'src/main/hostPlatform/resourcePreviewHost.ts', expression: 'LocalFilePreviewStreamRegistry', owner: 'resource-preview-host', count: 1 },
@@ -141,6 +150,7 @@ const requiredPlatformConstructions = [
   { path: 'src/main/hostPlatform/windowApplicationHost.ts', expression: 'AppUpdateService', owner: 'window-application-host', count: 1 },
   { path: 'src/main/hostPlatform/windowApplicationHost.ts', expression: 'BrowserWindow', owner: 'window-application-host', count: 3 },
   { path: 'src/main/launcher/launcherWindow.ts', expression: 'BrowserWindow', owner: 'window-application-host', count: 1 },
+  { path: 'src/main/agent/capabilities/agentTools.ts', expression: 'BrowserWindow', owner: 'agent-browser-capability', count: 2 },
 ] as const;
 const requiredPlatformEffects: ReadonlyArray<{
   readonly path: string;
@@ -150,6 +160,7 @@ const requiredPlatformEffects: ReadonlyArray<{
 }> = [
   { path: 'src/main/hostPlatform/nativeLocalFileHost.ts', kind: 'listener', owner: 'resource-preview-host', count: 6 },
   { path: 'src/main/hostPlatform/nativeLocalFileHost.ts', kind: 'timer', owner: 'resource-preview-host', count: 3 },
+  { path: 'src/main/hostPlatform/localFileProcessTracker.ts', kind: 'listener', owner: 'resource-preview-host', count: 2 },
   { path: 'src/main/hostPlatform/resourcePreviewHost.ts', kind: 'listener', owner: 'resource-preview-host', count: 10 },
   { path: 'src/main/hostPlatform/resourcePreviewHost.ts', kind: 'session', owner: 'resource-preview-host', count: 7 },
   { path: 'src/main/hostPlatform/windowApplicationHost.ts', kind: 'listener', owner: 'window-application-host', count: 20 },
@@ -157,12 +168,14 @@ const requiredPlatformEffects: ReadonlyArray<{
   { path: 'src/main/launcher/launcherWindow.ts', kind: 'listener', owner: 'window-application-host', count: 2 },
   { path: 'src/main/launcher/launcherWindow.ts', kind: 'mutable-global', owner: 'window-application-host', count: 1 },
 ];
-const platformConstructions = currentInventory
-  .filter((effect) => effect.kind === 'construction' && requiredPlatformConstructions.some((required) => (
-    effect.path === required.path && effect.expression === required.expression
-  )))
-  .map((effect) => ({ ...effect, owner: currentPlatformOwner(effect) }));
-const unownedPlatform = platformConstructions.filter((effect) => effect.owner === null);
+const platformConstructions = collectPlatformConstructions(
+  currentInventory,
+  requiredPlatformConstructions,
+);
+const unownedPlatform = unownedPlatformConstructions(
+  platformConstructions,
+  requiredPlatformConstructions,
+);
 const mismatchedPlatform = requiredPlatformConstructions.flatMap((required) => {
   const actual = platformConstructions.filter((effect) => (
     effect.path === required.path
@@ -176,12 +189,7 @@ const platformEffects = currentInventory
     effect.path === required.path && effect.kind === required.kind
   )))
   .map((effect) => ({ ...effect, owner: currentPlatformOwner(effect) }));
-const ownedPlatformEffectKeys = new Set(platformEffects.map(platformEffectKey));
-const unownedPlatformEffects = currentInventory
-  .filter((effect) => effect.kind !== 'timer'
-    && currentPlatformOwner(effect) === null
-    && ownedPlatformEffectKeys.has(platformEffectKey(effect)))
-  .map((effect) => ({ ...effect, owner: null }));
+const unownedPlatformEffects = collectUnownedPlatformEffects(currentInventory, platformEffects);
 const mismatchedPlatformEffects = requiredPlatformEffects.flatMap((required) => {
   const actual = platformEffects.filter((effect) => (
     effect.path === required.path
@@ -253,6 +261,9 @@ function collectEffects(source: string, path: string): Effect[] {
       ...(kind === 'listener'
         ? { [listenerRegistrationIdentity]: listenerIdentity(path, node, file) ?? undefined }
         : {}),
+      ...((kind === 'listener' || kind === 'timer') && ts.isCallExpression(node)
+        ? { [platformDuplicateIdentity]: fullCallIdentity(node, file) }
+        : {}),
     });
   };
 
@@ -313,6 +324,32 @@ function collectDomainConstructions(
     .map((effect) => ({ ...effect, owner: currentDomainOwner(effect) }));
 }
 
+function collectPlatformConstructions(
+  inventory: readonly Effect[],
+  required: ReadonlyArray<PlatformConstructionRequirement>,
+): Array<Effect & { readonly owner: string | null }> {
+  const managedExpressions = new Set(required.map((entry) => entry.expression));
+  return inventory
+    .filter((effect) => effect.kind === 'construction' && managedExpressions.has(effect.expression))
+    .map((effect) => ({
+      ...effect,
+      owner: required.find((entry) => (
+        entry.path === effect.path && entry.expression === effect.expression
+      ))?.owner ?? null,
+    }));
+}
+
+function unownedPlatformConstructions(
+  constructions: ReadonlyArray<Effect & { readonly owner: string | null }>,
+  required: ReadonlyArray<PlatformConstructionRequirement>,
+): Array<Effect & { readonly owner: string | null }> {
+  return constructions.filter((effect) => !required.some((entry) => (
+    effect.path === entry.path
+    && effect.expression === entry.expression
+    && effect.owner === entry.owner
+  )));
+}
+
 function ownerDeclaredByFunction(node: ts.Node): string | null {
   if (!ts.isFunctionDeclaration(node)) return null;
   const owners: Readonly<Record<string, string>> = {
@@ -353,6 +390,12 @@ function effectIdentity(node: ts.CallExpression, file: ts.SourceFile): string {
   const callee = node.expression.getText(file);
   const first = node.arguments[0]?.getText(file) ?? '';
   return `${callee}(${first})`;
+}
+
+function fullCallIdentity(node: ts.CallExpression, file: ts.SourceFile): string {
+  const callee = node.expression.getText(file);
+  const args = node.arguments.map((argument) => argument.getText(file)).join(', ');
+  return `${callee}(${args})`.replace(/\s+/g, ' ').trim();
 }
 
 function dispositionForBaseline(effect: Effect): Disposition {
@@ -429,7 +472,8 @@ function currentTypedEdgeOwner(effect: Effect): string | null {
 
 function currentPlatformOwner(effect: Pick<Effect, 'path'>): string | null {
   if (effect.path === 'src/main/hostPlatform/resourcePreviewHost.ts'
-    || effect.path === 'src/main/hostPlatform/nativeLocalFileHost.ts') return 'resource-preview-host';
+    || effect.path === 'src/main/hostPlatform/nativeLocalFileHost.ts'
+    || effect.path === 'src/main/hostPlatform/localFileProcessTracker.ts') return 'resource-preview-host';
   if (effect.path === 'src/main/hostPlatform/windowApplicationHost.ts'
     || effect.path === 'src/main/launcher/launcherWindow.ts'
     || effect.path === 'src/main/launcher/launcherHotkey.ts') return 'window-application-host';
@@ -586,7 +630,7 @@ function platformTransportSignature(effect: Pick<Effect, 'kind' | 'expression'>)
     ? 'configureDefaultSessionSecurity'
     : method;
   const event = effect.expression.match(/\(\s*(['"])([^'"]+)\1/)?.[2] ?? '';
-  const receiver = effect.expression.startsWith('child.stdout.')
+  const receiver = effect.expression.startsWith('child.stdout.') || effect.expression.startsWith('stdout.')
     ? 'child.stdout'
     : effect.expression.startsWith('child.')
       ? 'child'
@@ -602,8 +646,19 @@ function platformTransportSignature(effect: Pick<Effect, 'kind' | 'expression'>)
   return `${effect.kind}:${receiver}:${normalizedMethod}:${event}`;
 }
 
-function platformEffectKey(effect: Pick<Effect, 'kind' | 'expression'>): string {
-  return `${effect.kind}:${effect.expression}`;
+function platformEffectKey(effect: Effect): string {
+  return `${effect.kind}:${effect[platformDuplicateIdentity] ?? effect.expression}`;
+}
+
+function collectUnownedPlatformEffects(
+  inventory: readonly Effect[],
+  ownedEffects: readonly Effect[],
+): Array<Effect & { readonly owner: null }> {
+  const ownedKeys = new Set(ownedEffects.map(platformEffectKey));
+  return inventory
+    .filter((effect) => currentPlatformOwner(effect) === null
+      && ownedKeys.has(platformEffectKey(effect)))
+    .map((effect) => ({ ...effect, owner: null }));
 }
 
 function runNegativeFixtures(): void {
@@ -671,6 +726,27 @@ function runNegativeFixtures(): void {
     throw new Error('Negative fixture failed to detect an unowned duplicate domain construction.');
   }
 
+  const ownedPlatformConstruction = collectEffects(
+    "const store = new AppUpdateStore('owned');",
+    'src/main/hostPlatform/windowApplicationHost.ts',
+  )[0]!;
+  const duplicatePlatformConstruction = collectEffects(
+    "const store = new AppUpdateStore('duplicate');",
+    'src/main/main.ts',
+  )[0]!;
+  const platformConstructionFixture = collectPlatformConstructions(
+    [ownedPlatformConstruction, duplicatePlatformConstruction],
+    requiredPlatformConstructions,
+  );
+  const unownedPlatformConstructionFixture = unownedPlatformConstructions(
+    platformConstructionFixture,
+    requiredPlatformConstructions,
+  );
+  if (unownedPlatformConstructionFixture.length !== 1
+    || unownedPlatformConstructionFixture[0]?.path !== 'src/main/main.ts') {
+    throw new Error('Negative fixture failed to detect an off-path platform construction.');
+  }
+
   const ownedPlatformEffect = collectEffects(
     "window.on('closed', handleClosed);",
     'src/main/hostPlatform/windowApplicationHost.ts',
@@ -679,11 +755,30 @@ function runNegativeFixtures(): void {
     "window.on('closed', handleClosed);",
     'src/main/main.ts',
   )[0]!;
-  const ownedPlatformKeys = new Set([platformEffectKey(ownedPlatformEffect)]);
-  if (currentPlatformOwner(ownedPlatformEffect) !== 'window-application-host'
-    || currentPlatformOwner(duplicatePlatformEffect) !== null
-    || !ownedPlatformKeys.has(platformEffectKey(duplicatePlatformEffect))) {
+  const unownedPlatformEffectFixture = collectUnownedPlatformEffects(
+    [ownedPlatformEffect, duplicatePlatformEffect],
+    [ownedPlatformEffect],
+  );
+  if (unownedPlatformEffectFixture.length !== 1
+    || unownedPlatformEffectFixture[0]?.path !== 'src/main/main.ts') {
     throw new Error('Negative fixture failed to detect an unowned duplicate platform effect.');
+  }
+
+  const ownedPlatformTimer = collectEffects(
+    'setTimeout(refreshPreview, 100);',
+    'src/main/hostPlatform/resourcePreviewHost.ts',
+  )[0]!;
+  const duplicatePlatformTimer = collectEffects(
+    'setTimeout(refreshPreview, 100);',
+    'src/main/main.ts',
+  )[0]!;
+  const unownedPlatformTimerFixture = collectUnownedPlatformEffects(
+    [ownedPlatformTimer, duplicatePlatformTimer],
+    [ownedPlatformTimer],
+  );
+  if (unownedPlatformTimerFixture.length !== 1
+    || unownedPlatformTimerFixture[0]?.path !== 'src/main/main.ts') {
+    throw new Error('Negative fixture failed to detect an unowned duplicate platform timer.');
   }
 }
 
