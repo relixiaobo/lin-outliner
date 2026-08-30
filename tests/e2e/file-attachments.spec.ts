@@ -1263,6 +1263,14 @@ test.describe('file attachments', () => {
     const outlineImagePreview = imageRow.locator(':scope > .outline-source-preview-row .file-preview-image img');
     await expect(outlineImagePreview).toBeVisible();
     await expect(outlineImagePreview).toHaveAttribute('alt', 'picked-image.png');
+    await expect.poll(async () => outlineImagePreview.evaluate((image) => {
+      const element = image as HTMLImageElement;
+      return {
+        complete: element.complete,
+        height: element.naturalHeight,
+        width: element.naturalWidth,
+      };
+    })).toEqual({ complete: true, height: 360, width: 600 });
     await expect.poll(async () => imageRow.evaluate((ownerRow, sourceEntryId) => {
       const title = ownerRow.querySelector<HTMLElement>(':scope > .row .row-content-line');
       const preview = ownerRow.querySelector<HTMLElement>(':scope > .outline-source-preview-row .node-source-preview');
@@ -1294,12 +1302,17 @@ test.describe('file attachments', () => {
     await expect(showOutlinePreview).toBeVisible();
     await showOutlinePreview.click();
     await expect(outlineImagePreview).toBeVisible();
+    const imagePreviewStage = imageRow.locator(':scope > .outline-source-preview-row .file-node-preview--image');
+    await expect(imagePreviewStage).toBeVisible();
+    await expect(imagePreviewStage.locator('.file-preview-pill-primary')).toHaveCount(0);
+    await expect(imageRow.locator(':scope > .outline-source-preview-row .file-preview-resize-handle')).toHaveCount(0);
+    await expect(imagePreviewStage).not.toHaveClass(/collapsed|expanded/);
     await page.setViewportSize({ width: 760, height: 800 });
     await expect(hideOutlinePreview).toBeVisible();
     await expect.poll(async () => {
       const [previewRect, controlsRect, affordanceRect, sourceRowRect] = await Promise.all([
         imageRow.locator(':scope > .outline-source-preview-row .file-node-preview').boundingBox(),
-        imageRow.locator(':scope > .outline-source-preview-row .file-preview-pill').boundingBox(),
+        imageRow.locator(':scope > .outline-source-preview-row .file-preview-pill--image').boundingBox(),
         imageSourceRow.locator('.source-preview-affordance').boundingBox(),
         imageSourceRow.boundingBox(),
       ]);
@@ -1935,7 +1948,7 @@ test.describe('file attachments', () => {
     await expect(lastSectionIframe).toHaveCount(1);
   });
 
-  test('unsupported Source previews keep the same bottom action location as previewable Sources', async ({ page }) => {
+  test('unsupported Sources keep metadata and actions together in the fallback frame', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
 

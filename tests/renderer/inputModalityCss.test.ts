@@ -14,7 +14,7 @@ describe('input modality CSS guards', () => {
     expect(outlinerCss).not.toMatch(/(?:^|\n)\.definition-text-input\.input-bare:focus-visible\s*\{/);
   });
 
-  test('keeps flat media previews visible and non-blocking while chrome is hidden', () => {
+  test('keeps flat media previews and controls on one stable surface', () => {
     expect(filePreviewCss).toContain('width: var(--file-preview-media-width, min(760px, 100%));');
     expect(filePreviewCss).toContain('.file-node-body--media-audio');
     expect(filePreviewCss).toContain('--file-preview-media-width: min(640px, 100%);');
@@ -42,9 +42,16 @@ describe('input modality CSS guards', () => {
     expect(filePreviewCss).toMatch(/\.file-preview-pill--media-control \.file-preview-pill-more\s*\{[^}]*box-shadow:\s*none;/s);
     expect(filePreviewCss).toMatch(/\.file-preview-pill--media-control \.file-preview-pill-more:hover,[\s\S]*?background:\s*transparent;[\s\S]*?color:\s*var\(--text-primary\);/);
     expect(filePreviewCss).toMatch(/\.file-preview-pill--media-control \.file-preview-pill-more svg\s*\{[^}]*width:\s*var\(--icon-size-md\);[^}]*height:\s*var\(--icon-size-md\);/s);
-    expect(filePreviewCss).toMatch(/\.file-preview-pill--media\s*\{[^}]*pointer-events:\s*none;/s);
-    expect(filePreviewCss).toMatch(/\.file-preview-pill--media:has\(\.file-preview-pill-more\[aria-expanded='true'\]\)\s*\{[^}]*pointer-events:\s*auto;/s);
     expect(filePreviewCss).not.toContain('right: calc(-1 *');
+  });
+
+  test('keeps image previews direct while retaining an ellipsis action', () => {
+    expect(filePreviewCss).toMatch(/\.file-node-body--image\s*\{[^}]*width:\s*fit-content;[^}]*max-width:\s*100%;/s);
+    expect(filePreviewCss).toMatch(/\.file-node-preview--image\s*\{[^}]*width:\s*fit-content;/s);
+    expect(filePreviewCss).toMatch(/\.file-node-preview--image\s*\{[^}]*background:\s*transparent;/s);
+    expect(filePreviewCss).toMatch(/\.file-node-preview--image\s*\{[^}]*box-shadow:\s*none;/s);
+    expect(filePreviewCss).toMatch(/\.file-node-preview\.file-node-preview--image\s*\{[^}]*padding:\s*0;/s);
+    expect(filePreviewCss).toMatch(/\.file-preview-pill--image\s*\{[^}]*top:\s*var\(--space-2\);[^}]*right:\s*var\(--space-2\);/s);
   });
 
   test('keeps URL previews single-layer without the document preview frame', () => {

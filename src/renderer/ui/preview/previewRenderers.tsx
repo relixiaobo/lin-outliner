@@ -199,38 +199,53 @@ export interface PreviewRendererProps {
 }
 
 interface PreviewRendererEntry {
-  id: string;
   match: (source: PreviewFileSource) => boolean;
   component: (props: PreviewRendererProps) => ReactElement;
+  presentation: PreviewPresentation;
 }
 
+export type PreviewPresentation = 'document' | 'image' | 'media' | 'metadata' | 'web';
+
+const METADATA_PREVIEW_RENDERER: PreviewRendererEntry = {
+  match: () => true,
+  component: MetadataPreview,
+  presentation: 'metadata',
+};
+
 const FILE_PREVIEW_RENDERERS: PreviewRendererEntry[] = [
-  { id: 'directory', match: (source) => source.entryKind === 'directory', component: DirectoryPreview },
-  { id: 'image', match: isImageSource, component: ImagePreview },
-  { id: 'pdf', match: isPdfSource, component: PdfPreview },
-  { id: 'epub', match: isEpubSource, component: EpubPreviewLoader },
-  { id: 'audio', match: isAudioSource, component: AudioPreview },
-  { id: 'video', match: isVideoSource, component: VideoPreview },
-  { id: 'html', match: isHtmlSource, component: HtmlPreview },
-  { id: 'markdown', match: isMarkdownSource, component: MarkdownPreview },
-  { id: 'delimited', match: isDelimitedSource, component: DelimitedPreview },
-  { id: 'text', match: isTextSource, component: TextPreview },
-  { id: 'metadata', match: () => true, component: MetadataPreview },
+  { match: (source) => source.entryKind === 'directory', component: DirectoryPreview, presentation: 'document' },
+  { match: isImageSource, component: ImagePreview, presentation: 'image' },
+  { match: isPdfSource, component: PdfPreview, presentation: 'document' },
+  { match: isEpubSource, component: EpubPreviewLoader, presentation: 'document' },
+  { match: isAudioSource, component: AudioPreview, presentation: 'media' },
+  { match: isVideoSource, component: VideoPreview, presentation: 'media' },
+  { match: isHtmlSource, component: HtmlPreview, presentation: 'document' },
+  { match: isMarkdownSource, component: MarkdownPreview, presentation: 'document' },
+  { match: isDelimitedSource, component: DelimitedPreview, presentation: 'document' },
+  { match: isTextSource, component: TextPreview, presentation: 'document' },
+  METADATA_PREVIEW_RENDERER,
 ];
 
 /**
- * Whether a resolved source has a real content renderer (anything but the metadata
- * fallback). Drives the preview pill: a previewable source gets Expand/Collapse; a
- * non-previewable one (the metadata card) gets Open-with-default-app as its primary.
+ * Resolve both content and chrome from the same ordered registry. MIME and extension
+ * matching stays in the renderer entries; shells consume only the presentation.
  */
+export function previewPresentationForSource(source: PreviewSourceDescriptor): PreviewPresentation {
+  if (source.kind === 'url') return 'web';
+  return previewRendererEntryForFile(source).presentation;
+}
+
 export function isPreviewableSource(source: PreviewSourceDescriptor): boolean {
-  if (source.kind === 'url') return true;
-  const entry = FILE_PREVIEW_RENDERERS.find((candidate) => candidate.match(source));
-  return entry ? entry.id !== 'metadata' : false;
+  return previewPresentationForSource(source) !== 'metadata';
 }
 
 export function isPassivePlaybackSource(source: PreviewSourceDescriptor): boolean {
-  return source.kind === 'file' && (isAudioSource(source) || isVideoSource(source));
+  return previewPresentationForSource(source) === 'media';
+}
+
+function previewRendererEntryForFile(source: PreviewFileSource): PreviewRendererEntry {
+  return FILE_PREVIEW_RENDERERS.find((entry) => entry.match(source))
+    ?? METADATA_PREVIEW_RENDERER;
 }
 
 export function PreviewRenderer({
@@ -269,7 +284,7 @@ export function PreviewRenderer({
       />
     );
   }
-  const Renderer = FILE_PREVIEW_RENDERERS.find((entry) => entry.match(source))?.component ?? MetadataPreview;
+  const Renderer = previewRendererEntryForFile(source).component;
   return (
     <Renderer
       accessibleName={accessibleName}
@@ -307,15 +322,10 @@ export interface FilePreviewShellProps {
 }
 
 /**
- * The shared body of a file preview: the rendered content in an internally-scrolling
- * stage with a single bottom-center floating pill (primary + `⋯`), replacing the old
- * top meta+actions toolbar. Both loose previews and selected Node Sources reuse it
- * (the established `.file-node-*` classes name this preview renderer, not a Node type). A previewable
- * source toggles between a rounded summary strip and an expanded full-scroll reader;
- * a non-previewable one (the metadata card) renders at natural height with
- * Open-with-default-app as the same pill's primary. Callers supply the open action +
- * the `⋯` menu actions; the resolved-source rendering and the action location are
- * common across non-image file types.
+ * Shared preview body for loose previews and selected Node Sources. The renderer
+ * registry resolves a presentation policy: documents own summary/full chrome,
+ * images render directly with an action-only menu, media owns playback controls,
+ * webpages stay single-layer, and unsupported files use metadata actions.
  */
 export function FilePreviewShell({
   accessibleName,
@@ -335,16 +345,19 @@ export function FilePreviewShell({
   const [expanded, setExpanded] = useState(initialExpanded);
   const [previewHeights, setPreviewHeights] = useState<{ summary?: number; full?: number }>({});
   const [scrollToPageNumber, setScrollToPageNumber] = useState<number | null>(null);
-  const previewable = state.status === 'ready' && isPreviewableSource(state.source);
-  const passivePlayback = state.status === 'ready' && isPassivePlaybackSource(state.source);
+  const presentation = state.status === 'ready' ? previewPresentationForSource(state.source) : null;
+  const previewable = presentation !== null && presentation !== 'metadata';
+  const documentPreview = presentation === 'document';
+  const imagePreview = presentation === 'image';
+  const passivePlayback = presentation === 'media';
   const mediaKind = state.status === 'ready' ? mediaKindForSource(state.source) : null;
-  const urlPreview = state.status === 'ready' && state.source.kind === 'url';
+  const urlPreview = presentation === 'web';
   const documentKind = state.status === 'ready' && state.source.kind === 'file'
     ? documentKindForSource(state.source)
     : null;
   const metadataFallback = state.status === 'ready' && !previewable;
-  const effectiveExpanded = readerMode || passivePlayback || urlPreview || expanded;
-  const displayMode: FilePreviewDisplayMode = previewable && !effectiveExpanded ? 'summary' : 'full';
+  const effectiveExpanded = readerMode || !documentPreview || expanded;
+  const displayMode: FilePreviewDisplayMode = documentPreview && !effectiveExpanded ? 'summary' : 'full';
   const resizedHeight = displayMode === 'summary' ? previewHeights.summary : previewHeights.full;
   const toggleExpanded = () => {
     setExpanded((value) => {
@@ -388,19 +401,21 @@ export function FilePreviewShell({
     const direction = event.key === 'ArrowDown' ? 1 : -1;
     setResizedHeight((resizedHeight ?? preview.getBoundingClientRect().height) + direction * PREVIEW_RESIZE_KEY_STEP);
   };
-  // A non-previewable source (metadata card) needs no collapse/expand stage, so it
-  // carries only the base class — `.collapsed` / `.expanded` are the only stage rules.
+  const expansionClass = documentPreview
+    ? (effectiveExpanded ? 'expanded' : 'collapsed')
+    : readerMode || urlPreview ? 'expanded' : '';
   const stageClass = [
     'file-node-preview',
     `file-node-preview--${displayMode}`,
     metadataFallback ? 'file-node-preview--metadata' : '',
+    imagePreview ? 'file-node-preview--image' : '',
     passivePlayback ? 'file-node-preview--media' : '',
     urlPreview ? 'file-node-preview--url' : '',
     documentKind ? `file-node-preview--${documentKind}` : '',
     mediaKind ? `file-node-preview--media-${mediaKind}` : '',
     readerMode ? 'file-node-preview--reader' : '',
     resizedHeight !== undefined ? 'resized' : '',
-    previewable ? (effectiveExpanded ? 'expanded' : 'collapsed') : '',
+    expansionClass,
   ].filter(Boolean).join(' ');
   const previewStyle = resizedHeight !== undefined
     ? ({ '--file-preview-resized-height': `${resizedHeight}px` } as CSSProperties)
@@ -408,6 +423,7 @@ export function FilePreviewShell({
   const bodyClass = [
     'file-node-body',
     metadataFallback ? 'file-node-body--metadata' : '',
+    imagePreview ? 'file-node-body--image' : '',
     passivePlayback ? 'file-node-body--media' : '',
     urlPreview ? 'file-node-body--url' : '',
     documentKind ? `file-node-body--${documentKind}` : '',
@@ -416,22 +432,42 @@ export function FilePreviewShell({
   ]
     .filter(Boolean)
     .join(' ');
-  const pill = state.status !== 'loading' && !readerMode && !passivePlayback && !urlPreview ? (
-    // Hold the pill until the source resolves: while loading, `previewable` is
-    // false, so the primary would briefly be "Open with default app" and a click
-    // in that window would open the file externally instead of toggling the
-    // preview it is about to become.
+  const documentActions = !readerMode && documentPreview ? (
     <FilePreviewPill
-      previewable={previewable}
+      previewable
       expanded={expanded}
       onToggleExpand={toggleExpanded}
-      primaryMode={passivePlayback ? 'none' : previewable ? 'toggle' : 'open'}
+      primaryMode="toggle"
       primaryOpen={primaryOpen}
       menuActions={menuActions}
       meta={meta}
-      placement={metadataFallback ? 'footer' : 'overlay'}
     />
   ) : null;
+  const imageActions = !readerMode && imagePreview ? (
+    <FilePreviewPill
+      previewable
+      expanded
+      onToggleExpand={toggleExpanded}
+      primaryMode="none"
+      primaryOpen={primaryOpen}
+      menuActions={menuActions}
+      meta={meta}
+      placement="image"
+    />
+  ) : null;
+  const metadataActions = state.status !== 'loading' && !readerMode
+    && (metadataFallback || state.status === 'missing') ? (
+      <FilePreviewPill
+        previewable={false}
+        expanded={false}
+        onToggleExpand={toggleExpanded}
+        primaryMode="open"
+        primaryOpen={primaryOpen}
+        menuActions={menuActions}
+        meta={meta}
+        placement="footer"
+      />
+    ) : null;
   const mediaActions = state.status !== 'loading' && !readerMode && passivePlayback ? (
     <FilePreviewPill
       previewable={previewable}
@@ -467,10 +503,11 @@ export function FilePreviewShell({
             mediaActions={mediaActions}
           />
         )}
-        {metadataFallback ? pill : null}
+        {metadataActions}
       </div>
-      {metadataFallback ? null : pill}
-      {previewable && !readerMode && !passivePlayback && !urlPreview ? (
+      {documentActions}
+      {imageActions}
+      {documentPreview && !readerMode ? (
         <div
           aria-label="Resize preview"
           aria-orientation="horizontal"

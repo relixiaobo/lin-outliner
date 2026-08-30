@@ -5640,6 +5640,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 ? previewLongEpubBytes()
                 : previewEpubBytes()
               : null;
+            const browserStreamBytes = epubBytes
+              ?? (asset?.mimeType.startsWith('image/') ? previewPngBytes() : null);
             return clone({
               source: asset ? {
                 kind: 'file',
@@ -5655,8 +5657,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 entryKind: 'file',
                 sizeBytes: asset.byteSize,
                 lastModified: asset.createdAt,
-                streamUrl: epubBytes
-                  ? URL.createObjectURL(new Blob([epubBytes], { type: asset.mimeType }))
+                streamUrl: browserStreamBytes
+                  ? URL.createObjectURL(new Blob([browserStreamBytes], { type: asset.mimeType }))
                   : mockAssetUrl(target.assetId),
               } : null,
             }) as T;

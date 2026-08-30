@@ -21,7 +21,7 @@ interface FilePreviewPillProps {
   previewable: boolean;
   expanded: boolean;
   onToggleExpand: () => void;
-  /** Audio/video previews are already final controls, so they omit the Expand primary. */
+  /** Direct image and audio/video previews omit the document Expand primary. */
   primaryMode?: 'toggle' | 'open' | 'none';
   /** Open with the OS default app (asset / local file / url). Null when not openable. */
   primaryOpen?: { label: string; run: () => void } | null;
@@ -29,17 +29,13 @@ interface FilePreviewPillProps {
   menuActions?: FilePreviewMenuAction[];
   /** A quiet caption (type · size · pages) shown as the `⋯` menu header. */
   meta?: string | null;
-  /** Overlay preview content by default; footer keeps metadata cards in normal flow. */
-  placement?: 'overlay' | 'footer' | 'media' | 'media-control';
+  /** Overlay documents by default; image/media/footer select their native surface. */
+  placement?: 'overlay' | 'footer' | 'image' | 'media-control';
 }
 
 /**
- * The single bottom-center floating control over a file preview: a primary button
- * plus a separate `⋯` menu button, replacing the old top meta+actions toolbar. A previewable source's
- * primary toggles Expand/Collapse (the preview's peek vs full-scroll height) and
- * Open-with-default-app moves into the menu. A non-previewable metadata card uses
- * the same position and menu stack; only its primary action changes to Open with
- * default app, so every non-image file keeps one learned action location.
+ * Shared document/metadata action control. Image and media presentations reuse its
+ * menu mechanics with no primary button and place the ellipsis on their own surface.
  */
 export function FilePreviewPill({
   previewable,
@@ -81,7 +77,7 @@ export function FilePreviewPill({
       className={[
         'file-preview-pill',
         placement === 'footer' ? 'file-preview-pill--footer' : '',
-        placement === 'media' ? 'file-preview-pill--media' : '',
+        placement === 'image' ? 'file-preview-pill--image' : '',
         placement === 'media-control' ? 'file-preview-pill--media-control' : '',
       ].filter(Boolean).join(' ')}
       data-preserve-selection

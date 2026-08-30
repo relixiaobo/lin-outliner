@@ -91,6 +91,18 @@ Image previews use editable Node content as their user-authored accessible name
 and the Source-derived label only as an empty-content fallback. This is the UI
 half of the retired `inline-media-alt-text` task.
 
+### Type-specific preview presentation
+
+Resolved preview descriptors select one presentation through the renderer
+registry, rather than branching on Node type or repeating MIME checks in the
+shell. Documents (PDF, EPUB, HTML, Markdown, code, plain text, delimited tables,
+and directories) retain summary/full reading chrome, `Expand`/`Collapse`, and
+resize. Images render directly at their intrinsic aspect ratio with no document
+frame, expansion control, or resize handle; their authorized file operations
+remain in an ellipsis overlay. Audio and video own their playback surface and
+same-layer actions. URLs remain a direct web surface. Unsupported binaries use
+the bounded metadata presentation and its open/actions control.
+
 ### Dependencies and collisions
 
 `outline-source-model` must merge first. This plan is independent of Host

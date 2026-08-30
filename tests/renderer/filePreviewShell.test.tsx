@@ -17,6 +17,49 @@ afterEach(() => {
   while (mounted.length) mounted.pop()?.cleanup();
 });
 
+describe('FilePreviewShell type-specific chrome', () => {
+  test('renders images directly with only an ellipsis action menu', () => {
+    const rendered = render(
+      <FilePreviewShell
+        accessibleName="Release cover"
+        state={{ status: 'ready', source: imageSource() }}
+        onOpenTarget={() => undefined}
+        primaryOpen={{ label: 'Open with default app', run: () => undefined }}
+        menuActions={[menuAction('reveal')]}
+      />,
+    );
+
+    expect(rendered.document.querySelector('.file-node-body--image')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-node-preview--image')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-image img')?.getAttribute('alt')).toBe('Release cover');
+    expect(rendered.document.querySelector('.file-preview-pill--image .file-preview-pill-more')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-pill-primary')).toBeNull();
+    expect(rendered.document.querySelector('.file-preview-resize-handle')).toBeNull();
+    expect(rendered.document.querySelector('.file-node-preview--image.collapsed')).toBeNull();
+    expect(rendered.document.querySelector('.file-node-preview--image.expanded')).toBeNull();
+  });
+
+  test('keeps Expand and resize chrome for document previews', () => {
+    const rendered = render(
+      <FilePreviewShell
+        state={{ status: 'ready', source: htmlSource() }}
+        onOpenTarget={() => undefined}
+        primaryOpen={{ label: 'Open with default app', run: () => undefined }}
+        menuActions={[menuAction('reveal')]}
+      />,
+      {
+        lin: {
+          invoke: () => new Promise(() => undefined),
+        },
+      },
+    );
+
+    expect(rendered.document.querySelector('.file-node-preview--html.collapsed')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-pill-primary')?.textContent).toBe('Expand');
+    expect(rendered.document.querySelector('.file-preview-resize-handle')).not.toBeNull();
+  });
+});
+
 describe('FilePreviewShell media controls', () => {
   test('renders video controls in a flat media stage with same-layer actions', () => {
     const rendered = render(
@@ -33,8 +76,7 @@ describe('FilePreviewShell media controls', () => {
     expect(rendered.document.querySelector('.file-node-body--media')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-preview--media')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-preview--media-video')).not.toBeNull();
-    expect(rendered.document.querySelector('.file-preview-pill--media')).toBeNull();
-    expect(rendered.document.querySelector('.file-node-preview--media > .file-preview-pill--media')).toBeNull();
+    expect(rendered.document.querySelector('.file-preview-pill--image')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-pill--footer')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-pill-primary')).toBeNull();
     const video = rendered.document.querySelector('.file-preview-video');
@@ -61,8 +103,7 @@ describe('FilePreviewShell media controls', () => {
     expect(rendered.document.querySelector('.file-node-body--media-audio')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-preview--media')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-preview--media-audio')).not.toBeNull();
-    expect(rendered.document.querySelector('.file-preview-pill--media')).toBeNull();
-    expect(rendered.document.querySelector('.file-node-preview--media > .file-preview-pill--media')).toBeNull();
+    expect(rendered.document.querySelector('.file-preview-pill--image')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-pill--footer')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-pill-primary')).toBeNull();
     const audio = rendered.document.querySelector('.file-preview-audio');
@@ -335,6 +376,21 @@ function mediaSource(mimeType: string): PreviewFileSource {
     entryKind: 'file',
     sizeBytes: 1024,
     streamUrl: 'asset://clip',
+  };
+}
+
+function imageSource(): PreviewFileSource {
+  return {
+    kind: 'file',
+    sourceKind: 'asset',
+    id: 'asset:image',
+    target: { kind: 'asset', assetId: 'asset-image' },
+    name: 'cover.png',
+    ext: 'png',
+    mimeType: 'image/png',
+    entryKind: 'file',
+    sizeBytes: 1024,
+    streamUrl: 'asset://image',
   };
 }
 
