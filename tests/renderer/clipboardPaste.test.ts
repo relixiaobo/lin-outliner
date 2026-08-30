@@ -85,6 +85,17 @@ describe('classifyMediaPaste', () => {
     expect(classifyMediaPaste(null, { hasSelection: false })).toBeNull();
   });
 
+  test('a URL with any additional line remains an ordinary structured/plain paste', () => {
+    expect(classifyMediaPaste(dataTransfer({ text: '\nhttps://example.com/page' }), { hasSelection: false })).toBeNull();
+    expect(classifyMediaPaste(dataTransfer({ text: 'https://example.com/page\n' }), { hasSelection: false })).toBeNull();
+    expect(classifyMediaPaste(dataTransfer({ text: 'https://example.com/page\n\n' }), { hasSelection: false })).toBeNull();
+  });
+
+  test('a bare URL may retain surrounding horizontal whitespace', () => {
+    expect(classifyMediaPaste(dataTransfer({ text: ' \thttps://example.com/page\t ' }), { hasSelection: false }))
+      .toEqual({ kind: 'bareUrl', url: 'https://example.com/page' });
+  });
+
   test('defaults to no-selection when options are omitted', () => {
     expect(classifyMediaPaste(dataTransfer({ text: 'https://cdn.test/a.png' })))
       .toEqual({ kind: 'bareUrl', url: 'https://cdn.test/a.png' });

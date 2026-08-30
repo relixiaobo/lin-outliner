@@ -1,10 +1,25 @@
 import { describe, expect, test } from 'bun:test';
 
 const baseCss = await Bun.file('src/renderer/styles/base.css').text();
+const tokensCss = await Bun.file('src/renderer/styles/tokens.css').text();
+const a11yCss = await Bun.file('src/renderer/styles/a11y.css').text();
 const outlinerCss = await Bun.file('src/renderer/styles/outliner.css').text();
 const filePreviewCss = await Bun.file('src/renderer/styles/file-preview.css').text();
 
 describe('input modality CSS guards', () => {
+  test('routes every shared focus indicator through keyboard-modality paint seeds', () => {
+    expect(tokensCss).toContain('--focus-ring-modality: 0;');
+    expect(tokensCss).toContain('calc(var(--focus-ring-alpha) * var(--focus-ring-modality))');
+    expect(tokensCss).toContain('calc(2px * var(--focus-ring-modality))');
+    expect(tokensCss).toContain('--drop-line: rgb(var(--ink) / var(--focus-ring-alpha));');
+    expect(tokensCss).toMatch(/--underline-focus-shadow:[^;]*var\(--focus-ring-modality\)/);
+    expect(tokensCss).toMatch(/--tag-focus-shadow:[^;]*var\(--focus-ring-modality\)/);
+    expect(tokensCss).toMatch(/--inline-ref-focus-shadow:[^;]*var\(--focus-ring-modality\)/);
+    expect(a11yCss).toContain('--focus-ring-alpha: 0.75;');
+    expect(a11yCss).toContain('--focus-ring-shadow-alpha: 0.42;');
+    expect(a11yCss).not.toMatch(/--focus-ring(?:-shadow)?:\s*(?:rgb|0 0 0 2px)/);
+  });
+
   test('keeps the global text-control keyboard ring low-specificity', () => {
     expect(baseCss).toContain(':root[data-input-modality="keyboard"] :where(input:focus-visible, textarea:focus-visible, select:focus-visible)');
   });
@@ -64,14 +79,9 @@ describe('input modality CSS guards', () => {
       /\.file-preview-pill--source-corner \.file-preview-pill-more:hover,[\s\S]*?\.outline-source-preview-close\.icon-button:hover\s*\{[^}]*background:\s*transparent;[^}]*opacity:\s*1;/s,
     );
     expect(filePreviewCss).toMatch(
-      /\.file-preview-pill--source-corner \.file-preview-pill-more:focus-visible,[\s\S]*?\.outline-source-preview-close\.icon-button:focus-visible\s*\{[^}]*box-shadow:\s*none;/s,
+      /\.file-preview-pill--source-corner \.file-preview-pill-more:focus-visible,[\s\S]*?\.outline-source-preview-close\.icon-button:focus-visible\s*\{[^}]*box-shadow:\s*var\(--focus-ring-shadow\);/s,
     );
-    expect(filePreviewCss).toContain(
-      ':root[data-input-modality="keyboard"] .file-preview-pill--source-corner .file-preview-pill-more:focus-visible',
-    );
-    expect(filePreviewCss).toContain(
-      ':root[data-input-modality="keyboard"] .outline-source-preview-close.icon-button:focus-visible',
-    );
+    expect(filePreviewCss).not.toContain(':root[data-input-modality="keyboard"] .file-preview-pill--source-corner');
     expect(filePreviewCss).toMatch(
       /\.node-context-menu\.file-preview-menu--source-contained\s*\{[^}]*min-width:\s*0;/s,
     );

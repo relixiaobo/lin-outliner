@@ -53,9 +53,9 @@
     --outline-muted: inset 0 0 0 1px rgb(var(--ink) / 0.34);
     --outline-emphasis: inset 0 0 0 1px rgb(var(--ink) / 0.45);
 
-    /* a stronger neutral focus ring (--outline-focus derives from --focus-ring) */
-    --focus-ring: rgb(var(--ink) / 0.75);
-    --focus-ring-shadow: 0 0 0 2px rgb(var(--ink) / 0.42);
+    /* Stronger neutral focus seeds; modality-aware paint derives from them. */
+    --focus-ring-alpha: 0.75;
+    --focus-ring-shadow-alpha: 0.42;
   }
 }
 

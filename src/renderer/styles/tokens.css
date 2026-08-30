@@ -110,15 +110,21 @@
   /* selection & focus = NEUTRAL (never brand, never system accent) */
   --selection-bg: var(--fill-3);
   --selection-soft: var(--fill-2);
-  --focus-ring: rgb(var(--ink) / 0.45);
-  --focus-ring-shadow: 0 0 0 2px rgb(var(--ink) / 0.22);
+  --focus-ring-alpha: 0.45;
+  --focus-ring-shadow-alpha: 0.22;
+  --focus-ring-modality: 0;
+  /* Focus paint starts transparent until input-modality tracking confirms
+     keyboard navigation. Keeping valid zero-width shadows preserves compound
+     box-shadow declarations while pointer-restored focus stays visually quiet. */
+  --focus-ring: rgb(var(--ink) / calc(var(--focus-ring-alpha) * var(--focus-ring-modality)));
+  --focus-ring-shadow: 0 0 0 calc(2px * var(--focus-ring-modality)) rgb(var(--ink) / calc(var(--focus-ring-shadow-alpha) * var(--focus-ring-modality)));
   --focus-ring-shadow-inset: inset var(--focus-ring-shadow);
   --text-selection-bg: rgb(var(--ink) / 0.14); /* neutral ::selection */
   /* PDF canvases render their own document pixels, so alpha-on-ink can disappear
      over white pages in dark mode. Keep document text selection fixed-neutral and
      separate from app selection/link/accent semantics. */
   --document-selection-bg: rgba(0, 0, 0, 0.30);
-  --drop-line: var(--focus-ring);               /* neutral drag insertion line */
+  --drop-line: rgb(var(--ink) / var(--focus-ring-alpha)); /* neutral drag insertion line */
 
   /* accent = brand rose, used SPARSELY (caret, brand marks, status badges) */
   --accent: #f43f5e;
@@ -182,11 +188,11 @@
   --outline-muted: inset 0 0 0 1px rgb(var(--ink) / 0.10);
   --outline-emphasis: inset 0 0 0 1px rgb(var(--ink) / 0.16);
   --outline-focus: inset 0 0 0 1px var(--focus-ring);
-  --underline-focus-shadow: inset 0 -1px 0 rgb(var(--ink) / 0.20);
-  --tag-focus-shadow: 0 0 0 2px color-mix(in srgb, var(--tag-text, currentColor) 22%, transparent);
+  --underline-focus-shadow: inset 0 calc(-1px * var(--focus-ring-modality)) 0 rgb(var(--ink) / 0.20);
+  --tag-focus-shadow: 0 0 0 calc(2px * var(--focus-ring-modality)) color-mix(in srgb, var(--tag-text, currentColor) 22%, transparent);
   --inline-ref-hover-shadow: 0 0 0 var(--space-1) var(--fill-1);
   --inline-ref-selection-shadow: inset 0 0 0 1px var(--row-selection-border);
-  --inline-ref-focus-shadow: 0 0 0 2px color-mix(in srgb, var(--inline-ref-accent, var(--inline-ref-default)) 22%, transparent);
+  --inline-ref-focus-shadow: 0 0 0 calc(2px * var(--focus-ring-modality)) color-mix(in srgb, var(--inline-ref-accent, var(--inline-ref-default)) 22%, transparent);
   --message-user-highlight-shadow: 0 0 0 1px var(--border-emphasis);
   --message-assistant-highlight-shadow: 0 0 0 1px var(--fill-3);
   --view-radio-shadow: inset 0 0 0 1.5px var(--separator-opaque);

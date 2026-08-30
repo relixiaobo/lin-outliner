@@ -218,11 +218,6 @@
 .outline-source-preview-close.icon-button:focus-visible {
   background: transparent;
   outline: none;
-  box-shadow: none;
-}
-
-:root[data-input-modality="keyboard"] .file-preview-pill--source-corner .file-preview-pill-more:focus-visible,
-:root[data-input-modality="keyboard"] .outline-source-preview-close.icon-button:focus-visible {
   box-shadow: var(--focus-ring-shadow);
 }
 

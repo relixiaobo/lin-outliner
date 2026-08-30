@@ -1536,8 +1536,16 @@ test.describe('file attachments', () => {
     );
     await outlinePreviewActions.getByRole('button', { name: 'Preview actions' }).click();
     await expect(outlinePreviewMenu).toBeHidden();
-    await expect(outlinePreviewActions.getByRole('button', { name: 'Preview actions' }))
-      .toHaveCSS('box-shadow', 'none');
+    await expect.poll(async () => outlinePreviewActions
+      .getByRole('button', { name: 'Preview actions' })
+      .evaluate((button) => {
+        const modality = getComputedStyle(document.documentElement)
+          .getPropertyValue('--focus-ring-modality')
+          .trim();
+        const shadow = getComputedStyle(button).boxShadow;
+        const hasNoPaint = shadow === 'none' || shadow === 'rgba(0, 0, 0, 0) 0px 0px 0px 0px';
+        return modality === '0' && hasNoPaint;
+      })).toBe(true);
     await hideOutlinePreview.click();
     await expect(imageRow.locator(':scope > .outline-source-preview-row > .outline-source-preview')).toHaveCount(0);
     await expect.poll(async () => imageRow.evaluate((ownerRow) => {
