@@ -25,40 +25,78 @@ test.describe('userData isolation', () => {
     const smoke = await launchSmokeApp();
     await smoke.window.locator('#root').waitFor();
     const userData = smoke.userDataDir;
-    // The document store writes workspace.loro.json only on real document state;
-    // init/load may persist generated system state, and mutations can be
-    // coalesced. Its presence after a flushed mutation is a non-vacuous signal
-    // that persistence ran into THIS dir (a bare readdir would be satisfied by
-    // Chromium's own cache scaffolding).
-    const workspaceFile = join(userData, 'workspace.loro.json');
+    const workspaceRoot = join(userData, 'outline-runtime', 'workspace');
+    const snapshotFile = join(workspaceRoot, 'outline.snapshot.json');
+    const transactionFile = join(workspaceRoot, 'outline.transactions.jsonl');
 
-    // Apply a real mutation through the same IPC command surface the renderer
-    // uses (window.lin → 'lin:invoke' → documentService). The before-quit flush
-    // below drains any coalesced document save under the workspace root.
+    // Apply a real mutation through the same typed Outline IPC surface used by
+    // the renderer. The before-quit flush below drains the accepted transaction.
     await smoke.window.evaluate(async () => {
-      const lin = (window as unknown as { lin: { invoke: (c: string, a?: unknown) => Promise<unknown> } }).lin;
-      const snapshot = (await lin.invoke('get_projection')) as { projection: { rootId: string } };
-      await lin.invoke('create_node', { parentId: snapshot.projection.rootId, text: 'smoke-persist' });
+      const outline = (window as unknown as {
+        lin: { outline: { request: (request: unknown) => Promise<{ ok: boolean; data?: unknown; error?: { message: string } }> } };
+      }).lin.outline;
+      const request = async (command: string, input: unknown) => {
+        const response = await outline.request({ requestId: `smoke:${crypto.randomUUID()}`, command, input });
+        if (!response.ok) throw new Error(response.error?.message ?? `Outline ${command} failed`);
+        return response.data;
+      };
+      const diff = await request('diff', {
+        changeSet: {
+          protocolVersion: 1,
+          kind: 'outline.changeset',
+          idempotencyKey: `smoke:${crypto.randomUUID()}`,
+          operations: [{
+            op: 'create',
+            placement: {
+              kind: 'last',
+              parent: { target: { selector: { by: 'alias', alias: 'today' }, cardinality: 'one' } },
+            },
+            nodes: [{ content: { text: 'smoke-persist', marks: [], inlineRefs: [] }, children: [] }],
+          }],
+        },
+      });
+      await request('apply', { diff });
     });
     // before-quit flushes pending changes; the persisted state survives close.
     await closeSmokeApp(smoke, { keepUserData: true });
+    await waitForRuntimeRelease(userData);
     let relaunched: Awaited<ReturnType<typeof launchSmokeApp>> | null = null;
     try {
-      expect(existsSync(workspaceFile)).toBe(true);
-      const sizeAfterClose = statSync(workspaceFile).size;
-      expect(sizeAfterClose).toBeGreaterThan(0);
+      expect(existsSync(snapshotFile)).toBe(true);
+      expect(existsSync(transactionFile)).toBe(true);
+      const transactionSizeAfterClose = statSync(transactionFile).size;
+      expect(statSync(snapshotFile).size).toBeGreaterThan(0);
+      expect(transactionSizeAfterClose).toBeGreaterThan(0);
 
       relaunched = await launchSmokeApp({ userDataDir: userData });
       await relaunched.window.locator('#root').waitFor();
       const persisted = await relaunched.window.evaluate(async () => {
-        const lin = (window as unknown as { lin: { invoke: (c: string, a?: unknown) => Promise<unknown> } }).lin;
-        const snapshot = (await lin.invoke('get_projection')) as {
-          projection: { nodes: Array<{ content?: { text?: string } }> };
+        const outline = (window as unknown as {
+          lin: { outline: { request: (request: unknown) => Promise<{ ok: boolean; data?: unknown; error?: unknown }> } };
+        }).lin.outline;
+        const target = {
+          selector: {
+            by: 'query',
+            query: { kind: 'rule', op: 'STRING_MATCH', text: 'smoke-persist' },
+            order: 'document',
+            limit: 10,
+          },
+          cardinality: 'many',
+          max: 10,
         };
-        return snapshot.projection.nodes.some((node) => node.content?.text === 'smoke-persist');
+        const response = await outline.request({
+          requestId: `smoke:${crypto.randomUUID()}`,
+          command: 'find',
+          input: {
+            target,
+            projection: { kind: 'summary', targets: { target }, page: { limit: 10 } },
+          },
+        });
+        return response;
       });
-      expect(persisted).toBe(true);
-      expect(statSync(workspaceFile).size).toBeGreaterThanOrEqual(sizeAfterClose);
+      expect(persisted).toEqual(expect.objectContaining({ ok: true, data: expect.anything() }));
+      expect(JSON.stringify(persisted.data)).toContain('smoke-persist');
+      expect(statSync(transactionFile).size).toBeGreaterThanOrEqual(transactionSizeAfterClose);
     } finally {
       if (relaunched) {
         await closeSmokeApp(relaunched, { keepUserData: true });
@@ -84,3 +122,15 @@ test.describe('userData isolation', () => {
     }
   });
 });
+
+async function waitForRuntimeRelease(userData: string): Promise<void> {
+  const runtimeRoot = join(userData, 'outline-runtime');
+  const descriptor = join(runtimeRoot, 'runtime.json');
+  const writerLock = join(runtimeRoot, 'writer.lock');
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    if (!existsSync(descriptor) && !existsSync(writerLock)) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error('Outline Runtime descriptor or writer lock remained after desktop quit.');
+}

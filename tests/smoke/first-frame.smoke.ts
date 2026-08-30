@@ -18,26 +18,38 @@ test.describe('first frame', () => {
     await closeSmokeApp(smoke);
   });
 
-  test('a single main window is created and becomes visible', async () => {
+  test('one main window becomes visible while the launcher stays hidden', async () => {
     const visible = await smoke.app.evaluate(async ({ BrowserWindow }) => {
       const windows = BrowserWindow.getAllWindows();
-      if (windows.length !== 1) return { count: windows.length, visible: false };
-      const win = windows[0];
+      const main = windows.find((window) => /\/index\.html(?:$|\?)/.test(window.webContents.getURL()));
+      const launcher = windows.find((window) => /\/launcher\.html(?:$|\?)/.test(window.webContents.getURL()));
+      if (!main || !launcher) {
+        return { mainCount: main ? 1 : 0, launcherCount: launcher ? 1 : 0, mainVisible: false, launcherVisible: true };
+      }
       // Reveal happens on ready-to-show; poll briefly so we don't race the first
       // paint on a cold launch.
-      for (let i = 0; i < 50 && !win.isVisible(); i += 1) {
+      for (let i = 0; i < 50 && !main.isVisible(); i += 1) {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
-      return { count: windows.length, visible: win.isVisible() };
+      return {
+        mainCount: windows.filter((window) => /\/index\.html(?:$|\?)/.test(window.webContents.getURL())).length,
+        launcherCount: windows.filter((window) => /\/launcher\.html(?:$|\?)/.test(window.webContents.getURL())).length,
+        mainVisible: main.isVisible(),
+        launcherVisible: launcher.isVisible(),
+      };
     });
-    expect(visible.count).toBe(1);
-    expect(visible.visible).toBe(true);
+    expect(visible.mainCount).toBe(1);
+    expect(visible.launcherCount).toBe(1);
+    expect(visible.mainVisible).toBe(true);
+    expect(visible.launcherVisible).toBe(false);
   });
 
   test('the pre-paint backing is never white (no launch flash)', async () => {
-    const backgroundColor = await smoke.app.evaluate(({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows()[0]?.getBackgroundColor(),
-    );
+    const backgroundColor = await smoke.app.evaluate(({ BrowserWindow }) => (
+      BrowserWindow.getAllWindows()
+        .find((window) => /\/index\.html(?:$|\?)/.test(window.webContents.getURL()))
+        ?.getBackgroundColor()
+    ));
     // macOS vibrancy → transparent (#00000000); a non-material window → the
     // opaque deck colour (#ececec / #2a2a2c). Either way, never the default
     // white that telegraphs a web-page load.

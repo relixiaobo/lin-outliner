@@ -12,6 +12,10 @@ import {
 describe('Host domain composition', () => {
   test('exports narrow capabilities without leaking domain services or runtime maps', () => {
     const mainSource = readFileSync(path.join(import.meta.dir, '../../src/main/main.ts'), 'utf8');
+    const desktopHostSource = readFileSync(
+      path.join(import.meta.dir, '../../src/main/desktopHost.ts'),
+      'utf8',
+    );
     const outlineSource = readFileSync(
       path.join(import.meta.dir, '../../src/main/hostDomain/outlineDesktopHost.ts'),
       'utf8',
@@ -48,14 +52,14 @@ describe('Host domain composition', () => {
       'turnSkillRuntimes',
       'turnSkillRuntimeInitializations',
     ].join('|');
-    expect(mainSource).not.toMatch(
-      new RegExp(
+    const concreteServicePattern = new RegExp(
         `\\b(?:const|let)\\s+(?:(?:${concreteServiceBindings})\\b|\\{[^}]*\\b(?:${concreteServiceBindings})\\b)`,
         'su',
-      ),
-    );
-    expect(mainSource).toContain('agentHost.threads');
-    expect(mainSource).toContain('outlineHost.document');
+      );
+    expect(mainSource).not.toMatch(concreteServicePattern);
+    expect(desktopHostSource).not.toMatch(concreteServicePattern);
+    expect(desktopHostSource).toContain('agentHost.threads');
+    expect(desktopHostSource).toContain('outlineHost.document');
   });
 
   test('assign-once callbacks reject incomplete and duplicate composition', () => {

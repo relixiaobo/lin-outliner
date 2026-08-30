@@ -12,6 +12,7 @@ import { TimelineMemoryStore } from '../../src/main/agent/extensions/memory/Time
 
 const roots: string[] = [];
 const MAIN_SOURCE = readFileSync(path.join(import.meta.dir, '../../src/main/main.ts'), 'utf8');
+const DESKTOP_HOST_SOURCE = readFileSync(path.join(import.meta.dir, '../../src/main/desktopHost.ts'), 'utf8');
 const OUTLINE_HOST_SOURCE = readFileSync(
   path.join(import.meta.dir, '../../src/main/hostDomain/outlineDesktopHost.ts'),
   'utf8',
@@ -31,11 +32,11 @@ afterAll(async () => {
 
 describe('OutlineDocumentService', () => {
   test('keeps recovered desktop production wiring attached to the Runtime service', () => {
-    expect(MAIN_SOURCE).toContain('createOutlineDesktopHost({');
+    expect(DESKTOP_HOST_SOURCE).toContain('createOutlineDesktopHost({');
     expect(OUTLINE_HOST_SOURCE).toContain('new OutlineDocumentService(supervisor)');
     expect(OUTLINE_HOST_SOURCE).toContain('documents.setDurabilityFailureHandler(');
     expect(AGENT_HOST_SOURCE).toContain('new TimelineMemoryStore(options.timeline)');
-    expect(MAIN_SOURCE).toContain('outlineHost.observeProjection(({ event, update }) =>');
+    expect(DESKTOP_HOST_SOURCE).toContain('outlineHost.observeProjection(({ event, update }) =>');
     expect(AGENT_HOST_SOURCE).toContain("code: 'memory-runtime-projection-observer-failed'");
     expect(COMPOSITION_LIFECYCLE_SOURCE).toContain(
       'dependencies.documents.replacePersonalAccessRanking(dependencies.nodeAccess.snapshot())',
@@ -43,6 +44,7 @@ describe('OutlineDocumentService', () => {
     expect(OUTLINE_HOST_SOURCE).toContain('documents.upsertPersonalAccessRanking(update.upserted)');
     expect(OUTLINE_HOST_SOURCE).toContain('documents.removePersonalAccessRanking(');
     expect(MAIN_SOURCE).not.toContain('outlineDocumentService');
+    expect(DESKTOP_HOST_SOURCE).not.toContain('outlineDocumentService');
   });
 
   test('closes request clients whose personal ranking bootstrap fails', async () => {

@@ -41,6 +41,13 @@ the unowned queue catches duplicate effect identities outside those owners.
 Listener and timer duplicate identities include the complete call arguments, so
 different callbacks or delay policies do not collide.
 
+The final cutover moves the static transport registrations from `main.ts` to
+`desktopHost.ts`. For those two declared composition-root paths, baseline
+presence uses the exact effect kind and expression while duplicate detection
+continues to scan the complete tree. The old loop-shaped dev signal registration
+normalizes to the two explicit `SIGINT`/`SIGTERM` sites; each current site must
+still have its own statically matched release edge.
+
 Reports are written to `tmp/host-composition-audit/`. To reproduce in a GitHub
 single-branch clone, fetch the PR branch normally; the pinned baseline is its
 reachable ancestor. If Git omitted it, fetch the exact object before running:

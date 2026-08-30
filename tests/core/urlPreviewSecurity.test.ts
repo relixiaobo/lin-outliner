@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const MAIN_SRC = readFileSync(
-  join(import.meta.dir, '../../src/main/main.ts'),
+const DESKTOP_HOST_SRC = readFileSync(
+  join(import.meta.dir, '../../src/main/desktopHost.ts'),
   'utf8',
 );
 
@@ -76,7 +76,7 @@ describe('URL preview webview security posture', () => {
     expect(RESOURCE_PREVIEW_HOST_SRC).toContain('params.partition = URL_PREVIEW_WEBVIEW_PARTITION');
     expect(RESOURCE_PREVIEW_HOST_SRC).not.toContain('params.partition !== URL_PREVIEW_WEBVIEW_PARTITION');
     expect(RESOURCE_PREVIEW_HOST_SRC).toContain('webContents.session !== previewSession()');
-    expect(MAIN_SRC).toContain('owner.add(resourcePreviewHost.configurePreviewSession())');
+    expect(DESKTOP_HOST_SRC).toContain('owner.add(resourcePreviewHost.configurePreviewSession())');
     expect(URL_PREVIEW_SESSION_CORE_SRC).toContain("'persist:url-preview'");
     expect(URL_PREVIEW_SESSION_MAIN_SRC).toContain('previewSession.setPermissionRequestHandler');
     expect(URL_PREVIEW_SESSION_MAIN_SRC).toContain('previewSession.setPermissionCheckHandler');
@@ -140,6 +140,6 @@ describe('URL preview webview security posture', () => {
     expect(PAGE_TRANSLATION_SRC).toContain('URL_PAGE_TRANSLATION_MAX_BATCH_CHARS');
     expect(PAGE_TRANSLATION_SRC).toContain('requestedIds.has(id)');
     expect(PAGE_TRANSLATION_SRC).toContain('translations.has(id)');
-    expect(MAIN_SRC).toContain('!windowApplicationHost.isMainSender(event)');
+    expect(DESKTOP_HOST_SRC).toContain('!windowApplicationHost.isMainSender(event)');
   });
 });

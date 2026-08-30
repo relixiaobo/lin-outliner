@@ -78,10 +78,7 @@ try {
   }
 
   const firstCliStatus = cliStatus(await runCli(['--json', 'status']));
-  stage('request first desktop status');
   assertRuntimeIdentity(firstCliStatus, firstDescriptor, 'initial CLI status');
-  const firstDesktopStatus = desktopStatus(await desktopRequest(first.renderer, 'status', {}));
-  assertSameRuntimeStatus(firstCliStatus, firstDesktopStatus, 'desktop and CLI initial status');
 
   stage('settle shared CLI mutation');
   const mutation = await runCli([
@@ -91,50 +88,37 @@ try {
   if (operation.kind !== 'outline.operation') {
     throw new Error('The packaged CLI mutation did not settle as one public Operation.');
   }
-  stage('compare post-mutation desktop and CLI status');
+  stage('inspect post-mutation CLI status');
   const cliStatusAfterMutation = cliStatus(await runCli(['--json', 'status']));
-  const desktopStatusAfterMutation = desktopStatus(await desktopRequest(first.renderer, 'status', {}));
-  assertSameRuntimeStatus(
-    cliStatusAfterMutation,
-    desktopStatusAfterMutation,
-    'desktop and CLI status after mutation',
-  );
   if (runtimeRevision(cliStatusAfterMutation) !== operation.revisionAfter) {
     throw new Error('Packaged CLI Operation and live Runtime revision diverged.');
   }
   stage('verify first desktop sees CLI mutation');
   await assertDesktopSeesMutation(first.renderer);
 
-  stage('quit first desktop without stopping Runtime');
+  stage('quit first desktop and stop its Runtime');
   await quitDesktop(first);
   firstDesktop = null;
-  const afterFirstClose = await waitForDescriptor();
-  assertSameDescriptor(firstDescriptor, afterFirstClose, 'desktop close');
+  await waitForNoDescriptor();
 
-  stage('reopen desktop against existing Runtime');
+  stage('reopen desktop with a fresh Runtime');
   const second = await launchDesktop();
   secondDesktop = second;
   stage('inspect reopened desktop Runtime identity');
   const reopenedDescriptor = await waitForDescriptor();
-  assertSameDescriptor(firstDescriptor, reopenedDescriptor, 'desktop reopen');
+  assertDifferentDescriptor(firstDescriptor, reopenedDescriptor, 'desktop reopen');
   const secondMain = await packagedMainConfiguration(second.inspector);
   assertPackagedMainConfiguration(secondMain);
-  stage('compare reopened desktop and CLI status');
-  const reopenedDesktopStatus = desktopStatus(await desktopRequest(second.renderer, 'status', {}));
+  stage('inspect reopened CLI status');
   const reopenedCliStatus = cliStatus(await runCli(['--json', 'status']));
-  assertSameRuntimeStatus(reopenedCliStatus, reopenedDesktopStatus, 'reopened desktop and CLI status');
-  assertRuntimeIdentity(reopenedCliStatus, firstDescriptor, 'reopened CLI status');
+  assertRuntimeIdentity(reopenedCliStatus, reopenedDescriptor, 'reopened CLI status');
   stage('verify reopened desktop sees persisted mutation');
   await assertDesktopSeesMutation(second.renderer);
 
-  stage('quit reopened desktop without stopping Runtime');
+  stage('quit reopened desktop and stop its Runtime');
   await quitDesktop(second);
   secondDesktop = null;
-  const afterSecondClose = await waitForDescriptor();
-  assertSameDescriptor(firstDescriptor, afterSecondClose, 'second desktop close');
-
-  stage('stop owned standalone Runtime');
-  await stopOwnedRuntime(firstDescriptor);
+  await waitForNoDescriptor();
 
   report = {
     smoke: 'packaged-outline-lifecycle',
@@ -147,12 +131,18 @@ try {
     },
     localCommandsWithoutRuntime: ['version', 'schema Selector', 'capabilities'],
     runtime: {
-      pid: firstDescriptor.pid,
-      instanceId: firstDescriptor.instanceId,
+      first: {
+        pid: firstDescriptor.pid,
+        instanceId: firstDescriptor.instanceId,
+      },
+      reopened: {
+        pid: reopenedDescriptor.pid,
+        instanceId: reopenedDescriptor.instanceId,
+      },
       revision: runtimeRevision(reopenedCliStatus),
       transactionSequence: runtimeSequence(reopenedCliStatus),
       separateFromDesktop: true,
-      survivedDesktopRestart: true,
+      restartedAfterDesktopRestart: true,
       stoppedCleanly: true,
     },
     storage: {
@@ -427,11 +417,6 @@ function cliStatus(result: Awaited<ReturnType<typeof runCli>>): RuntimeStatus {
   return requireLiveStatus(parseCliData(result.stdout, 'status'), 'CLI status');
 }
 
-function desktopStatus(response: OutlineResponse): RuntimeStatus {
-  if (!response.ok) throw new Error(`Desktop status failed: ${response.error.message}`);
-  return requireLiveStatus(response.data, 'desktop status');
-}
-
 function requireLiveStatus(value: unknown, label: string): RuntimeStatus {
   if (!isRecord(value) || value.running !== true || !isRecord(value.runtime)) {
     throw new Error(`${label} did not return a live Runtime status.`);
@@ -453,24 +438,26 @@ function assertRuntimeIdentity(status: RuntimeStatus, descriptor: RuntimeDescrip
   }
 }
 
-function assertSameRuntimeStatus(left: RuntimeStatus, right: RuntimeStatus, label: string): void {
-  if (!left.running || !right.running
-    || left.runtime.instanceId !== right.runtime.instanceId
-    || left.runtime.revision !== right.runtime.revision
-    || left.runtime.transactionLog.sequence !== right.runtime.transactionLog.sequence
-    || left.runtime.transactionLog.eventSequence !== right.runtime.transactionLog.eventSequence) {
-    throw new Error(`${label} diverged: ${JSON.stringify({ left, right })}`);
-  }
-}
-
 function assertSameDescriptor(expected: RuntimeDescriptor, actual: RuntimeDescriptor, label: string): void {
   if (expected.pid !== actual.pid || expected.instanceId !== actual.instanceId) {
     throw new Error(`${label} replaced the Runtime writer: ${JSON.stringify({ expected, actual })}`);
   }
 }
 
+function assertDifferentDescriptor(previous: RuntimeDescriptor, current: RuntimeDescriptor, label: string): void {
+  if (previous.pid === current.pid || previous.instanceId === current.instanceId) {
+    throw new Error(`${label} reused a Runtime that should have stopped: ${JSON.stringify({ previous, current })}`);
+  }
+}
+
 async function waitForDescriptor(): Promise<RuntimeDescriptor> {
   return waitFor(async () => readOutlineRuntimeDescriptor(runtimeRoot), 15_000, 'Runtime descriptor');
+}
+
+async function waitForNoDescriptor(): Promise<void> {
+  await waitFor(async () => (
+    await readOutlineRuntimeDescriptor(runtimeRoot).catch(() => null) ? null : true
+  ), 15_000, 'Runtime descriptor release');
 }
 
 async function stopOwnedRuntime(expected: RuntimeDescriptor): Promise<void> {

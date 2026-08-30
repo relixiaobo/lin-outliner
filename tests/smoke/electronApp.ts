@@ -59,8 +59,19 @@ export async function launchSmokeApp(options: LaunchOptions = {}): Promise<Smoke
       ...options.env,
     },
   });
-  const window = await app.firstWindow();
+  await app.firstWindow();
+  const window = await waitForMainWindow(app);
   return { app, window, userDataDir };
+}
+
+async function waitForMainWindow(app: ElectronApplication): Promise<Page> {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const window = app.windows().find((page) => /\/index\.html(?:$|\?)/.test(page.url()));
+    if (window) return window;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error('The main application window did not attach within 15 seconds.');
 }
 
 export async function closeSmokeApp(smoke: SmokeApp, { keepUserData = false } = {}): Promise<void> {

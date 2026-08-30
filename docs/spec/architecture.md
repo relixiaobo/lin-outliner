@@ -267,15 +267,51 @@ activation; and window-scoped navigation and acknowledgement state. Global app
 effects have an explicit idempotent release path. Window and WebContents
 listeners remain bounded by the lifetime of the surface that created them.
 
-`main.ts` supplies native callbacks and the explicit cross-Host edges. Agent
-reads the live document projection, resolves verified assets, and gives Skill
-shells the existing authenticated Runtime connection. Outline projection events
-first prune private node-access ranking and then notify Agent Memory through the
-Agent Host capability. Main retains application startup ordering, transport
-registration, safe-quit arbitration, and reverse lifecycle coordination; it no
-longer owns concrete platform services or native window construction. No Host
-becomes a service locator or claims document authority from the standalone
-Runtime.
+`createDesktopHost` is the one static composition root above these owners. It
+supplies native callbacks and the explicit cross-Host edges: Agent reads the live
+document projection, resolves verified assets, and gives Skill shells the
+existing authenticated Runtime connection; Outline projection events first
+prune private node-access ranking and then notify Agent Memory through the Agent
+Host capability. `main.ts` retains only app identity and early `userData`, fatal
+process diagnostics, pre-ready schemes/security, the single-instance lock, one
+`createDesktopHost(environment)`, readiness startup, and Electron lifecycle
+event forwarding. No Host becomes a service locator or claims document authority
+from the standalone Runtime.
+
+### Desktop Host lifecycle
+
+The Desktop Host lifecycle owns `constructed -> starting -> started -> quitting
+-> disposed`. Startup is permanently single-flight and preserves the explicit
+provider reconciliation, Outline document, Agent, personal-ranking, native app,
+transport, window, and deferred-producer sequence. Transport and windows remain
+unpublished until their existing prerequisites settle; this cutover does not
+move the first-window boundary or create a second service readiness authority.
+
+A quit request synchronously closes Outline mutation admission and wins before
+the next awaited startup step may begin. Concurrent requests share only the
+current attempt. The request joins an in-flight step, then either enters ordinary
+safe quit after Outline initialization or performs early rollback without an
+authenticated Runtime shutdown. Cancel is possible only in the reversible
+drain/decision phase; it restores admission and `started`, clears the completed
+attempt, and lets the next OS quit perform a new drain.
+
+`ResourceScope` owns reversible Desktop effects in named child scopes. It closes
+registration synchronously, disposes children and resources once in reverse
+order, allows a child to release early, continues after individual failures, and
+reports an aggregate with scope/resource context. Application durability, user
+decisions, ordered Agent/Outline service shutdown, authenticated Runtime
+shutdown, and process exit remain explicit domain protocols rather than generic
+scope disposers.
+
+Ordinary quit remains under `AppQuitCoordinator`: freeze local admission, drain
+through the latest accepted revision, offer Retry/Cancel/Quit Anyway, commit the
+Runtime freeze, release windows/transport/producers, settle local services,
+authenticate shutdown of the exact current Runtime, and exit even if an
+irreversible teardown step fails. Failed-start rollback instead makes a bounded
+durability attempt only after Outline document initialization, closes the
+constructed local consumers and reversible effects, aggregates rollback errors
+under the original startup error, and never infers that the Host exclusively
+owns a compatible Runtime that may predate it.
 
 The tracked Host audit derives current effects from the Git tree and checks exact
 domain and platform construction manifests. Every declared Agent or Outline
@@ -297,7 +333,7 @@ and platform-effect queues fail the audit alongside the transport queues.
 ## Desktop Transport Ownership
 
 Electron main registers native transport through explicit capability owners.
-`registerMainTransport` remains in the current `main.ts` composition root and
+`registerMainTransport` lives in the `desktopHost.ts` composition root and
 combines distinct owners for Outline, updates, actions, Agent/Memory/Automation,
 Source/assets/preview, windows/settings/launcher/providers, diagnostics, native
 files, and Agent resources. Each named registrar receives only the owned
@@ -332,7 +368,9 @@ Quit first disposes the combined runtime transport and records aggregate release
 failure without skipping the remaining service flush/close sequence. Fatal error
 listeners remain installed through that service close sequence and are removed
 at the end of teardown.
-Startup failure disposes any partially completed main transport before exiting.
+Startup failure disposes any partially completed transport and every constructed
+local consumer before exiting; after Outline initialization it first makes the
+bounded durability attempt described above, without Runtime shutdown.
 
 The tracked `scripts/host-composition-audit/` driver pins the exact dependency-tip
 commit and tree, enumerates the complete `src/main/**/*.ts` baseline directly

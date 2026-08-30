@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { AppQuitCoordinator, type QuitCoordinatorHost, type QuitDecision, type QuitDrainOutcome } from '../../src/main/appQuitCoordinator';
 
 const MAIN_SOURCE = readFileSync(join(import.meta.dir, '../../src/main/main.ts'), 'utf8');
+const DESKTOP_HOST_SOURCE = readFileSync(join(import.meta.dir, '../../src/main/desktopHost.ts'), 'utf8');
 
 class FakeQuitHost implements QuitCoordinatorHost {
   accepted = 1;
@@ -41,13 +42,17 @@ class FakeQuitHost implements QuitCoordinatorHost {
 }
 
 describe('AppQuitCoordinator', () => {
-  test('main installs quit coordination before asynchronous workspace startup', () => {
-    const coordinatorSetup = MAIN_SOURCE.indexOf('quitCoordinator = new AppQuitCoordinator({');
-    const asynchronousStartup = MAIN_SOURCE.indexOf('app.whenReady().then(async () => {');
+  test('main constructs Desktop Host before readiness and Desktop Host installs quit coordination before startup', () => {
+    const hostConstruction = MAIN_SOURCE.indexOf('const desktopHost = createDesktopHost({');
+    const asynchronousStartup = MAIN_SOURCE.indexOf('app.whenReady()');
+    const coordinatorSetup = DESKTOP_HOST_SOURCE.indexOf('quitCoordinator = new AppQuitCoordinator({');
+    const lifecycleSetup = DESKTOP_HOST_SOURCE.indexOf('const lifecycle = new DesktopHostLifecycle({');
 
+    expect(hostConstruction).toBeGreaterThan(-1);
+    expect(asynchronousStartup).toBeGreaterThan(hostConstruction);
     expect(coordinatorSetup).toBeGreaterThan(-1);
-    expect(asynchronousStartup).toBeGreaterThan(coordinatorSetup);
-    expect(MAIN_SOURCE).not.toContain('if (!quitCoordinator) return;');
+    expect(lifecycleSetup).toBeGreaterThan(coordinatorSetup);
+    expect(DESKTOP_HOST_SOURCE).not.toContain('if (!quitCoordinator) return;');
   });
 
   test('cancels a failed drain without tearing down live services', async () => {
