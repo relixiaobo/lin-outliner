@@ -148,9 +148,14 @@ afterEach(async () => {
 });
 
 function createTrackedThreadService(
-  options: ConstructorParameters<typeof ThreadService>[0],
+  options: Omit<ConstructorParameters<typeof ThreadService>[0], 'extensions'> & {
+    readonly extensions?: ExtensionRegistry;
+  },
 ): ThreadService {
-  const service = new ThreadService(options);
+  const service = new ThreadService({
+    ...options,
+    extensions: options.extensions ?? new ExtensionRegistry(),
+  });
   const close = service.close.bind(service);
   let closing: Promise<void> | null = null;
   service.close = (drainTimeoutMs) => {

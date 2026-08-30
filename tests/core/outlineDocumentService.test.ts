@@ -12,6 +12,18 @@ import { TimelineMemoryStore } from '../../src/main/agent/extensions/memory/Time
 
 const roots: string[] = [];
 const MAIN_SOURCE = readFileSync(path.join(import.meta.dir, '../../src/main/main.ts'), 'utf8');
+const OUTLINE_HOST_SOURCE = readFileSync(
+  path.join(import.meta.dir, '../../src/main/hostDomain/outlineDesktopHost.ts'),
+  'utf8',
+);
+const AGENT_HOST_SOURCE = readFileSync(
+  path.join(import.meta.dir, '../../src/main/hostDomain/agentHost.ts'),
+  'utf8',
+);
+const COMPOSITION_LIFECYCLE_SOURCE = readFileSync(
+  path.join(import.meta.dir, '../../src/main/hostDomain/compositionLifecycle.ts'),
+  'utf8',
+);
 
 afterAll(async () => {
   await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
@@ -19,14 +31,18 @@ afterAll(async () => {
 
 describe('OutlineDocumentService', () => {
   test('keeps recovered desktop production wiring attached to the Runtime service', () => {
-    expect(MAIN_SOURCE).toContain('new OutlineDocumentService(outlineClientSupervisor)');
-    expect(MAIN_SOURCE).toContain('outlineDocumentService.setDurabilityFailureHandler(');
-    expect(MAIN_SOURCE).toContain('new TimelineMemoryStore(outlineDocumentService)');
-    expect(MAIN_SOURCE).toContain('outlineDocumentService.onProjectionChanged(({ event, update }) =>');
-    expect(MAIN_SOURCE).toContain("code: 'memory-runtime-projection-observer-failed'");
-    expect(MAIN_SOURCE).toContain('outlineDocumentService.replacePersonalAccessRanking(nodeAccessStore.snapshot())');
-    expect(MAIN_SOURCE).toContain('outlineDocumentService.upsertPersonalAccessRanking(update.upserted)');
-    expect(MAIN_SOURCE).toContain('outlineDocumentService.removePersonalAccessRanking(');
+    expect(MAIN_SOURCE).toContain('createOutlineDesktopHost({');
+    expect(OUTLINE_HOST_SOURCE).toContain('new OutlineDocumentService(supervisor)');
+    expect(OUTLINE_HOST_SOURCE).toContain('documents.setDurabilityFailureHandler(');
+    expect(AGENT_HOST_SOURCE).toContain('new TimelineMemoryStore(options.timeline)');
+    expect(MAIN_SOURCE).toContain('outlineHost.observeProjection(({ event, update }) =>');
+    expect(AGENT_HOST_SOURCE).toContain("code: 'memory-runtime-projection-observer-failed'");
+    expect(COMPOSITION_LIFECYCLE_SOURCE).toContain(
+      'dependencies.documents.replacePersonalAccessRanking(dependencies.nodeAccess.snapshot())',
+    );
+    expect(OUTLINE_HOST_SOURCE).toContain('documents.upsertPersonalAccessRanking(update.upserted)');
+    expect(OUTLINE_HOST_SOURCE).toContain('documents.removePersonalAccessRanking(');
+    expect(MAIN_SOURCE).not.toContain('outlineDocumentService');
   });
 
   test('closes request clients whose personal ranking bootstrap fails', async () => {

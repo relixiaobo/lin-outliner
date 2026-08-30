@@ -11,13 +11,20 @@ Run from the repository root:
 bun scripts/host-composition-audit/audit.ts
 ```
 
-Expected completion has all three queues at zero:
+Expected completion has all transport and domain-composition queues at zero:
 
 ```text
 unowned transport effects: 0
 duplicate transport effects: 0
 missing baseline transport effects: 0
+unowned domain constructions: 0
+duplicate domain constructions: 0
+missing domain constructions: 0
 ```
+
+Domain constructions are collected across the complete current `src/main` tree;
+only the typed Host files assign an owner. A required construction outside those
+files therefore fails as unowned and also participates in duplicate detection.
 
 Reports are written to `tmp/host-composition-audit/`. To reproduce in a GitHub
 single-branch clone, fetch the PR branch normally; the pinned baseline is its
@@ -29,6 +36,7 @@ bun scripts/host-composition-audit/audit.ts
 ```
 
 Only the first Host plan creates the baseline. Successor plans extend disposition
-rules against this same commit and tree. `--write-baseline` is reserved for
+rules and the exact domain-construction manifest against this same commit and
+tree. `--write-baseline` is reserved for
 reconstructing the two tracked generated files from the already pinned source; it
 does not change `baseline.json`.

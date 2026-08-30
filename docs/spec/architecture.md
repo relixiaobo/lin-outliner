@@ -224,6 +224,49 @@ and exact-revision coordinate, then ContentStore verifies the bytes. Electron
 main system actions consume that verified stream through a private
 materialization; the renderer never receives a ContentStore path.
 
+## Desktop Domain Composition
+
+Electron main composes two typed backend domain hosts before application
+orchestration begins. `createOutlineDesktopHost` owns the Runtime supervisor and
+launch description, the desktop request client, `OutlineDocumentService`, the
+desktop asset adapter, and the private node-access ranking store. It exports the
+Runtime/content/export roots plus narrow document, asset, startup, observation,
+authenticated Agent-shell, quit, flush, and close capabilities. The concrete
+supervisor, client, document service, asset service, and ranking store never
+leave the Host. Runtime document initialization remains separate
+from best-effort personal-ranking load and synchronization, so Agent startup
+continues to observe a ready document projection before derived ranking work.
+
+`createAgentHost` owns managed Skills and Browser Pilot composition,
+configuration readers/writers, managed worktrees, Memory stores and extension,
+`PiTurnExecutor`, `ThreadService`, Automation storage/dispatch/scheduling,
+`ToolRuntime`, and their one-time bindings. Real constructor cycles use typed
+assign-once callbacks: reading before composition completes or assigning a
+second implementation fails immediately. Constructors acquire synchronous
+objects only; Thread initialization, the Memory worker, and Automation scheduling
+remain an explicit ordered startup adapter. Shutdown preserves the reverse
+Automation, Memory, Thread, and store order and aggregates failures. Its public
+surface is grouped into configuration, worktree, Thread, Memory, Automation,
+Skill, and lifecycle capabilities; concrete services and per-Turn Skill Runtime
+maps remain private to the Host.
+
+`main.ts` supplies native UI callbacks and the explicit cross-domain edges. Agent
+reads the live document projection, resolves verified assets, and gives Skill
+shells the existing authenticated Runtime connection. Outline projection events
+first prune private node-access ranking and then notify Agent Memory through the
+Agent Host capability. Main retains application startup order, native windows,
+transport registration, safe-quit arbitration, and the platform/resource
+services assigned to later Host composition units; neither domain host becomes a
+service locator or claims document authority from the standalone Runtime.
+
+The tracked Host audit derives current effects from the Git tree and also checks
+an exact domain-construction manifest. Every declared Agent or Outline service
+must be constructed under its typed host owner exactly once. Required
+constructions are collected across the complete `src/main` tree before ownership
+is assigned, so a second construction outside `hostDomain/` enters both the
+unowned and duplicate queues. Unowned, duplicate, or missing domain queues fail
+the audit alongside the transport queues.
+
 ## Desktop Transport Ownership
 
 Electron main registers native transport through explicit capability owners.

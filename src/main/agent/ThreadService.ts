@@ -261,7 +261,7 @@ export interface ThreadServiceOptions {
   /** App-owned root for Thread transcript artifacts. Never a workspace path. */
   readonly transcriptRoot: string;
   readonly nameGenerator?: ThreadNameGenerator;
-  readonly extensions?: ExtensionRegistry;
+  readonly extensions: ExtensionRegistry;
   readonly resolveConfiguration?: (
     request: ThreadStartRequest,
   ) => EffectiveThreadConfiguration | Promise<EffectiveThreadConfiguration>;
@@ -541,7 +541,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private get pendingUserInputs() { return this.turnLifecycle.pendingUserInputsForInspection(); }
   constructor(options: ThreadServiceOptions) {
     this.executor = options.executor;
-    this.extensions = options.extensions ?? new ExtensionRegistry();
+    this.extensions = options.extensions;
     this.core = new ThreadCore(
       options.stores.metadata,
       options.stores.history,

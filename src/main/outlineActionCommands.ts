@@ -15,7 +15,15 @@ import type {
   TargetRef,
   UpdateInstruction,
 } from '../outline/contract/schemas';
-import type { OutlineDocumentService, OutlineMutationOptions } from './outlineDocumentService';
+import type { OutlineMutationOptions } from './outlineDocumentService';
+
+export interface OutlineActionDocumentCapability {
+  getProjection(): DocumentProjection;
+  runChanges(
+    changes: readonly Change[],
+    options?: OutlineMutationOptions,
+  ): Promise<unknown>;
+}
 
 interface ProjectionView {
   readonly projection: DocumentProjection;
@@ -23,7 +31,7 @@ interface ProjectionView {
 }
 
 export function runOutlineActionCommand(
-  document: OutlineDocumentService,
+  document: OutlineActionDocumentCapability,
   command: string,
   args: Record<string, unknown>,
 ) {

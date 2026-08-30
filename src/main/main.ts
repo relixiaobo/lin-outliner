@@ -7,53 +7,25 @@ import { mkdir, open, readdir, readFile, realpath, stat, writeFile } from 'node:
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pathToFileURL } from 'node:url';
-import { OutlineClientSupervisor, type OutlineRuntimeLaunch } from '../outline/client';
-import { DesktopOutlineClient, registerDesktopOutlineIpc } from './outlineClient';
-import { OutlineDocumentService } from './outlineDocumentService';
+import { registerDesktopOutlineIpc } from './outlineClient';
 import { runOutlineActionCommand } from './outlineActionCommands';
 import { AppQuitCoordinator, type QuitDecision } from './appQuitCoordinator';
 import {
   mimeTypeForAssetFilename as mimeTypeForFilename,
   sniffAssetMimeType as sniffMimeType,
 } from '../core/assetMetadata';
-import { OutlineDesktopAssetService } from './outlineDesktopAssetService';
-import { configureOutlineCliRuntime } from './outlineRuntime';
-import { ThreadService } from './agent/ThreadService';
 import { resolveRendererThreadStartDefaults } from './agent/rendererThreadStartDefaults';
 import { gitOutput } from './agent/context/AgentStartupContext';
-import { closeAgentServices } from './agent/closeAgentServices';
-import { ExtensionRegistry } from './agent/ExtensionRegistry';
-import { MemoryControlStore } from './agent/extensions/memory/MemoryControlStore';
-import { MemoryExtension } from './agent/extensions/memory/MemoryExtension';
-import { TimelineMemoryStore } from './agent/extensions/memory/TimelineMemoryStore';
-import { AutomationDispatcher } from './agent/automations/AutomationDispatcher';
-import { AutomationScheduler } from './agent/automations/AutomationScheduler';
-import { AutomationService } from './agent/automations/AutomationService';
-import { AutomationStore } from './agent/automations/AutomationStore';
-import { createAutomationTool } from './agent/automations/AutomationTool';
-import { AutomationWorktree } from './agent/automations/AutomationWorktree';
-import { AgentConfigurationLoader } from './agent/AgentConfigurationLoader';
 import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../core/agent/tools';
-import {
-  AgentConfigurationWriter,
-  type ConfigurationLayerTarget,
-} from './agent/AgentConfigurationWriter';
-import { PiTurnExecutor } from './agent/runtime/PiTurnExecutor';
-import { ToolRuntime } from './agent/runtime/ToolRuntime';
+import type { ConfigurationLayerTarget } from './agent/AgentConfigurationWriter';
 import { createToolArtifactSink } from './agent/runtime/ToolArtifactSink';
-import { observedSkillFilePaths } from './agent/context/SkillContextReducer';
-import { AttachmentResolver } from './agent/tools/attachments';
 import { createImageArtifactReference, ImageObservationNormalizationError } from './agent/imageArtifacts';
 import { Mutex } from './agent/Mutex';
 import {
-  AgentSkillRuntime,
   expandSkillDirectory,
   isolatedSkillShellContext,
-  resolvePreloadedSkillInvocations,
-  resolveUserSkillInvocation,
 } from './agent/capabilities/agentSkills';
 import { isValidSkillName } from './agent/capabilities/agentSkillAuthoring';
-import { createAgentSkillProvenanceStore } from './agent/capabilities/agentSkillProvenanceStore';
 import { executeAgentSkillShellCommand } from './agent/capabilities/agentSkillShell';
 import {
   decodeMemoryFeatureMode,
@@ -71,7 +43,6 @@ import {
   type AutomationMethod,
 } from '../core/agent/automation';
 import {
-  createAgentLocalWorkspaceContext,
   resolveAgentLocalReadPath,
   type AgentLocalWorkspaceContext,
   type AgentWorkspaceWriteBoundary,
@@ -104,15 +75,9 @@ import {
   THREAD_MESSAGE_CONTEXT_MENU_CHANNEL,
 } from '../core/agent/transport';
 import {
-  ManagedSkillService,
   ManagedSkillServiceError,
   managedSkillErrorView,
 } from './managedSkillService';
-import { ManagedSkillStore } from './managedSkillStore';
-import { DEFAULT_MANAGED_SKILLS } from './managedSkillDefaults';
-import { BROWSER_PILOT_MANAGED_SKILL_ID, BrowserPilotHost } from './browserPilotHost';
-import { ManagedSkillShellEnvironmentRegistry } from './managedSkillShellEnvironment';
-import { createOutlineAgentShellEnvironmentProvider } from './outlineAgentShellEnvironment';
 import { isRendererPermissionAllowed } from './rendererPermissions';
 import {
   clearUrlPreviewSessionData,
@@ -174,14 +139,11 @@ import { LocalFilePreviewStreamRegistry } from './localFilePreviewStream';
 import {
   LIN_AGENT_OAUTH_EVENT_CHANNEL,
   DAILY_NOTES_ID,
-  TRASH_ID,
   type AgentCapabilityCatalog,
   type AgentEditorView,
   type AgentProfileDraft,
   type AgentRoleDraft,
   type AssetIngestInput,
-  type NodeProjection,
-  type ProjectionUpdate,
 } from '../core/types';
 import {
   serializeUnknownError,
@@ -268,10 +230,7 @@ import {
   MAX_PROMPT_IMAGE_DIMENSION,
 } from '../core/agentAttachmentLimits';
 import { safeAttachmentFileName } from '../core/agentAttachmentPaths';
-import {
-  isPathInside,
-  pruneAgentScratch,
-} from './agent/capabilities/agentAttachmentMaterialization';
+import { isPathInside } from './agent/capabilities/agentAttachmentMaterialization';
 import {
   isSafeLocalFileOpenTarget,
   resolveTrustedLocalFileReference,
@@ -336,9 +295,7 @@ import {
   resolveAgentWorkdir,
 } from './agent/capabilities/agentLocalRoot';
 import { DiagnosticLogStore } from './diagnosticLog';
-import { NodeAccessStore } from './nodeAccessStore';
 import { resolveUserDataDir } from './userDataPath';
-import type { NodeAccessSource } from '../core/nodeAccessRanking';
 import {
   LIN_APP_UPDATE_CHANGED_CHANNEL,
   LIN_APP_UPDATE_CHECK_CHANNEL,
@@ -356,6 +313,8 @@ import {
   type OwnedIpcMain,
   type TransportOwner,
 } from './hostTransport/ownership';
+import { createOutlineDesktopHost } from './hostDomain/outlineDesktopHost';
+import { createAgentHost } from './hostDomain/agentHost';
 
 // App identity for menus / "About" / notifications. Kept deliberately separate
 // from the userData directory, which we resolve EXPLICITLY below instead of
@@ -464,82 +423,18 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const APP_ICON_PNG_PATH = app.isPackaged
   ? join(process.resourcesPath, 'icon.png')
   : join(__dirname, '../../build/icon.png');
-const outlineRuntimeRoot = join(resolvedUserDataDir, 'outline-runtime');
-const outlineContentRoot = join(resolvedUserDataDir, 'content');
-const outlineDevelopmentSessionId = app.isPackaged ? undefined : `desktop:${randomUUID()}`;
-const outlineClientSupervisor = new OutlineClientSupervisor({
-  root: outlineRuntimeRoot,
-  contentRoot: outlineContentRoot,
-  launch: desktopOutlineRuntimeLaunch(outlineRuntimeRoot, outlineContentRoot),
-  ...(outlineDevelopmentSessionId ? { expectedDevelopmentSessionId: outlineDevelopmentSessionId } : {}),
-  origin: 'desktop',
-});
-const desktopOutlineClient = new DesktopOutlineClient({
-  connect: () => outlineClientSupervisor.connect(),
-});
-const outlineDocumentService = new OutlineDocumentService(outlineClientSupervisor);
-outlineDocumentService.setDurabilityFailureHandler((error, revision) => reportError({
-  domain: 'document',
-  severity: 'error',
-  code: 'workspace-save-failed',
-  message: `Workspace save failed at revision ${revision}.`,
-  context: { operation: 'workspace-save', revision },
-  error,
-}));
-configureOutlineCliRuntime({
-  isPackaged: app.isPackaged,
+const outlineHost = createOutlineDesktopHost({
+  userDataDir: resolvedUserDataDir,
   moduleDir: __dirname,
+  isPackaged: app.isPackaged,
   resourcesPath: process.resourcesPath,
-  processExecPath: process.execPath,
+  execPath: process.execPath,
+  reportError,
 });
+const {
+  assetExportRoot: outlineAssetExportRoot,
+} = outlineHost;
 
-function desktopOutlineRuntimeLaunch(root: string, contentRoot: string): OutlineRuntimeLaunch {
-  const configuredEntry = process.env.TENON_OUTLINE_RUNTIME_ENTRY;
-  if (configuredEntry) {
-    return {
-      command: process.env.TENON_OUTLINE_RUNTIME_COMMAND ?? process.execPath,
-      args: [configuredEntry, '--root', root, '--content-root', contentRoot],
-    };
-  }
-  if (app.isPackaged) {
-    return {
-      command: process.execPath,
-      args: [join(process.resourcesPath, 'outline', 'outline-runtime.mjs'), '--root', root, '--content-root', contentRoot],
-    };
-  }
-  const npmExecutable = process.env.npm_execpath;
-  const bunExecutable = npmExecutable && basename(npmExecutable) === 'bun' ? npmExecutable : 'bun';
-  return {
-    command: bunExecutable,
-    args: [resolve(__dirname, '../../src/outline/runtime/server/entry.ts'), '--root', root, '--content-root', contentRoot],
-  };
-}
-
-const extensionRegistry = new ExtensionRegistry();
-const memoryControlStore = new MemoryControlStore(join(app.getPath('userData'), 'agent', 'memories.sqlite'));
-const timelineMemoryStore = new TimelineMemoryStore(outlineDocumentService);
-const memoryExtension = new MemoryExtension(memoryControlStore, timelineMemoryStore, {
-  onError: (error, operation) => reportError({
-    domain: 'memory',
-    severity: 'error',
-    code: `memory-${operation}-failed`,
-    message: `Memory ${operation} failed.`,
-    context: { operation },
-    error,
-  }),
-});
-const nodeAccessStore = new NodeAccessStore(join(app.getPath('userData'), 'node-access-stats.json'), {
-  onError: (error, operation) => reportError({
-    domain: 'node-access',
-    severity: 'warn',
-    code: `node-access-${operation}`,
-    message: `Node access store ${operation} failed`,
-    context: { operation },
-    error,
-  }),
-});
-const outlineAssetExportRoot = join(app.getPath('userData'), 'outline-asset-exports');
-const assetService = new OutlineDesktopAssetService(outlineClientSupervisor, outlineAssetExportRoot);
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
 let providerConfigWindow: BrowserWindow | null = null;
@@ -615,47 +510,6 @@ if (!hasExplicitAgentLocalRoot(process.env.LIN_AGENT_LOCAL_ROOT)) {
   ensureAgentDir(agentLocalFileRoot);
 }
 ensureAgentDir(agentScratchRoot);
-const browserPilotHost = new BrowserPilotHost({
-  userDataRoot: resolvedUserDataDir,
-  scratchRoot: agentScratchRoot,
-});
-const managedSkillStore = new ManagedSkillStore(resolvedUserDataDir);
-let managedSkillShellEnvironment: ManagedSkillShellEnvironmentRegistry | null = null;
-let skillRuntime!: AgentSkillRuntime;
-const turnSkillRuntimes = new Map<string, AgentSkillRuntime>();
-const turnSkillRuntimeInitializations = new Map<string, Promise<AgentSkillRuntime>>();
-const managedSkillService: ManagedSkillService = new ManagedSkillService({
-  appVersion: app.getVersion(),
-  store: managedSkillStore,
-  onChanged: async (): Promise<void> => {
-    managedSkillShellEnvironment?.invalidate();
-    await Promise.all(
-      [skillRuntime, ...turnSkillRuntimes.values()].map((runtime) => runtime.notifySkillContentWritten([])),
-    );
-  },
-  findNameConflict: async (name, excludingManagedSkillId) => {
-    const normalized = name.trim();
-    if (!normalized) return null;
-    const skills = await skillRuntime.listAllSkills();
-    const conflict = skills.find((skill) => (
-      skill.name === normalized
-      && !(skill.source === 'managed' && skill.name === excludingManagedSkillId)
-    ));
-    return conflict ? { source: conflict.source, location: conflict.skillFile } : null;
-  },
-});
-managedSkillShellEnvironment = new ManagedSkillShellEnvironmentRegistry({
-  activeSkillIds: async () => new Set(
-    (await managedSkillService.activeRuntimeRoots()).map((root) => root.id),
-  ),
-  outputRootBoundary: agentScratchRoot,
-  contributors: [{
-    skillId: BROWSER_PILOT_MANAGED_SKILL_ID,
-    processEnvironment: ({ threadId, turnId, executionId }) => (
-      browserPilotHost.processEnvironment(threadId, turnId, executionId)
-    ),
-  }],
-});
 // An available Skill update should be visible without going looking for it, but
 // nothing about that is urgent enough to spend the launch path on. So: one
 // throttled sweep per launch, deferred until after first paint, fire-and-forget.
@@ -671,7 +525,7 @@ function scheduleManagedSkillUpdateCheck(): void {
     // version touched. The throttle stamps lastCheckedAt on failure too, so a
     // record that keeps failing is retried on the same schedule as one that
     // succeeds rather than on every launch.
-    void managedSkillService
+    void agentHost.skills.catalog
       .checkUpdates(undefined, { throttleMs: MANAGED_SKILL_UPDATE_THROTTLE_MS })
       .catch(() => { /* recorded on the record; retried next launch */ });
   }, MANAGED_SKILL_UPDATE_STARTUP_DELAY_MS);
@@ -686,62 +540,6 @@ function scheduleAppUpdateCheck(): void {
   timer.unref?.();
 }
 
-// Scratch holds only ephemeral, app-owned data (resource materializations, live shell captures,
-// legacy fetch files, and PDF page images). Reclaim anything past the TTL once per launch;
-// failures are swallowed so cleanup never blocks startup.
-void pruneAgentScratch(agentScratchRoot).catch((error) => {
-  console.error('[agent] failed to prune scratch root at startup', error);
-});
-skillRuntime = new AgentSkillRuntime({
-  localRoot: agentLocalFileRoot,
-  provenanceStore: createAgentSkillProvenanceStore(),
-  managedSkillRoots: () => managedSkillService.activeRuntimeRoots(),
-  managedSkillContentRoot: managedSkillService.contentRoot,
-  assertManagedSkillInvocable: (skillId, expectedContentHash) => (
-    managedSkillService.assertInvocable(skillId, expectedContentHash)
-  ),
-  executeSkillShell: ({ skill, command, signal }) => executeAgentSkillShellCommand({
-    skill,
-    command,
-    localRoot: agentLocalFileRoot,
-    scratchRoot: agentScratchRoot,
-    signal,
-  }),
-});
-const managedSkillBootstrap = managedSkillService.bootstrapDefaults(DEFAULT_MANAGED_SKILLS, {
-  findNameConflict: findUnmanagedSkillNameConflict,
-});
-void managedSkillBootstrap.then((results) => {
-  for (const result of results) {
-    if (result.status === 'failed') {
-      console.warn(`[managed-skills] default acquisition failed for ${result.id}: ${result.error?.code ?? 'unexpected_error'}`);
-    }
-  }
-});
-void getAgentRuntimeSettings().then((settings) => {
-  for (const runtime of [skillRuntime, ...turnSkillRuntimes.values()]) {
-    runtime.updateAdditionalSkillDirectories(settings.additionalSkillDirectories);
-    runtime.updateDisabledSkills(settings.disabledSkills ?? []);
-  }
-}).catch((error) => console.error('[agent] failed to load skill settings', error));
-
-async function findUnmanagedSkillNameConflict(name: string) {
-  const normalized = name.trim();
-  if (!normalized) return null;
-  const settings = await getAgentRuntimeSettings();
-  const runtime = new AgentSkillRuntime({
-    localRoot: agentLocalFileRoot,
-    additionalSkillDirectories: settings.additionalSkillDirectories,
-  });
-  const conflict = (await runtime.listAllSkills()).find((skill) => skill.name === normalized);
-  return conflict ? { source: conflict.source, location: conflict.skillFile } : null;
-}
-let toolRuntime!: ToolRuntime;
-const agentConfigurationLoader = new AgentConfigurationLoader(resolvedUserDataDir);
-const agentConfigurationWriter = new AgentConfigurationWriter(resolvedUserDataDir);
-const agentWorktree = new AgentWorktree(resolvedUserDataDir);
-let threadService!: ThreadService;
-
 /** How many changed paths a worktree footer will LIST; the count it states is
  *  the real total, which is why both travel back. */
 const MAX_REPORTED_WORKTREE_CHANGES = 200;
@@ -753,15 +551,21 @@ const MAX_REPORTED_WORKTREE_CHANGES = 200;
  */
 function retainedAgentWorktree(agentId: string): { readonly path: string } | null {
   if (!agentId) return null;
-  const worktree = threadService.subagentExecution(agentId)?.worktree ?? null;
+  const worktree = agentHost.threads.subagentExecution(agentId)?.worktree ?? null;
   return worktree && worktree.removedAt === null ? { path: worktree.path } : null;
 }
 const agentImageObservationMutex = new Mutex();
-const attachmentResolver = new AttachmentResolver({
-  useResourcePath: (threadId, ref, use) => threadService.useThreadResourcePath(threadId, ref, use),
-  prepareImageArtifact: async ({ threadId, attachment, sourcePath }) => {
+const agentHost = createAgentHost({
+  userDataDir: resolvedUserDataDir,
+  scratchRoot: agentScratchRoot,
+  defaultCwd: agentLocalFileRoot,
+  appVersion: app.getVersion(),
+  loadRuntimeSettings: getAgentRuntimeSettings,
+  timeline: outlineHost.timeline,
+  reportError,
+  prepareImageArtifact: async ({ threadId, attachment, sourcePath, writeResource }) => {
     const snapshot = await prepareAttachmentPromptImage(attachment, sourcePath);
-    const written = await threadService.writeThreadResourceWithStatus(
+    const written = await writeResource(
       threadId,
       snapshot.bytes,
       snapshot.mimeType,
@@ -778,36 +582,28 @@ const attachmentResolver = new AttachmentResolver({
       createdResources: written.created ? [written.ref] : [],
     };
   },
-});
-const turnExecutor = new PiTurnExecutor({
-  createTools: (context) => toolRuntime.createTools(context),
-  beforeProviderContext: (context) => toolRuntime.prepareProviderContext(context),
-  transcriptIndexPath: threadTranscriptIndexPath(threadTranscriptRoot(resolvedUserDataDir)),
-  // One name, wherever it is drawn or spoken: the prompt now asks configuration
-  // who this agent is instead of hard-coding a name the transcript disagreed
-  // with. The root Thread is `main`; a child is named by its Agent type.
-  resolvePersona: (thread) => agentConfigurationLoader.resolveThreadPersona(thread, reportError),
-});
-threadService = ThreadService.open(
-  resolvedUserDataDir,
-  turnExecutor,
-  {
-    attachmentScratchRoot: agentScratchRoot,
-    nameGenerator: turnExecutor,
-    resolveConfiguration: (request) => agentConfigurationLoader.resolveProfile(
+  createTurnExecutorOptions: ({ configuration }) => ({
+    transcriptIndexPath: threadTranscriptIndexPath(threadTranscriptRoot(resolvedUserDataDir)),
+    // One name, wherever it is drawn or spoken: the prompt now asks configuration
+    // who this agent is instead of hard-coding a name the transcript disagreed
+    // with. The root Thread is `main`; a child is named by its Agent type.
+    resolvePersona: (thread) => configuration.resolveThreadPersona(thread, reportError),
+  }),
+  createThreadOptions: ({ configuration, worktrees }) => ({
+    resolveConfiguration: (request) => configuration.resolveProfile(
       request.configurationProfile,
       request.cwd,
     ),
-    resolveRole: (name, cwd) => agentConfigurationLoader.resolveRole(name, cwd),
-    resolveAgentType: (name, cwd) => agentConfigurationLoader.resolveAgentType(name, cwd),
+    resolveRole: (name, cwd) => configuration.resolveRole(name, cwd),
+    resolveAgentType: (name, cwd) => configuration.resolveAgentType(name, cwd),
     resolveRoleCatalog: (cwd, reportFailure) => (
-      agentConfigurationLoader.buildRoleCatalogSnapshotForUserPath(cwd, reportFailure)
+      configuration.buildRoleCatalogSnapshotForUserPath(cwd, reportFailure)
     ),
     resolveIdentityCatalog: (cwd, reportFailure) => (
-      agentConfigurationLoader.resolveIdentityCatalogForUserPath(cwd, reportFailure)
+      configuration.resolveIdentityCatalogForUserPath(cwd, reportFailure)
     ),
     resolvePersona: (thread, reportFailure) => (
-      agentConfigurationLoader.resolveThreadPersona(thread, reportFailure)
+      configuration.resolveThreadPersona(thread, reportFailure)
     ),
     resolveProviderModelIds: (providerId) => rankedModels(providerId).map((model) => model.id),
     resolveSubagentTokenBudget: async () => (await getAgentRuntimeSettings()).subagentTokenBudget,
@@ -818,11 +614,11 @@ threadService = ThreadService.open(
         maxConcurrent: settings.subagentMaxConcurrent,
       };
     },
-    planAgentWorktree: (input) => agentWorktree.plan(input),
-    prepareAgentWorktree: (input) => agentWorktree.prepare(input),
-    settleAgentWorktree: (worktree, options) => agentWorktree.settle(worktree, options),
-    recoverAgentWorktree: (input) => agentWorktree.recover(input),
-    cleanupResidualAgentWorktree: (input) => agentWorktree.cleanupResidual(input),
+    planAgentWorktree: (input) => worktrees.plan(input),
+    prepareAgentWorktree: (input) => worktrees.prepare(input),
+    settleAgentWorktree: (metadata, options) => worktrees.settle(metadata, options),
+    recoverAgentWorktree: (input) => worktrees.recover(input),
+    cleanupResidualAgentWorktree: (input) => worktrees.cleanupResidual(input),
     reportError,
     writeTrajectoryExport: async ({ defaultFileName, bundle }) => {
       try {
@@ -872,7 +668,6 @@ threadService = ThreadService.open(
       validateAgentModelSelection(selection.model, selection.reasoningEffort, provider);
     },
     onRendererConfigurationCommitted: saveLastAgentThreadConfiguration,
-    resolveUserContent: (content, context) => attachmentResolver.resolve(content, context),
     normalizeOutputImage: async ({ bytes, mimeType, signal }) => {
       try {
         const prepared = await prepareBoundedAgentImageBytes(
@@ -894,94 +689,38 @@ threadService = ThreadService.open(
         );
       }
     },
-    getDocumentProjection: () => outlineDocumentService.getProjection(),
+    getDocumentProjection: () => outlineHost.document.getProjection(),
     resolveReferencedAsset: async (assetId) => {
       const [path, metadata] = await Promise.all([
-        assetService.pathFor(assetId),
-        assetService.lookup(assetId),
+        outlineHost.assets.pathFor(assetId),
+        outlineHost.assets.lookup(assetId),
       ]);
       return path ? { path, metadata } : null;
     },
-    resolveSkillAdmission: async ({
-      thread,
-      turnId,
-      configuration,
-      preloadedSkills,
-      content,
-      acceptedAt,
-      observedFilePaths,
-    }) => {
-      const hasSkillTool = configuration.tools.includes('skill');
-      if (!hasSkillTool) {
-        return { catalogSnapshot: null, preloadedInvocations: [], invocation: null };
-      }
-      const runtime = new AgentSkillRuntime({
-        localRoot: thread.cwd,
-        threadId: thread.id,
-        enabledSkills: configuration.skills,
-        provenanceStore: createAgentSkillProvenanceStore(),
-        managedSkillRoots: () => managedSkillService.activeRuntimeRoots(),
-        managedSkillContentRoot: managedSkillService.contentRoot,
-        assertManagedSkillInvocable: (skillId, expectedContentHash) => (
-          managedSkillService.assertInvocable(skillId, expectedContentHash)
-        ),
-        executeSkillShell: ({ skill, command, signal }) => executeAgentSkillShellCommand({
-          skill,
-          command,
-          localRoot: thread.cwd,
-          scratchRoot: agentScratchRoot,
-          signal,
-          processEnvironment: createOutlineAgentShellEnvironmentProvider({
-            threadId: thread.id,
-            turnId,
-            runtimeRoot: outlineRuntimeRoot,
-            contentRoot: outlineContentRoot,
-            supervisor: outlineClientSupervisor,
-            baseEnvironment: (shell) => (
-              managedSkillShellEnvironment!.processEnvironment(thread.id, turnId, shell)
-            ),
-          }),
-          writeBoundary: agentWriteBoundaryForThread(thread.id),
-          subagentPolicy: threadService.subagentExecution(thread.id)?.toolPolicy,
-        }),
-      });
-      const settings = await getAgentRuntimeSettings();
-      runtime.updateAdditionalSkillDirectories(settings.additionalSkillDirectories);
-      runtime.updateDisabledSkills(settings.disabledSkills ?? []);
-      await runtime.notifyFileTouched([...observedFilePaths]);
-      const preloaded = await resolvePreloadedSkillInvocations(runtime, preloadedSkills, acceptedAt, true);
-      for (const diagnostic of preloaded.diagnostics) {
-        console.warn(`[agent][skill-preload] ${diagnostic}`);
-      }
-      const directInput = hasSkillTool ? directSkillAdmissionInput(content) : null;
-      const invocation = directInput
-        ? await resolveUserSkillInvocation(runtime, directInput, { invokedAt: acceptedAt })
-        : null;
-      return {
-        catalogSnapshot: hasSkillTool ? await runtime.buildSkillCatalogSnapshot() : null,
-        preloadedInvocations: preloaded.invocations,
-        invocation: invocation?.ok ? invocation.evidence : null,
-      };
-    },
-    extensions: extensionRegistry,
-    beforeInitialTurnAdmission: () => memoryExtension.prepareForTurnAdmission(),
-  },
-);
-memoryExtension.bindHost(threadService);
-extensionRegistry.register(memoryExtension);
-function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0]): AgentSkillRuntime {
-  const existing = turnSkillRuntimes.get(context.turn.id);
-  if (existing) return existing;
-  const runtime = new AgentSkillRuntime({
+  }),
+  createAdmissionSkillRuntimeOptions: ({ thread, turnId, configuration }, { threads }) => ({
+    localRoot: thread.cwd,
+    threadId: thread.id,
+    enabledSkills: configuration.skills,
+    executeSkillShell: ({ skill, command, signal }) => executeAgentSkillShellCommand({
+      skill,
+      command,
+      localRoot: thread.cwd,
+      scratchRoot: agentScratchRoot,
+      signal,
+      processEnvironment: outlineHost.createAgentShellEnvironment(
+        thread.id,
+        turnId,
+        (shell) => agentHost.skills.processEnvironment(thread.id, turnId, shell),
+      ),
+      writeBoundary: agentWriteBoundaryForThread(thread.id),
+      subagentPolicy: threads().subagentExecution(thread.id)?.toolPolicy,
+    }),
+  }),
+  createTurnSkillRuntimeOptions: (context, { threads }) => ({
     localRoot: context.thread.cwd,
     threadId: context.thread.id,
     enabledSkills: context.configuration.skills,
-    provenanceStore: createAgentSkillProvenanceStore(),
-    managedSkillRoots: () => managedSkillService.activeRuntimeRoots(),
-    managedSkillContentRoot: managedSkillService.contentRoot,
-    assertManagedSkillInvocable: (skillId, expectedContentHash) => (
-      managedSkillService.assertInvocable(skillId, expectedContentHash)
-    ),
     executeSkillShell: ({ skill, command, argumentBindings, signal }) => executeAgentSkillShellCommand({
       skill,
       command,
@@ -989,20 +728,13 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
       localRoot: context.thread.cwd,
       scratchRoot: agentScratchRoot,
       signal,
-      processEnvironment: createOutlineAgentShellEnvironmentProvider({
-        threadId: context.thread.id,
-        turnId: context.turn.id,
-        runtimeRoot: outlineRuntimeRoot,
-        contentRoot: outlineContentRoot,
-        supervisor: outlineClientSupervisor,
-        baseEnvironment: (shell) => managedSkillShellEnvironment!.processEnvironment(
-          context.thread.id,
-          context.turn.id,
-          shell,
-        ),
-      }),
+      processEnvironment: outlineHost.createAgentShellEnvironment(
+        context.thread.id,
+        context.turn.id,
+        (shell) => agentHost.skills.processEnvironment(context.thread.id, context.turn.id, shell),
+      ),
       writeBoundary: agentWriteBoundaryForThread(context.thread.id),
-      subagentPolicy: threadService.subagentExecution(context.thread.id)?.toolPolicy,
+      subagentPolicy: threads().subagentExecution(context.thread.id)?.toolPolicy,
       artifactSink: createToolArtifactSink(context),
     }),
     executeIsolatedSkill: async ({
@@ -1014,7 +746,7 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
     }) => {
       if (!parentToolCallId) throw new Error('An isolated Skill requires its parent dynamic-tool Item identity.');
       const shellContext = isolatedSkillShellContext(shellObservations);
-      const spawned = await threadService.spawnIsolatedSkillThread({
+      const spawned = await threads().spawnIsolatedSkillThread({
         parentThreadId: context.thread.id,
         parentTurnId: context.turn.id,
         parentItemId: parentToolCallId,
@@ -1030,8 +762,8 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
         ...(skill.model === undefined ? {} : { model: skill.model }),
         ...(skill.effort === undefined ? {} : { reasoningEffort: parseSkillReasoningEffort(skill.effort) }),
       });
-      await threadService.waitForIdle(spawned.thread.id);
-      const completed = threadService.readThread({
+      await threads().waitForIdle(spawned.thread.id);
+      const completed = threads().readThread({
         threadId: spawned.thread.id,
         includeTurns: true,
       }).thread.turns?.find((turn) => turn.id === spawned.turn.id);
@@ -1039,7 +771,7 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
         throw new Error(`Isolated Skill child Thread did not reach a terminal Turn: ${spawned.thread.id}`);
       }
       const result = turnTerminalAnswer(completed.items);
-      const transcriptPath = await threadService.threadTranscriptPath(spawned.thread.id);
+      const transcriptPath = await threads().threadTranscriptPath(spawned.thread.id);
       return {
         threadId: spawned.thread.id,
         agentRole: spawned.thread.agentRole ?? 'default',
@@ -1049,120 +781,25 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
         ...(completed.error?.message ? { error: completed.error.message } : {}),
       };
     },
-  });
-  turnSkillRuntimes.set(context.turn.id, runtime);
-  return runtime;
-}
-
-async function prepareSkillRuntimeForTurn(
-  context: Parameters<ToolRuntime['createTools']>[0],
-): Promise<AgentSkillRuntime> {
-  const existing = turnSkillRuntimeInitializations.get(context.turn.id);
-  if (existing) return existing;
-  const runtime = skillRuntimeForTurn(context);
-  const initialization = (async () => {
-    const settings = await getAgentRuntimeSettings();
-    runtime.updateAdditionalSkillDirectories(settings.additionalSkillDirectories);
-    runtime.updateDisabledSkills(settings.disabledSkills ?? []);
-    await runtime.notifyFileTouched(observedSkillFilePaths([
-      ...context.historyBeforeTurn,
-      { ...context.turn, items: context.recorder.orderedItems() },
-    ]));
-    return runtime;
-  })();
-  turnSkillRuntimeInitializations.set(context.turn.id, initialization);
-  try {
-    return await initialization;
-  } catch (error) {
-    if (turnSkillRuntimeInitializations.get(context.turn.id) === initialization) {
-      turnSkillRuntimeInitializations.delete(context.turn.id);
-      turnSkillRuntimes.delete(context.turn.id);
-      managedSkillShellEnvironment?.clearTurn(context.turn.id);
-    }
-    throw error;
-  }
-}
-
-async function refreshTurnSkillProvenanceRecords(): Promise<void> {
-  await Promise.all(
-    [...turnSkillRuntimes.values()].map((runtime) => runtime.refreshProvenanceRecords()),
-  );
-}
-
-function directSkillAdmissionInput(content: readonly ThreadUserContent[]): string | null {
-  if (content.some((part) => part.type === 'attachment')) return null;
-  const text = content.flatMap((part): string[] => {
-    if (part.type === 'text') return [part.text];
-    if (part.type === 'nodeReference') {
-      return [`[Outliner Node ${part.nodeId}]${part.note ? ` ${part.note}` : ''}`];
-    }
-    return [];
-  }).join('\n').trim();
-  return text || null;
-}
-
-function parseSkillReasoningEffort(value: string): ReasoningEffort {
-  const normalized = value.trim().toLowerCase();
-  if ((REASONING_EFFORTS as readonly string[]).includes(normalized)) return normalized as ReasoningEffort;
-  throw new Error(`Unsupported isolated Skill reasoning effort: ${value}`);
-}
-
-function localWorkspaceForTurn(context: Parameters<ToolRuntime['createTools']>[0]): AgentLocalWorkspaceContext {
-  const processEnvironment = createOutlineAgentShellEnvironmentProvider({
-    threadId: context.thread.id,
-    turnId: context.turn.id,
-    runtimeRoot: outlineRuntimeRoot,
-    contentRoot: outlineContentRoot,
-    supervisor: outlineClientSupervisor,
-    baseEnvironment: (shell) => managedSkillShellEnvironment!.processEnvironment(
+  }),
+  createToolOptions: () => ({
+    imageNormalizer: async ({ filePath, signal }) => {
+      return prepareBoundedAgentImage(filePath, basename(filePath), signal);
+    },
+  }),
+  createLocalWorkspaceOptions: (context) => ({
+    processEnvironment: outlineHost.createAgentShellEnvironment(
       context.thread.id,
       context.turn.id,
-      shell,
+      (shell) => agentHost.skills.processEnvironment(context.thread.id, context.turn.id, shell),
     ),
-  });
-  return createAgentLocalWorkspaceContext(
-    context.thread.cwd,
-    agentScratchRoot,
-    skillRuntimeForTurn(context),
-    processEnvironment,
-    agentWriteBoundaryForThread(context.thread.id),
-    context.thread.id,
-  );
-}
-
-function agentWriteBoundaryForThread(
-  threadId: string,
-): AgentWorkspaceWriteBoundary | undefined {
-  const worktree = threadService.agentWorktree(threadId);
-  if (!worktree) return undefined;
-  const sandbox = agentWorktree.sandboxPaths(worktree);
-  return {
-    root: worktree.path,
-    shellWritablePaths: sandbox.writablePaths,
-    protectedGitObjectStores: sandbox.protectedGitObjectStores,
-  };
-}
-
-const automationStore = new AutomationStore(join(resolvedUserDataDir, 'agent', 'automations.sqlite'));
-const automationWorktree = new AutomationWorktree(resolvedUserDataDir);
-let automationService!: AutomationService;
-async function validateAutomationEffectiveConfiguration(
-  modelProvider: string,
-  configuration: EffectiveThreadConfiguration,
-): Promise<void> {
-  const provider = await getProviderRuntimeConfig(modelProvider);
-  if (!provider) throw new Error(`Automation model provider is unavailable: ${modelProvider}`);
-  validateAgentModelSelection(configuration.model, configuration.reasoningEffort, provider);
-}
-const automationDispatcher = new AutomationDispatcher({
-  store: automationStore,
-  threads: threadService,
-  worktrees: automationWorktree,
-  defaultCwd: agentLocalFileRoot,
-  resolveConfiguration: async (selection, cwd) => {
-    const configuration = agentConfigurationLoader.resolveProfile(undefined, cwd);
+    writeBoundary: agentWriteBoundaryForThread(context.thread.id),
+  }),
+  createImageGenerationRuntime: createThreadImageGenerationRuntime,
+  resolveAutomationConfiguration: async (selection, cwd, { configuration }) => {
+    const resolvedConfiguration = configuration.resolveProfile(undefined, cwd);
     const effectiveConfiguration = Object.freeze({
-      ...configuration,
+      ...resolvedConfiguration,
       ...(selection.model === null ? {} : { model: selection.model }),
       ...(selection.reasoningEffort === null ? {} : { reasoningEffort: selection.reasoningEffort }),
     });
@@ -1173,44 +810,37 @@ const automationDispatcher = new AutomationDispatcher({
     await validateAutomationEffectiveConfiguration(provider.providerId, effectiveConfiguration);
     return { modelProvider: provider.providerId, configuration: effectiveConfiguration };
   },
-  validateEffectiveConfiguration: validateAutomationEffectiveConfiguration,
-  onRunChanged: (run) => automationService.runChanged(run),
+  validateAutomationConfiguration: validateAutomationEffectiveConfiguration,
 });
-const automationScheduler = new AutomationScheduler({
-  store: automationStore,
-  dispatcher: automationDispatcher,
-  onAutomationChanged: (automation) => automationService.automationChanged(automation),
-  onRunChanged: (run) => automationService.runChanged(run),
-});
-automationService = new AutomationService({
-  store: automationStore,
-  scheduler: automationScheduler,
-  dispatcher: automationDispatcher,
-  threads: threadService,
-});
-const wakeAutomationsOnResume = () => automationService.wake();
+function parseSkillReasoningEffort(value: string): ReasoningEffort {
+  const normalized = value.trim().toLowerCase();
+  if ((REASONING_EFFORTS as readonly string[]).includes(normalized)) return normalized as ReasoningEffort;
+  throw new Error(`Unsupported isolated Skill reasoning effort: ${value}`);
+}
 
-toolRuntime = new ToolRuntime(threadService, {
-  localWorkspace: localWorkspaceForTurn,
-  imageNormalizer: async ({ filePath, signal }) => {
-    return prepareBoundedAgentImage(filePath, basename(filePath), signal);
-  },
-  skillRuntime: prepareSkillRuntimeForTurn,
-  imageGeneration: (context) => createThreadImageGenerationRuntime(
-    context,
-    localWorkspaceForTurn(context),
-  ),
-  dynamicTools: () => [createAutomationTool(automationService)],
-});
-threadService.subscribe((notification) => {
-  if (notification.type === 'turn/completed') {
-    turnSkillRuntimes.delete(notification.turnId);
-    turnSkillRuntimeInitializations.delete(notification.turnId);
-    managedSkillShellEnvironment?.clearTurn(notification.turnId);
-  }
-  if (notification.type === 'turn/completed' || notification.type === 'thread/status/changed') {
-    automationService.wake();
-  }
+function agentWriteBoundaryForThread(
+  threadId: string,
+): AgentWorkspaceWriteBoundary | undefined {
+  const worktree = agentHost.threads.agentWorktree(threadId);
+  if (!worktree) return undefined;
+  const sandbox = agentHost.worktrees.sandboxPaths(worktree);
+  return {
+    root: worktree.path,
+    shellWritablePaths: sandbox.writablePaths,
+    protectedGitObjectStores: sandbox.protectedGitObjectStores,
+  };
+}
+
+async function validateAutomationEffectiveConfiguration(
+  modelProvider: string,
+  configuration: EffectiveThreadConfiguration,
+): Promise<void> {
+  const provider = await getProviderRuntimeConfig(modelProvider);
+  if (!provider) throw new Error(`Automation model provider is unavailable: ${modelProvider}`);
+  validateAgentModelSelection(configuration.model, configuration.reasoningEffort, provider);
+}
+const wakeAutomationsOnResume = () => agentHost.automations.wake();
+agentHost.threads.subscribe((notification) => {
   if (notification.type === 'subagent/execution/changed') {
     notifyTerminalBackgroundAgent(notification.execution);
   }
@@ -1267,7 +897,7 @@ function notifyTerminalBackgroundAgent(execution: SubagentExecutionProjection): 
     console.warn('[agent] Background Agent notification unavailable', error);
   }
 }
-automationService.subscribe((notification) => {
+agentHost.automations.subscribe((notification) => {
   liveWindow(mainWindow)?.webContents.send(AUTOMATION_NOTIFICATION_CHANNEL, notification);
 });
 
@@ -1388,78 +1018,9 @@ const localFilePreviewStreams = new LocalFilePreviewStreamRegistry(() => [
 ]);
 const linkedFileGrants = new LinkedFileGrantStore(join(resolvedUserDataDir, 'linked-file-grants.json'));
 
-outlineDocumentService.onProjectionChanged(({ event, update }) => {
-  pruneNodeAccessForProjectionUpdate(update);
-  try {
-    memoryExtension.projectionChanged({ update, ...(event.operation ? { operation: event.operation } : {}) });
-  } catch (error) {
-    reportError({
-      domain: 'memory',
-      severity: 'error',
-      code: 'memory-runtime-projection-observer-failed',
-      message: 'Memory Runtime projection observer failed.',
-      context: { operation: 'runtime-projection-observer' },
-      error,
-    });
-  }
+outlineHost.observeProjection(({ event, update }) => {
+  agentHost.projectionChanged(update, event.operation);
 });
-
-async function recordDocumentNodeAccess(nodeIds: readonly string[], source: NodeAccessSource): Promise<void> {
-  const uniqueIds = [...new Set(nodeIds.filter((nodeId) => typeof nodeId === 'string' && nodeId.length > 0))];
-  if (uniqueIds.length === 0) return;
-  const existingIds = new Set(outlineDocumentService.projectionNodesByIds(uniqueIds).map((node) => node.id));
-  const validIds = uniqueIds.filter((nodeId) => existingIds.has(nodeId));
-  if (validIds.length === 0) return;
-  const update = await nodeAccessStore.recordMany(validIds, source);
-  await outlineDocumentService.upsertPersonalAccessRanking(update.upserted);
-  if (update.removed.length > 0) {
-    await outlineDocumentService.removePersonalAccessRanking(update.removed);
-  }
-}
-
-function pruneNodeAccessForProjectionUpdate(update: ProjectionUpdate): void {
-  if (update.kind === 'full') {
-    void nodeAccessStore.retainOnly(update.projection.nodes.map((node) => node.id))
-      .then(() => outlineDocumentService.replacePersonalAccessRanking(nodeAccessStore.snapshot()))
-      .catch(() => undefined);
-    return;
-  }
-  const trashedIds = update.changedNodes
-    .filter((node) => node.parentId === TRASH_ID)
-    .map((node) => node.id);
-  const staleIds = new Set([...update.removedIds, ...trashedIds]);
-  if (trashedIds.length > 0) {
-    for (const descendantId of descendantProjectionIds(trashedIds, outlineDocumentService.getProjection().nodes)) {
-      staleIds.add(descendantId);
-    }
-  }
-  if (staleIds.size === 0) return;
-  void nodeAccessStore.deleteMany([...staleIds])
-    .then(() => outlineDocumentService.removePersonalAccessRanking([...staleIds]))
-    .catch(() => undefined);
-}
-
-function descendantProjectionIds(rootIds: readonly string[], nodes: readonly NodeProjection[]): string[] {
-  if (rootIds.length === 0) return [];
-  const childrenByParent = new Map<string, string[]>();
-  for (const node of nodes) {
-    if (!node.parentId) continue;
-    const children = childrenByParent.get(node.parentId) ?? [];
-    children.push(node.id);
-    childrenByParent.set(node.parentId, children);
-  }
-
-  const descendants: string[] = [];
-  const stack = [...rootIds];
-  while (stack.length > 0) {
-    const parentId = stack.pop()!;
-    for (const childId of childrenByParent.get(parentId) ?? []) {
-      descendants.push(childId);
-      stack.push(childId);
-    }
-  }
-  return descendants;
-}
 
 // ─── Security shell (the native host owns navigation + capabilities) ───
 
@@ -1963,7 +1524,7 @@ function createWindow() {
 
   registerRendererCapabilities(mainWindow.webContents, APP_RENDERER_CAPABILITIES);
   const outlineOwnerId = mainWindow.webContents.id;
-  mainWindow.webContents.once('destroyed', () => desktopOutlineClient.releaseOwner(outlineOwnerId));
+  mainWindow.webContents.once('destroyed', () => outlineHost.renderer.releaseOwner(outlineOwnerId));
 
   mainWindow.on('closed', () => {
     pageTranslationService.dispose();
@@ -2555,7 +2116,7 @@ async function resolveLocalFileOperation(
       [agentLocalFileRoot, agentScratchRoot],
     );
   }
-  const attachment = await threadService.resolveAttachmentFile(threadId, attachmentId).catch(() => null);
+  const attachment = await agentHost.threads.resolveAttachmentFile(threadId, attachmentId).catch(() => null);
   if (!attachment) return null;
   if (attachment.entryKind === 'directory') {
     return resolveTrustedLocalFileReference(
@@ -2639,9 +2200,9 @@ async function routeActionRendererStep(
 }
 
 const actionInvocationService = new ActionInvocationService({
-  projection: () => outlineDocumentService.liveProjection(),
-  runCommand: (command, args) => runOutlineActionCommand(outlineDocumentService, command, args),
-  searchNodes: (query, limit) => outlineDocumentService.searchNodeHits(query, limit),
+  projection: () => outlineHost.document.liveProjection(),
+  runCommand: (command, args) => runOutlineActionCommand(outlineHost.document, command, args),
+  searchNodes: (query, limit) => outlineHost.document.searchNodeHits(query, limit),
   executeRendererStep: routeActionRendererStep,
   activateAppSurface: async (surface) => {
     if (surface === 'settings') {
@@ -2709,7 +2270,7 @@ function registerMainTransport(previewSession: Electron.Session): HostTransportC
       protocol.handle(ASSET_URL_SCHEME, (request) => {
         const assetId = assetIdFromUrl(request.url);
         return assetId
-          ? assetService.serve(assetId, request)
+          ? outlineHost.assets.serve(assetId, request)
           : new Response('Asset not found', { status: 404, headers: { 'content-type': 'text/plain' } });
       });
       protocol.handle(PREVIEW_LOCAL_URL_SCHEME, (request) => {
@@ -2740,7 +2301,7 @@ function registerMainTransport(previewSession: Electron.Session): HostTransportC
 function registerOutlineTransport(ipcMain: OwnedIpcMain): void {
   registerDesktopOutlineIpc({
     ipcMain,
-    client: desktopOutlineClient,
+    client: outlineHost.renderer,
     authorize: (event) => {
       if (!mainWindow || event.sender !== mainWindow.webContents) {
         throw new Error('Outline Runtime is available only to the main application window.');
@@ -2847,13 +2408,13 @@ function registerAgentTransport(ipcMain: OwnedIpcMain): void {
     if (typeof method !== 'string' || !(AUTOMATION_METHODS as readonly string[]).includes(method)) {
       throw new Error(`Unknown Automation method: ${String(method)}`);
     }
-    return automationService.request(method as AutomationMethod, input);
+    return agentHost.automations.request(method as AutomationMethod, input);
   });
   ipcMain.handle(AGENT_CORE_REQUEST_CHANNEL, async (event, method: AgentCoreMethod, input: unknown) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) {
       throw new Error('Agent Core is available only to the main application window.');
     }
-    return threadService.request(method, input as AgentCoreRequestByMethod[AgentCoreMethod]);
+    return agentHost.threads.request(method, input as AgentCoreRequestByMethod[AgentCoreMethod]);
   });
   ipcMain.handle(
     THREAD_MESSAGE_CONTEXT_MENU_CHANNEL,
@@ -2922,7 +2483,7 @@ function registerSourcePreviewTransport(ipcMain: OwnedIpcMain): void {
         assertMainRenderer(event, 'Preview');
         return handlePreviewCommand(command, args ?? {}, {
           agentLocalFileRoots: [agentLocalFileRoot, agentScratchRoot],
-          assetService,
+          assetService: outlineHost.assets,
           assetFileStreamUrl: async (filePath, mimeType) => {
             const token = await localFilePreviewStreams.issuePath(filePath, mimeType);
             return token ? previewLocalUrl(token) : null;
@@ -2933,7 +2494,7 @@ function registerSourcePreviewTransport(ipcMain: OwnedIpcMain): void {
             return token ? previewLocalUrl(token) : null;
           },
           threadAttachmentFile: async (threadId, attachmentId) =>
-            threadService
+            agentHost.threads
               .resolveAttachmentFile(threadId, attachmentId)
               .then(async (resolved) => {
                 if (!resolved) return null;
@@ -2950,7 +2511,7 @@ function registerSourcePreviewTransport(ipcMain: OwnedIpcMain): void {
               })
               .catch(() => null),
           threadResourceFile: async (threadId, ref) =>
-            threadService
+            agentHost.threads
               .resolveThreadResourceFile(threadId, ref)
               .then((resolved) => {
                 if (!resolved) return null;
@@ -2961,7 +2522,7 @@ function registerSourcePreviewTransport(ipcMain: OwnedIpcMain): void {
               })
               .catch(() => null),
           threadImageArtifactFile: async (threadId, artifact) =>
-            threadService
+            agentHost.threads
               .resolveImageArtifactFile(threadId, artifact)
               .then(async (resolved) => {
                 if (!resolved) return null;
@@ -2995,7 +2556,7 @@ function registerSourcePreviewTransport(ipcMain: OwnedIpcMain): void {
             return token ? previewLocalUrl(token) : null;
           },
           mutateLinkedFileSource: (input) =>
-            outlineDocumentService.runChanges(
+            outlineHost.document.runChanges(
               [
                 {
                   op: 'update',
@@ -3037,7 +2598,7 @@ function registerSourcePreviewTransport(ipcMain: OwnedIpcMain): void {
 
   ipcMain.handle('lin:record-node-access', async (_event, raw: unknown): Promise<void> => {
     if (typeof raw !== 'string' || !raw) return;
-    await recordDocumentNodeAccess([raw], 'human');
+    await outlineHost.recordNodeAccess([raw], 'human');
   });
 
   ipcMain.handle(LIN_URL_PAGE_TRANSLATION_GUEST_CHANNEL, (event, raw: unknown) => {
@@ -3394,7 +2955,7 @@ function registerAgentResourceTransport(ipcMain: OwnedIpcMain): void {
     }
     const threadId = requiredNonEmptyString(raw?.threadId, 'threadId');
     const attachmentId = requiredNonEmptyString(raw?.attachmentId, 'attachmentId');
-    const uploadId = await threadService.beginAttachmentUpload({
+    const uploadId = await agentHost.threads.beginAttachmentUpload({
       threadId,
       attachmentId,
       expectedBytes,
@@ -3410,7 +2971,7 @@ function registerAgentResourceTransport(ipcMain: OwnedIpcMain): void {
     if (!bytes || bytes.byteLength === 0 || bytes.byteLength > ATTACHMENT_UPLOAD_CHUNK_BYTES) {
       throw new Error('Attachment upload chunk is invalid.');
     }
-    await threadService.appendAttachmentUpload({
+    await agentHost.threads.appendAttachmentUpload({
       threadId: requiredNonEmptyString(raw?.threadId, 'threadId'),
       attachmentId: requiredNonEmptyString(raw?.attachmentId, 'attachmentId'),
       uploadId: requiredNonEmptyString(raw?.uploadId, 'uploadId'),
@@ -3421,7 +2982,7 @@ function registerAgentResourceTransport(ipcMain: OwnedIpcMain): void {
 
   ipcMain.handle('lin:attachment-upload/finish', async (event, raw?: Record<string, unknown>) => {
     assertMainRenderer(event, 'Attachment upload');
-    return threadService.finishAttachmentUpload({
+    return agentHost.threads.finishAttachmentUpload({
       threadId: requiredNonEmptyString(raw?.threadId, 'threadId'),
       attachmentId: requiredNonEmptyString(raw?.attachmentId, 'attachmentId'),
       uploadId: requiredNonEmptyString(raw?.uploadId, 'uploadId'),
@@ -3430,7 +2991,7 @@ function registerAgentResourceTransport(ipcMain: OwnedIpcMain): void {
 
   ipcMain.handle('lin:attachment-upload/abort', async (event, raw?: Record<string, unknown>) => {
     assertMainRenderer(event, 'Attachment upload');
-    await threadService.abortAttachmentUpload({
+    await agentHost.threads.abortAttachmentUpload({
       threadId: requiredNonEmptyString(raw?.threadId, 'threadId'),
       attachmentId: requiredNonEmptyString(raw?.attachmentId, 'attachmentId'),
       uploadId: requiredNonEmptyString(raw?.uploadId, 'uploadId'),
@@ -3440,7 +3001,7 @@ function registerAgentResourceTransport(ipcMain: OwnedIpcMain): void {
 
   ipcMain.handle('lin:attachment-resource/discard', async (event, raw?: Record<string, unknown>) => {
     assertMainRenderer(event, 'Attachment resource discard');
-    const discarded = await threadService.discardUnreferencedThreadResource(
+    const discarded = await agentHost.threads.discardUnreferencedThreadResource(
       requiredNonEmptyString(raw?.threadId, 'threadId'),
       decodeThreadResourceReference(raw?.ref, 'attachmentResource.ref'),
     );
@@ -3451,17 +3012,17 @@ function registerAgentResourceTransport(ipcMain: OwnedIpcMain): void {
 async function handleMemoryCommand(command: string, args: Record<string, unknown>) {
   switch (command) {
     case 'memory_settings_get':
-      return memoryExtension.settings(typeof args.threadId === 'string' ? args.threadId : null);
+      return agentHost.memory.settings(typeof args.threadId === 'string' ? args.threadId : null);
     case 'memory_feature_mode_set':
-      return memoryExtension.setFeatureMode(decodeMemoryFeatureMode(args.mode));
+      return agentHost.memory.setFeatureMode(decodeMemoryFeatureMode(args.mode));
     case 'memory_thread_mode_set':
-      return memoryExtension.setThreadMode(
+      return agentHost.memory.setThreadMode(
         requiredNonEmptyString(args.threadId, 'threadId'),
         decodeThreadMemoryMode(args.mode),
       );
     case 'memory_open':
       {
-        const outcome = await outlineDocumentService.runChanges(
+        const outcome = await outlineHost.document.runChanges(
           [
             {
               op: 'ensure',
@@ -3484,9 +3045,9 @@ async function handleMemoryCommand(command: string, args: Record<string, unknown
         );
         navigateMainToNode(outcome.focus?.nodeId ?? DAILY_NOTES_ID);
       }
-      return memoryExtension.settings();
+      return agentHost.memory.settings();
     case 'memory_reset':
-      return memoryExtension.reset();
+      return agentHost.memory.reset();
     default:
       throw new Error(`Unknown Memory command: ${command}`);
   }
@@ -3648,7 +3209,7 @@ async function handleAssetCommand(
       if ((args as { kind?: unknown }).kind !== 'buffer') {
         throw new Error('ingest_asset accepts only kind:"buffer" over IPC');
       }
-      return assetService.ingest(args as unknown as AssetIngestInput);
+      return outlineHost.assets.ingest(args as unknown as AssetIngestInput);
     }
     case 'ingest_local_file': {
       // The ingest bridge (agent working file -> committed outliner asset). Unlike
@@ -3662,15 +3223,15 @@ async function handleAssetCommand(
         [agentLocalFileRoot, agentScratchRoot],
       );
       if (!file || file.entryKind !== 'file') return null;
-      return assetService.ingest({ kind: 'path', path: file.path });
+      return outlineHost.assets.ingest({ kind: 'path', path: file.path });
     }
     case 'ingest_thread_resource': {
       assertMainRenderer(event, 'Thread resource ingest');
       return ingestThreadResourceAsset(args, {
-        readResource: (threadId, ref) => threadService
+        readResource: (threadId, ref) => agentHost.threads
           .readReferencedThreadResource(threadId, ref)
           .catch(() => null),
-        ingestResource: (bytes, ref) => assetService.ingest({
+        ingestResource: (bytes, ref) => outlineHost.assets.ingest({
           kind: 'buffer',
           data: bytes,
           mimeType: ref.mimeType,
@@ -3679,7 +3240,7 @@ async function handleAssetCommand(
       });
     }
     case 'lookup_asset':
-      return assetService.lookup(String(args.id));
+      return outlineHost.assets.lookup(String(args.id));
     case 'pick_image_files': {
       const window = BrowserWindow.getFocusedWindow() ?? mainWindow;
       const dialogStrings = getMessages(effectiveLocale()).window;
@@ -3692,7 +3253,7 @@ async function handleAssetCommand(
         ? await dialog.showOpenDialog(window, options)
         : await dialog.showOpenDialog(options);
       if (result.canceled) return [];
-      return Promise.all(result.filePaths.map((path) => assetService.ingest({ kind: 'path', path })));
+      return Promise.all(result.filePaths.map((path) => outlineHost.assets.ingest({ kind: 'path', path })));
     }
     case 'pick_attachment_files': {
       const window = BrowserWindow.getFocusedWindow() ?? mainWindow;
@@ -3705,10 +3266,10 @@ async function handleAssetCommand(
         ? await dialog.showOpenDialog(window, options)
         : await dialog.showOpenDialog(options);
       if (result.canceled) return [];
-      return Promise.all(result.filePaths.map((path) => assetService.ingest({ kind: 'path', path })));
+      return Promise.all(result.filePaths.map((path) => outlineHost.assets.ingest({ kind: 'path', path })));
     }
     case 'open_asset': {
-      const path = await assetService.pathFor(String(args.id));
+      const path = await outlineHost.assets.pathFor(String(args.id));
       if (!path) return { opened: false };
       const pathStat = await stat(path);
       if (!isSafeLocalFileOpenTarget({ entryKind: 'file', path, stats: pathStat })) return { opened: false };
@@ -3716,12 +3277,12 @@ async function handleAssetCommand(
       return { opened: true };
     }
     case 'reveal_asset': {
-      const path = await assetService.pathFor(String(args.id));
+      const path = await outlineHost.assets.pathFor(String(args.id));
       if (path) shell.showItemInFolder(path);
       return { revealed: Boolean(path) };
     }
     case 'copy_asset_file': {
-      const path = await assetService.pathFor(String(args.id));
+      const path = await outlineHost.assets.pathFor(String(args.id));
       if (!path) return { copied: false };
       copyFilePathToClipboard(path);
       return { copied: true };
@@ -3902,11 +3463,11 @@ function agentEditorCwd(value: unknown): string {
  */
 async function agentEditorView(cwd: string): Promise<AgentEditorView> {
   return {
-    entries: agentConfigurationLoader.resolveIdentityCatalog(cwd),
-    roles: agentConfigurationLoader.listEditableRoles(cwd),
-    presentationOverrides: agentConfigurationLoader.listPresentationOverrides(cwd),
-    profile: agentConfigurationLoader.resolveEditableProfile(cwd),
-    builtInDefinitions: agentConfigurationLoader.listBuiltInDefinitions(),
+    entries: agentHost.configuration.resolveIdentityCatalog(cwd),
+    roles: agentHost.configuration.listEditableRoles(cwd),
+    presentationOverrides: agentHost.configuration.listPresentationOverrides(cwd),
+    profile: agentHost.configuration.resolveEditableProfile(cwd),
+    builtInDefinitions: agentHost.configuration.listBuiltInDefinitions(),
     capabilities: await agentCapabilityCatalog(),
   };
 }
@@ -3925,7 +3486,7 @@ async function agentCapabilityCatalog(): Promise<AgentCapabilityCatalog> {
     })),
     // Every Skill the install can see, so a narrowing names real Skills; which
     // of them are enabled is a separate setting on its own page.
-    skills: (await skillRuntime.listAllSkills()).map((skill) => skill.name),
+    skills: (await agentHost.skills.list(false)).map((skill) => skill.name),
   };
 }
 
@@ -4707,7 +4268,7 @@ async function isRevealableSkillLocation(target: string): Promise<boolean> {
     .map((dir) => expandSkillDirectory(dir, agentLocalFileRoot))
     .filter(Boolean);
   if (bound.some((dir) => isPathInside(dir, resolved))) return true;
-  const skills = await skillRuntime.listAllSkills().catch(() => []);
+  const skills = await agentHost.skills.list(false).catch(() => []);
   return skills.some((skill) => (
     // Managed content is pinned and immutable: resolveSkillContentTarget
     // refuses it for the same reason. Opening it invites the hand edit that
@@ -4850,10 +4411,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       const settings = await updateAgentRuntimeSettings(
         preserveStoredDirectoryForms(args.settings as AgentRuntimeSettingsInput, await getAgentRuntimeSettings()),
       );
-      for (const runtime of [skillRuntime, ...turnSkillRuntimes.values()]) {
-        runtime.updateAdditionalSkillDirectories(settings.agent.additionalSkillDirectories);
-        runtime.updateDisabledSkills(settings.agent.disabledSkills ?? []);
-      }
+      agentHost.skills.updateRuntimeSettings(settings.agent);
       return withCanonicalSkillDirectories(settings);
     }
     case 'agent_update_image_generation_settings':
@@ -4959,13 +4517,9 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return result;
     }
     case 'agent_list_all_skills':
-      return args.userInvocableOnly === true
-        ? skillRuntime.listUserInvocableSkills()
-        : skillRuntime.listAllSkills();
+      return agentHost.skills.list(args.userInvocableOnly === true);
     case 'agent_undo_skill_agent_edit': {
-      await skillRuntime.undoLastAgentSkillEdit(String(args.skillName));
-      await refreshTurnSkillProvenanceRecords();
-      return skillRuntime.listAllSkills();
+      return agentHost.skills.undoAgentEdit(String(args.skillName));
     }
     // The Agents editor. Configuration file IO stays behind the seam (A2): the
     // renderer names an Agent and a layer, never a path, so no renderer-side
@@ -4974,7 +4528,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return await agentEditorView(agentEditorCwd(args.cwd));
     case 'agent_write_role': {
       const cwd = agentEditorCwd(args.cwd);
-      await agentConfigurationWriter.writeRole(
+      await agentHost.configuration.writeRole(
         layerTarget(args.layer),
         cwd,
         decodeRoleDraft(args.role),
@@ -4985,7 +4539,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
     }
     case 'agent_delete_role': {
       const cwd = agentEditorCwd(args.cwd);
-      await agentConfigurationWriter.deleteRole(
+      await agentHost.configuration.deleteRole(
         layerTarget(args.layer),
         cwd,
         requiredText(args.name, 'name'),
@@ -4995,7 +4549,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
     }
     case 'agent_write_profile': {
       const cwd = agentEditorCwd(args.cwd);
-      await agentConfigurationWriter.writeProfile(
+      await agentHost.configuration.writeProfile(
         layerTarget(args.layer),
         cwd,
         requiredText(args.name, 'name'),
@@ -5010,7 +4564,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
     }
     case 'agent_write_presentation': {
       const cwd = agentEditorCwd(args.cwd);
-      await agentConfigurationWriter.writePresentation(
+      await agentHost.configuration.writePresentation(
         layerTarget(args.layer),
         cwd,
         requiredText(args.agentType, 'agentType'),
@@ -5021,34 +4575,34 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
     }
 
     case 'agent_managed_skill_catalog':
-      return managedSkillCommand(() => managedSkillService.loadCatalog());
+      return managedSkillCommand(() => agentHost.skills.catalog.load());
     case 'agent_managed_skill_discover':
-      return managedSkillCommand(() => managedSkillService.discover({
+      return managedSkillCommand(() => agentHost.skills.catalog.discover({
         sourceUrl: typeof args.sourceUrl === 'string' ? args.sourceUrl : undefined,
         catalogId: typeof args.catalogId === 'string' ? args.catalogId : undefined,
       }));
     case 'agent_managed_skill_install':
-      return managedSkillCommand(() => managedSkillService.install({
+      return managedSkillCommand(() => agentHost.skills.catalog.install({
         discoveryId: String(args.discoveryId ?? ''),
         candidateId: String(args.candidateId ?? ''),
         expectedCommit: String(args.expectedCommit ?? ''),
       }));
     case 'agent_managed_skill_list':
-      return managedSkillCommand(() => managedSkillService.list());
+      return managedSkillCommand(() => agentHost.skills.catalog.list());
     case 'agent_managed_skill_check_updates':
       // The throttle window is main's policy, so the renderer only says whether
       // the check was ambient — it never carries the number.
-      return managedSkillCommand(() => managedSkillService.checkUpdates(
+      return managedSkillCommand(() => agentHost.skills.catalog.checkUpdates(
         typeof args.skillId === 'string' ? args.skillId : undefined,
         args.ambient === true ? { throttleMs: MANAGED_SKILL_UPDATE_THROTTLE_MS } : undefined,
       ));
     case 'agent_managed_skill_preview_update':
-      return managedSkillCommand(() => managedSkillService.previewUpdate({
+      return managedSkillCommand(() => agentHost.skills.catalog.previewUpdate({
         skillId: String(args.skillId ?? ''),
         expectedActiveHash: String(args.expectedActiveHash ?? ''),
       }));
     case 'agent_managed_skill_apply_update':
-      return managedSkillCommand(() => managedSkillService.applyUpdate({
+      return managedSkillCommand(() => agentHost.skills.catalog.applyUpdate({
         skillId: String(args.skillId ?? ''),
         previewId: String(args.previewId ?? ''),
         expectedActiveHash: String(args.expectedActiveHash ?? ''),
@@ -5059,7 +4613,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
         if (typeof args.enabled !== 'boolean') {
           throw new ManagedSkillServiceError('invalid_request', 'Managed skill enabled state must be boolean.');
         }
-        return managedSkillService.setEnabled({
+        return agentHost.skills.catalog.setEnabled({
           skillId: String(args.skillId ?? ''),
           enabled: args.enabled,
           expectedActiveHash: String(args.expectedActiveHash ?? ''),
@@ -5067,13 +4621,13 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       });
     }
     case 'agent_managed_skill_rollback':
-      return managedSkillCommand(() => managedSkillService.rollback({
+      return managedSkillCommand(() => agentHost.skills.catalog.rollback({
         skillId: String(args.skillId ?? ''),
         expectedActiveHash: String(args.expectedActiveHash ?? ''),
         expectedPreviousHash: String(args.expectedPreviousHash ?? ''),
       }));
     case 'agent_managed_skill_uninstall':
-      return managedSkillCommand(() => managedSkillService.uninstall({
+      return managedSkillCommand(() => agentHost.skills.catalog.uninstall({
         skillId: String(args.skillId ?? ''),
         expectedActiveHash: String(args.expectedActiveHash ?? ''),
       }));
@@ -5157,17 +4711,16 @@ if (!app.requestSingleInstanceLock()) {
     pageTranslationService.dispose();
     await Promise.race([
       Promise.allSettled([
-        nodeAccessStore.flushNow(),
+        outlineHost.flushDerivedState(),
         previewTranslationCache.flushNow(),
-        closeAgentServices(memoryExtension, threadService, automationService),
+        agentHost.close(),
         diagnosticLog.flushNow({ reason: 'before-quit' }),
         flushUrlPreviewSession(urlPreviewSession),
         localFilePreviewStreams.close(),
       ]),
       new Promise((resolve) => setTimeout(resolve, 2_500)),
     ]);
-    desktopOutlineClient.close();
-    outlineDocumentService.close();
+    outlineHost.close();
     try {
       mainErrorTransport.dispose();
     } catch (error) {
@@ -5175,12 +4728,12 @@ if (!app.requestSingleInstanceLock()) {
     }
   };
   quitCoordinator = new AppQuitCoordinator({
-    freezeAdmission: () => outlineDocumentService.freezeMutationAdmission(),
-    unfreezeAdmission: () => outlineDocumentService.unfreezeMutationAdmission(),
-    commitAdmissionFreeze: () => outlineDocumentService.commitMutationAdmissionFreeze(),
-    latestAcceptedRevision: () => outlineDocumentService.latestAcceptedRevision(),
-    durableRevision: () => outlineDocumentService.durableRevision(),
-    drainToRevision: (revision) => outlineDocumentService.drainToRevision(revision),
+    freezeAdmission: () => outlineHost.quit.freezeAdmission(),
+    unfreezeAdmission: () => outlineHost.quit.unfreezeAdmission(),
+    commitAdmissionFreeze: () => outlineHost.quit.commitAdmissionFreeze(),
+    latestAcceptedRevision: () => outlineHost.quit.latestAcceptedRevision(),
+    durableRevision: () => outlineHost.quit.durableRevision(),
+    drainToRevision: (revision) => outlineHost.quit.drainToRevision(revision),
     showDrainFailure: async (error, outcome): Promise<QuitDecision> => {
       const strings = getMessages(effectiveLocale()).dialog;
       const parent = liveWindow(mainWindow);
@@ -5198,7 +4751,7 @@ if (!app.requestSingleInstanceLock()) {
       return response.response === 0 ? 'retry' : response.response === 1 ? 'quit-anyway' : 'cancel';
     },
     teardown: teardownForQuit,
-    shutdownRuntime: (signal) => outlineClientSupervisor.shutdown(signal),
+    shutdownRuntime: (signal) => outlineHost.quit.shutdownRuntime(signal),
     exit: () => app.exit(0),
   });
 
@@ -5208,31 +4761,9 @@ if (!app.requestSingleInstanceLock()) {
     // neither local catalog corruption nor cleanup failure may block app startup.
     const providerReconcile = await reconcileProviderConfig().catch(() => null);
     if (providerReconcile?.activeProviderChanged) clearLastAgentThreadConfiguration();
-    await outlineDocumentService.init();
-    memoryExtension.initializeMutationIndex(outlineDocumentService.liveProjection());
-    await threadService.initialize();
-    await memoryExtension.startWorker();
-    await automationService.start();
-    await nodeAccessStore.load().catch((error) => {
-      reportError({
-        domain: 'node-access',
-        severity: 'warn',
-        code: 'node-access-startup-load',
-        message: 'Node access store startup load failed',
-        context: { operation: 'startup-load' },
-        error,
-      });
-    });
-    await outlineDocumentService.replacePersonalAccessRanking(nodeAccessStore.snapshot()).catch((error) => {
-      reportError({
-        domain: 'node-access',
-        severity: 'warn',
-        code: 'node-access-runtime-sync',
-        message: 'Node access ranking Runtime sync failed',
-        context: { operation: 'runtime-sync' },
-        error,
-      });
-    });
+    await outlineHost.initializeDocuments();
+    await agentHost.initialize(outlineHost.document.liveProjection());
+    await outlineHost.initializePersonalAccessRanking();
     const icon = nativeImage.createFromPath(APP_ICON_PNG_PATH);
     if (process.platform === 'darwin' && !icon.isEmpty()) app.dock?.setIcon(icon);
     app.setAboutPanelOptions({
@@ -5318,7 +4849,7 @@ if (!app.requestSingleInstanceLock()) {
       });
       // Phase 2 is irreversible. A teardown rejection still calls app.exit and
       // must not reopen document admission after services have started closing.
-      if (quitCoordinator.phase() === 'idle') void outlineDocumentService.unfreezeMutationAdmission();
+      if (quitCoordinator.phase() === 'idle') void outlineHost.quit.unfreezeAdmission();
     });
   };
   app.on('before-quit', handleBeforeQuit);
