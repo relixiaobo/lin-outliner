@@ -239,6 +239,42 @@ describe('Outline URI field model', () => {
     expect(sourceFieldEntries(state, ownerId)).toHaveLength(2);
   });
 
+  test('orders Source convenience mutations across converged URI entries', () => {
+    const seed = Core.new();
+    const ownerId = focusedNodeId(seed.createNode(seed.projection().libraryId, null, 'Shared'));
+    const pair = replicas(seed);
+    pair.left.addSource(ownerId, 'source:left', 'https://example.com/left');
+    pair.right.addSource(ownerId, 'source:right', 'https://example.com/right');
+    pair.left.applyReplicationUpdates([pair.right.exportReplicationUpdate(pair.rightBase)]);
+    pair.right.applyReplicationUpdates([pair.left.exportReplicationUpdate(pair.leftBase)]);
+    expect(pair.left.state()).toEqual(pair.right.state());
+
+    const core = pair.left;
+    const entries = sourceFieldEntries(core.state(), ownerId);
+    expect(entries).toHaveLength(2);
+    const firstValueId = entries[0]!.children[0]!;
+    const secondValueId = entries[1]!.children[0]!;
+
+    core.addSource(ownerId, 'source:anchored', 'https://example.com/anchored', secondValueId);
+    expect(uriValueIds(core.state(), ownerId)).toEqual([
+      firstValueId,
+      secondValueId,
+      'source:anchored',
+    ]);
+
+    core.addSource(ownerId, 'source:tail', 'https://example.com/tail');
+    expect(uriValueIds(core.state(), ownerId).at(-1)).toBe('source:tail');
+
+    core.reorderSource(ownerId, firstValueId, 'source:anchored');
+    expect(uriValueIds(core.state(), ownerId)).toEqual([
+      secondValueId,
+      'source:anchored',
+      firstValueId,
+      'source:tail',
+    ]);
+    expect(sourceFieldEntries(core.state(), ownerId)).toHaveLength(1);
+  });
+
   test('clearing the final value uses ordinary parent-deletion convergence', () => {
     const seed = Core.new();
     const ownerId = focusedNodeId(seed.createNode(seed.projection().libraryId, null, 'Shared'));

@@ -1251,7 +1251,12 @@ export class Core {
     ensureFieldDefinition(state, SOURCE_FIELD_ID);
     if (state.nodes[valueId]) throw CoreError.invalidOperation(`Source value id already exists: ${valueId}`);
     const entries = sourceFieldEntries(state, ownerId);
-    const entry = entries[0] ?? (() => {
+    const anchoredEntry = typeof afterValueId === 'string'
+      ? requiredOwnerSourceValue(state, ownerId, afterValueId).entry
+      : undefined;
+    const entry = anchoredEntry
+      ?? (afterValueId === undefined ? entries.at(-1) : entries[0])
+      ?? (() => {
       const entryId = this.insertFieldEntryNodeDirect(ownerId, undefined, SOURCE_FIELD_ID);
       const created = this.snapshot().nodes[entryId];
       if (created?.type !== 'fieldEntry') throw new Error('Source field creation returned the wrong Node variant.');
@@ -1279,19 +1284,19 @@ export class Core {
   reorderSource(ownerId: NodeId, valueId: NodeId, afterValueId: NodeId | null): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
-      const { entry } = requiredOwnerSourceValue(state, ownerId, valueId);
+      const { entry: sourceEntry } = requiredOwnerSourceValue(state, ownerId, valueId);
       if (valueId === afterValueId) throw CoreError.invalidOperation('Source value cannot anchor itself.');
-      const withoutValue = entry.children.filter((id) => id !== valueId);
+      const targetEntry = afterValueId === null
+        ? sourceFieldEntries(state, ownerId)[0] ?? sourceEntry
+        : requiredOwnerSourceValue(state, ownerId, afterValueId).entry;
+      const withoutValue = targetEntry.children.filter((id) => id !== valueId);
       const index = afterValueId === null
         ? 0
-        : (() => {
-            const anchor = requiredOwnerSourceValue(state, ownerId, afterValueId);
-            if (anchor.entry.id !== entry.id) {
-              throw CoreError.invalidOperation('Source anchor must belong to the same field entry.');
-            }
-            return withoutValue.indexOf(afterValueId) + 1;
-          })();
-      this.loro.moveNode(valueId, entry.id, index);
+        : withoutValue.indexOf(afterValueId) + 1;
+      this.loro.moveNode(valueId, targetEntry.id, index);
+      if (sourceEntry.id !== targetEntry.id && sourceEntry.children.length === 1) {
+        this.removeSubtreeDirect(sourceEntry.id);
+      }
       return focus(ownerId);
     });
   }

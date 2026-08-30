@@ -119,9 +119,11 @@ type SourceCommand =
 Lowering resolves exactly one owner and one owner-local direct URI value or
 anchor where required, then emits `add_source`, `replace_source`,
 `reorder_source`, `remove_source`, or `clear_sources`. Omitted `after` appends;
-`after: null` means first position. `clear_sources` captures the value IDs the
-caller observed. Replacing preserves value identity, position, descendants, and
-local selection.
+`after: null` means first position. Both rules use the aggregate owner-local URI
+value order when convergence has produced multiple direct entries: an anchor
+selects its entry, append uses the aggregate tail, and reorder may move a value
+across entries. `clear_sources` captures the value IDs the caller observed.
+Replacing preserves value identity, position, descendants, and local selection.
 
 Normalization rejects declared or bound many/zero-or-one references, zero live
 results, a reused caller-supplied `valueId`, a self-anchor, cross-owner or

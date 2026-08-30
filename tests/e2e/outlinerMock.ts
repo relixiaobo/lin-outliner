@@ -2849,7 +2849,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       };
 
       if (instruction.action === 'add') {
-        let entry = sourceEntries()[0];
+        const entries = sourceEntries();
+        const anchor = instruction.after !== undefined && instruction.after !== null
+          ? oneSourceValue(instruction.after)
+          : undefined;
+        let entry = anchor?.entry
+          ?? (instruction.after === undefined ? entries.at(-1) : entries[0]);
         if (!entry) {
           const entryId = nextCanonicalNodeId();
           entry = makeNode(entryId, '', {
@@ -2864,11 +2869,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (nodes.has(valueId)) throw new Error(`Source value already exists: ${valueId}`);
         let index: number | null = null;
         if (instruction.after === null) index = 0;
-        else if (instruction.after !== undefined) {
-          const anchor = oneSourceValue(instruction.after);
-          if (anchor.entry.id !== entry.id) throw new Error('Source anchor belongs to another URI field entry.');
-          index = entry.children.indexOf(anchor.value.id) + 1;
-        }
+        else if (anchor) index = entry.children.indexOf(anchor.value.id) + 1;
         makeNode(valueId, String(instruction.sourceText ?? ''), { parentId: entry.id });
         appendChild(entry.id, valueId, index);
       } else if (instruction.action === 'replace') {
@@ -2876,10 +2877,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       } else if (instruction.action === 'reorder') {
         const { entry, value } = oneSourceValue(instruction.value);
         const anchor = instruction.after === null ? null : oneSourceValue(instruction.after);
-        if (anchor && anchor.entry.id !== entry.id) throw new Error('Source anchor belongs to another URI field entry.');
         if (anchor?.value.id === value.id) throw new Error('Source value cannot anchor itself.');
+        const targetEntry = anchor?.entry ?? sourceEntries()[0] ?? entry;
         removeFromParent(value.id);
-        appendChild(entry.id, value.id, anchor ? entry.children.indexOf(anchor.value.id) + 1 : 0);
+        appendChild(targetEntry.id, value.id, anchor ? targetEntry.children.indexOf(anchor.value.id) + 1 : 0);
+        if (entry.id !== targetEntry.id && entry.children.length === 0) removeNode(entry.id);
       } else if (instruction.action === 'remove') {
         const { entry, value } = oneSourceValue(instruction.value);
         removeNode(entry.children.length === 1 ? entry.id : value.id);

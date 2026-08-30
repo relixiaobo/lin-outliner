@@ -112,9 +112,11 @@ ChangeSet surface also exposes `source add`, `source replace`, `source reorder`,
 `source remove`, and `source clear` as convenience adapters for resource
 workflows. Replace preserves value identity and position, reorder/removal resolve
 an owner-local direct value, and clear removes the observed values plus an entry
-that becomes empty. Parent deletion and concurrent editing follow normal Loro
-tree semantics. Agents may use either generic field operations or the convenience
-family; both must produce the same ordinary field shape. Projection carries the exact URI in each value Node's
+that becomes empty. Add and reorder follow the aggregate owner-local value order
+across any converged entries. Parent deletion and concurrent editing follow
+normal Loro tree semantics. Agents may use either generic field operations or
+the convenience family; both must produce the same ordinary field shape.
+Projection carries the exact URI in each value Node's
 `content.text`. Preview, media search, local-file authorization, and asset
 reachability recognize the definition ID, never the visible label.
 

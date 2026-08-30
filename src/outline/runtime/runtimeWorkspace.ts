@@ -800,6 +800,16 @@ export class OutlineRuntimeWorkspace {
 
           const nextState = this.core.state();
           const nextAssetReferenceCounts = applyAssetReferencePatch(this.assetReferenceCounts, patch, nextState);
+          const liveAddedAssetRecordIds = changedAssetIds(
+            this.assetReferenceCounts,
+            nextAssetReferenceCounts,
+            (before, after) => before === 0 && after > 0,
+          );
+          const implicitlyConsumedLeases = await this.assets.resolveLeasesForAssetIds(liveAddedAssetRecordIds);
+          const consumedLeaseIds = [...new Set([
+            ...Object.keys(request.assetLeases ?? {}),
+            ...implicitlyConsumedLeases.keys(),
+          ])].sort();
           for (const assetId of Object.values(request.assetLeases ?? {})) {
             if ((nextAssetReferenceCounts.get(assetId) ?? 0) === 0) {
               throw new OutlineContractError(outlineError(
@@ -815,12 +825,8 @@ export class OutlineRuntimeWorkspace {
             ...request.protectedAssetRecordIds ?? [],
           ]);
           const assetDelta: OutlineAssetDelta = {
-            consumedLeaseIds: Object.keys(request.assetLeases ?? {}).sort(),
-            liveAddedAssetRecordIds: changedAssetIds(
-              this.assetReferenceCounts,
-              nextAssetReferenceCounts,
-              (before, after) => before === 0 && after > 0,
-            ),
+            consumedLeaseIds,
+            liveAddedAssetRecordIds,
             liveRemovedAssetRecordIds: changedAssetIds(
               this.assetReferenceCounts,
               nextAssetReferenceCounts,

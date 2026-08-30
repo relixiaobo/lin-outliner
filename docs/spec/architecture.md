@@ -47,6 +47,9 @@ value removes the field from that owner. Values are ordinary RichText-bearing
 content Nodes stored by the normal Loro codec, so generic text, field, tree,
 clone, and delete operations all apply. Concurrent first writes may produce
 multiple direct entries and readers aggregate them by definition ID.
+Source convenience add/reorder operations use that aggregate owner-local value
+order: omitted `after` appends to the aggregate tail, an anchor selects its
+entry, and reorder may move a value across converged entries.
 
 Preview resolution, media search, linked-file authorization, and managed-asset
 reachability opt in to values whose direct parent is a field entry with
@@ -439,11 +442,13 @@ large damaged file cannot cause one asynchronous read per byte. MP4 box and WAV
 chunk headers share a fixed-size read window, so dense containers do not cause
 one asynchronous read per header.
 
-`media add PATH|-` composes staging and media-Node creation as one common CLI
-intent while retaining the same internal lease boundary. `asset ingest` remains
-available when automation deliberately separates staging from reviewed document
-mutation. A failed media creation leaves the staged bytes governed by lease
-expiry; a successful Operation and its recovery patch protect the asset.
+Desktop file producers compose staging, ordinary Node creation, and a managed
+URI value as one transaction. `asset ingest` remains available when automation
+deliberately separates staging from a reviewed `source add` or generic URI-field
+mutation. Any mutation path that makes a managed URI live consumes its staged
+lease during Runtime settlement. A failed publication leaves the staged bytes
+governed by lease expiry; a successful Operation and its recovery patch protect
+the asset.
 
 Import is ordinary ChangeSet composition. The `outline` Skill's import helper
 inspects source data, accounts for coverage, and emits a ChangeSet plus evidence.

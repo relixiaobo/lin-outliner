@@ -250,7 +250,6 @@ describe('Outline Runtime assets', () => {
       changeSetHash: canonicalSha256(payload),
       diffHash: canonicalSha256({ ...payload, kind: 'diff' }),
       summary: 'Relinked an ordinary field to URI.',
-      assetLeases: { [lease.leaseId]: lease.assetId },
       execute: (core) => {
         const ownerId = core.createNode(core.projection().todayId, null, 'Relinked').focus!.nodeId;
         const tagId = core.createTag('relink-source').focus!.nodeId;
@@ -274,6 +273,32 @@ describe('Outline Runtime assets', () => {
       outlineError: { code: 'precondition_failed' },
     });
     expect(await workspace.collectAssetGarbage()).toEqual([]);
+  });
+
+  test('consumes a staged asset lease through a generic URI field write', async () => {
+    const workspace = await makeWorkspace();
+    const lease = await workspace.assets.ingestBytes(Buffer.from('generic field bytes'), 'generic.txt');
+    const ownerId = workspace.forkCore().projection().todayId;
+
+    await applyChangeSet(workspace, {
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      operations: [{
+        op: 'update',
+        targets: oneId(ownerId),
+        changes: [{
+          kind: 'field',
+          action: 'set',
+          field: oneId(SOURCE_FIELD_ID),
+          value: formatAssetSourceUri(lease.assetId),
+        }],
+      }],
+    });
+
+    expect(sourceOwnerIdForAsset(workspace, lease.assetId)).toBe(ownerId);
+    await expect(workspace.assets.resolveLeases([lease.leaseId])).rejects.toMatchObject({
+      outlineError: { code: 'precondition_failed' },
+    });
   });
 
   test('keeps a staged lease after a stale Diff and collects it only after expiry', async () => {
