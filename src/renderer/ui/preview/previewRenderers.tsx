@@ -23,7 +23,7 @@ import type {
   PreviewTarget,
   PreviewUrlSource,
 } from '../../../core/preview';
-import { normalizePreviewHttpUrl } from '../../../core/preview';
+import { normalizePreviewHttpUrl, previewTargetKey } from '../../../core/preview';
 import { mediaKindForMimeType } from '../../../core/mediaKind';
 import {
   httpReferrerForUrlPreview,
@@ -95,24 +95,30 @@ type TextState =
 
 /**
  * Resolve a PreviewTarget to its source descriptor (loading → ready/missing).
- * Shared by the unified file preview body and inline preview block. Pass a
- * referentially-stable `target` (useMemo) so the resolve effect does not re-fire
- * every render.
+ * Shared by the unified file preview body and inline preview block. Equivalent
+ * targets retain one semantic identity so ordinary parent re-renders do not
+ * restart resolution or collapse a ready preview back to loading.
  */
 export function usePreviewSource(target: PreviewTarget): PreviewSourceState {
+  const targetIdentity = `${previewTargetKey(target)}\0${target.label ?? ''}`;
+  const stableTargetRef = useRef({ identity: targetIdentity, target });
+  if (stableTargetRef.current.identity !== targetIdentity) {
+    stableTargetRef.current = { identity: targetIdentity, target };
+  }
+  const stableTarget = stableTargetRef.current.target;
   const [state, setState] = useState<PreviewSourceState>(() => (
-    target.kind === 'url' ? previewSourceStateForUrlTarget(target) : { status: 'loading' }
+    stableTarget.kind === 'url' ? previewSourceStateForUrlTarget(stableTarget) : { status: 'loading' }
   ));
   useEffect(() => {
     let cancelled = false;
-    if (target.kind === 'url') {
-      setState(previewSourceStateForUrlTarget(target));
+    if (stableTarget.kind === 'url') {
+      setState(previewSourceStateForUrlTarget(stableTarget));
       return () => {
         cancelled = true;
       };
     }
     setState({ status: 'loading' });
-    void api.resolvePreviewSource(target)
+    void api.resolvePreviewSource(stableTarget)
       .then((result) => {
         if (cancelled) return;
         setState(result.source ? { status: 'ready', source: result.source } : { status: 'missing', error: result.error });
@@ -124,7 +130,7 @@ export function usePreviewSource(target: PreviewTarget): PreviewSourceState {
     return () => {
       cancelled = true;
     };
-  }, [target]);
+  }, [stableTarget]);
   return state;
 }
 

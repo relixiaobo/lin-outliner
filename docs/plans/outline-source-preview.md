@@ -40,8 +40,11 @@ Guide geometry remains continuous across preview resize, optimistic insertion,
 and focus transfer: an incomplete DOM measurement retains the last valid
 geometry, while structural collapse/removal or definitive viewport exit removes
 it. Non-windowed guide resize work stays inside the overlay so it does not
-re-render ordinary rows. Enter on the URI field name exposes and focuses its
-ordinary optimistic sibling before Runtime settlement.
+re-render ordinary rows. Equivalent preview targets created by ordinary owner
+re-renders retain the ready preview body instead of restarting source resolution,
+so its height does not collapse during focus or structural changes. Enter on the
+URI field name exposes and focuses its ordinary optimistic sibling before Runtime
+settlement.
 
 On the Node page, the upper-right close action changes only local visibility and
 the Source toolbar label opens an ordered switcher when multiple values exist.

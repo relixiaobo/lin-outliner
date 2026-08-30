@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { act } from 'react';
+import { act, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import type { PreviewFileSource, PreviewTarget, PreviewUrlSource } from '../../src/core/preview';
@@ -382,6 +382,38 @@ describe('FilePreviewShell URL previews', () => {
     expect(invocations).toEqual([]);
     expect(rendered.document.querySelector('output')?.getAttribute('data-status')).toBe('ready');
   });
+
+  test('keeps a ready preview mounted when an equivalent target object is rendered', async () => {
+    const invocations: string[] = [];
+    const rendered = render(
+      <EquivalentTargetProbe />,
+      {
+        lin: {
+          invoke: (command) => {
+            invocations.push(command);
+            return Promise.resolve({ source: imageSource() });
+          },
+        },
+      },
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(rendered.document.querySelector('output')?.getAttribute('data-status')).toBe('ready');
+    expect(invocations).toHaveLength(1);
+
+    const rerender = rendered.document.querySelector('button');
+    if (!(rerender instanceof rendered.window.HTMLElement)) throw new Error('Missing rerender control');
+    await act(async () => {
+      rerender.click();
+      await Promise.resolve();
+    });
+
+    expect(rendered.document.querySelector('output')?.getAttribute('data-status')).toBe('ready');
+    expect(invocations).toHaveLength(1);
+  });
 });
 
 function mediaSource(mimeType: string): PreviewFileSource {
@@ -486,6 +518,16 @@ function PreviewSourceProbe({ target }: { target: PreviewTarget }) {
     >
       {state.status}
     </output>
+  );
+}
+
+function EquivalentTargetProbe() {
+  const [, setRevision] = useState(0);
+  return (
+    <>
+      <button type="button" onClick={() => setRevision((current) => current + 1)}>Rerender</button>
+      <PreviewSourceProbe target={{ kind: 'asset', assetId: 'asset-image', label: 'Cover' }} />
+    </>
   );
 }
 

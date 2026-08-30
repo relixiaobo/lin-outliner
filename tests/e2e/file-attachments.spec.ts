@@ -1118,18 +1118,34 @@ test.describe('file attachments', () => {
       .find((node) => node.id === attachmentId)?.children.length ?? 0;
     const guideSelector = `.outliner-flat-guides .indent-guide[data-guide-node-id="${attachmentId}"]`;
     await expect(page.locator(guideSelector)).toHaveCount(1);
-    await page.evaluate((selector) => {
+    await page.evaluate(({ selector, ownerId, fieldId }) => {
       const win = window as Window & {
-        __sourceGuideSampler?: { frame: number; samples: number[] };
+        __sourceGuideSampler?: {
+          frame: number;
+          samples: Array<{
+            fieldTop: number | null;
+            guideCount: number;
+            ownerTop: number | null;
+            scrollTop: number | null;
+          }>;
+        };
       };
-      const sampler = { frame: 0, samples: [] as number[] };
+      const sampler: NonNullable<typeof win.__sourceGuideSampler> = { frame: 0, samples: [] };
       const sample = () => {
-        sampler.samples.push(document.querySelectorAll(selector).length);
+        const scroller = document.querySelector<HTMLElement>('.outline-panel-surface.active-panel .main-panel');
+        const owner = document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(ownerId)}"]`);
+        const field = document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(fieldId)}"]`);
+        sampler.samples.push({
+          fieldTop: field?.getBoundingClientRect().top ?? null,
+          guideCount: document.querySelectorAll(selector).length,
+          ownerTop: owner?.getBoundingClientRect().top ?? null,
+          scrollTop: scroller?.scrollTop ?? null,
+        });
         sampler.frame = window.requestAnimationFrame(sample);
       };
       sample();
       win.__sourceGuideSampler = sampler;
-    }, guideSelector);
+    }, { selector: guideSelector, ownerId: attachmentId, fieldId: sourceEntry!.id });
     const releaseFieldCreate = await holdOutlineMutation(page, { op: 'create' });
     await fieldName.focus();
     await page.keyboard.press('Enter');
@@ -1149,7 +1165,15 @@ test.describe('file attachments', () => {
     await expect(rowEditor(page, createdAfterFieldId!)).toBeFocused();
     const guideSamples = await page.evaluate(async () => {
       const win = window as Window & {
-        __sourceGuideSampler?: { frame: number; samples: number[] };
+        __sourceGuideSampler?: {
+          frame: number;
+          samples: Array<{
+            fieldTop: number | null;
+            guideCount: number;
+            ownerTop: number | null;
+            scrollTop: number | null;
+          }>;
+        };
       };
       await new Promise<void>((resolve) => {
         window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()));
@@ -1160,7 +1184,12 @@ test.describe('file attachments', () => {
       return sampler.samples;
     });
     expect(guideSamples.length).toBeGreaterThan(0);
-    expect(guideSamples).not.toContain(0);
+    expect(guideSamples.map((sample) => sample.guideCount)).not.toContain(0);
+    for (const key of ['ownerTop', 'fieldTop', 'scrollTop'] as const) {
+      const positions = guideSamples.flatMap((sample) => sample[key] === null ? [] : [sample[key]]);
+      expect(positions.length).toBeGreaterThan(0);
+      expect(Math.max(...positions) - Math.min(...positions)).toBeLessThanOrEqual(1);
+    }
 
     await fieldName.focus();
     await page.keyboard.press('Meta+A');
@@ -1424,6 +1453,26 @@ test.describe('file attachments', () => {
       runsPastPreview: true,
       startsBelowMarker: true,
     });
+
+    const previewResolveCount = () => commandCalls(page).then((calls) => (
+      calls.filter((call) => call.cmd === 'preview_resolve_source').length
+    ));
+    const resolvesBeforeEnter = await previewResolveCount();
+    const releaseCreate = await holdOutlineMutation(page, { op: 'create' });
+    await row(page, imageSourceEntry!.id).locator('.field-name-input').focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.row.node-pending-structure .ProseMirror')).toBeFocused();
+    await page.evaluate(() => new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()));
+    }));
+    expect(await previewResolveCount()).toBe(resolvesBeforeEnter);
+    await releaseCreate();
+    await expect(page.locator('.row.node-pending-structure')).toHaveCount(0);
+    await page.evaluate(() => new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()));
+    }));
+    expect(await previewResolveCount()).toBe(resolvesBeforeEnter);
+    await expect(outlineImagePreview).toBeVisible();
 
     const hideOutlinePreview = imageSourceRow.getByRole('button', { name: 'Hide preview' });
     await expect(hideOutlinePreview).toBeVisible();
