@@ -182,6 +182,7 @@ export class OutlineRuntimeWorkspace {
     > = {},
   ) {
     this.now = now ?? (() => new Date());
+    this.core.setSearchAssetMetadataProvider(() => this.assets.metadataSnapshot());
     this.durabilityIdleDelayMs = Math.max(0, durabilityOptions.durabilityIdleDelayMs ?? DURABILITY_IDLE_DELAY_MS);
     this.durabilityMaxWaitMs = Math.max(
       this.durabilityIdleDelayMs,
@@ -1077,6 +1078,7 @@ export class OutlineRuntimeWorkspace {
       throw new Error('Durable settlement recovery requires workspace reconciliation before writes can resume');
     }
     await this.assets.reconcileAnchors();
+    recovered.setSearchAssetMetadataProvider(() => this.assets.metadataSnapshot());
     this.core = recovered;
     this.readModel.reseed(recovered.revision(), recovered.projection());
     this.assetReferenceCounts = countAssetReferences(Object.values(recovered.state().nodes));

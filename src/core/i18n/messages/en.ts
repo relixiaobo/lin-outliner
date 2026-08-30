@@ -762,11 +762,13 @@ export const en = {
     sources: {
       title: 'Sources',
       add: 'Add Source',
+      linkFile: 'Link File',
       addPlaceholder: 'Enter a URI',
       clear: 'Clear all',
       copyUri: 'Copy URI',
       edit: 'Edit Source',
       save: 'Save Source',
+      replaceWithFile: 'Replace with File',
       moveUp: 'Move Source up',
       moveDown: 'Move Source down',
       remove: 'Remove Source',

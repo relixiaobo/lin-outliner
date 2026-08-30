@@ -149,7 +149,8 @@ resolution applies current network policy, verified AssetRecord authority, or a
 profile-private exact-file grant. A linked-file grant is stored atomically under
 active `userData`, authorizes only the selected canonical regular file (never its
 directory or siblings), and is revalidated through the same opened no-follow
-handle used by reads. Grant identity, canonical paths, and device/inode facts do
+handle used by metadata, bounded reads, and exact-file stream tokens. Grant
+identity, canonical paths, and device/inode facts do
 not enter document, renderer, or Agent-visible state. Missing, corrupt, revoked,
 or retargeted grants degrade the Source to denied/unavailable without changing
 the stored scalar.

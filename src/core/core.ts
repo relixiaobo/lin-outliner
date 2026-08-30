@@ -25,7 +25,12 @@ import {
 } from './operationJournal';
 import { createPersistenceId, isPersistenceId } from './persistenceIdentity';
 import { assembleProjection, buildDocumentProjection, projectNode } from './projection';
-import { SEARCH_EXECUTABLE_QUERY_OPS, runSearchExpr, runSearchNode } from './searchEngine';
+import {
+  SEARCH_EXECUTABLE_QUERY_OPS,
+  runSearchExpr,
+  runSearchNode,
+  type SearchAssetMetadata,
+} from './searchEngine';
 import { SEARCH_QUERY_COMPLEXITY_LIMITS } from './searchQueryCompiler';
 import { DONE_FIELD, SYSTEM_FIELD_CHOICES, systemFieldLabel } from './systemFields';
 import {
@@ -494,6 +499,7 @@ export class Core {
   // state holding the old id (panel root, persisted layout) dangles → a
   // `parent not found` when the user adds the first row to today's note.
   private initialPersistRequired = false;
+  private searchAssetMetadataProvider?: () => ReadonlyMap<string, SearchAssetMetadata>;
 
   private constructor(
     initial: CoreInitialState | CoreRuntimeForkState = {},
@@ -525,6 +531,7 @@ export class Core {
         changedNodeIds: [...source.lastRevisionDelta.changedNodeIds],
       };
       this.initialPersistRequired = source.initialPersistRequired;
+      this.searchAssetMetadataProvider = source.searchAssetMetadataProvider;
       return;
     }
 
@@ -602,6 +609,12 @@ export class Core {
    *  so the today node id stays stable across launches. */
   requiresInitialPersist(): boolean {
     return this.initialPersistRequired;
+  }
+
+  setSearchAssetMetadataProvider(
+    provider: () => ReadonlyMap<string, SearchAssetMetadata>,
+  ): void {
+    this.searchAssetMetadataProvider = provider;
   }
 
   static new(options: CorePersistenceOptions = {}) {
@@ -4148,7 +4161,10 @@ export class Core {
     const searchNode = requiredNode(state, nodeId);
     if (searchNode.type !== 'search') throw CoreError.invalidOperation('expected a search node');
 
-    const result = runSearchNode(state, nodeId, { textIndex });
+    const result = runSearchNode(state, nodeId, {
+      textIndex,
+      assetMetadataById: this.searchAssetMetadataProvider?.(),
+    });
     if (!result.ok) {
       if (options.skipEvaluationFailure) return false;
       throw CoreError.invalidOperation(result.issue.message);

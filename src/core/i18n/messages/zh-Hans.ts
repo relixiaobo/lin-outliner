@@ -696,11 +696,13 @@ export const zhHans: PartialMessages = {
     sources: {
       title: '来源',
       add: '添加来源',
+      linkFile: '链接文件',
       addPlaceholder: '输入 URI',
       clear: '全部清除',
       copyUri: '复制 URI',
       edit: '编辑来源',
       save: '保存来源',
+      replaceWithFile: '替换为文件',
       moveUp: '上移来源',
       moveDown: '下移来源',
       remove: '移除来源',

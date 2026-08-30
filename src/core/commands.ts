@@ -166,6 +166,8 @@ export const PREVIEW_COMMANDS = [
   'preview_list_directory',
   'preview_authorize_linked_file',
   'preview_forget_linked_file',
+  'preview_link_file_source',
+  'preview_replace_source_with_file',
 ] as const;
 
 export type DocumentCommand = typeof DOCUMENT_COMMANDS[number];

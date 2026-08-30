@@ -2906,10 +2906,31 @@ function registerIpc() {
               : await dialog.showOpenDialog(options);
             return result.canceled ? null : result.filePaths[0] ?? null;
           },
-          linkedFileStreamUrl: async (filePath, mimeType) => {
-            const token = await localFilePreviewStreams.issueExactPath(filePath, mimeType);
+          linkedFileStreamUrl: async (file, mimeType) => {
+            const token = await localFilePreviewStreams.issueExactFile(file, mimeType);
             return token ? previewLocalUrl(token) : null;
           },
+          mutateLinkedFileSource: (input) => outlineDocumentService.runChanges([{
+            op: 'update',
+            targets: {
+              target: { selector: { by: 'id', id: input.ownerId }, cardinality: 'one' },
+            },
+            changes: [input.kind === 'add'
+              ? {
+                  kind: 'source',
+                  action: 'add',
+                  sourceText: input.sourceText,
+                  valueId: `node:${randomUUID()}`,
+                }
+              : {
+                  kind: 'source',
+                  action: 'replace',
+                  value: {
+                    target: { selector: { by: 'id', id: input.sourceValueId }, cardinality: 'one' },
+                  },
+                  sourceText: input.sourceText,
+                }],
+          }], { focus: { nodeId: input.ownerId, selectAll: false } }),
           localFileReferencePreview,
         });
       }
@@ -4993,6 +5014,7 @@ if (!app.requestSingleInstanceLock()) {
         closeAgentServices(memoryExtension, threadService, automationService),
         diagnosticLog.flushNow({ reason: 'before-quit' }),
         flushUrlPreviewSession(urlPreviewSession),
+        localFilePreviewStreams.close(),
       ]),
       new Promise((resolve) => setTimeout(resolve, 2_500)),
     ]);

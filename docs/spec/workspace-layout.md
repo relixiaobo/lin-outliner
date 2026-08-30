@@ -482,8 +482,11 @@ Source authority stays source-specific:
   text. Main resolves them through the profile-private exact-file grant store and
   returns no raw canonical path. Choose File admits only the exact canonical
   regular file named by the stored `file:` locator; Forget revokes authorization
-  without mutating Source. Every preview/read/copy repeats no-follow handle
-  verification, and an unavailable or retargeted file degrades locally.
+  without mutating Source. Link File and Replace with File admit the chosen grant
+  before one Host-owned Source mutation and revoke only a grant newly orphaned by
+  failed settlement. Every metadata/read/token operation consumes the same
+  no-follow handle it verified, and an unavailable or retargeted file degrades
+  locally.
 - `url` targets are first-class loose previews. Ordinary `http(s)` links from the
   outliner and Thread history route into a Tenon split preview pane by default.
   URL targets normalize through one shared `http(s)`-only helper in core. The pane

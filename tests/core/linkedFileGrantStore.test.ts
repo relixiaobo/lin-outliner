@@ -26,10 +26,10 @@ describe('linked-file grant store', () => {
 
     expect(await first.resolve(sourceText)).toEqual({ status: 'denied' });
     expect(await first.authorize(sourceText, filePath)).toEqual({ authorized: true });
-    expect((await first.resolve(sourceText)).status).toBe('ready');
+    await expectReady(first, sourceText);
 
     const restarted = new LinkedFileGrantStore(storePath);
-    expect((await restarted.resolve(sourceText)).status).toBe('ready');
+    await expectReady(restarted, sourceText);
     expect(await restarted.revoke(sourceText)).toBe(true);
     expect(await restarted.resolve(sourceText)).toEqual({ status: 'denied' });
 
@@ -78,7 +78,7 @@ describe('linked-file grant store', () => {
 
     await writeFile(replacementPath, 'second');
     await rename(replacementPath, filePath);
-    expect((await store.resolve(sourceText)).status).toBe('ready');
+    await expectReady(store, sourceText);
   });
 
   test('fails closed on corrupt persisted grants', async () => {
@@ -103,3 +103,9 @@ describe('linked-file grant store', () => {
     expect(linkedFilePath('not a uri')).toBeNull();
   });
 });
+
+async function expectReady(store: LinkedFileGrantStore, sourceText: string): Promise<void> {
+  const resolution = await store.resolve(sourceText);
+  expect(resolution.status).toBe('ready');
+  if (resolution.status === 'ready') await resolution.file.handle.close();
+}

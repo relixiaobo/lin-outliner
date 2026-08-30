@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -14,9 +14,11 @@ import {
 } from '../../src/core/preview';
 import { PREVIEW_LOCAL_URL_SCHEME } from '../../src/core/assets';
 import { handlePreviewCommand, type PreviewCommandContext } from '../../src/main/previewSource';
+import type { CommandResult } from '../../src/core/types';
 import type { TrustedLocalFileReference } from '../../src/main/localFileReferenceSecurity';
 import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
 import { LinkedFileGrantStore } from '../../src/main/linkedFileGrantStore';
+import { LocalFilePreviewStreamRegistry } from '../../src/main/localFilePreviewStream';
 
 describe('preview source commands', () => {
   let root: string;
@@ -388,8 +390,9 @@ describe('preview source commands', () => {
     const streamCalls: string[] = [];
     const baseContext = previewContext({
       linkedFileGrant: grants,
-      linkedFileStreamUrl: async (resolvedPath) => {
-        streamCalls.push(resolvedPath);
+      linkedFileStreamUrl: async (file) => {
+        streamCalls.push(file.path);
+        await file.handle.close();
         return `${PREVIEW_LOCAL_URL_SCHEME}://linked-file-token`;
       },
     });
@@ -453,6 +456,104 @@ describe('preview source commands', () => {
     await rm(filePath);
     expect(await handlePreviewCommand('preview_resolve_source', { target }, baseContext))
       .toEqual({ source: null, error: 'file-unavailable' });
+  });
+
+  test('never redefines an exact grant after a symlink substitution during token issue', async () => {
+    const filePath = join(root, 'linked.txt');
+    const replacementPath = join(root, 'replacement.txt');
+    const unauthorizedPath = join(root, 'unauthorized.txt');
+    await writeFile(filePath, 'AUTHORIZED');
+    await writeFile(replacementPath, 'AUTHORIZED');
+    await writeFile(unauthorizedPath, 'UNAUTHORIZED');
+    const sourceText = pathToFileURL(filePath).href;
+    const target = { kind: 'linked-file' as const, sourceValueId: 'source:race', sourceText };
+    const grants = new LinkedFileGrantStore(join(root, 'race-grants.json'));
+    expect(await grants.authorize(sourceText, filePath)).toEqual({ authorized: true });
+    const streams = new LocalFilePreviewStreamRegistry(() => []);
+    let token: string | null = null;
+    try {
+      const resolved = await handlePreviewCommand('preview_resolve_source', { target }, previewContext({
+        linkedFileGrant: grants,
+        linkedFileStreamUrl: async (file, mimeType) => {
+          await rename(filePath, replacementPath);
+          await symlink(unauthorizedPath, filePath);
+          token = await streams.issueExactFile(file, mimeType);
+          return token ? `${PREVIEW_LOCAL_URL_SCHEME}://${token}` : null;
+        },
+      })) as PreviewResolveSourceResult;
+
+      expect(token).not.toBeNull();
+      expect(resolved.source).toMatchObject({ sizeBytes: 'AUTHORIZED'.length });
+      const response = await streams.serve(token!, { headers: new Headers() });
+      expect(response.status).toBe(404);
+      expect(await response.text()).not.toContain('UNAUTHORIZED');
+    } finally {
+      await streams.close();
+    }
+  });
+
+  test('admits Link File and Replace with File grants before their document mutations', async () => {
+    const filePath = join(root, 'workflow.txt');
+    await writeFile(filePath, 'workflow');
+    const grants = new LinkedFileGrantStore(join(root, 'workflow-grants.json'));
+    const mutations: Array<{ kind: string; ownerId: string; sourceText: string; sourceValueId?: string }> = [];
+    const settlement = { update: { kind: 'test' } } as unknown as CommandResult;
+    const context = previewContext({
+      chooseLinkedFile: async () => filePath,
+      linkedFileGrant: grants,
+      mutateLinkedFileSource: async (input) => {
+        const resolution = await grants.resolve(input.sourceText);
+        expect(resolution.status).toBe('ready');
+        if (resolution.status === 'ready') await resolution.file.handle.close();
+        mutations.push(input);
+        return settlement;
+      },
+    });
+
+    expect(await handlePreviewCommand('preview_link_file_source', { ownerId: 'node:owner' }, context))
+      .toBe(settlement);
+    expect(await handlePreviewCommand('preview_replace_source_with_file', {
+      ownerId: 'node:owner',
+      sourceValueId: 'node:source',
+    }, context)).toBe(settlement);
+    expect(mutations).toEqual([
+      { kind: 'add', ownerId: 'node:owner', sourceText: pathToFileURL(filePath).href },
+      {
+        kind: 'replace',
+        ownerId: 'node:owner',
+        sourceValueId: 'node:source',
+        sourceText: pathToFileURL(filePath).href,
+      },
+    ]);
+  });
+
+  test('revokes only a newly created grant when linked-file settlement fails', async () => {
+    const newPath = join(root, 'new-grant.txt');
+    const existingPath = join(root, 'existing-grant.txt');
+    await writeFile(newPath, 'new');
+    await writeFile(existingPath, 'existing');
+    const grants = new LinkedFileGrantStore(join(root, 'compensation-grants.json'));
+    const rejectMutation = async (): Promise<CommandResult> => {
+      throw new Error('settlement failed');
+    };
+
+    await expect(handlePreviewCommand('preview_link_file_source', { ownerId: 'node:owner' }, previewContext({
+      chooseLinkedFile: async () => newPath,
+      linkedFileGrant: grants,
+      mutateLinkedFileSource: rejectMutation,
+    }))).rejects.toThrow('settlement failed');
+    expect(await grants.resolve(pathToFileURL(newPath).href)).toEqual({ status: 'denied' });
+
+    const existingSourceText = pathToFileURL(existingPath).href;
+    expect(await grants.authorize(existingSourceText, existingPath)).toEqual({ authorized: true });
+    await expect(handlePreviewCommand('preview_link_file_source', { ownerId: 'node:owner' }, previewContext({
+      chooseLinkedFile: async () => existingPath,
+      linkedFileGrant: grants,
+      mutateLinkedFileSource: rejectMutation,
+    }))).rejects.toThrow('settlement failed');
+    const preserved = await grants.resolve(existingSourceText);
+    expect(preserved.status).toBe('ready');
+    if (preserved.status === 'ready') await preserved.file.handle.close();
   });
 
   test('returns bounded command results for invalid linked-file targets', async () => {

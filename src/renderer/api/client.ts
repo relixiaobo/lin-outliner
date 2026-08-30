@@ -164,6 +164,10 @@ export const api = {
     command<PreviewAuthorizeLinkedFileResult>('preview_authorize_linked_file', { target }),
   forgetLinkedFile: (target: Extract<PreviewTarget, { kind: 'linked-file' }>) =>
     command<PreviewForgetLinkedFileResult>('preview_forget_linked_file', { target }),
+  linkFileSource: (ownerId: string) =>
+    command<CommandResult | null>('preview_link_file_source', { ownerId }),
+  replaceSourceWithFile: (ownerId: string, sourceValueId: string) =>
+    command<CommandResult | null>('preview_replace_source_with_file', { ownerId, sourceValueId }),
   agentGetProviderSettings: () =>
     command<AgentProviderSettingsView>('agent_get_provider_settings'),
   memorySettings: (threadId?: string) =>

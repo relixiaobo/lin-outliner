@@ -1,6 +1,7 @@
 import { constants } from 'node:fs';
 import { open, realpath, stat } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
+import type { FileHandle } from 'node:fs/promises';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { TrustedLocalFileReference } from './localFileReferenceSecurity';
 import {
   PRIVATE_JSON_FILE_OPTIONS,
@@ -20,11 +21,23 @@ interface LinkedFileGrantState {
 }
 
 export type LinkedFileGrantResolution =
-  | { status: 'ready'; file: TrustedLocalFileReference }
+  | { status: 'ready'; file: OpenedLinkedFileReference }
   | { status: 'denied' | 'unavailable' };
+
+export interface OpenedLinkedFileReference extends TrustedLocalFileReference {
+  handle: FileHandle;
+}
 
 export type LinkedFileGrantAuthorization =
   | { authorized: true }
+  | { authorized: false; reason: 'different-file' | 'invalid-source' | 'unavailable' };
+
+export type LinkedFileGrantAdmission =
+  | { authorized: true; created: boolean; sourceText: string }
+  | { authorized: false; reason: 'different-file' | 'invalid-source' | 'unavailable' };
+
+type LinkedFileGrantAuthorizationStatus =
+  | { authorized: true; created: boolean }
   | { authorized: false; reason: 'different-file' | 'invalid-source' | 'unavailable' };
 
 const EMPTY_STATE: LinkedFileGrantState = { schemaVersion: 1, grants: [] };
@@ -55,6 +68,7 @@ export class LinkedFileGrantStore {
 
     const handle = await open(canonicalPath, OPEN_NOFOLLOW).catch(() => null);
     if (!handle) return { status: 'unavailable' };
+    let transferred = false;
     try {
       const [openedStats, freshStats, freshCanonicalPath] = await Promise.all([
         handle.stat(),
@@ -67,16 +81,33 @@ export class LinkedFileGrantStore {
         || freshCanonicalPath !== grant.canonicalPath
         || !sameFileIdentity(openedStats, freshStats)
       ) return { status: 'unavailable' };
+      transferred = true;
       return {
         status: 'ready',
-        file: { entryKind: 'file', path: canonicalPath, stats: openedStats },
+        file: { entryKind: 'file', path: canonicalPath, stats: openedStats, handle },
       };
+    } catch {
+      return { status: 'unavailable' };
     } finally {
-      await handle.close().catch(() => undefined);
+      if (!transferred) await handle.close().catch(() => undefined);
     }
   }
 
   async authorize(sourceText: string, selectedPath: string): Promise<LinkedFileGrantAuthorization> {
+    const result = await this.authorizeWithStatus(sourceText, selectedPath);
+    return result.authorized ? { authorized: true } : result;
+  }
+
+  async admitSelectedFile(selectedPath: string): Promise<LinkedFileGrantAdmission> {
+    const sourceText = pathToFileURL(selectedPath).href;
+    const result = await this.authorizeWithStatus(sourceText, selectedPath);
+    return result.authorized ? { ...result, sourceText } : result;
+  }
+
+  private async authorizeWithStatus(
+    sourceText: string,
+    selectedPath: string,
+  ): Promise<LinkedFileGrantAuthorizationStatus> {
     const locatorPath = linkedFilePath(sourceText);
     if (!locatorPath) return { authorized: false, reason: 'invalid-source' };
     const [locatorCanonicalPath, selectedCanonicalPath] = await Promise.all([
@@ -108,11 +139,15 @@ export class LinkedFileGrantStore {
       await handle.close().catch(() => undefined);
     }
 
+    let created = false;
     await updateJsonFile(
       this.filePath,
       EMPTY_STATE,
       parseLinkedFileGrantState,
       (state) => {
+        created = !state.grants.some((grant) => (
+          grant.sourceText === sourceText && grant.canonicalPath === selectedCanonicalPath
+        ));
         const grants = state.grants.filter((grant) => grant.sourceText !== sourceText);
         grants.push({ sourceText, canonicalPath: selectedCanonicalPath, authorizedAt: this.now() });
         grants.sort((left, right) => left.sourceText.localeCompare(right.sourceText));
@@ -121,7 +156,7 @@ export class LinkedFileGrantStore {
       },
       PRIVATE_JSON_FILE_OPTIONS,
     );
-    return { authorized: true };
+    return { authorized: true, created };
   }
 
   async revoke(sourceText: string): Promise<boolean> {

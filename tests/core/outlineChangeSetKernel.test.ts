@@ -649,6 +649,10 @@ describe('outline ChangeSet kernel', () => {
     const mediaSelector = { by: 'query' as const, query: { kind: 'rule' as const, op: 'HAS_AUDIO' as const }, limit: 10 };
     expect(resolveSelector(workspace.selectionIndex(), mediaSelector)).toEqual([ownerId]);
     expect(resolveSelector(workspace.selectionIndex(), { by: 'search', id: searchId, limit: 10 })).toEqual([ownerId]);
+    expect(workspace.documentState().nodes[searchId]!.children
+      .map((childId) => workspace.documentState().nodes[childId])
+      .filter((node) => node?.type === 'reference')
+      .map((node) => node.targetId)).toEqual([ownerId]);
     await workspace.drainDurability();
     workspace.close();
 
@@ -656,6 +660,27 @@ describe('outline ChangeSet kernel', () => {
     expect(resolveSelector(restarted.selectionIndex(), mediaSelector)).toEqual([ownerId]);
     expect(resolveSelector(restarted.selectionIndex(), { by: 'search', id: searchId, limit: 10 })).toEqual([ownerId]);
     restarted.close();
+  });
+
+  test('excludes hidden Source structure from public summary child counts', async () => {
+    const workspace = await makeWorkspace();
+    const ownerId = await createExisting(workspace, 'Source-only owner');
+    await workspace.mutate({
+      ...createRequest('Add one Source'),
+      execute: (core) => {
+        core.addSource(ownerId, `node:${crypto.randomUUID()}`, 'https://example.com/source');
+      },
+    });
+
+    const result = workspace.project({
+      kind: 'summary',
+      targets: oneId(ownerId),
+      page: { limit: 1 },
+    });
+
+    expect(result.nodes).toEqual([
+      expect.objectContaining({ id: ownerId, type: 'plain', childCount: 0 }),
+    ]);
   });
 
   test('returns a Node and its backlinks in separately bounded Projection pages', async () => {

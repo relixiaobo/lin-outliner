@@ -59,7 +59,7 @@ export function projectOutlineFromSelectionIndex(
     : undefined;
   const nodes = projection.kind === 'backlinks'
     ? []
-    : pageIds.map((nodeId) => projectNode(index.byId.get(nodeId)!, projection));
+    : pageIds.map((nodeId) => projectNode(index.byId.get(nodeId)!, index.byId, projection));
   const backlinks = allBacklinks?.slice(offset, offset + limit);
   const pageWidth = Math.max(pageIds.length, backlinks?.length ?? 0);
   const nextOffset = offset + pageWidth;
@@ -156,7 +156,11 @@ function outlineProjectionChildIds(
   return node.children.filter((childId) => childId !== entryId);
 }
 
-function projectNode(node: NodeProjection, projection: Projection): Record<string, unknown> {
+function projectNode(
+  node: NodeProjection,
+  byId: ReadonlyMap<string, NodeProjection>,
+  projection: Projection,
+): Record<string, unknown> {
   if (projection.kind === 'summary') {
     const content = isContentBearingNode(node) ? node : undefined;
     return {
@@ -164,7 +168,7 @@ function projectNode(node: NodeProjection, projection: Projection): Record<strin
       type: node.type ?? 'plain',
       text: content?.content.text ?? (node.type === 'sourceValue' ? node.sourceText : ''),
       parentId: node.parentId ?? null,
-      childCount: node.children.length,
+      childCount: outlineProjectionChildIds(node, byId, false).length,
       done: typeof content?.completedAt === 'number' && content.completedAt > 0,
     };
   }

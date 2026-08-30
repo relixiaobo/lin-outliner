@@ -6,6 +6,7 @@ import { useT } from '../../i18n/I18nProvider';
 import type { DocumentIndex } from '../../state/document';
 import {
   AddIcon,
+  AttachmentIcon,
   CheckIcon,
   CopyIcon,
   HideIcon,
@@ -47,12 +48,22 @@ export function NodeSourcesSection({ index, ownerId, run }: NodeSourcesSectionPr
     ?? resolvedValues[0]
     ?? null;
   const [newSourceText, setNewSourceText] = useState('');
+  const [linkFilePending, setLinkFilePending] = useState(false);
 
   const add = () => {
     if (!newSourceText) return;
     const sourceText = newSourceText;
     setNewSourceText('');
     void run(() => api.addSource(ownerId, sourceText));
+  };
+  const linkFile = async () => {
+    if (linkFilePending) return;
+    setLinkFilePending(true);
+    try {
+      await run(() => api.linkFileSource(ownerId));
+    } finally {
+      setLinkFilePending(false);
+    }
   };
 
   return (
@@ -117,6 +128,10 @@ export function NodeSourcesSection({ index, ownerId, run }: NodeSourcesSectionPr
           type="submit"
           variant="panel"
         />
+        <Button disabled={linkFilePending} size="sm" variant="ghost" onClick={() => void linkFile()}>
+          <AttachmentIcon aria-hidden="true" />
+          {labels.linkFile}
+        </Button>
       </form>
 
       {selected && view.previewVisible ? (
@@ -268,6 +283,17 @@ function SourceRow({
       setSourceActionPending(false);
     }
   };
+  const replaceWithFile = async () => {
+    if (sourceActionPending) return;
+    setSourceActionPending(true);
+    setSourceActionError(null);
+    try {
+      const result = await run(() => api.replaceSourceWithFile(ownerId, value.sourceValueId));
+      if (result) onResolutionChanged();
+    } finally {
+      setSourceActionPending(false);
+    }
+  };
 
   return (
     <div
@@ -299,6 +325,13 @@ function SourceRow({
         </div>
       </div>
       <div className="node-source-actions">
+        <IconButton
+          disabled={sourceActionPending}
+          icon={AttachmentIcon}
+          label={labels.replaceWithFile}
+          onClick={() => void replaceWithFile()}
+          variant="panel"
+        />
         {linkedFileTarget && value.availability !== 'ready' ? (
           <Button disabled={sourceActionPending} size="sm" variant="ghost" onClick={() => void authorize()}>
             {value.availability === 'unavailable' ? labels.relink : labels.chooseFile}

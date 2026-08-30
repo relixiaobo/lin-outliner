@@ -605,6 +605,8 @@ test.describe('file attachments', () => {
     await expect(sourceRow).toHaveCount(1);
     await expect(sourceRow.locator('input')).toHaveValue(/^asset:\/\/local\//);
     await expect(sourceRow).toHaveAttribute('data-availability', 'ready');
+    await expect(nodePage.getByRole('button', { name: 'Link File' })).toBeVisible();
+    await expect(sourceRow.getByRole('button', { name: 'Replace with File' })).toBeVisible();
 
     const inlinePreviewFrame = nodePage.locator('.node-source-preview .file-node-preview.collapsed');
     await expect(inlinePreviewFrame).toBeVisible();
