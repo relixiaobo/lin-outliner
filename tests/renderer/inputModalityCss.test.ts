@@ -15,8 +15,8 @@ describe('input modality CSS guards', () => {
   });
 
   test('keeps structural outline guides visible without changing layout', () => {
-    expect(outlinerCss).toMatch(/\.indent-guide-line\s*\{[^}]*width:\s*1px;[^}]*background:\s*var\(--text-tertiary\);/s);
-    expect(outlinerCss).toMatch(/\.indent-guide:hover > \.indent-guide-line\s*\{[^}]*width:\s*2px;[^}]*background:\s*var\(--text-secondary\);/s);
+    expect(outlinerCss).toMatch(/\.indent-guide-line\s*\{[^}]*width:\s*1px;[^}]*background:\s*color-mix\(in srgb, var\(--text-primary\) 18%, transparent\);/s);
+    expect(outlinerCss).toMatch(/\.indent-guide:hover > \.indent-guide-line\s*\{[^}]*width:\s*2px;[^}]*background:\s*color-mix\(in srgb, var\(--text-primary\) 28%, transparent\);/s);
   });
 
   test('keeps flat media previews and controls on one stable surface', () => {

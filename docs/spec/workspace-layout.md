@@ -492,6 +492,8 @@ Source authority stays source-specific:
   URL targets normalize through one shared `http(s)`-only helper in core. The pane
   renders the webpage through a dedicated sandboxed Electron webview that allows
   only `http(s)` navigation, strips preload/Node privileges at attach time,
+  strips renderer-supplied referrers and restores one fixed provider referrer
+  only for strict `https://www.youtube.com/embed/<video-id>` targets,
   force-assigns the shared persistent `persist:url-preview` partition, denies
   child windows, and keeps the explicit fallback action for opening the URL in
   the system browser. The webview forwards new-window requests to main, where a

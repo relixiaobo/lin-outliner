@@ -158,6 +158,7 @@ import {
 } from '../core/urlPageTranslation';
 import { LIN_URL_PAGE_TRANSLATION_GUEST_CHANNEL } from '../core/urlPageTranslationGuest';
 import {
+  httpReferrerForUrlPreview,
   LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL,
   URL_PREVIEW_WEBVIEW_PARTITION,
   type ClearUrlPreviewDataResult,
@@ -1538,6 +1539,7 @@ function hardenWebContents(contents: Electron.WebContents) {
     }
     delete params.preload;
     delete params.webpreferences;
+    delete params.httpreferrer;
     delete webPreferences.preload;
     webPreferences.contextIsolation = true;
     webPreferences.nodeIntegration = false;
@@ -1553,6 +1555,8 @@ function hardenWebContents(contents: Electron.WebContents) {
     webPreferences.navigateOnDragDrop = false;
     params.partition = URL_PREVIEW_WEBVIEW_PARTITION;
     params.src = normalizedSrc;
+    const trustedHttpReferrer = httpReferrerForUrlPreview(normalizedSrc);
+    if (trustedHttpReferrer) params.httpreferrer = trustedHttpReferrer;
   });
   contents.on('did-attach-webview', (_event, webContents) => {
     if (!urlPreviewSession || webContents.session !== urlPreviewSession) {

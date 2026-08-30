@@ -25,7 +25,10 @@ import type {
 } from '../../../core/preview';
 import { normalizePreviewHttpUrl } from '../../../core/preview';
 import { mediaKindForMimeType } from '../../../core/mediaKind';
-import { URL_PREVIEW_WEBVIEW_PARTITION } from '../../../core/urlPreviewSession';
+import {
+  httpReferrerForUrlPreview,
+  URL_PREVIEW_WEBVIEW_PARTITION,
+} from '../../../core/urlPreviewSession';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import {
@@ -661,6 +664,7 @@ function UrlPreview({
         className={youtubeRoute
           ? 'file-preview-url-webview file-preview-youtube-webview'
           : 'file-preview-url-webview'}
+        httpreferrer={httpReferrerForUrlPreview(previewUrl)}
         partition={URL_PREVIEW_WEBVIEW_PARTITION}
         ref={setWebviewRef}
         src={previewUrl}

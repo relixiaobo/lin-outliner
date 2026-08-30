@@ -1059,6 +1059,15 @@ test.describe('file attachments', () => {
 
     await attachmentRow.locator('> .row').first().hover();
     await expect(attachmentRow).toHaveAttribute('aria-expanded', 'true');
+    const previewChevron = attachmentRow.locator(
+      ':scope > .outline-source-preview-row .row-chevron-button',
+    );
+    await expect(previewChevron).toBeVisible();
+    await previewChevron.click();
+    await expect(attachmentRow).toHaveAttribute('aria-expanded', 'false');
+    await expect(attachmentRow.locator(':scope > .outline-source-preview-row')).toHaveCount(0);
+    await attachmentRow.locator(':scope > .row .row-chevron-button').click({ force: true });
+    await expect(attachmentRow).toHaveAttribute('aria-expanded', 'true');
 
     const expandedProjection = await e2eProjection(page);
     const sourceEntry = sourceFieldEntries(expandedProjection, attachmentId)[0];
@@ -1538,6 +1547,7 @@ test.describe('file attachments', () => {
       'src',
       'https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=0&playsinline=1',
     );
+    await expect(webview).toHaveAttribute('httpreferrer', 'https://tenon.local/');
     await expect(row(page, createdId!).locator(
       ':scope > .outline-source-preview-row .file-node-preview--url',
     )).toHaveCount(0);

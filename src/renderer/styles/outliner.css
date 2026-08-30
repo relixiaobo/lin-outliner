@@ -1422,14 +1422,14 @@ button.outliner-table-column-kind:focus-visible {
   left: var(--indent-guide-line-offset);
   width: 1px;
   border-radius: var(--radius-pill);
-  background: var(--text-tertiary);
+  background: color-mix(in srgb, var(--text-primary) 18%, transparent);
   transform: translateX(-50%);
   transition: background var(--motion-fast), width var(--motion-fast);
 }
 
 .indent-guide:hover > .indent-guide-line {
   width: 2px;
-  background: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 28%, transparent);
 }
 
 .indent-guide--flat > .indent-guide-line {
@@ -2532,6 +2532,14 @@ button.outliner-table-column-kind:focus-visible {
   > .outline-source-preview-row
   > .row-leading
   > .row-chevron-button {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* A tall Source surface can sit under the guide hit band for most of its
+   height. Keep its ordinary Node disclosure visible instead of making a
+   long-distance hover the only way to discover it. */
+.outline-source-preview-row > .row-leading > .row-chevron-button {
   opacity: 1;
   pointer-events: auto;
 }

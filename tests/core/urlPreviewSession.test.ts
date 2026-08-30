@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import type { HandlerDetails } from 'electron';
-import { URL_PREVIEW_WEBVIEW_PARTITION } from '../../src/core/urlPreviewSession';
+import {
+  httpReferrerForUrlPreview,
+  URL_PREVIEW_WEBVIEW_PARTITION,
+} from '../../src/core/urlPreviewSession';
 import {
   clearUrlPreviewSessionData,
   configureUrlPreviewSession,
@@ -27,6 +30,16 @@ function handlerDetails(overrides: Partial<HandlerDetails> = {}): HandlerDetails
 describe('URL Preview persistent session', () => {
   test('uses one persistent partition', () => {
     expect(URL_PREVIEW_WEBVIEW_PARTITION).toBe('persist:url-preview');
+  });
+
+  test('assigns a fixed referrer only to strict YouTube embed URLs', () => {
+    expect(httpReferrerForUrlPreview(
+      'https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=0',
+    )).toBe('https://tenon.local/');
+    expect(httpReferrerForUrlPreview('https://www.youtube.com/watch?v=dQw4w9WgXcQ')).toBeUndefined();
+    expect(httpReferrerForUrlPreview('https://youtube.com/embed/dQw4w9WgXcQ')).toBeUndefined();
+    expect(httpReferrerForUrlPreview('https://example.com/embed/dQw4w9WgXcQ')).toBeUndefined();
+    expect(httpReferrerForUrlPreview('not a url')).toBeUndefined();
   });
 
   test('configures the permission allowlist once per session', () => {

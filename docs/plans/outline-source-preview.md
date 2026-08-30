@@ -16,7 +16,7 @@ field surface.
   exact-file grants, managed-asset settlement, or special-Node retirement.
 - No new preview renderer, pane type, file store, or renderer authority.
 - No hiding Source values or management operations supplied by the baseline.
-- No coupling preview visibility to ordinary child disclosure.
+- No replacing ordinary child disclosure with a preview-specific expansion state.
 
 ## Design
 
@@ -31,8 +31,9 @@ occupies an Outline level or becomes a child or card containing the Node.
 While the preview is visible, the ordinary Node marker occupies the rail beside
 the preview's upper edge rather than repeating beside the title. Its expanded
 guide begins below that real marker and runs through the preview composition to
-the final visible descendant marker. Hiding the preview returns the same marker
-to the title row; navigation and child-disclosure semantics never change.
+the final visible descendant marker. Hiding the preview or collapsing the Node
+returns the same marker to the title row. The shown preview participates in the
+ordinary child/field disclosure instead of creating a second expansion model.
 
 On the Node page, the upper-right close action changes only local visibility and
 the Source toolbar label opens an ordered switcher when multiple values exist.
@@ -60,16 +61,18 @@ rules as other fields. Drilled Node pages preserve the same selection,
 visibility, availability, and action semantics; dense table and calendar
 projections render ordered URI values without mounting rich previews.
 
-Selection, visibility, preview-body reader state, and child disclosure remain
-four independent state axes. Stable value identity preserves selection through
-reorder; removal follows the baseline fallback rules. Async work from an old
-selection cannot replace the current preview.
+Selection, the stored preview preference, preview-body reader state, and child
+disclosure remain independent state axes. Effective Outline visibility requires
+both a shown Source preference and an expanded owner Node. Stable value identity
+preserves selection through reorder; removal follows the baseline fallback
+rules. Async work from an old selection cannot replace the current preview.
 
 The first newly added Source is selected and shown by default. Adding another
 preserves current selection and visibility. Editing the selected visible value
 reloads in place; editing another value does not replace the current preview;
 editing while hidden remains hidden. Navigation, references, tags, content
-edits, and child disclosure change neither selection nor visibility.
+edits, and child disclosure change neither Source selection nor its stored
+preview preference.
 
 ### Paste and entry affordances
 
@@ -104,8 +107,10 @@ inspection size while a dedicated reader may use the larger viewport. Audio and
 video own their playback surface and same-layer actions. Ordinary URLs remain a
 direct web surface. YouTube watch, short, live, and short links use a bounded
 16:9 embed with click-to-play behavior and never inherit an autoplay request
-from the source URL. Unsupported binaries use the bounded metadata presentation
-and its open/actions control.
+from the source URL. The webview attach boundary strips arbitrary referrers and
+assigns YouTube embeds one fixed Tenon app referrer so the player can identify
+its client without extending that capability to ordinary URLs. Unsupported
+binaries use the bounded metadata presentation and its open/actions control.
 
 ### Dependencies and collisions
 
