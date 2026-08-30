@@ -1,6 +1,5 @@
 import type { FieldType } from '../../api/types';
 import { parseDateFieldValue } from '../../api/types';
-import { classifyNodeSource } from '../../../core/source';
 
 export interface FieldValueConstraints {
   min?: number;
@@ -30,23 +29,17 @@ export function validateFieldValue(
     if (constraints.min != null && num < constraints.min) return `Value should be ≥ ${constraints.min}`;
     if (constraints.max != null && num > constraints.max) return `Value should be ≤ ${constraints.max}`;
   }
-  if (fieldType === 'uri' && !looksLikeUrl(trimmed)) return 'Value should be a URI';
+  if (fieldType === 'uri' && !looksLikeUri(trimmed)) return 'Value should be a URI';
   if (fieldType === 'email' && !EMAIL_PATTERN.test(trimmed)) return 'Value should be an email';
   if (fieldType === 'date' && !parseDateFieldValue(trimmed)) return 'Value should be a date';
   return null;
 }
 
-/** Uses the built-in Source classifier so internal and non-Web URI schemes do not receive a false warning. */
-export function validateSourceFieldValue(value: string): string | null {
-  if (!value.trim()) return null;
-  return classifyNodeSource(value).availability === 'invalid' ? 'Value should be a URI' : null;
-}
-
-function looksLikeUrl(value: string): boolean {
+function looksLikeUri(value: string): boolean {
   if (/\s/.test(value)) return false;
-  if (/^https?:\/\/\S+$/i.test(value)) return true;
+  if (/^[a-z][a-z\d+.-]*:\S+$/i.test(value)) return true;
   // Allow a scheme-less host like `example.com/path` — lenient on purpose, so
-  // the hint only fires on input that is clearly not a url.
+  // the hint only fires on input that is clearly not a URI.
   return /^[^\s/]+\.[^\s/]+/.test(value);
 }
 
@@ -60,7 +53,8 @@ export function fieldValueOpenHref(fieldType: FieldType | undefined, value: stri
   const trimmed = value.trim();
   if (!trimmed) return null;
   if (fieldType === 'uri') {
-    if (!looksLikeUrl(trimmed)) return null;
+    if (!looksLikeUri(trimmed)) return null;
+    if (/^[a-z][a-z\d+.-]*:/i.test(trimmed) && !/^https?:\/\//i.test(trimmed)) return null;
     return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
   }
   if (fieldType === 'email') {

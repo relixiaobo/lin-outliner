@@ -42,11 +42,12 @@ the Source toolbar label opens an ordered switcher when multiple values exist.
 In the Outline, no duplicate toolbar appears: the selected URI value's inline
 affordance owns **Hide preview**, while other URI values own preview switching.
 URI values remain ordinary field value Nodes with their normal marker and
-disclosure; the in-value affordance controls preview state without replacing
-that Node chrome. The owner Node's ordinary bullet and chevron also remain
-unchanged. At the minimum supported pane width, the URI field stacks its name
-above the value, and the owner preview compacts mature preview controls inside
-the available width.
+disclosure; the preview affordance follows the value's final text inside the
+ordinary editor flow without replacing that Node chrome or creating a separate
+control row. The owner Node's ordinary bullet and chevron also remain unchanged.
+The URI field keeps the same responsive layout, validation, ordering, and draft
+placement as every other URI field; only the owner preview compacts mature
+preview controls inside the available width.
 Mature preview bodies retain
 their existing Open, Expand, reader, media, translation, and file actions rather
 than receiving duplicates. The ordinary Node bullet and chevron keep only their

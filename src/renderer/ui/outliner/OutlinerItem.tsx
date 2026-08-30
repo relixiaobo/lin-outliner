@@ -16,7 +16,6 @@ import { createPortal, flushSync } from 'react-dom';
 import { api } from '../../api/client';
 import { freshNodeId } from '../../../core/nodeId';
 import { formatAssetSourceUri } from '../../../core/source';
-import { SOURCE_FIELD_ID } from '../../../core/types';
 import type { OperationUndoGroup } from '../../../outline/contract';
 import type {
   AssetMetadata,
@@ -131,7 +130,6 @@ import type { FieldValueContext } from '../fields/fieldValueEditors';
 import {
   fieldValueOpenHref,
   validateFieldValue,
-  validateSourceFieldValue,
 } from '../fields/fieldValueValidation';
 import { CalendarIcon, ICON_SIZE, OpenIcon, WarningIcon } from '../icons';
 import {
@@ -542,20 +540,54 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const descriptionEditing = props.ui.editingDescriptionId === targetEditId;
   const referenceLikeRow = node.type === 'reference' || pendingReferenceConversion;
   const isCodeBlock = displayed.type === 'codeBlock' && !referenceLikeRow;
-  // Plain text rows host their tag chips INSIDE the editor (an inline widget at the
-  // end of the text) so the chips flow after the last word and wrap with it. Code
-  // rows have no inline text editor, so they keep the tag bar as a sibling below.
+  // Additive layers on a committed field value: a non-blocking validation hint
+  // and (for a well-formed URI / email) an open-link affordance. The hint takes
+  // precedence, so malformed input never exposes a broken link.
+  const fieldValueText = realNode ? displayed.content.text : '';
+  const fieldValueHint = props.fieldValue && fieldDescriptor?.validates && realNode
+    ? validateFieldValue(props.fieldValue.fieldType, fieldValueText, props.fieldValue.constraints)
+    : null;
+  const fieldValueHref = props.fieldValue && fieldDescriptor?.isLink && realNode && !fieldValueHint
+    ? fieldValueOpenHref(props.fieldValue.fieldType, fieldValueText)
+    : null;
+  const showDateTrigger = dateFieldValue && Boolean(realNode);
+  const sourcePreviewPlacement = props.fieldValue?.sourcePreviewPlacement;
+  const sourcePreviewAction = realNode
+    && props.fieldValue
+    && sourcePreviewPlacement
+    && sourcePreviewPlacement !== 'none' ? (
+    <SourcePreviewAffordance
+      index={props.index}
+      ownerId={props.fieldValue.ownerId}
+      valueId={realNode.id}
+      allowHide={sourcePreviewPlacement === 'outline'}
+    />
+  ) : null;
+  const hasFieldValueAffordances = Boolean(
+    props.fieldValue && (showDateTrigger || fieldValueHint || fieldValueHref || sourcePreviewAction),
+  );
+
+  // Plain text rows host trailing content INSIDE the editor as one inline widget
+  // at the end of the final text block. Tags and ordinary field affordances then
+  // follow the last word and wrap with it instead of becoming a separate row.
+  // Code and whole-field controls have no compatible inline text surface.
   const isPlainTextRow = !isCodeBlock;
   const hasTags = displayed.tags.length > 0;
-  const useInlineTagSlot = isPlainTextRow && !checkboxFieldValue;
-  const inlineTagSlotRef = useRef<HTMLSpanElement | null>(null);
-  if (useInlineTagSlot && hasTags && inlineTagSlotRef.current === null) {
+  const useInlineContentSlot = isPlainTextRow && !checkboxFieldValue;
+  const inlineContentSlotRef = useRef<HTMLSpanElement | null>(null);
+  if (
+    useInlineContentSlot
+    && (hasTags || hasFieldValueAffordances)
+    && inlineContentSlotRef.current === null
+  ) {
     const el = document.createElement('span');
-    el.className = 'row-inline-tag-slot';
+    el.className = 'row-inline-content-slot';
     el.contentEditable = 'false';
-    inlineTagSlotRef.current = el;
+    inlineContentSlotRef.current = el;
   }
-  const inlineTagSlot = useInlineTagSlot && hasTags ? inlineTagSlotRef.current : null;
+  const inlineContentSlot = useInlineContentSlot && (hasTags || hasFieldValueAffordances)
+    ? inlineContentSlotRef.current
+    : null;
   const [externalFileDropPosition, setExternalFileDropPosition] = useState<DropHoverPosition | null>(null);
   const externalFileDropTargetKey = `${props.panelId}:${props.parentId}:${props.nodeId}:${props.draft ? 'draft' : 'row'}:external-file`;
   const clearExternalFileDropState = () => {
@@ -2922,33 +2954,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     });
   };
 
-  // Additive layers on a committed field value: a non-blocking validation hint
-  // and (for a well-formed url / email) an open-link affordance. The hint takes
-  // precedence — a malformed value shows the hint, not a broken link.
-  const fieldValueText = realNode ? displayed.content.text : '';
-  const fieldValueHint = props.fieldValue && fieldDescriptor?.validates && realNode
-    ? props.fieldValue.fieldDefId === SOURCE_FIELD_ID
-      ? validateSourceFieldValue(fieldValueText)
-      : validateFieldValue(props.fieldValue.fieldType, fieldValueText, props.fieldValue.constraints)
-    : null;
-  const fieldValueHref = props.fieldValue && fieldDescriptor?.isLink && realNode && !fieldValueHint
-    ? fieldValueOpenHref(props.fieldValue.fieldType, fieldValueText)
-    : null;
-  // The calendar affordance reopens the picker on a committed date value. The
-  // empty draft is guided by its "Press Space…" placeholder instead, so it shows
-  // no button (avoids a redundant icon beside the placeholder).
-  const showDateTrigger = dateFieldValue && Boolean(realNode);
-  const sourcePreviewPlacement = props.fieldValue?.sourcePreviewPlacement;
-  const sourcePreviewAction = realNode
-    && props.fieldValue?.fieldDefId === SOURCE_FIELD_ID
-    && sourcePreviewPlacement !== 'none' ? (
-    <SourcePreviewAffordance
-      index={props.index}
-      ownerId={props.fieldValue.ownerId}
-      valueId={realNode.id}
-      allowHide={sourcePreviewPlacement === 'outline'}
-    />
-  ) : null;
   const outlineSourcePreview = realNode && props.outlineSourcePreviewKey ? (
     <OutlineSourcePreview
       accessibleName={realNode.content.text.trim() || undefined}
@@ -2956,6 +2961,40 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       ownerId={realNode.id}
       run={props.run}
     />
+  ) : null;
+  const fieldValueAffordances = hasFieldValueAffordances ? (
+    <span className="field-value-affordances" data-preserve-selection>
+      {fieldValueHint && (
+        <span
+          className="field-value-hint"
+          role="img"
+          title={fieldValueHint}
+          aria-label={fieldValueHint}
+        >
+          <WarningIcon size={ICON_SIZE.menu} />
+        </span>
+      )}
+      {fieldValueHref && (
+        <ButtonControl
+          className="field-value-affordance field-value-open"
+          aria-label={tf.openLink}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => void api.openExternalUrl(fieldValueHref)}
+        ><OpenIcon size={12} strokeWidth={1.8} /></ButtonControl>
+      )}
+      {showDateTrigger && (
+        <ButtonControl
+          className="field-value-affordance field-value-date-trigger"
+          aria-label={tf.pickADate}
+          aria-expanded={dateOverlayOpen}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => setDateOverlayOpen((open) => !open)}
+        >
+          <CalendarIcon size={13} strokeWidth={1.8} />
+        </ButtonControl>
+      )}
+      {sourcePreviewAction}
+    </span>
   ) : null;
 
   // The row's primary focus surface. Checkbox drafts and committed values keep
@@ -3028,7 +3067,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       nodeId={props.nodeId}
       content={renderedDraftContent}
       contentRevision={editorContentRevision}
-      inlineSlotEl={inlineTagSlot}
+      inlineSlotEl={inlineContentSlot}
       readOnly={displayed.locked}
       completed={Boolean(displayed.completedAt)}
       placeholder={fieldValueDraft
@@ -3233,12 +3272,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             />
           )}
           {rowEditorElement}
-          {hasTags && (
-            useInlineTagSlot ? (
-              // Portal the chips into the editor's inline slot so they sit in the
-              // text flow (after the last word, wrapping with it). The slot node
-              // lives inside this row's editor DOM, so it stays within the row.
-              inlineTagSlot && createPortal(
+          {inlineContentSlot && createPortal(
+            <>
+              {hasTags && (
                 <TagBar
                   nodeId={targetEditId}
                   tagIds={displayed.tags}
@@ -3247,11 +3283,14 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
                   setUi={props.setUi}
                   run={props.run}
                   onRoot={props.onRoot}
-                />,
-                inlineTagSlot,
-              )
-            ) : (
-              <TagBar
+                />
+              )}
+              {fieldValueAffordances}
+            </>,
+            inlineContentSlot,
+          )}
+          {hasTags && !useInlineContentSlot && (
+            <TagBar
                 nodeId={targetEditId}
                 tagIds={displayed.tags}
                 index={props.index}
@@ -3260,42 +3299,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
                 run={props.run}
                 onRoot={props.onRoot}
               />
-            )
           )}
-          {props.fieldValue && (showDateTrigger || fieldValueHint || fieldValueHref || sourcePreviewAction) && (
-            <span className="field-value-affordances" data-preserve-selection>
-              {fieldValueHint && (
-                <span
-                  className="field-value-hint"
-                  role="img"
-                  title={fieldValueHint}
-                  aria-label={fieldValueHint}
-                >
-                  <WarningIcon size={ICON_SIZE.menu} />
-                </span>
-              )}
-              {fieldValueHref && (
-                <ButtonControl
-                  className="field-value-affordance field-value-open"
-                  aria-label={tf.openLink}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => void api.openExternalUrl(fieldValueHref)}
-                ><OpenIcon size={12} strokeWidth={1.8} /></ButtonControl>
-              )}
-              {showDateTrigger && (
-                <ButtonControl
-                  className="field-value-affordance field-value-date-trigger"
-                  aria-label={tf.pickADate}
-                  aria-expanded={dateOverlayOpen}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => setDateOverlayOpen((open) => !open)}
-                >
-                  <CalendarIcon size={13} strokeWidth={1.8} />
-                </ButtonControl>
-              )}
-              {sourcePreviewAction}
-            </span>
-          )}
+          {!useInlineContentSlot && fieldValueAffordances}
           {!props.hideDisplayFields ? (
             <ViewDisplayFields ariaLabel={t.outliner.viewToolbar.displayedFieldsAriaLabel} values={displayValues} />
           ) : null}

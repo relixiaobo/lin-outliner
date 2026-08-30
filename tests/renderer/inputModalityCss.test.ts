@@ -15,8 +15,10 @@ describe('input modality CSS guards', () => {
   });
 
   test('keeps structural outline guides visible without changing layout', () => {
-    expect(outlinerCss).toMatch(/\.indent-guide-line\s*\{[^}]*width:\s*1px;[^}]*background:\s*color-mix\(in srgb, var\(--text-primary\) 18%, transparent\);/s);
-    expect(outlinerCss).toMatch(/\.indent-guide:hover > \.indent-guide-line\s*\{[^}]*width:\s*2px;[^}]*background:\s*color-mix\(in srgb, var\(--text-primary\) 28%, transparent\);/s);
+    expect(outlinerCss).toMatch(/--indent-guide-line-offset:\s*calc\(100% - 1px\);/);
+    expect(outlinerCss).toMatch(/\.indent-guide-line\s*\{[^}]*width:\s*1px;[^}]*background:\s*var\(--separator\);/s);
+    expect(outlinerCss).toMatch(/\.indent-guide:hover > \.indent-guide-line\s*\{[^}]*width:\s*2px;[^}]*background:\s*var\(--border-emphasis\);/s);
+    expect(outlinerCss).not.toMatch(/\.indent-guide-line\s*\{[^}]*transform:/s);
   });
 
   test('keeps Source owner disclosure on ordinary row-hover visibility', () => {
@@ -29,6 +31,16 @@ describe('input modality CSS guards', () => {
   test('gives Outline Source composition one preview-to-title gap', () => {
     expect(filePreviewCss).toMatch(
       /\.outline-source-preview \.file-node-body\s*\{[^}]*margin-bottom:\s*0;/s,
+    );
+    expect(outlinerCss).not.toContain('.source-field-row');
+    expect(outlinerCss).toMatch(
+      /\.row-inline-content-slot\s*\{[^}]*display:\s*inline-flex;/s,
+    );
+    expect(outlinerCss).toMatch(
+      /\.row-editor \.ProseMirror p:has\(\.field-value-affordances\)\s*\{[^}]*padding-inline-end:\s*var\(--field-value-affordance-reserve\);/s,
+    );
+    expect(outlinerCss).toMatch(
+      /\.row-content-line > \.row-editor:has\(\.field-value-affordances\)\s*\{[^}]*width:\s*100%;/s,
     );
   });
 

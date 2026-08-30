@@ -508,9 +508,9 @@ export function RichTextEditor(props: RichTextEditorProps) {
     const view = new EditorView(mount, {
       state: initialState,
       editable: () => !structuredPastePendingRef.current && isEditableSurface(propsRef.current),
-      // Inline trailing slot (the row's tag chips). A view-level prop, not a state
-      // plugin, so it survives the bare `updateState(EditorState.create(...))` calls
-      // on the paste path. Recomputed every update, so its position tracks edits.
+      // Inline trailing row content. A view-level prop, not a state plugin, so it
+      // survives bare `updateState(EditorState.create(...))` calls on the paste
+      // path. Recomputed every update, so its position tracks edits.
       decorations: (state) => {
         const el = propsRef.current.inlineSlotEl;
         if (!el) return null;
@@ -519,7 +519,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
         return DecorationSet.create(state.doc, [
           Decoration.widget(pos, el, {
             side: 1,
-            key: 'inline-tag-slot',
+            key: 'inline-content-slot',
             stopEvent: () => true,
             ignoreSelection: true,
           }),
@@ -1238,9 +1238,8 @@ export function RichTextEditor(props: RichTextEditorProps) {
     });
   }, [props.readOnly, props.readOnlyCaret]);
 
-  // The inline tag slot appears/disappears (node <-> null) when tags are added or
-  // removed — events that don't dispatch a transaction to THIS editor. Force a
-  // redraw so the `decorations` prop is recomputed and the widget added/removed.
+  // Inline trailing content can appear/disappear without dispatching a transaction
+  // to this editor. Force a redraw so the widget is added or removed immediately.
   useLayoutEffect(() => {
     const view = viewRef.current;
     if (!view) return;

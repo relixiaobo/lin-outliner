@@ -67,7 +67,6 @@ import { RowLeading } from './RowLeading';
 import { useOutlinerRowInteraction } from './useOutlinerRowInteraction';
 import { useT } from '../../i18n/I18nProvider';
 import type { NodeFieldSlot } from '../../../core/fieldSlots';
-import { SOURCE_FIELD_ID } from '../../../core/types';
 import {
   startOptimisticStructuralEdit,
   startOptimisticRelocation,
@@ -854,7 +853,6 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       wrapProps={row.wrapProps}
       rowClassName={row.rowClassName([
         'field-row-inline',
-        props.slot.fieldDefId === SOURCE_FIELD_ID ? 'source-field-row' : '',
         props.isFirstInFieldGroup ? 'field-group-start' : '',
         props.isLastInFieldGroup ? 'field-group-end' : '',
       ].filter(Boolean).join(' '))}

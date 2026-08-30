@@ -1322,15 +1322,24 @@ test.describe('file attachments', () => {
       const previewRect = preview.getBoundingClientRect();
       const sourceMarkerRect = sourceMarker.getBoundingClientRect();
       const guideLineRect = guideLine.getBoundingClientRect();
+      const guideMidX = guideLineRect.left + guideLineRect.width / 2;
+      const guideMidY = guideLineRect.top + guideLineRect.height / 2;
+      const hitStack = document.elementsFromPoint(guideMidX, guideMidY);
+      const guideStyle = getComputedStyle(guideLine);
       return {
         endsAtSourceMarker: Math.abs(
           guideLineRect.bottom - (sourceMarkerRect.top + sourceMarkerRect.height / 2),
         ) <= 1,
+        paintedAboveContent: hitStack.includes(guideLine),
+        paintedWithToken: guideStyle.backgroundColor !== 'rgba(0, 0, 0, 0)'
+          && guideStyle.backgroundColor !== 'transparent',
         runsPastPreview: guideLineRect.bottom >= previewRect.bottom,
         startsBelowMarker: guideLineRect.top > markerRect.bottom,
       };
     }, imageSourceEntry!.id)).toEqual({
       endsAtSourceMarker: true,
+      paintedAboveContent: true,
+      paintedWithToken: true,
       runsPastPreview: true,
       startsBelowMarker: true,
     });
@@ -1501,7 +1510,7 @@ test.describe('file attachments', () => {
   });
 
   test('a bare URL on an empty row atomically writes content and Source while non-empty content keeps an inline link', async ({ page }) => {
-    const url = 'https://example.com/article';
+    const url = 'https://example.com/article/with-a-long-path-that-wraps-inside-the-field-value-without-moving-its-open-and-preview-controls-onto-a-separate-line';
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
     await pasteClipboardText(page, url);
@@ -1523,6 +1532,53 @@ test.describe('file attachments', () => {
       draft: { id: createdId, content: { text: url } },
       sourceText: url,
     });
+
+    const createdProjection = await e2eProjection(page);
+    const createdSourceEntry = sourceFieldEntries(createdProjection, createdId!)[0];
+    const createdSourceValue = sourceFieldValues(createdProjection, createdId!)[0];
+    expect(createdSourceEntry).toBeTruthy();
+    expect(createdSourceValue).toBeTruthy();
+    const sourceFieldRow = row(page, createdSourceEntry!.id);
+    const sourceValueRow = row(page, createdSourceValue!.id);
+    await expect(sourceValueRow.locator('.row-inline-content-slot .source-preview-affordance')).toBeVisible();
+    await expect.poll(async () => sourceValueRow.evaluate((valueRow) => {
+      const editor = valueRow.querySelector<HTMLElement>('.row-editor');
+      const affordances = valueRow.querySelector<HTMLElement>('.field-value-affordances');
+      const textNode = Array.from(
+        editor?.querySelector('.ProseMirror')?.childNodes ?? [],
+      ).flatMap((child) => Array.from(child.childNodes))
+        .findLast((child): child is Text => child.nodeType === Node.TEXT_NODE && Boolean(child.textContent));
+      if (!editor || !affordances || !textNode?.textContent) return null;
+      const finalCharacter = document.createRange();
+      finalCharacter.setStart(textNode, textNode.textContent.length - 1);
+      finalCharacter.setEnd(textNode, textNode.textContent.length);
+      const editorRect = editor.getBoundingClientRect();
+      const editorParentRect = editor.parentElement?.getBoundingClientRect();
+      const finalTextRect = finalCharacter.getBoundingClientRect();
+      const affordanceRect = affordances.getBoundingClientRect();
+      return {
+        editorUsesAvailableWidth: Boolean(editorParentRect)
+          && Math.abs(editorRect.width - editorParentRect.width) <= 1,
+        sharesLastTextLine: finalTextRect.top < affordanceRect.bottom
+          && finalTextRect.bottom > affordanceRect.top,
+      };
+    })).toEqual({
+      editorUsesAvailableWidth: true,
+      sharesLastTextLine: true,
+    });
+    await expect.poll(async () => sourceFieldRow.evaluate((field, rootId) => {
+      const drafts = document.querySelectorAll<HTMLElement>(
+        `[data-trailing-parent-id="${CSS.escape(String(rootId))}"]`,
+      );
+      const draft = drafts.item(drafts.length - 1);
+      const fieldShell = field.closest('.outliner-flat-flow-row, .outliner-flat-row');
+      const draftShell = draft?.closest('.outliner-flat-flow-row, .outliner-flat-row');
+      return Boolean(
+        fieldShell
+          && draftShell
+          && fieldShell.compareDocumentPosition(draftShell) & Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+    }, ids.today)).toBe(true);
 
     const alphaEditor = rowEditor(page, ids.alpha);
     await alphaEditor.click();

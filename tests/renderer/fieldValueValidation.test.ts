@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
   validateFieldValue,
-  validateSourceFieldValue,
 } from '../../src/renderer/ui/fields/fieldValueValidation';
 
 describe('validateFieldValue (non-blocking)', () => {
@@ -38,17 +37,17 @@ describe('validateFieldValue (non-blocking)', () => {
   });
 });
 
-describe('validateSourceFieldValue', () => {
-  test('accepts canonical managed assets and supported or unsupported absolute URIs', () => {
-    expect(validateSourceFieldValue('asset://local/asset%3Aimage')).toBeNull();
-    expect(validateSourceFieldValue('file:///Users/example/image.png')).toBeNull();
-    expect(validateSourceFieldValue('https://example.com/image.png')).toBeNull();
-    expect(validateSourceFieldValue('ftp://example.com/image.png')).toBeNull();
+describe('URI field validation', () => {
+  test('accepts Web, file, managed-asset, and other absolute URIs', () => {
+    expect(validateFieldValue('uri', 'asset://local/asset%3Aimage')).toBeNull();
+    expect(validateFieldValue('uri', 'file:///Users/example/image.png')).toBeNull();
+    expect(validateFieldValue('uri', 'https://example.com/image.png')).toBeNull();
+    expect(validateFieldValue('uri', 'ftp://example.com/image.png')).toBeNull();
   });
 
-  test('warns only when the Source classifier reports a malformed URI', () => {
-    expect(validateSourceFieldValue('not a URI')).toBe('Value should be a URI');
-    expect(validateSourceFieldValue('asset://local/')).toBe('Value should be a URI');
-    expect(validateSourceFieldValue('')).toBeNull();
+  test('warns for malformed values and keeps empty values neutral', () => {
+    expect(validateFieldValue('uri', 'not a URI')).toBe('Value should be a URI');
+    expect(validateFieldValue('uri', 'asset:')).toBe('Value should be a URI');
+    expect(validateFieldValue('uri', '')).toBeNull();
   });
 });
