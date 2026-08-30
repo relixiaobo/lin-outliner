@@ -1462,6 +1462,41 @@ button.outliner-table-column-kind:focus-visible {
   padding: var(--space-hairline) var(--space-3) var(--space-hairline) var(--row-edge);
 }
 
+/* A visible Source preview lifts the ordinary Node marker into a rail beside
+   the preview, matching Tana's card geometry. The title retains the same
+   content column through a non-interactive spacer. When preview visibility is
+   off, the one real marker is positioned back over that title-row spacer. */
+.outline-source-preview-row {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  grid-template-columns: var(--row-leading-width) minmax(0, 1fr);
+  align-items: start;
+  padding-right: var(--space-3);
+  padding-left: var(--row-edge);
+}
+
+.outline-source-preview-row > .outline-source-preview {
+  min-width: 0;
+  grid-column: 2;
+}
+
+.outline-source-preview-row:not(:has(> .outline-source-preview)) {
+  height: 0;
+}
+
+.outline-source-preview-row:not(:has(> .outline-source-preview)) > .row-leading {
+  position: absolute;
+  top: var(--space-hairline);
+  left: var(--row-edge);
+  z-index: var(--z-raised);
+}
+
+.row-leading-spacer {
+  width: var(--row-leading-width);
+  height: var(--row-leading-height);
+}
+
 .row:hover {
   background: transparent;
 }
@@ -2488,6 +2523,15 @@ button.outliner-table-column-kind:focus-visible {
 }
 
 .row-wrap > .row:hover:not(:has(.row:hover)) > .row-leading > .row-chevron-button {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.outline-source-preview-row:hover > .row-leading > .row-chevron-button,
+.row-wrap:has(> .row:hover:not(:has(.row:hover)))
+  > .outline-source-preview-row
+  > .row-leading
+  > .row-chevron-button {
   opacity: 1;
   pointer-events: auto;
 }

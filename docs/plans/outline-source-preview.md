@@ -28,6 +28,11 @@ preview above the owner Node's editable content, followed by its ordinary URI
 field. This matches Tana's visible order: preview, title/content, then URI. The
 preview aligns with the owner content column, is presentation only, and never
 occupies an Outline level or becomes a child or card containing the Node.
+While the preview is visible, the ordinary Node marker occupies the rail beside
+the preview's upper edge rather than repeating beside the title. Its expanded
+guide begins below that real marker and runs through the preview composition to
+the final visible descendant marker. Hiding the preview returns the same marker
+to the title row; navigation and child-disclosure semantics never change.
 
 On the Node page, the upper-right close action changes only local visibility and
 the Source toolbar label opens an ordered switcher when multiple values exist.

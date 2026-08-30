@@ -3166,6 +3166,21 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       row.wrapProps.onDrop?.(event);
     },
   };
+  const rowLeadingElement = (
+    <RowLeading
+      hasChildren={row.hasChildren}
+      expanded={row.expanded}
+      variant={leadingVariant}
+      fieldType={projectFieldTypeById(props.index.byId, displayed.id)}
+      bulletColors={appliedTagColors}
+      tagDefColor={tagDefColor}
+      onToggleExpand={toggleRowDisclosure}
+      onDrillDown={() => props.onRoot(drillDownId)}
+      draggable={row.dragHandleProps.draggable}
+      onDragStart={row.dragHandleProps.onDragStart}
+      onDragEnd={row.dragHandleProps.onDragEnd}
+    />
+  );
 
   return (
     <OutlinerRowShell
@@ -3188,22 +3203,17 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       ].filter(Boolean).join(' '))}
       onSelectFromPointer={row.selectFromPointer}
       onContextMenu={virtualFieldValueDraft ? undefined : openContextMenu}
-      beforeRow={outlineSourcePreview}
+      beforeRow={outlineSourcePreview ? (
+        <div className="outline-source-preview-row">
+          {rowLeadingElement}
+          {outlineSourcePreview}
+        </div>
+      ) : undefined}
       rowContent={(
         <>
-        <RowLeading
-          hasChildren={row.hasChildren}
-          expanded={row.expanded}
-          variant={leadingVariant}
-          fieldType={projectFieldTypeById(props.index.byId, displayed.id)}
-          bulletColors={appliedTagColors}
-          tagDefColor={tagDefColor}
-          onToggleExpand={toggleRowDisclosure}
-          onDrillDown={() => props.onRoot(drillDownId)}
-          draggable={row.dragHandleProps.draggable}
-          onDragStart={row.dragHandleProps.onDragStart}
-          onDragEnd={row.dragHandleProps.onDragEnd}
-        />
+        {outlineSourcePreview
+          ? <span className="row-leading-spacer" aria-hidden="true" />
+          : rowLeadingElement}
         <div
           ref={optionAnchorRef}
           className="row-content-line"

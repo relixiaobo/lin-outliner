@@ -176,7 +176,7 @@ async function pasteClipboardFileAndOpenPreview(
   if (!pastedId) throw new Error(`No pasted Source-backed node for ${file.name}`);
   const pastedRow = row(page, pastedId);
   await pastedRow.locator('> .row').first().hover();
-  await pastedRow.locator('> .row .row-bullet-button').first().click();
+  await pastedRow.locator('.row-bullet-button').first().click();
   const previewFrame = page.locator('.outline-panel-surface.active-panel .node-source-preview .file-node-preview.collapsed');
   await expect(previewFrame).toBeVisible();
   return previewFrame;
@@ -625,7 +625,7 @@ test.describe('file attachments', () => {
     // for child disclosure and never owns preview state.
     const attachmentRowLine = attachmentRow.locator('> .row').first();
     await attachmentRowLine.hover();
-    await attachmentRow.locator('> .row .row-bullet-button').first().click();
+    await attachmentRow.locator('.row-bullet-button').first().click();
     const nodePage = page.locator('.outline-panel-surface.active-panel');
     await expect(nodePage.locator('.panel-title-editor .ProseMirror')).toContainText('Quarterly report');
     const drilledProjection = await e2eProjection(page);
@@ -1065,7 +1065,7 @@ test.describe('file attachments', () => {
     const sourceValue = sourceFieldValues(expandedProjection, attachmentId)[0];
     expect(sourceEntry).toBeTruthy();
     expect(sourceValue).toBeTruthy();
-    await expect(attachmentRow.locator(':scope > .outline-source-preview .node-source-preview')).toBeVisible();
+    await expect(attachmentRow.locator(':scope > .outline-source-preview-row .node-source-preview')).toBeVisible();
     await expect(attachmentRow.locator('.file-node-row-preview')).toHaveCount(0);
     const fieldName = row(page, sourceEntry!.id).locator('.field-name-input');
     await expect(fieldName).toHaveValue('URI');
@@ -1099,7 +1099,7 @@ test.describe('file attachments', () => {
 
     const attachmentRow = row(page, attachmentId);
     await attachmentRow.locator('> .row').first().hover();
-    await attachmentRow.locator('> .row .row-bullet-button').first().click();
+    await attachmentRow.locator('.row-bullet-button').first().click();
     const nodePage = page.locator('.outline-panel-surface.active-panel');
     await expect(nodePage.getByRole('region', { name: 'Source preview' })).toBeVisible();
 
@@ -1156,7 +1156,7 @@ test.describe('file attachments', () => {
     await expect(nodePage.locator('.node-source-preview')).toHaveAttribute('data-source-value-id', firstSource!.id);
   });
 
-  test('Source-backed Nodes keep the ordinary marker and indent-guide geometry', async ({ page }) => {
+  test('Source-backed Nodes place the ordinary marker and guide beside the preview', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
     await page.keyboard.type('/attachment');
@@ -1182,8 +1182,11 @@ test.describe('file attachments', () => {
     });
 
     await expect.poll(async () => page.evaluate((nodeId) => {
-      const markerButton = document.querySelector(`[data-node-id="${nodeId}"] > .row .row-bullet-button`);
-      const markerSlot = document.querySelector(`[data-node-id="${nodeId}"] > .row .row-bullet-shape.content`);
+      const owner = document.querySelector(`[data-node-id="${nodeId}"]`);
+      const markerButton = owner?.querySelector(':scope > .outline-source-preview-row .row-bullet-button');
+      const markerSlot = owner?.querySelector(':scope > .outline-source-preview-row .row-bullet-shape.content');
+      const preview = owner?.querySelector(':scope > .outline-source-preview-row .node-source-preview');
+      const titleMarker = owner?.querySelector(':scope > .row .row-bullet-button');
       const guide = document.querySelector(
         `.outliner-flat-guides .indent-guide[data-guide-node-id="${nodeId}"], `
           + `[data-node-id="${nodeId}"] > .indent-guide`,
@@ -1192,8 +1195,9 @@ test.describe('file attachments', () => {
         `.outliner-flat-guides .indent-guide[data-guide-node-id="${nodeId}"] .indent-guide-line, `
           + `[data-node-id="${nodeId}"] > .indent-guide .indent-guide-line`,
       );
-      if (!markerButton || !markerSlot || !guide || !guideLine) return null;
+      if (!markerButton || !markerSlot || !preview || !guide || !guideLine) return null;
       const markerButtonRect = markerButton.getBoundingClientRect();
+      const previewRect = preview.getBoundingClientRect();
       const guideRect = guide.getBoundingClientRect();
       const guideLineRect = guideLine.getBoundingClientRect();
       const centerX = (rect: DOMRect) => rect.left + rect.width / 2;
@@ -1202,11 +1206,19 @@ test.describe('file attachments', () => {
         measuredFromSlot: guideRect.left < centerX(markerButtonRect) && guideRect.right > centerX(markerButtonRect),
         startsBelowSlot: guideLineRect.top - markerButtonRect.bottom >= 3
           && guideLineRect.top - markerButtonRect.bottom <= 5,
+        markerAtPreviewTop: markerButtonRect.top <= previewRect.top
+          && markerButtonRect.bottom >= previewRect.top,
+        guideRunsPastPreview: guideLineRect.top < previewRect.bottom
+          && guideLineRect.bottom >= previewRect.bottom,
+        titleMarkerAbsent: titleMarker === null,
       };
     }, attachmentId)).toEqual({
       lineOnSlotCenter: true,
       measuredFromSlot: true,
       startsBelowSlot: true,
+      markerAtPreviewTop: true,
+      guideRunsPastPreview: true,
+      titleMarkerAbsent: true,
     });
   });
 
@@ -1248,12 +1260,12 @@ test.describe('file attachments', () => {
     expect(imageSourceEntry).toBeTruthy();
     expect(imageSource).toBeTruthy();
     const imageSourceRow = row(page, imageSource!.id);
-    const outlineImagePreview = imageRow.locator(':scope > .outline-source-preview .file-preview-image img');
+    const outlineImagePreview = imageRow.locator(':scope > .outline-source-preview-row .file-preview-image img');
     await expect(outlineImagePreview).toBeVisible();
     await expect(outlineImagePreview).toHaveAttribute('alt', 'picked-image.png');
     await expect.poll(async () => imageRow.evaluate((ownerRow, sourceEntryId) => {
       const title = ownerRow.querySelector<HTMLElement>(':scope > .row .row-content-line');
-      const preview = ownerRow.querySelector<HTMLElement>(':scope > .outline-source-preview .node-source-preview');
+      const preview = ownerRow.querySelector<HTMLElement>(':scope > .outline-source-preview-row .node-source-preview');
       const sourceField = document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(String(sourceEntryId))}"] > .row`);
       if (!title || !preview || !sourceField) return false;
       const titleRect = title.getBoundingClientRect();
@@ -1267,7 +1279,17 @@ test.describe('file attachments', () => {
     const hideOutlinePreview = imageSourceRow.getByRole('button', { name: 'Hide preview' });
     await expect(hideOutlinePreview).toBeVisible();
     await hideOutlinePreview.click();
-    await expect(imageRow.locator(':scope > .outline-source-preview')).toHaveCount(0);
+    await expect(imageRow.locator(':scope > .outline-source-preview-row > .outline-source-preview')).toHaveCount(0);
+    await expect.poll(async () => imageRow.evaluate((ownerRow) => {
+      const marker = ownerRow.querySelector<HTMLElement>(':scope > .outline-source-preview-row .row-bullet-button');
+      const title = ownerRow.querySelector<HTMLElement>(':scope > .row .row-content-line');
+      if (!marker || !title) return false;
+      const markerRect = marker.getBoundingClientRect();
+      const titleRect = title.getBoundingClientRect();
+      return Math.abs(
+        markerRect.top + markerRect.height / 2 - (titleRect.top + titleRect.height / 2),
+      ) <= 1;
+    })).toBe(true);
     const showOutlinePreview = imageSourceRow.getByRole('button', { name: 'Show preview' });
     await expect(showOutlinePreview).toBeVisible();
     await showOutlinePreview.click();
@@ -1276,8 +1298,8 @@ test.describe('file attachments', () => {
     await expect(hideOutlinePreview).toBeVisible();
     await expect.poll(async () => {
       const [previewRect, controlsRect, affordanceRect, sourceRowRect] = await Promise.all([
-        imageRow.locator(':scope > .outline-source-preview .file-node-preview').boundingBox(),
-        imageRow.locator(':scope > .outline-source-preview .file-preview-pill').boundingBox(),
+        imageRow.locator(':scope > .outline-source-preview-row .file-node-preview').boundingBox(),
+        imageRow.locator(':scope > .outline-source-preview-row .file-preview-pill').boundingBox(),
         imageSourceRow.locator('.source-preview-affordance').boundingBox(),
         imageSourceRow.boundingBox(),
       ]);
@@ -1314,7 +1336,7 @@ test.describe('file attachments', () => {
     await expect(outlineImagePreview).toHaveAttribute('alt', imageName);
 
     await imageRow.locator('> .row').first().hover();
-    await imageRow.locator('> .row .row-bullet-button').first().click();
+    await imageRow.locator('.row-bullet-button').first().click();
     const nodePage = page.locator('.outline-panel-surface.active-panel');
     const imagePreview = nodePage.locator('.node-source-preview .file-preview-image img');
     await expect(imagePreview).toBeVisible();
@@ -1398,7 +1420,7 @@ test.describe('file attachments', () => {
     const pastedRow = row(page, pastedId!);
     await expect(rowEditor(page, pastedId!)).toContainText('clipboard-image.png');
     await expect(pastedRow.locator('.file-node-keyboard-anchor, .file-node-row-main')).toHaveCount(0);
-    await expect(pastedRow.locator(':scope > .outline-source-preview .file-preview-image img'))
+    await expect(pastedRow.locator(':scope > .outline-source-preview-row .file-preview-image img'))
       .toHaveAttribute('alt', 'clipboard-image.png');
     const pastedSource = sourceFieldValues(await e2eProjection(page), pastedId!)[0];
     expect(pastedSource).toBeTruthy();
@@ -1929,7 +1951,7 @@ test.describe('file attachments', () => {
     await expect(rowEditor(page, pastedId)).toContainText('archive.zip');
 
     await attachmentRow.locator('> .row').first().hover();
-    await attachmentRow.locator('> .row .row-bullet-button').first().click();
+    await attachmentRow.locator('.row-bullet-button').first().click();
     const metadataPreview = page.locator('.outline-panel-surface.active-panel .node-source-preview .file-node-preview--metadata');
     await expect(metadataPreview).toBeVisible();
     const metadataKindRow = metadataPreview.locator('.file-preview-metadata-kind-row');
@@ -1991,7 +2013,7 @@ test.describe('file attachments', () => {
     const pastedId = (await todayChildren(page)).at(-1)!;
     const attachmentRow = row(page, pastedId);
     await attachmentRow.locator('> .row').first().hover();
-    await attachmentRow.locator('> .row .row-bullet-button').first().click();
+    await attachmentRow.locator('.row-bullet-button').first().click();
     const metadataPreview = page.locator('.outline-panel-surface.active-panel .node-source-preview .file-node-preview--metadata');
     await expect(metadataPreview).toBeVisible();
 
