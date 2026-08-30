@@ -13,10 +13,10 @@ latest published train is `v0.7.0`.
 
 ## In Flight
 
-`host-platform-composition` is in review as PR #602. A merged plan PR records
-ratified design; it does not mean the feature shipped. The remaining plans from
-#588/#589, #591, #595, and #596 stay active below until their implementation,
-spec fold, and archive move complete.
+No implementation PR is open. `host-platform-composition` shipped in #602, so
+`desktop-host-cutover` is the next eligible primary-chain claim. The remaining
+plans from #588/#589, #591, #595, and #596 stay active below until their
+implementation, spec fold, and archive move complete.
 
 ## Primary Delivery Queue
 
@@ -37,8 +37,7 @@ protocol, security rule, user flow, or acceptance criterion.
 
 ```text
 Critical mechanism lane:
-  host-platform-composition
-    -> desktop-host-cutover
+  desktop-host-cutover
     ~> agent-bash-stdin-transport
     ~> agent-result-and-file-lifecycle
 
@@ -61,8 +60,7 @@ Parallel after agent-result-and-file-lifecycle:
 
 | Priority | Plan / PR claim | Status | Eligible after |
 | --- | --- | --- | --- |
-| P1 | [host-platform-composition](plans/host-platform-composition.md) | `draft`, ratified in #591 | **Now; domain composition shipped in #601** |
-| P1 | [desktop-host-cutover](plans/desktop-host-cutover.md) | `draft`, ratified in #591 | `host-platform-composition` |
+| P1 | [desktop-host-cutover](plans/desktop-host-cutover.md) | `draft`, ratified in #591 | **Now; platform composition shipped in #602** |
 | P1 | [agent-bash-stdin-transport](plans/agent-bash-stdin-transport.md) | `draft`, ratified in #596 | `desktop-host-cutover` by A7 collision order |
 | P1 | [outline-cli-skill-efficiency](plans/outline-cli-skill-efficiency.md) | `draft`, ratified in #595 | `agent-bash-stdin-transport` |
 | P1 | [agent-result-and-file-lifecycle](plans/agent-result-and-file-lifecycle.md) | `draft`, ratified in #588/#589 | `agent-bash-stdin-transport` by A7 collision order; all three build stages stay inside this PR |
@@ -76,13 +74,12 @@ Parallel after agent-result-and-file-lifecycle:
 | P3 | [agent-skill-curation-report](plans/agent-skill-curation-report.md) | `draft` | `agent-skill-authoring-foundation` |
 | P3 | [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | `draft` | `agent-result-and-file-lifecycle` |
 
-`host-platform-composition` is the active primary-queue claim in #602.
-Build-ready work outside this queue remains independently claimable under its own
-collision boundary. The remaining Host chain has two substantial serial PRs:
-native platform composition and final DesktopHost/lifecycle cutover. Agent
-resource references, conversation workspaces/final citations, and delegated
-handoff remain three foundation-first build stages inside one atomic feature PR
-rather than three partial releases.
+`desktop-host-cutover` is the next primary-queue claim. Build-ready work outside
+this queue remains independently claimable under its own collision boundary.
+The remaining Host chain has one substantial PR: final DesktopHost/lifecycle
+cutover. Agent resource references, conversation workspaces/final citations,
+and delegated handoff remain three foundation-first build stages inside one
+atomic feature PR rather than three partial releases.
 
 The split also absorbs three former planless tasks without losing their intent:
 
@@ -230,6 +227,10 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **host-platform-composition** (`done`, #602, 2026-08-31) — Electron-native
+  resource, preview, window, and application ownership moved behind typed
+  platform Hosts with explicit release and complete-tree audits; plan archived
+  at [host-platform-composition](plans/archive/host-platform-composition.md).
 - **outline-source-preview** (`done`, #599, 2026-08-31) — ordinary Outline
   Sources gained preview-first composition, type-specific image/media/web
   presentation, stable marker/guide geometry, and exact bare-URL paste; plan

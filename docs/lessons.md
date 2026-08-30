@@ -2089,3 +2089,20 @@ Regression coverage must use the narrowest and shortest real presentation types,
 assert intrinsic content remains unscaled, assert local controls remain contained,
 and compare client size with scroll size so a visible menu frame cannot hide
 clipped actions.
+
+## Request deadlines do not release subprocess ownership
+
+PR #602 first moved native file search into `NativeLocalFileHost` while leaving
+`mdfind` and `rg` cleanup to each request's timeout. That bounded the caller's
+wait but not the operating-system process: quit can reach `app.exit()` before a
+JavaScript timer runs, allowing a child to outlive the Host that started it.
+
+**Track externally spawned work at the owning Host boundary, independently of
+request settlement.** Register each child before returning it, reject new spawn
+after close begins, terminate and detach every active child, and let idempotent
+Host close await `error` or `close` settlement. A higher-level quit deadline may
+bound the aggregate teardown, but it cannot substitute for initiating release.
+
+Regression coverage must close the owner with work in flight, prove every child
+was terminated and detached, settle children through both `close` and `error`,
+and prove no new process can start after closing begins.

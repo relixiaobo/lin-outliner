@@ -182,6 +182,23 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
+- **Electron-native resource, preview, window, and application ownership now
+  lives behind typed platform Hosts (PR #602, codex)** — `main.ts` retains
+  startup and quit orchestration while `ResourcePreviewHost` owns URL-preview
+  sessions, translation, exact-file grants, native file work, caches, and
+  streams, and `WindowApplicationHost` owns windows, menus, hotkeys, updates,
+  actions, theme, locale, and their reversible effects. Native `mdfind` and
+  `rg` searches now have explicit process ownership: close rejects new scans,
+  kills and detaches active children, and awaits settlement through the Host
+  release chain. The complete-tree audit rejects missing, off-path, duplicated,
+  or miscounted platform construction and effect ownership. Gate review found
+  two Medium gaps in off-path audit coverage and subprocess release; both were
+  fixed before the final no-findings integration review. The rebase also
+  preserved the merged trusted URL-preview referrer hardening inside the new
+  Host. Verified with typecheck, `docs:check`, the ownership audit, 21 focused
+  Core security/composition/lifecycle tests, whitespace checks, and all five
+  pre-rebase GitHub E2E samples under the repository's non-gating signal policy.
+
 - **Agent and Outline backend graphs now live behind narrow typed domain Hosts
   (PR #601, codex)** — `main.ts` now composes capability-grouped configuration,
   worktree, Thread, Memory, Automation, Skill, document, asset, renderer, ranking,
