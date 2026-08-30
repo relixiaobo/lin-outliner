@@ -12,6 +12,7 @@ interface Baseline {
 }
 
 type EffectKind = 'construction' | 'ipc' | 'listener' | 'mutable-global' | 'protocol' | 'session' | 'timer';
+const listenerRegistrationIdentity = Symbol('listenerRegistrationIdentity');
 
 interface Effect {
   readonly id: string;
@@ -20,6 +21,7 @@ interface Effect {
   readonly line: number;
   readonly expression: string;
   readonly owner: string | null;
+  readonly [listenerRegistrationIdentity]?: string;
 }
 
 interface Disposition extends Effect {
@@ -76,9 +78,9 @@ const currentSources = (readdirSync(currentSourceRoot, { recursive: true }) as s
     source: readFileSync(join(currentSourceRoot, path), 'utf8'),
   }));
 const currentInventory = currentSources.flatMap(({ path, source }) => collectEffects(source, path));
-const currentReleasedListenerEffects = collectReleasedListenerEffects(currentSources);
+const currentListenerReleaseCounts = collectListenerReleaseCounts(currentSources);
 const currentDispositions = currentInventory.map((effect) => (
-  dispositionForCurrent(effect, currentReleasedListenerEffects)
+  dispositionForCurrent(effect, currentListenerReleaseCounts)
 ));
 const baselineEquivalences = readBaselineEquivalences(equivalencesPath);
 validateBaselineEquivalences(baselineEquivalences, baselineDispositions, currentDispositions);
@@ -124,6 +126,9 @@ function collectEffects(source: string, path: string): Effect[] {
       line,
       expression: stableExpression,
       owner,
+      ...(kind === 'listener'
+        ? { [listenerRegistrationIdentity]: listenerIdentity(path, node, file) ?? undefined }
+        : {}),
     });
   };
 
@@ -217,8 +222,8 @@ function dispositionForBaseline(effect: Effect): Disposition {
   return { ...effect, transport: false, disposition: 'successor:host-domain-composition' };
 }
 
-function dispositionForCurrent(effect: Effect, releasedListenerEffects: ReadonlySet<string>): Disposition {
-  const inferredOwner = effect.owner ?? currentTypedEdgeOwner(effect, releasedListenerEffects);
+function dispositionForCurrent(effect: Effect, listenerReleaseCounts: Map<string, number>): Disposition {
+  const inferredOwner = effect.owner ?? currentTypedEdgeOwner(effect, listenerReleaseCounts);
   if (effect.kind === 'ipc' || effect.kind === 'protocol' || effect.kind === 'session') {
     const retained = effect.expression.includes('registerSchemesAsPrivileged');
     return {
@@ -247,7 +252,7 @@ function effectKey(effect: Effect): string {
   return `${effect.path}:${effect.kind}:${effect.expression}`;
 }
 
-function currentTypedEdgeOwner(effect: Effect, releasedListenerEffects: ReadonlySet<string>): string | null {
+function currentTypedEdgeOwner(effect: Effect, listenerReleaseCounts: Map<string, number>): string | null {
   if (effect.path === 'src/main/outlineClient/ipc.ts') return 'outline';
   if (effect.path === 'src/main/urlPreviewSession.ts') return 'url-preview-session-security';
   if (effect.path === 'src/main/hostTransport/ownership.ts') return 'typed-registration-edge';
@@ -255,56 +260,48 @@ function currentTypedEdgeOwner(effect: Effect, releasedListenerEffects: Readonly
     return 'agent-web-fetch-capability';
   }
   if (effect.kind !== 'listener') return null;
-  if (effect.expression.startsWith("app.on('") && releasedListenerEffects.has(effectKey(effect))) {
-    return 'app-lifecycle';
+  if (effect.expression.startsWith("app.on('") && effect[listenerRegistrationIdentity]) {
+    const identity = effect[listenerRegistrationIdentity];
+    const releaseCount = listenerReleaseCounts.get(identity) ?? 0;
+    if (releaseCount > 0) {
+      listenerReleaseCounts.set(identity, releaseCount - 1);
+      return 'app-lifecycle';
+    }
   }
   return null;
 }
 
-function listenerRegistrationKey(node: ts.CallExpression, file: ts.SourceFile): string | null {
+function listenerIdentity(path: string, node: ts.CallExpression, file: ts.SourceFile): string | null {
   if (!ts.isPropertyAccessExpression(node.expression)) return null;
   if (!['on', 'once', 'addListener'].includes(node.expression.name.text)) return null;
   const event = node.arguments[0];
   const listener = node.arguments[1];
   if (!event || !listener) return null;
-  return `${node.expression.expression.getText(file)}\0${event.getText(file)}\0${listener.getText(file)}`;
+  return `${path}\0${node.expression.expression.getText(file)}\0${event.getText(file)}\0${listener.getText(file)}`;
 }
 
-function collectReleasedListenerEffects(
+function collectListenerReleaseCounts(
   sources: readonly { path: string; source: string }[],
-): ReadonlySet<string> {
-  const releases = new Set<string>();
-  const registrations: { effectKey: string; releaseKey: string }[] = [];
+): Map<string, number> {
+  const releases = new Map<string, number>();
   for (const { path, source } of sources) {
     const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
     const visit = (node: ts.Node): void => {
-      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
-        const registrationKey = listenerRegistrationKey(node, file);
-        if (registrationKey) {
-          registrations.push({
-            effectKey: `${path}:listener:${effectIdentity(node, file)}`,
-            releaseKey: `${path}\0${registrationKey}`,
-          });
-        }
-        if (node.expression.name.text !== 'removeListener') {
-          ts.forEachChild(node, visit);
-          return;
-        }
+      if (ts.isCallExpression(node)
+        && ts.isPropertyAccessExpression(node.expression)
+        && node.expression.name.text === 'removeListener') {
         const event = node.arguments[0];
         const listener = node.arguments[1];
         if (event && listener) {
-          releases.add(
-            `${path}\0${node.expression.expression.getText(file)}\0${event.getText(file)}\0${listener.getText(file)}`,
-          );
+          const identity = `${path}\0${node.expression.expression.getText(file)}\0${event.getText(file)}\0${listener.getText(file)}`;
+          releases.set(identity, (releases.get(identity) ?? 0) + 1);
         }
       }
       ts.forEachChild(node, visit);
     };
     visit(file);
   }
-  return new Set(
-    registrations.filter(({ releaseKey }) => releases.has(releaseKey)).map(({ effectKey }) => effectKey),
-  );
+  return releases;
 }
 
 function readBaselineEquivalences(path: string): BaselineEquivalence[] {
@@ -380,10 +377,17 @@ function runNegativeFixtures(): void {
   const missing = missingBaselineTransportEffects(missingBaseline, [], []);
   if (missing.length !== 1) throw new Error('Negative fixture failed to detect a missing baseline handler.');
 
-  const unreleasedSource = "const handleActivate = () => undefined; app.on('activate', handleActivate);";
+  const unreleasedSource = [
+    'const releasedActivate = () => undefined;',
+    'const leakedActivate = () => undefined;',
+    "app.on('activate', releasedActivate);",
+    "app.on('activate', leakedActivate);",
+    "app.removeListener('activate', releasedActivate);",
+  ].join('\n');
   const unreleasedSources = [{ path: 'src/main/fixture.ts', source: unreleasedSource }];
+  const fixtureReleaseCounts = collectListenerReleaseCounts(unreleasedSources);
   const unreleased = collectEffects(unreleasedSource, unreleasedSources[0]!.path)
-    .map((effect) => dispositionForCurrent(effect, collectReleasedListenerEffects(unreleasedSources)))
+    .map((effect) => dispositionForCurrent(effect, fixtureReleaseCounts))
     .filter((entry) => entry.transport && entry.owner === null && !entry.disposition.startsWith('retained:'));
   if (unreleased.length !== 1) throw new Error('Negative fixture failed to detect an unreleased app listener.');
 }
