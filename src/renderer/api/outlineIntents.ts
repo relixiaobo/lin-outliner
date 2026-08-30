@@ -94,6 +94,7 @@ export const outlineDocumentApi = {
   createCodeBlock,
   setCodeLanguage,
   createSourceNode,
+  setNodeContentAndAddSource,
   addSource,
   replaceSource,
   reorderSource,
@@ -411,9 +412,10 @@ function createSourceNode(
     assetId?: string;
     sourceText?: string;
     name?: string | null;
+    id?: string;
   },
 ): Promise<CommandResult> {
-  const id = freshId('node');
+  const id = options.id ?? freshId('node');
   const valueId = freshId('node');
   const sourceText = options.assetId ? formatAssetSourceUri(options.assetId) : options.sourceText;
   if (!sourceText) return Promise.reject(new Error('Source text is required.'));
@@ -427,6 +429,22 @@ function createSourceNode(
     targets: { binding: 'sourceOwner' },
     changes: [{ kind: 'source', action: 'add', sourceText, valueId }],
   }], focus(id, parentId));
+}
+
+function setNodeContentAndAddSource(
+  ownerId: string,
+  content: RichText,
+  sourceText: string,
+): Promise<CommandResult> {
+  return update(ownerId, [
+    { kind: 'content', value: content },
+    {
+      kind: 'source',
+      action: 'add',
+      sourceText,
+      valueId: freshId('node'),
+    },
+  ], focus(ownerId));
 }
 
 function addSource(ownerId: string, sourceText: string, afterValueId?: string | null): Promise<CommandResult> {

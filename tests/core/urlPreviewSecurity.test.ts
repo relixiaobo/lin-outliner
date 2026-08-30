@@ -58,6 +58,9 @@ describe('URL preview webview security posture', () => {
     expect(MAIN_SRC).toContain('webPreferences.navigateOnDragDrop = false');
     expect(MAIN_SRC).toContain('delete params.preload');
     expect(MAIN_SRC).toContain('delete params.webpreferences');
+    expect(MAIN_SRC).toContain('delete params.httpreferrer');
+    expect(MAIN_SRC).toContain('httpReferrerForUrlPreview(normalizedSrc)');
+    expect(MAIN_SRC).toContain('params.httpreferrer = trustedHttpReferrer');
     expect(MAIN_SRC).toContain('normalizePreviewHttpUrl(src)');
     expect(MAIN_SRC).toContain('normalizePreviewHttpUrl(url)');
     expect(MAIN_SRC).toContain('params.partition = URL_PREVIEW_WEBVIEW_PARTITION');
@@ -86,8 +89,9 @@ describe('URL preview webview security posture', () => {
   test('the renderer URL preview does not request privileged webview features', () => {
     const webview = PREVIEW_RENDERERS_SRC.match(/<webview[\s\S]*?\/>/)?.[0] ?? '';
     expect(webview).toContain('<webview');
-    expect(PREVIEW_RENDERERS_SRC).toContain("import { URL_PREVIEW_WEBVIEW_PARTITION } from '../../../core/urlPreviewSession'");
+    expect(PREVIEW_RENDERERS_SRC).toContain("from '../../../core/urlPreviewSession'");
     expect(webview).toContain('partition={URL_PREVIEW_WEBVIEW_PARTITION}');
+    expect(webview).toContain('httpreferrer={httpReferrerForUrlPreview(previewUrl)}');
     expect(PREVIEW_RENDERERS_SRC).not.toContain("addEventListener('did-stop-loading'");
     expect(PREVIEW_RENDERERS_SRC).not.toContain('file-preview-url-loading');
     expect(webview).not.toContain('preload=');

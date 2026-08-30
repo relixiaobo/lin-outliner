@@ -7,6 +7,7 @@ import {
 import {
   openUrlPreviewFromClick,
   previewTargetForUrl,
+  youtubePreviewRouteForUrl,
 } from '../../src/renderer/ui/preview/urlPreviewRouting';
 
 afterEach(() => {
@@ -15,6 +16,25 @@ afterEach(() => {
 });
 
 describe('URL preview routing', () => {
+  test('routes supported YouTube URLs to a click-to-play embed', () => {
+    for (const url of [
+      'https://www.youtube.com/watch?v=dQw4w9WgXcQ&autoplay=1',
+      'https://youtu.be/dQw4w9WgXcQ?autoplay=1',
+      'https://m.youtube.com/shorts/dQw4w9WgXcQ',
+      'https://www.youtube.com/live/dQw4w9WgXcQ',
+    ]) {
+      expect(youtubePreviewRouteForUrl(url)).toEqual({
+        embedUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=0&playsinline=1',
+        videoId: 'dQw4w9WgXcQ',
+      });
+    }
+  });
+
+  test('leaves ordinary and malformed URLs on the generic web route', () => {
+    expect(youtubePreviewRouteForUrl('https://example.com/watch?v=dQw4w9WgXcQ')).toBeNull();
+    expect(youtubePreviewRouteForUrl('https://www.youtube.com/watch?v=bad!')).toBeNull();
+  });
+
   test('normalizes http(s) URLs into preview targets only', () => {
     expect(previewTargetForUrl('https://example.com/docs', 'Docs')).toEqual({
       kind: 'url',

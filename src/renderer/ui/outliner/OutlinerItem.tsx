@@ -127,7 +127,10 @@ import { makeDraftNode } from './draftRow';
 import { TrailingOptionsPopover } from './TrailingOptionsPopover';
 import { DateValuePicker } from './DateValuePicker';
 import type { FieldValueContext } from '../fields/fieldValueEditors';
-import { fieldValueOpenHref, validateFieldValue } from '../fields/fieldValueValidation';
+import {
+  fieldValueOpenHref,
+  validateFieldValue,
+} from '../fields/fieldValueValidation';
 import { CalendarIcon, ICON_SIZE, OpenIcon, WarningIcon } from '../icons';
 import {
   createPlaceholderInlineField,
@@ -151,6 +154,7 @@ import {
 import { noteOutlinerItemRender } from './renderProbe';
 import { useT } from '../../i18n/I18nProvider';
 import { usePopoverSelection } from './usePopoverSelection';
+import { OutlineSourcePreview, SourcePreviewAffordance } from '../preview/NodeSourcesSection';
 import {
   addOptimisticRemovals,
   clearOptimisticRemovals,
@@ -218,6 +222,7 @@ interface OutlinerItemProps {
   semanticRole?: 'treeitem' | 'presentation';
   hideDisplayFields?: boolean;
   suppressChildFieldEntries?: boolean;
+  outlineSourcePreviewKey?: string;
   tableNextRowId?: NodeId | null;
   onDisclosureToggleAnchor?: (anchorElement: HTMLElement | null) => void;
 }
@@ -321,12 +326,18 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const referenceCycle = node?.type === 'reference'
     && Boolean(referenceTargetId)
     && props.referencePath.includes(childParentId);
-  const rowChildIds = referenceCycle ? [] : outlinerChildren(childParentNode, props.index.byId).filter((childId) => {
+  const rowScopeChildIds = referenceCycle ? [] : outlinerChildren(childParentNode, props.index.byId).filter((childId) => {
     const child = props.index.byId.get(childId);
-    return child?.type !== 'fieldEntry'
-      || !props.suppressChildFieldEntries
-      || !isActiveTableFieldEntry(child, props.index.byId);
+    if (!child || !isContentBearingNode(child)) return false;
+    return !props.suppressChildFieldEntries || !isActiveTableFieldEntry(child, props.index.byId);
   });
+  const rowChildIds = rowScopeChildIds.filter((childId) => (
+    props.index.byId.get(childId)?.type !== 'fieldEntry'
+  ));
+  const firstContentChildId = rowChildIds[0];
+  const firstContentChildIndex = firstContentChildId
+    ? childParentNode?.children.indexOf(firstContentChildId) ?? -1
+    : -1;
   const parentView = readViewConfig(parentNode, props.index.byId);
   const referenceSummary = referenceSummaryForIndex(props.index);
   const displayValues = realNode && displayed && !props.draft && !props.fieldValue
@@ -535,20 +546,53 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const descriptionEditing = props.ui.editingDescriptionId === targetEditId;
   const referenceLikeRow = node.type === 'reference' || pendingReferenceConversion;
   const isCodeBlock = displayed.type === 'codeBlock' && !referenceLikeRow;
-  // Plain text rows host their tag chips INSIDE the editor (an inline widget at the
-  // end of the text) so the chips flow after the last word and wrap with it. Code
-  // rows have no inline text editor, so they keep the tag bar as a sibling below.
+  // Additive layers on a committed field value: a non-blocking validation hint
+  // and (for a well-formed URI / email) an open-link affordance. The hint takes
+  // precedence, so malformed input never exposes a broken link.
+  const fieldValueText = realNode ? displayed.content.text : '';
+  const fieldValueHint = props.fieldValue && fieldDescriptor?.validates && realNode
+    ? validateFieldValue(props.fieldValue.fieldType, fieldValueText, props.fieldValue.constraints)
+    : null;
+  const fieldValueHref = props.fieldValue && fieldDescriptor?.isLink && realNode && !fieldValueHint
+    ? fieldValueOpenHref(props.fieldValue.fieldType, fieldValueText)
+    : null;
+  const showDateTrigger = dateFieldValue && Boolean(realNode);
+  const sourcePreviewPlacement = props.fieldValue?.sourcePreviewPlacement;
+  const sourcePreviewAction = realNode
+    && props.fieldValue
+    && sourcePreviewPlacement
+    && sourcePreviewPlacement !== 'none' ? (
+    <SourcePreviewAffordance
+      index={props.index}
+      ownerId={props.fieldValue.ownerId}
+      valueId={realNode.id}
+    />
+  ) : null;
+  const hasFieldValueAffordances = Boolean(
+    props.fieldValue && (showDateTrigger || fieldValueHint || fieldValueHref || sourcePreviewAction),
+  );
+
+  // Plain text rows host trailing content INSIDE the editor as one inline widget
+  // at the end of the final text block. Tags and ordinary field affordances then
+  // follow the last word and wrap with it instead of becoming a separate row.
+  // Code and whole-field controls have no compatible inline text surface.
   const isPlainTextRow = !isCodeBlock;
   const hasTags = displayed.tags.length > 0;
-  const useInlineTagSlot = isPlainTextRow && !checkboxFieldValue;
-  const inlineTagSlotRef = useRef<HTMLSpanElement | null>(null);
-  if (useInlineTagSlot && hasTags && inlineTagSlotRef.current === null) {
+  const useInlineContentSlot = isPlainTextRow && !checkboxFieldValue;
+  const inlineContentSlotRef = useRef<HTMLSpanElement | null>(null);
+  if (
+    useInlineContentSlot
+    && (hasTags || hasFieldValueAffordances)
+    && inlineContentSlotRef.current === null
+  ) {
     const el = document.createElement('span');
-    el.className = 'row-inline-tag-slot';
+    el.className = 'row-inline-content-slot';
     el.contentEditable = 'false';
-    inlineTagSlotRef.current = el;
+    inlineContentSlotRef.current = el;
   }
-  const inlineTagSlot = useInlineTagSlot && hasTags ? inlineTagSlotRef.current : null;
+  const inlineContentSlot = useInlineContentSlot && (hasTags || hasFieldValueAffordances)
+    ? inlineContentSlotRef.current
+    : null;
   const [externalFileDropPosition, setExternalFileDropPosition] = useState<DropHoverPosition | null>(null);
   const externalFileDropTargetKey = `${props.panelId}:${props.parentId}:${props.nodeId}:${props.draft ? 'draft' : 'row'}:external-file`;
   const clearExternalFileDropState = () => {
@@ -1079,12 +1123,27 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     for (const asset of assets) {
       // Clipboard images are admitted as managed image Sources by construction
       // (filtered on the declared type upstream), so do not re-sniff the bytes.
-      await props.run(() => api.createSourceNode(parentId, insertIndex, {
+      const result = await props.run(() => api.createSourceNode(parentId, insertIndex, {
         assetId: asset.id,
         name: asset.originalFilename,
       }));
+      expandCreatedSourceOwner(result);
       if (insertIndex !== null) insertIndex += 1;
     }
+  };
+
+  const expandSourceOwner = (ownerId: NodeId) => {
+    props.setUi((previous) => {
+      if (previous.expanded.has(ownerId)) return previous;
+      const expanded = new Set(previous.expanded);
+      expanded.add(ownerId);
+      return { ...previous, expanded };
+    });
+  };
+
+  const expandCreatedSourceOwner = (result: CommandRunnerOperationResult) => {
+    if (!result || !('focus' in result) || !result.focus?.nodeId) return;
+    expandSourceOwner(result.focus.nodeId);
   };
 
   const insertAssetNodesAt = async (
@@ -1095,7 +1154,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   ) => {
     let insertIndex = initialIndex;
     for (const asset of assets) {
-      await createAssetNode(props.run, parentId, insertIndex, asset, options);
+      const result = await createAssetNode(props.run, parentId, insertIndex, asset, options);
+      expandCreatedSourceOwner(result);
       if (insertIndex !== null) insertIndex += 1;
     }
   };
@@ -1152,12 +1212,13 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     const canConvertInPlace = shouldConvertRowToImage({
       referenceLikeRow,
       nodeType: displayed.type,
-      hasChildren: row.hasChildren,
+      hasChildren: rowScopeChildIds.length > 0,
       rowTextEmpty,
     });
     if (canConvertInPlace) {
       const [first, ...rest] = assets;
-      await props.run(() => api.addSource(targetEditId, formatAssetSourceUri(first.id)));
+      const result = await props.run(() => api.addSource(targetEditId, formatAssetSourceUri(first.id)));
+      if (result) expandSourceOwner(targetEditId);
       await insertImagesFromAssets(rest);
     } else {
       await insertImagesFromAssets(assets);
@@ -1189,14 +1250,15 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     const canConvertFirstImage = first.mimeType.startsWith('image/') && shouldConvertRowToImage({
       referenceLikeRow,
       nodeType: displayed.type,
-      hasChildren: row.hasChildren,
+      hasChildren: rowScopeChildIds.length > 0,
       rowTextEmpty,
     });
     if (!canConvertFirstImage) {
       await insertAssetNodesAfterCurrentRow(assets, options);
       return;
     }
-    await props.run(() => api.addSource(targetEditId, formatAssetSourceUri(first.id)), options);
+    const result = await props.run(() => api.addSource(targetEditId, formatAssetSourceUri(first.id)), options);
+    if (result) expandSourceOwner(targetEditId);
     const siblings = props.index.byId.get(props.parentId)?.children ?? [];
     const rowIndex = siblings.indexOf(props.nodeId);
     await insertAssetNodesAt(rest, rowIndex >= 0 ? rowIndex + 1 : null, props.parentId, options);
@@ -1281,49 +1343,45 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     clearExternalFileDropState();
   };
 
-  // A pasted remote image URL follows the same Source-backed placement rules.
-  const handlePasteMediaUrl = async (url: string) => {
-    await commitDraft();
-    if (virtualFieldValueDraft && props.fieldValue) {
-      if (!materializeStartedRef.current) {
-        const outcome = await runClaimedVirtualFieldMaterialization(() => props.run(
-            () => props.fieldValue!.materializeImageUrl(props.nodeId, url),
-            {
-              applyFocus: false,
-              beforeApply: rememberMaterializedFieldEntry,
-            },
-          ));
-        if (outcome) {
-          replaceLocalDraftContent(EMPTY_RICH_TEXT);
-        }
-      } else {
-        await props.run(() => api.createSourceNode(
-          materializedFieldParentIdRef.current ?? props.parentId,
-          null,
-          { sourceText: url },
-        ));
-      }
+  const handlePasteBareUrl = (url: string) => {
+    const content = plainText(url);
+    if (props.draft && !realNode) {
+      startOptimisticDraftMaterialization({
+        content,
+        updateUi: (previous) => {
+          const expanded = new Set(previous.expanded);
+          expanded.add(props.nodeId);
+          return { ...previous, expanded };
+        },
+        rollbackUi: (previous) => {
+          const expanded = new Set(previous.expanded);
+          expanded.delete(props.nodeId);
+          return { ...previous, expanded };
+        },
+        command: () => api.createSourceNode(
+          props.parentId,
+          currentDraftCreateIndex(),
+          { sourceText: url, name: url, id: props.nodeId },
+        ),
+      });
       return;
     }
-    const draft = draftContentRef.current;
-    const rowTextEmpty = draft.text.trim().length === 0 && draft.inlineRefs.length === 0;
-    const convertInPlace = shouldConvertRowToImage({
-      referenceLikeRow,
-      nodeType: displayed.type,
-      hasChildren: row.hasChildren,
-      rowTextEmpty,
+    const previousContent = draftContentRef.current;
+    replaceLocalDraftContent(content);
+    void startOptimisticNodePatch({
+      currentUi: props.uiRef.current,
+      setUi: props.setUi,
+      patch: pendingNodePatch(targetEditId, { content }),
+      command: async () => {
+        const result = await props.run(
+          () => api.setNodeContentAndAddSource(targetEditId, content, url),
+          { applyFocus: false },
+        );
+        if (result) expandSourceOwner(targetEditId);
+        return result;
+      },
+      onRejected: () => replaceLocalDraftContent(previousContent),
     });
-    if (convertInPlace) {
-      await props.run(() => api.addSource(targetEditId, url));
-    } else {
-      const siblings = props.index.byId.get(props.parentId)?.children ?? [];
-      const rowIndex = siblings.indexOf(props.nodeId);
-      await props.run(() => api.createSourceNode(
-        props.parentId,
-        rowIndex >= 0 ? rowIndex + 1 : null,
-        { sourceText: url },
-      ));
-    }
   };
 
   const startOptimisticDraftMaterialization = (params: {
@@ -2256,14 +2314,16 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       const contentBeforeSplit = draftContentRef.current;
       const splitIntoChildren = node.type !== 'reference'
         && row.expanded
-        && row.hasChildren;
+        && rowScopeChildIds.length > 0;
       const targetParentId = splitIntoChildren ? props.nodeId : props.parentId;
-      const targetIndex = splitIntoChildren ? 0 : rowIndex >= 0 ? rowIndex + 1 : null;
+      const targetIndex = splitIntoChildren
+        ? firstContentChildIndex >= 0 ? firstContentChildIndex : null
+        : rowIndex >= 0 ? rowIndex + 1 : null;
       await startPendingStructuralCommand(
         {
           parentId: targetParentId,
           ...(splitIntoChildren
-            ? { beforeId: rowChildIds[0] ?? null }
+            ? { beforeId: firstContentChildId ?? null }
             : { afterId: props.nodeId }),
           content: payload.after,
           placement: cursorStart(),
@@ -2275,7 +2335,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             ...(node.type === 'reference'
               ? { targetParentId: props.parentId, targetIndex: rowIndex >= 0 ? rowIndex + 1 : null }
               : splitIntoChildren
-                ? { targetParentId: props.nodeId, targetIndex: 0 }
+                ? { targetParentId: props.nodeId, targetIndex }
                 : {}),
             focusPlacement: { kind: 'start' },
           }, pendingDraft.id), { applyFocus: false });
@@ -2293,14 +2353,16 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       );
       return;
     }
-    const createAsFirstChild = row.expanded && row.hasChildren;
-    const targetParentId = createAsFirstChild ? childParentId : props.parentId;
-    const targetIndex = createAsFirstChild ? 0 : rowIndex >= 0 ? rowIndex + 1 : null;
+    const createInExpandedScope = row.expanded && rowScopeChildIds.length > 0;
+    const targetParentId = createInExpandedScope ? childParentId : props.parentId;
+    const targetIndex = createInExpandedScope
+      ? firstContentChildIndex >= 0 ? firstContentChildIndex : null
+      : rowIndex >= 0 ? rowIndex + 1 : null;
     await startPendingStructuralCommand(
       {
         parentId: targetParentId,
-        ...(createAsFirstChild
-          ? { beforeId: rowChildIds[0] ?? null }
+        ...(createInExpandedScope
+          ? { beforeId: firstContentChildId ?? null }
           : { afterId: props.nodeId }),
         content: EMPTY_RICH_TEXT,
         placement: cursorEnd(),
@@ -2385,7 +2447,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     }
     const intent = resolveContentRowBackspaceAtStartIntent({
       isEmpty,
-      hasChildren: row.hasChildren,
+      hasChildren: rowScopeChildIds.length > 0,
     });
     if (intent === 'block_delete_parent') {
       return;
@@ -2901,20 +2963,48 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     });
   };
 
-  // Additive layers on a committed field value: a non-blocking validation hint
-  // and (for a well-formed url / email) an open-link affordance. The hint takes
-  // precedence — a malformed value shows the hint, not a broken link.
-  const fieldValueText = realNode ? displayed.content.text : '';
-  const fieldValueHint = props.fieldValue && fieldDescriptor?.validates && realNode
-    ? validateFieldValue(props.fieldValue.fieldType, fieldValueText, props.fieldValue.constraints)
-    : null;
-  const fieldValueHref = props.fieldValue && fieldDescriptor?.isLink && realNode && !fieldValueHint
-    ? fieldValueOpenHref(props.fieldValue.fieldType, fieldValueText)
-    : null;
-  // The calendar affordance reopens the picker on a committed date value. The
-  // empty draft is guided by its "Press Space…" placeholder instead, so it shows
-  // no button (avoids a redundant icon beside the placeholder).
-  const showDateTrigger = dateFieldValue && Boolean(realNode);
+  const outlineSourcePreview = realNode && props.outlineSourcePreviewKey ? (
+    <OutlineSourcePreview
+      accessibleName={realNode.content.text.trim() || undefined}
+      index={props.index}
+      ownerId={realNode.id}
+      run={props.run}
+    />
+  ) : null;
+  const fieldValueAffordances = hasFieldValueAffordances ? (
+    <span className="field-value-affordances" data-preserve-selection>
+      {fieldValueHint && (
+        <span
+          className="field-value-hint"
+          role="img"
+          title={fieldValueHint}
+          aria-label={fieldValueHint}
+        >
+          <WarningIcon size={ICON_SIZE.menu} />
+        </span>
+      )}
+      {fieldValueHref && (
+        <ButtonControl
+          className="field-value-affordance field-value-open"
+          aria-label={tf.openLink}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => void api.openExternalUrl(fieldValueHref)}
+        ><OpenIcon size={12} strokeWidth={1.8} /></ButtonControl>
+      )}
+      {showDateTrigger && (
+        <ButtonControl
+          className="field-value-affordance field-value-date-trigger"
+          aria-label={tf.pickADate}
+          aria-expanded={dateOverlayOpen}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => setDateOverlayOpen((open) => !open)}
+        >
+          <CalendarIcon size={13} strokeWidth={1.8} />
+        </ButtonControl>
+      )}
+      {sourcePreviewAction}
+    </span>
+  ) : null;
 
   // The row's primary focus surface. Checkbox drafts and committed values keep
   // the same control and Node ID, so materialization cannot remount the editor.
@@ -2986,7 +3076,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       nodeId={props.nodeId}
       content={renderedDraftContent}
       contentRevision={editorContentRevision}
-      inlineSlotEl={inlineTagSlot}
+      inlineSlotEl={inlineContentSlot}
       readOnly={displayed.locked}
       completed={Boolean(displayed.completedAt)}
       placeholder={fieldValueDraft
@@ -3069,7 +3159,11 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       onPasteOutliner={node.type === 'reference' ? undefined : handlePasteOutliner}
       onPasteImage={node.type === 'reference' ? undefined : (images) => void handlePasteImage(images)}
       onPasteFiles={node.type === 'reference' ? undefined : (files) => void handlePasteFiles(files)}
-      onPasteMediaUrl={node.type === 'reference' ? undefined : (url) => void handlePasteMediaUrl(url)}
+      onPasteBareUrl={
+        node.type === undefined && !props.fieldValue && !displayed.locked
+          ? handlePasteBareUrl
+          : undefined
+      }
       onInlineReferenceClick={pendingReferenceConversion
         ? undefined
         : (target, options) => {
@@ -3120,6 +3214,21 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       row.wrapProps.onDrop?.(event);
     },
   };
+  const rowLeadingElement = (
+    <RowLeading
+      hasChildren={row.hasChildren}
+      expanded={row.expanded}
+      variant={leadingVariant}
+      fieldType={projectFieldTypeById(props.index.byId, displayed.id)}
+      bulletColors={appliedTagColors}
+      tagDefColor={tagDefColor}
+      onToggleExpand={toggleRowDisclosure}
+      onDrillDown={() => props.onRoot(drillDownId)}
+      draggable={row.dragHandleProps.draggable}
+      onDragStart={row.dragHandleProps.onDragStart}
+      onDragEnd={row.dragHandleProps.onDragEnd}
+    />
+  );
 
   return (
     <OutlinerRowShell
@@ -3142,21 +3251,17 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       ].filter(Boolean).join(' '))}
       onSelectFromPointer={row.selectFromPointer}
       onContextMenu={virtualFieldValueDraft ? undefined : openContextMenu}
+      beforeRow={outlineSourcePreview ? (
+        <div className="outline-source-preview-row">
+          {rowLeadingElement}
+          {outlineSourcePreview}
+        </div>
+      ) : undefined}
       rowContent={(
         <>
-        <RowLeading
-          hasChildren={row.hasChildren}
-          expanded={row.expanded}
-          variant={leadingVariant}
-          fieldType={projectFieldTypeById(props.index.byId, displayed.id)}
-          bulletColors={appliedTagColors}
-          tagDefColor={tagDefColor}
-          onToggleExpand={toggleRowDisclosure}
-          onDrillDown={() => props.onRoot(drillDownId)}
-          draggable={row.dragHandleProps.draggable}
-          onDragStart={row.dragHandleProps.onDragStart}
-          onDragEnd={row.dragHandleProps.onDragEnd}
-        />
+        {outlineSourcePreview
+          ? <span className="row-leading-spacer" aria-hidden="true" />
+          : rowLeadingElement}
         <div
           ref={optionAnchorRef}
           className="row-content-line"
@@ -3176,12 +3281,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             />
           )}
           {rowEditorElement}
-          {hasTags && (
-            useInlineTagSlot ? (
-              // Portal the chips into the editor's inline slot so they sit in the
-              // text flow (after the last word, wrapping with it). The slot node
-              // lives inside this row's editor DOM, so it stays within the row.
-              inlineTagSlot && createPortal(
+          {inlineContentSlot && createPortal(
+            <>
+              {hasTags && (
                 <TagBar
                   nodeId={targetEditId}
                   tagIds={displayed.tags}
@@ -3190,11 +3292,14 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
                   setUi={props.setUi}
                   run={props.run}
                   onRoot={props.onRoot}
-                />,
-                inlineTagSlot,
-              )
-            ) : (
-              <TagBar
+                />
+              )}
+              {fieldValueAffordances}
+            </>,
+            inlineContentSlot,
+          )}
+          {hasTags && !useInlineContentSlot && (
+            <TagBar
                 nodeId={targetEditId}
                 tagIds={displayed.tags}
                 index={props.index}
@@ -3203,41 +3308,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
                 run={props.run}
                 onRoot={props.onRoot}
               />
-            )
           )}
-          {props.fieldValue && (showDateTrigger || fieldValueHint || fieldValueHref) && (
-            <span className="field-value-affordances" data-preserve-selection>
-              {fieldValueHint && (
-                <span
-                  className="field-value-hint"
-                  role="img"
-                  title={fieldValueHint}
-                  aria-label={fieldValueHint}
-                >
-                  <WarningIcon size={ICON_SIZE.menu} />
-                </span>
-              )}
-              {fieldValueHref && (
-                <ButtonControl
-                  className="field-value-affordance field-value-open"
-                  aria-label={tf.openLink}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => void api.openExternalUrl(fieldValueHref)}
-                ><OpenIcon size={12} strokeWidth={1.8} /></ButtonControl>
-              )}
-              {showDateTrigger && (
-                <ButtonControl
-                  className="field-value-affordance field-value-date-trigger"
-                  aria-label={tf.pickADate}
-                  aria-expanded={dateOverlayOpen}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => setDateOverlayOpen((open) => !open)}
-                >
-                  <CalendarIcon size={13} strokeWidth={1.8} />
-                </ButtonControl>
-              )}
-            </span>
-          )}
+          {!useInlineContentSlot && fieldValueAffordances}
           {!props.hideDisplayFields ? (
             <ViewDisplayFields ariaLabel={t.outliner.viewToolbar.displayedFieldsAriaLabel} values={displayValues} />
           ) : null}
@@ -3614,8 +3686,10 @@ function outlinerItemPropsEqual(prev: OutlinerItemProps, next: OutlinerItemProps
   if (prev.semanticRole !== next.semanticRole) return false;
   if (prev.hideDisplayFields !== next.hideDisplayFields) return false;
   if (prev.suppressChildFieldEntries !== next.suppressChildFieldEntries) return false;
+  if (prev.outlineSourcePreviewKey !== next.outlineSourcePreviewKey) return false;
   if (prev.tableNextRowId !== next.tableNextRowId) return false;
   if (prev.optimisticChange !== next.optimisticChange) return false;
+  if (prev.fieldValue?.sourcePreviewPlacement !== next.fieldValue?.sourcePreviewPlacement) return false;
   // Drag start/end is infrequent; re-render every row so drag handlers close over
   // the current dragId and the dragged row picks up its 'dragging' class.
   if (prev.dragId !== next.dragId) return false;

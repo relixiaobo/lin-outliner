@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { act } from 'react';
+import { act, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import type { PreviewFileSource, PreviewTarget, PreviewUrlSource } from '../../src/core/preview';
@@ -15,6 +15,49 @@ const mounted: Array<{ cleanup: () => void }> = [];
 
 afterEach(() => {
   while (mounted.length) mounted.pop()?.cleanup();
+});
+
+describe('FilePreviewShell type-specific chrome', () => {
+  test('renders images directly with only an ellipsis action menu', () => {
+    const rendered = render(
+      <FilePreviewShell
+        accessibleName="Release cover"
+        state={{ status: 'ready', source: imageSource() }}
+        onOpenTarget={() => undefined}
+        primaryOpen={{ label: 'Open with default app', run: () => undefined }}
+        menuActions={[menuAction('reveal')]}
+      />,
+    );
+
+    expect(rendered.document.querySelector('.file-node-body--image')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-node-preview--image')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-image img')?.getAttribute('alt')).toBe('Release cover');
+    expect(rendered.document.querySelector('.file-preview-pill--image .file-preview-pill-more')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-pill-primary')).toBeNull();
+    expect(rendered.document.querySelector('.file-preview-resize-handle')).toBeNull();
+    expect(rendered.document.querySelector('.file-node-preview--image.collapsed')).toBeNull();
+    expect(rendered.document.querySelector('.file-node-preview--image.expanded')).toBeNull();
+  });
+
+  test('keeps Expand and resize chrome for document previews', () => {
+    const rendered = render(
+      <FilePreviewShell
+        state={{ status: 'ready', source: htmlSource() }}
+        onOpenTarget={() => undefined}
+        primaryOpen={{ label: 'Open with default app', run: () => undefined }}
+        menuActions={[menuAction('reveal')]}
+      />,
+      {
+        lin: {
+          invoke: () => new Promise(() => undefined),
+        },
+      },
+    );
+
+    expect(rendered.document.querySelector('.file-node-preview--html.collapsed')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-pill-primary')?.textContent).toBe('Expand');
+    expect(rendered.document.querySelector('.file-preview-resize-handle')).not.toBeNull();
+  });
 });
 
 describe('FilePreviewShell media controls', () => {
@@ -33,8 +76,7 @@ describe('FilePreviewShell media controls', () => {
     expect(rendered.document.querySelector('.file-node-body--media')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-preview--media')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-preview--media-video')).not.toBeNull();
-    expect(rendered.document.querySelector('.file-preview-pill--media')).toBeNull();
-    expect(rendered.document.querySelector('.file-node-preview--media > .file-preview-pill--media')).toBeNull();
+    expect(rendered.document.querySelector('.file-preview-pill--image')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-pill--footer')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-pill-primary')).toBeNull();
     const video = rendered.document.querySelector('.file-preview-video');
@@ -61,8 +103,7 @@ describe('FilePreviewShell media controls', () => {
     expect(rendered.document.querySelector('.file-node-body--media-audio')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-preview--media')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-preview--media-audio')).not.toBeNull();
-    expect(rendered.document.querySelector('.file-preview-pill--media')).toBeNull();
-    expect(rendered.document.querySelector('.file-node-preview--media > .file-preview-pill--media')).toBeNull();
+    expect(rendered.document.querySelector('.file-preview-pill--image')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-pill--footer')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-pill-primary')).toBeNull();
     const audio = rendered.document.querySelector('.file-preview-audio');
@@ -158,6 +199,26 @@ describe('FilePreviewShell URL previews', () => {
     expect(rendered.document.querySelector('.file-node-body--url')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-preview--url.expanded')).not.toBeNull();
     expect(rendered.document.querySelector('.file-preview-message')).toBeNull();
+    expect(rendered.document.querySelector('.file-preview-pill')).toBeNull();
+    expect(rendered.document.querySelector('.file-preview-resize-handle')).toBeNull();
+  });
+
+  test('renders YouTube as a bounded click-to-play player', () => {
+    const rendered = render(
+      <FilePreviewShell
+        state={{ status: 'ready', source: youtubeSource() }}
+        onOpenTarget={() => undefined}
+        menuActions={[menuAction('open')]}
+      />,
+    );
+
+    const webview = rendered.document.querySelector('.file-preview-youtube-webview');
+    expect(webview?.getAttribute('src'))
+      .toBe('https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=0&playsinline=1');
+    expect(rendered.document.querySelector('.file-preview-youtube')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-node-body--youtube')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-node-preview--youtube')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-node-preview--url')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-pill')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-resize-handle')).toBeNull();
   });
@@ -321,6 +382,38 @@ describe('FilePreviewShell URL previews', () => {
     expect(invocations).toEqual([]);
     expect(rendered.document.querySelector('output')?.getAttribute('data-status')).toBe('ready');
   });
+
+  test('keeps a ready preview mounted when an equivalent target object is rendered', async () => {
+    const invocations: string[] = [];
+    const rendered = render(
+      <EquivalentTargetProbe />,
+      {
+        lin: {
+          invoke: (command) => {
+            invocations.push(command);
+            return Promise.resolve({ source: imageSource() });
+          },
+        },
+      },
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(rendered.document.querySelector('output')?.getAttribute('data-status')).toBe('ready');
+    expect(invocations).toHaveLength(1);
+
+    const rerender = rendered.document.querySelector('button');
+    if (!(rerender instanceof rendered.window.HTMLElement)) throw new Error('Missing rerender control');
+    await act(async () => {
+      rerender.click();
+      await Promise.resolve();
+    });
+
+    expect(rendered.document.querySelector('output')?.getAttribute('data-status')).toBe('ready');
+    expect(invocations).toHaveLength(1);
+  });
 });
 
 function mediaSource(mimeType: string): PreviewFileSource {
@@ -338,6 +431,21 @@ function mediaSource(mimeType: string): PreviewFileSource {
   };
 }
 
+function imageSource(): PreviewFileSource {
+  return {
+    kind: 'file',
+    sourceKind: 'asset',
+    id: 'asset:image',
+    target: { kind: 'asset', assetId: 'asset-image' },
+    name: 'cover.png',
+    ext: 'png',
+    mimeType: 'image/png',
+    entryKind: 'file',
+    sizeBytes: 1024,
+    streamUrl: 'asset://image',
+  };
+}
+
 function urlSource(): PreviewUrlSource {
   return {
     kind: 'url',
@@ -345,6 +453,16 @@ function urlSource(): PreviewUrlSource {
     target: { kind: 'url', url: 'https://example.com/docs', label: 'Example docs' },
     title: 'Example docs',
     url: 'https://example.com/docs',
+  };
+}
+
+function youtubeSource(): PreviewUrlSource {
+  return {
+    kind: 'url',
+    id: 'url:youtube',
+    target: { kind: 'url', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&autoplay=1' },
+    title: 'YouTube video',
+    url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&autoplay=1',
   };
 }
 
@@ -400,6 +518,16 @@ function PreviewSourceProbe({ target }: { target: PreviewTarget }) {
     >
       {state.status}
     </output>
+  );
+}
+
+function EquivalentTargetProbe() {
+  const [, setRevision] = useState(0);
+  return (
+    <>
+      <button type="button" onClick={() => setRevision((current) => current + 1)}>Rerender</button>
+      <PreviewSourceProbe target={{ kind: 'asset', assetId: 'asset-image', label: 'Cover' }} />
+    </>
   );
 }
 

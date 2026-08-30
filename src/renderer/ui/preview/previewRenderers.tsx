@@ -11,6 +11,7 @@ import {
   type KeyboardEvent,
   type PointerEvent,
   type ReactElement,
+  type ReactNode,
   type RefObject,
 } from 'react';
 import Markdown from 'react-markdown';
@@ -23,9 +24,12 @@ import type {
   PreviewTarget,
   PreviewUrlSource,
 } from '../../../core/preview';
-import { normalizePreviewHttpUrl } from '../../../core/preview';
+import { normalizePreviewHttpUrl, previewTargetKey } from '../../../core/preview';
 import { mediaKindForMimeType } from '../../../core/mediaKind';
-import { URL_PREVIEW_WEBVIEW_PARTITION } from '../../../core/urlPreviewSession';
+import {
+  httpReferrerForUrlPreview,
+  URL_PREVIEW_WEBVIEW_PARTITION,
+} from '../../../core/urlPreviewSession';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import {
@@ -62,7 +66,7 @@ import {
   writePdfReadingPosition,
   type PdfReadingPosition,
 } from './readingPositionStore';
-import { openUrlPreviewFromClick } from './urlPreviewRouting';
+import { openUrlPreviewFromClick, youtubePreviewRouteForUrl } from './urlPreviewRouting';
 import { usePreviewObjectUrl } from './usePreviewObjectUrl';
 
 type FilePreviewLabels = ReturnType<typeof useT>['shell']['filePreview'];
@@ -92,24 +96,30 @@ type TextState =
 
 /**
  * Resolve a PreviewTarget to its source descriptor (loading → ready/missing).
- * Shared by the unified file preview body and inline preview block. Pass a
- * referentially-stable `target` (useMemo) so the resolve effect does not re-fire
- * every render.
+ * Shared by the unified file preview body and inline preview block. Equivalent
+ * targets retain one semantic identity so ordinary parent re-renders do not
+ * restart resolution or collapse a ready preview back to loading.
  */
 export function usePreviewSource(target: PreviewTarget): PreviewSourceState {
+  const targetIdentity = `${previewTargetKey(target)}\0${target.label ?? ''}`;
+  const stableTargetRef = useRef({ identity: targetIdentity, target });
+  if (stableTargetRef.current.identity !== targetIdentity) {
+    stableTargetRef.current = { identity: targetIdentity, target };
+  }
+  const stableTarget = stableTargetRef.current.target;
   const [state, setState] = useState<PreviewSourceState>(() => (
-    target.kind === 'url' ? previewSourceStateForUrlTarget(target) : { status: 'loading' }
+    stableTarget.kind === 'url' ? previewSourceStateForUrlTarget(stableTarget) : { status: 'loading' }
   ));
   useEffect(() => {
     let cancelled = false;
-    if (target.kind === 'url') {
-      setState(previewSourceStateForUrlTarget(target));
+    if (stableTarget.kind === 'url') {
+      setState(previewSourceStateForUrlTarget(stableTarget));
       return () => {
         cancelled = true;
       };
     }
     setState({ status: 'loading' });
-    void api.resolvePreviewSource(target)
+    void api.resolvePreviewSource(stableTarget)
       .then((result) => {
         if (cancelled) return;
         setState(result.source ? { status: 'ready', source: result.source } : { status: 'missing', error: result.error });
@@ -121,7 +131,7 @@ export function usePreviewSource(target: PreviewTarget): PreviewSourceState {
     return () => {
       cancelled = true;
     };
-  }, [target]);
+  }, [stableTarget]);
   return state;
 }
 
@@ -182,6 +192,7 @@ function clampPreviewHeight(height: number) {
 }
 
 export interface PreviewRendererProps {
+  accessibleName?: string;
   displayMode: FilePreviewDisplayMode;
   mediaActions?: ReactElement | null;
   onEpubTranslationSurfaceChange?: (surface: EpubTranslationDomAdapter | null) => void;
@@ -198,41 +209,57 @@ export interface PreviewRendererProps {
 }
 
 interface PreviewRendererEntry {
-  id: string;
   match: (source: PreviewFileSource) => boolean;
   component: (props: PreviewRendererProps) => ReactElement;
+  presentation: PreviewPresentation;
 }
 
+export type PreviewPresentation = 'document' | 'image' | 'media' | 'metadata' | 'web' | 'youtube';
+
+const METADATA_PREVIEW_RENDERER: PreviewRendererEntry = {
+  match: () => true,
+  component: MetadataPreview,
+  presentation: 'metadata',
+};
+
 const FILE_PREVIEW_RENDERERS: PreviewRendererEntry[] = [
-  { id: 'directory', match: (source) => source.entryKind === 'directory', component: DirectoryPreview },
-  { id: 'image', match: isImageSource, component: ImagePreview },
-  { id: 'pdf', match: isPdfSource, component: PdfPreview },
-  { id: 'epub', match: isEpubSource, component: EpubPreviewLoader },
-  { id: 'audio', match: isAudioSource, component: AudioPreview },
-  { id: 'video', match: isVideoSource, component: VideoPreview },
-  { id: 'html', match: isHtmlSource, component: HtmlPreview },
-  { id: 'markdown', match: isMarkdownSource, component: MarkdownPreview },
-  { id: 'delimited', match: isDelimitedSource, component: DelimitedPreview },
-  { id: 'text', match: isTextSource, component: TextPreview },
-  { id: 'metadata', match: () => true, component: MetadataPreview },
+  { match: (source) => source.entryKind === 'directory', component: DirectoryPreview, presentation: 'document' },
+  { match: isImageSource, component: ImagePreview, presentation: 'image' },
+  { match: isPdfSource, component: PdfPreview, presentation: 'document' },
+  { match: isEpubSource, component: EpubPreviewLoader, presentation: 'document' },
+  { match: isAudioSource, component: AudioPreview, presentation: 'media' },
+  { match: isVideoSource, component: VideoPreview, presentation: 'media' },
+  { match: isHtmlSource, component: HtmlPreview, presentation: 'document' },
+  { match: isMarkdownSource, component: MarkdownPreview, presentation: 'document' },
+  { match: isDelimitedSource, component: DelimitedPreview, presentation: 'document' },
+  { match: isTextSource, component: TextPreview, presentation: 'document' },
+  METADATA_PREVIEW_RENDERER,
 ];
 
 /**
- * Whether a resolved source has a real content renderer (anything but the metadata
- * fallback). Drives the preview pill: a previewable source gets Expand/Collapse; a
- * non-previewable one (the metadata card) gets Open-with-default-app as its primary.
+ * Resolve both content and chrome from the same ordered registry. MIME and extension
+ * matching stays in the renderer entries; shells consume only the presentation.
  */
+export function previewPresentationForSource(source: PreviewSourceDescriptor): PreviewPresentation {
+  if (source.kind === 'url') return youtubePreviewRouteForUrl(source.url) ? 'youtube' : 'web';
+  return previewRendererEntryForFile(source).presentation;
+}
+
 export function isPreviewableSource(source: PreviewSourceDescriptor): boolean {
-  if (source.kind === 'url') return true;
-  const entry = FILE_PREVIEW_RENDERERS.find((candidate) => candidate.match(source));
-  return entry ? entry.id !== 'metadata' : false;
+  return previewPresentationForSource(source) !== 'metadata';
 }
 
 export function isPassivePlaybackSource(source: PreviewSourceDescriptor): boolean {
-  return source.kind === 'file' && (isAudioSource(source) || isVideoSource(source));
+  return previewPresentationForSource(source) === 'media';
+}
+
+function previewRendererEntryForFile(source: PreviewFileSource): PreviewRendererEntry {
+  return FILE_PREVIEW_RENDERERS.find((entry) => entry.match(source))
+    ?? METADATA_PREVIEW_RENDERER;
 }
 
 export function PreviewRenderer({
+  accessibleName,
   displayMode,
   onEpubTranslationSurfaceChange,
   onSummaryPageSelect,
@@ -245,6 +272,7 @@ export function PreviewRenderer({
   scrollRootRef,
   mediaActions,
 }: {
+  accessibleName?: string;
   displayMode: FilePreviewDisplayMode;
   mediaActions?: ReactElement | null;
   onEpubTranslationSurfaceChange?: (surface: EpubTranslationDomAdapter | null) => void;
@@ -266,9 +294,10 @@ export function PreviewRenderer({
       />
     );
   }
-  const Renderer = FILE_PREVIEW_RENDERERS.find((entry) => entry.match(source))?.component ?? MetadataPreview;
+  const Renderer = previewRendererEntryForFile(source).component;
   return (
     <Renderer
+      accessibleName={accessibleName}
       displayMode={displayMode}
       onEpubTranslationSurfaceChange={onEpubTranslationSurfaceChange}
       onSummaryPageSelect={onSummaryPageSelect}
@@ -283,6 +312,10 @@ export function PreviewRenderer({
 }
 
 export interface FilePreviewShellProps {
+  /** User-authored Node content used to name an image-backed Source. */
+  accessibleName?: string;
+  /** Optional shared action group anchored to the preview body's upper-right corner. */
+  cornerAction?: ReactNode;
   state: PreviewSourceState;
   onOpenTarget: (target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
   /** The OS-default-app open action (asset / local file / url). Null when not openable. */
@@ -301,17 +334,16 @@ export interface FilePreviewShellProps {
 }
 
 /**
- * The shared body of a file preview: the rendered content in an internally-scrolling
- * stage with a single bottom-center floating pill (primary + `⋯`), replacing the old
- * top meta+actions toolbar. Both loose previews and selected Node Sources reuse it
- * (the established `.file-node-*` classes name this preview renderer, not a Node type). A previewable
- * source toggles between a rounded summary strip and an expanded full-scroll reader;
- * a non-previewable one (the metadata card) renders at natural height with
- * Open-with-default-app as the same pill's primary. Callers supply the open action +
- * the `⋯` menu actions; the resolved-source rendering and the action location are
- * common across non-image file types.
+ * Shared preview body for loose previews and selected Node Sources. The renderer
+ * registry resolves a presentation policy: documents own summary/full chrome,
+ * images render directly with an action-only menu, media owns playback controls,
+ * webpages stay single-layer, YouTube uses a bounded player, and unsupported files
+ * use metadata actions. A Source surface can provide shared corner chrome; when it
+ * does, presentation-specific controls keep content actions only.
  */
 export function FilePreviewShell({
+  accessibleName,
+  cornerAction,
   state,
   onOpenTarget,
   primaryOpen = null,
@@ -328,16 +360,20 @@ export function FilePreviewShell({
   const [expanded, setExpanded] = useState(initialExpanded);
   const [previewHeights, setPreviewHeights] = useState<{ summary?: number; full?: number }>({});
   const [scrollToPageNumber, setScrollToPageNumber] = useState<number | null>(null);
-  const previewable = state.status === 'ready' && isPreviewableSource(state.source);
-  const passivePlayback = state.status === 'ready' && isPassivePlaybackSource(state.source);
+  const presentation = state.status === 'ready' ? previewPresentationForSource(state.source) : null;
+  const previewable = presentation !== null && presentation !== 'metadata';
+  const documentPreview = presentation === 'document';
+  const imagePreview = presentation === 'image';
+  const passivePlayback = presentation === 'media';
   const mediaKind = state.status === 'ready' ? mediaKindForSource(state.source) : null;
-  const urlPreview = state.status === 'ready' && state.source.kind === 'url';
+  const webPreview = presentation === 'web';
+  const youtubePreview = presentation === 'youtube';
   const documentKind = state.status === 'ready' && state.source.kind === 'file'
     ? documentKindForSource(state.source)
     : null;
   const metadataFallback = state.status === 'ready' && !previewable;
-  const effectiveExpanded = readerMode || passivePlayback || urlPreview || expanded;
-  const displayMode: FilePreviewDisplayMode = previewable && !effectiveExpanded ? 'summary' : 'full';
+  const effectiveExpanded = readerMode || !documentPreview || expanded;
+  const displayMode: FilePreviewDisplayMode = documentPreview && !effectiveExpanded ? 'summary' : 'full';
   const resizedHeight = displayMode === 'summary' ? previewHeights.summary : previewHeights.full;
   const toggleExpanded = () => {
     setExpanded((value) => {
@@ -381,19 +417,22 @@ export function FilePreviewShell({
     const direction = event.key === 'ArrowDown' ? 1 : -1;
     setResizedHeight((resizedHeight ?? preview.getBoundingClientRect().height) + direction * PREVIEW_RESIZE_KEY_STEP);
   };
-  // A non-previewable source (metadata card) needs no collapse/expand stage, so it
-  // carries only the base class — `.collapsed` / `.expanded` are the only stage rules.
+  const expansionClass = documentPreview
+    ? (effectiveExpanded ? 'expanded' : 'collapsed')
+    : readerMode || webPreview ? 'expanded' : '';
   const stageClass = [
     'file-node-preview',
     `file-node-preview--${displayMode}`,
     metadataFallback ? 'file-node-preview--metadata' : '',
+    imagePreview ? 'file-node-preview--image' : '',
     passivePlayback ? 'file-node-preview--media' : '',
-    urlPreview ? 'file-node-preview--url' : '',
+    webPreview ? 'file-node-preview--url' : '',
+    youtubePreview ? 'file-node-preview--youtube' : '',
     documentKind ? `file-node-preview--${documentKind}` : '',
     mediaKind ? `file-node-preview--media-${mediaKind}` : '',
     readerMode ? 'file-node-preview--reader' : '',
     resizedHeight !== undefined ? 'resized' : '',
-    previewable ? (effectiveExpanded ? 'expanded' : 'collapsed') : '',
+    expansionClass,
   ].filter(Boolean).join(' ');
   const previewStyle = resizedHeight !== undefined
     ? ({ '--file-preview-resized-height': `${resizedHeight}px` } as CSSProperties)
@@ -401,31 +440,53 @@ export function FilePreviewShell({
   const bodyClass = [
     'file-node-body',
     metadataFallback ? 'file-node-body--metadata' : '',
+    imagePreview ? 'file-node-body--image' : '',
     passivePlayback ? 'file-node-body--media' : '',
-    urlPreview ? 'file-node-body--url' : '',
+    webPreview ? 'file-node-body--url' : '',
+    youtubePreview ? 'file-node-body--youtube' : '',
     documentKind ? `file-node-body--${documentKind}` : '',
     mediaKind ? `file-node-body--media-${mediaKind}` : '',
     readerMode ? 'file-node-body--reader' : '',
   ]
     .filter(Boolean)
     .join(' ');
-  const pill = state.status !== 'loading' && !readerMode && !passivePlayback && !urlPreview ? (
-    // Hold the pill until the source resolves: while loading, `previewable` is
-    // false, so the primary would briefly be "Open with default app" and a click
-    // in that window would open the file externally instead of toggling the
-    // preview it is about to become.
+  const documentActions = !readerMode && documentPreview ? (
     <FilePreviewPill
-      previewable={previewable}
+      previewable
       expanded={expanded}
       onToggleExpand={toggleExpanded}
-      primaryMode={passivePlayback ? 'none' : previewable ? 'toggle' : 'open'}
+      primaryMode="toggle"
+      primaryOpen={cornerAction ? null : primaryOpen}
+      menuActions={cornerAction ? [] : menuActions}
+      meta={meta}
+    />
+  ) : null;
+  const imageActions = !readerMode && imagePreview && !cornerAction ? (
+    <FilePreviewPill
+      previewable
+      expanded
+      onToggleExpand={toggleExpanded}
+      primaryMode="none"
       primaryOpen={primaryOpen}
       menuActions={menuActions}
       meta={meta}
-      placement={metadataFallback ? 'footer' : 'overlay'}
+      placement="image"
     />
   ) : null;
-  const mediaActions = state.status !== 'loading' && !readerMode && passivePlayback ? (
+  const metadataActions = state.status !== 'loading' && !readerMode && !cornerAction
+    && (metadataFallback || state.status === 'missing') ? (
+      <FilePreviewPill
+        previewable={false}
+        expanded={false}
+        onToggleExpand={toggleExpanded}
+        primaryMode="open"
+        primaryOpen={primaryOpen}
+        menuActions={menuActions}
+        meta={meta}
+        placement="footer"
+      />
+    ) : null;
+  const mediaActions = state.status !== 'loading' && !readerMode && passivePlayback && !cornerAction ? (
     <FilePreviewPill
       previewable={previewable}
       expanded={expanded}
@@ -446,6 +507,7 @@ export function FilePreviewShell({
           <PreviewMessage>{state.error === 'too-large' ? labels.tooLarge : labels.unavailable}</PreviewMessage>
         ) : (
           <PreviewRenderer
+            accessibleName={accessibleName}
             displayMode={displayMode}
             onEpubTranslationSurfaceChange={onEpubTranslationSurfaceChange}
             onSummaryPageSelect={openSummaryPage}
@@ -459,10 +521,12 @@ export function FilePreviewShell({
             mediaActions={mediaActions}
           />
         )}
-        {metadataFallback ? pill : null}
+        {metadataActions}
       </div>
-      {metadataFallback ? null : pill}
-      {previewable && !readerMode && !passivePlayback && !urlPreview ? (
+      {cornerAction}
+      {documentActions}
+      {imageActions}
+      {documentPreview && !readerMode ? (
         <div
           aria-label="Resize preview"
           aria-orientation="horizontal"
@@ -541,7 +605,7 @@ function DirectoryPreview({ onOpenTarget, source }: PreviewRendererProps) {
   );
 }
 
-function ImagePreview({ source }: PreviewRendererProps) {
+function ImagePreview({ accessibleName, source }: PreviewRendererProps) {
   const labels = useT().shell.filePreview;
   // Prefer the stream URL; otherwise read bytes (shared cancel/revoke machine). The
   // thumbnail data URL is the placeholder while the read is in flight or on failure.
@@ -554,7 +618,7 @@ function ImagePreview({ source }: PreviewRendererProps) {
   if (!src) return <PreviewMessage>{labels.loading}</PreviewMessage>;
   return (
     <figure className="file-preview-image">
-      <img alt={labels.imageAlt({ name: source.name })} src={src} />
+      <img alt={accessibleName?.trim() || labels.imageAlt({ name: source.name })} src={src} />
       {isError ? <figcaption>{labels.tooLarge}</figcaption> : null}
     </figure>
   );
@@ -569,6 +633,8 @@ function UrlPreview({
   onWebviewChange?: (webview: Electron.WebviewTag | null) => void;
   source: PreviewUrlSource;
 }) {
+  const youtubeRoute = youtubePreviewRouteForUrl(source.url);
+  const previewUrl = youtubeRoute?.embedUrl ?? source.url;
   const webviewRef = useRef<Electron.WebviewTag | null>(null);
   const setWebviewRef = useCallback((webview: Electron.WebviewTag | null) => {
     webviewRef.current = webview;
@@ -601,13 +667,19 @@ function UrlPreview({
   }, [onMetadataChange]);
 
   return (
-    <div className="file-preview-url" data-preserve-selection>
+    <div
+      className={youtubeRoute ? 'file-preview-youtube' : 'file-preview-url'}
+      data-preserve-selection
+    >
       <webview
         allowpopups={ENABLE_WEBVIEW_POPUPS}
-        className="file-preview-url-webview"
+        className={youtubeRoute
+          ? 'file-preview-url-webview file-preview-youtube-webview'
+          : 'file-preview-url-webview'}
+        httpreferrer={httpReferrerForUrlPreview(previewUrl)}
         partition={URL_PREVIEW_WEBVIEW_PARTITION}
         ref={setWebviewRef}
-        src={source.url}
+        src={previewUrl}
         title={source.title}
       />
     </div>

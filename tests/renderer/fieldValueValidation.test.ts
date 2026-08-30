@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { validateFieldValue } from '../../src/renderer/ui/fields/fieldValueValidation';
+import {
+  validateFieldValue,
+} from '../../src/renderer/ui/fields/fieldValueValidation';
 
 describe('validateFieldValue (non-blocking)', () => {
   test('empty value never warns', () => {
@@ -32,5 +34,20 @@ describe('validateFieldValue (non-blocking)', () => {
   test('non-number field types are not range-validated', () => {
     expect(validateFieldValue('plain', 'anything', { min: 1, max: 5 })).toBeNull();
     expect(validateFieldValue(undefined, '999', { max: 5 })).toBeNull();
+  });
+});
+
+describe('URI field validation', () => {
+  test('accepts Web, file, managed-asset, and other absolute URIs', () => {
+    expect(validateFieldValue('uri', 'asset://local/asset%3Aimage')).toBeNull();
+    expect(validateFieldValue('uri', 'file:///Users/example/image.png')).toBeNull();
+    expect(validateFieldValue('uri', 'https://example.com/image.png')).toBeNull();
+    expect(validateFieldValue('uri', 'ftp://example.com/image.png')).toBeNull();
+  });
+
+  test('warns for malformed values and keeps empty values neutral', () => {
+    expect(validateFieldValue('uri', 'not a URI')).toBe('Value should be a URI');
+    expect(validateFieldValue('uri', 'asset:')).toBe('Value should be a URI');
+    expect(validateFieldValue('uri', '')).toBeNull();
   });
 });

@@ -96,6 +96,23 @@ describe('Node Sources renderer state', () => {
     await act(async () => { root.render(<Probe ids={['source:a']} />); });
     expect(container.textContent).toBe('source:a:false');
   });
+
+  test('shows the first Source after an owner returns from an empty state', async () => {
+    let view: ReturnType<typeof useNodeSourceViewState> | null = null;
+    const Probe = ({ ids }: { ids: readonly string[] }) => {
+      const current = useNodeSourceViewState('owner', ids);
+      useEffect(() => { view = current; }, [current]);
+      return <output>{`${current.selectedValueId}:${current.previewVisible}`}</output>;
+    };
+
+    await act(async () => { root.render(<Probe ids={['source:a']} />); });
+    act(() => view?.setPreviewVisible(false));
+    await act(async () => { root.render(<Probe ids={[]} />); });
+    expect(container.textContent).toBe('null:true');
+
+    await act(async () => { root.render(<Probe ids={['source:new']} />); });
+    expect(container.textContent).toBe('source:new:true');
+  });
 });
 
 function ResolutionProbe({ values }: { values: readonly NodeSourceDescriptor[] }) {

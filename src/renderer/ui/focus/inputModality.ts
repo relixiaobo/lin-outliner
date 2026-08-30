@@ -25,6 +25,7 @@ export function installInputModalityTracking(
 
   const setModality = (modality: InputModality) => {
     root.dataset.inputModality = modality;
+    root.style.setProperty('--focus-ring-modality', modality === 'keyboard' ? '1' : '0');
   };
 
   const handlePointerDown = () => setModality('pointer');

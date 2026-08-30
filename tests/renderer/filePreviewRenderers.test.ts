@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import type { PreviewSourceDescriptor } from '../../src/core/preview';
-import { isPassivePlaybackSource, isPreviewableSource } from '../../src/renderer/ui/preview/previewRenderers';
+import {
+  isPassivePlaybackSource,
+  isPreviewableSource,
+  previewPresentationForSource,
+} from '../../src/renderer/ui/preview/previewRenderers';
 
 function fileSource(overrides: Partial<Extract<PreviewSourceDescriptor, { kind: 'file' }>>): PreviewSourceDescriptor {
   return {
@@ -19,13 +23,28 @@ function fileSource(overrides: Partial<Extract<PreviewSourceDescriptor, { kind: 
 
 describe('file preview renderers', () => {
   test('treats URL sources as previewable web pages', () => {
-    expect(isPreviewableSource({
+    const source: PreviewSourceDescriptor = {
       kind: 'url',
       id: 'url:https://example.com/',
       target: { kind: 'url', url: 'https://example.com/' },
       title: 'Example',
       url: 'https://example.com/',
-    })).toBe(true);
+    };
+    expect(isPreviewableSource(source)).toBe(true);
+    expect(previewPresentationForSource(source)).toBe('web');
+  });
+
+  test('gives YouTube URLs a dedicated player presentation', () => {
+    const source: PreviewSourceDescriptor = {
+      kind: 'url',
+      id: 'url:youtube',
+      target: { kind: 'url', url: 'https://youtu.be/dQw4w9WgXcQ' },
+      title: 'Video',
+      url: 'https://youtu.be/dQw4w9WgXcQ',
+    };
+
+    expect(previewPresentationForSource(source)).toBe('youtube');
+    expect(isPreviewableSource(source)).toBe(true);
   });
 
   test('treats HTML as previewable', () => {
@@ -40,6 +59,11 @@ describe('file preview renderers', () => {
       ext: 'htm',
       mimeType: 'application/octet-stream',
     }))).toBe(true);
+    expect(previewPresentationForSource(fileSource({
+      name: 'index.html',
+      ext: 'html',
+      mimeType: 'text/html',
+    }))).toBe('document');
   });
 
   test('treats EPUB as previewable while generic ZIP stays metadata-only', () => {
@@ -54,6 +78,22 @@ describe('file preview renderers', () => {
       ext: 'zip',
       mimeType: 'application/zip',
     }))).toBe(false);
+    expect(previewPresentationForSource(fileSource({
+      name: 'archive.zip',
+      ext: 'zip',
+      mimeType: 'application/zip',
+    }))).toBe('metadata');
+  });
+
+  test('gives images a direct presentation instead of document chrome', () => {
+    const image = fileSource({
+      name: 'cover.png',
+      ext: 'png',
+      mimeType: 'image/png',
+    });
+    expect(isPreviewableSource(image)).toBe(true);
+    expect(previewPresentationForSource(image)).toBe('image');
+    expect(isPassivePlaybackSource(image)).toBe(false);
   });
 
   test('treats MP4 video and MP3 audio as direct-play previewable sources', () => {
@@ -64,6 +104,7 @@ describe('file preview renderers', () => {
     });
     expect(isPreviewableSource(video)).toBe(true);
     expect(isPassivePlaybackSource(video)).toBe(true);
+    expect(previewPresentationForSource(video)).toBe('media');
 
     const audio = fileSource({
       name: 'song.mp3',
@@ -72,6 +113,7 @@ describe('file preview renderers', () => {
     });
     expect(isPreviewableSource(audio)).toBe(true);
     expect(isPassivePlaybackSource(audio)).toBe(true);
+    expect(previewPresentationForSource(audio)).toBe('media');
 
     expect(isPreviewableSource(fileSource({
       name: 'clip.mp4',

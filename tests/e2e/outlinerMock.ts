@@ -1177,6 +1177,18 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
       return bytes.buffer;
     };
+    const previewSmallPngBytes = () => {
+      const base64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+      return bytes.buffer;
+    };
+    const previewImageBytes = (filename?: string) => (
+      filename?.toLowerCase().includes('small-preview')
+        ? previewSmallPngBytes()
+        : previewPngBytes()
+    );
     const applyRichTextPatch = (content: RichText, patch: RichTextPatch): RichText => {
       let next = clone(content);
       for (const op of patch.ops) {
@@ -5640,6 +5652,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 ? previewLongEpubBytes()
                 : previewEpubBytes()
               : null;
+            const browserStreamBytes = epubBytes
+              ?? (asset?.mimeType.startsWith('image/')
+                ? previewImageBytes(asset.originalFilename)
+                : null);
             return clone({
               source: asset ? {
                 kind: 'file',
@@ -5655,8 +5671,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 entryKind: 'file',
                 sizeBytes: asset.byteSize,
                 lastModified: asset.createdAt,
-                streamUrl: epubBytes
-                  ? URL.createObjectURL(new Blob([epubBytes], { type: asset.mimeType }))
+                streamUrl: browserStreamBytes
+                  ? URL.createObjectURL(new Blob([browserStreamBytes], { type: asset.mimeType }))
                   : mockAssetUrl(target.assetId),
               } : null,
             }) as T;
@@ -5675,6 +5691,17 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 entryKind: target.entryKind ?? 'file',
                 sizeBytes: target.entryKind === 'directory' ? 0 : 128,
                 displayPath: target.path,
+              },
+            }) as T;
+          }
+          if (target?.kind === 'url' && target.url) {
+            return clone({
+              source: {
+                kind: 'url',
+                id: `url:${target.url}`,
+                target,
+                title: target.label || target.url,
+                url: target.url,
               },
             }) as T;
           }
@@ -5737,7 +5764,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           }
           const imageAsset = target?.kind === 'asset' && target.assetId ? assets.get(target.assetId) : undefined;
           if (imageAsset?.mimeType?.startsWith('image/')) {
-            return { bytes: previewPngBytes(), mimeType: imageAsset.mimeType } as T;
+            return {
+              bytes: previewImageBytes(imageAsset.originalFilename),
+              mimeType: imageAsset.mimeType,
+            } as T;
           }
           return { bytes: new ArrayBuffer(0), mimeType: 'application/octet-stream' } as T;
         }

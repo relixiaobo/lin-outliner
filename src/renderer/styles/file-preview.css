@@ -13,117 +13,237 @@
   min-width: 0;
 }
 
-.node-sources {
+.node-source-preview-region {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--space-3);
-  margin: var(--space-6) 0;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-6);
 }
 
-.node-sources-header,
-.node-sources-header-actions,
-.node-source-add,
-.node-source-actions {
+/* Tana-style owner composition: preview, then editable Node content, then URI
+   field. Structural marker geometry is owned by the outliner row stylesheet. */
+.outline-source-preview {
+  min-width: 0;
+}
+
+.outline-source-preview > .node-source-preview-region {
+  margin: var(--space-2) 0 var(--space-3);
+}
+
+.node-source-preview-toolbar,
+.node-source-preview-toolbar-actions {
   display: flex;
   align-items: center;
 }
 
-.node-sources-header {
+.node-source-preview-toolbar {
   min-height: var(--control-size-md);
   justify-content: space-between;
   gap: var(--space-3);
 }
 
-.node-sources-header h2 {
-  margin: 0;
-  font-size: var(--title-group);
-  line-height: var(--line-ui-sm);
-  font-weight: 600;
-  user-select: none;
-}
-
-.node-sources-header-actions,
-.node-source-actions {
+.node-source-preview-toolbar-actions {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, var(--control-size-md));
   flex: 0 0 auto;
   gap: var(--space-1);
 }
 
-.node-source-list {
-  display: flex;
+.node-source-preview-label,
+.node-source-switcher {
   min-width: 0;
-  flex-direction: column;
-  border-block: 1px solid var(--separator);
+  max-width: min(420px, calc(100% - 76px));
+  color: var(--text-secondary);
+  font-size: var(--font-ui-sm);
+  font-weight: 500;
+  line-height: var(--line-ui-sm);
+  user-select: none;
 }
 
-.node-source-row {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-2) 0;
-  border-bottom: 1px solid var(--separator);
-}
-
-.node-source-row:last-child {
-  border-bottom: 0;
-}
-
-.node-source-row.is-selected {
-  background: var(--selection-soft);
-}
-
-.node-source-main {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.node-source-status {
-  display: flex;
-  min-width: 0;
-  gap: var(--space-2);
-  color: var(--text-tertiary);
-  font-size: var(--font-ui-xs);
-  line-height: var(--line-ui-xs);
-}
-
-.node-source-status span:last-child {
+.node-source-preview-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.node-source-add {
-  min-width: 0;
+.node-source-switcher {
+  display: inline-flex;
+  align-items: center;
   gap: var(--space-2);
+  border: 0;
+  background: transparent;
+  padding: var(--space-1) 0;
+  text-align: left;
 }
 
-.node-source-add .input-control {
-  flex: 1 1 auto;
+.node-source-switcher > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.node-source-preview {
+.node-source-switcher:hover,
+.node-source-switcher[aria-expanded='true'] {
+  color: var(--text-primary);
+}
+
+.node-source-menu {
+  z-index: var(--z-popover);
+  overflow: auto;
+  border-radius: var(--radius-overlay-sm);
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--overlay-shadow-level-1);
+  padding: var(--space-1);
+}
+
+.node-source-menu-item {
+  display: grid;
+  width: 100%;
+  min-height: var(--control-size-md);
   min-width: 0;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+}
+
+.node-source-menu-item:hover,
+.node-source-menu-item:focus-visible,
+.node-source-menu-item.active {
+  background: var(--control-hover);
+}
+
+.node-source-menu-item.is-destructive {
+  color: var(--status-danger);
+}
+
+.node-source-menu-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-source-menu-meta {
+  color: var(--text-secondary);
+  font-size: var(--font-ui-xs);
+  white-space: nowrap;
+}
+
+.node-source-preview,
+.node-source-message {
+  min-width: 0;
+}
+
+.node-source-message-wrap {
+  position: relative;
+  min-width: 0;
+}
+
+.outline-source-preview-actions {
+  position: absolute;
+  inset-block-start: calc(var(--file-preview-frame-padding-block) + var(--space-1));
+  inset-inline-end: calc(var(--file-preview-frame-padding-inline) + var(--space-1));
+  z-index: var(--z-raised);
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  background: transparent;
+  color: var(--media-hud-fg);
+  user-select: none;
+}
+
+.node-context-menu.file-preview-menu--source-contained {
+  min-width: 0;
+}
+
+.file-preview-pill.file-preview-pill--source-corner {
+  position: static;
+  inset: auto;
+  transform: none;
+}
+
+.file-preview-pill--source-corner .file-preview-pill-more,
+.outline-source-preview-close.icon-button {
+  width: var(--control-size-md);
+  height: var(--control-size-md);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+  color: var(--media-hud-fg);
+  opacity: 0.82;
+  transition: color var(--motion-fast), opacity var(--motion-fast);
+}
+
+.outline-source-preview-close.icon-button {
+  position: static;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.file-preview-pill--source-corner .file-preview-pill-more > svg,
+.outline-source-preview-close.icon-button > svg {
+  filter:
+    drop-shadow(0 1px 2px var(--media-hud-active-bg))
+    drop-shadow(0 0 1px var(--media-hud-active-bg));
+}
+
+.file-preview-pill--source-corner .file-preview-pill-more:hover,
+.file-preview-pill--source-corner .file-preview-pill-more[aria-expanded='true'],
+.outline-source-preview-close.icon-button:hover {
+  background: transparent;
+  color: var(--media-hud-fg);
+  opacity: 1;
+}
+
+.file-preview-pill--source-corner .file-preview-pill-more:active,
+.outline-source-preview-close.icon-button:active {
+  background: transparent;
+  opacity: 0.72;
+}
+
+.file-preview-pill--source-corner .file-preview-pill-more:focus-visible,
+.outline-source-preview-close.icon-button:focus-visible {
+  background: transparent;
+  outline: none;
+  box-shadow: var(--focus-ring-shadow);
 }
 
 .node-source-message {
   min-height: var(--control-size-xl);
-  padding: var(--space-3) 0;
+  padding: var(--space-4) 0;
   color: var(--text-secondary);
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm);
 }
 
-@media (max-width: 720px) {
-  .node-source-row {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.node-source-action-error {
+  grid-column: 1 / -1;
+  justify-self: end;
+  width: max-content;
+  max-width: min(320px, 70vw);
+  color: var(--status-danger);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+}
 
-  .node-source-actions {
-    justify-content: flex-end;
+@media (prefers-reduced-transparency: reduce) {
+  .node-source-menu {
+    background: var(--bg-elevated);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 }
 
@@ -346,12 +466,8 @@
 }
 
 .file-preview-image {
-  display: flex;
-  min-height: 100%;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-4);
+  display: block;
+  min-height: 0;
   margin: 0;
 }
 
@@ -360,6 +476,10 @@
   max-width: 100%;
   max-height: calc(100vh - 160px);
   object-fit: contain;
+}
+
+.file-node-body--image:not(.file-node-body--reader) .file-preview-image img {
+  max-height: min(60vh, 520px);
 }
 
 .file-preview-image figcaption {
@@ -398,6 +518,19 @@
   border: 0;
   border-radius: inherit;
   background: var(--bg-content);
+}
+
+.file-preview-youtube {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: var(--file-preview-frame-radius);
+  background: var(--bg-content);
+  box-shadow: var(--inset-hairline);
+  clip-path: inset(0 round var(--file-preview-frame-radius));
 }
 
 /* Audio / video players in a media Source preview. */
@@ -1097,9 +1230,7 @@
   line-height: var(--line-ui-sm);
 }
 
-/* Preview body with a single bottom-center floating pill, shared by loose previews
-   and selected Node Sources; the unified surface
-   provides the horizontal inset. The body is the positioning context for the pill. */
+/* Shared positioning context for document, direct-media, and metadata controls. */
 .file-node-body {
   position: relative;
   min-width: 0;
@@ -1107,17 +1238,41 @@
   --file-preview-content-inset: var(--space-4);
   --file-preview-frame-padding-block: var(--space-4);
   --file-preview-frame-padding-inline: var(--file-preview-frame-padding-block);
-  --file-preview-frame-radius: var(--radius-xl);
-  --file-preview-page-radius: max(
-    var(--radius-2xs),
-    calc(var(--file-preview-frame-radius) - var(--file-preview-frame-padding-block))
-  );
+  /* The 8px frame radius matches its 8px inset, placing each square inner-page
+     corner at the center of the corresponding outer arc. */
+  --file-preview-frame-radius: var(--radius-md);
+  --file-preview-page-radius: 0;
   --file-preview-scrollbar-gutter: var(--space-4);
 }
 
 .file-node-body--metadata {
   display: inline-block;
   max-width: 100%;
+}
+
+.file-node-body--image {
+  display: inline-block;
+  width: fit-content;
+  max-width: 100%;
+  margin-bottom: var(--space-4);
+}
+
+.file-node-body--image:not(.file-node-body--reader) {
+  max-width: min(720px, 100%);
+}
+
+.file-node-body--image:has(> .outline-source-preview-actions),
+.file-node-body--image:has(> .outline-source-preview-actions) > .file-node-preview--image {
+  min-width: calc(
+    var(--control-size-md) + var(--control-size-md)
+    + var(--file-preview-frame-padding-inline) + var(--file-preview-frame-padding-inline)
+    + var(--space-1) + var(--space-1)
+  );
+  min-height: calc(
+    var(--control-size-md)
+    + var(--file-preview-frame-padding-block) + var(--file-preview-frame-padding-block)
+    + var(--space-1) + var(--space-1)
+  );
 }
 
 .file-node-body--media {
@@ -1143,12 +1298,31 @@
   margin-bottom: 0;
 }
 
+.file-node-body--youtube {
+  display: inline-block;
+  width: min(760px, 100%);
+  max-width: 100%;
+  margin-bottom: var(--space-4);
+}
+
 .file-node-body--reader {
   display: flex;
   min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
   margin-bottom: 0;
+}
+
+.file-node-body--reader.file-node-body--youtube {
+  flex: 0 1 auto;
+  align-self: flex-start;
+}
+
+/* The Outline composition owns the one gap between its preview and title.
+   Shared preview-body margins belong to standalone and Node-page surfaces. */
+.outline-source-preview .file-node-body {
+  margin-bottom: 0;
+  vertical-align: top;
 }
 
 /* The preview stage is one rounded viewport. Previewable sources toggle between a
@@ -1240,6 +1414,23 @@
   max-width: min(360px, 100%);
 }
 
+.file-node-preview--image {
+  position: relative;
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  max-height: none;
+  overflow: hidden;
+  border-radius: var(--file-preview-frame-radius);
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.file-node-preview.file-node-preview--image {
+  padding: 0;
+}
+
 .file-node-preview--media {
   position: relative;
   display: block;
@@ -1270,6 +1461,21 @@
   padding-bottom: 0;
 }
 
+.file-node-preview--youtube {
+  display: block;
+  width: 100%;
+  max-height: none;
+  overflow: visible;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.file-node-preview.file-node-preview--youtube {
+  padding: 0;
+}
+
 .file-node-preview--reader.file-node-preview--url {
   min-height: 0;
 }
@@ -1284,9 +1490,8 @@
   flex: 1 1 auto;
 }
 
-/* The shared bottom-center action bar for every non-image file preview. It is chrome
-   over content, but deliberately quieter than a popover: one learned location, light
-   material, and no per-file-type control placement. */
+/* Document and metadata actions share one stable control. Direct image/media
+   presentations reuse only its ellipsis menu mechanics on their own surface. */
 .file-preview-pill {
   position: absolute;
   bottom: var(--space-4);
@@ -1312,15 +1517,12 @@
   transform: none;
 }
 
-.file-preview-pill--media {
+.file-preview-pill--image {
   top: var(--space-2);
   right: var(--space-2);
   bottom: auto;
   left: auto;
   transform: none;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--motion-fast);
 }
 
 .file-preview-pill--media-control {
@@ -1364,13 +1566,6 @@
   box-shadow: var(--focus-ring-shadow);
 }
 
-.file-node-body--media:hover .file-preview-pill--media,
-.file-node-body--media:focus-within .file-preview-pill--media,
-.file-preview-pill--media:has(.file-preview-pill-more[aria-expanded='true']) {
-  opacity: 1;
-  pointer-events: auto;
-}
-
 .file-preview-resize-handle {
   position: absolute;
   right: var(--file-preview-frame-radius, var(--radius-lg));
@@ -1383,21 +1578,8 @@
   touch-action: none;
 }
 
-.file-preview-resize-handle::before {
-  position: absolute;
-  right: 0;
-  bottom: var(--space-1);
-  left: 0;
-  height: 2px;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  content: "";
-  transition: background var(--motion-fast);
-}
-
-.file-preview-resize-handle:hover::before,
-.file-preview-resize-handle:focus-visible::before {
-  background: var(--drop-line);
+.file-node-body:has(> .file-preview-resize-handle:focus-visible) .file-node-preview {
+  box-shadow: var(--focus-ring-shadow), var(--inset-hairline);
 }
 
 .file-preview-pill-primary {

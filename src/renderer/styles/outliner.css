@@ -1,6 +1,7 @@
 .outliner {
   display: flex;
   flex-direction: column;
+  container-type: inline-size;
   --outliner-leading-bleed: var(--row-bullet-start);
   /* The row wrapper bleeds left to expose its marker gutter. Add back the
      remaining leading grid width to recover the row's content-text axis. */
@@ -13,7 +14,7 @@
   --field-value-control-height: var(--content-control-height);
   --field-value-row-min-height: var(--content-control-height);
   --indent-guide-hit-width: 16px;
-  --indent-guide-line-offset: calc(100% - 0.5px);
+  --indent-guide-line-offset: calc(100% - 1px);
   --indent-guide-parent-clearance: calc(var(--row-marker-center-y) + var(--space-2));
   --field-row-separator-color: color-mix(in srgb, var(--text-primary) 9%, transparent);
   --field-value-field-row-separator-color: color-mix(in srgb, var(--text-primary) 6%, transparent);
@@ -1422,7 +1423,6 @@ button.outliner-table-column-kind:focus-visible {
   width: 1px;
   border-radius: var(--radius-pill);
   background: var(--separator);
-  transform: translateX(-50%);
   transition: background var(--motion-fast), width var(--motion-fast);
 }
 
@@ -1438,7 +1438,7 @@ button.outliner-table-column-kind:focus-visible {
 .indent-guide--reference > .indent-guide-line {
   background: repeating-linear-gradient(
     to bottom,
-    color-mix(in srgb, var(--text-primary) 18%, transparent) 0 3px,
+    var(--separator) 0 3px,
     transparent 3px 7px
   );
 }
@@ -1446,7 +1446,7 @@ button.outliner-table-column-kind:focus-visible {
 .indent-guide--reference:hover > .indent-guide-line {
   background: repeating-linear-gradient(
     to bottom,
-    color-mix(in srgb, var(--text-primary) 24%, transparent) 0 3px,
+    var(--border-emphasis) 0 3px,
     transparent 3px 7px
   );
 }
@@ -1459,6 +1459,41 @@ button.outliner-table-column-kind:focus-visible {
   align-items: start;
   border-radius: var(--radius-row);
   padding: var(--space-hairline) var(--space-3) var(--space-hairline) var(--row-edge);
+}
+
+/* A visible Source preview lifts the ordinary Node marker into a rail beside
+   the preview, matching Tana's card geometry. The title retains the same
+   content column through a non-interactive spacer. When preview visibility is
+   off, the one real marker is positioned back over that title-row spacer. */
+.outline-source-preview-row {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  grid-template-columns: var(--row-leading-width) minmax(0, 1fr);
+  align-items: start;
+  padding-right: var(--space-3);
+  padding-left: var(--row-edge);
+}
+
+.outline-source-preview-row > .outline-source-preview {
+  min-width: 0;
+  grid-column: 2;
+}
+
+.outline-source-preview-row:not(:has(> .outline-source-preview)) {
+  height: 0;
+}
+
+.outline-source-preview-row:not(:has(> .outline-source-preview)) > .row-leading {
+  position: absolute;
+  top: var(--space-hairline);
+  left: var(--row-edge);
+  z-index: var(--z-raised);
+}
+
+.row-leading-spacer {
+  width: var(--row-leading-width);
+  height: var(--row-leading-height);
 }
 
 .row:hover {
@@ -1703,6 +1738,21 @@ button.outliner-table-column-kind:focus-visible {
   column-gap: var(--space-5);
   row-gap: var(--space-1);
   align-items: start;
+}
+
+/* Compact the owner preview's mature controls inside a narrow pane without
+   changing the ordinary URI field layout. */
+@container (max-width: 360px) {
+  .outline-source-preview .file-preview-pill {
+    gap: var(--space-1);
+    --file-preview-primary-width: 64px;
+    --file-preview-action-size: 30px;
+  }
+
+  .outline-source-preview .file-preview-pill-primary {
+    font-size: var(--font-ui-xs);
+    padding: 0 var(--space-3);
+  }
 }
 
 .row.field-row-inline > .outliner-field-grid::before,
@@ -1961,16 +2011,14 @@ button.outliner-table-column-kind:focus-visible {
   min-width: 0;
 }
 
-/* Additive affordances at the trailing edge of an editable field value row: a
-   non-blocking validation hint, an open-link button (url / email), and a
-   calendar trigger (date). They decorate the row without taking it out of
-   plain-text editing. */
+/* Additive affordances follow the editable value's final text inside its inline
+   slot. They stay outside editable content and wrap only when the line is full. */
 .field-value-affordances {
   display: inline-flex;
-  flex: 0 0 auto;
   align-items: center;
   gap: var(--space-2);
-  margin-left: var(--space-2);
+  margin-inline-start: var(--space-1);
+  vertical-align: top;
   user-select: none;
 }
 
@@ -2445,6 +2493,15 @@ button.outliner-table-column-kind:focus-visible {
   pointer-events: auto;
 }
 
+.outline-source-preview-row:hover > .row-leading > .row-chevron-button,
+.row-wrap:has(> .row:hover):not(:has(> .row .row:hover))
+  > .outline-source-preview-row
+  > .row-leading
+  > .row-chevron-button {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .row-chevron-button:hover {
   color: var(--text-primary);
 }
@@ -2904,11 +2961,10 @@ button.outliner-table-column-kind:focus-visible {
   color: var(--text-primary);
 }
 
-/* The editor renders this as a non-editable inline widget at the end of a row's
-   text (see RichTextEditor inlineSlotEl). Being inside the paragraph's inline flow
-   is what lets the tag chips sit right after the last word and wrap WITH the text
-   instead of dropping to their own line. The chips are portaled in by OutlinerItem. */
-.row-inline-tag-slot {
+/* The editor renders this as a non-editable widget at the end of the final text
+   block (see RichTextEditor inlineSlotEl). Tags and field affordances stay in
+   ordinary inline flow. */
+.row-inline-content-slot {
   display: inline-flex;
   /* Single-line chips stay centered in the text line; wrapped chips expand the
      row instead of overflowing over following rows. */

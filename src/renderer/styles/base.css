@@ -76,10 +76,9 @@ button:disabled {
   cursor: default;
 }
 
-/* Suppress the ring for pointer / programmatic focus, but keep a visible neutral
-   focus ring for keyboard focus (design-system B8). This is the global default;
-   controls with their own :focus-visible treatment (higher specificity) override
-   it, so no double ring. */
+/* The shared focus tokens are transparent in pointer modality and visible in
+   keyboard modality (design-system B8). Component-specific :focus-visible rules
+   consume the same tokens, so programmatic focus restoration cannot leak a ring. */
 button:focus:not(:focus-visible) {
   outline: none;
   box-shadow: none;
@@ -90,12 +89,9 @@ button:focus-visible {
   box-shadow: var(--focus-ring-shadow);
 }
 
-/* Text controls keep a visible neutral focus ring for keyboard navigation, but
-   pointer focus relies on the caret / local editing affordance. Chromium treats
-   text inputs as :focus-visible after pointer focus; the renderer-level modality
-   attribute keeps that browser default from turning ordinary clicks into web-form
-   boxes. Honours prefers-contrast for free (--focus-ring-shadow strengthens in
-   a11y.css). */
+/* Text controls also need a selector gate because some local rules provide
+   non-focus box shadows. Pointer focus relies on the caret / editing affordance;
+   keyboard focus consumes the same modality-aware shared ring token. */
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {

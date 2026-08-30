@@ -12,12 +12,15 @@ describe('input modality tracking', () => {
   test('starts in pointer modality and switches on keyboard navigation', () => {
     const rendered = renderDocument();
     expect(rendered.document.documentElement.dataset.inputModality).toBe('pointer');
+    expect(rendered.document.documentElement.style.getPropertyValue('--focus-ring-modality')).toBe('0');
 
     keydown(rendered, rendered.document.body, 'Tab');
     expect(rendered.document.documentElement.dataset.inputModality).toBe('keyboard');
+    expect(rendered.document.documentElement.style.getPropertyValue('--focus-ring-modality')).toBe('1');
 
     pointerdown(rendered, rendered.document.body);
     expect(rendered.document.documentElement.dataset.inputModality).toBe('pointer');
+    expect(rendered.document.documentElement.style.getPropertyValue('--focus-ring-modality')).toBe('0');
   });
 
   test('does not treat caret movement inside text controls as keyboard focus navigation', () => {

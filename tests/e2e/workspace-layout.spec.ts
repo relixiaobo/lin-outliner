@@ -285,7 +285,7 @@ test.describe('workspace layout resizing', () => {
       win.__LIN_E2E__?.emitDocumentEvent({ type: 'projection_changed', projection });
     }, ids.alpha);
 
-    const inlineTagBar = row(page, ids.alpha).locator('.row-inline-tag-slot .tag-bar').first();
+    const inlineTagBar = row(page, ids.alpha).locator('.row-inline-content-slot .tag-bar').first();
     await expect(inlineTagBar.locator('.tag-badge')).toHaveCount(10);
     await expect.poll(async () => inlineTagBar.evaluate((element, betaId) => {
       const rect = element.getBoundingClientRect();

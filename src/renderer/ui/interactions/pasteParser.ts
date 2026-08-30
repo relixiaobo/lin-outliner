@@ -360,6 +360,7 @@ export function isPlainSingleParagraph(trees: CreateNodeTree[]): boolean {
 
 /** Returns a normalized href for a single-line URL paste, or null. */
 export function detectSingleLineUrl(text: string): string | null {
+  if (/[\r\n]/u.test(text)) return null;
   const trimmed = text.trim();
   if (!trimmed || /\s/u.test(trimmed)) return null;
   const scanned = scanMarkdownInline(trimmed, {

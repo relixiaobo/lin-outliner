@@ -338,7 +338,7 @@ test.describe('outliner trigger parity', () => {
     const pendingEditor = rowEditor(page, draftId);
     expect(await pendingEditor.evaluate((element) => {
       const clone = element.cloneNode(true) as HTMLElement;
-      clone.querySelector('.row-inline-tag-slot')?.remove();
+      clone.querySelector('.row-inline-content-slot')?.remove();
       return clone.textContent;
     })).toBe('');
     await expect(pendingEditor).toBeFocused();
@@ -378,7 +378,7 @@ test.describe('outliner trigger parity', () => {
     await expect(row(page, ids.alpha).locator('.tag-badge-label')).toContainText('project');
     expect(await rowEditor(page, ids.alpha).evaluate((element) => {
       const clone = element.cloneNode(true) as HTMLElement;
-      clone.querySelector('.row-inline-tag-slot')?.remove();
+      clone.querySelector('.row-inline-content-slot')?.remove();
       return clone.textContent;
     })).toBe('Task ');
     expect((await nodeById(page, ids.alpha))?.content.text).toBe('Task #project');

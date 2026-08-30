@@ -1,9 +1,10 @@
 import { useMemo } from 'react';
 import type { PreviewTarget } from '../../../core/preview';
 import { useT } from '../../i18n/I18nProvider';
-import { CopyIcon, FolderIcon, OpenIcon } from '../icons';
+import { CloseIcon, CopyIcon, FolderIcon, OpenIcon } from '../icons';
+import { IconButton } from '../primitives/IconButton';
 import type { FilePreviewNavigationOptions } from '../workspaceLayoutTypes';
-import type { FilePreviewMenuAction } from './FilePreviewPill';
+import { FilePreviewPill, type FilePreviewMenuAction } from './FilePreviewPill';
 import {
   FilePreviewShell,
   canCopyPreviewSource,
@@ -17,6 +18,8 @@ import {
 } from './previewRenderers';
 
 interface FilePreviewBodyProps {
+  accessibleName?: string;
+  dismiss?: { label: string; run: () => void };
   ownerId: string;
   target: PreviewTarget;
   onOpenTarget: (target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
@@ -25,6 +28,8 @@ interface FilePreviewBodyProps {
 
 /** Preview body for one explicitly selected Source value of an ordinary Node. */
 export function FilePreviewBody({
+  accessibleName,
+  dismiss,
   ownerId,
   target,
   onOpenTarget,
@@ -68,14 +73,38 @@ export function FilePreviewBody({
     }
     return { primaryOpen, menuActions };
   }, [labels, onOpenTarget, ownerId, state, target]);
+  const meta = state.status === 'ready' ? sourceMeta(state.source, labels) : null;
+  const cornerAction = dismiss ? (
+    <div className="outline-source-preview-actions" data-preserve-selection>
+      <FilePreviewPill
+        previewable={state.status === 'ready'}
+        expanded
+        onToggleExpand={() => undefined}
+        primaryMode="none"
+        primaryOpen={controls.primaryOpen}
+        menuActions={controls.menuActions}
+        meta={meta}
+        placement="source-corner"
+      />
+      <IconButton
+        className="outline-source-preview-close"
+        icon={CloseIcon}
+        label={dismiss.label}
+        onClick={dismiss.run}
+        variant="panel"
+      />
+    </div>
+  ) : null;
 
   return (
     <FilePreviewShell
+      accessibleName={accessibleName}
+      cornerAction={cornerAction}
       state={state}
       onOpenTarget={onOpenTarget}
       primaryOpen={controls.primaryOpen}
       menuActions={controls.menuActions}
-      meta={state.status === 'ready' ? sourceMeta(state.source, labels) : null}
+      meta={meta}
       initialExpanded={initialExpanded}
     />
   );

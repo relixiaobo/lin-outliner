@@ -4,6 +4,7 @@ import {
   configurePreviewTranslationMock,
   emitDocumentEvent,
   e2eProjection,
+  holdOutlineMutation,
   ids,
   openMockedApp,
   row,
@@ -114,6 +115,35 @@ async function contrastAgainstWhitePreview(locator: Locator): Promise<number> {
   });
 }
 
+async function expectInsidePreviewBoundary(menu: Locator, preview: Locator): Promise<void> {
+  await expect.poll(async () => {
+    const [menuRect, previewRect] = await Promise.all([menu.boundingBox(), preview.boundingBox()]);
+    if (!menuRect || !previewRect) return false;
+    const tolerance = 0.5;
+    return menuRect.x >= previewRect.x - tolerance
+      && menuRect.y >= previewRect.y - tolerance
+      && menuRect.x + menuRect.width <= previewRect.x + previewRect.width + tolerance
+      && menuRect.y + menuRect.height <= previewRect.y + previewRect.height + tolerance;
+  }).toBe(true);
+}
+
+async function expectUsableMenuInsidePane(menu: Locator, pane: Locator): Promise<void> {
+  await expect.poll(async () => menu.evaluate((element) => (
+    element.clientHeight >= Math.min(element.scrollHeight, 120)
+  ))).toBe(true);
+  await expect.poll(async () => menu.boundingBox().then((rect) => rect?.width ?? 0))
+    .toBeGreaterThanOrEqual(219);
+  await expect.poll(async () => {
+    const [menuRect, paneRect] = await Promise.all([menu.boundingBox(), pane.boundingBox()]);
+    if (!menuRect || !paneRect) return false;
+    const tolerance = 0.5;
+    return menuRect.x >= paneRect.x - tolerance
+      && menuRect.y >= paneRect.y - tolerance
+      && menuRect.x + menuRect.width <= paneRect.x + paneRect.width + tolerance
+      && menuRect.y + menuRect.height <= paneRect.y + paneRect.height + tolerance;
+  }).toBe(true);
+}
+
 type ExternalFileDropPosition = 'before' | 'inside' | 'after';
 
 async function startExternalFileDrag(page: Parameters<typeof trailingEditor>[0], file: { name: string; mimeType: string; text: string }) {
@@ -138,6 +168,25 @@ async function pasteClipboardFile(page: Parameters<typeof trailingEditor>[0], fi
   }, file);
 }
 
+async function pasteClipboardText(
+  page: Parameters<typeof trailingEditor>[0],
+  text: string,
+  html = '',
+) {
+  await page.evaluate(({ html, text }) => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData('text/plain', text);
+    if (html) dataTransfer.setData('text/html', html);
+    const target = document.activeElement;
+    if (!target) throw new Error('No active paste target');
+    target.dispatchEvent(new ClipboardEvent('paste', {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: dataTransfer,
+    }));
+  }, { html, text });
+}
+
 async function pasteClipboardFileAndOpenPreview(
   page: Parameters<typeof trailingEditor>[0],
   file: { name: string; mimeType: string; text: string },
@@ -157,7 +206,7 @@ async function pasteClipboardFileAndOpenPreview(
   if (!pastedId) throw new Error(`No pasted Source-backed node for ${file.name}`);
   const pastedRow = row(page, pastedId);
   await pastedRow.locator('> .row').first().hover();
-  await pastedRow.locator('> .row .row-bullet-button').first().click();
+  await pastedRow.locator('.row-bullet-button').first().click();
   const previewFrame = page.locator('.outline-panel-surface.active-panel .node-source-preview .file-node-preview.collapsed');
   await expect(previewFrame).toBeVisible();
   return previewFrame;
@@ -501,7 +550,7 @@ async function openEpubSplitReader(
   return { chapter, readerPane };
 }
 
-async function expectConcentricPreviewCorners(previewFrame: Locator, contentSelector: string) {
+async function expectCenteredSquarePreviewCorners(previewFrame: Locator, contentSelector: string) {
   await expect.poll(async () => previewFrame.evaluate((element, selector) => {
     const content = element.querySelector<HTMLElement>(selector);
     if (!content) return null;
@@ -513,17 +562,20 @@ async function expectConcentricPreviewCorners(previewFrame: Locator, contentSele
     const paddingLeft = Number.parseFloat(frameStyle.paddingLeft);
     return {
       frameHasHairlineEdge: frameStyle.borderTopWidth === '0px' && frameStyle.boxShadow !== 'none',
+      frameRadius,
       contentClipPath: contentStyle.clipPath,
-      contentHasRadius: contentRadius > 0,
+      contentIsSquare: contentRadius === 0,
       inlinePaddingMatchesBlock: Math.abs(paddingLeft - paddingTop) <= 1,
-      innerRadiusFromOuter: Math.abs(contentRadius - Math.max(2, frameRadius - paddingTop)) <= 1,
+      innerCornerAtArcCenter: Math.abs(frameRadius - paddingTop) <= 1
+        && Math.abs(frameRadius - paddingLeft) <= 1,
     };
   }, contentSelector)).toEqual({
     frameHasHairlineEdge: true,
-    contentClipPath: 'inset(0px round 8px)',
-    contentHasRadius: true,
+    frameRadius: 8,
+    contentClipPath: 'inset(0px)',
+    contentIsSquare: true,
     inlinePaddingMatchesBlock: true,
-    innerRadiusFromOuter: true,
+    innerCornerAtArcCenter: true,
   });
 }
 
@@ -606,19 +658,30 @@ test.describe('file attachments', () => {
     // for child disclosure and never owns preview state.
     const attachmentRowLine = attachmentRow.locator('> .row').first();
     await attachmentRowLine.hover();
-    await attachmentRow.locator('> .row .row-bullet-button').first().click();
+    await attachmentRow.locator('.row-bullet-button').first().click();
     const nodePage = page.locator('.outline-panel-surface.active-panel');
     await expect(nodePage.locator('.panel-title-editor .ProseMirror')).toContainText('Quarterly report');
-    const sourceRow = nodePage.locator('.node-source-row');
-    await expect(sourceRow).toHaveCount(1);
-    await expect(sourceRow.locator('input')).toHaveValue(/^asset:\/\/local\//);
-    await expect(sourceRow).toHaveAttribute('data-availability', 'ready');
-    await expect(nodePage.getByRole('button', { name: 'Link File' })).toBeVisible();
-    await expect(sourceRow.getByRole('button', { name: 'Replace with File' })).toBeVisible();
+    const drilledProjection = await e2eProjection(page);
+    const sourceValue = sourceFieldValues(drilledProjection, attachmentId!)[0];
+    expect(sourceValue).toBeTruthy();
+    await expect(rowEditor(page, sourceValue!.id)).toContainText(/^asset:\/\/local\//);
+    await expect(row(page, sourceValue!.id).locator('.field-value-hint')).toHaveCount(0);
+    await expect(nodePage.getByRole('region', { name: 'Source preview' })).toBeVisible();
+    await expect.poll(async () => nodePage.evaluate((panel) => {
+      const preview = panel.querySelector('.node-source-preview-region');
+      const title = panel.querySelector('.panel-header');
+      return preview && title ? preview.getBoundingClientRect().bottom <= title.getBoundingClientRect().top : false;
+    })).toBe(true);
+    await nodePage.getByRole('button', { name: 'More Source actions' }).click();
+    await expect(page.getByRole('menu', { name: 'More Source actions' }).getByRole('menuitem', { name: 'Link File' }))
+      .toBeVisible();
+    await expect(page.getByRole('menu', { name: 'More Source actions' }).getByRole('menuitem', { name: 'Replace with File' }))
+      .toBeVisible();
+    await page.keyboard.press('Escape');
 
     const inlinePreviewFrame = nodePage.locator('.node-source-preview .file-node-preview.collapsed');
     await expect(inlinePreviewFrame).toBeVisible();
-    await expectConcentricPreviewCorners(inlinePreviewFrame, '.file-preview-pdf--summary');
+    await expectCenteredSquarePreviewCorners(inlinePreviewFrame, '.file-preview-pdf--summary');
     await expect.poll(async () => inlinePreviewFrame.evaluate((element) => {
       const style = getComputedStyle(element);
       const summaryStrip = element.querySelector<HTMLElement>('.file-preview-pdf--summary');
@@ -630,7 +693,6 @@ test.describe('file attachments', () => {
       const frameRect = element.getBoundingClientRect();
       const firstRect = firstCanvas?.getBoundingClientRect();
       const secondRect = secondCanvas?.getBoundingClientRect();
-      const frameRadius = Number.parseFloat(style.borderTopLeftRadius);
       const paddingLeft = Number.parseFloat(style.paddingLeft);
       const paddingTop = Number.parseFloat(style.paddingTop);
       const canvasRadius = firstCanvas ? Number.parseFloat(getComputedStyle(firstCanvas).borderTopLeftRadius) : 0;
@@ -651,7 +713,7 @@ test.describe('file attachments', () => {
         edgeInset: firstRect ? firstRect.left - frameRect.left >= 7 && firstRect.top - frameRect.top >= 7 : false,
         horizontalSummary: style.overflowX === 'hidden' && summaryStyle?.overflowX === 'auto',
         noScrollBleed: edgeHit ? !edgeHit.closest('.file-preview-pdf-page, .file-preview-pdf-stage, .file-preview-pdf-canvas') : false,
-        pageRadius: canvasRadius >= 6 && canvasRadius <= frameRadius,
+        pageIsSquare: canvasRadius === 0,
         scrollbarBelowPage: firstRect && summaryRect ? summaryRect.bottom - firstRect.bottom >= scrollbarGutter - 1 : false,
         symmetricInset: firstRect ? Math.abs((firstRect.left - frameRect.left) - (firstRect.top - frameRect.top)) <= 1 : false,
       };
@@ -662,7 +724,7 @@ test.describe('file attachments', () => {
       edgeInset: true,
       horizontalSummary: true,
       noScrollBleed: true,
-      pageRadius: true,
+      pageIsSquare: true,
       scrollbarBelowPage: true,
       symmetricInset: true,
     });
@@ -744,7 +806,7 @@ test.describe('file attachments', () => {
       Math.round(element.getBoundingClientRect().width));
     await nodePage.locator('.file-node-preview.collapsed .file-preview-pdf-page').nth(1).click();
     await expect(previewStage).toHaveClass(/expanded/);
-    await expectConcentricPreviewCorners(previewStage, '.file-preview-pdf--full');
+    await expectCenteredSquarePreviewCorners(previewStage, '.file-preview-pdf--full');
     await expect(pill.locator('.file-preview-pill-primary')).toHaveText('Collapse');
     const collapseButtonWidth = await pill.locator('.file-preview-pill-primary').evaluate((element) =>
       Math.round(element.getBoundingClientRect().width));
@@ -1017,7 +1079,7 @@ test.describe('file attachments', () => {
     await expect(readerMenu.getByRole('menuitem', { name: 'Open in split pane' })).toHaveCount(0);
   });
 
-  test('URI fields use ordinary disclosure, value editing, and entry deletion', async ({ page }) => {
+  test('URI fields stay editable while preview visibility ignores child disclosure', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
     await page.keyboard.type('/attachment');
@@ -1027,19 +1089,53 @@ test.describe('file attachments', () => {
     const attachmentId = (await todayChildren(page)).at(-1)!;
     const attachmentRow = row(page, attachmentId);
 
-    await attachmentRow.locator('> .row').first().hover();
-    await attachmentRow.locator('> .row .row-chevron-button').first().click();
-    await expect(attachmentRow.locator('.node-source-preview, .file-node-row-preview')).toHaveCount(0);
+    const previewChevron = attachmentRow.locator(
+      ':scope > .outline-source-preview-row .row-chevron-button',
+    );
+    await page.mouse.move(0, 0);
+    await expect(previewChevron).toHaveCSS('opacity', '0');
+    await attachmentRow.locator(':scope > .row').first().hover();
+    await expect(previewChevron).toHaveCSS('opacity', '1');
+    await previewChevron.click();
+    await expect(attachmentRow.locator(':scope > .outline-source-preview-row .node-source-preview')).toBeVisible();
+    await previewChevron.click();
 
     const expandedProjection = await e2eProjection(page);
     const sourceEntry = sourceFieldEntries(expandedProjection, attachmentId)[0];
     const sourceValue = sourceFieldValues(expandedProjection, attachmentId)[0];
     expect(sourceEntry).toBeTruthy();
     expect(sourceValue).toBeTruthy();
+    await expect(attachmentRow.locator(':scope > .outline-source-preview-row .node-source-preview')).toBeVisible();
+    await expect(attachmentRow.locator('.file-node-row-preview')).toHaveCount(0);
     const fieldName = row(page, sourceEntry!.id).locator('.field-name-input');
     await expect(fieldName).toHaveValue('URI');
-    await expect(fieldName).toHaveAttribute('readonly', '');
+    await expect(fieldName).not.toHaveAttribute('readonly', '');
+    await fieldName.focus();
+    await expect(fieldName).toBeFocused();
 
+    const ownerChildrenBeforeTitleEnter = expandedProjection.nodes
+      .find((node) => node.id === attachmentId)?.children.length ?? 0;
+    await rowEditor(page, attachmentId).click();
+    await page.keyboard.press('End');
+    await page.keyboard.press('Enter');
+    await expect.poll(async () => (
+      (await e2eProjection(page)).nodes.find((node) => node.id === attachmentId)?.children.length
+    )).toBe(ownerChildrenBeforeTitleEnter + 1);
+    const afterTitleEnter = await e2eProjection(page);
+    const childrenAfterTitleEnter = afterTitleEnter.nodes
+      .find((node) => node.id === attachmentId)?.children ?? [];
+    const createdAfterSourceId = childrenAfterTitleEnter[childrenAfterTitleEnter.indexOf(sourceEntry!.id) + 1];
+    expect(createdAfterSourceId).toBeTruthy();
+    await expect(rowEditor(page, createdAfterSourceId!)).toBeFocused();
+    await previewChevron.click();
+    await expect(row(page, createdAfterSourceId!)).toHaveCount(0);
+    await expect(attachmentRow.locator(':scope > .outline-source-preview-row .node-source-preview')).toBeVisible();
+    await previewChevron.click();
+    await expect(row(page, createdAfterSourceId!)).toBeVisible();
+
+    const uriValueRow = row(page, sourceValue!.id);
+    await expect(uriValueRow.locator(':scope > .row > .row-leading > .row-bullet-button')).toBeVisible();
+    await expect(uriValueRow.locator(':scope > .row .row-bullet-shape.content')).toBeVisible();
     const uriEditor = rowEditor(page, sourceValue!.id);
     await uriEditor.click();
     await page.keyboard.press('Meta+A');
@@ -1049,15 +1145,182 @@ test.describe('file attachments', () => {
       return sourceFieldValues(projection, attachmentId)[0]?.content.text;
     }).toBe('https://www.youtub.com/watch?v=abc123');
 
+    const ownerChildrenBeforeEnter = (await e2eProjection(page)).nodes
+      .find((node) => node.id === attachmentId)?.children.length ?? 0;
+    const guideSelector = `.outliner-flat-guides .indent-guide[data-guide-node-id="${attachmentId}"]`;
+    await expect(page.locator(guideSelector)).toHaveCount(1);
+    await page.evaluate(({ selector, ownerId, fieldId }) => {
+      const win = window as Window & {
+        __sourceGuideSampler?: {
+          frame: number;
+          samples: Array<{
+            fieldTop: number | null;
+            guideCount: number;
+            listHeight: number | null;
+            ownerTop: number | null;
+            scrollTop: number | null;
+          }>;
+        };
+      };
+      const sampler: NonNullable<typeof win.__sourceGuideSampler> = { frame: 0, samples: [] };
+      const sample = () => {
+        const scroller = document.querySelector<HTMLElement>('.outline-panel-surface.active-panel .main-panel');
+        const owner = document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(ownerId)}"]`);
+        const field = document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(fieldId)}"]`);
+        const list = owner?.closest<HTMLElement>('.outliner-flat-flow');
+        sampler.samples.push({
+          fieldTop: field?.getBoundingClientRect().top ?? null,
+          guideCount: document.querySelectorAll(selector).length,
+          listHeight: list?.getBoundingClientRect().height ?? null,
+          ownerTop: owner?.getBoundingClientRect().top ?? null,
+          scrollTop: scroller?.scrollTop ?? null,
+        });
+        sampler.frame = window.requestAnimationFrame(sample);
+      };
+      sample();
+      win.__sourceGuideSampler = sampler;
+    }, { selector: guideSelector, ownerId: attachmentId, fieldId: sourceEntry!.id });
+    const releaseFieldCreate = await holdOutlineMutation(page, { op: 'create' });
+    await fieldName.focus();
+    await page.keyboard.press('Enter');
+    const optimisticSibling = page.locator('.row.node-pending-structure .ProseMirror');
+    await expect(optimisticSibling).toBeFocused();
+    expect((await e2eProjection(page)).nodes
+      .find((node) => node.id === attachmentId)?.children.length).toBe(ownerChildrenBeforeEnter);
+    await expect(page.locator(guideSelector)).toHaveCount(1);
+    await releaseFieldCreate();
+    await expect.poll(async () => (
+      (await e2eProjection(page)).nodes.find((node) => node.id === attachmentId)?.children.length
+    )).toBe(ownerChildrenBeforeEnter + 1);
+    const afterFieldEnter = await e2eProjection(page);
+    const ownerChildren = afterFieldEnter.nodes.find((node) => node.id === attachmentId)?.children ?? [];
+    const createdAfterFieldId = ownerChildren[ownerChildren.indexOf(sourceEntry!.id) + 1];
+    expect(createdAfterFieldId).toBeTruthy();
+    await expect(rowEditor(page, createdAfterFieldId!)).toBeFocused();
+    const guideSamples = await page.evaluate(async () => {
+      const win = window as Window & {
+        __sourceGuideSampler?: {
+          frame: number;
+          samples: Array<{
+            fieldTop: number | null;
+            guideCount: number;
+            listHeight: number | null;
+            ownerTop: number | null;
+            scrollTop: number | null;
+          }>;
+        };
+      };
+      await new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()));
+      });
+      const sampler = win.__sourceGuideSampler;
+      if (!sampler) return [];
+      window.cancelAnimationFrame(sampler.frame);
+      return sampler.samples;
+    });
+    expect(guideSamples.length).toBeGreaterThan(0);
+    expect(guideSamples.map((sample) => sample.guideCount)).not.toContain(0);
+    for (const key of ['ownerTop', 'fieldTop', 'scrollTop'] as const) {
+      const positions = guideSamples.flatMap((sample) => sample[key] === null ? [] : [sample[key]]);
+      expect(positions.length).toBeGreaterThan(0);
+      expect(Math.max(...positions) - Math.min(...positions)).toBeLessThanOrEqual(1);
+    }
+    const listHeights = guideSamples.flatMap((sample) => (
+      sample.listHeight === null ? [] : [sample.listHeight]
+    ));
+    expect(listHeights.length).toBeGreaterThan(0);
+    expect(listHeights.at(-1)! - listHeights[0]!).toBeGreaterThan(0);
+    expect(Math.max(...listHeights) - listHeights.at(-1)!).toBeLessThanOrEqual(1);
+
+    await fieldName.focus();
+    await page.keyboard.press('Meta+A');
+    await page.keyboard.type('Stat');
+    const reusePopover = page.locator('.field-name-reuse-popover');
+    await expect(reusePopover.getByText('Status', { exact: true })).toBeVisible();
+    await reusePopover.getByText('Status', { exact: true }).click();
+    await expect.poll(async () => (
+      (await e2eProjection(page)).nodes.find((node) => node.id === sourceEntry!.id)?.fieldDefId
+    )).toBe(ids.statusField);
+
     await fieldName.focus();
     await fieldName.evaluate((element) => element.setSelectionRange(0, 0));
     await page.keyboard.press('Backspace');
-    await expect.poll(async () => sourceFieldEntries(await e2eProjection(page), attachmentId).length).toBe(0);
+    await expect.poll(async () => (
+      (await e2eProjection(page)).nodes.find((node) => node.id === attachmentId)?.children.includes(sourceEntry!.id)
+    )).toBe(false);
     await expect(row(page, attachmentId)).toBeVisible();
     expect(await todayChildren(page)).toHaveLength(beforeChildren.length + 1);
   });
 
-  test('Source-backed Nodes keep the ordinary marker and indent-guide geometry', async ({ page }) => {
+  test('Source preview hide, restore, switch, and removal preserve independent field state', async ({ page }) => {
+    const beforeChildren = await todayChildren(page);
+    await trailingEditor(page).click();
+    await page.keyboard.type('/attachment');
+    await expect(page.getByRole('option', { name: /Attachment/ })).toBeVisible();
+    await page.keyboard.press('Enter');
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+    const attachmentId = (await todayChildren(page)).at(-1)!;
+
+    const attachmentRow = row(page, attachmentId);
+    await attachmentRow.locator('> .row').first().hover();
+    await attachmentRow.locator('.row-bullet-button').first().click();
+    const nodePage = page.locator('.outline-panel-surface.active-panel');
+    await expect(nodePage.getByRole('region', { name: 'Source preview' })).toBeVisible();
+
+    let projection = await e2eProjection(page);
+    const sourceEntry = sourceFieldEntries(projection, attachmentId)[0];
+    const firstSource = sourceFieldValues(projection, attachmentId)[0];
+    expect(sourceEntry).toBeTruthy();
+    expect(firstSource).toBeTruthy();
+
+    await nodePage.getByRole('button', { name: 'Hide preview' }).click();
+    await expect(nodePage.getByRole('region', { name: 'Source preview' })).toHaveCount(0);
+    await expect(row(page, firstSource!.id).getByRole('button', { name: 'Show preview' })).toBeVisible();
+
+    const secondSourceText = 'not a valid Source URI';
+    await rowEditor(page, firstSource!.id).focus();
+    await page.keyboard.press('End');
+    await page.keyboard.press('Enter');
+    const sourceTrailing = nodePage.locator('[data-field-value] [data-trailing-parent-id] .ProseMirror');
+    await expect(sourceTrailing).toBeFocused();
+    await page.keyboard.insertText(secondSourceText);
+    await page.keyboard.press('Enter');
+    await expect.poll(async () => sourceFieldValues(await e2eProjection(page), attachmentId).length).toBe(2);
+    projection = await e2eProjection(page);
+    const secondSource = sourceFieldValues(projection, attachmentId)[1];
+    expect(secondSource).toBeTruthy();
+
+    await expect(nodePage.getByRole('region', { name: 'Source preview' })).toHaveCount(0);
+    await expect(row(page, firstSource!.id).getByRole('button', { name: 'Show preview' })).toBeVisible();
+    const previewSecond = row(page, secondSource!.id).getByRole('button', { name: 'Preview this Source' });
+    await expect(previewSecond).toBeVisible();
+    await rowEditor(page, firstSource!.id).focus();
+    await previewSecond.click();
+
+    const previewRegion = nodePage.getByRole('region', { name: 'Source preview' });
+    await expect(previewRegion).toBeVisible();
+    await expect(previewRegion.getByRole('status')).toContainText('not a valid URI');
+    expect(await previewRegion.evaluate((region) => region.contains(document.activeElement))).toBe(false);
+
+    await nodePage.locator('.node-source-switcher').click();
+    const switchMenu = page.getByRole('menu', { name: 'Switch preview Source' });
+    await expect(switchMenu.getByRole('menuitem')).toHaveCount(2);
+    await switchMenu.getByRole('menuitem', { name: /picked-report\.pdf/ }).click();
+    await expect(nodePage.locator('.node-source-preview')).toHaveAttribute('data-source-value-id', firstSource!.id);
+    expect(await previewRegion.evaluate((region) => region.contains(document.activeElement))).toBe(false);
+    await row(page, secondSource!.id).getByRole('button', { name: 'Preview this Source' }).click();
+    await expect(previewRegion.getByRole('status')).toContainText('not a valid URI');
+
+    await nodePage.getByRole('button', { name: 'More Source actions' }).click();
+    await page.getByRole('menu', { name: 'More Source actions' })
+      .getByRole('menuitem', { name: 'Remove Source' })
+      .click();
+    await expect.poll(async () => sourceFieldValues(await e2eProjection(page), attachmentId).length).toBe(1);
+    await expect(previewRegion).toBeVisible();
+    await expect(nodePage.locator('.node-source-preview')).toHaveAttribute('data-source-value-id', firstSource!.id);
+  });
+
+  test('Source-backed Nodes place the ordinary marker and guide beside the preview', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
     await page.keyboard.type('/attachment');
@@ -1068,7 +1331,7 @@ test.describe('file attachments', () => {
     const attachmentRow = row(page, attachmentId);
 
     await attachmentRow.locator('> .row').first().hover();
-    await attachmentRow.locator('.row-chevron-button').first().click();
+    await expect(attachmentRow).not.toHaveAttribute('aria-expanded', 'true');
     await page.evaluate(async ({ parentId }) => {
       const win = window as Window & {
         lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
@@ -1081,10 +1344,14 @@ test.describe('file attachments', () => {
       projection: await e2eProjection(page),
       timestamp: Date.now(),
     });
+    await expect(attachmentRow).toHaveAttribute('aria-expanded', 'true');
 
     await expect.poll(async () => page.evaluate((nodeId) => {
-      const markerButton = document.querySelector(`[data-node-id="${nodeId}"] > .row .row-bullet-button`);
-      const markerSlot = document.querySelector(`[data-node-id="${nodeId}"] > .row .row-bullet-shape.content`);
+      const owner = document.querySelector(`[data-node-id="${nodeId}"]`);
+      const markerButton = owner?.querySelector(':scope > .outline-source-preview-row .row-bullet-button');
+      const markerSlot = owner?.querySelector(':scope > .outline-source-preview-row .row-bullet-shape.content');
+      const preview = owner?.querySelector(':scope > .outline-source-preview-row .node-source-preview');
+      const titleMarker = owner?.querySelector(':scope > .row .row-bullet-button');
       const guide = document.querySelector(
         `.outliner-flat-guides .indent-guide[data-guide-node-id="${nodeId}"], `
           + `[data-node-id="${nodeId}"] > .indent-guide`,
@@ -1093,8 +1360,9 @@ test.describe('file attachments', () => {
         `.outliner-flat-guides .indent-guide[data-guide-node-id="${nodeId}"] .indent-guide-line, `
           + `[data-node-id="${nodeId}"] > .indent-guide .indent-guide-line`,
       );
-      if (!markerButton || !markerSlot || !guide || !guideLine) return null;
+      if (!markerButton || !markerSlot || !preview || !guide || !guideLine) return null;
       const markerButtonRect = markerButton.getBoundingClientRect();
+      const previewRect = preview.getBoundingClientRect();
       const guideRect = guide.getBoundingClientRect();
       const guideLineRect = guideLine.getBoundingClientRect();
       const centerX = (rect: DOMRect) => rect.left + rect.width / 2;
@@ -1103,11 +1371,19 @@ test.describe('file attachments', () => {
         measuredFromSlot: guideRect.left < centerX(markerButtonRect) && guideRect.right > centerX(markerButtonRect),
         startsBelowSlot: guideLineRect.top - markerButtonRect.bottom >= 3
           && guideLineRect.top - markerButtonRect.bottom <= 5,
+        markerAtPreviewTop: markerButtonRect.top <= previewRect.top
+          && markerButtonRect.bottom >= previewRect.top,
+        guideRunsPastPreview: guideLineRect.top < previewRect.bottom
+          && guideLineRect.bottom >= previewRect.bottom,
+        titleMarkerAbsent: titleMarker === null,
       };
     }, attachmentId)).toEqual({
       lineOnSlotCenter: true,
       measuredFromSlot: true,
       startsBelowSlot: true,
+      markerAtPreviewTop: true,
+      guideRunsPastPreview: true,
+      titleMarkerAbsent: true,
     });
   });
 
@@ -1142,7 +1418,190 @@ test.describe('file attachments', () => {
     const imageRow = row(page, imageId!);
     const imageTitle = rowEditor(page, imageId!);
     await expect(imageTitle).toContainText('picked-image.png');
-    await expect(imageRow.locator('.file-node-image, .file-node-card')).toHaveCount(0);
+    await expect(imageRow.locator(':scope > .row .file-node-image, :scope > .row .file-node-card')).toHaveCount(0);
+    const imageProjection = await e2eProjection(page);
+    const imageSourceEntry = sourceFieldEntries(imageProjection, imageId!)[0];
+    const imageSource = sourceFieldValues(imageProjection, imageId!)[0];
+    expect(imageSourceEntry).toBeTruthy();
+    expect(imageSource).toBeTruthy();
+    const imageSourceRow = row(page, imageSource!.id);
+    const outlineImagePreview = imageRow.locator(':scope > .outline-source-preview-row .file-preview-image img');
+    await expect(outlineImagePreview).toBeVisible();
+    await expect(outlineImagePreview).toHaveAttribute('alt', 'picked-image.png');
+    await expect.poll(async () => outlineImagePreview.evaluate((image) => {
+      const element = image as HTMLImageElement;
+      return {
+        complete: element.complete,
+        height: element.naturalHeight,
+        width: element.naturalWidth,
+      };
+    })).toEqual({ complete: true, height: 360, width: 600 });
+    await expect.poll(async () => outlineImagePreview.evaluate((image) => {
+      const rect = image.getBoundingClientRect();
+      return rect.width <= 720 && rect.height <= 520;
+    })).toBe(true);
+    await expect.poll(async () => imageRow.evaluate((ownerRow, sourceEntryId) => {
+      const title = ownerRow.querySelector<HTMLElement>(':scope > .row .row-content-line');
+      const preview = ownerRow.querySelector<HTMLElement>(':scope > .outline-source-preview-row .file-node-preview');
+      const sourceField = document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(String(sourceEntryId))}"] > .row`);
+      if (!title || !preview || !sourceField) return false;
+      const titleRect = title.getBoundingClientRect();
+      const previewRect = preview.getBoundingClientRect();
+      const sourceFieldRect = sourceField.getBoundingClientRect();
+      const previewToTitleGap = titleRect.top - previewRect.bottom;
+      return Math.abs(titleRect.left - previewRect.left) <= 1
+        && previewToTitleGap >= 6
+        && previewToTitleGap <= 8
+        && titleRect.bottom <= sourceFieldRect.top;
+    }, imageSourceEntry!.id)).toBe(true);
+    await expect.poll(async () => imageRow.evaluate((ownerRow, sourceEntryId) => {
+      const nodeId = ownerRow.dataset.nodeId;
+      const marker = ownerRow.querySelector<HTMLElement>(
+        ':scope > .outline-source-preview-row .row-bullet-button',
+      );
+      const preview = ownerRow.querySelector<HTMLElement>(
+        ':scope > .outline-source-preview-row .node-source-preview',
+      );
+      const sourceMarker = document.querySelector<HTMLElement>(
+        `[data-node-id="${CSS.escape(String(sourceEntryId))}"] .row-bullet-button`,
+      );
+      const guideLine = document.querySelector<HTMLElement>(
+        `.outliner-flat-guides .indent-guide[data-guide-node-id="${CSS.escape(String(nodeId))}"] .indent-guide-line`,
+      );
+      if (!marker || !preview || !sourceMarker || !guideLine) return null;
+      const markerRect = marker.getBoundingClientRect();
+      const previewRect = preview.getBoundingClientRect();
+      const sourceMarkerRect = sourceMarker.getBoundingClientRect();
+      const guideLineRect = guideLine.getBoundingClientRect();
+      const guideMidX = guideLineRect.left + guideLineRect.width / 2;
+      const guideMidY = guideLineRect.top + guideLineRect.height / 2;
+      const hitStack = document.elementsFromPoint(guideMidX, guideMidY);
+      const guideStyle = getComputedStyle(guideLine);
+      return {
+        endsAtSourceMarker: Math.abs(
+          guideLineRect.bottom - (sourceMarkerRect.top + sourceMarkerRect.height / 2),
+        ) <= 1,
+        paintedAboveContent: hitStack.includes(guideLine),
+        paintedWithToken: guideStyle.backgroundColor !== 'rgba(0, 0, 0, 0)'
+          && guideStyle.backgroundColor !== 'transparent',
+        runsPastPreview: guideLineRect.bottom >= previewRect.bottom,
+        startsBelowMarker: guideLineRect.top > markerRect.bottom,
+      };
+    }, imageSourceEntry!.id)).toEqual({
+      endsAtSourceMarker: true,
+      paintedAboveContent: true,
+      paintedWithToken: true,
+      runsPastPreview: true,
+      startsBelowMarker: true,
+    });
+
+    const previewResolveCount = () => commandCalls(page).then((calls) => (
+      calls.filter((call) => call.cmd === 'preview_resolve_source').length
+    ));
+    const resolvesBeforeEnter = await previewResolveCount();
+    const releaseCreate = await holdOutlineMutation(page, { op: 'create' });
+    await row(page, imageSourceEntry!.id).locator('.field-name-input').focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.row.node-pending-structure .ProseMirror')).toBeFocused();
+    await page.evaluate(() => new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()));
+    }));
+    expect(await previewResolveCount()).toBe(resolvesBeforeEnter);
+    await releaseCreate();
+    await expect(page.locator('.row.node-pending-structure')).toHaveCount(0);
+    await page.evaluate(() => new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()));
+    }));
+    expect(await previewResolveCount()).toBe(resolvesBeforeEnter);
+    await expect(outlineImagePreview).toBeVisible();
+
+    await expect(imageSourceRow.getByRole('button', { name: 'Hide preview' })).toHaveCount(0);
+    const hideOutlinePreview = imageRow
+      .locator(':scope > .outline-source-preview-row')
+      .getByRole('button', { name: 'Hide preview' });
+    await expect(hideOutlinePreview).toBeVisible();
+    await expect.poll(async () => {
+      const [previewRect, closeRect] = await Promise.all([
+        imageRow.locator(':scope > .outline-source-preview-row .file-node-preview').boundingBox(),
+        hideOutlinePreview.boundingBox(),
+      ]);
+      if (!previewRect || !closeRect) return false;
+      const previewRight = previewRect.x + previewRect.width;
+      return closeRect.x >= previewRect.x
+        && closeRect.x + closeRect.width <= previewRight
+        && closeRect.y >= previewRect.y
+        && closeRect.y + closeRect.height <= previewRect.y + previewRect.height;
+    }).toBe(true);
+    const outlinePreviewActions = imageRow
+      .locator(':scope > .outline-source-preview-row .outline-source-preview-actions');
+    await expect(outlinePreviewActions).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await expect.poll(async () => outlinePreviewActions.locator('button').evaluateAll((buttons) => (
+      buttons.map((button) => getComputedStyle(button).backgroundColor)
+    ))).toEqual(['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0)']);
+    await outlinePreviewActions.hover();
+    await expect(outlinePreviewActions).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await expect.poll(async () => outlinePreviewActions.locator('button').evaluateAll((buttons) => (
+      buttons.map((button) => getComputedStyle(button).backgroundColor)
+    ))).toEqual(['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0)']);
+    await outlinePreviewActions.getByRole('button', { name: 'Preview actions' }).click();
+    const outlinePreviewMenu = page.getByRole('menu', { name: 'Preview actions' });
+    await expect(outlinePreviewMenu).toBeVisible();
+    await expect(outlinePreviewMenu).toHaveClass(/file-preview-menu--source-contained/);
+    await expectInsidePreviewBoundary(
+      outlinePreviewMenu,
+      imageRow.locator(':scope > .outline-source-preview-row .file-node-preview'),
+    );
+    await outlinePreviewActions.getByRole('button', { name: 'Preview actions' }).click();
+    await expect(outlinePreviewMenu).toBeHidden();
+    await expect.poll(async () => outlinePreviewActions
+      .getByRole('button', { name: 'Preview actions' })
+      .evaluate((button) => {
+        const modality = getComputedStyle(document.documentElement)
+          .getPropertyValue('--focus-ring-modality')
+          .trim();
+        const shadow = getComputedStyle(button).boxShadow;
+        const hasNoPaint = shadow === 'none' || shadow === 'rgba(0, 0, 0, 0) 0px 0px 0px 0px';
+        return modality === '0' && hasNoPaint;
+      })).toBe(true);
+    await hideOutlinePreview.click();
+    await expect(imageRow.locator(':scope > .outline-source-preview-row > .outline-source-preview')).toHaveCount(0);
+    await expect.poll(async () => imageRow.evaluate((ownerRow) => {
+      const marker = ownerRow.querySelector<HTMLElement>(':scope > .outline-source-preview-row .row-bullet-button');
+      const title = ownerRow.querySelector<HTMLElement>(':scope > .row .row-content-line');
+      if (!marker || !title) return false;
+      const markerRect = marker.getBoundingClientRect();
+      const titleRect = title.getBoundingClientRect();
+      return Math.abs(
+        markerRect.top + markerRect.height / 2 - (titleRect.top + titleRect.height / 2),
+      ) <= 1;
+    })).toBe(true);
+    const showOutlinePreview = imageSourceRow.getByRole('button', { name: 'Show preview' });
+    await expect(showOutlinePreview).toBeVisible();
+    await showOutlinePreview.click();
+    await expect(outlineImagePreview).toBeVisible();
+    const imagePreviewStage = imageRow.locator(':scope > .outline-source-preview-row .file-node-preview--image');
+    await expect(imagePreviewStage).toBeVisible();
+    await expect(imagePreviewStage.locator('.file-preview-pill-primary')).toHaveCount(0);
+    await expect(imagePreviewStage.locator('.file-preview-pill--image')).toHaveCount(0);
+    await expect(
+      imageRow.locator(':scope > .outline-source-preview-row .outline-source-preview-actions button'),
+    ).toHaveCount(2);
+    await expect(imageRow.locator(':scope > .outline-source-preview-row .file-preview-resize-handle')).toHaveCount(0);
+    await expect(imagePreviewStage).not.toHaveClass(/collapsed|expanded/);
+    await page.setViewportSize({ width: 760, height: 800 });
+    await expect(hideOutlinePreview).toBeVisible();
+    await expect.poll(async () => {
+      const [previewRect, controlsRect] = await Promise.all([
+        imageRow.locator(':scope > .outline-source-preview-row .file-node-preview').boundingBox(),
+        imageRow.locator(':scope > .outline-source-preview-row .outline-source-preview-actions').boundingBox(),
+      ]);
+      if (!previewRect || !controlsRect) return false;
+      return controlsRect.x >= previewRect.x
+        && controlsRect.x + controlsRect.width <= previewRect.x + previewRect.width
+        && controlsRect.y >= previewRect.y
+        && controlsRect.y + controlsRect.height <= previewRect.y + previewRect.height;
+    }).toBe(true);
+    await page.setViewportSize({ width: 1280, height: 800 });
     await page.evaluate(({ nodeId, tagId }) => {
       const win = window as typeof window & {
         __LIN_E2E__?: {
@@ -1160,13 +1619,22 @@ test.describe('file attachments', () => {
     }, { nodeId: imageId, tagId: ids.projectTag });
     await expect(imageRow.locator('.tag-badge-label')).toHaveText('project');
 
+    const imageName = 'Release cover';
+    await imageTitle.click();
+    await page.keyboard.press('Meta+A');
+    await page.keyboard.type(imageName);
+    await expect.poll(async () => (
+      (await e2eProjection(page)).nodes.find((node) => node.id === imageId)?.content.text
+    )).toBe(imageName);
+    await expect(outlineImagePreview).toHaveAttribute('alt', imageName);
+
     await imageRow.locator('> .row').first().hover();
-    await imageRow.locator('> .row .row-bullet-button').first().click();
+    await imageRow.locator('.row-bullet-button').first().click();
     const nodePage = page.locator('.outline-panel-surface.active-panel');
     const imagePreview = nodePage.locator('.node-source-preview .file-preview-image img');
     await expect(imagePreview).toBeVisible();
-    await expect(imagePreview).toHaveAttribute('alt', /picked-image\.png/i);
-    await expect(nodePage.locator('.node-source-row')).toHaveAttribute('data-availability', 'ready');
+    await expect(imagePreview).toHaveAttribute('alt', imageName);
+    await expect(nodePage.getByRole('region', { name: 'Source preview' })).toBeVisible();
   });
 
   test('external file drag shows outliner insertion guides and drops at the indicated row position', async ({ page }) => {
@@ -1215,14 +1683,14 @@ test.describe('file attachments', () => {
     }));
   });
 
-  test('Cmd+V pastes clipboard files as ordinary Source-backed Nodes', async ({ page }) => {
+  test('Cmd+V pastes clipboard images as ordinary Source-backed Nodes with previews', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
 
     await pasteClipboardFile(page, {
-      name: 'clipboard-report.pdf',
-      mimeType: 'application/pdf',
-      text: '%PDF clipboard report',
+      name: 'clipboard-image.png',
+      mimeType: 'image/png',
+      text: 'clipboard image bytes',
     });
 
     await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
@@ -1238,22 +1706,245 @@ test.describe('file attachments', () => {
         type: pasted?.type ?? null,
       };
     }).toEqual({
-      name: 'clipboard-report.pdf',
+      name: 'clipboard-image.png',
       sourceText: expect.stringMatching(/^asset:\/\/local\//),
       type: null,
     });
     const pastedRow = row(page, pastedId!);
-    await expect(rowEditor(page, pastedId!)).toContainText('clipboard-report.pdf');
+    await expect(rowEditor(page, pastedId!)).toContainText('clipboard-image.png');
     await expect(pastedRow.locator('.file-node-keyboard-anchor, .file-node-row-main')).toHaveCount(0);
+    await expect(pastedRow.locator(':scope > .outline-source-preview-row .file-preview-image img'))
+      .toHaveAttribute('alt', 'clipboard-image.png');
+    const pastedSource = sourceFieldValues(await e2eProjection(page), pastedId!)[0];
+    expect(pastedSource).toBeTruthy();
+    await expect(row(page, pastedSource!.id).getByRole('button', { name: 'Hide preview' })).toHaveCount(0);
+    await expect(
+      pastedRow.locator(':scope > .outline-source-preview-row').getByRole('button', { name: 'Hide preview' }),
+    ).toBeVisible();
 
     const calls = await commandCalls(page);
     expect(calls.some((call) => call.cmd === 'outline/asset ingest')).toBe(true);
     expect(await appliedSourceCreates(page)).toContainEqual(expect.objectContaining({
       draft: expect.objectContaining({
-        content: expect.objectContaining({ text: 'clipboard-report.pdf' }),
+        content: expect.objectContaining({ text: 'clipboard-image.png' }),
       }),
       sourceText: expect.stringMatching(/^asset:\/\/local\//),
     }));
+  });
+
+  test('short audio previews fall back to the pane for a usable Source actions menu', async ({ page }) => {
+    const beforeChildren = await todayChildren(page);
+    await trailingEditor(page).click();
+    await pasteClipboardFile(page, {
+      name: 'short-preview.wav',
+      mimeType: 'audio/wav',
+      text: 'audio bytes',
+    });
+
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+    const pastedId = (await todayChildren(page)).at(-1)!;
+    const pastedRow = row(page, pastedId);
+    const preview = pastedRow.locator(
+      ':scope > .outline-source-preview-row .file-node-preview--media-audio',
+    );
+    await expect(preview).toBeVisible();
+    await expect.poll(async () => preview.boundingBox().then((rect) => rect?.height ?? 0))
+      .toBeLessThan(120);
+
+    await pastedRow
+      .locator(':scope > .outline-source-preview-row')
+      .getByRole('button', { name: 'Preview actions' })
+      .click();
+    const menu = page.getByRole('menu', { name: 'Preview actions' });
+    await expect(menu).toBeVisible();
+    await expectUsableMenuInsidePane(menu, page.locator('.outline-panel-surface.active-panel'));
+    await expect.poll(async () => {
+      const [menuRect, previewRect] = await Promise.all([menu.boundingBox(), preview.boundingBox()]);
+      return Boolean(menuRect && previewRect && menuRect.height > previewRect.height);
+    }).toBe(true);
+  });
+
+  test('tiny image previews contain corner controls and use the pane for the Source actions menu', async ({ page }) => {
+    const beforeChildren = await todayChildren(page);
+    await trailingEditor(page).click();
+    await pasteClipboardFile(page, {
+      name: 'small-preview.png',
+      mimeType: 'image/png',
+      text: 'image bytes',
+    });
+
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+    const pastedId = (await todayChildren(page)).at(-1)!;
+    const pastedRow = row(page, pastedId);
+    const preview = pastedRow.locator(
+      ':scope > .outline-source-preview-row .file-node-preview--image',
+    );
+    const image = preview.locator('img');
+    const actions = pastedRow.locator(
+      ':scope > .outline-source-preview-row .outline-source-preview-actions',
+    );
+    await expect(image).toBeVisible();
+    await expect.poll(async () => image.evaluate((element) => {
+      const imageElement = element as HTMLImageElement;
+      const rect = imageElement.getBoundingClientRect();
+      return {
+        naturalHeight: imageElement.naturalHeight,
+        naturalWidth: imageElement.naturalWidth,
+        renderedHeight: rect.height,
+        renderedWidth: rect.width,
+      };
+    })).toEqual({ naturalHeight: 1, naturalWidth: 1, renderedHeight: 1, renderedWidth: 1 });
+    await expect.poll(async () => {
+      const [actionsRect, previewRect] = await Promise.all([actions.boundingBox(), preview.boundingBox()]);
+      if (!actionsRect || !previewRect) return false;
+      const tolerance = 0.5;
+      return actionsRect.x >= previewRect.x - tolerance
+        && actionsRect.y >= previewRect.y - tolerance
+        && actionsRect.x + actionsRect.width <= previewRect.x + previewRect.width + tolerance
+        && actionsRect.y + actionsRect.height <= previewRect.y + previewRect.height + tolerance;
+    }).toBe(true);
+
+    await actions.getByRole('button', { name: 'Preview actions' }).click();
+    const menu = page.getByRole('menu', { name: 'Preview actions' });
+    await expect(menu).toBeVisible();
+    await expectUsableMenuInsidePane(menu, page.locator('.outline-panel-surface.active-panel'));
+  });
+
+  test('a bare URL on an empty row atomically writes content and Source while non-empty content keeps an inline link', async ({ page }) => {
+    const url = 'https://example.com/article/with-a-long-path-that-wraps-inside-the-field-value-without-moving-its-open-and-preview-controls-onto-a-separate-line';
+    const beforeChildren = await todayChildren(page);
+    await trailingEditor(page).click();
+    await pasteClipboardText(page, url);
+
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+    const createdId = (await todayChildren(page)).at(-1);
+    expect(createdId).toBeTruthy();
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const created = projection.nodes.find((node) => node.id === createdId);
+      return {
+        content: created?.content.text ?? null,
+        sources: sourceFieldValues(projection, createdId!).map((source) => source.content.text),
+      };
+    }).toEqual({ content: url, sources: [url] });
+
+    const sourceCreate = (await appliedSourceCreates(page)).find((entry) => entry.draft.id === createdId);
+    expect(sourceCreate).toMatchObject({
+      draft: { id: createdId, content: { text: url } },
+      sourceText: url,
+    });
+
+    const createdProjection = await e2eProjection(page);
+    const createdSourceEntry = sourceFieldEntries(createdProjection, createdId!)[0];
+    const createdSourceValue = sourceFieldValues(createdProjection, createdId!)[0];
+    expect(createdSourceEntry).toBeTruthy();
+    expect(createdSourceValue).toBeTruthy();
+    const sourceFieldRow = row(page, createdSourceEntry!.id);
+    const sourceValueRow = row(page, createdSourceValue!.id);
+    await expect(sourceValueRow.locator('.row-inline-content-slot .field-value-open')).toBeVisible();
+    await expect(sourceValueRow.locator('.row-inline-content-slot .source-preview-affordance')).toHaveCount(0);
+    await expect.poll(async () => sourceValueRow.evaluate((valueRow) => {
+      const editor = valueRow.querySelector<HTMLElement>('.row-editor');
+      const affordances = valueRow.querySelector<HTMLElement>('.field-value-affordances');
+      const textNode = Array.from(
+        editor?.querySelector('.ProseMirror')?.childNodes ?? [],
+      ).flatMap((child) => Array.from(child.childNodes))
+        .findLast((child): child is Text => child.nodeType === Node.TEXT_NODE && Boolean(child.textContent));
+      if (!editor || !affordances || !textNode?.textContent) return null;
+      const finalCharacter = document.createRange();
+      finalCharacter.setStart(textNode, textNode.textContent.length - 1);
+      finalCharacter.setEnd(textNode, textNode.textContent.length);
+      const finalTextRect = finalCharacter.getBoundingClientRect();
+      const affordanceRect = affordances.getBoundingClientRect();
+      const inlineGap = affordanceRect.left - finalTextRect.right;
+      return {
+        followsFinalText: inlineGap >= 0 && inlineGap <= 8,
+        sharesLastTextLine: finalTextRect.top < affordanceRect.bottom
+          && finalTextRect.bottom > affordanceRect.top,
+      };
+    })).toEqual({
+      followsFinalText: true,
+      sharesLastTextLine: true,
+    });
+    await expect.poll(async () => sourceFieldRow.evaluate((field, rootId) => {
+      const drafts = document.querySelectorAll<HTMLElement>(
+        `[data-trailing-parent-id="${CSS.escape(String(rootId))}"]`,
+      );
+      const draft = drafts.item(drafts.length - 1);
+      const fieldShell = field.closest('.outliner-flat-flow-row, .outliner-flat-row');
+      const draftShell = draft?.closest('.outliner-flat-flow-row, .outliner-flat-row');
+      return Boolean(
+        fieldShell
+          && draftShell
+          && fieldShell.compareDocumentPosition(draftShell) & Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+    }, ids.today)).toBe(true);
+
+    const alphaEditor = rowEditor(page, ids.alpha);
+    await alphaEditor.click();
+    await page.keyboard.press('End');
+    await pasteClipboardText(page, 'www.example.com/linked');
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const alpha = projection.nodes.find((node) => node.id === ids.alpha);
+      return {
+        links: alpha?.content.marks.filter((mark) => mark.type === 'link').map((mark) => mark.attrs?.href) ?? [],
+        sourceCount: sourceFieldValues(projection, ids.alpha).length,
+      };
+    }).toEqual({ links: ['https://www.example.com/linked'], sourceCount: 0 });
+  });
+
+  test('a YouTube Source uses a bounded click-to-play player', async ({ page }) => {
+    const url = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&autoplay=1';
+    const beforeChildren = await todayChildren(page);
+    await trailingEditor(page).click();
+    await pasteClipboardText(page, url);
+
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+    const createdId = (await todayChildren(page)).at(-1);
+    expect(createdId).toBeTruthy();
+    const player = row(page, createdId!).locator(':scope > .outline-source-preview-row .file-preview-youtube');
+    const webview = player.locator('webview.file-preview-youtube-webview');
+    await expect(player).toBeVisible();
+    const sourceActions = row(page, createdId!)
+      .locator(':scope > .outline-source-preview-row .outline-source-preview-actions');
+    await expect(sourceActions.locator('button')).toHaveCount(2);
+    await expect(sourceActions.getByRole('button', { name: 'Preview actions' })).toBeVisible();
+    await expect(sourceActions.getByRole('button', { name: 'Hide preview' })).toBeVisible();
+    await expect(row(page, createdId!).locator(
+      ':scope > .outline-source-preview-row .file-preview-pill:not(.file-preview-pill--source-corner)',
+    )).toHaveCount(0);
+    await expect(webview).toHaveAttribute(
+      'src',
+      'https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=0&playsinline=1',
+    );
+    await expect(webview).toHaveAttribute('httpreferrer', 'https://tenon.local/');
+    await expect(row(page, createdId!).locator(
+      ':scope > .outline-source-preview-row .file-node-preview--url',
+    )).toHaveCount(0);
+    await expect.poll(async () => player.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        bounded: rect.width <= 760,
+        ratio: Math.round((rect.width / rect.height) * 100) / 100,
+      };
+    })).toEqual({ bounded: true, ratio: 1.78 });
+    await expect.poll(async () => row(page, createdId!).evaluate((ownerRow) => {
+      const preview = ownerRow.querySelector<HTMLElement>(
+        ':scope > .outline-source-preview-row .file-preview-youtube',
+      );
+      const title = ownerRow.querySelector<HTMLElement>(':scope > .row .row-content-line');
+      if (!preview || !title) return false;
+      const gap = title.getBoundingClientRect().top - preview.getBoundingClientRect().bottom;
+      return gap >= 6 && gap <= 8;
+    })).toBe(true);
+    await sourceActions.getByRole('button', { name: 'Preview actions' }).click();
+    const sourceMenu = page.getByRole('menu', { name: 'Preview actions' });
+    await expect(sourceMenu).toBeVisible();
+    await expectInsidePreviewBoundary(
+      sourceMenu,
+      row(page, createdId!).locator(':scope > .outline-source-preview-row .file-node-preview'),
+    );
   });
 
   test('text-like file previews keep content and horizontal scrollbars inside the preview inset', async ({ page }) => {
@@ -1396,11 +2087,14 @@ test.describe('file attachments', () => {
     expect(previewCalls.some((call) => call.cmd === 'preview_read_bytes')).toBe(false);
 
     const epubBody = page.locator('.node-source-preview > .file-node-body').last();
-    await expectConcentricPreviewCorners(epubPreview, '.file-preview-epub-host');
+    await expectCenteredSquarePreviewCorners(epubPreview, '.file-preview-epub-host');
     await epubBody.locator('.file-preview-pill-primary').click();
     const fullPreview = epubBody.locator('.file-node-preview.expanded .file-preview-epub--full');
     const fullReader = fullPreview.locator('.file-preview-epub-host');
-    await expectConcentricPreviewCorners(epubBody.locator('.file-node-preview.expanded'), '.file-preview-epub-host');
+    await expectCenteredSquarePreviewCorners(
+      epubBody.locator('.file-node-preview.expanded'),
+      '.file-preview-epub-host',
+    );
     await expect(fullReader).toHaveAttribute('data-epub-continuous-reader', 'true');
     await expect(fullReader).toHaveAttribute('data-epub-section-count', '2');
     await expect(fullReader.locator('.file-preview-epub-section')).toHaveCount(2);
@@ -1452,10 +2146,10 @@ test.describe('file attachments', () => {
       backgroundColor: 'rgb(255, 255, 255)',
       boxShadow: 'none',
       hostBackgroundColor: 'rgba(0, 0, 0, 0)',
-      hostRadius: '8px',
-      iframeRadius: '8px',
+      hostRadius: '0px',
+      iframeRadius: '0px',
       minHeight: '0px',
-      pageRadius: '8px',
+      pageRadius: '0px',
     });
 
     await outlineMarkers.nth(1).click();
@@ -1717,7 +2411,7 @@ test.describe('file attachments', () => {
     await expect(lastSectionIframe).toHaveCount(1);
   });
 
-  test('unsupported Source previews keep the same bottom action location as previewable Sources', async ({ page }) => {
+  test('unsupported Sources keep metadata and actions together in the fallback frame', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
 
@@ -1733,7 +2427,7 @@ test.describe('file attachments', () => {
     await expect(rowEditor(page, pastedId)).toContainText('archive.zip');
 
     await attachmentRow.locator('> .row').first().hover();
-    await attachmentRow.locator('> .row .row-bullet-button').first().click();
+    await attachmentRow.locator('.row-bullet-button').first().click();
     const metadataPreview = page.locator('.outline-panel-surface.active-panel .node-source-preview .file-node-preview--metadata');
     await expect(metadataPreview).toBeVisible();
     const metadataKindRow = metadataPreview.locator('.file-preview-metadata-kind-row');
@@ -1795,7 +2489,7 @@ test.describe('file attachments', () => {
     const pastedId = (await todayChildren(page)).at(-1)!;
     const attachmentRow = row(page, pastedId);
     await attachmentRow.locator('> .row').first().hover();
-    await attachmentRow.locator('> .row .row-bullet-button').first().click();
+    await attachmentRow.locator('.row-bullet-button').first().click();
     const metadataPreview = page.locator('.outline-panel-surface.active-panel .node-source-preview .file-node-preview--metadata');
     await expect(metadataPreview).toBeVisible();
 
@@ -1875,9 +2569,12 @@ test.describe('file attachments', () => {
     await expect(attachmentRow.locator('.tag-badge-label')).toHaveText('project');
     await expect(titleEditor).toContainText('Renamed report');
 
-    const countBeforeEnter = (await todayChildren(page)).length;
+    const childCountBeforeEnter = outlineChildIds(await e2eProjection(page), attachmentId).length;
     await titleEditor.click();
+    await page.keyboard.press('Meta+ArrowRight');
     await page.keyboard.press('Enter');
-    await expect.poll(async () => (await todayChildren(page)).length).toBe(countBeforeEnter + 1);
+    await expect.poll(async () => (
+      outlineChildIds(await e2eProjection(page), attachmentId).length
+    )).toBe(childCountBeforeEnter + 1);
   });
 });

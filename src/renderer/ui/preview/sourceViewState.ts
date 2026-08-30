@@ -27,14 +27,22 @@ export function useNodeSourceViewState(ownerId: string, valueIds: readonly strin
   const previewVisible = owner?.previewVisible ?? true;
 
   useEffect(() => {
+    if (valueIds.length === 0) {
+      removeOwner(ownerId);
+      return;
+    }
     if (selectedValueId === owner?.selectedValueId) return;
     updateOwner(ownerId, { selectedValueId: selectedValueId ?? undefined });
-  }, [owner?.selectedValueId, ownerId, selectedValueId]);
+  }, [owner?.selectedValueId, ownerId, selectedValueId, valueIds.length]);
 
   return useMemo(() => ({
     selectedValueId,
     previewVisible,
     select: (valueId: string) => updateOwner(ownerId, { selectedValueId: valueId }),
+    show: (valueId = selectedValueId) => updateOwner(ownerId, {
+      previewVisible: true,
+      selectedValueId: valueId ?? undefined,
+    }),
     setPreviewVisible: (visible: boolean) => updateOwner(ownerId, { previewVisible: visible }),
   }), [ownerId, previewVisible, selectedValueId]);
 }
@@ -58,6 +66,15 @@ function updateOwner(ownerId: string, patch: Partial<OwnerSourceViewState>): voi
   if (next.previewVisible === previous.previewVisible
     && next.selectedValueId === previous.selectedValueId) return;
   snapshot = { owners: { ...snapshot.owners, [ownerId]: next } };
+  persistSnapshot(snapshot);
+  for (const listener of listeners) listener();
+}
+
+function removeOwner(ownerId: string): void {
+  if (!snapshot.owners[ownerId]) return;
+  const owners = { ...snapshot.owners };
+  delete owners[ownerId];
+  snapshot = { owners };
   persistSnapshot(snapshot);
   for (const listener of listeners) listener();
 }

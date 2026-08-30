@@ -909,6 +909,45 @@ test.describe('cursor affordances', () => {
     expect(collectFocusVisibleIndicatorTokenViolations()).toEqual([]);
   });
 
+  test('paints registered focus indicators only for the latest keyboard modality', async ({ page }) => {
+    await openMockedApp(page);
+    const probe = page.locator('[data-focus-modality-probe]');
+    await page.evaluate(() => {
+      const button = document.createElement('button');
+      button.dataset.focusModalityProbe = '';
+      button.style.boxShadow = [
+        'var(--focus-ring-shadow)',
+        'var(--tag-focus-shadow)',
+        'var(--inline-ref-focus-shadow)',
+        'var(--underline-focus-shadow)',
+      ].join(', ');
+      document.body.append(button);
+    });
+
+    const focusPaint = async () => probe.evaluate((element) => ({
+      modality: document.documentElement.dataset.inputModality,
+      factor: getComputedStyle(document.documentElement).getPropertyValue('--focus-ring-modality').trim(),
+      shadow: getComputedStyle(element).boxShadow,
+    }));
+
+    await probe.dispatchEvent('pointerdown');
+    await probe.focus();
+    const pointerPaint = await focusPaint();
+    expect(pointerPaint.modality).toBe('pointer');
+    expect(pointerPaint.factor).toBe('0');
+
+    await page.keyboard.press('Tab');
+    await probe.focus();
+    const keyboardPaint = await focusPaint();
+    expect(keyboardPaint.modality).toBe('keyboard');
+    expect(keyboardPaint.factor).toBe('1');
+    expect(keyboardPaint.shadow).not.toBe(pointerPaint.shadow);
+
+    await probe.dispatchEvent('pointerdown');
+    await probe.focus();
+    expect(await focusPaint()).toEqual(pointerPaint);
+  });
+
   test('keeps resize cursors routed through shared tokens', () => {
     expect(collectRawResizeCursorViolations()).toEqual([]);
   });

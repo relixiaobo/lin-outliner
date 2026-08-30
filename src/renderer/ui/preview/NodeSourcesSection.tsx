@@ -1,23 +1,27 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { SourceAvailability, SourceResolutionReason } from '../../../core/source';
 import { api } from '../../api/client';
 import type { NodeId } from '../../api/types';
 import { useT } from '../../i18n/I18nProvider';
 import type { DocumentIndex } from '../../state/document';
 import {
-  AddIcon,
   AttachmentIcon,
   CheckIcon,
+  ChevronDownIcon,
+  CloseIcon,
   CopyIcon,
-  HideIcon,
-  MoveDownIcon,
-  MoveUpIcon,
+  MoreIcon,
   ShowIcon,
   TrashIcon,
 } from '../icons';
-import { Button } from '../primitives/Button';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { IconButton } from '../primitives/IconButton';
-import { Input } from '../primitives/Input';
+import { MenuItem } from '../primitives/MenuItem';
+import { MenuSurface } from '../primitives/MenuSurface';
+import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import { useDismissibleOverlay } from '../primitives/useDismissibleOverlay';
+import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import type { CommandRunner } from '../shared';
 import { FilePreviewBody } from './FilePreviewBody';
 import { dispatchPreviewTargetOpen } from './previewEvents';
@@ -29,12 +33,21 @@ import {
 import { useNodeSourceViewState } from './sourceViewState';
 
 interface NodeSourcesSectionProps {
+  accessibleName?: string;
   index: DocumentIndex;
   ownerId: NodeId;
   run: CommandRunner;
+  showToolbar?: boolean;
 }
 
-export function NodeSourcesSection({ index, ownerId, run }: NodeSourcesSectionProps) {
+/** Preview-first presentation for the selected URI of an ordinary Node. */
+export function NodeSourcesSection({
+  accessibleName,
+  index,
+  ownerId,
+  run,
+  showToolbar = true,
+}: NodeSourcesSectionProps) {
   const labels = useT().nodePanel.sources;
   const values = useMemo(
     () => nodeSourceValues(ownerId, index.byId),
@@ -47,118 +60,139 @@ export function NodeSourcesSection({ index, ownerId, run }: NodeSourcesSectionPr
   const selected = resolvedValues.find((value) => value.sourceValueId === view.selectedValueId)
     ?? resolvedValues[0]
     ?? null;
-  const [newSourceText, setNewSourceText] = useState('');
-  const [linkFilePending, setLinkFilePending] = useState(false);
 
-  const add = () => {
-    if (!newSourceText) return;
-    const sourceText = newSourceText;
-    setNewSourceText('');
-    void run(() => api.addSource(ownerId, sourceText));
-  };
-  const linkFile = async () => {
-    if (linkFilePending) return;
-    setLinkFilePending(true);
-    try {
-      await run(() => api.linkFileSource(ownerId));
-    } finally {
-      setLinkFilePending(false);
-    }
-  };
+  if (!selected || !view.previewVisible) return null;
 
   return (
-    <section className="node-sources" aria-labelledby={`node-sources-title-${ownerId}`}>
-      <div className="node-sources-header">
-        <h2 id={`node-sources-title-${ownerId}`}>{labels.title}</h2>
-        <div className="node-sources-header-actions">
-          {values.length > 0 ? (
-            <IconButton
-              icon={view.previewVisible ? HideIcon : ShowIcon}
-              label={view.previewVisible ? labels.hidePreview : labels.showPreview}
-              onClick={() => view.setPreviewVisible(!view.previewVisible)}
-              variant="panel"
-            />
-          ) : null}
-          {values.length > 1 ? (
-            <Button size="sm" variant="ghost" onClick={() => void run(() => api.clearSources(ownerId))}>
-              {labels.clear}
-            </Button>
-          ) : null}
-        </div>
-      </div>
-
-      {values.length > 0 ? (
-        <div className="node-source-list" role="list">
-          {resolvedValues.map((value, index) => (
-            <SourceRow
-              key={value.sourceValueId}
-              index={index}
+    <section className="node-source-preview-region" aria-label={labels.previewRegion}>
+      {showToolbar ? (
+        <div className="node-source-preview-toolbar">
+          <SourceSwitcher
+            labels={labels}
+            selected={selected}
+            values={resolvedValues}
+            onSelect={(valueId) => view.show(valueId)}
+          />
+          <div className="node-source-preview-toolbar-actions">
+            <SourceActionsMenu
               labels={labels}
               ownerId={ownerId}
               run={run}
-              selected={value.sourceValueId === selected?.sourceValueId}
-              total={values.length}
-              value={value}
-              values={resolvedValues}
-              onSelect={() => view.select(value.sourceValueId)}
+              selected={selected}
+              total={resolvedValues.length}
               onResolutionChanged={() => setResolutionGeneration((current) => current + 1)}
             />
-          ))}
-        </div>
-      ) : null}
-
-      <form
-        className="node-source-add"
-        onSubmit={(event) => {
-          event.preventDefault();
-          add();
-        }}
-      >
-        <Input
-          label={labels.addPlaceholder}
-          onChange={(event) => setNewSourceText(event.currentTarget.value)}
-          placeholder={labels.addPlaceholder}
-          spellCheck={false}
-          value={newSourceText}
-        />
-        <IconButton
-          disabled={!newSourceText}
-          icon={AddIcon}
-          label={labels.add}
-          type="submit"
-          variant="panel"
-        />
-        <Button disabled={linkFilePending} size="sm" variant="ghost" onClick={() => void linkFile()}>
-          <AttachmentIcon aria-hidden="true" />
-          {labels.linkFile}
-        </Button>
-      </form>
-
-      {selected && view.previewVisible ? (
-        selected.availability === 'ready' && selected.previewTarget ? (
-          <div
-            key={`${selected.sourceValueId}:${resolutionGeneration}`}
-            className="node-source-preview"
-            data-source-value-id={selected.sourceValueId}
-          >
-            <FilePreviewBody
-              ownerId={ownerId}
-              target={selected.previewTarget}
-              onOpenTarget={(target, options) => dispatchPreviewTargetOpen({
-                target,
-                newPane: options?.newPane,
-                nodeId: options?.nodeId,
-                presentation: options?.presentation,
-              })}
+            <IconButton
+              icon={CloseIcon}
+              label={labels.hidePreview}
+              onClick={() => view.setPreviewVisible(false)}
+              variant="panel"
             />
           </div>
-        ) : (
-          <div className="node-source-message" role="status">
-            {sourceReasonLabel(selected, labels)}
-          </div>
-        )
+        </div>
       ) : null}
+      {selected.availability === 'ready' && selected.previewTarget ? (
+        <div
+          key={`${selected.sourceValueId}:${resolutionGeneration}`}
+          className="node-source-preview"
+          data-source-value-id={selected.sourceValueId}
+        >
+          <FilePreviewBody
+            accessibleName={accessibleName}
+            dismiss={!showToolbar ? {
+              label: labels.hidePreview,
+              run: () => view.setPreviewVisible(false),
+            } : undefined}
+            ownerId={ownerId}
+            target={selected.previewTarget}
+            onOpenTarget={(target, options) => dispatchPreviewTargetOpen({
+              target,
+              newPane: options?.newPane,
+              nodeId: options?.nodeId,
+              presentation: options?.presentation,
+            })}
+          />
+        </div>
+      ) : (
+        <div className="node-source-message-wrap">
+          <div className="node-source-message" role="status">
+            {selected.resolving ? labels.loading : sourceReasonLabel(selected, labels)}
+          </div>
+          {!showToolbar ? (
+            <div className="outline-source-preview-actions" data-preserve-selection>
+              <IconButton
+                className="outline-source-preview-close"
+                icon={CloseIcon}
+                label={labels.hidePreview}
+                onClick={() => view.setPreviewVisible(false)}
+                variant="panel"
+              />
+            </div>
+          ) : null}
+        </div>
+      )}
     </section>
+  );
+}
+
+/** Mount the selected Source preview before its ordinary owner row. */
+export function OutlineSourcePreview({
+  accessibleName,
+  index,
+  ownerId,
+  run,
+}: NodeSourcesSectionProps) {
+  const values = useMemo(
+    () => nodeSourceValues(ownerId, index.byId),
+    [index.byId, index.revision, ownerId],
+  );
+  const valueIds = useMemo(() => values.map((value) => value.sourceValueId), [values]);
+  const view = useNodeSourceViewState(ownerId, valueIds);
+  if (!view.previewVisible || !view.selectedValueId) return null;
+
+  return (
+    <div className="outline-source-preview" data-preserve-selection>
+      <NodeSourcesSection
+        accessibleName={accessibleName}
+        index={index}
+        ownerId={ownerId}
+        run={run}
+        showToolbar={false}
+      />
+    </div>
+  );
+}
+
+export function SourcePreviewAffordance({
+  index,
+  ownerId,
+  valueId,
+}: {
+  index: DocumentIndex;
+  ownerId: NodeId;
+  valueId: NodeId;
+}) {
+  const labels = useT().nodePanel.sources;
+  const values = useMemo(
+    () => nodeSourceValues(ownerId, index.byId),
+    [index.byId, index.revision, ownerId],
+  );
+  const valueIds = useMemo(() => values.map((value) => value.sourceValueId), [values]);
+  const view = useNodeSourceViewState(ownerId, valueIds);
+  const selected = view.selectedValueId === valueId;
+  if (selected && view.previewVisible) return null;
+  const label = selected ? labels.showPreview : labels.previewThisSource;
+  return (
+    <ButtonControl
+      aria-label={label}
+      className="field-value-affordance source-preview-affordance"
+      data-preserve-selection
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={() => view.show(valueId)}
+      title={label}
+    >
+      <ShowIcon size={13} strokeWidth={1.8} />
+    </ButtonControl>
   );
 }
 
@@ -217,181 +251,265 @@ export function useResolvedNodeSources(
   });
 }
 
-function SourceRow({
-  index,
+function SourceSwitcher({
+  labels,
+  selected,
+  values,
+  onSelect,
+}: {
+  labels: ReturnType<typeof useT>['nodePanel']['sources'];
+  selected: NodeSourceDescriptor & { resolving?: boolean };
+  values: Array<NodeSourceDescriptor & { resolving?: boolean }>;
+  onSelect: (valueId: NodeId) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const anchorRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const style = useAnchoredOverlay(menuRef, {
+    anchorRef,
+    disabled: !open,
+    layoutKey: values.map((value) => value.sourceValueId).join(':'),
+    maxHeight: 360,
+    placement: 'bottom-start',
+    width: 320,
+  });
+  useDismissibleOverlay(menuRef, () => setOpen(false), {
+    disabled: !open,
+    escape: false,
+    ignoreRefs: [anchorRef],
+  });
+  const { onKeyDown } = useMenuKeyboard({
+    surfaceRef: menuRef,
+    onClose: () => setOpen(false),
+    kind: 'menu',
+  });
+  const selectedLabel = sourceDisplayLabel(selected);
+
+  if (values.length === 1) {
+    return (
+      <span className="node-source-preview-label" title={selected.sourceText}>
+        {selectedLabel}
+      </span>
+    );
+  }
+
+  return (
+    <>
+      <ButtonControl
+        ref={anchorRef}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        className="node-source-switcher"
+        onClick={() => setOpen((current) => !current)}
+        title={labels.switchSource}
+      >
+        <span>{selectedLabel}</span>
+        <ChevronDownIcon aria-hidden="true" size={13} />
+      </ButtonControl>
+      {open ? createPortal(
+        <MenuSurface
+          ref={menuRef}
+          aria-label={labels.switchSource}
+          className="node-source-menu"
+          role="menu"
+          style={style}
+          onKeyDown={onKeyDown}
+        >
+          {values.map((value) => (
+            <MenuItem
+              key={value.sourceValueId}
+              active={value.sourceValueId === selected.sourceValueId}
+              className="node-source-menu-item"
+              icon={value.sourceValueId === selected.sourceValueId ? <CheckIcon size={14} /> : null}
+              label={sourceDisplayLabel(value)}
+              labelClassName="node-source-menu-label"
+              meta={value.resolving ? labels.loading : availabilityLabel(value.availability, labels)}
+              metaClassName="node-source-menu-meta"
+              role="menuitem"
+              onClick={() => {
+                onSelect(value.sourceValueId);
+                setOpen(false);
+              }}
+            />
+          ))}
+        </MenuSurface>,
+        document.body,
+      ) : null}
+    </>
+  );
+}
+
+function SourceActionsMenu({
   labels,
   ownerId,
   run,
   selected,
   total,
-  value,
-  values,
-  onSelect,
   onResolutionChanged,
 }: {
-  index: number;
   labels: ReturnType<typeof useT>['nodePanel']['sources'];
   ownerId: NodeId;
   run: CommandRunner;
-  selected: boolean;
+  selected: NodeSourceDescriptor & { resolving?: boolean };
   total: number;
-  value: NodeSourceDescriptor & { resolving?: boolean };
-  values: readonly NodeSourceDescriptor[];
-  onSelect: () => void;
   onResolutionChanged: () => void;
 }) {
-  const [draft, setDraft] = useState(value.sourceText);
-  const [sourceActionPending, setSourceActionPending] = useState(false);
-  const [sourceActionError, setSourceActionError] = useState<string | null>(null);
-  useEffect(() => setDraft(value.sourceText), [value.sourceText]);
-  const changed = draft !== value.sourceText;
-  const save = () => {
-    if (!changed) return;
-    void run(() => api.replaceSource(ownerId, value.sourceValueId, draft));
-  };
-  const linkedFileTarget = value.previewTarget?.kind === 'linked-file'
-    ? value.previewTarget
+  const [open, setOpen] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const anchorRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const style = useAnchoredOverlay(menuRef, {
+    anchorRef,
+    disabled: !open,
+    layoutKey: `${selected.sourceValueId}:${selected.availability}:${total}`,
+    maxHeight: 420,
+    placement: 'bottom-end',
+    width: 240,
+  });
+  useDismissibleOverlay(menuRef, () => setOpen(false), {
+    disabled: !open,
+    escape: false,
+    ignoreRefs: [anchorRef],
+  });
+  const { onKeyDown } = useMenuKeyboard({
+    surfaceRef: menuRef,
+    onClose: () => setOpen(false),
+    kind: 'menu',
+  });
+  const linkedFileTarget = selected.previewTarget?.kind === 'linked-file'
+    ? selected.previewTarget
     : null;
-  const authorize = async () => {
-    if (!linkedFileTarget || sourceActionPending) return;
-    setSourceActionPending(true);
-    setSourceActionError(null);
+  const runHostAction = async (action: () => Promise<void>, failure: string) => {
+    if (pending) return;
+    setPending(true);
+    setError(null);
     try {
-      const result = await api.authorizeLinkedFile(linkedFileTarget);
-      if (result.authorized) onResolutionChanged();
-      else if (!result.canceled) {
-        setSourceActionError(result.error === 'different-file'
-          ? labels.differentFile
-          : labels.authorizationFailed);
-      }
-    } catch {
-      setSourceActionError(labels.authorizationFailed);
+      await action();
+    } catch (caught) {
+      setError(caught instanceof Error && caught.message ? caught.message : failure);
     } finally {
-      setSourceActionPending(false);
+      setPending(false);
+      setOpen(false);
     }
   };
-  const forget = async () => {
-    if (!linkedFileTarget || sourceActionPending) return;
-    setSourceActionPending(true);
-    setSourceActionError(null);
-    try {
-      await api.forgetLinkedFile(linkedFileTarget);
-      onResolutionChanged();
-    } catch {
-      setSourceActionError(labels.forgetFailed);
-    } finally {
-      setSourceActionPending(false);
+  const authorize = () => runHostAction(async () => {
+    if (!linkedFileTarget) return;
+    const result = await api.authorizeLinkedFile(linkedFileTarget);
+    if (result.authorized) onResolutionChanged();
+    else if (!result.canceled) {
+      throw new Error(result.error === 'different-file' ? labels.differentFile : labels.authorizationFailed);
     }
-  };
-  const replaceWithFile = async () => {
-    if (sourceActionPending) return;
-    setSourceActionPending(true);
-    setSourceActionError(null);
-    try {
-      const result = await run(() => api.replaceSourceWithFile(ownerId, value.sourceValueId));
-      if (result) onResolutionChanged();
-    } finally {
-      setSourceActionPending(false);
-    }
-  };
+  }, labels.authorizationFailed);
 
   return (
-    <div
-      className={`node-source-row${selected ? ' is-selected' : ''}`}
-      data-availability={value.availability}
-      role="listitem"
-      onFocusCapture={onSelect}
-      onMouseDown={onSelect}
-    >
-      <div className="node-source-main">
-        <Input
-          label={labels.edit}
-          size="sm"
-          onChange={(event) => setDraft(event.currentTarget.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              event.preventDefault();
-              save();
-            }
-            if (event.key === 'Escape') setDraft(value.sourceText);
-          }}
-          spellCheck={false}
-          value={draft}
-        />
-        <div className="node-source-status">
-          <span>{value.resolving ? labels.loading : availabilityLabel(value.availability, labels)}</span>
-          {value.reason ? <span>{sourceReasonLabel(value, labels)}</span> : null}
-          {sourceActionError ? <span role="alert">{sourceActionError}</span> : null}
-        </div>
-      </div>
-      <div className="node-source-actions">
-        <IconButton
-          disabled={sourceActionPending}
-          icon={AttachmentIcon}
-          label={labels.replaceWithFile}
-          onClick={() => void replaceWithFile()}
-          variant="panel"
-        />
-        {linkedFileTarget && value.availability !== 'ready' ? (
-          <Button disabled={sourceActionPending} size="sm" variant="ghost" onClick={() => void authorize()}>
-            {value.availability === 'unavailable' ? labels.relink : labels.chooseFile}
-          </Button>
-        ) : null}
-        {linkedFileTarget && value.availability === 'ready' ? (
-          <Button disabled={sourceActionPending} size="sm" variant="ghost" onClick={() => void forget()}>
-            {labels.forgetAccess}
-          </Button>
-        ) : null}
-        {value.actions.includes('retry') && value.availability !== 'ready' ? (
-          <Button
-            disabled={sourceActionPending || value.resolving}
-            size="sm"
-            variant="ghost"
-            onClick={onResolutionChanged}
-          >
-            {labels.retry}
-          </Button>
-        ) : null}
-        <IconButton
-          disabled={!changed}
-          icon={CheckIcon}
-          label={labels.save}
-          onClick={save}
-          variant="panel"
-        />
-        <IconButton
-          icon={CopyIcon}
-          label={labels.copyUri}
-          onClick={() => void navigator.clipboard.writeText(value.sourceText)}
-          variant="panel"
-        />
-        <IconButton
-          disabled={index === 0}
-          icon={MoveUpIcon}
-          label={labels.moveUp}
-          onClick={() => void run(() => api.reorderSource(
-            ownerId,
-            value.sourceValueId,
-            index > 1 ? values[index - 2].sourceValueId : null,
-          ))}
-          variant="panel"
-        />
-        <IconButton
-          disabled={index === total - 1}
-          icon={MoveDownIcon}
-          label={labels.moveDown}
-          onClick={() => void run(() => api.reorderSource(ownerId, value.sourceValueId, values[index + 1].sourceValueId))}
-          variant="panel"
-        />
-        <IconButton
-          icon={TrashIcon}
-          label={labels.remove}
-          onClick={() => void run(() => api.removeSource(ownerId, value.sourceValueId))}
-          variant="panel"
-        />
-      </div>
-    </div>
+    <>
+      <IconButton
+        ref={anchorRef}
+        disabled={pending}
+        icon={MoreIcon}
+        label={labels.moreActions}
+        onClick={() => setOpen((current) => !current)}
+        variant="panel"
+      />
+      {open ? createPortal(
+        <MenuSurface
+          ref={menuRef}
+          aria-label={labels.moreActions}
+          className="node-source-menu"
+          role="menu"
+          style={style}
+          onKeyDown={onKeyDown}
+        >
+          <MenuItem
+            className="node-source-menu-item"
+            icon={<AttachmentIcon size={14} />}
+            label={labels.linkFile}
+            role="menuitem"
+            onClick={() => void runHostAction(async () => {
+              await run(() => api.linkFileSource(ownerId));
+            }, labels.authorizationFailed)}
+          />
+          <MenuItem
+            className="node-source-menu-item"
+            icon={<AttachmentIcon size={14} />}
+            label={labels.replaceWithFile}
+            role="menuitem"
+            onClick={() => void runHostAction(async () => {
+              const result = await run(() => api.replaceSourceWithFile(ownerId, selected.sourceValueId));
+              if (result) onResolutionChanged();
+            }, labels.authorizationFailed)}
+          />
+          {linkedFileTarget && selected.availability !== 'ready' ? (
+            <MenuItem
+              className="node-source-menu-item"
+              label={selected.availability === 'unavailable' ? labels.relink : labels.chooseFile}
+              role="menuitem"
+              onClick={() => void authorize()}
+            />
+          ) : null}
+          {linkedFileTarget && selected.availability === 'ready' ? (
+            <MenuItem
+              className="node-source-menu-item"
+              label={labels.forgetAccess}
+              role="menuitem"
+              onClick={() => void runHostAction(async () => {
+                await api.forgetLinkedFile(linkedFileTarget);
+                onResolutionChanged();
+              }, labels.forgetFailed)}
+            />
+          ) : null}
+          {selected.actions.includes('retry') && selected.availability !== 'ready' ? (
+            <MenuItem
+              className="node-source-menu-item"
+              disabled={selected.resolving}
+              label={labels.retry}
+              role="menuitem"
+              onClick={() => {
+                onResolutionChanged();
+                setOpen(false);
+              }}
+            />
+          ) : null}
+          <MenuItem
+            className="node-source-menu-item"
+            icon={<CopyIcon size={14} />}
+            label={labels.copyUri}
+            role="menuitem"
+            onClick={() => {
+              void navigator.clipboard.writeText(selected.sourceText);
+              setOpen(false);
+            }}
+          />
+          {total > 1 ? (
+            <MenuItem
+              className="node-source-menu-item"
+              label={labels.clear}
+              role="menuitem"
+              onClick={() => void runHostAction(async () => {
+                await run(() => api.clearSources(ownerId));
+              }, labels.sourceActionFailed)}
+            />
+          ) : null}
+          <MenuItem
+            className="node-source-menu-item is-destructive"
+            icon={<TrashIcon size={14} />}
+            label={labels.remove}
+            role="menuitem"
+            onClick={() => void runHostAction(async () => {
+              await run(() => api.removeSource(ownerId, selected.sourceValueId));
+            }, labels.sourceActionFailed)}
+          />
+        </MenuSurface>,
+        document.body,
+      ) : null}
+      {error ? <span className="node-source-action-error" role="alert">{error}</span> : null}
+    </>
   );
+}
+
+function sourceDisplayLabel(source: NodeSourceDescriptor): string {
+  return source.label.trim() || source.sourceText;
 }
 
 function availabilityLabel(
