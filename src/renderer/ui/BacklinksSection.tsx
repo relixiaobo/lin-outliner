@@ -8,8 +8,10 @@ import {
 } from 'react';
 import { api } from '../api/client';
 import {
+  isContentBearingNode,
   nodeReferenceTarget,
   replaceAllRichTextPatch,
+  type ContentBearingNodeProjection,
   type NodeId,
   type NodeProjection,
 } from '../api/types';
@@ -39,12 +41,12 @@ interface BacklinksSectionProps {
 
 interface ReferenceRow {
   source: ReferenceSource;
-  node: NodeProjection;
+  node: ContentBearingNodeProjection;
   key: string;
 }
 
 interface ReferenceOutlineRowProps {
-  node: NodeProjection;
+  node: ContentBearingNodeProjection;
   depth: number;
   path: readonly NodeId[];
   labels: ReturnType<typeof useT>['nodePanel']['references'];
@@ -145,7 +147,13 @@ function BacklinksSectionContent(props: BacklinksSectionProps) {
     if (!mention || mention.field !== 'content') return;
     const sourceNode = index.byId.get(source.sourceNodeId);
     const targetNode = index.byId.get(targetId);
-    if (!sourceNode || !targetNode || sourceNode.locked) return;
+    if (
+      !sourceNode
+      || !targetNode
+      || !isContentBearingNode(sourceNode)
+      || !isContentBearingNode(targetNode)
+      || sourceNode.locked
+    ) return;
     const currentText = sourceNode.content.text.slice(mention.start, mention.end);
     if (currentText.toLocaleLowerCase() !== mention.text.toLocaleLowerCase()) return;
     const displayName = targetNode.content.text.trim() || labels.untitledSource;
@@ -217,7 +225,7 @@ function BacklinksSectionContent(props: BacklinksSectionProps) {
               expandedRowKeys={expandedRowKeys}
               onToggleRowExpansion={toggleRowExpansion}
               onLinkMention={linkMention}
-              targetTitle={index.byId.get(targetId)?.content.text.trim() || labels.untitledSource}
+              targetTitle={nodeTitleOrFallback(index.byId.get(targetId), labels.untitledSource)}
             />
           )}
         </div>
@@ -412,7 +420,7 @@ function ReferenceChildOutlineRow({
   nodeId: NodeId;
 }) {
   const node = props.index.byId.get(nodeId);
-  if (!node) return null;
+  if (!node || !isContentBearingNode(node)) return null;
   return (
     <ReferenceOutlineRow
       {...props}
@@ -427,7 +435,7 @@ function BreadcrumbPath({
   labels,
   onOpenSource,
 }: {
-  nodes: readonly NodeProjection[];
+  nodes: readonly ContentBearingNodeProjection[];
   labels: ReturnType<typeof useT>['nodePanel']['references'];
   onOpenSource: (event: MouseEvent, sourceNodeId: NodeId) => void;
 }) {
@@ -481,7 +489,7 @@ function dedupeRows(
   const seen = new Set<string>();
   for (const source of sources) {
     const node = index.byId.get(source.sourceNodeId);
-    if (!node) continue;
+    if (!node || !isContentBearingNode(node)) continue;
     const key = referenceRowKey(source);
     if (seen.has(key)) continue;
     seen.add(key);
@@ -503,17 +511,25 @@ function referenceRowKey(source: ReferenceSource): string {
 
 function fieldLabel(source: ReferenceSource, index: DocumentIndex, fieldFallback: string): string {
   const fieldDef = source.fieldDefId ? index.byId.get(source.fieldDefId) : undefined;
-  if (fieldDef?.content.text.trim()) return fieldDef.content.text.trim();
+  if (fieldDef && isContentBearingNode(fieldDef) && fieldDef.content.text.trim()) return fieldDef.content.text.trim();
   const fieldEntry = source.fieldEntryId ? index.byId.get(source.fieldEntryId) : undefined;
-  return fieldEntry?.content.text.trim() || fieldFallback;
+  return nodeTitleOrFallback(fieldEntry, fieldFallback);
 }
 
-function nodeTitle(node: NodeProjection, fallback: string): string {
+function nodeTitle(node: ContentBearingNodeProjection, fallback: string): string {
   return node.content.text.trim() || fallback;
 }
 
-function displaySourceNode(node: NodeProjection, index: DocumentIndex): NodeProjection {
+function nodeTitleOrFallback(node: NodeProjection | undefined, fallback: string): string {
+  return node && isContentBearingNode(node) ? nodeTitle(node, fallback) : fallback;
+}
+
+function displaySourceNode(
+  node: ContentBearingNodeProjection,
+  index: DocumentIndex,
+): ContentBearingNodeProjection {
   if (node.type !== 'reference' || !node.targetId) return node;
   const targetId = resolveReferenceTargetId(node.targetId, index.byId);
-  return targetId ? index.byId.get(targetId) ?? node : node;
+  const target = targetId ? index.byId.get(targetId) : undefined;
+  return target && isContentBearingNode(target) ? target : node;
 }

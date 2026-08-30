@@ -23,7 +23,7 @@ const JsonValue = Type.Unknown();
 
 export const FieldTypeSchema = Type.Union([
   Type.Literal('plain'), Type.Literal('options'), Type.Literal('options_from_supertag'),
-  Type.Literal('date'), Type.Literal('number'), Type.Literal('url'),
+  Type.Literal('date'), Type.Literal('number'), Type.Literal('uri'),
   Type.Literal('email'), Type.Literal('checkbox'),
 ]);
 
@@ -85,6 +85,16 @@ export const TargetRefSchema = Type.Union([
   Type.Object({ target: TargetSpecSchema }, closed),
   Type.Object({ binding: BindingName }, closed),
 ], { $id: 'TargetRef' });
+
+export const OneTargetRefSchema = Type.Union([
+  Type.Object({
+    target: Type.Object({
+      selector: SelectorSchema,
+      cardinality: Type.Literal('one'),
+    }, closed),
+  }, closed),
+  Type.Object({ binding: BindingName }, closed),
+], { $id: 'OneTargetRef' });
 
 const FirstPlacementSchema = Type.Object({
   kind: Type.Literal('first'),
@@ -322,9 +332,6 @@ export const CaptureProvenanceSchema = Type.Object({
 }, { ...closed, $id: 'CaptureProvenance' });
 
 const NodeDraftMetadataSchema = Type.Object({
-  width: Type.Optional(Type.Union([Type.Number({ minimum: 0 }), Type.Null()])),
-  height: Type.Optional(Type.Union([Type.Number({ minimum: 0 }), Type.Null()])),
-  alt: Type.Optional(Type.Union([Type.String({ maxLength: 4_096 }), Type.Null()])),
   capture: Type.Optional(CaptureProvenanceSchema),
   query: Type.Optional(QueryExpressionSchema),
   pasteTags: Type.Optional(Type.Array(Type.String({ maxLength: 1_024 }), { maxItems: 1_024 })),
@@ -338,8 +345,7 @@ export const NodeDraftSchema = Type.Cyclic({
   NodeDraft: Type.Object({
     id: Type.Optional(NodeIdentifierSchema),
     type: Type.Optional(Type.Union([
-      Type.Literal('plain'), Type.Literal('codeBlock'), Type.Literal('image'),
-      Type.Literal('attachment'), Type.Literal('reference'), Type.Literal('search'),
+      Type.Literal('plain'), Type.Literal('codeBlock'), Type.Literal('reference'), Type.Literal('search'),
       Type.Literal('tagDef'), Type.Literal('fieldDef'), Type.Literal('fieldEntry'),
     ])),
     content: RichTextSchema,
@@ -353,8 +359,6 @@ export const NodeDraftSchema = Type.Cyclic({
       values: Type.Array(Type.Ref('NodeDraft'), { maxItems: 10_000 }),
     }, closed), { maxItems: 1_024 })),
     referenceTargetId: Type.Optional(Identifier),
-    assetLeaseId: Type.Optional(Identifier),
-    mediaUrl: Type.Optional(Type.String({ maxLength: 32_768 })),
     metadata: Type.Optional(NodeDraftMetadataSchema),
     children: Type.Array(Type.Ref('NodeDraft'), { maxItems: 100_000 }),
   }, closed),
@@ -457,24 +461,35 @@ const FieldSlotMutationSchema = Type.Union([
     id: Type.Optional(Identifier),
     ...FieldSlotCommon,
   }, closed),
-  Type.Object({
-    action: Type.Literal('append-image'),
-    assetLeaseId: Type.Optional(Identifier),
-    mediaUrl: Type.Optional(Type.String({ maxLength: 32_768 })),
-    width: Type.Optional(Type.Union([Type.Number({ minimum: 0 }), Type.Null()])),
-    height: Type.Optional(Type.Union([Type.Number({ minimum: 0 }), Type.Null()])),
-    alt: Type.Optional(Type.Union([Type.String({ maxLength: 4_096 }), Type.Null()])),
-    name: Type.Optional(Type.Union([Type.String({ maxLength: 4_096 }), Type.Null()])),
-    id: Type.Optional(Identifier),
-    ...FieldSlotCommon,
-  }, closed),
-  Type.Object({
-    action: Type.Literal('append-attachment'),
-    assetLeaseId: Identifier,
-    id: Type.Optional(Identifier),
-    ...FieldSlotCommon,
-  }, closed),
   Type.Object({ action: Type.Literal('commit'), ...FieldSlotCommon }, closed),
+]);
+
+export const SourceInstructionSchema = Type.Union([
+  Type.Object({
+    kind: Type.Literal('source'),
+    action: Type.Literal('add'),
+    sourceText: Type.String({ maxLength: 32_768 }),
+    valueId: Type.Optional(NodeIdentifierSchema),
+    after: Type.Optional(Type.Union([OneTargetRefSchema, Type.Null()])),
+  }, closed),
+  Type.Object({
+    kind: Type.Literal('source'),
+    action: Type.Literal('replace'),
+    value: OneTargetRefSchema,
+    sourceText: Type.String({ maxLength: 32_768 }),
+  }, closed),
+  Type.Object({
+    kind: Type.Literal('source'),
+    action: Type.Literal('reorder'),
+    value: OneTargetRefSchema,
+    after: Type.Union([OneTargetRefSchema, Type.Null()]),
+  }, closed),
+  Type.Object({
+    kind: Type.Literal('source'),
+    action: Type.Literal('remove'),
+    value: OneTargetRefSchema,
+  }, closed),
+  Type.Object({ kind: Type.Literal('source'), action: Type.Literal('clear') }, closed),
 ]);
 
 const ScalarValueSchema = Type.Union([
@@ -734,6 +749,7 @@ export const UpdateInstructionSchema = Type.Union([
     field: TargetRefSchema,
     mutation: FieldSlotMutationSchema,
   }, closed),
+  SourceInstructionSchema,
   DefinitionInstructionSchema,
   Type.Union([
     Type.Object({
@@ -754,7 +770,6 @@ export const UpdateInstructionSchema = Type.Union([
   SearchInstructionSchema,
   Type.Object({ kind: Type.Literal('icon'), value: Type.Union([Type.String({ maxLength: 4_096 }), Type.Null()]), iconKind: Type.Optional(Type.String({ maxLength: 128 })) }, closed),
   Type.Object({ kind: Type.Literal('banner'), assetLeaseId: Type.Union([Identifier, Type.Null()]), position: Type.Optional(Type.Object({ x: Type.Optional(Type.Number()), y: Type.Optional(Type.Number()) }, closed)) }, closed),
-  Type.Object({ kind: Type.Literal('image'), assetLeaseId: Type.Optional(Identifier), mediaUrl: Type.Optional(Type.String({ maxLength: 32_768 })), width: Type.Optional(Type.Number({ minimum: 0 })), height: Type.Optional(Type.Number({ minimum: 0 })) }, closed),
 ]);
 
 const UpdateChangeSchema = Type.Object({
@@ -1365,6 +1380,7 @@ export type QueryExpression = Static<typeof QueryExpressionSchema>;
 export type Selector = Static<typeof SelectorSchema>;
 export type TargetSpec = Static<typeof TargetSpecSchema>;
 export type TargetRef = Static<typeof TargetRefSchema>;
+export type OneTargetRef = Static<typeof OneTargetRefSchema>;
 export type DestinationPlacement = Static<typeof DestinationPlacementSchema>;
 export type Placement = Static<typeof PlacementSchema>;
 export type Projection = Static<typeof ProjectionSchema>;
@@ -1373,6 +1389,7 @@ export type OutlineCountResult = Static<typeof OutlineCountResultSchema>;
 export type OutlineBatchCountResult = Static<typeof OutlineBatchCountResultSchema>;
 export type NodeDraft = Static<typeof NodeDraftSchema>;
 export type UpdateInstruction = Static<typeof UpdateInstructionSchema>;
+export type SourceInstruction = Static<typeof SourceInstructionSchema>;
 export type Change = Static<typeof ChangeSchema>;
 export type ChangeSet = Static<typeof ChangeSetSchema>;
 export type Diff = Static<typeof DiffSchema>;

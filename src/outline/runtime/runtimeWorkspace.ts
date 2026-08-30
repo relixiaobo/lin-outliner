@@ -9,7 +9,13 @@ import { ContentStore, type ContentStoreOptions } from '../../content';
 import { canonicalSha256 } from '../contract/canonical';
 import { OutlineContractError, outlineError } from '../contract/errors';
 import type { Diff, Operation, OutlineEvent, RevertConflictDiff, NoChangeResult } from '../contract/schemas';
-import type { DocumentState, Node, ProjectionUpdate, SearchHit } from '../../core/types';
+import {
+  SOURCE_FIELD_ID,
+  type DocumentState,
+  type Node,
+  type ProjectionUpdate,
+  type SearchHit,
+} from '../../core/types';
 import { projectNode } from '../../core/projection';
 import { OUTLINE_PROTOCOL_VERSION } from '../contract/version';
 import {
@@ -32,6 +38,7 @@ import type { Projection, ProjectionResult } from '../contract/schemas';
 import { createSelectionIndex } from './selector';
 import { projectOutlineFromSelectionIndex } from './projection';
 import { assertProtectedMemoryDefinitionPatch } from './protectedDefinitions';
+import { parseAssetSourceUri } from '../../core/source';
 
 const MAX_AFFECTED_NODE_ID_SAMPLE = 1_000;
 const DURABILITY_IDLE_DELAY_MS = 700;
@@ -175,6 +182,7 @@ export class OutlineRuntimeWorkspace {
     > = {},
   ) {
     this.now = now ?? (() => new Date());
+    this.core.setSearchAssetMetadataProvider(() => this.assets.metadataSnapshot());
     this.durabilityIdleDelayMs = Math.max(0, durabilityOptions.durabilityIdleDelayMs ?? DURABILITY_IDLE_DELAY_MS);
     this.durabilityMaxWaitMs = Math.max(
       this.durabilityIdleDelayMs,
@@ -185,7 +193,7 @@ export class OutlineRuntimeWorkspace {
     ));
     this.durabilityCancel = durabilityOptions.durabilityCancel ?? ((timer) => clearTimeout(timer));
     this.readModel = DocumentReadModel.fromProjection(core.revision(), core.projection());
-    this.assetReferenceCounts = countAssetReferences(Object.values(core.state().nodes));
+    this.assetReferenceCounts = countAssetReferences(core.state());
     this.durableRevisionValue = core.revision();
   }
 
@@ -357,6 +365,7 @@ export class OutlineRuntimeWorkspace {
     return createSelectionIndex(this.readModel.projection, {
       nodesById: this.readModel.nodes,
       textIndex: this.readModel.textIndex,
+      assetMetadataById: this.assets.metadataSnapshot(),
     });
   }
 
@@ -789,7 +798,23 @@ export class OutlineRuntimeWorkspace {
             }
           }
 
-          const nextAssetReferenceCounts = applyAssetReferencePatch(this.assetReferenceCounts, patch);
+          const nextState = this.core.state();
+          const nextAssetReferenceCounts = applyAssetReferencePatch(this.assetReferenceCounts, patch, nextState);
+          const liveAddedAssetRecordIds = changedAssetIds(
+            this.assetReferenceCounts,
+            nextAssetReferenceCounts,
+            (before, after) => before === 0 && after > 0,
+          );
+          const recoveryProtectedAssetRecordIds = new Set(
+            request.revertsOperationId ? request.protectedAssetRecordIds ?? [] : [],
+          );
+          const implicitlyConsumedLeases = await this.assets.resolveLeasesForAssetIds(
+            liveAddedAssetRecordIds.filter((assetId) => !recoveryProtectedAssetRecordIds.has(assetId)),
+          );
+          const consumedLeaseIds = [...new Set([
+            ...Object.keys(request.assetLeases ?? {}),
+            ...implicitlyConsumedLeases.keys(),
+          ])].sort();
           for (const assetId of Object.values(request.assetLeases ?? {})) {
             if ((nextAssetReferenceCounts.get(assetId) ?? 0) === 0) {
               throw new OutlineContractError(outlineError(
@@ -799,20 +824,14 @@ export class OutlineRuntimeWorkspace {
               ));
             }
           }
-          const patchAssetIds = assetRecordIdsInNodes(patch.nodes.flatMap((entry) => (
-            [entry.before, entry.after].filter((node): node is Node => node !== null)
-          )));
+          const patchAssetIds = assetRecordIdsInPatch(patch, nextState);
           const protectedAssetRecordIds = await this.assets.expandAssetIds([
             ...patchAssetIds,
             ...request.protectedAssetRecordIds ?? [],
           ]);
           const assetDelta: OutlineAssetDelta = {
-            consumedLeaseIds: Object.keys(request.assetLeases ?? {}).sort(),
-            liveAddedAssetRecordIds: changedAssetIds(
-              this.assetReferenceCounts,
-              nextAssetReferenceCounts,
-              (before, after) => before === 0 && after > 0,
-            ),
+            consumedLeaseIds,
+            liveAddedAssetRecordIds,
             liveRemovedAssetRecordIds: changedAssetIds(
               this.assetReferenceCounts,
               nextAssetReferenceCounts,
@@ -1069,9 +1088,10 @@ export class OutlineRuntimeWorkspace {
       throw new Error('Durable settlement recovery requires workspace reconciliation before writes can resume');
     }
     await this.assets.reconcileAnchors();
+    recovered.setSearchAssetMetadataProvider(() => this.assets.metadataSnapshot());
     this.core = recovered;
     this.readModel.reseed(recovered.revision(), recovered.projection());
-    this.assetReferenceCounts = countAssetReferences(Object.values(recovered.state().nodes));
+    this.assetReferenceCounts = countAssetReferences(recovered.state());
     this.durableRevisionValue = recovered.revision();
     for (const idempotency of loaded.idempotency) {
       this.acceptedByIdempotencyKey.set(idempotency.key, { payloadHash: idempotency.payloadHash });
@@ -1230,21 +1250,23 @@ function operationEvent(
   };
 }
 
-function assetRecordIdsInNodes(nodes: readonly Node[]): Set<string> {
+function assetRecordIdsInNode(node: Node, isBuiltInUriValue: boolean): Set<string> {
   const result = new Set<string>();
-  for (const node of nodes) {
-    if (node.bannerAssetId) result.add(node.bannerAssetId);
-    if (node.icon && (node.iconKind === 'image' || node.iconKind === 'generated')) result.add(node.icon);
-    if ((node.type === 'image' || node.type === 'attachment') && node.assetId) result.add(node.assetId);
-    if (node.type === 'attachment' && node.thumbnailAssetId) result.add(node.thumbnailAssetId);
+  if (node.bannerAssetId) result.add(node.bannerAssetId);
+  if (node.icon && (node.iconKind === 'image' || node.iconKind === 'generated')) result.add(node.icon);
+  if (isBuiltInUriValue) {
+    const assetId = parseAssetSourceUri(node.content.text);
+    if (assetId) result.add(assetId);
   }
   return result;
 }
 
-function countAssetReferences(nodes: readonly Node[]): Map<string, number> {
+function countAssetReferences(state: DocumentState): Map<string, number> {
   const counts = new Map<string, number>();
-  for (const node of nodes) {
-    for (const assetId of assetRecordIdsInNodes([node])) {
+  for (const node of Object.values(state.nodes)) {
+    const parent = node.parentId ? state.nodes[node.parentId] : undefined;
+    const isBuiltInUriValue = parent?.type === 'fieldEntry' && parent.fieldDefId === SOURCE_FIELD_ID;
+    for (const assetId of assetRecordIdsInNode(node, isBuiltInUriValue)) {
       counts.set(assetId, (counts.get(assetId) ?? 0) + 1);
     }
   }
@@ -1254,23 +1276,86 @@ function countAssetReferences(nodes: readonly Node[]): Map<string, number> {
 function applyAssetReferencePatch(
   current: ReadonlyMap<string, number>,
   patch: CoreTransactionPatch,
+  nextState: DocumentState,
 ): Map<string, number> {
   const next = new Map(current);
-  for (const entry of patch.nodes) {
-    if (entry.before) {
-      for (const assetId of assetRecordIdsInNodes([entry.before as Node])) {
+  const patchById = new Map(patch.nodes.map((entry) => [entry.id, entry]));
+  for (const nodeId of assetReferenceCandidateNodeIds(patch)) {
+    const before = patchNodeAtPhase(nodeId, 'before', patchById, nextState);
+    if (before) {
+      for (const assetId of assetRecordIdsInNode(
+        before,
+        patchNodeIsSourceValue(before, 'before', patchById, nextState),
+      )) {
         const count = (next.get(assetId) ?? 0) - 1;
         if (count > 0) next.set(assetId, count);
         else next.delete(assetId);
       }
     }
-    if (entry.after) {
-      for (const assetId of assetRecordIdsInNodes([entry.after as Node])) {
+    const after = patchNodeAtPhase(nodeId, 'after', patchById, nextState);
+    if (after) {
+      for (const assetId of assetRecordIdsInNode(
+        after,
+        patchNodeIsSourceValue(after, 'after', patchById, nextState),
+      )) {
         next.set(assetId, (next.get(assetId) ?? 0) + 1);
       }
     }
   }
   return next;
+}
+
+function assetRecordIdsInPatch(patch: CoreTransactionPatch, nextState: DocumentState): Set<string> {
+  const result = new Set<string>();
+  const patchById = new Map(patch.nodes.map((entry) => [entry.id, entry]));
+  for (const nodeId of assetReferenceCandidateNodeIds(patch)) {
+    for (const phase of ['before', 'after'] as const) {
+      const node = patchNodeAtPhase(nodeId, phase, patchById, nextState);
+      if (!node) continue;
+      for (const assetId of assetRecordIdsInNode(
+        node,
+        patchNodeIsSourceValue(node, phase, patchById, nextState),
+      )) {
+        result.add(assetId);
+      }
+    }
+  }
+  return result;
+}
+
+function patchNodeIsSourceValue(
+  node: Node,
+  phase: 'before' | 'after',
+  patchById: ReadonlyMap<string, CoreTransactionPatch['nodes'][number]>,
+  nextState: DocumentState,
+): boolean {
+  if (!node.parentId) return false;
+  const parent = patchNodeAtPhase(node.parentId, phase, patchById, nextState);
+  return parent?.type === 'fieldEntry' && parent.fieldDefId === SOURCE_FIELD_ID;
+}
+
+function assetReferenceCandidateNodeIds(patch: CoreTransactionPatch): Set<string> {
+  const result = new Set(patch.nodes.map((entry) => entry.id));
+  for (const entry of patch.nodes) {
+    const beforeIsBuiltInUri = entry.before?.type === 'fieldEntry'
+      && entry.before.fieldDefId === SOURCE_FIELD_ID;
+    const afterIsBuiltInUri = entry.after?.type === 'fieldEntry'
+      && entry.after.fieldDefId === SOURCE_FIELD_ID;
+    if (beforeIsBuiltInUri === afterIsBuiltInUri) continue;
+    for (const childId of entry.before?.children ?? []) result.add(childId);
+    for (const childId of entry.after?.children ?? []) result.add(childId);
+  }
+  return result;
+}
+
+function patchNodeAtPhase(
+  nodeId: string,
+  phase: 'before' | 'after',
+  patchById: ReadonlyMap<string, CoreTransactionPatch['nodes'][number]>,
+  nextState: DocumentState,
+): Node | undefined {
+  const entry = patchById.get(nodeId);
+  return entry ? (entry[phase] as Node | null) ?? undefined : nextState.nodes[nodeId];
 }
 
 function changedAssetIds(

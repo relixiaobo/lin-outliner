@@ -9,7 +9,12 @@ import {
   richTextToReferenceMarkup,
 } from '../../../core/referenceMarkup';
 import { formatTag } from '../../../core/textSyntax';
-import type { DocumentProjection, NodeProjection } from '../../../core/types';
+import { classifyNodeSource } from '../../../core/source';
+import { sourceFieldValues } from '../../../core/sourceField';
+import {
+  type DocumentProjection,
+  type NodeProjection,
+} from '../../../core/types';
 import { findViewDef } from '../../../core/viewConfig';
 
 const MAX_TITLE_CHARS = 160;
@@ -124,13 +129,7 @@ export function nodeBreadcrumb(
 }
 
 export function nodeTitle(node: NodeProjection): string {
-  const fileName = node.type === 'attachment'
-    ? node.content.text || node.originalFilename
-    : node.type === 'image'
-      ? node.content.text || node.mediaUrl || node.mediaAlt
-      : null;
-  const text = fileName
-    || (node.type === 'reference' && node.targetId
+  const text = (node.type === 'reference' && node.targetId
       ? formatNamedNodeReference(node.targetId, undefined, { unavailable: 'display' })
       : null)
     || richTextToReferenceMarkup(node.content)
@@ -194,7 +193,9 @@ export function resolvedNodeTitle(
     }
     current = target;
   }
-  return nodeTitle(current);
+  const authoredTitle = nodeTitle(current);
+  if (authoredTitle !== 'Untitled') return authoredTitle;
+  return sourceFallbackTitle(current, byId) ?? authoredTitle;
 }
 
 function panelSnapshot(
@@ -234,7 +235,18 @@ function displayedChildCount(
     seen.add(current.id);
     current = byId.get(current.targetId);
   }
-  return current?.children.length ?? 0;
+  if (!current) return 0;
+  return current.children.length;
+}
+
+function sourceFallbackTitle(
+  node: NodeProjection,
+  byId: ReadonlyMap<string, NodeProjection>,
+): string | null {
+  for (const value of sourceFieldValues(byId, node.id)) {
+    return compact(classifyNodeSource(value.sourceText).label, MAX_TITLE_CHARS);
+  }
+  return null;
 }
 
 function validPanelId(

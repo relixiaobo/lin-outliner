@@ -1,6 +1,8 @@
 import type { Core } from '../../core/core';
 import { buildReferenceSummary } from '../../core/references';
-import type { NodeProjection } from '../../core/types';
+import {
+  type NodeProjection,
+} from '../../core/types';
 import { canonicalSha256 } from '../contract/canonical';
 import { OutlineContractError, outlineError } from '../contract/errors';
 import type { Projection, ProjectionResult, TargetRef } from '../contract/schemas';
@@ -27,7 +29,11 @@ export function projectOutlineFromSelectionIndex(
   const document = index.projection;
   const targetIds = resolveTargetRef(index, projection.targets, bindings);
   const selectedIds = projection.kind === 'outline' || projection.kind === 'export'
-    ? collectOutlineIds(index, targetIds, projection.depth ?? 3)
+    ? collectOutlineIds(
+        index,
+        targetIds,
+        projection.depth ?? 3,
+      )
     : targetIds;
   const projectionHash = canonicalSha256(projectionCursorIdentity(projection));
   const offset = decodePageCursor(projection.page?.cursor, projectionHash, revision);
@@ -107,7 +113,11 @@ export function resolveTargetRef(
   return resolveTargetSpec(index, reference.target);
 }
 
-function collectOutlineIds(index: OutlineSelectionIndex, roots: readonly string[], depth: number): string[] {
+function collectOutlineIds(
+  index: OutlineSelectionIndex,
+  roots: readonly string[],
+  depth: number,
+): string[] {
   const result: string[] = [];
   const seen = new Set<string>();
   for (const rootId of roots) {
@@ -120,15 +130,19 @@ function collectOutlineIds(index: OutlineSelectionIndex, roots: readonly string[
       seen.add(current.id);
       result.push(current.id);
       if (current.depth >= depth) continue;
-      for (let index = node.children.length - 1; index >= 0; index -= 1) {
-        stack.push({ id: node.children[index]!, depth: current.depth + 1 });
+      const children = node.children;
+      for (let childIndex = children.length - 1; childIndex >= 0; childIndex -= 1) {
+        stack.push({ id: children[childIndex]!, depth: current.depth + 1 });
       }
     }
   }
   return result;
 }
 
-function projectNode(node: NodeProjection, projection: Projection): Record<string, unknown> {
+function projectNode(
+  node: NodeProjection,
+  projection: Projection,
+): Record<string, unknown> {
   if (projection.kind === 'summary') {
     return {
       id: node.id,

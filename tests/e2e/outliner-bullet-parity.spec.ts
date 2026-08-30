@@ -5,6 +5,7 @@ import {
   emitDocumentEvent,
   ids,
   openMockedApp,
+  ordinaryChildIds,
   row,
   rowBody,
   rowEditor,
@@ -17,7 +18,7 @@ function expectClose(actual: number, expected: number, tolerance = 0.5) {
 
 async function lastTodayChildId(page: import('@playwright/test').Page) {
   const projection = await e2eProjection(page);
-  return projection.nodes.find((node) => node.id === ids.today)?.children.at(-1);
+  return ordinaryChildIds(projection.nodes.find((node) => node.id === ids.today)).at(-1);
 }
 
 async function directChevronOpacity(locator: ReturnType<typeof rowBody>) {
@@ -265,7 +266,9 @@ test.describe('outliner bullet parity', () => {
     await trailingEditor(page, fieldId).click();
     await page.keyboard.type('>');
     const projection = await e2eProjection(page);
-    const nestedFieldId = projection.nodes.find((node) => node.id === fieldId)?.children.at(-1);
+    const nestedFieldId = ordinaryChildIds(
+      projection.nodes.find((node) => node.id === fieldId),
+    ).at(-1);
     if (!nestedFieldId) throw new Error('missing nested field');
 
     await rowBody(page, nestedFieldId).hover();

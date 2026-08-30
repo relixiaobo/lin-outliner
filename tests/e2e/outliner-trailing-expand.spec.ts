@@ -9,6 +9,7 @@ import {
   nodeById,
   nodeByText,
   openMockedApp,
+  ordinaryChildIds,
   row,
   rowBody,
   rowEditor,
@@ -483,9 +484,10 @@ test.describe('outliner trailing input and expansion parity', () => {
 
     const projection = await e2eProjection(page);
     const today = projection.nodes.find((node) => node.id === ids.today)!;
-    expect(today.children).toHaveLength(5);
-    const contentId = today.children.at(-2)!;
-    const continuationId = today.children.at(-1)!;
+    const children = ordinaryChildIds(today);
+    expect(children).toHaveLength(5);
+    const contentId = children.at(-2)!;
+    const continuationId = children.at(-1)!;
     expect(projection.nodes.find((node) => node.id === contentId)?.content.text).toBe('Delta');
     expect(projection.nodes.find((node) => node.id === continuationId)?.content.text).toBe('');
     await expect(rowEditor(page, continuationId)).toBeFocused();
@@ -568,7 +570,7 @@ test.describe('outliner trailing input and expansion parity', () => {
     const projection = await e2eProjection(page);
     const valueNode = projection.nodes.find((node) => node.content.text === text)!;
     const fieldEntry = projection.nodes.find((node) => node.id === valueNode.parentId)!;
-    expect(fieldEntry.children).toEqual([valueNode.id]);
+    expect(ordinaryChildIds(fieldEntry)).toEqual([valueNode.id]);
   });
 
   test('BUG1 field value Enter leaves no duplicate value row in the DOM', async ({ page }) => {
@@ -623,12 +625,12 @@ test.describe('outliner trailing input and expansion parity', () => {
 
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
-      return projection.nodes.find((node) => node.id === ids.today)?.children.length;
+      return ordinaryChildIds(projection.nodes.find((node) => node.id === ids.today)).length;
     }).toBe(4);
 
     const projection = await e2eProjection(page);
     const today = projection.nodes.find((node) => node.id === ids.today)!;
-    const createdId = today.children.at(-1)!;
+    const createdId = ordinaryChildIds(today).at(-1)!;
     const created = projection.nodes.find((node) => node.id === createdId)!;
     expect(created.content.text).toBe('');
     // Enter on the trailing draft materializes it (the empty node above) and drops
@@ -645,12 +647,12 @@ test.describe('outliner trailing input and expansion parity', () => {
 
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
-      return projection.nodes.find((node) => node.id === ids.today)?.children.length;
+      return ordinaryChildIds(projection.nodes.find((node) => node.id === ids.today)).length;
     }).toBe(4);
 
     const projection = await e2eProjection(page);
     const today = projection.nodes.find((node) => node.id === ids.today)!;
-    const createdId = today.children.at(-1)!;
+    const createdId = ordinaryChildIds(today).at(-1)!;
     await expect.poll(async () => (await nodeById(page, createdId))?.completedAt).toBe(0);
     const created = await nodeById(page, createdId);
     expect(created?.content.text).toBe('');
@@ -662,7 +664,7 @@ test.describe('outliner trailing input and expansion parity', () => {
     await rejectDraftMaterializations(page, [rejection]);
 
     const before = await e2eProjection(page);
-    const beforeCount = before.nodes.find((node) => node.id === ids.today)!.children.length;
+    const beforeCount = ordinaryChildIds(before.nodes.find((node) => node.id === ids.today)).length;
     const beforeCall = (await commandCalls(page)).length;
     await trailingEditor(page).click();
     await page.keyboard.press('Meta+Enter');
@@ -675,7 +677,7 @@ test.describe('outliner trailing input and expansion parity', () => {
     )).filter((change) => change.kind === 'done');
     expect(doneChanges).toHaveLength(0);
     const after = await e2eProjection(page);
-    expect(after.nodes.find((node) => node.id === ids.today)!.children).toHaveLength(beforeCount);
+    expect(ordinaryChildIds(after.nodes.find((node) => node.id === ids.today))).toHaveLength(beforeCount);
   });
 
   test('Cmd+Enter stops when non-empty trailing draft materialization is rejected', async ({ page }) => {
@@ -684,7 +686,7 @@ test.describe('outliner trailing input and expansion parity', () => {
     await rejectDraftMaterializations(page, [eagerRejection, retryRejection], 120);
 
     const before = await e2eProjection(page);
-    const beforeCount = before.nodes.find((node) => node.id === ids.today)!.children.length;
+    const beforeCount = ordinaryChildIds(before.nodes.find((node) => node.id === ids.today)).length;
     const beforeCall = (await commandCalls(page)).length;
     const editor = trailingEditor(page);
     await editor.click();
@@ -701,7 +703,7 @@ test.describe('outliner trailing input and expansion parity', () => {
     )).filter((change) => change.kind === 'done');
     expect(doneChanges).toHaveLength(0);
     const after = await e2eProjection(page);
-    expect(after.nodes.find((node) => node.id === ids.today)!.children).toHaveLength(beforeCount);
+    expect(ordinaryChildIds(after.nodes.find((node) => node.id === ids.today))).toHaveLength(beforeCount);
     await expect(editor).toHaveText('abc');
   });
 
@@ -714,7 +716,7 @@ test.describe('outliner trailing input and expansion parity', () => {
     await expect(trailingEditor(page, ids.gamma)).toBeFocused();
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
-      return projection.nodes.find((node) => node.id === ids.gamma)?.children.length;
+      return ordinaryChildIds(projection.nodes.find((node) => node.id === ids.gamma)).length;
     }).toBe(0);
 
     // The first keystroke materializes the node under the relocated parent.
@@ -753,14 +755,15 @@ test.describe('outliner trailing input and expansion parity', () => {
       const projection = await e2eProjection(page);
       const inserted = projection.nodes.find((node) => node.content.text === 'After alpha');
       const today = projection.nodes.find((node) => node.id === ids.today);
-      const insertedIndex = inserted && today ? today.children.indexOf(inserted.id) : -1;
+      const children = ordinaryChildIds(today);
+      const insertedIndex = inserted ? children.indexOf(inserted.id) : -1;
       return {
         parentId: inserted?.parentId,
         insertedIndex,
-        childCount: today?.children.length ?? 0,
-        before: today?.children[0],
-        after: today?.children[2],
-        last: today?.children[3],
+        childCount: children.length,
+        before: children[0],
+        after: children[2],
+        last: children[3],
       };
     }).toEqual({
       parentId: ids.today,
@@ -787,8 +790,8 @@ test.describe('outliner trailing input and expansion parity', () => {
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
       return {
-        todayChildren: projection.nodes.find((node) => node.id === ids.today)?.children,
-        alphaChildren: projection.nodes.find((node) => node.id === ids.alpha)?.children,
+        todayChildren: ordinaryChildIds(projection.nodes.find((node) => node.id === ids.today)),
+        alphaChildren: ordinaryChildIds(projection.nodes.find((node) => node.id === ids.alpha)),
       };
     }).toEqual({
       todayChildren: [ids.alpha, ids.beta, ids.gamma],
@@ -810,14 +813,15 @@ test.describe('outliner trailing input and expansion parity', () => {
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
       const today = projection.nodes.find((node) => node.id === ids.today)!;
+      const children = ordinaryChildIds(today);
       const inserted = projection.nodes.find((node) => node.content.text === 'After empty');
-      const empty = projection.nodes.find((node) => node.id === today.children[1]);
+      const empty = projection.nodes.find((node) => node.id === children[1]);
       return {
-        insertedIndex: inserted ? today.children.indexOf(inserted.id) : -1,
+        insertedIndex: inserted ? children.indexOf(inserted.id) : -1,
         emptyText: empty?.content.text,
-        before: today.children[0],
-        after: today.children[3],
-        last: today.children[4],
+        before: children[0],
+        after: children[3],
+        last: children[4],
       };
     }).toEqual({
       insertedIndex: 2,
@@ -842,16 +846,17 @@ test.describe('outliner trailing input and expansion parity', () => {
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
       const today = projection.nodes.find((node) => node.id === ids.today)!;
+      const children = ordinaryChildIds(today);
       const committed = projection.nodes.find((node) => node.content.text === 'Delayed anchor');
       const continuation = committed
-        ? projection.nodes.find((node) => node.id === today.children[today.children.indexOf(committed.id) + 1])
+        ? projection.nodes.find((node) => node.id === children[children.indexOf(committed.id) + 1])
         : undefined;
       return {
-        committedIndex: committed ? today.children.indexOf(committed.id) : -1,
+        committedIndex: committed ? children.indexOf(committed.id) : -1,
         continuationText: continuation?.content.text,
-        before: today.children[0],
-        after: today.children[3],
-        last: today.children[4],
+        before: children[0],
+        after: children[3],
+        last: children[4],
       };
     }).toEqual({
       committedIndex: 1,
@@ -927,9 +932,10 @@ test.describe('outliner trailing input and expansion parity', () => {
 
     const projection = await e2eProjection(page);
     const gamma = projection.nodes.find((node) => node.id === ids.gamma)!;
-    expect(gamma.children).toHaveLength(2);
+    const children = ordinaryChildIds(gamma);
+    expect(children).toHaveLength(2);
     const leaf = projection.nodes.find((node) => node.content.text === 'Leaf child')!;
-    const continuation = projection.nodes.find((node) => node.id === gamma.children.at(-1))!;
+    const continuation = projection.nodes.find((node) => node.id === children.at(-1))!;
     expect(continuation.content.text).toBe('');
     expect(continuation.id).not.toBe(leaf.id);
     await expect(rowEditor(page, continuation.id)).toBeFocused();

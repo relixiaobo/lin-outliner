@@ -3,7 +3,14 @@ import { formatNamedNodeReference } from '../../../core/referenceMarkup';
 import type { Messages } from '../../../core/i18n';
 import { SEARCH_QUERY_COMPLEXITY_LIMITS } from '../../../core/searchQueryCompiler';
 import { api } from '../../api/client';
-import { inlineRefNodeId, type NodeId, type NodeProjection, type QueryOp } from '../../api/types';
+import {
+  inlineRefNodeId,
+  isContentBearingNode,
+  type ContentBearingNodeProjection,
+  type NodeId,
+  type NodeProjection,
+  type QueryOp,
+} from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { useT } from '../../i18n/I18nProvider';
 import {
@@ -299,7 +306,7 @@ function operandOutlineTexts(
     }
     visited.add(childId);
     const child = index.byId.get(childId);
-    if (!child || child.type === 'queryCondition') {
+    if (!child || !isContentBearingNode(child) || child.type === 'queryCondition') {
       truncated = true;
       continue;
     }
@@ -323,7 +330,7 @@ function operandOutlineTexts(
   return { texts: [], truncated };
 }
 
-function operandOutlineText(index: DocumentIndex, node: NodeProjection, t: Messages): string {
+function operandOutlineText(index: DocumentIndex, node: ContentBearingNodeProjection, t: Messages): string {
   if (node.type === 'reference' && node.targetId) return nodeReference(index, node.targetId, t, node.content.text.trim() || undefined);
   const inlineRef = node.content.inlineRefs[0];
   const inlineNodeId = inlineRef ? inlineRefNodeId(inlineRef) : null;
@@ -353,7 +360,8 @@ function directConditionChildren(index: DocumentIndex, node: NodeProjection): {
 }
 
 function nodeTitle(index: DocumentIndex, nodeId: NodeId, t: Messages): string {
-  return index.byId.get(nodeId)?.content.text.trim() || t.common.untitled;
+  const node = index.byId.get(nodeId);
+  return node && isContentBearingNode(node) ? node.content.text.trim() || t.common.untitled : t.common.untitled;
 }
 
 function nodeReference(index: DocumentIndex, nodeId: NodeId, t: Messages, label?: string): string {

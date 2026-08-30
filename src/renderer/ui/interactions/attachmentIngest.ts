@@ -39,12 +39,7 @@ export async function ingestFiles(files: readonly File[]): Promise<IngestedFiles
   return { assets, images, attachments };
 }
 
-// The single "AssetMetadata -> outliner node" mapping: an image node for image/*
-// (carrying its pixel dims), else an attachment node (full metadata). Shared by the
-// user paste/drop flow and the agent ingest bridge so an agent-inserted file and a
-// user-dropped one produce identical nodes. Returns the runner's result (null when
-// the command failed) so callers can confirm a real insert; `options` forwards focus
-// behavior (the bridge suppresses focus to keep it in the agent panel).
+// The single AssetMetadata -> ordinary Source-backed Node mapping.
 export function createAssetNode(
   run: CommandRunner,
   parentId: string,
@@ -52,25 +47,8 @@ export function createAssetNode(
   asset: AssetMetadata,
   options?: CommandRunnerOptions,
 ): ReturnType<CommandRunner> {
-  return mediaKindForMimeType(asset.mimeType) === 'image'
-    ? run(() => api.createImageNode(parentId, index, {
-        assetId: asset.id,
-        width: asset.imageWidth,
-        height: asset.imageHeight,
-        name: asset.originalFilename,
-      }), options)
-    : run(() => api.createAttachmentNode(parentId, index, attachmentNodeInput(asset)), options);
-}
-
-export function attachmentNodeInput(asset: AssetMetadata) {
-  return {
+  return run(() => api.createSourceNode(parentId, index, {
     assetId: asset.id,
-    mimeType: asset.mimeType,
-    originalFilename: asset.originalFilename ?? 'attachment',
-    fileSize: asset.byteSize,
-    ...(asset.thumbnailAssetId ? { thumbnailAssetId: asset.thumbnailAssetId } : {}),
-    ...(asset.pdfPageCount !== undefined ? { pdfPageCount: asset.pdfPageCount } : {}),
-    ...(asset.audioDurationMs !== undefined ? { audioDurationMs: asset.audioDurationMs } : {}),
-    ...(asset.videoDurationMs !== undefined ? { videoDurationMs: asset.videoDurationMs } : {}),
-  };
+    name: asset.originalFilename ?? 'attachment',
+  }), options);
 }

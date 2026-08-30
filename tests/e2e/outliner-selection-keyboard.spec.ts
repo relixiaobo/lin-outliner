@@ -14,6 +14,7 @@ import {
   nodeById,
   observeNextRowMoveAnimation,
   openMockedApp,
+  ordinaryChildIds,
   row,
   rowBody,
   rowEditor,
@@ -31,7 +32,9 @@ async function emitCurrentProjection(page: import('@playwright/test').Page) {
 
 async function todayChildren(page: import('@playwright/test').Page) {
   const projection = await e2eProjection(page);
-  return projection.nodes.find((node) => node.id === ids.today)?.children ?? [];
+  return ordinaryChildIds(
+    projection.nodes.find((node) => node.id === ids.today),
+  );
 }
 
 async function createReferenceFixture(page: import('@playwright/test').Page) {
@@ -436,7 +439,7 @@ test.describe('outliner selection keyboard parity', () => {
     await rowEditor(page, ids.gamma).click();
     await page.keyboard.press('Tab');
     await expect.poll(async () => (await nodeById(page, ids.gamma))?.parentId).toBe(ids.alpha);
-    await expect.poll(async () => (await nodeById(page, ids.alpha))?.children).toEqual([ids.beta, ids.gamma]);
+    await expect.poll(async () => ordinaryChildIds(await nodeById(page, ids.alpha))).toEqual([ids.beta, ids.gamma]);
 
     await page.keyboard.press('Escape');
     await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
@@ -449,7 +452,7 @@ test.describe('outliner selection keyboard parity', () => {
 
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.alpha);
     await expect.poll(async () => (await nodeById(page, ids.gamma))?.parentId).toBe(ids.alpha);
-    await expect.poll(async () => (await nodeById(page, ids.alpha))?.children).toEqual([ids.beta, ids.gamma]);
+    await expect.poll(async () => ordinaryChildIds(await nodeById(page, ids.alpha))).toEqual([ids.beta, ids.gamma]);
     expect((await appliedOutlineOperations(page, beforeCalls)).filter((operation) => operation.op === 'move')).toHaveLength(0);
     await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
     await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
@@ -496,7 +499,7 @@ test.describe('outliner selection keyboard parity', () => {
     await rowEditor(page, ids.gamma).click();
     await page.keyboard.press('Tab');
     await expect.poll(async () => (await nodeById(page, ids.gamma))?.parentId).toBe(ids.alpha);
-    await expect.poll(async () => (await nodeById(page, ids.alpha))?.children).toEqual([ids.beta, ids.gamma]);
+    await expect.poll(async () => ordinaryChildIds(await nodeById(page, ids.alpha))).toEqual([ids.beta, ids.gamma]);
     await expect(trailingEditor(page, ids.alpha)).toHaveCount(0);
 
     await page.keyboard.press('Escape');
@@ -508,7 +511,7 @@ test.describe('outliner selection keyboard parity', () => {
 
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.today);
     await expect.poll(async () => (await nodeById(page, ids.gamma))?.parentId).toBe(ids.today);
-    await expect.poll(async () => (await nodeById(page, ids.alpha))?.children).toEqual([]);
+    await expect.poll(async () => ordinaryChildIds(await nodeById(page, ids.alpha))).toEqual([]);
     await expect.poll(async () => (await todayChildren(page))).toEqual([ids.alpha, ids.beta, ids.gamma]);
     await expect(row(page, ids.beta)).toBeVisible();
     await expect(row(page, ids.gamma)).toBeVisible();

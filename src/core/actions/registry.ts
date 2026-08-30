@@ -17,7 +17,7 @@ import {
 } from './outlineStructure';
 import { parseIsoLocalDateParts, todayIsoLocalDate } from '../localDate';
 import { nodeIsInSubtree } from '../treeUtils';
-import type { NodeId, NodeProjection } from '../types';
+import { isContentBearingNode, type NodeId, type NodeProjection } from '../types';
 import {
   stepRef,
   type ActionEffectPlan,
@@ -414,7 +414,8 @@ function anchorContentNode(
   context: ActionResolveContext,
   anchor: NodeObject,
 ): NodeProjection | undefined {
-  return context.projection.byId.get(nodeIdForFacet(anchor.content, context.projection));
+  const node = context.projection.byId.get(nodeIdForFacet(anchor.content, context.projection));
+  return node && isContentBearingNode(node) ? node : undefined;
 }
 
 /** Resolve every family for one subject, in canonical order. */
@@ -667,8 +668,12 @@ function resolveSetDone(
   if (!rows) return [];
   const targets = checkboxTargetIds(context, subject);
   const byId = context.projection.byId;
-  const done = targets.filter((id) => Boolean(byId.get(id)?.completedAt));
-  const notDone = targets.filter((id) => !byId.get(id)?.completedAt);
+  const isDone = (id: NodeId) => {
+    const node = byId.get(id);
+    return Boolean(node && isContentBearingNode(node) && node.completedAt);
+  };
+  const done = targets.filter(isDone);
+  const notDone = targets.filter((id) => !isDone(id));
 
   const variant = (value: boolean, eligible: boolean): ActionPresentation => present({
     actionId: 'setDone',
@@ -1353,7 +1358,10 @@ const PLANNERS: { [K in ActionId]?: Planner<K> } = {
     const byId = context.projection.byId;
     // Only nodes not already in the requested state change; a mixed selection
     // therefore CONVERGES instead of becoming a different mixed selection.
-    const changing = targets.filter((id) => Boolean(byId.get(id)?.completedAt) !== args.done);
+    const changing = targets.filter((id) => {
+      const node = byId.get(id);
+      return Boolean(node && isContentBearingNode(node) && node.completedAt) !== args.done;
+    });
     if (changing.length === 0) return null;
     return restoreInvoker([changing.length > 1
       ? { on: 'main', kind: 'command', command: 'batch_toggle_done', args: { nodeIds: changing } }

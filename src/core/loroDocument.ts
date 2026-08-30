@@ -19,6 +19,7 @@ import {
   referenceTargetSortKey,
   referenceTargetsEqual,
   type DocumentState,
+  type ContentNode,
   type Node,
   type NodeFieldKey,
   type NodeType,
@@ -27,6 +28,10 @@ import {
   type RichTextPatchOp,
   type TextMark,
 } from './types';
+
+type NodeForType<T extends NodeType | undefined> = T extends undefined
+  ? ContentNode
+  : Extract<Node, { type: T }>;
 
 export type LoroUndoScope = 'all' | 'agent' | 'user';
 
@@ -107,18 +112,6 @@ const NODE_SCALAR_KEYS: NodeFieldKey[] = [
   'queryFieldDefId',
   'queryTargetId',
   'codeLanguage',
-  'assetId',
-  'mediaUrl',
-  'mediaAlt',
-  'imageWidth',
-  'imageHeight',
-  'mimeType',
-  'originalFilename',
-  'fileSize',
-  'thumbnailAssetId',
-  'pdfPageCount',
-  'audioDurationMs',
-  'videoDurationMs',
   'aiSummary',
   // User-only-writable field keys; a string[] that round-trips through the
   // generic clone path (same as `capture`).
@@ -539,12 +532,12 @@ export class LoroOutlinerDocument {
     this.touchNode(nodeId);
   }
 
-  createNodeWithId<T extends Node = Node>(
+  createNodeWithId<T extends NodeType | undefined>(
     id: string,
     parentId: string | undefined,
     index: number | null | undefined,
-    type: NodeType | undefined,
-    configure: (node: T) => void,
+    type: T,
+    configure: (node: NodeForType<T>) => void,
   ) {
     const parentTreeNode = parentId ? this.treeNodeOrUndefined(parentId) : undefined;
     if (parentId && !parentTreeNode) throw CoreError.parentNotFound(parentId);
@@ -557,7 +550,7 @@ export class LoroOutlinerDocument {
     const treeNode = this.tree.createNode(parentTreeId, targetIndex);
     // The caller's `type` argument fixes the variant; `T` lets it set
     // variant-specific fields on the configured node without a local cast.
-    const node = createNodeRecord(id, type, parentId, nowMs()) as T;
+    const node = createNodeRecord(id, type, parentId, nowMs()) as NodeForType<T>;
     configure(node);
     const normalized = normalizeNode(node);
     writeNodeData(treeNode.data, normalized);
@@ -596,6 +589,10 @@ export class LoroOutlinerDocument {
   }
 
   applyNodePatch(entries: readonly { id: string; node: Node | undefined }[]) {
+    this.applyNodePatchUnchecked(entries);
+  }
+
+  private applyNodePatchUnchecked(entries: readonly { id: string; node: Node | undefined }[]) {
     const desired = new Map(entries.map((entry) => [entry.id, entry.node]));
     const state = this.materializeState();
     const deletedIds = new Set(entries.filter((entry) => !entry.node).map((entry) => entry.id));
@@ -768,11 +765,12 @@ export class LoroOutlinerDocument {
     if (!id) return undefined;
     const parentTreeNode = treeNode.parent();
     const parentId = parentTreeNode ? readString(parentTreeNode.data.get('id')) : undefined;
+    const type = readString(data.get('type')) as NodeType | undefined;
     const content = readRichText(data);
     const filterValues = data.get('filterValues');
     const node = normalizeNode({
       id,
-      type: readString(data.get('type')) as NodeType | undefined,
+      type,
       parentId,
       children: [],
       content,
@@ -937,7 +935,7 @@ function normalizeNode(node: Node): Node {
       inlineRefs: node.content?.inlineRefs ?? [],
     },
     tags: node.tags ?? [],
-  };
+  } as Node;
 }
 
 // Read-only contract enforcement (dev/test only). The state cache hands out

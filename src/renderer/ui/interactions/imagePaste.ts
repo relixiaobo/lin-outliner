@@ -47,7 +47,7 @@ export async function ingestPastedImages(images: PastedImage[]): Promise<AssetMe
 }
 
 // A lone http(s) URL ending in a known image extension (optional query). Used
-// to turn a pasted image link into a remote image node rather than plain text.
+// to turn a pasted image link into a remote Source-backed Node rather than plain text.
 const IMAGE_URL_RE = /^https?:\/\/\S+\.(?:png|jpe?g|gif|webp|svg|avif|bmp|heic)(?:\?\S*)?$/i;
 
 /** If `text` is exactly a remote image URL, return it (trimmed); else null. */
@@ -58,11 +58,8 @@ export function imageUrlFromText(text: string | null | undefined): string | null
 }
 
 /**
- * Decide whether a dropped/pasted image should convert the current row in
- * place (vs. insert as a sibling). Converting an existing `image` row is always
- * fine — it has no visible text to lose. A plain row converts only when it is
- * empty, so we never bury typed text that the image row would not render.
- * Reference rows and rows with children never convert.
+ * Decide whether a dropped/pasted Source should attach to the current row in
+ * place. Only an empty, childless ordinary row is reused.
  */
 export function shouldConvertRowToImage(row: {
   referenceLikeRow: boolean;
@@ -71,27 +68,23 @@ export function shouldConvertRowToImage(row: {
   rowTextEmpty: boolean;
 }): boolean {
   if (row.referenceLikeRow || row.hasChildren) return false;
-  if (row.nodeType === 'image') return true;
   return !row.nodeType && row.rowTextEmpty;
 }
 
 /**
- * Ingest images and create `image` nodes appended under `parentId`. Used by the
- * trailing inputs; focus lands on the new image block (via its `BlockNodeRow`),
- * matching the inline paste path.
+ * Ingest images and create ordinary Source-backed Nodes under `parentId`.
  */
 export async function appendImageNodes(parentId: NodeId, images: PastedImage[], run: CommandRunner): Promise<void> {
   const assets = await ingestPastedImages(images);
   for (const asset of assets) {
-    await run(() => api.createImageNode(parentId, null, {
+    await run(() => api.createSourceNode(parentId, null, {
       assetId: asset.id,
-      width: asset.imageWidth,
-      height: asset.imageHeight,
+      name: asset.originalFilename,
     }));
   }
 }
 
-/** Create a remote (mediaUrl-backed) image node appended under `parentId`. */
+/** Create a remote Source-backed Node appended under `parentId`. */
 export async function appendRemoteImageNode(parentId: NodeId, url: string, run: CommandRunner): Promise<void> {
-  await run(() => api.createImageNode(parentId, null, { mediaUrl: url }));
+  await run(() => api.createSourceNode(parentId, null, { sourceText: url }));
 }

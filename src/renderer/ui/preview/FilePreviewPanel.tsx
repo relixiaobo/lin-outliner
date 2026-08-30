@@ -21,6 +21,7 @@ import { referenceSummaryForIndex } from '../../state/referenceSummary';
 import { BacklinksSection } from '../BacklinksSection';
 import {
   AddChildIcon,
+  CopyIcon,
   FolderIcon,
   HideIcon,
   ICON_SIZE,
@@ -47,16 +48,13 @@ import type { FilePreviewNavigationOptions, FilePreviewPresentation } from '../w
 import { buildPanelBreadcrumb } from '../panelBreadcrumb';
 import { PanelChildrenOutline, PanelStickyBreadcrumb, usePanelTitleDock, type PanelDragHandle } from '../PanelShared';
 import { canAddPreviewTargetToOutline, requestAddPreviewTargetToOutline } from './previewIngest';
-import { fileNodeTarget, fileNodeTitle, isFileNode } from './fileNode';
-import {
-  fileNodePreviewControls,
-  fileNodePreviewMeta,
-} from './FilePreviewBody';
 import type { FilePreviewMenuAction } from './FilePreviewPill';
 import {
   FilePreviewShell,
+  canCopyPreviewSource,
   canOpenPreviewSource,
   canRevealPreviewSource,
+  copyPreviewSource,
   openPreviewSource,
   revealPreviewSource,
   sourceMeta,
@@ -117,21 +115,18 @@ interface LooseBreadcrumbSegment {
 }
 
 /**
- * The unified file surface. A loose source (trusted local file /
- * url) and an ingested file node share this same mounted frame: read-only filename,
- * breadcrumb, preview hero, and optional children outline.
+ * The unified preview surface. A loose source and a Source selected from an ordinary
+ * Node share this mounted frame: title, breadcrumb, preview body, and optional children.
  */
 export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const t = useT();
   const previewLabels = t.shell.filePreview;
-  const attachmentLabels = t.outliner.field.attachment;
   const state = usePreviewSource(props.target);
   const rootNode = props.nodeId ? props.index.byId.get(props.nodeId) : undefined;
   const readerMode = props.presentation === 'reader';
-  const boundFileNode = isFileNode(rootNode) ? rootNode : null;
-  const fileRoot = readerMode ? null : boundFileNode;
-  const nodeTarget = boundFileNode ? fileNodeTarget(boundFileNode) : null;
-  const looseUrlPreview = !readerMode && !boundFileNode && props.target.kind === 'url';
+  const boundOwner = rootNode?.type === undefined ? rootNode : null;
+  const fileRoot = readerMode ? null : boundOwner;
+  const looseUrlPreview = !readerMode && !boundOwner && props.target.kind === 'url';
   const epubTranslationSource = state.status === 'ready'
     && state.source.kind === 'file'
     && isEpubSource(state.source)
@@ -210,7 +205,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const previewTitle = state.status === 'ready'
     ? sourceTitle(state.source)
     : props.target.label ?? targetTitleFallback(props.target);
-  const title = boundFileNode ? fileNodeTitle(boundFileNode) || previewTitle : previewTitle;
+  const title = boundOwner?.content.text.trim() || previewTitle;
   const [urlPageMetadata, setUrlPageMetadata] = useState<UrlPreviewPageMetadata>({});
   const displayTitle = looseUrlPreview ? urlPageMetadata.title ?? title : title;
   const canOpen = state.status === 'ready' && canOpenPreviewSource(state.source);
@@ -276,6 +271,10 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
     if (state.status !== 'ready') return;
     void revealPreviewSource(state.source);
   }, [state]);
+  const copyOriginal = useCallback(() => {
+    if (state.status !== 'ready') return;
+    void copyPreviewSource(state.source);
+  }, [state]);
 
   const restorePanelScroll = useCallback(() => {
     const panel = mainPanelRef.current;
@@ -299,7 +298,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
     const previous = resetStateRef.current;
     const next = { nodeId: fileRoot?.id ?? props.nodeId ?? null, targetKey };
     resetStateRef.current = next;
-    // Add-to-outline intentionally rebinds a loose source into an ingested node
+    // Add-to-outline intentionally rebinds a loose source to a Source-backed Node
     // without a visual jump. Other identity changes, including node A -> node B
     // with the same asset target, reset scroll and expanded breadcrumbs.
     const looseToIngested = previous
@@ -354,27 +353,16 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
     void props.run(() => api.moveNode(draggedId, fileRoot.id, null));
   };
 
-  const meta = boundFileNode
-    ? fileNodePreviewMeta(boundFileNode, state, attachmentLabels, previewLabels)
-    : state.status === 'ready' ? sourceMeta(state.source, previewLabels) : null;
-  // An ingested node carries Open-with-default + Reveal/Copy; a loose source carries
-  // Open (if openable) + Show-in-Finder (on-disk sources) + Add-to-outline.
-  const openSplitReader = boundFileNode && !readerMode
-    ? () => props.onOpenTarget(nodeTarget ?? props.target, {
+  const meta = state.status === 'ready' ? sourceMeta(state.source, previewLabels) : null;
+  const openSplitReader = boundOwner && !readerMode
+    ? () => props.onOpenTarget(props.target, {
         newPane: true,
-        nodeId: boundFileNode.id,
+        nodeId: boundOwner.id,
         presentation: 'reader',
       })
     : undefined;
-  const fileControls = boundFileNode
-    ? fileNodePreviewControls(boundFileNode, nodeTarget ?? props.target, attachmentLabels, previewLabels, {
-        openInSplit: openSplitReader,
-      })
-    : null;
   const primaryOpen = readerMode
     ? null
-    : fileControls
-    ? fileControls.primaryOpen
     : canOpen
       // A url opens in the browser; an on-disk source opens with its default app.
       ? {
@@ -382,11 +370,15 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
           run: openOriginal,
         }
       : null;
-  const menuActions: FilePreviewMenuAction[] = fileControls
-    ? fileControls.menuActions
-    : [
+  const menuActions: FilePreviewMenuAction[] = [
+        ...(openSplitReader
+          ? [{ key: 'open-in-split', label: previewLabels.openInSplitPane, icon: OpenIcon, run: openSplitReader }]
+          : []),
         ...(canReveal
           ? [{ key: 'reveal', label: previewLabels.reveal, icon: FolderIcon, run: revealOriginal }]
+          : []),
+        ...(state.status === 'ready' && canCopyPreviewSource(state.source)
+          ? [{ key: 'copy', label: previewLabels.copyFile, icon: CopyIcon, run: copyOriginal }]
           : []),
         ...(addTarget
           ? [{
@@ -399,14 +391,14 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
             }]
           : []),
       ];
-  const looseUrlOpenAction = !readerMode && !boundFileNode && props.target.kind === 'url' && canOpen
+  const looseUrlOpenAction = !readerMode && !boundOwner && props.target.kind === 'url' && canOpen
     ? {
         label: previewLabels.openInBrowser,
         run: openOriginal,
       }
     : null;
   const readerOpenAction = readerMode && canOpen
-    ? fileControls?.primaryOpen ?? {
+    ? {
         label: props.target.kind === 'url' ? previewLabels.openInBrowser : previewLabels.openWithDefault,
         run: openOriginal,
       }
@@ -864,6 +856,7 @@ function translationShortcutLabel(): string {
 function previewTargetFallbackKey(target: PreviewTarget): string {
   if (target.kind === 'asset') return target.assetId;
   if (target.kind === 'local-file') return target.path;
+  if (target.kind === 'linked-file') return `${target.sourceValueId}:${target.sourceText}`;
   return target.url;
 }
 

@@ -3,6 +3,7 @@ import {
   type ReferenceSource,
   type ReferenceSummary,
 } from '../../core/references';
+import { isContentBearingNode } from '../../core/types';
 import { inlineRefNodeId, type NodeId, type NodeProjection } from '../api/types';
 import { SparseProjectionMap } from './sparseProjectionMap';
 
@@ -59,6 +60,7 @@ function sparseSummary(summary: ReferenceSummary): ReferenceSummary {
 
 function inlineSourcesByTarget(node: NodeProjection): Map<NodeId, ReferenceSource[]> {
   const result = new Map<NodeId, ReferenceSource[]>();
+  if (!isContentBearingNode(node)) return result;
   for (const inlineRef of node.content.inlineRefs) {
     const targetId = inlineRefNodeId(inlineRef);
     if (!targetId) continue;
@@ -76,6 +78,7 @@ function inlineSourcesByTarget(node: NodeProjection): Map<NodeId, ReferenceSourc
 }
 
 function inlineReferenceTargetIds(node: NodeProjection): NodeId[] {
+  if (!isContentBearingNode(node)) return [];
   return node.content.inlineRefs.flatMap((inlineRef) => {
     const targetId = inlineRefNodeId(inlineRef);
     return targetId ? [targetId] : [];
@@ -83,6 +86,7 @@ function inlineReferenceTargetIds(node: NodeProjection): NodeId[] {
 }
 
 function sameInlineReferencePresentation(left: NodeProjection, right: NodeProjection): boolean {
+  if (!isContentBearingNode(left) || !isContentBearingNode(right)) return left.type === right.type;
   if (left.content.inlineRefs.length !== right.content.inlineRefs.length) return false;
   for (let index = 0; index < left.content.inlineRefs.length; index += 1) {
     const leftRef = left.content.inlineRefs[index]!;

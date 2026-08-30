@@ -6,7 +6,6 @@ import {
   useState,
   type Dispatch,
   type DragEvent,
-  type FocusEvent,
   type KeyboardEvent,
   type MouseEvent,
   type MutableRefObject,
@@ -16,10 +15,12 @@ import {
 import { createPortal, flushSync } from 'react-dom';
 import { api } from '../../api/client';
 import { freshNodeId } from '../../../core/nodeId';
+import { formatAssetSourceUri } from '../../../core/source';
 import type { OperationUndoGroup } from '../../../outline/contract';
 import type {
   AssetMetadata,
   CommandResult,
+  ContentBearingNodeProjection,
   CreateNodeTree,
   FocusHint,
   NodeId,
@@ -28,7 +29,14 @@ import type {
   RichText,
   RichTextPatch,
 } from '../../api/types';
-import { EMPTY_RICH_TEXT, inlineRefNodeId, nodeReferenceTarget, plainText, replaceAllRichTextPatch } from '../../api/types';
+import {
+  EMPTY_RICH_TEXT,
+  inlineRefNodeId,
+  isContentBearingNode,
+  nodeReferenceTarget,
+  plainText,
+  replaceAllRichTextPatch,
+} from '../../api/types';
 import { projectFieldTypeById, nodeShowsCheckbox } from '../../../core/configProjection';
 import type { CursorPlacement, FocusTarget } from '../../state/document';
 import {
@@ -41,7 +49,6 @@ import {
 import { referenceSummaryForIndex } from '../../state/referenceSummary';
 import { deriveRowMemoState, rowMemoStateEqual } from '../../state/rowUiState';
 import { RichTextEditor, type EditorSplitPayload } from '../editor/RichTextEditor';
-import { FileNodeKeyboardAnchor } from './FileNodeKeyboardAnchor';
 import {
   deleteRichTextRange,
   markWholeTextAsHeading,
@@ -98,10 +105,6 @@ import {
 import { renderedTextRightEdge, resolveTextOffsetFromPoint } from '../interactions/domCaret';
 import { TagBar } from '../tags/TagBar';
 import { inlineReferenceTextColor, resolveTagColor, tagBulletColors } from '../tags/tagColors';
-import { fileNodeIconKind, fileNodeTitle, isFileNode } from '../preview/fileNode';
-import { FileNodeImage } from '../preview/FileNodeImage';
-import { FilePreviewBody } from '../preview/FilePreviewBody';
-import { dispatchPreviewTargetOpen } from '../preview/previewEvents';
 import { CheckboxFieldControl } from './CheckboxFieldControl';
 import { CodeBlockRow } from './CodeBlockRow';
 import { TriggerPopover } from './TriggerPopover';
@@ -227,7 +230,10 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   noteOutlinerItemRender();
   const t = useT();
   const tf = t.outliner.field;
-  const realNode = props.index.byId.get(props.nodeId);
+  const realNodeCandidate = props.index.byId.get(props.nodeId);
+  const realNode = realNodeCandidate && isContentBearingNode(realNodeCandidate)
+    ? realNodeCandidate
+    : undefined;
   const parentNode = props.index.byId.get(props.parentId);
   // A draft row synthesizes an empty plain node so the normal render path runs;
   // `realNode` distinguishes "not materialized yet" from a real node.
@@ -301,7 +307,10 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const referenceTargetId = node?.type === 'reference' && node.targetId
     ? resolveReferenceTargetId(node.targetId, props.index.byId)
     : null;
-  const projectedDisplayed = referenceTargetId ? props.index.byId.get(referenceTargetId) ?? node : node;
+  const projectedDisplayedCandidate = referenceTargetId ? props.index.byId.get(referenceTargetId) ?? node : node;
+  const projectedDisplayed = projectedDisplayedCandidate && isContentBearingNode(projectedDisplayedCandidate)
+    ? projectedDisplayedCandidate
+    : undefined;
   const displayed = projectedDisplayed
     ? nodeWithPendingPatch(projectedDisplayed, props.ui.pendingNodePatches.get(projectedDisplayed.id))
     : projectedDisplayed;
@@ -323,22 +332,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const displayValues = realNode && displayed && !props.draft && !props.fieldValue
     ? viewDisplayValuesFor(displayed, parentView, props.index.byId, { referenceSummary })
     : [];
-  // A file node is a full node — the bullet drills to the node page, the chevron
-  // expands an inline preview. Its row content depends on the kind: a non-image file is
-  // a lightweight name row (file-type bullet, read-only filename, hover ⋯ menu); an
-  // image renders the image itself inline (FileNodeImage: an image's content is its
-  // identity), with the filename displayed read-only on the preview surface.
-  // A reference whose target is a file node must still render as a reference row,
-  // not as the file's own card/image: `displayed` resolves to the target only when
-  // `referenceTargetId` is set, so guard on `!referenceTargetId`. Otherwise an
-  // agent-created reference→file (the agent's add_reference does no type-check)
-  // would render inline and a click would drill to the target instead of selecting
-  // the reference. Only a row that IS the file node gets the file presentation.
-  const fileNodeRow = !referenceTargetId && isFileNode(displayed) ? displayed : null;
-  const imageFileRow = fileNodeRow?.type === 'image' ? fileNodeRow : null;
-  // A non-image file renders as a lightweight row (file-icon bullet + read-only
-  // filename, expand → inline preview); an image keeps its inline-image presentation.
-  const nonImageFileRow = fileNodeRow && fileNodeRow.type !== 'image' ? fileNodeRow : null;
   const trailingDraftOrigin = props.draft === true
     && !realNode
     && (!props.optimisticChange || props.optimisticChange.originatesFromDraft === true);
@@ -484,8 +477,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     ? focusTarget(props.parentId, props.parentId, props.panelId, 'trailing')
     : editorFocusTarget;
   const descriptionFocusTarget = focusTarget(props.nodeId, props.parentId, props.panelId, 'description');
-  const fileTitlePointerFocusRef = useRef(false);
-  const [fileTitleKeyboardFocusVisible, setFileTitleKeyboardFocusVisible] = useState(false);
   const requestRowFocus = (
     nodeId: NodeId,
     placement: CursorPlacement = cursorEnd(),
@@ -523,41 +514,18 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       }));
     });
   };
-  // A non-image file row's chevron toggles its inline preview (peek), not the
-  // trailing-child-draft toggle a childless content row uses. It flips this row's
-  // membership in the expanded set (which `row.expanded` reads) and selects the row —
-  // like `toggleExpandOrSelect`, so clicking a file row's chevron makes it the active
-  // row rather than leaving focus/selection on whatever row was active before.
-  const toggleFilePreview = () => {
-    props.setUi((prev) => {
-      const expandedSet = new Set(prev.expanded);
-      if (expandedSet.has(props.nodeId)) expandedSet.delete(props.nodeId);
-      else expandedSet.add(props.nodeId);
-      return { ...prev, expanded: expandedSet };
-    });
-    row.updateSelection();
-  };
   const toggleRowDisclosure = (anchorElement?: HTMLElement | null) => {
     props.onDisclosureToggleAnchor?.(anchorElement ?? null);
-    if (nonImageFileRow) {
-      toggleFilePreview();
-      return;
-    }
     row.toggleExpandOrSelect();
   };
   const pendingReferenceConversion = props.ui.pendingReferenceConversion?.nodeId === props.nodeId;
-  // A non-image file node shows its file-type icon as the bullet (the row text is the
-  // read-only filename); an image keeps the neutral content bullet (its inline image is
-  // its identity). The bullet still drills to the node page on click.
   const leadingVariant = node.type === 'reference' || pendingReferenceConversion
     ? 'reference'
     : displayed.type === 'tagDef'
       ? 'tag'
       : displayed.type === 'fieldDef'
         ? 'fieldDef'
-        : nonImageFileRow
-            ? 'file'
-            : 'content';
+        : 'content';
   const appliedTags = displayed.tags
     .map((tagId) => props.index.byId.get(tagId))
     .filter((tag): tag is NodeProjection => Boolean(tag));
@@ -572,10 +540,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // rows have no inline text editor, so they keep the tag bar as a sibling below.
   const isPlainTextRow = !isCodeBlock;
   const hasTags = displayed.tags.length > 0;
-  // A file node renders its editor visually hidden (the sr-only keyboard anchor), so
-  // the inline tag slot inside that editor would be invisible. File rows render
-  // their tags in the read-only filename row instead; code rows keep the sibling bar.
-  const useInlineTagSlot = isPlainTextRow && !fileNodeRow && !checkboxFieldValue;
+  const useInlineTagSlot = isPlainTextRow && !checkboxFieldValue;
   const inlineTagSlotRef = useRef<HTMLSpanElement | null>(null);
   if (useInlineTagSlot && hasTags && inlineTagSlotRef.current === null) {
     const el = document.createElement('span');
@@ -610,7 +575,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       ? textRenderRevision(JSON.stringify(renderedDraftContent))
     : draftContentRevision;
   const activeTrigger = props.trigger?.nodeId === props.nodeId ? props.trigger : null;
-  const activeFileTagTrigger = fileNodeRow && activeTrigger?.kind === '#' ? activeTrigger : null;
   const triggerOwnsWholeDraft = activeTrigger?.kind === '@'
     && draftContent.inlineRefs.length === 0
     && triggerOwnsWholeText(draftContent.text, activeTrigger);
@@ -1113,12 +1077,11 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     const rowIndex = siblings.indexOf(props.nodeId);
     let insertIndex = rowIndex >= 0 ? rowIndex + 1 : null;
     for (const asset of assets) {
-      // Clipboard images are image nodes by construction (filtered on the declared
-      // type upstream), so force an image node rather than re-sniffing the bytes.
-      await props.run(() => api.createImageNode(parentId, insertIndex, {
+      // Clipboard images are admitted as managed image Sources by construction
+      // (filtered on the declared type upstream), so do not re-sniff the bytes.
+      await props.run(() => api.createSourceNode(parentId, insertIndex, {
         assetId: asset.id,
-        width: asset.imageWidth,
-        height: asset.imageHeight,
+        name: asset.originalFilename,
       }));
       if (insertIndex !== null) insertIndex += 1;
     }
@@ -1174,12 +1137,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     await insertAssetNodesAt(assets, rowIndex >= 0 ? rowIndex + 1 : null, parentId, options);
   };
 
-  // Land images "here": convert the current row into the first image when it is
-  // a plain, *empty*, childless row (so no typed text is buried under an image
-  // body that never renders it) rather than spawning an empty row beside the
-  // image; remaining images become siblings. Used by both clipboard paste and
-  // the `/image` slash command. Focus lands on the new image block via its
-  // `BlockNodeRow` shell.
+  // Land images "here": add the first Source to a plain, empty, childless row
+  // rather than spawning an empty row beside it; remaining images become
+  // ordinary Source-backed siblings. Used by clipboard paste and `/image`.
   const landImagesOnCurrentRow = async (assets: AssetMetadata[]) => {
     if (assets.length === 0) return;
     if (await materializeVirtualFieldAssets(assets)) return;
@@ -1197,11 +1157,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     });
     if (canConvertInPlace) {
       const [first, ...rest] = assets;
-      await props.run(() => api.setNodeImage(targetEditId, {
-        assetId: first.id,
-        width: first.imageWidth,
-        height: first.imageHeight,
-      }));
+      await props.run(() => api.addSource(targetEditId, formatAssetSourceUri(first.id)));
       await insertImagesFromAssets(rest);
     } else {
       await insertImagesFromAssets(assets);
@@ -1240,11 +1196,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       await insertAssetNodesAfterCurrentRow(assets, options);
       return;
     }
-    await props.run(() => api.setNodeImage(targetEditId, {
-      assetId: first.id,
-      width: first.imageWidth,
-      height: first.imageHeight,
-    }), options);
+    await props.run(() => api.addSource(targetEditId, formatAssetSourceUri(first.id)), options);
     const siblings = props.index.byId.get(props.parentId)?.children ?? [];
     const rowIndex = siblings.indexOf(props.nodeId);
     await insertAssetNodesAt(rest, rowIndex >= 0 ? rowIndex + 1 : null, props.parentId, options);
@@ -1329,8 +1281,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     clearExternalFileDropState();
   };
 
-  // A pasted remote image URL: same land-here logic as a local image, but the
-  // node is backed by `mediaUrl` instead of an ingested asset.
+  // A pasted remote image URL follows the same Source-backed placement rules.
   const handlePasteMediaUrl = async (url: string) => {
     await commitDraft();
     if (virtualFieldValueDraft && props.fieldValue) {
@@ -1346,10 +1297,10 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           replaceLocalDraftContent(EMPTY_RICH_TEXT);
         }
       } else {
-        await props.run(() => api.createImageNode(
+        await props.run(() => api.createSourceNode(
           materializedFieldParentIdRef.current ?? props.parentId,
           null,
-          { mediaUrl: url },
+          { sourceText: url },
         ));
       }
       return;
@@ -1363,17 +1314,21 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       rowTextEmpty,
     });
     if (convertInPlace) {
-      await props.run(() => api.setNodeImage(targetEditId, { mediaUrl: url }));
+      await props.run(() => api.addSource(targetEditId, url));
     } else {
       const siblings = props.index.byId.get(props.parentId)?.children ?? [];
       const rowIndex = siblings.indexOf(props.nodeId);
-      await props.run(() => api.createImageNode(props.parentId, rowIndex >= 0 ? rowIndex + 1 : null, { mediaUrl: url }));
+      await props.run(() => api.createSourceNode(
+        props.parentId,
+        rowIndex >= 0 ? rowIndex + 1 : null,
+        { sourceText: url },
+      ));
     }
   };
 
   const startOptimisticDraftMaterialization = (params: {
     content: RichText;
-    nodeOverride?: NodeProjection;
+    nodeOverride?: ContentBearingNodeProjection;
     placement?: CursorPlacement;
     updateUi?: (previous: UiState) => UiState;
     rollbackUi?: (previous: UiState) => UiState;
@@ -1484,10 +1439,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     if (!trigger || !displayed) return null;
     const previousContent = draftContentRef.current;
     const pendingBeforeReplacement = pendingTextPatchRef.current;
-    const content = fileNodeRow
-      ? previousContent
-      : deleteRichTextRange(previousContent, trigger.from, trigger.to);
-    if (!fileNodeRow) replaceLocalDraftContent(content);
+    const content = deleteRichTextRange(previousContent, trigger.from, trigger.to);
+    replaceLocalDraftContent(content);
     void startOptimisticNodePatch({
       currentUi: props.uiRef.current,
       setUi: props.setUi,
@@ -1496,19 +1449,15 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         ui: props.uiRef.current,
         tagId: tag.id,
         action: 'add',
-        ...(!fileNodeRow ? { content } : {}),
+        content,
       }),
       command: async () => {
         await pendingBeforeReplacement;
-        return props.run(() => (
-          fileNodeRow
-            ? api.applyTag(targetEditId, tag.id)
-            : api.applyTagWithContent(targetEditId, tag.id, content)
-        ), {
+        return props.run(() => api.applyTagWithContent(targetEditId, tag.id, content), {
           applyFocus: false,
         });
       },
-      onRejected: !fileNodeRow ? () => replaceLocalDraftContent(previousContent) : undefined,
+      onRejected: () => replaceLocalDraftContent(previousContent),
     });
     return commandRunnerNoop();
   };
@@ -1518,11 +1467,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     if (!trigger || !displayed) return null;
     const previousContent = draftContentRef.current;
     const pendingBeforeReplacement = pendingTextPatchRef.current;
-    const content = fileNodeRow
-      ? previousContent
-      : deleteRichTextRange(previousContent, trigger.from, trigger.to);
+    const content = deleteRichTextRange(previousContent, trigger.from, trigger.to);
     const tagId = freshNodeId();
-    if (!fileNodeRow) replaceLocalDraftContent(content);
+    replaceLocalDraftContent(content);
     void startOptimisticNodePatch({
       currentUi: props.uiRef.current,
       setUi: props.setUi,
@@ -1531,19 +1478,17 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         ui: props.uiRef.current,
         tagId,
         action: 'add',
-        ...(!fileNodeRow ? { content } : {}),
+        content,
         pendingTagName: name,
       }),
       command: async () => {
         await pendingBeforeReplacement;
         return props.run(
-          () => fileNodeRow
-            ? api.createTagAndBatchApply([targetEditId], name, tagId)
-            : api.createTagAndApplyWithContent(targetEditId, name, content, tagId),
+          () => api.createTagAndApplyWithContent(targetEditId, name, content, tagId),
           { applyFocus: false },
         );
       },
-      onRejected: !fileNodeRow ? () => replaceLocalDraftContent(previousContent) : undefined,
+      onRejected: () => replaceLocalDraftContent(previousContent),
     });
     return commandRunnerNoop();
   };
@@ -1595,7 +1540,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     if (action === 'tree_reference') {
       if (onDraftTrigger) {
         const fieldReference = Boolean(props.fieldValue);
-        const optimisticNode: NodeProjection = fieldReference
+        const optimisticNode: ContentBearingNodeProjection = fieldReference
           ? {
               ...makeDraftNode(props.nodeId, props.parentId),
               type: 'reference',
@@ -1870,86 +1815,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     });
   };
 
-  const fileTitleSelectionAnchor = (): TriggerAnchor | undefined => {
-    const host = optionAnchorRef.current;
-    const selection = window.getSelection();
-    if (!host || !selection || selection.rangeCount === 0) return undefined;
-    const anchorNode = selection.anchorNode;
-    if (anchorNode && !host.contains(anchorNode)) return undefined;
-    const rect = selection.getRangeAt(0).getBoundingClientRect();
-    if (!Number.isFinite(rect.left) || !Number.isFinite(rect.top)) return undefined;
-    if (rect.width === 0 && rect.height === 0) return undefined;
-    return { left: rect.left, top: rect.top, bottom: rect.bottom };
-  };
-
-  const openFileTagTrigger = (anchor?: TriggerAnchor) => {
-    const rect = optionAnchorRef.current?.getBoundingClientRect();
-    row.updateSelection();
-    props.setTrigger({
-      nodeId: props.nodeId,
-      kind: '#',
-      query: '',
-      from: 0,
-      to: 1,
-      anchor: anchor ?? fileTitleSelectionAnchor() ?? (rect
-        ? { left: rect.left, top: rect.top, bottom: rect.bottom }
-        : undefined),
-    });
-  };
-
-  const updateFileTagTriggerQuery = (query: string) => {
-    if (!activeFileTagTrigger) return;
-    props.setTrigger({
-      ...activeFileTagTrigger,
-      query,
-      to: query.length + 1,
-    });
-  };
-
-  const handleFileTitleKeyDownCapture = (event: KeyboardEvent<HTMLElement>) => {
-    if (!nonImageFileRow) return;
-    const mod = event.metaKey || event.ctrlKey;
-    if (activeFileTagTrigger) {
-      if (event.key === 'Backspace') {
-        event.preventDefault();
-        event.stopPropagation();
-        if (activeFileTagTrigger.query.length === 0) {
-          props.setTrigger(null);
-        } else {
-          updateFileTagTriggerQuery(activeFileTagTrigger.query.slice(0, -1));
-        }
-        return;
-      }
-      if (!mod && !event.altKey && event.key.length === 1) {
-        event.preventDefault();
-        event.stopPropagation();
-        if (/\s/.test(event.key)) {
-          props.setTrigger(null);
-        } else {
-          updateFileTagTriggerQuery(`${activeFileTagTrigger.query}${event.key}`);
-        }
-      }
-      return;
-    }
-    if (!mod && !event.altKey && event.key === '#') {
-      event.preventDefault();
-      event.stopPropagation();
-      openFileTagTrigger();
-    }
-  };
-
-  const handleFileTitlePointerDownCapture = () => {
-    fileTitlePointerFocusRef.current = true;
-    setFileTitleKeyboardFocusVisible(false);
-  };
-
-  const handleFileTitleBlurCapture = (event: FocusEvent<HTMLElement>) => {
-    const nextTarget = event.relatedTarget instanceof Node ? event.relatedTarget : null;
-    if (!nextTarget || !event.currentTarget.contains(nextTarget)) {
-      setFileTitleKeyboardFocusVisible(false);
-    }
-  };
-
   // Append an existing pool option as a reference (the additive options overlay),
   // then return to the trailing draft for the next value. The typed query is
   // discarded — the user picked an option rather than creating from the text.
@@ -2200,7 +2065,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const startOptimisticContentConversion = (params: {
     content: RichText;
     presentation: 'content' | 'codeBlock';
-    nodeOverride?: NodeProjection;
+    nodeOverride?: ContentBearingNodeProjection;
     fieldValueTree: CreateNodeTree;
     convert: (nodeId: NodeId, content: RichText) => Promise<CommandResult>;
     create: (
@@ -2390,7 +2255,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     if (!payload.atEnd) {
       const contentBeforeSplit = draftContentRef.current;
       const splitIntoChildren = node.type !== 'reference'
-        && !fileNodeRow
         && row.expanded
         && row.hasChildren;
       const targetParentId = splitIntoChildren ? props.nodeId : props.parentId;
@@ -2408,8 +2272,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         async (pendingDraft) => {
           await pendingTextPatchRef.current;
           return props.run(() => api.splitNode(targetEditId, payload.before, payload.after, {
-            // A file node's `expanded` means "preview open", not "children visible to
-            // type into", so Enter on a file row always adds a sibling (never a child).
             ...(node.type === 'reference'
               ? { targetParentId: props.parentId, targetIndex: rowIndex >= 0 ? rowIndex + 1 : null }
               : splitIntoChildren
@@ -2431,7 +2293,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       );
       return;
     }
-    const createAsFirstChild = !fileNodeRow && row.expanded && row.hasChildren;
+    const createAsFirstChild = row.expanded && row.hasChildren;
     const targetParentId = createAsFirstChild ? childParentId : props.parentId;
     const targetIndex = createAsFirstChild ? 0 : rowIndex >= 0 ? rowIndex + 1 : null;
     await startPendingStructuralCommand(
@@ -2596,7 +2458,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     if (!previousId) return;
 
     const previousNode = props.index.byId.get(previousId);
-    if (!previousNode) return;
+    if (!previousNode || !isContentBearingNode(previousNode)) return;
 
     // Backspacing a reference row itself has nothing to merge away — just step
     // up. But merging *into* a reference is allowed: core converts that
@@ -2616,7 +2478,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       sourceContent: draftContentRef.current,
       resolvedReferenceTargetId,
       referenceDisplayName: resolvedReferenceTargetId
-        ? props.index.byId.get(resolvedReferenceTargetId)?.content.text || undefined
+        ? contentTextForNode(props.index.byId.get(resolvedReferenceTargetId)) || undefined
         : undefined,
     });
     const joinOffset = previousNode.type === 'reference'
@@ -2882,42 +2744,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         document.activeElement.blur();
       }
       selectRow(props.nodeId);
-      return;
-    }
-
-    if (nonImageFileRow) {
-      const editor = event.currentTarget.querySelector<HTMLElement>('.file-node-row-name .ProseMirror');
-      if (!editor) return;
-
-      const clickedInsideEditor = Boolean(target?.closest('.ProseMirror'));
-      const rightEdge = renderedTextRightEdge(editor);
-      if (clickedInsideEditor && (rightEdge === null || event.clientX <= rightEdge + 1)) return;
-
-      event.preventDefault();
-      event.stopPropagation();
-      const title = fileNodeTitle(nonImageFileRow);
-      const offset = resolveTextOffsetFromPoint({
-        container: editor,
-        clientX: event.clientX,
-        clientY: event.clientY,
-        textLength: title.length,
-      });
-      const editorRect = editor.getBoundingClientRect();
-      const inlineRefBias = event.clientX <= editorRect.left + 2 ? 'before' : 'after';
-      requestRowFocus(props.nodeId, cursorAtOffset(offset, inlineRefBias), props.parentId);
-      return;
-    }
-
-    if (imageFileRow) {
-      // An image row has no filename caret surface: a click on the image or the
-      // empty area beside it selects the row. Maximize lives in the image menu so
-      // a plain click behaves like other outliner content.
-      event.preventDefault();
-      event.stopPropagation();
-      if (document.activeElement instanceof HTMLElement) {
-        document.activeElement.blur();
-      }
-      selectRow(props.nodeId, 'global');
       return;
     }
 
@@ -3209,7 +3035,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         return true;
       } : undefined}
       resolveInlineReferenceColor={(targetId) => inlineReferenceTextColor(targetId, props.index)}
-      resolveInlineReferenceDisplayName={(targetId) => props.index.byId.get(targetId)?.content.text.trim() || undefined}
+      resolveInlineReferenceDisplayName={(targetId) => contentTextForNode(props.index.byId.get(targetId)).trim() || undefined}
       onFieldTriggerFire={suppressTextTriggers ? undefined : () => {
         props.setTrigger(null);
         // Claim the draft synchronously. Replacing the ProseMirror row with the
@@ -3269,50 +3095,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       }}
     />
   );
-  const nonImageFileTitle = nonImageFileRow ? fileNodeTitle(nonImageFileRow) : '';
-  const fileTitleEditorElement = nonImageFileRow ? (
-    <RichTextEditor
-      nodeId={props.nodeId}
-      className="file-node-row-name file-node-row-name-editor"
-      content={plainText(nonImageFileTitle)}
-      contentRevision={textRenderRevision(nonImageFileTitle)}
-      readOnly
-      readOnlyCaret
-      onFocus={() => {
-        const programmaticFocus = Boolean(props.ui.focusRequest)
-          && focusTargetMatches(props.ui.focusRequest!.target, editorRequestTarget);
-        setFileTitleKeyboardFocusVisible(programmaticFocus && !fileTitlePointerFocusRef.current);
-        fileTitlePointerFocusRef.current = false;
-        row.updateSelection();
-      }}
-      onChange={() => undefined}
-      onPatch={() => undefined}
-      onCommit={() => undefined}
-      onEnter={() => void handleEnter({
-        atStart: false,
-        atEnd: true,
-        before: EMPTY_RICH_TEXT,
-        after: EMPTY_RICH_TEXT,
-      })}
-      onBackspaceAtStart={() => void handleBackspaceAtStart(true)}
-      onTab={(shiftKey, cursorOffset) => void handleTab(shiftKey, cursorOffset)}
-      onArrowUpAtStart={() => row.moveFocus(-1)}
-      onArrowDownAtEnd={() => row.moveFocus(1)}
-      onShiftArrow={() => void exitToSelection()}
-      onUndo={() => void props.run(() => api.undo())}
-      onRedo={() => void props.run(() => api.redo())}
-      onSelectAllRows={selectAllVisibleRows}
-      onModEnter={() => void handleModEnter(EMPTY_RICH_TEXT)}
-      onPasteFiles={(files) => void handlePasteFiles(files)}
-      onEscape={() => void exitToSelection()}
-      onTriggerChange={() => undefined}
-      focusTarget={editorRequestTarget}
-      focusRequest={props.ui.focusRequest}
-      onFocusRequestConsumed={(request) => {
-        props.setUi((prev) => clearFocusRequestState(prev, request));
-      }}
-    />
-  ) : null;
   const outlinerWrapProps = {
     ...row.wrapProps,
     ...(exposesTrailingDraftMarker ? { 'data-trailing-parent-id': props.parentId } : {}),
@@ -3342,9 +3124,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   return (
     <OutlinerRowShell
       hasChildren={row.hasChildren}
-      // A non-image file row's chevron toggles its inline preview, so it is
-      // expandable even with no children (its `expanded` reflects the preview).
-      expandable={row.hasChildren || Boolean(nonImageFileRow)}
+      expandable={row.hasChildren}
       expanded={row.expanded}
       level={props.depth + 1}
       selected={row.rowSelected}
@@ -3352,10 +3132,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       wrapProps={outlinerWrapProps}
       rowClassName={row.rowClassName([
         referenceLikeRow ? 'reference-row' : '',
-        // A non-image file row is a lightweight name row (file-icon bullet, read-only
-        // filename) that expands to an inline preview; the class shows the chevron and
-        // styles the name/preview.
-        nonImageFileRow ? 'file-node-row' : '',
         externalFileDropPosition ? `drop-${externalFileDropPosition}` : '',
         pendingReferenceConversion ? 'ref-converting' : '',
         // Only the ordinary trailing draft reads as a fainter "next" slot. A
@@ -3373,7 +3149,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           expanded={row.expanded}
           variant={leadingVariant}
           fieldType={projectFieldTypeById(props.index.byId, displayed.id)}
-          fileIconKind={nonImageFileRow ? fileNodeIconKind(nonImageFileRow) : undefined}
           bulletColors={appliedTagColors}
           tagDefColor={tagDefColor}
           onToggleExpand={toggleRowDisclosure}
@@ -3400,87 +3175,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
               )}
             />
           )}
-          {fileNodeRow ? (
-            // A file node renders as content, not a rename field. Non-image files use a
-            // read-only title editor so the caret can land in the filename and drive
-            // structural commands/tags without mutating the filename. Images render as
-            // the image itself and keep the hidden keyboard anchor for parity.
-            <>
-              {imageFileRow ? (
-                <FileNodeImage node={imageFileRow} onMaximize={() => props.onRoot(drillDownId)} />
-              ) : nonImageFileRow ? (
-                <div
-                  className="file-node-row-main"
-                  data-keyboard-focus={fileTitleKeyboardFocusVisible ? 'true' : undefined}
-                >
-                  <div
-                    className="file-node-row-labels"
-                    title={nonImageFileTitle}
-                    onBlurCapture={handleFileTitleBlurCapture}
-                    onKeyDownCapture={handleFileTitleKeyDownCapture}
-                    onPointerDownCapture={handleFileTitlePointerDownCapture}
-                  >
-                    {fileTitleEditorElement}
-                    {hasTags && (
-                      <TagBar
-                        nodeId={targetEditId}
-                        tagIds={displayed.tags}
-                        index={props.index}
-                        ui={props.ui}
-                        setUi={props.setUi}
-                        run={props.run}
-                        onRoot={props.onRoot}
-                      />
-                    )}
-                  </div>
-                </div>
-              ) : null}
-              {imageFileRow && (
-                <FileNodeKeyboardAnchor
-                  label={fileNodeTitle(fileNodeRow)}
-                  onFocus={() => row.updateSelection()}
-                  tagTriggerQuery={activeFileTagTrigger?.query ?? null}
-                  onOpenTagTrigger={openFileTagTrigger}
-                  onUpdateTagTriggerQuery={updateFileTagTriggerQuery}
-                  onCloseTagTrigger={() => props.setTrigger(null)}
-                  onArrowUp={() => row.moveFocus(-1)}
-                  onArrowDown={() => row.moveFocus(1)}
-                  onEnter={() => void handleEnter({
-                    atStart: false,
-                    atEnd: true,
-                    before: draftContentRef.current,
-                    after: EMPTY_RICH_TEXT,
-                  })}
-                  onBackspace={() => void handleBackspaceAtStart(true)}
-                  onEscape={() => void exitToSelection()}
-                  onShiftArrow={() => void exitToSelection()}
-                  onTab={(shiftKey) => void handleTab(shiftKey, 0)}
-                  onSelectAllRows={selectAllVisibleRows}
-                  onUndo={() => void props.run(() => api.undo())}
-                  onRedo={() => void props.run(() => api.redo())}
-                  focusTarget={editorRequestTarget}
-                  focusRequest={props.ui.focusRequest}
-                  onFocusRequestConsumed={(request) => {
-                    props.setUi((prev) => clearFocusRequestState(prev, request));
-                  }}
-                />
-              )}
-              {hasTags && imageFileRow && (
-                <TagBar
-                  nodeId={targetEditId}
-                  tagIds={displayed.tags}
-                  index={props.index}
-                  ui={props.ui}
-                  setUi={props.setUi}
-                  run={props.run}
-                  onRoot={props.onRoot}
-                />
-              )}
-            </>
-          ) : (
-            rowEditorElement
-          )}
-          {hasTags && !fileNodeRow && (
+          {rowEditorElement}
+          {hasTags && (
             useInlineTagSlot ? (
               // Portal the chips into the editor's inline slot so they sit in the
               // text flow (after the last word, wrapping with it). The slot node
@@ -3621,25 +3317,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         </>
       )}
     >
-
-      {nonImageFileRow && row.expanded && (
-        // The inline file preview lives below the row (inside row-wrap, outside .row),
-        // so it is not painted by the row's selection highlight; it starts collapsed
-        // (peek) and the pill's Expand grows it to a full vertical scroll.
-        <div className="file-node-row-preview">
-          <FilePreviewBody
-            node={nonImageFileRow}
-            onOpenTarget={(target, options) => dispatchPreviewTargetOpen({
-              target,
-              newPane: options?.newPane,
-              nodeId: options?.nodeId,
-              presentation: options?.presentation,
-            })}
-            initialExpanded={false}
-          />
-        </div>
-      )}
-
       {activeTrigger && (
         <TriggerPopover
           trigger={activeTrigger}
@@ -3893,43 +3570,21 @@ function outlinerItemPinned(props: OutlinerItemProps): boolean {
   return props.isNodePinned(outlinerItemOpenId(props));
 }
 
-function outlinerItemFileRenderKey(props: OutlinerItemProps): string {
-  const node = props.index.byId.get(props.nodeId);
-  if (!isFileNode(node)) return '';
-  if (node.type === 'attachment') {
-    return [
-      node.type,
-      node.assetId,
-      node.content.text,
-      node.originalFilename ?? '',
-      node.mimeType ?? '',
-      node.fileSize ?? '',
-      node.pdfPageCount ?? '',
-      node.audioDurationMs ?? '',
-      node.videoDurationMs ?? '',
-    ].join('\u001f');
-  }
-  return [
-    node.type,
-    node.assetId ?? '',
-    node.content.text,
-    node.mediaUrl ?? '',
-    node.mediaAlt ?? '',
-    node.imageWidth ?? '',
-    node.imageHeight ?? '',
-  ].join('\u001f');
-}
-
 function inlineReferencePresentationKey(props: OutlinerItemProps): string {
   const openId = outlinerItemOpenId(props);
   const displayed = props.index.byId.get(openId) ?? props.index.byId.get(props.nodeId);
-  return (displayed?.content.inlineRefs ?? []).map((ref) => {
+  const content = displayed && isContentBearingNode(displayed) ? displayed.content : EMPTY_RICH_TEXT;
+  return content.inlineRefs.map((ref) => {
     const targetId = inlineRefNodeId(ref);
     if (!targetId) return '';
-    const title = props.index.byId.get(targetId)?.content.text.trim() ?? '';
+    const title = contentTextForNode(props.index.byId.get(targetId)).trim();
     const color = inlineReferenceTextColor(targetId, props.index) ?? '';
     return `${targetId}\u001f${title}\u001f${color}`;
   }).join('\u001e');
+}
+
+function contentTextForNode(node: NodeProjection | undefined): string {
+  return node && isContentBearingNode(node) ? node.content.text : '';
 }
 
 function textRenderRevision(text: string): number {
@@ -3975,7 +3630,6 @@ function outlinerItemPropsEqual(prev: OutlinerItemProps, next: OutlinerItemProps
   const prevRev = prev.index.renderRev?.get(prev.nodeId);
   const nextRev = next.index.renderRev?.get(next.nodeId);
   if (prevRev === undefined || nextRev === undefined || prevRev !== nextRev) return false;
-  if (outlinerItemFileRenderKey(prev) !== outlinerItemFileRenderKey(next)) return false;
   if (inlineReferencePresentationKey(prev) !== inlineReferencePresentationKey(next)) return false;
   if (outlinerItemPinned(prev) !== outlinerItemPinned(next)) return false;
   if (!referencePathEqual(prev.referencePath, next.referencePath)) return false;

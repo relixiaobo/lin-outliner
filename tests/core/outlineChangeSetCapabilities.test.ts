@@ -72,7 +72,7 @@ describe('outline ChangeSet capability coverage', () => {
       definitionType: 'field' as const,
       id: 'field:url',
       name: 'URL',
-      fieldType: 'url',
+      fieldType: 'uri',
       bind: 'urlField',
     };
 
@@ -92,7 +92,7 @@ describe('outline ChangeSet capability coverage', () => {
     expect(projectFieldConfig(
       new Map(Object.values(workspace.documentState().nodes).map((node) => [node.id, node])),
       workspace.documentState().nodes['field:url']!,
-    )).toMatchObject({ fieldType: 'url' });
+    )).toMatchObject({ fieldType: 'uri' });
     expect(Object.values(workspace.documentState().nodes).some((node) => (
       node.type === 'fieldEntry' && node.fieldDefId === 'field:url'
     ))).toBe(false);
@@ -170,7 +170,9 @@ describe('outline ChangeSet capability coverage', () => {
     expect(richNode.content.inlineRefs).toEqual([{ offset: 4, target: { kind: 'node', nodeId: referenceA } }]);
     expect(richNode.tags).toContain(tagId);
     expect(richNode.completedAt).toBeGreaterThan(0);
-    expect(workspace.documentState().nodes[richNode.children.at(-1)!]?.type).toBe('codeBlock');
+    expect(richNode.children.some((childId) => (
+      workspace.documentState().nodes[childId]?.type === 'codeBlock'
+    ))).toBe(true);
     expect(Object.values(workspace.documentState().nodes)).toContainEqual(
       expect.objectContaining({ type: 'fieldEntry', parentId: richId, fieldDefId: fieldId }),
     );

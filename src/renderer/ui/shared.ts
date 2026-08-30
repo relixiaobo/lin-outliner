@@ -3,6 +3,7 @@ import { useCallback } from 'react';
 import { flushSync } from 'react-dom';
 import type {
   CommandResult,
+  ContentBearingNodeProjection,
   ProjectionSnapshot,
   ProjectionUpdate,
   FocusHint,
@@ -91,7 +92,9 @@ export type TriggerState =
 
 export const FIELD_TYPE_OPTIONS = FIELD_TYPE_CONFIG_OPTIONS;
 
-export function isContentNode(node: NodeProjection | undefined): boolean {
+export function isContentNode(
+  node: NodeProjection | undefined,
+): node is Extract<ContentBearingNodeProjection, { type?: undefined } | { type: 'codeBlock' }> {
   return Boolean(node && (!node.type || node.type === 'codeBlock'));
 }
 

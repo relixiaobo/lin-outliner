@@ -1,4 +1,9 @@
-import type { NodeId, NodeProjection } from '../../api/types';
+import {
+  isContentBearingNode,
+  type ContentBearingNodeProjection,
+  type NodeId,
+  type NodeProjection,
+} from '../../api/types';
 import { TRASH_ID } from '../../../core/types';
 import { projectFieldConfig } from '../../../core/configProjection';
 import { isInternalConfigNode } from '../../../core/configSchema';
@@ -24,11 +29,13 @@ export function resolveFieldOptions(
     ? resolveOptionsFromSourceSupertag(field, byId)
     : field.children
       .map((childId) => byId.get(childId))
-      .filter((node): node is NodeProjection => Boolean(node) && !isInternalConfigNode(node!));
+      .filter((node): node is ContentBearingNodeProjection => (
+        Boolean(node) && isContentBearingNode(node!) && !isInternalConfigNode(node!)
+      ));
 
   const options = dedupeOptions(optionNodes.flatMap((node) => {
     const target = node.type === 'reference' && node.targetId ? byId.get(node.targetId) : node;
-    if (!target) return [];
+    if (!target || !isContentBearingNode(target)) return [];
     return [{
       id: node.id,
       label: target.content.text || 'Untitled',
@@ -45,12 +52,13 @@ export function resolveFieldOptions(
 function resolveOptionsFromSourceSupertag(
   field: NodeProjection,
   byId: Map<NodeId, NodeProjection>,
-): NodeProjection[] {
+): ContentBearingNodeProjection[] {
   const sourceSupertag = projectFieldConfig(byId, field).sourceSupertag;
   if (!sourceSupertag) return [];
   if (isNodeInSubtree(byId, sourceSupertag, TRASH_ID)) return [];
-  return [...byId.values()].filter((node) => (
+  return [...byId.values()].filter((node): node is ContentBearingNodeProjection => (
     node.id !== field.id
+    && isContentBearingNode(node)
     && (!node.type || node.type === 'codeBlock')
     && !isNodeInSubtree(byId, node.id, TRASH_ID)
     && node.tags.includes(sourceSupertag)
@@ -78,7 +86,7 @@ export function resolveSelectedOptionId(
   valueNode: NodeProjection | undefined,
   options: readonly FieldOption[],
 ): NodeId | undefined {
-  if (!valueNode) return undefined;
+  if (!valueNode || !isContentBearingNode(valueNode)) return undefined;
   const valueTargetId = valueNode.type === 'reference' ? valueNode.targetId : undefined;
   if (valueTargetId) {
     return options.find((option) => option.id === valueTargetId || option.targetId === valueTargetId)?.id;

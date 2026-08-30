@@ -9,6 +9,7 @@ import {
 import { decodeSemanticEscapes } from './semanticIngest/inlineScanner';
 import {
   QUERY_OPS,
+  isContentBearingNode,
   type DocumentProjection,
   type NodeProjection,
   type QueryLogic,
@@ -290,7 +291,7 @@ function valueOperands(
       const target = byId.get(reference.nodeId);
       if (!target) return lineIssue(value.line, 'Search value references a missing node.');
       if (isInTrash(reference.nodeId, trashId, byId)) return lineIssue(value.line, 'Search value references a trashed node.');
-      const text = target.content.text.trim() || undefined;
+      const text = isContentBearingNode(target) ? target.content.text.trim() || undefined : undefined;
       const key = `${reference.nodeId}:${text?.toLowerCase() ?? ''}`;
       if (!seen.has(key)) result.push({ targetId: reference.nodeId, ...(text ? { text } : {}) });
       seen.add(key);

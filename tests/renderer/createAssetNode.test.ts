@@ -44,37 +44,31 @@ function passthroughRunner(seen: { options?: unknown }): CommandRunner {
 }
 
 describe('createAssetNode', () => {
-  test('routes an image asset to the image intent with its pixel dims (no alt)', async () => {
-    const createImageNode = spyOn(api, 'createImageNode').mockImplementation(async () => commandResult);
+  test('maps an image asset to an ordinary Source-backed Node', async () => {
+    const createSourceNode = spyOn(api, 'createSourceNode').mockImplementation(async () => commandResult);
     try {
       await createAssetNode(passthroughRunner({}), 'parent', 2, imageAsset);
-      expect(createImageNode.mock.calls).toEqual([[
+      expect(createSourceNode.mock.calls).toEqual([[
         'parent',
         2,
-        { assetId: 'img1', width: 200, height: 100, name: 'shot.png' },
+        { assetId: 'img1', name: 'shot.png' },
       ]]);
     } finally {
-      createImageNode.mockRestore();
+      createSourceNode.mockRestore();
     }
   });
 
-  test('routes a non-image asset to the attachment intent with full metadata', async () => {
-    const createAttachmentNode = spyOn(api, 'createAttachmentNode').mockImplementation(async () => commandResult);
+  test('maps a document asset to the same ordinary Source-backed Node shape', async () => {
+    const createSourceNode = spyOn(api, 'createSourceNode').mockImplementation(async () => commandResult);
     try {
       await createAssetNode(passthroughRunner({}), 'parent', null, pdfAsset);
-      expect(createAttachmentNode.mock.calls).toEqual([[
+      expect(createSourceNode.mock.calls).toEqual([[
         'parent',
         null,
-        {
-          assetId: 'doc1',
-          mimeType: 'application/pdf',
-          originalFilename: 'report.pdf',
-          fileSize: 4096,
-          pdfPageCount: 3,
-        },
+        { assetId: 'doc1', name: 'report.pdf' },
       ]]);
     } finally {
-      createAttachmentNode.mockRestore();
+      createSourceNode.mockRestore();
     }
   });
 
@@ -86,13 +80,13 @@ describe('createAssetNode', () => {
   });
 
   test('forwards runner options (the bridge suppresses focus)', async () => {
-    const createImageNode = spyOn(api, 'createImageNode').mockImplementation(async () => commandResult);
+    const createSourceNode = spyOn(api, 'createSourceNode').mockImplementation(async () => commandResult);
     try {
       const seen: { options?: unknown } = {};
       await createAssetNode(passthroughRunner(seen), 'parent', null, imageAsset, { applyFocus: false });
       expect(seen.options).toEqual({ applyFocus: false });
     } finally {
-      createImageNode.mockRestore();
+      createSourceNode.mockRestore();
     }
   });
 });

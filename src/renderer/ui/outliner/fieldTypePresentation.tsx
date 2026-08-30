@@ -25,7 +25,7 @@ const FIELD_TYPE_ICONS = {
   options_from_supertag: OptionsIcon,
   date: CalendarIcon,
   number: HashIcon,
-  url: UrlIcon,
+  uri: UrlIcon,
   email: EmailIcon,
   checkbox: CheckboxIcon,
 } satisfies Record<FieldType, FieldIconComponent>;

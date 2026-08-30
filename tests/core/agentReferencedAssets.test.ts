@@ -3,7 +3,13 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { plainText, type DocumentProjection, type NodeProjection } from '../../src/core/types';
+import { formatAssetSourceUri } from '../../src/core/source';
+import {
+  SOURCE_FIELD_ID,
+  plainText,
+  type DocumentProjection,
+  type NodeProjection,
+} from '../../src/core/types';
 import {
   MAX_REFERENCED_RESOURCE_BYTES,
   admitReferencedResources,
@@ -32,49 +38,81 @@ function projection(nodes: NodeProjection[]): DocumentProjection {
   return { nodes, rootId: 'root', todayId: 'root' } as DocumentProjection;
 }
 
+function sourceBackedNode(input: {
+  id: string;
+  parentId: string;
+  content?: string;
+  sourceText?: string;
+}): NodeProjection[] {
+  const entryId = `${input.id}:uri`;
+  const valueId = `${entryId}:value`;
+  return [
+    node({
+      id: input.id,
+      parentId: input.parentId,
+      content: plainText(input.content ?? ''),
+      children: input.sourceText ? [entryId] : [],
+    }),
+    ...(input.sourceText ? [
+      node({
+        id: entryId,
+        type: 'fieldEntry',
+        parentId: input.id,
+        fieldDefId: SOURCE_FIELD_ID,
+        children: [valueId],
+      }),
+      node({
+        id: valueId,
+        parentId: entryId,
+        content: plainText(input.sourceText),
+      }),
+    ] : []),
+  ] as NodeProjection[];
+}
+
 describe('referenced resource admission', () => {
   test('uses the same attachment and image title precedence as the user view', async () => {
     const doc = projection([
-      node({ id: 'root', type: 'outline', content: plainText('Root'), children: ['captioned', 'remote', 'alt'] }),
-      node({
+      node({ id: 'root', type: 'outline', content: plainText('Root'), children: ['captioned', 'remote', 'derived'] }),
+      ...sourceBackedNode({
         id: 'captioned',
-        type: 'image',
         parentId: 'root',
-        content: plainText('Visible caption'),
-        mediaUrl: 'https://example.test/captioned.png',
-        mediaAlt: 'Alternative text',
+        content: 'Visible caption',
+        sourceText: 'https://example.test/captioned.png',
       }),
-      node({
+      ...sourceBackedNode({
         id: 'remote',
-        type: 'image',
         parentId: 'root',
-        mediaUrl: 'https://example.test/remote.png',
-        mediaAlt: 'Remote alternative text',
+        sourceText: 'https://example.test/remote.png',
       }),
-      node({ id: 'alt', type: 'image', parentId: 'root', mediaAlt: 'Alternative only' }),
+      ...sourceBackedNode({
+        id: 'derived',
+        parentId: 'root',
+        sourceText: 'https://example.test/Alternative%20only',
+      }),
     ]);
     const result = await admitReferencedResources({
       projection: doc,
-      references: [{ nodeId: 'captioned' }, { nodeId: 'remote' }, { nodeId: 'alt' }],
+      references: [{ nodeId: 'captioned' }, { nodeId: 'remote' }, { nodeId: 'derived' }],
       writeResource: async () => { throw new Error('unexpected write'); },
     });
 
     expect(result?.payload.resources.map(({ title }) => title)).toEqual([
       'Visible caption',
-      'https://example.test/remote.png',
+      'remote.png',
       'Alternative only',
     ]);
   });
 
   test('snapshots every explicit Node and records typed missing resources', async () => {
     const doc = projection([
-      node({ id: 'root', type: 'outline', content: plainText('Root'), children: ['note', 'missing-image'] }),
+      node({ id: 'root', type: 'outline', content: plainText('Root'), children: ['note', 'ordinary'] }),
       node({ id: 'note', type: 'outline', parentId: 'root', content: plainText('Current argument'), description: 'Evidence' }),
-      node({ id: 'missing-image', type: 'image', parentId: 'root', content: plainText('Diagram') }),
+      node({ id: 'ordinary', parentId: 'root', content: plainText('Diagram') }),
     ]);
     const result = await admitReferencedResources({
       projection: doc,
-      references: [{ nodeId: 'note' }, { nodeId: 'missing-image' }, { nodeId: 'gone', note: 'Deleted' }],
+      references: [{ nodeId: 'note' }, { nodeId: 'ordinary' }, { nodeId: 'gone', note: 'Deleted' }],
       writeResource: async () => { throw new Error('unexpected write'); },
     });
 
@@ -87,7 +125,7 @@ describe('referenced resource admission', () => {
         resourceRef: null,
         unavailableReason: null,
       },
-      { nodeId: 'missing-image', resourceRef: null, unavailableReason: 'missing' },
+      { nodeId: 'ordinary', resourceRef: null, unavailableReason: null },
       { nodeId: 'gone', nodeType: 'unknown', title: 'Deleted', unavailableReason: 'missing' },
     ]);
   });
@@ -128,14 +166,24 @@ describe('referenced resource admission', () => {
     await writeFile(path, bytes);
     const doc = projection([
       node({ id: 'root', type: 'outline', content: plainText('Root'), children: ['image', 'image-copy'] }),
-      node({ id: 'image', type: 'image', parentId: 'root', assetId: 'asset-1', mediaAlt: 'Diagram' }),
-      node({ id: 'image-copy', type: 'image', parentId: 'root', assetId: 'asset-1', mediaAlt: 'Diagram copy' }),
+      ...sourceBackedNode({ id: 'image', parentId: 'root', content: 'Diagram', sourceText: formatAssetSourceUri('asset-1') }),
+      ...sourceBackedNode({ id: 'image-copy', parentId: 'root', content: 'Diagram copy', sourceText: formatAssetSourceUri('asset-1') }),
     ]);
     let writes = 0;
     const result = await admitReferencedResources({
       projection: doc,
       references: [{ nodeId: 'image' }, { nodeId: 'image' }, { nodeId: 'image-copy' }],
-      resolveAsset: async () => ({ path, metadata: null }),
+      resolveAsset: async (assetId) => ({
+        path,
+        metadata: {
+          schemaVersion: 1,
+          id: assetId,
+          mimeType: 'image/png',
+          byteSize: bytes.byteLength,
+          originalFilename: 'diagram.png',
+          createdAt: 1,
+        },
+      }),
       writeResource: async (written, mimeType, fileName) => {
         writes += 1;
         return {
@@ -179,8 +227,8 @@ describe('referenced resource admission', () => {
     await writeFile(path, bytes);
     const doc = projection([
       node({ id: 'root', type: 'outline', content: plainText('Root'), children: ['first', 'second'] }),
-      node({ id: 'first', type: 'attachment', parentId: 'root', assetId: 'asset-1' }),
-      node({ id: 'second', type: 'attachment', parentId: 'root', assetId: 'asset-2' }),
+      ...sourceBackedNode({ id: 'first', parentId: 'root', content: 'First', sourceText: formatAssetSourceUri('asset-1') }),
+      ...sourceBackedNode({ id: 'second', parentId: 'root', content: 'Second', sourceText: formatAssetSourceUri('asset-2') }),
     ]);
     let writes = 0;
     const result = await admitReferencedResources({
@@ -225,8 +273,8 @@ describe('referenced resource admission', () => {
     await symlink(targetPath, symlinkPath);
     const doc = projection([
       node({ id: 'root', type: 'outline', content: plainText('Root'), children: ['linked', 'large'] }),
-      node({ id: 'linked', type: 'attachment', parentId: 'root', assetId: 'asset-linked' }),
-      node({ id: 'large', type: 'attachment', parentId: 'root', assetId: 'asset-large' }),
+      ...sourceBackedNode({ id: 'linked', parentId: 'root', content: 'Linked', sourceText: formatAssetSourceUri('asset-linked') }),
+      ...sourceBackedNode({ id: 'large', parentId: 'root', content: 'Large', sourceText: formatAssetSourceUri('asset-large') }),
     ]);
     const result = await admitReferencedResources({
       projection: doc,

@@ -1,7 +1,7 @@
 import { flushSync } from 'react-dom';
 import { nextCompletedAt, type DoneStateTransition } from '../../../core/doneState';
 import { tagDrivenShowCheckbox } from '../../../core/configProjection';
-import type { NodeId, NodeProjection, RichText } from '../../api/types';
+import type { ContentBearingNodeProjection, NodeId, RichText } from '../../api/types';
 import type {
   DocumentIndex,
   PendingNodePatch,
@@ -12,9 +12,9 @@ import type { Dispatch, SetStateAction } from 'react';
 type UiStateSetter = Dispatch<SetStateAction<UiState>>;
 
 export function nodeWithPendingPatch(
-  node: NodeProjection,
+  node: ContentBearingNodeProjection,
   patch: PendingNodePatch | undefined,
-): NodeProjection {
+): ContentBearingNodeProjection {
   if (!patch) return node;
   const next = patch.content ? { ...node, content: patch.content } : { ...node };
   if (patch.tags) next.tags = patch.tags;
@@ -26,7 +26,7 @@ export function nodeWithPendingPatch(
 }
 
 export function optimisticTagPatch(params: {
-  node: NodeProjection;
+  node: ContentBearingNodeProjection;
   ui: Pick<UiState, 'pendingNodePatches'>;
   tagId: NodeId;
   action: 'add' | 'remove';
@@ -51,15 +51,15 @@ export function optimisticTagPatch(params: {
 }
 
 export function optimisticNodeFor(
-  node: NodeProjection,
+  node: ContentBearingNodeProjection,
   ui: Pick<UiState, 'pendingNodePatches'>,
-): NodeProjection {
+): ContentBearingNodeProjection {
   return nodeWithPendingPatch(node, ui.pendingNodePatches.get(node.id));
 }
 
 export function optimisticDonePatch(params: {
   index: DocumentIndex;
-  node: NodeProjection;
+  node: ContentBearingNodeProjection;
   ui: Pick<UiState, 'pendingNodePatches'>;
   transition: DoneStateTransition;
   now?: number;
@@ -76,7 +76,7 @@ export function optimisticDonePatch(params: {
 
 export function startOptimisticDoneTransition<Result>(params: {
   index: DocumentIndex;
-  node: NodeProjection;
+  node: ContentBearingNodeProjection;
   currentUi: UiState;
   setUi: UiStateSetter;
   transition: DoneStateTransition;

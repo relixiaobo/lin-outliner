@@ -6,7 +6,6 @@ import {
   type LoroPersistenceReplayUpdate,
   type SharedLoroDocumentState,
 } from './loroDocument';
-import { mediaKindForMimeType } from './mediaKind';
 import { freshNodeId, isClientNodeId } from './nodeId';
 import {
   OperationJournal,
@@ -26,7 +25,12 @@ import {
 } from './operationJournal';
 import { createPersistenceId, isPersistenceId } from './persistenceIdentity';
 import { assembleProjection, buildDocumentProjection, projectNode } from './projection';
-import { SEARCH_EXECUTABLE_QUERY_OPS, runSearchExpr, runSearchNode } from './searchEngine';
+import {
+  SEARCH_EXECUTABLE_QUERY_OPS,
+  runSearchExpr,
+  runSearchNode,
+  type SearchAssetMetadata,
+} from './searchEngine';
 import { SEARCH_QUERY_COMPLEXITY_LIMITS } from './searchQueryCompiler';
 import { DONE_FIELD, SYSTEM_FIELD_CHOICES, systemFieldLabel } from './systemFields';
 import {
@@ -51,6 +55,7 @@ import {
   type SetConfigValueInput,
 } from './configSchema';
 import { referencesForTarget } from './references';
+import { sourceFieldEntries } from './sourceField';
 import { entersTable, findViewDef, missingDisplayOrderPlan, tableDisplayFieldInitialization } from './viewConfig';
 import { normalizeCodeLanguage } from './codeLanguages';
 import {
@@ -62,6 +67,7 @@ import {
   RESOURCES_ID,
   SCHEMA_ID,
   SEARCHES_ID,
+  SOURCE_FIELD_ID,
   TAG_DAY_ID,
   TAG_WEEK_ID,
   TAG_YEAR_ID,
@@ -69,6 +75,7 @@ import {
   WORKSPACE_ID,
   defConfigNodeId,
   inlineRefNodeId,
+  isContentBearingNode,
   nodeReferenceTarget,
   plainText,
   systemOptionNodeId,
@@ -77,6 +84,7 @@ import {
   type DefConfigKey,
   type RefRole,
   type CommandOutcome,
+  type ContentBearingNode,
   type CreateNodeTree,
   type ParsedPasteField,
   type PasteRowMeta,
@@ -93,13 +101,12 @@ import {
   type FocusHint,
   type IconKind,
   type Node,
-  type AttachmentNode,
   type CodeBlockNode,
   type DefConfigNode,
   type DisplayFieldNode,
   type FieldEntryNode,
+  type FieldDefNode,
   type FilterRuleNode,
-  type ImageNode,
   type QueryConditionNode,
   type ReferenceNode,
   type SearchNode,
@@ -491,6 +498,7 @@ export class Core {
   // state holding the old id (panel root, persisted layout) dangles → a
   // `parent not found` when the user adds the first row to today's note.
   private initialPersistRequired = false;
+  private searchAssetMetadataProvider?: () => ReadonlyMap<string, SearchAssetMetadata>;
 
   private constructor(
     initial: CoreInitialState | CoreRuntimeForkState = {},
@@ -522,6 +530,7 @@ export class Core {
         changedNodeIds: [...source.lastRevisionDelta.changedNodeIds],
       };
       this.initialPersistRequired = source.initialPersistRequired;
+      this.searchAssetMetadataProvider = source.searchAssetMetadataProvider;
       return;
     }
 
@@ -599,6 +608,12 @@ export class Core {
    *  so the today node id stays stable across launches. */
   requiresInitialPersist(): boolean {
     return this.initialPersistRequired;
+  }
+
+  setSearchAssetMetadataProvider(
+    provider: () => ReadonlyMap<string, SearchAssetMetadata>,
+  ): void {
+    this.searchAssetMetadataProvider = provider;
   }
 
   static new(options: CorePersistenceOptions = {}) {
@@ -1213,101 +1228,105 @@ export class Core {
     });
   }
 
-  createImageNode(
-    parentId: string,
-    index: number | null | undefined,
-    options: { assetId?: string; mediaUrl?: string; width?: number | null; height?: number | null; alt?: string | null; name?: string | null },
-    id?: string,
+  addSource(
+    ownerId: NodeId,
+    valueId: NodeId,
+    sourceText: string,
+    afterValueId?: NodeId | null,
   ): CommandOutcome {
-    const source = resolveImageSource(options);
-    // The node's text is its editable display name (the filename when one is
-    // known — drops carry it, clipboard/URL images do not). Empty is fine; the
-    // file row then shows a placeholder.
-    const displayName = options.name?.trim() ?? '';
     return this.mutate(() => {
-      const state = this.snapshot();
-      ensureParentMutable(state, parentId);
-      const imageId = this.resolveRuntimeNodeId(state, id, 'image');
-      this.loro.createNodeWithId<ImageNode>(imageId, parentId, index, 'image', (node) => {
-        node.content = plainText(displayName);
-        if (source.assetId) node.assetId = source.assetId;
-        else node.mediaUrl = source.mediaUrl;
-        if (options.width != null) node.imageWidth = options.width;
-        if (options.height != null) node.imageHeight = options.height;
-        const alt = options.alt?.trim();
-        if (alt) node.mediaAlt = alt;
-      });
-      this.applyChildTagsDirect(parentId, imageId);
-      return focus(imageId, { parentId, placement: { kind: 'end' } });
+      this.addSourceDirect(ownerId, valueId, sourceText, afterValueId);
+      return focus(ownerId);
     });
   }
 
-  createAttachmentNode(
-    parentId: string,
-    index: number | null | undefined,
-    options: {
-      assetId?: string | null;
-      mimeType?: string | null;
-      originalFilename?: string | null;
-      fileSize?: number | null;
-      thumbnailAssetId?: string | null;
-      pdfPageCount?: number | null;
-      audioDurationMs?: number | null;
-      videoDurationMs?: number | null;
-    },
-    id?: string,
-  ): CommandOutcome {
-    const attachment = normalizeAttachmentOptions(options);
-    return this.mutate(() => {
-      const state = this.snapshot();
-      ensureParentMutable(state, parentId);
-      const attachmentId = this.resolveRuntimeNodeId(state, id, 'attachment');
-      this.loro.createNodeWithId<AttachmentNode>(attachmentId, parentId, index, 'attachment', (node) => {
-        // The node's text is its editable display name; default it to the
-        // original filename so the file row reads as the file's name.
-        node.content = plainText(attachment.originalFilename);
-        node.assetId = attachment.assetId;
-        node.mimeType = attachment.mimeType;
-        node.originalFilename = attachment.originalFilename;
-        node.fileSize = attachment.fileSize;
-        if (attachment.thumbnailAssetId) node.thumbnailAssetId = attachment.thumbnailAssetId;
-        if (attachment.pdfPageCount !== undefined) node.pdfPageCount = attachment.pdfPageCount;
-        if (attachment.audioDurationMs !== undefined) node.audioDurationMs = attachment.audioDurationMs;
-        if (attachment.videoDurationMs !== undefined) node.videoDurationMs = attachment.videoDurationMs;
-      });
-      this.applyChildTagsDirect(parentId, attachmentId);
-      return focus(attachmentId, { parentId, placement: { kind: 'end' } });
+  private addSourceDirect(
+    ownerId: NodeId,
+    valueId: NodeId,
+    sourceText: string,
+    afterValueId?: NodeId | null,
+  ): void {
+    const state = this.snapshot();
+    ensureParentMutable(state, ownerId);
+    ensureFieldDefinition(state, SOURCE_FIELD_ID);
+    if (state.nodes[valueId]) throw CoreError.invalidOperation(`Source value id already exists: ${valueId}`);
+    const entries = sourceFieldEntries(state, ownerId);
+    const anchoredEntry = typeof afterValueId === 'string'
+      ? requiredOwnerSourceValue(state, ownerId, afterValueId).entry
+      : undefined;
+    const entry = anchoredEntry
+      ?? (afterValueId === undefined ? entries.at(-1) : entries[0])
+      ?? (() => {
+      const entryId = this.insertFieldEntryNodeDirect(ownerId, undefined, SOURCE_FIELD_ID);
+      const created = this.snapshot().nodes[entryId];
+      if (created?.type !== 'fieldEntry') throw new Error('Source field creation returned the wrong Node variant.');
+      return created;
+    })();
+    const index = sourceInsertionIndex(state, entry, afterValueId);
+    this.loro.createNodeWithId(valueId, entry.id, index, undefined, (node) => {
+      node.content = plainText(sourceText);
     });
   }
 
-  /**
-   * Convert a plain content node into an image node in place. Used when
-   * pasting/dropping an image (or a remote image URL) onto an existing row so
-   * the image lands on that row rather than spawning a sibling. The source is
-   * exactly one of `assetId` (local) or `mediaUrl` (remote); the other is
-   * cleared. Any existing row text is preserved in `content` (it is not shown
-   * for image nodes — the caption is `description`).
-   */
-  setNodeImage(
-    nodeId: string,
-    options: { assetId?: string; mediaUrl?: string; width?: number | null; height?: number | null },
-  ): CommandOutcome {
-    const source = resolveImageSource(options);
-    return this.patchNode(nodeId, (node) => {
-      if (node.type !== undefined && node.type !== 'image') {
-        throw CoreError.invalidOperation('only plain content nodes can become images');
+  replaceSource(ownerId: NodeId, valueId: NodeId, sourceText: string): CommandOutcome {
+    return this.mutate(() => {
+      const state = this.snapshot();
+      const { value: requiredValue } = requiredOwnerSourceValue(state, ownerId, valueId);
+      const value = clone(requiredValue);
+      if (value.content.text === sourceText) return focus(ownerId);
+      value.content = plainText(sourceText);
+      value.updatedAt = nowMs();
+      this.loro.writeNode(value);
+      return focus(ownerId);
+    });
+  }
+
+  reorderSource(ownerId: NodeId, valueId: NodeId, afterValueId: NodeId | null): CommandOutcome {
+    return this.mutate(() => {
+      const state = this.snapshot();
+      const { entry: sourceEntry } = requiredOwnerSourceValue(state, ownerId, valueId);
+      if (valueId === afterValueId) throw CoreError.invalidOperation('Source value cannot anchor itself.');
+      const targetEntry = afterValueId === null
+        ? sourceFieldEntries(state, ownerId)[0] ?? sourceEntry
+        : requiredOwnerSourceValue(state, ownerId, afterValueId).entry;
+      const withoutValue = targetEntry.children.filter((id) => id !== valueId);
+      const index = afterValueId === null
+        ? 0
+        : withoutValue.indexOf(afterValueId) + 1;
+      this.loro.moveNode(valueId, targetEntry.id, index);
+      if (sourceEntry.id !== targetEntry.id && sourceEntry.children.length === 1) {
+        this.removeSubtreeDirect(sourceEntry.id);
       }
-      // Rebuild as an image node so the variant fields type-check; the source is
-      // exactly one of assetId/mediaUrl (the other stays cleared).
-      const image: ImageNode = {
-        ...node,
-        type: 'image',
-        assetId: source.assetId ? source.assetId : undefined,
-        mediaUrl: source.assetId ? undefined : source.mediaUrl,
-        imageWidth: options.width != null ? options.width : undefined,
-        imageHeight: options.height != null ? options.height : undefined,
-      };
-      return image;
+      return focus(ownerId);
+    });
+  }
+
+  removeSource(ownerId: NodeId, valueId: NodeId): CommandOutcome {
+    return this.mutate(() => {
+      const state = this.snapshot();
+      const { entry } = requiredOwnerSourceValue(state, ownerId, valueId);
+      this.removeSubtreeDirect(entry.children.length === 1 ? entry.id : valueId);
+      return focus(ownerId);
+    });
+  }
+
+  clearSources(ownerId: NodeId, observedValueIds: readonly NodeId[]): CommandOutcome {
+    return this.mutate(() => {
+      const state = this.snapshot();
+      const observed = new Set(observedValueIds);
+      for (const valueId of observed) {
+        if (state.nodes[valueId]) requiredOwnerSourceValue(state, ownerId, valueId);
+      }
+      for (const entry of sourceFieldEntries(state, ownerId)) {
+        const currentValueIds = entry.children.filter((valueId) => observed.has(valueId));
+        if (currentValueIds.length === 0) continue;
+        if (currentValueIds.length === entry.children.length) {
+          this.removeSubtreeDirect(entry.id);
+        } else {
+          for (const valueId of currentValueIds) this.removeSubtreeDirect(valueId);
+        }
+      }
+      return focus(ownerId);
     });
   }
 
@@ -1561,10 +1580,13 @@ export class Core {
         if (input.metadata) node.capture = clone(input.metadata);
       });
       this.applyChildTagsDirect(input.destinationParentId, id);
-      // Project the capture into native outline shape: a tag (most specific kind,
-      // rolling up to #capture) + fields (Source::, Author::, …). This is what
+      // Project the capture into native outline shape: canonical Source, a tag
+      // (most specific kind, rolling up to #capture), and ordinary fields. This is what
       // makes a capture an ordinary, filterable/searchable outline node rather
       // than bespoke-rendered data (see docs/plans/lazy-like-global-launcher.md).
+      if (input.sourceText !== undefined) {
+        this.addSourceDirect(id, this.freshId('node'), input.sourceText);
+      }
       if (input.tag) {
         const tagId = this.ensureCaptureTagDirect(input.tag, input.tagExtends);
         this.applyTagNoHistoryDirect(id, tagId);
@@ -1629,14 +1651,14 @@ export class Core {
   ): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
-      ensureNodeEditable(state, nodeId);
+      const editable = ensureNodeEditable(state, nodeId);
       const parentId = state.nodes[nodeId]?.parentId;
       if (!parentId) throw CoreError.noParent();
       assertRichTextReferencesAvailable(state, content);
       assertCreateNodeTreeReferencesAvailable(state, children);
       assertCreateNodeTreeReferencesAvailable(state, siblingsAfter);
       const siblingIndex = (childIndex(state, parentId, nodeId) ?? 0) + 1;
-      const node = clone(requiredNode(state, nodeId));
+      const node = clone(editable);
       node.content = clone(content);
       const completedAt = pasteCompletedAt(firstMeta);
       if (completedAt !== undefined) node.completedAt = completedAt;
@@ -1660,7 +1682,7 @@ export class Core {
   splitNode(nodeId: string, before: RichText, after: RichText, options: SplitNodeOptions = {}): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
-      ensureNodeEditable(state, nodeId);
+      const editable = ensureNodeEditable(state, nodeId);
       const parentId = state.nodes[nodeId]?.parentId;
       if (!parentId) throw CoreError.noParent();
       const targetParentId = options.targetParentId ?? parentId;
@@ -1670,7 +1692,7 @@ export class Core {
           ? (childIndex(state, parentId, nodeId) ?? 0) + 1
           : null
       );
-      const node = clone(requiredNode(state, nodeId));
+      const node = clone(editable);
       node.content = clone(before);
       node.updatedAt = nowMs();
       this.loro.writeNode(node);
@@ -1711,8 +1733,7 @@ export class Core {
   updateNodeDescription(nodeId: string, description: string | null | undefined): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
-      ensureNodeEditable(state, nodeId);
-      const node = clone(requiredNode(state, nodeId));
+      const node = clone(ensureNodeEditable(state, nodeId));
       setOptional(node, 'description', normalizeOptionalText(description));
       node.updatedAt = nowMs();
       this.loro.writeNode(node);
@@ -1788,7 +1809,7 @@ export class Core {
   addSortRule(nodeId: string, field: ViewFieldRef, direction: SortDirection = 'asc'): CommandOutcome {
     return this.mutate(() => {
       const viewDefId = this.ensureViewDefDirect(nodeId);
-      this.loro.createNodeWithId<SortRuleNode>(this.freshId('sort'), viewDefId, undefined, 'sortRule', (node) => {
+      this.loro.createNodeWithId(this.freshId('sort'), viewDefId, undefined, 'sortRule', (node) => {
         node.sortField = normalizeRequiredText(field, 'sort field');
         node.sortDirection = direction === 'desc' ? 'desc' : 'asc';
       });
@@ -1837,7 +1858,7 @@ export class Core {
   ): CommandOutcome {
     return this.mutate(() => {
       const viewDefId = this.ensureViewDefDirect(nodeId);
-      this.loro.createNodeWithId<FilterRuleNode>(this.freshId('filter'), viewDefId, undefined, 'filterRule', (node) => {
+      this.loro.createNodeWithId(this.freshId('filter'), viewDefId, undefined, 'filterRule', (node) => {
         node.filterField = normalizeRequiredText(field, 'filter field');
         node.filterOperator = normalizeFilterOperator(operator);
         node.filterValueLogic = valueLogic === 'all' ? 'all' : 'any';
@@ -1938,7 +1959,7 @@ export class Core {
         Number.isFinite(display.displayOrder) ? Math.max(max, display.displayOrder!) : max
       ), -1) + 1;
       const displayFieldId = this.freshId('display');
-      this.loro.createNodeWithId<DisplayFieldNode>(displayFieldId, viewDefId, undefined, 'displayField', (node) => {
+      this.loro.createNodeWithId(displayFieldId, viewDefId, undefined, 'displayField', (node) => {
         node.displayField = fieldId;
         node.displayVisible = true;
         node.displayOrder = nextOrder;
@@ -2084,7 +2105,7 @@ export class Core {
       if (!parentId) throw CoreError.noParent();
       const index = childIndex(state, parentId, nodeId);
       if (!index) throw CoreError.noPreviousSibling();
-      const newParentId = requiredNode(state, parentId).children[index - 1];
+      const newParentId = documentChildIds(state, parentId)[index - 1];
       ensureParentMutable(state, newParentId);
       ensureParentCanContainChildInstance(state, newParentId, childInstanceTargetId(state, nodeId), nodeId);
       this.loro.moveNode(nodeId, newParentId, undefined);
@@ -2128,8 +2149,7 @@ export class Core {
   restoreNode(nodeId: string): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
-      ensureNodeMovable(state, nodeId);
-      const node = clone(requiredNode(state, nodeId));
+      const node = clone(ensureNodeMovable(state, nodeId));
       const parentId = node.trashedFromParentId && state.nodes[node.trashedFromParentId]
         ? node.trashedFromParentId
         : WORKSPACE_ID;
@@ -2255,8 +2275,12 @@ export class Core {
    * Mutate a node's done state and, when the done/undone state actually flips,
    * push the change into mapped option fields (forward done-state mapping).
    */
-  private writeDoneStateDirect(state: DocumentState, nodeId: string, mutate: (node: Node, tagDriven: boolean) => void) {
-    const node = clone(requiredNode(state, nodeId));
+  private writeDoneStateDirect(
+    state: DocumentState,
+    nodeId: string,
+    mutate: (node: ContentBearingNode, tagDriven: boolean) => void,
+  ) {
+    const node = clone(requiredContentNode(state, nodeId));
     const wasDone = nodeIsDone(node);
     mutate(node, nodeTagDrivenCheckbox(state, node));
     node.updatedAt = nowMs();
@@ -2267,7 +2291,7 @@ export class Core {
 
   /** Forward mapping: set each mapped field to its first checked/unchecked option. */
   private applyForwardDoneMappingDirect(nodeId: string, isDone: boolean) {
-    for (const mapping of getDoneStateMappings(this.snapshot(), requiredNode(this.snapshot(), nodeId))) {
+    for (const mapping of getDoneStateMappings(this.snapshot(), requiredContentNode(this.snapshot(), nodeId))) {
       const optionId = isDone ? mapping.checkedOptionIds[0] : mapping.uncheckedOptionIds[0];
       if (!optionId) continue;
       const entryId = this.ensureFieldEntryDirect(nodeId, mapping.fieldDefId);
@@ -2284,7 +2308,7 @@ export class Core {
     if (!ownerId) return;
     const state = this.snapshot();
     const owner = state.nodes[ownerId];
-    if (!owner) return;
+    if (!owner || !isContentBearingNode(owner)) return;
     const newDone = resolveReverseDoneMapping(state, owner, fieldDefId, optionNodeId);
     if (newDone === null) return;
     // Done-state mapping is a binary state-sync: a mapped field must not hold both a
@@ -2293,7 +2317,7 @@ export class Core {
     // clear-then-select — while any non-mapped values stay (the append model).
     this.removeOppositeDoneMappedOptionsDirect(owner, fieldDefId, optionNodeId, newDone);
     const refreshed = this.snapshot().nodes[ownerId];
-    if (!refreshed || nodeIsDone(refreshed) === newDone) return;
+    if (!refreshed || !isContentBearingNode(refreshed) || nodeIsDone(refreshed) === newDone) return;
     const node = clone(refreshed);
     applyNodeDoneState(node, newDone, nodeTagDrivenCheckbox(this.snapshot(), node));
     node.updatedAt = nowMs();
@@ -2305,7 +2329,12 @@ export class Core {
    * done state from the one just selected, so the field never holds contradictory
    * checked/unchecked options. Non-mapped values are left untouched (append model).
    */
-  private removeOppositeDoneMappedOptionsDirect(owner: Node, fieldDefId: string, selectedOptionId: string, newDone: boolean) {
+  private removeOppositeDoneMappedOptionsDirect(
+    owner: ContentBearingNode,
+    fieldDefId: string,
+    selectedOptionId: string,
+    newDone: boolean,
+  ) {
     const state = this.snapshot();
     const oppositeTargets = new Set<string>();
     for (const mapping of getDoneStateMappings(state, owner)) {
@@ -2431,8 +2460,7 @@ export class Core {
   removeTag(nodeId: string, tagId: string): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
-      ensureNodeEditable(state, nodeId);
-      const node = clone(requiredNode(state, nodeId));
+      const node = clone(ensureNodeEditable(state, nodeId));
       if (!node.tags.includes(tagId)) return undefined;
       node.tags = node.tags.filter((id) => id !== tagId);
       node.updatedAt = nowMs();
@@ -2624,7 +2652,7 @@ export class Core {
       ensureParentMutable(state, parentId);
       assertOwnerDoesNotHaveFieldName(state, parentId, normalized, afterNodeId);
       const fieldDefId = this.insertFieldDefNodeDirect(SCHEMA_ID, normalized, fieldType);
-      const existing = clone(requiredNode(state, afterNodeId));
+      const existing = clone(requiredContentNode(state, afterNodeId));
       // Convert the row into a field entry: rebuild as the variant rather than
       // mutating the discriminant in place.
       const node: FieldEntryNode = {
@@ -2726,11 +2754,13 @@ export class Core {
         throw CoreError.invalidOperation('target must be a field or tag definition');
       }
       if (isInTrash(state, targetId)) throw CoreError.invalidOperation('target definition is in Trash');
+      if (target.locked) throw CoreError.lockedNode(targetId);
       for (const sourceId of uniqueSourceIds) {
         if (sourceId === targetId) throw CoreError.invalidOperation('cannot merge a definition into itself');
         const source = requiredNode(state, sourceId);
         if (source.type !== target.type) throw CoreError.invalidOperation('definition merge requires target and sources of the same kind');
         if (isInTrash(state, sourceId)) throw CoreError.invalidOperation('source definition is in Trash');
+        if (source.locked) throw CoreError.lockedNode(sourceId);
       }
       if (target.type === 'fieldDef') this.mergeFieldDefinitionsDirect(targetId, uniqueSourceIds);
       else this.mergeTagDefinitionsDirect(targetId, uniqueSourceIds);
@@ -2781,7 +2811,9 @@ export class Core {
       const entry = state.nodes[entryId]!;
       const values = entry.children
         .map((valueId) => state.nodes[valueId])
-        .filter((value): value is Node => Boolean(value) && !isInTrash(state, value!.id))
+        .filter((value): value is ContentBearingNode => (
+          Boolean(value) && isContentBearingNode(value!) && !isInTrash(state, value!.id)
+        ))
         .map((value) => ({
           text: value.content.text,
           targetId: value.type === 'reference' ? value.targetId : undefined,
@@ -2929,6 +2961,7 @@ export class Core {
     const state = this.snapshot();
     for (const node of Object.values(state.nodes)) {
       if (isInTrash(state, node.id)) continue;
+      if (!isContentBearingNode(node)) continue;
       const next = clone(node);
       let changed = false;
       if (next.tags.includes(sourceId)) {
@@ -2975,6 +3008,7 @@ export class Core {
     const state = this.snapshot();
     for (const node of Object.values(state.nodes)) {
       if (isInTrash(state, node.id)) continue;
+      if (!isContentBearingNode(node)) continue;
       if (!node.content.inlineRefs.some((ref) => inlineRefNodeId(ref) === sourceId)) continue;
       const next = clone(node);
       next.content.inlineRefs = next.content.inlineRefs.map((ref) =>
@@ -3108,43 +3142,6 @@ export class Core {
         });
       }
 
-      if (mutation.kind === 'appendImage') {
-        const source = resolveImageSource(mutation);
-        const displayName = mutation.name?.trim() ?? '';
-        const valueId = this.resolveFieldValueId(state, mutation.id, 'image_value');
-        const entryId = slot?.entryId ?? this.insertFieldEntryNodeDirect(ownerId, undefined, fieldDefId);
-        this.loro.createNodeWithId<ImageNode>(valueId, entryId, undefined, 'image', (node) => {
-          node.content = plainText(displayName);
-          if (source.assetId) node.assetId = source.assetId;
-          else node.mediaUrl = source.mediaUrl;
-          if (mutation.width != null) node.imageWidth = mutation.width;
-          if (mutation.height != null) node.imageHeight = mutation.height;
-          const alt = mutation.alt?.trim();
-          if (alt) node.mediaAlt = alt;
-        });
-        this.applyChildTagsDirect(entryId, valueId);
-        return focus(entryId);
-      }
-
-      if (mutation.kind === 'appendAttachment') {
-        const attachment = normalizeAttachmentOptions(mutation);
-        const valueId = this.resolveFieldValueId(state, mutation.id, 'attachment_value');
-        const entryId = slot?.entryId ?? this.insertFieldEntryNodeDirect(ownerId, undefined, fieldDefId);
-        this.loro.createNodeWithId<AttachmentNode>(valueId, entryId, undefined, 'attachment', (node) => {
-          node.content = plainText(attachment.originalFilename);
-          node.assetId = attachment.assetId;
-          node.mimeType = attachment.mimeType;
-          node.originalFilename = attachment.originalFilename;
-          node.fileSize = attachment.fileSize;
-          if (attachment.thumbnailAssetId) node.thumbnailAssetId = attachment.thumbnailAssetId;
-          if (attachment.pdfPageCount !== undefined) node.pdfPageCount = attachment.pdfPageCount;
-          if (attachment.audioDurationMs !== undefined) node.audioDurationMs = attachment.audioDurationMs;
-          if (attachment.videoDurationMs !== undefined) node.videoDurationMs = attachment.videoDurationMs;
-        });
-        this.applyChildTagsDirect(entryId, valueId);
-        return focus(entryId);
-      }
-
       if (mutation.kind === 'appendText') {
         const normalized = mutation.text.trim();
         if (!normalized) {
@@ -3168,7 +3165,7 @@ export class Core {
             this.loro.createNodeWithId(valueId, entryId, undefined, undefined, (node) => {
               node.content = plainText(normalized);
             });
-            this.loro.createNodeWithId<ReferenceNode>(this.freshId('option_ref'), fieldDefId, undefined, 'reference', (node) => {
+            this.loro.createNodeWithId(this.freshId('option_ref'), fieldDefId, undefined, 'reference', (node) => {
               node.targetId = valueId;
               node.autoCollected = true;
             });
@@ -3191,7 +3188,7 @@ export class Core {
         if (slot?.entryId) ensureParentCanContainChildInstance(state, slot.entryId, resolvedTargetId);
         const valueId = this.resolveFieldValueId(state, mutation.id, 'ref');
         const entryId = slot?.entryId ?? this.insertFieldEntryNodeDirect(ownerId, undefined, fieldDefId);
-        this.loro.createNodeWithId<ReferenceNode>(valueId, entryId, undefined, 'reference', (node) => {
+        this.loro.createNodeWithId(valueId, entryId, undefined, 'reference', (node) => {
           node.targetId = resolvedTargetId;
         });
         return focus(entryId);
@@ -3232,7 +3229,7 @@ export class Core {
       this.loro.createNodeWithId(valueId, fieldEntryId, undefined, undefined, (node) => {
         node.content = plainText(normalized);
       });
-      this.loro.createNodeWithId<ReferenceNode>(this.freshId('option_ref'), fieldDefId, undefined, 'reference', (node) => {
+      this.loro.createNodeWithId(this.freshId('option_ref'), fieldDefId, undefined, 'reference', (node) => {
         node.targetId = valueId;
         node.autoCollected = true;
       });
@@ -3333,7 +3330,7 @@ export class Core {
       if (wouldCreateReferenceCycle(state, parentId, resolvedTargetId)) throw CoreError.referenceCycle();
       ensureParentCanContainChildInstance(state, parentId, resolvedTargetId);
       const referenceId = this.resolveRuntimeNodeId(state, id, 'ref');
-      this.loro.createNodeWithId<ReferenceNode>(referenceId, parentId, index, 'reference', (node) => {
+      this.loro.createNodeWithId(referenceId, parentId, index, 'reference', (node) => {
         node.targetId = resolvedTargetId;
       });
       return focus(referenceId);
@@ -3377,9 +3374,9 @@ export class Core {
   replaceNodeWithReference(nodeId: string, targetId: string): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
-      ensureNodeMovable(state, nodeId);
+      const movable = ensureNodeMovable(state, nodeId);
       const resolvedTargetId = resolveReferenceTargetId(state, targetId);
-      const current = clone(requiredNode(state, nodeId));
+      const current = clone(movable);
       const parentId = current.parentId;
       if (!parentId) throw CoreError.noParent();
       ensureParentMutable(state, parentId);
@@ -3396,7 +3393,7 @@ export class Core {
       }
       const index = childIndex(state, parentId, nodeId) ?? 0;
       const referenceId = this.freshId('ref');
-      this.loro.createNodeWithId<ReferenceNode>(referenceId, parentId, index, 'reference', (node) => {
+      this.loro.createNodeWithId(referenceId, parentId, index, 'reference', (node) => {
         node.targetId = resolvedTargetId;
       });
       current.trashedFromParentId = parentId;
@@ -3410,9 +3407,9 @@ export class Core {
   replaceNodeWithReferenceConversion(nodeId: string, targetId: string): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
-      ensureNodeMovable(state, nodeId);
+      const movable = ensureNodeMovable(state, nodeId);
       const resolvedTargetId = resolveReferenceTargetId(state, targetId);
-      const current = clone(requiredNode(state, nodeId));
+      const current = clone(movable);
       if (current.type === 'reference') throw CoreError.invalidOperation('expected a content node');
       const parentId = current.parentId;
       if (!parentId) throw CoreError.noParent();
@@ -3438,9 +3435,9 @@ export class Core {
   replaceNodeWithInlineReference(nodeId: string, targetId: string): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
-      ensureNodeMovable(state, nodeId);
+      const movable = ensureNodeMovable(state, nodeId);
       const resolvedTargetId = resolveReferenceTargetId(state, targetId);
-      const current = clone(requiredNode(state, nodeId));
+      const current = clone(movable);
       if (current.type === 'reference') throw CoreError.invalidOperation('expected a content node');
       const parentId = current.parentId;
       if (!parentId) throw CoreError.noParent();
@@ -3494,8 +3491,7 @@ export class Core {
   ): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
-      ensureNodeMovable(state, nodeId);
-      const node = requiredNode(state, nodeId);
+      const node = ensureNodeMovable(state, nodeId);
       const parentId = node.parentId;
       if (!parentId) throw CoreError.noParent();
       ensureParentMutable(state, parentId);
@@ -3507,7 +3503,7 @@ export class Core {
       ensureParentCanContainChildInstance(state, parentId, resolvedTargetId, nodeId);
       const index = childIndex(state, parentId, nodeId) ?? 0;
       const referenceId = this.resolveRuntimeNodeId(state, replacementId, 'ref');
-      this.loro.createNodeWithId<ReferenceNode>(referenceId, parentId, index, 'reference', (reference) => {
+      this.loro.createNodeWithId(referenceId, parentId, index, 'reference', (reference) => {
         reference.targetId = resolvedTargetId;
       });
       this.removeSubtreeDirect(nodeId);
@@ -3625,7 +3621,7 @@ export class Core {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureTagDefinition(state, tagId);
-      const tag = requiredNode(state, tagId);
+      const tag = requiredContentNode(state, tagId);
       const existing = Object.values(state.nodes).find((node) =>
         !isInTrash(state, node.id)
         && node.type === 'search'
@@ -3764,11 +3760,13 @@ export class Core {
   // A patch may mutate the node in place (return void) or return a replacement
   // node — the latter is how a type-changing patch rebuilds a different variant
   // instead of mutating the discriminant in place.
-  private patchNode(nodeId: string, patch: (node: Node) => Node | void): CommandOutcome {
+  private patchNode(
+    nodeId: string,
+    patch: (node: ContentBearingNode) => ContentBearingNode | void,
+  ): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
-      ensureNodeEditable(state, nodeId);
-      const node = clone(requiredNode(state, nodeId));
+      const node = clone(ensureNodeEditable(state, nodeId));
       const patched = patch(node) ?? node;
       patched.updatedAt = nowMs();
       this.loro.writeNode(patched);
@@ -3776,10 +3774,10 @@ export class Core {
     });
   }
 
-  private patchNodeAppearance(nodeId: string, patch: (node: Node) => void): CommandOutcome {
+  private patchNodeAppearance(nodeId: string, patch: (node: ContentBearingNode) => void): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
-      const node = clone(requiredNode(state, nodeId));
+      const node = clone(ensureNodeEditable(state, nodeId));
       patch(node);
       node.updatedAt = nowMs();
       this.loro.writeNode(node);
@@ -3793,7 +3791,7 @@ export class Core {
     const existing = findViewDef(state.nodes, owner);
     if (existing) return existing.id;
     const viewDefId = this.freshId('view');
-    this.loro.createNodeWithId<ViewDefNode>(viewDefId, nodeId, 0, 'viewDef', (node) => {
+    this.loro.createNodeWithId(viewDefId, nodeId, 0, 'viewDef', (node) => {
       node.viewMode = 'list';
       node.toolbarVisible = false;
     });
@@ -3839,7 +3837,7 @@ export class Core {
     }
     let nextOrder = orderPlan.nextOrder;
     for (const fieldId of missingFields) {
-      this.loro.createNodeWithId<DisplayFieldNode>(this.freshId('display'), viewDef.id, undefined, 'displayField', (node) => {
+      this.loro.createNodeWithId(this.freshId('display'), viewDef.id, undefined, 'displayField', (node) => {
         node.displayField = fieldId;
         node.displayVisible = true;
         node.displayOrder = nextOrder++;
@@ -4136,9 +4134,12 @@ export class Core {
     return requiredNode(this.snapshot(), nodeId);
   }
 
-  private patchNodeData(nodeId: string, patch: (node: Node, state: DocumentState) => void) {
+  private patchNodeData(
+    nodeId: string,
+    patch: (node: ContentBearingNode, state: DocumentState) => void,
+  ) {
     const state = this.snapshot();
-    const node = clone(requiredNode(state, nodeId));
+    const node = clone(requiredContentNode(state, nodeId));
     patch(node, state);
     node.updatedAt = nowMs();
     this.loro.writeNode(node);
@@ -4147,7 +4148,7 @@ export class Core {
   private writeSearchNodeConfigDirect(nodeId: string, config: SearchNodeConfig, textIndex?: TextSearchIndex) {
     assertSearchNodeConfigAdmitted(config);
     const state = this.snapshot();
-    const existing = clone(requiredNode(state, nodeId));
+    const existing = clone(requiredContentNode(state, nodeId));
     // Rebuild as a search node with its inline query cleared (the query lives in
     // child queryCondition nodes); reconstructing avoids mutating the discriminant.
     const node: SearchNode = {
@@ -4179,7 +4180,10 @@ export class Core {
     const searchNode = requiredNode(state, nodeId);
     if (searchNode.type !== 'search') throw CoreError.invalidOperation('expected a search node');
 
-    const result = runSearchNode(state, nodeId, { textIndex });
+    const result = runSearchNode(state, nodeId, {
+      textIndex,
+      assetMetadataById: this.searchAssetMetadataProvider?.(),
+    });
     if (!result.ok) {
       if (options.skipEvaluationFailure) return false;
       throw CoreError.invalidOperation(result.issue.message);
@@ -4210,7 +4214,7 @@ export class Core {
     for (const targetId of hits) {
       if (existingRefs.has(targetId)) continue;
       if (!refreshedState.nodes[targetId]) continue;
-      this.loro.createNodeWithId<ReferenceNode>(this.freshId('ref'), nodeId, undefined, 'reference', (node) => {
+      this.loro.createNodeWithId(this.freshId('ref'), nodeId, undefined, 'reference', (node) => {
         node.targetId = targetId;
         // Result refs are internal pointers, not user-authored links — keep them
         // out of the backlink graph (refRoleOf treats an absent role as 'link').
@@ -4235,7 +4239,7 @@ export class Core {
   private createSearchQueryConditionDirect(parentId: string, query: SearchQueryExpr, index?: number | null) {
     const state = this.snapshot();
     const conditionId = this.freshId('condition');
-    this.loro.createNodeWithId<QueryConditionNode>(conditionId, parentId, index, 'queryCondition', (node) => {
+    this.loro.createNodeWithId(conditionId, parentId, index, 'queryCondition', (node) => {
       if (query.kind === 'group') {
         node.queryLogic = query.logic;
         node.content = plainText(query.logic);
@@ -4257,7 +4261,7 @@ export class Core {
   private createSearchQueryOperandDirect(parentId: string, operand: SearchQueryOperand) {
     const targetId = operand.targetId;
     if (targetId) {
-      this.loro.createNodeWithId<ReferenceNode>(this.freshId('ref'), parentId, undefined, 'reference', (node) => {
+      this.loro.createNodeWithId(this.freshId('ref'), parentId, undefined, 'reference', (node) => {
         node.content = plainText(operand.text ?? '');
         node.targetId = targetId;
       });
@@ -4285,6 +4289,7 @@ export class Core {
     this.ensureSystemNodeDirect(TAG_DAY_ID, 'tagDef', SCHEMA_ID, 'day', true, now);
     this.ensureSystemNodeDirect(TAG_WEEK_ID, 'tagDef', SCHEMA_ID, 'week', true, now);
     this.ensureSystemNodeDirect(TAG_YEAR_ID, 'tagDef', SCHEMA_ID, 'year', true, now);
+    this.ensureSystemNodeDirect(SOURCE_FIELD_ID, 'fieldDef', SCHEMA_ID, 'URI', true, now);
     // Persist the canonical root child order into the tree. Materialization now
     // reflects the tree verbatim (no read-time re-ordering), so every system node
     // must be placed here, matching the historical projection order.
@@ -4292,10 +4297,13 @@ export class Core {
       this.ensureChildIndexDirect(id, WORKSPACE_ID, index);
     });
     this.ensureChildIndexDirect(RECENTS_ID, SEARCHES_ID, 0);
-    [TAG_DAY_ID, TAG_WEEK_ID, TAG_YEAR_ID].forEach((id, index) => {
+    [SOURCE_FIELD_ID, TAG_DAY_ID, TAG_WEEK_ID, TAG_YEAR_ID].forEach((id, index) => {
       this.ensureChildIndexDirect(id, SCHEMA_ID, index);
     });
     this.ensureSystemOptionNodesDirect();
+    if (fieldTypeOf(this.snapshot(), SOURCE_FIELD_ID) !== 'uri') {
+      this.setConfigValueDirect(SOURCE_FIELD_ID, { kind: 'enum', configKey: 'fieldType', value: 'uri' });
+    }
     this.migrateLegacyParaRootNodesDirect();
     this.ensureRecentsSearchDirect();
     this.moveLegacyWorkspaceNodesToLibraryDirect();
@@ -4330,7 +4338,7 @@ export class Core {
     const latest = this.snapshot();
     for (const rule of this.viewDefChildren(latest, RECENTS_ID, 'sortRule')) this.removeSubtreeDirect(rule.id);
     const viewDefId = this.ensureViewDefDirect(RECENTS_ID);
-      this.loro.createNodeWithId<SortRuleNode>(this.freshId('sort'), viewDefId, undefined, 'sortRule', (node) => {
+      this.loro.createNodeWithId(this.freshId('sort'), viewDefId, undefined, 'sortRule', (node) => {
       node.sortField = 'sys:updatedAt';
       node.sortDirection = 'desc';
     });
@@ -4348,7 +4356,7 @@ export class Core {
       RECENTS_ID,
       TRASH_ID,
     ]);
-    for (const childId of [...root.children]) {
+    for (const childId of documentChildIds(state, WORKSPACE_ID)) {
       if (systemRootIds.has(childId)) continue;
       if (state.nodes[childId]) this.loro.moveNode(childId, LIBRARY_ID, undefined);
     }
@@ -4360,7 +4368,7 @@ export class Core {
       const state = this.snapshot();
       const node = state.nodes[id];
       if (!node) continue;
-      if (isDisposableLegacyParaNode(node, title)) {
+      if (isDisposableLegacyParaNode(state, node, title)) {
         this.loro.deleteNode(id);
         continue;
       }
@@ -4391,9 +4399,8 @@ export class Core {
       return;
     }
     const state = this.snapshot();
-    const current = requiredNode(state, id);
-    const node = clone(current);
-    node.type = type;
+    const current = requiredContentNode(state, id);
+    const node = { ...clone(current), type } as ContentBearingNode;
     if (!node.content.text || legacyNames.includes(node.content.text)) node.content = plainText(name);
     node.locked = locked;
     node.updatedAt = node.updatedAt || now;
@@ -4403,7 +4410,7 @@ export class Core {
 
   private ensureChildIndexDirect(nodeId: string, parentId: string, index: number) {
     const state = this.snapshot();
-    if (state.nodes[nodeId]?.parentId !== parentId || state.nodes[parentId]?.children[index] !== nodeId) {
+    if (state.nodes[nodeId]?.parentId !== parentId || documentChildIds(state, parentId)[index] !== nodeId) {
       this.loro.moveNode(nodeId, parentId, index);
     }
   }
@@ -4457,7 +4464,7 @@ export class Core {
         this.ensureChildIndexDirect(rowId, defId, index);
         return;
       }
-      this.loro.createNodeWithId<DefConfigNode>(rowId, defId, index, 'defConfig', (node) => {
+      this.loro.createNodeWithId(rowId, defId, index, 'defConfig', (node) => {
         node.configKey = key;
         node.content = plainText(CONFIG_SCHEMA[key].label);
         node.locked = true;
@@ -4558,7 +4565,7 @@ export class Core {
     const rowId = defConfigNodeId(defId, configKey);
     if (!this.loro.hasNode(rowId)) {
       const now = nowMs();
-      this.loro.createNodeWithId<DefConfigNode>(rowId, defId, 0, 'defConfig', (node) => {
+      this.loro.createNodeWithId(rowId, defId, 0, 'defConfig', (node) => {
         node.configKey = configKey;
         node.content = plainText(CONFIG_SCHEMA[configKey].label);
         node.locked = true;
@@ -4578,7 +4585,7 @@ export class Core {
     const now = nowMs();
     if (targetId) {
       const id = this.freshId('ref');
-      this.loro.createNodeWithId<ReferenceNode>(id, rowId, undefined, 'reference', (node) => {
+      this.loro.createNodeWithId(id, rowId, undefined, 'reference', (node) => {
         node.content = plainText(text);
         if (refRole) node.refRole = refRole;
         node.targetId = targetId;
@@ -4633,7 +4640,12 @@ export class Core {
     return id;
   }
 
-  private createRichTextNodeDirect(parentId: string, index: number | null | undefined, content: RichText, type?: NodeType) {
+  private createRichTextNodeDirect(
+    parentId: string,
+    index: number | null | undefined,
+    content: RichText,
+    type?: NodeType,
+  ) {
     const id = this.freshId(type === 'reference' ? 'ref' : type === 'fieldEntry' ? 'field_entry' : 'node');
     this.loro.createNodeWithId(id, parentId, index, type, (node) => {
       node.content = clone(content);
@@ -4648,7 +4660,7 @@ export class Core {
     targetId: string,
     replacementId?: string,
   ) {
-    const target = requiredNode(state, targetId);
+    const target = requiredContentNode(state, targetId);
     const inlineNodeId = this.resolveRuntimeNodeId(state, replacementId, 'node');
     this.loro.createNodeWithId(inlineNodeId, parentId, index, undefined, (node) => {
       node.content = {
@@ -4744,6 +4756,7 @@ export class Core {
     const tagChainByTagId = new Map<NodeId, readonly NodeId[]>();
     const templateFieldDefIdsByTagId = new Map<NodeId, readonly NodeId[]>();
     for (const node of Object.values(state.nodes)) {
+      if (!isContentBearingNode(node)) continue;
       const key = definitionNameKey(node.content.text);
       if (!key) continue;
       if (isActiveTagDefinition(state, node.id)) {
@@ -4797,7 +4810,7 @@ export class Core {
     proposedId?: string,
   ) {
     const id = proposedId ?? this.freshId('field_entry');
-    this.loro.createNodeWithId<FieldEntryNode>(id, parentId, index, 'fieldEntry', (node) => {
+    this.loro.createNodeWithId(id, parentId, index, 'fieldEntry', (node) => {
       node.fieldDefId = fieldDefId;
       node.content = plainText('');
     });
@@ -4983,7 +4996,7 @@ export class Core {
   }
 
   private projectedFieldDefinitionFromContext(
-    owner: Node,
+    owner: ContentBearingNode,
     fieldNameKey: string,
     context: TreeMaterializeContext,
   ): ProjectedFieldDefinitionResolution {
@@ -5014,7 +5027,7 @@ export class Core {
       const cached = context.fieldNameById.get(fieldDefId);
       if (cached) return cached;
       const fieldDef = this.loro.materializeNode(fieldDefId);
-      if (fieldDef?.content.text.trim()) {
+      if (fieldDef && isContentBearingNode(fieldDef) && fieldDef.content.text.trim()) {
         context.fieldNameById.set(fieldDefId, fieldDef.content.text);
         return fieldDef.content.text;
       }
@@ -5048,7 +5061,7 @@ export class Core {
     if (emptySlot) {
       const slot = this.loro.materializeNode(emptySlot);
       if (!slot) throw CoreError.nodeNotFound(emptySlot);
-      const next = clone(slot);
+      const next = clone(requiredContentNode(this.snapshot(), emptySlot));
       next.content = plainText(value);
       next.updatedAt = nowMs();
       this.loro.writeNode(next);
@@ -5138,9 +5151,9 @@ export class Core {
 
   private trashNodeDirect(nodeId: string) {
     const state = this.snapshot();
-    ensureNodeMovable(state, nodeId);
+    const movable = ensureNodeMovable(state, nodeId);
     if (nodeId === TRASH_ID) throw CoreError.invalidOperation('cannot trash Trash');
-    const node = clone(requiredNode(state, nodeId));
+    const node = clone(movable);
     if (!node.parentId) throw CoreError.noParent();
     node.trashedFromParentId = node.parentId;
     node.trashedFromIndex = childIndex(state, node.parentId, nodeId) ?? 0;
@@ -5151,7 +5164,6 @@ export class Core {
   private cloneSubtreeDirect(sourceId: string, parentId: string, index: number | undefined): string {
     const state = this.snapshot();
     const source = clone(requiredNode(state, sourceId));
-    const sourceChildren = [...source.children];
     // A defConfig row is addressed by the stable id defConfigNodeId(parent, key);
     // cloning it under a fresh id would orphan it from ensureConfigRowDirect, so a
     // later edit on the copy creates a *second* row that configRowsByKey shadows.
@@ -5166,10 +5178,12 @@ export class Core {
       node.children = [];
       node.createdAt = createdAt;
       node.updatedAt = createdAt;
-      delete node.trashedFromParentId;
-      delete node.trashedFromIndex;
+      if (isContentBearingNode(node)) {
+        delete node.trashedFromParentId;
+        delete node.trashedFromIndex;
+      }
     });
-    for (const childId of sourceChildren) this.cloneSubtreeDirect(childId, clonedId, undefined);
+    for (const childId of source.children) this.cloneSubtreeDirect(childId, clonedId, undefined);
     return clonedId;
   }
 
@@ -5203,7 +5217,7 @@ export class Core {
   private applyTagNoHistoryDirect(nodeId: string, tagId: string) {
     const state = this.snapshot();
     ensureTagDefinition(state, tagId);
-    const node = clone(requiredNode(state, nodeId));
+    const node = clone(requiredContentNode(state, nodeId));
     if (node.tags.includes(tagId)) return;
     node.tags.push(tagId);
     node.updatedAt = nowMs();
@@ -5235,7 +5249,7 @@ export class Core {
         visitedFieldDefs.add(fieldRef.fieldDefId);
         const current = this.snapshot();
         const fieldDef = current.nodes[fieldRef.fieldDefId];
-        if (!fieldDef || fieldAutoInitOf(current, fieldRef.fieldDefId).length === 0) continue;
+        if (fieldDef?.type !== 'fieldDef' || fieldAutoInitOf(current, fieldRef.fieldDefId).length === 0) continue;
         const existing = current.nodes[nodeId]?.children.find((childId) => {
           const child = current.nodes[childId];
           return child?.type === 'fieldEntry' && child.fieldDefId === fieldRef.fieldDefId;
@@ -5245,7 +5259,7 @@ export class Core {
         if (!result) continue;
         const entryId = existing ?? this.insertFieldEntryNodeDirect(nodeId, undefined, fieldRef.fieldDefId);
         if (result.kind === 'reference') {
-          this.loro.createNodeWithId<ReferenceNode>(this.freshId('auto_value'), entryId, undefined, 'reference', (node) => {
+          this.loro.createNodeWithId(this.freshId('auto_value'), entryId, undefined, 'reference', (node) => {
             node.targetId = result.targetId;
           });
         } else {
@@ -5307,22 +5321,17 @@ export class Core {
 
   private cloneTemplateContentNodeShallowDirect(parentId: string, templateNodeId: string) {
     const state = this.snapshot();
-    const parent = requiredNode(state, parentId);
-    if (parent.children.some((childId) => state.nodes[childId]?.templateId === templateNodeId)) return;
-    const template = requiredNode(state, templateNodeId);
+    const parent = requiredContentNode(state, parentId);
+    if (parent.children.some((childId) => contentNode(state, childId)?.templateId === templateNodeId)) return;
+    const template = requiredContentNode(state, templateNodeId);
     const code = template as Partial<CodeBlockNode>;
-    const image = template as Partial<ImageNode>;
-    this.loro.createNodeWithId(this.freshId('template'), parentId, undefined, template.type, (node) => {
+    const templateType = template.type === 'codeBlock' ? 'codeBlock' : undefined;
+    this.loro.createNodeWithId(this.freshId('template'), parentId, undefined, templateType, (node) => {
       node.templateId = templateNodeId;
       node.content = clone(template.content);
       node.description = template.description;
       node.aiSummary = template.aiSummary;
       (node as CodeBlockNode).codeLanguage = code.codeLanguage;
-      const target = node as ImageNode;
-      target.mediaUrl = image.mediaUrl;
-      target.mediaAlt = image.mediaAlt;
-      target.imageWidth = image.imageWidth;
-      target.imageHeight = image.imageHeight;
     });
   }
 
@@ -5355,7 +5364,7 @@ export class Core {
     // An optional renderer-proposed id keeps the trailing draft row's React
     // identity through the draft->reference transition (see resolveFieldValueId).
     const referenceId = this.resolveFieldValueId(state, id, 'option_value');
-    this.loro.createNodeWithId<ReferenceNode>(referenceId, fieldEntryId, undefined, 'reference', (node) => {
+    this.loro.createNodeWithId(referenceId, fieldEntryId, undefined, 'reference', (node) => {
       node.targetId = optionTargetId;
     });
   }
@@ -5387,7 +5396,7 @@ export class Core {
     const insertIndex = fieldChildren.findIndex((childId) => collectedRefIds.includes(childId));
     for (const refId of collectedRefIds) this.removeSubtreeDirect(refId);
 
-    const promoted = clone(requiredNode(this.snapshot(), valueId));
+    const promoted = clone(requiredContentNode(this.snapshot(), valueId));
     promoted.autoCollected = true;
     this.loro.writeNode(promoted);
     this.loro.moveNode(valueId, fieldDefId, insertIndex >= 0 ? insertIndex : undefined);
@@ -5480,7 +5489,8 @@ export class Core {
     for (const childId of state.nodes[parentId]?.children ?? []) {
       const child = state.nodes[childId];
       if (
-        child?.content.text === name
+        child && isContentBearingNode(child)
+        && child.content.text === name
         && (!tagId || child.tags.includes(tagId))
       ) return childId;
     }
@@ -5496,10 +5506,10 @@ export class Core {
   private mergeNodeIntoTargetDirect(nodeId: string, targetId: string) {
     const state = this.snapshot();
     if (nodeId === targetId || isDescendant(state, targetId, nodeId)) throw CoreError.invalidMove();
-    const current = clone(requiredNode(state, nodeId));
+    const current = clone(requiredContentNode(state, nodeId));
     const sourceParentId = current.parentId;
     const sourceIndex = sourceParentId ? childIndex(state, sourceParentId, nodeId) : undefined;
-    let target = clone(requiredNode(state, targetId));
+    let target = clone(requiredContentNode(state, targetId));
     if (target.type === 'reference' && target.targetId) {
       // A reference node renders its target, not its own content, so merging text
       // into it converts the reference into a *leading inline reference* on a
@@ -5512,7 +5522,7 @@ export class Core {
         inlineRefs: [{
           offset: 0,
           target: nodeReferenceTarget(resolvedTargetId),
-          displayName: state.nodes[resolvedTargetId]?.content.text || undefined,
+          displayName: contentNode(state, resolvedTargetId)?.content.text || undefined,
         }],
       };
       const { targetId: _droppedTargetId, refRole: _droppedRefRole, ...rest } = target;
@@ -5526,7 +5536,7 @@ export class Core {
     }
     target.updatedAt = nowMs();
     this.loro.writeNode(target);
-    current.children.forEach((childId, offset) => {
+    documentChildIds(state, nodeId).forEach((childId, offset) => {
       const insertIndex = sourceParentId === targetId && sourceIndex !== undefined ? sourceIndex + 1 + offset : undefined;
       this.loro.moveNode(childId, targetId, insertIndex);
     });
@@ -5538,8 +5548,10 @@ export class Core {
     for (const parent of Object.values(planned.nodes)) {
       const existing = current.nodes[parent.id];
       if (!existing) continue;
-      parent.children.forEach((childId, index) => {
-        if (current.nodes[childId]?.parentId === parent.id && existing.children[index] !== childId) {
+      const plannedChildren = documentChildIds(planned, parent.id);
+      const existingChildren = documentChildIds(current, parent.id);
+      plannedChildren.forEach((childId, index) => {
+        if (current.nodes[childId]?.parentId === parent.id && existingChildren[index] !== childId) {
           this.loro.moveNode(childId, parent.id, index);
         }
       });
@@ -5680,12 +5692,13 @@ function applyPlannedNodeMove(state: DocumentState, move: BatchMoveNodeInput) {
   ensureParentMutable(state, move.parentId);
   ensureParentCanContainChildInstance(state, move.parentId, childInstanceTargetId(state, move.nodeId), move.nodeId);
 
-  const targetParent = requiredNode(state, move.parentId);
-  const targetIndex = plannedInsertIndex(move.index, targetParent.children.length);
+  const targetIndex = plannedInsertIndex(move.index, documentChildIds(state, move.parentId).length);
   const previousParent = node.parentId ? requiredNode(state, node.parentId) : null;
   if (previousParent) previousParent.children = previousParent.children.filter((childId) => childId !== move.nodeId);
   const refreshedTargetParent = requiredNode(state, move.parentId);
-  refreshedTargetParent.children.splice(Math.min(targetIndex, refreshedTargetParent.children.length), 0, move.nodeId);
+  const targetChildren = documentChildIds(state, move.parentId).filter((childId) => childId !== move.nodeId);
+  targetChildren.splice(Math.min(targetIndex, targetChildren.length), 0, move.nodeId);
+  refreshedTargetParent.children = targetChildren;
   node.parentId = move.parentId;
 }
 
@@ -5771,6 +5784,7 @@ function hasExternalReferencesToTarget(
   for (const node of Object.values(state.nodes)) {
     if (ignoredIds.has(node.id)) continue;
     if (node.type === 'reference' && node.targetId === targetId) return true;
+    if (!isContentBearingNode(node)) continue;
     if (node.content.inlineRefs.some((ref) => inlineRefNodeId(ref) === targetId)) return true;
   }
   return false;
@@ -5893,102 +5907,53 @@ function yieldToEventLoop(): Promise<void> {
 // itself lives in `./nodeId` as the single source of truth for renderer + core.
 export { freshNodeId, isClientNodeId };
 
-/**
- * An image node's source is exactly one of a local `assetId` or a remote
- * `mediaUrl`. Normalize and validate the create/convert options into one.
- */
-function resolveImageSource(
-  options: { assetId?: string; mediaUrl?: string },
-): { assetId: string; mediaUrl?: undefined } | { assetId?: undefined; mediaUrl: string } {
-  const assetId = options.assetId?.trim();
-  const mediaUrl = options.mediaUrl?.trim();
-  if (assetId && mediaUrl) {
-    throw CoreError.invalidOperation('image node takes either an assetId or a mediaUrl, not both');
-  }
-  if (assetId) return { assetId };
-  if (mediaUrl) {
-    // A remote source is always loaded into an <img>/opened externally, so it
-    // must be http(s). Enforcing it here keeps the document invariant true for
-    // every caller (paste, agent, import), not just the UI paste classifier.
-    if (!/^https?:\/\//i.test(mediaUrl)) {
-      throw CoreError.invalidOperation('image node mediaUrl must be an http(s) URL');
-    }
-    return { mediaUrl };
-  }
-  throw CoreError.invalidOperation('image node requires an assetId or a mediaUrl');
-}
-
-function normalizeAttachmentOptions(options: {
-  assetId?: string | null;
-  mimeType?: string | null;
-  originalFilename?: string | null;
-  fileSize?: number | null;
-  thumbnailAssetId?: string | null;
-  pdfPageCount?: number | null;
-  audioDurationMs?: number | null;
-  videoDurationMs?: number | null;
-}): {
-  assetId: string;
-  mimeType: string;
-  originalFilename: string;
-  fileSize: number;
-  thumbnailAssetId?: string;
-  pdfPageCount?: number;
-  audioDurationMs?: number;
-  videoDurationMs?: number;
-} {
-  const assetId = options.assetId?.trim();
-  if (!assetId) throw CoreError.invalidOperation('attachment node requires an assetId');
-  const mimeType = normalizeMimeType(options.mimeType);
-  if (mediaKindForMimeType(mimeType) === 'image') {
-    throw CoreError.invalidOperation('image assets must be created as image nodes');
-  }
-  const originalFilename = options.originalFilename?.trim();
-  if (!originalFilename) throw CoreError.invalidOperation('attachment node requires an originalFilename');
-  const fileSize = normalizeNonNegativeInteger(options.fileSize, 'attachment node requires a fileSize');
-  const thumbnailAssetId = normalizeOptionalText(options.thumbnailAssetId);
-  const pdfPageCount = optionalPositiveInteger(options.pdfPageCount);
-  const audioDurationMs = optionalPositiveInteger(options.audioDurationMs);
-  const videoDurationMs = optionalPositiveInteger(options.videoDurationMs);
-  return {
-    assetId,
-    mimeType,
-    originalFilename,
-    fileSize,
-    ...(thumbnailAssetId ? { thumbnailAssetId } : {}),
-    ...(pdfPageCount !== undefined ? { pdfPageCount } : {}),
-    ...(audioDurationMs !== undefined ? { audioDurationMs } : {}),
-    ...(videoDurationMs !== undefined ? { videoDurationMs } : {}),
-  };
-}
-
-function normalizeMimeType(value: string | null | undefined): string {
-  const normalized = value?.trim().toLowerCase() || 'application/octet-stream';
-  if (!/^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*(?:;[a-z0-9!#$&^_.+-]+=[a-z0-9!#$&^_.+-]+)*$/.test(normalized)) {
-    throw CoreError.invalidOperation('attachment node requires a valid MIME type');
-  }
-  return normalized;
-}
-
-function normalizeNonNegativeInteger(value: number | null | undefined, message: string): number {
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
-    throw CoreError.invalidOperation(message);
-  }
-  return value;
-}
-
-function optionalPositiveInteger(value: number | null | undefined): number | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw CoreError.invalidOperation('attachment metadata must be a positive integer');
-  }
-  return value;
-}
-
 function requiredNode(state: DocumentState, nodeId: string): Node {
   const node = state.nodes[nodeId];
   if (!node) throw CoreError.nodeNotFound(nodeId);
   return node;
+}
+
+function requiredContentNode(state: DocumentState, nodeId: string): ContentBearingNode {
+  return requiredNode(state, nodeId);
+}
+
+function contentNode(state: DocumentState, nodeId: NodeId): ContentBearingNode | undefined {
+  const node = state.nodes[nodeId];
+  return node && isContentBearingNode(node) ? node : undefined;
+}
+
+function requiredOwnerSourceValue(
+  state: DocumentState,
+  ownerId: NodeId,
+  valueId: NodeId,
+): { entry: FieldEntryNode; value: Node } {
+  requiredNode(state, ownerId);
+  const value = state.nodes[valueId];
+  const entry = value?.parentId ? state.nodes[value.parentId] : undefined;
+  if (
+    !value
+    || entry?.type !== 'fieldEntry'
+    || entry.parentId !== ownerId
+    || entry.fieldDefId !== SOURCE_FIELD_ID
+    || !entry.children.includes(valueId)
+  ) {
+    throw CoreError.invalidOperation('Source value must be a direct value of the requested owner.');
+  }
+  return { entry, value };
+}
+
+function sourceInsertionIndex(
+  state: DocumentState,
+  entry: FieldEntryNode,
+  afterValueId: NodeId | null | undefined,
+): number | undefined {
+  if (afterValueId === undefined) return undefined;
+  if (afterValueId === null) return 0;
+  const anchor = state.nodes[afterValueId];
+  if (!anchor || anchor.parentId !== entry.id) {
+    throw CoreError.invalidOperation('Source anchor must be a direct value of the requested owner.');
+  }
+  return entry.children.indexOf(afterValueId) + 1;
 }
 
 function setOptional<T extends object, K extends keyof T>(object: T, key: K, value: T[K] | undefined) {
@@ -5997,16 +5962,17 @@ function setOptional<T extends object, K extends keyof T>(object: T, key: K, val
 }
 
 function ensureParentMutable(state: DocumentState, parentId: string) {
-  if (!state.nodes[parentId]) throw CoreError.parentNotFound(parentId);
+  const parent = state.nodes[parentId];
+  if (!parent) throw CoreError.parentNotFound(parentId);
   // config-as-nodes: defConfig/systemOption subtrees are registry-governed;
   // user commands cannot insert children under them. Internal config machinery
   // uses *Direct loro APIs that bypass this guard.
-  if (isInternalConfigNode(state.nodes[parentId])) {
+  if (isInternalConfigNode(parent)) {
     throw CoreError.invalidOperation('config nodes are structurally locked');
   }
 }
 
-function ensureNodeEditable(state: DocumentState, nodeId: string) {
+function ensureNodeEditable(state: DocumentState, nodeId: string): ContentBearingNode {
   const node = requiredNode(state, nodeId);
   if (node.locked) throw CoreError.lockedNode(nodeId);
   // The defConfig/systemOption node itself cannot be renamed/edited via user
@@ -6015,9 +5981,14 @@ function ensureNodeEditable(state: DocumentState, nodeId: string) {
   return node;
 }
 
-function ensureNodeMovable(state: DocumentState, nodeId: string) {
+function ensureNodeMovable(state: DocumentState, nodeId: string): ContentBearingNode {
   const node = requiredNode(state, nodeId);
-  if (node.locked || isSystemId(nodeId) || isInternalConfigNode(node)) throw CoreError.lockedNode(nodeId);
+  if (
+    node.locked
+    || isSystemId(nodeId)
+    || isInternalConfigNode(node)
+  ) throw CoreError.lockedNode(nodeId);
+  return node;
 }
 
 function ensureTagDefinition(state: DocumentState, tagId: string) {
@@ -6071,9 +6042,9 @@ function normalizeSearchTitle(value: string) {
 }
 
 function searchRuleTitle(state: DocumentState, rule: SearchQueryRule): string {
-  if (rule.tagDefId) return state.nodes[rule.tagDefId]?.content.text ?? rule.tagDefId;
-  if (rule.targetId) return state.nodes[rule.targetId]?.content.text ?? rule.targetId;
-  if (rule.fieldDefId) return state.nodes[rule.fieldDefId]?.content.text ?? rule.fieldDefId;
+  if (rule.tagDefId) return contentNode(state, rule.tagDefId)?.content.text ?? rule.tagDefId;
+  if (rule.targetId) return contentNode(state, rule.targetId)?.content.text ?? rule.targetId;
+  if (rule.fieldDefId) return contentNode(state, rule.fieldDefId)?.content.text ?? rule.fieldDefId;
   return rule.op;
 }
 
@@ -6129,8 +6100,12 @@ function normalizeTextList(values: string[]): string[] {
 }
 
 function childIndex(state: DocumentState, parentId: string, childId: string): number | undefined {
-  const index = state.nodes[parentId]?.children.indexOf(childId) ?? -1;
+  const index = documentChildIds(state, parentId).indexOf(childId);
   return index >= 0 ? index : undefined;
+}
+
+function documentChildIds(state: DocumentState, parentId: NodeId): NodeId[] {
+  return [...(state.nodes[parentId]?.children ?? [])];
 }
 
 function batchIndentTargetParentId(
@@ -6143,10 +6118,11 @@ function batchIndentTargetParentId(
     const node: Node | undefined = state.nodes[currentId];
     const parentId: string | undefined = node?.parentId;
     const parent: Node | undefined = parentId ? state.nodes[parentId] : undefined;
-    const index: number = parent?.children.indexOf(currentId) ?? -1;
+    const siblings: NodeId[] = parentId ? documentChildIds(state, parentId) : [];
+    const index: number = siblings.indexOf(currentId);
     if (!parent || index <= 0) return null;
 
-    const previousSiblingId: string | undefined = parent.children[index - 1];
+    const previousSiblingId: string | undefined = siblings[index - 1];
     if (!previousSiblingId) return null;
     if (!batch.has(previousSiblingId)) return previousSiblingId;
     currentId = previousSiblingId;
@@ -6209,19 +6185,21 @@ function moveSelectedSiblings(state: DocumentState, nodeIds: string[], direction
   for (const parentId of parentIds) {
     const parent = state.nodes[parentId];
     if (!parent) continue;
+    const children = documentChildIds(state, parentId);
     if (direction === 'up') {
-      for (let index = 1; index < parent.children.length; index += 1) {
-        if (selected.has(parent.children[index]) && !selected.has(parent.children[index - 1])) {
-          [parent.children[index - 1], parent.children[index]] = [parent.children[index], parent.children[index - 1]];
+      for (let index = 1; index < children.length; index += 1) {
+        if (selected.has(children[index]) && !selected.has(children[index - 1])) {
+          [children[index - 1], children[index]] = [children[index], children[index - 1]];
         }
       }
     } else {
-      for (let index = parent.children.length - 2; index >= 0; index -= 1) {
-        if (selected.has(parent.children[index]) && !selected.has(parent.children[index + 1])) {
-          [parent.children[index], parent.children[index + 1]] = [parent.children[index + 1], parent.children[index]];
+      for (let index = children.length - 2; index >= 0; index -= 1) {
+        if (selected.has(children[index]) && !selected.has(children[index + 1])) {
+          [children[index], children[index + 1]] = [children[index + 1], children[index]];
         }
       }
     }
+    parent.children = children;
   }
   for (const nodeId of selected) touchNode(state, nodeId);
 }
@@ -6276,9 +6254,9 @@ const LEGACY_PARA_NODE_NAMES = new Map([
   [RESOURCES_ID, 'Resources'],
 ]);
 
-function isDisposableLegacyParaNode(node: Node, title: string) {
+function isDisposableLegacyParaNode(state: DocumentState, node: Node, title: string) {
   return node.type === undefined
-    && node.children.length === 0
+    && documentChildIds(state, node.id).length === 0
     && node.content.text === title
     && node.content.marks.length === 0
     && node.content.inlineRefs.length === 0
@@ -6287,13 +6265,13 @@ function isDisposableLegacyParaNode(node: Node, title: string) {
 }
 
 function isDisposableRetiredSettingsNode(state: DocumentState, node: Node) {
-  return isDisposableLegacySystemNode(node, RETIRED_SETTINGS_TITLE)
+  return isDisposableLegacySystemNode(state, node, RETIRED_SETTINGS_TITLE)
     && !hasExternalNodeTargetReferences(state, node.id);
 }
 
-function isDisposableLegacySystemNode(node: Node, title: string) {
+function isDisposableLegacySystemNode(state: DocumentState, node: Node, title: string) {
   return node.type === undefined
-    && node.children.length === 0
+    && documentChildIds(state, node.id).length === 0
     && node.content.text === title
     && node.content.marks.length === 0
     && node.content.inlineRefs.length === 0
@@ -6314,6 +6292,7 @@ function hasExternalNodeTargetReferences(state: DocumentState, targetId: string)
     if (other.id === targetId) continue;
     if (other.type === 'reference' && other.targetId === targetId) return true;
     if ((other.type === 'search' || other.type === 'queryCondition') && other.queryTargetId === targetId) return true;
+    if (!isContentBearingNode(other)) continue;
     if (other.content.inlineRefs.some((ref) => inlineRefNodeId(ref) === targetId)) return true;
   }
   return false;
@@ -6337,6 +6316,7 @@ function isSystemId(nodeId: string) {
     TAG_DAY_ID,
     TAG_WEEK_ID,
     TAG_YEAR_ID,
+    SOURCE_FIELD_ID,
   ].includes(nodeId);
 }
 
@@ -6376,7 +6356,7 @@ function configRefTarget(state: DocumentState, defId: string, configKey: DefConf
  */
 function fieldTypeOf(state: DocumentState, fieldDefId: string): FieldType {
   const optionId = configRefTarget(state, fieldDefId, 'fieldType');
-  const value = optionId ? state.nodes[optionId]?.content.text : undefined;
+  const value = optionId ? contentNode(state, optionId)?.content.text : undefined;
   return (value as FieldType | undefined) ?? 'plain';
 }
 
@@ -6389,7 +6369,7 @@ function configScalarText(state: DocumentState, defId: string, configKey: DefCon
     if (row?.type === 'defConfig' && row.configKey === configKey) {
       for (const valueId of row.children) {
         const value = state.nodes[valueId];
-        if (value && value.type !== 'reference') return value.content.text;
+        if (value && isContentBearingNode(value) && value.type !== 'reference') return value.content.text;
       }
     }
   }
@@ -6415,12 +6395,12 @@ function tagShowsCheckboxOf(state: DocumentState, tagDefId: string): boolean {
 }
 
 /** True when any of the node's applied tags drives a checkbox (tag-driven visibility). */
-function nodeTagDrivenCheckbox(state: DocumentState, node: Node): boolean {
+function nodeTagDrivenCheckbox(state: DocumentState, node: ContentBearingNode): boolean {
   return node.tags.some((tagId) => tagShowsCheckboxOf(state, tagId));
 }
 
 /** Done = a completion timestamp is set (sentinel 0 means "has checkbox, undone"). */
-function nodeIsDone(node: Node): boolean {
+function nodeIsDone(node: ContentBearingNode): boolean {
   return node.completedAt !== undefined && node.completedAt > 0;
 }
 
@@ -6468,7 +6448,7 @@ interface DoneStateFieldMapping {
  * extends chains) whose `doneStateEnabled` is on, the checked/unchecked option
  * lists grouped by the option's owning field definition.
  */
-function getDoneStateMappings(state: DocumentState, node: Node): DoneStateFieldMapping[] {
+function getDoneStateMappings(state: DocumentState, node: ContentBearingNode): DoneStateFieldMapping[] {
   const byField = new Map<string, { checked: string[]; unchecked: string[] }>();
   const seenTags = new Set<string>();
   const addOptions = (optionIds: string[], key: 'checked' | 'unchecked') => {
@@ -6501,7 +6481,12 @@ function getDoneStateMappings(state: DocumentState, node: Node): DoneStateFieldM
  * Reverse mapping: when an option is selected on a node's field, whether that
  * implies a new done state (true/false) or has no mapping (null).
  */
-function resolveReverseDoneMapping(state: DocumentState, node: Node, fieldDefId: string, optionNodeId: string): boolean | null {
+function resolveReverseDoneMapping(
+  state: DocumentState,
+  node: ContentBearingNode,
+  fieldDefId: string,
+  optionNodeId: string,
+): boolean | null {
   for (const mapping of getDoneStateMappings(state, node)) {
     if (mapping.fieldDefId !== fieldDefId) continue;
     if (mapping.checkedOptionIds.includes(optionNodeId)) return true;
@@ -6511,7 +6496,7 @@ function resolveReverseDoneMapping(state: DocumentState, node: Node, fieldDefId:
 }
 
 /** Apply a resolved done state to a node in place (tag-driven keeps the box on undo). */
-function applyNodeDoneState(node: Node, done: boolean, tagDriven: boolean) {
+function applyNodeDoneState(node: ContentBearingNode, done: boolean, tagDriven: boolean) {
   if (done) node.completedAt = nowMs();
   else if (tagDriven) delete node.completedAt;
   else node.completedAt = 0;
@@ -6536,7 +6521,9 @@ function fieldAutoInitOf(state: DocumentState, fieldDefId: string): AutoInitStra
   const strategies: AutoInitStrategy[] = [];
   for (const valueId of row.children) {
     const ref = state.nodes[valueId];
-    const text = ref?.type === 'reference' && ref.targetId ? state.nodes[ref.targetId]?.content.text : undefined;
+    const text = ref?.type === 'reference' && ref.targetId
+      ? contentNode(state, ref.targetId)?.content.text
+      : undefined;
     if (text && AUTO_INIT_STRATEGIES.includes(text as AutoInitStrategy)) strategies.push(text as AutoInitStrategy);
   }
   return strategies;
@@ -6579,7 +6566,7 @@ function templateFieldValueIdentity(
   fieldType: FieldType,
 ): string | undefined {
   const value = state.nodes[valueId];
-  if (!value) return undefined;
+  if (!value || !isContentBearingNode(value)) return undefined;
   if (fieldType === 'options' || fieldType === 'options_from_supertag') {
     return `target:${optionValueTargetId(state, valueId)}`;
   }
@@ -6609,7 +6596,9 @@ function fieldDefinitionValueCompatibilityError(
     if (!entry) continue;
     const values = entry.children
       .map((valueId) => state.nodes[valueId])
-      .filter((value): value is Node => Boolean(value) && !isInTrash(state, value!.id))
+      .filter((value): value is ContentBearingNode => (
+        Boolean(value) && isContentBearingNode(value!) && !isInTrash(state, value!.id)
+      ))
       .map((value) => ({
         text: value.content.text,
         targetId: value.type === 'reference' ? value.targetId : undefined,
@@ -6652,9 +6641,9 @@ function buildTagTemplateBackfillPlan(
   for (const nodeId of findNodesWithTagInExtendsChain(state, tagId)) {
     if (protectedNodeIds.has(nodeId)) continue;
     const node = state.nodes[nodeId];
-    if (!node || node.locked || isInternalConfigNode(node)) continue;
+    if (!node || !isContentBearingNode(node) || node.locked || isInternalConfigNode(node)) continue;
     const existingTemplateIds = new Set(node.children
-      .map((childId) => state.nodes[childId]?.templateId)
+      .map((childId) => contentNode(state, childId)?.templateId)
       .filter((templateId): templateId is NodeId => Boolean(templateId)));
     const missingTemplateNodeIds = templateNodeIds.filter((templateNodeId) => (
       !existingTemplateIds.has(templateNodeId)
@@ -6680,6 +6669,7 @@ function findNodesWithTagInExtendsChain(state: DocumentState, tagId: string) {
   return Object.values(state.nodes)
     .filter((node) => (
       !isInTrash(state, node.id)
+      && isContentBearingNode(node)
       && node.tags.some((appliedTagId) => matchingAppliedTagIds.has(appliedTagId))
     ))
     .map((node) => node.id);
@@ -6688,14 +6678,16 @@ function findNodesWithTagInExtendsChain(state: DocumentState, tagId: string) {
 function findTagByName(state: DocumentState, name: string) {
   const needle = definitionNameKey(name);
   return Object.values(state.nodes).find((node) =>
-    isActiveTagDefinition(state, node.id)
+    node.type === 'tagDef'
+    && !isInTrash(state, node.id)
     && definitionNameKey(node.content.text) === needle)?.id;
 }
 
 function findFieldDefByName(state: DocumentState, name: string) {
   const needle = definitionNameKey(name);
   return Object.values(state.nodes).find((node) =>
-    isActiveFieldDefinition(state, node.id)
+    node.type === 'fieldDef'
+    && !isInTrash(state, node.id)
     && node.parentId === SCHEMA_ID
     && definitionNameKey(node.content.text) === needle)?.id;
 }
@@ -6786,6 +6778,7 @@ function fieldDefRenameCandidateOwnerIds(state: DocumentState, fieldDefId: NodeI
   }
   for (const node of Object.values(state.nodes)) {
     if (isInTrash(state, node.id)) continue;
+    if (!isContentBearingNode(node)) continue;
     if (node.tags.some((tagId) => affectedTagIds.has(tagId))) candidateOwnerIds.add(node.id);
   }
   return candidateOwnerIds;
@@ -6794,7 +6787,7 @@ function fieldDefRenameCandidateOwnerIds(state: DocumentState, fieldDefId: NodeI
 function fieldDefinitionsForRenameCheck(state: DocumentState, ownerId: NodeId): Map<NodeId, NodeId> {
   const owner = state.nodes[ownerId];
   const definitions = new Map<NodeId, NodeId>();
-  if (!owner || isInTrash(state, ownerId)) return definitions;
+  if (!owner || !isContentBearingNode(owner) || isInTrash(state, ownerId)) return definitions;
 
   const addEntry = (entryId: NodeId) => {
     const entry = state.nodes[entryId];
@@ -6817,7 +6810,7 @@ function fieldDefinitionsForRenameCheck(state: DocumentState, ownerId: NodeId): 
 }
 
 function fieldNameForDefId(state: DocumentState, fieldDefId: NodeId): string {
-  return systemFieldLabel(fieldDefId) ?? state.nodes[fieldDefId]?.content.text ?? fieldDefId;
+  return systemFieldLabel(fieldDefId) ?? contentNode(state, fieldDefId)?.content.text ?? fieldDefId;
 }
 
 function systemFieldIdForName(fieldName: string): NodeId | null {
@@ -6848,7 +6841,9 @@ function findNamedTaggedChild(
 ) {
   return state.nodes[parentId]?.children.find((childId) => {
     const child = state.nodes[childId];
-    return child?.content.text === name && child.tags.includes(tagId);
+    return child && isContentBearingNode(child)
+      && child.content.text === name
+      && child.tags.includes(tagId);
   });
 }
 
@@ -6893,7 +6888,7 @@ function indexCanonicalDateChildren(
   const selectedIds: NodeId[] = [];
   for (const childId of state.nodes[parentId]?.children ?? []) {
     const child = state.nodes[childId];
-    if (!child?.tags.includes(tagId)) continue;
+    if (!child || !isContentBearingNode(child) || !child.tags.includes(tagId)) continue;
     const key = canonicalDateNodeIndexKey(parentId, tagId, child.content.text);
     if (index.has(key)) continue;
     index.set(key, childId);
@@ -6977,9 +6972,9 @@ function optionValueTargetId(state: DocumentState, optionNodeId: string) {
 
 function optionLabel(state: DocumentState, optionNodeId: string) {
   const optionNode = state.nodes[optionNodeId];
-  if (!optionNode) return '';
+  if (!optionNode || !isContentBearingNode(optionNode)) return '';
   if (optionNode.type === 'reference' && optionNode.targetId) {
-    return state.nodes[optionNode.targetId]?.content.text ?? optionNode.content.text;
+    return contentNode(state, optionNode.targetId)?.content.text ?? optionNode.content.text;
   }
   return optionNode.content.text;
 }
@@ -7006,7 +7001,7 @@ type AutoInitResult =
   | { kind: 'text'; value: string }
   | { kind: 'reference'; targetId: string };
 
-function resolveAutoInit(state: DocumentState, nodeId: string, fieldDef: Node): AutoInitResult | null {
+function resolveAutoInit(state: DocumentState, nodeId: string, fieldDef: FieldDefNode): AutoInitResult | null {
   const strategies = fieldAutoInitOf(state, fieldDef.id);
   for (const strategy of AUTO_INIT_PRIORITY) {
     if (!strategies.includes(strategy)) continue;
@@ -7019,14 +7014,14 @@ function resolveAutoInit(state: DocumentState, nodeId: string, fieldDef: Node): 
 function resolveAutoInitStrategy(
   state: DocumentState,
   nodeId: string,
-  fieldDef: Node,
+  fieldDef: FieldDefNode,
   strategy: AutoInitStrategy,
 ): AutoInitResult | null {
   if (strategy === 'current_date') return { kind: 'text', value: formatLocalDate(new Date()) };
   if (strategy === 'ancestor_day_node') {
     const dayNode = ancestorsOf(state, nodeId).find((ancestor) =>
       ancestor.tags.some((tagId) =>
-        tagId === TAG_DAY_ID || state.nodes[tagId]?.content.text.trim().toLowerCase() === 'day'));
+        tagId === TAG_DAY_ID || contentNode(state, tagId)?.content.text.trim().toLowerCase() === 'day'));
     const value = dayNode?.content.text.trim();
     return value ? { kind: 'text', value } : null;
   }
@@ -7040,6 +7035,7 @@ function resolveAutoInitStrategy(
       if (firstValue.type === 'reference' && firstValue.targetId) {
         return { kind: 'reference', targetId: firstValue.targetId };
       }
+      if (!isContentBearingNode(firstValue)) continue;
       const value = firstValue.content.text.trim();
       if (value) return { kind: 'text', value };
     }
@@ -7054,14 +7050,14 @@ function resolveAutoInitStrategy(
   return null;
 }
 
-function ancestorsOf(state: DocumentState, nodeId: string): Node[] {
-  const result: Node[] = [];
+function ancestorsOf(state: DocumentState, nodeId: string): ContentBearingNode[] {
+  const result: ContentBearingNode[] = [];
   const visited = new Set<string>();
   let currentId = state.nodes[nodeId]?.parentId;
   while (currentId && !visited.has(currentId)) {
     visited.add(currentId);
     const current = state.nodes[currentId];
-    if (!current) break;
+    if (!current || !isContentBearingNode(current)) break;
     result.push(current);
     currentId = current.parentId;
   }

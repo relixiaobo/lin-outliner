@@ -15,6 +15,7 @@ import {
   projectOutline,
   resolveSelector,
 } from '../../src/outline/runtime';
+import { formatAssetSourceUri } from '../../src/core/source';
 
 const roots: string[] = [];
 
@@ -23,6 +24,10 @@ afterAll(async () => {
 });
 
 describe('outline ChangeSet kernel', () => {
+  const documentChildIds = (workspace: OutlineRuntimeWorkspace, parentId: string) => (
+    workspace.documentState().nodes[parentId]?.children
+  );
+
   test('commits a non-destructive ChangeSet directly without reviewed Diff preview', async () => {
     const workspace = await makeWorkspace();
     const beforeRevision = workspace.revision();
@@ -603,6 +608,80 @@ describe('outline ChangeSet kernel', () => {
       .toEqual(expect.arrayContaining([firstId, laterId]));
   });
 
+  test('executes transient and Saved Search media queries from Runtime AssetRecord metadata after restart', async () => {
+    const root = await makeRoot();
+    const workspace = await openWorkspace(root);
+    const lease = await workspace.assets.ingestBytes(
+      new TextEncoder().encode('audio fixture'),
+      'runtime-audio.mp3',
+      'audio/mpeg',
+    );
+    const ownerId = `node:${crypto.randomUUID()}`;
+    await commitOutlineChangeSet(workspace, {
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      operations: [
+        {
+          op: 'create',
+          placement: { kind: 'last', parent: oneAlias('today') },
+          nodes: [draft('Runtime audio Source', { id: ownerId })],
+          bind: 'audio',
+        },
+        {
+          op: 'update',
+          targets: { binding: 'audio' },
+          changes: [{ kind: 'source', action: 'add', sourceText: formatAssetSourceUri(lease.assetId) }],
+        },
+      ],
+    }, { origin: 'external-client' });
+    const searchId = `node:${crypto.randomUUID()}`;
+    await workspace.mutate({
+      ...createRequest('Create managed-media Saved Search'),
+      execute: (core) => {
+        core.createSearchNode(core.projection().searchesId, null, {
+          title: 'Runtime audio',
+          query: { kind: 'rule', op: 'HAS_AUDIO' },
+        }, undefined, searchId);
+      },
+    });
+
+    const mediaSelector = { by: 'query' as const, query: { kind: 'rule' as const, op: 'HAS_AUDIO' as const }, limit: 10 };
+    expect(resolveSelector(workspace.selectionIndex(), mediaSelector)).toEqual([ownerId]);
+    expect(resolveSelector(workspace.selectionIndex(), { by: 'search', id: searchId, limit: 10 })).toEqual([ownerId]);
+    expect(workspace.documentState().nodes[searchId]!.children
+      .map((childId) => workspace.documentState().nodes[childId])
+      .filter((node) => node?.type === 'reference')
+      .map((node) => node.targetId)).toEqual([ownerId]);
+    await workspace.drainDurability();
+    workspace.close();
+
+    const restarted = await openWorkspace(root);
+    expect(resolveSelector(restarted.selectionIndex(), mediaSelector)).toEqual([ownerId]);
+    expect(resolveSelector(restarted.selectionIndex(), { by: 'search', id: searchId, limit: 10 })).toEqual([ownerId]);
+    restarted.close();
+  });
+
+  test('counts a visible URI field entry as a public summary child', async () => {
+    const workspace = await makeWorkspace();
+    const ownerId = await createExisting(workspace, 'Source-only owner');
+    await workspace.mutate({
+      ...createRequest('Add one Source'),
+      execute: (core) => {
+        core.addSource(ownerId, `node:${crypto.randomUUID()}`, 'https://example.com/source');
+      },
+    });
+
+    const result = workspace.project({
+      kind: 'summary',
+      targets: oneId(ownerId),
+      page: { limit: 1 },
+    });
+
+    expect(result.nodes).toEqual([
+      expect.objectContaining({ id: ownerId, type: 'plain', childCount: 1 }),
+    ]);
+  });
+
   test('returns a Node and its backlinks in separately bounded Projection pages', async () => {
     const workspace = await makeWorkspace();
     const targetId = await createExisting(workspace, 'Backlink target');
@@ -736,18 +815,18 @@ describe('outline ChangeSet kernel', () => {
       kind: 'outline.changeset',
       operations: [{ op: 'move', targets: many([ids.a, ids.b]), placement: { kind: 'after', sibling: oneId(ids.c) } }],
     }), { origin: 'local-user' });
-    expect(workspace.documentState().nodes[ids.parent]?.children).toEqual([ids.c, ids.a, ids.b, ids.d]);
+    expect(documentChildIds(workspace, ids.parent)).toEqual([ids.c, ids.a, ids.b, ids.d]);
     await workspace.revert(after.operationId, { origin: 'local-user' });
-    expect(workspace.documentState().nodes[ids.parent]?.children).toEqual(original);
+    expect(documentChildIds(workspace, ids.parent)).toEqual(original);
 
     const before = await applyOutlineDiff(workspace, await diffKeyed(workspace, {
       protocolVersion: 1,
       kind: 'outline.changeset',
       operations: [{ op: 'move', targets: many([ids.c, ids.d]), placement: { kind: 'before', sibling: oneId(ids.a) } }],
     }), { origin: 'local-user' });
-    expect(workspace.documentState().nodes[ids.parent]?.children).toEqual([ids.c, ids.d, ids.a, ids.b]);
+    expect(documentChildIds(workspace, ids.parent)).toEqual([ids.c, ids.d, ids.a, ids.b]);
     await workspace.revert(before.operationId, { origin: 'local-user' });
-    expect(workspace.documentState().nodes[ids.parent]?.children).toEqual(original);
+    expect(documentChildIds(workspace, ids.parent)).toEqual(original);
   });
 
   test('honors includeTrash during transient query execution', async () => {

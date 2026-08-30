@@ -1,4 +1,13 @@
-import { parseDateFieldValueRange, type FilterOperator, type NodeId, type NodeProjection, type SortDirection, type ViewMode } from '../api/types';
+import {
+  isContentBearingNode,
+  parseDateFieldValueRange,
+  type ContentBearingNodeProjection,
+  type FilterOperator,
+  type NodeId,
+  type NodeProjection,
+  type SortDirection,
+  type ViewMode,
+} from '../api/types';
 import { nodeShowsCheckbox, projectFieldConfig, projectFieldTypeById } from '../../core/configProjection';
 import {
   CREATED_FIELD,
@@ -154,17 +163,25 @@ function directChildren(parent: NodeProjection | undefined, byId: Map<NodeId, No
 }
 
 function nodeTitle(node: NodeProjection | undefined): string {
-  return node?.content.text || 'Untitled';
+  return node && isContentBearingNode(node) ? node.content.text || 'Untitled' : 'Untitled';
 }
 
-function displayNode(node: NodeProjection, byId: Map<NodeId, NodeProjection>): NodeProjection | undefined {
+function displayNode(
+  node: NodeProjection,
+  byId: Map<NodeId, NodeProjection>,
+): ContentBearingNodeProjection | undefined {
+  if (!isContentBearingNode(node)) return undefined;
   if (node.type !== 'reference') return node;
   if (!node.targetId) return undefined;
   const targetId = resolveReferenceChainTargetId(node.targetId, byId);
-  return targetId ? byId.get(targetId) : undefined;
+  const target = targetId ? byId.get(targetId) : undefined;
+  return target && isContentBearingNode(target) ? target : undefined;
 }
 
-function displayNodeOrSelf(node: NodeProjection, byId: Map<NodeId, NodeProjection>): NodeProjection {
+function displayNodeOrSelf(
+  node: ContentBearingNodeProjection,
+  byId: Map<NodeId, NodeProjection>,
+): ContentBearingNodeProjection {
   return displayNode(node, byId) ?? node;
 }
 
@@ -183,13 +200,14 @@ function slotsForNode(
 function rowNodeForView(
   row: Extract<OutlinerRowItem, { type: 'content' | 'field' }>,
   byId: Map<NodeId, NodeProjection>,
-): NodeProjection | undefined {
+): ContentBearingNodeProjection | undefined {
   const nodeId = row.type === 'field' ? row.slot.entryId : row.id;
-  return nodeId ? byId.get(nodeId) : undefined;
+  const node = nodeId ? byId.get(nodeId) : undefined;
+  return node && isContentBearingNode(node) ? node : undefined;
 }
 
 function childText(node: NodeProjection | undefined, byId: Map<NodeId, NodeProjection>): string {
-  if (!node) return '';
+  if (!node || !isContentBearingNode(node)) return '';
   const displayed = displayNodeOrSelf(node, byId);
   const own = displayed.content.text;
   if (own) return own;
@@ -219,7 +237,7 @@ function displayFieldValuesFor(
     case 'dayRef':
       return display.text ? [display.text] : [];
     case 'tags':
-      return display.tagIds.map((tagId) => byId.get(tagId)?.content.text || tagId).filter(Boolean);
+      return display.tagIds.map((tagId) => nodeTitle(byId.get(tagId)) || tagId).filter(Boolean);
     case 'nodeRefs':
       return display.refs.map((ref) => ref.label).filter(Boolean);
     case 'text':
@@ -243,7 +261,7 @@ function resolvedViewFieldValuesFor(
   fieldId: string,
   byId: Map<NodeId, NodeProjection>,
   systemFieldContext?: SystemFieldContext,
-  resolveDisplayNode?: (node: NodeProjection) => NodeProjection | undefined,
+  resolveDisplayNode?: (node: NodeProjection) => ContentBearingNodeProjection | undefined,
 ): string[] {
   const displayed = resolveDisplayNode ? resolveDisplayNode(rowNode) : displayNode(rowNode, byId);
   if (fieldId === NAME_FIELD) return [childText(displayed ?? rowNode, byId)].filter(Boolean);
@@ -269,7 +287,7 @@ function fieldTextFor(
   fieldId: string,
   byId: Map<NodeId, NodeProjection>,
   systemFieldContext?: SystemFieldContext,
-  resolveDisplayNode?: (node: NodeProjection) => NodeProjection | undefined,
+  resolveDisplayNode?: (node: NodeProjection) => ContentBearingNodeProjection | undefined,
 ): string {
   return resolvedViewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext, resolveDisplayNode).join(' ');
 }
@@ -279,7 +297,7 @@ function fieldNumberFor(
   fieldId: string,
   byId: Map<NodeId, NodeProjection>,
   systemFieldContext?: SystemFieldContext,
-  resolveDisplayNode?: (node: NodeProjection) => NodeProjection | undefined,
+  resolveDisplayNode?: (node: NodeProjection) => ContentBearingNodeProjection | undefined,
 ): number | null {
   const value = resolvedViewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext, resolveDisplayNode)[0];
   if (value === undefined) return null;
@@ -342,7 +360,7 @@ function fieldDateFor(
   fieldId: string,
   byId: Map<NodeId, NodeProjection>,
   systemFieldContext?: SystemFieldContext,
-  resolveDisplayNode?: (node: NodeProjection) => NodeProjection | undefined,
+  resolveDisplayNode?: (node: NodeProjection) => ContentBearingNodeProjection | undefined,
 ): number | null {
   if (!isViewDateField(fieldId, byId)) return null;
   const value = resolvedViewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext, resolveDisplayNode)[0];
@@ -361,7 +379,7 @@ function compareRowsByField(
   byId: Map<NodeId, NodeProjection>,
   fieldId: string,
   systemFieldContext?: SystemFieldContext,
-  resolveDisplayNode?: (node: NodeProjection) => NodeProjection | undefined,
+  resolveDisplayNode?: (node: NodeProjection) => ContentBearingNodeProjection | undefined,
 ): number {
   if (left.type !== 'content' && left.type !== 'field') return 1;
   if (right.type !== 'content' && right.type !== 'field') return -1;
@@ -472,7 +490,7 @@ function sortRows(
   systemFieldContext?: SystemFieldContext,
 ): OutlinerRowItem[] {
   if (view.sortRules.length === 0) return rows;
-  const displayedRows = new Map<NodeId, NodeProjection | undefined>();
+  const displayedRows = new Map<NodeId, ContentBearingNodeProjection | undefined>();
   for (const row of rows) {
     if (row.type !== 'content' && row.type !== 'field') continue;
     const node = rowNodeForView(row, byId);
@@ -638,6 +656,7 @@ function buildChildRows(
     if (options.pendingRemovalIds?.has(childId)) continue;
     const child = byId.get(childId);
     if (!child) continue;
+    if (!isContentBearingNode(child)) continue;
     if (child.type && INTERNAL_VIEW_NODE_TYPES.has(child.type)) continue;
     if (child.type === 'fieldEntry') {
       if (consumedEntryIds.has(child.id)) continue;
@@ -844,11 +863,11 @@ function fieldCandidateRows(
   parent: NodeProjection,
   byId: Map<NodeId, NodeProjection>,
   includeOwnerFieldEntries: boolean,
-): NodeProjection[] {
-  const rows: NodeProjection[] = [];
+): ContentBearingNodeProjection[] {
+  const rows: ContentBearingNodeProjection[] = [];
   for (const childId of parent.children) {
     const child = byId.get(childId);
-    if (!child) continue;
+    if (!child || !isContentBearingNode(child)) continue;
     if (child.type && INTERNAL_VIEW_NODE_TYPES.has(child.type)) continue;
     if (!includeOwnerFieldEntries && child.type === 'fieldEntry') continue;
     rows.push(child);
@@ -920,7 +939,7 @@ function referencedViewFields(view: ViewConfig): Set<string> {
 
 function systemFieldPresentInRows(
   fieldId: string,
-  rows: NodeProjection[],
+  rows: ContentBearingNodeProjection[],
   byId: Map<NodeId, NodeProjection>,
   referenceSummary: ReferenceSummary,
 ): boolean {

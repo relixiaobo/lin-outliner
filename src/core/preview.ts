@@ -2,31 +2,10 @@ import { decodeThreadImageArtifactReference } from './agent/codec';
 import type { ThreadImageArtifactReference, ThreadResourceReference } from './agent/protocol';
 import { MAX_MANAGED_ATTACHMENT_BYTES } from './agentAttachmentLimits';
 import { safeAttachmentFileName } from './agentAttachmentPaths';
+import type { PreviewEntryKind, PreviewTarget } from './previewTarget';
 
-export type PreviewEntryKind = 'file' | 'directory';
-export type PreviewSourceKind = 'local-file' | 'asset';
-
-export type PreviewTarget =
-  | {
-      kind: 'local-file';
-      path: string;
-      entryKind: PreviewEntryKind;
-      label?: string;
-      threadId?: string;
-      attachmentId?: string;
-      resourceRef?: ThreadResourceReference;
-      imageArtifactRef?: ThreadImageArtifactReference;
-    }
-  | {
-      kind: 'asset';
-      assetId: string;
-      label?: string;
-    }
-  | {
-      kind: 'url';
-      url: string;
-      label?: string;
-    };
+export type { PreviewEntryKind, PreviewTarget } from './previewTarget';
+export type PreviewSourceKind = 'local-file' | 'linked-file' | 'asset';
 
 export interface PreviewFileSource {
   kind: 'file';
@@ -87,6 +66,16 @@ export interface PreviewListDirectoryResult {
   error?: string;
 }
 
+export interface PreviewAuthorizeLinkedFileResult {
+  authorized: boolean;
+  canceled?: boolean;
+  error?: 'different-file' | 'invalid-source' | 'unavailable';
+}
+
+export interface PreviewForgetLinkedFileResult {
+  forgotten: boolean;
+}
+
 export function previewTargetKey(target: PreviewTarget): string {
   switch (target.kind) {
     case 'local-file':
@@ -103,6 +92,8 @@ export function previewTargetKey(target: PreviewTarget): string {
       return `local-file:${target.entryKind}:${target.path}`;
     case 'asset':
       return `asset:${target.assetId}`;
+    case 'linked-file':
+      return `linked-file:${target.sourceValueId}:${target.sourceText}`;
     case 'url':
       return `url:${target.url}`;
   }
@@ -147,6 +138,16 @@ export function previewTargetFromUnknown(value: unknown): PreviewTarget | null {
   if (value.kind === 'asset') {
     if (typeof value.assetId !== 'string' || !value.assetId) return null;
     return { kind: 'asset', assetId: value.assetId, ...(label ? { label } : {}) };
+  }
+  if (value.kind === 'linked-file') {
+    if (typeof value.sourceValueId !== 'string' || !value.sourceValueId) return null;
+    if (typeof value.sourceText !== 'string' || !value.sourceText) return null;
+    return {
+      kind: 'linked-file',
+      sourceValueId: value.sourceValueId,
+      sourceText: value.sourceText,
+      ...(label ? { label } : {}),
+    };
   }
   if (value.kind === 'url') {
     if (typeof value.url !== 'string' || !value.url) return null;

@@ -13,6 +13,120 @@
   min-width: 0;
 }
 
+.node-sources {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: var(--space-6) 0;
+}
+
+.node-sources-header,
+.node-sources-header-actions,
+.node-source-add,
+.node-source-actions {
+  display: flex;
+  align-items: center;
+}
+
+.node-sources-header {
+  min-height: var(--control-size-md);
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.node-sources-header h2 {
+  margin: 0;
+  font-size: var(--title-group);
+  line-height: var(--line-ui-sm);
+  font-weight: 600;
+  user-select: none;
+}
+
+.node-sources-header-actions,
+.node-source-actions {
+  flex: 0 0 auto;
+  gap: var(--space-1);
+}
+
+.node-source-list {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  border-block: 1px solid var(--separator);
+}
+
+.node-source-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--separator);
+}
+
+.node-source-row:last-child {
+  border-bottom: 0;
+}
+
+.node-source-row.is-selected {
+  background: var(--selection-soft);
+}
+
+.node-source-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.node-source-status {
+  display: flex;
+  min-width: 0;
+  gap: var(--space-2);
+  color: var(--text-tertiary);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+}
+
+.node-source-status span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-source-add {
+  min-width: 0;
+  gap: var(--space-2);
+}
+
+.node-source-add .input-control {
+  flex: 1 1 auto;
+}
+
+.node-source-preview {
+  min-width: 0;
+}
+
+.node-source-message {
+  min-height: var(--control-size-xl);
+  padding: var(--space-3) 0;
+  color: var(--text-secondary);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+}
+
+@media (max-width: 720px) {
+  .node-source-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .node-source-actions {
+    justify-content: flex-end;
+  }
+}
+
 .file-preview-panel--fill .file-preview-content {
   display: flex;
   width: 100%;
@@ -286,7 +400,7 @@
   background: var(--bg-content);
 }
 
-/* Audio / video players on a media file node's page. */
+/* Audio / video players in a media Source preview. */
 .file-preview-media {
   display: block;
   margin: 0;
@@ -983,8 +1097,8 @@
   line-height: var(--line-ui-sm);
 }
 
-/* File-node body — the preview content with a single bottom-center floating pill,
-   shared by loose previews and ingested file-node previews; the unified surface
+/* Preview body with a single bottom-center floating pill, shared by loose previews
+   and selected Node Sources; the unified surface
    provides the horizontal inset. The body is the positioning context for the pill. */
 .file-node-body {
   position: relative;
@@ -1354,208 +1468,4 @@
   color: var(--text-tertiary);
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs);
-}
-
-/* A non-image file node's row content: a read-only filename, sitting
-   in the row's content column. The file-type icon is the bullet (RowMarker `file`
-   variant), and the chevron expands an inline preview below the row, so a file reads as
-   a lightweight node — not a heavy card. */
-.file-node-row-main {
-  display: flex;
-  width: min(560px, 100%);
-  min-width: 0;
-  align-items: start;
-  border-radius: var(--radius-sm);
-  font-size: var(--font-content);
-  line-height: var(--line-content);
-}
-
-.row.file-node-row:focus-within .file-node-row-main[data-keyboard-focus='true'] {
-  box-shadow: var(--focus-ring-shadow);
-}
-
-.file-node-row-labels {
-  min-width: 0;
-  flex: 1 1 auto;
-  overflow-wrap: anywhere;
-}
-
-/* The filename is a read-only caret surface: it wraps like a locked/reference row
-   and participates in node keyboard commands, but text input never renames it. */
-.file-node-row-name {
-  color: var(--text-primary);
-  line-height: var(--line-content);
-  overflow-wrap: anywhere;
-  white-space: normal;
-}
-
-.file-node-row-name-editor,
-.file-node-row-name-editor .ProseMirror,
-.file-node-row-name-editor .ProseMirror p {
-  display: inline;
-}
-
-.file-node-row-name-editor {
-  width: auto;
-  max-width: 100%;
-  vertical-align: baseline;
-}
-
-.file-node-row-name-editor .ProseMirror {
-  min-height: 0;
-  overflow-wrap: anywhere;
-  white-space: normal;
-}
-
-.file-node-row-name-editor .ProseMirror p {
-  min-width: 0;
-}
-
-/* The inline preview sits below the file row (inside row-wrap, outside .row, so the row
-   selection highlight never paints it), indented under the row content. A shorter peek
-   and expanded bound than the dedicated node page keep it from dominating the outline. */
-.file-node-row-preview {
-  margin-top: var(--space-5);
-  margin-left: var(--row-leading-width);
-  --file-preview-summary-height: 248px;
-  --file-preview-expanded-height: min(60vh, 560px);
-}
-
-.file-node-row-preview .file-node-body {
-  margin-bottom: var(--space-3);
-}
-
-/* Icon-only chrome control: deepen colour on hover, no box (design-system B6). */
-.file-node-card-menu-trigger {
-  display: inline-flex;
-  width: var(--control-size-md);
-  height: var(--control-size-md);
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-sm);
-  color: var(--text-soft);
-  transition: color var(--motion-fast);
-  -webkit-app-region: no-drag;
-}
-
-.file-node-card-menu-trigger:hover,
-.file-node-card-menu-trigger[aria-expanded='true'] {
-  color: var(--text-primary);
-}
-
-.file-node-card-menu-trigger:focus-visible {
-  box-shadow: var(--focus-ring-shadow);
-}
-
-/* An image file node renders the image itself inline (an image's content is its
-   identity) — no file-type icon, no filename in the row (it is edited on the node
-   page). The ⋯ menu floats at the image's top-right, revealed on hover / while open. */
-.file-node-image {
-  position: relative;
-  display: inline-block;
-  /* Same bound as the image so this positioning context tracks the image's box,
-     keeping the absolutely-positioned ⋯ overlay pinned to the real top-right corner
-     (an inline-block otherwise grows to the row width when the intrinsic image is
-     wider than the cap). */
-  max-width: min(320px, 100%);
-  margin: var(--space-hairline) 0;
-}
-
-.file-node-image-button {
-  display: block;
-  border: 0;
-  border-radius: var(--radius-md);
-  background: transparent;
-  padding: 0;
-  /* A single click selects the image row; Maximize lives in the row menu. Native
-     content keeps the default arrow cursor (B10). */
-  cursor: default;
-  -webkit-app-region: no-drag;
-}
-
-.file-node-image-button img {
-  display: block;
-  /* auto overrides the intrinsic width/height attributes (set to reserve layout and
-     avoid load-time shift) so the box scales aspect-correctly under the max bounds,
-     rather than letterboxing inside the raw attribute dimensions. */
-  width: auto;
-  height: auto;
-  max-width: min(320px, 100%);
-  max-height: 240px;
-  border: 1px solid var(--separator);
-  border-radius: var(--radius-md);
-  background: var(--bg-content);
-  object-fit: contain;
-}
-
-/* The image could not be loaded (missing asset, or no asset:// handler + byte read
-   also failed): a bounded neutral placeholder that still carries the ⋯ menu. */
-.file-node-image--missing {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 160px;
-  min-height: var(--control-size-lg, 40px);
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--separator);
-  border-radius: var(--radius-md);
-  background: var(--bg-elevated);
-}
-
-.file-node-image-fallback {
-  color: var(--text-tertiary);
-  font-size: var(--font-ui-sm);
-  line-height: var(--line-ui-sm);
-}
-
-.file-node-image-button:focus-visible {
-  outline: none;
-}
-
-/* The row's focus (keyboard nav lands on the hidden image-row anchor) rings the image,
-   since the image is what the row shows. */
-.file-node-image-button:focus-visible img,
-.row:focus-within .file-node-image-button img {
-  box-shadow: var(--focus-ring-shadow);
-}
-
-.file-node-image-actions {
-  position: absolute;
-  top: var(--space-2);
-  right: var(--space-2);
-  display: inline-flex;
-  align-items: center;
-  opacity: 0;
-  transition: opacity var(--motion-fast);
-}
-
-.file-node-image:hover .file-node-image-actions,
-.file-node-image-actions:focus-within,
-.file-node-image-actions:has(.file-node-card-menu-trigger[aria-expanded='true']) {
-  opacity: 1;
-}
-
-/* Over arbitrary image content the trigger needs a legible backing: a circular glass
-   pill (B5 material on chrome; reduced-transparency fallback comes from the token). */
-.file-node-image-actions .file-node-card-menu-trigger {
-  border-radius: var(--radius-pill);
-  background: var(--material-popover);
-  -webkit-backdrop-filter: var(--material-backdrop);
-  backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--overlay-shadow-level-1);
-  color: var(--text-primary);
-}
-
-/* Image file rows have no filename editor; this focusable, visually-hidden anchor
-   carries their keyboard parity (arrow nav, Enter, etc.). Hide it (sr-only) while
-   keeping it focusable. position: absolute takes the anchor out of flow, so the
-   canonical sr-only `margin: -1px` is redundant — width/height 1px + clip + overflow
-   hide it. */
-.file-node-keyboard-anchor {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
 }

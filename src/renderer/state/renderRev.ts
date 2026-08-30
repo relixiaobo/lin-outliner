@@ -1,5 +1,6 @@
 import { inlineRefNodeId, type NodeId, type NodeProjection } from '../api/types';
 import { addToSetMap } from '../../core/setUtils';
+import { isContentBearingNode } from '../../core/types';
 import { SparseProjectionMap } from './sparseProjectionMap';
 
 // Per-node "data revision" support for memoizing the outliner.
@@ -54,13 +55,13 @@ export function emptyReverseEdges(): ReverseEdges {
 // allocation saved on the per-keystroke path.
 function nodeReverseKeys(node: NodeProjection): Record<ReverseCategory, readonly NodeId[]> {
   const inlineReferrers: NodeId[] = [];
-  for (const inlineRef of node.content.inlineRefs) {
+  for (const inlineRef of isContentBearingNode(node) ? node.content.inlineRefs : []) {
     const nodeId = inlineRefNodeId(inlineRef);
     if (nodeId) inlineReferrers.push(nodeId);
   }
   return {
     references: node.type === 'reference' && node.targetId ? [node.targetId] : [],
-    taggers: node.tags,
+    taggers: isContentBearingNode(node) ? node.tags : [],
     inlineReferrers,
     fieldEntries: node.type === 'fieldEntry' && node.fieldDefId ? [node.fieldDefId] : [],
   };

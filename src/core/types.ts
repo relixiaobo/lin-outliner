@@ -36,6 +36,7 @@ export const TRASH_ID = 'trash';
 export const TAG_DAY_ID = 'tag:day';
 export const TAG_WEEK_ID = 'tag:week';
 export const TAG_YEAR_ID = 'tag:year';
+export const SOURCE_FIELD_ID = 'field:source';
 
 // System option subtrees under SCHEMA_ID. Each holds the enum domain for a
 // config knob; selecting an enum value = referencing one of these nodes, so
@@ -62,8 +63,6 @@ export type NodeType =
   | 'fieldEntry'
   | 'reference'
   | 'codeBlock'
-  | 'image'
-  | 'attachment'
   | 'tagDef'
   | 'fieldDef'
   | 'defConfig'
@@ -81,7 +80,7 @@ export type FieldType =
   | 'options_from_supertag'
   | 'date'
   | 'number'
-  | 'url'
+  | 'uri'
   | 'email'
   | 'checkbox';
 
@@ -423,25 +422,7 @@ export interface CodeBlockNode extends NodeBase {
   /** CodeMirror language bundle id; '' means plain text. */
   codeLanguage?: string;
 }
-export interface ImageNode extends NodeBase {
-  type: 'image';
-  assetId?: string;
-  mediaUrl?: string;
-  mediaAlt?: string;
-  imageWidth?: number;
-  imageHeight?: number;
-}
-export interface AttachmentNode extends NodeBase {
-  type: 'attachment';
-  assetId?: string;
-  mimeType?: string;
-  originalFilename?: string;
-  fileSize?: number;
-  thumbnailAssetId?: string;
-  pdfPageCount?: number;
-  audioDurationMs?: number;
-  videoDurationMs?: number;
-}
+
 export interface TagDefNode extends NodeBase { type: 'tagDef'; }
 export interface FieldDefNode extends NodeBase { type: 'fieldDef'; }
 export interface DefConfigNode extends NodeBase {
@@ -492,13 +473,11 @@ export interface QueryParams {
 export interface SearchNode extends NodeBase, QueryParams { type: 'search'; }
 export interface QueryConditionNode extends NodeBase, QueryParams { type: 'queryCondition'; }
 
-export type Node =
+export type ContentBearingNode =
   | ContentNode
   | FieldEntryNode
   | ReferenceNode
   | CodeBlockNode
-  | ImageNode
-  | AttachmentNode
   | TagDefNode
   | FieldDefNode
   | DefConfigNode
@@ -509,6 +488,15 @@ export type Node =
   | DisplayFieldNode
   | SearchNode
   | QueryConditionNode;
+
+export type Node = ContentBearingNode;
+
+/** True when a node owns rich content and the ordinary content metadata surface. */
+export function isContentBearingNode<T extends { type?: NodeType }>(
+  node: T,
+): node is T {
+  return Boolean(node);
+}
 
 export interface DocumentState {
   schemaVersion: number;
@@ -527,12 +515,13 @@ type KeysOfUnion<T> = T extends unknown ? keyof T : never;
  * Every field key any node variant can carry. Persistence enumerates this to
  * read/write the flat scalar map generically, independent of a node's variant.
  */
-export type NodeFieldKey = KeysOfUnion<Node>;
+export type NodeFieldKey = Extract<KeysOfUnion<Node>, string>;
 
 // The projection mirrors the `Node` union variant-by-variant. Trash origin
 // metadata stays visible so read projections can associate deleted direct
 // children with their live owner; the restore index remains core-internal.
-export type NodeProjection = DistributiveOmit<Node, 'trashedFromIndex'>;
+export type ContentBearingNodeProjection = DistributiveOmit<ContentBearingNode, 'trashedFromIndex'>;
+export type NodeProjection = ContentBearingNodeProjection;
 
 export interface DocumentProjection {
   workspaceId: NodeId;
@@ -682,30 +671,6 @@ export type FieldSlotMutation =
       kind: 'appendField';
       name: string;
       fieldType: FieldType;
-      id?: NodeId;
-      entryId?: NodeId;
-    }
-  | {
-      kind: 'appendImage';
-      assetId?: string;
-      mediaUrl?: string;
-      width?: number | null;
-      height?: number | null;
-      alt?: string | null;
-      name?: string | null;
-      id?: NodeId;
-      entryId?: NodeId;
-    }
-  | {
-      kind: 'appendAttachment';
-      assetId?: string | null;
-      mimeType?: string | null;
-      originalFilename?: string | null;
-      fileSize?: number | null;
-      thumbnailAssetId?: string | null;
-      pdfPageCount?: number | null;
-      audioDurationMs?: number | null;
-      videoDurationMs?: number | null;
       id?: NodeId;
       entryId?: NodeId;
     }
@@ -1336,8 +1301,6 @@ export function createNodeRecord(
   parentId: NodeId | undefined,
   now: number,
 ): Node {
-  // `type` is the broad `NodeType | undefined` here; the variants are
-  // structurally identical at Stage 8, so this widening to the union is sound.
   return {
     id,
     type,

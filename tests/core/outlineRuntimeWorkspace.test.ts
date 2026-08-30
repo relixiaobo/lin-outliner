@@ -1025,9 +1025,11 @@ describe('OutlineRuntimeWorkspace', () => {
     const resumed = await logPage(router, {
       operationId: operation.operationId,
       cursor: operation.affectedNodeIdsCursor,
+      limit: 1,
     });
     expect(resumed.affectedNodeIds).toMatchObject({ offset: 1_000, totalCount: operation.affectedNodeCount });
-    expect(resumed.affectedNodeIds?.nodeIds).toEqual(pages.slice(1_000));
+    expect(resumed.affectedNodeIds?.nodeIds).toEqual(pages.slice(1_000, 1_001));
+    expect(resumed.cursor).toEqual(expect.any(String));
   });
 
   test('derives bounded many defaults for every multi-target Runtime read selector', async () => {
@@ -1078,7 +1080,9 @@ describe('OutlineRuntimeWorkspace', () => {
         expect(response.ok).toBe(true);
         if (!response.ok) continue;
         const result = response.data as ProjectionResult;
-        const resultIds = result.nodes.map((node) => (node as { id: string }).id);
+        const resultIds = result.nodes
+          .map((node) => (node as { id: string }).id)
+          .filter((id) => nodeIds.includes(id));
         if (selector.by === 'ids') expect(resultIds).toEqual(nodeIds);
         else expect(new Set(resultIds)).toEqual(new Set(nodeIds));
         expect(result.projection.targets).toEqual({

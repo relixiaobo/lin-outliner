@@ -38,9 +38,31 @@ settles receipt-bearing Runtime mutations against that control state. The
 control database is not portable workspace content. See
 [`agent-memory.md`](agent-memory.md).
 
-Binary assets are outside the CRDT document. The document stores stable logical
-asset IDs on `image` / `attachment` Nodes. Runtime owns Outline `AssetRecord`
-metadata, staging leases, live-Node and recovery-patch reachability, and the
+The schema includes one locked built-in `uri` field definition with stable
+internal ID `field:source` and user-visible name `URI`. The definition lock keeps
+that system identity and type stable; entries and values are ordinary unlocked
+Nodes. New content Nodes have no URI entry. The first field or Source-convenience
+mutation creates a normal `fieldEntry` lazily, and deleting the entry or its final
+value removes the field from that owner. Values are ordinary RichText-bearing
+content Nodes stored by the normal Loro codec, so generic text, field, tree,
+clone, and delete operations all apply. Concurrent first writes may produce
+multiple direct entries and readers aggregate them by definition ID.
+Source convenience add/reorder operations use that aggregate owner-local value
+order: omitted `after` appends to the aggregate tail, an anchor selects its
+entry, and reorder may move a value across converged entries.
+
+Preview resolution, media search, linked-file authorization, and managed-asset
+reachability opt in to values whose direct parent is a field entry with
+`fieldDefId === 'field:source'`. This is derived consumer meaning, not a mutation
+boundary. Labels are never identity: a user-defined field named `Source` or
+`URI` remains unrelated. Invalid, edited, unavailable, or unauthorized URI text
+stays exact and editable while only its derived presentation degrades.
+
+Binary assets are outside the CRDT document. An ordinary Node relates to a
+managed logical asset through the canonical
+`asset://local/<percent-encoded-logical-id>` text of a value under the built-in
+URI field, never through a special Node variant or asset scalar. Runtime owns Outline `AssetRecord`
+metadata, staging leases, Source/icon/banner/recovery-patch reachability, and the
 transaction that changes those facts. The neutral `ContentStore` stores immutable
 exact revisions, admission leases, opaque mechanical retention anchors,
 admission-staging/publication/deletion journals, physical-integrity quarantine,
@@ -114,8 +136,15 @@ without exposing its digest key. A revision shared by multiple recovery records
 is charged once, and a revision still retained by a live logical record is not
 charged as recovery-only storage.
 
-Renderer flows stage files through public asset capabilities and reference the
-returned lease in an ordinary ChangeSet. Native pickers, open, Reveal in Finder,
+Renderer flows stage files through public asset capabilities and consume the
+returned lease in the same ChangeSet that creates an ordinary Node and adds its
+canonical managed Source. Every AssetRecord that transitions from zero live URI
+references to one or more through an ordinary mutation must resolve exactly one
+unexpired staging lease during settlement; a missing or expired lease rejects
+publication even while its record still exists before garbage collection. Source
+convenience changes and generic URI field mutations share this settlement rule.
+Revert, undo, and redo may instead restore assets protected by the retained
+recovery patch they consume. Native pickers, open, Reveal in Finder,
 copy, and external URL handling remain Electron-main OS effects rather than
 Runtime document capabilities. Local `asset://` range serving streams verified
 Runtime bytes and does not pre-read an entire video merely to render it. PDF
@@ -126,6 +155,19 @@ exactly that authority and one decoded path segment, rejecting credentials,
 ports, query, fragment, separators, controls, and empty or oversized IDs before
 the Runtime asset service is called. Colon-bearing logical IDs therefore never
 enter a URL hostname, where normalization would lowercase them.
+
+Source classification is pure and permission-independent. It recognizes
+`http(s)` remote locators, canonical managed `asset:` locators, and exact linked
+`file:` locators while preserving invalid or unsupported text verbatim. Host
+resolution applies current network policy, verified AssetRecord authority, or a
+profile-private exact-file grant. A linked-file grant is stored atomically under
+active `userData`, authorizes only the selected canonical regular file (never its
+directory or siblings), and is revalidated through the same opened no-follow
+handle used by metadata, bounded reads, and exact-file stream tokens. Grant
+identity, canonical paths, and device/inode facts do
+not enter document, renderer, or Agent-visible state. Missing, corrupt, revoked,
+or retargeted grants degrade the Source to denied/unavailable without changing
+the stored scalar.
 
 Preview translation persistence is a separate local-derived-data boundary, not
 an asset or workspace fact. Electron main owns a bounded cache under `userData`;
@@ -406,11 +448,13 @@ large damaged file cannot cause one asynchronous read per byte. MP4 box and WAV
 chunk headers share a fixed-size read window, so dense containers do not cause
 one asynchronous read per header.
 
-`media add PATH|-` composes staging and media-Node creation as one common CLI
-intent while retaining the same internal lease boundary. `asset ingest` remains
-available when automation deliberately separates staging from reviewed document
-mutation. A failed media creation leaves the staged bytes governed by lease
-expiry; a successful Operation and its recovery patch protect the asset.
+Desktop file producers compose staging, ordinary Node creation, and a managed
+URI value as one transaction. `asset ingest` remains available when automation
+deliberately separates staging from a reviewed `source add` or generic URI-field
+mutation. Any mutation path that makes a managed URI live consumes its staged
+lease during Runtime settlement. A failed publication leaves the staged bytes
+governed by lease expiry; a successful Operation and its recovery patch protect
+the asset.
 
 Import is ordinary ChangeSet composition. The `outline` Skill's import helper
 inspects source data, accounts for coverage, and emits a ChangeSet plus evidence.

@@ -133,7 +133,7 @@ describe('reduceProjection over real core deltas', () => {
     expect(byId.has(a)).toBe(false);        // merged node gone
     expect(byId.has(g1)).toBe(true);        // grandchildren survive
     expect(byId.has(g2)).toBe(true);
-    expect(byId.get(c)!.children).toEqual([g1, g2]); // C kept its children
+    expect(byId.get(c)!.children).toEqual([g1, g2]); // C kept its content children
     expect(byId.get(c)!.parentId).toBe(b);  // C re-parented under B
     expect(materializedById(byId)).toEqual(rebuiltById(core)); // and the whole index matches a rebuild
   });

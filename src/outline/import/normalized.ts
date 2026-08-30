@@ -49,6 +49,9 @@ export interface GenericChangeSet {
 }
 export type ImportVerification = ImportEvidence['verification'][number];
 
+const MAX_IMPORT_PROJECTION_NODES = 10_000;
+const MAX_VERIFIED_IMPORT_NODES = MAX_IMPORT_PROJECTION_NODES / 2;
+
 export interface VerifiedImportRoot {
   binding: string;
   kind: 'created-tree' | 'date';
@@ -225,7 +228,7 @@ export function buildImportChangeSet(
           targets: { binding: entry.binding },
           depth: 1_024,
           include: ['description', 'children', 'tags', 'fields', 'references', 'media', 'view', 'trash'],
-          page: { limit: Math.min(entry.expectedNodeCount, 10_000) },
+          page: { limit: Math.min(entry.expectedNodeCount * 2, MAX_IMPORT_PROJECTION_NODES) },
         }),
   };
   return {
@@ -289,10 +292,11 @@ export function verifyImportSettlement(
       'binding' in candidate.projection.targets
       && candidate.projection.targets.binding === expected.binding
     ));
+    const importedNodes = result?.nodes;
     if (!result
       || result.revision !== operation.revisionAfter
-      || result.nodes.length !== expected.expectedNodeCount
-      || (result.nodes[0] as { id?: unknown } | undefined)?.id !== bindingIds[0]
+      || importedNodes?.length !== expected.expectedNodeCount
+      || (importedNodes[0] as { id?: unknown } | undefined)?.id !== bindingIds[0]
       || Boolean(result.truncated) !== Boolean(expected.truncated)) {
       throw new Error(`Returned Projection does not match evidence binding: ${expected.binding}`);
     }
@@ -301,7 +305,7 @@ export function verifyImportSettlement(
       kind: expected.kind,
       nodeId: bindingIds[0]!,
       ...(expected.date ? { date: expected.date } : {}),
-      nodeCount: result.nodes.length,
+      nodeCount: importedNodes.length,
       truncated: Boolean(expected.truncated),
     };
   });
@@ -311,8 +315,8 @@ function verificationForTree(binding: string, nodeCount: number): ImportVerifica
   return {
     binding,
     kind: 'created-tree',
-    expectedNodeCount: Math.min(nodeCount, 10_000),
-    ...(nodeCount > 10_000 ? { truncated: true as const } : {}),
+    expectedNodeCount: Math.min(nodeCount, MAX_VERIFIED_IMPORT_NODES),
+    ...(nodeCount > MAX_VERIFIED_IMPORT_NODES ? { truncated: true as const } : {}),
   };
 }
 

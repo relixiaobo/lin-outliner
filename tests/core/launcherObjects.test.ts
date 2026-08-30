@@ -12,6 +12,7 @@ import { ACTION_PANEL_ORDER } from '../../src/core/actions/registry';
 import { orderedResultObjects, stableObjectsFor } from '../../src/core/actions/surfaceObjects';
 import type { InvocationOpened, ObjectRef, RequestId } from '../../src/core/actions/types';
 import { Core } from '../../src/core/core';
+import { formatAssetSourceUri } from '../../src/core/source';
 import { buildTextSearchIndex } from '../../src/core/searchEngine';
 import { searchNodeText } from '../../src/main/nodeRetrievalService';
 
@@ -115,14 +116,14 @@ describe('the main-list query generation', () => {
     expect(result.resultItems[0]?.object.kind).toBe('node');
   });
 
-  test('returns and opens attachment nodes through the shared search kernel', async () => {
+  test('returns and opens Source-backed Nodes through the shared search kernel', async () => {
     const h = harness();
-    const attachment = h.core.createAttachmentNode(h.core.projection().todayId, null, {
-      assetId: 'asset-quarterly-call',
-      mimeType: 'audio/wav',
-      originalFilename: 'Quarterly call recording.wav',
-      fileSize: 2_048,
-    }).focus!.nodeId;
+    const attachment = h.core.createNode(
+      h.core.projection().todayId,
+      null,
+      'Quarterly call recording.wav',
+    ).focus!.nodeId;
+    h.core.addSource(attachment, 'source:quarterly-call', formatAssetSourceUri('asset-quarterly-call'));
     const opened = h.service.openLauncher({ openSeq: 1, consumerId: LAUNCHER });
     const result = await h.service.queryObjects({
       invocationRef: opened.invocationRef,
@@ -136,8 +137,8 @@ describe('the main-list query generation', () => {
     const item = result.resultItems.find((candidate) => candidate.object.backingNodeId === attachment);
     expect(item?.object.kind).toBe('node');
     expect(item?.object.name).toEqual({ source: 'literal', value: 'Quarterly call recording.wav' });
-    expect(item?.object.iconId).toBe('file');
-    expect(item?.object.typeLabel).toEqual({ en: 'File', 'zh-Hans': '文件' });
+    expect(item?.object.iconId).toBe('node');
+    expect(item?.object.typeLabel).toEqual({ en: 'Node', 'zh-Hans': '节点' });
     expect(item?.primaryAction?.actionId).toBe('open');
     expect(result.resultItems.some((candidate) => candidate.object.kind === 'draft')).toBe(false);
     expect(item).toBeDefined();

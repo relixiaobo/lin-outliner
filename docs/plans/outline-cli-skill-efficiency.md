@@ -396,9 +396,8 @@ interface ViewSummary {
   `viewDef`; otherwise inspection fails without writing. The result reports the
   persisted mode instead of assuming that the requested mode was applied.
 - **FR-18:** `itemCount` is exact and counts direct ordinary content children
-  only. It excludes the view definition, protected Source entry, field entries,
-  field values, and other structural children introduced by the final Source
-  model.
+  only. It excludes the view definition, field entries, field values, and other
+  structural children.
 - **FR-19:** Display metadata follows the view's complete display configuration
   and resolves labels deterministically. The digest covers the complete ordered
   display state so bounded human output can prove whether an omitted tail
@@ -517,10 +516,10 @@ execution boundary.
   `show`/`find` requests. Runtime routing, storage, and mutation code remain
   byte-for-byte unchanged, and cross-request revision drift never produces a
   mixed summary.
-- **NFR-7:** `outline-source-model`'s ordinary-Node constructor, protected Source entry,
-  Source mutation restrictions, and retired special-Node rules remain intact in
-  every lowered row and owner. No pre-Source draft shape survives in fixtures or
-  tests.
+- **NFR-7:** `outline-source-model`'s ordinary-Node constructor, lazily created
+  built-in URI field, ordinary editable value behavior, and retired special-Node
+  rules remain intact in every lowered row and owner. No pre-Source draft shape
+  survives in fixtures or tests.
 
 ### 10. Dependency And Collision Boundary
 

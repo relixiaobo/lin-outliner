@@ -2843,17 +2843,13 @@ describe('row interaction resolvers', () => {
     }));
   });
 
-  test('reference candidates include file nodes by their display filename only when requested', () => {
+  test('reference candidates use ordinary Node content for Source-backed resources', () => {
     const nodes = [
       makeNode('root', 'Root', { children: ['today'] }),
       makeNode('today', 'Today', { parentId: 'root', children: ['current', 'pdf'] }),
       makeNode('current', 'Current', { parentId: 'today' }),
-      makeNode('pdf', '', {
+      makeNode('pdf', '微信背后的产品观.pdf', {
         parentId: 'today',
-        type: 'attachment',
-        assetId: 'asset-pdf',
-        mimeType: 'application/pdf',
-        originalFilename: '微信背后的产品观.pdf',
       }),
     ];
     const projection = {
@@ -2875,24 +2871,14 @@ describe('row interaction resolvers', () => {
       query: '产品观',
       excludeCurrentNode: false,
     });
-    expect(defaultCandidates.some((candidate) => candidate.type === 'node' && candidate.id === 'pdf')).toBe(false);
-
-    const composerCandidates = buildReferenceCandidates({
-      index: { projection, byId: new Map(nodes.map((node) => [node.id, node])) } as any,
-      currentNodeId: 'current',
-      query: '产品观',
-      excludeCurrentNode: false,
-      includeFileNodes: true,
-    });
-
-    expect(composerCandidates).toContainEqual(expect.objectContaining({
+    expect(defaultCandidates).toContainEqual(expect.objectContaining({
       id: 'pdf',
       label: '微信背后的产品观.pdf',
       type: 'node',
     }));
   });
 
-  test('reference admission excludes date shortcuts and private Composer file-node identities', () => {
+  test('reference admission excludes date shortcuts and private Composer identities', () => {
     const publicNodeId = 'node:550e8400-e29b-41d4-a716-446655440000';
     const attachmentId = 'attachment:6ba7b810-9dad-4d80-b4f0-21cf460d5c2f';
     const imageId = 'image:7ba7b810-9dad-4d80-b4f0-21cf460d5c2f';
@@ -2901,17 +2887,8 @@ describe('row interaction resolvers', () => {
     ));
     const nodes = [
       makeNode(publicNodeId, 'Shared result'),
-      makeNode(attachmentId, '', {
-        type: 'attachment',
-        assetId: 'asset-pdf',
-        mimeType: 'application/pdf',
-        originalFilename: 'Private brief.pdf',
-      }),
-      makeNode(imageId, 'Private diagram', {
-        type: 'image',
-        assetId: 'asset-image',
-        mimeType: 'image/png',
-      }),
+      makeNode(attachmentId, 'Private brief.pdf'),
+      makeNode(imageId, 'Private diagram'),
       ...privateDateNodes,
     ];
     const projection = {
@@ -2937,14 +2914,12 @@ describe('row interaction resolvers', () => {
       index,
       currentNodeId: null,
       query: 'Private',
-      includeFileNodes: true,
       excludeCurrentNode: false,
     }).some((candidate) => candidate.type === 'node')).toBe(false);
     expect(referenceItems({
       index,
       currentNodeId: null,
       query: 'Shared',
-      includeFileNodes: true,
       excludeCurrentNode: false,
     })).toContainEqual(expect.objectContaining({
       id: publicNodeId,

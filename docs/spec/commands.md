@@ -43,7 +43,7 @@ owned. Missing and duplicate owners both fail the guard.
 | Mutation kernel | `diff`, `commit`, `apply` | Previews one ChangeSet, directly commits a non-destructive ChangeSet, or atomically applies one exact reviewed Diff. |
 | History | `log`, `revert`, `undo`, `redo` | Reads durable Operations or records a guarded reversal as another Operation. |
 | Asset | `asset ingest`, `asset show`, `asset export` | Stages verified bytes, reads metadata, or streams verified bytes. |
-| Porcelain mutation | `add`, `set`, `text replace`, `move`, `duplicate`, `merge`, `indent`, `outdent`, `done set`, `done cycle`, `tag add`, `tag remove`, `field define`, `field set`, `field clear`, `field remove`, `field reuse`, `field select`, `definition create`, `definition configure`, `definition merge`, `reference add`, `reference set`, `reference replace`, `reference inline`, `reference restore`, `view set`, `view group set`, `view sort add`, `view sort set`, `view sort remove`, `view sort clear`, `view filter add`, `view filter set`, `view filter remove`, `view filter clear`, `view display add`, `view display set`, `view display remove`, `search create`, `search ensure-tag`, `search set`, `search refresh`, `template apply`, `daily ensure`, `capture add`, `media add`, `media set`, `trash`, `restore`, `purge` | Lowers one intent into the public ChangeSet contract. `--preview` returns its Diff; destructive or review-bound writes apply an exact Diff, while ordinary non-destructive writes may commit directly. |
+| Porcelain mutation | `add`, `set`, `text replace`, `move`, `duplicate`, `merge`, `indent`, `outdent`, `done set`, `done cycle`, `tag add`, `tag remove`, `field define`, `field set`, `field clear`, `field remove`, `field reuse`, `field select`, `definition create`, `definition configure`, `definition merge`, `reference add`, `reference set`, `reference replace`, `reference inline`, `reference restore`, `view set`, `view group set`, `view sort add`, `view sort set`, `view sort remove`, `view sort clear`, `view filter add`, `view filter set`, `view filter remove`, `view filter clear`, `view display add`, `view display set`, `view display remove`, `search create`, `search ensure-tag`, `search set`, `search refresh`, `template apply`, `daily ensure`, `capture add`, `source add`, `source replace`, `source reorder`, `source remove`, `source clear`, `trash`, `restore`, `purge` | Lowers one intent into the public ChangeSet contract. `--preview` returns its Diff; destructive or review-bound writes apply an exact Diff, while ordinary non-destructive writes may commit directly. |
 
 `capabilities` is executable authority rather than a hand-maintained help list.
 `outline --help`, family help, exact command help, shell completion metadata,
@@ -149,12 +149,16 @@ it. Markdown tables, aligned child text, and owner Nodes without a table
 `viewDef` do not satisfy a table request.
 
 `capture add` accepts exactly one parent or local date, ensures the date when
-needed, preserves capture provenance, and creates its typed child tree in the
-same Operation. `media add` accepts a local path or stdin, stages the asset lease,
-and creates the image/attachment Node in one invocation. `asset ingest` remains
-the explicit primitive for automation that deliberately separates staging and
-review. Root `set` patches generic Node properties; `media set` owns media
-source/geometry; `search set` owns Search query/view configuration.
+needed, preserves capture provenance, derives a canonical HTTP(S) Source from the
+capture metadata when present, and creates its typed child tree in the same
+Operation. The dedicated `source add`, `source replace`, `source reorder`,
+`source remove`, and `source clear` commands adapt direct values under the
+built-in URI field definition. When convergence leaves multiple entries, add and
+reorder use their aggregate owner-local value order and may select or move across
+entries. `asset ingest` remains the explicit primitive for automation that
+deliberately separates staging and review; the reviewed ChangeSet then adds its
+canonical managed Source to an ordinary Node. Root `set` patches generic Node
+properties, while `search set` owns Search query/view configuration.
 
 Create, move, and duplicate use a public placement union rather than loosely
 coupled parent/index fields. Destination placement is `first(parent)`,

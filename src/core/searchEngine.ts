@@ -11,6 +11,7 @@ import {
   TRASH_ID,
   WORKSPACE_ID,
   inlineRefNodeId,
+  isContentBearingNode,
   type DocumentProjection,
   type DocumentState,
   type FieldType,
@@ -36,8 +37,14 @@ import {
   startOfLocalDay,
   startOfLocalWeek,
 } from './localDate';
-import { mediaKindForMimeType, type MediaKind } from './mediaKind';
+import type { MediaKind } from './mediaKind';
+import {
+  classifyNodeSource,
+  parseAssetSourceUri,
+  sourceKindFromMetadata,
+} from './source';
 import { intersectSetList, unionSets } from './setUtils';
+import { sourceFieldValues } from './sourceField';
 import {
   createTextSearchIndex,
   type MutableTextSearchIndex,
@@ -79,7 +86,8 @@ import {
 } from './systemFields';
 
 type SearchDocument = DocumentState | DocumentProjection;
-type SearchNode = Node | NodeProjection;
+type SearchDocumentNode = Node | NodeProjection;
+type SearchNode = SearchDocumentNode;
 /** A node that carries query params — a `search` (inline rule) or a `queryCondition`. */
 type QueryBearingNode = Extract<SearchNode, { type: 'search' } | { type: 'queryCondition' }>;
 
@@ -217,6 +225,12 @@ export interface SearchRunOptions {
   searchNodeId?: NodeId;
   textIndex?: TextSearchIndex;
   includeTrash?: boolean;
+  assetMetadataById?: ReadonlyMap<string, SearchAssetMetadata>;
+}
+
+export interface SearchAssetMetadata {
+  mimeType: string;
+  originalFilename?: string;
 }
 
 export interface TransientSearchRunOptions extends SearchRunOptions, TransientSearchOptions {}
@@ -228,6 +242,7 @@ interface SearchIndex {
   allNodes: SearchNode[];
   deletedNodeIds?: ReadonlySet<NodeId>;
   fieldSlotCache: NodeFieldSlotCache;
+  assetMetadataById?: ReadonlyMap<string, SearchAssetMetadata>;
 }
 
 interface SearchContext {
@@ -319,7 +334,7 @@ function runSearchExprInternal(
   options: SearchRunOptions,
   personalAccessRanking?: SearchPersonalAccessRanking,
 ): SearchRunResult {
-  const baseIndex = indexSearchDocument(document);
+  const baseIndex = indexSearchDocument(document, options.assetMetadataById);
   const searchNode = options.searchNodeId
     ? baseIndex.nodes.get(options.searchNodeId)
     : undefined;
@@ -673,15 +688,17 @@ export function buildTextSearchRecordSnapshot(document: SearchDocument): TextSea
 }
 
 export function textSearchRecordForNodeMap(
-  nodes: ReadonlyMap<NodeId, SearchNode>,
+  documentNodes: ReadonlyMap<NodeId, SearchDocumentNode>,
   rootId: NodeId,
   libraryId: NodeId,
   nodeId: NodeId,
 ): NodeTextSearchRecord | null {
+  const contentNodes = [...documentNodes.values()].filter(isContentBearingNode);
+  const nodes = new Map(contentNodes.map((node) => [node.id, node]));
   return textSearchRecordForNode({
     rootId,
     libraryId,
-    nodes: nodes as Map<NodeId, SearchNode>,
+    nodes,
     allNodes: [],
     fieldSlotCache: new NodeFieldSlotCache(),
   }, nodeId);
@@ -694,10 +711,14 @@ function referenceSummaryForSearchIndex(index: SearchIndex): ReferenceSummary {
   });
 }
 
-function indexSearchDocument(document: SearchDocument): SearchIndex {
-  const allNodes = Array.isArray(document.nodes)
+function indexSearchDocument(
+  document: SearchDocument,
+  assetMetadataById?: ReadonlyMap<string, SearchAssetMetadata>,
+): SearchIndex {
+  const documentNodes: SearchDocumentNode[] = Array.isArray(document.nodes)
     ? document.nodes
     : Object.values(document.nodes);
+  const allNodes = documentNodes.filter(isContentBearingNode);
   const nodes = new Map(allNodes.map((node) => [node.id, node]));
   return {
     rootId: document.rootId,
@@ -706,6 +727,7 @@ function indexSearchDocument(document: SearchDocument): SearchIndex {
     nodes,
     deletedNodeIds: deletedNodeIdSet(nodes),
     fieldSlotCache: new NodeFieldSlotCache(),
+    assetMetadataById,
   };
 }
 
@@ -1228,14 +1250,14 @@ function evaluateLeaf(index: SearchIndex, candidate: SearchNode, conditionNode: 
   if (op === 'OVERDUE') return { ok: true, match: nodeIsOverdue(index, candidate, conditionNode), score: 18 };
 
   if (op === 'HAS_MEDIA' || op === 'HAS_IMAGE' || op === 'HAS_AUDIO' || op === 'HAS_VIDEO') {
-    const mediaKind = nodeMediaKind(candidate);
+    const mediaKinds = nodeMediaKinds(index, candidate);
     const match = op === 'HAS_MEDIA'
-      ? mediaKind !== null
+      ? mediaKinds.length > 0
       : op === 'HAS_IMAGE'
-        ? mediaKind === 'image'
+        ? mediaKinds.includes('image')
         : op === 'HAS_AUDIO'
-          ? mediaKind === 'audio'
-          : mediaKind === 'video';
+          ? mediaKinds.includes('audio')
+          : mediaKinds.includes('video');
     return { ok: true, match, score: 14 };
   }
 
@@ -1285,7 +1307,7 @@ function virtualConditionNodeFromCompiledRule(
 }
 
 function virtualSearchNode(): SearchNode {
-  return virtualNode('virtual:search', undefined, 'search', 'Search');
+  return virtualNode('virtual:search', undefined, 'search', 'Search') as SearchNode;
 }
 
 function virtualNode(
@@ -1294,9 +1316,8 @@ function virtualNode(
   type: SearchNode['type'],
   text: string,
 ): SearchNode {
-  return {
+  const base = {
     id,
-    type,
     parentId,
     children: [],
     content: plainText(text),
@@ -1306,6 +1327,7 @@ function virtualNode(
     locked: false,
     autoCollected: false,
   };
+  return (type === undefined ? base : { ...base, type }) as SearchNode;
 }
 
 function invalidSearchNode(searchNodeId: NodeId): SearchConditionIssue {
@@ -1986,11 +2008,30 @@ function isCalendarNode(index: SearchIndex, nodeId: NodeId): boolean {
   return isDayNode(index, nodeId) || isWeekNode(index, nodeId) || isYearNode(index, nodeId);
 }
 
-function nodeMediaKind(node: SearchNode): MediaKind | null {
-  if (node.type === 'image') return 'image';
-  if (node.type !== 'attachment') return null;
-  const mediaKind = mediaKindForMimeType(node.mimeType);
-  return mediaKind === 'audio' || mediaKind === 'video' ? mediaKind : null;
+function nodeMediaKinds(index: SearchIndex, node: SearchNode): readonly MediaKind[] {
+  const result = new Set<MediaKind>();
+  for (const value of sourceFieldValues(index.nodes, node.id)) {
+    const assetId = parseAssetSourceUri(value.sourceText);
+    if (assetId) {
+      const metadata = index.assetMetadataById?.get(assetId);
+      if (!metadata) continue;
+      const kind = sourceKindFromMetadata(metadata.mimeType, metadata.originalFilename);
+      if (kind === 'image' || kind === 'audio' || kind === 'video') result.add(kind);
+      continue;
+    }
+    let protocol: string;
+    try {
+      protocol = new URL(value.sourceText).protocol;
+    } catch {
+      continue;
+    }
+    if (protocol !== 'http:' && protocol !== 'https:') continue;
+    const classified = classifyNodeSource(value.sourceText);
+    if (classified.kind === 'image' || classified.kind === 'audio' || classified.kind === 'video') {
+      result.add(classified.kind);
+    }
+  }
+  return [...result];
 }
 
 function nodeMatchesType(index: SearchIndex, node: SearchNode, expectedType: string): boolean {
@@ -2005,7 +2046,6 @@ function nodeMatchesType(index: SearchIndex, node: SearchNode, expectedType: str
   if (expected === 'day') return isDayNode(index, node.id);
   if (expected === 'week') return isWeekNode(index, node.id);
   if (expected === 'year') return isYearNode(index, node.id);
-  if (expected === 'image') return node.type === 'image';
   if (['code', 'codeblock'].includes(expected)) return node.type === 'codeBlock';
   return false;
 }
@@ -2124,7 +2164,7 @@ function isSearchCandidate(index: SearchIndex, nodeId: NodeId, includeTrash = fa
   return (includeTrash || !isInTrash(index, nodeId))
     && !hasAncestorOfType(index, nodeId, 'queryCondition')
     && !SYSTEM_IDS.has(nodeId)
-    && (node.type === undefined || ['tagDef', 'fieldDef', 'search', 'codeBlock', 'image', 'attachment'].includes(node.type));
+    && (node.type === undefined || ['tagDef', 'fieldDef', 'search', 'codeBlock'].includes(node.type));
 }
 
 function hasAncestorOfType(index: SearchIndex, nodeId: NodeId, type: SearchNode['type']): boolean {

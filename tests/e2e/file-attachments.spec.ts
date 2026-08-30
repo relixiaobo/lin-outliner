@@ -7,6 +7,9 @@ import {
   ids,
   openMockedApp,
   row,
+  rowEditor,
+  sourceFieldEntries,
+  sourceFieldValues,
   trailingEditor,
 } from './outlinerMock';
 
@@ -15,7 +18,14 @@ async function todayChildren(page: Parameters<typeof trailingEditor>[0]) {
   return projection.nodes.find((node) => node.id === ids.today)?.children ?? [];
 }
 
-async function appliedAttachmentDrafts(page: Parameters<typeof trailingEditor>[0]) {
+function outlineChildIds(projection: Awaited<ReturnType<typeof e2eProjection>>, ownerId: string) {
+  const owner = projection.nodes.find((node) => node.id === ownerId);
+  return owner?.children.filter((childId) => (
+    projection.nodes.find((node) => node.id === childId)?.type !== 'fieldEntry'
+  )) ?? [];
+}
+
+async function appliedSourceCreates(page: Parameters<typeof trailingEditor>[0]) {
   const calls = await commandCalls(page);
   return calls.flatMap((call) => {
     const input = call.args as {
@@ -27,6 +37,9 @@ async function appliedAttachmentDrafts(page: Parameters<typeof trailingEditor>[0
           index?: number;
         };
         nodes?: Array<Record<string, unknown>>;
+        bind?: string;
+        targets?: { binding?: string };
+        changes?: Array<Record<string, unknown>>;
       }> } };
       changeSet?: { operations?: Array<{
         op?: string;
@@ -36,22 +49,31 @@ async function appliedAttachmentDrafts(page: Parameters<typeof trailingEditor>[0
           index?: number;
         };
         nodes?: Array<Record<string, unknown>>;
+        bind?: string;
+        targets?: { binding?: string };
+        changes?: Array<Record<string, unknown>>;
       }> };
     };
     const operations = call.cmd === 'outline/apply'
       ? input.diff?.normalizedChangeSet?.operations ?? []
       : call.cmd === 'outline/commit' ? input.changeSet?.operations ?? [] : [];
-    return operations.flatMap((operation) => (
-      operation.op === 'create'
-        ? (operation.nodes ?? []).filter((draft) => draft.type === 'attachment').map((draft) => ({
-            draft,
-            index: operation.placement?.index,
-            parentId: operation.placement?.parent?.target?.selector?.by === 'id'
-              ? operation.placement.parent.target.selector.id
-              : undefined,
-          }))
-        : []
-    ));
+    return operations.flatMap((operation) => {
+      if (operation.op !== 'create' || !operation.bind) return [];
+      const sourceAdds = operations.flatMap((candidate) => (
+        candidate.op === 'update' && candidate.targets?.binding === operation.bind
+          ? (candidate.changes ?? []).filter((change) => change.kind === 'source' && change.action === 'add')
+          : []
+      ));
+      if (sourceAdds.length === 0) return [];
+      return (operation.nodes ?? []).map((draft) => ({
+        draft,
+        index: operation.placement?.index,
+        parentId: operation.placement?.parent?.target?.selector?.by === 'id'
+          ? operation.placement.parent.target.selector.id
+          : undefined,
+        sourceText: sourceAdds[0]?.sourceText,
+      }));
+    });
   });
 }
 
@@ -120,16 +142,23 @@ async function pasteClipboardFileAndOpenPreview(
   page: Parameters<typeof trailingEditor>[0],
   file: { name: string; mimeType: string; text: string },
 ) {
+  const activePanel = page.locator('.outline-panel-surface.active-panel');
+  if (!(await trailingEditor(page).isVisible())) {
+    const backButton = activePanel.locator('.panel-page-back-button');
+    await expect(backButton).toBeEnabled();
+    await backButton.click();
+    await expect(trailingEditor(page)).toBeVisible();
+  }
   const beforeChildren = await todayChildren(page);
   await trailingEditor(page).click();
   await pasteClipboardFile(page, file);
   await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
   const pastedId = (await todayChildren(page)).at(-1);
-  if (!pastedId) throw new Error(`No pasted file node for ${file.name}`);
+  if (!pastedId) throw new Error(`No pasted Source-backed node for ${file.name}`);
   const pastedRow = row(page, pastedId);
   await pastedRow.locator('> .row').first().hover();
-  await pastedRow.locator('.row-chevron-button').first().click();
-  const previewFrame = pastedRow.locator('.file-node-row-preview .file-node-preview.collapsed');
+  await pastedRow.locator('> .row .row-bullet-button').first().click();
+  const previewFrame = page.locator('.outline-panel-surface.active-panel .node-source-preview .file-node-preview.collapsed');
   await expect(previewFrame).toBeVisible();
   return previewFrame;
 }
@@ -528,7 +557,7 @@ test.describe('file attachments', () => {
     await openMockedApp(page);
   });
 
-  test('/attachment creates a lightweight file name row whose chevron expands an inline preview and whose bullet drills to the node page', async ({ page }) => {
+  test('/attachment creates an ordinary editable Node with a managed Source and a full PDF preview', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
     await page.keyboard.type('/attachment');
@@ -541,136 +570,53 @@ test.describe('file attachments', () => {
     const attachmentId = (await todayChildren(page)).at(-1);
     expect(attachmentId).toBeTruthy();
     await expect.poll(async () => {
-      const node = (await e2eProjection(page)).nodes.find((entry) => entry.id === attachmentId);
-      return node?.type ?? null;
-    }).toBe('attachment');
-
-    const longFilename = '01KRONS5VGWKCMGEN42FKHVS26-diffs_from_pierre_unbroken_review_bundle_for_wrap_regression.pdf';
-    // Simulate old saved data where the file node has a source filename but an empty
-    // node title. The row and preview surface should still render the filename, not
-    // "Untitled"; long filenames wrap like read-only reference rows instead of
-    // truncating behind an ellipsis.
-    await page.evaluate(({ nodeId, longFilename, tagId }) => {
-      const win = window as typeof window & {
-        __LIN_E2E__?: {
-          emitDocumentEvent: (event: unknown) => void;
-          projection: () => {
-            nodes: Array<{
-              id: string;
-              content: { text: string; marks?: unknown[]; inlineRefs: unknown[] };
-              originalFilename?: string;
-              tags?: string[];
-            }>;
-          };
-        };
-      };
-      const projection = win.__LIN_E2E__!.projection();
-      const node = projection.nodes.find((entry) => entry.id === nodeId);
-      if (!node) throw new Error('missing attachment node');
-      node.content = { text: '', marks: [], inlineRefs: [] };
-      node.originalFilename = longFilename;
-      node.tags = [tagId];
-      win.__LIN_E2E__!.emitDocumentEvent({ type: 'projection_changed', projection });
-    }, { nodeId: attachmentId, longFilename, tagId: ids.projectTag });
-
-    // A non-image file is a lightweight name row (no card): the file-type icon serves
-    // as the bullet, and the row carries a read-only filename. The old uniform
-    // `.file-node-card` and the old row-level `⋯` menu are gone; file actions live in
-    // the preview pill.
-    const attachmentRow = row(page, attachmentId!);
-    await expect(attachmentRow.locator('.row-bullet-shape.file')).toHaveCount(1);
-    await expect(attachmentRow.locator('.file-node-card')).toHaveCount(0);
-    const rowMain = attachmentRow.locator('.file-node-row-main');
-    await expect(rowMain).toBeVisible();
-    await expect(rowMain.locator('.file-node-row-name')).toContainText(longFilename);
-    await expect(rowMain.locator('.file-node-row-name')).not.toContainText('Untitled');
-    await expect(rowMain.locator('.file-node-row-labels > .tag-bar .tag-badge-label')).toHaveText('project');
-    await expect(attachmentRow.locator('> .row .row-content-line > .tag-bar')).toHaveCount(0);
-    await expect(rowMain.locator('.file-node-card-menu-trigger')).toHaveCount(0);
-    await expect(attachmentRow.locator('.file-node-row-actions')).toHaveCount(0);
-    await expect.poll(async () => rowMain.locator('.file-node-row-labels').evaluate((element) => {
-      const style = getComputedStyle(element);
-      const range = document.createRange();
-      range.selectNodeContents(element);
-      const rects = Array.from(range.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0);
-      range.detach();
+      const projection = await e2eProjection(page);
+      const node = projection.nodes.find((entry) => entry.id === attachmentId);
+      const sourceEntry = sourceFieldEntries(projection, attachmentId!)[0];
+      const source = sourceFieldValues(projection, attachmentId!)[0];
       return {
-        wraps: rects.length > 1,
-        whiteSpace: style.whiteSpace,
-        overflows: element.scrollWidth > element.clientWidth + 1,
+        content: node?.content.text ?? null,
+        sourceCount: sourceEntry?.children.length ?? 0,
+        sourceEntryField: sourceEntry?.fieldDefId ?? null,
+        sourceText: source?.content.text ?? null,
+        sourceType: source?.type ?? null,
+        type: node?.type ?? null,
       };
-    })).toEqual({ wraps: true, whiteSpace: 'normal', overflows: false });
-    await expect.poll(async () => attachmentRow.evaluate((element) => {
-      const icon = element.querySelector('.row-bullet-shape.file');
-      const name = element.querySelector('.file-node-row-name');
-      if (!icon || !name) return null;
-      const range = document.createRange();
-      range.selectNodeContents(name);
-      const firstLine = Array.from(range.getClientRects()).find((rect) => rect.width > 0 && rect.height > 0);
-      range.detach();
-      if (!firstLine) return null;
-      const iconRect = icon.getBoundingClientRect();
-      const firstLineCenter = firstLine.top + firstLine.height / 2;
-      const iconCenter = iconRect.top + iconRect.height / 2;
-      return Math.round(Math.abs(firstLineCenter - iconCenter));
-    })).toBeLessThanOrEqual(3);
-    await expect.poll(async () => attachmentRow.evaluate((element, contentNodeId) => {
-      const contentButton = document.querySelector(`[data-node-id="${contentNodeId}"] .row-bullet-button`);
-      const button = element.querySelector('.row-bullet-button');
-      const marker = element.querySelector('.row-bullet-shape.file');
-      const icon = marker?.querySelector('.inline-ref-file-icon');
-      if (!contentButton || !button || !marker || !icon) return null;
-      const centerX = (rect: DOMRect) => rect.left + rect.width / 2;
-      const contentButtonRect = contentButton.getBoundingClientRect();
-      const buttonRect = button.getBoundingClientRect();
-      const markerRect = marker.getBoundingClientRect();
-      const iconRect = icon.getBoundingClientRect();
-      const iconStyle = getComputedStyle(icon);
-      return {
-        buttonWidth: Math.round(buttonRect.width),
-        contentButtonWidth: Math.round(contentButtonRect.width),
-        iconHeight: Math.round(iconRect.height),
-        iconCentered: Math.abs(centerX(iconRect) - centerX(buttonRect)) <= 0.5,
-        iconWidth: Math.round(iconRect.width),
-        iconMarginRight: iconStyle.marginRight,
-        markerHeight: Math.round(markerRect.height),
-        markerCentered: Math.abs(centerX(markerRect) - centerX(buttonRect)) <= 0.5,
-        markerWidth: Math.round(markerRect.width),
-        sameHitHeight: Math.abs(buttonRect.height - contentButtonRect.height) <= 0.5,
-        sameHitWidth: Math.abs(buttonRect.width - contentButtonRect.width) <= 0.5,
-      };
-    }, ids.alpha)).toEqual({
-      buttonWidth: 15,
-      contentButtonWidth: 15,
-      iconHeight: 15,
-      iconCentered: true,
-      iconWidth: 15,
-      iconMarginRight: '0px',
-      markerHeight: 15,
-      markerCentered: true,
-      markerWidth: 15,
-      sameHitHeight: true,
-      sameHitWidth: true,
+    }).toEqual({
+      content: 'picked-report.pdf',
+      sourceCount: 1,
+      sourceEntryField: 'field:source',
+      sourceText: expect.stringMatching(/^asset:\/\/local\//),
+      sourceType: null,
+      type: null,
     });
 
-    // The filename is display-only: a single click selects the row but does NOT
-    // navigate to the node page — the Today outline stays active.
-    await attachmentRow.locator('.file-node-row-name').click();
-    await expect(page.locator(`.outline-panel-surface.active-panel [data-trailing-parent-id="${ids.today}"]`)).toBeVisible();
-    await expect(page.locator('.outline-panel-surface.active-panel .panel-title-file-heading')).toHaveCount(0);
-
-    // The chevron expands an INLINE PREVIEW (not children). The chevron is
-    // hover-revealed, so hover the row line first, then click it.
+    const attachmentRow = row(page, attachmentId!);
+    await expect(attachmentRow.locator('.row-bullet-shape.file')).toHaveCount(0);
+    const titleEditor = rowEditor(page, attachmentId!);
+    await expect(titleEditor).toContainText('picked-report.pdf');
+    await titleEditor.click();
+    await page.keyboard.press('Meta+A');
+    await page.keyboard.type('Quarterly report');
+    await expect.poll(async () => {
+      const node = (await e2eProjection(page)).nodes.find((entry) => entry.id === attachmentId);
+      return node?.content.text ?? null;
+    }).toBe('Quarterly report');
+    // The ordinary bullet drills to the node page; the chevron remains reserved
+    // for child disclosure and never owns preview state.
     const attachmentRowLine = attachmentRow.locator('> .row').first();
-    const attachmentChevron = attachmentRow.locator('.row-chevron-button').first();
-    await page.mouse.move(5, 5);
-    await expect.poll(async () => attachmentChevron.evaluate((element) =>
-      Number(getComputedStyle(element).opacity))).toBe(0);
     await attachmentRowLine.hover();
-    await expect.poll(async () => attachmentChevron.evaluate((element) =>
-      Number(getComputedStyle(element).opacity))).toBeGreaterThan(0.9);
-    await attachmentChevron.click();
-    const inlinePreviewFrame = attachmentRow.locator('.file-node-row-preview .file-node-preview.collapsed');
+    await attachmentRow.locator('> .row .row-bullet-button').first().click();
+    const nodePage = page.locator('.outline-panel-surface.active-panel');
+    await expect(nodePage.locator('.panel-title-editor .ProseMirror')).toContainText('Quarterly report');
+    const sourceRow = nodePage.locator('.node-source-row');
+    await expect(sourceRow).toHaveCount(1);
+    await expect(sourceRow.locator('input')).toHaveValue(/^asset:\/\/local\//);
+    await expect(sourceRow).toHaveAttribute('data-availability', 'ready');
+    await expect(nodePage.getByRole('button', { name: 'Link File' })).toBeVisible();
+    await expect(sourceRow.getByRole('button', { name: 'Replace with File' })).toBeVisible();
+
+    const inlinePreviewFrame = nodePage.locator('.node-source-preview .file-node-preview.collapsed');
     await expect(inlinePreviewFrame).toBeVisible();
     await expectConcentricPreviewCorners(inlinePreviewFrame, '.file-preview-pdf--summary');
     await expect.poll(async () => inlinePreviewFrame.evaluate((element) => {
@@ -720,31 +666,21 @@ test.describe('file attachments', () => {
       scrollbarBelowPage: true,
       symmetricInset: true,
     });
-    await expect.poll(async () => attachmentRow.evaluate((element) => {
-      const rowElement = element.querySelector(':scope > .row');
-      const previewElement = element.querySelector('.file-node-row-preview');
-      if (!rowElement || !previewElement) return 0;
-      const rowRect = rowElement.getBoundingClientRect();
-      const previewRect = previewElement.getBoundingClientRect();
-      return Math.round(previewRect.top - rowRect.bottom);
-    })).toBeGreaterThanOrEqual(8);
-    const inlinePreviewCanvas = attachmentRow.locator('.file-node-row-preview .file-preview-pdf--summary .file-preview-pdf-canvas');
+    const inlinePreviewCanvas = inlinePreviewFrame.locator('.file-preview-pdf--summary .file-preview-pdf-canvas');
     await expect(inlinePreviewCanvas).toHaveCount(3);
     await expect(inlinePreviewCanvas.first()).toBeVisible();
-    await expect.poll(async () => attachmentRow.evaluate((element) => {
-      const frameElement = element.querySelector('.file-node-row-preview .file-node-preview.collapsed');
-      const canvasElement = element.querySelector('.file-node-row-preview .file-preview-pdf-canvas');
-      if (!frameElement || !canvasElement) return null;
+    await expect.poll(async () => inlinePreviewFrame.evaluate((frameElement) => {
+      const canvasElement = frameElement.querySelector('.file-preview-pdf-canvas');
+      if (!canvasElement) return null;
       const frameRect = frameElement.getBoundingClientRect();
       const canvasRect = canvasElement.getBoundingClientRect();
       return Math.round(frameRect.bottom - canvasRect.bottom);
     })).toBeLessThanOrEqual(36);
-    await expect.poll(async () => attachmentRow.evaluate((element) => {
-      const frameElement = element.querySelector('.file-node-row-preview .file-node-preview.collapsed');
-      const summaryElement = element.querySelector<HTMLElement>('.file-node-row-preview .file-preview-pdf--summary');
-      const canvasElement = element.querySelector('.file-node-row-preview .file-preview-pdf-canvas');
-      const pillElement = element.querySelector('.file-node-row-preview .file-preview-pill');
-      if (!frameElement || !summaryElement || !canvasElement || !pillElement) return null;
+    await expect.poll(async () => inlinePreviewFrame.evaluate((frameElement) => {
+      const summaryElement = frameElement.querySelector<HTMLElement>('.file-preview-pdf--summary');
+      const canvasElement = frameElement.querySelector('.file-preview-pdf-canvas');
+      const pillElement = frameElement.parentElement?.querySelector('.file-preview-pill');
+      if (!summaryElement || !canvasElement || !pillElement) return null;
       const summaryStyle = getComputedStyle(summaryElement);
       const summaryRect = summaryElement.getBoundingClientRect();
       const canvasRect = canvasElement.getBoundingClientRect();
@@ -757,7 +693,7 @@ test.describe('file attachments', () => {
         scrollbarBelowPage: summaryRect.bottom - canvasRect.bottom >= scrollbarGutter - 1,
       };
     })).toEqual({ pageFitsViewport: true, pillOverlaysPage: true, scrollbarBelowPage: true });
-    const resizeHandle = attachmentRow.locator('.file-node-row-preview .file-preview-resize-handle');
+    const resizeHandle = inlinePreviewFrame.locator('xpath=..').locator('.file-preview-resize-handle');
     await expect(resizeHandle).toBeVisible();
     const beforeResizeHeight = await inlinePreviewFrame.evaluate((element) => element.getBoundingClientRect().height);
     const handleBox = await resizeHandle.boundingBox();
@@ -769,33 +705,20 @@ test.describe('file attachments', () => {
     await expect.poll(async () => inlinePreviewFrame.evaluate((element) => Math.round(element.getBoundingClientRect().height)))
       .toBeGreaterThanOrEqual(Math.round(beforeResizeHeight + 48));
 
-    // Expanding a childless file row still exposes the normal child trailing draft
-    // below the inline preview, so users can annotate the file without drilling in.
+    // Preview visibility is independent from the ordinary child outline. A
+    // childless Source-backed Node still exposes its trailing draft below Sources.
     await expect(trailingEditor(page, attachmentId!)).toBeVisible();
     await expect.poll(async () => trailingEditor(page, attachmentId!).evaluate((editor, nodeId) => {
-      const preview = document.querySelector<HTMLElement>(`[data-node-id="${nodeId}"] .file-node-row-preview`);
+      const preview = document.querySelector<HTMLElement>('.outline-panel-surface.active-panel .node-source-preview');
       if (!preview) return false;
       return editor.getBoundingClientRect().top > preview.getBoundingClientRect().bottom;
     }, attachmentId!)).toBe(true);
     await expect.poll(async () => {
-      const node = (await e2eProjection(page)).nodes.find((entry) => entry.id === attachmentId);
-      return node?.children.length ?? 0;
+      const projection = await e2eProjection(page);
+      return outlineChildIds(projection, attachmentId!).length;
     }).toBe(0);
 
-    // The file-type bullet drills to the node page.
-    await attachmentRowLine.hover();
-    await attachmentRow.locator('> .row .row-bullet-button').first().click();
-    const nodePage = page.locator('.outline-panel-surface.active-panel');
-    await expect(nodePage.locator('.panel-title-file-heading')).toContainText(longFilename);
-    await expect(nodePage.locator('.panel-title-file-heading')).not.toContainText('Untitled');
-    await expect(nodePage.locator('.panel-title-editor .ProseMirror')).toHaveCount(0);
-
-    // The old top meta strip and the actions button row are gone — meta/actions now
-    // live on the bottom pill and its `⋯` menu.
-    await expect(nodePage.locator('.file-node-meta')).toHaveCount(0);
-    await expect(nodePage.locator('.file-node-actions')).toHaveCount(0);
-
-    const previewStage = nodePage.locator('.file-node-body .file-node-preview');
+    const previewStage = nodePage.locator('.node-source-preview .file-node-preview');
     await expect(previewStage).toHaveClass(/collapsed/);
     await expect(nodePage.locator('.file-node-preview.collapsed .file-preview-pdf--summary .file-preview-pdf-canvas')).toHaveCount(3);
     await expect(nodePage.locator('.file-node-preview.collapsed .file-preview-pdf-text-layer')).toHaveCount(0);
@@ -1021,30 +944,29 @@ test.describe('file attachments', () => {
     await pillMoreButton.click();
     await pillMenu.getByRole('menuitem', { name: 'Copy file' }).click();
 
-    // A file node carries child notes on its node page: an "always" trailing draft in
-    // the children outline materializes a child under the attachment when typed into.
+    // The Source-backed Node keeps the ordinary children outline.
     await trailingEditor(page, attachmentId!).click();
     await page.keyboard.type('a note on this file');
     await expect.poll(async () => {
-      const node = (await e2eProjection(page)).nodes.find((entry) => entry.id === attachmentId);
-      return node?.children.length ?? 0;
+      const projection = await e2eProjection(page);
+      return outlineChildIds(projection, attachmentId!).length;
     }).toBe(1);
     await expect(nodePage.getByText('a note on this file')).toBeVisible();
 
-    // Back returns to the Today page the file was drilled from.
+    // Back returns to the Today page the Node was drilled from.
     await expect(nodePage.locator('.panel-page-back-button')).toBeEnabled();
     await nodePage.locator('.panel-page-back-button').click();
-    await expect(attachmentRow.locator('.file-node-row-name')).toContainText('picked-report.pdf');
+    await expect(rowEditor(page, attachmentId!)).toContainText('Quarterly report');
 
     const calls = await commandCalls(page);
     expect(calls.some((call) => call.cmd === 'pick_attachment_files')).toBe(true);
-    expect(await appliedAttachmentDrafts(page)).toHaveLength(1);
+    expect(await appliedSourceCreates(page)).toHaveLength(1);
     expect(calls.some((call) => call.cmd === 'open_asset')).toBe(true);
     expect(calls.some((call) => call.cmd === 'reveal_asset')).toBe(true);
     expect(calls.some((call) => call.cmd === 'copy_asset_file')).toBe(true);
   });
 
-  test('file preview menu opens a split pane as a file-only reader', async ({ page }) => {
+  test('Source preview menu opens a split pane as a file-only reader', async ({ page }) => {
     await page.setViewportSize({ width: 1500, height: 900 });
     await openMockedApp(page);
     await pasteClipboardFileAndOpenPreview(page, {
@@ -1056,7 +978,7 @@ test.describe('file attachments', () => {
     if (!attachmentId) throw new Error('missing pasted attachment');
 
     const panelCountBefore = await page.locator('.outline-panel-surface').count();
-    await page.locator('.file-node-row-preview .file-preview-pill-more').click();
+    await page.locator('.node-source-preview .file-preview-pill-more').click();
     const inlineMenu = page.getByRole('menu', { name: 'Preview actions' });
     await inlineMenu.getByRole('menuitem', { name: 'Open in split pane' }).click();
 
@@ -1095,7 +1017,7 @@ test.describe('file attachments', () => {
     await expect(readerMenu.getByRole('menuitem', { name: 'Open in split pane' })).toHaveCount(0);
   });
 
-  test('expanded childless file rows show an inline child trailing draft', async ({ page }) => {
+  test('URI fields use ordinary disclosure, value editing, and entry deletion', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
     await page.keyboard.type('/attachment');
@@ -1107,28 +1029,35 @@ test.describe('file attachments', () => {
 
     await attachmentRow.locator('> .row').first().hover();
     await attachmentRow.locator('> .row .row-chevron-button').first().click();
-    await expect(attachmentRow.locator('.file-node-row-preview .file-node-preview.collapsed')).toBeVisible();
-    const inlineDraft = trailingEditor(page, attachmentId);
-    await expect(inlineDraft).toBeVisible();
-    await expect.poll(async () => inlineDraft.evaluate((editor, nodeId) => {
-      const preview = document.querySelector<HTMLElement>(`[data-node-id="${nodeId}"] .file-node-row-preview`);
-      if (!preview) return false;
-      return editor.getBoundingClientRect().top > preview.getBoundingClientRect().bottom;
-    }, attachmentId)).toBe(true);
+    await expect(attachmentRow.locator('.node-source-preview, .file-node-row-preview')).toHaveCount(0);
 
-    await inlineDraft.click();
-    await page.keyboard.type('inline note on this file');
+    const expandedProjection = await e2eProjection(page);
+    const sourceEntry = sourceFieldEntries(expandedProjection, attachmentId)[0];
+    const sourceValue = sourceFieldValues(expandedProjection, attachmentId)[0];
+    expect(sourceEntry).toBeTruthy();
+    expect(sourceValue).toBeTruthy();
+    const fieldName = row(page, sourceEntry!.id).locator('.field-name-input');
+    await expect(fieldName).toHaveValue('URI');
+    await expect(fieldName).toHaveAttribute('readonly', '');
+
+    const uriEditor = rowEditor(page, sourceValue!.id);
+    await uriEditor.click();
+    await page.keyboard.press('Meta+A');
+    await page.keyboard.type('https://www.youtub.com/watch?v=abc123');
     await expect.poll(async () => {
-      const node = (await e2eProjection(page)).nodes.find((entry) => entry.id === attachmentId);
-      return node?.children.length ?? 0;
-    }).toBe(1);
-    const inlineChildId = (await e2eProjection(page)).nodes.find((entry) => entry.id === attachmentId)?.children[0];
-    expect(inlineChildId).toBeTruthy();
-    await expect(row(page, inlineChildId!)).toContainText('inline note on this file');
+      const projection = await e2eProjection(page);
+      return sourceFieldValues(projection, attachmentId)[0]?.content.text;
+    }).toBe('https://www.youtub.com/watch?v=abc123');
+
+    await fieldName.focus();
+    await fieldName.evaluate((element) => element.setSelectionRange(0, 0));
+    await page.keyboard.press('Backspace');
+    await expect.poll(async () => sourceFieldEntries(await e2eProjection(page), attachmentId).length).toBe(0);
+    await expect(row(page, attachmentId)).toBeVisible();
     expect(await todayChildren(page)).toHaveLength(beforeChildren.length + 1);
   });
 
-  test('file marker guides use the shared transparent marker slot geometry', async ({ page }) => {
+  test('Source-backed Nodes keep the ordinary marker and indent-guide geometry', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
     await page.keyboard.type('/attachment');
@@ -1155,7 +1084,7 @@ test.describe('file attachments', () => {
 
     await expect.poll(async () => page.evaluate((nodeId) => {
       const markerButton = document.querySelector(`[data-node-id="${nodeId}"] > .row .row-bullet-button`);
-      const markerSlot = document.querySelector(`[data-node-id="${nodeId}"] > .row .row-bullet-shape.file`);
+      const markerSlot = document.querySelector(`[data-node-id="${nodeId}"] > .row .row-bullet-shape.content`);
       const guide = document.querySelector(
         `.outliner-flat-guides .indent-guide[data-guide-node-id="${nodeId}"], `
           + `[data-node-id="${nodeId}"] > .indent-guide`,
@@ -1182,7 +1111,7 @@ test.describe('file attachments', () => {
     });
   });
 
-  test('/image creates a file node rendered as the image itself inline (no card, no filename), selecting on click', async ({ page }) => {
+  test('/image creates an ordinary editable Node whose Source preview renders the image', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
     await page.keyboard.type('/image');
@@ -1194,16 +1123,26 @@ test.describe('file attachments', () => {
     await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
     const imageId = (await todayChildren(page)).at(-1);
     await expect.poll(async () => {
-      const node = (await e2eProjection(page)).nodes.find((entry) => entry.id === imageId);
-      return node?.type ?? null;
-    }).toBe('image');
+      const projection = await e2eProjection(page);
+      const node = projection.nodes.find((entry) => entry.id === imageId);
+      const source = sourceFieldValues(projection, imageId!)[0];
+      return {
+        content: node?.content.text ?? null,
+        sourceText: source?.content.text ?? null,
+        sourceType: source?.type ?? null,
+        type: node?.type ?? null,
+      };
+    }).toEqual({
+      content: 'picked-image.png',
+      sourceText: expect.stringMatching(/^asset:\/\/local\//),
+      sourceType: null,
+      type: null,
+    });
 
-    // An image is the one file kind that renders inline as the image itself — an
-    // image's content is its identity. It does NOT use the file card and shows no
-    // file-type icon or filename in the row (the filename is shown in the preview).
     const imageRow = row(page, imageId!);
-    await expect(imageRow.locator('.file-node-image-button img')).toBeVisible();
-    await expect(imageRow.locator('.file-node-card')).toHaveCount(0);
+    const imageTitle = rowEditor(page, imageId!);
+    await expect(imageTitle).toContainText('picked-image.png');
+    await expect(imageRow.locator('.file-node-image, .file-node-card')).toHaveCount(0);
     await page.evaluate(({ nodeId, tagId }) => {
       const win = window as typeof window & {
         __LIN_E2E__?: {
@@ -1215,47 +1154,19 @@ test.describe('file attachments', () => {
       };
       const projection = win.__LIN_E2E__!.projection();
       const node = projection.nodes.find((entry) => entry.id === nodeId);
-      if (!node) throw new Error('missing image node');
+      if (!node) throw new Error('missing Source-backed image Node');
       node.tags = [tagId];
       win.__LIN_E2E__!.emitDocumentEvent({ type: 'projection_changed', projection });
     }, { nodeId: imageId, tagId: ids.projectTag });
-    await expect(imageRow.locator('> .row .row-content-line > .tag-bar .tag-badge-label')).toHaveText('project');
-    // The ⋯ menu lives at the image's top-right (image rows keep their own inline
-    // maximize/reveal menu, unlike non-image file name rows).
-    await expect(imageRow.locator('.file-node-image-actions .file-node-card-menu-trigger')).toBeAttached();
+    await expect(imageRow.locator('.tag-badge-label')).toHaveText('project');
 
-    // …and it is pinned to the image's REAL top-right corner. The mock image is wider
-    // than the inline cap, so it renders at the capped width; the positioning wrapper
-    // must hug that rendered box, not grow to the row width — otherwise the overlay
-    // floats in the empty gap to the right of the image (a regression we hit and fixed).
-    const overlayGeometry = await imageRow.evaluate((rowEl) => {
-      const imgEl = rowEl.querySelector('.file-node-image-button img');
-      const triggerEl = rowEl.querySelector('.file-node-image-actions .file-node-card-menu-trigger');
-      if (!imgEl || !triggerEl) return null;
-      const img = imgEl.getBoundingClientRect();
-      const trigger = triggerEl.getBoundingClientRect();
-      return { rightGap: Math.round(img.right - trigger.right), topGap: Math.round(trigger.top - img.top) };
-    });
-    expect(overlayGeometry).not.toBeNull();
-    // Inset from the corner is small and positive (the overlay sits just inside the image).
-    expect(overlayGeometry!.rightGap).toBeGreaterThanOrEqual(0);
-    expect(overlayGeometry!.rightGap).toBeLessThanOrEqual(12);
-    expect(overlayGeometry!.topGap).toBeGreaterThanOrEqual(0);
-    expect(overlayGeometry!.topGap).toBeLessThanOrEqual(12);
-
-    // Plain-clicking the image is a row interaction: it selects the image row
-    // instead of drilling into a different page.
-    await imageRow.locator('.file-node-image-button').click();
-    await expect(imageRow).toHaveAttribute('aria-selected', 'true');
-    await expect(page.locator('.outline-panel-surface.active-panel .file-node-body')).toHaveCount(0);
-
-    // Maximize remains available from the row's explicit file action menu.
-    await imageRow.locator('.file-node-image-actions .file-node-card-menu-trigger').click();
-    await page.getByRole('menuitem', { name: 'Maximize' }).click();
-    await expect(page.locator('.outline-panel-surface.active-panel .file-node-body')).toBeVisible();
-    await expect(page.locator('.outline-panel-surface.active-panel .panel-page-back-button')).toBeEnabled();
-    await page.locator('.outline-panel-surface.active-panel .panel-page-back-button').click();
-    await expect(imageRow.locator('.file-node-image-button img')).toBeVisible();
+    await imageRow.locator('> .row').first().hover();
+    await imageRow.locator('> .row .row-bullet-button').first().click();
+    const nodePage = page.locator('.outline-panel-surface.active-panel');
+    const imagePreview = nodePage.locator('.node-source-preview .file-preview-image img');
+    await expect(imagePreview).toBeVisible();
+    await expect(imagePreview).toHaveAttribute('alt', /picked-image\.png/i);
+    await expect(nodePage.locator('.node-source-row')).toHaveAttribute('data-availability', 'ready');
   });
 
   test('external file drag shows outliner insertion guides and drops at the indicated row position', async ({ page }) => {
@@ -1278,25 +1189,33 @@ test.describe('file attachments', () => {
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
       const gamma = projection.nodes.find((node) => node.id === ids.gamma);
-      const child = projection.nodes.find((node) => node.id === gamma?.children[0]);
+      const childIds = gamma?.children ?? [];
+      const child = projection.nodes.find((node) => node.id === childIds[0]);
+      const source = child ? sourceFieldValues(projection, child.id)[0] : undefined;
       return {
-        childCount: gamma?.children.length ?? 0,
-        childName: child?.originalFilename ?? child?.content.text ?? null,
+        childCount: childIds.length,
+        childName: child?.content.text ?? null,
+        childSource: source?.content.text ?? null,
         childType: child?.type ?? null,
       };
-    }).toEqual({ childCount: 1, childName: 'drop-guide.md', childType: 'attachment' });
+    }).toEqual({
+      childCount: 1,
+      childName: 'drop-guide.md',
+      childSource: expect.stringMatching(/^asset:\/\/local\//),
+      childType: null,
+    });
 
-    expect(await appliedAttachmentDrafts(page)).toContainEqual(expect.objectContaining({
+    expect(await appliedSourceCreates(page)).toContainEqual(expect.objectContaining({
       parentId: ids.gamma,
       index: 0,
       draft: expect.objectContaining({
-        type: 'attachment',
         content: expect.objectContaining({ text: 'drop-guide.md' }),
       }),
+      sourceText: expect.stringMatching(/^asset:\/\/local\//),
     }));
   });
 
-  test('Cmd+V pastes clipboard files into the outline as file nodes', async ({ page }) => {
+  test('Cmd+V pastes clipboard files as ordinary Source-backed Nodes', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
 
@@ -1312,27 +1231,28 @@ test.describe('file attachments', () => {
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
       const pasted = projection.nodes.find((node) => node.id === pastedId);
+      const source = sourceFieldValues(projection, pastedId!)[0];
       return {
-        name: pasted?.originalFilename ?? pasted?.content.text ?? null,
+        name: pasted?.content.text ?? null,
+        sourceText: source?.content.text ?? null,
         type: pasted?.type ?? null,
       };
-    }).toEqual({ name: 'clipboard-report.pdf', type: 'attachment' });
+    }).toEqual({
+      name: 'clipboard-report.pdf',
+      sourceText: expect.stringMatching(/^asset:\/\/local\//),
+      type: null,
+    });
     const pastedRow = row(page, pastedId!);
-    await expect(pastedRow.locator('.file-node-row-name')).toContainText('clipboard-report.pdf');
-    await expect.poll(async () => pastedRow.locator('.file-node-row-main').evaluate((element) => {
-      return getComputedStyle(element).boxShadow;
-    })).toBe('none');
-    await expect.poll(async () => page.evaluate(() => {
-      return document.activeElement?.classList.contains('file-node-keyboard-anchor') ?? false;
-    })).toBe(false);
+    await expect(rowEditor(page, pastedId!)).toContainText('clipboard-report.pdf');
+    await expect(pastedRow.locator('.file-node-keyboard-anchor, .file-node-row-main')).toHaveCount(0);
 
     const calls = await commandCalls(page);
     expect(calls.some((call) => call.cmd === 'outline/asset ingest')).toBe(true);
-    expect(await appliedAttachmentDrafts(page)).toContainEqual(expect.objectContaining({
+    expect(await appliedSourceCreates(page)).toContainEqual(expect.objectContaining({
       draft: expect.objectContaining({
-        type: 'attachment',
         content: expect.objectContaining({ text: 'clipboard-report.pdf' }),
       }),
+      sourceText: expect.stringMatching(/^asset:\/\/local\//),
     }));
   });
 
@@ -1460,7 +1380,7 @@ test.describe('file attachments', () => {
     });
   });
 
-  test('EPUB files render through the inline reader instead of metadata fallback', async ({ page }) => {
+  test('EPUB Sources render through the embedded reader instead of metadata fallback', async ({ page }) => {
     const epubPreview = await pasteClipboardFileAndOpenPreview(page, {
       name: 'preview-book.epub',
       mimeType: 'application/epub+zip',
@@ -1475,7 +1395,7 @@ test.describe('file attachments', () => {
     const previewCalls = await commandCalls(page);
     expect(previewCalls.some((call) => call.cmd === 'preview_read_bytes')).toBe(false);
 
-    const epubBody = page.locator('.file-node-row-preview > .file-node-body').last();
+    const epubBody = page.locator('.node-source-preview > .file-node-body').last();
     await expectConcentricPreviewCorners(epubPreview, '.file-preview-epub-host');
     await epubBody.locator('.file-preview-pill-primary').click();
     const fullPreview = epubBody.locator('.file-node-preview.expanded .file-preview-epub--full');
@@ -1561,7 +1481,7 @@ test.describe('file attachments', () => {
       mimeType: 'application/pdf',
       text: 'pdf bytes',
     });
-    const pdfBody = page.locator('.file-node-row-preview > .file-node-body').last();
+    const pdfBody = page.locator('.node-source-preview > .file-node-body').last();
     await pdfBody.locator('.file-preview-pill-primary').click();
     const inlineReader = pdfBody.locator('.file-node-preview.expanded .file-preview-pdf--full');
     await expect(inlineReader).toBeVisible();
@@ -1603,7 +1523,7 @@ test.describe('file attachments', () => {
       mimeType: 'application/epub+zip',
       text: 'epub bytes',
     });
-    const epubBody = page.locator('.file-node-row-preview > .file-node-body').last();
+    const epubBody = page.locator('.node-source-preview > .file-node-body').last();
     await epubBody.locator('.file-preview-pill-primary').click();
     const inlineReader = epubBody.locator('.file-node-preview.expanded .file-preview-epub-host');
     await expect(inlineReader).toHaveAttribute('data-epub-continuous-reader', 'true');
@@ -1768,7 +1688,7 @@ test.describe('file attachments', () => {
       text: 'epub bytes',
     });
 
-    const epubBody = page.locator('.file-node-row-preview > .file-node-body').last();
+    const epubBody = page.locator('.node-source-preview > .file-node-body').last();
     await epubBody.locator('.file-preview-pill-primary').click();
     const fullReader = epubBody.locator('.file-node-preview.expanded .file-preview-epub-host');
     await expect(fullReader).toHaveAttribute('data-epub-continuous-reader', 'true');
@@ -1797,7 +1717,7 @@ test.describe('file attachments', () => {
     await expect(lastSectionIframe).toHaveCount(1);
   });
 
-  test('unsupported file previews keep the same bottom action location as previewable files', async ({ page }) => {
+  test('unsupported Source previews keep the same bottom action location as previewable Sources', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
 
@@ -1810,11 +1730,11 @@ test.describe('file attachments', () => {
     await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
     const pastedId = (await todayChildren(page)).at(-1)!;
     const attachmentRow = row(page, pastedId);
-    await expect(attachmentRow.locator('.file-node-row-name')).toContainText('archive.zip');
+    await expect(rowEditor(page, pastedId)).toContainText('archive.zip');
 
     await attachmentRow.locator('> .row').first().hover();
-    await attachmentRow.locator('.row-chevron-button').first().click();
-    const metadataPreview = attachmentRow.locator('.file-node-row-preview .file-node-preview--metadata');
+    await attachmentRow.locator('> .row .row-bullet-button').first().click();
+    const metadataPreview = page.locator('.outline-panel-surface.active-panel .node-source-preview .file-node-preview--metadata');
     await expect(metadataPreview).toBeVisible();
     const metadataKindRow = metadataPreview.locator('.file-preview-metadata-kind-row');
     await expect(metadataKindRow.locator('h2')).toHaveText('zip');
@@ -1844,12 +1764,11 @@ test.describe('file attachments', () => {
         primary.getBoundingClientRect().height - more.getBoundingClientRect().height,
       ));
     })).toBe(0);
-    await expect(attachmentRow.locator('.file-node-row-preview > .file-node-body > .file-preview-pill')).toHaveCount(0);
+    await expect(page.locator('.node-source-preview > .file-node-body > .file-preview-pill')).toHaveCount(0);
     await expect.poll(async () => pill.evaluate((element) => getComputedStyle(element).position)).toBe('static');
-    await expect.poll(async () => attachmentRow.evaluate((element) => {
-      const frame = element.querySelector('.file-node-preview--metadata');
-      const pill = element.querySelector('.file-preview-pill');
-      const metadata = element.querySelector('.file-preview-metadata');
+    await expect.poll(async () => metadataPreview.evaluate((frame) => {
+      const pill = frame.querySelector('.file-preview-pill');
+      const metadata = frame.querySelector('.file-preview-metadata');
       if (!frame || !pill || !metadata) return null;
       const frameRect = frame.getBoundingClientRect();
       const pillRect = pill.getBoundingClientRect();
@@ -1864,7 +1783,7 @@ test.describe('file attachments', () => {
     })).toEqual({ bottomAction: true, centeredInFrame: true, compactWidth: true });
   });
 
-  test('file preview action menus dismiss on outside clicks without a surface focus outline', async ({ page }) => {
+  test('Source preview action menus dismiss on outside clicks without a surface focus outline', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
     await pasteClipboardFile(page, {
@@ -1876,8 +1795,8 @@ test.describe('file attachments', () => {
     const pastedId = (await todayChildren(page)).at(-1)!;
     const attachmentRow = row(page, pastedId);
     await attachmentRow.locator('> .row').first().hover();
-    await attachmentRow.locator('.row-chevron-button').first().click();
-    const metadataPreview = attachmentRow.locator('.file-node-row-preview .file-node-preview--metadata');
+    await attachmentRow.locator('> .row .row-bullet-button').first().click();
+    const metadataPreview = page.locator('.outline-panel-surface.active-panel .node-source-preview .file-node-preview--metadata');
     await expect(metadataPreview).toBeVisible();
 
     await metadataPreview.locator('.file-preview-pill-more').click();
@@ -1885,11 +1804,11 @@ test.describe('file attachments', () => {
     await expect(menu).toBeVisible();
     await expect.poll(async () => menu.evaluate((element) => getComputedStyle(element).outlineStyle)).toBe('none');
 
-    await row(page, ids.alpha).locator('> .row').click();
+    await page.locator('.outline-panel-surface.active-panel .panel-title-editor').click();
     await expect(menu).toBeHidden();
   });
 
-  test('a file row has a read-only caret surface: display-only name, but tag/Enter nav works', async ({ page }) => {
+  test('a Source-backed row keeps ordinary editable content and keyboard behavior', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
     await page.keyboard.type('/attachment');
@@ -1898,30 +1817,25 @@ test.describe('file attachments', () => {
     await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
     const attachmentId = (await todayChildren(page)).at(-1)!;
     const attachmentRow = row(page, attachmentId);
-    const rowName = attachmentRow.locator('.file-node-row-name');
-    await expect(rowName).toContainText('picked-report.pdf');
+    const titleEditor = rowEditor(page, attachmentId);
+    await expect(titleEditor).toContainText('picked-report.pdf');
 
-    // A non-image file row uses a read-only editor surface, not the image-row
-    // hidden anchor, so users can place a caret in the filename while the stored
-    // filename remains immutable.
+    // Source-backed rows use the same real editor as every other ordinary Node.
     const anchor = attachmentRow.locator('.file-node-keyboard-anchor');
     await expect(anchor).toHaveCount(0);
-    const titleEditor = attachmentRow.locator('.file-node-row-name .ProseMirror');
     await expect(titleEditor).toHaveCount(1);
     await titleEditor.click();
-    const focused = await titleEditor.evaluate((element) => {
-      return element === document.activeElement;
-    });
-    expect(focused).toBe(true);
-    await expect.poll(async () => attachmentRow.locator('.file-node-row-main').evaluate((element) =>
-      getComputedStyle(element).boxShadow)).toBe('none');
-
-    // The name is display-only: ordinary typing on the focused file title never
-    // renames it or fires slash commands.
-    await page.keyboard.type('renamed/');
-    await expect(page.getByRole('listbox', { name: 'Slash commands' })).toHaveCount(0);
-    await expect(rowName).toContainText('picked-report.pdf');
-    await expect(rowName).not.toContainText('renamed');
+    await page.keyboard.press('Meta+A');
+    await page.keyboard.type('Renamed report');
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const node = projection.nodes.find((entry) => entry.id === attachmentId);
+      const sourceEntry = sourceFieldEntries(projection, attachmentId)[0];
+      return {
+        content: node?.content.text ?? null,
+        sourceCount: sourceEntry?.children.length ?? 0,
+      };
+    }).toEqual({ content: 'Renamed report', sourceCount: 1 });
 
     const countBeforeFilePaste = (await todayChildren(page)).length;
     await titleEditor.click();
@@ -1934,26 +1848,33 @@ test.describe('file attachments', () => {
     const pastedFromTitleId = (await todayChildren(page))[countBeforeFilePaste];
     expect(pastedFromTitleId).toBeTruthy();
     await expect.poll(async () => {
-      const pasted = (await e2eProjection(page)).nodes.find((node) => node.id === pastedFromTitleId);
+      const projection = await e2eProjection(page);
+      const pasted = projection.nodes.find((node) => node.id === pastedFromTitleId);
+      const sourceEntry = sourceFieldEntries(projection, pastedFromTitleId!)[0];
       return {
-        name: pasted?.originalFilename ?? pasted?.content.text ?? null,
+        name: pasted?.content.text ?? null,
+        sourceCount: sourceEntry?.children.length ?? 0,
         type: pasted?.type ?? null,
       };
-    }).toEqual({ name: 'file-title-paste.pdf', type: 'attachment' });
+    }).toEqual({ name: 'file-title-paste.pdf', sourceCount: 1, type: null });
+    await expect.poll(async () => (
+      (await e2eProjection(page)).nodes.find((node) => node.id === attachmentId)?.content.text
+    )).toBe('Renamed report');
+    await expect(titleEditor).toContainText('Renamed report');
 
-    // But # is still a node-level command surface for the file node itself.
+    // Tags and structural navigation remain the ordinary Node command surface.
     await titleEditor.click();
-    await page.keyboard.type('#project');
+    await page.keyboard.press('Meta+ArrowRight');
+    await page.keyboard.type(' #project');
+    await expect(titleEditor).toContainText('Renamed report #project');
     const tagListbox = page.getByRole('listbox', { name: 'Tag suggestions' });
     await expect(tagListbox).toBeVisible();
     await expect(page.getByRole('option', { name: 'project' })).toBeVisible();
     await page.keyboard.press('Enter');
     await expect(tagListbox).toHaveCount(0);
-    await expect(attachmentRow.locator('.file-node-row-labels > .tag-bar .tag-badge-label')).toHaveText('project');
-    await expect(rowName).toContainText('picked-report.pdf');
+    await expect(attachmentRow.locator('.tag-badge-label')).toHaveText('project');
+    await expect(titleEditor).toContainText('Renamed report');
 
-    // ...but structural keyboard nav DOES drive the row. Enter on the focused
-    // read-only title adds a sibling, matching locked-node behavior.
     const countBeforeEnter = (await todayChildren(page)).length;
     await titleEditor.click();
     await page.keyboard.press('Enter');

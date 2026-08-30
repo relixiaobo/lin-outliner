@@ -115,7 +115,7 @@ const EXPOSED_FIELD_TYPES: readonly FieldType[] = [
   'options_from_supertag',
   'date',
   'number',
-  'url',
+  'uri',
   'email',
   'checkbox',
 ];

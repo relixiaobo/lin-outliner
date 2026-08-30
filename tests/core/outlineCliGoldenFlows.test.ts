@@ -5,6 +5,9 @@ import path from 'node:path';
 import { runOutlineCli } from '../../src/outline/cli';
 import type { Diff, NoChangeResult, Operation } from '../../src/outline/contract';
 import { OutlineRuntimeServer } from '../../src/outline/runtime/server';
+import { formatAssetSourceUri } from '../../src/core/source';
+import { sourceFieldEntries, sourceFieldValues } from '../../src/core/sourceField';
+import type { AssetLease } from '../../src/outline/contract';
 
 const roots: string[] = [];
 
@@ -146,27 +149,48 @@ describe('outline mandatory CLI golden flows', () => {
       const captureId = returnedIds(operation)[0]!;
       const capture = runtime.workspace.documentState().nodes[captureId]!;
       expect(capture.capture).toMatchObject({ captureId: 'capture:golden', providerId: 'generic-webpage' });
-      expect(runtime.workspace.documentState().nodes[capture.children[0]!]).toMatchObject({ content: { text: 'Captured body' } });
+      const state = runtime.workspace.documentState();
+      expect(sourceFieldValues(state, captureId).map((value) => value.sourceText))
+        .toEqual(['https://example.com']);
+      const sourceEntryIds = new Set(sourceFieldEntries(state, captureId).map((entry) => entry.id));
+      const contentChild = capture.children.find((childId) => !sourceEntryIds.has(childId))!;
+      expect(runtime.workspace.documentState().nodes[contentChild]).toMatchObject({ content: { text: 'Captured body' } });
       await exactRevert(runtime, operation, before, cli);
     });
   });
 
-  test('6. stages and adds a local image in one invocation, retains the asset, and reverts the Node', async () => {
+  test('6. stages a local image, adds it as a Node Source, retains the asset, and reverts the Node', async () => {
     await withRuntime(async ({ root, runtime, cli }) => {
       const imagePath = path.join(root, 'pixel.png');
       await Bun.write(imagePath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'));
       const before = snapshot(runtime);
       const operationsBefore = await countOperations(runtime);
       const callsBefore = cli.calls;
-      const operation = operationResult(await cli.json(['media', 'add', '@library', 'image', imagePath, '--name', 'Pixel']));
-      expect(cli.calls - callsBefore).toBe(1);
+      const lease = await cli.json(['asset', 'ingest', imagePath]) as AssetLease;
+      const operation = operationResult(await cli.json(['commit', '--input', '-'], JSON.stringify({
+        protocolVersion: 1,
+        kind: 'outline.changeset',
+        operations: [
+          {
+            op: 'create',
+            placement: { kind: 'last', parent: oneAlias('library') },
+            nodes: [draft('Pixel')],
+            bind: 'image',
+          },
+          {
+            op: 'update',
+            targets: { binding: 'image' },
+            changes: [{ kind: 'source', action: 'add', sourceText: formatAssetSourceUri(lease.assetId) }],
+          },
+        ],
+        return: [{ kind: 'summary', targets: { binding: 'image' }, page: { limit: 1 } }],
+      })));
+      expect(cli.calls - callsBefore).toBe(2);
       expect(await countOperations(runtime)).toBe(operationsBefore + 1);
       const mediaId = returnedIds(operation)[0]!;
-      const assetId = runtime.workspace.documentState().nodes[mediaId]?.assetId;
-      expect(assetId).toBeDefined();
-      expect(await runtime.workspace.assets.show(assetId!)).toMatchObject({ assetId });
+      expect(await runtime.workspace.assets.show(lease.assetId)).toMatchObject({ assetId: lease.assetId });
       await exactRevert(runtime, operation, before, cli);
-      expect(await runtime.workspace.assets.show(assetId!)).toMatchObject({ assetId });
+      expect(await runtime.workspace.assets.show(lease.assetId)).toMatchObject({ assetId: lease.assetId });
     });
   });
 

@@ -9,7 +9,7 @@
 
 import { projectFieldConfig } from '../configProjection';
 import { isOptionsFieldType } from '../fieldTypeRegistry';
-import type { NodeId, NodeProjection } from '../types';
+import { isContentBearingNode, type NodeId, type NodeProjection } from '../types';
 
 export type NodeRowKind =
   | 'content'
@@ -217,10 +217,11 @@ export function commonTagIdsForTargets(
 ): NodeId[] {
   if (targetIds.length === 0) return [];
   const first = byId.get(targetIds[0]!);
-  if (!first) return [];
+  if (!first || !isContentBearingNode(first)) return [];
   const common = new Set(first.tags);
   for (const targetId of targetIds.slice(1)) {
-    const tags = new Set(byId.get(targetId)?.tags ?? []);
+    const target = byId.get(targetId);
+    const tags = new Set(target && isContentBearingNode(target) ? target.tags : []);
     for (const tagId of [...common]) {
       if (!tags.has(tagId)) common.delete(tagId);
     }

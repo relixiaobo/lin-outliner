@@ -200,8 +200,8 @@ player-position anchor is stripped).
 and the typed text rides along as the note. The main process holds the
 authoritative `ExternalContext` and the renderer never receives it — it names an
 action and main resolves the source itself, so there is nothing to tamper with. A **page
-capture** node carries a hidden `capture` provenance sidecar plus an outline
-projection (capture-kind tag + URL/Author/Published fields); a typed note nests
+capture** creates an ordinary Node with a canonical URL Source, a hidden `capture`
+provenance sidecar, and native capture-kind tag plus Author/Published fields; a typed note nests
 **under** it as a child bullet (the outliner metaphor — "this source, and my note
 on it"), never the node's `description`. A **plain manual note** (`capture-note`
 row, no source) is just a node under Today — no sidecar, no `#capture` tag, since
@@ -221,10 +221,10 @@ remediation banner pointing at System Settings.
 There is **no** "Search notes" command — typing IS the search. The renderer
 debounces (120ms) and calls `ObjectQueryRequest`; main runs the same ranked
 retrieval and returns the top hits (limit 8) as node OBJECTS whose presentation
-carries the single-line title, the parent's text as subtitle and the node's own
-emoji, since the locked-down launcher renderer can't read the document.
-Attachment hits remain node objects but carry a file glyph and localized File
-type label, so a file named like an ordinary note remains visibly distinct.
+carries the single-line authored title, the parent's text as subtitle and the
+node's own emoji, since the locked-down launcher renderer can't read the document.
+Source-backed Nodes remain ordinary node objects; Launcher search neither changes
+their glyph nor substitutes a derived filename for authored content.
 Resolution looks up only the hit nodes
 (+ their parents) by id via `Core.projectionNodesByIds`, never materializing the
 whole-document projection per keystroke. `search_nodes` is a transient lookup
@@ -232,9 +232,9 @@ surface. It uses the same document-derived reference-authority boost as saved
 searches, then opts into per-user personal access ranking; both affect ordering
 only and never change saved search rules or materialized saved-search results.
 `Enter` on a node runs `open`; main focuses the main window and sends the action
-registry's renderer navigation step. The main renderer's `navigateRoot` opens
-the existing file preview for attachment/image nodes and otherwise performs the
-ordinary in-place outliner landing. A navigation that arrives before the main
+registry's renderer navigation step. The main renderer's `navigateRoot` performs
+the same ordinary in-place node-page landing for every content Node; Source
+management and the selected preview live on that page. A navigation that arrives before the main
 window's renderer has loaded is queued and flushed after load (re-armable, so it
 survives a renderer reload).
 Only the resulting main-window landing records human access after a short dwell;

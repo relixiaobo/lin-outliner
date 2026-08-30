@@ -45,7 +45,7 @@ export interface ReferenceNodeLike {
   type?: NodeType;
   parentId?: NodeId | null;
   children: readonly NodeId[];
-  content: RichText;
+  content?: RichText;
   description?: string;
   targetId?: NodeId;
   fieldDefId?: NodeId;
@@ -100,7 +100,7 @@ export function buildReferenceSummary(
       });
     }
 
-    if (isSearchReferenceSource(node.id)) continue;
+    if (isSearchReferenceSource(node.id) || !node.content) continue;
     for (const inlineRef of node.content.inlineRefs) {
       const targetId = inlineRefNodeId(inlineRef);
       if (!targetId) continue;
@@ -274,6 +274,7 @@ export function createUnlinkedReferenceMatcher(
     matchNode(source) {
       if (
         targetTitles.length === 0
+        || !source.content
         || !nodeCanSourceUnlinkedMention(source, isDeleted, isSearchReferenceSource)
       ) return [];
       const matches = new Map<NodeId, ReferenceSource[]>();
@@ -313,7 +314,7 @@ function mentionTargetTitles(
       })
     : byId.values();
   for (const node of targetNodes) {
-    if (isDeleted(node.id) || !nodeCanBeMentionTarget(node)) continue;
+    if (isDeleted(node.id) || !node.content || !nodeCanBeMentionTarget(node)) continue;
     const text = node.content.text.trim();
     if (text.length < minMentionLength) continue;
     const lowerText = caseFold(text);
@@ -392,8 +393,8 @@ function addUnlinkedMentionsFromText(
 }
 
 function hasInlineRefAtOffset(source: ReferenceNodeLike, targetId: NodeId, offset: number): boolean {
-  return source.content.inlineRefs.some((inlineRef) =>
-    inlineRef.offset === offset && inlineRefNodeId(inlineRef) === targetId);
+  return Boolean(source.content?.inlineRefs.some((inlineRef) =>
+    inlineRef.offset === offset && inlineRefNodeId(inlineRef) === targetId));
 }
 
 function hasMentionBoundary(text: string, start: number, end: number): boolean {

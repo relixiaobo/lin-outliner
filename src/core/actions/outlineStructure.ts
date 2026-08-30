@@ -8,7 +8,7 @@
 // difference is invisible until a user tries it.
 
 import { isInternalConfigNode } from '../configSchema';
-import type { NodeId, NodeProjection } from '../types';
+import { type NodeId, type NodeProjection } from '../types';
 
 const NON_OUTLINE_CHILD_TYPES = new Set([
   'queryCondition',
@@ -41,9 +41,10 @@ export function indentTargetParentId(
   if (!parentId) return null;
   const parent = byId.get(parentId);
   if (!parent) return null;
-  const index = parent.children.indexOf(nodeId);
+  const siblings = outlineChildIds(parent, byId);
+  const index = siblings.indexOf(nodeId);
   if (index <= 0) return null;
-  return parent.children[index - 1] ?? null;
+  return siblings[index - 1] ?? null;
 }
 
 /**
@@ -68,10 +69,11 @@ function selectedRunHasExternalPreviousSibling(
     const node = byId.get(currentId);
     const parentId = node?.parentId;
     const parent = parentId ? byId.get(parentId) : undefined;
-    const index: number = parent?.children.indexOf(currentId) ?? -1;
+    const siblings: NodeId[] = parent ? outlineChildIds(parent, byId) : [];
+    const index: number = siblings.indexOf(currentId);
     if (!parent || index <= 0) return false;
 
-    const previousSiblingId: NodeId | undefined = parent.children[index - 1];
+    const previousSiblingId: NodeId | undefined = siblings[index - 1];
     if (!previousSiblingId) return false;
     if (!batch.has(previousSiblingId)) return true;
     currentId = previousSiblingId;

@@ -337,6 +337,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       >;
     };
     const mockAssetUrl = (assetId: string) => `${assetUrlPrefix}${encodeURIComponent(assetId)}`;
+    const mockAssetSourceUri = (assetId: string) => `asset://local/${encodeURIComponent(assetId)}`;
     const referenceTargetsEqual = (left: ReferenceTarget, right: ReferenceTarget) => {
       if (left.kind !== right.kind) return false;
       if (left.kind === 'node') return left.nodeId === (right as Extract<ReferenceTarget, { kind: 'node' }>).nodeId;
@@ -419,18 +420,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	      queryTargetId?: string;
 	      targetId?: string;
 	      codeLanguage?: string;
-	      assetId?: string;
-	      mediaUrl?: string;
-	      mediaAlt?: string;
-	      imageWidth?: number;
-	      imageHeight?: number;
-	      mimeType?: string;
-	      originalFilename?: string;
-	      fileSize?: number;
-	      thumbnailAssetId?: string;
-	      pdfPageCount?: number;
-	      audioDurationMs?: number;
-	      videoDurationMs?: number;
 	      configKey?: string;
 	      refRole?: string;
 	    };
@@ -817,11 +806,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       | { kind: 'host' }
       | { kind: 'feature'; feature: string; ref?: string }
       | { kind: 'unknown' };
+    type MockAgentAttachmentKind = 'attachment';
     type MockThreadUserContent = Array<
       | { type: 'text'; text: string }
       | { type: 'nodeReference'; nodeId: string; note?: string }
       | {
-          type: 'attachment';
+          type: MockAgentAttachmentKind;
           id: string;
           name: string;
           mimeType: string;
@@ -1253,7 +1243,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       return next;
     };
     const makeNode = (id: string, text: string, overrides: Partial<MockNode> = {}) => {
-      nodes.set(id, {
+      const node: MockNode = {
         id,
         children: [],
         content: rich(text),
@@ -1266,8 +1256,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	        autocollectOptions: false,
 	        autoCollected: false,
 	        ...overrides,
-	      });
-      return nodes.get(id)!;
+      };
+      nodes.set(id, node);
+      return node;
     };
     const appendChild = (parentId: string, childId: string, index: number | null = null) => {
       const parent = nodes.get(parentId);
@@ -1805,13 +1796,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	      });
 	      appendChild(nodeId, conditionId, 0);
 	    };
-	    const duplicateNode = (nodeId: string) => {
+	    const duplicateSubtree = (nodeId: string, parentId: string, index: number | null): string | null => {
 	      const node = nodes.get(nodeId);
-      if (!node?.parentId) return null;
+      if (!node) return null;
       const cloneId = `${nodeId}-copy-${++sequence}`;
       makeNode(cloneId, node.content.text, {
         type: node.type,
-        parentId: node.parentId,
+        parentId,
         tags: [...node.tags],
         showCheckbox: node.showCheckbox,
         doneStateEnabled: node.doneStateEnabled,
@@ -1833,10 +1824,16 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       });
       const cloneNode = nodes.get(cloneId)!;
       cloneNode.content = clone(node.content);
+      appendChild(parentId, cloneId, index);
+      for (const childId of node.children) duplicateSubtree(childId, cloneId, null);
+      return cloneId;
+    };
+	    const duplicateNode = (nodeId: string) => {
+	      const node = nodes.get(nodeId);
+      if (!node?.parentId) return null;
       const parent = nodes.get(node.parentId);
       const index = parent ? parent.children.indexOf(nodeId) + 1 : null;
-      appendChild(node.parentId, cloneId, index);
-      return cloneId;
+      return duplicateSubtree(nodeId, node.parentId, index);
     };
     const siblingMove = (nodeIds: string[], direction: 'up' | 'down') => {
       const idsToMove = direction === 'up' ? nodeIds : [...nodeIds].reverse();
@@ -2038,38 +2035,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           surface: 'field-name',
         });
       }
-      if (kind === 'appendImage') {
-        const entry = currentEntry ?? ensureFieldSlotEntry(ownerId, fieldDefId, preferredEntryId);
-        createNode(entry.id, null, typeof args.name === 'string' ? args.name.trim() : '', {
-          type: 'image',
-          showCheckbox: false,
-          assetId: typeof args.assetId === 'string' ? args.assetId : undefined,
-          mediaUrl: typeof args.mediaUrl === 'string' ? args.mediaUrl : undefined,
-          imageWidth: typeof args.width === 'number' ? args.width : undefined,
-          imageHeight: typeof args.height === 'number' ? args.height : undefined,
-          mediaAlt: typeof args.alt === 'string' ? args.alt.trim() : undefined,
-        }, proposedId);
-        return outcome({ nodeId: entry.id, selectAll: false });
-      }
-      if (kind === 'appendAttachment') {
-        const entry = currentEntry ?? ensureFieldSlotEntry(ownerId, fieldDefId, preferredEntryId);
-        const originalFilename = typeof args.originalFilename === 'string'
-          ? args.originalFilename.trim() || 'attachment'
-          : 'attachment';
-        createNode(entry.id, null, originalFilename, {
-          type: 'attachment',
-          showCheckbox: false,
-          assetId: typeof args.assetId === 'string' ? args.assetId : '',
-          mimeType: typeof args.mimeType === 'string' ? args.mimeType : 'application/octet-stream',
-          originalFilename,
-          fileSize: typeof args.fileSize === 'number' ? args.fileSize : 0,
-          thumbnailAssetId: typeof args.thumbnailAssetId === 'string' ? args.thumbnailAssetId : undefined,
-          pdfPageCount: typeof args.pdfPageCount === 'number' ? args.pdfPageCount : undefined,
-          audioDurationMs: typeof args.audioDurationMs === 'number' ? args.audioDurationMs : undefined,
-          videoDurationMs: typeof args.videoDurationMs === 'number' ? args.videoDurationMs : undefined,
-        }, proposedId);
-        return outcome({ nodeId: entry.id, selectAll: false });
-      }
       return outcome();
     };
     const convertNodeToInlineField = (nodeId: string, name: string, fieldType: string) => {
@@ -2241,6 +2206,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     makeNode(ids.trash, 'Trash', { parentId: ids.root, locked: true });
     makeNode(ids.dayTag, 'day', { type: 'tagDef', parentId: ids.schema, color: 'gray' });
     makeNode(ids.projectTag, 'project', { type: 'tagDef', parentId: ids.schema, color: 'green' });
+    makeNode('field:source', 'URI', {
+      type: 'fieldDef',
+      parentId: ids.schema,
+      fieldType: 'uri',
+      nullable: true,
+      locked: true,
+    });
     makeNode(ids.statusField, 'Status', {
       type: 'fieldDef',
       parentId: ids.schema,
@@ -2341,6 +2313,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     if (options.searchReferenceChain) appendChild(ids.recents, ids.searchResult);
     appendChild(ids.schema, ids.dayTag);
     appendChild(ids.schema, ids.projectTag);
+    appendChild(ids.schema, 'field:source');
     appendChild(ids.schema, ids.statusField);
     if (options.optionsField) {
       appendChild(ids.schema, ids.priorityField);
@@ -2531,8 +2504,35 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       if (query.op === 'HAS_TAG') return node.tags.includes(String(query.tagDefId ?? ''));
       if (query.op === 'DONE') return (node.completedAt ?? 0) > 0;
       if (query.op === 'NOT_DONE') return (node.completedAt ?? 0) <= 0;
-      if (query.op === 'HAS_IMAGE') return node.type === 'image';
-      if (query.op === 'HAS_MEDIA') return node.type === 'image' || node.type === 'attachment';
+      if (
+        query.op === 'HAS_MEDIA'
+        || query.op === 'HAS_IMAGE'
+        || query.op === 'HAS_AUDIO'
+        || query.op === 'HAS_VIDEO'
+      ) {
+        const sourceEntries = node.children.flatMap((childId) => {
+          const child = nodes.get(childId);
+          return child?.type === 'fieldEntry' && child.fieldDefId === 'field:source' ? [child] : [];
+        });
+        const sourceMimeTypes = sourceEntries.flatMap((entry) => entry.children).flatMap((valueId) => {
+          const sourceText = nodes.get(valueId)?.content.text;
+          if (!sourceText?.startsWith('asset://local/')) return [];
+          let assetId: string;
+          try {
+            assetId = decodeURIComponent(sourceText.slice('asset://local/'.length));
+          } catch {
+            return [];
+          }
+          const mimeType = assets.get(assetId)?.mimeType;
+          return mimeType ? [mimeType.toLocaleLowerCase()] : [];
+        });
+        if (query.op === 'HAS_IMAGE') return sourceMimeTypes.some((mimeType) => mimeType.startsWith('image/'));
+        if (query.op === 'HAS_AUDIO') return sourceMimeTypes.some((mimeType) => mimeType.startsWith('audio/'));
+        if (query.op === 'HAS_VIDEO') return sourceMimeTypes.some((mimeType) => mimeType.startsWith('video/'));
+        return sourceMimeTypes.some((mimeType) => (
+          mimeType.startsWith('image/') || mimeType.startsWith('audio/') || mimeType.startsWith('video/')
+        ));
+      }
       if (query.op === 'IS_TYPE') return node.type === String(query.text ?? 'plain');
       return true;
     };
@@ -2689,8 +2689,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       const metadata = draft.metadata && typeof draft.metadata === 'object'
         ? draft.metadata as Record<string, unknown>
         : {};
-      const type = typeof draft.type === 'string' ? draft.type : undefined;
-      const asset = typeof draft.assetLeaseId === 'string' ? assets.get(draft.assetLeaseId) : undefined;
+      const draftType = typeof draft.type === 'string' ? draft.type : undefined;
+      const type = draftType === 'plain' ? undefined : draftType;
       const overrides: Partial<MockNode> = {
         type,
         showCheckbox: draft.checkbox === true,
@@ -2698,21 +2698,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       };
       if (type === 'reference') {
         overrides.targetId = String(draft.referenceTargetId ?? '');
-      } else if (type === 'image') {
-        overrides.assetId = asset?.id ?? (typeof draft.assetLeaseId === 'string' ? draft.assetLeaseId : undefined);
-        overrides.mediaUrl = typeof draft.mediaUrl === 'string' ? draft.mediaUrl : undefined;
-        overrides.imageWidth = typeof metadata.width === 'number' ? metadata.width : asset?.imageWidth;
-        overrides.imageHeight = typeof metadata.height === 'number' ? metadata.height : asset?.imageHeight;
-        overrides.mediaAlt = typeof metadata.alt === 'string' ? metadata.alt : undefined;
-      } else if (type === 'attachment') {
-        overrides.assetId = asset?.id ?? String(draft.assetLeaseId ?? '');
-        overrides.mimeType = asset?.mimeType ?? 'application/octet-stream';
-        overrides.originalFilename = asset?.originalFilename ?? content.text;
-        overrides.fileSize = asset?.byteSize ?? 0;
-        overrides.thumbnailAssetId = asset?.thumbnailAssetId;
-        overrides.pdfPageCount = asset?.pdfPageCount;
-        overrides.audioDurationMs = asset?.audioDurationMs;
-        overrides.videoDurationMs = asset?.videoDurationMs;
       } else if (type === 'codeBlock') {
         overrides.codeLanguage = typeof draft.codeLanguage === 'string' ? draft.codeLanguage : undefined;
       }
@@ -2815,8 +2800,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         'select-option': 'selectOption',
         'append-nodes': 'appendNodes',
         'append-field': 'appendField',
-        'append-image': 'appendImage',
-        'append-attachment': 'appendAttachment',
         commit: 'commit',
       };
       const args: Record<string, unknown> = {
@@ -2840,31 +2823,72 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           : [];
       }
       if (mutation.action === 'append-field') Object.assign(args, { name: mutation.name, fieldType: mutation.fieldType });
-      if (mutation.action === 'append-image') {
-        const asset = typeof mutation.assetLeaseId === 'string' ? assets.get(mutation.assetLeaseId) : undefined;
-        Object.assign(args, {
-          assetId: asset?.id ?? mutation.assetLeaseId,
-          mediaUrl: mutation.mediaUrl,
-          width: mutation.width,
-          height: mutation.height,
-          alt: mutation.alt,
-          name: mutation.name,
-        });
-      }
-      if (mutation.action === 'append-attachment') {
-        const asset = assets.get(String(mutation.assetLeaseId));
-        Object.assign(args, {
-          assetId: asset?.id ?? mutation.assetLeaseId,
-          mimeType: asset?.mimeType,
-          originalFilename: asset?.originalFilename,
-          fileSize: asset?.byteSize,
-          thumbnailAssetId: asset?.thumbnailAssetId,
-          pdfPageCount: asset?.pdfPageCount,
-          audioDurationMs: asset?.audioDurationMs,
-          videoDurationMs: asset?.videoDurationMs,
-        });
-      }
       updateFieldSlot(args);
+    };
+
+    const applyMockSourceInstruction = (
+      ownerId: string,
+      instruction: Record<string, unknown>,
+      bindings: Record<string, string[]>,
+    ) => {
+      const owner = nodes.get(ownerId);
+      if (!owner) throw new Error(`Source owner does not exist: ${ownerId}`);
+      const sourceEntries = () => owner.children.flatMap((childId) => {
+        const child = nodes.get(childId);
+        return child?.type === 'fieldEntry' && child.fieldDefId === 'field:source' ? [child] : [];
+      });
+
+      const oneSourceValue = (reference: unknown) => {
+        const valueId = oneMockTarget(reference as MockTargetRef, bindings);
+        const value = nodes.get(valueId);
+        const entry = value?.parentId ? nodes.get(value.parentId) : undefined;
+        if (entry?.type !== 'fieldEntry' || entry.parentId !== ownerId || entry.fieldDefId !== 'field:source') {
+          throw new Error(`Source value is not owned by ${ownerId}: ${valueId}`);
+        }
+        return { entry, value: value! };
+      };
+
+      if (instruction.action === 'add') {
+        const entries = sourceEntries();
+        const anchor = instruction.after !== undefined && instruction.after !== null
+          ? oneSourceValue(instruction.after)
+          : undefined;
+        let entry = anchor?.entry
+          ?? (instruction.after === undefined ? entries.at(-1) : entries[0]);
+        if (!entry) {
+          const entryId = nextCanonicalNodeId();
+          entry = makeNode(entryId, '', {
+            type: 'fieldEntry',
+            parentId: ownerId,
+            fieldDefId: 'field:source',
+            fieldType: 'uri',
+          });
+          appendChild(ownerId, entryId);
+        }
+        const valueId = typeof instruction.valueId === 'string' ? instruction.valueId : nextCanonicalNodeId();
+        if (nodes.has(valueId)) throw new Error(`Source value already exists: ${valueId}`);
+        let index: number | null = null;
+        if (instruction.after === null) index = 0;
+        else if (anchor) index = entry.children.indexOf(anchor.value.id) + 1;
+        makeNode(valueId, String(instruction.sourceText ?? ''), { parentId: entry.id });
+        appendChild(entry.id, valueId, index);
+      } else if (instruction.action === 'replace') {
+        oneSourceValue(instruction.value).value.content = rich(String(instruction.sourceText ?? ''));
+      } else if (instruction.action === 'reorder') {
+        const { entry, value } = oneSourceValue(instruction.value);
+        const anchor = instruction.after === null ? null : oneSourceValue(instruction.after);
+        if (anchor?.value.id === value.id) throw new Error('Source value cannot anchor itself.');
+        const targetEntry = anchor?.entry ?? sourceEntries()[0] ?? entry;
+        removeFromParent(value.id);
+        appendChild(targetEntry.id, value.id, anchor ? targetEntry.children.indexOf(anchor.value.id) + 1 : 0);
+        if (entry.id !== targetEntry.id && entry.children.length === 0) removeNode(entry.id);
+      } else if (instruction.action === 'remove') {
+        const { entry, value } = oneSourceValue(instruction.value);
+        removeNode(entry.children.length === 1 ? entry.id : value.id);
+      } else if (instruction.action === 'clear') {
+        for (const entry of sourceEntries()) removeNode(entry.id);
+      }
+      if (nodes.has(ownerId)) nodes.get(ownerId)!.updatedAt = ++now;
     };
     const applyMockViewInstruction = (
       targetId: string,
@@ -3012,6 +3036,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           if (!node.tags.includes(tagId)) node.tags.push(tagId);
           for (const templateNodeId of tagTemplateContentNodeIds(tagId)) cloneTemplateContentNode(targetId, templateNodeId);
         } else node.tags = node.tags.filter((id) => id !== tagId);
+      } else if (instruction.kind === 'source') {
+        applyMockSourceInstruction(targetId, instruction, bindings);
       } else if (instruction.kind === 'field') {
         applyMockFieldInstruction(targetId, instruction, bindings);
       } else if (instruction.kind === 'field-slot') {
@@ -3094,12 +3120,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         const position = instruction.position as Record<string, unknown> | undefined;
         if (position?.x != null) setOptionalNumber(node, 'bannerPositionX', position.x);
         if (position?.y != null) setOptionalNumber(node, 'bannerPositionY', position.y);
-      } else if (instruction.kind === 'image') {
-        node.type = 'image';
-        if (typeof instruction.assetLeaseId === 'string') node.assetId = instruction.assetLeaseId;
-        if (typeof instruction.mediaUrl === 'string') node.mediaUrl = instruction.mediaUrl;
-        if (typeof instruction.width === 'number') node.imageWidth = instruction.width;
-        if (typeof instruction.height === 'number') node.imageHeight = instruction.height;
       }
       if (nodes.has(targetId)) nodes.get(targetId)!.updatedAt = ++now;
     };
@@ -5625,8 +5645,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 kind: 'file',
                 sourceKind: 'asset',
                 id: `asset:${target.assetId}`,
-                target,
-                name: target.label || asset.originalFilename || target.assetId,
+                target: {
+                  ...target,
+                  label: asset.originalFilename || target.label || target.assetId,
+                },
+                name: asset.originalFilename || target.label || target.assetId,
                 ext: (asset.originalFilename || '').split('.').pop() || '',
                 mimeType: asset.mimeType,
                 entryKind: 'file',
@@ -5740,35 +5763,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             typeof args.id === 'string' ? args.id : undefined,
           );
           return clone(outcome({ nodeId, parentId: String(args.parentId), placement: { kind: 'end' }, selectAll: false }));
-        }
-        if (cmd === 'create_image_node') {
-          const parentId = String(args.parentId);
-          const nodeId = createNode(parentId, args.index as number | null, typeof args.name === 'string' ? args.name : '', {
-            type: 'image',
-            showCheckbox: false,
-            assetId: typeof args.assetId === 'string' ? args.assetId : undefined,
-            mediaUrl: typeof args.mediaUrl === 'string' ? args.mediaUrl : undefined,
-            imageWidth: typeof args.width === 'number' ? args.width : undefined,
-            imageHeight: typeof args.height === 'number' ? args.height : undefined,
-            mediaAlt: typeof args.alt === 'string' ? args.alt : undefined,
-          });
-          return clone(outcome({ nodeId, parentId, placement: { kind: 'end' }, selectAll: false }));
-        }
-        if (cmd === 'create_attachment_node') {
-          const parentId = String(args.parentId);
-          const nodeId = createNode(parentId, args.index as number | null, String(args.originalFilename ?? 'attachment'), {
-            type: 'attachment',
-            showCheckbox: false,
-            assetId: String(args.assetId ?? ''),
-            mimeType: String(args.mimeType ?? 'application/octet-stream'),
-            originalFilename: String(args.originalFilename ?? 'attachment'),
-            fileSize: typeof args.fileSize === 'number' ? args.fileSize : 0,
-            thumbnailAssetId: typeof args.thumbnailAssetId === 'string' ? args.thumbnailAssetId : undefined,
-            pdfPageCount: typeof args.pdfPageCount === 'number' ? args.pdfPageCount : undefined,
-            audioDurationMs: typeof args.audioDurationMs === 'number' ? args.audioDurationMs : undefined,
-            videoDurationMs: typeof args.videoDurationMs === 'number' ? args.videoDurationMs : undefined,
-          });
-          return clone(outcome({ nodeId, parentId, placement: { kind: 'end' }, selectAll: false }));
         }
         if (cmd === 'create_rich_text_node') {
           const parentId = String(args.parentId);
@@ -6483,18 +6477,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           }
           return clone(outcome({ nodeId: String(args.nodeId), selectAll: false }));
         }
-        if (cmd === 'set_node_image') {
-          const node = nodes.get(String(args.nodeId));
-          if (node) {
-            node.type = 'image';
-            node.assetId = typeof args.assetId === 'string' ? args.assetId : undefined;
-            node.mediaUrl = typeof args.mediaUrl === 'string' ? args.mediaUrl : undefined;
-            node.imageWidth = typeof args.width === 'number' ? args.width : undefined;
-            node.imageHeight = typeof args.height === 'number' ? args.height : undefined;
-            node.updatedAt = ++now;
-          }
-          return clone(outcome({ nodeId: String(args.nodeId), selectAll: false }));
-        }
         if (
           cmd === 'ensure_tag_search'
           || cmd === 'refresh_search_node_results'
@@ -6669,7 +6651,7 @@ export async function multiSelect(page: Page, rowIds: string[]) {
   }
 }
 
-export async function e2eProjection(page: Page): Promise<{ nodes: Array<{
+export interface E2EProjectionNode {
   id: string;
   parentId?: string;
   children: string[];
@@ -6683,6 +6665,7 @@ export async function e2eProjection(page: Page): Promise<{ nodes: Array<{
   extends?: string;
   showCheckbox?: boolean;
   doneStateEnabled?: boolean;
+  fieldDefId?: string;
   fieldType?: string;
   nullable?: boolean;
   hideField?: string;
@@ -6691,7 +6674,9 @@ export async function e2eProjection(page: Page): Promise<{ nodes: Array<{
   maxValue?: number;
   sourceSupertag?: string;
   templateId?: string;
-}> }> {
+}
+
+export async function e2eProjection(page: Page): Promise<{ nodes: E2EProjectionNode[] }> {
   return page.evaluate(() => {
     const win = window as E2EWindow;
     return win.__LIN_E2E__?.projection() as { nodes: Array<{
@@ -6709,6 +6694,7 @@ export async function e2eProjection(page: Page): Promise<{ nodes: Array<{
       showCheckbox?: boolean;
       doneStateEnabled?: boolean;
       fieldType?: string;
+      fieldDefId?: string;
       nullable?: boolean;
       hideField?: string;
       autocollectOptions?: boolean;
@@ -6718,6 +6704,31 @@ export async function e2eProjection(page: Page): Promise<{ nodes: Array<{
       templateId?: string;
     }> };
   });
+}
+
+export function ordinaryChildIds(node: { id: string; children: string[] } | null | undefined): string[] {
+  return node?.children ?? [];
+}
+
+export function sourceFieldEntries(
+  projection: { nodes: E2EProjectionNode[] },
+  ownerId: string,
+): E2EProjectionNode[] {
+  const owner = projection.nodes.find((node) => node.id === ownerId);
+  return owner?.children.flatMap((childId) => {
+    const child = projection.nodes.find((node) => node.id === childId);
+    return child?.type === 'fieldEntry' && child.fieldDefId === 'field:source' ? [child] : [];
+  }) ?? [];
+}
+
+export function sourceFieldValues(
+  projection: { nodes: E2EProjectionNode[] },
+  ownerId: string,
+): E2EProjectionNode[] {
+  return sourceFieldEntries(projection, ownerId).flatMap((entry) => entry.children.flatMap((valueId) => {
+    const value = projection.nodes.find((node) => node.id === valueId);
+    return value ? [value] : [];
+  }));
 }
 
 export async function nodeByText(page: Page, text: string) {

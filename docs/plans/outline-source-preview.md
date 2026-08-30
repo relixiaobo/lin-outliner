@@ -6,8 +6,9 @@
 
 Turn the complete content-first Source baseline into a preview-first resource
 interaction without changing the document or public Host protocol. The selected
-preview appears before the editable Node content, while every Source remains
-visible and manageable through one compact switcher and field surface.
+preview appears before the editable Node content, while every built-in URI value
+remains visible and manageable through one compact switcher and its ordinary
+field surface.
 
 ## Non-goals
 
@@ -22,7 +23,7 @@ visible and manageable through one compact switcher and field surface.
 ### Preview-first composition
 
 Within the same ordinary Node scope, render selected preview, compact preview
-toolbar, editable content/tags, Source field, other fields, and ordinary
+toolbar, editable content/tags, the ordinary URI field, other fields, and ordinary
 children in that order. The preview is presentation only and never occupies an
 Outline level or becomes a card containing the Node.
 
@@ -39,10 +40,10 @@ specific invalid, unsupported, denied, unavailable, or retryable state rather
 than an empty body. Switching Source restores the preview but does not move
 keyboard focus into interactive media.
 
-The Source field remains visible whenever any value exists even when optional
-field-display rules would hide other fields. Drilled Node pages preserve the
-same selection, visibility, availability, and action semantics; dense table and
-calendar projections render ordered URI values without mounting rich previews.
+The URI field follows the same field-display, editing, movement, and deletion
+rules as other fields. Drilled Node pages preserve the same selection,
+visibility, availability, and action semantics; dense table and calendar
+projections render ordered URI values without mounting rich previews.
 
 Selection, visibility, preview-body reader state, and child disclosure remain
 four independent state axes. Stable value identity preserves selection through
@@ -66,10 +67,10 @@ selection and visibility.
 
 Selected or non-empty content, prose containing a URL, multi-line input, an HTML
 anchor, code, or a protected RichText range retains ordinary inline-link
-behavior and adds no Source. Typing a URL never auto-converts the Node. Add the
-context-menu Source entry commands on the final merged APIs and recompose the
-existing Add/Edit/Reorder/Remove/Clear controls without changing their semantics
-or inventing a first-value-only adapter.
+behavior and adds no URI value. Typing a URL never auto-converts the Node. Add
+task-oriented context-menu URI commands on the final merged APIs and recompose
+the existing Add/Edit/Reorder/Remove/Clear conveniences without restricting the
+ordinary field surface or inventing a first-value-only adapter.
 
 Image previews use editable Node content as their user-authored accessible name
 and the Source-derived label only as an empty-content fallback. This is the UI

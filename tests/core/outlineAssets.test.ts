@@ -10,8 +10,10 @@ import {
   AssetRecordSchema,
   canonicalSha256,
   type ChangeSet,
-  type NodeDraft,
 } from '../../src/outline/contract';
+import { formatAssetSourceUri } from '../../src/core/source';
+import { sourceFieldValues } from '../../src/core/sourceField';
+import { SOURCE_FIELD_ID } from '../../src/core/types';
 import {
   applyOutlineDiff,
   diffOutlineChangeSet,
@@ -159,14 +161,10 @@ describe('Outline Runtime assets', () => {
     const bytes = Buffer.alloc(32 * 1024, 7);
     const firstLease = await workspace.assets.ingestBytes(bytes, 'first.bin');
     const secondLease = await workspace.assets.ingestBytes(bytes, 'second.bin');
-    const firstCreate = await applyChangeSet(workspace, createAttachmentChangeSet(firstLease.leaseId));
-    const secondCreate = await applyChangeSet(workspace, createAttachmentChangeSet(secondLease.leaseId));
-    const firstNodeId = firstCreate.affectedNodeIds.find((id) => (
-      workspace.documentState().nodes[id]?.assetId === firstLease.assetId
-    ));
-    const secondNodeId = secondCreate.affectedNodeIds.find((id) => (
-      workspace.documentState().nodes[id]?.assetId === secondLease.assetId
-    ));
+    await applyChangeSet(workspace, createManagedSourceChangeSet(firstLease.assetId));
+    await applyChangeSet(workspace, createManagedSourceChangeSet(secondLease.assetId));
+    const firstNodeId = sourceOwnerIdForAsset(workspace, firstLease.assetId);
+    const secondNodeId = sourceOwnerIdForAsset(workspace, secondLease.assetId);
     expect(firstNodeId).toBeDefined();
     expect(secondNodeId).toBeDefined();
 
@@ -197,7 +195,7 @@ describe('Outline Runtime assets', () => {
       metadata: { mimeType: 'image/png', imageWidth: 128, imageHeight: 96 },
     });
 
-    await applyChangeSet(workspace, createAttachmentChangeSet(lease.leaseId));
+    await applyChangeSet(workspace, createManagedSourceChangeSet(lease.assetId));
     nowMs += 1_001;
 
     expect(await workspace.collectAssetGarbage()).toEqual([]);
@@ -207,7 +205,7 @@ describe('Outline Runtime assets', () => {
   test('consumes a lease atomically and retains live and recovery-only bytes through purge and revert', async () => {
     const workspace = await makeWorkspace();
     const lease = await workspace.assets.ingestBytes(Buffer.from('attachment bytes'), 'note.txt');
-    const createDiff = await diffOutlineChangeSet(workspace, createAttachmentChangeSet(lease.leaseId));
+    const createDiff = await diffOutlineChangeSet(workspace, createManagedSourceChangeSet(lease.assetId));
     const createdId = createDiff.bindings.created?.[0];
     expect(createdId).toBeDefined();
     expect(createDiff.affected).toContainEqual(expect.objectContaining({ id: createdId, effect: 'create' }));
@@ -215,9 +213,9 @@ describe('Outline Runtime assets', () => {
     const created = await applyOutlineDiff(workspace, createDiff, { origin: 'local-user' });
     expect(created.affectedNodeIds).toContain(createdId!);
     expect(workspace.documentState().nodes[createdId!]).toMatchObject({
-      type: 'attachment',
-      assetId: lease.assetId,
+      content: { text: 'note.txt' },
     });
+    expect(sourceOwnerIdForAsset(workspace, lease.assetId)).toBe(createdId);
     await expect(workspace.assets.resolveLeases([lease.leaseId])).rejects.toMatchObject({
       outlineError: { code: 'precondition_failed' },
     });
@@ -238,7 +236,99 @@ describe('Outline Runtime assets', () => {
     expect((await workspace.assets.readVerified(lease.assetId)).bytes).toEqual(Buffer.from('attachment bytes'));
 
     await workspace.revert(purged.operationId, { origin: 'local-user' });
-    expect(workspace.documentState().nodes[createdId!]).toMatchObject({ assetId: lease.assetId });
+    expect(sourceOwnerIdForAsset(workspace, lease.assetId)).toBe(createdId);
+    expect(await workspace.assets.show(lease.assetId)).toMatchObject({ assetId: lease.assetId });
+  });
+
+  test('tracks existing values when an ordinary field entry is relinked to the built-in URI definition', async () => {
+    const workspace = await makeWorkspace();
+    const lease = await workspace.assets.ingestBytes(Buffer.from('relinked bytes'), 'relinked.txt');
+    const payload = { kind: 'relink-uri-field', assetId: lease.assetId };
+
+    await workspace.mutate({
+      origin: 'local-user',
+      changeSetHash: canonicalSha256(payload),
+      diffHash: canonicalSha256({ ...payload, kind: 'diff' }),
+      summary: 'Relinked an ordinary field to URI.',
+      execute: (core) => {
+        const ownerId = core.createNode(core.projection().todayId, null, 'Relinked').focus!.nodeId;
+        const tagId = core.createTag('relink-source').focus!.nodeId;
+        const templateEntryId = core.createFieldDef(tagId, 'Locator', 'plain').focus!.nodeId;
+        const fieldDefId = core.state().nodes[templateEntryId]!.fieldDefId!;
+        core.updateFieldSlot(ownerId, fieldDefId, {
+          kind: 'appendText',
+          text: formatAssetSourceUri(lease.assetId),
+        });
+        const entryId = core.state().nodes[ownerId]!.children.find((childId) => (
+          core.state().nodes[childId]?.type === 'fieldEntry'
+          && core.state().nodes[childId]?.fieldDefId === fieldDefId
+        ));
+        if (!entryId) throw new Error('Expected the ordinary field entry to exist.');
+        core.reuseFieldDefinition(entryId, SOURCE_FIELD_ID);
+      },
+    });
+
+    expect(sourceOwnerIdForAsset(workspace, lease.assetId)).toBeDefined();
+    await expect(workspace.assets.resolveLeases([lease.leaseId])).rejects.toMatchObject({
+      outlineError: { code: 'precondition_failed' },
+    });
+    expect(await workspace.collectAssetGarbage()).toEqual([]);
+  });
+
+  test('consumes a staged asset lease through a generic URI field write', async () => {
+    const workspace = await makeWorkspace();
+    const lease = await workspace.assets.ingestBytes(Buffer.from('generic field bytes'), 'generic.txt');
+    const ownerId = workspace.forkCore().projection().todayId;
+
+    await applyChangeSet(workspace, {
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      operations: [{
+        op: 'update',
+        targets: oneId(ownerId),
+        changes: [{
+          kind: 'field',
+          action: 'set',
+          field: oneId(SOURCE_FIELD_ID),
+          value: formatAssetSourceUri(lease.assetId),
+        }],
+      }],
+    });
+
+    expect(sourceOwnerIdForAsset(workspace, lease.assetId)).toBe(ownerId);
+    await expect(workspace.assets.resolveLeases([lease.leaseId])).rejects.toMatchObject({
+      outlineError: { code: 'precondition_failed' },
+    });
+  });
+
+  test('rejects publishing an expired staged asset before garbage collection removes its record', async () => {
+    let nowMs = Date.parse('2030-01-01T00:00:00.000Z');
+    const workspace = await makeWorkspace({
+      now: () => new Date(nowMs),
+      assetStoreOptions: { leaseMs: 1_000 },
+    });
+    const lease = await workspace.assets.ingestBytes(Buffer.from('expired field bytes'), 'expired.txt');
+    const ownerId = workspace.forkCore().projection().todayId;
+    nowMs += 2_000;
+
+    await expect(applyChangeSet(workspace, {
+      protocolVersion: 1,
+      kind: 'outline.changeset',
+      operations: [{
+        op: 'update',
+        targets: oneId(ownerId),
+        changes: [{
+          kind: 'field',
+          action: 'set',
+          field: oneId(SOURCE_FIELD_ID),
+          value: formatAssetSourceUri(lease.assetId),
+        }],
+      }],
+    })).rejects.toMatchObject({
+      outlineError: { code: 'precondition_failed' },
+    });
+
+    expect(sourceOwnerIdForAsset(workspace, lease.assetId)).toBeUndefined();
     expect(await workspace.assets.show(lease.assetId)).toMatchObject({ assetId: lease.assetId });
   });
 
@@ -249,7 +339,7 @@ describe('Outline Runtime assets', () => {
       assetStoreOptions: { leaseMs: 1_000 },
     });
     const lease = await workspace.assets.ingestBytes(Buffer.from('retry me'), 'retry.txt');
-    const stale = await diffOutlineChangeSet(workspace, createAttachmentChangeSet(lease.leaseId));
+    const stale = await diffOutlineChangeSet(workspace, createManagedSourceChangeSet(lease.assetId));
     await applyChangeSet(workspace, createPlainChangeSet('Concurrent edit'));
 
     await expect(applyOutlineDiff(workspace, stale, { origin: 'local-user' })).rejects.toMatchObject({
@@ -273,8 +363,8 @@ describe('Outline Runtime assets', () => {
       storeOptions: { minimumRetentionDays: 1, minimumRetentionOperations: 0 },
     });
     const lease = await workspace.assets.ingestBytes(Buffer.from('eventually collect'), 'old.txt');
-    const create = await applyChangeSet(workspace, createAttachmentChangeSet(lease.leaseId));
-    const createdNodeId = create.affectedNodeIds.find((id) => workspace.documentState().nodes[id]?.type === 'attachment')!;
+    await applyChangeSet(workspace, createManagedSourceChangeSet(lease.assetId));
+    const createdNodeId = sourceOwnerIdForAsset(workspace, lease.assetId)!;
     await applyChangeSet(workspace, {
       protocolVersion: 1,
       kind: 'outline.changeset',
@@ -585,19 +675,32 @@ describe('Outline Runtime assets', () => {
   });
 });
 
-function createAttachmentChangeSet(assetLeaseId: string): ChangeSet {
-  const attachment: NodeDraft = {
-    type: 'attachment',
-    content: { text: 'note.txt', marks: [], inlineRefs: [] },
-    assetLeaseId,
-    children: [],
-  };
+function createManagedSourceChangeSet(assetId: string): ChangeSet {
   return {
     protocolVersion: 1,
     kind: 'outline.changeset',
     idempotencyKey: `test:${crypto.randomUUID()}`,
-    operations: [{ op: 'create', placement: { kind: 'last', parent: oneAlias('today') }, nodes: [attachment], bind: 'created' }],
+    operations: [
+      {
+        op: 'create',
+        placement: { kind: 'last', parent: oneAlias('today') },
+        nodes: [{ content: { text: 'note.txt', marks: [], inlineRefs: [] }, children: [] }],
+        bind: 'created',
+      },
+      {
+        op: 'update',
+        targets: { binding: 'created' },
+        changes: [{ kind: 'source', action: 'add', sourceText: formatAssetSourceUri(assetId) }],
+      },
+    ],
   };
+}
+
+function sourceOwnerIdForAsset(workspace: OutlineRuntimeWorkspace, assetId: string): string | undefined {
+  const state = workspace.documentState();
+  return Object.values(state.nodes).find((node) => (
+    sourceFieldValues(state, node.id).some((value) => value.sourceText === formatAssetSourceUri(assetId))
+  ))?.id;
 }
 
 function createPlainChangeSet(text: string): ChangeSet {

@@ -5,6 +5,7 @@ import {
   ids,
   nodeById,
   openMockedApp,
+  ordinaryChildIds,
   row,
 } from './outlinerMock';
 
@@ -69,20 +70,20 @@ test.describe('tag template seed backfill', () => {
     const dialog = page.getByRole('dialog', { name: 'Apply #project template?' });
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText('This adds 4 template children to 2 tagged nodes.');
-    expect((await nodeById(page, ids.alpha))?.children).toEqual([]);
-    expect((await nodeById(page, ids.beta))?.children).toEqual([]);
+    expect(ordinaryChildIds(await nodeById(page, ids.alpha))).toEqual([]);
+    expect(ordinaryChildIds(await nodeById(page, ids.beta))).toEqual([]);
     expect((await templateRuntimeCalls(page)).applies).toHaveLength(0);
 
     await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
 
     await expect(dialog).toBeHidden();
     await expect(row(page, ids.alpha).getByRole('button', { name: 'Open project tag' })).toBeFocused();
-    await expect.poll(async () => (await nodeById(page, ids.alpha))?.children.length).toBe(2);
-    await expect.poll(async () => (await nodeById(page, ids.beta))?.children.length).toBe(2);
+    await expect.poll(async () => ordinaryChildIds(await nodeById(page, ids.alpha)).length).toBe(2);
+    await expect.poll(async () => ordinaryChildIds(await nodeById(page, ids.beta)).length).toBe(2);
     const alpha = await nodeById(page, ids.alpha);
     const beta = await nodeById(page, ids.beta);
-    expect(alpha?.children.map((childId) => childId)).toHaveLength(2);
-    expect(beta?.children.map((childId) => childId)).toHaveLength(2);
+    expect(ordinaryChildIds(alpha)).toHaveLength(2);
+    expect(ordinaryChildIds(beta)).toHaveLength(2);
     expect((await templateRuntimeCalls(page)).diffs).toHaveLength(1);
     expect((await templateRuntimeCalls(page)).applies).toHaveLength(1);
 
@@ -94,7 +95,7 @@ test.describe('tag template seed backfill', () => {
       ))
       .map((node) => node.id);
     const instanceTemplateIds = [alpha, beta].map((node) => (
-      node?.children.map((childId) => byId.get(childId)?.templateId) ?? []
+      ordinaryChildIds(node).map((childId) => byId.get(childId)?.templateId)
     ));
     expect(instanceTemplateIds).toEqual([
       templateIds,

@@ -214,6 +214,7 @@ type PreviewTarget =
       attachmentId?: string;
     }
   | { kind: 'asset'; assetId: string; label?: string }
+  | { kind: 'linked-file'; sourceValueId: string; sourceText: string; label?: string }
   | { kind: 'url'; url: string; label?: string };
 
 type PanelView =
@@ -370,21 +371,16 @@ Back/Forward visit.
 
 ### File preview panel
 
-A file that **is** an outliner node (an `attachment` or `image` node) behaves
-like a normal outline row, but its presentation depends on the kind. A non-image
-file is a lightweight name row: its **file-type icon is the bullet** (the `file`
-RowMarker variant), the row content is the **read-only filename** (a caret can
-land in it, but ordinary input never renames it), and the **chevron expands an
-inline preview** below the row (the same preview widget the node page uses,
-started collapsed/peek). Non-image row actions live in the preview surface, not
-on a row-level `⋯`. An image renders the image itself inline as the row content;
-a plain click selects the row rather than opening a different page, while its
-top-right menu owns Maximize. The bullet drills into the node page; real child
-nodes still render below the inline preview. See "File node" in
-`ui-behavior.md`.
+A Source-backed content Node remains an ordinary outline row: editable RichText,
+neutral bullet, normal tags and keyboard behavior. Its chevron controls only
+ordinary child disclosure. The bullet opens the normal Node page, whose Source
+section lists every ordered value and renders the explicitly selected value's
+preview below the list. Row state, selected Source, preview visibility, preview
+reader state, and child disclosure are independent.
 
-Opening a file node shows the same `file-preview` workspace view used by loose
-sources, but with `nodeId` set. That `nodeId` is the lifecycle switch:
+`file-preview` remains the workspace view for loose sources and dedicated readers.
+When it carries `nodeId`, that ID binds the preview to an ordinary Source owner for
+persistence and navigation; it does not imply a special Node type:
 
 - Without `nodeId`, the view is a loose preview. The breadcrumb is sourced from
   the filesystem/source identity, the title is the read-only filename/source
@@ -393,18 +389,19 @@ sources, but with `nodeId` set. That `nodeId` is the lifecycle switch:
   webpage favicon and page title when the webview reports them, falling back to
   the link label or URL, and the body starts directly with a single-layer webpage
   surface that fills the available pane height.
-- With `nodeId`, the view is an ingested file node. The breadcrumb is sourced
-  from the outliner ancestry, the title remains the read-only filename, and the
-  file node's children outline mounts below the preview hero.
+- With `nodeId`, the view is bound to an ordinary Node. The breadcrumb is sourced
+  from outliner ancestry, the title uses editable authored Node content with a
+  derived Source label only as an empty-content fallback, and ordinary children
+  may mount below the preview.
 - With `nodeId` plus `presentation: 'reader'`, the view is a file-only reader.
   It keeps the node binding so the asset target can persist and sanitize safely,
-  but it does **not** render the file node page: no outliner ancestry breadcrumb,
+  but it does **not** render the Node page: no outliner ancestry breadcrumb,
   title hero, children outline, References section, Expand/Collapse primary, or
   inner preview resize handle. The header is a compact back control + filename +
   `⋯` file-action menu, and the body is the full reader content.
 
 `file-preview` is a workspace-panel view, not an overlay and not part of the
-agent dock. It is opened for outliner file nodes, outliner inline local-file refs,
+agent dock. It is opened from a selected Source's dedicated-reader action, outliner inline local-file refs,
 agent meta-surface inline local-file refs, visible agent payload rows, and nested
 links followed from inside a preview body (e.g. a directory-listing entry). Live
 agent transcript file chips open the same `file-preview` view with
@@ -418,23 +415,32 @@ preview reuses the rightmost workspace pane and preserves that pane's view
 history so Back can return to the previous outliner or preview view.
 
 The unified view renders one frame in both lifecycle states: sticky breadcrumb,
-read-only filename title, the `FilePreviewShell` preview, and optional children
-outline. Non-image file sources use one bottom-center preview action bar (a
+source/authored title, the `FilePreviewShell` preview, and optional children
+outline. Non-image file Sources use one bottom-center preview action bar (a
 fixed-width primary button plus a separate circular `⋯` menu button), not a top
 toolbar, and that action location is the same for every format. Previewable
 sources use the primary to toggle between a collapsed peek and an expanded
 full-scroll height, and the `⋯` menu carries
-Open-in-split-pane / Show-in-Finder / Open-with-default-app / Copy (an ingested
+Open-in-split-pane / Reveal-in-Finder / Open-with-default-app / Copy (a managed
 asset) or Add-to-outline (a loose source). Non-previewable sources render a compact
 metadata fallback card with the file kind and size on one line, modified date on
 its own line, and no icon; the same action bar shows short `Open` as its primary and `⋯` for
 secondary system actions, so unsupported formats do not teach a different control
 location.
-The same `FilePreviewShell` mounts both inline under an expanded file row
-(started collapsed) and on the node page (started expanded). Changing a loose
-preview into an ingested node mutates the same mounted view (`nodeId` is added);
+The same `FilePreviewShell` mounts below the selected value in a Node's Source
+section and in `file-preview` workspace views. Changing a loose preview into a
+managed Source-backed Node mutates the same mounted view (`nodeId` is added);
 it does not navigate to a different panel
 kind or remount the preview body.
+
+The Node-page Source section exposes the complete document mutation surface:
+add, lossless edit/replace, stable-value selection, ordered move, remove, and
+observed clear. It shows availability and recovery per value, persists selected
+value plus preview visibility in renderer-local workspace state, and falls back
+to the first surviving value only when the selected identity disappears. Invalid,
+denied, unsupported, missing, and temporarily unavailable values stay visible
+and editable; asynchronous resolution for an old selection cannot overwrite the
+current body. Removing the final value leaves the ordinary Node intact.
 
 The renderer normalizes every entry point to `PreviewTarget` and asks main to
 resolve it through the preload preview API:
@@ -467,11 +473,20 @@ Source authority stays source-specific:
   `preview-local://` UUID backed by a bounded verified materialization; that
   scheme is registered only in the app's default session, not the remote
   URL-preview partition. Open/reveal/copy stay on the existing asset commands. A standalone `asset` preview is only valid
-  when the view is bound to a file node via `nodeId`; a persisted `file-preview`
+  when the view is bound to its ordinary owner via `nodeId`; a persisted `file-preview`
   view whose target is an `asset` but has no `nodeId` is invalidated on restore.
   If it was the current view, the pane falls back to a live outliner under the
   restore rules above; another preview or Diagnostics entry is retained only as
   navigation history (pre-launch — no migration).
+- `linked-file` targets carry only stable Source value identity and exact stored
+  text. Main resolves them through the profile-private exact-file grant store and
+  returns no raw canonical path. Choose File admits only the exact canonical
+  regular file named by the stored `file:` locator; Forget revokes authorization
+  without mutating Source. Link File and Replace with File admit the chosen grant
+  before one Host-owned Source mutation and revoke only a grant newly orphaned by
+  failed settlement. Every metadata/read/token operation consumes the same
+  no-follow handle it verified, and an unavailable or retargeted file degrades
+  locally.
 - `url` targets are first-class loose previews. Ordinary `http(s)` links from the
   outliner and Thread history route into a Tenon split preview pane by default.
   URL targets normalize through one shared `http(s)`-only helper in core. The pane
@@ -875,7 +890,7 @@ Documents without outline metadata render no rail.
 
 **Add to outline.** A non-node preview carries an "add to outline" action that
 captures the source as an exact revision plus logical AssetRecord and creates a
-file node. It is offered for `local-file` (full-file ingest, gated to the Agent's
+normal content Node with one managed Source. It is offered for `local-file` (full-file ingest, gated to the Agent's
 trusted roots) and `agent-payload` (a typed, admission-bounded Thread resource).
 `url` is not yet ingestable. Anything the preview can resolve, it can ingest
 through the same authorization boundary. The action is enabled only after
@@ -886,10 +901,10 @@ renderer sends only `(threadId, resourceRef)` through the dedicated asset comman
 main reauthorizes the reference against the Thread Item graph and buffer-ingests the
 verified managed bytes without accepting or returning a path. The 20 MiB read cap
 fails closed rather than committing a partial file. The renderer receives the
-committed asset metadata and creates an `image`/`attachment` node under
-Today, then binds the same mounted `file-preview` view to the new node id; from
-then on the source is an ingested node with outliner ancestry and a children
-outline. The preview pane reaches App's document state through a single-handler
+committed asset metadata and creates an ordinary Node under Today with one
+managed Source, then binds the same mounted `file-preview` view to the new owner
+id. From then on it has ordinary authored content, outliner ancestry, children,
+Source management, and the same selected preview. The preview pane reaches App's document state through a single-handler
 request bridge (`previewIngest`, mirroring `agentFileInsert`); the action
 confirms only on a real insert.
 

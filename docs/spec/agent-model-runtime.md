@@ -341,11 +341,12 @@ renderer state, IPC, rollouts, and canonical Items never do.
 An explicit `nodeReference` also creates a bounded, main-resolved
 `referencedResources` snapshot. Every referenced Node retains authoritative
 identity, title, breadcrumb, bounded outline content, and typed availability.
-Attachment/image Nodes are opened as regular non-symlink files, capped at 50 MiB,
-checked against stored byte length and SHA-256 metadata, and copied into the
-owning Thread before the Item is published. Missing, corrupt, unsupported, and
-over-budget resources remain visible as typed unavailable evidence. Up to eight
-supported images add the verified Thread-owned bytes at the provider boundary. An
+For an ordinary Node whose ordered Sources include a managed asset, the first
+managed Source is resolved through its authoritative `AssetRecord`, opened as a
+regular non-symlink file, capped at 50 MiB, checked against stored byte length,
+and copied into the owning Thread before the Item is published. Missing, corrupt,
+unsupported, and over-budget resources remain visible as typed unavailable
+evidence. Up to eight supported images add the verified Thread-owned bytes at the provider boundary. An
 available Node resource exposes both an application-authority `readable_path` and the
 same untrusted-label file marker grammar used by composer attachments. The
 owning context Item declares dependencies by complete typed resource reference

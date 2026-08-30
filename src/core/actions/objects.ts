@@ -5,7 +5,7 @@
 // activation/pin on the drill-down surface — which is exactly what the shipped
 // call sites pass as `targetId` and `openId` today.
 
-import type { NodeId, NodeProjection } from '../types';
+import { isContentBearingNode, type NodeId, type NodeProjection } from '../types';
 import { objectName, objectTypeLabel } from './names';
 import { resolveReferenceChainTargetId } from './rowFacets';
 import type {
@@ -99,7 +99,7 @@ export function nodeText(
 ): string {
   if (!node) return untitled;
   if (node.type === 'reference' && node.targetId) return `@${node.targetId}`;
-  return node.content.text || untitled;
+  return isContentBearingNode(node) ? node.content.text || untitled : untitled;
 }
 
 const SYSTEM_OBJECT_ICONS: Record<SystemNodeKey, IconId> = {
@@ -147,22 +147,25 @@ export function presentObject(
       }
       const contentId = nodeIdForFacet(object.content, projection);
       const node = projection.byId.get(contentId);
-      const isAttachment = node?.type === 'attachment';
       // The parent's text disambiguates same-named nodes, which is the whole
       // reason the shipped launcher row carried a subtitle.
       const parent = node?.parentId ? projection.byId.get(node.parentId) : undefined;
+      const contentNode = node && isContentBearingNode(node) ? node : undefined;
+      const contentParent = parent && isContentBearingNode(parent) ? parent : undefined;
       return {
         objectRef: object.objectRef,
         kind: 'node',
         name: { source: 'literal', value: nodeText(node, untitled) },
         // No subtitle at all for a parent with no text — the deleted matcher
         // omitted it, and a literal "Untitled" is noise, not disambiguation.
-        ...(parent?.content.text ? { subtitle: { source: 'literal' as const, value: parent.content.text } } : {}),
+        ...(contentParent?.content.text
+          ? { subtitle: { source: 'literal' as const, value: contentParent.content.text } }
+          : {}),
         // Only a real emoji icon: an image / generated icon identifier is not
         // an emoji, and emitting it as one renders the raw id.
-        ...(node?.icon && node.iconKind === 'emoji' ? { emoji: node.icon } : {}),
-        iconId: isAttachment ? 'file' : 'node',
-        typeLabel: objectTypeLabel(isAttachment ? 'file' : 'node'),
+        ...(contentNode?.icon && contentNode.iconKind === 'emoji' ? { emoji: contentNode.icon } : {}),
+        iconId: 'node',
+        typeLabel: objectTypeLabel('node'),
         backingNodeId: contentId,
       };
     }

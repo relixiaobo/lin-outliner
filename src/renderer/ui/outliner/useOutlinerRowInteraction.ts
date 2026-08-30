@@ -10,7 +10,7 @@ import {
   type SetStateAction,
 } from 'react';
 import { api } from '../../api/client';
-import { EMPTY_RICH_TEXT, type NodeId } from '../../api/types';
+import { EMPTY_RICH_TEXT, isContentBearingNode, type NodeId } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
 import {
   OUTLINER_NODE_DRAG_MIME,
@@ -513,7 +513,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
           afterId: placement.afterId,
           presentation: node?.type === 'fieldEntry' ? 'field' as const : 'content' as const,
           resolvedFieldDefId: node?.type === 'fieldEntry' ? node.fieldDefId : undefined,
-          content: node?.content ?? EMPTY_RICH_TEXT,
+          content: node && isContentBearingNode(node) ? node.content : EMPTY_RICH_TEXT,
           placement: cursorEnd(),
           preserveFocus: true,
         };

@@ -12,7 +12,7 @@ import {
 import { api } from '../api/client';
 import type { NodeId, NodeProjection, RichText, RichTextPatch } from '../api/types';
 import { freshNodeId } from '../../core/nodeId';
-import { EMPTY_RICH_TEXT, nodeReferenceTarget, plainText } from '../api/types';
+import { EMPTY_RICH_TEXT, isContentBearingNode, nodeReferenceTarget, plainText } from '../api/types';
 import { flattenVisibleRows, resolveReferenceTargetId, type DocumentIndex, type UiState } from '../state/document';
 import { dayNoteIsoDateForNode } from '../state/dayNoteCounts';
 import { RichTextEditor, type EditorSplitPayload } from './editor/RichTextEditor';
@@ -65,9 +65,7 @@ import { SearchQueryBuilderPanel } from './search/SearchQueryBuilderPanel';
 import { inlineReferenceTextColor, resolveTagColor } from './tags/tagColors';
 import { TagBar } from './tags/TagBar';
 import { BacklinksSection } from './BacklinksSection';
-import { FilePreviewBody } from './preview/FilePreviewBody';
-import { fileNodeTitle, isFileNode } from './preview/fileNode';
-import { dispatchPreviewTargetOpen } from './preview/previewEvents';
+import { NodeSourcesSection } from './preview/NodeSourcesSection';
 import { buildPanelBreadcrumb } from './panelBreadcrumb';
 import { PanelDateNavigation } from './PanelDateNavigation';
 import { PanelChildrenOutline, PanelStickyBreadcrumb, usePanelTitleDock, type PanelDragHandle } from './PanelShared';
@@ -148,15 +146,13 @@ export function NodePanel(props: NodePanelProps) {
   const resolvedRootId = requestedRootNode?.type === 'reference' && requestedRootNode.targetId
     ? resolveReferenceTargetId(requestedRootNode.targetId, props.index.byId) ?? props.rootId
     : props.rootId;
-  const projectedRootNode = props.index.byId.get(resolvedRootId);
+  const projectedRootCandidate = props.index.byId.get(resolvedRootId);
+  const projectedRootNode = projectedRootCandidate && isContentBearingNode(projectedRootCandidate)
+    ? projectedRootCandidate
+    : undefined;
   const rootNode = projectedRootNode
     ? nodeWithPendingPatch(projectedRootNode, props.ui.pendingNodePatches.get(resolvedRootId))
     : projectedRootNode;
-  // A file root (attachment/image) renders its read-only filename plus a preview
-  // "hero" above its children outline. It remains a normal node, so the preview is
-  // extra, not a substitute for children.
-  const fileRoot = isFileNode(rootNode) ? rootNode : null;
-  const fileTitleLabel = fileRoot ? fileNodeTitle(fileRoot) || t.common.untitled : null;
   const projection = props.index.projection;
   const [titleContent, setTitleContent] = useState<RichText>(rootNode?.content ?? EMPTY_RICH_TEXT);
   const [titleContentRevision, setTitleContentRevision] = useState(0);
@@ -317,7 +313,7 @@ export function NodePanel(props: NodePanelProps) {
     () => (dayTitleLabel != null ? plainText(dayTitleLabel) : null),
     [dayTitleLabel],
   );
-  const currentPageTitle = fileTitleLabel ?? dayTitleLabel ?? (rootNode?.content.text || t.common.untitled);
+  const currentPageTitle = dayTitleLabel ?? (rootNode?.content.text || t.common.untitled);
 
   const restorePanelScroll = useCallback(() => {
     const panel = mainPanelRef.current;
@@ -580,7 +576,8 @@ export function NodePanel(props: NodePanelProps) {
     });
   };
 
-  const applyTitleInlineReference = async (target: { id: NodeId; content: RichText }) => {
+  const applyTitleInlineReference = async (target: NodeProjection) => {
+    if (!isContentBearingNode(target)) return;
     if (!titleTrigger || !rootNode) {
       return;
     }
@@ -751,12 +748,7 @@ export function NodePanel(props: NodePanelProps) {
                   )}
                 />
               )}
-              {fileTitleLabel ? (
-                <h1 className="panel-title-file-heading" title={fileTitleLabel}>
-                  {fileTitleLabel}
-                </h1>
-              ) : (
-                <RichTextEditor
+              <RichTextEditor
                   nodeId={resolvedRootId}
                   content={dayTitleContent ?? titleContent}
                   contentRevision={titleContentRevision}
@@ -784,7 +776,10 @@ export function NodePanel(props: NodePanelProps) {
                   }}
                   onModEnter={(content) => void handleTitleModEnter(content)}
                   resolveInlineReferenceColor={(targetId) => inlineReferenceTextColor(targetId, props.index)}
-                  resolveInlineReferenceDisplayName={(targetId) => props.index.byId.get(targetId)?.content.text.trim() || undefined}
+                  resolveInlineReferenceDisplayName={(targetId) => {
+                    const target = props.index.byId.get(targetId);
+                    return target && isContentBearingNode(target) ? target.content.text.trim() || undefined : undefined;
+                  }}
                   onInlineReferenceClick={(target, options) => {
                     if (target.kind === 'node') {
                       props.onRoot(target.nodeId, {
@@ -816,9 +811,8 @@ export function NodePanel(props: NodePanelProps) {
                   onCompositionHandoff={(text) => {
                     props.setUi((prev) => relayCompositionHandoffState(prev, text));
                   }}
-                />
-              )}
-              {!fileTitleLabel && titleTrigger && (
+              />
+              {titleTrigger && (
                 <TriggerPopover
                   trigger={{ nodeId: resolvedRootId, ...titleTrigger }}
                   index={props.index}
@@ -945,19 +939,9 @@ export function NodePanel(props: NodePanelProps) {
         {rootNode && rootDefinitionKind && (
           <DefinitionConfigPanel node={rootNode} index={props.index} run={props.run} />
         )}
-        {/* A file root shows its preview as the page hero, above the children
-            outline (a file node is a normal node and keeps its children). */}
-        {fileRoot && (
-          <FilePreviewBody
-            node={fileRoot}
-            onOpenTarget={(target, options) => dispatchPreviewTargetOpen({
-              target,
-              newPane: options?.newPane,
-              nodeId: options?.nodeId,
-              presentation: options?.presentation,
-            })}
-          />
-        )}
+        {rootNode?.type === undefined ? (
+          <NodeSourcesSection index={props.index} ownerId={resolvedRootId} run={props.run} />
+        ) : null}
         {showOutliner && (
           <PanelChildrenOutline
             className={rootDefinitionKind ? 'definition-template-outliner' : undefined}

@@ -3,13 +3,18 @@ import type {
   Change,
   Diff,
   NodeDraft,
+  OneTargetRef,
   OperationUndoGroup,
   ProjectionResult,
   TargetRef,
   UpdateInstruction,
 } from '../../outline/contract';
 import { freshNodeId } from '../../core/nodeId';
+import { isContentBearingNode } from './types';
 import type {
+  ContentBearingNodeProjection,
+  NodeProjection,
+  RichText,
   Backlink,
   AssetMetadata,
   BatchMoveNodeInput,
@@ -23,10 +28,8 @@ import type {
   FilterValueLogic,
   FocusHint,
   IconKind,
-  NodeProjection,
   PasteRowMeta,
   ProjectionSnapshot,
-  RichText,
   RichTextPatch,
   SearchHit,
   SortDirection,
@@ -37,6 +40,7 @@ import type {
 } from './types';
 import { parseSearchQueryOutline } from '../../core/searchQueryOutline';
 import { nextCompletedAt } from '../../core/doneState';
+import { formatAssetSourceUri } from '../../core/source';
 import { tagDrivenShowCheckbox } from '../../core/configProjection';
 import {
   previewDesktopMutation,
@@ -89,9 +93,12 @@ export const outlineDocumentApi = {
   convertNodeToCodeBlock,
   createCodeBlock,
   setCodeLanguage,
-  createImageNode,
-  createAttachmentNode,
-  setNodeImage,
+  createSourceNode,
+  addSource,
+  replaceSource,
+  reorderSource,
+  removeSource,
+  clearSources,
   ingestAssetFromData,
   setViewToolbarVisible,
   setViewMode,
@@ -144,6 +151,7 @@ export const outlineDocumentApi = {
   createInlineFieldAfterNode,
   createInlineField,
   updateFieldSlot,
+  appendFieldSource,
   reuseFieldDefinition,
   registerCollectedOption,
   createCollectedFieldOption,
@@ -275,7 +283,7 @@ function pasteNodesIntoNode(
 ): Promise<CommandResult> {
   return mutate(() => {
     const view = requireProjection();
-    const node = requiredNode(view, nodeId);
+    const node = requiredContentBearingNode(view, nodeId);
     if (!node.parentId) throw new Error('Cannot paste siblings beside a root Node.');
     const siblingIndex = requiredNode(view, node.parentId).children.indexOf(nodeId) + 1;
     const definitions = collectTreeDefinitions([...children, ...siblingsAfter], firstMeta);
@@ -291,7 +299,7 @@ function pasteNodesIntoNode(
     operations.push(...childPlan.operations, ...siblingPlan.operations);
     return operations;
   }, (_operation, diff) => {
-    const created = diff.affected.filter((entry) => entry.effect === 'create').at(-1)?.id;
+    const created = createdOrdinaryNodeIds(diff).at(-1);
     return created ? focus(created) : focus(nodeId);
   }, { requiresDiff: true });
 }
@@ -306,7 +314,7 @@ function splitNode(
   let targetParentId: string | null = null;
   return mutate(() => {
     const view = requireProjection();
-    const node = requiredNode(view, nodeId);
+    const node = requiredContentBearingNode(view, nodeId);
     if (!node.parentId) throw new Error('Cannot split a root Node.');
     targetParentId = options.targetParentId ?? node.parentId;
     const targetIndex = options.targetIndex ?? (
@@ -396,71 +404,57 @@ function setCodeLanguage(nodeId: string, codeLanguage: string): Promise<CommandR
   return update(nodeId, [{ kind: 'code', language: codeLanguage }], focus(nodeId));
 }
 
-function createImageNode(
+function createSourceNode(
   parentId: string,
   index: number | null,
   options: {
     assetId?: string;
-    mediaUrl?: string;
-    width?: number | null;
-    height?: number | null;
-    alt?: string | null;
+    sourceText?: string;
     name?: string | null;
   },
 ): Promise<CommandResult> {
   const id = freshId('node');
+  const valueId = freshId('node');
+  const sourceText = options.assetId ? formatAssetSourceUri(options.assetId) : options.sourceText;
+  if (!sourceText) return Promise.reject(new Error('Source text is required.'));
   return mutate(() => [{
     op: 'create',
     placement: structuralPlacement(oneId(parentId), index),
-    nodes: [draft({ text: options.name ?? '', marks: [], inlineRefs: [] }, id, {
-      type: 'image',
-      ...(options.assetId ? { assetLeaseId: options.assetId } : {}),
-      ...(options.mediaUrl ? { mediaUrl: options.mediaUrl } : {}),
-      metadata: {
-        ...(options.width !== undefined ? { width: options.width } : {}),
-        ...(options.height !== undefined ? { height: options.height } : {}),
-        ...(options.alt !== undefined ? { alt: options.alt } : {}),
-      },
-    })],
+    nodes: [draft({ text: options.name ?? '', marks: [], inlineRefs: [] }, id)],
+    bind: 'sourceOwner',
+  }, {
+    op: 'update',
+    targets: { binding: 'sourceOwner' },
+    changes: [{ kind: 'source', action: 'add', sourceText, valueId }],
   }], focus(id, parentId));
 }
 
-function createAttachmentNode(
-  parentId: string,
-  index: number | null,
-  options: {
-    assetId: string;
-    mimeType: string;
-    originalFilename: string;
-    fileSize: number;
-    thumbnailAssetId?: string;
-    pdfPageCount?: number;
-    audioDurationMs?: number;
-    videoDurationMs?: number;
-  },
-): Promise<CommandResult> {
-  const id = freshId('node');
-  return mutate(() => [{
-    op: 'create',
-    placement: structuralPlacement(oneId(parentId), index),
-    nodes: [draft({ text: options.originalFilename, marks: [], inlineRefs: [] }, id, {
-      type: 'attachment',
-      assetLeaseId: options.assetId,
-    })],
-  }], focus(id, parentId));
+function addSource(ownerId: string, sourceText: string, afterValueId?: string | null): Promise<CommandResult> {
+  return update(ownerId, [{
+    kind: 'source',
+    action: 'add',
+    sourceText,
+    valueId: freshId('node'),
+    ...(afterValueId === undefined ? {} : { after: afterValueId === null ? null : oneSourceId(afterValueId) }),
+  }], focus(ownerId));
 }
 
-function setNodeImage(
-  nodeId: string,
-  options: { assetId?: string; mediaUrl?: string; width?: number | null; height?: number | null },
-): Promise<CommandResult> {
-  return update(nodeId, [{
-    kind: 'image',
-    ...(options.assetId ? { assetLeaseId: options.assetId } : {}),
-    ...(options.mediaUrl ? { mediaUrl: options.mediaUrl } : {}),
-    ...(options.width !== undefined && options.width !== null ? { width: options.width } : {}),
-    ...(options.height !== undefined && options.height !== null ? { height: options.height } : {}),
-  }], focus(nodeId));
+function replaceSource(ownerId: string, valueId: string, sourceText: string): Promise<CommandResult> {
+  return update(ownerId, [{ kind: 'source', action: 'replace', value: oneSourceId(valueId), sourceText }], focus(ownerId));
+}
+
+function reorderSource(ownerId: string, valueId: string, afterValueId: string | null): Promise<CommandResult> {
+  return update(ownerId, [{
+    kind: 'source', action: 'reorder', value: oneSourceId(valueId), after: afterValueId === null ? null : oneSourceId(afterValueId),
+  }], focus(ownerId));
+}
+
+function removeSource(ownerId: string, valueId: string): Promise<CommandResult> {
+  return update(ownerId, [{ kind: 'source', action: 'remove', value: oneSourceId(valueId) }], focus(ownerId));
+}
+
+function clearSources(ownerId: string): Promise<CommandResult> {
+  return update(ownerId, [{ kind: 'source', action: 'clear' }], focus(ownerId));
 }
 
 async function ingestAssetFromData(
@@ -720,7 +714,7 @@ function batchToggleDone(nodeIds: string[]): Promise<CommandResult> {
     const view = requireProjection();
     return nodeIds.map((nodeId) => updateChange(
       nodeId,
-      doneTransitionInstructions(view, requiredNode(view, nodeId), 'toggle'),
+      doneTransitionInstructions(view, requiredContentBearingNode(view, nodeId), 'toggle'),
     ));
   });
 }
@@ -730,7 +724,7 @@ function batchCycleDoneState(nodeIds: string[]): Promise<CommandResult> {
     const view = requireProjection();
     return nodeIds.map((nodeId) => updateChange(
       nodeId,
-      doneTransitionInstructions(view, requiredNode(view, nodeId), 'cycle'),
+      doneTransitionInstructions(view, requiredContentBearingNode(view, nodeId), 'cycle'),
     ));
   });
 }
@@ -796,7 +790,7 @@ function toggleDone(nodeId: string): Promise<CommandResult> {
     const view = requireProjection();
     return [updateChange(
       nodeId,
-      doneTransitionInstructions(view, requiredNode(view, nodeId), 'toggle'),
+      doneTransitionInstructions(view, requiredContentBearingNode(view, nodeId), 'toggle'),
     )];
   }, focus(nodeId));
 }
@@ -806,7 +800,7 @@ function cycleDoneState(nodeId: string): Promise<CommandResult> {
     const view = requireProjection();
     return [updateChange(
       nodeId,
-      doneTransitionInstructions(view, requiredNode(view, nodeId), 'cycle'),
+      doneTransitionInstructions(view, requiredContentBearingNode(view, nodeId), 'cycle'),
     )];
   }, focus(nodeId));
 }
@@ -934,6 +928,33 @@ function updateFieldSlot(
   return update(ownerId, [{ kind: 'field-slot', field: oneId(fieldDefId), mutation: lowered }], focusHint, {
     requiresDiff: mutation.kind === 'appendField' && !('id' in mutation && mutation.id),
   });
+}
+
+function appendFieldSource(
+  ownerId: string,
+  fieldDefId: string,
+  valueId: string,
+  sourceText: string,
+  name = '',
+  entryId?: string,
+): Promise<CommandResult> {
+  return mutate(() => [{
+    op: 'update',
+    targets: oneId(ownerId),
+    changes: [{
+      kind: 'field-slot',
+      field: oneId(fieldDefId),
+      mutation: {
+        action: 'append-nodes',
+        nodes: [draft({ text: name, marks: [], inlineRefs: [] }, valueId)],
+        ...(entryId ? { entryId } : {}),
+      },
+    }],
+  }, {
+    op: 'update',
+    targets: oneId(valueId),
+    changes: [{ kind: 'source', action: 'add', sourceText, valueId: freshId('node') }],
+  }], focus(valueId));
 }
 
 function reuseFieldDefinition(entryId: string, targetDefId: string): Promise<CommandResult> {
@@ -1231,6 +1252,10 @@ function oneId(id: string): TargetRef {
   return { target: { selector: { by: 'id', id }, cardinality: 'one' } };
 }
 
+function oneSourceId(id: string): OneTargetRef {
+  return { target: { selector: { by: 'id', id }, cardinality: 'one' } };
+}
+
 function manyIds(ids: readonly string[]): TargetRef {
   return { target: { selector: { by: 'ids', ids: [...ids] }, cardinality: 'many', max: ids.length } };
 }
@@ -1334,6 +1359,15 @@ function requireProjection(): DesktopProjectionView {
 function requiredNode(view: DesktopProjectionView, nodeId: string): NodeProjection {
   const node = view.byId.get(nodeId);
   if (!node) throw new Error(`Outline Node is unavailable: ${nodeId}`);
+  return node;
+}
+
+function requiredContentBearingNode(
+  view: DesktopProjectionView,
+  nodeId: string,
+): ContentBearingNodeProjection {
+  const node = requiredNode(view, nodeId);
+  if (!isContentBearingNode(node)) throw new Error(`Outline Node is not content-bearing: ${nodeId}`);
   return node;
 }
 
@@ -1529,7 +1563,7 @@ function moveSelectedSiblings(nodeIds: string[], direction: 'up' | 'down'): Prom
 
 function doneTransitionInstructions(
   view: DesktopProjectionView,
-  node: NodeProjection,
+  node: ContentBearingNodeProjection,
   transition: 'toggle' | 'cycle',
 ): UpdateInstruction[] {
   const tagDriven = tagDrivenShowCheckbox(view.byId, node);
@@ -1578,27 +1612,6 @@ function lowerFieldSlotMutation(
     action: 'append-field', name: mutation.name, fieldType: mutation.fieldType, ...common,
     ...(mutation.id ? { id: mutation.id } : {}),
   };
-  if (mutation.kind === 'appendImage') {
-    return {
-      action: 'append-image', ...common,
-      ...(mutation.assetId ? { assetLeaseId: mutation.assetId } : {}),
-      ...(mutation.mediaUrl ? { mediaUrl: mutation.mediaUrl } : {}),
-      width: mutation.width,
-      height: mutation.height,
-      alt: mutation.alt,
-      name: mutation.name,
-      ...(mutation.id ? { id: mutation.id } : {}),
-    };
-  }
-  if (mutation.kind === 'appendAttachment') {
-    if (!mutation.assetId) throw new Error('Field attachment lease is unavailable.');
-    return {
-      action: 'append-attachment',
-      assetLeaseId: mutation.assetId,
-      ...common,
-      ...(mutation.id ? { id: mutation.id } : {}),
-    };
-  }
   return { action: 'commit', ...common };
 }
 
@@ -1625,8 +1638,9 @@ function treeDraftPasteMetadata(tree: CreateNodeTree): NodeDraft['metadata'] | u
 }
 
 function inlineReferenceContent(targetId: string, suppliedDisplayName?: string): RichText {
+  const target = projectionReader?.()?.byId.get(targetId);
   const displayName = suppliedDisplayName
-    || projectionReader?.()?.byId.get(targetId)?.content.text
+    || (target && isContentBearingNode(target) ? target.content.text : '')
     || undefined;
   return {
     text: '',
@@ -1646,9 +1660,15 @@ function requiredReferenceTarget(referenceId: string): string {
 }
 
 function templatePreviewFromDiff(diff: Diff): TagTemplateBackfillPreview {
-  const additionCount = diff.affected.filter((entry) => entry.effect === 'create').length;
+  const additionCount = createdOrdinaryNodeIds(diff).length;
   const nodeCount = diff.affected.filter((entry) => entry.effect === 'update').length;
   return { nodeCount, additionCount };
+}
+
+function createdOrdinaryNodeIds(diff: Diff): string[] {
+  return diff.affected
+    .filter((entry) => entry.effect === 'create')
+    .map((entry) => entry.id);
 }
 
 function bytesToBase64(data: Uint8Array): string {
@@ -1662,7 +1682,7 @@ function bytesToBase64(data: Uint8Array): string {
 function legacyAssetMetadata(lease: AssetLease): AssetMetadata {
   return {
     schemaVersion: 1,
-    id: lease.leaseId,
+    id: lease.assetId,
     mimeType: lease.metadata.mimeType,
     byteSize: lease.metadata.byteSize,
     originalFilename: lease.metadata.originalFilename,

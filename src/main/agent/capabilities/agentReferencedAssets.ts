@@ -6,7 +6,13 @@ import type {
   ReferencedResourcesContextPayload,
   ThreadResourceReference,
 } from '../../../core/agent/protocol';
-import type { AssetMetadata, DocumentProjection, NodeProjection } from '../../../core/types';
+import {
+  type AssetMetadata,
+  type DocumentProjection,
+  type NodeProjection,
+} from '../../../core/types';
+import { parseAssetSourceUri } from '../../../core/source';
+import { sourceFieldValues } from '../../../core/sourceField';
 import {
   nodeBreadcrumb,
   outlineText,
@@ -63,13 +69,13 @@ export async function admitReferencedResources(input: {
       content: content.text,
       contentTruncated: content.truncated,
     };
-    const assetId = node.type === 'attachment' || node.type === 'image' ? node.assetId : undefined;
+    const assetId = firstManagedAssetId(node, byId);
     if (!assetId) {
       resources.push({
         ...base,
         resourceRef: null,
         inlineImage: false,
-        unavailableReason: node.type === 'attachment' || node.type === 'image' ? 'missing' : null,
+        unavailableReason: null,
       });
       continue;
     }
@@ -122,10 +128,8 @@ export async function admitReferencedResources(input: {
       } finally {
         await handle.close();
       }
-      const mimeType = normalizedMimeType(resolved.metadata?.mimeType, node);
-      const fileName = resolved.metadata?.originalFilename
-        || (node.type === 'attachment' ? node.originalFilename : undefined)
-        || basename(resolved.path)
+      const mimeType = normalizedMimeType(resolved.metadata?.mimeType);
+      const fileName = resolved.metadata?.originalFilename || basename(resolved.path)
         || 'resource';
       const written = await input.writeResource(bytes, mimeType, fileName);
       admittedAssets.set(assetId, written.ref);
@@ -194,13 +198,22 @@ function unavailable(
   };
 }
 
-function normalizedMimeType(value: string | undefined, node: NodeProjection): string {
+function normalizedMimeType(value: string | undefined): string {
   const normalized = value?.trim().toLowerCase();
   if (normalized === 'image/jpg') return 'image/jpeg';
   if (normalized) return normalized;
-  if (node.type === 'image') return 'image/png';
-  if (node.type === 'attachment' && node.mimeType) return node.mimeType;
   return 'application/octet-stream';
+}
+
+function firstManagedAssetId(
+  node: NodeProjection,
+  byId: ReadonlyMap<string, NodeProjection>,
+): string | undefined {
+  for (const value of sourceFieldValues(byId, node.id)) {
+    const assetId = parseAssetSourceUri(value.sourceText);
+    if (assetId) return assetId;
+  }
+  return undefined;
 }
 
 function resourceFailureReason(error: unknown): ReferencedResourceSnapshot['unavailableReason'] {

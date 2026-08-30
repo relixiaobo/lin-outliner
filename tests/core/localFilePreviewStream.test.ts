@@ -84,10 +84,12 @@ describe('local file preview stream registry', () => {
       expect(token).toBeTruthy();
       expect(await registry.issuePath(siblingPath, 'video/mp4')).toBeNull();
       expect(await (await registry.serve(token!, requestWithRange(null))).text()).toBe('exact');
+      expect(await (await registry.serve(token!, requestWithRange(null))).text()).toBe('exact');
 
       await rm(exactPath);
       await symlink(siblingPath, exactPath);
       expect((await registry.serve(token!, requestWithRange(null))).status).toBe(404);
+      await registry.close();
     } finally {
       await rm(outsideRoot, { recursive: true, force: true });
     }

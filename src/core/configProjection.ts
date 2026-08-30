@@ -24,7 +24,6 @@ import type {
   Node,
   NodeId,
   NodeType,
-  RichText,
 } from './types';
 import { nodeHasDoneField } from './systemFields';
 
@@ -39,7 +38,7 @@ export type ConfigNodeLike = {
   type?: NodeType;
   configKey?: DefConfigKey;
   children: NodeId[];
-  content: RichText;
+  content?: { text: string };
   targetId?: NodeId;
   fieldDefId?: NodeId;
 };
@@ -63,7 +62,7 @@ function valueChildren(byId: ConfigNodeMap, row: ConfigNodeLike | undefined): Co
 
 /** Scalar value (number/bool/color): the single non-reference value child's text. */
 function scalarText(byId: ConfigNodeMap, row: ConfigNodeLike | undefined): string | undefined {
-  return valueChildren(byId, row).find((n) => n.type !== 'reference')?.content.text;
+  return valueChildren(byId, row).find((n) => n.type !== 'reference')?.content?.text;
 }
 
 /** Ref value (`extends`/`childSupertag`/`sourceSupertag`): the value reference's target. */
@@ -81,14 +80,14 @@ function refTargets(byId: ConfigNodeMap, row: ConfigNodeLike | undefined): NodeI
 /** Enum value: resolve the value reference to its system option; its text is the canonical value. */
 function enumValue(byId: ConfigNodeMap, row: ConfigNodeLike | undefined): string | undefined {
   const target = refTarget(byId, row);
-  return target ? byId.get(target)?.content.text : undefined;
+  return target ? byId.get(target)?.content?.text : undefined;
 }
 
 /** Enum-list values: every value reference's resolved option text, in child order. */
 function enumListValues(byId: ConfigNodeMap, row: ConfigNodeLike | undefined): string[] {
   return valueChildren(byId, row)
     .filter((n) => n.type === 'reference' && n.targetId)
-    .map((n) => byId.get(n.targetId as NodeId)?.content.text)
+    .map((n) => byId.get(n.targetId as NodeId)?.content?.text)
     .filter((text): text is string => Boolean(text));
 }
 
@@ -140,7 +139,7 @@ export function projectFieldTypeById(byId: ConfigNodeMap, fieldDefId: NodeId | u
 // present but undone, > 0 = done (the completion timestamp).
 
 /** Whether the node carries a checkbox marked done (completion timestamp set). */
-export function nodeIsDone(node: Pick<Node, 'completedAt'>): boolean {
+export function nodeIsDone(node: { completedAt?: number }): boolean {
   return node.completedAt !== undefined && node.completedAt > 0;
 }
 
@@ -155,7 +154,7 @@ function tagShowsCheckbox(byId: ConfigNodeMap, tagDefId: NodeId, visited: Set<No
 }
 
 /** True when any of the node's applied tags (via extends chains) shows a checkbox. */
-export function tagDrivenShowCheckbox(byId: ConfigNodeMap, node: Pick<Node, 'tags'>): boolean {
+export function tagDrivenShowCheckbox(byId: ConfigNodeMap, node: { tags: readonly NodeId[] }): boolean {
   const visited = new Set<NodeId>();
   return node.tags.some((tagId) => tagShowsCheckbox(byId, tagId, visited));
 }
@@ -169,7 +168,7 @@ export function tagDrivenShowCheckbox(byId: ConfigNodeMap, node: Pick<Node, 'tag
  */
 export function nodeShowsCheckbox(
   byId: ConfigNodeMap,
-  node: Pick<Node, 'id' | 'tags' | 'completedAt' | 'children'>,
+  node: { id: NodeId; tags: readonly NodeId[]; completedAt?: number; children: readonly NodeId[] },
 ): boolean {
   return (
     node.completedAt !== undefined ||

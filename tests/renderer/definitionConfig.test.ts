@@ -45,7 +45,7 @@ describe('definition config registry', () => {
       'options_from_supertag',
       'date',
       'number',
-      'url',
+      'uri',
       'email',
       'checkbox',
     ]);

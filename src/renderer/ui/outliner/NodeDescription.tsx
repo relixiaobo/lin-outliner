@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { api } from '../../api/client';
-import type { NodeId, NodeProjection } from '../../api/types';
+import type { ContentBearingNodeProjection, NodeId } from '../../api/types';
 import type { FocusRequest, FocusTarget, PendingInputChar } from '../../state/document';
 import { focusTargetMatches } from '../focus/focusModel';
 import { isCompositionLive } from '../editor/compositionRelay';
@@ -13,7 +13,7 @@ import type { CommandRunner } from '../shared';
 import { NodeDescriptionEditor } from './NodeDescriptionSurface';
 
 interface NodeDescriptionProps {
-  node: NodeProjection;
+  node: ContentBearingNodeProjection;
   targetId: NodeId;
   editing: boolean;
   run: CommandRunner;

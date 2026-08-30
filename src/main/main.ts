@@ -163,6 +163,7 @@ import {
   type ClearUrlPreviewDataResult,
 } from '../core/urlPreviewSession';
 import { handlePreviewCommand } from './previewSource';
+import { LinkedFileGrantStore } from './linkedFileGrantStore';
 import { ingestThreadResourceAsset } from './threadResourceAssetIngest';
 import { PageTranslationService, pageTranslationErrorReport } from './pageTranslation';
 import { PreviewTranslationCacheStore } from './previewTranslationCacheStore';
@@ -1371,6 +1372,7 @@ const localFilePreviewStreams = new LocalFilePreviewStreamRegistry(() => [
   agentScratchRoot,
   outlineAssetExportRoot,
 ]);
+const linkedFileGrants = new LinkedFileGrantStore(join(resolvedUserDataDir, 'linked-file-grants.json'));
 
 outlineDocumentService.onProjectionChanged(({ event, update }) => {
   pruneNodeAccessForProjectionUpdate(update);
@@ -2895,6 +2897,40 @@ function registerIpc() {
             const token = await localFilePreviewStreams.issueExactPath(filePath, mimeType);
             return token ? previewLocalUrl(token) : null;
           },
+          linkedFileGrant: linkedFileGrants,
+          chooseLinkedFile: async () => {
+            const window = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? mainWindow;
+            const options: Electron.OpenDialogOptions = { properties: ['openFile'] };
+            const result = window
+              ? await dialog.showOpenDialog(window, options)
+              : await dialog.showOpenDialog(options);
+            return result.canceled ? null : result.filePaths[0] ?? null;
+          },
+          linkedFileStreamUrl: async (file, mimeType) => {
+            const token = await localFilePreviewStreams.issueExactFile(file, mimeType);
+            return token ? previewLocalUrl(token) : null;
+          },
+          mutateLinkedFileSource: (input) => outlineDocumentService.runChanges([{
+            op: 'update',
+            targets: {
+              target: { selector: { by: 'id', id: input.ownerId }, cardinality: 'one' },
+            },
+            changes: [input.kind === 'add'
+              ? {
+                  kind: 'source',
+                  action: 'add',
+                  sourceText: input.sourceText,
+                  valueId: `node:${randomUUID()}`,
+                }
+              : {
+                  kind: 'source',
+                  action: 'replace',
+                  value: {
+                    target: { selector: { by: 'id', id: input.sourceValueId }, cardinality: 'one' },
+                  },
+                  sourceText: input.sourceText,
+                }],
+          }], { focus: { nodeId: input.ownerId, selectAll: false } }),
           localFileReferencePreview,
         });
       }
@@ -4978,6 +5014,7 @@ if (!app.requestSingleInstanceLock()) {
         closeAgentServices(memoryExtension, threadService, automationService),
         diagnosticLog.flushNow({ reason: 'before-quit' }),
         flushUrlPreviewSession(urlPreviewSession),
+        localFilePreviewStreams.close(),
       ]),
       new Promise((resolve) => setTimeout(resolve, 2_500)),
     ]);

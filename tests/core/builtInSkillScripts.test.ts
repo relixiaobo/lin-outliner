@@ -218,10 +218,12 @@ describe('built-in outline Skill import workflow', () => {
       expect((await runtime.workspace.store.operations()).length).toBe(operationsBefore + 1);
 
       const state = runtime.workspace.documentState();
-      expect(state.nodes[existingDayId]?.children.map((id) => state.nodes[id]?.content.text))
+      expect(state.nodes[existingDayId]?.children
+        .map((id) => state.nodes[id]?.content.text))
         .toEqual(['Existing Daily Note content', 'Imported existing-day row']);
       const newDay = Object.values(state.nodes).find((node) => node.content.text === '2026-01-02');
-      expect(newDay?.children.map((id) => state.nodes[id]?.content.text))
+      expect(newDay?.children
+        .map((id) => state.nodes[id]?.content.text))
         .toEqual(['Imported new-day row']);
 
       const afterFirstImport = structuredClone(state);

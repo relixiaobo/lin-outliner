@@ -9,7 +9,7 @@
 
 import { rankTextSearchLabel } from '../textSearchAnalyzer';
 import { nodeIsInSubtree } from '../treeUtils';
-import type { NodeId, NodeProjection } from '../types';
+import type { ContentBearingNodeProjection, NodeId, NodeProjection } from '../types';
 import { isDescendantOf } from './rowFacets';
 
 // ---------------------------------------------------------------------------
@@ -67,14 +67,14 @@ export function moveToEmptyQueryOrder(params: {
 // ---------------------------------------------------------------------------
 
 export type TagCandidate =
-  | { type: 'existing'; tag: NodeProjection }
+  | { type: 'existing'; tag: Extract<ContentBearingNodeProjection, { type: 'tagDef' }> }
   | { type: 'create'; name: string };
 
 const DEFAULT_TAG_LIMIT = 24;
 const HEX_COLOR_LABEL_RE = /^#?(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 
 interface TagCandidateEntry {
-  tag: NodeProjection;
+  tag: Extract<ContentBearingNodeProjection, { type: 'tagDef' }>;
   label: string;
   normalizedLabel: string;
   hexPenalty: number;
@@ -86,7 +86,7 @@ export interface TagCandidateIndex {
   normalizedLabels: ReadonlySet<string>;
 }
 
-function tagLabel(tag: NodeProjection): string {
+function tagLabel(tag: Extract<ContentBearingNodeProjection, { type: 'tagDef' }>): string {
   return tag.content.text.trim();
 }
 

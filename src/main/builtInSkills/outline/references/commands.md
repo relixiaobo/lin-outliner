@@ -75,11 +75,11 @@ through `--query` or `--input` for advanced search.
 | `ON_DAY_NODE` | none | n/a | Match direct children of a Daily Note day Node. | `{"kind":"rule","op":"ON_DAY_NODE"}` |
 | `FOR_DATE` | `text` or `operands` required | YYYY-MM-DD, YYYY-MM-DDTHH:mm, or start/end with "/". | Match Nodes associated with an exact date or date range. | `{"kind":"rule","op":"FOR_DATE","text":"2026-08-24"}` |
 | `FOR_RELATIVE_DATE` | `text` or `operands` required | today, yesterday, tomorrow, this/last/next week, month, or year, or a resolvable calendar operand. | Match Nodes associated with a relative calendar range. | `{"kind":"rule","op":"FOR_RELATIVE_DATE","text":"this week"}` |
-| `IS_TYPE` | `text` or `operands` required | node, tag, field, search, calendar, day, week, year, image, attachment, or code. | Match one or more Node type names. | `{"kind":"rule","op":"IS_TYPE","text":"attachment"}` |
-| `HAS_MEDIA` | none | n/a | Match image, audio, or video Nodes. | `{"kind":"rule","op":"HAS_MEDIA"}` |
-| `HAS_IMAGE` | none | n/a | Match image Nodes. | `{"kind":"rule","op":"HAS_IMAGE"}` |
-| `HAS_AUDIO` | none | n/a | Match attachment Nodes with an audio MIME type. | `{"kind":"rule","op":"HAS_AUDIO"}` |
-| `HAS_VIDEO` | none | n/a | Match attachment Nodes with a video MIME type. | `{"kind":"rule","op":"HAS_VIDEO"}` |
+| `IS_TYPE` | `text` or `operands` required | node, tag, field, search, calendar, day, week, year, or code. | Match one or more Node type names. | `{"kind":"rule","op":"IS_TYPE","text":"code"}` |
+| `HAS_MEDIA` | none | n/a | Match Nodes with an image, audio, or video Source. | `{"kind":"rule","op":"HAS_MEDIA"}` |
+| `HAS_IMAGE` | none | n/a | Match Nodes with an image Source. | `{"kind":"rule","op":"HAS_IMAGE"}` |
+| `HAS_AUDIO` | none | n/a | Match Nodes with an audio Source. | `{"kind":"rule","op":"HAS_AUDIO"}` |
+| `HAS_VIDEO` | none | n/a | Match Nodes with a video Source. | `{"kind":"rule","op":"HAS_VIDEO"}` |
 
 ## Global Options
 
@@ -103,9 +103,9 @@ Place global options before the command:
 | `done` | Set or cycle checkbox completion state. |
 | `field` | Define, reuse, set, clear, remove, or select fields. |
 | `import` | Inspect external sources and plan reviewed imports through normalized data. |
-| `media` | Create and patch image or attachment Nodes. |
 | `reference` | Add, retarget, replace, inline, and restore references. |
 | `search` | Create, configure, ensure, and refresh Saved Searches. |
+| `source` | Add, replace, reorder, remove, or clear Node Sources. |
 | `tag` | Apply or remove tag definitions. |
 | `template` | Preview and apply tag-template backfill. |
 | `text` | Apply bounded, reviewed literal text transformations. |
@@ -133,7 +133,7 @@ Root commands cover discovery, direct Node operations, ChangeSets, history, and 
 | `outline undo` | recovery mutation; idempotent | Revert the latest applicable Operation in one origin scope. | `outline undo [--origin ORIGIN] [--expect-operation ID] [--idempotency-key KEY]` |
 | `outline redo` | recovery mutation; idempotent | Revert the latest applicable revert Operation in one origin scope. | `outline redo [--origin ORIGIN] [--expect-operation ID] [--idempotency-key KEY]` |
 | `outline add` | create; not idempotent | Create one complete typed Node tree below a parent. | `outline add PARENT TEXT \| add --before\|--after SIBLING TEXT \| add --input FILE\|-` |
-| `outline set` | patch; idempotent | Patch content, description, code, checkbox, icon, banner, or image state. | `outline set TARGET [PROPERTY OPTIONS]` |
+| `outline set` | patch; idempotent | Patch content, description, code, checkbox, icon, or banner state. | `outline set TARGET [PROPERTY OPTIONS]` |
 | `outline move` | patch; idempotent | Move a bounded Node selection below one destination. | `outline move TARGET DESTINATION \| move TARGET --before\|--after SIBLING \| move TARGET --previous\|--next` |
 | `outline duplicate` | create; not idempotent | Duplicate a bounded Node selection below one destination. | `outline duplicate TARGET DESTINATION \| duplicate TARGET --before\|--after SIBLING \| duplicate TARGET --previous\|--next` |
 | `outline merge` | destructive; not idempotent; destructive review required | Merge source Nodes into one target after exact Diff review. | `outline merge SOURCE TARGET` |
@@ -211,15 +211,6 @@ Inspect external sources and plan reviewed imports through normalized data.
 | `outline import plan` | preview; idempotent | Normalize one external source and produce one reviewed import Diff. | `outline import plan SOURCE --output DIFF --evidence-output EVIDENCE [OPTIONS]` |
 | `outline import verify` | read-only verification; idempotent | Verify one import Operation against its reviewed Diff and evidence. | `outline import verify OPERATION_ID --diff DIFF --evidence EVIDENCE` |
 
-## Media
-
-Create and patch image or attachment Nodes.
-
-| Command | Semantics | Purpose | Common syntax |
-|---|---|---|---|
-| `outline media add` | create; not idempotent | Stage a local asset and create its media Node in one invocation. | `outline media add PARENT TYPE PATH\|-` |
-| `outline media set` | patch; idempotent | Patch image or attachment metadata and source. | `outline media set TARGET [PROPERTY OPTIONS]` |
-
 ## Reference
 
 Add, retarget, replace, inline, and restore references.
@@ -242,6 +233,18 @@ Create, configure, ensure, and refresh Saved Searches.
 | `outline search ensure-tag` | ensure; idempotent | Ensure the canonical Saved Search for one tag exists. | `outline search ensure-tag TAG` |
 | `outline search set` | patch; idempotent | Atomically patch a Search query, title, and view, then refresh results. | `outline search set TARGET [--title TITLE] [--query JSON\|FILE]` |
 | `outline search refresh` | patch; idempotent | Refresh materialized results for a Search. | `outline search refresh TARGET` |
+
+## Source
+
+Add, replace, reorder, remove, or clear Node Sources.
+
+| Command | Semantics | Purpose | Common syntax |
+|---|---|---|---|
+| `outline source add` | create; not idempotent | Append one exact Source value to an ordinary Node. | `outline source add TARGET SOURCE [--after VALUE\|null]` |
+| `outline source replace` | patch; idempotent | Replace one direct Source value without changing its identity. | `outline source replace TARGET VALUE SOURCE` |
+| `outline source reorder` | patch; idempotent | Move one direct Source value within its owner. | `outline source reorder TARGET VALUE --after VALUE\|null` |
+| `outline source remove` | patch; idempotent | Remove one direct Source value. | `outline source remove TARGET VALUE` |
+| `outline source clear` | patch; idempotent | Remove every Source value observed for one owner. | `outline source clear TARGET` |
 
 ## Tag
 

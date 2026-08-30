@@ -4,6 +4,7 @@ import {
   ids,
   nodeById,
   openMockedApp,
+  ordinaryChildIds,
   row,
   rowBody,
   rowEditor,
@@ -23,7 +24,7 @@ async function createCodeBlockViaTrailing(page: Page) {
 
 async function todayChildren(page: Page) {
   const projection = await e2eProjection(page);
-  return projection.nodes.find((node) => node.id === ids.today)?.children ?? [];
+  return ordinaryChildIds(projection.nodes.find((node) => node.id === ids.today));
 }
 
 async function lastTodayChildId(page: Page) {

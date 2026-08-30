@@ -1,5 +1,6 @@
 import { api } from '../../api/client';
 import {
+  isContentBearingNode,
   plainText,
   type CommandResult,
   type FieldType,
@@ -38,7 +39,7 @@ async function clearFallbackFieldName(outcome: CommandResult): Promise<CommandRe
   if (!fieldDefId) return outcome;
 
   const fieldDef = nodeFromProjectionUpdate(outcome.update, fieldDefId);
-  if (!fieldDef || fieldDef.content.text === '') return outcome;
+  if (!fieldDef || !isContentBearingNode(fieldDef) || fieldDef.content.text === '') return outcome;
 
   const cleared = await api.replaceNodeText(fieldDefId, plainText(''));
   return {

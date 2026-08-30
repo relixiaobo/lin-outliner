@@ -61,28 +61,23 @@ hyphens before comparison. It first compares that value with the node's exact
 - `search`, `searchnode`, or `livesearch` for search nodes;
 - `calendar` or `calendarnode` for any day, week, or year node, with `day`,
   `week`, and `year` matching only their respective calendar node;
-- `image` for image nodes;
-- `attachment` for attachment nodes;
 - `code` or `codeblock` for code-block nodes.
 
 The evaluator only visits search candidates: plain, tag-definition,
-field-definition, search, code-block, image, and attachment nodes outside trash,
-system roots, and query-condition trees. Attachment display text defaults to the
-original filename, so ordinary `STRING_MATCH` queries and Launcher lookup can
-find files by name; `IS_TYPE attachment` matches every searchable attachment,
-including PDFs. Candidacy is global rather than operator-specific: every
-executable tag, timestamp, field, link, or structural rule evaluates an
-attachment when that attachment carries the rule's required data.
+field-definition, search, and code-block nodes outside trash, system roots, and
+query-condition trees. Source-backed content remains an ordinary plain candidate:
+`STRING_MATCH` reads authored Node content, and tag, timestamp, field, link, or
+structural rules evaluate it exactly like any other content Node. `IS_TYPE` never
+reclassifies a Node from its selected or available Source.
 
-Media rules take no operand. Image nodes always match `HAS_IMAGE` and
-`HAS_MEDIA`. The attachment write boundary rejects `image/*`, so attachment
-facets classify only explicit normalized `audio/*` and `video/*` MIME families;
-both also match `HAS_MEDIA`. Asset ingestion recognizes common media signatures
-and filename extensions before creating the node, including AAC, FLAC,
-Matroska, MPEG, Ogg/Opus, AVI, WMA, and WMV. Missing/generic MIME data, duration
-metadata, arbitrary text, filenames inside the search evaluator, and URLs never
-override the stored family. PDFs and other files remain available through text
-search and `IS_TYPE attachment`, not a media facet.
+Media rules take no operand and aggregate every direct Source value independently
+of renderer selection. Managed Sources use authoritative `AssetRecord` MIME and
+filename metadata; deterministic remote classification may recognize supported
+image/audio/video URL forms. `HAS_IMAGE`, `HAS_AUDIO`, and `HAS_VIDEO` match their
+respective derived families, and `HAS_MEDIA` matches any of them. Missing or
+generic metadata remains unknown instead of guessing from authored Node text or
+failing the search. PDFs and other non-media Sources remain discoverable through
+ordinary content, tag, field, link, and structural rules.
 
 ## Field Slot Semantics
 

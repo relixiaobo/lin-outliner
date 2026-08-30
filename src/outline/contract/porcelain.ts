@@ -8,6 +8,8 @@ import {
   IdentifierSchema,
   LocalDateSchema,
   NodeDraftSchema,
+  NodeIdentifierSchema,
+  OneTargetRefSchema,
   QueryExpressionSchema,
   RichTextSchema,
   TagDefinitionPatchSchema,
@@ -57,12 +59,6 @@ const SetInputSchema = Type.Object({
   icon: Type.Optional(Type.Union([Type.String({ maxLength: 4_096 }), Type.Null()])),
   iconKind: Type.Optional(Type.String({ maxLength: 128 })),
   bannerLeaseId: Type.Optional(Type.Union([IdentifierSchema, Type.Null()])),
-  image: Type.Optional(Type.Object({
-    assetLeaseId: Type.Optional(IdentifierSchema),
-    mediaUrl: Type.Optional(Type.String({ maxLength: 32_768 })),
-    width: Type.Optional(Type.Number({ minimum: 0 })),
-    height: Type.Optional(Type.Number({ minimum: 0 })),
-  }, closed)),
 }, { ...closed, minProperties: 2 });
 
 const TextReplaceInputSchema = Type.Object({
@@ -205,27 +201,23 @@ const CaptureAddInputSchema = Type.Union([
   }, closed),
 ]);
 
-const MediaSourceSchema = Type.Union([
-  Type.Object({ kind: Type.Literal('path'), path: Type.String({ minLength: 1, maxLength: 32_768 }) }, closed),
-  Type.Object({ kind: Type.Literal('stdin') }, closed),
-]);
-const MediaMetadataSchema = Type.Object({
-  width: Type.Optional(Type.Number({ minimum: 0 })),
-  height: Type.Optional(Type.Number({ minimum: 0 })),
-  alt: Type.Optional(Type.String({ maxLength: 4_096 })),
+const SourceAddInputSchema = Type.Object({
+  target: OneTargetRefSchema,
+  sourceText: Type.String({ maxLength: 32_768 }),
+  valueId: Type.Optional(NodeIdentifierSchema),
+  after: Type.Optional(Type.Union([OneTargetRefSchema, Type.Null()])),
 }, closed);
-const MediaAddInputSchema = Type.Union([
-  Type.Object({ parent: TargetRefSchema, mediaType: Type.Union([Type.Literal('image'), Type.Literal('attachment')]), name: Type.Optional(Type.String({ maxLength: 4_096 })), source: MediaSourceSchema, metadata: Type.Optional(MediaMetadataSchema), bind: OptionalBind }, closed),
-  Type.Object({ parent: TargetRefSchema, mediaType: Type.Union([Type.Literal('image'), Type.Literal('attachment')]), name: Type.Optional(Type.String({ maxLength: 4_096 })), assetLeaseId: IdentifierSchema, metadata: Type.Optional(MediaMetadataSchema), bind: OptionalBind }, closed),
-  Type.Object({ parent: TargetRefSchema, mediaType: Type.Literal('image'), name: Type.Optional(Type.String({ maxLength: 4_096 })), mediaUrl: Type.String({ minLength: 1, maxLength: 32_768 }), metadata: Type.Optional(MediaMetadataSchema), bind: OptionalBind }, closed),
-]);
-
-const MediaSetInputSchema = Type.Object({
-  target: TargetRefSchema,
-  assetLeaseId: Type.Optional(IdentifierSchema),
-  mediaUrl: Type.Optional(Type.String({ maxLength: 32_768 })),
-  width: Type.Optional(Type.Number({ minimum: 0 })),
-  height: Type.Optional(Type.Number({ minimum: 0 })),
+const SourceValueInputSchema = Type.Object({
+  target: OneTargetRefSchema,
+  value: OneTargetRefSchema,
+}, closed);
+const SourceReplaceInputSchema = Type.Object({
+  ...SourceValueInputSchema.properties,
+  sourceText: Type.String({ maxLength: 32_768 }),
+}, closed);
+const SourceReorderInputSchema = Type.Object({
+  ...SourceValueInputSchema.properties,
+  after: Type.Union([OneTargetRefSchema, Type.Null()]),
 }, closed);
 
 export interface CommandOptionHelp {
@@ -302,7 +294,7 @@ function contract(inputSchema: TSchema, usage: string, options: readonly Command
 
 const PORCELAIN_BASE_CONTRACTS = Object.freeze({
   add: contract(AddInputSchema, 'add PARENT TEXT | add --before|--after SIBLING TEXT | add --input FILE|-', [parent, option('tree', 'FILE|-', 'Create a complete typed Node tree.'), option('type', 'TYPE', 'Set the root Node type.'), option('description', 'TEXT', 'Set the root description.'), option('first', undefined, 'Insert first under PARENT.'), option('last', undefined, 'Insert last under PARENT.', { default: 'true' }), option('index', 'INDEX', 'Insert at a zero-based child index under PARENT.'), option('before', 'SIBLING', 'Insert immediately before one exact sibling; PARENT is not required.'), option('after', 'SIBLING', 'Insert immediately after one exact sibling; PARENT is not required.'), bind]),
-  set: contract(SetInputSchema, 'set TARGET [PROPERTY OPTIONS]', [target, option('text', 'TEXT', 'Replace plain content.'), option('content', 'TEXT', 'Replace plain content.'), option('description', 'TEXT|null', 'Patch the description.'), option('code', 'LANGUAGE', 'Set code-block language.'), option('checkbox', 'BOOLEAN', 'Set checkbox visibility.'), option('icon', 'VALUE|null', 'Set the Node icon.'), option('icon-kind', 'KIND', 'Set the icon kind.'), option('banner', 'LEASE|null', 'Set the banner asset lease.'), option('image', 'LEASE', 'Set the image asset lease.'), option('media-url', 'URL', 'Set an external media URL.'), option('width', 'NUMBER', 'Set media width.'), option('height', 'NUMBER', 'Set media height.')]),
+  set: contract(SetInputSchema, 'set TARGET [PROPERTY OPTIONS]', [target, option('text', 'TEXT', 'Replace plain content.'), option('content', 'TEXT', 'Replace plain content.'), option('description', 'TEXT|null', 'Patch the description.'), option('code', 'LANGUAGE', 'Set code-block language.'), option('checkbox', 'BOOLEAN', 'Set checkbox visibility.'), option('icon', 'VALUE|null', 'Set the Node icon.'), option('icon-kind', 'KIND', 'Set the icon kind.'), option('banner', 'LEASE|null', 'Set the banner asset lease.')]),
   'text replace': contract(TextReplaceInputSchema, 'text replace TARGET --find TEXT --replace TEXT | text replace --matching TEXT --max N --find TEXT --replace TEXT | text replace --input FILE|-', [target, option('matching', 'TEXT', 'Select a bounded many target with STRING_MATCH shorthand.'), option('query', 'JSON|FILE', 'Select with the canonical structured query.'), option('within', 'SELECTOR', 'Bound query selection below one exact Selector.'), option('include-trash', undefined, 'Include trashed Nodes in query selection.'), option('order', 'ORDER', 'Use document, created, updated, or text query order.', { default: 'document' }), option('max', 'N', 'Required maximum Node count for --matching or --query.'), option('find', 'TEXT', 'Literal text to replace.'), option('replace', 'TEXT', 'Replacement text; an empty string deletes matches.'), option('field', 'content|description|both', 'Select transformed fields.', { default: 'content' }), option('occurrence', 'first|all', 'Replace the first or all non-overlapping matches in each selected field.', { default: 'all' }), option('case-sensitive', 'BOOLEAN', 'Use case-sensitive literal matching.', { default: 'true' }), option('max-replacements', 'N', 'Bound total replacements across every selected Node.', { default: '1000' })]),
   move: contract(MoveInputSchema, 'move TARGET DESTINATION | move TARGET --before|--after SIBLING | move TARGET --previous|--next', [target, option('destination', 'TARGET', 'Destination parent for first, last, or index placement.'), option('first', undefined, 'Place first under DESTINATION.'), option('last', undefined, 'Place last under DESTINATION.', { default: 'true' }), option('index', 'INDEX', 'Place at a zero-based index under DESTINATION.'), option('before', 'SIBLING', 'Place immediately before one exact sibling.'), option('after', 'SIBLING', 'Place immediately after one exact sibling.'), option('previous', undefined, 'Move the selected sibling block one position earlier.'), option('next', undefined, 'Move the selected sibling block one position later.')]),
   duplicate: contract(DuplicateInputSchema, 'duplicate TARGET DESTINATION | duplicate TARGET --before|--after SIBLING | duplicate TARGET --previous|--next', [target, option('destination', 'TARGET', 'Destination parent for first, last, or index placement.'), option('first', undefined, 'Place copies first under DESTINATION.'), option('last', undefined, 'Place copies last under DESTINATION.', { default: 'true' }), option('index', 'INDEX', 'Place copies at a zero-based index under DESTINATION.'), option('before', 'SIBLING', 'Place copies immediately before one exact sibling.'), option('after', 'SIBLING', 'Place copies immediately after one exact sibling.'), option('previous', undefined, 'Place each copy immediately before its source.'), option('next', undefined, 'Place each copy immediately after its source.'), bind]),
@@ -347,8 +339,11 @@ const PORCELAIN_BASE_CONTRACTS = Object.freeze({
   'template apply': contract(Type.Object({ tag: TargetRefSchema }, closed), 'template apply TAG', [option('tag', 'TAG', 'Tag definition target.')]),
   'daily ensure': contract(DailyEnsureInputSchema, 'daily ensure YYYY-MM-DD', [option('date', 'YYYY-MM-DD', 'Local calendar date.'), bind]),
   'capture add': contract(CaptureAddInputSchema, 'capture add (--parent TARGET | --date YYYY-MM-DD) --title TITLE --metadata FILE', [parent, option('date', 'YYYY-MM-DD', 'Ensure and capture below this local date.'), option('title', 'TITLE', 'Capture title.'), option('description', 'TEXT', 'Capture description.'), option('metadata', 'JSON|FILE', 'Capture provenance.'), option('tree', 'FILE|-', 'Typed captured child tree.'), bind]),
-  'media add': contract(MediaAddInputSchema, 'media add PARENT TYPE PATH|-', [parent, option('type', 'image|attachment', 'Media Node type.'), option('name', 'NAME', 'Media label.'), option('source', 'PATH|-', 'Stage a local path or stdin in this invocation.'), option('lease', 'LEASE', 'Use an explicitly staged asset lease.'), option('url', 'URL', 'Use an external image URL.'), option('metadata', 'JSON|FILE', 'Image dimensions and alt text.'), bind]),
-  'media set': contract(MediaSetInputSchema, 'media set TARGET [PROPERTY OPTIONS]', [target, option('lease', 'LEASE', 'Set an asset lease.'), option('url', 'URL', 'Set an external media URL.'), option('width', 'NUMBER', 'Set media width.'), option('height', 'NUMBER', 'Set media height.')]),
+  'source add': contract(SourceAddInputSchema, 'source add TARGET SOURCE [--after VALUE|null]', [target, option('source', 'URI', 'Exact Source text.'), option('value-id', 'ID', 'Explicit Source value Node ID.'), option('after', 'VALUE|null', 'Insert after one direct Source value; null inserts first.')]),
+  'source replace': contract(SourceReplaceInputSchema, 'source replace TARGET VALUE SOURCE', [target, option('value', 'VALUE', 'Direct Source value.'), option('source', 'URI', 'Replacement Source text.')]),
+  'source reorder': contract(SourceReorderInputSchema, 'source reorder TARGET VALUE --after VALUE|null', [target, option('value', 'VALUE', 'Direct Source value.'), option('after', 'VALUE|null', 'Direct Source anchor; null moves first.')]),
+  'source remove': contract(SourceValueInputSchema, 'source remove TARGET VALUE', [target, option('value', 'VALUE', 'Direct Source value.')]),
+  'source clear': contract(Type.Object({ target: OneTargetRefSchema }, closed), 'source clear TARGET', [target]),
   trash: contract(TargetOnlySchema, 'trash TARGET', [target]),
   restore: contract(TargetOnlySchema, 'restore TARGET', [target]),
   purge: contract(TargetOnlySchema, 'purge TARGET [--contents]', [target, option('contents', undefined, 'Purge the contents of Trash.')]),
@@ -358,7 +353,7 @@ type PorcelainCommandKey = keyof typeof PORCELAIN_BASE_CONTRACTS;
 
 const PORCELAIN_SUMMARIES = {
   add: 'Create one complete typed Node tree below a parent.',
-  set: 'Patch content, description, code, checkbox, icon, banner, or image state.',
+  set: 'Patch content, description, code, checkbox, icon, or banner state.',
   'text replace': 'Replace literal text across one exact or bounded query-selected Node set.',
   move: 'Move a bounded Node selection below one destination.',
   duplicate: 'Duplicate a bounded Node selection below one destination.',
@@ -403,8 +398,11 @@ const PORCELAIN_SUMMARIES = {
   'template apply': 'Preview or apply template backfill to all matching tagged Nodes.',
   'daily ensure': 'Ensure one local-date Daily Note exists.',
   'capture add': 'Ensure an optional date and create a provenanced typed capture tree.',
-  'media add': 'Stage a local asset and create its media Node in one invocation.',
-  'media set': 'Patch image or attachment metadata and source.',
+  'source add': 'Append one exact Source value to an ordinary Node.',
+  'source replace': 'Replace one direct Source value without changing its identity.',
+  'source reorder': 'Move one direct Source value within its owner.',
+  'source remove': 'Remove one direct Source value.',
+  'source clear': 'Remove every Source value observed for one owner.',
   trash: 'Move a bounded Node selection to Trash.',
   restore: 'Restore a bounded Node selection from Trash.',
   purge: 'Permanently purge selected Nodes or Empty Trash after exact Diff review.',
@@ -457,8 +455,11 @@ const PORCELAIN_EXAMPLES = {
   'template apply': ['outline template apply tag:project --preview', 'outline template apply --input template-backfill.json --preview'],
   'daily ensure': ['outline daily ensure 2026-08-24', 'outline daily ensure --input ensure-date.json'],
   'capture add': ['outline capture add --date 2026-08-24 --title "Reading note" --metadata provenance.json', 'outline capture add --input complete-capture.json'],
-  'media add': ['outline media add @inbox image ./diagram.png', 'outline media add @inbox attachment -'],
-  'media set': ['outline media set node:image --width 1280 --height 720', 'outline media set --input media-patch.json'],
+  'source add': ['outline source add node:brief https://example.com', 'outline source add --input source-add.json'],
+  'source replace': ['outline source replace node:brief node:source-value https://example.com/new', 'outline source replace --input source-replace.json'],
+  'source reorder': ['outline source reorder node:brief node:source-value --after null', 'outline source reorder --input source-reorder.json'],
+  'source remove': ['outline source remove node:brief node:source-value', 'outline source remove --input source-remove.json'],
+  'source clear': ['outline source clear node:brief', 'outline source clear --input source-clear.json'],
   trash: ['outline trash node:obsolete', 'outline trash --input trash-many.json'],
   restore: ['outline restore node:obsolete', 'outline restore --input restore-many.json'],
   purge: ['outline purge @trash --contents --preview --idempotency-key cli:review-purge', 'outline purge @trash --contents --idempotency-key cli:review-purge --expect-diff SHA256 --yes'],
@@ -466,7 +467,7 @@ const PORCELAIN_EXAMPLES = {
 
 const CREATE_COMMANDS = new Set<PorcelainCommandKey>([
   'add', 'duplicate', 'field define', 'definition create', 'view sort add', 'view filter add',
-  'view display add', 'search create', 'capture add', 'media add',
+  'view display add', 'search create', 'capture add', 'source add',
 ]);
 const ENSURE_COMMANDS = new Set<PorcelainCommandKey>(['search ensure-tag', 'daily ensure']);
 const DESTRUCTIVE_COMMANDS = new Set<PorcelainCommandKey>(['text replace', 'merge', 'definition merge', 'purge']);
@@ -476,11 +477,13 @@ const IDEMPOTENT_COMMANDS = new Set<PorcelainCommandKey>([
   'field remove', 'field reuse', 'field select', 'definition configure', 'reference set', 'view set',
   'view group set', 'view sort set', 'view sort remove', 'view sort clear', 'view filter set',
   'view filter remove', 'view filter clear', 'view display set', 'view display remove', 'search ensure-tag',
-  'search set', 'search refresh', 'template apply', 'daily ensure', 'media set', 'trash', 'restore',
+  'search set', 'search refresh', 'template apply', 'daily ensure', 'source replace', 'source reorder',
+  'source remove', 'source clear', 'trash', 'restore',
 ]);
 const EXACT_TARGET_COMMANDS = new Set<PorcelainCommandKey>([
   'indent', 'outdent', 'done cycle', 'reference replace', 'reference inline', 'reference restore', 'view sort set',
   'view sort remove', 'view filter set', 'view filter remove', 'view display set', 'view display remove',
+  'source add', 'source replace', 'source reorder', 'source remove', 'source clear',
 ]);
 
 const PORCELAIN_DEFAULTS: Partial<Record<PorcelainCommandKey, readonly string[]>> = {

@@ -1,4 +1,5 @@
 import { REF_COUNT_FIELD, type SystemFieldContext } from '../../core/systemFields';
+import { isContentBearingNode } from '../../core/types';
 import type { NodeId, NodeProjection } from '../api/types';
 import {
   buildOutlinerRows,
@@ -306,7 +307,7 @@ export function buildVisualRowsIncrementally(
   let readsReferenceCounts = false;
   const resolveFieldSlots = (nodeId: NodeId) => {
     const owner = index.byId.get(nodeId);
-    if (owner) fieldSlotOwnerTags.set(nodeId, owner.tags);
+    if (owner && isContentBearingNode(owner)) fieldSlotOwnerTags.set(nodeId, owner.tags);
     return fieldSlotsForIndex(index, nodeId);
   };
   const rows = buildVisualRows(rootId, index.byId, options, {
@@ -372,7 +373,8 @@ function canReuseVisualRows(
   for (const dirtyId of index.delta.dirtyIds) {
     const previousOwnerTags = previous.fieldSlotOwnerTags.get(dirtyId);
     if (previousOwnerTags) {
-      const nextOwnerTags = index.byId.get(dirtyId)?.tags;
+      const nextOwner = index.byId.get(dirtyId);
+      const nextOwnerTags = nextOwner && isContentBearingNode(nextOwner) ? nextOwner.tags : undefined;
       if (!nextOwnerTags || !sameStrings(previousOwnerTags, nextOwnerTags)) return false;
     }
     if (

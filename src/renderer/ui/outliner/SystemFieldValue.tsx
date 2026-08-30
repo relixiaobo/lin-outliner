@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import type { NodeId, NodeProjection } from '../../api/types';
+import { isContentBearingNode, type NodeId, type NodeProjection } from '../../api/types';
 import type { NavigateRootOptions } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
 import { CalendarIcon } from '../icons';
@@ -101,7 +101,7 @@ function renderValue(
         : display.tagIds.map((tagId) => {
           const tag = byId.get(tagId);
           const color = resolveTagColor(tag, byId);
-          const label = tag?.content.text || tagId;
+          const label = tag && isContentBearingNode(tag) ? tag.content.text || tagId : tagId;
           return (
             <ButtonControl
               key={tagId}
