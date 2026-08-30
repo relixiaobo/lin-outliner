@@ -259,8 +259,8 @@ function compareSelectedNodes(
     const difference = left.updatedAt - right.updatedAt;
     if (difference !== 0) return difference;
   } else {
-    const leftText = isContentBearingNode(left) ? left.content.text : left.sourceText;
-    const rightText = isContentBearingNode(right) ? right.content.text : right.sourceText;
+    const leftText = left.content.text;
+    const rightText = right.content.text;
     const difference = compareText(leftText, rightText);
     if (difference !== 0) return difference;
   }

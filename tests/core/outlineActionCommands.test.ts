@@ -5,6 +5,7 @@ import path from 'node:path';
 import { buildConfigIndex } from '../../src/core/configProjection';
 import type { CreateCaptureInput } from '../../src/core/launcher/sources';
 import { plainText } from '../../src/core/types';
+import { sourceFieldValues } from '../../src/core/sourceField';
 import { runOutlineActionCommand } from '../../src/main/outlineActionCommands';
 import type { OutlineDocumentService, OutlineMutationOptions } from '../../src/main/outlineDocumentService';
 import type { Change, ChangeSet, Operation } from '../../src/outline/contract';
@@ -54,12 +55,8 @@ describe('Outline action commands', () => {
 
     expect(buildConfigIndex(state).tag(articleTag.id)?.extends).toBe(captureTag.id);
     expect(root.tags).toContain(articleTag.id);
-    const sourceEntry = state.nodes[`${root.id}::source`];
-    expect(sourceEntry?.type).toBe('fieldEntry');
-    expect(state.nodes[sourceEntry!.children[0]!]!).toMatchObject({
-      type: 'sourceValue',
-      sourceText: 'https://example.com/article',
-    });
+    expect(sourceFieldValues(state, root.id).map((value) => value.sourceText))
+      .toEqual(['https://example.com/article']);
     expect(child.tags).toContain(reviewTag.id);
     expect(nodes.find((node) => node.parentId === fieldEntry.id)?.content.text).toBe('Ready');
     expect((await workspace.store.operations()).length - before.length).toBe(1);

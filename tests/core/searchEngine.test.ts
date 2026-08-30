@@ -17,7 +17,6 @@ import {
   plainText,
   QUERY_OPS,
   replaceAllRichTextPatch,
-  sourceEntryNodeId,
   type QueryOp,
   type SearchQueryExpr,
 } from '../../src/core/types';
@@ -844,7 +843,7 @@ describe('core search engine', () => {
     core.applyTag(empty, taskTagId);
     addFieldValue(core, active, statusFieldDefId, 'Active');
     addFieldValue(core, waiting, statusFieldDefId, 'Waiting');
-    expect(core.state().nodes[empty]!.children.filter((childId) => childId !== sourceEntryNodeId(empty))).toEqual([]);
+    expect(core.state().nodes[empty]!.children).toEqual([]);
 
     const searchId = mustFocus(core.createNode(core.projection().searchesId, null, 'Field search'));
     const conditionId = mustFocus(core.createNode(searchId, null, 'Active'));

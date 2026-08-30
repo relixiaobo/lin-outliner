@@ -55,6 +55,7 @@ import {
   type SetConfigValueInput,
 } from './configSchema';
 import { referencesForTarget } from './references';
+import { sourceFieldEntries } from './sourceField';
 import { entersTable, findViewDef, missingDisplayOrderPlan, tableDisplayFieldInitialization } from './viewConfig';
 import { normalizeCodeLanguage } from './codeLanguages';
 import {
@@ -78,7 +79,6 @@ import {
   nodeReferenceTarget,
   plainText,
   systemOptionNodeId,
-  sourceEntryNodeId,
   type Backlink,
   type BatchMoveNodeInput,
   type DefConfigKey,
@@ -107,7 +107,6 @@ import {
   type FieldEntryNode,
   type FieldDefNode,
   type FilterRuleNode,
-  type SourceValueNode,
   type QueryConditionNode,
   type ReferenceNode,
   type SearchNode,
@@ -1248,23 +1247,31 @@ export class Core {
     afterValueId?: NodeId | null,
   ): void {
     const state = this.snapshot();
-    const entry = requiredSourceEntry(state, ownerId);
+    ensureParentMutable(state, ownerId);
+    ensureFieldDefinition(state, SOURCE_FIELD_ID);
     if (state.nodes[valueId]) throw CoreError.invalidOperation(`Source value id already exists: ${valueId}`);
+    const entries = sourceFieldEntries(state, ownerId);
+    const entry = entries[0] ?? (() => {
+      const entryId = this.insertFieldEntryNodeDirect(ownerId, undefined, SOURCE_FIELD_ID);
+      const created = this.snapshot().nodes[entryId];
+      if (created?.type !== 'fieldEntry') throw new Error('Source field creation returned the wrong Node variant.');
+      return created;
+    })();
     const index = sourceInsertionIndex(state, entry, afterValueId);
-    this.loro.createNodeWithId(valueId, entry.id, index, 'sourceValue', (node) => {
-      if (node.type !== 'sourceValue') throw new Error('Source value creation returned the wrong Node variant.');
-      node.sourceText = sourceText;
+    this.loro.createNodeWithId(valueId, entry.id, index, undefined, (node) => {
+      node.content = plainText(sourceText);
     });
   }
 
   replaceSource(ownerId: NodeId, valueId: NodeId, sourceText: string): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
-      const value = clone(requiredOwnerSourceValue(state, ownerId, valueId));
-      if (value.sourceText === sourceText) return focus(ownerId);
-      value.sourceText = sourceText;
+      const { value: requiredValue } = requiredOwnerSourceValue(state, ownerId, valueId);
+      const value = clone(requiredValue);
+      if (value.content.text === sourceText) return focus(ownerId);
+      value.content = plainText(sourceText);
       value.updatedAt = nowMs();
-      this.loro.writeNode(value as Node);
+      this.loro.writeNode(value);
       return focus(ownerId);
     });
   }
@@ -1272,14 +1279,16 @@ export class Core {
   reorderSource(ownerId: NodeId, valueId: NodeId, afterValueId: NodeId | null): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
-      const entry = requiredSourceEntry(state, ownerId);
-      requiredOwnerSourceValue(state, ownerId, valueId);
+      const { entry } = requiredOwnerSourceValue(state, ownerId, valueId);
       if (valueId === afterValueId) throw CoreError.invalidOperation('Source value cannot anchor itself.');
       const withoutValue = entry.children.filter((id) => id !== valueId);
       const index = afterValueId === null
         ? 0
         : (() => {
-            requiredOwnerSourceValue(state, ownerId, afterValueId);
+            const anchor = requiredOwnerSourceValue(state, ownerId, afterValueId);
+            if (anchor.entry.id !== entry.id) {
+              throw CoreError.invalidOperation('Source anchor must belong to the same field entry.');
+            }
             return withoutValue.indexOf(afterValueId) + 1;
           })();
       this.loro.moveNode(valueId, entry.id, index);
@@ -1290,8 +1299,8 @@ export class Core {
   removeSource(ownerId: NodeId, valueId: NodeId): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
-      requiredOwnerSourceValue(state, ownerId, valueId);
-      this.removeSubtreeDirect(valueId);
+      const { entry } = requiredOwnerSourceValue(state, ownerId, valueId);
+      this.removeSubtreeDirect(entry.children.length === 1 ? entry.id : valueId);
       return focus(ownerId);
     });
   }
@@ -1299,12 +1308,18 @@ export class Core {
   clearSources(ownerId: NodeId, observedValueIds: readonly NodeId[]): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
-      requiredSourceEntry(state, ownerId);
-      for (const valueId of [...new Set(observedValueIds)]) {
-        const value = state.nodes[valueId];
-        if (!value) continue;
-        requiredOwnerSourceValue(state, ownerId, valueId);
-        this.removeSubtreeDirect(valueId);
+      const observed = new Set(observedValueIds);
+      for (const valueId of observed) {
+        if (state.nodes[valueId]) requiredOwnerSourceValue(state, ownerId, valueId);
+      }
+      for (const entry of sourceFieldEntries(state, ownerId)) {
+        const currentValueIds = entry.children.filter((valueId) => observed.has(valueId));
+        if (currentValueIds.length === 0) continue;
+        if (currentValueIds.length === entry.children.length) {
+          this.removeSubtreeDirect(entry.id);
+        } else {
+          for (const valueId of currentValueIds) this.removeSubtreeDirect(valueId);
+        }
       }
       return focus(ownerId);
     });
@@ -2734,11 +2749,13 @@ export class Core {
         throw CoreError.invalidOperation('target must be a field or tag definition');
       }
       if (isInTrash(state, targetId)) throw CoreError.invalidOperation('target definition is in Trash');
+      if (target.locked) throw CoreError.lockedNode(targetId);
       for (const sourceId of uniqueSourceIds) {
         if (sourceId === targetId) throw CoreError.invalidOperation('cannot merge a definition into itself');
         const source = requiredNode(state, sourceId);
         if (source.type !== target.type) throw CoreError.invalidOperation('definition merge requires target and sources of the same kind');
         if (isInTrash(state, sourceId)) throw CoreError.invalidOperation('source definition is in Trash');
+        if (source.locked) throw CoreError.lockedNode(sourceId);
       }
       if (target.type === 'fieldDef') this.mergeFieldDefinitionsDirect(targetId, uniqueSourceIds);
       else this.mergeTagDefinitionsDirect(targetId, uniqueSourceIds);
@@ -3032,9 +3049,6 @@ export class Core {
   updateFieldSlot(ownerId: string, fieldDefId: string, mutation: FieldSlotMutation): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
-      if (fieldDefId === SOURCE_FIELD_ID) {
-        throw CoreError.invalidOperation('Source values require dedicated Source commands.');
-      }
       ensureParentMutable(state, ownerId);
       ensureFieldDefinition(state, fieldDefId);
       if (mutation.entryId) {
@@ -4270,7 +4284,7 @@ export class Core {
     this.ensureSystemNodeDirect(TAG_DAY_ID, 'tagDef', SCHEMA_ID, 'day', true, now);
     this.ensureSystemNodeDirect(TAG_WEEK_ID, 'tagDef', SCHEMA_ID, 'week', true, now);
     this.ensureSystemNodeDirect(TAG_YEAR_ID, 'tagDef', SCHEMA_ID, 'year', true, now);
-    this.ensureSystemNodeDirect(SOURCE_FIELD_ID, 'fieldDef', SCHEMA_ID, 'Source', true, now);
+    this.ensureSystemNodeDirect(SOURCE_FIELD_ID, 'fieldDef', SCHEMA_ID, 'URI', true, now);
     // Persist the canonical root child order into the tree. Materialization now
     // reflects the tree verbatim (no read-time re-ordering), so every system node
     // must be placed here, matching the historical projection order.
@@ -4362,7 +4376,7 @@ export class Core {
 
   private ensureSystemNodeDirect(
     id: string,
-    type: Exclude<NodeType, 'sourceValue'> | undefined,
+    type: NodeType | undefined,
     parentId: string | undefined,
     name: string,
     locked: boolean,
@@ -4598,7 +4612,7 @@ export class Core {
     parentId: string,
     index: number | null | undefined,
     text: string,
-    type?: Exclude<NodeType, 'sourceValue'>,
+    type?: NodeType,
     id?: string,
   ) {
     const nodeId = id ?? this.freshId(type === 'reference' ? 'ref' : type === 'fieldEntry' ? 'field_entry' : 'node');
@@ -4625,7 +4639,7 @@ export class Core {
     parentId: string,
     index: number | null | undefined,
     content: RichText,
-    type?: Exclude<NodeType, 'sourceValue'>,
+    type?: NodeType,
   ) {
     const id = this.freshId(type === 'reference' ? 'ref' : type === 'fieldEntry' ? 'field_entry' : 'node');
     this.loro.createNodeWithId(id, parentId, index, type, (node) => {
@@ -4790,9 +4804,6 @@ export class Core {
     fieldDefId: string,
     proposedId?: string,
   ) {
-    if (fieldDefId === SOURCE_FIELD_ID) {
-      throw CoreError.invalidOperation('Source entries cannot be created through generic field operations.');
-    }
     const id = proposedId ?? this.freshId('field_entry');
     this.loro.createNodeWithId(id, parentId, index, 'fieldEntry', (node) => {
       node.fieldDefId = fieldDefId;
@@ -4904,9 +4915,6 @@ export class Core {
 
     const owner = this.loro.materializeNode(nodeId);
     if (!owner) throw CoreError.nodeNotFound(nodeId);
-    if (!isContentBearingNode(owner)) {
-      throw CoreError.invalidOperation('Source values cannot own ordinary fields.');
-    }
     const projectedResolution = this.projectedFieldDefinitionFromContext(owner, key, context);
     if (projectedResolution.kind === 'ambiguous') return false;
     if (projectedResolution.kind === 'resolved') {
@@ -5114,7 +5122,6 @@ export class Core {
       if (removedIds.has(other.id)) continue;
       const next = clone(other);
       const before = JSON.stringify(next);
-      if (next.type === 'sourceValue') continue;
       next.tags = next.tags.filter((id) => !removedIds.has(id));
       if (next.type === 'reference' && next.targetId && removedIds.has(next.targetId)) delete next.targetId;
       if ((next.type === 'search' || next.type === 'queryCondition') && next.queryTargetId && removedIds.has(next.queryTargetId)) {
@@ -5152,10 +5159,6 @@ export class Core {
   private cloneSubtreeDirect(sourceId: string, parentId: string, index: number | undefined): string {
     const state = this.snapshot();
     const source = clone(requiredNode(state, sourceId));
-    const sourceEntryId = source.type === undefined
-      ? permanentSourceEntryId(state, source.id)
-      : undefined;
-    const sourceChildren = source.children.filter((childId) => childId !== sourceEntryId);
     // A defConfig row is addressed by the stable id defConfigNodeId(parent, key);
     // cloning it under a fresh id would orphan it from ensureConfigRowDirect, so a
     // later edit on the copy creates a *second* row that configRowsByKey shadows.
@@ -5175,13 +5178,7 @@ export class Core {
         delete node.trashedFromIndex;
       }
     });
-    for (const childId of sourceChildren) this.cloneSubtreeDirect(childId, clonedId, undefined);
-    if (sourceEntryId) {
-      const clonedEntryId = sourceEntryNodeId(clonedId);
-      for (const valueId of state.nodes[sourceEntryId]?.children ?? []) {
-        this.cloneSubtreeDirect(valueId, clonedEntryId, undefined);
-      }
-    }
+    for (const childId of source.children) this.cloneSubtreeDirect(childId, clonedId, undefined);
     return clonedId;
   }
 
@@ -5696,7 +5693,7 @@ function applyPlannedNodeMove(state: DocumentState, move: BatchMoveNodeInput) {
   const refreshedTargetParent = requiredNode(state, move.parentId);
   const targetChildren = documentChildIds(state, move.parentId).filter((childId) => childId !== move.nodeId);
   targetChildren.splice(Math.min(targetIndex, targetChildren.length), 0, move.nodeId);
-  refreshedTargetParent.children = withPermanentSourceEntry(state, move.parentId, targetChildren);
+  refreshedTargetParent.children = targetChildren;
   node.parentId = move.parentId;
 }
 
@@ -5912,11 +5909,7 @@ function requiredNode(state: DocumentState, nodeId: string): Node {
 }
 
 function requiredContentNode(state: DocumentState, nodeId: string): ContentBearingNode {
-  const node = requiredNode(state, nodeId);
-  if (!isContentBearingNode(node)) {
-    throw CoreError.invalidOperation('Source values are only mutable through Source commands.');
-  }
-  return node;
+  return requiredNode(state, nodeId);
 }
 
 function contentNode(state: DocumentState, nodeId: NodeId): ContentBearingNode | undefined {
@@ -5924,36 +5917,24 @@ function contentNode(state: DocumentState, nodeId: NodeId): ContentBearingNode |
   return node && isContentBearingNode(node) ? node : undefined;
 }
 
-function requiredSourceEntry(state: DocumentState, ownerId: NodeId): FieldEntryNode {
-  const owner = requiredNode(state, ownerId);
-  if (owner.type !== undefined) throw CoreError.invalidOperation('Source owner must be an ordinary content Node.');
-  const entryId = sourceEntryNodeId(ownerId);
-  const entry = state.nodes[entryId];
+function requiredOwnerSourceValue(
+  state: DocumentState,
+  ownerId: NodeId,
+  valueId: NodeId,
+): { entry: FieldEntryNode; value: Node } {
+  requiredNode(state, ownerId);
+  const value = state.nodes[valueId];
+  const entry = value?.parentId ? state.nodes[value.parentId] : undefined;
   if (
-    entry?.type !== 'fieldEntry'
+    !value
+    || entry?.type !== 'fieldEntry'
     || entry.parentId !== ownerId
     || entry.fieldDefId !== SOURCE_FIELD_ID
-    || !entry.locked
-    || !owner.children.includes(entryId)
+    || !entry.children.includes(valueId)
   ) {
-    throw CoreError.invalidOperation(`ordinary content Node has no valid permanent Source entry: ${ownerId}`);
-  }
-  for (const childId of entry.children) {
-    const child = state.nodes[childId];
-    if (child?.type !== 'sourceValue' || child.parentId !== entryId) {
-      throw CoreError.invalidOperation(`Source entry contains a non-Source value: ${entryId}`);
-    }
-  }
-  return entry;
-}
-
-function requiredOwnerSourceValue(state: DocumentState, ownerId: NodeId, valueId: NodeId): SourceValueNode {
-  const entry = requiredSourceEntry(state, ownerId);
-  const value = state.nodes[valueId];
-  if (value?.type !== 'sourceValue' || value.parentId !== entry.id || !entry.children.includes(valueId)) {
     throw CoreError.invalidOperation('Source value must be a direct value of the requested owner.');
   }
-  return value;
+  return { entry, value };
 }
 
 function sourceInsertionIndex(
@@ -5964,7 +5945,7 @@ function sourceInsertionIndex(
   if (afterValueId === undefined) return undefined;
   if (afterValueId === null) return 0;
   const anchor = state.nodes[afterValueId];
-  if (anchor?.type !== 'sourceValue' || anchor.parentId !== entry.id) {
+  if (!anchor || anchor.parentId !== entry.id) {
     throw CoreError.invalidOperation('Source anchor must be a direct value of the requested owner.');
   }
   return entry.children.indexOf(afterValueId) + 1;
@@ -5978,9 +5959,6 @@ function setOptional<T extends object, K extends keyof T>(object: T, key: K, val
 function ensureParentMutable(state: DocumentState, parentId: string) {
   const parent = state.nodes[parentId];
   if (!parent) throw CoreError.parentNotFound(parentId);
-  if (isPermanentSourceEntry(state, parentId)) {
-    throw CoreError.invalidOperation('the permanent Source entry is structurally locked');
-  }
   // config-as-nodes: defConfig/systemOption subtrees are registry-governed;
   // user commands cannot insert children under them. Internal config machinery
   // uses *Direct loro APIs that bypass this guard.
@@ -5991,13 +5969,7 @@ function ensureParentMutable(state: DocumentState, parentId: string) {
 
 function ensureNodeEditable(state: DocumentState, nodeId: string): ContentBearingNode {
   const node = requiredNode(state, nodeId);
-  if (isPermanentSourceEntry(state, nodeId) || isDirectSourceValue(state, nodeId)) {
-    throw CoreError.lockedNode(nodeId);
-  }
   if (node.locked) throw CoreError.lockedNode(nodeId);
-  if (!isContentBearingNode(node)) {
-    throw CoreError.invalidOperation('Source values are only mutable through Source commands.');
-  }
   // The defConfig/systemOption node itself cannot be renamed/edited via user
   // commands; its value is mutated only through the setConfigValue chokepoint.
   if (isInternalConfigNode(node)) throw CoreError.invalidOperation('config nodes are structurally locked');
@@ -6007,15 +5979,10 @@ function ensureNodeEditable(state: DocumentState, nodeId: string): ContentBearin
 function ensureNodeMovable(state: DocumentState, nodeId: string): ContentBearingNode {
   const node = requiredNode(state, nodeId);
   if (
-    isPermanentSourceEntry(state, nodeId)
-    || isDirectSourceValue(state, nodeId)
-    || node.locked
+    node.locked
     || isSystemId(nodeId)
     || isInternalConfigNode(node)
   ) throw CoreError.lockedNode(nodeId);
-  if (!isContentBearingNode(node)) {
-    throw CoreError.invalidOperation('Source values are only movable through Source commands.');
-  }
   return node;
 }
 
@@ -6132,44 +6099,8 @@ function childIndex(state: DocumentState, parentId: string, childId: string): nu
   return index >= 0 ? index : undefined;
 }
 
-function permanentSourceEntryId(state: DocumentState, ownerId: NodeId): NodeId | undefined {
-  const owner = state.nodes[ownerId];
-  const entryId = sourceEntryNodeId(ownerId);
-  const entry = state.nodes[entryId];
-  return owner?.type === undefined
-    && entry?.type === 'fieldEntry'
-    && entry.parentId === ownerId
-    && entry.fieldDefId === SOURCE_FIELD_ID
-    && owner.children.includes(entryId)
-    ? entryId
-    : undefined;
-}
-
-function isPermanentSourceEntry(state: DocumentState, nodeId: NodeId): boolean {
-  const entry = state.nodes[nodeId];
-  return entry?.type === 'fieldEntry'
-    && entry.parentId !== undefined
-    && permanentSourceEntryId(state, entry.parentId) === nodeId;
-}
-
-function isDirectSourceValue(state: DocumentState, nodeId: NodeId): boolean {
-  const value = state.nodes[nodeId];
-  return value?.type === 'sourceValue'
-    && isPermanentSourceEntry(state, value.parentId);
-}
-
 function documentChildIds(state: DocumentState, parentId: NodeId): NodeId[] {
-  const entryId = permanentSourceEntryId(state, parentId);
-  return (state.nodes[parentId]?.children ?? []).filter((childId) => childId !== entryId);
-}
-
-function withPermanentSourceEntry(
-  state: DocumentState,
-  parentId: NodeId,
-  documentChildren: readonly NodeId[],
-): NodeId[] {
-  const entryId = permanentSourceEntryId(state, parentId);
-  return entryId ? [...documentChildren, entryId] : [...documentChildren];
+  return [...(state.nodes[parentId]?.children ?? [])];
 }
 
 function batchIndentTargetParentId(
@@ -6263,7 +6194,7 @@ function moveSelectedSiblings(state: DocumentState, nodeIds: string[], direction
         }
       }
     }
-    parent.children = withPermanentSourceEntry(state, parentId, children);
+    parent.children = children;
   }
   for (const nodeId of selected) touchNode(state, nodeId);
 }
@@ -6321,7 +6252,6 @@ const LEGACY_PARA_NODE_NAMES = new Map([
 function isDisposableLegacyParaNode(state: DocumentState, node: Node, title: string) {
   return node.type === undefined
     && documentChildIds(state, node.id).length === 0
-    && (state.nodes[permanentSourceEntryId(state, node.id) ?? '']?.children.length ?? 0) === 0
     && node.content.text === title
     && node.content.marks.length === 0
     && node.content.inlineRefs.length === 0
@@ -6337,7 +6267,6 @@ function isDisposableRetiredSettingsNode(state: DocumentState, node: Node) {
 function isDisposableLegacySystemNode(state: DocumentState, node: Node, title: string) {
   return node.type === undefined
     && documentChildIds(state, node.id).length === 0
-    && (state.nodes[permanentSourceEntryId(state, node.id) ?? '']?.children.length ?? 0) === 0
     && node.content.text === title
     && node.content.marks.length === 0
     && node.content.inlineRefs.length === 0

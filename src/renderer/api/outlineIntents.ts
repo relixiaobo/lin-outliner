@@ -10,7 +10,6 @@ import type {
   UpdateInstruction,
 } from '../../outline/contract';
 import { freshNodeId } from '../../core/nodeId';
-import { sourceEntryNodeId } from '../../core/types';
 import { isContentBearingNode } from './types';
 import type {
   ContentBearingNodeProjection,
@@ -1667,11 +1666,9 @@ function templatePreviewFromDiff(diff: Diff): TagTemplateBackfillPreview {
 }
 
 function createdOrdinaryNodeIds(diff: Diff): string[] {
-  const createdIds = diff.affected
+  return diff.affected
     .filter((entry) => entry.effect === 'create')
     .map((entry) => entry.id);
-  const createdSourceEntryIds = new Set(createdIds.map(sourceEntryNodeId));
-  return createdIds.filter((id) => !createdSourceEntryIds.has(id));
 }
 
 function bytesToBase64(data: Uint8Array): string {

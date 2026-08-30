@@ -106,7 +106,6 @@ export function isContentNode(
 export function textOf(node: NodeProjection | undefined, fallback = ''): string {
   if (!node) return fallback;
   if (node.type === 'reference' && node.targetId) return `@${node.targetId}`;
-  if (node.type === 'sourceValue') return node.sourceText || fallback;
   return node.content.text || fallback;
 }
 

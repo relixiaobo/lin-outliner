@@ -2,7 +2,6 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { sourceEntryNodeId } from '../../src/core/types';
 import { runOutlineCli } from '../../src/outline/cli';
 import type { Diff, Operation } from '../../src/outline/contract';
 import { OutlineRuntimeServer } from '../../src/outline/runtime/server';
@@ -373,8 +372,7 @@ function childTexts(runtime: OutlineRuntimeServer, parentId: string): string[] {
 }
 
 function documentChildIds(runtime: OutlineRuntimeServer, parentId: string): string[] {
-  return runtime.workspace.documentState().nodes[parentId]!.children
-    .filter((id) => id !== sourceEntryNodeId(parentId));
+  return runtime.workspace.documentState().nodes[parentId]!.children;
 }
 
 function nodeIdByText(runtime: OutlineRuntimeServer, text: string): string {

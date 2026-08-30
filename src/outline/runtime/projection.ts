@@ -1,9 +1,6 @@
 import type { Core } from '../../core/core';
 import { buildReferenceSummary } from '../../core/references';
 import {
-  SOURCE_FIELD_ID,
-  isContentBearingNode,
-  sourceEntryNodeId,
   type NodeProjection,
 } from '../../core/types';
 import { canonicalSha256 } from '../contract/canonical';
@@ -36,7 +33,6 @@ export function projectOutlineFromSelectionIndex(
         index,
         targetIds,
         projection.depth ?? 3,
-        projection.include?.includes('fields') === true,
       )
     : targetIds;
   const projectionHash = canonicalSha256(projectionCursorIdentity(projection));
@@ -59,7 +55,7 @@ export function projectOutlineFromSelectionIndex(
     : undefined;
   const nodes = projection.kind === 'backlinks'
     ? []
-    : pageIds.map((nodeId) => projectNode(index.byId.get(nodeId)!, index.byId, projection));
+    : pageIds.map((nodeId) => projectNode(index.byId.get(nodeId)!, projection));
   const backlinks = allBacklinks?.slice(offset, offset + limit);
   const pageWidth = Math.max(pageIds.length, backlinks?.length ?? 0);
   const nextOffset = offset + pageWidth;
@@ -121,7 +117,6 @@ function collectOutlineIds(
   index: OutlineSelectionIndex,
   roots: readonly string[],
   depth: number,
-  includeSourceStructure: boolean,
 ): string[] {
   const result: string[] = [];
   const seen = new Set<string>();
@@ -135,7 +130,7 @@ function collectOutlineIds(
       seen.add(current.id);
       result.push(current.id);
       if (current.depth >= depth) continue;
-      const children = outlineProjectionChildIds(node, index.byId, includeSourceStructure);
+      const children = node.children;
       for (let childIndex = children.length - 1; childIndex >= 0; childIndex -= 1) {
         stack.push({ id: children[childIndex]!, depth: current.depth + 1 });
       }
@@ -144,32 +139,18 @@ function collectOutlineIds(
   return result;
 }
 
-function outlineProjectionChildIds(
-  node: NodeProjection,
-  byId: ReadonlyMap<string, NodeProjection>,
-  includeSourceStructure: boolean,
-): readonly string[] {
-  if (includeSourceStructure || node.type !== undefined) return node.children;
-  const entryId = sourceEntryNodeId(node.id);
-  const entry = byId.get(entryId);
-  if (entry?.type !== 'fieldEntry' || entry.fieldDefId !== SOURCE_FIELD_ID) return node.children;
-  return node.children.filter((childId) => childId !== entryId);
-}
-
 function projectNode(
   node: NodeProjection,
-  byId: ReadonlyMap<string, NodeProjection>,
   projection: Projection,
 ): Record<string, unknown> {
   if (projection.kind === 'summary') {
-    const content = isContentBearingNode(node) ? node : undefined;
     return {
       id: node.id,
       type: node.type ?? 'plain',
-      text: content?.content.text ?? (node.type === 'sourceValue' ? node.sourceText : ''),
+      text: node.content.text,
       parentId: node.parentId ?? null,
-      childCount: outlineProjectionChildIds(node, byId, false).length,
-      done: typeof content?.completedAt === 'number' && content.completedAt > 0,
+      childCount: node.children.length,
+      done: typeof node.completedAt === 'number' && node.completedAt > 0,
     };
   }
   const include = new Set(projection.include ?? []);

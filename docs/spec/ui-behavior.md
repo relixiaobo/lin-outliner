@@ -870,13 +870,18 @@ frozen.
 - Trigger menus must route `ArrowUp`, `ArrowDown`, `Enter`, and `Escape` before
   normal outliner navigation.
 
-## Source And Preview Matrix
+## URI And Preview Matrix
 
-Binary files are not embedded in the document. Every ordinary content Node owns
-one permanent protected Source entry whose ordered `sourceValue` children carry
-exact locator text. Managed file producers admit bytes first, then create the
-ordinary Node and canonical asset Source in one document transaction so
-undo/redo, projection, and asset reachability stay coherent.
+Binary files are not embedded in the document. The schema's locked built-in URI
+definition has stable ID `field:source` and visible name `URI`; its lock does not
+extend to entries or values. New Nodes have no URI entry. Producers create a
+normal unlocked entry lazily, with ordinary editable RichText value Nodes that
+carry exact locator text. Users can edit, move, copy, process, or delete a value,
+and can delete the complete entry. The final value's removal deletes the empty
+entry. A user-defined field named `Source` is unrelated because preview meaning
+follows definition identity, not text labels. Managed file producers admit bytes
+first, then create the ordinary Node and canonical asset URI in one document
+transaction so undo/redo, projection, and asset reachability stay coherent.
 
 | Interaction | Expected behavior |
 | --- | --- |
@@ -884,8 +889,9 @@ undo/redo, projection, and asset reachability stay coherent.
 | Paste files into an outliner row | A real clipboard `File` payload wins over companion display text. Pure image, mixed, and non-image clips all use the managed Source producer. On an empty row the first success retains row identity; on a non-empty row resources become ordered siblings after it. Successful siblings survive an independent failure. |
 | `/attachment` or `/image` on an empty row | Remove the trigger, open the native picker, and create ordinary managed Source-backed Nodes at that position. The task-oriented command name does not choose a Node type. Cancel leaves the row empty. |
 | Source-backed row | Render exactly like any ordinary content Node: editable RichText, normal neutral bullet, inline tags, references, description, selection, movement, Enter/Tab/Backspace, paste, and `#` behavior. No file-type bullet, read-only filename editor, inline image row, hidden keyboard anchor, or row-level preview exists. The chevron controls only ordinary children; the bullet opens the normal Node page. |
-| Source management | The Node page lists every direct Source value in document order with exact editable text, selection, availability/reason, add, replace, move up/down, remove, clear, Copy URI, retry, and exact-file authorization/revocation where applicable. Link File and Replace with File are explicit atomic Host workflows: the picker grant settles before the Source mutation, and failed mutation releases a newly orphaned grant. Selection uses stable value identity, survives reorder, never skips an explicitly selected unavailable value, and falls back to the first surviving value only when its identity disappears. Removing the final value leaves the ordinary Node. |
-| Source preview state | The selected Source preview lives below the Source list on the Node page. Selected value, preview visibility, document reader state, and child disclosure are independent; selected value and visibility persist in renderer-local view state. Stale resolution from a previous selection cannot replace the current body. Invalid, denied, unavailable, or unsupported values show their own reason and recovery without deleting or changing selection. |
+| URI management | The URI field uses the same field row, value editor, tree commands, copy/move behavior, and entry deletion as other fields. The Node page also lists built-in URI values in document order with exact editable text, selection, availability/reason, add, replace, move up/down, remove, clear, Copy URI, retry, and exact-file authorization/revocation where applicable. Link File and Replace with File are explicit atomic Host workflows: the picker grant settles before the field mutation, and failed mutation releases a newly orphaned grant. Selection uses stable value identity, survives reorder, never skips an explicitly selected unavailable value, and falls back to the first surviving value only when its identity disappears. Removing the final value removes the URI entry and leaves the owner unchanged. |
+| Edited or broken URI | A text edit commits exactly what the user entered and immediately derives presentation from that value. A syntactically valid edited YouTube or web URL loads the new address. Invalid, denied, unsupported, missing, or temporarily unavailable text stays durable and editable and shows its local reason; preview failure never rolls back or locks the field. |
+| URI preview state | The selected URI preview lives below the URI list on the Node page. Selected value, preview visibility, document reader state, and child disclosure are independent; selected value and visibility persist in renderer-local view state. Stale resolution from a previous selection cannot replace the current body. Invalid, denied, unavailable, or unsupported values show their own reason and recovery without deleting or changing selection. |
 | Document and image preview | `FilePreviewShell` keeps the mature renderer registry for image, PDF, EPUB, HTML, Markdown, code, plain text, delimited tables, directories, and bounded metadata fallback. Document previews keep summary/full state, per-source resized height, insets, scroll geometry, PDF page jumps and restored positions, EPUB lazy mounting/outlines/translation, and scoped cleanup. Images use bounded aspect-aware display in the preview, not as row content. |
 | Preview actions | Document-like Sources use the stable bottom-center `Expand`/`Collapse` plus separate `⋯` actions. Authorized managed Sources expose **Open in split pane**, **Open with default app**, **Reveal in Finder**, and **Copy file**; unsupported formats keep **Open** plus the authorized secondary actions. The dedicated reader is bound to the ordinary owner/source identity but omits Node-page ancestry, title hero, child outline, References, inner Expand/Collapse, and resize handle. Open/Reveal/Copy use Runtime-verified private materialization and never expose a ContentStore path. |
 | Media preview controls | Audio and video remain a single-layer Media Chrome surface with playback, seek, volume, mute, shortcuts, fullscreen, and same-layer authorized actions. They omit document Expand/Collapse, resize, and outer card chrome. Fixed control geometry and transparent range hover keep the bar stable. |

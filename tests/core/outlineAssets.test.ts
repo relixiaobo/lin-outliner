@@ -12,6 +12,8 @@ import {
   type ChangeSet,
 } from '../../src/outline/contract';
 import { formatAssetSourceUri } from '../../src/core/source';
+import { sourceFieldValues } from '../../src/core/sourceField';
+import { SOURCE_FIELD_ID } from '../../src/core/types';
 import {
   applyOutlineDiff,
   diffOutlineChangeSet,
@@ -236,6 +238,42 @@ describe('Outline Runtime assets', () => {
     await workspace.revert(purged.operationId, { origin: 'local-user' });
     expect(sourceOwnerIdForAsset(workspace, lease.assetId)).toBe(createdId);
     expect(await workspace.assets.show(lease.assetId)).toMatchObject({ assetId: lease.assetId });
+  });
+
+  test('tracks existing values when an ordinary field entry is relinked to the built-in URI definition', async () => {
+    const workspace = await makeWorkspace();
+    const lease = await workspace.assets.ingestBytes(Buffer.from('relinked bytes'), 'relinked.txt');
+    const payload = { kind: 'relink-uri-field', assetId: lease.assetId };
+
+    await workspace.mutate({
+      origin: 'local-user',
+      changeSetHash: canonicalSha256(payload),
+      diffHash: canonicalSha256({ ...payload, kind: 'diff' }),
+      summary: 'Relinked an ordinary field to URI.',
+      assetLeases: { [lease.leaseId]: lease.assetId },
+      execute: (core) => {
+        const ownerId = core.createNode(core.projection().todayId, null, 'Relinked').focus!.nodeId;
+        const tagId = core.createTag('relink-source').focus!.nodeId;
+        const templateEntryId = core.createFieldDef(tagId, 'Locator', 'plain').focus!.nodeId;
+        const fieldDefId = core.state().nodes[templateEntryId]!.fieldDefId!;
+        core.updateFieldSlot(ownerId, fieldDefId, {
+          kind: 'appendText',
+          text: formatAssetSourceUri(lease.assetId),
+        });
+        const entryId = core.state().nodes[ownerId]!.children.find((childId) => (
+          core.state().nodes[childId]?.type === 'fieldEntry'
+          && core.state().nodes[childId]?.fieldDefId === fieldDefId
+        ));
+        if (!entryId) throw new Error('Expected the ordinary field entry to exist.');
+        core.reuseFieldDefinition(entryId, SOURCE_FIELD_ID);
+      },
+    });
+
+    expect(sourceOwnerIdForAsset(workspace, lease.assetId)).toBeDefined();
+    await expect(workspace.assets.resolveLeases([lease.leaseId])).rejects.toMatchObject({
+      outlineError: { code: 'precondition_failed' },
+    });
+    expect(await workspace.collectAssetGarbage()).toEqual([]);
   });
 
   test('keeps a staged lease after a stale Diff and collects it only after expiry', async () => {
@@ -604,11 +642,9 @@ function createManagedSourceChangeSet(assetId: string): ChangeSet {
 
 function sourceOwnerIdForAsset(workspace: OutlineRuntimeWorkspace, assetId: string): string | undefined {
   const state = workspace.documentState();
-  const sourceValue = Object.values(state.nodes).find((node) => (
-    node.type === 'sourceValue' && node.sourceText === formatAssetSourceUri(assetId)
-  ));
-  const entry = sourceValue?.parentId ? state.nodes[sourceValue.parentId] : undefined;
-  return entry?.type === 'fieldEntry' ? entry.parentId : undefined;
+  return Object.values(state.nodes).find((node) => (
+    sourceFieldValues(state, node.id).some((value) => value.sourceText === formatAssetSourceUri(assetId))
+  ))?.id;
 }
 
 function createPlainChangeSet(text: string): ChangeSet {

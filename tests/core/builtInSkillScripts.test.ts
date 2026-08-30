@@ -17,7 +17,6 @@ import {
 } from '../../src/outline/contract/schemas';
 import { OutlineRuntimeServer } from '../../src/outline/runtime/server';
 import { canonicalSha256 } from '../../src/outline/contract/canonical';
-import { sourceEntryNodeId } from '../../src/core/types';
 
 const execFile = promisify(execFileCallback);
 const root = path.resolve(import.meta.dir, '..', '..');
@@ -220,12 +219,10 @@ describe('built-in outline Skill import workflow', () => {
 
       const state = runtime.workspace.documentState();
       expect(state.nodes[existingDayId]?.children
-        .filter((id) => id !== sourceEntryNodeId(existingDayId))
         .map((id) => state.nodes[id]?.content.text))
         .toEqual(['Existing Daily Note content', 'Imported existing-day row']);
       const newDay = Object.values(state.nodes).find((node) => node.content.text === '2026-01-02');
       expect(newDay?.children
-        .filter((id) => id !== sourceEntryNodeId(newDay.id))
         .map((id) => state.nodes[id]?.content.text))
         .toEqual(['Imported new-day row']);
 

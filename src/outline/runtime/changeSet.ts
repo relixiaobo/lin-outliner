@@ -10,7 +10,6 @@ import {
 import {
   TRASH_ID,
   plainText,
-  sourceEntryNodeId,
   type CreateNodeTree,
   type FieldType,
   type FilterOperator,
@@ -24,6 +23,7 @@ import {
   type ViewFieldRef,
   type ViewMode,
 } from '../../core/types';
+import { sourceFieldValues } from '../../core/sourceField';
 import {
   canonicalChangeSetHash,
   canonicalDiffHash,
@@ -614,7 +614,6 @@ async function executeChange(
       const targetIds = resolveTargetRef(baseIndex, change.targets, bindings);
       const effectiveTargets = change.action === 'purge' && change.contents && targetIds.includes(TRASH_ID)
         ? [...core.state().nodes[TRASH_ID]?.children ?? []]
-            .filter((targetId) => targetId !== sourceEntryNodeId(TRASH_ID))
         : targetIds;
       if (change.action === 'trash') core.batchTrashNodes([...effectiveTargets]);
       else if (change.action === 'restore') for (const targetId of effectiveTargets) core.restoreNode(targetId);
@@ -1125,10 +1124,7 @@ function executeSourceUpdate(
   }
   if (instruction.action === 'clear') {
     const state = core.state();
-    const entry = state.nodes[`${ownerId}::source`];
-    const observedValueIds = entry?.type === 'fieldEntry'
-      ? entry.children.filter((nodeId) => state.nodes[nodeId]?.type === 'sourceValue')
-      : [];
+    const observedValueIds = sourceFieldValues(state, ownerId).map((value) => value.node.id);
     core.clearSources(ownerId, observedValueIds);
     return;
   }

@@ -5,21 +5,24 @@
 ## Goal
 
 Give URLs, images, and files one final Outline representation and a complete
-desktop management baseline:
+desktop management baseline without introducing a protected Source subsystem:
 
 ```text
 ordinary content Node
 |- editable RichText content
-|- protected Source field with ordered URI values
+|- optional ordinary URI field entry
+|  `- ordinary editable value Nodes containing locator text
 |- other fields
 `- ordinary child Nodes
 
-preview = derived presentation of one selected Source value
+preview = derived presentation of one selected URI value
 ```
 
-A Node never becomes a special resource object. Adding or removing Source values
-changes derived presentation only. Content, Source values, selected Source,
-preview visibility, and child disclosure remain independent.
+A Node never becomes a special resource object. Adding, editing, moving, or
+removing URI values uses normal field and Node behavior; preview is only a
+consumer of values under the built-in URI definition. Content, URI values,
+selected preview value, preview visibility, and child disclosure remain
+independent.
 
 This PR is intentionally a large coordinated cut. It changes the Core document
 protocol and must move every producer and consumer to the final model in the
@@ -45,17 +48,26 @@ desktop state and violate A4, A7, and A10.
 ### Canonical document model
 
 - Replace field type `url` with `uri` in one protocol cut.
-- Define one protected built-in field with stable ID `field:source`, default
-  display name `Source`, fixed type `uri`, and ordered multi-value cardinality.
-  Every ordinary content Node is created atomically with exactly one permanently
-  addressable Source entry. The entry cannot be deleted or retyped; zero live
-  values projects as no visible field.
-- Represent each direct Source scalar with a final `sourceValue` Node carrying
-  stable value identity and exact `sourceText`. It is structural, has no
-  RichText content, fields, tags, or nested Source entry of its own.
-- Store author-supplied Source text losslessly. Syntax, scheme support,
+- Define one built-in field definition with stable internal ID `field:source`,
+  user-visible name `URI`, fixed type `uri`, and ordered multi-value cardinality.
+  The system definition remains locked so its identity and type cannot drift;
+  this lock does not apply to field entries or values. Labels are not identity,
+  so users may create unrelated fields named `Source` or `URI`.
+- Create no field entry for a new Node. The first producer or ordinary field
+  mutation creates a normal unlocked `fieldEntry` lazily. The user may delete
+  the complete entry, and removing or clearing its final value removes the empty
+  entry. Concurrent first writes may converge as multiple ordinary entries;
+  consumers aggregate all direct entries with the same definition ID.
+- Represent every URI as an ordinary RichText-bearing content Node under that
+  entry. It can be edited, described, copied, moved, nested, duplicated, and
+  deleted through the same operations as any other field value. There is no
+  `sourceValue` Node type, `sourceText` storage key, deterministic entry ID, or
+  Source-only codec/admission invariant.
+- Store author-supplied URI text losslessly in `content.text`. Syntax, scheme support,
   normalization, classification, availability, and authority are derived at
-  read/use time.
+  read/use time. Editing a working YouTube URL into another syntactically valid
+  URL previews the new address; an invalid or unavailable address keeps the
+  exact text and shows a local failure while remaining editable.
 - Delete Outline `image` and `attachment` Node variants, their scalar fields
   (`assetId`, `mediaUrl`, `mediaAlt`, file metadata, and thumbnail fields), and
   their dedicated mutation, ChangeSet, CLI, import, search, and renderer paths.
@@ -65,48 +77,17 @@ desktop state and violate A4, A7, and A10.
 - Keep Agent attachment/image content, model image parts, `AssetRecord`,
   `PreviewTarget`, ContentStore, and rich-text links outside this retirement.
 
-Generic `uri` fields retain the ordinary editable value-row model and lossless
-text admission; only the protected `field:source` entry uses `sourceValue` and
-the dedicated command/settlement rules. A Source value's scheme never changes
-its field type.
-
-The final stored and projected value shape is exact:
-
-```ts
-interface SourceValueNode {
-  type: 'sourceValue';
-  id: NodeId;
-  parentId: NodeId;
-  children: NodeId[];
-  sourceText: string;
-  createdAt: number;
-  updatedAt: number;
-  locked: boolean;
-}
-
-type SourceValueProjection = SourceValueNode;
-```
-
-Split the structural Node base from the RichText-bearing base so content remains
-required for every content variant rather than becoming globally optional.
-`SourceValueNode` implements only the structural contract above. Its `parentId`
-must identify the owner's permanent Source `FieldEntryNode`; every direct child
-of that entry must be a `sourceValue`, and `sourceValue` cannot occur elsewhere.
-Its ordinary content descendants attach through `children`, retain normal
-identity and editing semantics, and receive their own permanent Source entries;
-the value itself never does.
-
-The Loro codec stores `type` and `sourceText` as scalar map keys and creates no
-`LoroText` or `content` key for this variant. Concurrent replacement therefore
-settles through one atomic map-register value rather than character merging.
-Decode and non-replication admission require the exact discriminator, scalar,
-protected parent, and absence of content; projection exposes no additional
-description, metadata, URI, tag, or field property.
+The built-in URI definition is semantically special only to opt-in consumers.
+Preview resolution, media search, managed-asset reachability, and linked-file
+authorization recognize `fieldDefId === 'field:source'`; they never recognize a
+label and never grant that identity to another field named `Source` or `URI`.
+This derived interpretation adds no mutation restriction. A value's scheme
+never changes its field type or stored Node shape.
 
 ### Commands, convergence, and settlement
 
-The public ChangeSet shape is exact. Source instructions do not inherit generic
-update fan-out:
+The public ChangeSet keeps a Source instruction family as a task-oriented
+convenience adapter for preview and capture workflows:
 
 ```ts
 type OneTargetRef =
@@ -135,44 +116,41 @@ type SourceCommand =
       observedValueIds: readonly NodeId[] };
 ```
 
-Lowering resolves exactly one ordinary owner and one owner-local direct value
-or anchor where required, then emits `add_source`, `replace_source`,
+Lowering resolves exactly one owner and one owner-local direct URI value or
+anchor where required, then emits `add_source`, `replace_source`,
 `reorder_source`, `remove_source`, or `clear_sources`. Omitted `after` appends;
 `after: null` means first position. `clear_sources` captures the value IDs the
-caller observed, so an unseen concurrent add survives. Replacing preserves
-value identity, position, descendants, and local selection.
+caller observed. Replacing preserves value identity, position, descendants, and
+local selection.
 
 Normalization rejects declared or bound many/zero-or-one references, zero live
 results, a reused caller-supplied `valueId`, a self-anchor, cross-owner or
-indirect descendant anchors, non-Source targets, and any value not directly
-under that owner's permanent entry before mutation. Multi-owner work uses
-explicit independently paired owner operations inside one atomic ChangeSet.
+indirect descendant anchors, and values outside a direct built-in URI entry.
+Multi-owner work uses explicit independently paired owner operations inside one
+atomic ChangeSet.
 
-Dedicated Source commands are the only public operations that can change direct
-values. Generic field/content/tree operations, direct-value cloning, templates,
-imports, and restore admission cannot synthesize or mutate Source structure.
-In particular, generic field-slot `append-text`, `append-reference`,
-`append-nodes`, and `append-field` reject `field:source`; content editing rejects
-the direct `sourceValue`; and create/move/paste/import/default/auto-init/field-
-copy paths cannot synthesize a Source entry, `sourceValue`, or non-Source direct
-child. Ordinary tree commands may still manage content descendants under a
-`sourceValue`. Cloning a complete ordinary owner creates one new permanent
-Source entry and reproduces its ordered values through the dedicated semantics;
-copying one value uses `add_source`.
+These commands do not own the mutation boundary. Generic field-slot operations
+may create and edit `field:source`; generic text patches may change URI values;
+ordinary tree operations may move, clone, or delete values and whole entries.
+The convenience `add` path creates an entry only when none exists, `remove` and
+observed `clear` remove an entry once it has no remaining values, and clone uses
+ordinary subtree cloning. Generic and convenience paths must project the same
+result.
 
-Concurrent unique adds retain both values in converged order; add/reorder,
-add/remove, observed-clear/add, and replace/replace converge without rejecting a
-state produced by valid commands. Removing a value wins over reordering that
-same value, while atomic scalar replacement never splices two Source strings.
-Persistence, codec, and non-replication admission fail closed on structures no
-valid command can produce. Runtime inspection degrades only Source presentation
+Concurrent unique first adds retain both values even when they create two field
+entries; add/reorder, add/remove, clear/add, and ordinary RichText editing inherit
+the normal Loro tree convergence rules. Deleting the final value deletes its
+entry, so a concurrent add targeting that same deleted entry does not resurrect
+the parent; an add in an independent concurrent entry survives. Runtime
+inspection skips malformed relationships and degrades only URI presentation
 instead of aborting the user path.
 
 Managed-asset publication settles bytes before document state can reference
 them. Replace, remove, clear, clone, undo/redo, transaction, and history paths
-release liveness only after document settlement and only when no protected
-relationship still names the exact revision. Selection and preview visibility
-never participate in liveness.
+release liveness only after document settlement and only when no value under a
+direct built-in URI entry still names the exact revision. Coincidental
+`asset://` text elsewhere in the document does not retain an asset. Selection
+and preview visibility never participate in liveness.
 
 ### Classification and Host authority
 
@@ -199,8 +177,10 @@ Raw paths and malformed reserved forms remain exact text but classify as
 invalid. A valid ungranted `file:` locator classifies identically with or without
 permission and resolves as denied until the chooser admits that exact file.
 
-Resolution returns one derived descriptor per direct Source value in document
-order, not another canonical product object:
+Resolution returns one derived descriptor per ordinary value under a direct
+built-in URI entry, in document order, not another canonical product object.
+The adapter property names retain `sourceValueId` and `sourceText`; they do not
+describe a stored Node variant:
 
 ```ts
 type ResolvedNodeSource = {
@@ -257,18 +237,18 @@ that same handle.
 
 ### Complete desktop baseline
 
-Before this PR merges, the existing preview host consumes the final selected
-Source descriptor and the desktop can manage every state public CLI/ChangeSet
+Before this PR merges, the existing preview host consumes the final selected URI
+descriptor and the desktop can manage every state public CLI/ChangeSet
 operations can create:
 
-- list every Source value in converged order with readable status and reason;
+- list every built-in URI value in converged order with readable status and reason;
 - select/preview, edit, reorder, remove, add, and clear values;
 - persist selected value and preview visibility in local workspace view state;
 - fall back to the first value when the selection disappears;
 - leave an ordinary Node when the final value is removed; and
 - keep preview visibility independent from ordinary child disclosure.
 
-The baseline treats document content, selected Source value, preview visibility,
+The baseline treats document content, selected URI value, preview visibility,
 preview-body reader state, and ordinary child disclosure as independent axes.
 Selection is keyed by stable owner/value identity, survives reorder, never skips
 an explicitly selected unavailable value, and cannot be overwritten by stale
@@ -319,8 +299,8 @@ recovery; it never keeps stale content, deletes Source, or selects another value
 
 ### Producer and consumer cutover
 
-Cut every existing URL/image/file producer to final ordinary Nodes and dedicated
-Source operations. Paste, drop, picker, clipboard image, launcher, import, and
+Cut every existing URL/image/file producer to final ordinary Nodes and the
+built-in URI field adapters. Paste, drop, picker, clipboard image, launcher, import, and
 loose-preview Add to Outline capture files as managed exact revisions by default.
 An explicit Link file action creates a live external Source instead. The later
 `outline-source-preview` feature owns the new bare-URL editor paste and context-
@@ -336,16 +316,17 @@ relationship through the existing lease/reconciliation boundary.
 
 `/attachment`, `/image`, picker, clipboard image, external drop, loose-preview
 Add to Outline, launcher capture, and import all use the same ordinary-Node
-constructor and Source commands. Their task-oriented names no longer select a
-Node variant. **Link file** records the exact-file grant and adds a `file:` Source
+constructor and URI field adapter. Their task-oriented names no longer select a
+Node variant. **Link file** records the exact-file grant and adds a `file:` URI
 without capturing bytes; moving, replacing, denying, or deleting that external
 file changes only availability and never causes Tenon to delete it.
 
 `HAS_MEDIA`, `HAS_IMAGE`, `HAS_AUDIO`, and `HAS_VIDEO` aggregate authoritative
-managed metadata or deterministic remote classification over every Source value,
+managed metadata or deterministic remote classification over every built-in URI value,
 independent of local selection. Missing metadata yields unknown/unavailable,
 never a guessed type or projection failure. Managed liveness derives from
-canonical Source URIs plus existing icon/banner relationships, never from
+canonical managed-asset URIs under `field:source` plus existing icon/banner
+relationships, never from
 retired Node fields. Duplicating or referencing a resource Node adds logical
 relationships rather than copying bytes; AssetRecord thumbnail relationships
 remain store metadata and are not duplicated onto Nodes.
@@ -374,9 +355,10 @@ commands and begin only after it merges.
 
 ### Verification
 
-The PR proves exact `SourceValueNode` encoding, single-target ChangeSet
-normalization/lowering, public CLI admission, two-replica convergence for every
-operation pair, managed-asset settlement, complete-owner clone behavior,
+The PR proves ordinary field/value encoding, generic and convenience mutation
+parity, single-target ChangeSet normalization/lowering, public CLI admission,
+two-replica convergence for every operation pair, managed-asset settlement,
+complete-owner clone behavior,
 exact-file grant restart/revoke/relink/replacement and adversarial path races,
 impossible-state degradation, search/query classification, and a desktop round
 trip for valid, invalid, unsupported, denied, unavailable, and secondary Source
@@ -387,22 +369,26 @@ PreviewTargets, AssetRecords, and ContentStore concepts.
 
 ### Acceptance criteria
 
-- A URL or file capture creates an ordinary Node plus Source value; no special
+- A URL or file capture creates an ordinary Node plus built-in URI value; no special
   image/attachment Node survives in protocol, state, projection, or UI logic.
-- Every ordinary content Node owns exactly one permanent `field:source` entry;
-  direct values round-trip the exact `SourceValueNode` shape through scalar Loro
-  storage and cannot occur outside that entry.
-- Clearing or editing content never removes Source, selection, fields, tags, or
-  children.
+- New Nodes have no URI entry. The first value lazily creates an unlocked normal
+  entry; values use ordinary RichText Nodes, and deleting the entry or final
+  value removes the field from that owner.
+- The visible definition is `URI`; its stable internal ID is `field:source`.
+  Users may create an unrelated `Source` field without it gaining preview,
+  search, authorization, or asset-liveness semantics.
+- URI values accept generic text and tree mutations. Editing a URL stores the
+  exact replacement and re-derives preview state without rollback; the entire
+  URI entry can be deleted through normal field UI.
 - Every public Source state is visible and manageable in the desktop baseline.
-- Source updates accept only one ordinary owner and owner-local direct value/
-  anchor references; generic operations cannot bypass Source or asset settlement.
-- Concurrent add/reorder/remove/clear/replace cases converge without losing an
-  unseen add or merging two scalar texts.
+- Source convenience updates accept only one owner and owner-local direct value/
+  anchor references, while generic field operations remain equally valid.
+- Concurrent add/reorder/remove/clear/replace cases converge according to normal
+  field-entry and RichText rules, without a Source-specific settlement layer.
 - Multi-file capture preserves source order, retains successful siblings, creates
   no Node for failed admission, and releases any uncommitted managed relationship.
 - Removing the selected value falls back deterministically; removing the final
-  value leaves an ordinary Node and clears only Source-local view state.
+  value deletes the empty URI entry and clears only preview-local view state.
 - Invalid or unauthorized text stays exact, editable, durable, and locally
   degraded without aborting projection.
 - External-file authorization never widens beyond the exact selected file.

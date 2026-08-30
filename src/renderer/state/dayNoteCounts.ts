@@ -1,5 +1,5 @@
 import { normalizedIsoLocalDate } from '../../core/localDate';
-import { TAG_DAY_ID, isContentBearingNode, sourceEntryNodeId } from '../../core/types';
+import { TAG_DAY_ID, isContentBearingNode } from '../../core/types';
 import type { NodeId, NodeProjection } from '../api/types';
 
 const DAY_NOTE_COUNT_WINDOW_CACHE_LIMIT = 128;
@@ -639,7 +639,7 @@ function recomputeDateCount(
 }
 
 function dayNoteContentChildCount(node: NodeProjection): number {
-  return node.children.filter((childId) => childId !== sourceEntryNodeId(node.id)).length;
+  return node.children.length;
 }
 
 function createMapPatchDraft<TKey extends string, TValue>(

@@ -38,22 +38,27 @@ settles receipt-bearing Runtime mutations against that control state. The
 control database is not portable workspace content. See
 [`agent-memory.md`](agent-memory.md).
 
-Every ordinary content Node atomically owns one permanent protected
-`field:source` entry at `${ownerId}::source`. Its ordered direct children are
-`sourceValue` structural Nodes with stable identity and one exact `sourceText`
-scalar; they have no RichText, tags, fields, or nested Source entry. Zero values
-project as no visible field. Dedicated add, replace, reorder, remove, and
-observed-clear commands are the only public mutation surface for direct Source
-values. Generic field and tree operations cannot create, move, or edit that
-protected structure. The Loro codec stores `sourceText` as an atomic map scalar,
-so concurrent replacement never splices characters; malformed stored structure
-fails closed at codec/admission boundaries and degrades only Source presentation
-during runtime inspection.
+The schema includes one locked built-in `uri` field definition with stable
+internal ID `field:source` and user-visible name `URI`. The definition lock keeps
+that system identity and type stable; entries and values are ordinary unlocked
+Nodes. New content Nodes have no URI entry. The first field or Source-convenience
+mutation creates a normal `fieldEntry` lazily, and deleting the entry or its final
+value removes the field from that owner. Values are ordinary RichText-bearing
+content Nodes stored by the normal Loro codec, so generic text, field, tree,
+clone, and delete operations all apply. Concurrent first writes may produce
+multiple direct entries and readers aggregate them by definition ID.
+
+Preview resolution, media search, linked-file authorization, and managed-asset
+reachability opt in to values whose direct parent is a field entry with
+`fieldDefId === 'field:source'`. This is derived consumer meaning, not a mutation
+boundary. Labels are never identity: a user-defined field named `Source` or
+`URI` remains unrelated. Invalid, edited, unavailable, or unauthorized URI text
+stays exact and editable while only its derived presentation degrades.
 
 Binary assets are outside the CRDT document. An ordinary Node relates to a
 managed logical asset through the canonical
-`asset://local/<percent-encoded-logical-id>` text of a Source value, never through
-a special Node variant or asset scalar. Runtime owns Outline `AssetRecord`
+`asset://local/<percent-encoded-logical-id>` text of a value under the built-in
+URI field, never through a special Node variant or asset scalar. Runtime owns Outline `AssetRecord`
 metadata, staging leases, Source/icon/banner/recovery-patch reachability, and the
 transaction that changes those facts. The neutral `ContentStore` stores immutable
 exact revisions, admission leases, opaque mechanical retention anchors,

@@ -8,7 +8,7 @@
 // difference is invisible until a user tries it.
 
 import { isInternalConfigNode } from '../configSchema';
-import { SOURCE_FIELD_ID, sourceEntryNodeId, type NodeId, type NodeProjection } from '../types';
+import { type NodeId, type NodeProjection } from '../types';
 
 const NON_OUTLINE_CHILD_TYPES = new Set([
   'queryCondition',
@@ -27,14 +27,6 @@ export function outlineChildIds(
   return node.children.filter((childId) => {
     const child = byId.get(childId);
     if (!child || isInternalConfigNode(child)) return false;
-    if (
-      child.type === 'sourceValue'
-      || (
-        child.type === 'fieldEntry'
-        && child.id === sourceEntryNodeId(node.id)
-        && child.fieldDefId === SOURCE_FIELD_ID
-      )
-    ) return false;
     return !NON_OUTLINE_CHILD_TYPES.has(child.type ?? '');
   });
 }

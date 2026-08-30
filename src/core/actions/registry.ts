@@ -413,7 +413,7 @@ function workspaceFactFor(
 function anchorContentNode(
   context: ActionResolveContext,
   anchor: NodeObject,
-): Exclude<NodeProjection, { type: 'sourceValue' }> | undefined {
+): NodeProjection | undefined {
   const node = context.projection.byId.get(nodeIdForFacet(anchor.content, context.projection));
   return node && isContentBearingNode(node) ? node : undefined;
 }

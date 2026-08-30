@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { SOURCE_FIELD_ID } from '../../core/types';
 import type {
   Diff,
   ImportCoverage,
@@ -293,7 +292,7 @@ export function verifyImportSettlement(
       'binding' in candidate.projection.targets
       && candidate.projection.targets.binding === expected.binding
     ));
-    const importedNodes = result?.nodes.filter((node) => !isManagedSourceProjectionNode(node));
+    const importedNodes = result?.nodes;
     if (!result
       || result.revision !== operation.revisionAfter
       || importedNodes?.length !== expected.expectedNodeCount
@@ -310,13 +309,6 @@ export function verifyImportSettlement(
       truncated: Boolean(expected.truncated),
     };
   });
-}
-
-function isManagedSourceProjectionNode(node: unknown): boolean {
-  if (!node || typeof node !== 'object') return false;
-  const candidate = node as { type?: unknown; fieldDefId?: unknown };
-  return candidate.type === 'sourceValue'
-    || (candidate.type === 'fieldEntry' && candidate.fieldDefId === SOURCE_FIELD_ID);
 }
 
 function verificationForTree(binding: string, nodeCount: number): ImportVerification {

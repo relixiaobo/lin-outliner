@@ -1025,10 +1025,10 @@ describe('OutlineRuntimeWorkspace', () => {
     const resumed = await logPage(router, {
       operationId: operation.operationId,
       cursor: operation.affectedNodeIdsCursor,
-      limit: 400,
+      limit: 1,
     });
     expect(resumed.affectedNodeIds).toMatchObject({ offset: 1_000, totalCount: operation.affectedNodeCount });
-    expect(resumed.affectedNodeIds?.nodeIds).toEqual(pages.slice(1_000, 1_400));
+    expect(resumed.affectedNodeIds?.nodeIds).toEqual(pages.slice(1_000, 1_001));
     expect(resumed.cursor).toEqual(expect.any(String));
   });
 

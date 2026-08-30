@@ -6,6 +6,7 @@ import { runOutlineCli } from '../../src/outline/cli';
 import type { Diff, NoChangeResult, Operation } from '../../src/outline/contract';
 import { OutlineRuntimeServer } from '../../src/outline/runtime/server';
 import { formatAssetSourceUri } from '../../src/core/source';
+import { sourceFieldEntries, sourceFieldValues } from '../../src/core/sourceField';
 import type { AssetLease } from '../../src/outline/contract';
 
 const roots: string[] = [];
@@ -148,12 +149,11 @@ describe('outline mandatory CLI golden flows', () => {
       const captureId = returnedIds(operation)[0]!;
       const capture = runtime.workspace.documentState().nodes[captureId]!;
       expect(capture.capture).toMatchObject({ captureId: 'capture:golden', providerId: 'generic-webpage' });
-      const sourceEntry = runtime.workspace.documentState().nodes[`${captureId}::source`]!;
-      expect(runtime.workspace.documentState().nodes[sourceEntry.children[0]!]!).toMatchObject({
-        type: 'sourceValue',
-        sourceText: 'https://example.com',
-      });
-      const contentChild = capture.children.find((childId) => childId !== sourceEntry.id)!;
+      const state = runtime.workspace.documentState();
+      expect(sourceFieldValues(state, captureId).map((value) => value.sourceText))
+        .toEqual(['https://example.com']);
+      const sourceEntryIds = new Set(sourceFieldEntries(state, captureId).map((entry) => entry.id));
+      const contentChild = capture.children.find((childId) => !sourceEntryIds.has(childId))!;
       expect(runtime.workspace.documentState().nodes[contentChild]).toMatchObject({ content: { text: 'Captured body' } });
       await exactRevert(runtime, operation, before, cli);
     });

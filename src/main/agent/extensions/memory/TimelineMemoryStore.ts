@@ -59,7 +59,7 @@ export interface TimelinePublication {
 }
 
 export interface CanonicalMemoryNode {
-  readonly node: Exclude<NodeProjection, { type: 'sourceValue' }>;
+  readonly node: NodeProjection;
   readonly category: MemoryCategory;
   readonly sourceDate: string;
   readonly containerId: string;
@@ -326,7 +326,7 @@ export class TimelineMemoryStore {
 
 export function canonicalMemoryGraph(projection: DocumentProjection): CanonicalMemoryGraph {
   const index = nodeIndex(projection);
-  const tagged = projection.nodes.filter((node): node is Exclude<NodeProjection, { type: 'sourceValue' }> => (
+  const tagged = projection.nodes.filter((node) => (
     isContentBearingNode(node) && node.tags.some((tagId) => memoryCategoryForTagId(tagId) !== null)
   ));
   const containers: CanonicalMemoryNode[] = [];
@@ -382,14 +382,14 @@ export function canonicalMemoryGraph(projection: DocumentProjection): CanonicalM
 }
 
 export function canonicalMemoryNodeFromIndex(
-  node: Exclude<NodeProjection, { type: 'sourceValue' }>,
+  node: NodeProjection,
   index: ReadonlyMap<string, NodeProjection>,
 ): CanonicalMemoryNode | null {
   if (nodeIsInSubtree(index, node.id, TRASH_ID)) return null;
   const directContainer = canonicalMemoryContainer(node, index);
   if (directContainer) return directContainer;
 
-  const path: Array<Exclude<NodeProjection, { type: 'sourceValue' }>> = [node];
+  const path: NodeProjection[] = [node];
   const visited = new Set<string>([node.id]);
   let current = node.parentId ? index.get(node.parentId) : undefined;
   while (current && !visited.has(current.id)) {
@@ -440,7 +440,7 @@ export function canonicalMemoryContainerAncestorFromIndex(
 }
 
 function canonicalMemoryContainer(
-  node: Exclude<NodeProjection, { type: 'sourceValue' }>,
+  node: NodeProjection,
   index: ReadonlyMap<string, NodeProjection>,
 ): CanonicalMemoryNode | null {
   if (
@@ -635,7 +635,7 @@ function nodeDepth(nodeId: string, projection: DocumentProjection): number {
 }
 
 function isDayNodeInsideDailyNotes(
-  node: Exclude<NodeProjection, { type: 'sourceValue' }>,
+  node: NodeProjection,
   index: ReadonlyMap<string, NodeProjection>,
 ): boolean {
   if (!node.tags.includes(TAG_DAY_ID)) return false;

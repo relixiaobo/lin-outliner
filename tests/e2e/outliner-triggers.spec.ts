@@ -11,6 +11,7 @@ import {
   row,
   rowBody,
   rowEditor,
+  sourceFieldEntries,
   trailingEditor,
 } from './outlinerMock';
 
@@ -20,8 +21,7 @@ async function lastTodayChildId(page: import('@playwright/test').Page) {
 
 async function todayChildren(page: import('@playwright/test').Page) {
   const projection = await e2eProjection(page);
-  return (projection.nodes.find((node) => node.id === ids.today)?.children ?? [])
-    .filter((nodeId) => nodeId !== `${ids.today}::source`);
+  return projection.nodes.find((node) => node.id === ids.today)?.children ?? [];
 }
 
 async function appliedOperations(page: import('@playwright/test').Page, fromCall = 0) {
@@ -1122,8 +1122,7 @@ test.describe('outliner trigger parity', () => {
         fieldVisible: fieldName !== null,
         focused: document.activeElement === fieldName,
         projectedChildren: win.__LIN_E2E__?.projection().nodes
-          .find((node) => node.id === todayId)?.children
-          .filter((childId) => childId !== `${todayId}::source`),
+          .find((node) => node.id === todayId)?.children,
         writes: (win.__LIN_E2E__?.calls.slice(beforeCalls) ?? []).filter((call) => {
           const command = (call as { cmd?: string }).cmd;
           return command === 'outline/apply' || command === 'outline/commit';
@@ -1170,8 +1169,7 @@ test.describe('outliner trigger parity', () => {
         codeVisible: textarea !== null,
         focused: document.activeElement === textarea,
         projectedChildren: win.__LIN_E2E__?.projection().nodes
-          .find((node) => node.id === todayId)?.children
-          .filter((childId) => childId !== `${todayId}::source`),
+          .find((node) => node.id === todayId)?.children,
         calls: win.__LIN_E2E__?.calls.slice(beforeCalls),
         expectedChildren: beforeChildren,
       };
@@ -1248,8 +1246,7 @@ test.describe('outliner trigger parity', () => {
         sameEditor: win.__slashCheckboxEditor?.isConnected === true
           && currentEditor === win.__slashCheckboxEditor,
         projectedChildren: win.__LIN_E2E__?.projection().nodes
-          .find((node) => node.id === todayId)?.children
-          .filter((childId) => childId !== `${todayId}::source`),
+          .find((node) => node.id === todayId)?.children,
         calls: win.__LIN_E2E__?.calls.slice(beforeCalls),
         expectedChildren: beforeChildren,
       };
@@ -1540,9 +1537,7 @@ test.describe('outliner trigger parity', () => {
     await row(page, ids.gamma).locator('.row-chevron-button').click();
     await expect(trailingEditor(page, ids.gamma)).toBeFocused();
     await page.keyboard.type('>');
-    const secondId = (await nodeById(page, ids.gamma))?.children
-      .filter((childId) => childId !== `${ids.gamma}::source`)
-      .at(-1);
+    const secondId = (await nodeById(page, ids.gamma))?.children.at(-1);
     if (!secondId || secondId === firstId) throw new Error('missing second field');
     const secondName = row(page, secondId).locator('.field-name-input');
     await expect(secondName).toBeFocused();
@@ -1641,9 +1636,7 @@ test.describe('outliner trigger parity', () => {
     await row(page, ids.gamma).locator('.row-chevron-button').click();
     await expect(trailingEditor(page, ids.gamma)).toBeFocused();
     await page.keyboard.type('>');
-    const fieldId = (await nodeById(page, ids.gamma))?.children
-      .filter((childId) => childId !== `${ids.gamma}::source`)
-      .at(-1);
+    const fieldId = (await nodeById(page, ids.gamma))?.children.at(-1);
     if (!fieldId) throw new Error('missing field');
     await page.keyboard.type('Done');
     const popover = page.locator('.field-name-reuse-popover');
@@ -1875,9 +1868,7 @@ test.describe('outliner trigger parity', () => {
     let nestedFieldId: string | undefined;
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
-      nestedFieldId = projection.nodes.find((node) => node.id === fieldId)?.children
-        .filter((childId) => childId !== `${fieldId}::source`)
-        .at(-1);
+      nestedFieldId = projection.nodes.find((node) => node.id === fieldId)?.children.at(-1);
       return nestedFieldId;
     }).not.toBeUndefined();
     if (!nestedFieldId) throw new Error('missing nested field');
@@ -1905,8 +1896,7 @@ test.describe('outliner trigger parity', () => {
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
       const fieldEntry = projection.nodes.find((node) => node.id === fieldId);
-      const ordinaryChildren = fieldEntry?.children
-        .filter((childId) => childId !== `${fieldId}::source`) ?? [];
+      const ordinaryChildren = fieldEntry?.children ?? [];
       nestedFieldId = ordinaryChildren.at(-1);
       const nestedField = projection.nodes.find((node) => node.id === nestedFieldId);
       return {
@@ -1937,9 +1927,7 @@ test.describe('outliner trigger parity', () => {
     let valueNodeId: string | undefined;
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
-      valueNodeId = projection.nodes.find((node) => (
-        node.parentId === fieldId && node.id !== `${fieldId}::source`
-      ))?.id;
+      valueNodeId = projection.nodes.find((node) => node.parentId === fieldId)?.id;
       return valueNodeId;
     }).not.toBeUndefined();
 
@@ -2071,7 +2059,6 @@ test.describe('outliner trigger parity', () => {
       const nextField = projection.nodes.find((node) => (
         node.parentId === ids.today
         && node.type === 'fieldEntry'
-        && node.id !== `${ids.today}::source`
         && !childrenBeforeNextField.includes(node.id)
       ));
       nextFieldId = nextField?.id ?? '';
@@ -2096,9 +2083,7 @@ test.describe('outliner trigger parity', () => {
     let childId = '';
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
-      const child = projection.nodes.find((node) => (
-        node.parentId === valueId && node.id !== `${valueId}::source`
-      ));
+      const child = projection.nodes.find((node) => node.parentId === valueId);
       childId = child?.id ?? '';
       return child?.content.text;
     }).toBe('Boolean detail');
@@ -2756,7 +2741,7 @@ test.describe('tag-projected field slot interactions', () => {
       const entry = projection.nodes.find((node) => node.id === alphaEntryId);
       return (entry?.children ?? []).map((childId) => {
         const child = projection.nodes.find((node) => node.id === childId);
-        const sourceEntry = projection.nodes.find((node) => node.id === `${childId}::source`);
+        const sourceEntry = sourceFieldEntries(projection, childId)[0];
         return {
           sourceCount: sourceEntry?.children.length ?? 0,
           text: child?.content.text,
@@ -2794,7 +2779,7 @@ test.describe('tag-projected field slot interactions', () => {
       const entry = projection.nodes.find((node) => node.id === betaEntryId);
       return (entry?.children ?? []).map((childId) => {
         const child = projection.nodes.find((node) => node.id === childId);
-        const sourceEntry = projection.nodes.find((node) => node.id === `${childId}::source`);
+        const sourceEntry = sourceFieldEntries(projection, childId)[0];
         return {
           sourceCount: sourceEntry?.children.length ?? 0,
           text: child?.content.text,

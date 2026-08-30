@@ -7,7 +7,6 @@ import { formatAssetSourceUri } from '../../src/core/source';
 import {
   SOURCE_FIELD_ID,
   plainText,
-  sourceEntryNodeId,
   type DocumentProjection,
   type NodeProjection,
 } from '../../src/core/types';
@@ -45,7 +44,7 @@ function sourceBackedNode(input: {
   content?: string;
   sourceText?: string;
 }): NodeProjection[] {
-  const entryId = sourceEntryNodeId(input.id);
+  const entryId = `${input.id}:uri`;
   const valueId = `${entryId}:value`;
   return [
     node({
@@ -60,19 +59,13 @@ function sourceBackedNode(input: {
         type: 'fieldEntry',
         parentId: input.id,
         fieldDefId: SOURCE_FIELD_ID,
-        locked: true,
         children: [valueId],
       }),
-      {
+      node({
         id: valueId,
-        type: 'sourceValue' as const,
         parentId: entryId,
-        children: [],
-        sourceText: input.sourceText,
-        createdAt: 0,
-        updatedAt: 0,
-        locked: true,
-      },
+        content: plainText(input.sourceText),
+      }),
     ] : []),
   ] as NodeProjection[];
 }

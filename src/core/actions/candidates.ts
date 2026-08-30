@@ -33,7 +33,7 @@ export function admitsMoveToDestination(params: MoveToAdmissionParams): boolean 
   if (candidateId === trashId) return false;
   if (moving.includes(candidateId)) return false;
   const node = byId.get(candidateId);
-  if (!node || node.type === 'fieldEntry' || node.type === 'sourceValue') return false;
+  if (!node || node.type === 'fieldEntry') return false;
   return moving.every((nodeId) => !isDescendantOf(byId, candidateId, nodeId));
 }
 

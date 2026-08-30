@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { DOCUMENT_COMMANDS, RUNTIME_DOCUMENT_COMMANDS } from '../../src/core/commands';
 import { Core, type CoreTransactionPatch } from '../../src/core/core';
-import { SOURCE_FIELD_ID, plainText } from '../../src/core/types';
+import { plainText } from '../../src/core/types';
 
 describe('Core transaction patches', () => {
   test('captures immutable complete before and after Nodes in sorted order', async () => {
@@ -66,14 +66,7 @@ describe('Core transaction patches', () => {
       }), { operationId: 'op:chunks', tool: 'outline' });
 
     const created = patch.nodes.filter((entry) => entry.before === null);
-    const contentNodes = created.filter((entry) => !(
-      entry.after?.type === 'fieldEntry' && entry.after.fieldDefId === SOURCE_FIELD_ID
-    ));
-    const sourceEntries = created.filter((entry) => (
-      entry.after?.type === 'fieldEntry' && entry.after.fieldDefId === SOURCE_FIELD_ID
-    ));
-    expect(contentNodes).toHaveLength(nodes.length);
-    expect(sourceEntries).toHaveLength(nodes.length);
+    expect(created).toHaveLength(nodes.length);
     expect(created.every((entry) => entry.after !== null)).toBe(true);
     expect(patch.nodes.find((entry) => entry.id === parentId)?.before?.children).not.toEqual(
       patch.nodes.find((entry) => entry.id === parentId)?.after?.children,

@@ -8,13 +8,21 @@ import {
   openMockedApp,
   row,
   rowEditor,
+  sourceFieldEntries,
+  sourceFieldValues,
   trailingEditor,
 } from './outlinerMock';
 
 async function todayChildren(page: Parameters<typeof trailingEditor>[0]) {
   const projection = await e2eProjection(page);
-  return (projection.nodes.find((node) => node.id === ids.today)?.children ?? [])
-    .filter((nodeId) => nodeId !== `${ids.today}::source`);
+  return projection.nodes.find((node) => node.id === ids.today)?.children ?? [];
+}
+
+function outlineChildIds(projection: Awaited<ReturnType<typeof e2eProjection>>, ownerId: string) {
+  const owner = projection.nodes.find((node) => node.id === ownerId);
+  return owner?.children.filter((childId) => (
+    projection.nodes.find((node) => node.id === childId)?.type !== 'fieldEntry'
+  )) ?? [];
 }
 
 async function appliedSourceCreates(page: Parameters<typeof trailingEditor>[0]) {
@@ -564,13 +572,13 @@ test.describe('file attachments', () => {
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
       const node = projection.nodes.find((entry) => entry.id === attachmentId);
-      const sourceEntry = projection.nodes.find((entry) => entry.id === `${attachmentId}::source`);
-      const source = projection.nodes.find((entry) => entry.id === sourceEntry?.children[0]);
+      const sourceEntry = sourceFieldEntries(projection, attachmentId!)[0];
+      const source = sourceFieldValues(projection, attachmentId!)[0];
       return {
         content: node?.content.text ?? null,
         sourceCount: sourceEntry?.children.length ?? 0,
         sourceEntryField: sourceEntry?.fieldDefId ?? null,
-        sourceText: source?.sourceText ?? null,
+        sourceText: source?.content.text ?? null,
         sourceType: source?.type ?? null,
         type: node?.type ?? null,
       };
@@ -579,7 +587,7 @@ test.describe('file attachments', () => {
       sourceCount: 1,
       sourceEntryField: 'field:source',
       sourceText: expect.stringMatching(/^asset:\/\/local\//),
-      sourceType: 'sourceValue',
+      sourceType: null,
       type: null,
     });
 
@@ -706,8 +714,8 @@ test.describe('file attachments', () => {
       return editor.getBoundingClientRect().top > preview.getBoundingClientRect().bottom;
     }, attachmentId!)).toBe(true);
     await expect.poll(async () => {
-      const node = (await e2eProjection(page)).nodes.find((entry) => entry.id === attachmentId);
-      return node?.children.filter((childId) => childId !== `${attachmentId}::source`).length ?? 0;
+      const projection = await e2eProjection(page);
+      return outlineChildIds(projection, attachmentId!).length;
     }).toBe(0);
 
     const previewStage = nodePage.locator('.node-source-preview .file-node-preview');
@@ -940,8 +948,8 @@ test.describe('file attachments', () => {
     await trailingEditor(page, attachmentId!).click();
     await page.keyboard.type('a note on this file');
     await expect.poll(async () => {
-      const node = (await e2eProjection(page)).nodes.find((entry) => entry.id === attachmentId);
-      return node?.children.filter((childId) => childId !== `${attachmentId}::source`).length ?? 0;
+      const projection = await e2eProjection(page);
+      return outlineChildIds(projection, attachmentId!).length;
     }).toBe(1);
     await expect(nodePage.getByText('a note on this file')).toBeVisible();
 
@@ -1009,7 +1017,7 @@ test.describe('file attachments', () => {
     await expect(readerMenu.getByRole('menuitem', { name: 'Open in split pane' })).toHaveCount(0);
   });
 
-  test('Source-backed rows use their chevron only for ordinary child disclosure', async ({ page }) => {
+  test('URI fields use ordinary disclosure, value editing, and entry deletion', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
     await page.keyboard.type('/attachment');
@@ -1022,20 +1030,30 @@ test.describe('file attachments', () => {
     await attachmentRow.locator('> .row').first().hover();
     await attachmentRow.locator('> .row .row-chevron-button').first().click();
     await expect(attachmentRow.locator('.node-source-preview, .file-node-row-preview')).toHaveCount(0);
-    const inlineDraft = trailingEditor(page, attachmentId);
-    await expect(inlineDraft).toBeVisible();
 
-    await inlineDraft.click();
-    await page.keyboard.type('inline note on this Source');
+    const expandedProjection = await e2eProjection(page);
+    const sourceEntry = sourceFieldEntries(expandedProjection, attachmentId)[0];
+    const sourceValue = sourceFieldValues(expandedProjection, attachmentId)[0];
+    expect(sourceEntry).toBeTruthy();
+    expect(sourceValue).toBeTruthy();
+    const fieldName = row(page, sourceEntry!.id).locator('.field-name-input');
+    await expect(fieldName).toHaveValue('URI');
+    await expect(fieldName).toHaveAttribute('readonly', '');
+
+    const uriEditor = rowEditor(page, sourceValue!.id);
+    await uriEditor.click();
+    await page.keyboard.press('Meta+A');
+    await page.keyboard.type('https://www.youtub.com/watch?v=abc123');
     await expect.poll(async () => {
-      const node = (await e2eProjection(page)).nodes.find((entry) => entry.id === attachmentId);
-      return node?.children.filter((childId) => childId !== `${attachmentId}::source`).length ?? 0;
-    }).toBe(1);
-    const inlineChildId = (await e2eProjection(page)).nodes
-      .find((entry) => entry.id === attachmentId)
-      ?.children.find((childId) => childId !== `${attachmentId}::source`);
-    expect(inlineChildId).toBeTruthy();
-    await expect(row(page, inlineChildId!)).toContainText('inline note on this Source');
+      const projection = await e2eProjection(page);
+      return sourceFieldValues(projection, attachmentId)[0]?.content.text;
+    }).toBe('https://www.youtub.com/watch?v=abc123');
+
+    await fieldName.focus();
+    await fieldName.evaluate((element) => element.setSelectionRange(0, 0));
+    await page.keyboard.press('Backspace');
+    await expect.poll(async () => sourceFieldEntries(await e2eProjection(page), attachmentId).length).toBe(0);
+    await expect(row(page, attachmentId)).toBeVisible();
     expect(await todayChildren(page)).toHaveLength(beforeChildren.length + 1);
   });
 
@@ -1107,18 +1125,17 @@ test.describe('file attachments', () => {
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
       const node = projection.nodes.find((entry) => entry.id === imageId);
-      const sourceEntry = projection.nodes.find((entry) => entry.id === `${imageId}::source`);
-      const source = projection.nodes.find((entry) => entry.id === sourceEntry?.children[0]);
+      const source = sourceFieldValues(projection, imageId!)[0];
       return {
         content: node?.content.text ?? null,
-        sourceText: source?.sourceText ?? null,
+        sourceText: source?.content.text ?? null,
         sourceType: source?.type ?? null,
         type: node?.type ?? null,
       };
     }).toEqual({
       content: 'picked-image.png',
       sourceText: expect.stringMatching(/^asset:\/\/local\//),
-      sourceType: 'sourceValue',
+      sourceType: null,
       type: null,
     });
 
@@ -1172,14 +1189,13 @@ test.describe('file attachments', () => {
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
       const gamma = projection.nodes.find((node) => node.id === ids.gamma);
-      const childIds = gamma?.children.filter((childId) => childId !== `${ids.gamma}::source`) ?? [];
+      const childIds = gamma?.children ?? [];
       const child = projection.nodes.find((node) => node.id === childIds[0]);
-      const sourceEntry = projection.nodes.find((node) => node.id === `${child?.id}::source`);
-      const source = projection.nodes.find((node) => node.id === sourceEntry?.children[0]);
+      const source = child ? sourceFieldValues(projection, child.id)[0] : undefined;
       return {
         childCount: childIds.length,
         childName: child?.content.text ?? null,
-        childSource: source?.sourceText ?? null,
+        childSource: source?.content.text ?? null,
         childType: child?.type ?? null,
       };
     }).toEqual({
@@ -1215,11 +1231,10 @@ test.describe('file attachments', () => {
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
       const pasted = projection.nodes.find((node) => node.id === pastedId);
-      const sourceEntry = projection.nodes.find((node) => node.id === `${pastedId}::source`);
-      const source = projection.nodes.find((node) => node.id === sourceEntry?.children[0]);
+      const source = sourceFieldValues(projection, pastedId!)[0];
       return {
         name: pasted?.content.text ?? null,
-        sourceText: source?.sourceText ?? null,
+        sourceText: source?.content.text ?? null,
         type: pasted?.type ?? null,
       };
     }).toEqual({
@@ -1815,7 +1830,7 @@ test.describe('file attachments', () => {
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
       const node = projection.nodes.find((entry) => entry.id === attachmentId);
-      const sourceEntry = projection.nodes.find((entry) => entry.id === `${attachmentId}::source`);
+      const sourceEntry = sourceFieldEntries(projection, attachmentId)[0];
       return {
         content: node?.content.text ?? null,
         sourceCount: sourceEntry?.children.length ?? 0,
@@ -1835,7 +1850,7 @@ test.describe('file attachments', () => {
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
       const pasted = projection.nodes.find((node) => node.id === pastedFromTitleId);
-      const sourceEntry = projection.nodes.find((node) => node.id === `${pastedFromTitleId}::source`);
+      const sourceEntry = sourceFieldEntries(projection, pastedFromTitleId!)[0];
       return {
         name: pasted?.content.text ?? null,
         sourceCount: sourceEntry?.children.length ?? 0,

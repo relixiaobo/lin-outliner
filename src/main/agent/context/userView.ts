@@ -10,10 +10,8 @@ import {
 } from '../../../core/referenceMarkup';
 import { formatTag } from '../../../core/textSyntax';
 import { classifyNodeSource } from '../../../core/source';
+import { sourceFieldValues } from '../../../core/sourceField';
 import {
-  SOURCE_FIELD_ID,
-  isContentBearingNode,
-  sourceEntryNodeId,
   type DocumentProjection,
   type NodeProjection,
 } from '../../../core/types';
@@ -131,7 +129,6 @@ export function nodeBreadcrumb(
 }
 
 export function nodeTitle(node: NodeProjection): string {
-  if (!isContentBearingNode(node)) return compact(node.sourceText, MAX_TITLE_CHARS) || 'Untitled';
   const text = (node.type === 'reference' && node.targetId
       ? formatNamedNodeReference(node.targetId, undefined, { unavailable: 'display' })
       : null)
@@ -144,7 +141,6 @@ export function outlineText(
   node: NodeProjection,
   byId: ReadonlyMap<string, NodeProjection>,
 ): string {
-  if (!isContentBearingNode(node)) return compact(node.sourceText, MAX_TITLE_CHARS) || 'Untitled';
   if (node.type === 'fieldEntry') {
     const field = node.fieldDefId ? byId.get(node.fieldDefId) : undefined;
     return `${nodeTitle(field ?? node)}::`;
@@ -240,23 +236,14 @@ function displayedChildCount(
     current = byId.get(current.targetId);
   }
   if (!current) return 0;
-  const sourceEntryId = sourceEntryNodeId(current.id);
-  return current.children.filter((childId) => childId !== sourceEntryId).length;
+  return current.children.length;
 }
 
 function sourceFallbackTitle(
   node: NodeProjection,
   byId: ReadonlyMap<string, NodeProjection>,
 ): string | null {
-  const entry = byId.get(sourceEntryNodeId(node.id));
-  if (
-    entry?.type !== 'fieldEntry'
-    || entry.parentId !== node.id
-    || entry.fieldDefId !== SOURCE_FIELD_ID
-  ) return null;
-  for (const valueId of entry.children) {
-    const value = byId.get(valueId);
-    if (value?.type !== 'sourceValue' || value.parentId !== entry.id) continue;
+  for (const value of sourceFieldValues(byId, node.id)) {
     return compact(classifyNodeSource(value.sourceText).label, MAX_TITLE_CHARS);
   }
   return null;

@@ -337,7 +337,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       >;
     };
     const mockAssetUrl = (assetId: string) => `${assetUrlPrefix}${encodeURIComponent(assetId)}`;
-    const sourceEntryNodeId = (ownerId: string) => `${ownerId}::source`;
     const mockAssetSourceUri = (assetId: string) => `asset://local/${encodeURIComponent(assetId)}`;
     const referenceTargetsEqual = (left: ReferenceTarget, right: ReferenceTarget) => {
       if (left.kind !== right.kind) return false;
@@ -421,7 +420,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	      queryTargetId?: string;
 	      targetId?: string;
 	      codeLanguage?: string;
-	      sourceText?: string;
 	      configKey?: string;
 	      refRole?: string;
 	    };
@@ -1258,32 +1256,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	        autocollectOptions: false,
 	        autoCollected: false,
 	        ...overrides,
-	      };
+      };
       nodes.set(id, node);
-      if (node.type === undefined) {
-        const entryId = sourceEntryNodeId(id);
-        if (!nodes.has(entryId)) {
-          const entry: MockNode = {
-            id: entryId,
-            type: 'fieldEntry',
-            parentId: id,
-            children: [],
-            content: rich(''),
-            tags: [],
-            createdAt: ++now,
-            updatedAt: now,
-            locked: true,
-            showCheckbox: false,
-            doneStateEnabled: false,
-            fieldDefId: 'field:source',
-            fieldType: 'uri',
-            autocollectOptions: false,
-            autoCollected: false,
-          };
-          nodes.set(entryId, entry);
-          node.children.push(entryId);
-        }
-      }
       return node;
     };
     const appendChild = (parentId: string, childId: string, index: number | null = null) => {
@@ -1291,11 +1265,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       const child = nodes.get(childId);
       if (!parent || !child) return;
       parent.children = parent.children.filter((id) => id !== childId);
-      const permanentSourceIndex = parent.children.indexOf(sourceEntryNodeId(parentId));
-      const upperBound = childId === sourceEntryNodeId(parentId) || permanentSourceIndex < 0
-        ? parent.children.length
-        : permanentSourceIndex;
-      const insertAt = index == null ? upperBound : Math.max(0, Math.min(index, upperBound));
+      const insertAt = index == null ? parent.children.length : Math.max(0, Math.min(index, parent.children.length));
       parent.children.splice(insertAt, 0, childId);
       child.parentId = parentId;
       parent.updatedAt = ++now;
@@ -1826,13 +1796,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	      });
 	      appendChild(nodeId, conditionId, 0);
 	    };
-	    const duplicateNode = (nodeId: string) => {
+	    const duplicateSubtree = (nodeId: string, parentId: string, index: number | null): string | null => {
 	      const node = nodes.get(nodeId);
-      if (!node?.parentId) return null;
+      if (!node) return null;
       const cloneId = `${nodeId}-copy-${++sequence}`;
       makeNode(cloneId, node.content.text, {
         type: node.type,
-        parentId: node.parentId,
+        parentId,
         tags: [...node.tags],
         showCheckbox: node.showCheckbox,
         doneStateEnabled: node.doneStateEnabled,
@@ -1854,10 +1824,16 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       });
       const cloneNode = nodes.get(cloneId)!;
       cloneNode.content = clone(node.content);
+      appendChild(parentId, cloneId, index);
+      for (const childId of node.children) duplicateSubtree(childId, cloneId, null);
+      return cloneId;
+    };
+	    const duplicateNode = (nodeId: string) => {
+	      const node = nodes.get(nodeId);
+      if (!node?.parentId) return null;
       const parent = nodes.get(node.parentId);
       const index = parent ? parent.children.indexOf(nodeId) + 1 : null;
-      appendChild(node.parentId, cloneId, index);
-      return cloneId;
+      return duplicateSubtree(nodeId, node.parentId, index);
     };
     const siblingMove = (nodeIds: string[], direction: 'up' | 'down') => {
       const idsToMove = direction === 'up' ? nodeIds : [...nodeIds].reverse();
@@ -2230,7 +2206,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     makeNode(ids.trash, 'Trash', { parentId: ids.root, locked: true });
     makeNode(ids.dayTag, 'day', { type: 'tagDef', parentId: ids.schema, color: 'gray' });
     makeNode(ids.projectTag, 'project', { type: 'tagDef', parentId: ids.schema, color: 'green' });
-    makeNode('field:source', 'Source', {
+    makeNode('field:source', 'URI', {
       type: 'fieldDef',
       parentId: ids.schema,
       fieldType: 'uri',
@@ -2534,9 +2510,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         || query.op === 'HAS_AUDIO'
         || query.op === 'HAS_VIDEO'
       ) {
-        const sourceEntry = nodes.get(sourceEntryNodeId(node.id));
-        const sourceMimeTypes = sourceEntry?.children.flatMap((valueId) => {
-          const sourceText = nodes.get(valueId)?.sourceText;
+        const sourceEntries = node.children.flatMap((childId) => {
+          const child = nodes.get(childId);
+          return child?.type === 'fieldEntry' && child.fieldDefId === 'field:source' ? [child] : [];
+        });
+        const sourceMimeTypes = sourceEntries.flatMap((entry) => entry.children).flatMap((valueId) => {
+          const sourceText = nodes.get(valueId)?.content.text;
           if (!sourceText?.startsWith('asset://local/')) return [];
           let assetId: string;
           try {
@@ -2546,7 +2525,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           }
           const mimeType = assets.get(assetId)?.mimeType;
           return mimeType ? [mimeType.toLocaleLowerCase()] : [];
-        }) ?? [];
+        });
         if (query.op === 'HAS_IMAGE') return sourceMimeTypes.some((mimeType) => mimeType.startsWith('image/'));
         if (query.op === 'HAS_AUDIO') return sourceMimeTypes.some((mimeType) => mimeType.startsWith('audio/'));
         if (query.op === 'HAS_VIDEO') return sourceMimeTypes.some((mimeType) => mimeType.startsWith('video/'));
@@ -2853,51 +2832,59 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       bindings: Record<string, string[]>,
     ) => {
       const owner = nodes.get(ownerId);
-      if (!owner || owner.type !== undefined) throw new Error(`Source owner must be an ordinary Node: ${ownerId}`);
-      const entryId = sourceEntryNodeId(ownerId);
-      const entry = nodes.get(entryId);
-      if (entry?.type !== 'fieldEntry' || entry.fieldDefId !== 'field:source') {
-        throw new Error(`Source owner has no permanent Source entry: ${ownerId}`);
-      }
+      if (!owner) throw new Error(`Source owner does not exist: ${ownerId}`);
+      const sourceEntries = () => owner.children.flatMap((childId) => {
+        const child = nodes.get(childId);
+        return child?.type === 'fieldEntry' && child.fieldDefId === 'field:source' ? [child] : [];
+      });
 
       const oneSourceValue = (reference: unknown) => {
         const valueId = oneMockTarget(reference as MockTargetRef, bindings);
         const value = nodes.get(valueId);
-        if (value?.type !== 'sourceValue' || value.parentId !== entryId) {
+        const entry = value?.parentId ? nodes.get(value.parentId) : undefined;
+        if (entry?.type !== 'fieldEntry' || entry.parentId !== ownerId || entry.fieldDefId !== 'field:source') {
           throw new Error(`Source value is not owned by ${ownerId}: ${valueId}`);
         }
-        return value;
+        return { entry, value: value! };
       };
 
       if (instruction.action === 'add') {
+        let entry = sourceEntries()[0];
+        if (!entry) {
+          const entryId = nextCanonicalNodeId();
+          entry = makeNode(entryId, '', {
+            type: 'fieldEntry',
+            parentId: ownerId,
+            fieldDefId: 'field:source',
+            fieldType: 'uri',
+          });
+          appendChild(ownerId, entryId);
+        }
         const valueId = typeof instruction.valueId === 'string' ? instruction.valueId : nextCanonicalNodeId();
         if (nodes.has(valueId)) throw new Error(`Source value already exists: ${valueId}`);
         let index: number | null = null;
         if (instruction.after === null) index = 0;
         else if (instruction.after !== undefined) {
           const anchor = oneSourceValue(instruction.after);
-          index = entry.children.indexOf(anchor.id) + 1;
+          if (anchor.entry.id !== entry.id) throw new Error('Source anchor belongs to another URI field entry.');
+          index = entry.children.indexOf(anchor.value.id) + 1;
         }
-        makeNode(valueId, '', {
-          type: 'sourceValue',
-          parentId: entryId,
-          sourceText: String(instruction.sourceText ?? ''),
-          locked: true,
-          showCheckbox: false,
-        });
-        appendChild(entryId, valueId, index);
+        makeNode(valueId, String(instruction.sourceText ?? ''), { parentId: entry.id });
+        appendChild(entry.id, valueId, index);
       } else if (instruction.action === 'replace') {
-        oneSourceValue(instruction.value).sourceText = String(instruction.sourceText ?? '');
+        oneSourceValue(instruction.value).value.content = rich(String(instruction.sourceText ?? ''));
       } else if (instruction.action === 'reorder') {
-        const value = oneSourceValue(instruction.value);
+        const { entry, value } = oneSourceValue(instruction.value);
         const anchor = instruction.after === null ? null : oneSourceValue(instruction.after);
-        if (anchor?.id === value.id) throw new Error('Source value cannot anchor itself.');
+        if (anchor && anchor.entry.id !== entry.id) throw new Error('Source anchor belongs to another URI field entry.');
+        if (anchor?.value.id === value.id) throw new Error('Source value cannot anchor itself.');
         removeFromParent(value.id);
-        appendChild(entryId, value.id, anchor ? entry.children.indexOf(anchor.id) + 1 : 0);
+        appendChild(entry.id, value.id, anchor ? entry.children.indexOf(anchor.value.id) + 1 : 0);
       } else if (instruction.action === 'remove') {
-        removeNode(oneSourceValue(instruction.value).id);
+        const { entry, value } = oneSourceValue(instruction.value);
+        removeNode(entry.children.length === 1 ? entry.id : value.id);
       } else if (instruction.action === 'clear') {
-        for (const valueId of [...entry.children]) removeNode(valueId);
+        for (const entry of sourceEntries()) removeNode(entry.id);
       }
       if (nodes.has(ownerId)) nodes.get(ownerId)!.updatedAt = ++now;
     };
@@ -3252,8 +3239,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         } else if (change.op === 'lifecycle') {
           result = resolveMockTarget(change.targets as MockTargetRef, bindings);
           if (change.action === 'purge' && change.contents === true && result.includes(ids.trash)) {
-            result = [...nodes.get(ids.trash)?.children ?? []]
-              .filter((nodeId) => nodeId !== sourceEntryNodeId(ids.trash));
+            result = [...nodes.get(ids.trash)?.children ?? []];
           }
           for (const targetId of result) {
             if (change.action === 'trash') moveNode(targetId, ids.trash);
@@ -6663,7 +6649,7 @@ export async function multiSelect(page: Page, rowIds: string[]) {
   }
 }
 
-export async function e2eProjection(page: Page): Promise<{ nodes: Array<{
+export interface E2EProjectionNode {
   id: string;
   parentId?: string;
   children: string[];
@@ -6677,6 +6663,7 @@ export async function e2eProjection(page: Page): Promise<{ nodes: Array<{
   extends?: string;
   showCheckbox?: boolean;
   doneStateEnabled?: boolean;
+  fieldDefId?: string;
   fieldType?: string;
   nullable?: boolean;
   hideField?: string;
@@ -6685,7 +6672,9 @@ export async function e2eProjection(page: Page): Promise<{ nodes: Array<{
   maxValue?: number;
   sourceSupertag?: string;
   templateId?: string;
-}> }> {
+}
+
+export async function e2eProjection(page: Page): Promise<{ nodes: E2EProjectionNode[] }> {
   return page.evaluate(() => {
     const win = window as E2EWindow;
     return win.__LIN_E2E__?.projection() as { nodes: Array<{
@@ -6696,7 +6685,6 @@ export async function e2eProjection(page: Page): Promise<{ nodes: Array<{
       completedAt?: number;
       tags: string[];
       type?: string;
-      sourceText?: string;
       targetId?: string;
       color?: string;
       childSupertag?: string;
@@ -6717,7 +6705,28 @@ export async function e2eProjection(page: Page): Promise<{ nodes: Array<{
 }
 
 export function ordinaryChildIds(node: { id: string; children: string[] } | null | undefined): string[] {
-  return node?.children.filter((childId) => childId !== `${node.id}::source`) ?? [];
+  return node?.children ?? [];
+}
+
+export function sourceFieldEntries(
+  projection: { nodes: E2EProjectionNode[] },
+  ownerId: string,
+): E2EProjectionNode[] {
+  const owner = projection.nodes.find((node) => node.id === ownerId);
+  return owner?.children.flatMap((childId) => {
+    const child = projection.nodes.find((node) => node.id === childId);
+    return child?.type === 'fieldEntry' && child.fieldDefId === 'field:source' ? [child] : [];
+  }) ?? [];
+}
+
+export function sourceFieldValues(
+  projection: { nodes: E2EProjectionNode[] },
+  ownerId: string,
+): E2EProjectionNode[] {
+  return sourceFieldEntries(projection, ownerId).flatMap((entry) => entry.children.flatMap((valueId) => {
+    const value = projection.nodes.find((node) => node.id === valueId);
+    return value ? [value] : [];
+  }));
 }
 
 export async function nodeByText(page: Page, text: string) {

@@ -1,4 +1,5 @@
-import { SOURCE_FIELD_ID, sourceEntryNodeId, type NodeId } from '../../../core/types';
+import { type NodeId } from '../../../core/types';
+import { sourceFieldValues } from '../../../core/sourceField';
 import {
   classifyNodeSource,
   parseAssetSourceUri,
@@ -66,21 +67,13 @@ export function nodeSourceValues(
   ownerId: NodeId,
   byId: ReadonlyMap<NodeId, NodeProjection>,
 ): NodeSourceDescriptor[] {
-  const entryId = sourceEntryNodeId(ownerId);
-  const entry = byId.get(entryId);
-  if (entry?.type !== 'fieldEntry'
-    || entry.parentId !== ownerId
-    || entry.fieldDefId !== SOURCE_FIELD_ID) return [];
-
   const values: NodeSourceDescriptor[] = [];
-  for (const valueId of entry.children) {
-    const value = byId.get(valueId);
-    if (value?.type !== 'sourceValue' || value.parentId !== entryId) continue;
+  for (const value of sourceFieldValues(byId, ownerId)) {
     const classified = classifyNodeSource(value.sourceText);
-    const target = sourcePreviewTarget(value.id, value.sourceText, classified.label);
+    const target = sourcePreviewTarget(value.node.id, value.sourceText, classified.label);
     values.push({
       ...classified,
-      sourceValueId: value.id,
+      sourceValueId: value.node.id,
       ...(target ? { previewTarget: target } : {}),
     });
   }

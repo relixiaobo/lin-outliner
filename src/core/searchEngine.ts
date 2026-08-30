@@ -44,6 +44,7 @@ import {
   sourceKindFromMetadata,
 } from './source';
 import { intersectSetList, unionSets } from './setUtils';
+import { sourceFieldValues } from './sourceField';
 import {
   createTextSearchIndex,
   type MutableTextSearchIndex,
@@ -86,8 +87,7 @@ import {
 
 type SearchDocument = DocumentState | DocumentProjection;
 type SearchDocumentNode = Node | NodeProjection;
-type SearchNode = Exclude<SearchDocumentNode, { type: 'sourceValue' }>;
-type SearchSourceValue = Extract<SearchDocumentNode, { type: 'sourceValue' }>;
+type SearchNode = SearchDocumentNode;
 /** A node that carries query params — a `search` (inline rule) or a `queryCondition`. */
 type QueryBearingNode = Extract<SearchNode, { type: 'search' } | { type: 'queryCondition' }>;
 
@@ -239,7 +239,6 @@ interface SearchIndex {
   rootId: NodeId;
   libraryId: NodeId;
   nodes: Map<NodeId, SearchNode>;
-  sourceValues: Map<NodeId, SearchSourceValue>;
   allNodes: SearchNode[];
   deletedNodeIds?: ReadonlySet<NodeId>;
   fieldSlotCache: NodeFieldSlotCache;
@@ -696,14 +695,10 @@ export function textSearchRecordForNodeMap(
 ): NodeTextSearchRecord | null {
   const contentNodes = [...documentNodes.values()].filter(isContentBearingNode);
   const nodes = new Map(contentNodes.map((node) => [node.id, node]));
-  const sourceValues = new Map([...documentNodes.values()]
-    .filter((node): node is SearchSourceValue => node.type === 'sourceValue')
-    .map((node) => [node.id, node]));
   return textSearchRecordForNode({
     rootId,
     libraryId,
     nodes,
-    sourceValues,
     allNodes: [],
     fieldSlotCache: new NodeFieldSlotCache(),
   }, nodeId);
@@ -725,15 +720,11 @@ function indexSearchDocument(
     : Object.values(document.nodes);
   const allNodes = documentNodes.filter(isContentBearingNode);
   const nodes = new Map(allNodes.map((node) => [node.id, node]));
-  const sourceValues = new Map(documentNodes
-    .filter((node): node is SearchSourceValue => node.type === 'sourceValue')
-    .map((node) => [node.id, node]));
   return {
     rootId: document.rootId,
     libraryId: 'libraryId' in document ? document.libraryId : LIBRARY_ID,
     allNodes,
     nodes,
-    sourceValues,
     deletedNodeIds: deletedNodeIdSet(nodes),
     fieldSlotCache: new NodeFieldSlotCache(),
     assetMetadataById,
@@ -2018,12 +2009,8 @@ function isCalendarNode(index: SearchIndex, nodeId: NodeId): boolean {
 }
 
 function nodeMediaKinds(index: SearchIndex, node: SearchNode): readonly MediaKind[] {
-  const entry = index.nodes.get(`${node.id}::source`);
-  if (entry?.type !== 'fieldEntry') return [];
   const result = new Set<MediaKind>();
-  for (const valueId of entry.children) {
-    const value = index.sourceValues.get(valueId);
-    if (!value) continue;
+  for (const value of sourceFieldValues(index.nodes, node.id)) {
     const assetId = parseAssetSourceUri(value.sourceText);
     if (assetId) {
       const metadata = index.assetMetadataById?.get(assetId);

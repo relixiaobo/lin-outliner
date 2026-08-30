@@ -232,7 +232,7 @@ export interface CreateCaptureInput {
   title: RichText;
   /** Optional short user note. */
   description?: string;
-  /** Exact canonical page locator to add through the protected Source model. */
+  /** Exact canonical page locator to add through the built-in URI field. */
   sourceText?: string;
   /** Tag to apply (most specific capture kind, e.g. 'article' or 'capture'). */
   tag?: string;

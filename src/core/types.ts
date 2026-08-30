@@ -38,11 +38,6 @@ export const TAG_WEEK_ID = 'tag:week';
 export const TAG_YEAR_ID = 'tag:year';
 export const SOURCE_FIELD_ID = 'field:source';
 
-/** Permanent protected Source entry owned by an ordinary content Node. */
-export function sourceEntryNodeId(ownerId: NodeId): NodeId {
-  return `${ownerId}::source`;
-}
-
 // System option subtrees under SCHEMA_ID. Each holds the enum domain for a
 // config knob; selecting an enum value = referencing one of these nodes, so
 // an invalid enum value is unrepresentable. See docs/plans/archive/config-as-nodes.md.
@@ -66,7 +61,6 @@ export function defConfigNodeId(defId: NodeId, configKey: string): NodeId {
 
 export type NodeType =
   | 'fieldEntry'
-  | 'sourceValue'
   | 'reference'
   | 'codeBlock'
   | 'tagDef'
@@ -369,20 +363,17 @@ export type QueryOp = typeof QUERY_OPS[number];
 // `node.type`; Stage 10 moves each field onto the variant that owns it and the
 // god-record is gone. Until then the variants are intentionally identical
 // apart from their discriminant.
-export interface NodeStructuralBase {
+export interface NodeBase {
   id: NodeId;
   parentId?: NodeId;
   children: NodeId[];
-  createdAt: number;
-  updatedAt: number;
-  locked: boolean;
-}
-
-export interface NodeBase extends NodeStructuralBase {
   content: RichText;
   description?: string;
   tags: NodeId[];
+  createdAt: number;
+  updatedAt: number;
   completedAt?: number;
+  locked: boolean;
   icon?: string;
   iconKind?: IconKind;
   bannerAssetId?: string;
@@ -430,11 +421,6 @@ export interface CodeBlockNode extends NodeBase {
   type: 'codeBlock';
   /** CodeMirror language bundle id; '' means plain text. */
   codeLanguage?: string;
-}
-export interface SourceValueNode extends NodeStructuralBase {
-  type: 'sourceValue';
-  parentId: NodeId;
-  sourceText: string;
 }
 
 export interface TagDefNode extends NodeBase { type: 'tagDef'; }
@@ -503,13 +489,13 @@ export type ContentBearingNode =
   | SearchNode
   | QueryConditionNode;
 
-export type Node = ContentBearingNode | SourceValueNode;
+export type Node = ContentBearingNode;
 
 /** True when a node owns rich content and the ordinary content metadata surface. */
 export function isContentBearingNode<T extends { type?: NodeType }>(
   node: T,
-): node is Exclude<T, { type: 'sourceValue' }> {
-  return node.type !== 'sourceValue';
+): node is T {
+  return Boolean(node);
 }
 
 export interface DocumentState {
@@ -535,8 +521,7 @@ export type NodeFieldKey = Extract<KeysOfUnion<Node>, string>;
 // metadata stays visible so read projections can associate deleted direct
 // children with their live owner; the restore index remains core-internal.
 export type ContentBearingNodeProjection = DistributiveOmit<ContentBearingNode, 'trashedFromIndex'>;
-export type NodeProjection = ContentBearingNodeProjection | SourceValueNode;
-export type SourceValueProjection = SourceValueNode;
+export type NodeProjection = ContentBearingNodeProjection;
 
 export interface DocumentProjection {
   workspaceId: NodeId;
@@ -1316,19 +1301,6 @@ export function createNodeRecord(
   parentId: NodeId | undefined,
   now: number,
 ): Node {
-  if (type === 'sourceValue') {
-    if (!parentId) throw new Error('Source values require a permanent Source entry parent.');
-    return {
-      id,
-      type,
-      parentId,
-      children: [],
-      sourceText: '',
-      createdAt: now,
-      updatedAt: now,
-      locked: true,
-    };
-  }
   return {
     id,
     type,

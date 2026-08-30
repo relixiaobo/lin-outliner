@@ -33,7 +33,6 @@ import type {
 } from '../../src/core/agent/protocol';
 import {
   SOURCE_FIELD_ID,
-  sourceEntryNodeId,
   type AssetMetadata,
   type DocumentProjection,
   type NodeProjection,
@@ -13603,7 +13602,7 @@ function contextProjection(nodes: NodeProjection[]): DocumentProjection {
 }
 
 function contextSourceBackedNodes(id: string, text: string, assetId: string): NodeProjection[] {
-  const entryId = sourceEntryNodeId(id);
+  const entryId = `${id}:uri`;
   const valueId = `${entryId}:value`;
   return [
     contextNode(id, text, { parentId: 'root', children: [entryId] }),
@@ -13611,19 +13610,9 @@ function contextSourceBackedNodes(id: string, text: string, assetId: string): No
       type: 'fieldEntry',
       parentId: id,
       fieldDefId: SOURCE_FIELD_ID,
-      locked: true,
       children: [valueId],
     }),
-    {
-      id: valueId,
-      type: 'sourceValue',
-      parentId: entryId,
-      children: [],
-      sourceText: formatAssetSourceUri(assetId),
-      createdAt: 1,
-      updatedAt: 1,
-      locked: true,
-    },
+    contextNode(valueId, formatAssetSourceUri(assetId), { parentId: entryId }),
   ];
 }
 

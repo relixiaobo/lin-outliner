@@ -38,8 +38,7 @@ interface SurfaceCase {
 
 async function todayChildren(page: Page) {
   const projection = await e2eProjection(page);
-  return projection.nodes.find((node) => node.id === ids.today)?.children
-    .filter((nodeId) => nodeId !== `${ids.today}::source`) ?? [];
+  return projection.nodes.find((node) => node.id === ids.today)?.children ?? [];
 }
 
 async function invokeDocumentCommand(page: Page, cmd: string, args: Record<string, unknown>) {

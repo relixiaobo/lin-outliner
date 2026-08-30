@@ -16,7 +16,6 @@ import {
   resolveSelector,
 } from '../../src/outline/runtime';
 import { formatAssetSourceUri } from '../../src/core/source';
-import { sourceEntryNodeId } from '../../src/core/types';
 
 const roots: string[] = [];
 
@@ -26,7 +25,7 @@ afterAll(async () => {
 
 describe('outline ChangeSet kernel', () => {
   const documentChildIds = (workspace: OutlineRuntimeWorkspace, parentId: string) => (
-    workspace.documentState().nodes[parentId]?.children.filter((id) => id !== sourceEntryNodeId(parentId))
+    workspace.documentState().nodes[parentId]?.children
   );
 
   test('commits a non-destructive ChangeSet directly without reviewed Diff preview', async () => {
@@ -662,7 +661,7 @@ describe('outline ChangeSet kernel', () => {
     restarted.close();
   });
 
-  test('excludes hidden Source structure from public summary child counts', async () => {
+  test('counts a visible URI field entry as a public summary child', async () => {
     const workspace = await makeWorkspace();
     const ownerId = await createExisting(workspace, 'Source-only owner');
     await workspace.mutate({
@@ -679,7 +678,7 @@ describe('outline ChangeSet kernel', () => {
     });
 
     expect(result.nodes).toEqual([
-      expect.objectContaining({ id: ownerId, type: 'plain', childCount: 0 }),
+      expect.objectContaining({ id: ownerId, type: 'plain', childCount: 1 }),
     ]);
   });
 

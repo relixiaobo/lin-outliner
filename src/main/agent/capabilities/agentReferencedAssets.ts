@@ -7,13 +7,12 @@ import type {
   ThreadResourceReference,
 } from '../../../core/agent/protocol';
 import {
-  SOURCE_FIELD_ID,
-  sourceEntryNodeId,
   type AssetMetadata,
   type DocumentProjection,
   type NodeProjection,
 } from '../../../core/types';
 import { parseAssetSourceUri } from '../../../core/source';
+import { sourceFieldValues } from '../../../core/sourceField';
 import {
   nodeBreadcrumb,
   outlineText,
@@ -172,7 +171,6 @@ function resourceContent(
   byId: ReadonlyMap<string, NodeProjection>,
 ): { readonly text: string; readonly truncated: boolean } {
   const children = node.children.flatMap((childId) => {
-    if (childId === sourceEntryNodeId(node.id)) return [];
     const child = byId.get(childId);
     return child ? [`- ${outlineText(child, byId)}`] : [];
   });
@@ -211,11 +209,7 @@ function firstManagedAssetId(
   node: NodeProjection,
   byId: ReadonlyMap<string, NodeProjection>,
 ): string | undefined {
-  const entry = byId.get(sourceEntryNodeId(node.id));
-  if (entry?.type !== 'fieldEntry' || entry.fieldDefId !== SOURCE_FIELD_ID) return undefined;
-  for (const valueId of entry.children) {
-    const value = byId.get(valueId);
-    if (value?.type !== 'sourceValue') continue;
+  for (const value of sourceFieldValues(byId, node.id)) {
     const assetId = parseAssetSourceUri(value.sourceText);
     if (assetId) return assetId;
   }

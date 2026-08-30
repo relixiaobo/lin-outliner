@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { Core } from '../../src/core/core';
-import { plainText, sourceEntryNodeId } from '../../src/core/types';
+import { plainText } from '../../src/core/types';
+import { sourceFieldValues } from '../../src/core/sourceField';
 import { buildContextCaptureInput, buildManualNoteInput, CAPTURE_FIELD, isCaptureIntent } from '../../src/core/launcher/sources';
 import type { CaptureNodeMetadata } from '../../src/core/launcher/sources';
 import type { ExternalContext } from '../../src/core/launcher/context';
@@ -53,9 +54,8 @@ describe('Core.createCapture', () => {
     expect(node?.description).toBe('clipped from Safari');
     expect(node?.capture).toEqual(sampleMetadata());
 
-    const contentChildren = node?.children.filter((childId) => childId !== sourceEntryNodeId(id));
-    expect(contentChildren).toHaveLength(1);
-    const child = core.projection().nodes.find((entry) => entry.id === contentChildren?.[0]);
+    expect(node?.children).toHaveLength(1);
+    const child = core.projection().nodes.find((entry) => entry.id === node?.children[0]);
     expect(child?.content.text).toBe('Local-first software keeps a full copy on device.');
   });
 
@@ -289,7 +289,7 @@ describe('buildContextCaptureInput', () => {
     const node = nodes.find((entry) => entry.id === id);
     expect(node?.content.text).toBe('A great article'); // headline = source title
     expect(node?.description).toBeUndefined(); // NOT the description
-    // The permanent Source entry is structural; the note is the ordinary child bullet.
+    // The URI entry is a field row; the note is the ordinary child bullet.
     const childNodes = node?.children.map((cid) => nodes.find((n) => n.id === cid));
     const noteChild = childNodes?.find((c) => c?.type !== 'fieldEntry');
     expect(noteChild?.content.text).toBe('remember this');
@@ -353,15 +353,10 @@ describe('buildContextCaptureInput', () => {
     expect(tagDefs.find((n) => n.content.text === 'capture')).toBeDefined();
     expect(node?.tags).toContain(articleTag!.id);
 
-    // ... the canonical Source value, plus the ordinary Published field.
-    const sourceEntry = nodes.find((n) => n.id === sourceEntryNodeId(id));
-    expect(sourceEntry?.type).toBe('fieldEntry');
-    const sourceValue = nodes.find((n) => n.id === sourceEntry?.children[0]);
-    expect(sourceValue).toMatchObject({
-      type: 'sourceValue',
-      sourceText: 'https://example.com/a',
-    });
     const byId = new Map(nodes.map((n) => [n.id, n]));
+    // ... the built-in URI field value, plus the ordinary Published field.
+    expect(sourceFieldValues(byId, id).map((value) => value.sourceText))
+      .toEqual(['https://example.com/a']);
     expect(projectFieldTypeById(byId, CAPTURE_FIELD.published.id)).toBe('date');
   });
 

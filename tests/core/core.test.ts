@@ -26,7 +26,6 @@ import {
   nodeReferenceTarget,
   plainText,
   replaceAllRichTextPatch,
-  sourceEntryNodeId,
   type CreateNodeTree,
   type FieldEntryNode,
   type FocusHint,
@@ -51,12 +50,12 @@ function fieldEntries(core: Core, ownerId: string): FieldEntryNode[] {
   return state.nodes[ownerId].children
     .map((childId) => state.nodes[childId])
     .filter((node): node is FieldEntryNode => (
-      node?.type === 'fieldEntry' && node.fieldDefId !== SOURCE_FIELD_ID
+      node?.type === 'fieldEntry'
     ));
 }
 
 function documentChildren(core: Core, ownerId: string): string[] {
-  return core.state().nodes[ownerId].children.filter((childId) => childId !== sourceEntryNodeId(ownerId));
+  return [...core.state().nodes[ownerId].children];
 }
 
 function fieldEntryForDefinition(core: Core, ownerId: string, fieldDefId: string): FieldEntryNode | undefined {
@@ -1640,7 +1639,7 @@ describe('Core', () => {
     });
   });
 
-  test('materializes Source-backed ordinary values with renderer-proposed ids', () => {
+  test('materializes URI-backed ordinary values with renderer-proposed ids', () => {
     const core = Core.new();
     const tagId = mustFocus(core.createTag('project'));
     const templateEntryId = mustFocus(core.createFieldDef(tagId, 'Files', 'plain'));
@@ -1678,16 +1677,16 @@ describe('Core', () => {
       parentId: entry.id,
       content: { text: 'report.pdf' },
     });
-    expect(core.state().nodes[imageSourceId]).toMatchObject({
-      type: 'sourceValue',
-      parentId: sourceEntryNodeId(imageId),
-      sourceText: 'https://example.com/diagram.png',
-    });
-    expect(core.state().nodes[attachmentSourceId]).toMatchObject({
-      type: 'sourceValue',
-      parentId: sourceEntryNodeId(attachmentId),
-      sourceText: formatAssetSourceUri('asset-report'),
-    });
+    expect(core.state().nodes[imageSourceId]).toEqual(expect.objectContaining({
+      content: plainText('https://example.com/diagram.png'),
+      locked: false,
+    }));
+    expect(core.state().nodes[imageSourceId]).not.toHaveProperty('type');
+    expect(core.state().nodes[attachmentSourceId]).toEqual(expect.objectContaining({
+      content: plainText(formatAssetSourceUri('asset-report')),
+      locked: false,
+    }));
+    expect(core.state().nodes[attachmentSourceId]).not.toHaveProperty('type');
   });
 
   test('applying tags projects same-name fields by definition identity', () => {
@@ -2922,7 +2921,7 @@ describe('Core', () => {
 
     expect(core.state().nodes[current].content).toEqual(plainText('Current'));
     expect(documentChildren(core, current)).toEqual([]);
-    expect(documentChildren(core, today)).toEqual(todayChildrenBefore.filter((id) => id !== sourceEntryNodeId(today)));
+    expect(documentChildren(core, today)).toEqual(todayChildrenBefore);
   });
 
   test('batch move preserves sibling block order', () => {

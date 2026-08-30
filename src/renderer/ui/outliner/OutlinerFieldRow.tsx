@@ -264,7 +264,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     draftDefId: field?.id,
     trashId: props.index.projection.trashId,
     nameDraft,
-    disabled: Boolean(systemFieldId) || slot.source === 'tag',
+    disabled: Boolean(systemFieldId) || field?.locked === true || slot.source === 'tag',
   });
 
   // Each read-only system field renders by its real type, not as bare text — the
@@ -698,7 +698,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       data-focus-node-id={rowId}
       label={tf.fieldNameLabel}
       value={systemFieldId ? systemFieldLabel : nameDraft}
-      readOnly={Boolean(systemFieldId)}
+      readOnly={Boolean(systemFieldId) || field?.locked === true}
       placeholder={tf.fieldNameLabel}
       title={systemFieldId
         ? tf.systemFieldTitle({ name: systemFieldLabel })
