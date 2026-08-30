@@ -88,10 +88,13 @@ describe('Outline legacy surface retirement', () => {
     expect(contentSource).not.toContain("path.join(root, '" + ['revi', 'sions'].join('') + "')");
     expect(contentSource).not.toMatch(/(?:outline|agent|electron|renderer|core)\//u);
 
-    const mainSource = await readFile(path.join(repoRoot, 'src', 'main', 'main.ts'), 'utf8');
-    expect(mainSource).toContain("join(resolvedUserDataDir, 'outline-runtime')");
-    expect(mainSource).toContain("join(resolvedUserDataDir, 'content')");
-    expect(mainSource).not.toMatch(/dirname\(outlineRuntimeRoot\)/u);
+    const outlineHostSource = await readFile(
+      path.join(repoRoot, 'src', 'main', 'hostDomain', 'outlineDesktopHost.ts'),
+      'utf8',
+    );
+    expect(outlineHostSource).toContain("join(options.userDataDir, 'outline-runtime')");
+    expect(outlineHostSource).toContain("join(options.userDataDir, 'content')");
+    expect(outlineHostSource).not.toMatch(/dirname\(runtimeRoot\)/u);
 
     const assetStoreSource = await readFile(
       path.join(repoRoot, 'src', 'outline', 'runtime', 'storage', 'assetStore.ts'),

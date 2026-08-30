@@ -92,6 +92,46 @@ const missingBaselineTransport = missingBaselineTransportEffects(
   currentDispositions,
   baselineEquivalences,
 );
+const requiredDomainConstructions = new Map<string, string>([
+  ['ExtensionRegistry', 'agent-host'],
+  ['MemoryControlStore', 'agent-host'],
+  ['TimelineMemoryStore', 'agent-host'],
+  ['MemoryExtension', 'agent-host'],
+  ['AgentConfigurationLoader', 'agent-host'],
+  ['AgentConfigurationWriter', 'agent-host'],
+  ['AgentWorktree', 'agent-host'],
+  ['AttachmentResolver', 'agent-host'],
+  ['PiTurnExecutor', 'agent-host'],
+  ['ThreadService.open', 'agent-host'],
+  ['AutomationStore', 'agent-host'],
+  ['AutomationWorktree', 'agent-host'],
+  ['AutomationDispatcher', 'agent-host'],
+  ['AutomationScheduler', 'agent-host'],
+  ['AutomationService', 'agent-host'],
+  ['ToolRuntime', 'agent-host'],
+  ['BrowserPilotHost', 'agent-host'],
+  ['ManagedSkillStore', 'agent-host'],
+  ['ManagedSkillService', 'agent-host'],
+  ['ManagedSkillShellEnvironmentRegistry', 'agent-host'],
+  ['OutlineClientSupervisor', 'outline-desktop-host'],
+  ['DesktopOutlineClient', 'outline-desktop-host'],
+  ['OutlineDocumentService', 'outline-desktop-host'],
+  ['OutlineDesktopAssetService', 'outline-desktop-host'],
+  ['NodeAccessStore', 'outline-desktop-host'],
+]);
+const currentDomainFactoryCalls = collectCurrentDomainFactoryCalls(currentSources);
+const domainConstructions = [...currentInventory, ...currentDomainFactoryCalls]
+  .filter((effect) => effect.kind === 'construction'
+    && effect.path.startsWith('src/main/hostDomain/')
+    && requiredDomainConstructions.has(effect.expression))
+  .map((effect) => ({ ...effect, owner: currentDomainOwner(effect) }));
+const unownedDomain = domainConstructions.filter((effect) => effect.owner === null);
+const duplicateDomain = duplicateDomainConstructions(domainConstructions);
+const missingDomain = [...requiredDomainConstructions.entries()]
+  .filter(([expression, owner]) => !domainConstructions.some((effect) => (
+    effect.expression === expression && effect.owner === owner
+  )))
+  .map(([expression, owner]) => ({ expression, owner }));
 runNegativeFixtures();
 
 mkdirSync(reportRoot, { recursive: true });
@@ -100,6 +140,10 @@ writeJson(join(reportRoot, 'current-dispositions.json'), currentDispositions);
 writeJson(join(reportRoot, 'unowned-transport.json'), unownedTransport);
 writeJson(join(reportRoot, 'duplicate-transport.json'), duplicateTransport);
 writeJson(join(reportRoot, 'missing-baseline-transport.json'), missingBaselineTransport);
+writeJson(join(reportRoot, 'domain-constructions.json'), domainConstructions);
+writeJson(join(reportRoot, 'unowned-domain.json'), unownedDomain);
+writeJson(join(reportRoot, 'duplicate-domain.json'), duplicateDomain);
+writeJson(join(reportRoot, 'missing-domain.json'), missingDomain);
 
 console.log(`baseline effects: ${baselineInventory.length}`);
 console.log(`baseline transport effects: ${baselineDispositions.filter((entry) => entry.transport).length}`);
@@ -107,9 +151,17 @@ console.log(`current effects: ${currentInventory.length}`);
 console.log(`unowned transport effects: ${unownedTransport.length}`);
 console.log(`duplicate transport effects: ${duplicateTransport.length}`);
 console.log(`missing baseline transport effects: ${missingBaselineTransport.length}`);
+console.log(`unowned domain constructions: ${unownedDomain.length}`);
+console.log(`duplicate domain constructions: ${duplicateDomain.length}`);
+console.log(`missing domain constructions: ${missingDomain.length}`);
 console.log(`reports: ${relative(root, reportRoot)}`);
 
-if (unownedTransport.length > 0 || duplicateTransport.length > 0 || missingBaselineTransport.length > 0) {
+if (unownedTransport.length > 0
+  || duplicateTransport.length > 0
+  || missingBaselineTransport.length > 0
+  || unownedDomain.length > 0
+  || duplicateDomain.length > 0
+  || missingDomain.length > 0) {
   process.exitCode = 1;
 }
 
@@ -152,6 +204,32 @@ function collectEffects(source: string, path: string): Effect[] {
   };
   visit(file, null);
   return effects.sort((left, right) => left.line - right.line || left.kind.localeCompare(right.kind));
+}
+
+function collectCurrentDomainFactoryCalls(
+  sources: readonly { path: string; source: string }[],
+): Effect[] {
+  const effects: Effect[] = [];
+  for (const { path, source } of sources) {
+    if (!path.startsWith('src/main/hostDomain/')) continue;
+    const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node) && node.expression.getText(file) === 'ThreadService.open') {
+        const line = file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1;
+        effects.push({
+          id: `${path}:construction:${line}:${sha256('ThreadService.open').slice(0, 12)}`,
+          kind: 'construction',
+          path,
+          line,
+          expression: 'ThreadService.open',
+          owner: currentDomainOwner({ path }),
+        });
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(file);
+  }
+  return effects;
 }
 
 function ownerDeclaredByFunction(node: ts.Node): string | null {
@@ -264,6 +342,27 @@ function currentTypedEdgeOwner(effect: Effect): string | null {
     return 'agent-web-fetch-capability';
   }
   return null;
+}
+
+function currentDomainOwner(effect: Pick<Effect, 'path'>): string | null {
+  if (effect.path === 'src/main/hostDomain/agentHost.ts'
+    || effect.path === 'src/main/hostDomain/managedSkillsHost.ts') return 'agent-host';
+  if (effect.path === 'src/main/hostDomain/outlineDesktopHost.ts') return 'outline-desktop-host';
+  return null;
+}
+
+function duplicateDomainConstructions(
+  effects: readonly (Effect & { readonly owner: string | null })[],
+): string[] {
+  const counts = new Map<string, number>();
+  for (const effect of effects) {
+    const key = `${effect.owner ?? 'unowned'}:${effect.expression}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([key]) => key)
+    .sort();
 }
 
 function isLifecycleListener(effect: Effect): boolean {

@@ -7,53 +7,31 @@ import { mkdir, open, readdir, readFile, realpath, stat, writeFile } from 'node:
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pathToFileURL } from 'node:url';
-import { OutlineClientSupervisor, type OutlineRuntimeLaunch } from '../outline/client';
-import { DesktopOutlineClient, registerDesktopOutlineIpc } from './outlineClient';
-import { OutlineDocumentService } from './outlineDocumentService';
+import { registerDesktopOutlineIpc } from './outlineClient';
 import { runOutlineActionCommand } from './outlineActionCommands';
 import { AppQuitCoordinator, type QuitDecision } from './appQuitCoordinator';
 import {
   mimeTypeForAssetFilename as mimeTypeForFilename,
   sniffAssetMimeType as sniffMimeType,
 } from '../core/assetMetadata';
-import { OutlineDesktopAssetService } from './outlineDesktopAssetService';
-import { configureOutlineCliRuntime } from './outlineRuntime';
-import { ThreadService } from './agent/ThreadService';
+import type { ThreadService } from './agent/ThreadService';
 import { resolveRendererThreadStartDefaults } from './agent/rendererThreadStartDefaults';
 import { gitOutput } from './agent/context/AgentStartupContext';
-import { closeAgentServices } from './agent/closeAgentServices';
-import { ExtensionRegistry } from './agent/ExtensionRegistry';
-import { MemoryControlStore } from './agent/extensions/memory/MemoryControlStore';
-import { MemoryExtension } from './agent/extensions/memory/MemoryExtension';
-import { TimelineMemoryStore } from './agent/extensions/memory/TimelineMemoryStore';
-import { AutomationDispatcher } from './agent/automations/AutomationDispatcher';
-import { AutomationScheduler } from './agent/automations/AutomationScheduler';
-import { AutomationService } from './agent/automations/AutomationService';
-import { AutomationStore } from './agent/automations/AutomationStore';
-import { createAutomationTool } from './agent/automations/AutomationTool';
-import { AutomationWorktree } from './agent/automations/AutomationWorktree';
-import { AgentConfigurationLoader } from './agent/AgentConfigurationLoader';
 import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../core/agent/tools';
-import {
-  AgentConfigurationWriter,
-  type ConfigurationLayerTarget,
-} from './agent/AgentConfigurationWriter';
-import { PiTurnExecutor } from './agent/runtime/PiTurnExecutor';
-import { ToolRuntime } from './agent/runtime/ToolRuntime';
+import type { ConfigurationLayerTarget } from './agent/AgentConfigurationWriter';
+import type { ToolRuntime } from './agent/runtime/ToolRuntime';
 import { createToolArtifactSink } from './agent/runtime/ToolArtifactSink';
 import { observedSkillFilePaths } from './agent/context/SkillContextReducer';
-import { AttachmentResolver } from './agent/tools/attachments';
 import { createImageArtifactReference, ImageObservationNormalizationError } from './agent/imageArtifacts';
 import { Mutex } from './agent/Mutex';
 import {
-  AgentSkillRuntime,
   expandSkillDirectory,
   isolatedSkillShellContext,
   resolvePreloadedSkillInvocations,
   resolveUserSkillInvocation,
+  type AgentSkillRuntime,
 } from './agent/capabilities/agentSkills';
 import { isValidSkillName } from './agent/capabilities/agentSkillAuthoring';
-import { createAgentSkillProvenanceStore } from './agent/capabilities/agentSkillProvenanceStore';
 import { executeAgentSkillShellCommand } from './agent/capabilities/agentSkillShell';
 import {
   decodeMemoryFeatureMode,
@@ -104,14 +82,9 @@ import {
   THREAD_MESSAGE_CONTEXT_MENU_CHANNEL,
 } from '../core/agent/transport';
 import {
-  ManagedSkillService,
   ManagedSkillServiceError,
   managedSkillErrorView,
 } from './managedSkillService';
-import { ManagedSkillStore } from './managedSkillStore';
-import { DEFAULT_MANAGED_SKILLS } from './managedSkillDefaults';
-import { BROWSER_PILOT_MANAGED_SKILL_ID, BrowserPilotHost } from './browserPilotHost';
-import { ManagedSkillShellEnvironmentRegistry } from './managedSkillShellEnvironment';
 import { createOutlineAgentShellEnvironmentProvider } from './outlineAgentShellEnvironment';
 import { isRendererPermissionAllowed } from './rendererPermissions';
 import {
@@ -268,10 +241,7 @@ import {
   MAX_PROMPT_IMAGE_DIMENSION,
 } from '../core/agentAttachmentLimits';
 import { safeAttachmentFileName } from '../core/agentAttachmentPaths';
-import {
-  isPathInside,
-  pruneAgentScratch,
-} from './agent/capabilities/agentAttachmentMaterialization';
+import { isPathInside } from './agent/capabilities/agentAttachmentMaterialization';
 import {
   isSafeLocalFileOpenTarget,
   resolveTrustedLocalFileReference,
@@ -336,7 +306,6 @@ import {
   resolveAgentWorkdir,
 } from './agent/capabilities/agentLocalRoot';
 import { DiagnosticLogStore } from './diagnosticLog';
-import { NodeAccessStore } from './nodeAccessStore';
 import { resolveUserDataDir } from './userDataPath';
 import type { NodeAccessSource } from '../core/nodeAccessRanking';
 import {
@@ -356,6 +325,8 @@ import {
   type OwnedIpcMain,
   type TransportOwner,
 } from './hostTransport/ownership';
+import { createOutlineDesktopHost } from './hostDomain/outlineDesktopHost';
+import { createAgentHost } from './hostDomain/agentHost';
 
 // App identity for menus / "About" / notifications. Kept deliberately separate
 // from the userData directory, which we resolve EXPLICITLY below instead of
@@ -464,82 +435,25 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const APP_ICON_PNG_PATH = app.isPackaged
   ? join(process.resourcesPath, 'icon.png')
   : join(__dirname, '../../build/icon.png');
-const outlineRuntimeRoot = join(resolvedUserDataDir, 'outline-runtime');
-const outlineContentRoot = join(resolvedUserDataDir, 'content');
-const outlineDevelopmentSessionId = app.isPackaged ? undefined : `desktop:${randomUUID()}`;
-const outlineClientSupervisor = new OutlineClientSupervisor({
-  root: outlineRuntimeRoot,
-  contentRoot: outlineContentRoot,
-  launch: desktopOutlineRuntimeLaunch(outlineRuntimeRoot, outlineContentRoot),
-  ...(outlineDevelopmentSessionId ? { expectedDevelopmentSessionId: outlineDevelopmentSessionId } : {}),
-  origin: 'desktop',
-});
-const desktopOutlineClient = new DesktopOutlineClient({
-  connect: () => outlineClientSupervisor.connect(),
-});
-const outlineDocumentService = new OutlineDocumentService(outlineClientSupervisor);
-outlineDocumentService.setDurabilityFailureHandler((error, revision) => reportError({
-  domain: 'document',
-  severity: 'error',
-  code: 'workspace-save-failed',
-  message: `Workspace save failed at revision ${revision}.`,
-  context: { operation: 'workspace-save', revision },
-  error,
-}));
-configureOutlineCliRuntime({
-  isPackaged: app.isPackaged,
+const outlineHost = createOutlineDesktopHost({
+  userDataDir: resolvedUserDataDir,
   moduleDir: __dirname,
+  isPackaged: app.isPackaged,
   resourcesPath: process.resourcesPath,
-  processExecPath: process.execPath,
+  execPath: process.execPath,
+  reportError,
 });
+const {
+  runtimeRoot: outlineRuntimeRoot,
+  contentRoot: outlineContentRoot,
+  assetExportRoot: outlineAssetExportRoot,
+  supervisor: outlineClientSupervisor,
+  client: desktopOutlineClient,
+  documents: outlineDocumentService,
+  assets: assetService,
+  nodeAccess: nodeAccessStore,
+} = outlineHost;
 
-function desktopOutlineRuntimeLaunch(root: string, contentRoot: string): OutlineRuntimeLaunch {
-  const configuredEntry = process.env.TENON_OUTLINE_RUNTIME_ENTRY;
-  if (configuredEntry) {
-    return {
-      command: process.env.TENON_OUTLINE_RUNTIME_COMMAND ?? process.execPath,
-      args: [configuredEntry, '--root', root, '--content-root', contentRoot],
-    };
-  }
-  if (app.isPackaged) {
-    return {
-      command: process.execPath,
-      args: [join(process.resourcesPath, 'outline', 'outline-runtime.mjs'), '--root', root, '--content-root', contentRoot],
-    };
-  }
-  const npmExecutable = process.env.npm_execpath;
-  const bunExecutable = npmExecutable && basename(npmExecutable) === 'bun' ? npmExecutable : 'bun';
-  return {
-    command: bunExecutable,
-    args: [resolve(__dirname, '../../src/outline/runtime/server/entry.ts'), '--root', root, '--content-root', contentRoot],
-  };
-}
-
-const extensionRegistry = new ExtensionRegistry();
-const memoryControlStore = new MemoryControlStore(join(app.getPath('userData'), 'agent', 'memories.sqlite'));
-const timelineMemoryStore = new TimelineMemoryStore(outlineDocumentService);
-const memoryExtension = new MemoryExtension(memoryControlStore, timelineMemoryStore, {
-  onError: (error, operation) => reportError({
-    domain: 'memory',
-    severity: 'error',
-    code: `memory-${operation}-failed`,
-    message: `Memory ${operation} failed.`,
-    context: { operation },
-    error,
-  }),
-});
-const nodeAccessStore = new NodeAccessStore(join(app.getPath('userData'), 'node-access-stats.json'), {
-  onError: (error, operation) => reportError({
-    domain: 'node-access',
-    severity: 'warn',
-    code: `node-access-${operation}`,
-    message: `Node access store ${operation} failed`,
-    context: { operation },
-    error,
-  }),
-});
-const outlineAssetExportRoot = join(app.getPath('userData'), 'outline-asset-exports');
-const assetService = new OutlineDesktopAssetService(outlineClientSupervisor, outlineAssetExportRoot);
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
 let providerConfigWindow: BrowserWindow | null = null;
@@ -615,47 +529,6 @@ if (!hasExplicitAgentLocalRoot(process.env.LIN_AGENT_LOCAL_ROOT)) {
   ensureAgentDir(agentLocalFileRoot);
 }
 ensureAgentDir(agentScratchRoot);
-const browserPilotHost = new BrowserPilotHost({
-  userDataRoot: resolvedUserDataDir,
-  scratchRoot: agentScratchRoot,
-});
-const managedSkillStore = new ManagedSkillStore(resolvedUserDataDir);
-let managedSkillShellEnvironment: ManagedSkillShellEnvironmentRegistry | null = null;
-let skillRuntime!: AgentSkillRuntime;
-const turnSkillRuntimes = new Map<string, AgentSkillRuntime>();
-const turnSkillRuntimeInitializations = new Map<string, Promise<AgentSkillRuntime>>();
-const managedSkillService: ManagedSkillService = new ManagedSkillService({
-  appVersion: app.getVersion(),
-  store: managedSkillStore,
-  onChanged: async (): Promise<void> => {
-    managedSkillShellEnvironment?.invalidate();
-    await Promise.all(
-      [skillRuntime, ...turnSkillRuntimes.values()].map((runtime) => runtime.notifySkillContentWritten([])),
-    );
-  },
-  findNameConflict: async (name, excludingManagedSkillId) => {
-    const normalized = name.trim();
-    if (!normalized) return null;
-    const skills = await skillRuntime.listAllSkills();
-    const conflict = skills.find((skill) => (
-      skill.name === normalized
-      && !(skill.source === 'managed' && skill.name === excludingManagedSkillId)
-    ));
-    return conflict ? { source: conflict.source, location: conflict.skillFile } : null;
-  },
-});
-managedSkillShellEnvironment = new ManagedSkillShellEnvironmentRegistry({
-  activeSkillIds: async () => new Set(
-    (await managedSkillService.activeRuntimeRoots()).map((root) => root.id),
-  ),
-  outputRootBoundary: agentScratchRoot,
-  contributors: [{
-    skillId: BROWSER_PILOT_MANAGED_SKILL_ID,
-    processEnvironment: ({ threadId, turnId, executionId }) => (
-      browserPilotHost.processEnvironment(threadId, turnId, executionId)
-    ),
-  }],
-});
 // An available Skill update should be visible without going looking for it, but
 // nothing about that is urgent enough to spend the launch path on. So: one
 // throttled sweep per launch, deferred until after first paint, fire-and-forget.
@@ -686,60 +559,6 @@ function scheduleAppUpdateCheck(): void {
   timer.unref?.();
 }
 
-// Scratch holds only ephemeral, app-owned data (resource materializations, live shell captures,
-// legacy fetch files, and PDF page images). Reclaim anything past the TTL once per launch;
-// failures are swallowed so cleanup never blocks startup.
-void pruneAgentScratch(agentScratchRoot).catch((error) => {
-  console.error('[agent] failed to prune scratch root at startup', error);
-});
-skillRuntime = new AgentSkillRuntime({
-  localRoot: agentLocalFileRoot,
-  provenanceStore: createAgentSkillProvenanceStore(),
-  managedSkillRoots: () => managedSkillService.activeRuntimeRoots(),
-  managedSkillContentRoot: managedSkillService.contentRoot,
-  assertManagedSkillInvocable: (skillId, expectedContentHash) => (
-    managedSkillService.assertInvocable(skillId, expectedContentHash)
-  ),
-  executeSkillShell: ({ skill, command, signal }) => executeAgentSkillShellCommand({
-    skill,
-    command,
-    localRoot: agentLocalFileRoot,
-    scratchRoot: agentScratchRoot,
-    signal,
-  }),
-});
-const managedSkillBootstrap = managedSkillService.bootstrapDefaults(DEFAULT_MANAGED_SKILLS, {
-  findNameConflict: findUnmanagedSkillNameConflict,
-});
-void managedSkillBootstrap.then((results) => {
-  for (const result of results) {
-    if (result.status === 'failed') {
-      console.warn(`[managed-skills] default acquisition failed for ${result.id}: ${result.error?.code ?? 'unexpected_error'}`);
-    }
-  }
-});
-void getAgentRuntimeSettings().then((settings) => {
-  for (const runtime of [skillRuntime, ...turnSkillRuntimes.values()]) {
-    runtime.updateAdditionalSkillDirectories(settings.additionalSkillDirectories);
-    runtime.updateDisabledSkills(settings.disabledSkills ?? []);
-  }
-}).catch((error) => console.error('[agent] failed to load skill settings', error));
-
-async function findUnmanagedSkillNameConflict(name: string) {
-  const normalized = name.trim();
-  if (!normalized) return null;
-  const settings = await getAgentRuntimeSettings();
-  const runtime = new AgentSkillRuntime({
-    localRoot: agentLocalFileRoot,
-    additionalSkillDirectories: settings.additionalSkillDirectories,
-  });
-  const conflict = (await runtime.listAllSkills()).find((skill) => skill.name === normalized);
-  return conflict ? { source: conflict.source, location: conflict.skillFile } : null;
-}
-let toolRuntime!: ToolRuntime;
-const agentConfigurationLoader = new AgentConfigurationLoader(resolvedUserDataDir);
-const agentConfigurationWriter = new AgentConfigurationWriter(resolvedUserDataDir);
-const agentWorktree = new AgentWorktree(resolvedUserDataDir);
 let threadService!: ThreadService;
 
 /** How many changed paths a worktree footer will LIST; the count it states is
@@ -757,8 +576,14 @@ function retainedAgentWorktree(agentId: string): { readonly path: string } | nul
   return worktree && worktree.removedAt === null ? { path: worktree.path } : null;
 }
 const agentImageObservationMutex = new Mutex();
-const attachmentResolver = new AttachmentResolver({
-  useResourcePath: (threadId, ref, use) => threadService.useThreadResourcePath(threadId, ref, use),
+const agentHost = createAgentHost({
+  userDataDir: resolvedUserDataDir,
+  scratchRoot: agentScratchRoot,
+  defaultCwd: agentLocalFileRoot,
+  appVersion: app.getVersion(),
+  loadRuntimeSettings: getAgentRuntimeSettings,
+  timeline: outlineDocumentService,
+  reportError,
   prepareImageArtifact: async ({ threadId, attachment, sourcePath }) => {
     const snapshot = await prepareAttachmentPromptImage(attachment, sourcePath);
     const written = await threadService.writeThreadResourceWithStatus(
@@ -778,36 +603,28 @@ const attachmentResolver = new AttachmentResolver({
       createdResources: written.created ? [written.ref] : [],
     };
   },
-});
-const turnExecutor = new PiTurnExecutor({
-  createTools: (context) => toolRuntime.createTools(context),
-  beforeProviderContext: (context) => toolRuntime.prepareProviderContext(context),
-  transcriptIndexPath: threadTranscriptIndexPath(threadTranscriptRoot(resolvedUserDataDir)),
-  // One name, wherever it is drawn or spoken: the prompt now asks configuration
-  // who this agent is instead of hard-coding a name the transcript disagreed
-  // with. The root Thread is `main`; a child is named by its Agent type.
-  resolvePersona: (thread) => agentConfigurationLoader.resolveThreadPersona(thread, reportError),
-});
-threadService = ThreadService.open(
-  resolvedUserDataDir,
-  turnExecutor,
-  {
-    attachmentScratchRoot: agentScratchRoot,
-    nameGenerator: turnExecutor,
-    resolveConfiguration: (request) => agentConfigurationLoader.resolveProfile(
+  createTurnExecutorOptions: ({ configurationLoader }) => ({
+    transcriptIndexPath: threadTranscriptIndexPath(threadTranscriptRoot(resolvedUserDataDir)),
+    // One name, wherever it is drawn or spoken: the prompt now asks configuration
+    // who this agent is instead of hard-coding a name the transcript disagreed
+    // with. The root Thread is `main`; a child is named by its Agent type.
+    resolvePersona: (thread) => configurationLoader.resolveThreadPersona(thread, reportError),
+  }),
+  createThreadOptions: ({ configurationLoader, worktree }) => ({
+    resolveConfiguration: (request) => configurationLoader.resolveProfile(
       request.configurationProfile,
       request.cwd,
     ),
-    resolveRole: (name, cwd) => agentConfigurationLoader.resolveRole(name, cwd),
-    resolveAgentType: (name, cwd) => agentConfigurationLoader.resolveAgentType(name, cwd),
+    resolveRole: (name, cwd) => configurationLoader.resolveRole(name, cwd),
+    resolveAgentType: (name, cwd) => configurationLoader.resolveAgentType(name, cwd),
     resolveRoleCatalog: (cwd, reportFailure) => (
-      agentConfigurationLoader.buildRoleCatalogSnapshotForUserPath(cwd, reportFailure)
+      configurationLoader.buildRoleCatalogSnapshotForUserPath(cwd, reportFailure)
     ),
     resolveIdentityCatalog: (cwd, reportFailure) => (
-      agentConfigurationLoader.resolveIdentityCatalogForUserPath(cwd, reportFailure)
+      configurationLoader.resolveIdentityCatalogForUserPath(cwd, reportFailure)
     ),
     resolvePersona: (thread, reportFailure) => (
-      agentConfigurationLoader.resolveThreadPersona(thread, reportFailure)
+      configurationLoader.resolveThreadPersona(thread, reportFailure)
     ),
     resolveProviderModelIds: (providerId) => rankedModels(providerId).map((model) => model.id),
     resolveSubagentTokenBudget: async () => (await getAgentRuntimeSettings()).subagentTokenBudget,
@@ -818,11 +635,11 @@ threadService = ThreadService.open(
         maxConcurrent: settings.subagentMaxConcurrent,
       };
     },
-    planAgentWorktree: (input) => agentWorktree.plan(input),
-    prepareAgentWorktree: (input) => agentWorktree.prepare(input),
-    settleAgentWorktree: (worktree, options) => agentWorktree.settle(worktree, options),
-    recoverAgentWorktree: (input) => agentWorktree.recover(input),
-    cleanupResidualAgentWorktree: (input) => agentWorktree.cleanupResidual(input),
+    planAgentWorktree: (input) => worktree.plan(input),
+    prepareAgentWorktree: (input) => worktree.prepare(input),
+    settleAgentWorktree: (metadata, options) => worktree.settle(metadata, options),
+    recoverAgentWorktree: (input) => worktree.recover(input),
+    cleanupResidualAgentWorktree: (input) => worktree.cleanupResidual(input),
     reportError,
     writeTrajectoryExport: async ({ defaultFileName, bundle }) => {
       try {
@@ -872,7 +689,6 @@ threadService = ThreadService.open(
       validateAgentModelSelection(selection.model, selection.reasoningEffort, provider);
     },
     onRendererConfigurationCommitted: saveLastAgentThreadConfiguration,
-    resolveUserContent: (content, context) => attachmentResolver.resolve(content, context),
     normalizeOutputImage: async ({ bytes, mimeType, signal }) => {
       try {
         const prepared = await prepareBoundedAgentImageBytes(
@@ -915,16 +731,10 @@ threadService = ThreadService.open(
       if (!hasSkillTool) {
         return { catalogSnapshot: null, preloadedInvocations: [], invocation: null };
       }
-      const runtime = new AgentSkillRuntime({
+      const runtime = managedSkills.createRuntime({
         localRoot: thread.cwd,
         threadId: thread.id,
         enabledSkills: configuration.skills,
-        provenanceStore: createAgentSkillProvenanceStore(),
-        managedSkillRoots: () => managedSkillService.activeRuntimeRoots(),
-        managedSkillContentRoot: managedSkillService.contentRoot,
-        assertManagedSkillInvocable: (skillId, expectedContentHash) => (
-          managedSkillService.assertInvocable(skillId, expectedContentHash)
-        ),
         executeSkillShell: ({ skill, command, signal }) => executeAgentSkillShellCommand({
           skill,
           command,
@@ -938,7 +748,7 @@ threadService = ThreadService.open(
             contentRoot: outlineContentRoot,
             supervisor: outlineClientSupervisor,
             baseEnvironment: (shell) => (
-              managedSkillShellEnvironment!.processEnvironment(thread.id, turnId, shell)
+              managedSkillShellEnvironment.processEnvironment(thread.id, turnId, shell)
             ),
           }),
           writeBoundary: agentWriteBoundaryForThread(thread.id),
@@ -963,25 +773,59 @@ threadService = ThreadService.open(
         invocation: invocation?.ok ? invocation.evidence : null,
       };
     },
-    extensions: extensionRegistry,
-    beforeInitialTurnAdmission: () => memoryExtension.prepareForTurnAdmission(),
+  }),
+  createToolOptions: () => ({
+    localWorkspace: localWorkspaceForTurn,
+    imageNormalizer: async ({ filePath, signal }) => {
+      return prepareBoundedAgentImage(filePath, basename(filePath), signal);
+    },
+    skillRuntime: prepareSkillRuntimeForTurn,
+    imageGeneration: (context) => createThreadImageGenerationRuntime(
+      context,
+      localWorkspaceForTurn(context),
+    ),
+  }),
+  resolveAutomationConfiguration: async (selection, cwd, { configurationLoader }) => {
+    const configuration = configurationLoader.resolveProfile(undefined, cwd);
+    const effectiveConfiguration = Object.freeze({
+      ...configuration,
+      ...(selection.model === null ? {} : { model: selection.model }),
+      ...(selection.reasoningEffort === null ? {} : { reasoningEffort: selection.reasoningEffort }),
+    });
+    const provider = selection.modelProvider
+      ? await getProviderRuntimeConfig(selection.modelProvider)
+      : await getActiveProviderRuntimeConfig();
+    if (!provider) throw new Error('Configure the Automation model provider before its next occurrence.');
+    await validateAutomationEffectiveConfiguration(provider.providerId, effectiveConfiguration);
+    return { modelProvider: provider.providerId, configuration: effectiveConfiguration };
   },
-);
-memoryExtension.bindHost(threadService);
-extensionRegistry.register(memoryExtension);
+  validateAutomationConfiguration: validateAutomationEffectiveConfiguration,
+});
+({ threadService } = agentHost);
+const {
+  configurationLoader: agentConfigurationLoader,
+  configurationWriter: agentConfigurationWriter,
+  worktree: agentWorktree,
+  memory: memoryExtension,
+  automationService,
+  toolRuntime,
+} = agentHost;
+const managedSkills = agentHost.managedSkills;
+const {
+  browserPilot: browserPilotHost,
+  service: managedSkillService,
+  shellEnvironment: managedSkillShellEnvironment,
+  primaryRuntime: skillRuntime,
+  turnRuntimes: turnSkillRuntimes,
+  turnRuntimeInitializations: turnSkillRuntimeInitializations,
+} = managedSkills;
 function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0]): AgentSkillRuntime {
   const existing = turnSkillRuntimes.get(context.turn.id);
   if (existing) return existing;
-  const runtime = new AgentSkillRuntime({
+  const runtime = managedSkills.createRuntime({
     localRoot: context.thread.cwd,
     threadId: context.thread.id,
     enabledSkills: context.configuration.skills,
-    provenanceStore: createAgentSkillProvenanceStore(),
-    managedSkillRoots: () => managedSkillService.activeRuntimeRoots(),
-    managedSkillContentRoot: managedSkillService.contentRoot,
-    assertManagedSkillInvocable: (skillId, expectedContentHash) => (
-      managedSkillService.assertInvocable(skillId, expectedContentHash)
-    ),
     executeSkillShell: ({ skill, command, argumentBindings, signal }) => executeAgentSkillShellCommand({
       skill,
       command,
@@ -995,7 +839,7 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
         runtimeRoot: outlineRuntimeRoot,
         contentRoot: outlineContentRoot,
         supervisor: outlineClientSupervisor,
-        baseEnvironment: (shell) => managedSkillShellEnvironment!.processEnvironment(
+        baseEnvironment: (shell) => managedSkillShellEnvironment.processEnvironment(
           context.thread.id,
           context.turn.id,
           shell,
@@ -1114,7 +958,7 @@ function localWorkspaceForTurn(context: Parameters<ToolRuntime['createTools']>[0
     runtimeRoot: outlineRuntimeRoot,
     contentRoot: outlineContentRoot,
     supervisor: outlineClientSupervisor,
-    baseEnvironment: (shell) => managedSkillShellEnvironment!.processEnvironment(
+    baseEnvironment: (shell) => managedSkillShellEnvironment.processEnvironment(
       context.thread.id,
       context.turn.id,
       shell,
@@ -1143,9 +987,6 @@ function agentWriteBoundaryForThread(
   };
 }
 
-const automationStore = new AutomationStore(join(resolvedUserDataDir, 'agent', 'automations.sqlite'));
-const automationWorktree = new AutomationWorktree(resolvedUserDataDir);
-let automationService!: AutomationService;
 async function validateAutomationEffectiveConfiguration(
   modelProvider: string,
   configuration: EffectiveThreadConfiguration,
@@ -1154,54 +995,7 @@ async function validateAutomationEffectiveConfiguration(
   if (!provider) throw new Error(`Automation model provider is unavailable: ${modelProvider}`);
   validateAgentModelSelection(configuration.model, configuration.reasoningEffort, provider);
 }
-const automationDispatcher = new AutomationDispatcher({
-  store: automationStore,
-  threads: threadService,
-  worktrees: automationWorktree,
-  defaultCwd: agentLocalFileRoot,
-  resolveConfiguration: async (selection, cwd) => {
-    const configuration = agentConfigurationLoader.resolveProfile(undefined, cwd);
-    const effectiveConfiguration = Object.freeze({
-      ...configuration,
-      ...(selection.model === null ? {} : { model: selection.model }),
-      ...(selection.reasoningEffort === null ? {} : { reasoningEffort: selection.reasoningEffort }),
-    });
-    const provider = selection.modelProvider
-      ? await getProviderRuntimeConfig(selection.modelProvider)
-      : await getActiveProviderRuntimeConfig();
-    if (!provider) throw new Error('Configure the Automation model provider before its next occurrence.');
-    await validateAutomationEffectiveConfiguration(provider.providerId, effectiveConfiguration);
-    return { modelProvider: provider.providerId, configuration: effectiveConfiguration };
-  },
-  validateEffectiveConfiguration: validateAutomationEffectiveConfiguration,
-  onRunChanged: (run) => automationService.runChanged(run),
-});
-const automationScheduler = new AutomationScheduler({
-  store: automationStore,
-  dispatcher: automationDispatcher,
-  onAutomationChanged: (automation) => automationService.automationChanged(automation),
-  onRunChanged: (run) => automationService.runChanged(run),
-});
-automationService = new AutomationService({
-  store: automationStore,
-  scheduler: automationScheduler,
-  dispatcher: automationDispatcher,
-  threads: threadService,
-});
 const wakeAutomationsOnResume = () => automationService.wake();
-
-toolRuntime = new ToolRuntime(threadService, {
-  localWorkspace: localWorkspaceForTurn,
-  imageNormalizer: async ({ filePath, signal }) => {
-    return prepareBoundedAgentImage(filePath, basename(filePath), signal);
-  },
-  skillRuntime: prepareSkillRuntimeForTurn,
-  imageGeneration: (context) => createThreadImageGenerationRuntime(
-    context,
-    localWorkspaceForTurn(context),
-  ),
-  dynamicTools: () => [createAutomationTool(automationService)],
-});
 threadService.subscribe((notification) => {
   if (notification.type === 'turn/completed') {
     turnSkillRuntimes.delete(notification.turnId);
@@ -1388,20 +1182,9 @@ const localFilePreviewStreams = new LocalFilePreviewStreamRegistry(() => [
 ]);
 const linkedFileGrants = new LinkedFileGrantStore(join(resolvedUserDataDir, 'linked-file-grants.json'));
 
-outlineDocumentService.onProjectionChanged(({ event, update }) => {
+outlineHost.observeProjection(({ event, update }) => {
   pruneNodeAccessForProjectionUpdate(update);
-  try {
-    memoryExtension.projectionChanged({ update, ...(event.operation ? { operation: event.operation } : {}) });
-  } catch (error) {
-    reportError({
-      domain: 'memory',
-      severity: 'error',
-      code: 'memory-runtime-projection-observer-failed',
-      message: 'Memory Runtime projection observer failed.',
-      context: { operation: 'runtime-projection-observer' },
-      error,
-    });
-  }
+  agentHost.projectionChanged(update, event.operation);
 });
 
 async function recordDocumentNodeAccess(nodeIds: readonly string[], source: NodeAccessSource): Promise<void> {
@@ -5157,17 +4940,16 @@ if (!app.requestSingleInstanceLock()) {
     pageTranslationService.dispose();
     await Promise.race([
       Promise.allSettled([
-        nodeAccessStore.flushNow(),
+        outlineHost.flushDerivedState(),
         previewTranslationCache.flushNow(),
-        closeAgentServices(memoryExtension, threadService, automationService),
+        agentHost.close(),
         diagnosticLog.flushNow({ reason: 'before-quit' }),
         flushUrlPreviewSession(urlPreviewSession),
         localFilePreviewStreams.close(),
       ]),
       new Promise((resolve) => setTimeout(resolve, 2_500)),
     ]);
-    desktopOutlineClient.close();
-    outlineDocumentService.close();
+    outlineHost.close();
     try {
       mainErrorTransport.dispose();
     } catch (error) {
@@ -5208,31 +4990,9 @@ if (!app.requestSingleInstanceLock()) {
     // neither local catalog corruption nor cleanup failure may block app startup.
     const providerReconcile = await reconcileProviderConfig().catch(() => null);
     if (providerReconcile?.activeProviderChanged) clearLastAgentThreadConfiguration();
-    await outlineDocumentService.init();
-    memoryExtension.initializeMutationIndex(outlineDocumentService.liveProjection());
-    await threadService.initialize();
-    await memoryExtension.startWorker();
-    await automationService.start();
-    await nodeAccessStore.load().catch((error) => {
-      reportError({
-        domain: 'node-access',
-        severity: 'warn',
-        code: 'node-access-startup-load',
-        message: 'Node access store startup load failed',
-        context: { operation: 'startup-load' },
-        error,
-      });
-    });
-    await outlineDocumentService.replacePersonalAccessRanking(nodeAccessStore.snapshot()).catch((error) => {
-      reportError({
-        domain: 'node-access',
-        severity: 'warn',
-        code: 'node-access-runtime-sync',
-        message: 'Node access ranking Runtime sync failed',
-        context: { operation: 'runtime-sync' },
-        error,
-      });
-    });
+    await outlineHost.initializeDocuments();
+    await agentHost.initialize(outlineDocumentService.liveProjection());
+    await outlineHost.initializePersonalAccessRanking();
     const icon = nativeImage.createFromPath(APP_ICON_PNG_PATH);
     if (process.platform === 'darwin' && !icon.isEmpty()) app.dock?.setIcon(icon);
     app.setAboutPanelOptions({
