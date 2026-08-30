@@ -36,8 +36,7 @@ protocol, security rule, user flow, or acceptance criterion.
 
 ```text
 Critical mechanism lane:
-  host-domain-composition
-    -> host-platform-composition
+  host-platform-composition
     -> desktop-host-cutover
     ~> agent-bash-stdin-transport
     ~> agent-result-and-file-lifecycle
@@ -65,8 +64,7 @@ Parallel after agent-result-and-file-lifecycle:
 | Priority | Plan / PR claim | Status | Eligible after |
 | --- | --- | --- | --- |
 | P2 | [outline-source-preview](plans/outline-source-preview.md) | `draft`, ratified in #593 | **Now; Source model shipped in #598** |
-| P1 | [host-domain-composition](plans/host-domain-composition.md) | `draft`, ratified in #591 | **Now; transport ownership shipped in #600** |
-| P1 | [host-platform-composition](plans/host-platform-composition.md) | `draft`, ratified in #591 | `host-domain-composition` |
+| P1 | [host-platform-composition](plans/host-platform-composition.md) | `draft`, ratified in #591 | **Now; domain composition shipped in #601** |
 | P1 | [desktop-host-cutover](plans/desktop-host-cutover.md) | `draft`, ratified in #591 | `host-platform-composition` |
 | P1 | [agent-bash-stdin-transport](plans/agent-bash-stdin-transport.md) | `draft`, ratified in #596 | `desktop-host-cutover` by A7 collision order |
 | P1 | [outline-cli-skill-efficiency](plans/outline-cli-skill-efficiency.md) | `draft`, ratified in #595 | `agent-bash-stdin-transport` |
@@ -81,14 +79,13 @@ Parallel after agent-result-and-file-lifecycle:
 | P3 | [agent-skill-curation-report](plans/agent-skill-curation-report.md) | `draft` | `agent-skill-authoring-foundation` |
 | P3 | [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | `draft` | `agent-result-and-file-lifecycle` |
 
-`outline-source-preview` and `host-domain-composition` are now eligible in
+`outline-source-preview` and `host-platform-composition` are now eligible in
 parallel **inside the primary delivery queue**. Build-ready work outside this
 queue remains independently claimable under its own collision boundary. The
-remaining Host chain has three substantial serial PRs: backend domain
-composition, native platform composition, and final DesktopHost/lifecycle
-cutover. Agent resource references, conversation workspaces/final citations,
-and delegated handoff remain three foundation-first build stages inside one
-atomic feature PR rather than three partial releases.
+remaining Host chain has two substantial serial PRs: native platform composition
+and final DesktopHost/lifecycle cutover. Agent resource references, conversation
+workspaces/final citations, and delegated handoff remain three foundation-first
+build stages inside one atomic feature PR rather than three partial releases.
 
 The split also absorbs three former planless tasks without losing their intent:
 
@@ -236,6 +233,10 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **host-domain-composition** (`done`, #601, 2026-08-30) — Agent and Outline
+  backend graphs moved behind narrow typed Hosts with explicit lifecycle and a
+  complete-tree construction audit; plan archived at
+  [host-domain-composition](plans/archive/host-domain-composition.md).
 - **host-transport-ownership** (`done`, #600, 2026-08-30) — every desktop IPC,
   protocol, session, and process-lifetime transport effect gained one named,
   idempotently disposable owner plus a reproducible baseline audit; plan

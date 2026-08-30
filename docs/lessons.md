@@ -2054,3 +2054,19 @@ duplicate registrations with one release, and a registration inside an owned
 scope with its release removed. Run those fixtures through the same inventory,
 classification, and completion path as the real tree so the guard proves its
 own failure behavior.
+
+## Ownership audits must scan before they classify
+
+PR #601's first domain-construction audit filtered inventory to `hostDomain/`
+before assigning owners. That made the expected Host construction visible but
+discarded the exact violation the guard was meant to catch: a second required
+service constructed in `main.ts`. The report claimed zero unowned and duplicate
+constructions even though the complete inventory contained both instances.
+
+**Collect the complete authority surface before applying ownership or scope
+rules.** Select semantic targets first, assign owners second, then calculate
+unowned, duplicate, and missing queues from that same complete set. Scope is an
+ownership fact, not an inventory filter. A negative fixture must place one valid
+instance inside the owner and one invalid instance outside it; for critical
+audits, also inject that violation into a real-tree checkout and verify a nonzero
+exit so helper-level fixtures cannot merely agree with their own blind spot.

@@ -46,7 +46,8 @@ more than they do on the merged baseline.
 
 ### Dependencies and collisions
 
-`host-domain-composition` lands first. `desktop-host-cutover` consumes these
+The shipped `host-domain-composition` boundary is the direct predecessor.
+`desktop-host-cutover` consumes these
 final owners. Source preview, file-preview extensions, update-check follow-ups,
 theme/i18n work, and preview-jank units wait or repeat the live file collision
 check; this refactor does not absorb their behavior changes.

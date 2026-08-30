@@ -163,6 +163,23 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
+- **Agent and Outline backend graphs now live behind narrow typed domain Hosts
+  (PR #601, codex)** — `main.ts` now composes capability-grouped configuration,
+  worktree, Thread, Memory, Automation, Skill, document, asset, renderer, ranking,
+  and quit surfaces without retaining concrete services or per-Turn runtime maps.
+  Typed assign-once edges close real constructor cycles while explicit startup,
+  projection, ranking, durability, Automation, Memory, Thread, and reverse-close
+  ordering preserve the existing desktop behavior. The Host audit now inventories
+  every required domain construction across the complete `src/main` tree and
+  rejects missing, unowned, or globally duplicated services. Gate review found
+  two Medium gaps: the first audit ignored duplicate constructors outside
+  `hostDomain/`, and the first Host interfaces still exposed mutable service
+  bags. Both were fixed before the final no-findings review, including a real
+  duplicate-construction negative fixture and end-to-end failure injection.
+  Verified with typecheck, `docs:check`, build, 252 focused Core tests, 1,437
+  renderer tests, 2,678 passing full-Core tests with 6 skipped and two existing
+  failures, whitespace checks, and all five GitHub E2E samples.
+
 - **Desktop Host transport now has explicit, disposable ownership (PR #600,
   codex)** — all 60 IPC channels, custom protocols, session policy, Automation
   resume, and app/process lifecycle listeners are grouped behind named owners
