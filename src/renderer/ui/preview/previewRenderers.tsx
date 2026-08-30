@@ -182,6 +182,7 @@ function clampPreviewHeight(height: number) {
 }
 
 export interface PreviewRendererProps {
+  accessibleName?: string;
   displayMode: FilePreviewDisplayMode;
   mediaActions?: ReactElement | null;
   onEpubTranslationSurfaceChange?: (surface: EpubTranslationDomAdapter | null) => void;
@@ -233,6 +234,7 @@ export function isPassivePlaybackSource(source: PreviewSourceDescriptor): boolea
 }
 
 export function PreviewRenderer({
+  accessibleName,
   displayMode,
   onEpubTranslationSurfaceChange,
   onSummaryPageSelect,
@@ -245,6 +247,7 @@ export function PreviewRenderer({
   scrollRootRef,
   mediaActions,
 }: {
+  accessibleName?: string;
   displayMode: FilePreviewDisplayMode;
   mediaActions?: ReactElement | null;
   onEpubTranslationSurfaceChange?: (surface: EpubTranslationDomAdapter | null) => void;
@@ -269,6 +272,7 @@ export function PreviewRenderer({
   const Renderer = FILE_PREVIEW_RENDERERS.find((entry) => entry.match(source))?.component ?? MetadataPreview;
   return (
     <Renderer
+      accessibleName={accessibleName}
       displayMode={displayMode}
       onEpubTranslationSurfaceChange={onEpubTranslationSurfaceChange}
       onSummaryPageSelect={onSummaryPageSelect}
@@ -283,6 +287,8 @@ export function PreviewRenderer({
 }
 
 export interface FilePreviewShellProps {
+  /** User-authored Node content used to name an image-backed Source. */
+  accessibleName?: string;
   state: PreviewSourceState;
   onOpenTarget: (target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
   /** The OS-default-app open action (asset / local file / url). Null when not openable. */
@@ -312,6 +318,7 @@ export interface FilePreviewShellProps {
  * common across non-image file types.
  */
 export function FilePreviewShell({
+  accessibleName,
   state,
   onOpenTarget,
   primaryOpen = null,
@@ -446,6 +453,7 @@ export function FilePreviewShell({
           <PreviewMessage>{state.error === 'too-large' ? labels.tooLarge : labels.unavailable}</PreviewMessage>
         ) : (
           <PreviewRenderer
+            accessibleName={accessibleName}
             displayMode={displayMode}
             onEpubTranslationSurfaceChange={onEpubTranslationSurfaceChange}
             onSummaryPageSelect={openSummaryPage}
@@ -541,7 +549,7 @@ function DirectoryPreview({ onOpenTarget, source }: PreviewRendererProps) {
   );
 }
 
-function ImagePreview({ source }: PreviewRendererProps) {
+function ImagePreview({ accessibleName, source }: PreviewRendererProps) {
   const labels = useT().shell.filePreview;
   // Prefer the stream URL; otherwise read bytes (shared cancel/revoke machine). The
   // thumbnail data URL is the placeholder while the read is in flight or on failure.
@@ -554,7 +562,7 @@ function ImagePreview({ source }: PreviewRendererProps) {
   if (!src) return <PreviewMessage>{labels.loading}</PreviewMessage>;
   return (
     <figure className="file-preview-image">
-      <img alt={labels.imageAlt({ name: source.name })} src={src} />
+      <img alt={accessibleName?.trim() || labels.imageAlt({ name: source.name })} src={src} />
       {isError ? <figcaption>{labels.tooLarge}</figcaption> : null}
     </figure>
   );

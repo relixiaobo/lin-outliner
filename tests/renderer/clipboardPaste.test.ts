@@ -12,13 +12,16 @@ function stringItem(type: string): DataTransferItem {
 function dataTransfer(parts: {
   items?: DataTransferItem[];
   files?: File[];
+  html?: string;
   text?: string;
 }): DataTransfer {
   const text = parts.text ?? '';
   return {
     items: parts.items ?? [],
     files: parts.files ?? [],
-    getData: (type: string) => (type === 'text/plain' ? text : ''),
+    getData: (type: string) => (
+      type === 'text/plain' ? text : type === 'text/html' ? parts.html ?? '' : ''
+    ),
   } as unknown as DataTransfer;
 }
 
@@ -54,21 +57,25 @@ describe('classifyMediaPaste', () => {
     expect(intent).toEqual({ kind: 'files', files: [image, attachment] });
   });
 
-  test('a lone remote image URL becomes a media-URL intent when there is no selection', () => {
+  test('a lone bare web URL becomes Source-eligible when there is no selection', () => {
     const intent = classifyMediaPaste(dataTransfer({ text: 'https://cdn.test/a.png' }), { hasSelection: false });
-    expect(intent).toEqual({ kind: 'mediaUrl', url: 'https://cdn.test/a.png' });
+    expect(intent).toEqual({ kind: 'bareUrl', url: 'https://cdn.test/a.png' });
   });
 
-  test('an image URL with an active selection links the selection instead (linkUrl, not mediaUrl)', () => {
+  test('a URL with an active selection links the selection', () => {
     const intent = classifyMediaPaste(dataTransfer({ text: 'https://cdn.test/a.png' }), { hasSelection: true });
     expect(intent).toEqual({ kind: 'linkUrl', url: 'https://cdn.test/a.png' });
   });
 
-  test('a non-image single-line URL becomes a link intent regardless of selection', () => {
+  test('a bare URL is normalized and an HTML anchor remains an inline link', () => {
     expect(classifyMediaPaste(dataTransfer({ text: 'https://example.com/page' }), { hasSelection: false }))
-      .toEqual({ kind: 'linkUrl', url: 'https://example.com/page' });
+      .toEqual({ kind: 'bareUrl', url: 'https://example.com/page' });
     expect(classifyMediaPaste(dataTransfer({ text: 'www.example.com/x' }), { hasSelection: true }))
       .toEqual({ kind: 'linkUrl', url: 'https://www.example.com/x' });
+    expect(classifyMediaPaste(dataTransfer({
+      text: 'https://example.com/page',
+      html: '<a href="https://example.com/page">https://example.com/page</a>',
+    }), { hasSelection: false })).toEqual({ kind: 'linkUrl', url: 'https://example.com/page' });
   });
 
   test('plain prose / multi-token text is not a media paste (caller handles structured/plain)', () => {
@@ -80,6 +87,6 @@ describe('classifyMediaPaste', () => {
 
   test('defaults to no-selection when options are omitted', () => {
     expect(classifyMediaPaste(dataTransfer({ text: 'https://cdn.test/a.png' })))
-      .toEqual({ kind: 'mediaUrl', url: 'https://cdn.test/a.png' });
+      .toEqual({ kind: 'bareUrl', url: 'https://cdn.test/a.png' });
   });
 });

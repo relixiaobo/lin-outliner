@@ -628,6 +628,43 @@ describe('renderer Outline intents', () => {
       }),
     ]);
   });
+
+  test('writes bare-URL content and its Source in one owner update', async () => {
+    const harness = await createHarness([node('target')]);
+    const url = 'https://example.com/article';
+
+    await outlineDocumentApi.setNodeContentAndAddSource('target', rich(url), url);
+
+    expect(harness.changeSets[0]!.operations).toEqual([{
+      op: 'update',
+      targets: oneId('target'),
+      changes: [
+        { kind: 'content', value: rich(url) },
+        {
+          kind: 'source',
+          action: 'add',
+          sourceText: url,
+          valueId: expect.any(String),
+        },
+      ],
+    }]);
+  });
+
+  test('materializes a bare-URL draft under its reserved Node identity', async () => {
+    const harness = await createHarness([node('root')]);
+    const url = 'https://example.com/article';
+
+    await outlineDocumentApi.createSourceNode('root', 0, {
+      id: 'node:reserved',
+      name: url,
+      sourceText: url,
+    });
+
+    expect(harness.changeSets[0]!.operations[0]).toMatchObject({
+      op: 'create',
+      nodes: [{ id: 'node:reserved', content: rich(url) }],
+    });
+  });
 });
 
 interface IntentHarness {

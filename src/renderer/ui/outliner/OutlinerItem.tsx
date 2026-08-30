@@ -16,6 +16,7 @@ import { createPortal, flushSync } from 'react-dom';
 import { api } from '../../api/client';
 import { freshNodeId } from '../../../core/nodeId';
 import { formatAssetSourceUri } from '../../../core/source';
+import { SOURCE_FIELD_ID } from '../../../core/types';
 import type { OperationUndoGroup } from '../../../outline/contract';
 import type {
   AssetMetadata,
@@ -151,6 +152,7 @@ import {
 import { noteOutlinerItemRender } from './renderProbe';
 import { useT } from '../../i18n/I18nProvider';
 import { usePopoverSelection } from './usePopoverSelection';
+import { SourcePreviewAffordance } from '../preview/NodeSourcesSection';
 import {
   addOptimisticRemovals,
   clearOptimisticRemovals,
@@ -1281,49 +1283,31 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     clearExternalFileDropState();
   };
 
-  // A pasted remote image URL follows the same Source-backed placement rules.
-  const handlePasteMediaUrl = async (url: string) => {
-    await commitDraft();
-    if (virtualFieldValueDraft && props.fieldValue) {
-      if (!materializeStartedRef.current) {
-        const outcome = await runClaimedVirtualFieldMaterialization(() => props.run(
-            () => props.fieldValue!.materializeImageUrl(props.nodeId, url),
-            {
-              applyFocus: false,
-              beforeApply: rememberMaterializedFieldEntry,
-            },
-          ));
-        if (outcome) {
-          replaceLocalDraftContent(EMPTY_RICH_TEXT);
-        }
-      } else {
-        await props.run(() => api.createSourceNode(
-          materializedFieldParentIdRef.current ?? props.parentId,
-          null,
-          { sourceText: url },
-        ));
-      }
+  const handlePasteBareUrl = (url: string) => {
+    const content = plainText(url);
+    if (props.draft && !realNode) {
+      startOptimisticDraftMaterialization({
+        content,
+        command: () => api.createSourceNode(
+          props.parentId,
+          currentDraftCreateIndex(),
+          { sourceText: url, name: url, id: props.nodeId },
+        ),
+      });
       return;
     }
-    const draft = draftContentRef.current;
-    const rowTextEmpty = draft.text.trim().length === 0 && draft.inlineRefs.length === 0;
-    const convertInPlace = shouldConvertRowToImage({
-      referenceLikeRow,
-      nodeType: displayed.type,
-      hasChildren: row.hasChildren,
-      rowTextEmpty,
+    const previousContent = draftContentRef.current;
+    replaceLocalDraftContent(content);
+    void startOptimisticNodePatch({
+      currentUi: props.uiRef.current,
+      setUi: props.setUi,
+      patch: pendingNodePatch(targetEditId, { content }),
+      command: () => props.run(
+        () => api.setNodeContentAndAddSource(targetEditId, content, url),
+        { applyFocus: false },
+      ),
+      onRejected: () => replaceLocalDraftContent(previousContent),
     });
-    if (convertInPlace) {
-      await props.run(() => api.addSource(targetEditId, url));
-    } else {
-      const siblings = props.index.byId.get(props.parentId)?.children ?? [];
-      const rowIndex = siblings.indexOf(props.nodeId);
-      await props.run(() => api.createSourceNode(
-        props.parentId,
-        rowIndex >= 0 ? rowIndex + 1 : null,
-        { sourceText: url },
-      ));
-    }
   };
 
   const startOptimisticDraftMaterialization = (params: {
@@ -2915,6 +2899,13 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // empty draft is guided by its "Press Space…" placeholder instead, so it shows
   // no button (avoids a redundant icon beside the placeholder).
   const showDateTrigger = dateFieldValue && Boolean(realNode);
+  const sourcePreviewAction = realNode && props.fieldValue?.fieldDefId === SOURCE_FIELD_ID ? (
+    <SourcePreviewAffordance
+      index={props.index}
+      ownerId={props.fieldValue.ownerId}
+      valueId={realNode.id}
+    />
+  ) : null;
 
   // The row's primary focus surface. Checkbox drafts and committed values keep
   // the same control and Node ID, so materialization cannot remount the editor.
@@ -3069,7 +3060,11 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       onPasteOutliner={node.type === 'reference' ? undefined : handlePasteOutliner}
       onPasteImage={node.type === 'reference' ? undefined : (images) => void handlePasteImage(images)}
       onPasteFiles={node.type === 'reference' ? undefined : (files) => void handlePasteFiles(files)}
-      onPasteMediaUrl={node.type === 'reference' ? undefined : (url) => void handlePasteMediaUrl(url)}
+      onPasteBareUrl={
+        node.type === undefined && !props.fieldValue && !displayed.locked
+          ? handlePasteBareUrl
+          : undefined
+      }
       onInlineReferenceClick={pendingReferenceConversion
         ? undefined
         : (target, options) => {
@@ -3205,7 +3200,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
               />
             )
           )}
-          {props.fieldValue && (showDateTrigger || fieldValueHint || fieldValueHref) && (
+          {props.fieldValue && (showDateTrigger || fieldValueHint || fieldValueHref || sourcePreviewAction) && (
             <span className="field-value-affordances" data-preserve-selection>
               {fieldValueHint && (
                 <span
@@ -3236,6 +3231,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
                   <CalendarIcon size={13} strokeWidth={1.8} />
                 </ButtonControl>
               )}
+              {sourcePreviewAction}
             </span>
           )}
           {!props.hideDisplayFields ? (

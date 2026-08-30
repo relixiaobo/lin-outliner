@@ -113,8 +113,8 @@ interface RichTextEditorProps {
   }) => Promise<boolean>;
   onPasteImage?: (images: PastedImage[]) => void;
   onPasteFiles?: (files: File[]) => void;
-  /** A lone remote image URL pasted with no active selection. */
-  onPasteMediaUrl?: (url: string) => void;
+  /** Converts a lone bare URL only when this editor is an empty ordinary Node. */
+  onPasteBareUrl?: (url: string) => void;
   /**
    * First-chance paste handler. When it returns `true` the editor's own paste
    * logic is skipped entirely. Lets a consumer (the trailing slot) keep its own
@@ -655,10 +655,9 @@ export function RichTextEditor(props: RichTextEditorProps) {
             return true;
           }
 
-          // Image / media-URL / single-line-URL front-matter is classified by
-          // the same helper the trailing input uses, so the two stay in
-          // lock-step. Only the application below differs (edit in place here;
-          // create a node in the trailing input).
+          // File and URL front-matter is classified before structured paste so
+          // an exact bare URL can use the empty-node Source producer while HTML
+          // anchors and every non-empty/selected case remain inline links.
           const mediaPaste = classifyMediaPaste(clipboardEvent.clipboardData, { hasSelection: from !== to });
 
           const onPasteFiles = propsRef.current.onPasteFiles;
@@ -680,10 +679,17 @@ export function RichTextEditor(props: RichTextEditorProps) {
             return true;
           }
 
-          const onPasteMediaUrl = propsRef.current.onPasteMediaUrl;
-          if (mediaPaste?.kind === 'mediaUrl' && onPasteMediaUrl) {
+          const currentEditorContent = docToRichText(viewInstance.state.doc);
+          const onPasteBareUrl = propsRef.current.onPasteBareUrl;
+          if (
+            mediaPaste?.kind === 'bareUrl'
+            && onPasteBareUrl
+            && currentEditorContent.text.length === 0
+            && currentEditorContent.inlineRefs.length === 0
+            && currentEditorContent.marks.length === 0
+          ) {
             clipboardEvent.preventDefault();
-            onPasteMediaUrl(mediaPaste.url);
+            onPasteBareUrl(mediaPaste.url);
             return true;
           }
 
@@ -707,15 +713,17 @@ export function RichTextEditor(props: RichTextEditorProps) {
           // one, otherwise insert the URL as link-marked text. Consumers that
           // prefer a pasted URL to flow in as plain text opt out via
           // `linkifyPastedUrl={false}`.
-          if (mediaPaste?.kind === 'linkUrl' && propsRef.current.linkifyPastedUrl !== false) {
+          if (
+            (mediaPaste?.kind === 'linkUrl' || mediaPaste?.kind === 'bareUrl')
+            && propsRef.current.linkifyPastedUrl !== false
+          ) {
             const url = mediaPaste.url;
             clipboardEvent.preventDefault();
-            const current = docToRichText(viewInstance.state.doc);
             let nextContent: RichText;
             if (from !== to) {
               nextContent = {
-                ...current,
-                marks: [...current.marks, { start: from, end: to, type: 'link', attrs: { href: url } }],
+                ...currentEditorContent,
+                marks: [...currentEditorContent.marks, { start: from, end: to, type: 'link', attrs: { href: url } }],
               };
             } else {
               const display = plainText.trim();
@@ -724,8 +732,8 @@ export function RichTextEditor(props: RichTextEditorProps) {
                 marks: [{ start: 0, end: display.length, type: 'link', attrs: { href: url } }],
                 inlineRefs: [],
               };
-              const before = sliceRichText(current, 0, from);
-              const after = sliceRichText(current, from, current.text.length);
+              const before = sliceRichText(currentEditorContent, 0, from);
+              const after = sliceRichText(currentEditorContent, from, currentEditorContent.text.length);
               nextContent = concatRichText(concatRichText(before, linkText), after);
             }
             setContent(nextContent);

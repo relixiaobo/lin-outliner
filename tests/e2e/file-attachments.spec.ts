@@ -138,6 +138,25 @@ async function pasteClipboardFile(page: Parameters<typeof trailingEditor>[0], fi
   }, file);
 }
 
+async function pasteClipboardText(
+  page: Parameters<typeof trailingEditor>[0],
+  text: string,
+  html = '',
+) {
+  await page.evaluate(({ html, text }) => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData('text/plain', text);
+    if (html) dataTransfer.setData('text/html', html);
+    const target = document.activeElement;
+    if (!target) throw new Error('No active paste target');
+    target.dispatchEvent(new ClipboardEvent('paste', {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: dataTransfer,
+    }));
+  }, { html, text });
+}
+
 async function pasteClipboardFileAndOpenPreview(
   page: Parameters<typeof trailingEditor>[0],
   file: { name: string; mimeType: string; text: string },
@@ -609,12 +628,22 @@ test.describe('file attachments', () => {
     await attachmentRow.locator('> .row .row-bullet-button').first().click();
     const nodePage = page.locator('.outline-panel-surface.active-panel');
     await expect(nodePage.locator('.panel-title-editor .ProseMirror')).toContainText('Quarterly report');
-    const sourceRow = nodePage.locator('.node-source-row');
-    await expect(sourceRow).toHaveCount(1);
-    await expect(sourceRow.locator('input')).toHaveValue(/^asset:\/\/local\//);
-    await expect(sourceRow).toHaveAttribute('data-availability', 'ready');
-    await expect(nodePage.getByRole('button', { name: 'Link File' })).toBeVisible();
-    await expect(sourceRow.getByRole('button', { name: 'Replace with File' })).toBeVisible();
+    const drilledProjection = await e2eProjection(page);
+    const sourceValue = sourceFieldValues(drilledProjection, attachmentId!)[0];
+    expect(sourceValue).toBeTruthy();
+    await expect(rowEditor(page, sourceValue!.id)).toContainText(/^asset:\/\/local\//);
+    await expect(nodePage.getByRole('region', { name: 'Source preview' })).toBeVisible();
+    await expect.poll(async () => nodePage.evaluate((panel) => {
+      const preview = panel.querySelector('.node-source-preview-region');
+      const title = panel.querySelector('.panel-header');
+      return preview && title ? preview.getBoundingClientRect().bottom <= title.getBoundingClientRect().top : false;
+    })).toBe(true);
+    await nodePage.getByRole('button', { name: 'More Source actions' }).click();
+    await expect(page.getByRole('menu', { name: 'More Source actions' }).getByRole('menuitem', { name: 'Link File' }))
+      .toBeVisible();
+    await expect(page.getByRole('menu', { name: 'More Source actions' }).getByRole('menuitem', { name: 'Replace with File' }))
+      .toBeVisible();
+    await page.keyboard.press('Escape');
 
     const inlinePreviewFrame = nodePage.locator('.node-source-preview .file-node-preview.collapsed');
     await expect(inlinePreviewFrame).toBeVisible();
@@ -1057,6 +1086,74 @@ test.describe('file attachments', () => {
     expect(await todayChildren(page)).toHaveLength(beforeChildren.length + 1);
   });
 
+  test('Source preview hide, restore, switch, and removal preserve independent field state', async ({ page }) => {
+    const beforeChildren = await todayChildren(page);
+    await trailingEditor(page).click();
+    await page.keyboard.type('/attachment');
+    await expect(page.getByRole('option', { name: /Attachment/ })).toBeVisible();
+    await page.keyboard.press('Enter');
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+    const attachmentId = (await todayChildren(page)).at(-1)!;
+
+    const attachmentRow = row(page, attachmentId);
+    await attachmentRow.locator('> .row').first().hover();
+    await attachmentRow.locator('> .row .row-bullet-button').first().click();
+    const nodePage = page.locator('.outline-panel-surface.active-panel');
+    await expect(nodePage.getByRole('region', { name: 'Source preview' })).toBeVisible();
+
+    let projection = await e2eProjection(page);
+    const sourceEntry = sourceFieldEntries(projection, attachmentId)[0];
+    const firstSource = sourceFieldValues(projection, attachmentId)[0];
+    expect(sourceEntry).toBeTruthy();
+    expect(firstSource).toBeTruthy();
+
+    await nodePage.getByRole('button', { name: 'Hide preview' }).click();
+    await expect(nodePage.getByRole('region', { name: 'Source preview' })).toHaveCount(0);
+    await expect(row(page, firstSource!.id).getByRole('button', { name: 'Show preview' })).toBeVisible();
+
+    const secondSourceText = 'not a valid Source URI';
+    await rowEditor(page, firstSource!.id).focus();
+    await page.keyboard.press('End');
+    await page.keyboard.press('Enter');
+    const sourceTrailing = nodePage.locator('[data-field-value] [data-trailing-parent-id] .ProseMirror');
+    await expect(sourceTrailing).toBeFocused();
+    await page.keyboard.insertText(secondSourceText);
+    await page.keyboard.press('Enter');
+    await expect.poll(async () => sourceFieldValues(await e2eProjection(page), attachmentId).length).toBe(2);
+    projection = await e2eProjection(page);
+    const secondSource = sourceFieldValues(projection, attachmentId)[1];
+    expect(secondSource).toBeTruthy();
+
+    await expect(nodePage.getByRole('region', { name: 'Source preview' })).toHaveCount(0);
+    await expect(row(page, firstSource!.id).getByRole('button', { name: 'Show preview' })).toBeVisible();
+    const previewSecond = row(page, secondSource!.id).getByRole('button', { name: 'Preview this Source' });
+    await expect(previewSecond).toBeVisible();
+    await rowEditor(page, firstSource!.id).focus();
+    await previewSecond.click();
+
+    const previewRegion = nodePage.getByRole('region', { name: 'Source preview' });
+    await expect(previewRegion).toBeVisible();
+    await expect(previewRegion.getByRole('status')).toContainText('not a valid URI');
+    expect(await previewRegion.evaluate((region) => region.contains(document.activeElement))).toBe(false);
+
+    await nodePage.locator('.node-source-switcher').click();
+    const switchMenu = page.getByRole('menu', { name: 'Switch preview Source' });
+    await expect(switchMenu.getByRole('menuitem')).toHaveCount(2);
+    await switchMenu.getByRole('menuitem', { name: /picked-report\.pdf/ }).click();
+    await expect(nodePage.locator('.node-source-preview')).toHaveAttribute('data-source-value-id', firstSource!.id);
+    expect(await previewRegion.evaluate((region) => region.contains(document.activeElement))).toBe(false);
+    await row(page, secondSource!.id).getByRole('button', { name: 'Preview this Source' }).click();
+    await expect(previewRegion.getByRole('status')).toContainText('not a valid URI');
+
+    await nodePage.getByRole('button', { name: 'More Source actions' }).click();
+    await page.getByRole('menu', { name: 'More Source actions' })
+      .getByRole('menuitem', { name: 'Remove Source' })
+      .click();
+    await expect.poll(async () => sourceFieldValues(await e2eProjection(page), attachmentId).length).toBe(1);
+    await expect(previewRegion).toBeVisible();
+    await expect(nodePage.locator('.node-source-preview')).toHaveAttribute('data-source-value-id', firstSource!.id);
+  });
+
   test('Source-backed Nodes keep the ordinary marker and indent-guide geometry', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
@@ -1160,13 +1257,21 @@ test.describe('file attachments', () => {
     }, { nodeId: imageId, tagId: ids.projectTag });
     await expect(imageRow.locator('.tag-badge-label')).toHaveText('project');
 
+    const imageName = 'Release cover';
+    await imageTitle.click();
+    await page.keyboard.press('Meta+A');
+    await page.keyboard.type(imageName);
+    await expect.poll(async () => (
+      (await e2eProjection(page)).nodes.find((node) => node.id === imageId)?.content.text
+    )).toBe(imageName);
+
     await imageRow.locator('> .row').first().hover();
     await imageRow.locator('> .row .row-bullet-button').first().click();
     const nodePage = page.locator('.outline-panel-surface.active-panel');
     const imagePreview = nodePage.locator('.node-source-preview .file-preview-image img');
     await expect(imagePreview).toBeVisible();
-    await expect(imagePreview).toHaveAttribute('alt', /picked-image\.png/i);
-    await expect(nodePage.locator('.node-source-row')).toHaveAttribute('data-availability', 'ready');
+    await expect(imagePreview).toHaveAttribute('alt', imageName);
+    await expect(nodePage.getByRole('region', { name: 'Source preview' })).toBeVisible();
   });
 
   test('external file drag shows outliner insertion guides and drops at the indicated row position', async ({ page }) => {
@@ -1254,6 +1359,44 @@ test.describe('file attachments', () => {
       }),
       sourceText: expect.stringMatching(/^asset:\/\/local\//),
     }));
+  });
+
+  test('a bare URL on an empty row atomically writes content and Source while non-empty content keeps an inline link', async ({ page }) => {
+    const url = 'https://example.com/article';
+    const beforeChildren = await todayChildren(page);
+    await trailingEditor(page).click();
+    await pasteClipboardText(page, url);
+
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+    const createdId = (await todayChildren(page)).at(-1);
+    expect(createdId).toBeTruthy();
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const created = projection.nodes.find((node) => node.id === createdId);
+      return {
+        content: created?.content.text ?? null,
+        sources: sourceFieldValues(projection, createdId!).map((source) => source.content.text),
+      };
+    }).toEqual({ content: url, sources: [url] });
+
+    const sourceCreate = (await appliedSourceCreates(page)).find((entry) => entry.draft.id === createdId);
+    expect(sourceCreate).toMatchObject({
+      draft: { id: createdId, content: { text: url } },
+      sourceText: url,
+    });
+
+    const alphaEditor = rowEditor(page, ids.alpha);
+    await alphaEditor.click();
+    await page.keyboard.press('End');
+    await pasteClipboardText(page, 'www.example.com/linked');
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const alpha = projection.nodes.find((node) => node.id === ids.alpha);
+      return {
+        links: alpha?.content.marks.filter((mark) => mark.type === 'link').map((mark) => mark.attrs?.href) ?? [],
+        sourceCount: sourceFieldValues(projection, ids.alpha).length,
+      };
+    }).toEqual({ links: ['https://www.example.com/linked'], sourceCount: 0 });
   });
 
   test('text-like file previews keep content and horizontal scrollbars inside the preview inset', async ({ page }) => {

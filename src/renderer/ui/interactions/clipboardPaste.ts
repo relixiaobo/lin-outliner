@@ -1,4 +1,4 @@
-import { clipboardImageFiles, imageUrlFromText } from './imagePaste';
+import { clipboardImageFiles } from './imagePaste';
 import { dataTransferFiles } from './attachmentIngest';
 import { detectSingleLineUrl } from './pasteParser';
 
@@ -12,7 +12,7 @@ import { detectSingleLineUrl } from './pasteParser';
 export type MediaPasteIntent =
   | { kind: 'files'; files: File[] }
   | { kind: 'images'; files: File[] }
-  | { kind: 'mediaUrl'; url: string }
+  | { kind: 'bareUrl'; url: string }
   | { kind: 'linkUrl'; url: string };
 
 /**
@@ -25,9 +25,10 @@ export type MediaPasteIntent =
  *
  * 1. Files — image-only clips keep the dedicated image intent; any mixed or
  *    non-image file clip becomes a Source-backed Node paste.
- * 2. A lone remote image URL — only with no active selection. With a selection
- *    the URL should link the selected text instead, so it falls to `linkUrl`.
- * 3. Any single-line URL — becomes a link.
+ * 2. A lone bare web URL with no selection or HTML anchor is eligible for the
+ *    empty-node Source producer. The editor still decides whether its target is
+ *    an empty ordinary Node.
+ * 3. Every other single-line URL remains an inline link.
  *
  * Must run synchronously inside the paste event: `clipboardImageFiles` reads
  * `DataTransfer.items`, which is only valid during dispatch.
@@ -50,12 +51,14 @@ export function classifyMediaPaste(
   if (files.length > 0) return { kind: 'images', files };
 
   const plain = data?.getData('text/plain') ?? '';
-
-  const imageUrl = imageUrlFromText(plain);
-  if (imageUrl && !options.hasSelection) return { kind: 'mediaUrl', url: imageUrl };
-
   const linkUrl = detectSingleLineUrl(plain);
-  if (linkUrl) return { kind: 'linkUrl', url: linkUrl };
+  if (linkUrl) {
+    const html = data?.getData('text/html') ?? '';
+    const carriesAnchor = /<a\b[^>]*\bhref\s*=/iu.test(html);
+    return !options.hasSelection && !carriesAnchor
+      ? { kind: 'bareUrl', url: linkUrl }
+      : { kind: 'linkUrl', url: linkUrl };
+  }
 
   return null;
 }

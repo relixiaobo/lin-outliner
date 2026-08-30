@@ -17,6 +17,7 @@ import {
 } from './previewRenderers';
 
 interface FilePreviewBodyProps {
+  accessibleName?: string;
   ownerId: string;
   target: PreviewTarget;
   onOpenTarget: (target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
@@ -25,6 +26,7 @@ interface FilePreviewBodyProps {
 
 /** Preview body for one explicitly selected Source value of an ordinary Node. */
 export function FilePreviewBody({
+  accessibleName,
   ownerId,
   target,
   onOpenTarget,
@@ -71,6 +73,7 @@ export function FilePreviewBody({
 
   return (
     <FilePreviewShell
+      accessibleName={accessibleName}
       state={state}
       onOpenTarget={onOpenTarget}
       primaryOpen={controls.primaryOpen}

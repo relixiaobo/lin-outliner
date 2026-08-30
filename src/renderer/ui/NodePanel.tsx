@@ -731,6 +731,14 @@ export function NodePanel(props: NodePanelProps) {
         </PanelStickyBreadcrumb>
       )}
       <div className="panel-inner">
+        {rootNode?.type === undefined ? (
+          <NodeSourcesSection
+            accessibleName={rootNode.content.text.trim() || undefined}
+            index={props.index}
+            ownerId={resolvedRootId}
+            run={props.run}
+          />
+        ) : null}
         <header className="panel-header">
           {headerIcon && (
             <div className="panel-heading-icon-row">
@@ -939,9 +947,6 @@ export function NodePanel(props: NodePanelProps) {
         {rootNode && rootDefinitionKind && (
           <DefinitionConfigPanel node={rootNode} index={props.index} run={props.run} />
         )}
-        {rootNode?.type === undefined ? (
-          <NodeSourcesSection index={props.index} ownerId={resolvedRootId} run={props.run} />
-        ) : null}
         {showOutliner && (
           <PanelChildrenOutline
             className={rootDefinitionKind ? 'definition-template-outliner' : undefined}
