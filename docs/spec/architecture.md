@@ -250,22 +250,45 @@ surface is grouped into configuration, worktree, Thread, Memory, Automation,
 Skill, and lifecycle capabilities; concrete services and per-Turn Skill Runtime
 maps remain private to the Host.
 
-`main.ts` supplies native UI callbacks and the explicit cross-domain edges. Agent
+`createResourcePreviewHost` owns the URL-preview session and its security policy,
+page translation and cache, local preview streams, linked-file grants, and the
+native local-file boundary. Its nested `createNativeLocalFileHost` owns native
+pickers, search and recent-file discovery, metadata/icon/thumbnail caches,
+attachment-exact reference resolution, and open/reveal/copy actions. The Host
+exports narrow resource capabilities; it does not expose its concrete stores,
+registries, cache maps, or pending native-file work.
+
+`createWindowApplicationHost` owns the Main, Settings, Provider Config, and
+Launcher windows; app-update and action-invocation services; locale, theme, and
+translation preferences; application menus; launcher context and global hotkey;
+activation; and window-scoped navigation and acknowledgement state. Global app
+effects have an explicit idempotent release path. Window and WebContents
+listeners remain bounded by the lifetime of the surface that created them.
+
+`main.ts` supplies native callbacks and the explicit cross-Host edges. Agent
 reads the live document projection, resolves verified assets, and gives Skill
 shells the existing authenticated Runtime connection. Outline projection events
 first prune private node-access ranking and then notify Agent Memory through the
-Agent Host capability. Main retains application startup order, native windows,
-transport registration, safe-quit arbitration, and the platform/resource
-services assigned to later Host composition units; neither domain host becomes a
-service locator or claims document authority from the standalone Runtime.
+Agent Host capability. Main retains application startup ordering, transport
+registration, safe-quit arbitration, and reverse lifecycle coordination; it no
+longer owns concrete platform services or native window construction. No Host
+becomes a service locator or claims document authority from the standalone
+Runtime.
 
-The tracked Host audit derives current effects from the Git tree and also checks
-an exact domain-construction manifest. Every declared Agent or Outline service
-must be constructed under its typed host owner exactly once. Required
-constructions are collected across the complete `src/main` tree before ownership
-is assigned, so a second construction outside `hostDomain/` enters both the
-unowned and duplicate queues. Unowned, duplicate, or missing domain queues fail
-the audit alongside the transport queues.
+The tracked Host audit derives current effects from the Git tree and checks exact
+domain and platform construction manifests. Every declared Agent or Outline
+service must be constructed under its typed domain Host exactly once. Required
+platform services are path-scoped with explicit expected counts, including the
+three direct `BrowserWindow` constructors; the Launcher constructor remains
+owned through its dedicated window helper. Resource/session effects must resolve
+to the Resource Preview Host, while window, update, action, menu, hotkey,
+listener, and timer effects must resolve to the Window Application Host.
+Constructions are collected across the complete `src/main` tree before ownership
+is assigned, so a second construction outside its Host enters the unowned or
+mismatched queues. Platform effect path-and-kind counts are also pinned, and a
+duplicate effect identity outside its Host enters the unowned queue. Unowned,
+duplicate, missing, or count-mismatched construction and platform-effect queues
+fail the audit alongside the transport queues.
 
 ## Desktop Transport Ownership
 
@@ -310,13 +333,13 @@ Startup failure disposes any partially completed main transport before exiting.
 The tracked `scripts/host-composition-audit/` driver pins the exact dependency-tip
 commit and tree, enumerates the complete `src/main/**/*.ts` baseline directly
 from Git, and generates its inventory and disposition ledger. Current reports are
-derived under `tmp/host-composition-audit/`; the transport slice is complete only
-when unowned, duplicate, and missing-baseline queues are all empty. A baseline
-effect that changes identity or is deliberately removed requires a validated
-tracked equivalence/removal disposition. Application lifecycle listeners receive
-an inferred owner only when the audit finds the exact matching release edge.
-Later Host composition work extends this same baseline rather than regenerating
-history from a newer tree.
+derived under `tmp/host-composition-audit/`; composition is complete only when
+the transport, domain-construction, platform-construction, and platform-effect
+queues are all empty. A baseline effect that changes identity or is deliberately
+removed requires a validated tracked equivalence/removal disposition.
+Application lifecycle listeners receive an inferred owner only when the audit
+finds the exact matching release edge. Later Host composition work extends this
+same baseline rather than regenerating history from a newer tree.
 
 ## Command Flow
 

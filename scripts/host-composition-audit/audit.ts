@@ -131,6 +131,65 @@ const missingDomain = [...requiredDomainConstructions.entries()]
     effect.expression === expression && effect.owner === owner
   )))
   .map(([expression, owner]) => ({ expression, owner }));
+const requiredPlatformConstructions = [
+  { path: 'src/main/hostPlatform/resourcePreviewHost.ts', expression: 'PreviewTranslationCacheStore', owner: 'resource-preview-host', count: 1 },
+  { path: 'src/main/hostPlatform/resourcePreviewHost.ts', expression: 'PageTranslationService', owner: 'resource-preview-host', count: 1 },
+  { path: 'src/main/hostPlatform/resourcePreviewHost.ts', expression: 'LocalFilePreviewStreamRegistry', owner: 'resource-preview-host', count: 1 },
+  { path: 'src/main/hostPlatform/resourcePreviewHost.ts', expression: 'LinkedFileGrantStore', owner: 'resource-preview-host', count: 1 },
+  { path: 'src/main/hostPlatform/windowApplicationHost.ts', expression: 'ActionInvocationService', owner: 'window-application-host', count: 1 },
+  { path: 'src/main/hostPlatform/windowApplicationHost.ts', expression: 'AppUpdateStore', owner: 'window-application-host', count: 1 },
+  { path: 'src/main/hostPlatform/windowApplicationHost.ts', expression: 'AppUpdateService', owner: 'window-application-host', count: 1 },
+  { path: 'src/main/hostPlatform/windowApplicationHost.ts', expression: 'BrowserWindow', owner: 'window-application-host', count: 3 },
+  { path: 'src/main/launcher/launcherWindow.ts', expression: 'BrowserWindow', owner: 'window-application-host', count: 1 },
+] as const;
+const requiredPlatformEffects: ReadonlyArray<{
+  readonly path: string;
+  readonly kind: EffectKind;
+  readonly owner: string;
+  readonly count: number;
+}> = [
+  { path: 'src/main/hostPlatform/nativeLocalFileHost.ts', kind: 'listener', owner: 'resource-preview-host', count: 6 },
+  { path: 'src/main/hostPlatform/nativeLocalFileHost.ts', kind: 'timer', owner: 'resource-preview-host', count: 3 },
+  { path: 'src/main/hostPlatform/resourcePreviewHost.ts', kind: 'listener', owner: 'resource-preview-host', count: 10 },
+  { path: 'src/main/hostPlatform/resourcePreviewHost.ts', kind: 'session', owner: 'resource-preview-host', count: 7 },
+  { path: 'src/main/hostPlatform/windowApplicationHost.ts', kind: 'listener', owner: 'window-application-host', count: 20 },
+  { path: 'src/main/hostPlatform/windowApplicationHost.ts', kind: 'timer', owner: 'window-application-host', count: 3 },
+  { path: 'src/main/launcher/launcherWindow.ts', kind: 'listener', owner: 'window-application-host', count: 2 },
+  { path: 'src/main/launcher/launcherWindow.ts', kind: 'mutable-global', owner: 'window-application-host', count: 1 },
+];
+const platformConstructions = currentInventory
+  .filter((effect) => effect.kind === 'construction' && requiredPlatformConstructions.some((required) => (
+    effect.path === required.path && effect.expression === required.expression
+  )))
+  .map((effect) => ({ ...effect, owner: currentPlatformOwner(effect) }));
+const unownedPlatform = platformConstructions.filter((effect) => effect.owner === null);
+const mismatchedPlatform = requiredPlatformConstructions.flatMap((required) => {
+  const actual = platformConstructions.filter((effect) => (
+    effect.path === required.path
+    && effect.expression === required.expression
+    && effect.owner === required.owner
+  )).length;
+  return actual === required.count ? [] : [{ ...required, actual }];
+});
+const platformEffects = currentInventory
+  .filter((effect) => requiredPlatformEffects.some((required) => (
+    effect.path === required.path && effect.kind === required.kind
+  )))
+  .map((effect) => ({ ...effect, owner: currentPlatformOwner(effect) }));
+const ownedPlatformEffectKeys = new Set(platformEffects.map(platformEffectKey));
+const unownedPlatformEffects = currentInventory
+  .filter((effect) => effect.kind !== 'timer'
+    && currentPlatformOwner(effect) === null
+    && ownedPlatformEffectKeys.has(platformEffectKey(effect)))
+  .map((effect) => ({ ...effect, owner: null }));
+const mismatchedPlatformEffects = requiredPlatformEffects.flatMap((required) => {
+  const actual = platformEffects.filter((effect) => (
+    effect.path === required.path
+    && effect.kind === required.kind
+    && effect.owner === required.owner
+  )).length;
+  return actual === required.count ? [] : [{ ...required, actual }];
+});
 runNegativeFixtures();
 
 mkdirSync(reportRoot, { recursive: true });
@@ -143,6 +202,12 @@ writeJson(join(reportRoot, 'domain-constructions.json'), domainConstructions);
 writeJson(join(reportRoot, 'unowned-domain.json'), unownedDomain);
 writeJson(join(reportRoot, 'duplicate-domain.json'), duplicateDomain);
 writeJson(join(reportRoot, 'missing-domain.json'), missingDomain);
+writeJson(join(reportRoot, 'platform-constructions.json'), platformConstructions);
+writeJson(join(reportRoot, 'unowned-platform.json'), unownedPlatform);
+writeJson(join(reportRoot, 'mismatched-platform.json'), mismatchedPlatform);
+writeJson(join(reportRoot, 'platform-effects.json'), platformEffects);
+writeJson(join(reportRoot, 'unowned-platform-effects.json'), unownedPlatformEffects);
+writeJson(join(reportRoot, 'mismatched-platform-effects.json'), mismatchedPlatformEffects);
 
 console.log(`baseline effects: ${baselineInventory.length}`);
 console.log(`baseline transport effects: ${baselineDispositions.filter((entry) => entry.transport).length}`);
@@ -153,6 +218,10 @@ console.log(`missing baseline transport effects: ${missingBaselineTransport.leng
 console.log(`unowned domain constructions: ${unownedDomain.length}`);
 console.log(`duplicate domain constructions: ${duplicateDomain.length}`);
 console.log(`missing domain constructions: ${missingDomain.length}`);
+console.log(`unowned platform constructions: ${unownedPlatform.length}`);
+console.log(`mismatched platform constructions: ${mismatchedPlatform.length}`);
+console.log(`unowned platform effects: ${unownedPlatformEffects.length}`);
+console.log(`mismatched platform effects: ${mismatchedPlatformEffects.length}`);
 console.log(`reports: ${relative(root, reportRoot)}`);
 
 if (unownedTransport.length > 0
@@ -160,7 +229,11 @@ if (unownedTransport.length > 0
   || missingBaselineTransport.length > 0
   || unownedDomain.length > 0
   || duplicateDomain.length > 0
-  || missingDomain.length > 0) {
+  || missingDomain.length > 0
+  || unownedPlatform.length > 0
+  || mismatchedPlatform.length > 0
+  || unownedPlatformEffects.length > 0
+  || mismatchedPlatformEffects.length > 0) {
   process.exitCode = 1;
 }
 
@@ -270,7 +343,7 @@ function effectKind(expression: string): EffectKind | null {
   if (/protocol\.(?:handle|registerSchemesAsPrivileged)$/.test(expression)) return 'protocol';
   if (/\.(?:setPermissionRequestHandler|setPermissionCheckHandler)$/.test(expression)
     || /\.webRequest\.onHeadersReceived$/.test(expression)
-    || /^(?:configureSessionSecurity|configureUrlPreviewSession)$/.test(expression)) return 'session';
+    || /(?:^|\.)(?:configureSessionSecurity|configureDefaultSessionSecurity|configureUrlPreviewSession)$/.test(expression)) return 'session';
   if (/^(?:setInterval|setTimeout)$/.test(expression)) return 'timer';
   if (/\.(?:on|once|addListener|setWindowOpenHandler)$/.test(expression)) return 'listener';
   return null;
@@ -343,12 +416,23 @@ function effectKey(effect: Effect): string {
 }
 
 function currentTypedEdgeOwner(effect: Effect): string | null {
+  const platformOwner = currentPlatformOwner(effect);
+  if (platformOwner) return platformOwner;
   if (effect.path === 'src/main/outlineClient/ipc.ts') return 'outline';
   if (effect.path === 'src/main/urlPreviewSession.ts') return 'url-preview-session-security';
   if (effect.path === 'src/main/hostTransport/ownership.ts') return 'typed-registration-edge';
   if (effect.path === 'src/main/agent/capabilities/agentTools.ts' && effect.kind === 'session') {
     return 'agent-web-fetch-capability';
   }
+  return null;
+}
+
+function currentPlatformOwner(effect: Pick<Effect, 'path'>): string | null {
+  if (effect.path === 'src/main/hostPlatform/resourcePreviewHost.ts'
+    || effect.path === 'src/main/hostPlatform/nativeLocalFileHost.ts') return 'resource-preview-host';
+  if (effect.path === 'src/main/hostPlatform/windowApplicationHost.ts'
+    || effect.path === 'src/main/launcher/launcherWindow.ts'
+    || effect.path === 'src/main/launcher/launcherHotkey.ts') return 'window-application-host';
   return null;
 }
 
@@ -483,9 +567,43 @@ function missingBaselineTransportEffects(
     currentDispositions.filter((entry) => entry.transport).map(effectKey),
   );
   const dispositionKeys = new Set(equivalences.map((entry) => entry.baselineKey));
+  const currentPlatformSignatures = new Set(currentDispositions
+    .filter((entry) => entry.transport && currentPlatformOwner(entry) !== null)
+    .map(platformTransportSignature)
+    .filter((signature): signature is string => signature !== null));
   return baselineDispositions.filter((entry) => (
-    entry.transport && !currentKeys.has(effectKey(entry)) && !dispositionKeys.has(effectKey(entry))
+    entry.transport
+    && !currentKeys.has(effectKey(entry))
+    && !dispositionKeys.has(effectKey(entry))
+    && !currentPlatformSignatures.has(platformTransportSignature(entry) ?? '')
   ));
+}
+
+function platformTransportSignature(effect: Pick<Effect, 'kind' | 'expression'>): string | null {
+  if (effect.kind !== 'listener' && effect.kind !== 'session') return null;
+  const method = effect.expression.match(/([A-Za-z]+)\s*\(/)?.[1] ?? '';
+  const normalizedMethod = method === 'configureSessionSecurity'
+    ? 'configureDefaultSessionSecurity'
+    : method;
+  const event = effect.expression.match(/\(\s*(['"])([^'"]+)\1/)?.[2] ?? '';
+  const receiver = effect.expression.startsWith('child.stdout.')
+    ? 'child.stdout'
+    : effect.expression.startsWith('child.')
+      ? 'child'
+      : effect.expression.includes('.webContents.') || effect.expression.startsWith('webContents.')
+        ? 'webContents'
+        : /^(?:mainWindow|settingsWindow|providerConfigWindow|window|target)\./.test(effect.expression)
+          ? 'window'
+          : effect.expression.startsWith('app.')
+            ? 'app'
+            : effect.kind === 'session'
+              ? 'session'
+              : 'contents';
+  return `${effect.kind}:${receiver}:${normalizedMethod}:${event}`;
+}
+
+function platformEffectKey(effect: Pick<Effect, 'kind' | 'expression'>): string {
+  return `${effect.kind}:${effect.expression}`;
 }
 
 function runNegativeFixtures(): void {
@@ -551,6 +669,21 @@ function runNegativeFixtures(): void {
   const duplicateDomainKeys = duplicateDomainConstructions(duplicateDomainEffects);
   if (unownedDomainEffects.length !== 1 || duplicateDomainKeys[0] !== 'NodeAccessStore') {
     throw new Error('Negative fixture failed to detect an unowned duplicate domain construction.');
+  }
+
+  const ownedPlatformEffect = collectEffects(
+    "window.on('closed', handleClosed);",
+    'src/main/hostPlatform/windowApplicationHost.ts',
+  )[0]!;
+  const duplicatePlatformEffect = collectEffects(
+    "window.on('closed', handleClosed);",
+    'src/main/main.ts',
+  )[0]!;
+  const ownedPlatformKeys = new Set([platformEffectKey(ownedPlatformEffect)]);
+  if (currentPlatformOwner(ownedPlatformEffect) !== 'window-application-host'
+    || currentPlatformOwner(duplicatePlatformEffect) !== null
+    || !ownedPlatformKeys.has(platformEffectKey(duplicatePlatformEffect))) {
+    throw new Error('Negative fixture failed to detect an unowned duplicate platform effect.');
   }
 }
 

@@ -7,6 +7,16 @@ const MAIN_SRC = readFileSync(
   'utf8',
 );
 
+const RESOURCE_PREVIEW_HOST_SRC = readFileSync(
+  join(import.meta.dir, '../../src/main/hostPlatform/resourcePreviewHost.ts'),
+  'utf8',
+);
+
+const WINDOW_APPLICATION_HOST_SRC = readFileSync(
+  join(import.meta.dir, '../../src/main/hostPlatform/windowApplicationHost.ts'),
+  'utf8',
+);
+
 const PREVIEW_RENDERERS_SRC = readFileSync(
   join(import.meta.dir, '../../src/renderer/ui/preview/previewRenderers.tsx'),
   'utf8',
@@ -39,34 +49,34 @@ const TRANSLATION_GUEST_HOST_SRC = readFileSync(
 
 describe('URL preview webview security posture', () => {
   test('the main window enables webview only behind attach-time hardening', () => {
-    expect(MAIN_SRC).toContain('webviewTag: true');
-    expect(MAIN_SRC).toContain("contents.on('will-attach-webview'");
-    expect(MAIN_SRC).toContain("contents.on('did-attach-webview'");
+    expect(WINDOW_APPLICATION_HOST_SRC).toContain('webviewTag: true');
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain("contents.on('will-attach-webview'");
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain("contents.on('did-attach-webview'");
   });
 
   test('webview attach strips preload and keeps remote content sandboxed', () => {
-    expect(MAIN_SRC).toContain('delete webPreferences.preload');
-    expect(MAIN_SRC).toContain('webPreferences.contextIsolation = true');
-    expect(MAIN_SRC).toContain('webPreferences.nodeIntegration = false');
-    expect(MAIN_SRC).toContain('webPreferences.nodeIntegrationInSubFrames = false');
-    expect(MAIN_SRC).toContain('webPreferences.nodeIntegrationInWorker = false');
-    expect(MAIN_SRC).toContain('webPreferences.partition = URL_PREVIEW_WEBVIEW_PARTITION');
-    expect(MAIN_SRC).toContain('webPreferences.sandbox = true');
-    expect(MAIN_SRC).toContain('webPreferences.webSecurity = true');
-    expect(MAIN_SRC).toContain('webPreferences.allowRunningInsecureContent = false');
-    expect(MAIN_SRC).toContain('webPreferences.disableDialogs = true');
-    expect(MAIN_SRC).toContain('webPreferences.navigateOnDragDrop = false');
-    expect(MAIN_SRC).toContain('delete params.preload');
-    expect(MAIN_SRC).toContain('delete params.webpreferences');
-    expect(MAIN_SRC).toContain('delete params.httpreferrer');
-    expect(MAIN_SRC).toContain('httpReferrerForUrlPreview(normalizedSrc)');
-    expect(MAIN_SRC).toContain('params.httpreferrer = trustedHttpReferrer');
-    expect(MAIN_SRC).toContain('normalizePreviewHttpUrl(src)');
-    expect(MAIN_SRC).toContain('normalizePreviewHttpUrl(url)');
-    expect(MAIN_SRC).toContain('params.partition = URL_PREVIEW_WEBVIEW_PARTITION');
-    expect(MAIN_SRC).not.toContain('params.partition !== URL_PREVIEW_WEBVIEW_PARTITION');
-    expect(MAIN_SRC).toContain('webContents.session !== urlPreviewSession');
-    expect(MAIN_SRC).toContain('owner.add(configureUrlPreviewSession(previewSession))');
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain('delete webPreferences.preload');
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain('webPreferences.contextIsolation = true');
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain('webPreferences.nodeIntegration = false');
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain('webPreferences.nodeIntegrationInSubFrames = false');
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain('webPreferences.nodeIntegrationInWorker = false');
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain('webPreferences.partition = URL_PREVIEW_WEBVIEW_PARTITION');
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain('webPreferences.sandbox = true');
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain('webPreferences.webSecurity = true');
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain('webPreferences.allowRunningInsecureContent = false');
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain('webPreferences.disableDialogs = true');
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain('webPreferences.navigateOnDragDrop = false');
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain('delete params.preload');
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain('delete params.webpreferences');
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain('delete params.httpreferrer');
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain('httpReferrerForUrlPreview(normalizedSrc)');
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain('params.httpreferrer = trustedHttpReferrer');
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain('normalizePreviewHttpUrl(src)');
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain('normalizePreviewHttpUrl(url)');
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain('params.partition = URL_PREVIEW_WEBVIEW_PARTITION');
+    expect(RESOURCE_PREVIEW_HOST_SRC).not.toContain('params.partition !== URL_PREVIEW_WEBVIEW_PARTITION');
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain('webContents.session !== previewSession()');
+    expect(MAIN_SRC).toContain('owner.add(resourcePreviewHost.configurePreviewSession())');
     expect(URL_PREVIEW_SESSION_CORE_SRC).toContain("'persist:url-preview'");
     expect(URL_PREVIEW_SESSION_MAIN_SRC).toContain('previewSession.setPermissionRequestHandler');
     expect(URL_PREVIEW_SESSION_MAIN_SRC).toContain('previewSession.setPermissionCheckHandler');
@@ -74,11 +84,12 @@ describe('URL preview webview security posture', () => {
   });
 
   test('quit teardown keeps live sessions fail-closed until process exit', () => {
-    expect(MAIN_SRC).toContain('ses.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))');
-    expect(MAIN_SRC).toContain('ses.setPermissionCheckHandler(() => false)');
-    expect(MAIN_SRC).not.toContain('ses.setPermissionRequestHandler(null)');
-    expect(MAIN_SRC).not.toContain('ses.setPermissionCheckHandler(null)');
-    expect(MAIN_SRC).not.toContain('ses.webRequest.onHeadersReceived(null)');
+    expect(RESOURCE_PREVIEW_HOST_SRC)
+      .toContain('defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))');
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain('defaultSession.setPermissionCheckHandler(() => false)');
+    expect(RESOURCE_PREVIEW_HOST_SRC).not.toContain('defaultSession.setPermissionRequestHandler(null)');
+    expect(RESOURCE_PREVIEW_HOST_SRC).not.toContain('defaultSession.setPermissionCheckHandler(null)');
+    expect(RESOURCE_PREVIEW_HOST_SRC).not.toContain('defaultSession.webRequest.onHeadersReceived(null)');
     expect(URL_PREVIEW_SESSION_MAIN_SRC)
       .toContain('previewSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))');
     expect(URL_PREVIEW_SESSION_MAIN_SRC).toContain('previewSession.setPermissionCheckHandler(() => false)');
@@ -98,7 +109,7 @@ describe('URL preview webview security posture', () => {
     expect(webview).not.toContain('nodeintegration');
     expect(webview).not.toContain('disablewebsecurity');
     expect(webview).toContain('allowpopups');
-    expect(MAIN_SRC).toContain('webContents.setWindowOpenHandler(createUrlPreviewWindowOpenHandler');
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain('webContents.setWindowOpenHandler(createUrlPreviewWindowOpenHandler');
     expect(URL_PREVIEW_SESSION_MAIN_SRC).toContain("return { action: 'deny' }");
     expect(URL_PREVIEW_SESSION_MAIN_SRC).not.toContain("action: 'allow'");
   });
@@ -117,10 +128,11 @@ describe('URL preview webview security posture', () => {
   });
 
   test('the scoped translation shortcut is intercepted by the hardened guest host', () => {
-    expect(MAIN_SRC).toContain("webContents.on('before-input-event'");
-    expect(MAIN_SRC).toContain("input.code === 'KeyA'");
-    expect(MAIN_SRC).toContain('LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL');
-    expect(MAIN_SRC).toContain('contents.send(LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL, webContents.id)');
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain("webContents.on('before-input-event'");
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain("input.code === 'KeyA'");
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain('LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL');
+    expect(RESOURCE_PREVIEW_HOST_SRC)
+      .toContain('contents.send(LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL, webContents.id)');
   });
 
   test('translation validates bounded blocks and exact response ids in main', () => {
@@ -128,6 +140,6 @@ describe('URL preview webview security posture', () => {
     expect(PAGE_TRANSLATION_SRC).toContain('URL_PAGE_TRANSLATION_MAX_BATCH_CHARS');
     expect(PAGE_TRANSLATION_SRC).toContain('requestedIds.has(id)');
     expect(PAGE_TRANSLATION_SRC).toContain('translations.has(id)');
-    expect(MAIN_SRC).toContain("event.sender !== mainWindow.webContents");
+    expect(MAIN_SRC).toContain('!windowApplicationHost.isMainSender(event)');
   });
 });

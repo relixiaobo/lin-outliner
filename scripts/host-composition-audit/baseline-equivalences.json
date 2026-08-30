@@ -2,7 +2,7 @@
   "equivalences": [
     {
       "baselineKey": "src/main/main.ts:session:configureUrlPreviewSession(urlPreviewSession)",
-      "currentKey": "src/main/main.ts:session:configureUrlPreviewSession(previewSession)",
+      "currentKey": "src/main/hostPlatform/resourcePreviewHost.ts:session:configureUrlPreviewSession(previewSession)",
       "disposition": "equivalent:url-preview-session-security owner receives the same session as an explicit capability"
     }
   ]
