@@ -252,6 +252,12 @@ their lifetime boundary. The pre-ready `registerSchemesAsPrivileged` declaration
 is retained bootstrap because Electron provides no corresponding unregister
 operation after readiness.
 
+Permission and CSP policy is fail-closed through asynchronous quit. Disposing a
+session owner replaces its permission request/check handlers with deny-all
+handlers while every live WebContents finishes teardown; it never restores
+Electron's permissive no-handler default. The default-session CSP response
+handler remains installed until process exit for the same reason.
+
 Quit first disposes the combined runtime transport and records aggregate release
 failure without skipping the remaining service flush/close sequence. Fatal error
 listeners remain installed through that service close sequence and are removed
@@ -262,8 +268,12 @@ The tracked `scripts/host-composition-audit/` driver pins the exact dependency-t
 commit and tree, enumerates the complete `src/main/**/*.ts` baseline directly
 from Git, and generates its inventory and disposition ledger. Current reports are
 derived under `tmp/host-composition-audit/`; the transport slice is complete only
-when both unowned and duplicate queues are empty. Later Host composition work
-extends this same baseline rather than regenerating history from a newer tree.
+when unowned, duplicate, and missing-baseline queues are all empty. A baseline
+effect that changes identity or is deliberately removed requires a validated
+tracked equivalence/removal disposition. Application lifecycle listeners receive
+an inferred owner only when the audit finds the exact matching release edge.
+Later Host composition work extends this same baseline rather than regenerating
+history from a newer tree.
 
 ## Command Flow
 

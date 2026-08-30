@@ -70,6 +70,19 @@ describe('URL preview webview security posture', () => {
     expect(URL_PREVIEW_SESSION_MAIN_SRC).toContain('isRendererPermissionAllowed(permission)');
   });
 
+  test('quit teardown keeps live sessions fail-closed until process exit', () => {
+    expect(MAIN_SRC).toContain('ses.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))');
+    expect(MAIN_SRC).toContain('ses.setPermissionCheckHandler(() => false)');
+    expect(MAIN_SRC).not.toContain('ses.setPermissionRequestHandler(null)');
+    expect(MAIN_SRC).not.toContain('ses.setPermissionCheckHandler(null)');
+    expect(MAIN_SRC).not.toContain('ses.webRequest.onHeadersReceived(null)');
+    expect(URL_PREVIEW_SESSION_MAIN_SRC)
+      .toContain('previewSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))');
+    expect(URL_PREVIEW_SESSION_MAIN_SRC).toContain('previewSession.setPermissionCheckHandler(() => false)');
+    expect(URL_PREVIEW_SESSION_MAIN_SRC).not.toContain('setPermissionRequestHandler(null)');
+    expect(URL_PREVIEW_SESSION_MAIN_SRC).not.toContain('setPermissionCheckHandler(null)');
+  });
+
   test('the renderer URL preview does not request privileged webview features', () => {
     const webview = PREVIEW_RENDERERS_SRC.match(/<webview[\s\S]*?\/>/)?.[0] ?? '';
     expect(webview).toContain('<webview');

@@ -11,11 +11,12 @@ Run from the repository root:
 bun scripts/host-composition-audit/audit.ts
 ```
 
-Expected completion has both queues at zero:
+Expected completion has all three queues at zero:
 
 ```text
 unowned transport effects: 0
 duplicate transport effects: 0
+missing baseline transport effects: 0
 ```
 
 Reports are written to `tmp/host-composition-audit/`. To reproduce in a GitHub

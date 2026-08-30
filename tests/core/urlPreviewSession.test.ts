@@ -62,8 +62,11 @@ describe('URL Preview persistent session', () => {
     release();
     expect(requestConfigCount).toBe(2);
     expect(checkConfigCount).toBe(2);
-    expect(requestHandler).toBeNull();
-    expect(checkHandler).toBeNull();
+    const denied: boolean[] = [];
+    requestHandler?.(null, 'fullscreen', (allowed) => denied.push(allowed));
+    requestHandler?.(null, 'clipboard-sanitized-write', (allowed) => denied.push(allowed));
+    expect(denied).toEqual([false, false]);
+    expect(checkHandler?.(null, 'fullscreen')).toBe(false);
   });
 
   test('routes an HTTP GET new-window request back into the same guest', async () => {

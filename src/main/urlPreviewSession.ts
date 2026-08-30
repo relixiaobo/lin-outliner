@@ -37,8 +37,8 @@ export function configureUrlPreviewSession(previewSession: PreviewSession): () =
   const release = () => {
     if (released) return;
     released = true;
-    previewSession.setPermissionRequestHandler(null);
-    previewSession.setPermissionCheckHandler(null);
+    previewSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+    previewSession.setPermissionCheckHandler(() => false);
     if (configuredSessions.get(previewSession) === release) configuredSessions.delete(previewSession);
   };
   configuredSessions.set(previewSession, release);

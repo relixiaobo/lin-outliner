@@ -120,6 +120,7 @@ export class HostTransportComposition implements TransportOwner {
 
   registerIpcOwner(name: string, register: (ipc: OwnedIpcMain) => void): void {
     this.registerOwner(name, (owner) => {
+      let facade: OwnedIpcMain;
       const handle = ((channel: string, listener: (
         event: IpcMainInvokeEvent,
         ...args: unknown[]
@@ -158,10 +159,11 @@ export class HostTransportComposition implements TransportOwner {
             releaseClaim();
           }
         });
-        return this.targets.ipcMain;
+        return facade;
       }) as IpcMain['on'];
 
-      register({ handle, on });
+      facade = { handle, on };
+      register(facade);
     });
   }
 

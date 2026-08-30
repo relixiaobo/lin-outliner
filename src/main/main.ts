@@ -1641,9 +1641,8 @@ function configureSessionSecurity(): () => void {
   return () => {
     if (released) return;
     released = true;
-    ses.setPermissionRequestHandler(null);
-    ses.setPermissionCheckHandler(null);
-    ses.webRequest.onHeadersReceived(null);
+    ses.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+    ses.setPermissionCheckHandler(() => false);
   };
 }
 

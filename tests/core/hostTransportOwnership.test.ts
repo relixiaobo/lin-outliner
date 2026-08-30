@@ -116,6 +116,19 @@ describe('host transport ownership', () => {
     expect(fixture.handlers.get('shared')).toBe(original);
   });
 
+  test('keeps chained event registration inside the owned facade', () => {
+    const fixture = targetFixture();
+    const transport = new HostTransportComposition('main', fixture.target);
+    transport.registerIpcOwner('events', (ipc) => {
+      ipc.on('first', () => undefined).on('second', () => undefined);
+    });
+
+    expect([...fixture.listeners.keys()]).toEqual(['first', 'second']);
+    transport.dispose();
+    expect(fixture.listeners.size).toBe(0);
+    expect(fixture.releases).toEqual(['listener:second', 'listener:first']);
+  });
+
   test('continues disposal after a release failure and reports the aggregate once', () => {
     const fixture = targetFixture({ failRelease: 'ipc:first' });
     const transport = new HostTransportComposition('main', fixture.target);

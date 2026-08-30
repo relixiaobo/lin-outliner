@@ -27,11 +27,18 @@ interface Disposition extends Effect {
   readonly transport: boolean;
 }
 
+interface BaselineEquivalence {
+  readonly baselineKey: string;
+  readonly currentKey: string | null;
+  readonly disposition: string;
+}
+
 const root = resolve(import.meta.dir, '../..');
 const auditRoot = resolve(import.meta.dir);
 const baselinePath = join(auditRoot, 'baseline.json');
 const inventoryPath = join(auditRoot, 'baseline-inventory.jsonl');
 const dispositionsPath = join(auditRoot, 'baseline-dispositions.jsonl');
+const equivalencesPath = join(auditRoot, 'baseline-equivalences.json');
 const reportRoot = join(root, 'tmp/host-composition-audit');
 const writeBaseline = process.argv.includes('--write-baseline');
 
@@ -69,25 +76,40 @@ const currentSources = (readdirSync(currentSourceRoot, { recursive: true }) as s
     source: readFileSync(join(currentSourceRoot, path), 'utf8'),
   }));
 const currentInventory = currentSources.flatMap(({ path, source }) => collectEffects(source, path));
-const currentDispositions = currentInventory.map(dispositionForCurrent);
+const currentReleasedListenerEffects = collectReleasedListenerEffects(currentSources);
+const currentDispositions = currentInventory.map((effect) => (
+  dispositionForCurrent(effect, currentReleasedListenerEffects)
+));
+const baselineEquivalences = readBaselineEquivalences(equivalencesPath);
+validateBaselineEquivalences(baselineEquivalences, baselineDispositions, currentDispositions);
 const unownedTransport = currentDispositions.filter((entry) => entry.transport && entry.owner === null
   && !entry.disposition.startsWith('retained:'));
 const duplicateTransport = duplicateKeys(currentDispositions.filter((entry) => entry.transport));
+const missingBaselineTransport = missingBaselineTransportEffects(
+  baselineDispositions,
+  currentDispositions,
+  baselineEquivalences,
+);
+runNegativeFixtures();
 
 mkdirSync(reportRoot, { recursive: true });
 writeJson(join(reportRoot, 'current-inventory.json'), currentInventory);
 writeJson(join(reportRoot, 'current-dispositions.json'), currentDispositions);
 writeJson(join(reportRoot, 'unowned-transport.json'), unownedTransport);
 writeJson(join(reportRoot, 'duplicate-transport.json'), duplicateTransport);
+writeJson(join(reportRoot, 'missing-baseline-transport.json'), missingBaselineTransport);
 
 console.log(`baseline effects: ${baselineInventory.length}`);
 console.log(`baseline transport effects: ${baselineDispositions.filter((entry) => entry.transport).length}`);
 console.log(`current effects: ${currentInventory.length}`);
 console.log(`unowned transport effects: ${unownedTransport.length}`);
 console.log(`duplicate transport effects: ${duplicateTransport.length}`);
+console.log(`missing baseline transport effects: ${missingBaselineTransport.length}`);
 console.log(`reports: ${relative(root, reportRoot)}`);
 
-if (unownedTransport.length > 0 || duplicateTransport.length > 0) process.exitCode = 1;
+if (unownedTransport.length > 0 || duplicateTransport.length > 0 || missingBaselineTransport.length > 0) {
+  process.exitCode = 1;
+}
 
 function collectEffects(source: string, path: string): Effect[] {
   const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -195,8 +217,8 @@ function dispositionForBaseline(effect: Effect): Disposition {
   return { ...effect, transport: false, disposition: 'successor:host-domain-composition' };
 }
 
-function dispositionForCurrent(effect: Effect): Disposition {
-  const inferredOwner = effect.owner ?? currentTypedEdgeOwner(effect);
+function dispositionForCurrent(effect: Effect, releasedListenerEffects: ReadonlySet<string>): Disposition {
+  const inferredOwner = effect.owner ?? currentTypedEdgeOwner(effect, releasedListenerEffects);
   if (effect.kind === 'ipc' || effect.kind === 'protocol' || effect.kind === 'session') {
     const retained = effect.expression.includes('registerSchemesAsPrivileged');
     return {
@@ -225,7 +247,7 @@ function effectKey(effect: Effect): string {
   return `${effect.path}:${effect.kind}:${effect.expression}`;
 }
 
-function currentTypedEdgeOwner(effect: Effect): string | null {
+function currentTypedEdgeOwner(effect: Effect, releasedListenerEffects: ReadonlySet<string>): string | null {
   if (effect.path === 'src/main/outlineClient/ipc.ts') return 'outline';
   if (effect.path === 'src/main/urlPreviewSession.ts') return 'url-preview-session-security';
   if (effect.path === 'src/main/hostTransport/ownership.ts') return 'typed-registration-edge';
@@ -233,8 +255,141 @@ function currentTypedEdgeOwner(effect: Effect): string | null {
     return 'agent-web-fetch-capability';
   }
   if (effect.kind !== 'listener') return null;
-  if (effect.expression.startsWith("app.on('")) return 'app-lifecycle';
+  if (effect.expression.startsWith("app.on('") && releasedListenerEffects.has(effectKey(effect))) {
+    return 'app-lifecycle';
+  }
   return null;
+}
+
+function listenerRegistrationKey(node: ts.CallExpression, file: ts.SourceFile): string | null {
+  if (!ts.isPropertyAccessExpression(node.expression)) return null;
+  if (!['on', 'once', 'addListener'].includes(node.expression.name.text)) return null;
+  const event = node.arguments[0];
+  const listener = node.arguments[1];
+  if (!event || !listener) return null;
+  return `${node.expression.expression.getText(file)}\0${event.getText(file)}\0${listener.getText(file)}`;
+}
+
+function collectReleasedListenerEffects(
+  sources: readonly { path: string; source: string }[],
+): ReadonlySet<string> {
+  const releases = new Set<string>();
+  const registrations: { effectKey: string; releaseKey: string }[] = [];
+  for (const { path, source } of sources) {
+    const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+        const registrationKey = listenerRegistrationKey(node, file);
+        if (registrationKey) {
+          registrations.push({
+            effectKey: `${path}:listener:${effectIdentity(node, file)}`,
+            releaseKey: `${path}\0${registrationKey}`,
+          });
+        }
+        if (node.expression.name.text !== 'removeListener') {
+          ts.forEachChild(node, visit);
+          return;
+        }
+        const event = node.arguments[0];
+        const listener = node.arguments[1];
+        if (event && listener) {
+          releases.add(
+            `${path}\0${node.expression.expression.getText(file)}\0${event.getText(file)}\0${listener.getText(file)}`,
+          );
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(file);
+  }
+  return new Set(
+    registrations.filter(({ releaseKey }) => releases.has(releaseKey)).map(({ effectKey }) => effectKey),
+  );
+}
+
+function readBaselineEquivalences(path: string): BaselineEquivalence[] {
+  const parsed = JSON.parse(readFileSync(path, 'utf8')) as { equivalences?: unknown };
+  if (!Array.isArray(parsed.equivalences)) throw new Error('Baseline equivalences must contain an array.');
+  return parsed.equivalences.map((value, index) => {
+    if (!isRecord(value)
+      || typeof value.baselineKey !== 'string'
+      || (value.currentKey !== null && typeof value.currentKey !== 'string')
+      || typeof value.disposition !== 'string'
+      || !/^(?:equivalent|removed):/.test(value.disposition)) {
+      throw new Error(`Invalid baseline equivalence at index ${index}.`);
+    }
+    return value as unknown as BaselineEquivalence;
+  });
+}
+
+function validateBaselineEquivalences(
+  equivalences: readonly BaselineEquivalence[],
+  baselineDispositions: readonly Disposition[],
+  currentDispositions: readonly Disposition[],
+): void {
+  const baselineTransport = new Map(
+    baselineDispositions.filter((entry) => entry.transport).map((entry) => [effectKey(entry), entry]),
+  );
+  const currentTransport = new Map(
+    currentDispositions.filter((entry) => entry.transport).map((entry) => [effectKey(entry), entry]),
+  );
+  const seen = new Set<string>();
+  for (const equivalence of equivalences) {
+    if (seen.has(equivalence.baselineKey)) {
+      throw new Error(`Duplicate baseline equivalence: ${equivalence.baselineKey}`);
+    }
+    seen.add(equivalence.baselineKey);
+    const baselineEffect = baselineTransport.get(equivalence.baselineKey);
+    if (!baselineEffect) throw new Error(`Baseline equivalence source is not a transport effect: ${equivalence.baselineKey}`);
+    if (equivalence.currentKey === null) {
+      if (!equivalence.disposition.startsWith('removed:')) {
+        throw new Error(`Baseline removal requires a removed disposition: ${equivalence.baselineKey}`);
+      }
+      continue;
+    }
+    const currentEffect = currentTransport.get(equivalence.currentKey);
+    if (!currentEffect) throw new Error(`Baseline equivalence target is not a current transport effect: ${equivalence.currentKey}`);
+    if (baselineEffect.kind !== currentEffect.kind) {
+      throw new Error(`Baseline equivalence changes effect kind: ${equivalence.baselineKey}`);
+    }
+    if (!equivalence.disposition.startsWith('equivalent:')) {
+      throw new Error(`Baseline replacement requires an equivalent disposition: ${equivalence.baselineKey}`);
+    }
+  }
+}
+
+function missingBaselineTransportEffects(
+  baselineDispositions: readonly Disposition[],
+  currentDispositions: readonly Disposition[],
+  equivalences: readonly BaselineEquivalence[],
+): Disposition[] {
+  const currentKeys = new Set(
+    currentDispositions.filter((entry) => entry.transport).map(effectKey),
+  );
+  const dispositionKeys = new Set(equivalences.map((entry) => entry.baselineKey));
+  return baselineDispositions.filter((entry) => (
+    entry.transport && !currentKeys.has(effectKey(entry)) && !dispositionKeys.has(effectKey(entry))
+  ));
+}
+
+function runNegativeFixtures(): void {
+  const missingBaseline = collectEffects(
+    "ipcMain.handle('fixture:known', () => undefined);",
+    'src/main/fixture.ts',
+  ).map(dispositionForBaseline);
+  const missing = missingBaselineTransportEffects(missingBaseline, [], []);
+  if (missing.length !== 1) throw new Error('Negative fixture failed to detect a missing baseline handler.');
+
+  const unreleasedSource = "const handleActivate = () => undefined; app.on('activate', handleActivate);";
+  const unreleasedSources = [{ path: 'src/main/fixture.ts', source: unreleasedSource }];
+  const unreleased = collectEffects(unreleasedSource, unreleasedSources[0]!.path)
+    .map((effect) => dispositionForCurrent(effect, collectReleasedListenerEffects(unreleasedSources)))
+    .filter((entry) => entry.transport && entry.owner === null && !entry.disposition.startsWith('retained:'));
+  if (unreleased.length !== 1) throw new Error('Negative fixture failed to detect an unreleased app listener.');
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function baselineIpcOwner(effect: Effect): string {
