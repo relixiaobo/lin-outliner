@@ -2144,3 +2144,29 @@ spec and codec tests, and carry the required reset into the release gate and
 release note. Do not infer compatibility intent from whether a field looks
 additive, and do not add a fallback that contradicts the ratified storage
 boundary.
+
+## Shared controllers need explicit negative capabilities
+
+PR #605 removed audio's fullscreen button but initially left Media Chrome's
+global `F` shortcut enabled. The visible surface looked audio-only while the
+shared controller could still emit a video-only fullscreen request.
+
+**Removing a control does not remove the capability owned by its controller.**
+When sibling surfaces share a controller but support different commands, encode
+the exclusion in the controller's policy rather than relying on absent UI. Test
+both sides of the asymmetry: the unsupported surface emits no request, and the
+supported surface still emits exactly one request for the same input.
+
+## A green classifier is not a green verdict
+
+PR #605's five E2E sample jobs and comparison job all completed successfully,
+but their report still classified one deterministic `5/5` branch-only layout
+failure. The workflow intentionally treats failures as data so every sample can
+finish; reading only the check conclusion allowed that known regression to
+merge.
+
+**For a non-gating diagnostic workflow, success means the verdict was produced,
+not that the change passed.** Gate on the classifier's published content, tied
+to the reviewed head SHA, and resolve every introduced failure before merging.
+When local isolation disagrees with the same-environment whole-suite signal,
+strengthen the local reproduction instead of dismissing the classifier.

@@ -61,9 +61,10 @@ describe('FilePreviewShell type-specific chrome', () => {
 });
 
 describe('FilePreviewShell media controls', () => {
-  test('renders video controls in a flat media stage with same-layer actions', () => {
+  test('renders video with one shared transport and video-only fullscreen', () => {
     const rendered = render(
       <FilePreviewShell
+        accessibleName="Launch walkthrough"
         state={{ status: 'ready', source: mediaSource('video/mp4') }}
         onOpenTarget={() => undefined}
         menuActions={[menuAction('reveal')]}
@@ -71,8 +72,31 @@ describe('FilePreviewShell media controls', () => {
     );
 
     expect(rendered.document.querySelector('.file-preview-video[data-preserve-selection]')).not.toBeNull();
-    expect(rendered.document.querySelector('.file-preview-media-player--video')).not.toBeNull();
-    expect(rendered.document.querySelector('media-control-bar .file-preview-pill--media-control')).not.toBeNull();
+    const videoPlayer = rendered.document.querySelector('.file-preview-media-player--video');
+    expect(videoPlayer).not.toBeNull();
+    expect(videoPlayer?.hasAttribute('hotkeys')).toBe(false);
+    expect(rendered.document.querySelector('.file-preview-media-controls .file-preview-pill--media-control')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-media-info')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-media-name')?.textContent).toBe('Launch walkthrough');
+    expect(rendered.document.querySelector('.file-preview-media-info[slot="top-chrome"]')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-media-time')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-media-duration')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-media-progress-row')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-media-timeline')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-media-command-row')).not.toBeNull();
+    expect(rendered.document.querySelectorAll('media-play-button')).toHaveLength(1);
+    expect(rendered.document.querySelector('media-seek-backward-button')?.getAttribute('seekoffset')).toBe('15');
+    expect(rendered.document.querySelector('media-seek-forward-button')?.getAttribute('seekoffset')).toBe('15');
+    expect(rendered.document.querySelector('media-mute-button > svg.file-preview-media-glyph[slot="off"]')).not.toBeNull();
+    expect(rendered.document.querySelector('media-play-button > svg.file-preview-media-glyph[slot="play"]')).not.toBeNull();
+    expect(rendered.document.querySelector('media-play-button > svg.file-preview-media-glyph--pause[slot="pause"]')).not.toBeNull();
+    expect(rendered.document.querySelector('media-seek-backward-button > svg.file-preview-media-glyph[slot="icon"]')).not.toBeNull();
+    expect(rendered.document.querySelector('media-seek-forward-button > svg.file-preview-media-glyph[slot="icon"]')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-media-center-play')).toBeNull();
+    expect(rendered.document.querySelector('.file-preview-media-fullscreen-spacer')).toBeNull();
+    expect(rendered.document.querySelector('media-fullscreen-button.file-preview-media-button')).not.toBeNull();
+    expect(rendered.document.querySelector('media-fullscreen-button > svg.file-preview-media-glyph[slot="enter"]')).not.toBeNull();
+    expect(rendered.document.querySelector('media-fullscreen-button > svg.file-preview-media-glyph[slot="exit"]')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-body--media')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-preview--media')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-preview--media-video')).not.toBeNull();
@@ -87,9 +111,10 @@ describe('FilePreviewShell media controls', () => {
     expect(video?.hasAttribute('disablePictureInPicture')).toBe(true);
   });
 
-  test('renders audio controls with the same flat media stage', () => {
+  test('renders audio with the shared HUD without video-only controls', () => {
     const rendered = render(
       <FilePreviewShell
+        accessibleName="Product interview"
         state={{ status: 'ready', source: mediaSource('audio/mpeg') }}
         onOpenTarget={() => undefined}
         menuActions={[menuAction('reveal')]}
@@ -97,8 +122,29 @@ describe('FilePreviewShell media controls', () => {
     );
 
     expect(rendered.document.querySelector('.file-preview-audio[data-preserve-selection]')).not.toBeNull();
-    expect(rendered.document.querySelector('.file-preview-media-player--audio[data-preserve-selection]')).not.toBeNull();
-    expect(rendered.document.querySelector('media-control-bar .file-preview-pill--media-control')).not.toBeNull();
+    expect(rendered.document.querySelector(
+      '.file-preview-media-player--audio[data-preserve-selection][hotkeys="nof"]',
+    )).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-media-controls .file-preview-pill--media-control')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-media-info')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-media-name')?.textContent).toBe('Product interview');
+    expect(rendered.document.querySelector('.file-preview-media-info[slot]')).toBeNull();
+    expect(rendered.document.querySelector('.file-preview-media-time')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-media-duration')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-media-progress-row')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-media-timeline')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-media-command-row')).not.toBeNull();
+    expect(rendered.document.querySelectorAll('media-play-button')).toHaveLength(1);
+    expect(rendered.document.querySelector('media-seek-backward-button')?.getAttribute('seekoffset')).toBe('15');
+    expect(rendered.document.querySelector('media-seek-forward-button')?.getAttribute('seekoffset')).toBe('15');
+    expect(rendered.document.querySelector('media-mute-button > svg.file-preview-media-glyph[slot="off"]')).not.toBeNull();
+    expect(rendered.document.querySelector('media-play-button > svg.file-preview-media-glyph[slot="play"]')).not.toBeNull();
+    expect(rendered.document.querySelector('media-play-button > svg.file-preview-media-glyph--pause[slot="pause"]')).not.toBeNull();
+    expect(rendered.document.querySelector('media-seek-backward-button > svg.file-preview-media-glyph[slot="icon"]')).not.toBeNull();
+    expect(rendered.document.querySelector('media-seek-forward-button > svg.file-preview-media-glyph[slot="icon"]')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-media-center-play')).toBeNull();
+    expect(rendered.document.querySelector('.file-preview-media-fullscreen-spacer')).toBeNull();
+    expect(rendered.document.querySelector('media-fullscreen-button')).toBeNull();
     expect(rendered.document.querySelector('.file-node-body--media')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-body--media-audio')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-preview--media')).not.toBeNull();
@@ -113,71 +159,19 @@ describe('FilePreviewShell media controls', () => {
     expect((audio as HTMLMediaElement | null)?.disableRemotePlayback).toBe(true);
   });
 
-  test('media keyboard shortcuts are scoped to the focused media element', async () => {
-    const rendered = render(
-      <FilePreviewShell
-        state={{ status: 'ready', source: mediaSource('video/mp4') }}
-        onOpenTarget={() => undefined}
-        menuActions={[menuAction('reveal')]}
-      />,
+  test('delegates media shortcuts to the keyboard-enabled Media Chrome controller', async () => {
+    const source = await Bun.file(new URL(
+      '../../src/renderer/ui/preview/previewRenderers.tsx',
+      import.meta.url,
+    )).text();
+    const mediaSection = source.slice(
+      source.indexOf('function useMediaSourceUrl'),
+      source.indexOf('function HtmlPreview'),
     );
-    const video = rendered.document.querySelector('.file-preview-video');
-    if (!(video instanceof rendered.window.HTMLElement)) throw new Error('Missing video');
-    installMediaState(video, { paused: true, currentTime: 20, duration: 120 });
 
-    await keydown(rendered, rendered.document.body, ' ');
-    expect(mediaState(video).playCalls).toBe(0);
-
-    video.focus();
-    await keydown(rendered, video, ' ');
-    expect(mediaState(video).playCalls).toBe(1);
-    expect(mediaState(video).paused).toBe(false);
-
-    await keydown(rendered, video, 'k');
-    expect(mediaState(video).pauseCalls).toBe(1);
-    expect(mediaState(video).paused).toBe(true);
-
-    await keydown(rendered, video, 'ArrowRight');
-    expect(mediaState(video).currentTime).toBe(25);
-    await keydown(rendered, video, 'l');
-    expect(mediaState(video).currentTime).toBe(35);
-    await keydown(rendered, video, 'ArrowLeft');
-    expect(mediaState(video).currentTime).toBe(30);
-    await keydown(rendered, video, 'j');
-    expect(mediaState(video).currentTime).toBe(20);
-
-    await keydown(rendered, video, 'm');
-    expect(mediaState(video).muted).toBe(true);
-  });
-
-  test('video fullscreen shortcuts use the media controller fullscreen surface', async () => {
-    const rendered = render(
-      <FilePreviewShell
-        state={{ status: 'ready', source: mediaSource('video/mp4') }}
-        onOpenTarget={() => undefined}
-        menuActions={[menuAction('reveal')]}
-      />,
-    );
-    const video = rendered.document.querySelector('.file-preview-video');
-    const controller = rendered.document.querySelector('.file-preview-media-player--video');
-    if (!(video instanceof rendered.window.HTMLElement)) throw new Error('Missing video');
-    if (!(controller instanceof rendered.window.HTMLElement)) throw new Error('Missing controller');
-    installMediaState(video, { paused: true, currentTime: 0, duration: 60 });
-    const videoFullscreen = installFullscreenRequestState(video);
-    const controllerFullscreen = installFullscreenRequestState(controller);
-    installFullscreenState(rendered.document, controller);
-
-    await keydown(rendered, rendered.document.body, ' ');
-    expect(mediaState(video).playCalls).toBe(1);
-    expect(mediaState(video).paused).toBe(false);
-
-    await keydown(rendered, rendered.document.body, 'f');
-    expect(fullscreenState(rendered.document).exitCalls).toBe(1);
-
-    installFullscreenState(rendered.document, null);
-    await keydown(rendered, video, 'f');
-    expect(controllerFullscreen.requestFullscreenCalls).toBe(1);
-    expect(videoFullscreen.requestFullscreenCalls).toBe(0);
+    expect(mediaSection).toContain('keyboardControl');
+    expect(mediaSection).not.toContain('useMediaKeyboardShortcuts');
+    expect(mediaSection).not.toContain("addEventListener('keydown'");
   });
 });
 
@@ -569,120 +563,4 @@ function installDomGlobals(window: Window) {
     window,
   });
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-}
-
-interface TestMediaState {
-  currentTime: number;
-  duration: number;
-  muted: boolean;
-  paused: boolean;
-  pauseCalls: number;
-  playCalls: number;
-}
-
-function installMediaState(
-  media: Element,
-  input: Pick<TestMediaState, 'currentTime' | 'duration' | 'paused'>,
-) {
-  const state: TestMediaState = {
-    ...input,
-    muted: false,
-    pauseCalls: 0,
-    playCalls: 0,
-  };
-  Object.defineProperties(media, {
-    currentTime: {
-      configurable: true,
-      get: () => state.currentTime,
-      set: (value: number) => {
-        state.currentTime = value;
-      },
-    },
-    duration: {
-      configurable: true,
-      get: () => state.duration,
-    },
-    muted: {
-      configurable: true,
-      get: () => state.muted,
-      set: (value: boolean) => {
-        state.muted = value;
-      },
-    },
-    paused: {
-      configurable: true,
-      get: () => state.paused,
-    },
-    __mediaState: {
-      configurable: true,
-      value: state,
-    },
-  });
-  Object.assign(media, {
-    pause: () => {
-      state.pauseCalls += 1;
-      state.paused = true;
-    },
-    play: () => {
-      state.playCalls += 1;
-      state.paused = false;
-      return Promise.resolve();
-    },
-  });
-}
-
-function mediaState(media: Element): TestMediaState {
-  return (media as Element & { __mediaState: TestMediaState }).__mediaState;
-}
-
-interface TestFullscreenState {
-  exitCalls: number;
-}
-
-interface TestFullscreenRequestState {
-  requestFullscreenCalls: number;
-}
-
-function installFullscreenState(document: Document, element: Element | null) {
-  const state: TestFullscreenState = { exitCalls: 0 };
-  Object.defineProperties(document, {
-    fullscreenElement: {
-      configurable: true,
-      get: () => element,
-    },
-    __fullscreenState: {
-      configurable: true,
-      value: state,
-    },
-  });
-  Object.assign(document, {
-    exitFullscreen: () => {
-      state.exitCalls += 1;
-      return Promise.resolve();
-    },
-  });
-}
-
-function fullscreenState(document: Document): TestFullscreenState {
-  return (document as Document & { __fullscreenState: TestFullscreenState }).__fullscreenState;
-}
-
-function installFullscreenRequestState(element: Element): TestFullscreenRequestState {
-  const state: TestFullscreenRequestState = { requestFullscreenCalls: 0 };
-  Object.assign(element, {
-    requestFullscreen: () => {
-      state.requestFullscreenCalls += 1;
-      return Promise.resolve();
-    },
-  });
-  return state;
-}
-
-async function keydown(rendered: { window: Window }, target: Element | Document, key: string) {
-  const event = new rendered.window.Event('keydown', { bubbles: true, cancelable: true }) as Event & { key: string };
-  Object.defineProperty(event, 'key', { value: key });
-  await act(async () => {
-    target.dispatchEvent(event);
-    await Promise.resolve();
-  });
 }

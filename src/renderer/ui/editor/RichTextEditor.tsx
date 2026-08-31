@@ -978,6 +978,21 @@ export function RichTextEditor(props: RichTextEditorProps) {
         }
 
         if (
+          event.metaKey
+          && !event.ctrlKey
+          && !event.shiftKey
+          && !event.altKey
+          && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')
+        ) {
+          event.preventDefault();
+          const selection = event.key === 'ArrowRight'
+            ? TextSelection.atEnd(viewInstance.state.doc)
+            : TextSelection.atStart(viewInstance.state.doc);
+          viewInstance.dispatch(viewInstance.state.tr.setSelection(selection).scrollIntoView());
+          return true;
+        }
+
+        if (
           matchesShortcutEvent(event, 'editor.description')
           && propsRef.current.onDescriptionToggle
         ) {

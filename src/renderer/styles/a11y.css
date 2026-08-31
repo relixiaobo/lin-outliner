@@ -29,6 +29,7 @@
     --media-hud-bg: rgb(46 46 50);
     --media-hud-hover-bg: rgb(31 31 35);
     --media-hud-active-bg: rgb(20 20 24);
+    --media-hud-gradient-start: var(--media-hud-bg);
   }
 }
 

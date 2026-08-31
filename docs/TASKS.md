@@ -15,10 +15,11 @@ latest published train is `v0.7.0`.
 
 No implementation PR is open. `agent-bash-stdin-transport` shipped in #604, so
 `outline-cli-skill-efficiency` and `agent-result-and-file-lifecycle` are now
-eligible in parallel. Startup Window, preview readers, and Skill authoring are
-also independently eligible under their collision lanes. The remaining plans
-from #588/#589, #591, and #595 stay active below until their implementation,
-spec fold, and archive move complete.
+eligible in parallel. `media-preview-polish` shipped in #605, so the shared
+preview-shell lane is clear again. Startup Window, preview readers, and Skill
+authoring are also independently eligible under their collision lanes. The
+remaining plans from #588/#589, #591, and #595 stay active below until their
+implementation, spec fold, and archive move complete.
 
 ## Primary Delivery Queue
 
@@ -91,7 +92,7 @@ The split also absorbs three former planless tasks without losing their intent:
 Collision lanes remain claim-time constraints, not hidden graph edges:
 
 - `file-preview-office`, `url-static-reader`, and the preview/translation units
-  in Interaction Jank must not overlap on shared preview shell files; #599 is the
+  in Interaction Jank must not overlap on shared preview shell files; #605 is the
   merged baseline for every later claim.
 - PR #604 settled Agent Bash stdin before Agent resource lifecycle because both
   rewrite Agent protocol/codec, `ToolPayloadStore`, context dependencies, Thread
@@ -224,6 +225,10 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **media-preview-polish** (`done`, #605, 2026-08-31) — Source actions now
+  reveal without reflow while direct audio and video share one responsive Media
+  Chrome HUD, scoped shortcuts, and viewport-filling video fullscreen; plan
+  archived at [media-preview-polish](plans/archive/media-preview-polish.md).
 - **agent-bash-stdin-transport** (`done`, #604, 2026-08-31) — Bash gained exact
   bounded foreground stdin over Thread-private large-text dependencies with
   canonical replay, renderer projection, and complete fork/prune lifecycle;

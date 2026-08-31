@@ -46,6 +46,7 @@ export {
   Clock as ClockIcon,
   CircleHelp as QuestionToolIcon,
   Play as PlayIcon,
+  Pause as PauseIcon,
   Code2 as CodeIcon,
   Command as CommandIcon,
   Copy as CopyIcon,
@@ -100,6 +101,7 @@ export {
   ListX as NodeDeleteToolIcon,
   Loader2 as LoaderIcon,
   Maximize2 as ExpandIcon,
+  Minimize2 as CollapseIcon,
   Mail as EmailIcon,
   MoreHorizontal as MoreIcon,
   MoveDown as MoveDownIcon,
@@ -116,7 +118,9 @@ export {
   Pin as PinIcon,
   Plus as AddIcon,
   Redo2 as RedoIcon,
+  Rewind as SeekBackwardIcon,
   RefreshCw as RefreshIcon,
+  FastForward as SeekForwardIcon,
   Repeat as RepeatIcon,
   Rows3 as GroupIcon,
   CloudDownload as WebFetchToolIcon,
@@ -138,6 +142,9 @@ export {
   Type as PlainTextIcon,
   Undo2 as UndoIcon,
   User as UserIcon,
+  Volume1 as VolumeLowIcon,
+  Volume2 as VolumeHighIcon,
+  VolumeX as VolumeOffIcon,
   // An MCP server tool is a *connected* external tool, not an unidentified one.
   // Sharing Wrench with the unknown-tool fallback made a working integration and
   // an unmappable call render identically in the same transcript.
