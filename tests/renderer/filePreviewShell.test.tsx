@@ -84,6 +84,7 @@ describe('FilePreviewShell media controls', () => {
     expect(rendered.document.querySelector('.file-preview-media-command-row')).not.toBeNull();
     expect(rendered.document.querySelectorAll('media-play-button')).toHaveLength(1);
     expect(rendered.document.querySelector('.file-preview-media-center-play')).toBeNull();
+    expect(rendered.document.querySelector('.file-preview-media-fullscreen-spacer')).toBeNull();
     expect(rendered.document.querySelector('media-fullscreen-button.file-preview-media-button')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-body--media')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-preview--media')).not.toBeNull();
@@ -122,6 +123,7 @@ describe('FilePreviewShell media controls', () => {
     expect(rendered.document.querySelector('.file-preview-media-command-row')).not.toBeNull();
     expect(rendered.document.querySelectorAll('media-play-button')).toHaveLength(1);
     expect(rendered.document.querySelector('.file-preview-media-center-play')).toBeNull();
+    expect(rendered.document.querySelector('.file-preview-media-fullscreen-spacer[aria-hidden="true"]')).not.toBeNull();
     expect(rendered.document.querySelector('media-fullscreen-button')).toBeNull();
     expect(rendered.document.querySelector('.file-node-body--media')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-body--media-audio')).not.toBeNull();

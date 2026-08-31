@@ -1776,7 +1776,9 @@ test.describe('file attachments', () => {
       const play = element.querySelector<HTMLElement>('media-play-button');
       const mute = element.querySelector<HTMLElement>('media-mute-button');
       const time = element.querySelector<HTMLElement>('.file-preview-media-time-group');
-      if (!player || !info || !progress || !command || !volume || !play || !mute || !time) return null;
+      const fullscreenSpacer = element.querySelector<HTMLElement>('.file-preview-media-fullscreen-spacer');
+      if (!player || !info || !progress || !command || !volume || !play || !mute || !time
+        || !fullscreenSpacer) return null;
       const playerRect = player.getBoundingClientRect();
       const infoRect = info.getBoundingClientRect();
       const progressRect = progress.getBoundingClientRect();
@@ -1785,6 +1787,7 @@ test.describe('file attachments', () => {
       const playRect = play.getBoundingClientRect();
       const muteRect = mute.getBoundingClientRect();
       const timeRect = time.getBoundingClientRect();
+      const fullscreenSpacerRect = fullscreenSpacer.getBoundingClientRect();
       return {
         centeredPlay: Math.abs(
           playRect.left + playRect.width / 2 - (playerRect.left + playerRect.width / 2),
@@ -1795,12 +1798,18 @@ test.describe('file attachments', () => {
           Math.abs(muteRect.top + muteRect.height / 2 - (playRect.top + playRect.height / 2)),
           Math.abs(timeRect.top + timeRect.height / 2 - (playRect.top + playRect.height / 2)),
         ) <= 1,
+        sharedTrailingGeometry: fullscreenSpacerRect.width === 28
+          && fullscreenSpacerRect.left - timeRect.right >= 1
+          && fullscreenSpacerRect.left - timeRect.right <= 8
+          && playerRect.right - fullscreenSpacerRect.right >= 15
+          && playerRect.right - fullscreenSpacerRect.right <= 17,
       };
     })).toEqual({
       centeredPlay: true,
       compactVolume: true,
       orderedTiers: true,
       sharedBaseline: true,
+      sharedTrailingGeometry: true,
     });
 
     await pastedRow.locator(':scope > .outline-source-preview-row .file-node-body').hover({
@@ -1817,6 +1826,144 @@ test.describe('file attachments', () => {
       const [menuRect, previewRect] = await Promise.all([menu.boundingBox(), preview.boundingBox()]);
       return Boolean(menuRect && previewRect && menuRect.height > previewRect.height);
     }).toBe(true);
+  });
+
+  test('audio and video previews share one HUD metric system', async ({ page }) => {
+    const beforeChildren = await todayChildren(page);
+    await trailingEditor(page).click();
+    await pasteClipboardFile(page, {
+      name: 'metric-audio.wav',
+      mimeType: 'audio/wav',
+      text: 'audio bytes',
+    });
+    await expect.poll(async () => (await todayChildren(page)).length)
+      .toBe(beforeChildren.length + 1);
+    const audioId = (await todayChildren(page)).at(-1)!;
+
+    await trailingEditor(page).click();
+    await pasteClipboardFile(page, {
+      name: 'metric-video.mp4',
+      mimeType: 'video/mp4',
+      text: 'video bytes',
+    });
+    await expect.poll(async () => (await todayChildren(page)).length)
+      .toBe(beforeChildren.length + 2);
+    const videoId = (await todayChildren(page)).at(-1)!;
+
+    const readMetrics = async (nodeId: string, kind: 'audio' | 'video') => row(page, nodeId)
+      .locator(`:scope > .outline-source-preview-row .file-preview-media-player--${kind}`)
+      .evaluate((player, mediaKind) => {
+        const info = player.querySelector<HTMLElement>('.file-preview-media-info');
+        const title = player.querySelector<HTMLElement>('.file-preview-media-name');
+        const controls = player.querySelector<HTMLElement>('.file-preview-media-controls');
+        const progress = player.querySelector<HTMLElement>('.file-preview-media-progress-row');
+        const command = player.querySelector<HTMLElement>('.file-preview-media-command-row');
+        const play = player.querySelector<HTMLElement>('media-play-button');
+        const time = player.querySelector<HTMLElement>('.file-preview-media-time-group');
+        const trailingSlot = player.querySelector<HTMLElement>(
+          mediaKind === 'audio'
+            ? '.file-preview-media-fullscreen-spacer'
+            : 'media-fullscreen-button',
+        );
+        const actions = player.closest('.file-node-body')
+          ?.querySelector<HTMLElement>('.outline-source-preview-actions');
+        const more = actions?.querySelector<HTMLElement>('.file-preview-pill-more');
+        const close = actions?.querySelector<HTMLElement>('.outline-source-preview-close');
+        if (!info || !title || !controls || !progress || !command || !play || !time
+          || !trailingSlot || !actions || !more || !close) return null;
+
+        const playerRect = player.getBoundingClientRect();
+        const infoRect = info.getBoundingClientRect();
+        const controlsRect = controls.getBoundingClientRect();
+        const progressRect = progress.getBoundingClientRect();
+        const commandRect = command.getBoundingClientRect();
+        const playRect = play.getBoundingClientRect();
+        const timeRect = time.getBoundingClientRect();
+        const trailingSlotRect = trailingSlot.getBoundingClientRect();
+        const actionsRect = actions.getBoundingClientRect();
+        const titleStyle = getComputedStyle(title);
+        const timeStyle = getComputedStyle(time);
+        const playStyle = getComputedStyle(play);
+        const controlsStyle = getComputedStyle(controls);
+        const iconColorProbe = document.createElement('span');
+        iconColorProbe.style.color = playStyle.getPropertyValue('--media-icon-color');
+        player.append(iconColorProbe);
+        const iconColor = getComputedStyle(iconColorProbe).color;
+        iconColorProbe.remove();
+        return {
+          actionTitleCenterDelta: Math.abs(
+            actionsRect.top + actionsRect.height / 2 - (infoRect.top + infoRect.height / 2),
+          ),
+          actionTitleColors: [
+            titleStyle.color,
+            getComputedStyle(more).color,
+            getComputedStyle(close).color,
+          ],
+          commandInset: Math.round(commandRect.left - playerRect.left),
+          controlGap: controlsStyle.rowGap,
+          controlInset: Math.round(controlsRect.left - playerRect.left),
+          foregroundColors: [
+            titleStyle.color,
+            timeStyle.color,
+            iconColor,
+          ],
+          infoOffsetTop: Math.round(infoRect.top - playerRect.top),
+          playSize: [Math.round(playRect.width), Math.round(playRect.height)],
+          progressInset: Math.round(progressRect.left - playerRect.left),
+          timeTypography: [
+            timeStyle.fontFamily,
+            timeStyle.fontSize,
+            timeStyle.fontWeight,
+            timeStyle.lineHeight,
+            timeStyle.letterSpacing,
+          ],
+          titleTypography: [
+            titleStyle.fontFamily,
+            titleStyle.fontSize,
+            titleStyle.fontWeight,
+            titleStyle.lineHeight,
+            titleStyle.letterSpacing,
+          ],
+          trailingSlotSize: [
+            Math.round(trailingSlotRect.width),
+            Math.round(trailingSlotRect.height),
+          ],
+          trailingTimeGap: Math.round(trailingSlotRect.left - timeRect.right),
+        };
+      }, kind);
+
+    const [audioMetrics, videoMetrics] = await Promise.all([
+      readMetrics(audioId, 'audio'),
+      readMetrics(videoId, 'video'),
+    ]);
+    expect(audioMetrics).not.toBeNull();
+    expect(videoMetrics).not.toBeNull();
+    expect(audioMetrics!.actionTitleCenterDelta).toBeLessThanOrEqual(1);
+    expect(videoMetrics!.actionTitleCenterDelta).toBeLessThanOrEqual(1);
+    expect(audioMetrics!.actionTitleColors).toEqual(
+      Array<string>(3).fill(audioMetrics!.actionTitleColors[0]!),
+    );
+    expect(videoMetrics!.actionTitleColors).toEqual(
+      Array<string>(3).fill(videoMetrics!.actionTitleColors[0]!),
+    );
+    expect(audioMetrics!.foregroundColors).toEqual(
+      Array<string>(3).fill(audioMetrics!.foregroundColors[0]!),
+    );
+    expect(videoMetrics!.foregroundColors).toEqual(
+      Array<string>(3).fill(videoMetrics!.foregroundColors[0]!),
+    );
+    expect(audioMetrics!.infoOffsetTop).toBe(videoMetrics!.infoOffsetTop);
+    expect(audioMetrics!.titleTypography).toEqual(videoMetrics!.titleTypography);
+    expect(audioMetrics!.timeTypography).toEqual(videoMetrics!.timeTypography);
+    expect(audioMetrics!.playSize).toEqual([28, 28]);
+    expect(videoMetrics!.playSize).toEqual(audioMetrics!.playSize);
+    expect(audioMetrics!.trailingSlotSize).toEqual([28, 28]);
+    expect(videoMetrics!.trailingSlotSize).toEqual(audioMetrics!.trailingSlotSize);
+    expect(videoMetrics!.trailingTimeGap).toBe(audioMetrics!.trailingTimeGap);
+    expect(videoMetrics!.controlGap).toBe(audioMetrics!.controlGap);
+    expect(videoMetrics!.controlInset).toBe(audioMetrics!.controlInset);
+    expect(videoMetrics!.progressInset).toBe(audioMetrics!.progressInset);
+    expect(videoMetrics!.commandInset).toBe(audioMetrics!.commandInset);
   });
 
   test('video media HUD owns one playback shortcut and fills fullscreen', async ({ page }) => {
@@ -1841,6 +1988,19 @@ test.describe('file attachments', () => {
     await expect.poll(async () => player.evaluate((element) => {
       const rect = element.getBoundingClientRect();
       return rect.width <= 720 && rect.height <= 520;
+    })).toBe(true);
+    await expect.poll(async () => player.evaluate((element) => {
+      const time = element.querySelector<HTMLElement>('.file-preview-media-time-group');
+      const fullscreen = element.querySelector<HTMLElement>('media-fullscreen-button');
+      if (!time || !fullscreen) return false;
+      const playerRect = element.getBoundingClientRect();
+      const timeRect = time.getBoundingClientRect();
+      const fullscreenRect = fullscreen.getBoundingClientRect();
+      return fullscreenRect.width === 28
+        && fullscreenRect.left - timeRect.right >= 1
+        && fullscreenRect.left - timeRect.right <= 8
+        && playerRect.right - fullscreenRect.right >= 15
+        && playerRect.right - fullscreenRect.right <= 17;
     })).toBe(true);
 
     await video.evaluate((element) => {

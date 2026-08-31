@@ -112,7 +112,7 @@ describe('input modality CSS guards', () => {
     expect(filePreviewCss).toContain('.file-preview-media-progress-row');
     expect(filePreviewCss).toContain('.file-preview-media-command-row');
     expect(filePreviewCss).toMatch(/\.file-preview-media-player--audio\s*\{[^}]*min-height:\s*calc\([\s\S]*?var\(--media-control-height\) \* 2 \+ var\(--line-ui-sm\) \+ var\(--space-6\)[\s\S]*?\);/s);
-    expect(filePreviewCss).toMatch(/\.file-preview-media-info\s*\{[^}]*min-height:\s*var\(--control-size-md\);[^}]*margin-block-start:\s*var\(--space-6\);[^}]*padding:\s*0 var\(--space-8\);/s);
+    expect(filePreviewCss).toMatch(/\.file-preview-media-info\s*\{[^}]*min-height:\s*var\(--control-size-md\);[^}]*margin-block-start:\s*calc\(var\(--file-preview-frame-padding-block\) \+ var\(--space-1\)\);[^}]*padding:\s*0 var\(--space-8\);/s);
     expect(filePreviewCss).toMatch(/\.file-node-body--media:has\(> \.outline-source-preview-actions\) \.file-preview-media-info\s*\{[^}]*padding-inline-end:\s*calc\(/s);
     expect(filePreviewCss).toMatch(/\.file-preview-media-timeline\s*\{[^}]*width:\s*100%;[^}]*min-width:\s*0;/s);
     expect(filePreviewCss).toMatch(/\.file-preview-media-controls\s*\{[^}]*gap:\s*var\(--space-4\);[^}]*padding:\s*var\(--space-6\) var\(--space-8\);/s);
@@ -120,9 +120,10 @@ describe('input modality CSS guards', () => {
     expect(filePreviewCss).toMatch(/\.file-preview-media-command-row\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto minmax\(0, 1fr\);/s);
     expect(filePreviewCss).toMatch(/\.file-preview-media-volume\s*\{[^}]*width:\s*var\(--media-volume-range-width\);[^}]*flex:\s*0 0 var\(--media-volume-range-width\);/s);
     expect(filePreviewCss).toMatch(/\.file-preview-media-command-row\s*\{[^}]*min-height:\s*var\(--control-size-xl\);/s);
-    expect(filePreviewCss).toMatch(/\.file-preview-media-name\s*\{[^}]*font-size:\s*var\(--font-ui-sm\);[^}]*line-height:\s*var\(--line-ui-sm\);/s);
-    expect(filePreviewCss).toMatch(/\.file-preview-media-time-group\s*\{[^}]*color:\s*var\(--text-secondary\);[^}]*font-size:\s*var\(--font-ui-xs\);[^}]*line-height:\s*var\(--line-ui-xs\);/s);
-    expect(filePreviewCss).toMatch(/@container \(max-width: 360px\)\s*\{[\s\S]*?\.outline-source-preview \.file-preview-media-volume\s*\{[^}]*display:\s*none;/s);
+    expect(filePreviewCss).toMatch(/\.file-preview-media-name\s*\{[^}]*color:\s*var\(--text-primary\);[^}]*font-size:\s*var\(--font-ui-sm\);[^}]*line-height:\s*var\(--line-ui-sm\);/s);
+    expect(filePreviewCss).toMatch(/\.file-preview-media-time-group\s*\{[^}]*color:\s*var\(--text-primary\);[^}]*font-family:\s*var\(--font-family-sans\);[^}]*font-size:\s*var\(--font-ui-xs\);[^}]*font-variant-numeric:\s*tabular-nums;[^}]*font-weight:\s*500;[^}]*letter-spacing:\s*0;[^}]*line-height:\s*var\(--line-ui-xs\);/s);
+    expect(filePreviewCss).toMatch(/\.file-preview-media-fullscreen-spacer\s*\{[^}]*width:\s*var\(--control-size-xl\);[^}]*height:\s*var\(--control-size-xl\);[^}]*flex:\s*0 0 var\(--control-size-xl\);/s);
+    expect(filePreviewCss).toMatch(/@container \(max-width: 360px\)\s*\{[\s\S]*?\.outline-source-preview \.file-preview-media-volume,[\s\S]*?\.outline-source-preview \.file-preview-media-fullscreen-spacer\s*\{[^}]*display:\s*none;/s);
     expect(filePreviewCss).toMatch(/\.file-preview-media-command-group--transport\s*\{[^}]*justify-content:\s*center;/s);
     expect(filePreviewCss).toMatch(/\.file-preview-media-command-group--trailing\s*\{[^}]*justify-content:\s*flex-end;/s);
     expect(filePreviewCss).toMatch(/\.file-node-body--media-video:not\(\.file-node-body--reader\)\s*\{[^}]*--file-preview-media-width:\s*min\(720px, 100%\);/s);
@@ -133,7 +134,11 @@ describe('input modality CSS guards', () => {
       .toBeGreaterThan(filePreviewCss.indexOf(
         '.file-node-body--media-video:not(.file-node-body--reader) .file-preview-video',
       ));
-    expect(filePreviewCss).toMatch(/\.file-preview-media-button\s*\{[^}]*width:\s*var\(--control-size-xl\);[^}]*height:\s*var\(--control-size-xl\);[^}]*color:\s*var\(--text-secondary\);/s);
+    expect(filePreviewCss).toMatch(/\.file-preview-media-button\s*\{[^}]*width:\s*var\(--control-size-xl\);[^}]*height:\s*var\(--control-size-xl\);[^}]*color:\s*var\(--text-primary\);/s);
+    expect(filePreviewCss).toMatch(/\.file-preview-pill--source-corner \.file-preview-pill-more,[\s\S]*?\.outline-source-preview-close\.icon-button\s*\{[^}]*color:\s*inherit;/s);
+    expect(filePreviewCss).toMatch(/\.file-node-body--media-audio > \.outline-source-preview-actions\s*\{[^}]*color:\s*var\(--text-primary\);/s);
+    expect(filePreviewCss).toMatch(/\.file-node-body--media-audio > \.outline-source-preview-actions \.file-preview-pill\s*\{[^}]*color:\s*inherit;/s);
+    expect(filePreviewCss).toMatch(/\.file-node-body--media-audio > \.outline-source-preview-actions[\s\S]*?:is\(\.file-preview-pill-more, \.outline-source-preview-close\.icon-button\) > svg\s*\{[^}]*filter:\s*none;/s);
     expect(filePreviewCss).toMatch(/\.file-preview-media-button:hover,[\s\S]*?--media-icon-color:\s*var\(--text-primary\);[\s\S]*?color:\s*var\(--text-primary\);/);
     expect(filePreviewCss).toMatch(/\.file-preview-media-player--video \.file-preview-media-controls\s*\{[^}]*padding-block-start:\s*var\(--space-xl\);[^}]*background:\s*linear-gradient\(to bottom, transparent, var\(--media-hud-active-bg\)\);[^}]*border:\s*0;[^}]*border-radius:\s*0;[^}]*box-shadow:\s*none;/s);
     expect(filePreviewCss).not.toContain('.file-preview-media-center-play');

@@ -198,7 +198,7 @@
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   box-shadow: none;
-  color: var(--media-hud-fg);
+  color: inherit;
   opacity: 0.82;
   transition: color var(--motion-fast), opacity var(--motion-fast);
 }
@@ -221,8 +221,21 @@
 .file-preview-pill--source-corner .file-preview-pill-more[aria-expanded='true'],
 .outline-source-preview-close.icon-button:hover {
   background: transparent;
-  color: var(--media-hud-fg);
+  color: inherit;
   opacity: 1;
+}
+
+.file-node-body--media-audio > .outline-source-preview-actions {
+  color: var(--text-primary);
+}
+
+.file-node-body--media-audio > .outline-source-preview-actions .file-preview-pill {
+  color: inherit;
+}
+
+.file-node-body--media-audio > .outline-source-preview-actions
+  :is(.file-preview-pill-more, .outline-source-preview-close.icon-button) > svg {
+  filter: none;
 }
 
 .file-preview-pill--source-corner .file-preview-pill-more:active,
@@ -580,7 +593,7 @@
   --media-button-padding: 0;
   --media-button-icon-width: var(--icon-size-md);
   --media-button-icon-height: var(--icon-size-md);
-  --media-icon-color: var(--text-secondary);
+  --media-icon-color: var(--text-primary);
   --media-button-icon-transition: fill var(--motion-fast);
   --media-time-range-height: var(--control-size-xl);
   --media-range-padding: 0;
@@ -671,7 +684,7 @@
 
 .file-preview-media-info {
   min-height: var(--control-size-md);
-  margin-block-start: var(--space-6);
+  margin-block-start: calc(var(--file-preview-frame-padding-block) + var(--space-1));
   padding: 0 var(--space-8);
 }
 
@@ -685,7 +698,7 @@
 .file-preview-media-name {
   min-width: 0;
   overflow: hidden;
-  color: var(--text-secondary);
+  color: var(--text-primary);
   font-size: var(--font-ui-sm);
   font-weight: 500;
   line-height: var(--line-ui-sm);
@@ -718,7 +731,7 @@
 .file-preview-media-button {
   width: var(--control-size-xl);
   height: var(--control-size-xl);
-  color: var(--text-secondary);
+  color: var(--text-primary);
   transition: color var(--motion-fast);
 }
 
@@ -780,14 +793,25 @@
   min-width: 0;
   flex: 0 0 auto;
   align-items: center;
-  color: var(--text-secondary);
+  color: var(--text-primary);
+  font-family: var(--font-family-sans);
   font-size: var(--font-ui-xs);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  letter-spacing: 0;
   line-height: var(--line-ui-xs);
   white-space: nowrap;
 }
 
+.file-preview-media-fullscreen-spacer {
+  width: var(--control-size-xl);
+  height: var(--control-size-xl);
+  flex: 0 0 var(--control-size-xl);
+}
+
 @container (max-width: 360px) {
-  .outline-source-preview .file-preview-media-volume {
+  .outline-source-preview .file-preview-media-volume,
+  .outline-source-preview .file-preview-media-fullscreen-spacer {
     display: none;
   }
 
