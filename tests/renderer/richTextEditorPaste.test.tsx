@@ -215,6 +215,44 @@ describe('RichTextEditor structured paste commit', () => {
     expect(editor.textContent).not.toContain('X');
     expect(globalCommands).toBe(0);
   });
+
+  test('synchronously applies Cmd+ArrowRight before a following Enter', () => {
+    const splits: Parameters<NonNullable<EditorProps['onEnter']>>[0][] = [];
+    const rendered = renderEditor({ text: 'Renamed report', marks: [], inlineRefs: [] }, {
+      onEnter: (payload) => splits.push(payload),
+    });
+    const editor = rendered.document.querySelector<HTMLElement>('.ProseMirror')!;
+
+    const moveToEnd = new rendered.window.Event('keydown', { bubbles: true, cancelable: true });
+    Object.defineProperties(moveToEnd, {
+      altKey: { value: false },
+      ctrlKey: { value: false },
+      key: { value: 'ArrowRight' },
+      metaKey: { value: true },
+      shiftKey: { value: false },
+    });
+    const enter = new rendered.window.Event('keydown', { bubbles: true, cancelable: true });
+    Object.defineProperties(enter, {
+      altKey: { value: false },
+      ctrlKey: { value: false },
+      key: { value: 'Enter' },
+      metaKey: { value: false },
+      shiftKey: { value: false },
+    });
+
+    act(() => {
+      editor.dispatchEvent(moveToEnd);
+      editor.dispatchEvent(enter);
+    });
+
+    expect(moveToEnd.defaultPrevented).toBe(true);
+    expect(splits).toEqual([{
+      after: { text: '', marks: [], inlineRefs: [] },
+      atEnd: true,
+      atStart: false,
+      before: { text: 'Renamed report', marks: [], inlineRefs: [] },
+    }]);
+  });
 });
 
 function dispatchModZ(

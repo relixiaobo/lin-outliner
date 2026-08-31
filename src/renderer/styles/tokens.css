@@ -93,6 +93,7 @@
   --media-hud-bg: rgba(46, 46, 50, 0.78);
   --media-hud-hover-bg: rgba(31, 31, 35, 0.88);
   --media-hud-active-bg: rgba(20, 20, 24, 0.94);
+  --media-hud-gradient-start: transparent;
   --media-hud-fg: rgba(255, 255, 255, 0.94);
   --media-hud-outline: rgba(255, 255, 255, 0.12);
   --media-hud-compact-shadow: inset 0 0 0 1px var(--media-hud-outline);

@@ -41,6 +41,7 @@ import { projectFieldTypeById, nodeShowsCheckbox } from '../../../core/configPro
 import type { CursorPlacement, FocusTarget } from '../../state/document';
 import {
   flattenVisibleRows,
+  isRowExpanded,
   resolveReferenceTargetId,
   type DocumentIndex,
   type PendingStructuralChange,
@@ -2312,8 +2313,13 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     }
     if (!payload.atEnd) {
       const contentBeforeSplit = draftContentRef.current;
+      const expandedNow = isRowExpanded(
+        props.nodeId,
+        props.index.byId,
+        props.uiRef.current.expanded,
+      );
       const splitIntoChildren = node.type !== 'reference'
-        && row.expanded
+        && expandedNow
         && rowScopeChildIds.length > 0;
       const targetParentId = splitIntoChildren ? props.nodeId : props.parentId;
       const targetIndex = splitIntoChildren
@@ -2353,7 +2359,12 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       );
       return;
     }
-    const createInExpandedScope = row.expanded && rowScopeChildIds.length > 0;
+    const expandedNow = isRowExpanded(
+      props.nodeId,
+      props.index.byId,
+      props.uiRef.current.expanded,
+    );
+    const createInExpandedScope = expandedNow && rowScopeChildIds.length > 0;
     const targetParentId = createInExpandedScope ? childParentId : props.parentId;
     const targetIndex = createInExpandedScope
       ? firstContentChildIndex >= 0 ? firstContentChildIndex : null

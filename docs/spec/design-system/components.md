@@ -138,6 +138,45 @@ Only these registered preview actions add `--material-backdrop`; compact media-H
 consumers such as gallery count badges keep the shared contrast pair without blur
 or preview elevation.
 
+An Outline Source preview keeps its upper-right `More + Close` controls mounted
+in stable geometry but hides them at rest on hover-capable pointers. Hovering the
+preview body, moving keyboard focus into the group, or opening its menu reveals
+the controls; coarse and non-hover pointers keep them visible. Hidden controls do
+not intercept pointer input, and reveal never changes preview geometry.
+
+Direct audio and video previews share one Media Chrome HUD: a top Source-name row
+aligned with the exclusive upper-right `More + Close` region,
+then a full-width timeline and one balanced three-zone command row: mute/volume
+on the left, seek-back-15 / play / seek-forward-15 in the center, and
+current/duration time on the right followed by video-only fullscreen and
+authorized Source actions. Audio places this
+geometry on its neutral content surface and
+reserves that information row when the Outline corner group is present, so hover
+chrome owns an exclusive region. The volume slider stays a compact member of the
+left control group rather than stretching to fill that grid track; narrow Outline
+previews hide only the slider and retain mute. Title, timeline, and command row
+form separate vertical tiers; their outer inset is larger than the gaps within a
+control group. Audio ends its time group at the visible timeline endpoint and
+never reserves unavailable fullscreen chrome; video places its real fullscreen
+control before the shared outer inset. The title information row and corner-action
+boxes share one top edge and center line. Audio maps title, time, and icons to
+primary theme text, including the corner actions; video maps those same elements
+to the fixed HUD foreground required over pixels. The readable owner title is preferred over an
+internal asset identifier. Video places the remaining HUD directly over the
+bottom pixels with a frameless contrast scrim; it never introduces an inset
+control card, border, second rounded container, or duplicate playback control.
+Player transport and output controls use filled Lucide media glyphs with a
+weight-matched pause state; application-level corner actions remain in the
+shared Lucide stroke family. Seek direction glyphs carry exact 15-second
+semantics through their accessible labels rather than unreadable icon microtype.
+Media Chrome owns playback, seeking, keyboard shortcuts, and activity state so
+each keypress performs one action and controls auto-hide without React tracking
+time or pointer movement. Audio disables only the video-specific `F` fullscreen
+shortcut while retaining the shared playback, mute, and seek shortcuts.
+Fullscreen removes inline size limits, fills the viewport, and preserves the
+video's aspect ratio. The video scrim uses an opaque gradient from edge to edge
+when reduced transparency or increased contrast is requested.
+
 External document pixels may force a light document canvas inside the preview
 iframe/page renderer. That exception is confined to document pixels; preview
 chrome, overlays, selection handles, and HUD controls stay tokenized.
