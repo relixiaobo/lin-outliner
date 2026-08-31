@@ -69,6 +69,7 @@ export interface StagedContextEvidence {
   readonly payload: Extract<ThreadContextPayload, { readonly kind: ContextEvidenceKind }>;
   readonly payloadRef: ThreadContextPayloadReference;
   readonly contextRefs: readonly ThreadContextPayloadReference[];
+  readonly internalTextRefs: readonly import('../../../core/agent/protocol').ThreadInternalTextPayloadReference[];
   readonly resourceRefs: readonly ThreadResourceReference[];
   readonly outputRefs: readonly ThreadItemOutputReference[];
   readonly summary: string;

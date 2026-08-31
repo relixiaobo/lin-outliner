@@ -93,6 +93,22 @@ describe('large-text tool arguments', () => {
       .toEqual(value);
   });
 
+  test('uses the same locale-independent pointer order for selection, codec, and rehydration', async () => {
+    const value = { Z: 'upper', a: 'lower' } as const;
+    const selected = selectLargeTextArguments(value, contract(['/Z', '/a']));
+    const refs = selected.map((entry) => reference(entry.value));
+    const factored = factorLargeTextArguments(value, selected, refs);
+    const decoded = decodeThreadContextPayload(factored.payload);
+
+    expect(decoded.kind).toBe('toolCallArguments');
+    if (decoded.kind !== 'toolCallArguments') throw new Error('Expected tool-call arguments');
+    expect(await rehydrateLargeTextArguments(
+      decoded,
+      factored.internalTextRefs,
+      async (ref) => ref.id === refs[0]!.id ? value.Z : value.a,
+    )).toEqual(value);
+  });
+
   test('rejects overlapping, missing, extra, reordered, skeleton-mismatched, and corrupt stored dependencies', async () => {
     const a = reference('a');
     const b = reference('b');
@@ -156,6 +172,26 @@ describe('large-text tool arguments', () => {
       smallFactored.internalTextRefs,
       async (_ref, maxPrefixChars) => projection(small.stdin, maxPrefixChars),
     )).toEqual(small);
+  });
+
+  test('counts the complete indentation of deeply nested pretty JSON', async () => {
+    let value: JsonValue = 'deep text';
+    let path = '';
+    for (let depth = 0; depth < 220; depth += 1) {
+      value = { nested: value };
+      path = `/nested${path}`;
+    }
+    const selected = selectLargeTextArguments(value, contract([path]));
+    const factored = factorLargeTextArguments(value, selected, [reference('deep text')]);
+    const projected = await projectLargeTextArgumentsForDisplay(
+      factored.payload,
+      factored.internalTextRefs,
+      async (_ref, maxPrefixChars) => projection('deep text', maxPrefixChars),
+    );
+
+    expect(JSON.stringify(value, null, 2).length).toBeGreaterThan(32_000);
+    expect(projected).toMatchObject({ truncated: true });
+    expect(JSON.stringify(projected, null, 2).length).toBeLessThanOrEqual(32_000);
   });
 });
 

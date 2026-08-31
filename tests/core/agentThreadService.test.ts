@@ -612,6 +612,14 @@ class ContextPayloadExecutor extends ControlledExecutor {
       'text/plain',
       'Context output',
     );
+    const inheritedText = 'nested inherited stdin';
+    const inheritedTextRef = await this.payloads.writeInternalText(context.thread.id, inheritedText);
+    const inheritedArgumentRef = await this.payloads.writeContext(context.thread.id, {
+      schemaVersion: 1,
+      kind: 'toolCallArguments',
+      value: { stdin: null },
+      bindings: [{ kind: 'internalText', path: '/stdin', ref: inheritedTextRef }],
+    });
     const payload = {
       schemaVersion: 1,
       kind: 'turnEnvironment',
@@ -669,6 +677,7 @@ class ContextPayloadExecutor extends ControlledExecutor {
       payloadRef,
       summary: 'UTC turn environment',
       contextRefs: [nestedPayloadRef],
+      internalTextRefs: [],
       resourceRefs: [resourceRef],
       outputRefs: [outputRef],
     });
@@ -707,7 +716,14 @@ class ContextPayloadExecutor extends ControlledExecutor {
         }],
         success: true,
         durationMs: 1,
-        modelCall: replayableModelCall('test__nested_image', {}),
+        modelCall: {
+          ...replayableModelCall('test__nested_image', {}),
+          arguments: {
+            storage: 'payload',
+            ref: inheritedArgumentRef,
+            internalTextRefs: [inheritedTextRef],
+          },
+        },
       }],
       itemsView: 'full',
       provenance: {
@@ -722,26 +738,15 @@ class ContextPayloadExecutor extends ControlledExecutor {
       completedAt: context.turn.startedAt + 1,
       durationMs: 1,
     };
-    const inheritedPayloadRef = await this.payloads.writeContext(context.thread.id, {
+    const inheritedPayload = {
       schemaVersion: 1,
-      kind: 'inheritedContext',
+      kind: 'inheritedContext' as const,
       sourceThreadId: context.thread.id,
       coveredThrough: { turnId: inheritedTurnId, itemId: inheritedItemId },
-      requestedTurns: 'all',
+      requestedTurns: 'all' as const,
       turns: [inheritedTurn],
-    });
-    const inheritedEvidenceId = context.recorder.createItemId();
-    await context.recorder.completedImmediately({
-      type: 'contextEvidence',
-      id: inheritedEvidenceId,
-      provenance: context.recorder.localProvenance(inheritedEvidenceId),
-      kind: 'inheritedContext',
-      payloadRef: inheritedPayloadRef,
-      summary: 'Inherited context with a managed image',
-      contextRefs: [],
-      resourceRefs: [inheritedImageArtifact.observation, inheritedToolResource],
-      outputRefs: [],
-    });
+    };
+    await context.persistContextEvidence(inheritedPayload, 'Inherited context with a managed image');
     const resetId = context.recorder.createItemId();
     await context.recorder.completedImmediately({
       type: 'contextReset',
@@ -762,6 +767,7 @@ class ContextPayloadExecutor extends ControlledExecutor {
       restoredStateRef,
       instructionsRef,
       contextRefs: [nestedPayloadRef],
+      internalTextRefs: [],
       resourceRefs: [resourceRef],
       outputRefs: [outputRef],
     });
@@ -3788,6 +3794,7 @@ describe('ThreadService', () => {
     expect(forkEvidence.payloadRef).toEqual(sourceEvidence.payloadRef);
     expect(forkEvidence.contextRefs).toEqual(sourceEvidence.contextRefs);
     expect(forkInherited.payloadRef).toEqual(sourceInherited.payloadRef);
+    expect(forkInherited.internalTextRefs).toEqual(sourceInherited.internalTextRefs);
 
     await service.deleteThread(source.id);
     expect(await stores.payloads.readContext(fork.id, forkEvidence.payloadRef))
@@ -3814,12 +3821,24 @@ describe('ThreadService', () => {
     if (!nestedImage) {
       throw new Error('Fork inherited context image reference missing');
     }
-    expect(nestedImage.artifactRef.observation).toEqual(forkInherited.resourceRefs[0]);
+    expect(forkInherited.resourceRefs).toContainEqual(nestedImage.artifactRef.observation);
     expect(await stores.payloads.readResource(fork.id, nestedImage.artifactRef.observation))
       .toEqual(ONE_PIXEL_PNG_BYTES);
-    expect(nestedToolResource).toEqual(forkInherited.resourceRefs[1]);
+    expect(forkInherited.resourceRefs).toContainEqual(nestedToolResource);
     expect(await stores.payloads.readResource(fork.id, nestedToolResource!))
       .toEqual(Buffer.from('nested tool resource'));
+    const nestedCall = inheritedPayload.turns[0]?.items.find((item) => 'modelCall' in item);
+    if (
+      !nestedCall
+      || nestedCall.modelCall.disposition !== 'replayable'
+      || nestedCall.modelCall.arguments.storage !== 'payload'
+    ) throw new Error('Fork inherited argument payload missing');
+    expect(await stores.payloads.readContext(fork.id, nestedCall.modelCall.arguments.ref)).toMatchObject({
+      kind: 'toolCallArguments',
+      value: { stdin: null },
+    });
+    expect(await stores.payloads.readInternalText(fork.id, forkInherited.internalTextRefs[0]!))
+      .toBe('nested inherited stdin');
     const previewFile = await service.resolveThreadResourceFile(fork.id, nestedImage.artifactRef.observation);
     if (!previewFile) throw new Error('Fork inherited context image preview missing');
     expect(previewFile.path).not.toContain(join('payloads', fork.id));
@@ -4984,6 +5003,7 @@ describe('ThreadService', () => {
         kind: item.kind,
         payloadRef: item.payloadRef,
         contextRefs: item.contextRefs,
+        internalTextRefs: item.internalTextRefs,
         resourceRefs: item.resourceRefs,
         outputRefs: item.outputRefs,
         summary: item.summary,
@@ -13910,6 +13930,7 @@ async function recordReferencedImageEvidence(
     payloadRef,
     summary: 'Referenced image',
     contextRefs: [],
+    internalTextRefs: [],
     resourceRefs: [resourceRef],
     outputRefs: [],
   });

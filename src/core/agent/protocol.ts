@@ -1253,6 +1253,7 @@ export interface ContextEvidenceThreadItem extends ThreadItemBase {
   readonly payloadRef: ThreadContextPayloadReference;
   readonly summary: string;
   readonly contextRefs: readonly ThreadContextPayloadReference[];
+  readonly internalTextRefs: readonly ThreadInternalTextPayloadReference[];
   readonly resourceRefs: readonly ThreadResourceReference[];
   readonly outputRefs: readonly ThreadItemOutputReference[];
 }
@@ -1272,6 +1273,7 @@ export interface ContextCompactionThreadItem extends ThreadItemBase {
   readonly restoredStateRef: ThreadContextPayloadReference;
   readonly instructionsRef: ThreadContextPayloadReference | null;
   readonly contextRefs: readonly ThreadContextPayloadReference[];
+  readonly internalTextRefs: readonly ThreadInternalTextPayloadReference[];
   readonly resourceRefs: readonly ThreadResourceReference[];
   readonly outputRefs: readonly ThreadItemOutputReference[];
 }
@@ -2404,6 +2406,7 @@ type RendererProjectedResponseMethod =
   | 'thread/configuration/set'
   | 'thread/turns/list'
   | 'thread/items/list'
+  | 'thread/context/read'
   | 'thread/turn/details/read'
   | 'turn/submit'
   | 'turn/start'

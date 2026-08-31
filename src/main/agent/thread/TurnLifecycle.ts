@@ -8,7 +8,7 @@ import { MAX_PROMPT_IMAGE_BYTES,MAX_PROMPT_IMAGE_DIMENSION } from '../../../core
 import type { DocumentProjection } from '../../../core/types';
 import { planContextCompaction } from '../context/ContextCompaction';
 import { ContextCapacityError,ContextCompactionRequiredError,estimateTextTokens } from '../context/ContextBudgetPlanner';
-import { assertContextPayloadDependencies } from '../context/contextDependencies';
+import { assertContextPayloadDependencies, contextPayloadDependencies } from '../context/contextDependencies';
 import { cursorFor,selectEffectiveContext } from '../context/ContextEpoch';
 import { admitContextEvidence,contextEvidenceItem } from '../context/evidenceAdmission';
 import { planRoleCatalogEvidence } from '../context/RoleContextReducer';
@@ -423,6 +423,7 @@ export class TurnLifecycle {
               restoredStateRef,
               instructionsRef,
               contextRefs: plan.contextRefs,
+              internalTextRefs: [],
               resourceRefs: [],
               outputRefs: plan.outputRefs,
             };
@@ -1053,6 +1054,7 @@ export class TurnLifecycle {
             createItemId: () => uuidV7(),
           }, staged.payload.kind, staged.payloadRef, staged.summary, staged.resourceRefs, {
             contextRefs: staged.contextRefs,
+            internalTextRefs: staged.internalTextRefs,
             outputRefs: staged.outputRefs,
           });
           assertContextPayloadDependencies(stagedItem, staged.payload);
@@ -1892,6 +1894,7 @@ export class TurnLifecycle {
             restoredStateRef,
             instructionsRef: null,
             contextRefs: plan.contextRefs,
+            internalTextRefs: [],
             resourceRefs: [],
             outputRefs: plan.outputRefs,
           };
@@ -1940,12 +1943,15 @@ export class TurnLifecycle {
     ): Promise<ContextEvidenceThreadItem> {
       const payloadRef = await this.core.payloads.writeContext(active.threadId, payload);
       try {
+        const dependencies = contextPayloadDependencies(payload);
         const item = contextEvidenceItem({
           thread,
           turnId: active.turnId,
           createItemId: () => active.recorder.createItemId(),
-        }, payload.kind, payloadRef, summary, [], {
-          outputRefs: payload.kind === 'toolOutputProjection' ? [payload.outputRef] : [],
+        }, payload.kind, payloadRef, summary, dependencies.resources, {
+          contextRefs: dependencies.contexts,
+          internalTextRefs: dependencies.internalTexts,
+          outputRefs: dependencies.outputs,
         });
         assertContextPayloadDependencies(item, payload);
         return await active.recorder.completedImmediately(item, this.now()) as ContextEvidenceThreadItem;

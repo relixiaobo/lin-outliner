@@ -193,6 +193,7 @@ function evidence(
     payloadRef,
     summary: 'Frozen output',
     contextRefs: [],
+    internalTextRefs: [],
     resourceRefs: [],
     outputRefs: [outputRef],
   };

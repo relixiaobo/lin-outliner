@@ -297,6 +297,7 @@ function contextStore() {
         payloadRef,
         summary: payload.kind,
         contextRefs: [],
+        internalTextRefs: [],
         resourceRefs: [],
         outputRefs: [],
       };
@@ -343,6 +344,7 @@ function contextStore() {
         restoredStateRef,
         instructionsRef: null,
         contextRefs: [summaryRef, restoredStateRef],
+        internalTextRefs: [],
         resourceRefs: [],
         outputRefs: [],
       };

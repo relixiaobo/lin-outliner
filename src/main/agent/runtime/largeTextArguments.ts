@@ -7,6 +7,7 @@ import type {
 import {
   MAX_TOOL_ARGUMENT_DISPLAY_CHARS,
 } from '../../../core/agent/modelCallHistory';
+import { compareJsonPointerPaths } from '../../../core/agent/jsonPointer';
 import {
   MAX_TOOL_ARGUMENT_TEXT_BINDINGS,
   MAX_TOOL_ARGUMENT_TEXT_BYTES,
@@ -46,7 +47,7 @@ export function selectLargeTextArguments(
     throw new Error('Large-text argument binding count exceeds its declared limit.');
   }
   const selected = bindings.map((binding) => selectBinding(value, binding));
-  const sorted = [...selected].sort((left, right) => left.path.localeCompare(right.path));
+  const sorted = [...selected].sort((left, right) => compareJsonPointerPaths(left.path, right.path));
   if (sorted.some((binding, index) => binding.path !== selected[index]?.path)) {
     throw new Error('Large-text argument bindings must be in canonical path order.');
   }
@@ -196,7 +197,7 @@ function validateStoredBindings(
   if (bindings.length > MAX_TOOL_ARGUMENT_TEXT_BINDINGS) throw new Error('Too many stored argument bindings.');
   const paths = bindings.map((binding) => binding.path);
   if (paths.some((path) => !isCanonicalJsonPointer(path))) throw new Error('Invalid stored argument path.');
-  const sorted = [...paths].sort();
+  const sorted = [...paths].sort(compareJsonPointerPaths);
   if (paths.some((path, index) => path !== sorted[index])) throw new Error('Stored argument bindings are reordered.');
   if (paths.some((path, index) => index > 0 && (path === paths[index - 1] || isPointerAncestor(paths[index - 1]!, path)))) {
     throw new Error('Stored argument bindings overlap.');
@@ -231,7 +232,11 @@ function projectedPrettyJson(
     }
     totalChars += length;
   };
-  const indent = (depth: number): string => '  '.repeat(Math.min(depth, 10));
+  const appendIndent = (depth: number): void => {
+    const length = depth * 2;
+    const remaining = Math.max(0, maxPreviewChars - preview.length);
+    append(' '.repeat(Math.min(length, remaining)), length);
+  };
   const visit = (entry: JsonValue, path: string, depth: number): void => {
     const projection = projections.get(path);
     if (projection) {
@@ -252,10 +257,12 @@ function projectedPrettyJson(
       append('[\n');
       for (const [index, child] of entry.entries()) {
         if (index > 0) append(',\n');
-        append(indent(depth + 1));
+        appendIndent(depth + 1);
         visit(child, `${path}/${index}`, depth + 1);
       }
-      append(`\n${indent(depth)}]`);
+      append('\n');
+      appendIndent(depth);
+      append(']');
       return;
     }
     if (entry !== null && typeof entry === 'object') {
@@ -267,10 +274,13 @@ function projectedPrettyJson(
       append('{\n');
       for (const [index, [key, child]] of fields.entries()) {
         if (index > 0) append(',\n');
-        append(`${indent(depth + 1)}${JSON.stringify(key)}: `);
+        appendIndent(depth + 1);
+        append(`${JSON.stringify(key)}: `);
         visit(child, `${path}/${escapeJsonPointerToken(key)}`, depth + 1);
       }
-      append(`\n${indent(depth)}}`);
+      append('\n');
+      appendIndent(depth);
+      append('}');
       return;
     }
     append(JSON.stringify(entry));

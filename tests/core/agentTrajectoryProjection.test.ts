@@ -322,6 +322,7 @@ describe('ThreadTrajectoryProjection', () => {
       restoredStateRef,
       instructionsRef: null,
       contextRefs: [summaryRef, restoredStateRef],
+      internalTextRefs: [],
       resourceRefs: [],
       outputRefs: [],
     };
@@ -1667,6 +1668,7 @@ function toolOutputProjectionItem(): ThreadItem {
     },
     summary: 'Frozen tool output projection',
     contextRefs: [],
+    internalTextRefs: [],
     resourceRefs: [],
     outputRefs: [],
   };
@@ -1681,6 +1683,7 @@ function contextItem(): ThreadItem {
     payloadRef: CONTEXT_REF,
     summary: 'Turn environment',
     contextRefs: [],
+    internalTextRefs: [],
     resourceRefs: [],
     outputRefs: [],
   };
@@ -1701,6 +1704,7 @@ function emptyAdditionalContextItem(): ThreadItem {
     },
     summary: 'Additional context (0 turn, 0 state)',
     contextRefs: [],
+    internalTextRefs: [],
     resourceRefs: [],
     outputRefs: [],
   };

@@ -132,10 +132,11 @@ runtime degradation rather than a dead Thread: reducers clear or skip only affec
 state, restored checkpoints carry typed degradation entries, and projection emits a
 bounded marker that tells the model to re-inspect current state.
 
-Every nested context payload, managed resource, or complete tool output named by a
-context payload is also an explicit dependency on its owning context Item through
-`contextRefs`, `resourceRefs`, or `outputRefs`. Lifecycle operations use that canonical
-dependency graph instead of parsing payload-private JSON. A tool Item whose canonical
+Every nested context payload, private internal text, managed resource, or complete tool
+output named by a context payload is also an explicit dependency on its owning context
+Item through `contextRefs`, `internalTextRefs`, `resourceRefs`, or `outputRefs`.
+Lifecycle operations use that canonical dependency graph instead of parsing
+payload-private JSON. A tool Item whose canonical
 arguments exceed the 32 KiB inline bound owns its `toolCallArguments` reference and
 deduplicated `internalTextRefs` directly; those references participate in the same
 reachability, fork-copy, rollback, quota, deletion, and startup reconciliation graph.
@@ -488,7 +489,7 @@ record.
 
 Forked user Items retain `author` and `acceptedAt`. Context cursors are rewritten to the copied
 Turn/Item identities. Every context payload and every dependency listed by the owning
-Item's `contextRefs`, `resourceRefs`, and `outputRefs` is copied into the fork before
+Item's `contextRefs`, `internalTextRefs`, `resourceRefs`, and `outputRefs` is copied into the fork before
 publication, including a tool Item's canonical argument payload; failure deletes the
 staged fork. The copied Thread therefore remains
 readable after its source is deleted. Content-addressed resource references do not
@@ -629,14 +630,16 @@ references them. Execution-time context publication writes the payload and its I
 under the Thread mutex; failed publication and Turn terminalization prune any context
 payload not reachable from the canonical Item graph. Inline model-call arguments are
 codec-bounded to 32 KiB; larger exact JSON uses the Thread-owned payload store rather
-than truncation. A resolved tool may select up to 256 ordered, non-overlapping textual
-argument paths for private internal-text storage, subject to per-binding and aggregate
+than truncation. A resolved tool may select up to 256 non-overlapping textual argument
+paths in deterministic UTF-16 code-unit order for private internal-text storage, subject
+to per-binding and aggregate
 64 MiB UTF-8 ceilings. Admission rejects unpaired UTF-16 surrogates, scans each selected
 string independently, scans the remaining skeleton structurally, writes verified text
 dependencies before the context envelope, and commits the owning Item last. Canonical
 provider replay rehydrates the exact durable value. Transcript, trajectory, compaction,
 Turn copy, and renderer detail instead share one path-aware 32,000-character projector
-that streams verified prefixes and never constructs the complete bound value. The
+that streams verified prefixes, accounts for complete pretty-JSON indentation at every
+depth, and never constructs the complete bound value. The
 recommended Secretlint preset plus complete private-key, legacy
 `sk-`, short GitHub-token, Bearer, and JWT signatures redact known credential formats
 before either the Item or payload becomes durable.
@@ -786,10 +789,11 @@ path directly.
 Main retains canonical `Thread`, `Turn`, and `ThreadItem` values. Before main-window IPC,
 one exhaustive response/notification projector recursively replaces only payload-backed
 model-call arguments with `{ storage: 'itemBound' }`; inline arguments cross unchanged.
-Preload decodes distinct renderer projection types and rejects `storage: 'payload'`,
-`internalTextRefs`, and `bindings` anywhere in the envelope. Every Agent Core method and
-notification variant appears in an exhaustive switch, so a new carrier cannot silently
-bypass the privacy boundary.
+The projection includes Turns nested in renderer-readable inherited-context payloads.
+Preload decodes distinct renderer projection types and rejects `storage: 'payload'` plus
+its private references at canonical model-call slots, without interpreting matching keys
+inside arbitrary inline JSON. Every Agent Core method and notification variant appears in
+an exhaustive switch, so a new carrier cannot silently bypass the privacy boundary.
 
 `thread/turn/details/read` resolves one reachable full Turn and its Thread-owned
 diagnostics reference. A Turn without a reference returns `diagnostics: null`; a Turn

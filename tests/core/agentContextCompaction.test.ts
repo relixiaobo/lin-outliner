@@ -360,6 +360,7 @@ describe('context compaction reducer', () => {
       restoredStateRef,
       instructionsRef: null,
       contextRefs: [summaryRef, restoredStateRef],
+      internalTextRefs: [],
       resourceRefs: [],
       outputRefs: [],
     };
@@ -441,6 +442,7 @@ describe('context compaction reducer', () => {
       restoredStateRef,
       instructionsRef: null,
       contextRefs: [oldItem.payloadRef],
+      internalTextRefs: [],
       resourceRefs: [],
       outputRefs: [],
     };
@@ -644,6 +646,7 @@ describe('context compaction reducer', () => {
       restoredStateRef,
       instructionsRef: null,
       contextRefs: firstPlan.contextRefs,
+      internalTextRefs: [],
       resourceRefs: [],
       outputRefs: firstPlan.outputRefs,
     };
@@ -677,6 +680,7 @@ function contextEvidence(
     payloadRef,
     summary: payload.kind,
     contextRefs: [],
+    internalTextRefs: [],
     resourceRefs: [],
     outputRefs: [],
   };
@@ -780,6 +784,7 @@ function observation(
     payloadRef: projectionRef,
     summary: `Frozen ${tool} output`,
     contextRefs: [],
+    internalTextRefs: [],
     resourceRefs: [],
     outputRefs: [outputRef],
   };

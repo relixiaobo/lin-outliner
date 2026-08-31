@@ -57,6 +57,7 @@ describe('provider cache topology', () => {
       restoredStateRef: contextRef('compactionRestoredState', 'b'),
       instructionsRef: null,
       contextRefs: [],
+      internalTextRefs: [],
       resourceRefs: [],
       outputRefs: [],
     }]);

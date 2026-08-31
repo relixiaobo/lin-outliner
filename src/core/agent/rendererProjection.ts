@@ -13,10 +13,17 @@ import type {
   RendererThreadItemEntry,
   RendererTurn,
   Thread,
+  ThreadContextPayload,
   ThreadItem,
   ThreadItemEntry,
   Turn,
 } from './protocol';
+
+type RendererThreadContextPayload =
+  | Exclude<ThreadContextPayload, { readonly kind: 'inheritedContext' }>
+  | (Omit<Extract<ThreadContextPayload, { readonly kind: 'inheritedContext' }>, 'turns'> & {
+      readonly turns: readonly RendererTurn[];
+    });
 
 export function projectAgentCoreResponse<Method extends AgentCoreMethod>(
   method: Method,
@@ -63,6 +70,16 @@ export function projectAgentCoreResponse<Method extends AgentCoreMethod>(
         turn: projectTurn(value.turn),
       });
     }
+    case 'thread/context/read': {
+      const value = response as AgentCoreResponseByMethod['thread/context/read'];
+      if (value.context === null) return freezeProjected({ context: null });
+      return freezeProjected({
+        context: Object.freeze({
+          ...value.context,
+          payload: projectThreadContextPayload(value.context.payload),
+        }),
+      });
+    }
     case 'turn/submit': {
       const value = response as AgentCoreResponseByMethod['turn/submit'];
       return freezeProjected({
@@ -91,7 +108,6 @@ export function projectAgentCoreResponse<Method extends AgentCoreMethod>(
     case 'thread/delete':
     case 'thread/item/output/read':
     case 'thread/item/arguments/read':
-    case 'thread/context/read':
     case 'thread/trajectory/read':
     case 'thread/trajectory/detail/read':
     case 'thread/trajectory/export':
@@ -106,6 +122,11 @@ export function projectAgentCoreResponse<Method extends AgentCoreMethod>(
     default:
       return assertNever(method);
   }
+}
+
+function projectThreadContextPayload(payload: ThreadContextPayload): RendererThreadContextPayload {
+  if (payload.kind !== 'inheritedContext') return payload;
+  return Object.freeze({ ...payload, turns: payload.turns.map(projectTurn) });
 }
 
 export function projectAgentCoreNotification(

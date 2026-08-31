@@ -101,6 +101,7 @@ import {
   type ThreadGoal,
 } from './goal';
 import { REASONING_EFFORTS } from './configuration';
+import { compareJsonPointerPaths } from './jsonPointer';
 import { projectAgentCoreNotification, projectAgentCoreResponse } from './rendererProjection';
 
 export class AgentProtocolCodecError extends Error {
@@ -521,7 +522,8 @@ function decodeNonMessageThreadItem(
       break;
     case 'contextEvidence':
       exactKeys(record, [
-        'type', 'id', 'provenance', 'kind', 'payloadRef', 'summary', 'contextRefs', 'resourceRefs', 'outputRefs',
+        'type', 'id', 'provenance', 'kind', 'payloadRef', 'summary', 'contextRefs', 'internalTextRefs',
+        'resourceRefs', 'outputRefs',
       ], 'item');
       result = {
         ...base,
@@ -531,6 +533,8 @@ function decodeNonMessageThreadItem(
         summary: stringValue(record.summary, 'item.summary'),
         contextRefs: arrayValue(record.contextRefs, 'item.contextRefs')
           .map((ref, index) => decodeThreadContextPayloadReference(ref, `item.contextRefs[${index}]`)),
+        internalTextRefs: arrayValue(record.internalTextRefs, 'item.internalTextRefs')
+          .map((ref, index) => decodeThreadInternalTextPayloadReference(ref, `item.internalTextRefs[${index}]`)),
         resourceRefs: arrayValue(record.resourceRefs, 'item.resourceRefs')
           .map((ref, index) => decodeThreadResourceReference(ref, `item.resourceRefs[${index}]`)),
         outputRefs: arrayValue(record.outputRefs, 'item.outputRefs')
@@ -544,7 +548,8 @@ function decodeNonMessageThreadItem(
     case 'contextCompaction':
       exactKeys(record, [
         'type', 'id', 'provenance', 'trigger', 'coveredFrom', 'coveredThrough', 'preservedFrom',
-        'summaryRef', 'restoredStateRef', 'instructionsRef', 'contextRefs', 'resourceRefs', 'outputRefs',
+        'summaryRef', 'restoredStateRef', 'instructionsRef', 'contextRefs', 'internalTextRefs',
+        'resourceRefs', 'outputRefs',
       ], 'item');
       result = {
         ...base,
@@ -566,6 +571,8 @@ function decodeNonMessageThreadItem(
           : decodeThreadContextPayloadReference(record.instructionsRef, 'item.instructionsRef'),
         contextRefs: arrayValue(record.contextRefs, 'item.contextRefs')
           .map((ref, index) => decodeThreadContextPayloadReference(ref, `item.contextRefs[${index}]`)),
+        internalTextRefs: arrayValue(record.internalTextRefs, 'item.internalTextRefs')
+          .map((ref, index) => decodeThreadInternalTextPayloadReference(ref, `item.internalTextRefs[${index}]`)),
         resourceRefs: arrayValue(record.resourceRefs, 'item.resourceRefs')
           .map((ref, index) => decodeThreadResourceReference(ref, `item.resourceRefs[${index}]`)),
         outputRefs: arrayValue(record.outputRefs, 'item.outputRefs')
@@ -1111,6 +1118,11 @@ function validateContextItemReferences(item: ThreadItem): void {
     'references',
   );
   requireUnique(
+    item.internalTextRefs.map((ref) => [ref.id, ref.encoding, ref.byteLength].join('\0')),
+    'item.internalTextRefs',
+    'references',
+  );
+  requireUnique(
     item.resourceRefs.map((ref) => [ref.id, ref.mimeType, ref.byteLength, ref.fileName].join('\0')),
     'item.resourceRefs',
     'references',
@@ -1381,10 +1393,29 @@ export function decodeRendererAgentCoreResponse<M extends AgentCoreMethod>(
   method: M,
   value: unknown,
 ): RendererAgentCoreResponseByMethod[M] {
+  if (method === 'thread/context/read') {
+    return decodeRendererThreadContextReadResponse(value) as RendererAgentCoreResponseByMethod[M];
+  }
   return projectAgentCoreResponse(method, decodeAgentCoreResponse(
     method,
     inflateRendererResponse(method, value),
   ));
+}
+
+function decodeRendererThreadContextReadResponse(
+  value: unknown,
+): RendererAgentCoreResponseByMethod['thread/context/read'] {
+  const record = recordValue(value, 'thread/context/read response');
+  exactKeys(record, ['context'], 'thread/context/read response');
+  if (record.context === null) return deepFreeze({ context: null });
+  const context = recordValue(record.context, 'thread/context/read response.context');
+  exactKeys(context, ['ref', 'payload'], 'thread/context/read response.context');
+  const ref = decodeThreadContextPayloadReference(context.ref, 'thread/context/read response.context.ref');
+  const payload = decodeThreadContextPayload(inflateRendererContextPayload(context.payload));
+  if (ref.kind !== payload.kind) {
+    fail('thread/context/read response.context.payload.kind', 'must match the context reference kind');
+  }
+  return projectAgentCoreResponse('thread/context/read', { context: { ref, payload } });
 }
 
 function inflateRendererResponse(method: AgentCoreMethod, value: unknown): unknown {
@@ -1416,6 +1447,12 @@ function inflateRendererResponse(method: AgentCoreMethod, value: unknown): unkno
     default:
       return value;
   }
+}
+
+function inflateRendererContextPayload(value: unknown): unknown {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+  if ((value as Readonly<Record<string, unknown>>).kind !== 'inheritedContext') return value;
+  return mapRendererField(value, 'turns', (turns) => mapRendererArray(turns, inflateRendererTurn));
 }
 
 function inflateRendererNotification(value: unknown): unknown {
@@ -3739,7 +3776,7 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
       for (let index = 0; index < bindings.length; index += 1) {
         const previous = bindings[index - 1];
         const current = bindings[index]!;
-        if (previous && previous.path.localeCompare(current.path) >= 0) {
+        if (previous && compareJsonPointerPaths(previous.path, current.path) >= 0) {
           fail('contextPayload.bindings', 'must be unique and in canonical path order');
         }
         if (previous && current.path.startsWith(`${previous.path}/`)) {

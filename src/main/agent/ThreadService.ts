@@ -2032,6 +2032,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
               payload: payload as StagedContextEvidence['payload'],
               payloadRef: evidence.payloadRef,
               contextRefs: evidence.contextRefs,
+              internalTextRefs: evidence.internalTextRefs,
               resourceRefs: evidence.resourceRefs,
               outputRefs: evidence.outputRefs,
               summary: evidence.summary,

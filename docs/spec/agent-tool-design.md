@@ -720,7 +720,9 @@ For a larger value, selected durable strings are written as content-addressed st
 UTF-8 dependencies. The Thread-owned `toolCallArguments` payload stores the remaining
 JSON skeleton with selected locations replaced by `null`, plus canonical
 `{ kind: 'internalText', path, ref }` bindings. The owning model-call argument envelope
-declares the deduplicated reference set. Dependencies are verified before the envelope
+declares the deduplicated reference set. When a complete Turn is nested in inherited
+context, the owning context Item repeats those refs in its `internalTextRefs` manifest.
+Dependencies are verified before the envelope
 and owning Item publish; reference-set mismatch, an invalid skeleton slot, or missing or
 corrupt text makes the whole value unavailable. Fork, child inheritance, rollback,
 deletion, quota accounting, and startup reconciliation retain or reclaim both layers.

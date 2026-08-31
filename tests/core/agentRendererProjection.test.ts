@@ -5,6 +5,7 @@ import {
   decodeRendererAgentCoreNotification,
   decodeRendererAgentCoreResponse,
   decodeThreadItem,
+  encodeThreadContextPayload,
 } from '../../src/core/agent/codec';
 import type {
   AgentCoreMethod,
@@ -109,6 +110,21 @@ const privateThread: Thread = {
   historyMode: 'paginated',
   turns: [privateTurn],
 };
+const inheritedPayload = {
+  schemaVersion: 1 as const,
+  kind: 'inheritedContext' as const,
+  sourceThreadId: THREAD_ID,
+  coveredThrough: { turnId: TURN_ID, itemId: ITEM_ID },
+  requestedTurns: 'all' as const,
+  turns: [privateTurn],
+};
+const inheritedPayloadRef = {
+  id: '3'.repeat(64),
+  mimeType: 'application/vnd.tenon.agent-context+json' as const,
+  byteLength: new TextEncoder().encode(encodeThreadContextPayload(inheritedPayload)).byteLength,
+  schemaVersion: 1 as const,
+  kind: 'inheritedContext' as const,
+};
 
 describe('renderer Agent Core projection', () => {
   test('removes private arguments from every response carrier', () => {
@@ -134,6 +150,7 @@ describe('renderer Agent Core projection', () => {
       ['thread/items/list', {
         data: [{ turnId: TURN_ID, item: privateItem }], nextCursor: null, backwardsCursor: null,
       }],
+      ['thread/context/read', { context: { ref: inheritedPayloadRef, payload: inheritedPayload } }],
       ['thread/turn/details/read', { thread: privateThread, turn: privateTurn, diagnostics: null }],
       ['turn/submit', {
         turn: privateTurn, turnId: TURN_ID, acceptedItemId: ITEM_ID, deduplicated: false,
@@ -147,6 +164,16 @@ describe('renderer Agent Core projection', () => {
       expectPrivateArgumentsAbsent(projected);
       expect(countItemBoundArguments(projected)).toBeGreaterThan(0);
     }
+  });
+
+  test('renderer context codec projects private arguments nested in inherited Turns', () => {
+    const projected = projectAgentCoreResponse('thread/context/read', {
+      context: { ref: inheritedPayloadRef, payload: inheritedPayload },
+    });
+    const decoded = decodeRendererAgentCoreResponse('thread/context/read', projected);
+
+    expectPrivateArgumentsAbsent(decoded);
+    expect(countItemBoundArguments(decoded)).toBe(1);
   });
 
   test('removes private arguments from every full Thread, Turn, or Item notification', () => {
