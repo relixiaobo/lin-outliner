@@ -803,6 +803,10 @@
   white-space: nowrap;
 }
 
+.file-preview-media-player--audio .file-preview-media-time-group {
+  margin-inline-end: var(--media-range-padding-right);
+}
+
 @container (max-width: 360px) {
   .outline-source-preview .file-preview-media-volume {
     display: none;

@@ -1795,15 +1795,15 @@ test.describe('file attachments', () => {
           Math.abs(muteRect.top + muteRect.height / 2 - (playRect.top + playRect.height / 2)),
           Math.abs(timeRect.top + timeRect.height / 2 - (playRect.top + playRect.height / 2)),
         ) <= 1,
-        directTrailingInset: playerRect.right - timeRect.right >= 15
-          && playerRect.right - timeRect.right <= 17,
+        timelineTrailingAlignment: playerRect.right - timeRect.right >= 19
+          && playerRect.right - timeRect.right <= 21,
       };
     })).toEqual({
       centeredPlay: true,
       compactVolume: true,
       orderedTiers: true,
       sharedBaseline: true,
-      directTrailingInset: true,
+      timelineTrailingAlignment: true,
     });
 
     await pastedRow.locator(':scope > .outline-source-preview-row .file-node-body').hover({
@@ -1953,8 +1953,8 @@ test.describe('file attachments', () => {
     expect(videoMetrics!.playSize).toEqual(audioMetrics!.playSize);
     expect(audioMetrics!.trailingSlotSize).toBeNull();
     expect(audioMetrics!.trailingTimeGap).toBeNull();
-    expect(audioMetrics!.timeRightInset).toBeGreaterThanOrEqual(15);
-    expect(audioMetrics!.timeRightInset).toBeLessThanOrEqual(17);
+    expect(audioMetrics!.timeRightInset).toBeGreaterThanOrEqual(19);
+    expect(audioMetrics!.timeRightInset).toBeLessThanOrEqual(21);
     expect(videoMetrics!.trailingSlotSize).toEqual([28, 28]);
     expect(videoMetrics!.trailingTimeGap).toBeGreaterThanOrEqual(1);
     expect(videoMetrics!.trailingTimeGap).toBeLessThanOrEqual(8);
