@@ -21,6 +21,7 @@ export interface SubagentSettlementEnvelopeCandidate {
   readonly notification: SubagentPendingNotification;
   readonly output: string;
   readonly citations?: readonly AgentFinalCitationBinding[];
+  readonly transcriptFallbackRef?: ThreadResourceReference;
 }
 
 export interface SubagentSettlementEnvelope {
@@ -155,7 +156,7 @@ export function projectSubagentHandoff(input: {
     };
   });
   const coverage = coverageFor(input.origin, members, false);
-  const resourceRefs = selectedHandoffReferences(rendered.entries);
+  const resourceRefs = selectedHandoffReferences(rendered.entries, ordered);
   return readyEnvelope(rendered.text, members, input.origin, coverage, resourceRefs);
 }
 
@@ -325,9 +326,10 @@ function serializeEnvelope(
   }
   if (hasIncomplete) {
     for (const candidate of [...entries.map((entry) => entry.candidate), ...omitted]) {
-      lines.push(
-        `<transcript-fallback agent-id="${escapeXmlAttribute(candidate.notification.agentId)}" generation="${candidate.notification.generation}" turn-id="${escapeXmlAttribute(candidate.notification.turnId)}" />`,
-      );
+      const availability = candidate.transcriptFallbackRef
+        ? `availability="available" resource-name="${escapeXmlAttribute(transcriptFallbackFileName(candidate))}"`
+        : 'availability="unavailable"';
+      lines.push(`<transcript-fallback agent-id="${escapeXmlAttribute(candidate.notification.agentId)}" generation="${candidate.notification.generation}" turn-id="${escapeXmlAttribute(candidate.notification.turnId)}" ${availability} />`);
     }
   }
   lines.push('</subagent-settlement>');
@@ -342,8 +344,21 @@ function serializeEnvelope(
 
 function selectedHandoffReferences(
   entries: readonly RenderedEntry[],
+  candidates: readonly SubagentSettlementEnvelopeCandidate[],
 ): ThreadResourceReference[] {
   const selected = new Map<string, ThreadResourceReference>();
+  const dispositions = new Map(entries.map((entry) => [
+    executionIdentity(entry.candidate),
+    entry.disposition,
+  ]));
+  for (const candidate of candidates) {
+    if (
+      dispositions.get(executionIdentity(candidate)) !== 'full'
+      && candidate.transcriptFallbackRef
+    ) {
+      selected.set(candidate.transcriptFallbackRef.id, candidate.transcriptFallbackRef);
+    }
+  }
   for (const entry of entries) {
     if (entry.disposition === 'omitted') continue;
     const citations = entry.candidate.citations ?? [];
@@ -356,6 +371,12 @@ function selectedHandoffReferences(
     }
   }
   return [...selected.values()];
+}
+
+export function transcriptFallbackFileName(
+  candidate: Pick<SubagentSettlementEnvelopeCandidate, 'notification'>,
+): string {
+  return `delegated-transcript-${candidate.notification.agentId}-g${candidate.notification.generation}.md`;
 }
 
 function includedCitationOrdinals(source: string, excerpt: string): Set<number> {

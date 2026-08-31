@@ -192,7 +192,7 @@ function formatSkillShellOutput(
   if (result.persistedOutput) {
     parts.push([
       '[output saved]',
-      `resource=${result.persistedOutput.resourceRef.id}, bytes=${result.persistedOutput.byteLength}`,
+      `file=${result.persistedOutput.resourceRef.fileName}, bytes=${result.persistedOutput.byteLength}`,
       ...(includeReadablePaths && result.persistedOutput.filePath
         ? [`Current readable path: ${result.persistedOutput.filePath}. Use file_read if more detail is needed.`]
         : includeReadablePaths ? ['No readable path is currently available.'] : []),
@@ -201,7 +201,7 @@ function formatSkillShellOutput(
   if (result.artifacts?.length) parts.push([
     '[produced artifacts]',
     ...result.artifacts.flatMap((artifact) => [
-      `- ${artifact.label}: resource=${artifact.ref.id}, bytes=${artifact.ref.byteLength}`,
+      `- ${artifact.label}: file=${artifact.ref.fileName}, bytes=${artifact.ref.byteLength}`,
       includeReadablePaths && artifact.readablePath
         ? `  Current readable path: ${artifact.readablePath}`
         : includeReadablePaths ? '  No readable path is currently available.' : '',

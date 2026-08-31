@@ -19,10 +19,9 @@ export function hasExplicitAgentLocalRoot(envLocalRoot: string | undefined): boo
   return explicitAgentLocalRoot(envLocalRoot) != null;
 }
 
-// The agent workdir. `LIN_AGENT_LOCAL_ROOT` is the explicit opt-in to point the agent
-// at a real directory (e.g. a repo clone for dogfooding). With no override the workdir is
-// the dedicated `<userData>/agent-workdir` in BOTH dev and packaged — never `process.cwd()`,
-// which in dev is the repo clone (the source of stray agent files) and packaged can be `/`.
+// `LIN_AGENT_LOCAL_ROOT` explicitly points the agent at a real directory (for example,
+// a repo clone for dogfooding). Without it this returns the managed workspace container;
+// ordinary root conversations bind to their own child directory before execution.
 export function resolveAgentWorkdir(input: ResolveAgentWorkdirInput): string {
   const envLocalRoot = explicitAgentLocalRoot(input.envLocalRoot);
   if (envLocalRoot) {

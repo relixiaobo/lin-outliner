@@ -175,9 +175,10 @@ with no task receives only a neutral execute-without-additional-input message; t
 never manufactures task content from the parent conversation. Embedded shell syntax is
 replaced in that developer block by a stable observation marker. Each command result is
 persisted as an `untrusted` / `observation` additional-context entry, never as developer
-or system guidance. Related retained resources are copied into the child Thread before
-admission, and projection resolves their current readable paths from stable resource
-references so transient paths are not frozen into canonical history.
+or system guidance. Related retained resources are linked into the child Thread before
+admission, and projection resolves disposable readable observations from opaque resource
+references so transient paths are not frozen into canonical history and exact bytes are
+not copied.
 
 Every isolated Skill catalog entry appends a host-derived execution constraint.
 The constraint states that invocation runs once in a single isolated child Thread

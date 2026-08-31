@@ -947,6 +947,24 @@ Details, preceded by Retry on a last Turn the user did not end. User messages th
 measured Show more / Show less disclosure instead of
 growing the transcript without bound.
 
+A terminal Agent answer remains the model-authored Markdown byte sequence; Host
+binding never rewrites its file markers. At finalization, main parses only unescaped
+`[[file:///...]]` markers and records ordinal-aligned `finalCitations` on the final
+`agentMessage`. A regular file normally binds both the current source locator and an
+exact captured revision. A directory binds source navigation only. Pending,
+unavailable, and denied bindings remain typed data states and never turn a useful final
+answer into a failed Turn.
+
+The renderer uses the marker text only for its label and source-facing action. When a
+binding carries an opaque resource reference, Preview/Open resolves that exact delivered
+revision through the owning Thread; it does not trust the URI path or interpret the
+opaque ID as a filesystem location. Reveal/Edit Source resolves the current source
+locator independently and never substitutes the exact scratch observation. A source-
+only directory exposes navigation but no delivered-revision preview. If either
+representation is unavailable, the inline reference remains readable and only the
+affected action is unavailable. Composer history and session registries compare opaque
+reference fields; they never derive equality or access from a digest-shaped ID.
+
 User-message rendering is a presentation projection over canonical
 `ThreadUserContent[]`; it does not claim to show provider part order. Every image
 attachment in one message is collected in canonical image order into one leading

@@ -30,6 +30,10 @@ describe('SubagentHandoffProjector', () => {
   test('projects only citations retained by an excerpt and adds an opaque transcript fallback', () => {
     const selectedRef = resourceRef('resource:00000000-0000-4000-8000-000000000001', 'selected.txt');
     const omittedRef = resourceRef('resource:00000000-0000-4000-8000-000000000002', 'omitted.txt');
+    const transcriptRef = resourceRef(
+      'resource:00000000-0000-4000-8000-000000000003',
+      'delegated-transcript-agent-1-g1.md',
+    );
     const output = [
       'Selected [[file:///workspace/selected.txt]]',
       'x'.repeat(6_000),
@@ -43,7 +47,7 @@ describe('SubagentHandoffProjector', () => {
       candidates: [candidate(output, [
         { markerOrdinal: 0, status: 'available', resourceRef: selectedRef },
         { markerOrdinal: 1, status: 'available', resourceRef: omittedRef },
-      ])],
+      ], transcriptRef)],
       maxTokens: 4_000,
       maxBytes: 2_000,
     });
@@ -52,8 +56,11 @@ describe('SubagentHandoffProjector', () => {
     if (result.status !== 'ready') throw new Error('Expected a ready handoff.');
     expect(result.envelope.coverage.excerpted).toBe(1);
     expect(result.envelope.text).toContain('<transcript-fallback');
+    expect(result.envelope.text).toContain('availability="available"');
+    expect(result.envelope.text).toContain('resource-name="delegated-transcript-agent-1-g1.md"');
     expect(result.envelope.text).not.toContain('/thread-transcripts/');
     expect(result.envelope.resourceRefs).toContainEqual(selectedRef);
+    expect(result.envelope.resourceRefs).toContainEqual(transcriptRef);
     expect(result.envelope.resourceRefs).not.toContainEqual(omittedRef);
   });
 
@@ -71,12 +78,15 @@ describe('SubagentHandoffProjector', () => {
     expect(result.envelope.coverage.omitted).toBe(1);
     expect(result.envelope.text).toContain('disposition="omitted"');
     expect(result.envelope.text).toContain('<transcript-fallback');
+    expect(result.envelope.text).toContain('availability="unavailable"');
+    expect(result.envelope.text).not.toContain('resource-name=');
   });
 });
 
 function candidate(
   output: string,
   citations: SubagentSettlementEnvelopeCandidate['citations'] = [],
+  transcriptFallbackRef?: ThreadResourceReference,
 ): SubagentSettlementEnvelopeCandidate {
   return {
     execution: {
@@ -108,6 +118,7 @@ function candidate(
     } satisfies SubagentPendingNotification,
     output,
     citations,
+    ...(transcriptFallbackRef ? { transcriptFallbackRef } : {}),
   };
 }
 

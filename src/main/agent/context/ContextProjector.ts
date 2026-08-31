@@ -779,9 +779,9 @@ export class CanonicalContextProjector {
       content.push(contextBlock(
         payload.kind,
         [
-          `resource=${ref.id}`,
           `file_name=${ref.fileName}`,
           `mime_type=${ref.mimeType}`,
+          `byte_length=${ref.byteLength}`,
           readablePath ? `readable_path=${readablePath}` : 'availability=missing',
         ].join('\n'),
         'untrusted',
@@ -849,7 +849,7 @@ export class CanonicalContextProjector {
         if (!path) {
           content.push(this.degradationPart(
             'referencedResources',
-            contextDegradation('payloadUnavailable', 'referencedResource', resource.resourceRef.id),
+            contextDegradation('payloadUnavailable', 'referencedResource', resource.resourceRef.fileName),
           ));
         }
       }
@@ -878,7 +878,7 @@ export class CanonicalContextProjector {
         if (!bytes) {
           content.push(this.degradationPart(
             'referencedResources',
-            contextDegradation('payloadUnavailable', 'referencedImage', resource.resourceRef.id),
+            contextDegradation('payloadUnavailable', 'referencedImage', resource.resourceRef.fileName),
           ));
           continue;
         }
@@ -1454,7 +1454,7 @@ async function projectedToolArtifactText(
   const lines = ['[Tool artifacts]'];
   for (const ref of refs.slice(0, MAX_PROJECTED_TOOL_ARTIFACTS)) {
     const readablePath = await resources.resolveResourceObservationPath(ref).catch(() => null);
-    lines.push(`- resource=${ref.id}, file=${ref.fileName}, mime=${ref.mimeType}, bytes=${ref.byteLength}`);
+    lines.push(`- file=${ref.fileName}, mime=${ref.mimeType}, bytes=${ref.byteLength}`);
     lines.push(readablePath
       ? `  Readable path: ${readablePath.slice(0, MAX_PROJECTED_TOOL_ARTIFACT_PATH_CHARS)}`
       : '  Stored, but no readable path is currently available for file_read.');

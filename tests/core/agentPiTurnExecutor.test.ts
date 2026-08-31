@@ -3256,10 +3256,9 @@ describe('PiTurnExecutor event normalization', () => {
       data: {
         binaryFile: {
           filePath: producingPath,
-          resourceRef,
+          fileName: resourceRef.fileName,
           mimeType: resourceRef.mimeType,
           byteLength: resourceRef.byteLength,
-          sha256: resourceRef.id,
         },
       },
     });
@@ -3288,7 +3287,8 @@ describe('PiTurnExecutor event normalization', () => {
     }
     const persistedOutput = await fixture.context.readOutput(item.outputRef);
     expect(persistedOutput).not.toContain(producingPath);
-    expect(persistedOutput).toContain(resourceRef.id);
+    expect(persistedOutput).toContain(resourceRef.fileName);
+    expect(persistedOutput).not.toContain(resourceRef.id);
   });
 
   test('keeps bash artifact handles and repeated instruction paths out of the canonical command Item', async () => {
@@ -3307,7 +3307,12 @@ describe('PiTurnExecutor event normalization', () => {
       data: {
         stdout: `saved ${managedOutputRoot}/capture.png`,
         stderr: '',
-        persistedOutput: { filePath: producingPath, resourceRef, byteLength: resourceRef.byteLength },
+        persistedOutput: {
+          filePath: producingPath,
+          fileName: resourceRef.fileName,
+          mimeType: resourceRef.mimeType,
+          byteLength: resourceRef.byteLength,
+        },
         temporaryOutputPath,
       },
       instructions: `The temporary output path is ${temporaryOutputPath}.`,
@@ -3347,7 +3352,8 @@ describe('PiTurnExecutor event normalization', () => {
     expect(persistedOutput).not.toContain(managedOutputRoot);
     expect(persistedOutput).toContain('[temporary-shell-output]');
     expect(persistedOutput).toContain('[managed-output:browser-pilot-output]/capture.png');
-    expect(persistedOutput).toContain(resourceRef.id);
+    expect(persistedOutput).toContain(resourceRef.fileName);
+    expect(persistedOutput).not.toContain(resourceRef.id);
   });
 
   test('stabilizes task_stop managed-root scan warnings in outputRef', async () => {

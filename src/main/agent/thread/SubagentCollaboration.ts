@@ -51,7 +51,11 @@ import {
   subagentTurnResult,
   taskNotificationContext,
 } from './subagentOutput';
-import { SubagentHandoffProjector } from './subagentSettlementEnvelope';
+import {
+  SubagentHandoffProjector,
+  transcriptFallbackFileName,
+  type SubagentSettlementEnvelopeCandidate,
+} from './subagentSettlementEnvelope';
 
 const MAX_TERMINAL_SETTLEMENT_RETRIES = 4;
 const TERMINAL_SETTLEMENT_RETRY_EXHAUSTED_MESSAGE =
@@ -135,6 +139,7 @@ export class SubagentCollaboration {
   private readonly terminalSettlementDeferreds = new Map<string, TerminalSettlementDeferred>();
   private readonly parentDeliveryPipelines = new Map<ThreadId, Promise<void>>();
   private readonly resumePipelines = new Map<ThreadId, Promise<unknown>>();
+  private readonly transcriptFallbacks = new Map<string, Promise<ThreadResourceReference | null>>();
   private readonly parentGenerationGate = new KeyedMutex();
   private readonly deletingThreadIds = new Set<ThreadId>();
   /** Pipeline handles survive per-Thread coordination teardown so close can drain them. */
@@ -313,6 +318,9 @@ export class SubagentCollaboration {
       this.transcripts.forgetCursor(threadId);
       for (const key of [...this.terminalPipelines.keys()]) {
         if (key.startsWith(`${threadId}:`)) this.terminalPipelines.delete(key);
+      }
+      for (const key of [...this.transcriptFallbacks.keys()]) {
+        if (key.startsWith(`${threadId}:`)) this.transcriptFallbacks.delete(key);
       }
       const settlementKeys = new Set([
         ...this.terminalSettlementReservations.keys(),
@@ -716,7 +724,7 @@ export class SubagentCollaboration {
     if (!terminal) throw new Error(`Foreground Agent Turn was not recorded: ${settled.currentTurnId}`);
     const notification = this.executions.terminalNotification(execution.agentId, settled.generation);
     if (!notification) throw new Error(`Foreground Agent terminal record was not recorded: ${execution.agentId}`);
-    const handoff = this.handoffProjector.project({
+    const handoff = await this.projectSubagentHandoff({
       batchId: uuidV7(this.now()),
       origin: 'foreground',
       candidates: [{
@@ -1354,6 +1362,62 @@ export class SubagentCollaboration {
       });
     }
 
+  private async projectSubagentHandoff(
+    input: Parameters<SubagentHandoffProjector['project']>[0],
+  ): Promise<ReturnType<SubagentHandoffProjector['project']>> {
+    const projected = this.handoffProjector.project(input);
+    if (projected.status !== 'ready') return projected;
+    const incomplete = new Set(projected.envelope.members.flatMap((member) => (
+      member.disposition === 'full'
+        ? []
+        : [executionKey(member.agentId, member.generation)]
+    )));
+    if (incomplete.size === 0) return projected;
+    const candidates = await Promise.all(input.candidates.map(async (candidate) => {
+      if (!incomplete.has(executionKey(
+        candidate.notification.agentId,
+        candidate.notification.generation,
+      ))) return candidate;
+      const transcriptFallbackRef = await this.captureTranscriptFallback(candidate);
+      return transcriptFallbackRef ? { ...candidate, transcriptFallbackRef } : candidate;
+    }));
+    return this.handoffProjector.project({ ...input, candidates });
+  }
+
+  private captureTranscriptFallback(
+    candidate: SubagentSettlementEnvelopeCandidate,
+  ): Promise<ThreadResourceReference | null> {
+    const key = executionKey(
+      candidate.notification.agentId,
+      candidate.notification.generation,
+    );
+    const existing = this.transcriptFallbacks.get(key);
+    if (existing) return existing;
+    const pending = (async () => {
+      const transcriptPath = await this.transcripts.pathForReader(candidate.notification.agentId);
+      if (!transcriptPath) return null;
+      return this.resourceOps.captureThreadResourcePath(
+        candidate.notification.agentId,
+        transcriptPath,
+        'text/markdown',
+        transcriptFallbackFileName(candidate),
+      );
+    })().catch((error) => {
+      console.warn(
+        `[agent] Delegated transcript fallback is unavailable for ${candidate.notification.agentId}`,
+        error,
+      );
+      return null;
+    });
+    this.transcriptFallbacks.set(key, pending);
+    void pending.then((ref) => {
+      if (ref === null && this.transcriptFallbacks.get(key) === pending) {
+        this.transcriptFallbacks.delete(key);
+      }
+    });
+    return pending;
+  }
+
   private async copyAdditionalContextResources(
     targetThreadId: ThreadId,
     refs: readonly ThreadResourceReference[],
@@ -1547,7 +1611,7 @@ export class SubagentCollaboration {
         };
       });
       const batchId = uuidV7(this.now());
-      const envelopeResult = this.handoffProjector.project({
+      const envelopeResult = await this.projectSubagentHandoff({
         batchId,
         origin: 'explicitAdmission',
         mode: 'carryForward',
@@ -2411,7 +2475,7 @@ export class SubagentCollaboration {
           citations: finalCitationBindings(childTurn),
         };
       });
-      const envelopeResult = this.handoffProjector.project({
+      const envelopeResult = await this.projectSubagentHandoff({
         batchId,
         origin: current.terminalOrigin === 'normalOvershoot'
           ? 'normalOvershoot'
@@ -2613,7 +2677,7 @@ export class SubagentCollaboration {
         const execution = this.executions.require(notification.agentId);
         const turn = this.core.readTurn(notification.agentId, notification.turnId);
         if (!turn) throw new Error(`Agent notification Turn not found: ${notification.turnId}`);
-        const handoff = this.handoffProjector.project({
+        const handoff = await this.projectSubagentHandoff({
           batchId: notificationClientId(notification),
           origin: 'background',
           candidates: [{

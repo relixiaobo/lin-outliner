@@ -190,6 +190,21 @@ export class ThreadResourceOps {
     return this.resources.writeBytes(threadId, bytes, mimeType, fileName);
   }
 
+  async captureThreadResourcePath(
+    threadId: ThreadId,
+    sourcePath: string,
+    mimeType: string,
+    fileName: string,
+  ): Promise<ThreadResourceReference> {
+    this.core.requireThread(threadId);
+    return (await this.resources.capturePath({
+      threadId,
+      sourcePath,
+      mimeType,
+      fileName,
+    })).ref;
+  }
+
   async useThreadResourcePath<T>(
     threadId: ThreadId,
     ref: ThreadResourceReference,

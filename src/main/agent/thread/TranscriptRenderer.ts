@@ -21,8 +21,9 @@
  *
  * PURITY. Turns plus a payload reader are injected; this module imports no
  * store and performs no I/O of its own. Bounds reuse the persistence caps
- * (`MAX_PERSISTED_*`), so the projection is bounded exactly where the canonical
- * record is bounded rather than at a second, invented limit.
+ * (`MAX_PERSISTED_*`) for already-bounded fields. Canonical Assistant text is
+ * written verbatim so an incomplete delegated handoff can resolve the complete
+ * answer from the transcript instead of capturing a second lossy projection.
  */
 import type {
   DynamicToolCallThreadItem,
@@ -104,7 +105,7 @@ export interface RenderTranscriptOptions {
   readonly subject?: TranscriptSubject;
 }
 
-/** Free text is persisted unbounded; cap it at the tool-output bound for parity. */
+/** Non-answer prose stays bounded at the persisted tool-output ceiling. */
 const MAX_TRANSCRIPT_TEXT_CHARS = MAX_PERSISTED_TOOL_OUTPUT_CHARS;
 
 /**
@@ -129,7 +130,8 @@ export function renderTranscriptHeader(
   return `${[
     '# Agent Thread transcript',
     '',
-    'Faithful projection of the canonical Turns of one Thread, bounded per field.',
+    'Faithful projection of the canonical Turns of one Thread.',
+    'Assistant text is verbatim; bounded payload fields carry explicit truncation markers.',
     'Appended one completed Turn at a time; a Turn still running is not here yet.',
     'Each entry is a heading, then metadata lines, then verbatim content:',
     'a heading that appears inside content is content, not structure.',
@@ -263,7 +265,7 @@ async function itemLines(
       return [
         `### Assistant${item.phase ? ` (${item.phase})` : ''}`,
         ...identity,
-        bounded(item.text, MAX_TRANSCRIPT_TEXT_CHARS),
+        item.text,
       ];
     case 'reasoning': {
       const body = item.summary.length > 0 ? item.summary : ['(no reasoning summary was emitted)'];

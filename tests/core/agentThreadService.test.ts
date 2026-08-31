@@ -182,6 +182,7 @@ class ControlledExecutor implements TurnExecutor {
   private releaseSteeringRegistrationBlock: (() => void) | null = null;
   private readonly usageQueues: Array<Array<{ readonly tokens: number; readonly acknowledged: () => void }>> = [];
   private readonly usageWaiters: Array<((report: { readonly tokens: number; readonly acknowledged: () => void } | null) => void) | undefined> = [];
+  private readonly completionTexts = new Map<number, string>();
 
   async execute(context: TurnExecutionContext): Promise<TurnExecutionResult> {
     this.contexts.push(context);
@@ -220,8 +221,11 @@ class ControlledExecutor implements TurnExecutor {
     await usagePump;
     await context.recorder.completed({
       ...started,
-      text: result.status === 'interrupted' ? 'Interrupted' : 'Done',
+      text: result.status === 'interrupted'
+        ? 'Interrupted'
+        : this.completionTexts.get(executionIndex) ?? 'Done',
     });
+    this.completionTexts.delete(executionIndex);
     return result;
   }
 
@@ -229,6 +233,15 @@ class ControlledExecutor implements TurnExecutor {
     const complete = this.completions[index];
     if (!complete) throw new Error(`Executor call ${index} is not waiting`);
     complete(result);
+  }
+
+  finishWithText(
+    index: number,
+    text: string,
+    result: TurnExecutionResult = completedExecutionResult(),
+  ): void {
+    this.completionTexts.set(index, text);
+    this.finish(index, result);
   }
 
   async waitUntilWaiting(index = 0): Promise<void> {
@@ -4642,7 +4655,8 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       resolveImageArtifactPath: async () => null,
     }).projectTurns(forkTurns);
     expect(JSON.stringify(projected)).toContain('Image output unavailable or corrupt');
-    expect(JSON.stringify(projected)).toContain(resourceRef.id);
+    expect(JSON.stringify(projected)).toContain(resourceRef.fileName);
+    expect(JSON.stringify(projected)).not.toContain(resourceRef.id);
     await fixture.service.close();
   });
 
@@ -8558,7 +8572,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     const shellContext = isolatedSkillShellContext([{
       key: 'skill_shell_output_1',
       output: `${shellInjection}\nCurrent readable path: /temporary/parent/path`,
-      persistedOutput: `${shellInjection}\nresource=${shellResource.id}`,
+      persistedOutput: `${shellInjection}\nfile=${shellResource.fileName}, bytes=${shellResource.byteLength}`,
       resourceRefs: [shellResource],
     }]);
 
@@ -8592,7 +8606,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
         source: 'skill:shell-backed:shell',
         authority: 'untrusted',
         purpose: 'observation',
-        text: `${shellInjection}\nresource=${shellResource.id}`,
+        text: `${shellInjection}\nfile=${shellResource.fileName}, bytes=${shellResource.byteLength}`,
       }],
     });
 
@@ -9505,6 +9519,61 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       expect(completed.details).toMatchObject({ agentId: child.id });
       expect(completed.content).not.toContainEqual({ type: 'text', text: '' });
     }
+
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('captures an exact transcript resource when a foreground handoff is excerpted', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate a long foreground answer' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'long-foreground-spawn');
+    const tools = await fixture.service.collaborationToolContributions({
+      threadId: root.id,
+      turnId: rootTurn.turn.id,
+    });
+    const foreground = executeTool(tools, 'agent', 'long-foreground-spawn', {
+      description: 'long foreground fixture',
+      prompt: 'Return the complete long answer',
+      subagent_type: 'general-purpose',
+      run_in_background: false,
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    const child = fixture.service.listThreadDescendants({ threadId: root.id }).data[0];
+    if (!child) throw new Error('Foreground Agent was not created');
+    const exactMiddle = 'EXACT-TRANSCRIPT-MIDDLE-7f2f6d';
+    fixture.executor.finishWithText(
+      1,
+      `${'long answer '.repeat(6_000)}\n${exactMiddle}\n${'long answer '.repeat(6_000)}`,
+    );
+
+    const result = await foreground;
+    expect(result.details).toMatchObject({ coverage: { excerpted: 1 } });
+    const handoff = result.content.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n');
+    expect(handoff).toContain('<transcript-fallback');
+    expect(handoff).toContain(`resource-name="delegated-transcript-${child.id}-g1.md"`);
+    expect(handoff).not.toContain(exactMiddle);
+    const transcriptPath = await fixture.service.threadTranscriptPath(child.id);
+    expect(transcriptPath).not.toBeNull();
+    expect(handoff).not.toContain(transcriptPath!);
+
+    const fallbackRefs = result.resourceRefs ?? [];
+    expect(fallbackRefs).toHaveLength(1);
+    expect(fallbackRefs[0]?.fileName).toBe(`delegated-transcript-${child.id}-g1.md`);
+    expect(handoff).not.toContain(fallbackRefs[0]!.id);
+    expect((await fixture.stores.resources.readExact(fallbackRefs[0]!)).toString('utf8'))
+      .toContain(exactMiddle);
 
     fixture.executor.finish(0);
     await fixture.service.waitForIdle(root.id);

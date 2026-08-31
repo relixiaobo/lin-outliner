@@ -7,7 +7,7 @@ import {
 import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
 
 const resourceRef = {
-  id: 'b'.repeat(64),
+  id: 'resource:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
   mimeType: 'image/png',
   byteLength: 21,
   fileName: 'managed-image.png',

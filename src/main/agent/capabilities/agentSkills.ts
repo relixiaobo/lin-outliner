@@ -842,7 +842,9 @@ function skillToolModelData<T extends Record<string, unknown>>(
     ...(artifacts.length > 0 ? {
       artifacts: artifacts.map((artifact) => ({
         label: artifact.label,
-        resourceRef: artifact.ref,
+        fileName: artifact.ref.fileName,
+        mimeType: artifact.ref.mimeType,
+        byteLength: artifact.ref.byteLength,
         ...(artifact.readablePath ? { filePath: artifact.readablePath } : {}),
       })),
     } : {}),

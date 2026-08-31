@@ -595,8 +595,9 @@ describe('canonical context projection', () => {
       resolveResourceObservationPath: async () => '/scratch/current-thread/analysis.pdf',
     }).projectTurns([turn(1, [userItem('artifact-user', 1, 'Fetch it.'), tool], true)]);
     const readableResult = readableMessages.find((message) => message.role === 'toolResult');
-    expect(messageText(readableResult!)).toContain(`resource=${resourceRef.id}`);
+    expect(messageText(readableResult!)).toContain('file=analysis.pdf, mime=application/pdf, bytes=42');
     expect(messageText(readableResult!)).toContain('Readable path: /scratch/current-thread/analysis.pdf');
+    expect(messageText(readableResult!)).not.toContain(resourceRef.id);
     expect(JSON.stringify(tool)).not.toContain('/scratch/current-thread/analysis.pdf');
 
     const unavailableMessages = await new CanonicalContextProjector(model, {

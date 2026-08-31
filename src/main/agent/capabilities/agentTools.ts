@@ -885,7 +885,6 @@ async function persistWebFetchBinary(
     resourceRef: persisted.ref,
     mimeType,
     byteLength: bytes.byteLength,
-    sha256,
   };
 }
 

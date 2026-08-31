@@ -303,15 +303,16 @@ materialize a readable artifact path is weaker than rendition loss: projection r
 the error, labels only the path as unavailable, and still includes retained observation
 bytes.
 
-Attachment sources are reference-only. `localFile` records a canonical live
-path; `resource` records a lowercase SHA-256 digest, MIME type, byte length,
-and safe display filename. Neither source carries base64 or an unbounded byte
-array. A path-backed regular file is canonicalized without being copied and has
-no shared source-size ceiling. A pathless browser `File` crosses preload in
-1 MiB chunks into staged Thread storage, with a 2 GiB per-resource budget and an
-8 GiB per-Thread quota. Completion hashes and atomically publishes the payload;
-failure, cancellation, startup recovery, draft removal, and unreferenced-resource
-reconciliation reclaim incomplete or orphaned data.
+Attachment sources are reference-only. `localFile` is an admission-time source
+path; main captures a submitted regular file as a canonical Agent resource before
+publishing the user Item. `resource` carries an opaque Host-issued identity, MIME
+type, byte length, and safe display filename. Neither source carries a digest,
+anchor, private path, base64 value, or unbounded byte array. A pathless browser
+`File` crosses preload in 1 MiB chunks into Agent scratch, with a 2 GiB
+per-resource budget and an 8 GiB per-Thread linked-byte quota. Completion admits
+the exact revision into shared ContentStore and atomically publishes the Agent
+reference; failure, cancellation, startup recovery, draft removal, and reference
+reconciliation reclaim incomplete or orphaned state.
 
 Main-process admission independently enforces at most 20 attachments and at most
 10 image attachments in one user message, so renderer bypass cannot widen the input.
@@ -320,14 +321,14 @@ rejects a total above 24 MiB before publishing the user Item. The existing admis
 rollback deletes any observations created earlier in that rejected batch; renderer Send
 recovery restores the complete draft.
 
-Non-image provider input exposes the readable path through both the file marker and its
-independent attachment block; stable instructions define percent-decoding plus
-`file_read` for files and `file_glob` for directories. A `localFile`
-uses its live canonical user path; a `resource` uses an execution-lifetime copy at
-a deterministic Thread/digest/filename path under Agent scratch. Reprojection across
-Turns and restart therefore preserves the marker bytes and cache prefix. The runtime
-removes that observation when execution ends, and model or tool writes to it cannot
-modify the private content-addressed payload. Images are decoded in main from a
+Non-image provider input exposes a readable observation path through both the file marker
+and its independent attachment block; stable instructions define percent-decoding plus
+`file_read` for files and `file_glob` for directories. A canonical resource resolves its
+exact revision and receives an execution-lifetime scratch observation whose path is an
+access handle, not identity. Reprojection may produce a different observation path while
+retaining the same opaque reference and exact bytes. The runtime removes that
+observation when execution ends, and model or tool writes to it cannot modify the
+ContentStore revision. Images are decoded in main from a
 source of at most 256 MiB, orientation-normalized by the native image pipeline,
 bounded to 2,000 px, and persisted as an immutable prompt snapshot of at most
 4.5 MiB per image and 24 MiB across the message.
@@ -343,15 +344,15 @@ An explicit `nodeReference` also creates a bounded, main-resolved
 identity, title, breadcrumb, bounded outline content, and typed availability.
 For an ordinary Node whose ordered Sources include a managed asset, the first
 managed Source is resolved through its authoritative `AssetRecord`, opened as a
-regular non-symlink file, capped at 50 MiB, checked against stored byte length,
-and copied into the owning Thread before the Item is published. Missing, corrupt,
+regular non-symlink exact revision, capped at 50 MiB, checked against stored byte
+length, and linked into the owning Thread before the Item is published. Missing, corrupt,
 unsupported, and over-budget resources remain visible as typed unavailable
-evidence. Up to eight supported images add the verified Thread-owned bytes at the provider boundary. An
+evidence. Up to eight supported images add verified exact observations at the provider boundary. An
 available Node resource exposes both an application-authority `readable_path` and the
 same untrusted-label file marker grammar used by composer attachments. The
 owning context Item declares dependencies by complete typed resource reference
-(digest, MIME type, byte length, and safe filename), even when multiple references map
-to one content-addressed physical file.
+(opaque ID, MIME type, byte length, and safe filename). Multiple references may retain
+one ContentStore revision without making its digest public identity.
 
 ## Stream Normalization
 
@@ -459,14 +460,14 @@ MIME type, byte length, and summary. `thread/item/output/read` validates the
 requested Thread/Turn/Item/ref tuple, MIME-selected file, byte length, and SHA-256
 digest before returning text. Dependency equality and collection deduplication use the
 complete typed reference: context payloads include digest/MIME/length/schema/kind,
-resources include digest/MIME/length/file name, and outputs include
-digest/MIME/length/summary. A shared digest never aliases references whose remaining
-identity fields differ.
+resources include opaque ID/MIME/length/file name, and outputs include
+digest/MIME/length/summary. Resource digest and retention-anchor equality remain private
+ContentStore facts and never replace the opaque Agent reference.
 Forked Items retain origin provenance while copying referenced payloads under
-the fork's own Thread directory. Managed resource copies use copy-on-write when
-available but always receive a distinct inode. Payload reads resolve through the
-requested Thread, so deleting or corrupting the source Thread cannot invalidate
-inherited text or image results. Payload reads never become provider history
+the fork's own Thread directory. Resource dependencies link the same Agent reference and
+exact revision into the fork; no byte or inode copy is created. Payload and resource
+reads resolve through the requested Thread's canonical dependency set, so deleting the
+source Thread cannot invalidate inherited text or image results. Payload reads never become provider history
 authority. Before the next provider boundary, the runtime records exactly one
 `toolOutputProjection` for each previously unseen complete output. A result uses its full
 payload when both the per-output and aggregate output shares fit; otherwise it uses a
@@ -476,14 +477,14 @@ inheritance use the same bytes while the complete `outputRef` remains available 
 inspection and checkpoint dependencies.
 
 Ordinary binary/file outputs use a separate host-only resource manifest. The live tool
-result may expose a current `filePath` handle plus stable `resourceRef` metadata, while
+result may expose a current `filePath` handle plus opaque `resourceRef` metadata, while
 persisted result text removes that path and the completed tool Item owns the reference in
 `resourceRefs`. On every later provider projection, the host resolves those references
 against the current Thread, appends a deterministic `[Tool artifacts]` block for at most
 16 entries, and reports a stable unavailable warning when a readable path cannot be
 materialized. It never reads artifact bytes into provider context. Restart and fork
 therefore produce current target-Thread handles instead of replaying the producing
-Turn's scratch path.
+Turn's scratch path or copying canonical bytes.
 For shell producers, durable text also substitutes every typed managed-output root in
 stdout, stderr, instructions, and warnings with its stable root identity. Structured
 `filePath` and `temporaryOutputPath` handles are removed, and repeated occurrences of
@@ -496,7 +497,7 @@ foreground and background collectors cannot claim each other's files.
 
 Binary image output never enters rollout JSON, SQLite projection, or IPC as a
 data URL. Every accepted dynamic-tool image stores one immutable `artifactRef`; the
-artifact's Thread-owned observation is the exact bounded image exposed to the provider,
+artifact's exact observation reference is the bounded image exposed to the provider,
 while its optional original remains available to file-oriented consumers. The adjacent
 provider text identifies the artifact and reports source size, observation size, both
 scale factors, and the observation-to-source affine matrix. This gives the model enough
@@ -543,15 +544,15 @@ images produce one structured omission summary instead of failing the complete t
 result. Images within the generic source budgets pass through the common 2,000 px /
 4.5 MiB normalizer before persistence. Binary `data` fields are replaced before full
 textual output persistence, so neither small nor large base64 images leak into text
-payloads. Forking copies each available managed rendition under the target Thread while
+payloads. Forking links each available exact rendition into the target Thread while
 preserving the same artifact reference; a missing image rendition is skipped rather
 than aborting the fork. This exception is based on actual artifact use, not MIME type;
 an ordinary referenced `image/*` resource remains required. Inherited-context scans are
-recursive, so the same distinction governs child copying and pressure retention. A
-Thread-scoped preview resolves the best available rendition to
-a stable disposable scratch materialization rather than exposing canonical resource
-paths. Deleting a Thread deletes only that Thread's payload directory and materialized
-copies; it never touches an external original.
+recursive, so the same distinction governs child linking and retention. A Thread-scoped
+preview resolves the best available rendition to a disposable scratch observation rather
+than exposing canonical resource paths. Deleting a Thread removes that Thread's links,
+payload directory, and materialized observations; surviving links retain the exact
+revision and external originals are never touched.
 
 ## Tools And Causation
 
