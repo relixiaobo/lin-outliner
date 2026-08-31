@@ -11,6 +11,7 @@ import {
 import { safeAttachmentFileName } from '../../../core/agentAttachmentPaths';
 import {
   CONTEXT_PAYLOAD_KINDS,
+  MAX_TOOL_ARGUMENT_TEXT_BYTES,
   MAX_THREAD_CONTEXT_PAYLOAD_BYTES,
   MAX_TURN_DIAGNOSTICS_PAYLOAD_BYTES,
   type ContextPayloadKind,
@@ -18,6 +19,7 @@ import {
   type ThreadContextPayload,
   type ThreadContextPayloadReference,
   type ThreadId,
+  type ThreadInternalTextPayloadReference,
   type ThreadItemOutputReference,
   type ThreadImageArtifactReference,
   type ThreadResourceReference,
@@ -49,6 +51,8 @@ const CONTEXT_PAYLOAD_FILENAME_PATTERN = /^[a-f0-9]{64}\.json$/;
 const TURN_DIAGNOSTICS_FILENAME_PATTERN = /^[a-f0-9]{64}\.json$/;
 const TEXT_PAYLOAD_FILENAME_PATTERN = /^[a-f0-9]{64}\.(?:txt|json)$/;
 const CONTEXT_DIR = 'context';
+const INTERNAL_TEXT_DIR = 'internal-text';
+const INTERNAL_TEXT_FILENAME_PATTERN = /^[a-f0-9]{64}\.txt$/;
 const TURN_DIAGNOSTICS_DIR = 'turn-diagnostics';
 const RESOURCE_DIR = 'resources';
 const STAGING_DIR = '.staging';
@@ -556,6 +560,141 @@ export class ToolPayloadStore {
     });
   }
 
+  async writeInternalText(
+    threadId: ThreadId,
+    text: string,
+  ): Promise<ThreadInternalTextPayloadReference> {
+    if (!hasWellFormedUnicode(text)) throw new Error('Internal text requires well-formed Unicode.');
+    const bytes = Buffer.from(text, 'utf8');
+    if (bytes.byteLength > MAX_TOOL_ARGUMENT_TEXT_BYTES) throw new Error('Internal text exceeds the payload budget.');
+    const ref: ThreadInternalTextPayloadReference = {
+      id: createHash('sha256').update(bytes).digest('hex'),
+      encoding: 'utf-8',
+      byteLength: bytes.byteLength,
+    };
+    return this.withResourceLock(threadId, async () => {
+      const directory = await this.ensureManagedDirectory(threadId, INTERNAL_TEXT_DIR);
+      const target = join(directory, internalTextFileName(ref));
+      const existing = await lstat(target).catch((error: unknown) => {
+        if (isNotFound(error)) return null;
+        throw error;
+      });
+      if (existing) {
+        if (!await verifyStoredPayload(target, ref)) throw new Error('Internal text conflicts with existing bytes.');
+        return ref;
+      }
+      await this.assertResourceCapacity(threadId, bytes.byteLength);
+      const stagingDirectory = await this.ensureManagedDirectory(threadId, STAGING_DIR);
+      const stagingPath = join(stagingDirectory, randomUUID());
+      try {
+        await writeFile(stagingPath, bytes, { flag: 'wx' });
+        await link(stagingPath, target).catch(async (error: unknown) => {
+          if (!isAlreadyExists(error)) throw error;
+          if (!await verifyStoredPayload(target, ref)) throw new Error('Internal text conflicts with existing bytes.');
+        });
+        if (!await verifyStoredPayload(target, ref)) throw new Error('Published internal text is invalid.');
+        return ref;
+      } finally {
+        await rm(stagingPath, { force: true });
+      }
+    });
+  }
+
+  async readInternalText(
+    threadId: ThreadId,
+    ref: ThreadInternalTextPayloadReference,
+  ): Promise<string | null> {
+    validateInternalTextReference(ref);
+    const directory = await this.existingManagedDirectory(threadId, INTERNAL_TEXT_DIR);
+    if (!directory) return null;
+    const bytes = await readVerifiedPayloadBytes(join(directory, internalTextFileName(ref)), ref);
+    if (!bytes) return null;
+    try {
+      return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+      return null;
+    }
+  }
+
+  async readInternalTextProjection(
+    threadId: ThreadId,
+    ref: ThreadInternalTextPayloadReference,
+    maxPrefixChars: number,
+  ): Promise<{
+    readonly textPrefix: string;
+    readonly textChars: number;
+    readonly jsonStringChars: number;
+  } | null> {
+    validateInternalTextReference(ref);
+    if (!Number.isSafeInteger(maxPrefixChars) || maxPrefixChars < 0) {
+      throw new Error('Invalid internal-text projection prefix limit.');
+    }
+    const directory = await this.existingManagedDirectory(threadId, INTERNAL_TEXT_DIR);
+    if (!directory) return null;
+    return readVerifiedInternalTextProjection(
+      join(directory, internalTextFileName(ref)),
+      ref,
+      maxPrefixChars,
+    );
+  }
+
+  async copyInternalTextToThread(
+    sourceThreadId: ThreadId,
+    targetThreadId: ThreadId,
+    ref: ThreadInternalTextPayloadReference,
+  ): Promise<boolean> {
+    validateInternalTextReference(ref);
+    const sourceDirectory = await this.existingManagedDirectory(sourceThreadId, INTERNAL_TEXT_DIR);
+    if (!sourceDirectory) return false;
+    const sourcePath = join(sourceDirectory, internalTextFileName(ref));
+    if (!await readVerifiedPayloadBytes(sourcePath, ref)) return false;
+    return this.withResourceLock(targetThreadId, async () => {
+      const targetDirectory = await this.ensureManagedDirectory(targetThreadId, INTERNAL_TEXT_DIR);
+      const targetPath = join(targetDirectory, internalTextFileName(ref));
+      const existing = await lstat(targetPath).catch((error: unknown) => {
+        if (isNotFound(error)) return null;
+        throw error;
+      });
+      if (existing) {
+        if (!await verifyStoredPayload(targetPath, ref)) {
+          throw new Error('Internal text conflicts with existing bytes.');
+        }
+        return true;
+      }
+      await this.assertResourceCapacity(targetThreadId, ref.byteLength);
+      try {
+        await copyFile(sourcePath, targetPath, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
+      } catch (error) {
+        if (isNotFound(error)) return false;
+        if (!isAlreadyExists(error)) throw error;
+      }
+      if (!await verifyStoredPayload(targetPath, ref)) {
+        await rm(targetPath, { force: true });
+        throw new Error('Copied internal text is invalid.');
+      }
+      return true;
+    });
+  }
+
+  async pruneUnreferencedInternalText(
+    threadId: ThreadId,
+    references: readonly ThreadInternalTextPayloadReference[],
+  ): Promise<void> {
+    const retained = new Set(references.map((ref) => {
+      validateInternalTextReference(ref);
+      return internalTextFileName(ref);
+    }));
+    await this.withResourceLock(threadId, async () => {
+      const directory = await this.existingManagedDirectory(threadId, INTERNAL_TEXT_DIR);
+      if (!directory) return;
+      for (const fileName of await readdir(directory)) {
+        if (!INTERNAL_TEXT_FILENAME_PATTERN.test(fileName) || !retained.has(fileName)) {
+          await rm(join(directory, fileName), { recursive: true, force: true });
+        }
+      }
+    });
+  }
+
   async readContext(
     threadId: ThreadId,
     ref: ThreadContextPayloadReference,
@@ -617,6 +756,7 @@ export class ToolPayloadStore {
   async pruneUnreferencedContexts(
     threadId: ThreadId,
     references: readonly ThreadContextPayloadReference[],
+    internalTextReferences: readonly ThreadInternalTextPayloadReference[],
   ): Promise<void> {
     const retained = new Set(references.map((ref) => {
       validateContextPayloadReference(ref);
@@ -632,6 +772,7 @@ export class ToolPayloadStore {
         }
       }
     });
+    await this.pruneUnreferencedInternalText(threadId, internalTextReferences);
   }
 
   async writeTurnDiagnostics(
@@ -957,6 +1098,15 @@ export class ToolPayloadStore {
       for (const file of files) {
         if (!CONTEXT_PAYLOAD_FILENAME_PATTERN.test(file)) continue;
         const fileStat = await lstat(join(contextDirectory, file)).catch(() => null);
+        if (fileStat?.isFile() && !fileStat.isSymbolicLink()) total += fileStat.size;
+      }
+    }
+    const internalTextDirectory = await this.existingManagedDirectory(threadId, INTERNAL_TEXT_DIR);
+    if (internalTextDirectory) {
+      const files = await readdir(internalTextDirectory);
+      for (const file of files) {
+        if (!INTERNAL_TEXT_FILENAME_PATTERN.test(file)) continue;
+        const fileStat = await lstat(join(internalTextDirectory, file)).catch(() => null);
         if (fileStat?.isFile() && !fileStat.isSymbolicLink()) total += fileStat.size;
       }
     }
@@ -1378,6 +1528,92 @@ async function readVerifiedPayloadBytes(
   }
 }
 
+async function readVerifiedInternalTextProjection(
+  path: string,
+  ref: Pick<ThreadInternalTextPayloadReference, 'id' | 'byteLength'>,
+  maxPrefixChars: number,
+): Promise<{
+  readonly textPrefix: string;
+  readonly textChars: number;
+  readonly jsonStringChars: number;
+} | null> {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW).catch(() => null);
+  if (!handle) return null;
+  try {
+    const before = await handle.stat();
+    if (!isStoredResourceFile(before, ref.byteLength)) return null;
+    const hash = createHash('sha256');
+    const decoder = new TextDecoder('utf-8', { fatal: true });
+    const buffer = Buffer.alloc(Math.min(1024 * 1024, Math.max(1, ref.byteLength)));
+    let position = 0;
+    let textPrefix = '';
+    let prefixTruncated = false;
+    let textChars = 0;
+    let jsonStringChars = 2;
+    const consume = (text: string): void => {
+      textChars += text.length;
+      jsonStringChars += JSON.stringify(text).length - 2;
+      if (prefixTruncated || textPrefix.length >= maxPrefixChars) return;
+      const remaining = maxPrefixChars - textPrefix.length;
+      let end = Math.min(text.length, remaining);
+      if (
+        end > 0
+        && end < text.length
+        && isHighSurrogate(text.charCodeAt(end - 1))
+        && isLowSurrogate(text.charCodeAt(end))
+      ) end -= 1;
+      textPrefix += text.slice(0, end);
+      prefixTruncated = end < text.length;
+    };
+    try {
+      for (;;) {
+        const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, position);
+        if (bytesRead === 0) break;
+        const chunk = buffer.subarray(0, bytesRead);
+        hash.update(chunk);
+        consume(decoder.decode(chunk, { stream: true }));
+        position += bytesRead;
+      }
+      consume(decoder.decode());
+    } catch {
+      return null;
+    }
+    const after = await handle.stat();
+    const current = await lstat(path).catch(() => null);
+    if (
+      position !== ref.byteLength
+      || hash.digest('hex') !== ref.id
+      || !current
+      || !sameResourceFileIdentity(resourceFileIdentity(before), resourceFileIdentity(after))
+      || !sameResourceFileIdentity(resourceFileIdentity(after), resourceFileIdentity(current))
+    ) return null;
+    return { textPrefix, textChars, jsonStringChars };
+  } finally {
+    await handle.close();
+  }
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff;
+}
+
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff;
+}
+
+function hasWellFormedUnicode(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (isHighSurrogate(code)) {
+      if (!isLowSurrogate(value.charCodeAt(index + 1))) return false;
+      index += 1;
+    } else if (isLowSurrogate(code)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function isPlainDirectory(fileStat: Awaited<ReturnType<typeof lstat>>): boolean {
   return fileStat.isDirectory() && !fileStat.isSymbolicLink();
 }
@@ -1435,6 +1671,10 @@ function contextPayloadFileName(ref: ThreadContextPayloadReference): string {
   return `${ref.id}.json`;
 }
 
+function internalTextFileName(ref: ThreadInternalTextPayloadReference): string {
+  return `${ref.id}.txt`;
+}
+
 function turnDiagnosticsFileName(ref: TurnDiagnosticsPayloadReference): string {
   return `${ref.id}.json`;
 }
@@ -1462,6 +1702,14 @@ function validateContextPayloadReference(ref: ThreadContextPayloadReference): vo
     throw new Error('Invalid context payload kind.');
   }
   validateContextPayloadByteLength(ref.byteLength);
+}
+
+function validateInternalTextReference(ref: ThreadInternalTextPayloadReference): void {
+  if (!SHA_256_PATTERN.test(ref.id)) throw new Error('Invalid internal-text digest.');
+  if (ref.encoding !== 'utf-8') throw new Error('Invalid internal-text encoding.');
+  if (!Number.isSafeInteger(ref.byteLength) || ref.byteLength < 0 || ref.byteLength > MAX_TOOL_ARGUMENT_TEXT_BYTES) {
+    throw new Error('Invalid internal-text byte length.');
+  }
 }
 
 function validateTurnDiagnosticsPayloadReference(ref: TurnDiagnosticsPayloadReference): void {

@@ -1219,7 +1219,7 @@ describe('canonical context projection', () => {
           ...commandToolItem('missing-arguments', null, 'none'),
           modelCall: {
             ...projectionModelCall('bash', { command: 'pwd' }),
-            arguments: { storage: 'payload', ref: missingArgumentRef },
+            arguments: { storage: 'payload', ref: missingArgumentRef, internalTextRefs: [] },
           },
         }],
       },

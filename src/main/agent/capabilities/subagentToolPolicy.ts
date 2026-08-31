@@ -144,7 +144,13 @@ export function subagentToolAllowed(
 export function subagentBashExecutionAllowed(
   policy: SubagentToolPolicy,
   actionKinds: readonly ModelToolActionKind[],
+  stdinConsumer: import('./agentCapabilities').BashStdinConsumer = 'absent',
 ): boolean {
+  if (
+    stdinConsumer !== 'absent'
+    && stdinConsumer !== 'registered-data'
+    && (policy.worktree || policy.readOnly || policy.kind === 'explore' || policy.kind === 'plan')
+  ) return false;
   if (policy.worktree && actionKinds.some((kind) => OUTLINE_MUTATION_ACTION_KINDS.has(kind))) return false;
   if (policy.readOnly && (
     actionKinds.length === 0 || !actionKinds.every(isReadOnlyModelToolActionKind)

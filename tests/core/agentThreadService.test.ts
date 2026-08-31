@@ -321,7 +321,7 @@ class SubagentToolAdmissionExecutor extends ControlledExecutor {
 class ForkPayloadExecutor extends ControlledExecutor {
   override async execute(context: TurnExecutionContext): Promise<TurnExecutionResult> {
     const itemId = context.recorder.createItemId();
-    const argumentRef = await context.persistToolCallArguments(FORK_MODEL_ARGUMENTS);
+    const argumentSource = await context.persistToolCallArguments(FORK_MODEL_ARGUMENTS, []);
     const started: ThreadItem = {
       type: 'dynamicToolCall',
       id: itemId,
@@ -336,7 +336,7 @@ class ForkPayloadExecutor extends ControlledExecutor {
       durationMs: null,
       modelCall: {
         ...replayableModelCall('test__payload', {}),
-        arguments: { storage: 'payload', ref: argumentRef },
+        arguments: argumentSource,
         schemaDigest: modelToolSchemaDigest(FORK_PAYLOAD_TOOL_SCHEMA),
       },
     };
@@ -3990,22 +3990,21 @@ describe('ThreadService', () => {
       schemaVersion: 1,
       kind: 'toolCallArguments',
       value: FORK_MODEL_ARGUMENTS,
+      bindings: [],
     });
     expect(await opened.service.request('thread/context/read', {
       threadId: fork.id,
       turnId: forkTurn.id,
       itemId: forkItem.id,
       contextId: forkArgumentRef.id,
-    })).toEqual({
-      context: {
-        ref: forkArgumentRef,
-        payload: {
-          schemaVersion: 1,
-          kind: 'toolCallArguments',
-          value: FORK_MODEL_ARGUMENTS,
-        },
-      },
+    })).toEqual({ context: null });
+    const boundedArguments = await opened.service.request('thread/item/arguments/read', {
+      threadId: fork.id,
+      turnId: forkTurn.id,
+      itemId: forkItem.id,
     });
+    expect(boundedArguments).toMatchObject({ arguments: { truncated: true, originalChars: 50_090 } });
+    expect(JSON.stringify(boundedArguments.arguments, null, 2).length).toBeLessThanOrEqual(32_000);
     const unrelatedItem = forkTurn.items.find((item) => item.id !== forkItem.id)!;
     expect(await opened.service.request('thread/context/read', {
       threadId: fork.id,
@@ -4035,6 +4034,7 @@ describe('ThreadService', () => {
       schemaVersion: 1,
       kind: 'toolCallArguments',
       value: FORK_MODEL_ARGUMENTS,
+      bindings: [],
     });
     const crashLeftover = await opened.stores.payloads.writeText(
       fork.id,
@@ -4059,6 +4059,7 @@ describe('ThreadService', () => {
       schemaVersion: 1,
       kind: 'toolCallArguments',
       value: FORK_MODEL_ARGUMENTS,
+      bindings: [],
     });
     expect(await reopened.stores.payloads.readTextReference(fork.id, crashLeftover)).toBeNull();
     const restartedTurns = reopened.service.readThread({ threadId: fork.id, includeTurns: true }).thread.turns!;

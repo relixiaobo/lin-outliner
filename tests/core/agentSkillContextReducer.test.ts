@@ -219,11 +219,13 @@ describe('Skill context reducer', () => {
       schemaVersion: 1,
       kind: 'toolCallArguments',
       value: { file_path: '/workspace/payload.ts', content: 'x'.repeat(40_000) },
+      bindings: [],
     });
     const secondPayloadRef = store.put({
       schemaVersion: 1,
       kind: 'toolCallArguments',
       value: { file_path: '/workspace/second-payload.ts', pattern: 'canonical' },
+      bindings: [],
     });
     const payloadBacked = dynamicTool('payload-read', null, 'file_grep', '/workspace/presentation-only.ts');
     const secondPayloadBacked = dynamicTool(
@@ -241,7 +243,7 @@ describe('Skill context reducer', () => {
           disposition: 'replayable',
           identity: { namespace: null, name: 'file_grep' },
           providerName: 'file_grep',
-          arguments: { storage: 'payload', ref: payloadRef },
+          arguments: { storage: 'payload', ref: payloadRef, internalTextRefs: [] },
           schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
         },
       },
@@ -251,7 +253,7 @@ describe('Skill context reducer', () => {
           disposition: 'replayable',
           identity: { namespace: null, name: 'file_read' },
           providerName: 'file_read',
-          arguments: { storage: 'payload', ref: secondPayloadRef },
+          arguments: { storage: 'payload', ref: secondPayloadRef, internalTextRefs: [] },
           schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
         },
       },

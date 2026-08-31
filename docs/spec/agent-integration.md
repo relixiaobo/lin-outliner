@@ -40,6 +40,12 @@ Agent Core. It is a contract checklist, not project status.
 - Attach Thread/Turn/Item causation to the Runtime Operation, not to a parallel
   Agent document schema.
 - Keep visible output bounded without discarding durable details.
+- Let a resolved tool opt specific canonical RFC 6901 string paths into the
+  shared large-text contract. Keep exact UTF-8 dependencies Thread-private,
+  replay them exactly for the provider, and use bounded projections for display.
+- Treat Bash `stdin` as literal foreground UTF-8 data, not shell syntax. Classify
+  its effective consumer from the command once, keep the payload opaque to
+  permissions, and reject background input before spawn.
 - Start every new Agent from fresh context; reuse its own history only when the
   same stable ID is resumed.
 
@@ -56,7 +62,11 @@ Agent Core. It is a contract checklist, not project status.
 
 ## Renderer Contract
 
-- Render canonical DTOs directly.
+- Keep canonical Thread, Turn, and Item authority in main. Render only the
+  exhaustively projected renderer DTOs; payload-backed model arguments cross IPC
+  as `{ storage: 'itemBound' }`, never as context or internal-text references.
+- Resolve payload-backed tool arguments through the enclosing
+  `thread/item/arguments/read` identity and accept only main's bounded value.
 - Store identity and pagination state in `threadStore`.
 - Decode notifications before state mutation.
 - Use shared dialogs, menus, icons, tokens, and i18n.
@@ -76,6 +86,9 @@ Agent Core. It is a contract checklist, not project status.
   resource-reference records and resolution remain future work rather than an
   alternate store in this feature.
 - Keep rollout JSONL append-only and projections rebuildable.
+- Account content-addressed internal text in the owning Thread quota and carry
+  its reachability through fork, child inheritance, rollback, prune, startup
+  reconciliation, and Thread deletion.
 - Keep feature stores explicitly owned and keyed by canonical IDs.
 - Persist Agent identity, recorded configuration, stop provenance, retained
   worktree metadata, and pending `{agentId, generation}` delivery without adding

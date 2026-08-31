@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Automation, AutomationRun } from '../../../core/agent/automation';
-import type { Thread } from '../../../core/agent/protocol';
+import type { Thread } from '../projectionTypes';
 import type { AgentProviderSettingsView } from '../../api/types';
 import { useT } from '../../i18n/I18nProvider';
 import {

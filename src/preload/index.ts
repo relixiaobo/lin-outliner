@@ -23,12 +23,12 @@ import type {
   ParameterObjectQueryRequest,
   ParameterObjectQueryResult,
 } from '../core/actions/types';
-import { decodeAgentCoreNotification, decodeAgentCoreResponse } from '../core/agent/codec';
+import { decodeRendererAgentCoreNotification, decodeRendererAgentCoreResponse } from '../core/agent/codec';
 import type {
   AgentCoreMethod,
-  AgentCoreNotification,
+  RendererAgentCoreNotification,
   AgentCoreRequestByMethod,
-  AgentCoreResponseByMethod,
+  RendererAgentCoreResponseByMethod,
   ThreadResourceReference,
   ThreadMessageContextMenuAction,
   ThreadMessageContextMenuRequest,
@@ -348,10 +348,10 @@ const api = {
     method: Method,
     input: AgentCoreRequestByMethod[Method],
   ) => ipcRenderer.invoke(AGENT_CORE_REQUEST_CHANNEL, method, input)
-    .then((response) => decodeAgentCoreResponse(method, response)) as Promise<AgentCoreResponseByMethod[Method]>,
-  onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => {
+    .then((response) => decodeRendererAgentCoreResponse(method, response)) as Promise<RendererAgentCoreResponseByMethod[Method]>,
+  onAgentCoreNotification: (listener: (notification: RendererAgentCoreNotification) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, notification: unknown) => (
-      listener(decodeAgentCoreNotification(notification))
+      listener(decodeRendererAgentCoreNotification(notification))
     );
     ipcRenderer.on(AGENT_CORE_NOTIFICATION_CHANNEL, handler);
     return () => ipcRenderer.removeListener(AGENT_CORE_NOTIFICATION_CHANNEL, handler);

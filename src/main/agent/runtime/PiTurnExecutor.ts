@@ -443,7 +443,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         admitToolCall: async (request) => {
           const decision = await persistToolCallAdmission(
             request,
-            (value) => context.persistToolCallArguments(value),
+            (value, selected) => context.persistToolCallArguments(value, selected),
           );
           if (request.outcome.type === 'admitted' && decision.execute) {
             liveModelToolCalls.set(request.toolCallId, {

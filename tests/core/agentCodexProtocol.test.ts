@@ -1031,6 +1031,7 @@ describe('Codex Agent Core protocol codec', () => {
           command: 'bun run typecheck',
           description: 'Typecheck the project',
         },
+        bindings: [],
       },
       {
         schemaVersion: 1,
@@ -1728,6 +1729,11 @@ describe('Codex Agent Core protocol codec', () => {
         itemId: 'item-5',
         outputId: OUTPUT_ID,
       },
+      'thread/item/arguments/read': {
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        itemId: 'item-5',
+      },
       'thread/context/read': {
         threadId: THREAD_ID,
         turnId: TURN_ID,
@@ -1802,6 +1808,7 @@ describe('Codex Agent Core protocol codec', () => {
           text: 'ok',
         },
       },
+      'thread/item/arguments/read': { arguments: { command: 'bun run typecheck' } },
       'thread/context/read': {
         context: { ref: rpcContextRef, payload: rpcContextPayload },
       },

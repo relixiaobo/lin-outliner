@@ -114,7 +114,7 @@ describe('ThreadTrajectoryProjection', () => {
           disposition: 'replayable',
           identity: { namespace: null, name: 'second_tool' },
           providerName: 'second_tool',
-          arguments: { storage: 'payload', ref: argumentsRef },
+          arguments: { storage: 'payload', ref: argumentsRef, internalTextRefs: [] },
           schemaDigest: '9'.repeat(64),
         }, outputRef),
       ],

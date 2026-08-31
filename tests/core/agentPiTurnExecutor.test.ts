@@ -4937,17 +4937,18 @@ function createContext(): {
       return { id, mimeType, byteLength: Buffer.byteLength(text, 'utf8'), summary };
     },
     persistToolCallArguments: async (value) => {
-      const payload = { schemaVersion: 1 as const, kind: 'toolCallArguments' as const, value };
+      const payload = { schemaVersion: 1 as const, kind: 'toolCallArguments' as const, value, bindings: [] };
       const serialized = JSON.stringify(payload);
       const id = createHash('sha256').update(serialized).digest('hex');
       contextPayloads.set(id, payload);
-      return {
+      const ref = {
         id,
         mimeType: 'application/vnd.tenon.agent-context+json',
         byteLength: Buffer.byteLength(serialized),
         schemaVersion: 1,
         kind: 'toolCallArguments',
       };
+      return { storage: 'payload' as const, ref, internalTextRefs: [] };
     },
     persistContextEvidence: async (payload, summary) => {
       const serialized = JSON.stringify(payload);

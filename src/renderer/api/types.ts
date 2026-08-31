@@ -82,19 +82,21 @@ export type {
 
 export type {
   AgentCoreMethod,
-  AgentCoreNotification,
   AgentCoreRequestByMethod,
-  AgentCoreResponseByMethod,
   AdditionalContext,
   RequestUserInputRequest,
   RequestUserInputResponse,
-  Thread,
   ThreadId,
-  ThreadItem,
-  ThreadItemEntry,
   ThreadSource,
-  Turn,
   TurnId,
+} from '../../core/agent/protocol';
+export type {
+  RendererAgentCoreNotification as AgentCoreNotification,
+  RendererAgentCoreResponseByMethod as AgentCoreResponseByMethod,
+  RendererThread as Thread,
+  RendererThreadItem as ThreadItem,
+  RendererThreadItemEntry as ThreadItemEntry,
+  RendererTurn as Turn,
 } from '../../core/agent/protocol';
 
 export type { ThreadGoal, ThreadGoalStatus } from '../../core/agent/goal';

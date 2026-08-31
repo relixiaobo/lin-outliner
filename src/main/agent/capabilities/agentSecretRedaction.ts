@@ -47,6 +47,10 @@ export async function redactSecretLikeJsonAsync<T>(
   }
 }
 
+export async function redactSecretLikeTextAsync(value: string): Promise<SecretRedactionResult<string>> {
+  return scanSecretLikeJson(value, null, scanSecretStringsOffMain);
+}
+
 /**
  * Redact a diagnostic-only copy with bounded scanner work. Text beyond the budget is
  * omitted from diagnostics, never from execution, replay, or the provider request.

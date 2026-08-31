@@ -8,10 +8,10 @@
  * lives in core beside the other Turn-shaped helpers so that what counts as the
  * answer (which Item types, which phases) is changed in one place.
  */
-import type { ThreadItem } from './protocol';
+import type { RendererThreadItem, ThreadItem } from './protocol';
 
 /** Empty when the Turn left no completed final assistant text — a real outcome, not a failure. */
-export function turnTerminalAnswer(items: readonly ThreadItem[]): string {
+export function turnTerminalAnswer(items: readonly (ThreadItem | RendererThreadItem)[]): string {
   return items
     .flatMap((item) => (
       item.type === 'agentMessage' && (item.phase === 'final_answer' || item.phase === null)

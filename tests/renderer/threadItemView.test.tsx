@@ -410,20 +410,13 @@ describe('ThreadItemView tool output disclosure', () => {
   });
 
   test('loads exact payload-backed arguments without rendering the storage stub', async () => {
-    const ref = {
-      id: 'b'.repeat(64),
-      mimeType: 'application/vnd.tenon.agent-context+json' as const,
-      byteLength: 64,
-      schemaVersion: 1 as const,
-      kind: 'toolCallArguments' as const,
-    };
     const item = {
       ...commandItem(),
       command: 'bounded command preview',
       outputRef: null,
       modelCall: {
         ...replayableModelCall('bash', {}),
-        arguments: { storage: 'payload' as const, ref },
+        arguments: { storage: 'itemBound' as const },
       },
     } satisfies CommandExecutionThreadItem;
     let reads = 0;
@@ -445,13 +438,6 @@ describe('ThreadItemView tool output disclosure', () => {
   });
 
   test('bounds payload-backed arguments before they enter the code renderer', async () => {
-    const ref = {
-      id: 'c'.repeat(64),
-      mimeType: 'application/vnd.tenon.agent-context+json' as const,
-      byteLength: 1_000_000,
-      schemaVersion: 1 as const,
-      kind: 'toolCallArguments' as const,
-    };
     const item = {
       ...dynamic({
         id: 'large-payload-tool',
@@ -461,12 +447,16 @@ describe('ThreadItemView tool output disclosure', () => {
       }),
       modelCall: {
         ...replayableModelCall('plugin__write_fixture', {}),
-        arguments: { storage: 'payload' as const, ref },
+        arguments: { storage: 'itemBound' as const },
       },
     } satisfies ThreadToolItem;
     const rendered = renderItem(item, {
       expanded: true,
-      onReadToolArguments: async () => ({ command: 'x'.repeat(1_000_000) }),
+      onReadToolArguments: async () => ({
+        truncated: true,
+        originalChars: 1_000_020,
+        preview: '{\n  "command": "xxxxxxxx',
+      }),
     });
 
     await flush();
@@ -494,13 +484,6 @@ describe('ThreadItemView tool output disclosure', () => {
   });
 
   test('shows typed unavailable evidence instead of Item arguments when a payload read fails', async () => {
-    const ref = {
-      id: 'd'.repeat(64),
-      mimeType: 'application/vnd.tenon.agent-context+json' as const,
-      byteLength: 128_000,
-      schemaVersion: 1 as const,
-      kind: 'toolCallArguments' as const,
-    };
     const item = {
       ...base('payload-mcp'),
       type: 'mcpToolCall' as const,
@@ -515,7 +498,7 @@ describe('ThreadItemView tool output disclosure', () => {
       durationMs: 5,
       modelCall: {
         ...replayableModelCall('docs__search', {}),
-        arguments: { storage: 'payload' as const, ref },
+        arguments: { storage: 'itemBound' as const },
       },
     } satisfies ThreadItem;
     let reads = 0;
@@ -539,13 +522,6 @@ describe('ThreadItemView tool output disclosure', () => {
   });
 
   test('shows the same typed unavailable arguments for a payload-backed file change', async () => {
-    const ref = {
-      id: 'f'.repeat(64),
-      mimeType: 'application/vnd.tenon.agent-context+json' as const,
-      byteLength: 128_000,
-      schemaVersion: 1 as const,
-      kind: 'toolCallArguments' as const,
-    };
     const item = {
       ...base('payload-file-change'),
       type: 'fileChange' as const,
@@ -554,7 +530,7 @@ describe('ThreadItemView tool output disclosure', () => {
       changes: [{ path: '/workspace/presentation-only.ts', kind: 'update' as const }],
       modelCall: {
         ...replayableModelCall('file_edit', {}),
-        arguments: { storage: 'payload' as const, ref },
+        arguments: { storage: 'itemBound' as const },
       },
     } satisfies ThreadItem;
     const rendered = renderItem(item, {

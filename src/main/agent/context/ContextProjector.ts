@@ -55,9 +55,11 @@ import {
   redactedReplayMarker,
 } from '../runtime/toolCallHistory';
 import { redactSecretLikeJsonAsync } from '../capabilities/agentSecretRedaction';
+import { rehydrateLargeTextArguments } from '../runtime/largeTextArguments';
 
 interface ProjectionResources {
   readContext(ref: ThreadContextPayloadReference): Promise<ThreadContextPayload | null>;
+  readInternalText(ref: import('../../../core/agent/protocol').ThreadInternalTextPayloadReference): Promise<string | null>;
   readOutput(ref: ToolOutputProjectionContextPayload['outputRef']): Promise<string | null>;
   readResource(ref: ThreadResourceReference): Promise<Buffer | null>;
   resolveResourceObservationPath(ref: ThreadResourceReference): Promise<string | null>;
@@ -1278,7 +1280,7 @@ async function historyTool(
   timestamp: number,
   resources: Pick<
     ProjectionResources,
-    'readContext' | 'readOutput' | 'readResource' | 'resolveResourceObservationPath' | 'resolveImageArtifactPath'
+    'readContext' | 'readInternalText' | 'readOutput' | 'readResource' | 'resolveResourceObservationPath' | 'resolveImageArtifactPath'
   >,
   projection: ToolOutputProjectionContextPayload | null,
   projectionUnavailable: boolean,
@@ -1306,7 +1308,15 @@ async function historyTool(
       if (!payload || payload.kind !== 'toolCallArguments') {
         return { kind: 'evidence', text: await historicalToolEvidence(item, 'argumentPayloadUnavailable') };
       }
-      args = payload.value;
+      const rehydrated = await rehydrateLargeTextArguments(
+        payload,
+        source.internalTextRefs,
+        resources.readInternalText,
+      );
+      if (rehydrated === null) {
+        return { kind: 'evidence', text: await historicalToolEvidence(item, 'argumentPayloadUnavailable') };
+      }
+      args = rehydrated;
     }
   }
   if (projectionUnavailable) {

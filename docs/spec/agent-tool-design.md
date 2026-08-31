@@ -223,6 +223,15 @@ local-tool envelope, so status, error code, recovery guidance, and metrics remai
 available to canonical history. Native command exit and filesystem errors remain
 visible to the model.
 
+`bash.stdin` is an optional JSON string delivered only to a foreground child. Its child
+bytes are exactly `Buffer.from(stdin, 'utf8')`: empty is distinct from omitted, and the
+host adds no newline, quoting, expansion, delimiter, or normalization. Admission rejects
+non-strings, unpaired UTF-16 surrogates, more than 64 MiB of UTF-8, and any explicit
+background combination before spawn. The writer attaches output, child, and stdin error
+listeners before sending 64 KiB chunks, honors backpressure, closes stdin after the final
+byte, and settles writer failure, early close, abort, timeout, and process termination
+through the same foreground lifecycle. A stdin-bearing call never auto-backgrounds.
+
 Final shell logs use the Thread artifact sink. A foreground saved log and the final log
 returned by `task_stop` expose `persistedOutput` with a stable `resourceRef`, byte length,
 and current readable `filePath` when available. A running background task exposes only
@@ -664,6 +673,10 @@ execute it. `bash` may run only when every classified action is a proven
 repository inspection. An extension or MCP tool may run only when every action
 kind is classified read-only; an empty, unknown, mixed-write, or newly introduced
 classification fails closed at execution and returns structured unavailability.
+When stdin is present, the same parsed Bash capability result also carries one
+Host-private consumer fact: `registered-data` is allowed under the ordinary classified
+actions, while `executable` and `unknown` are rejected by explore, plan, read-only, and
+worktree policies. The stdin payload is never parsed to make that decision.
 
 ## Canonical Call History
 
@@ -696,10 +709,22 @@ The immutable envelope has three dispositions:
 - `evidenceOnly` stores no replayable call, only identity when resolved, a bounded
   secret-redacted provider name and argument summary, a stable reason, and correction.
 
-Exact JSON up to 32 KiB stays inline. Larger values use a content-addressed,
-Thread-owned `toolCallArguments` payload and participate in fork, child inheritance,
-rollback, deletion, and startup reconciliation. Truncation is never presented as an
-exact call. Projection replays the admission-time provider name and arguments without
+Exact JSON up to 32 KiB stays inline. A resolved tool may declare one private
+large-text contract that selects a canonical ordered set of non-overlapping RFC 6901
+paths after schema admission. Shared admission requires each path to resolve to
+well-formed text, caps the set at 256 paths and 64 MiB aggregate UTF-8, and applies only
+the fixed `secretScanText` durable policy. Tools without a contract preserve ordinary
+storage behavior. Bash selects only `/stdin`, with one binding and a 64 MiB ceiling.
+
+For a larger value, selected durable strings are written as content-addressed strict
+UTF-8 dependencies. The Thread-owned `toolCallArguments` payload stores the remaining
+JSON skeleton with selected locations replaced by `null`, plus canonical
+`{ kind: 'internalText', path, ref }` bindings. The owning model-call argument envelope
+declares the deduplicated reference set. Dependencies are verified before the envelope
+and owning Item publish; reference-set mismatch, an invalid skeleton slot, or missing or
+corrupt text makes the whole value unavailable. Fork, child inheritance, rollback,
+deletion, quota accounting, and startup reconciliation retain or reclaim both layers.
+Truncation is never presented as an exact call. Projection replays the admission-time provider name and arguments without
 consulting the current registry or schema; the schema digest is audit evidence only.
 The whole call/result pair degrades to typed evidence only when a persisted argument,
 complete output, or image dependency is unavailable. Item-specific fields are
@@ -711,10 +736,12 @@ each canonical reference and the later projector emits typed call evidence or a 
 context-degradation marker instead of aborting the user operation.
 The codec requires the envelope on every tool Item. Pre-envelope Items have no migration,
 fallback decoder, inspection helper, or replay path; pre-release userData is reset when
-the format changes. Payload-backed arguments are available to renderer detail and Turn
-copy only through an Item-bound main-process read of the exact reference, and are bounded
-before renderer caching, formatting, highlighting, or copying. Inline arguments remain
-complete. While a payload read is pending or unavailable, renderer detail and Turn copy
+the format changes. Canonical replay rehydrates the exact durable value. Payload-backed
+renderer detail and Turn copy use the enclosing Item-bound main-process read and one
+shared path-aware 32,000-character projector, which reads bounded verified text prefixes
+without building the complete bound value. Renderer projection exposes only
+`{ storage: 'itemBound' }`, never context or internal-text references or binding paths.
+Inline arguments remain complete. While a payload read is pending or unavailable, renderer detail and Turn copy
 use the same typed unavailable value and never reconstruct arguments from Item
 presentation fields.
 

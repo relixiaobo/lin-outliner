@@ -51,6 +51,7 @@ import {
 import { buildAgentLocalToolProcessEnv, runAgentToolProcess } from './agentToolProcess';
 import { resolveRipgrepCommand, type ResolvedRipgrepCommand } from './agentRipgrep';
 import { getAgentProcessExecutor } from './agentProcessExecutor';
+import { hasWellFormedUnicode } from '../runtime/largeTextArguments';
 import {
   MAX_IMAGE_ATTACHMENT_SOURCE_BYTES,
   MAX_PROMPT_IMAGE_BYTES,
@@ -315,6 +316,7 @@ interface Hunk {
 
 interface BashParams {
   command: string;
+  stdin?: string;
   description?: string;
   timeout?: number;
   run_in_background?: boolean;
@@ -685,6 +687,7 @@ const BASH_PARAMETERS = {
   required: ['command'],
   properties: {
     command: { type: 'string', minLength: 1, description: 'The command to execute.' },
+    stdin: { type: 'string', description: 'Literal UTF-8 bytes delivered to the foreground process standard input.' },
     description: {
       type: 'string',
       description: [
@@ -1577,6 +1580,18 @@ function createBashTool(
       'Commands should include a clear description of what they do in active voice.',
     ].join('\n'),
     parameters: BASH_PARAMETERS,
+    largeTextArguments: {
+      maxBindings: 1,
+      maxAggregateBytes: 64 * 1024 * 1024,
+      select: (canonicalArguments) => (
+        canonicalArguments !== null
+          && !Array.isArray(canonicalArguments)
+          && typeof canonicalArguments === 'object'
+          && Object.hasOwn(canonicalArguments, 'stdin')
+          ? [{ kind: 'internalText', path: '/stdin', maxBytes: 64 * 1024 * 1024, historyPolicy: 'secretScanText' }]
+          : []
+      ),
+    },
     executionMode: 'sequential',
     execute: async (toolCallId, rawParams: unknown, signal?: AbortSignal) => {
       const started = Date.now();
@@ -1829,8 +1844,23 @@ function normalizeFileDeleteParams(rawParams: unknown): FileDeleteParams {
 function normalizeBashParams(rawParams: unknown): BashParams {
   const input = asRecord(rawParams);
   const command = requiredLocalString(input.command, 'command');
+  if (input.stdin !== undefined && typeof input.stdin !== 'string') {
+    throw new LocalToolFailure('invalid_args', 'stdin must be a string.');
+  }
+  if (typeof input.stdin === 'string') {
+    if (!hasWellFormedUnicode(input.stdin)) {
+      throw new LocalToolFailure('invalid_args', 'stdin must contain well-formed Unicode.');
+    }
+    if (Buffer.byteLength(input.stdin, 'utf8') > 64 * 1024 * 1024) {
+      throw new LocalToolFailure('invalid_args', 'stdin exceeds the 64 MiB UTF-8 limit.');
+    }
+    if (input.run_in_background === true) {
+      throw new LocalToolFailure('invalid_args', 'stdin is available only for foreground commands.');
+    }
+  }
   return {
     command,
+    ...(typeof input.stdin === 'string' ? { stdin: input.stdin } : {}),
     description: optionalNormalizedString(input.description),
     timeout: clampInteger(input.timeout, 1, BASH_MAX_TIMEOUT_MS, BASH_DEFAULT_TIMEOUT_MS),
     run_in_background: input.run_in_background === true,
@@ -2144,7 +2174,7 @@ async function runForegroundCommand(
       cwd: workspace.root,
       env,
       sandbox: workspaceShellSandbox(workspace),
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [params.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
       windowsHide: true,
     });
@@ -2158,6 +2188,7 @@ async function runForegroundCommand(
   let interrupted = false;
   let timedOut = false;
   let outputLimitExceededBytes: number | undefined;
+  let stdinFailure: Error | null = null;
   let resolved = false;
   const timeoutTimer = setTimeout(() => {
     timedOut = true;
@@ -2175,8 +2206,20 @@ async function runForegroundCommand(
   });
 
   return await new Promise<ForegroundBashResult>((resolve, reject) => {
+    const childStdin = processHandle.child.stdin;
+    const recordStdinFailure = (error: unknown): Error => {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      if (resolved || stdinFailure) return stdinFailure ?? failure;
+      stdinFailure = failure;
+      interrupted = true;
+      requestBashProcessStop(processHandle);
+      return failure;
+    };
+    const onStdinError = (error: Error) => { recordStdinFailure(error); };
+    childStdin?.on('error', onStdinError);
+    let stdinWriter = Promise.resolve<Error | null>(null);
     const autoBackgroundTimer = setTimeout(() => {
-      if (resolved || interrupted || !shouldAutoBackground(params.command)) return;
+      if (params.stdin !== undefined || resolved || interrupted || !shouldAutoBackground(params.command)) return;
       resolved = true;
       clearTimeout(timeoutTimer);
       clearOutputWatchdog(foregroundOutputWatchdog);
@@ -2210,6 +2253,8 @@ async function runForegroundCommand(
       clearBashKillEscalation(processHandle);
       signal?.removeEventListener('abort', onAbort);
       void (async () => {
+        const writerFailure = await stdinWriter;
+        childStdin?.removeListener('error', onStdinError);
         await waitForOutputClosed(capture.outputClosed);
         const output = await finalizeForegroundOutput(workspace, capture);
         const outputLimitExceeded = outputLimitExceededBytes !== undefined || output.outputLimitExceeded;
@@ -2222,7 +2267,10 @@ async function runForegroundCommand(
           artifactSink,
         );
         const artifactWarnings = mergeArtifactWarnings(artifact.artifactWarnings, collected.warnings);
-        const interpretation = outputLimitExceeded
+        const effectiveStdinFailure = stdinFailure ?? writerFailure;
+        const interpretation = effectiveStdinFailure
+          ? { isError: true, message: `Command stdin failed: ${effectiveStdinFailure.message}` }
+          : outputLimitExceeded
           ? { isError: true, message: `Command killed: output exceeded ${formatBytes(bashMaxOutputBytes())}.` }
           : timedOut
             ? { isError: true, message: `Command timed out after ${timeoutMs}ms.` }
@@ -2245,6 +2293,61 @@ async function runForegroundCommand(
         });
       })().catch(reject);
     });
+    if (params.stdin !== undefined) {
+      stdinWriter = writeForegroundStdin(processHandle.child, params.stdin, signal).then(
+        () => null,
+        (error: unknown) => recordStdinFailure(error),
+      );
+    }
+  });
+}
+
+async function writeForegroundStdin(
+  child: ChildProcess,
+  input: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const stdin = child.stdin;
+  if (!stdin) throw new Error('Child stdin is unavailable.');
+  const bytes = Buffer.from(input, 'utf8');
+  const abort = () => stdin.destroy(new Error('Command stdin was interrupted.'));
+  signal?.addEventListener('abort', abort, { once: true });
+  try {
+    const chunkBytes = 64 * 1024;
+    for (let offset = 0; offset < bytes.byteLength; offset += chunkBytes) {
+      if (signal?.aborted) throw new Error('Command stdin was interrupted.');
+      if (!stdin.write(bytes.subarray(offset, Math.min(bytes.byteLength, offset + chunkBytes)))) {
+        await waitForWritableDrain(stdin);
+      }
+    }
+    stdin.end();
+  } finally {
+    signal?.removeEventListener('abort', abort);
+  }
+}
+
+function waitForWritableDrain(stdin: NonNullable<ChildProcess['stdin']>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      stdin.removeListener('drain', onDrain);
+      stdin.removeListener('error', onError);
+      stdin.removeListener('close', onClose);
+    };
+    const onDrain = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const onClose = () => {
+      cleanup();
+      reject(new Error('Command stdin closed before all input was written.'));
+    };
+    stdin.once('drain', onDrain);
+    stdin.once('error', onError);
+    stdin.once('close', onClose);
   });
 }
 

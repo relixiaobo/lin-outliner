@@ -650,6 +650,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
       completedTurns: (threadId) => this.core.allTurns(threadId).filter((turn) => turn.status !== 'inProgress'),
       payloads: (threadId) => ({
         readContext: (ref) => this.core.payloads.readContext(threadId, ref),
+        readInternalTextProjection: (ref, maxPrefixChars) => (
+          this.core.payloads.readInternalTextProjection(threadId, ref, maxPrefixChars)
+        ),
         readOutput: (ref) => this.core.payloads.readTextReference(threadId, ref),
         readDiagnostics: (ref) => this.core.payloads.readTurnDiagnostics(threadId, ref),
       }),
@@ -893,7 +896,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         const references = this.resourceOps.threadStorageReferences(threadId);
         return [
           this.core.payloads.pruneUnreferencedResources(threadId, references.resources),
-          this.core.payloads.pruneUnreferencedContexts(threadId, references.contexts),
+          this.core.payloads.pruneUnreferencedContexts(threadId, references.contexts, references.internalTexts),
           this.core.payloads.pruneUnreferencedTurnDiagnostics(threadId, references.diagnostics),
           this.core.payloads.pruneUnreferencedTextOutputs(threadId, references.textOutputs),
         ];
@@ -1599,6 +1602,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
       case 'thread/item/output/read':
         return await this.readItemOutput(
           decoded as AgentCoreRequestByMethod['thread/item/output/read'],
+        ) as AgentCoreResponseByMethod[Method];
+      case 'thread/item/arguments/read':
+        return await this.resourceOps.readItemArguments(
+          decoded as AgentCoreRequestByMethod['thread/item/arguments/read'],
         ) as AgentCoreResponseByMethod[Method];
       case 'thread/context/read':
         return await this.readContextPayload(

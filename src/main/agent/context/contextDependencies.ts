@@ -3,11 +3,13 @@ import type {
   ContextEvidenceThreadItem,
   ThreadContextPayload,
   ThreadContextPayloadReference,
+  ThreadInternalTextPayloadReference,
   ThreadItem,
   ThreadItemOutputReference,
   ThreadImageArtifactReference,
   ThreadResourceReference,
 } from '../../../core/agent/protocol';
+import { modelCallArgumentSource } from '../../../core/agent/modelCallHistory';
 import { imageArtifactResourceReferences } from '../imageArtifacts';
 
 type ContextDependencyOwner = ContextEvidenceThreadItem | ContextCompactionThreadItem;
@@ -202,6 +204,12 @@ export function itemToolArgumentPayloadReferences(item: ThreadItem): ThreadConte
     ? modelCall.arguments
     : modelCall.redactedArguments;
   return source.storage === 'payload' ? [...dependencyRefs, source.ref] : dependencyRefs;
+}
+
+export function itemInternalTextPayloadReferences(item: ThreadItem): ThreadInternalTextPayloadReference[] {
+  if (!('modelCall' in item) || item.modelCall.disposition === 'evidenceOnly') return [];
+  const source = modelCallArgumentSource(item.modelCall);
+  return source.storage === 'payload' ? [...source.internalTextRefs] : [];
 }
 
 export function itemOutputReferences(item: ThreadItem): ThreadItemOutputReference[] {

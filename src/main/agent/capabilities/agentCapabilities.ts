@@ -23,6 +23,19 @@ export type {
 } from './agentCapabilityRules';
 
 export type AgentCapabilityAccess = 'read' | 'write' | 'execute' | 'control' | 'unknown';
+export type BashStdinConsumer = 'absent' | 'registered-data' | 'executable' | 'unknown';
+
+export interface StdinConsumerContract {
+  readonly executable: string;
+  readonly command: 'add' | 'commit' | 'diff';
+  readonly classification: 'registered-data';
+}
+
+export const BASH_STDIN_CONSUMER_CONTRACTS: readonly StdinConsumerContract[] = Object.freeze([
+  Object.freeze({ executable: 'outline', command: 'add', classification: 'registered-data' }),
+  Object.freeze({ executable: 'outline', command: 'commit', classification: 'registered-data' }),
+  Object.freeze({ executable: 'outline', command: 'diff', classification: 'registered-data' }),
+]);
 
 export interface AgentCapabilityPolicy {
   workspaceRoot: string;
@@ -38,6 +51,7 @@ interface AgentCapabilityDecisionBase {
   access: AgentCapabilityAccess;
   descriptor?: ToolActionDescriptor;
   descriptors: readonly ToolActionDescriptor[];
+  bashStdinConsumer?: BashStdinConsumer;
 }
 
 export interface AgentCapabilityAllowDecision extends AgentCapabilityDecisionBase {
@@ -76,13 +90,17 @@ export function evaluateAgentToolCapability(input: AgentCapabilityEvaluationInpu
   const policy = createAgentCapabilityPolicy(input.policy);
   const toolName = normalizeToolName(input.toolName);
   const access = classifyToolAccess(toolName, input.args, input.actionKinds);
-  const descriptors = deriveAgentToolActionDescriptors({
+  const descriptorInput = {
     toolName,
     args: input.args,
     ...(input.actionKinds === undefined ? {} : { actionKinds: input.actionKinds }),
     policy,
     access,
-  });
+  };
+  const bash = toolName === 'bash'
+    ? deriveBashCapability(getStringArg(input.args, 'command'), input.args)
+    : null;
+  const descriptors = bash?.descriptors ?? deriveAgentToolActionDescriptors(descriptorInput);
 
   const userBlock = descriptors
     .map((descriptor) => ({ descriptor, rule: matchingBlockForDescriptor(descriptor, policy.capabilityConfig) }))
@@ -93,6 +111,7 @@ export function evaluateAgentToolCapability(input: AgentCapabilityEvaluationInpu
       access,
       descriptors,
       userBlock.descriptor,
+      bash?.stdinConsumer,
     );
   }
 
@@ -102,6 +121,7 @@ export function evaluateAgentToolCapability(input: AgentCapabilityEvaluationInpu
     source: 'default',
     descriptor: descriptors[0],
     descriptors,
+    ...(bash ? { bashStdinConsumer: bash.stdinConsumer } : {}),
   };
 }
 
@@ -113,7 +133,7 @@ export function deriveAgentToolActionDescriptors(input: {
   access: AgentCapabilityAccess;
 }): ToolActionDescriptor[] {
   const toolName = normalizeToolName(input.toolName);
-  if (toolName === 'bash') return deriveBashActionDescriptors(getStringArg(input.args, 'command'), input.args);
+  if (toolName === 'bash') return deriveBashCapability(getStringArg(input.args, 'command'), input.args).descriptors;
   if (toolName === 'task_stop') {
     return [
       simpleDescriptor(toolName, input.args, 'agent.subagent.interrupt', 'Agent stop', 'Stop a running background Agent.'),
@@ -206,13 +226,31 @@ function derivePathToolActionDescriptor(
   });
 }
 
-function deriveBashActionDescriptors(
+function deriveBashCapability(
   command: string | null,
   args: unknown,
-): ToolActionDescriptor[] {
-  if (!command) return [unknownShellDescriptor('', 'Missing shell command.')];
-  const descriptors = splitShellSegments(command)
-    .flatMap((segment) => classifyShellSegment(segment, command));
+): { readonly descriptors: ToolActionDescriptor[]; readonly stdinConsumer: BashStdinConsumer } {
+  if (!command) {
+    return {
+      descriptors: [unknownShellDescriptor('', 'Missing shell command.')],
+      stdinConsumer: hasOwnArg(args, 'stdin') ? 'unknown' : 'absent',
+    };
+  }
+  const segments = splitShellSegments(command).map((segment) => ({
+    segment,
+    words: parseShellWords(segment),
+  }));
+  const descriptors = segments.flatMap(({ segment, words }) => classifyShellSegment(segment, command, words));
+  const stdinConsumer = classifyParsedBashStdinConsumer(
+    command,
+    hasOwnArg(args, 'stdin'),
+    segments.map(({ words }) => words),
+  );
+  if (stdinConsumer === 'executable' && !descriptors.some((entry) => entry.actionKind === 'shell.local_code_execution')) {
+    descriptors.push(shellConsumerDescriptor(command, 'shell.local_code_execution', stdinConsumer));
+  } else if (stdinConsumer === 'unknown' && !descriptors.some((entry) => entry.actionKind === 'shell.unknown')) {
+    descriptors.push(shellConsumerDescriptor(command, 'shell.unknown', stdinConsumer));
+  }
   if (getBooleanArg(args, 'run_in_background')) {
     descriptors.push(descriptor('bash', 'shell.background_process', {
       accessScope: 'local_system',
@@ -222,12 +260,95 @@ function deriveBashActionDescriptors(
       command,
     }));
   }
-  return descriptors.length > 0 ? descriptors : [unknownShellDescriptor(command, 'Unclassified shell syntax.')];
+  return {
+    descriptors: descriptors.length > 0 ? descriptors : [unknownShellDescriptor(command, 'Unclassified shell syntax.')],
+    stdinConsumer,
+  };
 }
 
-function classifyShellSegment(segmentInput: string, fullCommand: string): ToolActionDescriptor[] {
+export function classifyBashStdinConsumer(
+  command: string,
+  stdinPresent: boolean,
+  registry: readonly StdinConsumerContract[] = BASH_STDIN_CONSUMER_CONTRACTS,
+): BashStdinConsumer {
+  const segments = splitShellSegments(command).map((segment) => parseShellWords(segment));
+  return classifyParsedBashStdinConsumer(command, stdinPresent, segments, registry);
+}
+
+function classifyParsedBashStdinConsumer(
+  command: string,
+  stdinPresent: boolean,
+  segments: readonly (readonly string[])[],
+  registry: readonly StdinConsumerContract[] = BASH_STDIN_CONSUMER_CONTRACTS,
+): BashStdinConsumer {
+  if (!stdinPresent) return 'absent';
+  if (segments.length !== 1 || containsShellComposition(command)) return 'unknown';
+  const words = segments[0]!;
+  const outline = outlineShellInvocation(words);
+  if (outline && registeredOutlineStdinConsumer(outline, registry)) return 'registered-data';
+  return interpreterConsumesStdin(words) ? 'executable' : 'unknown';
+}
+
+function registeredOutlineStdinConsumer(
+  invocation: DirectOutlineShellInvocation,
+  registry: readonly StdinConsumerContract[],
+): boolean {
+  const contract = registry.find((entry) => entry.executable === 'outline' && entry.command === invocation.command);
+  if (!contract) return false;
+  const inputIndexes = invocation.args.flatMap((entry, index) => entry === '--input' ? [index] : []);
+  if (inputIndexes.length !== 1 || invocation.args[inputIndexes[0]! + 1] !== '-') return false;
+  return !invocation.args.some((entry) => (
+    entry === '--file' || entry.startsWith('--file=') || entry.startsWith('--input=')
+  ));
+}
+
+function interpreterConsumesStdin(words: readonly string[]): boolean {
+  const executableIndex = shellExecutableIndex(words);
+  const executable = path.basename(words[executableIndex] ?? '').toLowerCase();
+  const args = words.slice(executableIndex + 1);
+  if (['bash', 'sh', 'zsh'].includes(executable)) return args.some((arg) => arg === '-s' || /^-[^-]*s/.test(arg));
+  if (/^python(?:\d+(?:\.\d+)*)?$/.test(executable)) return noScriptOrDash(args, new Set(['-c', '-m']));
+  if (executable === 'node') return noScriptOrDash(args, new Set(['-e', '--eval', '-p', '--print']));
+  if (executable === 'deno') return args[0] === '-' || (args[0] === 'run' && args[1] === '-');
+  if (executable === 'bun') return args[0] === '-' || (args[0] === 'run' && args[1] === '-');
+  if (['ruby', 'perl', 'php'].includes(executable)) return noScriptOrDash(args, new Set(['-e', '-r']));
+  if (executable === 'osascript') return args.length === 0 || args.at(-1) === '-';
+  return false;
+}
+
+function noScriptOrDash(args: readonly string[], sourceOptions: ReadonlySet<string>): boolean {
+  if (args.includes('-')) return true;
+  if (args.some((arg) => sourceOptions.has(arg))) return false;
+  return !args.some((arg) => !arg.startsWith('-'));
+}
+
+function containsShellComposition(command: string): boolean {
+  return /(?:&&|\|\||[;|<>]|`|\$\()/.test(command);
+}
+
+function shellConsumerDescriptor(
+  command: string,
+  actionKind: AgentToolActionKind,
+  consumer: BashStdinConsumer,
+): ToolActionDescriptor {
+  return descriptor('bash', actionKind, {
+    accessScope: 'local_system',
+    title: consumer === 'executable' ? 'executable stdin' : 'unknown stdin consumer',
+    summary: `${command} (${consumer} stdin consumer)`,
+    consequence: consumer === 'executable'
+      ? 'Execute program source supplied through standard input.'
+      : 'Deliver input to an unregistered standard-input consumer.',
+    command,
+  });
+}
+
+function classifyShellSegment(
+  segmentInput: string,
+  fullCommand: string,
+  parsedWords?: readonly string[],
+): ToolActionDescriptor[] {
   const segment = segmentInput.trim();
-  const words = parseShellWords(segment);
+  const words = parsedWords ?? parseShellWords(segment);
   const head = words[0]?.toLowerCase() ?? '';
   const findAction = classifyFindAction(words);
   const values = (actionKind: AgentToolActionKind, title: string, summary: string): ToolActionDescriptor => descriptor('bash', actionKind, {
@@ -412,6 +533,7 @@ function unavailable(
   access: AgentCapabilityAccess,
   descriptors: readonly ToolActionDescriptor[],
   descriptorValue?: ToolActionDescriptor,
+  bashStdinConsumer?: BashStdinConsumer,
 ): AgentCapabilityUnavailableDecision {
   return {
     behavior: 'unavailable',
@@ -421,6 +543,7 @@ function unavailable(
     source: 'user_blocklist',
     descriptor: descriptorValue ?? descriptors[0],
     descriptors,
+    ...(bashStdinConsumer ? { bashStdinConsumer } : {}),
   };
 }
 
@@ -559,6 +682,10 @@ function getStringArg(args: unknown, name: string): string | null {
 
 function getBooleanArg(args: unknown, name: string): boolean {
   return getUnknownArg(args, name) === true;
+}
+
+function hasOwnArg(args: unknown, name: string): boolean {
+  return Boolean(args && typeof args === 'object' && !Array.isArray(args) && Object.hasOwn(args, name));
 }
 
 function resolveCapabilityPath(root: string, inputPath: string): string {

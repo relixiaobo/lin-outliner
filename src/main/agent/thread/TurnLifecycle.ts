@@ -24,6 +24,7 @@ import type {
 import type { SubagentRequest,SubagentRequestLedger } from '../persistence/SubagentRequestLedger';
 import type { ThreadCatalogRecord } from '../persistence/ThreadMetadataStore';
 import { ItemRecorder } from '../runtime/ItemRecorder';
+import { factorLargeTextArguments } from '../runtime/largeTextArguments';
 import type { OutputImageObservationNormalizer,PreparedOutputImageObservation,StagedContextCompaction,SteeredTurnInput,TurnExecutionContext,TurnExecutionResult,TurnExecutor } from '../runtime/types';
 import { SubagentBudgetExhaustedError } from '../SubagentBudgetExhaustedError';
 import { SubagentRequestClosedError } from '../SubagentRequestClosedError';
@@ -375,6 +376,9 @@ export class TurnLifecycle {
             const plan = await planContextCompaction({
               turns,
               readContext: (ref) => this.core.payloads.readContext(request.threadId, ref),
+              readInternalTextProjection: (ref, maxPrefixChars) => (
+                this.core.payloads.readInternalTextProjection(request.threadId, ref, maxPrefixChars)
+              ),
             });
             if (!plan) {
               const prior = selected.latestCompaction
@@ -462,6 +466,7 @@ export class TurnLifecycle {
             await this.core.payloads.pruneUnreferencedContexts(
               request.threadId,
               this.resourceOps.threadContextPayloadReferences(request.threadId),
+              this.resourceOps.threadInternalTextPayloadReferences(request.threadId),
             ).catch(() => undefined);
           }
           throw error;
@@ -714,6 +719,7 @@ export class TurnLifecycle {
           await this.core.payloads.pruneUnreferencedContexts(
             thread.id,
             references.contexts,
+            references.internalTexts,
           );
           throw error;
         }
@@ -994,6 +1000,7 @@ export class TurnLifecycle {
         await this.core.payloads.pruneUnreferencedContexts(
           record.thread.id,
           references.contexts,
+          references.internalTexts,
         );
         throw error;
       }
@@ -1410,6 +1417,7 @@ export class TurnLifecycle {
       signal: new AbortController().signal,
       recorder,
       readContext: (ref) => this.core.payloads.readContext(thread.id, ref),
+      readInternalText: (ref) => this.core.payloads.readInternalText(thread.id, ref),
       readOutput: (ref) => this.core.payloads.readTextReference(thread.id, ref),
       resolveResourceObservationPath: (ref) => resourceObservation.resolvePath(ref),
       resolveImageArtifactPath: (artifact) => resourceObservation.resolveArtifactPath(artifact),
@@ -1487,6 +1495,7 @@ export class TurnLifecycle {
           signal: active.controller.signal,
           recorder: active.recorder,
           readContext: (ref) => this.core.payloads.readContext(active.threadId, ref),
+          readInternalText: (ref) => this.core.payloads.readInternalText(active.threadId, ref),
           readOutput: (ref) => this.core.payloads.readTextReference(active.threadId, ref),
           resolveResourceObservationPath: (ref) => resourceObservation.resolvePath(ref),
           resolveImageArtifactPath: (artifact) => resourceObservation.resolveArtifactPath(artifact),
@@ -1536,11 +1545,15 @@ export class TurnLifecycle {
             mimeType,
             summary,
           ),
-          persistToolCallArguments: (value) => this.core.payloads.writeContext(active.threadId, {
-            schemaVersion: 1,
-            kind: 'toolCallArguments',
-            value,
-          }),
+          persistToolCallArguments: async (value, selected) => {
+            const refs = [];
+            for (const binding of selected) {
+              refs.push(await this.core.payloads.writeInternalText(active.threadId, binding.value));
+            }
+            const factored = factorLargeTextArguments(value, selected, refs);
+            const ref = await this.core.payloads.writeContext(active.threadId, factored.payload);
+            return { storage: 'payload', ref, internalTextRefs: factored.internalTextRefs };
+          },
           persistContextEvidence: (payload, summary) => this.persistExecutionContextEvidence(
             active,
             thread,
@@ -1702,7 +1715,11 @@ export class TurnLifecycle {
           ).catch(() => undefined);
           const payloadReferences = this.resourceOps.threadStorageReferences(active.threadId);
           await Promise.all([
-            this.core.payloads.pruneUnreferencedContexts(active.threadId, payloadReferences.contexts),
+            this.core.payloads.pruneUnreferencedContexts(
+              active.threadId,
+              payloadReferences.contexts,
+              payloadReferences.internalTexts,
+            ),
             this.core.payloads.pruneUnreferencedTurnDiagnostics(active.threadId, payloadReferences.diagnostics),
           ]).catch(() => undefined);
         }
@@ -1848,11 +1865,15 @@ export class TurnLifecycle {
           turns,
           preserveFrom: preserveFrom ?? firstTurnCursor(turns, active.turnId),
           readContext: (ref) => this.core.payloads.readContext(active.threadId, ref),
+          readInternalTextProjection: (ref, maxPrefixChars) => (
+            this.core.payloads.readInternalTextProjection(active.threadId, ref, maxPrefixChars)
+          ),
         });
         if (!plan) return null;
         const cleanupLocked = () => this.core.payloads.pruneUnreferencedContexts(
           active.threadId,
           this.resourceOps.threadContextPayloadReferences(active.threadId),
+          this.resourceOps.threadInternalTextPayloadReferences(active.threadId),
         ).catch(() => undefined);
         const cleanup = () => this.core.threadMutex.run(active.threadId, cleanupLocked);
         try {
@@ -1932,6 +1953,7 @@ export class TurnLifecycle {
         await this.core.payloads.pruneUnreferencedContexts(
           active.threadId,
           this.resourceOps.threadContextPayloadReferences(active.threadId),
+          this.resourceOps.threadInternalTextPayloadReferences(active.threadId),
         ).catch(() => undefined);
         throw error;
       }
@@ -2058,6 +2080,7 @@ export class TurnLifecycle {
           this.core.payloads.pruneUnreferencedContexts(
             active.threadId,
             references.contexts,
+            references.internalTexts,
           ),
           this.core.payloads.pruneUnreferencedTurnDiagnostics(
             active.threadId,

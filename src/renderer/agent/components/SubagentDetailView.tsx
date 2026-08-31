@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { RendererUserViewHints, ThreadId, Turn } from '../../../core/agent/protocol';
+import type { RendererUserViewHints, ThreadId } from '../../../core/agent/protocol';
+import type { Turn } from '../projectionTypes';
 import type { DocumentIndexStore } from '../../state/documentIndexStore';
 import { useT } from '../../i18n/I18nProvider';
 import { BackIcon, GitForkIcon, ICON_SIZE, StopIcon } from '../../ui/icons';

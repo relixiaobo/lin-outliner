@@ -14,7 +14,7 @@ import type {
   Usage,
 } from '@earendil-works/pi-ai';
 import type { Static, TSchema } from 'typebox';
-import type { ModelToolIdentity, ThreadResourceReference, TurnError } from '../../../../core/agent/protocol';
+import type { JsonValue, ModelToolIdentity, ThreadResourceReference, TurnError } from '../../../../core/agent/protocol';
 import type { ModelGateway } from './ModelGateway';
 import type {
   ToolCallAdmissionDecision,
@@ -77,12 +77,26 @@ export interface AgentToolTextReplacement {
   readonly replacement: string;
 }
 
+export interface AgentToolLargeTextBinding {
+  readonly kind: 'internalText';
+  readonly path: string;
+  readonly maxBytes: number;
+  readonly historyPolicy: 'secretScanText';
+}
+
+export interface AgentToolLargeTextArguments {
+  readonly maxBindings: number;
+  readonly maxAggregateBytes: number;
+  readonly select: (canonicalArguments: JsonValue) => readonly AgentToolLargeTextBinding[];
+}
+
 export type AgentToolUpdateCallback<T = any> = (partialResult: AgentToolResult<T>) => void;
 
 export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any> extends Tool<TParameters> {
   label: string;
   readonly canonicalIdentity?: ModelToolIdentity;
   prepareArguments?: (args: unknown) => Static<TParameters>;
+  readonly largeTextArguments?: AgentToolLargeTextArguments;
   execute: (
     toolCallId: string,
     params: Static<TParameters>,

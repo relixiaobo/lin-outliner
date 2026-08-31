@@ -2811,6 +2811,71 @@ describe('agent local tools', () => {
     });
   });
 
+  test('bash delivers empty and delimiter-heavy stdin as exact literal UTF-8 bytes', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const script = "const chunks=[];process.stdin.on('data',(chunk)=>chunks.push(chunk));process.stdin.on('end',()=>process.stdout.write(Buffer.concat(chunks).toString('base64')));";
+      const values = [
+        '',
+        'NUL:\0\nUnicode:界\nquotes:\"\' backticks:`literal` command:$(printf injected)\nEOF\n',
+      ];
+      for (const stdin of values) {
+        const result = await executeTool<{ stdout: string }>(workspaceRoot, 'bash', {
+          command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+          stdin,
+        });
+        expect(result.ok).toBe(true);
+        expect(result.data?.stdout).toBe(Buffer.from(stdin, 'utf8').toString('base64'));
+      }
+    });
+  });
+
+  test('bash honors stdin backpressure and settles an early-close failure once', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const input = '界\\"\n'.repeat(400_000);
+      const digestScript = "const c=require('node:crypto');const h=c.createHash('sha256');process.stdin.pause();process.stdin.on('data',(chunk)=>h.update(chunk));process.stdin.on('end',()=>process.stdout.write(h.digest('hex')));setTimeout(()=>process.stdin.resume(),50);";
+      const delivered = await executeTool<{ stdout: string }>(workspaceRoot, 'bash', {
+        command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(digestScript)}`,
+        stdin: input,
+      });
+      expect(delivered.ok).toBe(true);
+      expect(delivered.data?.stdout).toBe(createHash('sha256').update(Buffer.from(input)).digest('hex'));
+
+      const closed = await executeTool<{ interrupted: boolean; returnCodeInterpretation: string }>(workspaceRoot, 'bash', {
+        command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify('process.exit(0)')}`,
+        stdin: 'x'.repeat(4 * 1024 * 1024),
+      });
+      expect(closed.ok).toBe(false);
+      expect(closed.error?.code).toBe('command_interrupted');
+      expect(closed.data).toMatchObject({ interrupted: true });
+      expect(closed.data?.returnCodeInterpretation).toContain('stdin failed');
+    });
+  });
+
+  test('bash rejects invalid, unpaired, oversized, and background stdin before spawn', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const invalid = await executeTool(workspaceRoot, 'bash', { command: 'printf unreachable', stdin: 1 });
+      expect(invalid).toMatchObject({ ok: false, error: { code: 'invalid_args' } });
+
+      const unpaired = await executeTool(workspaceRoot, 'bash', { command: 'printf unreachable', stdin: '\ud800' });
+      expect(unpaired).toMatchObject({ ok: false, error: { code: 'invalid_args' } });
+      expect(unpaired.error?.message).toContain('well-formed Unicode');
+
+      const background = await executeTool(workspaceRoot, 'bash', {
+        command: 'printf unreachable',
+        stdin: 'input',
+        run_in_background: true,
+      });
+      expect(background).toMatchObject({ ok: false, error: { code: 'invalid_args' } });
+
+      const oversized = await executeTool(workspaceRoot, 'bash', {
+        command: 'printf unreachable',
+        stdin: 'x'.repeat(64 * 1024 * 1024 + 1),
+      });
+      expect(oversized).toMatchObject({ ok: false, error: { code: 'invalid_args' } });
+      expect(oversized.error?.message).toContain('64 MiB');
+    });
+  });
+
   test('bash keeps non-filesystem OS authorization failures as command failures', async () => {
     if (process.platform !== 'darwin') return;
     await withWorkspace(async (workspaceRoot) => {

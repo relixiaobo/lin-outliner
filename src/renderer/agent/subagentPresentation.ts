@@ -1,17 +1,14 @@
 import type {
-  CollabAgentToolCallThreadItem,
   SubAgentActivityThreadItem,
   SubagentExecutionProjection,
   SubagentRunMode,
   SubagentWorktreeSummary,
-  Thread,
   ThreadId,
-  ThreadItem,
   ThreadItemId,
-  Turn,
   TurnError,
   TurnId,
 } from '../../core/agent/protocol';
+import type { Thread, ThreadItem, Turn } from './projectionTypes';
 import { isolatedSkillNameFromTaskName } from '../../core/agent/subagentTaskPath';
 import { userFacingAgentErrorRecord } from './threadErrorMessage';
 
@@ -718,9 +715,11 @@ function shortAgentId(agentId: string): string {
   return agentId.length > 12 ? `${agentId.slice(0, 8)}...${agentId.slice(-4)}` : agentId;
 }
 
-export function collaborationResultSnapshot(item: CollabAgentToolCallThreadItem): {
+export function collaborationResultSnapshot(
+  item: Extract<ThreadItem, { readonly type: 'collabAgentToolCall' }>,
+): {
   readonly receiverThreadIds: readonly ThreadId[];
-  readonly agentsStates: CollabAgentToolCallThreadItem['agentsStates'];
+  readonly agentsStates: Extract<ThreadItem, { readonly type: 'collabAgentToolCall' }>['agentsStates'];
 } {
   return {
     receiverThreadIds: item.receiverThreadIds,

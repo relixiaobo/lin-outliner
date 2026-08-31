@@ -43,9 +43,9 @@ import type {
 import { replaceAllRichTextPatch } from './types';
 import type {
   AgentCoreMethod,
-  AgentCoreNotification,
+  RendererAgentCoreNotification,
   AgentCoreRequestByMethod,
-  AgentCoreResponseByMethod,
+  RendererAgentCoreResponseByMethod,
   ThreadResourceReference,
 } from '../../core/agent/protocol';
 import type {
@@ -108,7 +108,7 @@ export const api = {
   agentCoreRequest: <Method extends AgentCoreMethod>(
     method: Method,
     input: AgentCoreRequestByMethod[Method],
-  ): Promise<AgentCoreResponseByMethod[Method]> => {
+  ): Promise<RendererAgentCoreResponseByMethod[Method]> => {
     if (window.lin) return window.lin.agentCoreRequest(method, input);
     return Promise.reject(new Error('Tenon desktop bridge is unavailable'));
   },
@@ -120,7 +120,7 @@ export const api = {
   onSettingsChanged: (listener: () => void) => (
     window.lin?.onSettingsChanged(listener) ?? (() => undefined)
   ),
-  onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => (
+  onAgentCoreNotification: (listener: (notification: RendererAgentCoreNotification) => void) => (
     window.lin?.onAgentCoreNotification(listener) ?? (() => undefined)
   ),
   automationRequest: <Method extends AutomationMethod>(

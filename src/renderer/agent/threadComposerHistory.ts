@@ -1,8 +1,8 @@
 import {
   isReaderAuthoredUserMessage,
-  type Turn,
   type UserMessageThreadItem,
 } from '../../core/agent/protocol';
+import type { Turn } from './projectionTypes';
 
 export type ThreadComposerHistoryDirection = 'older' | 'newer';
 

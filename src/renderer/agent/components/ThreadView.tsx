@@ -32,14 +32,11 @@ import type {
   RendererUserViewHints,
   ThreadAttachmentContent,
   ThreadConfigurationSummary,
-  Thread,
   ThreadId,
-  ThreadItem,
   ThreadResourceReference,
   ThreadUserContent,
-  Turn,
-  TurnSubmitResponse,
 } from '../../../core/agent/protocol';
+import type { Thread, ThreadItem, Turn, TurnSubmitResponse } from '../projectionTypes';
 import { isReaderAuthoredUserMessage } from '../../../core/agent/protocol';
 import type { ThreadGoal } from '../../../core/agent/goal';
 import {
@@ -4243,7 +4240,7 @@ function toolCopyArguments(item: ThreadToolItem, argumentsValue: JsonValue | nul
       const source = item.modelCall.disposition === 'replayable'
         ? item.modelCall.arguments
         : item.modelCall.redactedArguments;
-      if (source.storage === 'payload') {
+      if (source.storage === 'itemBound') {
         return jsonText(boundedToolArgumentsForDisplay(argumentsValue));
       }
     }

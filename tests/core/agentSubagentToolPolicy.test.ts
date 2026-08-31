@@ -69,6 +69,31 @@ describe('Subagent tool policy', () => {
     expect(subagentBashExecutionAllowed({ ...foreground, worktree: true }, ['shell.local_code_execution'])).toBe(true);
   });
 
+  test('applies stdin consumer policy before constrained Bash execution', () => {
+    const constrained = [
+      { ...foreground, worktree: true },
+      { ...foreground, readOnly: true },
+      { ...foreground, kind: 'explore' as const },
+      { ...foreground, kind: 'plan' as const },
+    ];
+    for (const policy of constrained) {
+      expect(subagentBashExecutionAllowed(policy, ['shell.read_search'], 'executable')).toBe(false);
+      expect(subagentBashExecutionAllowed(policy, ['shell.read_search'], 'unknown')).toBe(false);
+    }
+    expect(subagentBashExecutionAllowed(
+      { ...foreground, worktree: true },
+      ['outline.read'],
+      'registered-data',
+    )).toBe(true);
+    expect(subagentBashExecutionAllowed(
+      { ...foreground, worktree: true },
+      ['outline.edit'],
+      'registered-data',
+    )).toBe(false);
+    expect(subagentBashExecutionAllowed(foreground, ['shell.unknown'], 'unknown')).toBe(true);
+    expect(subagentBashExecutionAllowed(foreground, ['shell.local_code_execution'], 'executable')).toBe(true);
+  });
+
   test('fails closed on unclassified read-only actions while preserving inspection and host control', () => {
     const policy = { ...foreground, readOnly: true };
     const keys = filterSubagentToolContracts(MODEL_TOOL_CATALOG, policy).map(toolKey);

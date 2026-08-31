@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { ThreadMemoryMode } from '../../../core/agent/memory';
-import type { Thread, Turn } from '../../../core/agent/protocol';
+import type { Thread, Turn } from '../projectionTypes';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import { threadStore, useThreadStore, type ThreadDescendantsView } from '../store/threadStore';

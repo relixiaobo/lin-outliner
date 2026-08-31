@@ -84,6 +84,15 @@ cleanup, and unknown shell behavior return structured unavailability before
 the underlying action starts. The ceiling does not rewrite commands or infer
 safety from the Agent's stated intent.
 
+For a Bash call with `stdin`, capability evaluation parses the command once and returns
+both its action descriptors and one Host-private consumer class. Omitted input is
+`absent`; the exact direct `outline add|commit|diff --input -` registry forms are
+`registered-data`; known interpreter stdin-source forms are `executable`; every nested
+shell wrapper, pipeline, alternate input source, or unproved consumer is `unknown`. Stdin text is opaque
+to this classifier. Explore, plan, read-only, and worktree Agents reject `executable` and
+`unknown` before spawn; `registered-data` remains governed by the command's ordinary
+Outline read/edit descriptors, including the worktree mutation prohibition.
+
 ## Admission Is Not Permission
 
 Full Access authorizes a valid operation exposed in the Thread; it does not make an
@@ -172,6 +181,11 @@ into replay. The
 active Turn may retain exact admitted arguments in a transient provider-history overlay;
 that overlay is neither audit data nor durable history and disappears before any later
 Turn or restart.
+When a tool selects a large textual argument for private storage, durable redaction scans
+that whole standalone string with the same Secretlint policy while the remaining JSON
+skeleton is scanned structurally. The selected location is then restored with only its
+durable replayable or redacted text. Live Bash stdin keeps the validated provider bytes;
+redaction cannot change consumer classification, capability descriptors, or execution.
 The recommended Secretlint scanner preset plus complete private-key, legacy `sk-`, short
 GitHub-token, Bearer, and JWT signatures identify known credential formats. Structured
 redaction requires both a normalized credential field name and a credential-candidate

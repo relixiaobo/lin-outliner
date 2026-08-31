@@ -5,6 +5,7 @@ import type {
 Thread,
 ThreadAttachmentContent,
 ThreadContextPayloadReference,
+ThreadInternalTextPayloadReference,
 ThreadContextReadRequest,
 ThreadContextReadResponse,
 ThreadId,
@@ -12,6 +13,8 @@ ThreadItem,
 ThreadItemOutputReadRequest,
 ThreadItemOutputReadResponse,
 ThreadItemOutputReference,
+ThreadItemArgumentsReadRequest,
+ThreadItemArgumentsReadResponse,
 ThreadImageArtifactReference,
 ThreadResourceReference,
 ThreadTurnDetailsReadRequest,
@@ -27,6 +30,7 @@ type ManagedAttachmentObservation,
 import {
 assertContextPayloadDependencies,
 itemContextPayloadReferences,
+itemInternalTextPayloadReferences,
 itemResourceReferences,
 resourceReferenceKey,
 scanThreadItemResourceUsage,
@@ -42,11 +46,13 @@ ResolvedThreadImageArtifactFile,
 ResolvedThreadResourceFile,
 ThreadUserContentResolutionContext,
 } from '../ThreadService';
+import { projectLargeTextArgumentsForDisplay } from '../runtime/largeTextArguments';
 import { ThreadCore } from './ThreadCore';
 
 export interface ThreadStorageReferences {
   readonly resources: readonly ThreadResourceReference[];
   readonly contexts: readonly ThreadContextPayloadReference[];
+  readonly internalTexts: readonly ThreadInternalTextPayloadReference[];
   readonly diagnostics: readonly TurnDiagnosticsPayloadReference[];
   readonly textOutputs: readonly ThreadItemOutputReference[];
 }
@@ -87,12 +93,28 @@ export class ThreadResourceOps {
       assertContextPayloadDependencies(item, payload);
       return { context: { ref: item.payloadRef, payload } };
     }
-    if (!('modelCall' in item) || item.modelCall.disposition === 'evidenceOnly') return { context: null };
+    return { context: null };
+  }
+  async readItemArguments(request: ThreadItemArgumentsReadRequest): Promise<ThreadItemArgumentsReadResponse> {
+    const turn = this.core.readTurn(request.threadId, request.turnId);
+    const item = turn?.items.find((candidate) => candidate.id === request.itemId);
+    if (!item || !('modelCall' in item) || item.modelCall.disposition === 'evidenceOnly') {
+      return { arguments: null };
+    }
     const source = modelCallArgumentSource(item.modelCall);
-    if (source.storage !== 'payload' || source.ref.id !== request.contextId) return { context: null };
-    const payload = await this.core.payloads.readContext(request.threadId, source.ref);
-    if (!payload || payload.kind !== 'toolCallArguments') return { context: null };
-    return { context: { ref: source.ref, payload } };
+    if (source.storage === 'inline') return { arguments: source.value };
+    const payload = await this.core.payloads.readContext(request.threadId, source.ref).catch(() => null);
+    if (!payload || payload.kind !== 'toolCallArguments') return { arguments: null };
+    const value = await projectLargeTextArgumentsForDisplay(
+      payload,
+      source.internalTextRefs,
+      (ref, maxPrefixChars) => this.core.payloads.readInternalTextProjection(
+        request.threadId,
+        ref,
+        maxPrefixChars,
+      ),
+    );
+    return { arguments: value };
   }
   async readTurnDetails(request: ThreadTurnDetailsReadRequest): Promise<ThreadTurnDetailsReadResponse> {
     const thread = this.core.requireThread(request.threadId).thread;
@@ -405,6 +427,7 @@ export class ThreadResourceOps {
     return {
       resources: resourceReferencesFromTurns(turns),
       contexts: contextReferencesFromTurns(turns),
+      internalTexts: internalTextReferencesFromTurns(turns),
       diagnostics: diagnosticsReferencesFromTurns(turns),
       textOutputs: textOutputReferencesFromTurns(turns),
     };
@@ -427,6 +450,9 @@ export class ThreadResourceOps {
   }
   threadContextPayloadReferences(threadId: ThreadId): ThreadContextPayloadReference[] {
     return contextReferencesFromTurns(this.core.allTurns(threadId));
+  }
+  threadInternalTextPayloadReferences(threadId: ThreadId): ThreadInternalTextPayloadReference[] {
+    return internalTextReferencesFromTurns(this.core.allTurns(threadId));
   }
   threadTurnDiagnosticsReferences(threadId: ThreadId): TurnDiagnosticsPayloadReference[] {
     return diagnosticsReferencesFromTurns(this.core.allTurns(threadId));
@@ -491,6 +517,10 @@ function resourceReferencesFromTurns(turns: readonly Turn[]): ThreadResourceRefe
 
 function contextReferencesFromTurns(turns: readonly Turn[]): ThreadContextPayloadReference[] {
   return turns.flatMap((turn) => turn.items.flatMap(itemContextPayloadReferences));
+}
+
+function internalTextReferencesFromTurns(turns: readonly Turn[]): ThreadInternalTextPayloadReference[] {
+  return turns.flatMap((turn) => turn.items.flatMap(itemInternalTextPayloadReferences));
 }
 
 function diagnosticsReferencesFromTurns(turns: readonly Turn[]): TurnDiagnosticsPayloadReference[] {

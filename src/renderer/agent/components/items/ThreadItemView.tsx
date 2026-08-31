@@ -17,10 +17,10 @@ import type {
   JsonValue,
   RendererUserViewHints,
   ThreadAttachmentContent,
-  ThreadItem,
   ThreadUserContent,
   UserMessageThreadItem,
 } from '../../../../core/agent/protocol';
+import type { ThreadItem } from '../../projectionTypes';
 import { isReaderAuthoredUserMessage } from '../../../../core/agent/protocol';
 import type { Messages } from '../../../../core/i18n';
 import { useT } from '../../../i18n/I18nProvider';
@@ -2170,7 +2170,7 @@ function canonicalCommandArgument(argumentsValue: JsonValue): string | null {
 function toolArgumentPayloadId(item: ThreadToolItem): string | null {
   if (item.modelCall.disposition === 'evidenceOnly') return null;
   const source = modelCallArgumentSource(item.modelCall);
-  return source.storage === 'payload' ? source.ref.id : null;
+  return source.storage === 'itemBound' ? item.id : null;
 }
 
 function isJsonText(value: string): boolean {
