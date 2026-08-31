@@ -55,6 +55,9 @@ describe('input modality CSS guards', () => {
       /\.row-inline-content-slot\s*\{[^}]*display:\s*inline-flex;/s,
     );
     expect(outlinerCss).toMatch(
+      /\.row-content-line > \.row-editor \.ProseMirror p\s*\{[^}]*display:\s*inline-block;[^}]*max-width:\s*100%;[^}]*overflow-wrap:\s*anywhere;/s,
+    );
+    expect(outlinerCss).toMatch(
       /\.field-value-affordances\s*\{[^}]*display:\s*inline-flex;[^}]*margin-inline-start:\s*var\(--space-1\);/s,
     );
     expect(outlinerCss).not.toMatch(/\.field-value-affordances\s*\{[^}]*position:\s*absolute;/s);
@@ -143,7 +146,14 @@ describe('input modality CSS guards', () => {
     expect(filePreviewCss).toMatch(/\.file-node-body--media-audio > \.outline-source-preview-actions \.file-preview-pill\s*\{[^}]*color:\s*inherit;/s);
     expect(filePreviewCss).toMatch(/\.file-node-body--media-audio > \.outline-source-preview-actions[\s\S]*?:is\(\.file-preview-pill-more, \.outline-source-preview-close\.icon-button\) > svg\s*\{[^}]*filter:\s*none;/s);
     expect(filePreviewCss).toMatch(/\.file-preview-media-button:hover,[\s\S]*?--media-icon-color:\s*var\(--text-primary\);[\s\S]*?color:\s*var\(--text-primary\);/);
-    expect(filePreviewCss).toMatch(/\.file-preview-media-player--video \.file-preview-media-controls\s*\{[^}]*padding-block-start:\s*var\(--space-xl\);[^}]*background:\s*linear-gradient\(to bottom, transparent, var\(--media-hud-active-bg\)\);[^}]*border:\s*0;[^}]*border-radius:\s*0;[^}]*box-shadow:\s*none;/s);
+    expect(tokensCss).toContain('--media-hud-gradient-start: transparent;');
+    expect(a11yCss).toMatch(
+      /@media \(prefers-contrast: more\), \(prefers-reduced-transparency: reduce\)[\s\S]*?--media-hud-gradient-start:\s*var\(--media-hud-bg\);/s,
+    );
+    expect(filePreviewCss).toMatch(/\.file-preview-media-player--video \.file-preview-media-controls\s*\{[^}]*padding-block-start:\s*var\(--space-xl\);[^}]*background:\s*linear-gradient\([\s\S]*?var\(--media-hud-gradient-start\),[\s\S]*?var\(--media-hud-active-bg\)[\s\S]*?\);[^}]*border:\s*0;[^}]*border-radius:\s*0;[^}]*box-shadow:\s*none;/s);
+    expect(filePreviewCss).not.toMatch(
+      /\.file-preview-media-player--video \.file-preview-media-controls\s*\{[^}]*background:[^;]*transparent/s,
+    );
     expect(filePreviewCss).not.toContain('.file-preview-media-center-play');
     expect(filePreviewCss).toMatch(/\.file-node-preview--media\s*\{[^}]*overflow:\s*visible;/s);
     expect(filePreviewCss).toMatch(/\.file-node-preview--media\s*\{[^}]*background:\s*transparent;/s);

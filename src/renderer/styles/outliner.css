@@ -2802,6 +2802,8 @@ button.outliner-table-column-kind:focus-visible {
 
 .row-content-line > .row-editor .ProseMirror p {
   display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .row-editor .ProseMirror {

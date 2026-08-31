@@ -660,7 +660,11 @@
 
 .file-preview-media-player--video .file-preview-media-controls {
   padding-block-start: var(--space-xl);
-  background: linear-gradient(to bottom, transparent, var(--media-hud-active-bg));
+  background: linear-gradient(
+    to bottom,
+    var(--media-hud-gradient-start),
+    var(--media-hud-active-bg)
+  );
   border: 0;
   border-radius: 0;
   box-shadow: none;

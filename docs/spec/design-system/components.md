@@ -171,8 +171,11 @@ shared Lucide stroke family. Seek direction glyphs carry exact 15-second
 semantics through their accessible labels rather than unreadable icon microtype.
 Media Chrome owns playback, seeking, keyboard shortcuts, and activity state so
 each keypress performs one action and controls auto-hide without React tracking
-time or pointer movement. Fullscreen removes inline size limits, fills the
-viewport, and preserves the video's aspect ratio.
+time or pointer movement. Audio disables only the video-specific `F` fullscreen
+shortcut while retaining the shared playback, mute, and seek shortcuts.
+Fullscreen removes inline size limits, fills the viewport, and preserves the
+video's aspect ratio. The video scrim uses an opaque gradient from edge to edge
+when reduced transparency or increased contrast is requested.
 
 External document pixels may force a light document canvas inside the preview
 iframe/page renderer. That exception is confined to document pixels; preview

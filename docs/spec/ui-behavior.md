@@ -112,6 +112,7 @@ keyboard or pointer change should be checked against this matrix.
 | `Backspace` on empty row with children | Block deletion so a subtree is not removed by accident. |
 | `ArrowUp` at text start | Focus previous visible row at end. |
 | `ArrowDown` at text end | Enter expanded child scope first, then next visible row/trailing row. |
+| `Cmd+ArrowLeft` / `Cmd+ArrowRight` on macOS | Move the ProseMirror selection to the document start/end synchronously so an immediately following structural command observes the new cursor boundary. |
 | `Escape` | Leave edit mode and select the current row. |
 | `Mod+A` | First press uses native text selection inside the focused editor. If the row text is already fully selected, the next press leaves edit mode and selects every visible row in the panel selection scope. |
 | `Mod+Enter` | Cycle checkbox state: no checkbox, undone checkbox, done checkbox. |

@@ -1813,6 +1813,20 @@ test.describe('file attachments', () => {
       timelineTrailingAlignment: true,
     });
 
+    const audioPlayer = preview.locator('.file-preview-media-player--audio');
+    await audioPlayer.evaluate((element) => {
+      const state = window as typeof window & { __audioFullscreenRequests?: number };
+      state.__audioFullscreenRequests = 0;
+      element.addEventListener('mediaenterfullscreenrequest', () => {
+        state.__audioFullscreenRequests = (state.__audioFullscreenRequests ?? 0) + 1;
+      }, { capture: true });
+    });
+    await preview.locator('.file-preview-audio').focus();
+    await page.keyboard.press('f');
+    await expect.poll(async () => page.evaluate(() => (
+      window as typeof window & { __audioFullscreenRequests?: number }
+    ).__audioFullscreenRequests ?? 0)).toBe(0);
+
     await pastedRow.locator(':scope > .outline-source-preview-row .file-node-body').hover({
       position: { x: 1, y: 1 },
     });
@@ -2080,7 +2094,8 @@ test.describe('file attachments', () => {
         state.__previewFullscreenRequests = (state.__previewFullscreenRequests ?? 0) + 1;
       }, { capture: true });
     });
-    await player.locator('media-fullscreen-button').click();
+    await video.focus();
+    await page.keyboard.press('f');
     await expect.poll(async () => page.evaluate(() => (
       window as typeof window & { __previewFullscreenRequests?: number }
     ).__previewFullscreenRequests ?? 0)).toBe(1);

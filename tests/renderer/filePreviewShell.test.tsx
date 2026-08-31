@@ -72,7 +72,9 @@ describe('FilePreviewShell media controls', () => {
     );
 
     expect(rendered.document.querySelector('.file-preview-video[data-preserve-selection]')).not.toBeNull();
-    expect(rendered.document.querySelector('.file-preview-media-player--video')).not.toBeNull();
+    const videoPlayer = rendered.document.querySelector('.file-preview-media-player--video');
+    expect(videoPlayer).not.toBeNull();
+    expect(videoPlayer?.hasAttribute('hotkeys')).toBe(false);
     expect(rendered.document.querySelector('.file-preview-media-controls .file-preview-pill--media-control')).not.toBeNull();
     expect(rendered.document.querySelector('.file-preview-media-info')).not.toBeNull();
     expect(rendered.document.querySelector('.file-preview-media-name')?.textContent).toBe('Launch walkthrough');
@@ -120,7 +122,9 @@ describe('FilePreviewShell media controls', () => {
     );
 
     expect(rendered.document.querySelector('.file-preview-audio[data-preserve-selection]')).not.toBeNull();
-    expect(rendered.document.querySelector('.file-preview-media-player--audio[data-preserve-selection]')).not.toBeNull();
+    expect(rendered.document.querySelector(
+      '.file-preview-media-player--audio[data-preserve-selection][hotkeys="nof"]',
+    )).not.toBeNull();
     expect(rendered.document.querySelector('.file-preview-media-controls .file-preview-pill--media-control')).not.toBeNull();
     expect(rendered.document.querySelector('.file-preview-media-info')).not.toBeNull();
     expect(rendered.document.querySelector('.file-preview-media-name')?.textContent).toBe('Product interview');

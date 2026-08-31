@@ -61,8 +61,10 @@ video surface and has an opaque reduced-transparency fallback.
 
 Media Chrome is the sole owner of playback and seeking state, keyboard
 shortcuts, and auto-hide. React does not mirror playback state, install a second keyboard
-listener, or subscribe to time updates or pointer movement. Fullscreen removes
-the inline preview's maximum dimensions so the video and HUD fill the viewport.
+listener, or subscribe to time updates or pointer movement. Audio disables the
+video-only `F` fullscreen shortcut through Media Chrome's hotkey policy while
+retaining the shared media shortcuts. Fullscreen removes the inline preview's
+maximum dimensions so the video and HUD fill the viewport.
 
 ### Accessibility and stability
 
@@ -90,11 +92,17 @@ None.
 ## Expected files
 
 - `src/renderer/ui/preview/previewRenderers.tsx`
+- `src/renderer/ui/editor/RichTextEditor.tsx`
+- `src/renderer/ui/outliner/OutlinerItem.tsx`
+- `src/renderer/styles/a11y.css`
 - `src/renderer/styles/file-preview.css`
+- `src/renderer/styles/outliner.css`
+- `src/renderer/styles/tokens.css`
 - `docs/spec/design-system/components.md`
 - `docs/spec/ui-behavior.md`
 - `tests/renderer/filePreviewShell.test.tsx`
 - `tests/renderer/inputModalityCss.test.ts`
+- `tests/renderer/richTextEditorPaste.test.tsx`
 - `tests/e2e/file-attachments.spec.ts`
 
 ## Risks

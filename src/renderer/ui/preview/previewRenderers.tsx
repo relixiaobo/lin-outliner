@@ -788,6 +788,7 @@ function MediaPreviewPlayer({
       audio={isAudio}
       className={`file-preview-media-player file-preview-media-player--${kind}`}
       data-preserve-selection
+      hotkeys={isAudio ? 'nof' : undefined}
       keyboardControl
       noAutohide={isAudio}
     >
