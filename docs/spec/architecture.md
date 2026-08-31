@@ -298,6 +298,9 @@ possible only in the reversible drain/decision phase; it reports cancellation
 only after both Runtime and local admission are confirmed unfrozen, resumes any
 remaining startup milestones before reporting `started`, clears the completed
 attempt, and lets the next OS quit perform a new drain.
+Early quit reaches `disposed`, settles startup, and invokes process exit even when
+its best-effort rollback reports a cleanup failure; that failure still propagates
+through the quit request for diagnostics.
 
 `ResourceScope` owns reversible Desktop effects in named child scopes. It closes
 registration synchronously, disposes children and resources once in reverse

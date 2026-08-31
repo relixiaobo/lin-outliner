@@ -124,11 +124,24 @@ export class DesktopHostLifecycle {
     if (this.currentPhase === 'disposed') return;
 
     if (!this.milestones.has('outline-documents')) {
-      await this.options.rollback(this.completedMilestones(), 'quit-before-start');
+      const failures: unknown[] = [];
+      try {
+        await this.options.rollback(this.completedMilestones(), 'quit-before-start');
+      } catch (error) {
+        failures.push(error);
+      }
       this.currentPhase = 'disposed';
-      this.options.exitAfterEarlyQuit();
       this.resolveStart?.();
       this.clearStartCompletion();
+      try {
+        this.options.exitAfterEarlyQuit();
+      } catch (error) {
+        failures.push(error);
+      }
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1) {
+        throw new AggregateError(failures, 'Desktop Host early quit and cleanup both failed.');
+      }
       return;
     }
 

@@ -217,6 +217,49 @@ describe('DesktopHostLifecycle', () => {
     expect(lifecycle.phase()).toBe('disposed');
   });
 
+  test('early rollback failure still settles startup and exits exactly once', async () => {
+    const boundary = deferred();
+    const events: string[] = [];
+    const lifecycle = new DesktopHostLifecycle({
+      startSteps: [
+        {
+          name: 'provider-configuration',
+          run: async () => {
+            events.push('provider');
+            await boundary.promise;
+          },
+        },
+        { name: 'outline-documents', run: () => { events.push('documents'); } },
+      ],
+      closeAdmission: () => { events.push('freeze'); },
+      ordinaryQuit: async () => 'disposed',
+      rollback: async (_milestones, cause) => {
+        events.push(`rollback:${cause}`);
+        throw new Error('early cleanup failed');
+      },
+      exitAfterStartupFailure: () => undefined,
+      exitAfterEarlyQuit: () => { events.push('exit:quit'); },
+    });
+
+    const startup = lifecycle.start();
+    while (!events.includes('provider')) await Promise.resolve();
+    const quitting = lifecycle.requestQuit();
+    boundary.resolve();
+
+    await startup;
+    await expect(quitting).rejects.toThrow('early cleanup failed');
+    expect(lifecycle.phase()).toBe('disposed');
+    expect(events).toEqual([
+      'provider',
+      'freeze',
+      'rollback:quit-before-start',
+      'exit:quit',
+    ]);
+
+    await lifecycle.requestQuit();
+    expect(events.filter((event) => event === 'exit:quit')).toHaveLength(1);
+  });
+
   test('startup failure preserves the original error and aggregates rollback failure', async () => {
     const lifecycle = new DesktopHostLifecycle({
       startSteps: [{ name: 'broken', run: () => { throw new Error('startup failed'); } }],
