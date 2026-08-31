@@ -2828,6 +2828,15 @@ button.outliner-table-column-kind:focus-visible {
   );
 }
 
+/* A narrow pane can leave the shared two-column field grid less than one
+   control-width for its value. Keep the zero-width slot behavior there, but do
+   not spend the entire text measure on duplicate end padding. */
+@container (max-width: 360px) {
+  .row-editor .ProseMirror p:has(.row-inline-content-slot > .field-value-affordances) {
+    padding-inline-end: 0;
+  }
+}
+
 .row-editor .ProseMirror {
   min-height: var(--content-control-height);
   caret-color: var(--text-primary);
