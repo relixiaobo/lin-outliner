@@ -4,8 +4,8 @@
 
 Make Source preview chrome recede until it is needed, and give direct audio and
 video previews one coherent control language. Video keeps its pixels as the
-primary surface with a transparent bottom HUD and a central play control; audio
-uses the same control geometry inside its content surface.
+primary surface with a transparent bottom HUD; audio uses the same control
+geometry inside its content surface.
 
 This plan is one complete feature in one PR.
 
@@ -33,20 +33,25 @@ keep the group visible. Reduced motion removes the opacity transition.
 ### Shared media HUD
 
 Audio and video retain Media Chrome as the playback authority and share one HUD
-structure: an information row with the Source name and current/duration time, a
-full-width timeline, then a command row with play on the left and mute, volume,
-video-only fullscreen, and Source actions on the right. Control sizes, spacing,
-range geometry, focus treatment, and responsive compaction are identical.
+structure: a top title row aligned with an exclusive `More + Close` region, a
+full-width timeline, then a balanced command row with mute/volume on the left,
+play centered, and current/duration time on the right followed by video-only
+fullscreen and Source actions. Control sizes, spacing, range geometry, focus
+treatment, and responsive compaction are identical. Volume remains a compact
+control beside mute instead of stretching across the left grid track; narrow
+Outline previews hide only that slider while keeping mute available. Title,
+timeline, and command row use distinct vertical tiers, with larger outer insets
+than the compact gaps within each control group.
 
 The audio HUD is the complete compact audio surface. The video HUD overlays the
 bottom of the video without an inset card, border, or independent rounded
 container. It may use a tokenized pixel-contrast scrim that reads as part of the
 video surface and has an opaque reduced-transparency fallback.
 
-Video adds a central Media Chrome play button. It stays visible while paused;
-while playing it follows the controller's hover/focus/activity visibility with
-the bottom HUD. Media Chrome continues to own playback state and auto-hide, so
-React does not subscribe to time updates or pointer movement.
+Media Chrome is the sole owner of playback state, keyboard shortcuts, and
+auto-hide. React does not mirror playback state, install a second keyboard
+listener, or subscribe to time updates or pointer movement. Fullscreen removes
+the inline preview's maximum dimensions so the video and HUD fill the viewport.
 
 ### Accessibility and stability
 
@@ -54,12 +59,13 @@ Keyboard focus always reveals the relevant controls and preserves the shared
 neutral focus ring. Touch/coarse-pointer users never depend on hover. Hidden
 chrome cannot intercept pointer input, an open action menu keeps its trigger
 visible, and no hover state changes player or outliner geometry. Existing media
-shortcuts and fullscreen behavior remain unchanged.
+shortcuts produce one action per keypress. Fullscreen preserves the video aspect
+ratio while using the complete viewport.
 
 ### Verification
 
-Renderer tests cover the shared HUD structure, video-only central/fullscreen
-controls, and the absence of duplicate native controls. CSS guards cover stable
+Renderer tests cover the shared HUD structure, its single playback control,
+video-only fullscreen, and the absence of duplicate native controls. CSS guards cover stable
 source-action geometry, hover/focus/open/touch reveal, transparent video HUD,
 shared audio/video control geometry, and accessibility preference fallbacks.
 Playwright verifies rest/hover/menu-open Source action visibility plus audio and

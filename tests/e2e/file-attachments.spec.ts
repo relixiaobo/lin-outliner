@@ -1514,12 +1514,17 @@ test.describe('file attachments', () => {
     }));
     expect(await previewResolveCount()).toBe(resolvesBeforeEnter);
     await expect(outlineImagePreview).toBeVisible();
+    await page.mouse.move(0, 0);
 
     await expect(imageSourceRow.getByRole('button', { name: 'Hide preview' })).toHaveCount(0);
     const hideOutlinePreview = imageRow
       .locator(':scope > .outline-source-preview-row')
       .getByRole('button', { name: 'Hide preview' });
     await expect(hideOutlinePreview).toBeVisible();
+    const outlinePreviewActions = imageRow
+      .locator(':scope > .outline-source-preview-row .outline-source-preview-actions');
+    await expect(outlinePreviewActions).toHaveCSS('opacity', '0');
+    await expect(outlinePreviewActions).toHaveCSS('pointer-events', 'none');
     await expect.poll(async () => {
       const [previewRect, closeRect] = await Promise.all([
         imageRow.locator(':scope > .outline-source-preview-row .file-node-preview').boundingBox(),
@@ -1532,13 +1537,13 @@ test.describe('file attachments', () => {
         && closeRect.y >= previewRect.y
         && closeRect.y + closeRect.height <= previewRect.y + previewRect.height;
     }).toBe(true);
-    const outlinePreviewActions = imageRow
-      .locator(':scope > .outline-source-preview-row .outline-source-preview-actions');
     await expect(outlinePreviewActions).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
     await expect.poll(async () => outlinePreviewActions.locator('button').evaluateAll((buttons) => (
       buttons.map((button) => getComputedStyle(button).backgroundColor)
     ))).toEqual(['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0)']);
-    await outlinePreviewActions.hover();
+    await outlineImagePreview.hover();
+    await expect(outlinePreviewActions).toHaveCSS('opacity', '1');
+    await expect(outlinePreviewActions).toHaveCSS('pointer-events', 'auto');
     await expect(outlinePreviewActions).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
     await expect.poll(async () => outlinePreviewActions.locator('button').evaluateAll((buttons) => (
       buttons.map((button) => getComputedStyle(button).backgroundColor)
@@ -1546,6 +1551,7 @@ test.describe('file attachments', () => {
     await outlinePreviewActions.getByRole('button', { name: 'Preview actions' }).click();
     const outlinePreviewMenu = page.getByRole('menu', { name: 'Preview actions' });
     await expect(outlinePreviewMenu).toBeVisible();
+    await expect(outlinePreviewActions).toHaveCSS('opacity', '1');
     await expect(outlinePreviewMenu).toHaveClass(/file-preview-menu--source-contained/);
     await expectInsidePreviewBoundary(
       outlinePreviewMenu,
@@ -1718,9 +1724,12 @@ test.describe('file attachments', () => {
     const pastedSource = sourceFieldValues(await e2eProjection(page), pastedId!)[0];
     expect(pastedSource).toBeTruthy();
     await expect(row(page, pastedSource!.id).getByRole('button', { name: 'Hide preview' })).toHaveCount(0);
-    await expect(
-      pastedRow.locator(':scope > .outline-source-preview-row').getByRole('button', { name: 'Hide preview' }),
-    ).toBeVisible();
+    const pastedActions = pastedRow.locator(
+      ':scope > .outline-source-preview-row .outline-source-preview-actions',
+    );
+    await page.mouse.move(0, 0);
+    await expect(pastedActions.getByRole('button', { name: 'Hide preview' })).toBeVisible();
+    await expect(pastedActions).toHaveCSS('opacity', '0');
 
     const calls = await commandCalls(page);
     expect(calls.some((call) => call.cmd === 'outline/asset ingest')).toBe(true);
@@ -1749,8 +1758,54 @@ test.describe('file attachments', () => {
     );
     await expect(preview).toBeVisible();
     await expect.poll(async () => preview.boundingBox().then((rect) => rect?.height ?? 0))
-      .toBeLessThan(120);
+      .toBeGreaterThanOrEqual(80);
+    await expect.poll(async () => preview.boundingBox().then((rect) => rect?.height ?? Number.POSITIVE_INFINITY))
+      .toBeLessThanOrEqual(100);
+    await expect(preview.locator('.file-preview-media-name')).toHaveText('short-preview.wav');
+    await expect(preview.locator('.file-preview-media-info')).toBeVisible();
+    await expect(preview.locator('.file-preview-media-timeline')).toHaveCount(1);
+    await expect(preview.locator('.file-preview-media-command-row')).toBeVisible();
+    await expect(preview.locator('.file-preview-media-center-play')).toHaveCount(0);
+    await expect(preview.locator('media-fullscreen-button')).toHaveCount(0);
+    await expect.poll(async () => preview.evaluate((element) => {
+      const player = element.querySelector<HTMLElement>('.file-preview-media-player--audio');
+      const info = element.querySelector<HTMLElement>('.file-preview-media-info');
+      const progress = element.querySelector<HTMLElement>('.file-preview-media-progress-row');
+      const command = element.querySelector<HTMLElement>('.file-preview-media-command-row');
+      const volume = element.querySelector<HTMLElement>('.file-preview-media-volume');
+      const play = element.querySelector<HTMLElement>('media-play-button');
+      const mute = element.querySelector<HTMLElement>('media-mute-button');
+      const time = element.querySelector<HTMLElement>('.file-preview-media-time-group');
+      if (!player || !info || !progress || !command || !volume || !play || !mute || !time) return null;
+      const playerRect = player.getBoundingClientRect();
+      const infoRect = info.getBoundingClientRect();
+      const progressRect = progress.getBoundingClientRect();
+      const commandRect = command.getBoundingClientRect();
+      const volumeRect = volume.getBoundingClientRect();
+      const playRect = play.getBoundingClientRect();
+      const muteRect = mute.getBoundingClientRect();
+      const timeRect = time.getBoundingClientRect();
+      return {
+        centeredPlay: Math.abs(
+          playRect.left + playRect.width / 2 - (playerRect.left + playerRect.width / 2),
+        ) <= 1,
+        compactVolume: volumeRect.width <= 64,
+        orderedTiers: infoRect.bottom <= progressRect.top && progressRect.bottom <= commandRect.top,
+        sharedBaseline: Math.max(
+          Math.abs(muteRect.top + muteRect.height / 2 - (playRect.top + playRect.height / 2)),
+          Math.abs(timeRect.top + timeRect.height / 2 - (playRect.top + playRect.height / 2)),
+        ) <= 1,
+      };
+    })).toEqual({
+      centeredPlay: true,
+      compactVolume: true,
+      orderedTiers: true,
+      sharedBaseline: true,
+    });
 
+    await pastedRow.locator(':scope > .outline-source-preview-row .file-node-body').hover({
+      position: { x: 1, y: 1 },
+    });
     await pastedRow
       .locator(':scope > .outline-source-preview-row')
       .getByRole('button', { name: 'Preview actions' })
@@ -1762,6 +1817,102 @@ test.describe('file attachments', () => {
       const [menuRect, previewRect] = await Promise.all([menu.boundingBox(), preview.boundingBox()]);
       return Boolean(menuRect && previewRect && menuRect.height > previewRect.height);
     }).toBe(true);
+  });
+
+  test('video media HUD owns one playback shortcut and fills fullscreen', async ({ page }) => {
+    const beforeChildren = await todayChildren(page);
+    await trailingEditor(page).click();
+    await pasteClipboardFile(page, {
+      name: 'fullscreen-preview.mp4',
+      mimeType: 'video/mp4',
+      text: 'video bytes',
+    });
+
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+    const pastedId = (await todayChildren(page)).at(-1)!;
+    const preview = row(page, pastedId).locator(
+      ':scope > .outline-source-preview-row .file-node-preview--media-video',
+    );
+    const player = preview.locator('.file-preview-media-player--video');
+    const video = preview.locator('video.file-preview-video');
+    await expect(player).toBeVisible();
+    await expect(player.locator('media-play-button')).toHaveCount(1);
+    await expect(player.locator('.file-preview-media-center-play')).toHaveCount(0);
+    await expect.poll(async () => player.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.width <= 720 && rect.height <= 520;
+    })).toBe(true);
+
+    await video.evaluate((element) => {
+      const state = window as typeof window & {
+        __previewPlayCalls?: number;
+        __previewPlayRequests?: number;
+      };
+      state.__previewPlayCalls = 0;
+      state.__previewPlayRequests = 0;
+      element.closest('media-controller')?.addEventListener('mediaplayrequest', () => {
+        state.__previewPlayRequests = (state.__previewPlayRequests ?? 0) + 1;
+      }, { capture: true });
+      element.play = () => {
+        state.__previewPlayCalls = (state.__previewPlayCalls ?? 0) + 1;
+        return Promise.resolve();
+      };
+    });
+    await video.focus();
+    await page.keyboard.press('Space');
+    await expect.poll(async () => page.evaluate(() => {
+      const state = window as typeof window & {
+        __previewPlayCalls?: number;
+        __previewPlayRequests?: number;
+      };
+      return (state.__previewPlayCalls ?? 0) + (state.__previewPlayRequests ?? 0);
+    })).toBe(1);
+
+    await player.evaluate((element) => {
+      const state = window as typeof window & { __previewFullscreenRequests?: number };
+      state.__previewFullscreenRequests = 0;
+      element.addEventListener('mediaenterfullscreenrequest', () => {
+        state.__previewFullscreenRequests = (state.__previewFullscreenRequests ?? 0) + 1;
+      }, { capture: true });
+    });
+    await player.locator('media-fullscreen-button').click();
+    await expect.poll(async () => page.evaluate(() => (
+      window as typeof window & { __previewFullscreenRequests?: number }
+    ).__previewFullscreenRequests ?? 0)).toBe(1);
+    if (!await player.evaluate((element) => document.fullscreenElement === element)) {
+      await player.evaluate((element) => {
+        const trigger = document.createElement('button');
+        trigger.dataset.previewFullscreenTrigger = 'true';
+        trigger.style.cssText = 'position:fixed;inset:0 auto auto 0;z-index:2147483647;width:24px;height:24px';
+        trigger.addEventListener('click', () => void element.requestFullscreen(), { once: true });
+        document.body.append(trigger);
+      });
+      await page.locator('[data-preview-fullscreen-trigger="true"]').click();
+    }
+    await expect.poll(async () => player.evaluate((element) => document.fullscreenElement === element))
+      .toBe(true);
+    await expect.poll(async () => player.evaluate((element) => {
+      const playerRect = element.getBoundingClientRect();
+      const media = element.querySelector<HTMLElement>('.file-preview-video');
+      if (!media) return null;
+      const mediaStyle = getComputedStyle(media);
+      return {
+        fillsViewport: Math.abs(playerRect.width - window.innerWidth) <= 1
+          && Math.abs(playerRect.height - window.innerHeight) <= 1,
+        mediaHeight: mediaStyle.height,
+        mediaMaxHeight: mediaStyle.maxHeight,
+        playerRadius: getComputedStyle(element).borderRadius,
+      };
+    })).toEqual({
+      fillsViewport: true,
+      mediaHeight: expect.stringMatching(/px$/),
+      mediaMaxHeight: 'none',
+      playerRadius: '0px',
+    });
+    await page.evaluate(async () => {
+      await document.exitFullscreen();
+      document.querySelector('[data-preview-fullscreen-trigger="true"]')?.remove();
+    });
   });
 
   test('tiny image previews contain corner controls and use the pane for the Source actions menu', async ({ page }) => {
@@ -1804,6 +1955,12 @@ test.describe('file attachments', () => {
         && actionsRect.y + actionsRect.height <= previewRect.y + previewRect.height + tolerance;
     }).toBe(true);
 
+    await page.mouse.move(0, 0);
+    await expect(actions).toHaveCSS('opacity', '0');
+    await pastedRow.locator(':scope > .outline-source-preview-row .file-node-body').hover({
+      position: { x: 1, y: 1 },
+    });
+    await expect(actions).toHaveCSS('opacity', '1');
     await actions.getByRole('button', { name: 'Preview actions' }).click();
     const menu = page.getByRole('menu', { name: 'Preview actions' });
     await expect(menu).toBeVisible();
@@ -1908,9 +2065,11 @@ test.describe('file attachments', () => {
     await expect(player).toBeVisible();
     const sourceActions = row(page, createdId!)
       .locator(':scope > .outline-source-preview-row .outline-source-preview-actions');
+    await page.mouse.move(0, 0);
     await expect(sourceActions.locator('button')).toHaveCount(2);
     await expect(sourceActions.getByRole('button', { name: 'Preview actions' })).toBeVisible();
     await expect(sourceActions.getByRole('button', { name: 'Hide preview' })).toBeVisible();
+    await expect(sourceActions).toHaveCSS('opacity', '0');
     await expect(row(page, createdId!).locator(
       ':scope > .outline-source-preview-row .file-preview-pill:not(.file-preview-pill--source-corner)',
     )).toHaveCount(0);
@@ -1938,6 +2097,8 @@ test.describe('file attachments', () => {
       const gap = title.getBoundingClientRect().top - preview.getBoundingClientRect().bottom;
       return gap >= 6 && gap <= 8;
     })).toBe(true);
+    await player.hover();
+    await expect(sourceActions).toHaveCSS('opacity', '1');
     await sourceActions.getByRole('button', { name: 'Preview actions' }).click();
     const sourceMenu = page.getByRole('menu', { name: 'Preview actions' });
     await expect(sourceMenu).toBeVisible();

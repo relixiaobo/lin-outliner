@@ -33,8 +33,8 @@ import {
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import {
-  MediaControlBar,
   MediaController,
+  MediaDurationDisplay,
   MediaFullscreenButton,
   MediaMuteButton,
   MediaPlayButton,
@@ -42,7 +42,6 @@ import {
   MediaTimeRange,
   MediaVolumeRange,
 } from 'media-chrome/react';
-import type { MediaController as MediaControllerElement } from 'media-chrome';
 import {
   FileTextIcon,
   FolderIcon,
@@ -709,114 +708,18 @@ function useMediaSourceUrl(source: PreviewFileSource): { src: string | null; err
   return source.streamUrl ? { src: source.streamUrl } : bytes;
 }
 
-type PreviewMediaElement = HTMLAudioElement | HTMLVideoElement;
-
-function useMediaKeyboardShortcuts({
-  controllerRef,
-  enabled,
-  mediaRef,
-}: {
-  controllerRef: RefObject<MediaControllerElement | null>;
-  enabled: boolean;
-  mediaRef: RefObject<PreviewMediaElement | null>;
-}) {
-  useEffect(() => {
-    if (!enabled) return;
-    const media = mediaRef.current;
-    if (!media) return;
-    const ownerDocument = media.ownerDocument;
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (!isMediaShortcutActive(ownerDocument, media, controllerRef.current, event.target)) return;
-      const key = event.key.toLowerCase();
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
-      if (key === ' ' || key === 'k') {
-        event.preventDefault();
-        void toggleMediaPlayback(media).catch(() => {});
-        return;
-      }
-      if (key === 'arrowleft' || key === 'arrowright') {
-        event.preventDefault();
-        seekMediaBy(media, key === 'arrowleft' ? -5 : 5);
-        return;
-      }
-      if (key === 'j' || key === 'l') {
-        event.preventDefault();
-        seekMediaBy(media, key === 'j' ? -10 : 10);
-        return;
-      }
-      if (key === 'm') {
-        event.preventDefault();
-        media.muted = !media.muted;
-        return;
-      }
-      if (key === 'f' && isPreviewVideoElement(media)) {
-        event.preventDefault();
-        void toggleMediaFullscreen(ownerDocument, controllerRef.current ?? media).catch(() => {});
-      }
-    };
-    ownerDocument.addEventListener('keydown', onKeyDown, true);
-    return () => ownerDocument.removeEventListener('keydown', onKeyDown, true);
-  }, [controllerRef, enabled, mediaRef]);
-}
-
-function isMediaShortcutActive(
-  ownerDocument: Document,
-  media: PreviewMediaElement,
-  controller: MediaControllerElement | null,
-  target: EventTarget | null,
-): boolean {
-  const fullscreenElement = ownerDocument.fullscreenElement;
-  if (fullscreenElement) {
-    return fullscreenElement === media
-      || fullscreenElement.contains(media)
-      || media.contains(fullscreenElement)
-      || Boolean(controller && (fullscreenElement === controller || fullscreenElement.contains(controller)));
-  }
-  return target === media;
-}
-
-async function toggleMediaPlayback(media: PreviewMediaElement): Promise<void> {
-  if (media.paused) {
-    await media.play();
-    return;
-  }
-  media.pause();
-}
-
-function seekMediaBy(media: PreviewMediaElement, deltaSeconds: number): void {
-  if (!Number.isFinite(media.duration)) return;
-  const max = Math.max(0, media.duration);
-  media.currentTime = Math.min(max, Math.max(0, media.currentTime + deltaSeconds));
-}
-
-function isPreviewVideoElement(media: PreviewMediaElement): media is HTMLVideoElement {
-  return media.tagName.toLowerCase() === 'video';
-}
-
-async function toggleMediaFullscreen(ownerDocument: Document, target: HTMLElement): Promise<void> {
-  if (ownerDocument.fullscreenElement) {
-    await ownerDocument.exitFullscreen();
-    return;
-  }
-  await target.requestFullscreen();
-}
-
-function AudioPreview({ mediaActions, source }: PreviewRendererProps) {
+function AudioPreview({ accessibleName, mediaActions, source }: PreviewRendererProps) {
   const labels = useT().shell.filePreview;
   const { src, error } = useMediaSourceUrl(source);
-  const mediaRef = useRef<HTMLAudioElement | null>(null);
-  const controllerRef = useRef<MediaControllerElement | null>(null);
   const setMediaRef = useCallback((element: HTMLAudioElement | null) => {
-    mediaRef.current = element;
     if (element) element.disableRemotePlayback = true;
   }, []);
-  useMediaKeyboardShortcuts({ controllerRef, enabled: Boolean(src), mediaRef });
   if (!src) return <PreviewMessage>{error === 'too-large' ? labels.tooLarge : labels.loading}</PreviewMessage>;
   return (
     <MediaPreviewPlayer
       actions={mediaActions}
-      controllerRef={controllerRef}
       kind="audio"
+      name={accessibleName?.trim() || source.name}
     >
       <audio
         ref={setMediaRef}
@@ -832,21 +735,17 @@ function AudioPreview({ mediaActions, source }: PreviewRendererProps) {
   );
 }
 
-function VideoPreview({ mediaActions, source }: PreviewRendererProps) {
+function VideoPreview({ accessibleName, mediaActions, source }: PreviewRendererProps) {
   const labels = useT().shell.filePreview;
   const { src, error } = useMediaSourceUrl(source);
-  const mediaRef = useRef<HTMLVideoElement | null>(null);
-  const controllerRef = useRef<MediaControllerElement | null>(null);
-  useMediaKeyboardShortcuts({ controllerRef, enabled: Boolean(src), mediaRef });
   if (!src) return <PreviewMessage>{error === 'too-large' ? labels.tooLarge : labels.loading}</PreviewMessage>;
   return (
     <MediaPreviewPlayer
       actions={mediaActions}
-      controllerRef={controllerRef}
       kind="video"
+      name={accessibleName?.trim() || source.name}
     >
       <video
-        ref={mediaRef}
         className="file-preview-media file-preview-video"
         controlsList="nodownload noplaybackrate noremoteplayback"
         data-preserve-selection
@@ -864,13 +763,13 @@ function VideoPreview({ mediaActions, source }: PreviewRendererProps) {
 function MediaPreviewPlayer({
   actions,
   children,
-  controllerRef,
   kind,
+  name,
 }: {
   actions?: ReactElement | null;
   children: ReactElement;
-  controllerRef: RefObject<MediaControllerElement | null>;
   kind: 'audio' | 'video';
+  name: string;
 }) {
   const isAudio = kind === 'audio';
   return (
@@ -880,18 +779,37 @@ function MediaPreviewPlayer({
       data-preserve-selection
       keyboardControl
       noAutohide={isAudio}
-      ref={controllerRef}
     >
       {children}
-      <MediaControlBar className="file-preview-media-controls">
-        <MediaPlayButton className="file-preview-media-button" />
-        <MediaTimeDisplay className="file-preview-media-time" showDuration noToggle />
-        <MediaTimeRange className="file-preview-media-timeline" />
-        <MediaMuteButton className="file-preview-media-button" />
-        <MediaVolumeRange className="file-preview-media-volume" />
-        {isAudio ? null : <MediaFullscreenButton className="file-preview-media-button" />}
-        {actions}
-      </MediaControlBar>
+      <div
+        className="file-preview-media-info"
+        slot={isAudio ? undefined : 'top-chrome'}
+      >
+        <span className="file-preview-media-name" title={name}>{name}</span>
+      </div>
+      <div className="file-preview-media-controls">
+        <div className="file-preview-media-progress-row">
+          <MediaTimeRange className="file-preview-media-timeline" />
+        </div>
+        <div className="file-preview-media-command-row">
+          <div className="file-preview-media-command-group">
+            <MediaMuteButton className="file-preview-media-button" />
+            <MediaVolumeRange className="file-preview-media-volume" />
+          </div>
+          <div className="file-preview-media-command-group file-preview-media-command-group--transport">
+            <MediaPlayButton className="file-preview-media-button" />
+          </div>
+          <div className="file-preview-media-command-group file-preview-media-command-group--trailing">
+            <span className="file-preview-media-time-group">
+              <MediaTimeDisplay className="file-preview-media-time" noToggle />
+              <span aria-hidden="true" className="file-preview-media-time-separator">/</span>
+              <MediaDurationDisplay className="file-preview-media-duration" />
+            </span>
+            {isAudio ? null : <MediaFullscreenButton className="file-preview-media-button" />}
+            {actions}
+          </div>
+        </div>
+      </div>
     </MediaController>
   );
 }
