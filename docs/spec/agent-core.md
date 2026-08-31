@@ -135,6 +135,10 @@ bounded marker that tells the model to re-inspect current state.
 Every nested context payload, private internal text, managed resource, or complete tool
 output named by a context payload is also an explicit dependency on its owning context
 Item through `contextRefs`, `internalTextRefs`, `resourceRefs`, or `outputRefs`.
+Every `contextEvidence` and `contextCompaction` Item writes all four manifests explicitly,
+including `internalTextRefs: []`; the codec rejects pre-manifest Items instead of defaulting
+the field. This pre-release storage-format change requires a clean userData reset and has no
+compatibility reader.
 Lifecycle operations use that canonical dependency graph instead of parsing
 payload-private JSON. A tool Item whose canonical
 arguments exceed the 32 KiB inline bound owns its `toolCallArguments` reference and

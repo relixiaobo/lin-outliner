@@ -893,6 +893,15 @@ describe('Codex Agent Core protocol codec', () => {
     })).toThrow('coveredFrom must not follow coveredThrough');
   });
 
+  test('rejects context Items without the required internal-text dependency manifest', () => {
+    for (const type of ['contextEvidence', 'contextCompaction'] as const) {
+      const item = { ...allItems.find((candidate) => candidate.type === type)! } as Record<string, unknown>;
+      delete item.internalTextRefs;
+
+      expect(() => decodeThreadItem(item)).toThrow('item.internalTextRefs');
+    }
+  });
+
   test('round-trips every semantic context payload and rejects authority escalation', () => {
     const payloads: readonly ThreadContextPayload[] = [
       {
