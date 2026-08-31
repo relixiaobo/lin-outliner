@@ -735,6 +735,17 @@
   transition: color var(--motion-fast);
 }
 
+.file-preview-media-glyph {
+  color: var(--media-icon-color);
+  fill: currentColor;
+  stroke: currentColor;
+}
+
+.file-preview-media-glyph--pause {
+  fill: none;
+  stroke-width: 3;
+}
+
 .file-preview-media-button:hover,
 .file-preview-media-button:focus-visible {
   --media-icon-color: var(--text-primary);

@@ -38,14 +38,25 @@ import {
   MediaFullscreenButton,
   MediaMuteButton,
   MediaPlayButton,
+  MediaSeekBackwardButton,
+  MediaSeekForwardButton,
   MediaTimeDisplay,
   MediaTimeRange,
   MediaVolumeRange,
 } from 'media-chrome/react';
 import {
+  CollapseIcon,
+  ExpandIcon,
   FileTextIcon,
   FolderIcon,
   ICON_SIZE,
+  PauseIcon,
+  PlayIcon,
+  SeekBackwardIcon,
+  SeekForwardIcon,
+  VolumeHighIcon,
+  VolumeLowIcon,
+  VolumeOffIcon,
 } from '../icons';
 import { inlineFileIconKind, INLINE_FILE_ICON_CLASS } from '../editor/inlineFileIcon';
 import { highlightCode, isKnownCodeLanguage, plainCodeHtml } from '../editor/shikiHighlighter';
@@ -793,11 +804,29 @@ function MediaPreviewPlayer({
         </div>
         <div className="file-preview-media-command-row">
           <div className="file-preview-media-command-group">
-            <MediaMuteButton className="file-preview-media-button" />
+            <MediaMuteButton className="file-preview-media-button">
+              <VolumeOffIcon aria-hidden="true" className="file-preview-media-glyph" slot="off" />
+              <VolumeLowIcon aria-hidden="true" className="file-preview-media-glyph" slot="low" />
+              <VolumeLowIcon aria-hidden="true" className="file-preview-media-glyph" slot="medium" />
+              <VolumeHighIcon aria-hidden="true" className="file-preview-media-glyph" slot="high" />
+            </MediaMuteButton>
             <MediaVolumeRange className="file-preview-media-volume" />
           </div>
           <div className="file-preview-media-command-group file-preview-media-command-group--transport">
-            <MediaPlayButton className="file-preview-media-button" />
+            <MediaSeekBackwardButton className="file-preview-media-button" seekOffset={15}>
+              <SeekBackwardIcon aria-hidden="true" className="file-preview-media-glyph" slot="icon" />
+            </MediaSeekBackwardButton>
+            <MediaPlayButton className="file-preview-media-button">
+              <PlayIcon aria-hidden="true" className="file-preview-media-glyph" slot="play" />
+              <PauseIcon
+                aria-hidden="true"
+                className="file-preview-media-glyph file-preview-media-glyph--pause"
+                slot="pause"
+              />
+            </MediaPlayButton>
+            <MediaSeekForwardButton className="file-preview-media-button" seekOffset={15}>
+              <SeekForwardIcon aria-hidden="true" className="file-preview-media-glyph" slot="icon" />
+            </MediaSeekForwardButton>
           </div>
           <div className="file-preview-media-command-group file-preview-media-command-group--trailing">
             <span className="file-preview-media-time-group">
@@ -805,7 +834,12 @@ function MediaPreviewPlayer({
               <span aria-hidden="true" className="file-preview-media-time-separator">/</span>
               <MediaDurationDisplay className="file-preview-media-duration" />
             </span>
-            {isAudio ? null : <MediaFullscreenButton className="file-preview-media-button" />}
+            {isAudio ? null : (
+              <MediaFullscreenButton className="file-preview-media-button">
+                <ExpandIcon aria-hidden="true" className="file-preview-media-glyph" slot="enter" />
+                <CollapseIcon aria-hidden="true" className="file-preview-media-glyph" slot="exit" />
+              </MediaFullscreenButton>
+            )}
             {actions}
           </div>
         </div>

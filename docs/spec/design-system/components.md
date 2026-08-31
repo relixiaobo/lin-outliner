@@ -147,8 +147,9 @@ not intercept pointer input, and reveal never changes preview geometry.
 Direct audio and video previews share one Media Chrome HUD: a top Source-name row
 aligned with the exclusive upper-right `More + Close` region,
 then a full-width timeline and one balanced three-zone command row: mute/volume
-on the left, play in the center, and current/duration time on the right followed
-by video-only fullscreen and authorized Source actions. Audio places this
+on the left, seek-back-15 / play / seek-forward-15 in the center, and
+current/duration time on the right followed by video-only fullscreen and
+authorized Source actions. Audio places this
 geometry on its neutral content surface and
 reserves that information row when the Outline corner group is present, so hover
 chrome owns an exclusive region. The volume slider stays a compact member of the
@@ -164,10 +165,14 @@ to the fixed HUD foreground required over pixels. The readable owner title is pr
 internal asset identifier. Video places the remaining HUD directly over the
 bottom pixels with a frameless contrast scrim; it never introduces an inset
 control card, border, second rounded container, or duplicate playback control.
-Media Chrome owns playback, keyboard shortcuts, and activity state so each
-keypress performs one action and controls auto-hide without React tracking time
-or pointer movement. Fullscreen removes inline size limits, fills the viewport,
-and preserves the video's aspect ratio.
+Player transport and output controls use filled Lucide media glyphs with a
+weight-matched pause state; application-level corner actions remain in the
+shared Lucide stroke family. Seek direction glyphs carry exact 15-second
+semantics through their accessible labels rather than unreadable icon microtype.
+Media Chrome owns playback, seeking, keyboard shortcuts, and activity state so
+each keypress performs one action and controls auto-hide without React tracking
+time or pointer movement. Fullscreen removes inline size limits, fills the
+viewport, and preserves the video's aspect ratio.
 
 External document pixels may force a light document canvas inside the preview
 iframe/page renderer. That exception is confined to document pixels; preview

@@ -1773,16 +1773,21 @@ test.describe('file attachments', () => {
       const progress = element.querySelector<HTMLElement>('.file-preview-media-progress-row');
       const command = element.querySelector<HTMLElement>('.file-preview-media-command-row');
       const volume = element.querySelector<HTMLElement>('.file-preview-media-volume');
+      const backward = element.querySelector<HTMLElement>('media-seek-backward-button');
       const play = element.querySelector<HTMLElement>('media-play-button');
+      const forward = element.querySelector<HTMLElement>('media-seek-forward-button');
       const mute = element.querySelector<HTMLElement>('media-mute-button');
       const time = element.querySelector<HTMLElement>('.file-preview-media-time-group');
-      if (!player || !info || !progress || !command || !volume || !play || !mute || !time) return null;
+      if (!player || !info || !progress || !command || !volume || !backward || !play || !forward
+        || !mute || !time) return null;
       const playerRect = player.getBoundingClientRect();
       const infoRect = info.getBoundingClientRect();
       const progressRect = progress.getBoundingClientRect();
       const commandRect = command.getBoundingClientRect();
       const volumeRect = volume.getBoundingClientRect();
+      const backwardRect = backward.getBoundingClientRect();
       const playRect = play.getBoundingClientRect();
+      const forwardRect = forward.getBoundingClientRect();
       const muteRect = mute.getBoundingClientRect();
       const timeRect = time.getBoundingClientRect();
       return {
@@ -1790,6 +1795,7 @@ test.describe('file attachments', () => {
           playRect.left + playRect.width / 2 - (playerRect.left + playerRect.width / 2),
         ) <= 1,
         compactVolume: volumeRect.width <= 64,
+        orderedTransport: backwardRect.right <= playRect.left && playRect.right <= forwardRect.left,
         orderedTiers: infoRect.bottom <= progressRect.top && progressRect.bottom <= commandRect.top,
         sharedBaseline: Math.max(
           Math.abs(muteRect.top + muteRect.height / 2 - (playRect.top + playRect.height / 2)),
@@ -1801,6 +1807,7 @@ test.describe('file attachments', () => {
     })).toEqual({
       centeredPlay: true,
       compactVolume: true,
+      orderedTransport: true,
       orderedTiers: true,
       sharedBaseline: true,
       timelineTrailingAlignment: true,
@@ -1852,7 +1859,9 @@ test.describe('file attachments', () => {
         const controls = player.querySelector<HTMLElement>('.file-preview-media-controls');
         const progress = player.querySelector<HTMLElement>('.file-preview-media-progress-row');
         const command = player.querySelector<HTMLElement>('.file-preview-media-command-row');
+        const backward = player.querySelector<HTMLElement>('media-seek-backward-button');
         const play = player.querySelector<HTMLElement>('media-play-button');
+        const forward = player.querySelector<HTMLElement>('media-seek-forward-button');
         const time = player.querySelector<HTMLElement>('.file-preview-media-time-group');
         const trailingSlot = mediaKind === 'video'
           ? player.querySelector<HTMLElement>('media-fullscreen-button')
@@ -1861,7 +1870,7 @@ test.describe('file attachments', () => {
           ?.querySelector<HTMLElement>('.outline-source-preview-actions');
         const more = actions?.querySelector<HTMLElement>('.file-preview-pill-more');
         const close = actions?.querySelector<HTMLElement>('.outline-source-preview-close');
-        if (!info || !title || !controls || !progress || !command || !play || !time
+        if (!info || !title || !controls || !progress || !command || !backward || !play || !forward || !time
           || (mediaKind === 'video' && !trailingSlot) || !actions || !more || !close) return null;
 
         const playerRect = player.getBoundingClientRect();
@@ -1869,7 +1878,9 @@ test.describe('file attachments', () => {
         const controlsRect = controls.getBoundingClientRect();
         const progressRect = progress.getBoundingClientRect();
         const commandRect = command.getBoundingClientRect();
+        const backwardRect = backward.getBoundingClientRect();
         const playRect = play.getBoundingClientRect();
+        const forwardRect = forward.getBoundingClientRect();
         const timeRect = time.getBoundingClientRect();
         const trailingSlotRect = trailingSlot?.getBoundingClientRect() ?? null;
         const actionsRect = actions.getBoundingClientRect();
@@ -1877,6 +1888,10 @@ test.describe('file attachments', () => {
         const timeStyle = getComputedStyle(time);
         const playStyle = getComputedStyle(play);
         const controlsStyle = getComputedStyle(controls);
+        const glyphColors = Array.from(
+          player.querySelectorAll<SVGElement>('.file-preview-media-glyph'),
+          (glyph) => getComputedStyle(glyph).color,
+        );
         const iconColorProbe = document.createElement('span');
         iconColorProbe.style.color = playStyle.getPropertyValue('--media-icon-color');
         player.append(iconColorProbe);
@@ -1899,8 +1914,15 @@ test.describe('file attachments', () => {
             timeStyle.color,
             iconColor,
           ],
+          glyphColors,
           infoOffsetTop: Math.round(infoRect.top - playerRect.top),
           playSize: [Math.round(playRect.width), Math.round(playRect.height)],
+          seekButtonSizes: [
+            Math.round(backwardRect.width),
+            Math.round(backwardRect.height),
+            Math.round(forwardRect.width),
+            Math.round(forwardRect.height),
+          ],
           progressInset: Math.round(progressRect.left - playerRect.left),
           timeTypography: [
             timeStyle.fontFamily,
@@ -1946,11 +1968,19 @@ test.describe('file attachments', () => {
     expect(videoMetrics!.foregroundColors).toEqual(
       Array<string>(3).fill(videoMetrics!.foregroundColors[0]!),
     );
+    expect(audioMetrics!.glyphColors).toEqual(
+      Array<string>(audioMetrics!.glyphColors.length).fill(audioMetrics!.foregroundColors[0]!),
+    );
+    expect(videoMetrics!.glyphColors).toEqual(
+      Array<string>(videoMetrics!.glyphColors.length).fill(videoMetrics!.foregroundColors[0]!),
+    );
     expect(audioMetrics!.infoOffsetTop).toBe(videoMetrics!.infoOffsetTop);
     expect(audioMetrics!.titleTypography).toEqual(videoMetrics!.titleTypography);
     expect(audioMetrics!.timeTypography).toEqual(videoMetrics!.timeTypography);
     expect(audioMetrics!.playSize).toEqual([28, 28]);
     expect(videoMetrics!.playSize).toEqual(audioMetrics!.playSize);
+    expect(audioMetrics!.seekButtonSizes).toEqual([28, 28, 28, 28]);
+    expect(videoMetrics!.seekButtonSizes).toEqual(audioMetrics!.seekButtonSizes);
     expect(audioMetrics!.trailingSlotSize).toBeNull();
     expect(audioMetrics!.trailingTimeGap).toBeNull();
     expect(audioMetrics!.timeRightInset).toBeGreaterThanOrEqual(19);
@@ -1982,6 +2012,8 @@ test.describe('file attachments', () => {
     const video = preview.locator('video.file-preview-video');
     await expect(player).toBeVisible();
     await expect(player.locator('media-play-button')).toHaveCount(1);
+    await expect(player.locator('media-seek-backward-button')).toHaveAttribute('seekoffset', '15');
+    await expect(player.locator('media-seek-forward-button')).toHaveAttribute('seekoffset', '15');
     await expect(player.locator('.file-preview-media-center-play')).toHaveCount(0);
     await expect.poll(async () => player.evaluate((element) => {
       const rect = element.getBoundingClientRect();
@@ -2025,6 +2057,21 @@ test.describe('file attachments', () => {
       };
       return (state.__previewPlayCalls ?? 0) + (state.__previewPlayRequests ?? 0);
     })).toBe(1);
+
+    await player.evaluate((element) => {
+      const state = window as typeof window & { __previewSeekRequests?: number[] };
+      state.__previewSeekRequests = [];
+      element.addEventListener('mediaseekrequest', (event) => {
+        state.__previewSeekRequests?.push((event as CustomEvent<number>).detail);
+      }, { capture: true });
+      element.querySelector('media-seek-backward-button')?.setAttribute('mediacurrenttime', '60');
+      element.querySelector('media-seek-forward-button')?.setAttribute('mediacurrenttime', '60');
+    });
+    await player.locator('media-seek-backward-button').click();
+    await player.locator('media-seek-forward-button').click();
+    await expect.poll(async () => page.evaluate(() => (
+      window as typeof window & { __previewSeekRequests?: number[] }
+    ).__previewSeekRequests ?? [])).toEqual([45, 75]);
 
     await player.evaluate((element) => {
       const state = window as typeof window & { __previewFullscreenRequests?: number };

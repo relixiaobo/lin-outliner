@@ -136,6 +136,8 @@ describe('input modality CSS guards', () => {
         '.file-node-body--media-video:not(.file-node-body--reader) .file-preview-video',
       ));
     expect(filePreviewCss).toMatch(/\.file-preview-media-button\s*\{[^}]*width:\s*var\(--control-size-xl\);[^}]*height:\s*var\(--control-size-xl\);[^}]*color:\s*var\(--text-primary\);/s);
+    expect(filePreviewCss).toMatch(/\.file-preview-media-glyph\s*\{[^}]*color:\s*var\(--media-icon-color\);[^}]*fill:\s*currentColor;[^}]*stroke:\s*currentColor;/s);
+    expect(filePreviewCss).toMatch(/\.file-preview-media-glyph--pause\s*\{[^}]*fill:\s*none;[^}]*stroke-width:\s*3;/s);
     expect(filePreviewCss).toMatch(/\.file-preview-pill--source-corner \.file-preview-pill-more,[\s\S]*?\.outline-source-preview-close\.icon-button\s*\{[^}]*color:\s*inherit;/s);
     expect(filePreviewCss).toMatch(/\.file-node-body--media-audio > \.outline-source-preview-actions\s*\{[^}]*color:\s*var\(--text-primary\);/s);
     expect(filePreviewCss).toMatch(/\.file-node-body--media-audio > \.outline-source-preview-actions \.file-preview-pill\s*\{[^}]*color:\s*inherit;/s);

@@ -35,8 +35,9 @@ keep the group visible. Reduced motion removes the opacity transition.
 Audio and video retain Media Chrome as the playback authority and share one HUD
 structure: a top title row aligned with an exclusive `More + Close` region, a
 full-width timeline, then a balanced command row with mute/volume on the left,
-play centered, and current/duration time on the right followed by video-only
-fullscreen and Source actions. Control sizes, spacing, range geometry, focus
+seek-back-15 / play / seek-forward-15 centered, and current/duration time on the
+right followed by video-only fullscreen and Source actions. Control sizes,
+spacing, range geometry, focus
 treatment, and responsive compaction are identical. Volume remains a compact
 control beside mute instead of stretching across the left grid track; narrow
 Outline previews hide only that slider while keeping mute available. Title,
@@ -47,14 +48,19 @@ video adds its real fullscreen control before the shared outer inset. The title
 information row shares the corner-action top edge and center line. Audio maps
 title, time, player icons, and corner actions to primary theme text; video maps
 the same elements to the fixed HUD foreground required over pixels.
+Player transport and output controls use filled Lucide media glyphs with a
+weight-matched pause state; the application-level corner actions remain in the
+shared Lucide stroke family. Seek buttons use direction glyphs while their
+accessible labels state the exact 15-second interval, avoiding unreadable
+microtype inside a compact icon.
 
 The audio HUD is the complete compact audio surface. The video HUD overlays the
 bottom of the video without an inset card, border, or independent rounded
 container. It may use a tokenized pixel-contrast scrim that reads as part of the
 video surface and has an opaque reduced-transparency fallback.
 
-Media Chrome is the sole owner of playback state, keyboard shortcuts, and
-auto-hide. React does not mirror playback state, install a second keyboard
+Media Chrome is the sole owner of playback and seeking state, keyboard
+shortcuts, and auto-hide. React does not mirror playback state, install a second keyboard
 listener, or subscribe to time updates or pointer movement. Fullscreen removes
 the inline preview's maximum dimensions so the video and HUD fill the viewport.
 
