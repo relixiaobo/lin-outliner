@@ -670,7 +670,7 @@ function outlineShowNodeIds(context: ToolLifecycleResult): ReadonlySet<string> {
     return new Set();
   }
   let projection: ProjectionResult;
-  if (invocation.output === 'human') {
+  if (invocation.output === 'summary') {
     if (!checkOutlineSchema(ProjectionResultSchema, parsed)) return new Set();
     projection = parsed;
   } else {

@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
 import { open, readFile, rename, rm } from 'node:fs/promises';
 import { createInterface } from 'node:readline/promises';
 import {
@@ -33,18 +32,20 @@ import { OUTLINE_AGENT_ATTESTATION_ENV } from '../contract/agentAttestation';
 import {
   parseReadCommand,
   parseSelectorToken,
+  splitOptionTerminator,
   parseWatchCommand,
 } from './arguments';
 import { buildPorcelainRequest } from './porcelain';
 import { executeImportInvocation } from './import';
-import { inspectView, renderHumanResult } from './presentation';
+import { inspectView, renderSummaryResult } from './presentation';
 
 const MAX_INLINE_DIFF_BYTES = 8 * 1024 * 1024;
+const GLOBAL_OPTION_BY_NAME = new Map(OUTLINE_GLOBAL_OPTIONS.map((entry) => [entry.name, entry]));
 
 export interface OutlineCliIo {
-  readonly stdout: (value: string) => void;
-  readonly stdoutBytes: (value: Uint8Array) => void;
-  readonly stderr: (value: string) => void;
+  readonly stdout: (value: string) => void | Promise<void>;
+  readonly stdoutBytes: (value: Uint8Array) => void | Promise<void>;
+  readonly stderr: (value: string) => void | Promise<void>;
   readonly readStdin: (signal?: AbortSignal) => Promise<string>;
   readonly stdinBytes: (signal?: AbortSignal) => AsyncIterable<Uint8Array>;
   readonly interactive: boolean;
@@ -65,7 +66,7 @@ interface HandledExecution {
 }
 
 interface ParsedInvocation {
-  readonly json: boolean;
+  readonly output: 'summary' | 'json';
   readonly noStart: boolean;
   readonly startupTimeoutMs: number | undefined;
   readonly timeoutMs: number | undefined;
@@ -74,9 +75,9 @@ interface ParsedInvocation {
 }
 
 const defaultIo: OutlineCliIo = {
-  stdout: (value) => process.stdout.write(value),
-  stdoutBytes: (value) => process.stdout.write(value),
-  stderr: (value) => process.stderr.write(value),
+  stdout: (value) => writeProcessStream(process.stdout, value),
+  stdoutBytes: (value) => writeProcessStream(process.stdout, value),
+  stderr: (value) => writeProcessStream(process.stderr, value),
   readStdin: async (signal) => {
     const chunks: Buffer[] = [];
     for await (const chunk of signalAwareStdin(signal)) chunks.push(Buffer.from(chunk));
@@ -101,22 +102,22 @@ const defaultIo: OutlineCliIo = {
 export async function runOutlineCli(argv: readonly string[], options: OutlineCliRunOptions = {}): Promise<number> {
   const io = { ...defaultIo, ...options.io };
   let invocation: ParsedInvocation | undefined;
-  const machineOutput = argv.includes('--json')
-    || (!argv.includes('--human') && !io.interactive);
+  const requestedOutput = requestedOutputMode(argv);
   try {
-    if (argv.includes('--help') || argv.includes('-h')) {
-      io.stdout(renderHelp(argv));
+    if (hasHelpOption(argv)) {
+      await io.stdout(renderHelp(argv));
       return OUTLINE_EXIT_CODES.success;
     }
-    invocation = parseInvocation(argv, io.interactive);
+    invocation = parseInvocation(argv);
     const data = await executeInvocation(invocation, options, io);
     if (isHandledExecution(data)) return data.exitCode;
-    writeSuccess(io, invocation, data);
+    await writeSuccess(io, invocation, data);
     return OUTLINE_EXIT_CODES.success;
   } catch (error) {
+    if (isBrokenPipe(error)) return OUTLINE_EXIT_CODES.success;
     const publicError = withUsageGuidance(toPublicError(error), invocation);
     if (!options.signal?.aborted || publicError.code === 'operation_settlement_unknown') {
-      writeFailure(io, invocation ?? (machineOutput ? failedJsonInvocation() : undefined), publicError);
+      await writeFailure(io, invocation ?? failedInvocation(requestedOutput), publicError);
     }
     return options.signal?.aborted
       ? signalExitCode(options.signal)
@@ -124,9 +125,9 @@ export async function runOutlineCli(argv: readonly string[], options: OutlineCli
   }
 }
 
-function failedJsonInvocation(): ParsedInvocation {
+function failedInvocation(output: ParsedInvocation['output']): ParsedInvocation {
   return {
-    json: true,
+    output,
     noStart: false,
     startupTimeoutMs: undefined,
     timeoutMs: undefined,
@@ -197,8 +198,10 @@ async function executeInvocation(
   if (invocation.command === 'asset export') return executeAssetExport(invocation, supervisor, io, options.signal);
   if (capability.streaming) return executeStreamingInvocation(invocation, supervisor, io, options.signal);
   if (invocation.command === 'view inspect') {
-    if (invocation.args.length !== 1) throw usageError('view inspect requires exactly one TARGET.');
-    const target = { target: { selector: parseSelectorToken(invocation.args[0]!), cardinality: 'one' as const } };
+    const split = splitOptionTerminator(invocation.args);
+    const targets = [...split.options, ...split.literals];
+    if (targets.length !== 1) throw usageError('view inspect requires exactly one TARGET.');
+    const target = { target: { selector: parseSelectorToken(targets[0]!), cardinality: 'one' as const } };
     const input = { target };
     if (!checkOutlineSchema(capability.requestSchema, input)) {
       throw schemaUsageError('Input does not match the public schema for command: view inspect', capability.requestSchema, input);
@@ -223,7 +226,7 @@ async function executeInvocation(
     && isRecord(input)
     && input.preview !== true
     && input.acknowledgeDestructive !== true
-    && (invocation.json || !io.interactive)) {
+    && (invocation.output === 'json' || !io.interactive)) {
     throw new OutlineContractError(outlineError(
       'confirmation_required',
       'confirmation',
@@ -234,7 +237,7 @@ async function executeInvocation(
   try {
     if (capability.destructive
       && capability.kind === 'mutate'
-      && !invocation.json
+      && invocation.output === 'summary'
       && io.interactive
       && isRecord(input)
       && input.preview !== true
@@ -248,7 +251,7 @@ async function executeInvocation(
       capability.kind === 'mutate' && isRecord(input) && input.preview !== true,
       options.signal,
     )).data;
-    const viewedTree = !invocation.json && invocation.command === 'add'
+    const viewedTree = invocation.output === 'summary' && invocation.command === 'add'
       ? viewedTreeReceipt(input, data)
       : undefined;
     return viewedTree ?? data;
@@ -280,7 +283,7 @@ async function executeInteractiveDestructive(
       { details: { expected: input.expectDiff, actual: preview.diffHash } },
     ));
   }
-  io.stdout(`Review Diff:\n${JSON.stringify(preview, null, 2)}\n`);
+  await io.stdout(`Review Diff:\n${JSON.stringify(preview, null, 2)}\n`);
   if (!await io.confirm(`Apply destructive ${command} Diff ${preview.diffHash}?`, signal)) {
     throw new OutlineContractError(outlineError(
       'confirmation_required',
@@ -297,9 +300,8 @@ async function executeInteractiveDestructive(
   )).data;
 }
 
-function parseInvocation(argv: readonly string[], interactive: boolean): ParsedInvocation {
+function parseInvocation(argv: readonly string[]): ParsedInvocation {
   let jsonRequested = false;
-  let humanRequested = false;
   let noStart = false;
   let startupTimeoutMs: number | undefined;
   let timeoutMs: number | undefined;
@@ -307,8 +309,11 @@ function parseInvocation(argv: readonly string[], interactive: boolean): ParsedI
   let index = 0;
   while (index < argv.length && argv[index]?.startsWith('-')) {
     const arg = argv[index];
+    if (arg === '--') {
+      index += 1;
+      break;
+    }
     if (arg === '--json') jsonRequested = true;
-    else if (arg === '--human') humanRequested = true;
     else if (arg === '--no-start') noStart = true;
     else if (arg === '--protocol') protocol = positiveInteger(argv[++index], '--protocol');
     else if (arg === '--startup-timeout') startupTimeoutMs = positiveInteger(argv[++index], '--startup-timeout');
@@ -321,7 +326,6 @@ function parseInvocation(argv: readonly string[], interactive: boolean): ParsedI
     else throw usageError(`Unknown global option: ${arg}`);
     index += 1;
   }
-  if (jsonRequested && humanRequested) throw usageError('--json cannot be combined with --human.');
   if (protocol !== OUTLINE_PROTOCOL_VERSION) {
     throw new OutlineContractError(outlineError(
       'protocol_incompatible',
@@ -334,7 +338,7 @@ function parseInvocation(argv: readonly string[], interactive: boolean): ParsedI
   const command = longestCommandPrefix(remaining);
   if (!command) throw usageError(unknownCommandMessage(remaining));
   return {
-    json: jsonRequested || (!humanRequested && !interactive),
+    output: jsonRequested ? 'json' : 'summary',
     noStart,
     startupTimeoutMs,
     timeoutMs,
@@ -353,8 +357,10 @@ async function runtimeInput(
     return (await parseReadCommand(invocation.command, invocation.args, (source) => readStructuredSource(source, io, signal))).input;
   }
   if (invocation.command === 'asset show') {
-    if (invocation.args.length !== 1) throw usageError('asset show requires exactly one AssetRecord ID.');
-    return { assetId: invocation.args[0] };
+    const split = splitOptionTerminator(invocation.args);
+    const assetIds = [...split.options, ...split.literals];
+    if (assetIds.length !== 1) throw usageError('asset show requires exactly one AssetRecord ID.');
+    return { assetId: assetIds[0] };
   }
   if (invocation.command === 'log') return parseLogInput(invocation.args);
   if (invocation.command === 'revert' || invocation.command === 'undo' || invocation.command === 'redo') {
@@ -453,52 +459,56 @@ async function executeDiffInvocation(
   if (!parsed.input) throw usageError('diff requires --input FILE|-.');
   if (parsed.yes) throw usageError('--yes is not valid for diff.');
   if (parsed.rest.length > 0) throw usageError(`Unexpected diff argument: ${parsed.rest[0]}`);
-  const source = parsed.input === '-' ? io.stdinBytes(signal) : createReadStream(parsed.input);
-  const client = await supervisor.connect(signal);
+  const inputFile = parsed.input === '-' ? undefined : await open(parsed.input, 'r');
   try {
-    const idempotencyKey = parsed.idempotencyKey ?? newCliIdempotencyKey();
-    const artifact = await client.diffArtifact(source, {
-      inputFormat: parsed.inputFormat,
-      idempotencyKey,
-      idempotencyKeyMode: parsed.idempotencyKey ? 'exact' : 'if-missing',
-      signal,
-    });
-    if (!parsed.output && artifact.byteCount > MAX_INLINE_DIFF_BYTES) {
-      throw usageError('Diff exceeds 8 MiB; specify --output DIFF_FILE or --output -.');
-    }
-    if (parsed.output === '-') {
-      for await (const chunk of artifact.chunks) io.stdoutBytes(chunk);
-      io.stdoutBytes(Buffer.from('\n'));
-      return { handled: true, exitCode: OUTLINE_EXIT_CODES.success };
-    }
-    if (parsed.output) {
-      await writeAtomicArtifact(parsed.output, artifact.chunks);
-      if (invocation.json) return { path: parsed.output, byteCount: artifact.byteCount, sha256: artifact.sha256 };
+    const source = inputFile?.createReadStream({ autoClose: false }) ?? io.stdinBytes(signal);
+    const client = await supervisor.connect(signal);
+    try {
+      const idempotencyKey = parsed.idempotencyKey ?? newCliIdempotencyKey();
+      const artifact = await client.diffArtifact(source, {
+        inputFormat: parsed.inputFormat,
+        idempotencyKey,
+        idempotencyKeyMode: parsed.idempotencyKey ? 'exact' : 'if-missing',
+        signal,
+      });
+      if (!parsed.output && artifact.byteCount > MAX_INLINE_DIFF_BYTES) {
+        throw usageError('Diff exceeds 8 MiB; specify --output DIFF_FILE or --output -.');
+      }
+      if (parsed.output === '-') {
+        for await (const chunk of artifact.chunks) await io.stdoutBytes(chunk);
+        return { handled: true, exitCode: OUTLINE_EXIT_CODES.success };
+      }
+      if (parsed.output) {
+        await writeAtomicArtifact(parsed.output, artifact.chunks);
+        if (invocation.output === 'json') return { path: parsed.output, byteCount: artifact.byteCount, sha256: artifact.sha256 };
+        let value: unknown;
+        try {
+          value = JSON.parse(await readFile(parsed.output, 'utf8')) as unknown;
+        } catch {
+          throw artifactProtocolError('Outline Runtime returned an invalid Diff artifact.');
+        }
+        if (!checkOutlineSchema(DiffSchema, value)) {
+          throw artifactProtocolError('Outline Runtime returned a Diff artifact that violates the public schema.');
+        }
+        return { kind: 'outline.summary-diff-receipt', path: parsed.output, byteCount: artifact.byteCount, sha256: artifact.sha256, diff: value };
+      }
+      const chunks: Buffer[] = [];
+      for await (const chunk of artifact.chunks) chunks.push(Buffer.from(chunk));
       let value: unknown;
       try {
-        value = JSON.parse(await readFile(parsed.output, 'utf8')) as unknown;
+        value = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
       } catch {
         throw artifactProtocolError('Outline Runtime returned an invalid Diff artifact.');
       }
       if (!checkOutlineSchema(DiffSchema, value)) {
         throw artifactProtocolError('Outline Runtime returned a Diff artifact that violates the public schema.');
       }
-      return { kind: 'outline.human-diff-receipt', path: parsed.output, byteCount: artifact.byteCount, sha256: artifact.sha256, diff: value };
+      return value;
+    } finally {
+      client.close();
     }
-    const chunks: Buffer[] = [];
-    for await (const chunk of artifact.chunks) chunks.push(Buffer.from(chunk));
-    let value: unknown;
-    try {
-      value = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
-    } catch {
-      throw artifactProtocolError('Outline Runtime returned an invalid Diff artifact.');
-    }
-    if (!checkOutlineSchema(DiffSchema, value)) {
-      throw artifactProtocolError('Outline Runtime returned a Diff artifact that violates the public schema.');
-    }
-    return value;
   } finally {
-    client.close();
+    await inputFile?.close();
   }
 }
 
@@ -524,7 +534,7 @@ function viewedTreeReceipt(input: unknown, settlement: unknown): Record<string, 
   const displayFieldCount = Array.isArray(replace.display) ? replace.display.length : 0;
   const ownerId = isRecord(settlement) ? returnedRootId(settlement) : undefined;
   return {
-    kind: 'outline.human-viewed-tree-receipt', settlement,
+    kind: 'outline.summary-viewed-tree-receipt', settlement,
     ownerId, itemCount, displayFieldCount, mode: view.mode,
   };
 }
@@ -544,8 +554,10 @@ async function executeAssetIngest(
   io: OutlineCliIo,
   signal?: AbortSignal,
 ): Promise<unknown> {
-  if (invocation.args.length !== 1) throw usageError('asset ingest requires exactly one PATH or -.');
-  const source = invocation.args[0]!;
+  const split = splitOptionTerminator(invocation.args);
+  const sources = [...split.options, ...split.literals];
+  if (sources.length !== 1) throw usageError('asset ingest requires exactly one PATH or -.');
+  const source = sources[0]!;
   const client = await supervisor.connect(signal);
   try {
     if (source === '-') return client.ingestAsset(io.stdinBytes(signal), { signal });
@@ -561,13 +573,18 @@ async function executeAssetExport(
   io: OutlineCliIo,
   signal?: AbortSignal,
 ): Promise<unknown | HandledExecution> {
+  const split = splitOptionTerminator(invocation.args);
   let assetId: string | undefined;
   let output: string | undefined;
-  for (let index = 0; index < invocation.args.length; index += 1) {
-    const arg = invocation.args[index]!;
-    if (arg === '--output') output = requiredValue(invocation.args[++index], '--output');
+  for (let index = 0; index < split.options.length; index += 1) {
+    const arg = split.options[index]!;
+    if (arg === '--output') output = requiredValue(split.options[++index], '--output');
     else if (!assetId) assetId = arg;
     else throw usageError(`Unexpected asset export argument: ${arg}`);
+  }
+  for (const literal of split.literals) {
+    if (!assetId) assetId = literal;
+    else throw usageError(`Unexpected asset export argument: ${literal}`);
   }
   if (!assetId) throw usageError('asset export requires exactly one AssetRecord ID.');
   if (!output) throw usageError('asset export requires --output FILE|-.');
@@ -583,7 +600,7 @@ async function executeAssetExport(
     for await (const chunk of client.exportAsset(assetId, signal)) {
       bytes += chunk.byteLength;
       if (file) await file.write(chunk);
-      else io.stdoutBytes(chunk);
+      else await io.stdoutBytes(chunk);
     }
     if (!file) return { handled: true, exitCode: OUTLINE_EXIT_CODES.success };
     await file.sync();
@@ -600,18 +617,20 @@ async function executeAssetExport(
 }
 
 function parseLogInput(args: readonly string[]): Record<string, unknown> {
+  const split = splitOptionTerminator(args);
+  if (split.literals.length > 0) throw usageError(`Unexpected log argument: ${split.literals[0]}`);
   const result: Record<string, unknown> = {};
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (arg === '--limit') result.limit = positiveInteger(args[++index], '--limit');
-    else if (arg === '--cursor') result.cursor = requiredValue(args[++index], '--cursor');
-    else if (arg === '--operation') result.operationId = requiredValue(args[++index], '--operation');
-    else if (arg === '--idempotency-key') result.idempotencyKey = requiredValue(args[++index], '--idempotency-key');
-    else if (arg === '--node') result.nodeId = requiredValue(args[++index], '--node');
-    else if (arg === '--origin') result.origin = requiredValue(args[++index], '--origin');
-    else if (arg === '--thread') result.threadId = requiredValue(args[++index], '--thread');
-    else if (arg === '--turn') result.turnId = requiredValue(args[++index], '--turn');
-    else if (arg === '--item') result.itemId = requiredValue(args[++index], '--item');
+  for (let index = 0; index < split.options.length; index += 1) {
+    const arg = split.options[index];
+    if (arg === '--limit') result.limit = positiveInteger(split.options[++index], '--limit');
+    else if (arg === '--cursor') result.cursor = requiredValue(split.options[++index], '--cursor');
+    else if (arg === '--operation') result.operationId = requiredValue(split.options[++index], '--operation');
+    else if (arg === '--idempotency-key') result.idempotencyKey = requiredValue(split.options[++index], '--idempotency-key');
+    else if (arg === '--node') result.nodeId = requiredValue(split.options[++index], '--node');
+    else if (arg === '--origin') result.origin = requiredValue(split.options[++index], '--origin');
+    else if (arg === '--thread') result.threadId = requiredValue(split.options[++index], '--thread');
+    else if (arg === '--turn') result.turnId = requiredValue(split.options[++index], '--turn');
+    else if (arg === '--item') result.itemId = requiredValue(split.options[++index], '--item');
     else throw usageError(`Unknown log option: ${arg}`);
   }
   return result;
@@ -621,26 +640,31 @@ function parseHistoryMutationInput(
   command: 'revert' | 'undo' | 'redo',
   args: readonly string[],
 ): Record<string, unknown> {
+  const split = splitOptionTerminator(args);
   let operationId: string | undefined;
   let origin: string | undefined;
   let expectOperationId: string | undefined;
   let idempotencyKey: string | undefined;
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
+  for (let index = 0; index < split.options.length; index += 1) {
+    const arg = split.options[index];
     if (arg === '--idempotency-key') {
-      idempotencyKey = requiredValue(args[++index], '--idempotency-key');
+      idempotencyKey = requiredValue(split.options[++index], '--idempotency-key');
     } else if (command !== 'revert' && arg === '--origin') {
-      origin = requiredValue(args[++index], '--origin');
+      origin = requiredValue(split.options[++index], '--origin');
       if (!['own', 'all', 'desktop', 'local-user', 'built-in-agent', 'external-client'].includes(origin)) {
         throw usageError('--origin must be own, all, desktop, local-user, built-in-agent, or external-client.');
       }
     } else if (command !== 'revert' && arg === '--expect-operation') {
-      expectOperationId = requiredValue(args[++index], '--expect-operation');
+      expectOperationId = requiredValue(split.options[++index], '--expect-operation');
     } else if (command === 'revert' && !operationId && !arg?.startsWith('-')) {
       operationId = arg;
     } else {
       throw usageError(`Unexpected ${command} argument: ${arg}`);
     }
+  }
+  for (const literal of split.literals) {
+    if (command === 'revert' && !operationId) operationId = literal;
+    else throw usageError(`Unexpected ${command} argument: ${literal}`);
   }
   if (command === 'revert' && !operationId) throw usageError('revert requires exactly one Operation ID.');
   return {
@@ -659,24 +683,26 @@ function parseInputOptions(args: readonly string[]): {
   yes: boolean;
   rest: readonly string[];
 } {
+  const split = splitOptionTerminator(args);
   let input: string | undefined;
   let inputFormat: 'json' | 'jsonl' = 'json';
   let output: string | undefined;
   let idempotencyKey: string | undefined;
   let yes = false;
   const rest: string[] = [];
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (arg === '--input') input = requiredValue(args[++index], '--input');
+  for (let index = 0; index < split.options.length; index += 1) {
+    const arg = split.options[index];
+    if (arg === '--input') input = requiredValue(split.options[++index], '--input');
     else if (arg === '--input-format') {
-      const format = requiredValue(args[++index], '--input-format');
+      const format = requiredValue(split.options[++index], '--input-format');
       if (format !== 'json' && format !== 'jsonl') throw usageError('--input-format must be json or jsonl.');
       inputFormat = format;
-    } else if (arg === '--output') output = requiredValue(args[++index], '--output');
-    else if (arg === '--idempotency-key') idempotencyKey = requiredValue(args[++index], '--idempotency-key');
+    } else if (arg === '--output') output = requiredValue(split.options[++index], '--output');
+    else if (arg === '--idempotency-key') idempotencyKey = requiredValue(split.options[++index], '--idempotency-key');
     else if (arg === '--yes') yes = true;
     else rest.push(arg ?? '');
   }
+  rest.push(...split.literals);
   return { input, inputFormat, output, idempotencyKey, yes, rest };
 }
 
@@ -718,11 +744,11 @@ async function executeStreamingInvocation(
         digest.update(chunk);
         bytes += Buffer.byteLength(chunk);
       } else if (output === '-') {
-        if (record.type === 'data') io.stdout(exportDataChunk(record.data, parsed.input));
-      } else if (invocation.json) {
-        io.stdout(`${JSON.stringify(record)}\n`);
+        if (record.type === 'data') await io.stdout(exportDataChunk(record.data, parsed.input));
+      } else if (invocation.output === 'json') {
+        await io.stdout(`${JSON.stringify(record)}\n`);
       } else {
-        writeHumanStreamRecord(io, record);
+        await writeSummaryStreamRecord(io, record);
       }
     }
     if (streamError) {
@@ -731,7 +757,9 @@ async function executeStreamingInvocation(
         file = undefined;
         await rm(temporaryPath!, { force: true });
       }
-      if (!invocation.json && output !== '-') io.stderr(`outline: ${streamError.message}\n`);
+      if (output === '-' || invocation.output === 'summary') {
+        await io.stderr(`outline: [${streamError.code}] ${streamError.message}\n`);
+      }
       return { handled: true, exitCode: outlineExitCodeForError(streamError) };
     }
     if (file && temporaryPath && output) {
@@ -757,7 +785,6 @@ async function writeAtomicArtifact(target: string, chunks: AsyncIterable<Uint8Ar
   const handle = await open(temporary, 'wx', 0o600);
   try {
     for await (const chunk of chunks) await handle.write(chunk);
-    await handle.write(Buffer.from('\n'));
     await handle.sync();
     await handle.close();
     await rename(temporary, target);
@@ -831,16 +858,16 @@ function exportDataChunk(data: unknown, input: unknown): string {
   return `${JSON.stringify(data)}\n`;
 }
 
-function writeHumanStreamRecord(
+async function writeSummaryStreamRecord(
   io: OutlineCliIo,
   record: import('../contract').OutlineStreamRecord,
-): void {
+): Promise<void> {
   if (record.type === 'data') {
-    io.stdout(typeof record.data === 'string' ? record.data : `${JSON.stringify(record.data)}\n`);
+    await io.stdout(typeof record.data === 'string' ? record.data : `${JSON.stringify(record.data)}\n`);
   } else if (record.type === 'event') {
-    io.stdout(`${JSON.stringify(record.event)}\n`);
+    await io.stdout(`${JSON.stringify(record.event)}\n`);
   } else if (record.type === 'error') {
-    io.stderr(`outline: ${record.error.message}\n`);
+    await io.stderr(`outline: [${record.error.code}] ${record.error.message}\n`);
   }
 }
 
@@ -917,17 +944,18 @@ function signalExitCode(signal: AbortSignal): number {
 }
 
 function schemaResult(args: readonly string[]): unknown {
+  const split = splitOptionTerminator(args);
   let part: 'request' | 'result' | 'both' = 'request';
   let partSpecified = false;
   const nameParts: string[] = [];
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index]!;
+  for (let index = 0; index < split.options.length; index += 1) {
+    const arg = split.options[index]!;
     if (arg !== '--part') {
       nameParts.push(arg);
       continue;
     }
     if (partSpecified) throw usageError('--part may be specified only once.');
-    const value = args[index + 1];
+    const value = split.options[index + 1];
     if (value !== 'request' && value !== 'result' && value !== 'both') {
       throw usageError('--part requires request, result, or both.');
     }
@@ -935,6 +963,7 @@ function schemaResult(args: readonly string[]): unknown {
     partSpecified = true;
     index += 1;
   }
+  nameParts.push(...split.literals);
   const name = nameParts.join(' ');
   if (!name) {
     if (partSpecified) throw usageError('--part applies only to command schemas.');
@@ -964,8 +993,8 @@ function longestCommandPrefix(args: readonly string[]): string | undefined {
     .sort((left, right) => right.split(' ').length - left.split(' ').length)[0];
 }
 
-function writeSuccess(io: OutlineCliIo, invocation: ParsedInvocation, data: unknown): void {
-  if (invocation.json) {
+async function writeSuccess(io: OutlineCliIo, invocation: ParsedInvocation, data: unknown): Promise<void> {
+  if (invocation.output === 'json') {
     const response = {
       protocolVersion: OUTLINE_PROTOCOL_VERSION,
       requestId: `cli:${crypto.randomUUID()}`,
@@ -973,30 +1002,30 @@ function writeSuccess(io: OutlineCliIo, invocation: ParsedInvocation, data: unkn
       command: invocation.command,
       data,
     } as OutlineResponse;
-    io.stdout(`${JSON.stringify(response)}\n`);
+    await io.stdout(`${JSON.stringify(response)}\n`);
     return;
   }
   if (invocation.command === 'version' && isRecord(data)) {
-    io.stdout(`outline ${String(data.cliVersion)} (Tenon ${String(data.appVersion)}; protocol ${OUTLINE_PROTOCOL_VERSION})\n`);
+    await io.stdout(`outline ${String(data.cliVersion)} (Tenon ${String(data.appVersion)}; protocol ${OUTLINE_PROTOCOL_VERSION})\n`);
     return;
   }
   if (invocation.command === 'status' && isRecord(data) && data.running === false) {
-    io.stdout('Outline Runtime: not running\n');
-    return;
-  }
-  if (invocation.command === 'capabilities' && Array.isArray(data)) {
-    io.stdout(`${data.map((entry) => isRecord(entry) ? `${String(entry.name)}\t${String(entry.summary)}` : String(entry)).join('\n')}\n`);
+    await io.stdout('Outline Runtime: not running\n');
     return;
   }
   try {
-    io.stdout(renderHumanResult(invocation.command, data));
+    await io.stdout(renderSummaryResult(invocation.command, data));
   } catch {
-    io.stdout(`Command: ${invocation.command}\nStatus: succeeded\nPresentation: unavailable\n`);
+    await io.stdout(`Command: ${invocation.command}\nStatus: succeeded\nPresentation: unavailable\n`);
   }
 }
 
-function writeFailure(io: OutlineCliIo, invocation: ParsedInvocation | undefined, error: OutlineError): void {
-  if (invocation?.json) {
+async function writeFailure(
+  io: OutlineCliIo,
+  invocation: ParsedInvocation,
+  error: OutlineError,
+): Promise<void> {
+  if (invocation.output === 'json' && !isRawStdoutInvocation(invocation)) {
     const response = {
       protocolVersion: OUTLINE_PROTOCOL_VERSION,
       requestId: `cli:${crypto.randomUUID()}`,
@@ -1004,11 +1033,11 @@ function writeFailure(io: OutlineCliIo, invocation: ParsedInvocation | undefined
       command: invocation.command,
       error,
     } as OutlineResponse;
-    io.stdout(`${JSON.stringify(response)}\n`);
+    await io.stdout(`${JSON.stringify(response)}\n`);
     return;
   }
-  io.stderr(`outline: [${error.code}] ${error.message}\n`);
-  for (const next of error.next ?? []) io.stderr(`  ${next}\n`);
+  await io.stderr(`outline: [${error.code}] ${error.message}\n`);
+  for (const next of error.next ?? []) await io.stderr(`  ${next}\n`);
 }
 
 function renderHelp(argv: readonly string[]): string {
@@ -1115,13 +1144,16 @@ function renderOption(entry: CommandOptionHelp): string {
 }
 
 function helpCommandPath(argv: readonly string[]): string[] {
-  const global = new Map(OUTLINE_GLOBAL_OPTIONS.map((entry) => [entry.name, entry]));
   const path: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]!;
+    if (arg === '--') {
+      if (path.length === 0) continue;
+      break;
+    }
     if (arg === '--help' || arg === '-h') continue;
     if (arg.startsWith('--')) {
-      const metadata = global.get(arg.slice(2));
+      const metadata = GLOBAL_OPTION_BY_NAME.get(arg.slice(2));
       if (metadata) {
         if (metadata.value) index += 1;
         continue;
@@ -1145,6 +1177,7 @@ function validateRegisteredOptions(
   const options = porcelain ? porcelainHelpOptions(porcelain) : fixedOptions;
   const names = new Set(options.map((entry) => entry.name));
   for (const arg of invocation.args) {
+    if (arg === '--') break;
     if (!arg.startsWith('--')) continue;
     const name = arg.slice(2);
     if (names.has(name)) continue;
@@ -1211,7 +1244,14 @@ function parseJsonInput(raw: string): unknown {
 }
 
 function takeFlag(args: readonly string[], flag: string): { present: boolean; rest: readonly string[] } {
-  return { present: args.includes(flag), rest: args.filter((arg) => arg !== flag) };
+  const split = splitOptionTerminator(args);
+  return {
+    present: split.options.includes(flag),
+    rest: [
+      ...split.options.filter((arg) => arg !== flag),
+      ...split.literals,
+    ],
+  };
 }
 
 function positiveInteger(value: string | undefined, option: string): number {
@@ -1227,7 +1267,9 @@ function requiredValue(value: string | undefined, option: string): string {
 }
 
 function assertNoArgs(invocation: ParsedInvocation): void {
-  if (invocation.args.length > 0) throw usageError(`Unexpected ${invocation.command} argument: ${invocation.args[0]}`);
+  const split = splitOptionTerminator(invocation.args);
+  const args = [...split.options, ...split.literals];
+  if (args.length > 0) throw usageError(`Unexpected ${invocation.command} argument: ${args[0]}`);
 }
 
 function usageError(message: string): OutlineContractError {
@@ -1249,12 +1291,104 @@ function schemaUsageError(
 
 function toPublicError(error: unknown): OutlineError {
   if (error instanceof OutlineContractError) return error.outlineError;
+  const systemError = toPublicSystemError(error);
+  if (systemError) return systemError;
   return outlineError(
     'internal_error',
     'internal',
     'The outline command could not be completed.',
     { details: error instanceof Error ? error.message : String(error) },
   );
+}
+
+function hasHelpOption(argv: readonly string[]): boolean {
+  let index = 0;
+  while (index < argv.length && argv[index]?.startsWith('-')) {
+    const arg = argv[index]!;
+    if (arg === '--help' || arg === '-h') return true;
+    if (arg === '--') {
+      index += 1;
+      break;
+    }
+    if (GLOBAL_OPTION_BY_NAME.get(arg.slice(2))?.value) index += 1;
+    index += 1;
+  }
+  const remaining = argv.slice(index);
+  const command = longestCommandPrefix(remaining);
+  const pathLength = command?.split(' ').length
+    ?? (remaining[0] && isCommandFamily(remaining[0]) ? 1 : undefined);
+  if (!pathLength) return false;
+  for (const arg of remaining.slice(pathLength)) {
+    if (arg === '--') return false;
+    if (arg === '--help' || arg === '-h') return true;
+  }
+  return false;
+}
+
+function requestedOutputMode(argv: readonly string[]): ParsedInvocation['output'] {
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]!;
+    if (arg === '--' || !arg.startsWith('-')) return 'summary';
+    if (arg === '--json') return 'json';
+    const metadata = GLOBAL_OPTION_BY_NAME.get(arg.slice(2));
+    if (metadata?.value) {
+      index += 1;
+      continue;
+    }
+    if (!metadata) return 'summary';
+  }
+  return 'summary';
+}
+
+function isRawStdoutInvocation(invocation: ParsedInvocation): boolean {
+  if (!['diff', 'export', 'asset export'].includes(invocation.command)) return false;
+  const split = splitOptionTerminator(invocation.args);
+  for (let index = 0; index < split.options.length; index += 1) {
+    if (split.options[index] === '--output' && split.options[index + 1] === '-') return true;
+  }
+  return false;
+}
+
+function toPublicSystemError(error: unknown): OutlineError | undefined {
+  if (!isRecord(error) || typeof error.code !== 'string') return undefined;
+  const code = error.code;
+  const target = typeof error.path === 'string' ? error.path : undefined;
+  const subject = target ? `: ${target}` : '';
+  if (code === 'ENOENT') return outlineError('invalid_input', 'usage', `File not found${subject}.`);
+  if (code === 'EEXIST') return outlineError('invalid_input', 'usage', `File already exists${subject}.`);
+  if (code === 'EISDIR' || code === 'ENOTDIR') {
+    return outlineError('invalid_input', 'usage', `Invalid file path${subject} (${code}).`);
+  }
+  if (code === 'EACCES' || code === 'EPERM') {
+    return outlineError('unauthorized', 'unavailable', `Permission denied for file operation${subject}.`);
+  }
+  if (code === 'ENOSPC' || code === 'EROFS') {
+    return outlineError('durability_failed', 'durability', `File write failed${subject} (${code}).`);
+  }
+  return undefined;
+}
+
+function isBrokenPipe(error: unknown): boolean {
+  return isRecord(error) && error.code === 'EPIPE';
+}
+
+function writeProcessStream(stream: NodeJS.WriteStream, value: string | Uint8Array): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: Error | null) => {
+      if (settled) return;
+      settled = true;
+      stream.off('error', finish);
+      if (error) reject(error);
+      else resolve();
+    };
+    stream.once('error', finish);
+    try {
+      stream.write(value, finish);
+    } catch (error) {
+      finish(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

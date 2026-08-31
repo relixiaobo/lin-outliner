@@ -20,20 +20,20 @@ exact family/command help. Read only `outline schema COMMAND` for a structured
 form you actually need. Do not load root help, the aggregate ChangeSet schema,
 or a fixture for ordinary work.
 
-Use `--human` for output the current model must read. Use `--json` only when an
-exact machine contract is explicitly required. Never use Python, Node, `jq`,
+The default output is a bounded summary for the current model. Use `--json` only
+when an exact machine contract is explicitly required. Never use Python, Node, `jq`,
 `sed`, `grep`, temporary input files, or file tools to assemble or interpret an
 Outline operation.
 
 ## Inspect Current State
 
-Use `outline --human show` for a known exact target and `outline --human find`
+Use `outline show` for a known exact target and `outline find`
 for discovery. Prefer exact IDs and stable aliases such as `@inbox`, `@library`,
 `@saved-searches`, `@today`, and `@date:YYYY-MM-DD`. Never select from display
 text without one bounded read proving the target. Read only the smallest
 Projection needed to decide the mutation.
 
-Use `outline --human view inspect TARGET` to verify persisted view mode, exact
+Use `outline view inspect TARGET` to verify persisted view mode, exact
 direct-item count, and ordered display configuration. Do not fetch a complete
 table or parse generic descendant projections for view verification.
 
@@ -61,7 +61,7 @@ properties. Only a documented replacement form replaces a collection.
 Repeated `set`, `configure`, and `ensure` calls must converge or return
 semantic no-change.
 
-For a known non-destructive ChangeSet, use `outline --human commit --input -`
+For a known non-destructive ChangeSet, use `outline commit --input -`
 directly. Use `diff --output` followed by exact `apply` for destructive work,
 ambiguous target effects, conversion of existing content, high-impact changes,
 or when the user requests review. Read
@@ -76,12 +76,12 @@ fields and configure the complete view on the owner. Never substitute a
 Markdown table or aligned text for native table state.
 
 For a new table, list, cards view, or calendar view below one exact destination,
-run one `outline --human add --input -` with `kind: "viewed-tree"`. Declare
+run one `outline add --input -` with `kind: "viewed-tree"`. Declare
 local fields once with stable `key` values, reference them from item `values`
 and view configuration as `{ "fieldKey": "key" }`, and use canonical `sys:*`
 names for system fields. The CLI creates definitions, owner, ordinary items,
 field values, and view atomically. Then verify with one
-`outline --human view inspect OWNER_ID`.
+`outline view inspect OWNER_ID`.
 
 Date field values use `YYYY-MM-DD`, `YYYY-MM-DDTHH:mm`, or `start/end` with `/`.
 Use exact local-date selectors for Daily Notes; do not apply timezone conversion
@@ -90,7 +90,7 @@ to a local calendar date. In the final response, mention an ordinary persisted
 
 ## Review and Execute
 
-`diff --output FILE` writes the exact immutable Diff and prints a bounded human
+`diff --output FILE` writes the exact immutable Diff and prints a bounded summary
 review receipt. Review its hashes, base revision, effects, destructive classes,
 bindings, warnings, and any omission count. Stop or narrow the work if a
 review-critical tail is omitted. Pass the exact artifact to `apply`; never
@@ -108,9 +108,9 @@ revision transition, affected count/digest, returned root IDs, and recovery
 state. Verify consequential work independently with one bounded `show`, `find`,
 or `view inspect`; dispatch alone is not proof of final state.
 
-If settlement is unknown, stop writing and inspect `outline --human log` by the
+If settlement is unknown, stop writing and inspect `outline log` by the
 same idempotency key. Do not retry with a new key. Revert a known completed
-Operation with `outline --human revert OPERATION_ID`; never issue an unrelated
+Operation with `outline revert OPERATION_ID`; never issue an unrelated
 compensating edit. Stop before writing when selection is unresolved,
 cardinality is surprising, the reviewed Diff changed, acknowledgement is
 incomplete, or verification cannot distinguish the intended result.

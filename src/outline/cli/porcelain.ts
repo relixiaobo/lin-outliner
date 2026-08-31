@@ -17,7 +17,7 @@ import { CaptureProvenanceSchema } from '../contract/schemas';
 import { OutlineContractError, outlineError } from '../contract/errors';
 import { porcelainContract, porcelainHelpOptions } from '../contract/porcelain';
 import { checkOutlineSchema, outlineSchemaValidationDetails } from '../contract/validation';
-import { createChangeSet, parseSelectorToken, type StructuredReader } from './arguments';
+import { createChangeSet, parseSelectorToken, splitOptionTerminator, type StructuredReader } from './arguments';
 import { canonicalJson } from '../contract/canonical';
 
 type PublicViewField = Extract<
@@ -1545,8 +1545,9 @@ function parseOptions(command: string, args: readonly string[]): ParsedOptions {
   const allOptions = new Map(porcelainHelpOptions(contract).map((entry) => [entry.name, entry]));
   const options = new Map<string, string | true>();
   const positional: string[] = [];
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
+  const split = splitOptionTerminator(args);
+  for (let index = 0; index < split.options.length; index += 1) {
+    const arg = split.options[index];
     if (!arg?.startsWith('--')) {
       positional.push(arg ?? '');
       continue;
@@ -1557,11 +1558,12 @@ function parseOptions(command: string, args: readonly string[]): ParsedOptions {
     if (options.has(name)) throw usageError(`Option may be specified only once: ${arg}`);
     if (COMMON_BOOLEAN_OPTIONS.has(name) || !('value' in metadata)) options.set(name, true);
     else {
-      const value = args[++index];
+      const value = split.options[++index];
       if (value === undefined || value.startsWith('--')) throw usageError(`${arg} requires a value.`);
       options.set(name, value);
     }
   }
+  positional.push(...split.literals);
   return { options, consumed: new Set(), allowed: new Set(commandOptions.keys()), positional };
 }
 

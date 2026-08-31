@@ -1113,7 +1113,7 @@ describe('agent skills', () => {
     expect(instructions).toContain('Always try porcelain first');
     expect(instructions).toContain('known non-destructive ChangeSet');
     expect(instructions).toContain('Bash\'s separate `stdin` field');
-    expect(instructions).toContain('outline --human view inspect TARGET');
+    expect(instructions).toContain('outline view inspect TARGET');
   });
 
   test('loads bundled built-in skills with real resource directories', async () => {

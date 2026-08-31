@@ -827,8 +827,8 @@ captured by the runtime and complete the Item as failed.
 
 Visible tool output is bounded independently from durable structured details.
 The runtime may shorten presentation without changing the recorded result.
-The built-in Outline workflow requests deterministic CLI `--human` receipts
-through direct Bash invocations. Structured `--input -` bytes use Bash's
+The built-in Outline workflow uses deterministic default CLI summaries through
+direct Bash invocations. Structured `--input -` bytes use Bash's
 separate stdin transport; the command string contains only `outline` and its
 arguments. Complete `--json` responses and exact Diff artifacts remain
 available when machine fidelity is explicitly required.

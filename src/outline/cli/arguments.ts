@@ -20,17 +20,32 @@ export interface ParsedReadCommand {
   readonly output?: string;
 }
 
+export interface SplitOptionArguments {
+  readonly options: readonly string[];
+  readonly literals: readonly string[];
+}
+
+export function splitOptionTerminator(args: readonly string[]): SplitOptionArguments {
+  const index = args.indexOf('--');
+  return index < 0
+    ? { options: args, literals: [] }
+    : { options: args.slice(0, index), literals: args.slice(index + 1) };
+}
+
 export async function parseReadCommand(
   command: 'find' | 'show' | 'export',
   args: readonly string[],
   read: StructuredReader,
 ): Promise<ParsedReadCommand> {
-  const inputIndex = args.indexOf('--input');
+  const split = splitOptionTerminator(args);
+  const inputIndex = split.options.indexOf('--input');
   if (inputIndex >= 0) {
     if (command !== 'find') throw usageError('--input is only available for find.');
-    if (inputIndex !== 0 || args.length !== 2) throw usageError('find --input must be used alone.');
+    if (inputIndex !== 0 || split.options.length !== 2 || split.literals.length > 0) {
+      throw usageError('find --input must be used alone.');
+    }
     return {
-      input: parseJson(await read(requiredValue(args[1], '--input')), '--input'),
+      input: parseJson(await read(requiredValue(split.options[1], '--input')), '--input'),
     };
   }
   let selector: Selector | undefined;
@@ -50,29 +65,30 @@ export async function parseReadCommand(
   let projection: Projection | undefined;
   let output: string | undefined;
   const positional: string[] = [];
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (arg === '--selector') selector = parseSelector(await read(requiredValue(args[++index], '--selector')));
-    else if (arg === '--query') query = parseJson(await read(requiredValue(args[++index], '--query')), '--query');
-    else if (arg === '--search') searchId = requiredValue(args[++index], '--search');
+  for (let index = 0; index < split.options.length; index += 1) {
+    const arg = split.options[index];
+    if (arg === '--selector') selector = parseSelector(await read(requiredValue(split.options[++index], '--selector')));
+    else if (arg === '--query') query = parseJson(await read(requiredValue(split.options[++index], '--query')), '--query');
+    else if (arg === '--search') searchId = requiredValue(split.options[++index], '--search');
     else if (arg === '--count') count = true;
-    else if (arg === '--within') within = parseSelector(await read(requiredValue(args[++index], '--within')));
+    else if (arg === '--within') within = parseSelector(await read(requiredValue(split.options[++index], '--within')));
     else if (arg === '--include-trash') includeTrash = true;
-    else if (arg === '--order') order = oneOf(requiredValue(args[++index], '--order'), ['document', 'created', 'updated', 'text'], '--order');
+    else if (arg === '--order') order = oneOf(requiredValue(split.options[++index], '--order'), ['document', 'created', 'updated', 'text'], '--order');
     else if (arg === '--limit') {
-      limit = boundedInteger(args[++index], '--limit', 1, 10_000);
+      limit = boundedInteger(split.options[++index], '--limit', 1, 10_000);
       limitSpecified = true;
     }
-    else if (arg === '--cursor') cursor = requiredValue(args[++index], '--cursor');
-    else if (arg === '--kind') kind = oneOf(requiredValue(args[++index], '--kind'), ['summary', 'node', 'outline', 'backlinks', 'view', 'export'], '--kind');
-    else if (arg === '--depth') depth = boundedInteger(args[++index], '--depth', 0, 1_024);
-    else if (arg === '--include') include = parseInclude(requiredValue(args[++index], '--include'));
-    else if (arg === '--format') format = oneOf(requiredValue(args[++index], '--format'), ['json', 'jsonl', 'markdown', 'opml'], '--format');
-    else if (arg === '--projection') projection = parseJson(await read(requiredValue(args[++index], '--projection')), '--projection') as Projection;
-    else if (arg === '--output') output = requiredValue(args[++index], '--output');
+    else if (arg === '--cursor') cursor = requiredValue(split.options[++index], '--cursor');
+    else if (arg === '--kind') kind = oneOf(requiredValue(split.options[++index], '--kind'), ['summary', 'node', 'outline', 'backlinks', 'view', 'export'], '--kind');
+    else if (arg === '--depth') depth = boundedInteger(split.options[++index], '--depth', 0, 1_024);
+    else if (arg === '--include') include = parseInclude(requiredValue(split.options[++index], '--include'));
+    else if (arg === '--format') format = oneOf(requiredValue(split.options[++index], '--format'), ['json', 'jsonl', 'markdown', 'opml'], '--format');
+    else if (arg === '--projection') projection = parseJson(await read(requiredValue(split.options[++index], '--projection')), '--projection') as Projection;
+    else if (arg === '--output') output = requiredValue(split.options[++index], '--output');
     else if (arg?.startsWith('-')) throw usageError(`Unknown ${command} option: ${arg}`);
     else positional.push(arg ?? '');
   }
+  positional.push(...split.literals);
   if (selector && positional.length > 0) throw usageError(`${command} cannot combine a positional target with --selector.`);
   if (command === 'find') {
     if (selector && (query !== undefined || searchId)) throw usageError('find cannot combine --selector with --query or --search.');
@@ -159,14 +175,16 @@ export async function parseWatchCommand(
   args: readonly string[],
   read: StructuredReader,
 ): Promise<WatchRequest> {
+  const split = splitOptionTerminator(args);
+  if (split.literals.length > 0) throw usageError(`Unexpected watch argument: ${split.literals[0]}`);
   let cursor: string | undefined;
   let filter: EventFilter | undefined;
   let projection: Projection | undefined;
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (arg === '--cursor') cursor = requiredValue(args[++index], '--cursor');
-    else if (arg === '--filter') filter = parseJson(await read(requiredValue(args[++index], '--filter')), '--filter') as EventFilter;
-    else if (arg === '--projection') projection = parseJson(await read(requiredValue(args[++index], '--projection')), '--projection') as Projection;
+  for (let index = 0; index < split.options.length; index += 1) {
+    const arg = split.options[index];
+    if (arg === '--cursor') cursor = requiredValue(split.options[++index], '--cursor');
+    else if (arg === '--filter') filter = parseJson(await read(requiredValue(split.options[++index], '--filter')), '--filter') as EventFilter;
+    else if (arg === '--projection') projection = parseJson(await read(requiredValue(split.options[++index], '--projection')), '--projection') as Projection;
     else throw usageError(`Unknown watch option: ${arg}`);
   }
   return {

@@ -75,9 +75,12 @@ defaults, selectors, cardinality, argv versus `--input FILE|-`, output,
 create/patch/replace/ensure/destructive and idempotency semantics, plus two or
 three canonical examples. Destructive help requires `--preview`, reviewed
 `--expect-diff`, and `--yes`, and states that `--yes` alone is invalid. Help is
-plain text even with `--json` or `--human` and runs without Runtime. Unknown
+plain text even with `--json` and runs without Runtime. Unknown
 paths/options and missing arguments provide the nearest command or exact help
-next step.
+next step. The conventional `--` before a command terminates global options;
+the same token after a command terminates that command's options. Arguments
+after the command terminator are literal positionals, and `--help` or `-h`
+there is content rather than control syntax.
 
 Advanced query help and completion metadata use the same executable operator
 registry as `QueryExpressionSchema` and the generated Agent command reference.
@@ -86,18 +89,26 @@ closed operator-specific object: required field, tag, target, or value operands
 cannot be omitted, unrelated operands cannot be supplied, and an operator absent
 from that schema is not a supported CLI operator.
 
-Non-TTY stdout defaults to one versioned JSON response envelope, or JSONL for a
-stream. `--human` forces human presentation and `--json` explicitly forces the
-machine form; combining them is invalid. Output mode never changes selection,
-mutation, or error semantics. `SIGINT` and `SIGTERM` abort every command path and
-use exit codes 130 and 143 respectively.
+TTY and non-TTY stdout both default to the same deterministic summary.
+`--json` explicitly requests one versioned JSON response envelope, or JSONL for
+a stream. TTY state affects interaction only, never the output data structure.
+Output mode never changes selection, mutation, or error semantics. `SIGINT` and
+`SIGTERM` abort every command path and use exit codes 130 and 143 respectively.
 
-Human success output is a deterministic, ANSI-free receipt capped at 4 KiB.
+Raw `--output -` reserves stdout exclusively for artifact or asset bytes.
+Failures before or during a raw transfer write a diagnostic to stderr and return
+a non-zero exit without appending a response envelope to stdout. CLI and Runtime
+stream writers honor downstream backpressure. A downstream `EPIPE` is a normal
+early-consumer termination rather than an internal CLI failure. Common file
+errors retain their path and actionable cause in summary output while preserving
+stable public error categories.
+
+Summary success output is a deterministic, ANSI-free receipt capped at 4 KiB.
 Mutation receipts report settlement, Operation and revision identity, affected
 count/digest, recovery, and bounded returned roots; viewed-tree add also reports
 owner, item/display counts, and mode. View inspection reports complete display
 state when it fits and otherwise explicit omission evidence plus a digest. A
-human `diff --output FILE` leaves the exact artifact unchanged and reports its
+default `diff --output FILE` leaves the exact artifact unchanged and reports its
 path, bytes/hash, Diff/ChangeSet hashes, base revision, effect counts,
 destructive classes, bindings, and warnings. `--json` remains complete.
 
@@ -397,7 +408,7 @@ on the Operation. The same key and canonical payload returns the original
 Operation even when its base is now historical; the same key with another payload
 remains an idempotency conflict.
 
-Human destructive porcelain on a TTY first prints the exact Runtime-produced
+Interactive destructive porcelain on a TTY first prints the exact Runtime-produced
 Diff and asks for confirmation. Acceptance submits that same artifact to
 `apply`; rejection writes nothing, and a revision change during review returns a
 stale conflict without recomputing or retrying. JSON and non-TTY callers must
@@ -410,7 +421,9 @@ Canonical Diff responses stream from Runtime while SHA-256 and byte count advanc
 over the same chunks. Results up to 8 MiB may be collected into the single JSON
 envelope. Larger results require an atomic `--output` file or raw `--output -`;
 the client verifies response identity, length, and digest as the stream is
-consumed and never retains the whole encoded artifact merely to hash it.
+consumed and never retains the whole encoded artifact merely to hash it. File
+output writes those verified chunks unchanged: its byte count and raw-file
+SHA-256 exactly match the returned receipt.
 
 Apply is atomic. Runtime keeps Core rollback live until one fsynced transaction
 record contains the document update, Operation, recovery patch, idempotency

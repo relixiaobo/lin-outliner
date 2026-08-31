@@ -9,7 +9,7 @@ import {
 } from '../contract/schemas';
 import { checkOutlineSchema } from '../contract/validation';
 
-const MAX_HUMAN_BYTES = 4 * 1024;
+const MAX_SUMMARY_BYTES = 4 * 1024;
 const NON_ITEM_NODE_TYPES = new Set([
   'queryCondition', 'viewDef', 'sortRule', 'filterRule', 'displayField',
   'defConfig', 'systemOption', 'fieldEntry',
@@ -135,33 +135,38 @@ async function show(client: ReadClient, projection: Projection, signal?: AbortSi
   return data;
 }
 
-export function renderHumanResult(command: string, data: unknown): string {
-  const lines = humanLines(command, data);
+export function renderSummaryResult(command: string, data: unknown): string {
+  const lines = summaryLines(command, data);
   const output = `${lines.join('\n')}\n`;
-  if (Buffer.byteLength(output) <= MAX_HUMAN_BYTES) return output;
+  if (Buffer.byteLength(output) <= MAX_SUMMARY_BYTES) return output;
   const digest = canonicalSha256(data);
   const kept = [...lines];
   while (kept.length > 0) {
     const omitted = lines.slice(kept.length);
     const suffix = `Omitted lines: ${omitted.length}; bytes=${Buffer.byteLength(`${omitted.join('\n')}\n`)}\nDigest: ${digest}\n`;
     const bounded = `${kept.join('\n')}\n${suffix}`;
-    if (Buffer.byteLength(bounded) <= MAX_HUMAN_BYTES) return bounded;
+    if (Buffer.byteLength(bounded) <= MAX_SUMMARY_BYTES) return bounded;
     kept.pop();
   }
   return `Omitted lines: ${lines.length}; bytes=${Buffer.byteLength(output)}\nDigest: ${digest}\n`;
 }
 
-function humanLines(command: string, data: unknown): string[] {
-  if (isRecord(data) && data.kind === 'outline.human-viewed-tree-receipt' && isRecord(data.settlement)) {
+function summaryLines(command: string, data: unknown): string[] {
+  if (command === 'capabilities' && Array.isArray(data)) {
+    return data.map((entry) => isRecord(entry)
+      ? `${String(entry.name)}\t${String(entry.summary)}`
+      : String(entry));
+  }
+  if (isRecord(data) && data.kind === 'outline.summary-viewed-tree-receipt' && isRecord(data.settlement)) {
     return [
-      ...humanLines(command, data.settlement),
+      ...summaryLines(command, data.settlement),
       `Owner: ${String(data.ownerId)}`,
       `Items: ${String(data.itemCount)}`,
       `Display fields: ${String(data.displayFieldCount)}`,
       `Persisted view mode: ${String(data.mode)}`,
     ];
   }
-  if (isRecord(data) && data.kind === 'outline.human-diff-receipt' && isRecord(data.diff)) {
+  if (isRecord(data) && data.kind === 'outline.summary-diff-receipt' && isRecord(data.diff)) {
     const diff = data.diff;
     const effects = new Map<string, number>();
     for (const affected of Array.isArray(diff.affected) ? diff.affected : []) {
@@ -226,7 +231,7 @@ function humanLines(command: string, data: unknown): string[] {
       ...(resultIds.length > 0 ? [`Returned roots: ${resultIds.join(', ')}`] : []),
     ];
   }
-  return [JSON.stringify(data, null, 2)];
+  return JSON.stringify(data, null, 2).split('\n');
 }
 
 function returnedRootIds(data: Record<string, unknown>): string[] {

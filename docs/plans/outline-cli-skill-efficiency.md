@@ -11,7 +11,7 @@ choreography, and ad hoc shell analysis.
 
 This plan is **one complete feature in one PR**. The feature includes the Skill
 instructions, the public CLI affordances those instructions need, deterministic
-human-readable receipts, executable fixtures, current-behavior specifications,
+summary receipts, executable fixtures, current-behavior specifications,
 and end-to-end acceptance evidence. None of those parts ships independently:
 guidance without the compact `add --input` form leaves the model generating the
 same verbose ChangeSet, while a command form the Skill does not select does not
@@ -107,11 +107,11 @@ representative table scenario uses only the `skill` tool and Bash invocations
 whose executable is `outline`, with at most four Provider tool calls:
 
 1. one invocation that loads the built-in `outline` Skill;
-2. zero or one Bash invocation of a bounded `outline --human show` or `find`
+2. zero or one Bash invocation of a bounded `outline show` or `find`
    when the destination is not already exact;
-3. one Bash invocation whose `command` is `outline --human add --input -` and
+3. one Bash invocation whose `command` is `outline add --input -` and
    whose separate `stdin` argument is the literal structured payload; and
-4. one Bash invocation of `outline --human view inspect OWNER_ID`.
+4. one Bash invocation of `outline view inspect OWNER_ID`.
 
 The common exact-destination case therefore uses three calls. It performs zero
 file-tool calls and reads no bundled reference or fixture at runtime.
@@ -197,7 +197,7 @@ The Outline Skill's representative invocation after #596 merges is:
 
 ```json
 {
-  "command": "outline --human add --input -",
+  "command": "outline add --input -",
   "stdin": "{\"kind\":\"viewed-tree\",\"placement\":{...},\"title\":\"Prices\",...}"
 }
 ```
@@ -401,7 +401,7 @@ interface ViewSummary {
   structural children.
 - **FR-19:** Display metadata follows the view's complete display configuration
   and resolves labels deterministically. The digest covers the complete ordered
-  display state so bounded human output can prove whether an omitted tail
+  display state so bounded summary output can prove whether an omitted tail
   changed.
 - **FR-20:** Inspection performs any local pagination/count composition behind
   one CLI invocation. It never returns row cell contents, complete owner
@@ -412,15 +412,13 @@ model to parse a large generic `show` Projection. For a table request, success
 requires `mode: table` plus the expected ordinary item and display-field counts;
 the summary never invents a separate table resource.
 
-### 7. Deterministic Human Receipts
+### 7. Deterministic Summary Receipts
 
-Non-interactive CLI execution currently defaults to a JSON envelope, and most
-`--human` commands still pretty-print the complete JSON result. Through `bash`,
-that JSON becomes a string inside another tool-result envelope, adding escaping
-without helping the model decide what happened.
-
-`--json` remains the complete stable machine contract. `--human` becomes a
-deterministic presentation contract for model-visible execution:
+The CLI defaults to the same deterministic summary on TTY and non-TTY stdout.
+TTY state affects interaction only, never the output data structure. `--json`
+is the explicit complete stable machine contract. This avoids nesting a JSON
+response string inside the Bash tool-result envelope when the model only needs
+to decide what happened:
 
 - **FR-21:** Operation receipts contain command, applied/no-change status,
   Operation ID when present, revision transition, affected count and digest,
@@ -431,13 +429,13 @@ deterministic presentation contract for model-visible execution:
   count, display-field count, and persisted view mode. `view inspect` prints the
   complete summary when it fits and otherwise prints the counts, display digest,
   a bounded display-field prefix, and the exact omitted count.
-- **FR-23:** `diff --output FILE` in human mode writes the unchanged exact Diff
+- **FR-23:** Default `diff --output FILE` writes the unchanged exact Diff
   artifact and prints a review receipt: artifact path/bytes/hash, Diff and
   ChangeSet hashes, base revision, affected counts by effect, destructive
   classifications, bindings, warning codes/messages, and explicit omission
   counts. The Skill must stop or narrow the work when any review-critical tail
   is omitted; it must not silently apply from a partial receipt.
-- **FR-24:** Every human receipt is valid UTF-8, stable across TTY/non-TTY use,
+- **FR-24:** Every summary receipt is valid UTF-8, stable across TTY/non-TTY use,
   free of ANSI control sequences, and capped at 4 KiB. A cap is expressed with
   counts and digests, never silent truncation.
 - **FR-25:** Failure output keeps the existing typed error code, message, and
@@ -450,8 +448,8 @@ Agent shell projector. Raw `--json` responses, Diff artifacts, Operation log
 records, and Runtime protocol results remain byte-for-byte governed by their
 existing schemas.
 
-The Skill uses `--human` whenever stdout is intended for the current model. It
-uses `--json` only when a test explicitly validates the JSON contract. Exact
+The Skill relies on default summary output for the current model. It uses
+`--json` only when a test explicitly validates the JSON contract. Exact
 Diff artifacts travel directly from `outline diff --output PATH` to `outline
 apply --input PATH`; neither the model nor a file tool opens or echoes them.
 
@@ -505,7 +503,7 @@ execution boundary.
 - **NFR-3:** Existing destructive acknowledgement, Diff hash, ChangeSet hash,
   target cardinality, causation, permission, audit, and recovery semantics do
   not change.
-- **NFR-4:** Human presentation failure degrades to a bounded typed receipt or
+- **NFR-4:** Summary presentation failure degrades to a bounded typed receipt or
   explicit presentation error after the canonical result is retained. It never
   changes mutation settlement and never turns a successful write into an
   uncertain retry condition.
@@ -573,7 +571,7 @@ Expected implementation ownership after `outline-source-model`:
   shared final field/view schema reuse;
 - `src/outline/cli/porcelain.ts` for deterministic viewed-tree lowering;
 - `src/outline/cli/runner.ts` plus at most one adjacent pure presenter/inspector
-  module for view inspection and bounded human receipts;
+  module for view inspection and bounded summary receipts;
 - `src/main/builtInSkills/outline/SKILL.md` and
   `references/changesets.md` for the workflow correction;
 - generated `references/commands.md` through
@@ -603,7 +601,7 @@ return that interface decision to PM review instead of expanding this PR.
 
 There are no unresolved product questions in this plan. Ratification accepts the
 mode-neutral viewed-tree `add` form, compact `view inspect`, direct-commit routing,
-and 4 KiB human-receipt contract together. Exact private type names may align with
+and 4 KiB summary-receipt contract together. Exact private type names may align with
 `outline-source-model` during implementation without changing those observable behaviors.
 
 ## Acceptance criteria
@@ -647,7 +645,7 @@ and 4 KiB human-receipt contract together. Exact private type names may align wi
 ### Context Efficiency
 
 - [ ] **AC-11:** The sanitized prepared-table trace uses one Skill load, zero or
-  one bounded human `show/find`, one human `add --input -`, and one human `view
+  one bounded summary `show/find`, one summary `add --input -`, and one summary `view
   inspect`; the exact-destination case uses three Provider tool calls. The Bash
   call's `command` contains only the direct `outline` invocation and its
   separate `stdin` field contains the complete structured input.
@@ -658,7 +656,7 @@ and 4 KiB human-receipt contract together. Exact private type names may align wi
 - [ ] **AC-13:** One valid 10,000-row viewed-tree payload larger than macOS
   `ARG_MAX` and below the merged 64 MiB raw-stdin bound reaches the real CLI
   through the Bash stdin field, produces the correct table, and leaves the shell
-  argv free of payload bytes. Human mutation, Diff, and view receipts remain at
+  argv free of payload bytes. Summary mutation, Diff, and view receipts remain at
   or below 4 KiB and expose explicit omitted counts/digests at the boundary. A
   separate production-schema-valid `outline add --input -` fixture with two
   4,194,304-code-unit NUL-valued Nodes measures 50,331,901 raw stdin bytes,
@@ -666,8 +664,8 @@ and 4 KiB human-receipt contract together. Exact private type names may align wi
   the real CLI intact, and preserves both exact values; #596 contains no Outline
   schema or capacity fixture.
 - [ ] **AC-14:** `--json` golden responses and exact Diff artifacts retain their complete
-  public schemas; `--human` output contains no nested JSON envelope or ANSI
-  control sequences.
+  public schemas; default summary output contains no nested JSON envelope or
+  ANSI control sequences.
 - [ ] **AC-15:** Before/after evidence records Provider Call count, per-call model-visible
   bytes, uncached input, cache read, output, wall time, and correctness. It does
   not use `totalTokens` alone as the conclusion.

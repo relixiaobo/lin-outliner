@@ -295,6 +295,20 @@ describe('Codex Memory contracts', () => {
     expect(store.usageForNode(MEMORY_NODE_ID).count).toBe(1);
   });
 
+  test('counts an inline citation from an explicit JSON show envelope', () => {
+    const { extension, store, targetThread, activeTurn, projection } = memoryUsageHarness();
+    extension.contributeThreadContext(targetThread);
+    completeOutlineShow(extension, targetThread, activeTurn, projection, [MEMORY_NODE_ID], {
+      command: `outline --json show ${MEMORY_NODE_ID}`,
+    });
+    completeMemoryTurn(
+      extension,
+      targetThread,
+      completedResponseTurn(activeTurn, formatNodeReferenceMarker(MEMORY_NODE_ID)),
+    );
+    expect(store.usageForNode(MEMORY_NODE_ID).count).toBe(1);
+  });
+
   test('does not count find results, ordinary Nodes, failed shows, or uncited Memory reads', () => {
     const { extension, store, targetThread, activeTurn, projection } = memoryUsageHarness();
     extension.contributeThreadContext(targetThread);
@@ -2186,19 +2200,22 @@ function completeOutlineShow(
     nodes: nodeIds.map((nodeId) => projection.nodes.find((entry) => entry.id === nodeId))
       .filter((entry): entry is NodeProjection => entry !== undefined),
   };
-  const stdout = JSON.stringify({
-    protocolVersion: OUTLINE_PROTOCOL_VERSION,
-    requestId: 'cli:memory-citation-test',
-    ok: true,
-    command: 'show',
-    data,
-  });
+  const command = options.command ?? `outline show ${nodeIds.join(' ')}`;
+  const stdout = command.includes('--json')
+    ? JSON.stringify({
+        protocolVersion: OUTLINE_PROTOCOL_VERSION,
+        requestId: 'cli:memory-citation-test',
+        ok: true,
+        command: 'show',
+        data,
+      })
+    : JSON.stringify(data);
   extension.onToolCompleted({
     threadId: thread.id,
     turnId: turn.id,
     itemId: `item:show:${nodeIds.join(':')}`,
     identity: { namespace: null, name: 'bash' },
-    arguments: { command: options.command ?? `outline show ${nodeIds.join(' ')}` },
+    arguments: { command },
     result: options.ok === false
       ? { ok: false, tool: 'bash', error: { code: 'command_failed', message: 'Failed' } }
       : { ok: true, tool: 'bash', data: { stdout, stderr: '', interrupted: false, exitCode: 0 } },

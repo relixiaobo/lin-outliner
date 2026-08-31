@@ -578,8 +578,8 @@ export class OutlineRuntimeServer {
       connection: 'close',
     });
     let sequence = 0;
-    const write = (record: OutlineStreamRecord) => response.write(`${JSON.stringify(record)}\n`);
-    write({
+    const write = (record: OutlineStreamRecord) => writeWithBackpressure(response, `${JSON.stringify(record)}\n`);
+    await write({
       protocolVersion: OUTLINE_PROTOCOL_VERSION,
       requestId: request.requestId,
       sequence: sequence++,
@@ -587,14 +587,14 @@ export class OutlineRuntimeServer {
     });
     const result = await this.router.handle(request, { origin: 'external-client' });
     if (!result.ok) {
-      write({
+      await write({
         protocolVersion: OUTLINE_PROTOCOL_VERSION,
         requestId: request.requestId,
         sequence: sequence++,
         type: 'error',
         error: result.error,
       });
-      write({
+      await write({
         protocolVersion: OUTLINE_PROTOCOL_VERSION,
         requestId: request.requestId,
         sequence: sequence++,
@@ -607,7 +607,7 @@ export class OutlineRuntimeServer {
       ? formatOutlineExport(result.data as import('../../contract/schemas').ProjectionResult)
       : [result.data];
     for (const data of records) {
-      write({
+      await write({
         protocolVersion: OUTLINE_PROTOCOL_VERSION,
         requestId: request.requestId,
         sequence: sequence++,
@@ -618,7 +618,7 @@ export class OutlineRuntimeServer {
     const cursor = isRecord(result.data) && typeof result.data.cursor === 'string'
       ? result.data.cursor
       : undefined;
-    write({
+    await write({
       protocolVersion: OUTLINE_PROTOCOL_VERSION,
       requestId: request.requestId,
       sequence: sequence++,

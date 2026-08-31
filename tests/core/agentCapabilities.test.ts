@@ -147,6 +147,7 @@ describe('agent capabilities', () => {
       ['outline --timeout 300000 apply --file diff.json', ['outline.edit', 'outline.delete']],
       ['outline daily ensure --date 2026-08-24', ['outline.edit']],
       ['outline purge @trash --yes', ['outline.edit', 'outline.delete']],
+      ['outline -- purge @trash --yes', ['outline.edit', 'outline.delete']],
     ] as const;
     for (const [command, actionKinds] of cases) {
       const decision = evaluateAgentToolCapability({
@@ -156,11 +157,12 @@ describe('agent capabilities', () => {
       });
       expect(decision.descriptors.map((descriptor) => descriptor.actionKind), command).toEqual(actionKinds);
     }
-    expect(directOutlineShellInvocation('outline --timeout 300000 --human show @today')).toEqual({
+    expect(directOutlineShellInvocation('outline --timeout 300000 show @today')).toEqual({
       command: 'show',
       args: ['@today'],
-      output: 'human',
+      output: 'summary',
     });
+    expect(directOutlineShellInvocation('outline --human show @today')).toBeNull();
     expect(directOutlineShellInvocation('outline show @today && echo done')).toBeNull();
   });
 
@@ -309,7 +311,7 @@ describe('agent capabilities', () => {
             TENON_OUTLINE_CLI_ENTRY: path.resolve('src/outline/cli/entry.ts'),
           },
         }),
-      })).resolves.toMatchObject({ output: expect.stringContaining('"running":false'), resourceRefs: [] });
+      })).resolves.toMatchObject({ output: 'Outline Runtime: not running', resourceRefs: [] });
       await expect(executeAgentSkillShellCommand({
         command: 'printf changed > tracked.txt',
         localRoot: workspace,

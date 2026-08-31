@@ -86,7 +86,6 @@ through `--query` or `--input` for advanced search.
 Place global options before the command:
 
 - `--json`: Write stable machine-readable response envelopes; ignored by --help.
-- `--human`: Write human-readable output even when stdout is not a TTY; ignored by --help.
 - `--protocol MAJOR` (default 1): Require one supported protocol major.
 - `--no-start`: Fail if Runtime is not already running.
 - `--startup-timeout MS` (default 10000): Limit Runtime startup wait time.

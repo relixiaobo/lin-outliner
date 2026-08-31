@@ -38,7 +38,7 @@ import {
   validateNormalizedImportShape,
   verifyImportSettlement,
 } from '../import/normalized';
-import { parseSelectorToken } from './arguments';
+import { parseSelectorToken, splitOptionTerminator } from './arguments';
 
 const execFile = promisify(execFileCallback);
 const IMPORT_ADAPTER_ENTRY_ENV = 'TENON_OUTLINE_IMPORT_ADAPTER_ENTRY';
@@ -84,11 +84,14 @@ export async function executeImportInvocation(
 }
 
 function parseInspectInput(args: readonly string[]): { source: string } {
-  if (args.length !== 1) throw usageError('import inspect requires exactly one SOURCE.');
-  return { source: args[0]! };
+  const split = splitOptionTerminator(args);
+  const sources = [...split.options, ...split.literals];
+  if (sources.length !== 1) throw usageError('import inspect requires exactly one SOURCE.');
+  return { source: sources[0]! };
 }
 
 async function parsePlanInput(args: readonly string[], io: ImportCliIo, signal?: AbortSignal) {
+  const split = splitOptionTerminator(args);
   let source: string | undefined;
   let sourceFormat: 'auto' | 'normalized' | 'tana' = 'auto';
   let fidelity: 'content' | 'clean' | 'full' = 'clean';
@@ -99,36 +102,40 @@ async function parsePlanInput(args: readonly string[], io: ImportCliIo, signal?:
   let changeSetOutput: string | undefined;
   let coverageOutput: string | undefined;
   let includeTrash = false;
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index]!;
+  for (let index = 0; index < split.options.length; index += 1) {
+    const arg = split.options[index]!;
     if (arg === '--format') {
-      const value = requiredValue(args[++index], '--format');
+      const value = requiredValue(split.options[++index], '--format');
       if (value !== 'auto' && value !== 'normalized' && value !== 'tana') {
         throw usageError('--format must be auto, normalized, or tana.');
       }
       sourceFormat = value;
     } else if (arg === '--fidelity') {
-      const value = requiredValue(args[++index], '--fidelity');
+      const value = requiredValue(split.options[++index], '--fidelity');
       if (value !== 'content' && value !== 'clean' && value !== 'full') {
         throw usageError('--fidelity must be content, clean, or full.');
       }
       fidelity = value;
     } else if (arg === '--mode') {
-      const value = requiredValue(args[++index], '--mode');
+      const value = requiredValue(split.options[++index], '--mode');
       if (value !== 'native_daily' && value !== 'stage') {
         throw usageError('--mode must be native_daily or stage.');
       }
       mode = value;
     } else if (arg === '--parent') {
-      parent = await parseParent(requiredValue(args[++index], '--parent'), io, signal);
-    } else if (arg === '--output') output = requiredValue(args[++index], '--output');
-    else if (arg === '--evidence-output') evidenceOutput = requiredValue(args[++index], '--evidence-output');
-    else if (arg === '--changeset-output') changeSetOutput = requiredValue(args[++index], '--changeset-output');
-    else if (arg === '--coverage-output') coverageOutput = requiredValue(args[++index], '--coverage-output');
+      parent = await parseParent(requiredValue(split.options[++index], '--parent'), io, signal);
+    } else if (arg === '--output') output = requiredValue(split.options[++index], '--output');
+    else if (arg === '--evidence-output') evidenceOutput = requiredValue(split.options[++index], '--evidence-output');
+    else if (arg === '--changeset-output') changeSetOutput = requiredValue(split.options[++index], '--changeset-output');
+    else if (arg === '--coverage-output') coverageOutput = requiredValue(split.options[++index], '--coverage-output');
     else if (arg === '--include-trash') includeTrash = true;
     else if (arg.startsWith('--')) throw usageError(`Unknown import plan option: ${arg}`);
     else if (!source) source = arg;
     else throw usageError(`Unexpected import plan argument: ${arg}`);
+  }
+  for (const literal of split.literals) {
+    if (!source) source = literal;
+    else throw usageError(`Unexpected import plan argument: ${literal}`);
   }
   if (!source) throw usageError('import plan requires SOURCE.');
   if (!output) throw usageError('import plan requires --output DIFF.');
@@ -149,16 +156,21 @@ async function parsePlanInput(args: readonly string[], io: ImportCliIo, signal?:
 }
 
 function parseVerifyInput(args: readonly string[]) {
+  const split = splitOptionTerminator(args);
   let operationId: string | undefined;
   let evidence: string | undefined;
   let diff: string | undefined;
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index]!;
-    if (arg === '--evidence') evidence = requiredValue(args[++index], '--evidence');
-    else if (arg === '--diff') diff = requiredValue(args[++index], '--diff');
+  for (let index = 0; index < split.options.length; index += 1) {
+    const arg = split.options[index]!;
+    if (arg === '--evidence') evidence = requiredValue(split.options[++index], '--evidence');
+    else if (arg === '--diff') diff = requiredValue(split.options[++index], '--diff');
     else if (arg.startsWith('--')) throw usageError(`Unknown import verify option: ${arg}`);
     else if (!operationId) operationId = arg;
     else throw usageError(`Unexpected import verify argument: ${arg}`);
+  }
+  for (const literal of split.literals) {
+    if (!operationId) operationId = literal;
+    else throw usageError(`Unexpected import verify argument: ${literal}`);
   }
   if (!operationId) throw usageError('import verify requires OPERATION_ID.');
   if (!evidence) throw usageError('import verify requires --evidence EVIDENCE.');
@@ -456,7 +468,6 @@ async function writeAtomicArtifact(target: string, chunks: AsyncIterable<Uint8Ar
   const handle = await open(temporary, 'wx', 0o600);
   try {
     for await (const chunk of chunks) await handle.write(chunk);
-    await handle.write(Buffer.from('\n'));
     await handle.sync();
     await handle.close();
     await rename(temporary, target);
