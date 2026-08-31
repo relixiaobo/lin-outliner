@@ -12,6 +12,29 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Bash can now receive large literal stdin without shell interpolation (PR
+  #604, codex)** — foreground `bash` calls accept up to 64 MiB of exact UTF-8
+  input through a backpressure-aware child-process stream, with explicit EOF and
+  unified early-close, abort, timeout, output, and process settlement. A generic
+  tool-owned large-text contract factors eligible JSON argument paths into
+  Thread-private, content-addressed dependencies while preserving canonical
+  replay, secret scanning, quota accounting, fork/copy, rollback, pruning, and
+  deletion. Renderer IPC exposes only item-bound argument identities and bounded
+  presentation, including Turns nested inside inherited context; shared RFC 6901
+  ordering and exact deep-JSON accounting keep reconstruction and display
+  deterministic. Constrained Agents classify stdin consumers from the same
+  parsed Bash authority used by capability policy. The context dependency
+  manifest is an intentional strict pre-release storage cut: pre-#604 installed
+  and clone-scoped Agent stores must be reset with every Tenon process stopped
+  before packaged/development first-launch verification. Gate review found four
+  Medium privacy, retention, ordering, and display-budget defects; all were fixed.
+  A later compatibility finding was withdrawn after confirming the ratified
+  clean-reset contract, which is now explicit in the spec and codec guard.
+  Verified with typecheck, `docs:check`, 2,727 passing Core tests with 6 skipped
+  and one known main-baseline plan-reference failure, 1,461 renderer tests,
+  whitespace checks, and all five GitHub E2E sample jobs plus baseline
+  subtraction.
+
 - **Outline Sources now present previews as part of the ordinary row flow (PR
   #599, codex-2)** — the selected preview renders before editable Node content
   and its ordinary URI field, with one marker/guide rail and independent child

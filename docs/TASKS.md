@@ -13,12 +13,12 @@ latest published train is `v0.7.0`.
 
 ## In Flight
 
-No implementation PR is open. `desktop-host-cutover` shipped in #603, so
-`agent-bash-stdin-transport` is the next eligible primary-chain claim. Startup
-Window, preview readers, and Skill authoring are also independently eligible
-under their collision lanes. The remaining plans from #588/#589, #591, #595,
-and #596 stay active below until their implementation, spec fold, and archive
-move complete.
+No implementation PR is open. `agent-bash-stdin-transport` shipped in #604, so
+`outline-cli-skill-efficiency` and `agent-result-and-file-lifecycle` are now
+eligible in parallel. Startup Window, preview readers, and Skill authoring are
+also independently eligible under their collision lanes. The remaining plans
+from #588/#589, #591, and #595 stay active below until their implementation,
+spec fold, and archive move complete.
 
 ## Primary Delivery Queue
 
@@ -39,17 +39,13 @@ protocol, security rule, user flow, or acceptance criterion.
 
 ```text
 Critical mechanism lane:
-  agent-bash-stdin-transport
-    ~> agent-result-and-file-lifecycle
+  agent-result-and-file-lifecycle
 
-Parallel now eligible after desktop-host-cutover:
+Parallel now eligible:
   startup-window-first
   file-preview-office
   url-static-reader
   agent-skill-authoring-foundation -> agent-skill-curation-report
-  agent-bash-stdin-transport (continues the critical lane)
-
-Parallel after agent-bash-stdin-transport:
   outline-cli-skill-efficiency
   agent-result-and-file-lifecycle (continues the critical lane)
 
@@ -61,9 +57,8 @@ Parallel after agent-result-and-file-lifecycle:
 
 | Priority | Plan / PR claim | Status | Eligible after |
 | --- | --- | --- | --- |
-| P1 | [agent-bash-stdin-transport](plans/agent-bash-stdin-transport.md) | `draft`, ratified in #596 | **Now; Desktop Host shipped in #603** |
-| P1 | [outline-cli-skill-efficiency](plans/outline-cli-skill-efficiency.md) | `draft`, ratified in #595 | `agent-bash-stdin-transport` |
-| P1 | [agent-result-and-file-lifecycle](plans/agent-result-and-file-lifecycle.md) | `draft`, ratified in #588/#589 | `agent-bash-stdin-transport` by A7 collision order; all three build stages stay inside this PR |
+| P1 | [outline-cli-skill-efficiency](plans/outline-cli-skill-efficiency.md) | `draft`, ratified in #595 | **Now; Bash stdin shipped in #604** |
+| P1 | [agent-result-and-file-lifecycle](plans/agent-result-and-file-lifecycle.md) | `draft`, ratified in #588/#589 | **Now; Bash stdin shipped in #604**; all three build stages stay inside this PR |
 | P1 | [agent-cross-thread-reference](plans/agent-cross-thread-reference.md) | `draft`, ratified in #589 | `agent-result-and-file-lifecycle` |
 | P1 | [agent-root-turn-recovery](plans/agent-root-turn-recovery.md) | `draft` | `agent-result-and-file-lifecycle` by A7 collision order |
 | P1 | [agent-delegated-failure-truth](plans/agent-delegated-failure-truth.md) | `draft` | `agent-root-turn-recovery` claim serialization |
@@ -74,12 +69,13 @@ Parallel after agent-result-and-file-lifecycle:
 | P3 | [agent-skill-curation-report](plans/agent-skill-curation-report.md) | `draft` | `agent-skill-authoring-foundation` |
 | P3 | [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | `draft` | `agent-result-and-file-lifecycle` |
 
-`agent-bash-stdin-transport` is the next primary-queue claim. Build-ready work
-outside this queue remains independently claimable under its own collision
-boundary. The Host composition chain is complete. Agent resource references,
-conversation workspaces/final citations, and delegated handoff remain three
-foundation-first build stages inside one atomic feature PR rather than three
-partial releases.
+`outline-cli-skill-efficiency` and `agent-result-and-file-lifecycle` are the next
+primary-queue claims and may proceed in parallel. Build-ready work outside this
+queue remains independently claimable under its own collision boundary. The
+Host composition and Bash stdin foundations are complete. Agent resource
+references, conversation workspaces/final citations, and delegated handoff
+remain three foundation-first build stages inside one atomic feature PR rather
+than three partial releases.
 
 The split also absorbs three former planless tasks without losing their intent:
 
@@ -97,7 +93,7 @@ Collision lanes remain claim-time constraints, not hidden graph edges:
 - `file-preview-office`, `url-static-reader`, and the preview/translation units
   in Interaction Jank must not overlap on shared preview shell files; #599 is the
   merged baseline for every later claim.
-- `agent-bash-stdin-transport` precedes Agent resource lifecycle because both
+- PR #604 settled Agent Bash stdin before Agent resource lifecycle because both
   rewrite Agent protocol/codec, `ToolPayloadStore`, context dependencies, Thread
   lifecycle, canonical-to-renderer projection, preload, and Host transport.
   Internal text remains a private Item dependency and never becomes a file
@@ -129,10 +125,11 @@ contract or user-visible decision.
 
 ### Release gates
 
-- **Agent input-history cutover verification** (release gate) — before the next
-  packaged train, stop every Tenon process, manually reset installed and clone-
-  scoped pre-#587 Agent stores, and verify fresh packaged/dev first launch. No
-  migration or automatic deletion ships.
+- **Agent persisted-schema cutover verification** (release gate) — before the
+  next packaged train, stop every Tenon process, manually reset installed and
+  clone-scoped pre-#604 Agent stores, and verify fresh packaged/dev first launch.
+  This covers the input-author and context dependency-manifest cuts; no migration
+  or automatic deletion ships.
 - **Launcher NSPanel packaged verification** — one `.dmg` pass for Cmd+Tab,
   fullscreen floating, focus, dock icon, and light/dark behavior.
 
@@ -227,6 +224,11 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **agent-bash-stdin-transport** (`done`, #604, 2026-08-31) — Bash gained exact
+  bounded foreground stdin over Thread-private large-text dependencies with
+  canonical replay, renderer projection, and complete fork/prune lifecycle;
+  plan archived at
+  [agent-bash-stdin-transport](plans/archive/agent-bash-stdin-transport.md).
 - **desktop-host-cutover** (`done`, #603, 2026-08-31) — the final typed
   `DesktopHost` now owns startup, race-safe quit/Cancel arbitration, reversible
   effects, and ordered cleanup while `main.ts` retains fixed Electron bootstrap;

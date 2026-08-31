@@ -2127,3 +2127,20 @@ Regression coverage must interrupt every nested async boundary, prove completed
 effects are not replayed after Cancel, reject failed unfreeze without reporting
 `started`, and inject cleanup plus exit failures to prove terminal settlement and
 exactly-once exit behavior.
+
+## Compatibility findings must establish the format policy first
+
+PR #604 added a required context dependency manifest. Review correctly
+reproduced that older Items no longer decoded, but initially classified the
+failure as a compatibility regression even though the ratified plan and
+repository policy explicitly selected a pre-release clean reset with no legacy
+reader.
+
+**Resolve the approved persistence policy before judging a historical decode
+failure.** If a format is compatible, test real historical bytes and require the
+reader to preserve their semantics. If a format is an intentional strict cut,
+reject the old shape explicitly, lock that rejection in the current-behavior
+spec and codec tests, and carry the required reset into the release gate and
+release note. Do not infer compatibility intent from whether a field looks
+additive, and do not add a fallback that contradicts the ratified storage
+boundary.
