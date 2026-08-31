@@ -2223,26 +2223,64 @@ test.describe('file attachments', () => {
     await expect(sourceValueRow.locator('.row-inline-content-slot .source-preview-affordance')).toHaveCount(0);
     await expect.poll(async () => sourceValueRow.evaluate((valueRow) => {
       const editor = valueRow.querySelector<HTMLElement>('.row-editor');
+      const paragraph = editor?.querySelector<HTMLElement>('.ProseMirror p');
+      const slot = paragraph?.querySelector<HTMLElement>('.row-inline-content-slot');
       const affordances = valueRow.querySelector<HTMLElement>('.field-value-affordances');
       const textNode = Array.from(
         editor?.querySelector('.ProseMirror')?.childNodes ?? [],
       ).flatMap((child) => Array.from(child.childNodes))
         .findLast((child): child is Text => child.nodeType === Node.TEXT_NODE && Boolean(child.textContent));
-      if (!editor || !affordances || !textNode?.textContent) return null;
+      if (!editor || !paragraph || !slot || !affordances || !textNode?.textContent) {
+        return {
+          status: 'missing',
+          affordances: Boolean(affordances),
+          editor: Boolean(editor),
+          paragraph: Boolean(paragraph),
+          slot: Boolean(slot),
+          textNode: Boolean(textNode?.textContent),
+        };
+      }
       const finalCharacter = document.createRange();
       finalCharacter.setStart(textNode, textNode.textContent.length - 1);
       finalCharacter.setEnd(textNode, textNode.textContent.length);
       const finalTextRect = finalCharacter.getBoundingClientRect();
       const affordanceRect = affordances.getBoundingClientRect();
       const inlineGap = affordanceRect.left - finalTextRect.right;
+      const sharesLastTextLine = finalTextRect.top < affordanceRect.bottom
+        && finalTextRect.bottom > affordanceRect.top;
+      if (inlineGap >= 0 && inlineGap <= 8 && sharesLastTextLine) {
+        return { status: 'aligned' };
+      }
+      const rect = (target: Element | Range) => {
+        const value = target.getBoundingClientRect();
+        return {
+          bottom: value.bottom,
+          height: value.height,
+          left: value.left,
+          right: value.right,
+          top: value.top,
+          width: value.width,
+        };
+      };
+      const paragraphStyle = getComputedStyle(paragraph);
+      const slotStyle = getComputedStyle(slot);
       return {
-        followsFinalText: inlineGap >= 0 && inlineGap <= 8,
-        sharesLastTextLine: finalTextRect.top < affordanceRect.bottom
-          && finalTextRect.bottom > affordanceRect.top,
+        status: 'misaligned',
+        affordanceChildren: affordances.children.length,
+        affordances: rect(affordances),
+        editor: rect(editor),
+        finalCharacter: rect(finalCharacter),
+        inlineGap,
+        paragraph: rect(paragraph),
+        paragraphPaddingInlineEnd: paragraphStyle.paddingInlineEnd,
+        reserve: paragraphStyle.getPropertyValue('--field-value-affordance-reserve'),
+        slot: rect(slot),
+        slotMarginInlineEnd: slotStyle.marginInlineEnd,
+        slotParent: slot.parentElement?.tagName ?? null,
+        viewport: { height: innerHeight, width: innerWidth },
       };
     })).toEqual({
-      followsFinalText: true,
-      sharesLastTextLine: true,
+      status: 'aligned',
     });
     await expect.poll(async () => sourceFieldRow.evaluate((field, rootId) => {
       const drafts = document.querySelectorAll<HTMLElement>(
