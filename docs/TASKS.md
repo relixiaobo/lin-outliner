@@ -13,10 +13,12 @@ latest published train is `v0.7.0`.
 
 ## In Flight
 
-No implementation PR is open. `host-platform-composition` shipped in #602, so
-`desktop-host-cutover` is the next eligible primary-chain claim. The remaining
-plans from #588/#589, #591, #595, and #596 stay active below until their
-implementation, spec fold, and archive move complete.
+No implementation PR is open. `desktop-host-cutover` shipped in #603, so
+`agent-bash-stdin-transport` is the next eligible primary-chain claim. Startup
+Window, preview readers, and Skill authoring are also independently eligible
+under their collision lanes. The remaining plans from #588/#589, #591, #595,
+and #596 stay active below until their implementation, spec fold, and archive
+move complete.
 
 ## Primary Delivery Queue
 
@@ -37,11 +39,10 @@ protocol, security rule, user flow, or acceptance criterion.
 
 ```text
 Critical mechanism lane:
-  desktop-host-cutover
-    ~> agent-bash-stdin-transport
+  agent-bash-stdin-transport
     ~> agent-result-and-file-lifecycle
 
-Parallel after desktop-host-cutover:
+Parallel now eligible after desktop-host-cutover:
   startup-window-first
   file-preview-office
   url-static-reader
@@ -60,26 +61,25 @@ Parallel after agent-result-and-file-lifecycle:
 
 | Priority | Plan / PR claim | Status | Eligible after |
 | --- | --- | --- | --- |
-| P1 | [desktop-host-cutover](plans/desktop-host-cutover.md) | `draft`, ratified in #591 | **Now; platform composition shipped in #602** |
-| P1 | [agent-bash-stdin-transport](plans/agent-bash-stdin-transport.md) | `draft`, ratified in #596 | `desktop-host-cutover` by A7 collision order |
+| P1 | [agent-bash-stdin-transport](plans/agent-bash-stdin-transport.md) | `draft`, ratified in #596 | **Now; Desktop Host shipped in #603** |
 | P1 | [outline-cli-skill-efficiency](plans/outline-cli-skill-efficiency.md) | `draft`, ratified in #595 | `agent-bash-stdin-transport` |
 | P1 | [agent-result-and-file-lifecycle](plans/agent-result-and-file-lifecycle.md) | `draft`, ratified in #588/#589 | `agent-bash-stdin-transport` by A7 collision order; all three build stages stay inside this PR |
 | P1 | [agent-cross-thread-reference](plans/agent-cross-thread-reference.md) | `draft`, ratified in #589 | `agent-result-and-file-lifecycle` |
 | P1 | [agent-root-turn-recovery](plans/agent-root-turn-recovery.md) | `draft` | `agent-result-and-file-lifecycle` by A7 collision order |
 | P1 | [agent-delegated-failure-truth](plans/agent-delegated-failure-truth.md) | `draft` | `agent-root-turn-recovery` claim serialization |
-| P2 | [startup-window-first](plans/startup-window-first.md) | `draft` | `desktop-host-cutover` |
-| P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | `desktop-host-cutover`; preview-shell lane clear |
-| P2 | [url-static-reader](plans/url-static-reader.md) | `draft` | `desktop-host-cutover`; preview-shell lane clear |
-| P2 | [agent-skill-authoring-foundation](plans/agent-skill-authoring-foundation.md) | `draft` | `desktop-host-cutover` |
+| P2 | [startup-window-first](plans/startup-window-first.md) | `draft` | **Now; Desktop Host shipped in #603** |
+| P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
+| P2 | [url-static-reader](plans/url-static-reader.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
+| P2 | [agent-skill-authoring-foundation](plans/agent-skill-authoring-foundation.md) | `draft` | **Now; Desktop Host shipped in #603** |
 | P3 | [agent-skill-curation-report](plans/agent-skill-curation-report.md) | `draft` | `agent-skill-authoring-foundation` |
 | P3 | [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | `draft` | `agent-result-and-file-lifecycle` |
 
-`desktop-host-cutover` is the next primary-queue claim. Build-ready work outside
-this queue remains independently claimable under its own collision boundary.
-The remaining Host chain has one substantial PR: final DesktopHost/lifecycle
-cutover. Agent resource references, conversation workspaces/final citations,
-and delegated handoff remain three foundation-first build stages inside one
-atomic feature PR rather than three partial releases.
+`agent-bash-stdin-transport` is the next primary-queue claim. Build-ready work
+outside this queue remains independently claimable under its own collision
+boundary. The Host composition chain is complete. Agent resource references,
+conversation workspaces/final citations, and delegated handoff remain three
+foundation-first build stages inside one atomic feature PR rather than three
+partial releases.
 
 The split also absorbs three former planless tasks without losing their intent:
 
@@ -227,6 +227,10 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **desktop-host-cutover** (`done`, #603, 2026-08-31) — the final typed
+  `DesktopHost` now owns startup, race-safe quit/Cancel arbitration, reversible
+  effects, and ordered cleanup while `main.ts` retains fixed Electron bootstrap;
+  plan archived at [desktop-host-cutover](plans/archive/desktop-host-cutover.md).
 - **host-platform-composition** (`done`, #602, 2026-08-31) — Electron-native
   resource, preview, window, and application ownership moved behind typed
   platform Hosts with explicit release and complete-tree audits; plan archived

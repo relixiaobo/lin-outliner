@@ -182,6 +182,23 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
+- **Desktop composition now converges behind one race-safe `DesktopHost` (PR
+  #603, codex)** — `main.ts` retains fixed Electron identity, security,
+  single-instance, readiness, and lifecycle forwarding while the final Host
+  composes typed domain/platform owners, transport, windows, deferred producers,
+  and reverse-order `ResourceScope` cleanup. Startup is permanently single-flight
+  with resumable outer and Agent-internal milestones; quit synchronously closes
+  admission, joins startup, preserves Retry/Cancel/Quit Anyway, confirms Runtime
+  unfreeze before Cancel, and exits after early or irreversible cleanup even when
+  cleanup reports failure. The complete-tree audit follows transport ownership
+  into the new composition root, and packaged smoke now verifies Runtime release
+  and clean replacement on relaunch. Gate review found four Medium lifecycle
+  races across nested producer startup, partial-start Cancel, failed unfreeze,
+  and failed early rollback; all were fixed before the final no-findings review.
+  Verified with typecheck, `docs:check`, the Host audit, 62 focused Core tests
+  across lifecycle/composition/security surfaces, whitespace checks, and all five
+  GitHub E2E samples plus baseline subtraction.
+
 - **Electron-native resource, preview, window, and application ownership now
   lives behind typed platform Hosts (PR #602, codex)** — `main.ts` retains
   startup and quit orchestration while `ResourcePreviewHost` owns URL-preview

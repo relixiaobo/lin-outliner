@@ -2106,3 +2106,24 @@ bound the aggregate teardown, but it cannot substitute for initiating release.
 Regression coverage must close the owner with work in flight, prove every child
 was terminated and detached, settle children through both `close` and `error`,
 and prove no new process can start after closing begins.
+
+## Lifecycle ownership must cross nested await boundaries
+
+PR #603 first checked quit ownership only around top-level startup steps. The
+Agent step contained its own awaited Thread, Memory-worker, and Automation
+sequence, so quit could win while a later producer still started. The first
+Cancel path then labelled a partially started Host as `started`, changed quit to
+reversible before Runtime unfreeze was confirmed, and made early process exit
+conditional on best-effort cleanup succeeding.
+
+**Bracket every awaited effect with the lifecycle boundary that owns it, even
+when the await is hidden behind another Host facade.** Record a milestone as soon
+as its effect settles, check ownership before starting the next effect, and let
+reversible Cancel resume only unfinished milestones. Publish a reversible state
+only after restoration succeeds. Once exit is irreversible, run it independently
+of cleanup success and propagate cleanup failure only as diagnostic evidence.
+
+Regression coverage must interrupt every nested async boundary, prove completed
+effects are not replayed after Cancel, reject failed unfreeze without reporting
+`started`, and inject cleanup plus exit failures to prove terminal settlement and
+exactly-once exit behavior.
