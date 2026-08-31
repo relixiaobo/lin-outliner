@@ -92,6 +92,15 @@ machine form; combining them is invalid. Output mode never changes selection,
 mutation, or error semantics. `SIGINT` and `SIGTERM` abort every command path and
 use exit codes 130 and 143 respectively.
 
+Human success output is a deterministic, ANSI-free receipt capped at 4 KiB.
+Mutation receipts report settlement, Operation and revision identity, affected
+count/digest, recovery, and bounded returned roots; viewed-tree add also reports
+owner, item/display counts, and mode. View inspection reports complete display
+state when it fits and otherwise explicit omission evidence plus a digest. A
+human `diff --output FILE` leaves the exact artifact unchanged and reports its
+path, bytes/hash, Diff/ChangeSet hashes, base revision, effect counts,
+destructive classes, bindings, and warnings. `--json` remains complete.
+
 ### Porcelain intent routing
 
 The public product rule is:
@@ -99,7 +108,9 @@ The public product rule is:
 - one complete resource intent uses one porcelain invocation;
 - complex state for that resource uses the same command with `--input FILE|-`;
 - multiple resources, dependencies, cross-date work, or bounded bulk edits use
-  one ChangeSet with bindings, one Diff, and one apply.
+  one ChangeSet with bindings; known non-destructive work uses `commit`, while
+  destructive, ambiguous, conversion, high-impact, or review-requested work uses
+  one Diff artifact and one exact apply.
 
 No complete command intent requires a shell mutation loop, intermediate
 created-ID lookup, or several mutation Operations. Create and ensure results
@@ -129,7 +140,13 @@ definitions and their type-specific configuration, templates/options, defaults,
 inheritance, and constraints. `field define` instead creates or reuses a field on
 one target and may set its initial value; an empty field name is valid only as an
 editor placeholder slot and is still recorded through the public schema rather
-than a renderer-only command. `tag add` applies an existing definition.
+than a renderer-only command. `tag add` applies an existing definition. The
+alternative discriminated `kind: viewed-tree` add input creates one view-backed
+owner below an exact persisted destination. At most 256 unique local field keys
+name new or exactly resolved reusable definitions; at most 10,000 direct
+ordinary items use those keys for typed scalar values. Keyed view configuration
+supports list, table, cards, and calendar modes. All resolution and validation
+finish before one atomic ChangeSet writes the complete resource.
 
 `search create` accepts title, canonical query or `--match` STRING_MATCH
 shorthand, and initial mode, ordered sort, filters, group, display fields, and
@@ -141,12 +158,19 @@ collections. The view leaf commands remain for small edits.
 
 A real table is represented by one owner Node with `viewMode: table`, direct
 child row Nodes, reusable field definitions, field-backed cell values, and an
-explicit display/sort/filter configuration. The built-in Skill's
-`fixtures/table-view-changeset.json` is the canonical executable example: the
-mandatory golden flow reads that fixture, creates the table below an ensured
-Daily Note through one Diff/apply, verifies its fields/view, and exactly reverts
-it. Markdown tables, aligned child text, and owner Nodes without a table
+explicit display/sort/filter configuration. The developer-only
+`fixtures/table-view-add.json` drives the mandatory golden flow: one `add`
+creates the table below an ensured Daily Note, one `view inspect` verifies its
+persisted mode and counts, and one revert restores the exact prior state. The
+fixture is not an Agent instruction. Markdown tables, aligned child text, and owner Nodes without a table
 `viewDef` do not satisfy a table request.
+
+`view inspect TARGET` is a CLI-composed read, not a Runtime command. It resolves
+one owner and composes only existing paginated `show` projections at one
+revision. It requires exactly one live `viewDef` and returns a compact
+`outline.view-summary` with exact direct ordinary-item count and ordered display
+metadata/digest. A revision race retries the whole composition once and then
+returns a retryable stale-revision conflict without mixing snapshots.
 
 `capture add` accepts exactly one parent or local date, ensures the date when
 needed, preserves capture provenance, derives a canonical HTTP(S) Source from the

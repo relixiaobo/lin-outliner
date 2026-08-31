@@ -23,6 +23,10 @@ import {
   ViewSetSpecificationSchema,
   ViewSortSpecificationSchema,
   ViewFieldSchema,
+  ViewModeSchema,
+  ViewSystemFieldSchema,
+  SortDirectionSchema,
+  DisplayPlacementSchema,
 } from './schemas';
 
 const closed = { additionalProperties: false } as const;
@@ -44,11 +48,62 @@ const TargetOnlySchema = Type.Object({ target: TargetRefSchema }, closed);
 const TargetFieldSchema = Type.Object({ target: TargetRefSchema, field: TargetRefSchema }, closed);
 const TargetTagSchema = Type.Object({ target: TargetRefSchema, tag: TargetRefSchema }, closed);
 
-const AddInputSchema = Type.Object({
+const TreeAddInputSchema = Type.Object({
   placement: DestinationPlacementSchema,
   nodes: Type.Array(NodeDraftSchema, { minItems: 1, maxItems: 100_000 }),
   bind: OptionalBind,
 }, closed);
+
+const FieldKeySchema = Type.String({ pattern: '^[A-Za-z][A-Za-z0-9_-]{0,63}$' });
+const KeyedViewFieldSchema = Type.Union([
+  ViewSystemFieldSchema,
+  Type.Object({ fieldKey: FieldKeySchema }, closed),
+]);
+const ViewedTreeAddInputSchema = Type.Object({
+  kind: Type.Literal('viewed-tree'),
+  placement: DestinationPlacementSchema,
+  title: Type.String({ minLength: 1, maxLength: 4_194_304 }),
+  description: Type.Optional(Type.String({ maxLength: 4_194_304 })),
+  fields: Type.Optional(Type.Array(Type.Union([
+    Type.Object({
+      key: FieldKeySchema,
+      name: Type.String({ minLength: 1, maxLength: 1_024 }),
+      config: FieldDefinitionPatchSchema,
+    }, closed),
+    Type.Object({ key: FieldKeySchema, field: OneTargetRefSchema }, closed),
+  ]), { maxItems: 256 })),
+  items: Type.Array(Type.Object({
+    content: Type.String({ maxLength: 4_194_304 }),
+    description: Type.Optional(Type.String({ maxLength: 4_194_304 })),
+    values: Type.Optional(Type.Record(FieldKeySchema, ScalarValueSchema, { maxProperties: 256 })),
+    children: Type.Optional(Type.Array(NodeDraftSchema, { maxItems: 100_000 })),
+  }, closed), { maxItems: 10_000 }),
+  view: Type.Object({
+    mode: ViewModeSchema,
+    toolbar: Type.Optional(Type.Boolean()),
+    group: Type.Optional(Type.Union([KeyedViewFieldSchema, Type.Null()])),
+    sort: Type.Optional(Type.Array(Type.Object({
+      field: KeyedViewFieldSchema,
+      direction: Type.Optional(SortDirectionSchema),
+    }, closed), { maxItems: 1_000 })),
+    filters: Type.Optional(Type.Array(Type.Object({
+      field: KeyedViewFieldSchema,
+      operator: Type.Optional(FilterOperatorSchema),
+      values: Type.Optional(Type.Array(Type.String({ maxLength: 65_536 }), { maxItems: 10_000 })),
+      valueLogic: Type.Optional(FilterValueLogicSchema),
+    }, closed), { maxItems: 1_000 })),
+    display: Type.Optional(Type.Array(Type.Object({
+      field: KeyedViewFieldSchema,
+      visible: Type.Optional(Type.Boolean()),
+      width: Type.Optional(Type.Number({ minimum: 0 })),
+      label: Type.Optional(Type.Union([Type.String({ maxLength: 4_096 }), Type.Null()])),
+      placement: Type.Optional(DisplayPlacementSchema),
+    }, closed), { maxItems: 1_000 })),
+  }, closed),
+  bind: OptionalBind,
+}, closed);
+
+const AddInputSchema = Type.Union([TreeAddInputSchema, ViewedTreeAddInputSchema]);
 
 const SetInputSchema = Type.Object({
   target: TargetRefSchema,

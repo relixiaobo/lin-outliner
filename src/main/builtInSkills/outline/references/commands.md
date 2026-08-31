@@ -277,6 +277,7 @@ Configure complete views or edit group, sort, filter, and display leaves.
 
 | Command | Semantics | Purpose | Common syntax |
 |---|---|---|---|
+| `outline view inspect` | read-only; idempotent | Inspect one persisted view without returning item payloads. | `outline view inspect TARGET` |
 | `outline view set` | patch; idempotent | Apply one complete declarative view patch with explicit collection replacement. | `outline view set TARGET MODE \| view set --input FILE\|-` |
 | `outline view group set` | patch; idempotent | Set or clear the view grouping field. | `outline view group set TARGET FIELD\|null` |
 | `outline view sort add` | create; not idempotent | Append one sort rule to a view. | `outline view sort add TARGET --field FIELD` |

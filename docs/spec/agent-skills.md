@@ -315,11 +315,14 @@ The Skill owns no document logic. `outline` discovers current capabilities,
 root/family/exact command help, completion metadata, and command-specific schemas
 from the executable registry. It routes one complete resource to one porcelain
 invocation, complex state for that resource to the same command's `--input`, and
-dependent, cross-date, or bounded bulk work to one ChangeSet with bindings. It
+dependent, cross-date, or bounded bulk work to one ChangeSet with bindings. A
+known non-destructive ChangeSet uses direct `commit`; destructive, ambiguous,
+conversion, high-impact, and review-requested work uses one immutable Diff
+artifact and exact apply. It
 never uses a shell mutation loop or intermediate created-ID lookup. For ordinary
 document work it also avoids ad hoc Python, Node, or shell programs for schema
 discovery, CLI-output transformation, or ChangeSet assembly; public
-command-specific schemas, supplied fixtures, and direct `--input` artifacts are
+command-specific schemas and direct `--input -` payloads are
 the execution path. Bundled source adapters remain reserved for the documented
 external import workflow.
 
@@ -342,12 +345,12 @@ not timezone-converted. Final Agent answers reference an ordinary persisted
 `node:UUID` as `[[node://UUID]]`, removing the internal `node:` prefix, so the
 client resolves current titles.
 
-`references/changesets.md` includes a complete field-backed Daily Note table
-pattern backed by `fixtures/table-view-changeset.json`. The mandatory CLI golden
-flow executes that same fixture through one Diff, one apply, and exact revert.
-This makes the non-obvious field-definition, row-value, sort, display, and
-`viewMode: table` bindings executable guidance rather than prose that a model
-must rediscover with a local script.
+New view-backed collections use the mode-neutral `add --input -` viewed-tree
+form and `view inspect` verification. Bash executes only `outline`; structured
+payloads travel in its separate stdin field without pipelines, heredocs, helper
+programs, or temporary input files. The developer-only table fixture is tested
+but not linked from Agent instructions, so internal binding topology does not
+enter model context.
 
 Its Agent-facing information architecture has four layers. `SKILL.md` teaches
 the inspect/choose/review/execute/verify/recover loop. A generated

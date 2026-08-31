@@ -32,10 +32,12 @@ import { OutlineClientSupervisor, resolveOutlineContentRoot, resolveOutlineRunti
 import { OUTLINE_AGENT_ATTESTATION_ENV } from '../contract/agentAttestation';
 import {
   parseReadCommand,
+  parseSelectorToken,
   parseWatchCommand,
 } from './arguments';
 import { buildPorcelainRequest } from './porcelain';
 import { executeImportInvocation } from './import';
+import { inspectView, renderHumanResult } from './presentation';
 
 const MAX_INLINE_DIFF_BYTES = 8 * 1024 * 1024;
 
@@ -194,6 +196,20 @@ async function executeInvocation(
   if (invocation.command === 'asset ingest') return executeAssetIngest(invocation, supervisor, io, options.signal);
   if (invocation.command === 'asset export') return executeAssetExport(invocation, supervisor, io, options.signal);
   if (capability.streaming) return executeStreamingInvocation(invocation, supervisor, io, options.signal);
+  if (invocation.command === 'view inspect') {
+    if (invocation.args.length !== 1) throw usageError('view inspect requires exactly one TARGET.');
+    const target = { target: { selector: parseSelectorToken(invocation.args[0]!), cardinality: 'one' as const } };
+    const input = { target };
+    if (!checkOutlineSchema(capability.requestSchema, input)) {
+      throw schemaUsageError('Input does not match the public schema for command: view inspect', capability.requestSchema, input);
+    }
+    const client = await supervisor.connect(options.signal);
+    try {
+      return await inspectView(client, target, options.signal);
+    } finally {
+      client.close();
+    }
+  }
   const input = await runtimeInput(invocation, io, supervisor, options.signal);
   if (!checkOutlineSchema(capability.requestSchema, input)) {
     throw schemaUsageError(
@@ -232,7 +248,10 @@ async function executeInvocation(
       capability.kind === 'mutate' && isRecord(input) && input.preview !== true,
       options.signal,
     )).data;
-    return data;
+    const viewedTree = !invocation.json && invocation.command === 'add'
+      ? viewedTreeReceipt(input, data)
+      : undefined;
+    return viewedTree ?? data;
   } finally {
     client.close();
   }
@@ -454,7 +473,17 @@ async function executeDiffInvocation(
     }
     if (parsed.output) {
       await writeAtomicArtifact(parsed.output, artifact.chunks);
-      return { path: parsed.output, byteCount: artifact.byteCount, sha256: artifact.sha256 };
+      if (invocation.json) return { path: parsed.output, byteCount: artifact.byteCount, sha256: artifact.sha256 };
+      let value: unknown;
+      try {
+        value = JSON.parse(await readFile(parsed.output, 'utf8')) as unknown;
+      } catch {
+        throw artifactProtocolError('Outline Runtime returned an invalid Diff artifact.');
+      }
+      if (!checkOutlineSchema(DiffSchema, value)) {
+        throw artifactProtocolError('Outline Runtime returned a Diff artifact that violates the public schema.');
+      }
+      return { kind: 'outline.human-diff-receipt', path: parsed.output, byteCount: artifact.byteCount, sha256: artifact.sha256, diff: value };
     }
     const chunks: Buffer[] = [];
     for await (const chunk of artifact.chunks) chunks.push(Buffer.from(chunk));
@@ -471,6 +500,42 @@ async function executeDiffInvocation(
   } finally {
     client.close();
   }
+}
+
+function viewedTreeReceipt(input: unknown, settlement: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(input) || !isRecord(input.changeSet) || !Array.isArray(input.changeSet.operations)) return undefined;
+  const operations = input.changeSet.operations.filter(isRecord);
+  const viewChange = [...operations].reverse().find((operation) => operation.op === 'update'
+    && Array.isArray(operation.changes)
+    && operation.changes.some((change) => isRecord(change)
+      && change.kind === 'view' && change.property === 'configuration' && change.action === 'set'));
+  if (!viewChange || !isRecord(viewChange.targets) || typeof viewChange.targets.binding !== 'string') return undefined;
+  const ownerBinding = viewChange.targets.binding;
+  const ownerCreate = operations.find((operation) => operation.op === 'create' && operation.bind === ownerBinding);
+  if (!ownerCreate || ownerCreate.resource === 'definition') return undefined;
+  const ownerDraft = Array.isArray(ownerCreate.nodes) && isRecord(ownerCreate.nodes[0])
+    ? ownerCreate.nodes[0]
+    : undefined;
+  const itemCount = ownerDraft && Array.isArray(ownerDraft.children) ? ownerDraft.children.length : 0;
+  const instruction = (viewChange.changes as unknown[]).find((change) => isRecord(change)
+    && change.kind === 'view' && change.property === 'configuration') as Record<string, unknown> | undefined;
+  const view = instruction && isRecord(instruction.view) ? instruction.view : {};
+  const replace = isRecord(view.replace) ? view.replace : {};
+  const displayFieldCount = Array.isArray(replace.display) ? replace.display.length : 0;
+  const ownerId = isRecord(settlement) ? returnedRootId(settlement) : undefined;
+  return {
+    kind: 'outline.human-viewed-tree-receipt', settlement,
+    ownerId, itemCount, displayFieldCount, mode: view.mode,
+  };
+}
+
+function returnedRootId(settlement: Record<string, unknown>): string | undefined {
+  if (!Array.isArray(settlement.result)) return undefined;
+  for (const result of settlement.result) {
+    if (!isRecord(result) || !Array.isArray(result.nodes)) continue;
+    for (const node of result.nodes) if (isRecord(node) && typeof node.id === 'string') return node.id;
+  }
+  return undefined;
 }
 
 async function executeAssetIngest(
@@ -923,7 +988,11 @@ function writeSuccess(io: OutlineCliIo, invocation: ParsedInvocation, data: unkn
     io.stdout(`${data.map((entry) => isRecord(entry) ? `${String(entry.name)}\t${String(entry.summary)}` : String(entry)).join('\n')}\n`);
     return;
   }
-  io.stdout(`${JSON.stringify(data, null, 2)}\n`);
+  try {
+    io.stdout(renderHumanResult(invocation.command, data));
+  } catch {
+    io.stdout(`Command: ${invocation.command}\nStatus: succeeded\nPresentation: unavailable\n`);
+  }
 }
 
 function writeFailure(io: OutlineCliIo, invocation: ParsedInvocation | undefined, error: OutlineError): void {
@@ -938,7 +1007,7 @@ function writeFailure(io: OutlineCliIo, invocation: ParsedInvocation | undefined
     io.stdout(`${JSON.stringify(response)}\n`);
     return;
   }
-  io.stderr(`outline: ${error.message}\n`);
+  io.stderr(`outline: [${error.code}] ${error.message}\n`);
   for (const next of error.next ?? []) io.stderr(`  ${next}\n`);
 }
 

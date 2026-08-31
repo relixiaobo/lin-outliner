@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Value } from 'typebox/value';
 import { runOutlineCli } from '../../src/outline/cli';
+import { renderHumanResult } from '../../src/outline/cli/presentation';
 import {
   issueOutlineAgentAttestation,
   OUTLINE_AGENT_ATTESTATION_ENV,
@@ -32,6 +33,25 @@ afterAll(async () => {
 });
 
 describe('outline CLI', () => {
+  test('bounds human view receipts with explicit omitted state and no ANSI', () => {
+    const displayFields = Array.from({ length: 100 }, (_, index) => ({
+      fieldId: `field:${index}`,
+      label: `Field ${index} ${'x'.repeat(200)}`,
+      visible: true,
+      order: index,
+    }));
+    const output = renderHumanResult('view inspect', {
+      kind: 'outline.view-summary', revision: 7, ownerId: 'node:owner', title: 'Large view',
+      mode: 'table', toolbarVisible: true, itemCount: 10_000,
+      displayFieldCount: displayFields.length, displayDigest: canonicalSha256(displayFields),
+      displayFields, group: null, sortCount: 1, filterCount: 0,
+    });
+    expect(Buffer.byteLength(output)).toBeLessThanOrEqual(4 * 1024);
+    expect(output).toContain('Display fields: 100');
+    expect(output).toContain('Omitted display fields: 68');
+    expect(output).not.toMatch(/\u001b\[/u);
+  });
+
   test('emits exactly one versioned JSON envelope for a local command without starting Runtime', async () => {
     const root = await makeRoot();
     const output = captureIo();
@@ -397,6 +417,20 @@ describe('outline CLI', () => {
     expect(output.stdout).toContain('--input FILE|-');
     expect(output.stdout).toContain('outline view sort add node:projects --field sys:updatedAt --direction desc');
     expect(output.stdout).toContain('outline view sort add --input sort-rule.json');
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  test('publishes exact view inspect help and compact result schema', async () => {
+    const root = await makeRoot();
+    const help = captureIo();
+    const schema = captureIo();
+    expect(await runOutlineCli(['view', 'inspect', '--help'], { runtimeRoot: root, io: help.io })).toBe(0);
+    expect(help.stdout).toContain('view inspect TARGET');
+    expect(help.stdout).toContain('outline.view-summary');
+    expect(await runOutlineCli(['--json', 'schema', 'view', 'inspect', '--part', 'result'], { runtimeRoot: root, io: schema.io })).toBe(0);
+    const resultSchema = JSON.stringify(JSON.parse(schema.stdout).data);
+    expect(resultSchema).toContain('displayDigest');
+    expect(resultSchema).toContain('itemCount');
     expect(await readdir(root)).toEqual([]);
   });
 
@@ -1124,6 +1158,17 @@ describe('outline CLI', () => {
       ], { runtimeRoot: root, io: output.io })).toBe(0);
       expect(JSON.parse(output.stdout).data).toMatchObject({ path: outputPath, sha256: expect.any(String) });
       expect((JSON.parse(await readFile(outputPath, 'utf8')) as Diff).kind).toBe('outline.diff');
+
+      const humanPath = path.join(root, 'reviewed-human.diff.json');
+      const human = captureIo(JSON.stringify(changeSet));
+      expect(await runOutlineCli([
+        '--human', '--no-start', 'diff', '--input', '-', '--output', humanPath,
+      ], { runtimeRoot: root, io: human.io })).toBe(0);
+      expect(Buffer.byteLength(human.stdout)).toBeLessThanOrEqual(4 * 1024);
+      expect(human.stdout).toContain(`Artifact: ${humanPath}`);
+      expect(human.stdout).toContain('Diff: ');
+      expect(human.stdout).toContain('create=1');
+      expect((JSON.parse(await readFile(humanPath, 'utf8')) as Diff).kind).toBe('outline.diff');
 
       const corrupted = captureIo(input.replace(canonicalSha256(changeSet), '0'.repeat(64)));
       expect(await runOutlineCli([
