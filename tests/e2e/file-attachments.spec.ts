@@ -2188,6 +2188,7 @@ test.describe('file attachments', () => {
   });
 
   test('a bare URL on an empty row atomically writes content and Source while non-empty content keeps an inline link', async ({ page }) => {
+    await page.setViewportSize({ width: 760, height: 800 });
     const url = 'https://example.com/article/with-a-long-path-that-wraps-inside-the-field-value-without-moving-its-open-and-preview-controls-onto-a-separate-line';
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();

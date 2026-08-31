@@ -2806,13 +2806,26 @@ button.outliner-table-column-kind:focus-visible {
   overflow-wrap: anywhere;
 }
 
-/* A long field value must leave a legal break before its non-editable trailing
-   affordances. `overflow-wrap:anywhere` only breaks an otherwise overflowing
-   word, so platform font metrics can still orphan the inline slot. Keep the
-   stronger break policy scoped to field values; ordinary prose and tag rows
-   retain natural word boundaries. */
+/* Reserve the trailing controls inside the paragraph while keeping them in
+   ordinary inline flow. The slot's negative end margin makes its line-layout
+   width zero; its pixels occupy the matching paragraph padding, so platform
+   font metrics cannot orphan it below the final text fragment. */
 .row-editor .ProseMirror p:has(.row-inline-content-slot > .field-value-affordances) {
-  word-break: break-all;
+  --field-value-affordance-reserve: calc(
+    var(--field-value-control-height) + var(--space-1)
+  );
+
+  width: 100%;
+  box-sizing: border-box;
+  padding-inline-end: var(--field-value-affordance-reserve);
+}
+
+.row-editor .ProseMirror p:has(
+  .row-inline-content-slot > .field-value-affordances > :nth-child(2)
+) {
+  --field-value-affordance-reserve: calc(
+    2 * var(--field-value-control-height) + var(--space-2) + var(--space-1)
+  );
 }
 
 .row-editor .ProseMirror {
@@ -2984,6 +2997,10 @@ button.outliner-table-column-kind:focus-visible {
   vertical-align: top;
   white-space: normal;
   user-select: none;
+}
+
+.row-inline-content-slot:has(> .field-value-affordances) {
+  margin-inline-end: calc(-1 * var(--field-value-affordance-reserve));
 }
 
 .tag-bar {

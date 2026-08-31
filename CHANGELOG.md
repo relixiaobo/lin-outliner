@@ -23,11 +23,13 @@ Entries reference the pull request that introduced them when one exists.
   scrim becomes fully opaque for reduced-transparency and increased-contrast
   preferences. Gate review found one High pair of branch-only URL wrapping and
   Source-row Enter regressions plus two Medium audio-fullscreen and opaque-
-  fallback defects; all were fixed, and re-review found no new reportable issue.
-  Verified with typecheck, `docs:check`, 1,460 renderer tests, 28 final-head
-  focused renderer tests, 20 repeated critical Playwright runs, whitespace
-  checks, light/dark visual QA, and all five GitHub E2E samples plus baseline
-  subtraction.
+  fallback defects. The first follow-up closed three defects, but the same-
+  environment classifier kept reporting URL wrapping at `5/5`; a main follow-up
+  replaced font-dependent emergency wrapping with an inline control reserve and
+  added a narrow-window regression. Re-review found no other reportable issue.
+  Verified with typecheck, `docs:check`, 1,460 renderer tests, final-head focused
+  renderer tests, repeated critical Playwright runs, whitespace checks,
+  light/dark visual QA, and the GitHub E2E signal plus baseline subtraction.
 
 - **Bash can now receive large literal stdin without shell interpolation (PR
   #604, codex)** — foreground `bash` calls accept up to 64 MiB of exact UTF-8
