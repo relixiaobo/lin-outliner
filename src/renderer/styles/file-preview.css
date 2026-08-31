@@ -803,15 +803,8 @@
   white-space: nowrap;
 }
 
-.file-preview-media-fullscreen-spacer {
-  width: var(--control-size-xl);
-  height: var(--control-size-xl);
-  flex: 0 0 var(--control-size-xl);
-}
-
 @container (max-width: 360px) {
-  .outline-source-preview .file-preview-media-volume,
-  .outline-source-preview .file-preview-media-fullscreen-spacer {
+  .outline-source-preview .file-preview-media-volume {
     display: none;
   }
 

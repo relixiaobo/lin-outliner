@@ -41,12 +41,12 @@ treatment, and responsive compaction are identical. Volume remains a compact
 control beside mute instead of stretching across the left grid track; narrow
 Outline previews hide only that slider while keeping mute available. Title,
 timeline, and command row use distinct vertical tiers, with larger outer insets
-than the compact gaps within each control group. Audio reserves the same trailing
-fullscreen slot that video fills, so time and later Source actions align at equal
-player widths; narrow previews drop the empty audio slot. The title information
-row shares the corner-action top edge and center line. Audio maps title, time,
-player icons, and corner actions to primary theme text; video maps the same
-elements to the fixed HUD foreground required over pixels.
+than the compact gaps within each control group. Audio ends its time group at the
+shared right inset instead of reserving unavailable fullscreen chrome; video adds
+its real fullscreen control between the time group and that inset. The title
+information row shares the corner-action top edge and center line. Audio maps
+title, time, player icons, and corner actions to primary theme text; video maps
+the same elements to the fixed HUD foreground required over pixels.
 
 The audio HUD is the complete compact audio surface. The video HUD overlays the
 bottom of the video without an inset card, border, or independent rounded

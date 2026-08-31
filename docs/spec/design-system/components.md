@@ -155,12 +155,12 @@ chrome owns an exclusive region. The volume slider stays a compact member of the
 left control group rather than stretching to fill that grid track; narrow Outline
 previews hide only the slider and retain mute. Title, timeline, and command row
 form separate vertical tiers; their outer inset is larger than the gaps within a
-control group. Audio reserves the video-only fullscreen slot as a non-interactive
-spacer so time and later Source actions align at equal player widths; narrow
-previews drop the empty slot. The title information row and corner-action boxes
-share one top edge and center line. Audio maps title, time, and icons to primary
-theme text, including the corner actions; video maps those same elements to the
-fixed HUD foreground required over pixels. The readable owner title is preferred over an
+control group. Audio ends its time group at the shared right inset and never
+reserves unavailable fullscreen chrome; video places its real fullscreen control
+between the time group and that inset. The title information row and corner-action
+boxes share one top edge and center line. Audio maps title, time, and icons to
+primary theme text, including the corner actions; video maps those same elements
+to the fixed HUD foreground required over pixels. The readable owner title is preferred over an
 internal asset identifier. Video places the remaining HUD directly over the
 bottom pixels with a frameless contrast scrim; it never introduces an inset
 control card, border, second rounded container, or duplicate playback control.

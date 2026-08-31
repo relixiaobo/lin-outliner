@@ -805,11 +805,7 @@ function MediaPreviewPlayer({
               <span aria-hidden="true" className="file-preview-media-time-separator">/</span>
               <MediaDurationDisplay className="file-preview-media-duration" />
             </span>
-            {isAudio ? (
-              <span aria-hidden="true" className="file-preview-media-fullscreen-spacer" />
-            ) : (
-              <MediaFullscreenButton className="file-preview-media-button" />
-            )}
+            {isAudio ? null : <MediaFullscreenButton className="file-preview-media-button" />}
             {actions}
           </div>
         </div>

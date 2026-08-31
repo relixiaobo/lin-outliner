@@ -1776,9 +1776,7 @@ test.describe('file attachments', () => {
       const play = element.querySelector<HTMLElement>('media-play-button');
       const mute = element.querySelector<HTMLElement>('media-mute-button');
       const time = element.querySelector<HTMLElement>('.file-preview-media-time-group');
-      const fullscreenSpacer = element.querySelector<HTMLElement>('.file-preview-media-fullscreen-spacer');
-      if (!player || !info || !progress || !command || !volume || !play || !mute || !time
-        || !fullscreenSpacer) return null;
+      if (!player || !info || !progress || !command || !volume || !play || !mute || !time) return null;
       const playerRect = player.getBoundingClientRect();
       const infoRect = info.getBoundingClientRect();
       const progressRect = progress.getBoundingClientRect();
@@ -1787,7 +1785,6 @@ test.describe('file attachments', () => {
       const playRect = play.getBoundingClientRect();
       const muteRect = mute.getBoundingClientRect();
       const timeRect = time.getBoundingClientRect();
-      const fullscreenSpacerRect = fullscreenSpacer.getBoundingClientRect();
       return {
         centeredPlay: Math.abs(
           playRect.left + playRect.width / 2 - (playerRect.left + playerRect.width / 2),
@@ -1798,18 +1795,15 @@ test.describe('file attachments', () => {
           Math.abs(muteRect.top + muteRect.height / 2 - (playRect.top + playRect.height / 2)),
           Math.abs(timeRect.top + timeRect.height / 2 - (playRect.top + playRect.height / 2)),
         ) <= 1,
-        sharedTrailingGeometry: fullscreenSpacerRect.width === 28
-          && fullscreenSpacerRect.left - timeRect.right >= 1
-          && fullscreenSpacerRect.left - timeRect.right <= 8
-          && playerRect.right - fullscreenSpacerRect.right >= 15
-          && playerRect.right - fullscreenSpacerRect.right <= 17,
+        directTrailingInset: playerRect.right - timeRect.right >= 15
+          && playerRect.right - timeRect.right <= 17,
       };
     })).toEqual({
       centeredPlay: true,
       compactVolume: true,
       orderedTiers: true,
       sharedBaseline: true,
-      sharedTrailingGeometry: true,
+      directTrailingInset: true,
     });
 
     await pastedRow.locator(':scope > .outline-source-preview-row .file-node-body').hover({
@@ -1860,17 +1854,15 @@ test.describe('file attachments', () => {
         const command = player.querySelector<HTMLElement>('.file-preview-media-command-row');
         const play = player.querySelector<HTMLElement>('media-play-button');
         const time = player.querySelector<HTMLElement>('.file-preview-media-time-group');
-        const trailingSlot = player.querySelector<HTMLElement>(
-          mediaKind === 'audio'
-            ? '.file-preview-media-fullscreen-spacer'
-            : 'media-fullscreen-button',
-        );
+        const trailingSlot = mediaKind === 'video'
+          ? player.querySelector<HTMLElement>('media-fullscreen-button')
+          : null;
         const actions = player.closest('.file-node-body')
           ?.querySelector<HTMLElement>('.outline-source-preview-actions');
         const more = actions?.querySelector<HTMLElement>('.file-preview-pill-more');
         const close = actions?.querySelector<HTMLElement>('.outline-source-preview-close');
         if (!info || !title || !controls || !progress || !command || !play || !time
-          || !trailingSlot || !actions || !more || !close) return null;
+          || (mediaKind === 'video' && !trailingSlot) || !actions || !more || !close) return null;
 
         const playerRect = player.getBoundingClientRect();
         const infoRect = info.getBoundingClientRect();
@@ -1879,7 +1871,7 @@ test.describe('file attachments', () => {
         const commandRect = command.getBoundingClientRect();
         const playRect = play.getBoundingClientRect();
         const timeRect = time.getBoundingClientRect();
-        const trailingSlotRect = trailingSlot.getBoundingClientRect();
+        const trailingSlotRect = trailingSlot?.getBoundingClientRect() ?? null;
         const actionsRect = actions.getBoundingClientRect();
         const titleStyle = getComputedStyle(title);
         const timeStyle = getComputedStyle(time);
@@ -1924,11 +1916,13 @@ test.describe('file attachments', () => {
             titleStyle.lineHeight,
             titleStyle.letterSpacing,
           ],
-          trailingSlotSize: [
-            Math.round(trailingSlotRect.width),
-            Math.round(trailingSlotRect.height),
-          ],
-          trailingTimeGap: Math.round(trailingSlotRect.left - timeRect.right),
+          trailingSlotSize: trailingSlotRect
+            ? [Math.round(trailingSlotRect.width), Math.round(trailingSlotRect.height)]
+            : null,
+          trailingTimeGap: trailingSlotRect
+            ? Math.round(trailingSlotRect.left - timeRect.right)
+            : null,
+          timeRightInset: Math.round(playerRect.right - timeRect.right),
         };
       }, kind);
 
@@ -1957,9 +1951,13 @@ test.describe('file attachments', () => {
     expect(audioMetrics!.timeTypography).toEqual(videoMetrics!.timeTypography);
     expect(audioMetrics!.playSize).toEqual([28, 28]);
     expect(videoMetrics!.playSize).toEqual(audioMetrics!.playSize);
-    expect(audioMetrics!.trailingSlotSize).toEqual([28, 28]);
-    expect(videoMetrics!.trailingSlotSize).toEqual(audioMetrics!.trailingSlotSize);
-    expect(videoMetrics!.trailingTimeGap).toBe(audioMetrics!.trailingTimeGap);
+    expect(audioMetrics!.trailingSlotSize).toBeNull();
+    expect(audioMetrics!.trailingTimeGap).toBeNull();
+    expect(audioMetrics!.timeRightInset).toBeGreaterThanOrEqual(15);
+    expect(audioMetrics!.timeRightInset).toBeLessThanOrEqual(17);
+    expect(videoMetrics!.trailingSlotSize).toEqual([28, 28]);
+    expect(videoMetrics!.trailingTimeGap).toBeGreaterThanOrEqual(1);
+    expect(videoMetrics!.trailingTimeGap).toBeLessThanOrEqual(8);
     expect(videoMetrics!.controlGap).toBe(audioMetrics!.controlGap);
     expect(videoMetrics!.controlInset).toBe(audioMetrics!.controlInset);
     expect(videoMetrics!.progressInset).toBe(audioMetrics!.progressInset);

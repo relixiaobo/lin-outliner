@@ -122,8 +122,8 @@ describe('input modality CSS guards', () => {
     expect(filePreviewCss).toMatch(/\.file-preview-media-command-row\s*\{[^}]*min-height:\s*var\(--control-size-xl\);/s);
     expect(filePreviewCss).toMatch(/\.file-preview-media-name\s*\{[^}]*color:\s*var\(--text-primary\);[^}]*font-size:\s*var\(--font-ui-sm\);[^}]*line-height:\s*var\(--line-ui-sm\);/s);
     expect(filePreviewCss).toMatch(/\.file-preview-media-time-group\s*\{[^}]*color:\s*var\(--text-primary\);[^}]*font-family:\s*var\(--font-family-sans\);[^}]*font-size:\s*var\(--font-ui-xs\);[^}]*font-variant-numeric:\s*tabular-nums;[^}]*font-weight:\s*500;[^}]*letter-spacing:\s*0;[^}]*line-height:\s*var\(--line-ui-xs\);/s);
-    expect(filePreviewCss).toMatch(/\.file-preview-media-fullscreen-spacer\s*\{[^}]*width:\s*var\(--control-size-xl\);[^}]*height:\s*var\(--control-size-xl\);[^}]*flex:\s*0 0 var\(--control-size-xl\);/s);
-    expect(filePreviewCss).toMatch(/@container \(max-width: 360px\)\s*\{[\s\S]*?\.outline-source-preview \.file-preview-media-volume,[\s\S]*?\.outline-source-preview \.file-preview-media-fullscreen-spacer\s*\{[^}]*display:\s*none;/s);
+    expect(filePreviewCss).not.toContain('.file-preview-media-fullscreen-spacer');
+    expect(filePreviewCss).toMatch(/@container \(max-width: 360px\)\s*\{[\s\S]*?\.outline-source-preview \.file-preview-media-volume\s*\{[^}]*display:\s*none;/s);
     expect(filePreviewCss).toMatch(/\.file-preview-media-command-group--transport\s*\{[^}]*justify-content:\s*center;/s);
     expect(filePreviewCss).toMatch(/\.file-preview-media-command-group--trailing\s*\{[^}]*justify-content:\s*flex-end;/s);
     expect(filePreviewCss).toMatch(/\.file-node-body--media-video:not\(\.file-node-body--reader\)\s*\{[^}]*--file-preview-media-width:\s*min\(720px, 100%\);/s);
