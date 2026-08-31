@@ -45,11 +45,10 @@ test.describe('native application menu', () => {
   test('the conventional macOS menu bar is installed', () => {
     // App, Edit, View, Window, Help.
     expect(tree.length).toBeGreaterThanOrEqual(5);
-    const roles = tree.map((node) => node.role);
-    // Role-based menus normalise to lowercase role strings.
-    expect(roles).toContain('editmenu');
-    expect(roles).toContain('windowmenu');
-    expect(roles).toContain('help');
+    expect(tree.map((node) => node.label)).toEqual(
+      expect.arrayContaining(['Tenon', 'Edit', 'View', 'Window', 'Help']),
+    );
+    expect(tree.find((node) => node.label === 'Help')?.role).toBe('help');
   });
 
   test('Preferences is bound to Cmd+,', () => {
@@ -61,8 +60,8 @@ test.describe('native application menu', () => {
     expect(prefs?.enabled).toBe(true);
   });
 
-  test('Help offers Learn More', () => {
+  test('Help offers application help', () => {
     const help = tree.find((node) => node.role === 'help' || /help/i.test(node.label));
-    expect(help?.submenu.some((node) => /Learn More/i.test(node.label))).toBe(true);
+    expect(help?.submenu.some((node) => /Tenon Help/i.test(node.label))).toBe(true);
   });
 });

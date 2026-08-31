@@ -506,7 +506,11 @@ function isLifecycleListener(effect: Effect): boolean {
 }
 
 function inferredLifecycleOwner(effect: Effect): string | null {
-  return effect.expression.startsWith("app.on('") ? 'app-lifecycle' : null;
+  if (effect.expression.startsWith("app.on('")) return 'app-lifecycle';
+  if (effect.path === 'src/main/desktopHost.ts' && effect.expression.startsWith('process.on(')) {
+    return 'desktop-host/dev-effects';
+  }
+  return null;
 }
 
 function consumeLifecycleListenerRelease(effect: Effect, listenerReleaseCounts: Map<string, number>): boolean {
@@ -610,6 +614,11 @@ function missingBaselineTransportEffects(
   const currentKeys = new Set(
     currentDispositions.filter((entry) => entry.transport).map(effectKey),
   );
+  const currentCompositionRootKeys = new Set(currentDispositions
+    .filter((entry) => entry.transport && (
+      entry.path === 'src/main/main.ts' || entry.path === 'src/main/desktopHost.ts'
+    ))
+    .map(compositionRootTransportKey));
   const dispositionKeys = new Set(equivalences.map((entry) => entry.baselineKey));
   const currentPlatformSignatures = new Set(currentDispositions
     .filter((entry) => entry.transport && currentPlatformOwner(entry) !== null)
@@ -618,9 +627,20 @@ function missingBaselineTransportEffects(
   return baselineDispositions.filter((entry) => (
     entry.transport
     && !currentKeys.has(effectKey(entry))
+    && !(entry.path === 'src/main/main.ts'
+      && currentCompositionRootKeys.has(compositionRootTransportKey(entry)))
     && !dispositionKeys.has(effectKey(entry))
     && !currentPlatformSignatures.has(platformTransportSignature(entry) ?? '')
   ));
+}
+
+function compositionRootTransportKey(effect: Pick<Effect, 'kind' | 'expression'>): string {
+  // The baseline loop registered both dev signals through one dynamic AST site;
+  // DesktopHost spells them as two static sites so each release edge is auditable.
+  if (effect.kind === 'listener' && effect.expression.startsWith('process.on(')) {
+    return 'listener:process-dev-signals';
+  }
+  return `${effect.kind}:${effect.expression}`;
 }
 
 function platformTransportSignature(effect: Pick<Effect, 'kind' | 'expression'>): string | null {

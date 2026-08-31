@@ -305,9 +305,14 @@ export class OutlineDocumentService {
   }
 
   async unfreezeMutationAdmission(): Promise<void> {
-    if (this.admissionCommitted) return;
+    if (this.admissionCommitted) {
+      throw new Error('Mutation admission cannot be unfrozen after the freeze is committed.');
+    }
     const status = await this.manageRuntime('unfreeze');
-    if (!status.admissionFrozen) this.admissionFrozen = false;
+    if (status.admissionFrozen) {
+      throw new Error('Outline Runtime did not confirm mutation admission was unfrozen.');
+    }
+    this.admissionFrozen = false;
   }
 
   async commitMutationAdmissionFreeze(): Promise<void> {

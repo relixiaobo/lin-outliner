@@ -124,7 +124,7 @@ export interface AgentHost {
   readonly automations: AgentAutomationCapability;
   readonly skills: AgentSkillsCapability;
   projectionChanged(update: ProjectionUpdate, operation?: Operation): void;
-  initialize(projection: DocumentProjection): Promise<void>;
+  initialize(projection: DocumentProjection, assertActive?: () => void): Promise<void>;
   close(): Promise<void>;
 }
 

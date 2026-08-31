@@ -46,6 +46,7 @@ describe('Agent input-history cutover guards', () => {
   test('keeps the manual reset outside application startup', () => {
     const startup = [
       source('src/main/main.ts'),
+      source('src/main/desktopHost.ts'),
       source('src/main/userDataPath.ts'),
     ].join('\n');
 

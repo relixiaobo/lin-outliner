@@ -8,23 +8,29 @@ const readMainSource = (path: string): string => readFileSync(
 );
 
 const MAIN_SRC = readMainSource('main.ts');
+const DESKTOP_HOST_SRC = readMainSource('desktopHost.ts');
 const RESOURCE_HOST_SRC = readMainSource('hostPlatform/resourcePreviewHost.ts');
 const LOCAL_FILE_HOST_SRC = readMainSource('hostPlatform/nativeLocalFileHost.ts');
 const LOCAL_FILE_PROCESS_TRACKER_SRC = readMainSource('hostPlatform/localFileProcessTracker.ts');
 const WINDOW_HOST_SRC = readMainSource('hostPlatform/windowApplicationHost.ts');
 
 describe('Host platform composition', () => {
-  test('main composes platform hosts without constructing their concrete services', () => {
-    expect(MAIN_SRC).toContain('createResourcePreviewHost({');
-    expect(MAIN_SRC).toContain('createWindowApplicationHost({');
-    expect(MAIN_SRC).not.toContain('new BrowserWindow(');
-    expect(MAIN_SRC).not.toContain('new AppUpdateStore(');
-    expect(MAIN_SRC).not.toContain('new AppUpdateService(');
-    expect(MAIN_SRC).not.toContain('new ActionInvocationService(');
-    expect(MAIN_SRC).not.toContain('new PreviewTranslationCacheStore(');
-    expect(MAIN_SRC).not.toContain('new PageTranslationService(');
-    expect(MAIN_SRC).not.toContain('new LocalFilePreviewStreamRegistry(');
-    expect(MAIN_SRC).not.toContain('new LinkedFileGrantStore(');
+  test('main delegates one static composition root without constructing concrete services', () => {
+    expect(MAIN_SRC.match(/createDesktopHost\(\{/g)).toHaveLength(1);
+    expect(DESKTOP_HOST_SRC).toContain('createResourcePreviewHost({');
+    expect(DESKTOP_HOST_SRC).toContain('createWindowApplicationHost({');
+    expect(MAIN_SRC).not.toContain('createResourcePreviewHost({');
+    expect(MAIN_SRC).not.toContain('createWindowApplicationHost({');
+    for (const source of [MAIN_SRC, DESKTOP_HOST_SRC]) {
+      expect(source).not.toContain('new BrowserWindow(');
+      expect(source).not.toContain('new AppUpdateStore(');
+      expect(source).not.toContain('new AppUpdateService(');
+      expect(source).not.toContain('new ActionInvocationService(');
+      expect(source).not.toContain('new PreviewTranslationCacheStore(');
+      expect(source).not.toContain('new PageTranslationService(');
+      expect(source).not.toContain('new LocalFilePreviewStreamRegistry(');
+      expect(source).not.toContain('new LinkedFileGrantStore(');
+    }
   });
 
   test('resource preview host owns services, local-file state, sessions, and cleanup', () => {
@@ -56,9 +62,9 @@ describe('Host platform composition', () => {
       'lastPickerDirectory',
     ]) {
       expect(LOCAL_FILE_HOST_SRC).toContain(owner);
-      expect(MAIN_SRC).not.toContain(owner);
+      expect(DESKTOP_HOST_SRC).not.toContain(owner);
     }
-    expect(MAIN_SRC).not.toContain('resolveLocalFileOperation');
+    expect(DESKTOP_HOST_SRC).not.toContain('resolveLocalFileOperation');
   });
 
   test('window application host owns window, update, action, menu, and launcher effects', () => {
@@ -80,7 +86,7 @@ describe('Host platform composition', () => {
     expect(WINDOW_HOST_SRC).toContain('pendingAmbientSeeds.clear();');
     expect(WINDOW_HOST_SRC).toContain('pendingActionStepAcks.clear();');
     expect(WINDOW_HOST_SRC).toContain('actionInvocationService.releaseOpening(launcherInvocationRef);');
-    expect(MAIN_SRC).toContain('windowApplicationHost.release();');
+    expect(DESKTOP_HOST_SRC).toContain('windowApplicationHost.release()');
   });
 
   test('window destruction uses the captured renderer identity', () => {

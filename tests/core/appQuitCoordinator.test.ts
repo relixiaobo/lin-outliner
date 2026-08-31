@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { AppQuitCoordinator, type QuitCoordinatorHost, type QuitDecision, type QuitDrainOutcome } from '../../src/main/appQuitCoordinator';
 
 const MAIN_SOURCE = readFileSync(join(import.meta.dir, '../../src/main/main.ts'), 'utf8');
+const DESKTOP_HOST_SOURCE = readFileSync(join(import.meta.dir, '../../src/main/desktopHost.ts'), 'utf8');
 
 class FakeQuitHost implements QuitCoordinatorHost {
   accepted = 1;
@@ -41,13 +42,17 @@ class FakeQuitHost implements QuitCoordinatorHost {
 }
 
 describe('AppQuitCoordinator', () => {
-  test('main installs quit coordination before asynchronous workspace startup', () => {
-    const coordinatorSetup = MAIN_SOURCE.indexOf('quitCoordinator = new AppQuitCoordinator({');
-    const asynchronousStartup = MAIN_SOURCE.indexOf('app.whenReady().then(async () => {');
+  test('main constructs Desktop Host before readiness and Desktop Host installs quit coordination before startup', () => {
+    const hostConstruction = MAIN_SOURCE.indexOf('const desktopHost = createDesktopHost({');
+    const asynchronousStartup = MAIN_SOURCE.indexOf('app.whenReady()');
+    const coordinatorSetup = DESKTOP_HOST_SOURCE.indexOf('quitCoordinator = new AppQuitCoordinator({');
+    const lifecycleSetup = DESKTOP_HOST_SOURCE.indexOf('const lifecycle = new DesktopHostLifecycle({');
 
+    expect(hostConstruction).toBeGreaterThan(-1);
+    expect(asynchronousStartup).toBeGreaterThan(hostConstruction);
     expect(coordinatorSetup).toBeGreaterThan(-1);
-    expect(asynchronousStartup).toBeGreaterThan(coordinatorSetup);
-    expect(MAIN_SOURCE).not.toContain('if (!quitCoordinator) return;');
+    expect(lifecycleSetup).toBeGreaterThan(coordinatorSetup);
+    expect(DESKTOP_HOST_SOURCE).not.toContain('if (!quitCoordinator) return;');
   });
 
   test('cancels a failed drain without tearing down live services', async () => {
@@ -67,6 +72,35 @@ describe('AppQuitCoordinator', () => {
     expect(host.exitCount).toBe(0);
     expect(host.commitFreezeCount).toBe(0);
     expect(host.shutdownCount).toBe(0);
+  });
+
+  test('does not report cancellation until admission is confirmed unfrozen', async () => {
+    const host = new FakeQuitHost();
+    host.drainToRevision = async () => {
+      host.drains += 1;
+      throw new Error('disk offline');
+    };
+    host.decisions = ['cancel'];
+    let unfreezeAttempts = 0;
+    host.unfreezeAdmission = async () => {
+      unfreezeAttempts += 1;
+      if (unfreezeAttempts === 1) throw new Error('Runtime unfreeze failed');
+      host.frozen = false;
+    };
+    const coordinator = new AppQuitCoordinator(host, { drainTimeoutMs: 50 });
+
+    await expect(coordinator.requestQuit()).rejects.toThrow('Runtime unfreeze failed');
+
+    expect(coordinator.phase()).toBe('draining');
+    expect(host.frozen).toBe(true);
+    expect(host.teardownCount).toBe(0);
+    expect(host.exitCount).toBe(0);
+
+    host.decisions = ['cancel'];
+    await coordinator.requestQuit();
+    expect(coordinator.phase()).toBe('idle');
+    expect(host.frozen).toBe(false);
+    expect(unfreezeAttempts).toBe(2);
   });
 
   test('retries and then enters teardown only after the durable barrier', async () => {
