@@ -223,9 +223,9 @@ describe('foreground Agent main-message delivery', () => {
     collaboration.spawnAgent = async () => ({
       agentId: FIRST_AGENT_ID,
       runMode: 'foreground',
-      report: '',
-      usage: null,
-      outputFile: null,
+      handoff: '',
+      resourceRefs: [],
+      coverage: { full: 0, excerpted: 0, omitted: 0 },
     });
     const [agent] = collaboration.collaborationToolContributions(
       { threadId: PARENT_ID, turnId: 'parent-turn' },

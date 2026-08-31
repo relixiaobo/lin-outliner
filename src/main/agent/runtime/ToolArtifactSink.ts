@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, open, type FileHandle } from 'node:fs/promises';
 import { MAX_MANAGED_ATTACHMENT_BYTES } from '../../../core/agentAttachmentLimits';
@@ -60,10 +59,8 @@ export function createToolArtifactSink(context: TurnExecutionContext): ToolArtif
           : 'Tool artifact storage failed.',
       );
     }
-    const digest = createHash('sha256').update(input.bytes).digest('hex');
     if (
-      ref.id !== digest
-      || ref.byteLength !== input.bytes.byteLength
+      ref.byteLength !== input.bytes.byteLength
       || ref.mimeType !== input.mimeType
       || ref.fileName !== input.fileName
     ) {

@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import { estimateTextTokens } from '../context/ContextBudgetPlanner';
+import { parseReferenceMarkers } from '../../../core/referenceMarkup';
+import type { AgentFinalCitationBinding, ThreadResourceReference } from '../../../core/agent/protocol';
 import type {
   SubagentCoverageDisposition,
   SubagentDeliveryBatchMember,
@@ -18,24 +20,38 @@ export interface SubagentSettlementEnvelopeCandidate {
   readonly execution: SubagentExecutionRecord;
   readonly notification: SubagentPendingNotification;
   readonly output: string;
+  readonly citations?: readonly AgentFinalCitationBinding[];
 }
 
 export interface SubagentSettlementEnvelope {
   readonly text: string;
   readonly digest: string;
   readonly members: readonly SubagentDeliveryBatchMember[];
-  readonly coverage: SubagentSettlementCoverage;
+  readonly coverage: SubagentHandoffCoverage;
   readonly estimatedTokens: number;
   readonly byteLength: number;
+  readonly resourceRefs: readonly ThreadResourceReference[];
+}
+
+export type SubagentHandoffOrigin = SubagentSettlementCoverage['origin'] | 'foreground' | 'background';
+
+export interface SubagentHandoffCoverage extends Omit<SubagentSettlementCoverage, 'origin'> {
+  readonly origin: SubagentHandoffOrigin;
 }
 
 export type SubagentSettlementEnvelopeResult =
   | { readonly status: 'ready'; readonly envelope: SubagentSettlementEnvelope }
   | { readonly status: 'noCapacity' };
 
-export function buildSubagentSettlementEnvelope(input: {
+export class SubagentHandoffProjector {
+  project(input: Parameters<typeof projectSubagentHandoff>[0]): SubagentSettlementEnvelopeResult {
+    return projectSubagentHandoff(input);
+  }
+}
+
+export function projectSubagentHandoff(input: {
   readonly batchId: string;
-  readonly origin: SubagentSettlementCoverage['origin'];
+  readonly origin: SubagentHandoffOrigin;
   readonly candidates: readonly SubagentSettlementEnvelopeCandidate[];
   readonly mode?: 'settlement' | 'carryForward';
   readonly maxTokens?: number;
@@ -139,14 +155,16 @@ export function buildSubagentSettlementEnvelope(input: {
     };
   });
   const coverage = coverageFor(input.origin, members, false);
-  return readyEnvelope(rendered.text, members, input.origin, coverage);
+  const resourceRefs = selectedHandoffReferences(rendered.entries);
+  return readyEnvelope(rendered.text, members, input.origin, coverage, resourceRefs);
 }
 
 function readyEnvelope(
   text: string,
   members: readonly SubagentDeliveryBatchMember[],
-  origin: SubagentSettlementCoverage['origin'],
+  origin: SubagentHandoffOrigin,
   coverage = coverageFor(origin, members, false),
+  resourceRefs: readonly ThreadResourceReference[] = [],
 ): Extract<SubagentSettlementEnvelopeResult, { readonly status: 'ready' }> {
   return {
     status: 'ready',
@@ -157,6 +175,7 @@ function readyEnvelope(
       coverage,
       estimatedTokens: text ? estimateTextTokens(text) : 0,
       byteLength: utf8Bytes(text),
+      resourceRefs: Object.freeze([...resourceRefs]),
     },
   };
 }
@@ -211,7 +230,7 @@ interface RenderedEnvelope {
 
 function renderWithinAllowance(input: {
   readonly batchId: string;
-  readonly origin: SubagentSettlementCoverage['origin'];
+  readonly origin: SubagentHandoffOrigin;
   readonly selected: readonly SubagentSettlementEnvelopeCandidate[];
   readonly omitted: readonly SubagentSettlementEnvelopeCandidate[];
   readonly maxTokens: number;
@@ -268,7 +287,7 @@ function renderWithinAllowance(input: {
 
 function serializeEnvelope(
   batchId: string,
-  origin: SubagentSettlementCoverage['origin'],
+  origin: SubagentHandoffOrigin,
   entries: readonly RenderedEntry[],
   omitted: readonly SubagentSettlementEnvelopeCandidate[],
 ): RenderedEnvelope {
@@ -288,7 +307,7 @@ function serializeEnvelope(
     const nested = candidate.notification.settlementCoverage;
     lines.push(
       `<agent-output agent-id="${escapeXmlAttribute(candidate.notification.agentId)}" generation="${candidate.notification.generation}" turn-id="${escapeXmlAttribute(candidate.notification.turnId)}">`,
-      `<execution status="${candidate.notification.status}" stop-provenance="${candidate.notification.stopProvenance}" tokens-used="${candidate.notification.tokensUsed}" />`,
+      `<execution status="${candidate.notification.status}" stop-provenance="${candidate.notification.stopProvenance}" />`,
       `<nested-coverage full="${nested?.full ?? 0}" excerpted="${nested?.excerpted ?? 0}" omitted="${nested?.omitted ?? 0}" provider-attempted="${nested?.providerAttempted === true}" />`,
       ...(entry.content ? [`<output>${escapeXmlText(entry.content)}</output>`] : []),
       ...(entry.disposition === 'full' ? [] : [
@@ -304,6 +323,13 @@ function serializeEnvelope(
       `<omitted-agent-outputs count="${omitted.length}" source-bytes="${bytes}" source-tokens="${tokens}" batch-id="${escapeXmlAttribute(batchId)}" />`,
     );
   }
+  if (hasIncomplete) {
+    for (const candidate of [...entries.map((entry) => entry.candidate), ...omitted]) {
+      lines.push(
+        `<transcript-fallback agent-id="${escapeXmlAttribute(candidate.notification.agentId)}" generation="${candidate.notification.generation}" turn-id="${escapeXmlAttribute(candidate.notification.turnId)}" />`,
+      );
+    }
+  }
   lines.push('</subagent-settlement>');
   const text = lines.join('\n');
   return {
@@ -312,6 +338,30 @@ function serializeEnvelope(
     estimatedTokens: estimateTextTokens(text),
     byteLength: utf8Bytes(text),
   };
+}
+
+function selectedHandoffReferences(
+  entries: readonly RenderedEntry[],
+): ThreadResourceReference[] {
+  const selected = new Map<string, ThreadResourceReference>();
+  for (const entry of entries) {
+    if (entry.disposition === 'omitted') continue;
+    const citations = entry.candidate.citations ?? [];
+    const includedOrdinals = entry.disposition === 'full'
+      ? new Set(citations.map((citation) => citation.markerOrdinal))
+      : includedCitationOrdinals(entry.candidate.output, entry.content);
+    for (const citation of citations) {
+      if (!includedOrdinals.has(citation.markerOrdinal) || !citation.resourceRef) continue;
+      selected.set(citation.resourceRef.id, citation.resourceRef);
+    }
+  }
+  return [...selected.values()];
+}
+
+function includedCitationOrdinals(source: string, excerpt: string): Set<number> {
+  const sourceMarkers = parseReferenceMarkers(source, ['file']);
+  const excerptUris = new Set(parseReferenceMarkers(excerpt, ['file']).map((marker) => marker.uri));
+  return new Set(sourceMarkers.flatMap((marker, ordinal) => excerptUris.has(marker.uri) ? [ordinal] : []));
 }
 
 function excerptForAllowance(
@@ -423,10 +473,10 @@ function fairCandidateOrder(
 }
 
 function coverageFor(
-  origin: SubagentSettlementCoverage['origin'],
+  origin: SubagentHandoffOrigin,
   members: readonly SubagentDeliveryBatchMember[],
   providerAttempted: boolean,
-): SubagentSettlementCoverage {
+): SubagentHandoffCoverage {
   return {
     origin,
     full: members.filter((member) => member.disposition === 'full').length,

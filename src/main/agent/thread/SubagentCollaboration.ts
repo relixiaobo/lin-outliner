@@ -48,11 +48,10 @@ import type { ExplicitSubagentAdmissionPreparer,TurnLifecycle } from './TurnLife
 import {
   agentMessageContext,
   backgroundLaunchText,
-  foregroundUsageText,
   subagentTurnResult,
   taskNotificationContext,
 } from './subagentOutput';
-import { buildSubagentSettlementEnvelope } from './subagentSettlementEnvelope';
+import { SubagentHandoffProjector } from './subagentSettlementEnvelope';
 
 const MAX_TERMINAL_SETTLEMENT_RETRIES = 4;
 const TERMINAL_SETTLEMENT_RETRY_EXHAUSTED_MESSAGE =
@@ -111,9 +110,13 @@ interface SubagentCatalog {
 interface AgentSpawnResult {
   readonly agentId: ThreadId;
   readonly runMode: 'foreground' | 'background';
-  readonly report: string | null;
-  readonly usage: string | null;
-  readonly outputFile: string | null;
+  readonly handoff: string | null;
+  readonly resourceRefs: readonly ThreadResourceReference[];
+  readonly coverage: {
+    readonly full: number;
+    readonly excerpted: number;
+    readonly omitted: number;
+  } | null;
 }
 interface PreparedResumeWorktree {
   readonly previous: AgentWorktreeMetadata | null;
@@ -121,6 +124,7 @@ interface PreparedResumeWorktree {
 }
 
 export class SubagentCollaboration {
+  private readonly handoffProjector = new SubagentHandoffProjector();
   private readonly ephemeralSpawnEdges = new Map<ThreadId, { sessionId: string; parentThreadId: ThreadId; taskPath: string; createdAt: number }>();
   private readonly pendingSubagentActivities = new Map<ThreadId, PendingSubagentActivity[]>();
   private readonly pendingCollaborationActivity = new Set<ThreadId>();
@@ -522,13 +526,13 @@ export class SubagentCollaboration {
         if (result.runMode === 'background') {
           return rawTextToolResult(backgroundLaunchText({
             agentId: result.agentId,
-            outputFile: result.outputFile,
-          }), { agentId: result.agentId, outputFile: result.outputFile });
+          }), { agentId: result.agentId });
         }
-        const content = [result.report, result.usage]
-          .filter((text): text is string => typeof text === 'string' && text.length > 0);
-        if (content.length === 0) content.push('Agent finished without text output.');
-        return rawTextBlocksToolResult(content, { agentId: result.agentId });
+        return rawTextToolResult(
+          result.handoff ? result.handoff : 'Agent finished without text output.',
+          { agentId: result.agentId, coverage: result.coverage },
+          result.resourceRefs,
+        );
       }, agentInputSchema(modelIds), normalizeAgentToolInput),
       agentTool('agent_message', 'Agent Message', async (itemId, params) => {
         const input = normalizeAgentMessageToolInput(params);
@@ -653,9 +657,9 @@ export class SubagentCollaboration {
       return {
         agentId: execution.agentId,
         runMode: 'background',
-        report: null,
-        usage: null,
-        outputFile: this.transcripts.pathForPendingReader(execution.agentId),
+        handoff: null,
+        resourceRefs: [],
+        coverage: null,
       };
     }
     if (!foregroundSettlementKey || !foregroundSettlement || !rootThreadId) {
@@ -710,14 +714,35 @@ export class SubagentCollaboration {
     const settled = this.executions.require(execution.agentId);
     const terminal = this.core.readTurn(execution.agentId, settled.currentTurnId);
     if (!terminal) throw new Error(`Foreground Agent Turn was not recorded: ${settled.currentTurnId}`);
+    const notification = this.executions.terminalNotification(execution.agentId, settled.generation);
+    if (!notification) throw new Error(`Foreground Agent terminal record was not recorded: ${execution.agentId}`);
+    const handoff = this.handoffProjector.project({
+      batchId: uuidV7(this.now()),
+      origin: 'foreground',
+      candidates: [{
+        execution: settled,
+        notification,
+        output: subagentTurnResult(terminal),
+        citations: finalCitationBindings(terminal),
+      }],
+    });
+    if (handoff.status !== 'ready') {
+      throw new Error(`Foreground Agent handoff could not be projected: ${execution.agentId}`);
+    }
+    const projectedResourceRefs = await this.copyAdditionalContextResources(
+      input.senderThreadId,
+      handoff.envelope.resourceRefs,
+    );
     return {
       agentId: execution.agentId,
       runMode: 'foreground',
-      report: subagentTurnResult(terminal),
-      usage: selected.kind === 'explore' || selected.kind === 'plan'
-        ? null
-        : foregroundUsageText({ agentId: execution.agentId, turn: terminal, worktree: settled.worktree }),
-      outputFile: await this.transcripts.pathForReader(execution.agentId),
+      handoff: handoff.envelope.text,
+      resourceRefs: projectedResourceRefs,
+      coverage: {
+        full: handoff.envelope.coverage.full,
+        excerpted: handoff.envelope.coverage.excerpted,
+        omitted: handoff.envelope.coverage.omitted,
+      },
     };
   }
 
@@ -892,10 +917,9 @@ export class SubagentCollaboration {
         }
         throw error;
       }
-      const outputFile = await this.transcripts.pathForReader(current.agentId);
       return {
         success: true,
-        message: `Agent "${current.agentId}" was stopped (${terminalStatus(this.core.allTurns(current.agentId).at(-2))}); resumed it in the background with your message. You'll be notified when it finishes. Output: ${outputFile ?? '(unavailable)'}`,
+        message: `Agent "${current.agentId}" was stopped (${terminalStatus(this.core.allTurns(current.agentId).at(-2))}); resumed it in the background with your message. You'll be notified when it finishes.`,
         resumedAgentId: current.agentId,
         pin: agentPin(current.agentId),
       };
@@ -1183,7 +1207,6 @@ export class SubagentCollaboration {
               taskPath: input.taskPath,
             });
             copiedAdditionalContextResourceRefs = await this.copyAdditionalContextResources(
-              parent.thread.id,
               thread.id,
               input.additionalContextResourceRefs ?? [],
             );
@@ -1332,7 +1355,6 @@ export class SubagentCollaboration {
     }
 
   private async copyAdditionalContextResources(
-    sourceThreadId: ThreadId,
     targetThreadId: ThreadId,
     refs: readonly ThreadResourceReference[],
   ): Promise<readonly ThreadResourceReference[]> {
@@ -1341,7 +1363,7 @@ export class SubagentCollaboration {
       const key = `${ref.id}\0${ref.fileName}`;
       if (copied.has(key)) continue;
       try {
-        if (await this.core.payloads.copyResourceToThread(sourceThreadId, targetThreadId, ref)) {
+        if (this.core.resources.linkReference(targetThreadId, ref)) {
           copied.set(key, ref);
         } else {
           console.warn(`[agent] Skill shell context resource is unavailable: ${ref.id}`);
@@ -1521,10 +1543,11 @@ export class SubagentCollaboration {
           execution: childExecution,
           notification,
           output: subagentTurnResult(childTurn),
+          citations: finalCitationBindings(childTurn),
         };
       });
       const batchId = uuidV7(this.now());
-      const envelopeResult = buildSubagentSettlementEnvelope({
+      const envelopeResult = this.handoffProjector.project({
         batchId,
         origin: 'explicitAdmission',
         mode: 'carryForward',
@@ -1535,6 +1558,10 @@ export class SubagentCollaboration {
       if (envelopeResult.status !== 'ready') {
         throw new Error(`Subagent carry-forward envelope could not be planned: ${input.current.agentId}`);
       }
+      const projectedResourceRefs = await this.copyAdditionalContextResources(
+        input.current.agentId,
+        envelopeResult.envelope.resourceRefs,
+      );
       const prepared = this.executions.prepareExplicitGenerationBatch({
         batchId,
         agentId: input.current.agentId,
@@ -1563,6 +1590,7 @@ export class SubagentCollaboration {
           envelopeDigest: envelopeResult.envelope.digest,
         },
         sidecarText: envelopeResult.envelope.text,
+        resourceRefs: projectedResourceRefs,
       };
     };
   }
@@ -2380,9 +2408,10 @@ export class SubagentCollaboration {
           execution: childExecution,
           notification,
           output: subagentTurnResult(childTurn),
+          citations: finalCitationBindings(childTurn),
         };
       });
-      const envelopeResult = buildSubagentSettlementEnvelope({
+      const envelopeResult = this.handoffProjector.project({
         batchId,
         origin: current.terminalOrigin === 'normalOvershoot'
           ? 'normalOvershoot'
@@ -2392,6 +2421,10 @@ export class SubagentCollaboration {
       if (envelopeResult.status !== 'ready') {
         throw new Error(`Subagent settlement envelope has no provider capacity: ${current.agentId}`);
       }
+      const projectedResourceRefs = await this.copyAdditionalContextResources(
+        current.agentId,
+        envelopeResult.envelope.resourceRefs,
+      );
       const prepared = this.executions.prepareExhaustedSettlementBatch({
         batchId,
         agentId: current.agentId,
@@ -2419,6 +2452,7 @@ export class SubagentCollaboration {
             },
           },
           additionalContextSource: `subagent-settlement:${batchId}`,
+          additionalContextResourceRefs: projectedResourceRefs,
           clientUserMessageId: `subagent-settlement:${batchId}`,
           author: { kind: 'host' },
           trigger: {
@@ -2579,12 +2613,23 @@ export class SubagentCollaboration {
         const execution = this.executions.require(notification.agentId);
         const turn = this.core.readTurn(notification.agentId, notification.turnId);
         if (!turn) throw new Error(`Agent notification Turn not found: ${notification.turnId}`);
-        let outputFile: string | null = null;
-        try {
-          outputFile = await this.transcripts.pathForReader(notification.agentId);
-        } catch (error) {
-          console.warn(`[agent] Subagent transcript path unavailable for ${notification.agentId}`, error);
+        const handoff = this.handoffProjector.project({
+          batchId: notificationClientId(notification),
+          origin: 'background',
+          candidates: [{
+            execution,
+            notification,
+            output: subagentTurnResult(turn),
+            citations: finalCitationBindings(turn),
+          }],
+        });
+        if (handoff.status !== 'ready') {
+          throw new Error(`Background Agent handoff could not be projected: ${execution.agentId}`);
         }
+        const projectedResourceRefs = await this.copyAdditionalContextResources(
+          parentThreadId,
+          handoff.envelope.resourceRefs,
+        );
         if (this.closing) {
           this.executions.release(notification.agentId, notification.generation);
           return 'stop';
@@ -2623,7 +2668,13 @@ export class SubagentCollaboration {
           threadId: parentThreadId,
           ...(continuationTurnId === undefined ? {} : { turnId: continuationTurnId }),
           input: [],
-          additionalContext: taskNotificationContext({ execution, notification, turn, outputFile }),
+          additionalContext: taskNotificationContext({
+            execution,
+            notification,
+            turn,
+            projectedOutput: handoff.envelope.text,
+          }),
+          additionalContextResourceRefs: projectedResourceRefs,
           additionalContextSource: `subagent:${execution.agentId}`,
           clientUserMessageId,
           author: { kind: 'agent', threadId: notification.agentId },
@@ -3160,12 +3211,16 @@ function agentTool(
   };
 }
 
-function rawTextToolResult(text: string, details: JsonValue): AgentToolResult<JsonValue> {
-  return { content: [{ type: 'text', text }], details };
-}
-
-function rawTextBlocksToolResult(texts: readonly string[], details: JsonValue): AgentToolResult<JsonValue> {
-  return { content: texts.map((text) => ({ type: 'text' as const, text })), details };
+function rawTextToolResult(
+  text: string,
+  details: JsonValue,
+  resourceRefs: readonly ThreadResourceReference[] = [],
+): AgentToolResult<JsonValue> {
+  return {
+    content: [{ type: 'text', text }],
+    details,
+    ...(resourceRefs.length === 0 ? {} : { resourceRefs }),
+  };
 }
 
 function rawJsonToolResult(value: JsonValue): AgentToolResult<JsonValue> {
@@ -3305,6 +3360,15 @@ function utf8Prefix(value: string, maxBytes: number): { readonly text: string; r
 
 function executionKey(agentId: ThreadId, generation: number): string {
   return `${agentId}:${generation}`;
+}
+
+function finalCitationBindings(turn: Turn) {
+  return turn.items.flatMap((item) => (
+    item.type === 'agentMessage'
+      && (item.phase === 'final_answer' || item.phase === null)
+      ? [...(item.finalCitations ?? [])]
+      : []
+  ));
 }
 
 async function settlementContextText(

@@ -1,4 +1,5 @@
 import { parseFileReferenceUri } from '../../../core/referenceMarkup';
+import type { ThreadResourceReference } from '../../../core/agent/protocol';
 
 export interface InlineFilePreviewDescriptor {
   attachmentId?: string;
@@ -9,6 +10,7 @@ export interface InlineFilePreviewDescriptor {
   name?: string;
   path?: string;
   ref?: string;
+  resourceRef?: ThreadResourceReference;
   sizeBytes?: number;
   thumbnailDataUrl?: string;
   threadId?: string;
@@ -29,18 +31,27 @@ export function inlineFilePreviewAttrs(file: InlineFilePreviewDescriptor): Recor
   setAttr(attrs, 'data-inline-ref-thumbnail-data-url', file.thumbnailDataUrl);
   setAttr(attrs, 'data-inline-ref-thread-id', file.threadId);
   setAttr(attrs, 'data-inline-ref-attachment-id', file.attachmentId);
+  setAttr(attrs, 'data-inline-ref-resource-id', file.resourceRef?.id);
+  setAttr(attrs, 'data-inline-ref-resource-mime-type', file.resourceRef?.mimeType);
+  setFiniteNumberAttr(attrs, 'data-inline-ref-resource-byte-length', file.resourceRef?.byteLength);
+  setAttr(attrs, 'data-inline-ref-resource-file-name', file.resourceRef?.fileName);
   return attrs;
 }
 
 export const LOCAL_FILE_REFERENCE_LINK_PREFIX = 'lin-file:';
 
-export function localFileReferenceHref(path: string, entryKind: 'file' | 'directory' = 'file'): string {
-  return `#${LOCAL_FILE_REFERENCE_LINK_PREFIX}${encodeURIComponent(entryKind)}:${encodeURIComponent(path)}`;
+export function localFileReferenceHref(
+  path: string,
+  entryKind: 'file' | 'directory' = 'file',
+  markerOrdinal?: number,
+): string {
+  const suffix = markerOrdinal === undefined ? '' : `:${markerOrdinal}`;
+  return `#${LOCAL_FILE_REFERENCE_LINK_PREFIX}${encodeURIComponent(entryKind)}:${encodeURIComponent(path)}${suffix}`;
 }
 
 export function localFileReferenceFromHref(
   href: string | undefined,
-): { entryKind: 'file' | 'directory'; path: string } | null {
+): { entryKind: 'file' | 'directory'; path: string; markerOrdinal?: number } | null {
   const normalizedHref = href?.startsWith('#') ? href.slice(1) : href;
   const fileReferenceUrl = parseFileReferenceUri(normalizedHref);
   if (fileReferenceUrl) {
@@ -51,11 +62,19 @@ export function localFileReferenceFromHref(
   const separator = body.indexOf(':');
   if (separator < 0) return null;
   const rawEntryKind = body.slice(0, separator);
-  const rawPath = body.slice(separator + 1);
+  const rawBody = body.slice(separator + 1);
+  const ordinalSeparator = rawBody.lastIndexOf(':');
+  const rawOrdinal = ordinalSeparator >= 0 ? rawBody.slice(ordinalSeparator + 1) : '';
+  const hasOrdinal = /^\d+$/u.test(rawOrdinal);
+  const rawPath = hasOrdinal ? rawBody.slice(0, ordinalSeparator) : rawBody;
   try {
     const entryKind = decodeURIComponent(rawEntryKind) === 'directory' ? 'directory' : 'file';
     const path = decodeURIComponent(rawPath);
-    return path ? { entryKind, path } : null;
+    return path ? {
+      entryKind,
+      path,
+      ...(hasOrdinal ? { markerOrdinal: Number(rawOrdinal) } : {}),
+    } : null;
   } catch {
     return null;
   }

@@ -12,6 +12,7 @@ import { applyThreadItemDelta } from '../itemDelta';
 import { uuidV7 } from '../uuid';
 
 type NotificationWriter = (notification: AgentCoreRecordedNotification) => Promise<void>;
+type CompletedItemPreparer = (item: ThreadItem) => Promise<ThreadItem>;
 
 export class ItemRecorder {
   private readonly items = new Map<string, ThreadItem>();
@@ -24,6 +25,7 @@ export class ItemRecorder {
     readonly turnId: TurnId,
     initialItems: readonly ThreadItem[],
     private readonly writeNotification: NotificationWriter,
+    private readonly prepareCompletedItem?: CompletedItemPreparer,
   ) {
     for (const item of initialItems) {
       this.putInitial(item);
@@ -83,7 +85,8 @@ export class ItemRecorder {
   }
 
   async completed(itemInput: ThreadItem, completedAt = Date.now()): Promise<ThreadItem> {
-    const item = decodeThreadItem(itemInput);
+    let item = decodeThreadItem(itemInput);
+    if (this.prepareCompletedItem) item = decodeThreadItem(await this.prepareCompletedItem(item));
     this.assertLocalEnvelope(item);
     if (!this.items.has(item.id)) throw new Error(`Thread Item was not started: ${item.id}`);
     if (this.completedItemIds.has(item.id)) throw new Error(`Thread Item was already completed: ${item.id}`);
@@ -106,7 +109,12 @@ export class ItemRecorder {
 
   async completedImmediatelyBatch(itemsInput: readonly ThreadItem[], at = Date.now()): Promise<readonly ThreadItem[]> {
     if (itemsInput.length === 0) return [];
-    const items = itemsInput.map((item) => decodeThreadItem(item));
+    const items: ThreadItem[] = [];
+    for (const itemInput of itemsInput) {
+      let item = decodeThreadItem(itemInput);
+      if (this.prepareCompletedItem) item = decodeThreadItem(await this.prepareCompletedItem(item));
+      items.push(item);
+    }
     const itemIds = new Set<string>();
     for (const item of items) {
       this.assertLocalEnvelope(item);

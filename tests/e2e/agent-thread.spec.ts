@@ -1701,7 +1701,7 @@ test.describe('canonical agent Thread surface', () => {
                 mimeType: 'text/plain',
                 sizeBytes: 12,
                 source: {
-                  kind: 'threadPayload',
+                  kind: 'resource',
                   ref: {
                     id: 'a'.repeat(64),
                     mimeType: 'text/plain',
@@ -2000,7 +2000,7 @@ test.describe('canonical agent Thread surface', () => {
         id: expect.any(String),
         name: 'Pasted.txt',
         mimeType: 'text/plain',
-        source: expect.objectContaining({ kind: 'threadPayload' }),
+        source: expect.objectContaining({ kind: 'resource' }),
       }),
     ]);
     expect(JSON.stringify(submit?.args.input)).not.toContain('extractedText');
@@ -2387,7 +2387,7 @@ test.describe('canonical agent Thread surface', () => {
     expect(attachment?.mimeType).toBe('image/png');
     expect(attachment?.sizeBytes).toBe(originalSize);
     expect(attachment?.source).toMatchObject({
-      kind: 'threadPayload',
+      kind: 'resource',
       ref: { byteLength: originalSize, mimeType: 'image/png' },
     });
     const chunks = (await commandCalls(page)).filter((call) => call.cmd === 'attachment-upload/append');
@@ -9032,7 +9032,7 @@ test('restores attachment state when a failed large paste replaced its marker', 
   expect(submit?.args.input).toEqual([expect.objectContaining({
     type: 'attachment',
     name: 'existing.txt',
-    source: expect.objectContaining({ kind: 'threadPayload' }),
+    source: expect.objectContaining({ kind: 'resource' }),
   })]);
 });
 

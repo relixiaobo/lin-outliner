@@ -1,6 +1,7 @@
 import { useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import type { PreviewTarget } from '../../../core/preview';
+import type { ThreadResourceReference } from '../../../core/agent/protocol';
 import type { FilePreviewNavigationOptions } from '../workspaceLayoutTypes';
 import { useT } from '../../i18n/I18nProvider';
 import {
@@ -24,6 +25,7 @@ export interface InlineFileMenuFile {
   name: string;
   entryKind: 'file' | 'directory';
   threadId?: string;
+  resourceRef?: ThreadResourceReference;
 }
 
 interface InlineFileContextMenuProps {
@@ -42,7 +44,9 @@ export function previewTargetForInlineFile(file: InlineFileMenuFile): PreviewTar
     label: file.name,
     ...(file.threadId && file.attachmentId
       ? { threadId: file.threadId, attachmentId: file.attachmentId }
-      : {}),
+      : file.threadId && file.resourceRef
+        ? { threadId: file.threadId, resourceRef: file.resourceRef }
+        : {}),
   };
 }
 
@@ -89,7 +93,9 @@ export function InlineFileContextMenu({
       path: file.path,
       ...(file.threadId && file.attachmentId
         ? { threadId: file.threadId, attachmentId: file.attachmentId }
-        : {}),
+        : file.threadId && file.resourceRef
+          ? { threadId: file.threadId, resourceRef: file.resourceRef }
+          : {}),
     });
   };
 
@@ -98,7 +104,9 @@ export function InlineFileContextMenu({
       path: file.path,
       ...(file.threadId && file.attachmentId
         ? { threadId: file.threadId, attachmentId: file.attachmentId }
-        : {}),
+        : file.threadId && file.resourceRef
+          ? { threadId: file.threadId, resourceRef: file.resourceRef }
+          : {}),
     });
   };
 

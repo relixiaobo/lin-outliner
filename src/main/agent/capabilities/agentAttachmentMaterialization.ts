@@ -77,7 +77,7 @@ export function createManagedAttachmentObservation(
           : null;
         if (copiedOriginal) return realpath(copiedOriginal);
         const copiedObservation = await copyArtifactSource(
-          { kind: 'threadPayload', ref: artifact.observation },
+          { kind: 'resource', ref: artifact.observation },
           targetDirectory,
           targetPath,
           copyResource,

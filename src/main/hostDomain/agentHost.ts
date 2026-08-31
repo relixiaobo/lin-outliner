@@ -175,6 +175,7 @@ export interface AgentThreadCapability {
   threadTranscriptPath: ThreadService['threadTranscriptPath'];
   resolveAttachmentFile: ThreadService['resolveAttachmentFile'];
   resolveThreadResourceFile: ThreadService['resolveThreadResourceFile'];
+  resolveThreadResourceSource: ThreadService['resolveThreadResourceSource'];
   resolveImageArtifactFile: ThreadService['resolveImageArtifactFile'];
   readReferencedThreadResource: ThreadService['readReferencedThreadResource'];
   beginAttachmentUpload: ThreadService['beginAttachmentUpload'];
@@ -280,6 +281,9 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
       ...input,
       writeResource: (...args) => threadCapabilityReference.get().writeThreadResourceWithStatus(...args),
     }),
+    captureLocalFile: (threadId, sourcePath, mimeType, fileName) => (
+      threadReference.get().captureThreadLocalFile(threadId, sourcePath, mimeType, fileName)
+    ),
   });
   const turnExecutor = new PiTurnExecutor({
     ...options.createTurnExecutorOptions(composition),
@@ -311,6 +315,7 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
     threadTranscriptPath: (...args) => threadService.threadTranscriptPath(...args),
     resolveAttachmentFile: (...args) => threadService.resolveAttachmentFile(...args),
     resolveThreadResourceFile: (...args) => threadService.resolveThreadResourceFile(...args),
+    resolveThreadResourceSource: (...args) => threadService.resolveThreadResourceSource(...args),
     resolveImageArtifactFile: (...args) => threadService.resolveImageArtifactFile(...args),
     readReferencedThreadResource: (...args) => threadService.readReferencedThreadResource(...args),
     beginAttachmentUpload: (...args) => threadService.beginAttachmentUpload(...args),

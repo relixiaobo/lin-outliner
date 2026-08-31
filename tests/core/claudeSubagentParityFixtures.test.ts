@@ -19,7 +19,6 @@ import { agentProviderPayload } from '../../src/main/agent/runtime/agentProvider
 import {
   agentMessageContext,
   backgroundLaunchText,
-  foregroundUsageText,
   scanSubagentOutput,
   taskNotificationContext,
 } from '../../src/main/agent/thread/subagentOutput';
@@ -219,25 +218,17 @@ describe('Claude Code 2.1.227 Subagent parity fixtures', () => {
       .toBe(JSON.stringify(OUTPUT_HELPERS_NORMALIZED));
   });
 
-  test('keeps launch helpers byte-aligned while lowering child output to typed context', () => {
-    const expected = OUTPUT_HELPERS_NORMALIZED as {
-      readonly backgroundLaunch: { readonly text: string };
-      readonly foregroundGeneral: { readonly content: readonly [string, string] };
-    };
-    expect(backgroundLaunchText({
+  test('keeps background launch guidance while lowering child output to typed context', () => {
+    const launch = backgroundLaunchText({
       agentId: '<agent-id>',
-      outputFile: '<output-file>',
-    })).toBe(expected.backgroundLaunch.text);
-    const foreground = completedTurn('CHILD_MARKER', 2);
-    expect([
-      'CHILD_MARKER',
-      foregroundUsageText({ agentId: '<agent-id>', turn: foreground, worktree: null }),
-    ]).toEqual(expected.foregroundGeneral.content);
+    });
+    expect(launch).toContain('agentId: <agent-id>');
+    expect(launch).not.toContain('output_file');
+    expect(launch).not.toContain('/tmp/');
     const notification = taskNotificationContext({
       execution: completedExecution(),
       notification: completedNotification(),
       turn: completedTurn('CHILD_MARKER', 1),
-      outputFile: '/tmp/tenon-budget-output',
     });
     expect(notification['subagent.output']).toEqual({
       kind: 'untrusted',
@@ -330,7 +321,6 @@ describe('Claude Code 2.1.227 Subagent parity fixtures', () => {
     const input = {
       execution: budgetExecution(),
       notification: budgetNotification(),
-      outputFile: '/tmp/tenon-budget-output',
     };
 
     const withPartial = taskNotificationContext({ ...input, turn: withPartialResult });

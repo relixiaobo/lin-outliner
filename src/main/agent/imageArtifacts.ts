@@ -67,7 +67,7 @@ export function imageArtifactResourceReferences(
   artifact: ThreadImageArtifactReference,
 ): ThreadResourceReference[] {
   const refs = [
-    ...(artifact.original?.kind === 'threadPayload' ? [artifact.original.ref] : []),
+    ...(artifact.original?.kind === 'resource' ? [artifact.original.ref] : []),
     artifact.observation,
   ];
   return [...new Map(refs.map((ref) => [`${ref.id}\0${ref.fileName}`, ref])).values()];

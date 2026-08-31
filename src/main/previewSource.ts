@@ -436,9 +436,7 @@ async function resolveLocalFileTarget(
   if (target.resourceRef) {
     const resource = await context.threadResourceFile?.(target.threadId, target.resourceRef);
     if (!resource || resource.entryKind !== 'file') return null;
-    return target.path === resource.path || resource.acceptedPathHints.includes(target.path)
-      ? resource
-      : null;
+    return resource;
   }
   if (!target.attachmentId) return null;
   const attachment = await context.threadAttachmentFile?.(target.threadId, target.attachmentId);

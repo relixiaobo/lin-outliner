@@ -110,6 +110,7 @@ type RolloutEntry,
 type ThreadHistoryRollbackMarker
 } from './persistence/RolloutStore';
 import { openSqlite } from './persistence/sqlite';
+import { AgentResourceStore } from './persistence/AgentResourceStore';
 import { SubagentRequestLedger } from './persistence/SubagentRequestLedger';
 import {
   type AgentStartupContextSnapshot,
@@ -239,6 +240,7 @@ export interface AgentCorePaths {
   readonly history: string;
   readonly goals: string;
   readonly payloads: string;
+  readonly resourceReferences: string;
   /** Thread transcript artifacts. A sibling of `agent/`, directly under userData. */
   readonly transcripts: string;
 }
@@ -252,12 +254,20 @@ export interface ThreadServiceStores {
   readonly subagentExecutions: SubagentExecutionLedger;
   readonly agentStartupContexts: AgentStartupContextStore;
   readonly payloads: ToolPayloadStore;
+  readonly resources: AgentResourceStore;
 }
 
 export interface ThreadServiceOptions {
   readonly stores: ThreadServiceStores;
   readonly executor: TurnExecutor;
   readonly attachmentScratchRoot: string;
+  readonly resolveRootWorkspace?: (
+    threadId: ThreadId,
+  ) => string | Promise<string>;
+  readonly cleanupRootWorkspace?: (
+    threadId: ThreadId,
+    cwd: string,
+  ) => void | Promise<void>;
   /** App-owned root for Thread transcript artifacts. Never a workspace path. */
   readonly transcriptRoot: string;
   readonly nameGenerator?: ThreadNameGenerator;
@@ -392,7 +402,7 @@ export interface ResolvedThreadAttachmentFile {
 }
 
 export interface ResolvedThreadResourceFile {
-  readonly entryKind: 'file';
+  readonly entryKind: 'file' | 'directory';
   readonly path: string;
   readonly stats: Stats;
   readonly ref: ThreadResourceReference;
@@ -547,6 +557,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       options.stores.history,
       options.stores.rollout,
       options.stores.payloads,
+      options.stores.resources,
       this.extensions,
     );
     this.reportError = async (report) => { await options.reportError?.(report); };
@@ -626,12 +637,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.writeTrajectoryExport = options.writeTrajectoryExport;
     this.resourceOps = new ThreadResourceOps(
       this.core,
+      options.stores.resources,
       options.attachmentScratchRoot,
       options.resolveUserContent ?? ((content) => content),
     );
-    options.stores.payloads.setImageRetentionInventoryProvider((threadId) => (
-      this.resourceOps.threadImageRetentionInventory(threadId)
-    ));
     this.transcriptExclusions = new ThreadTranscriptExclusions(options.transcriptRoot);
     this.transcriptIndex = new ThreadTranscriptIndex({
       transcriptRoot: options.transcriptRoot,
@@ -748,6 +757,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
       options.nameGenerator ?? null,
       options.resolveConfiguration ?? defaultConfiguration,
       options.resolveRendererStartDefaults ?? missingRendererStartDefaults,
+      options.resolveRootWorkspace,
+      options.cleanupRootWorkspace,
       options.validateRendererConfiguration ?? (() => undefined),
       options.onRendererConfigurationCommitted,
       this.now,
@@ -804,12 +815,17 @@ export class ThreadService implements ThreadServiceExtensionHost {
         subagentExecutions: new SubagentExecutionLedger(goalsDatabase),
         agentStartupContexts,
         payloads: new ToolPayloadStore(paths.payloads),
+        resources: new AgentResourceStore(
+          paths.resourceReferences,
+          join(userDataPath, 'content'),
+          options.attachmentScratchRoot,
+          options.now ?? Date.now,
+        ),
       },
     });
   }
   async initialize(): Promise<void> {
     if (this.initialized) return;
-    await this.core.payloads.initialize();
     // Before any Turn can complete: the subject resolver reads this synchronously.
     await this.transcriptExclusions.load();
     await this.recoverInitialSubagentAdmissions();
@@ -872,6 +888,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
       console.warn('[agent] Agent ledger orphan cleanup deferred during startup', error);
     }
     await this.rebuildRetryDeliveryAliases(reconciledThreadIds);
+    await this.core.resources.initialize(new Map(reconciledThreadIds.map((threadId) => [
+      threadId,
+      this.resourceOps.threadResourceReferences(threadId),
+    ])));
     await Promise.all([
       // Transcript reclamation is the same kind of work as payload pruning, so it
       // joins the same startup batch rather than adding a serial step.
@@ -895,7 +915,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       ...reconciledThreadIds.flatMap((threadId) => {
         const references = this.resourceOps.threadStorageReferences(threadId);
         return [
-          this.core.payloads.pruneUnreferencedResources(threadId, references.resources),
+          this.core.resources.setThreadReferences(threadId, references.resources),
           this.core.payloads.pruneUnreferencedContexts(threadId, references.contexts, references.internalTexts),
           this.core.payloads.pruneUnreferencedTurnDiagnostics(threadId, references.diagnostics),
           this.core.payloads.pruneUnreferencedTextOutputs(threadId, references.textOutputs),
@@ -1071,6 +1091,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         this.core.history.deleteThread(descendantId);
         await this.core.rollout.delete(descendantId);
         await this.core.payloads.deleteThread(descendantId);
+        await this.core.resources.deleteThread(descendantId);
       }
       this.subagentBudgets.clearThreadsForRecovery(subtreeIds);
       this.core.metadata.delete(threadId);
@@ -1254,6 +1275,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.core.history.deleteThread(threadId);
     await this.core.rollout.delete(threadId);
     await this.core.payloads.deleteThread(threadId);
+    await this.core.resources.deleteThread(threadId);
     await this.transcripts.deleteForRecovery(threadId);
     this.subagentBudgets.clearThreadsForRecovery([threadId]);
     this.subagentExecutions.deleteAgentOnly(threadId);
@@ -1442,8 +1464,14 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const operations = await Promise.allSettled([
       this.core.flush(),
       this.core.rollbackRecovery.close(),
-      this.core.payloads.abortAllResourceUploads(),
-      Promise.all([...this.core.ephemeral.keys()].map((threadId) => this.core.payloads.deleteThread(threadId))),
+      (async () => {
+        await this.core.resources.abortAllUploads();
+        await Promise.all([...this.core.ephemeral.keys()].map(async (threadId) => {
+          await this.core.payloads.deleteThread(threadId);
+          await this.core.resources.deleteThread(threadId);
+        }));
+        await this.core.resources.close();
+      })(),
     ]);
     for (const result of operations) {
       if (result.status === 'rejected') failures.push(result.reason);
@@ -1746,11 +1774,31 @@ export class ThreadService implements ThreadServiceExtensionHost {
     threadId: ThreadId,
     ref: ThreadResourceReference,
   ): Promise<ResolvedThreadResourceFile | null> { return this.resourceOps.resolveThreadResourceFile(threadId, ref); }
+  async resolveThreadResourceSource(
+    threadId: ThreadId,
+    ref: ThreadResourceReference,
+  ): Promise<ResolvedThreadResourceFile | null> {
+    return this.resourceOps.resolveThreadResourceSource(threadId, ref);
+  }
   async resolveImageArtifactFile(
     threadId: ThreadId,
     artifact: ThreadImageArtifactReference,
   ): Promise<ResolvedThreadImageArtifactFile | null> {
     return this.resourceOps.resolveImageArtifactFile(threadId, artifact);
+  }
+  async captureThreadLocalFile(
+    threadId: ThreadId,
+    sourcePath: string,
+    mimeType: string,
+    fileName: string,
+  ): Promise<ThreadResourceReference> {
+    this.core.requireThread(threadId);
+    return (await this.core.resources.capturePath({
+      threadId,
+      sourcePath,
+      mimeType,
+      fileName,
+    })).ref;
   }
   listItems(request: ThreadItemsListRequest): ThreadItemsListResponse {
     this.assertThreadHistoryReadable(request.threadId);
@@ -2377,6 +2425,7 @@ export function agentCorePaths(userDataPath: string): AgentCorePaths {
     history: join(root, 'thread_history.sqlite'),
     goals: join(root, 'goals.sqlite'),
     payloads: join(root, 'payloads'),
+    resourceReferences: join(root, 'resource_references.sqlite'),
     transcripts: threadTranscriptRoot(userDataPath),
   };
 }

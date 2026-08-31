@@ -53,8 +53,8 @@ import { uuidV7 } from '../../src/main/agent/uuid';
 import {
   MAX_TOOL_PAYLOAD_IMAGE_BASE64_CHARS,
   MAX_TOOL_PAYLOAD_IMAGE_BYTES,
-  ThreadResourceQuotaError,
 } from '../../src/main/agent/persistence/ToolPayloadStore';
+import { ThreadResourceQuotaError } from '../../src/main/agent/persistence/AgentResourceStore';
 import { NativeAgentRuntime } from '../../src/main/agent/runtime/kernel/NativeAgentRuntime';
 import { PiModelGateway } from '../../src/main/agent/runtime/kernel/ModelGateway';
 import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
@@ -85,7 +85,7 @@ describe('PiTurnExecutor event normalization', () => {
     const normalizer = new PiEventNormalizer(fixture.context);
     const assistant = assistantMessage([{ type: 'text', text: 'Done' }]);
     const artifactRef: ThreadResourceReference = {
-      id: 'd'.repeat(64),
+      id: 'resource:00000000-0000-4000-8000-00000000000d',
       mimeType: 'text/plain',
       byteLength: 10,
       fileName: 'command.log',
@@ -748,7 +748,7 @@ describe('PiTurnExecutor event normalization', () => {
 
   test('uses a scratch observation path for managed non-image attachments', async () => {
     const ref = {
-      id: 'b'.repeat(64),
+      id: 'resource:00000000-0000-4000-8000-00000000000b',
       mimeType: 'application/pdf',
       byteLength: 512,
       fileName: 'report.pdf',
@@ -759,7 +759,7 @@ describe('PiTurnExecutor event normalization', () => {
       name: 'report.pdf',
       mimeType: 'application/pdf',
       sizeBytes: 512,
-      source: { kind: 'threadPayload', ref },
+      source: { kind: 'resource', ref },
     }] as const;
     const resources = {
       readResource: async () => null,
@@ -783,7 +783,7 @@ describe('PiTurnExecutor event normalization', () => {
 
   test('encodes only the persisted image observation at the provider boundary', async () => {
     const observation = {
-      id: 'c'.repeat(64),
+      id: 'resource:00000000-0000-4000-8000-00000000000c',
       mimeType: 'image/png',
       byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
       fileName: 'prompt.png',
@@ -836,7 +836,7 @@ describe('PiTurnExecutor event normalization', () => {
 
   test('keeps an image observation when its readable path cannot be materialized', async () => {
     const observation = {
-      id: 'f'.repeat(64),
+      id: 'resource:00000000-0000-4000-8000-00000000000f',
       mimeType: 'image/png',
       byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
       fileName: 'prompt.png',
@@ -905,7 +905,7 @@ describe('PiTurnExecutor event normalization', () => {
       artifactRef: imageArtifact(
         { kind: 'localFile', path: '/workspace/report.pdf' },
         {
-          id: 'e'.repeat(64),
+          id: 'resource:00000000-0000-4000-8000-00000000000e',
           mimeType: 'image/png',
           byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
           fileName: 'prompt.png',
@@ -946,7 +946,7 @@ describe('PiTurnExecutor event normalization', () => {
         artifactRef: imageArtifact(
           { kind: 'localFile', path: '/workspace/diagram.png' },
           {
-            id: 'd'.repeat(64),
+            id: 'resource:00000000-0000-4000-8000-00000000000d',
             mimeType: 'image/png',
             byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
             fileName: 'diagram.png',
@@ -2984,7 +2984,7 @@ describe('PiTurnExecutor event normalization', () => {
     const imageBytes = ONE_PIXEL_PNG_BYTES;
     const imageBase64 = imageBytes.toString('base64');
     const imageRef = {
-      id: 'c'.repeat(64),
+      id: 'resource:00000000-0000-4000-8000-00000000000c',
       mimeType: 'image/png',
       byteLength: imageBytes.byteLength,
       fileName: 'tool-output.png',
@@ -3077,7 +3077,7 @@ describe('PiTurnExecutor event normalization', () => {
     const missingPreviewPath = '/scratch/generated-images/turn/image-0.png';
     const previewedPath = '/scratch/generated-images/turn/image-1.png';
     const observation = {
-      id: createHash('sha256').update(ONE_PIXEL_PNG_BYTES).digest('hex'),
+      id: 'resource:00000000-0000-4000-8000-00000000000a',
       mimeType: 'image/png',
       byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
       fileName: 'tool-output.png',
@@ -3086,9 +3086,9 @@ describe('PiTurnExecutor event normalization', () => {
       createdAt: 1,
       retention: 'tiered',
       original: {
-        kind: 'threadPayload',
+        kind: 'resource',
         ref: {
-          id: 'f'.repeat(64),
+          id: 'resource:00000000-0000-4000-8000-00000000000f',
           mimeType: 'image/png',
           byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
           fileName: 'original.png',
@@ -3245,7 +3245,7 @@ describe('PiTurnExecutor event normalization', () => {
   test('persists tool artifact identity without retaining the producing Turn path', async () => {
     const fixture = createContext();
     const resourceRef: ThreadResourceReference = {
-      id: 'e'.repeat(64),
+      id: 'resource:00000000-0000-4000-8000-00000000000e',
       mimeType: 'application/pdf',
       byteLength: 456,
       fileName: 'report.pdf',
@@ -3294,7 +3294,7 @@ describe('PiTurnExecutor event normalization', () => {
   test('keeps bash artifact handles and repeated instruction paths out of the canonical command Item', async () => {
     const fixture = createContext();
     const resourceRef: ThreadResourceReference = {
-      id: 'f'.repeat(64),
+      id: 'resource:00000000-0000-4000-8000-00000000000f',
       mimeType: 'text/plain',
       byteLength: 32,
       fileName: 'command.log',
@@ -4900,6 +4900,10 @@ function createContext(): {
   const outputPayloads = new Map<string, string>();
   const diagnosticsPayloads: TurnDiagnosticsPayload[] = [];
   const diagnosticsErrors: unknown[] = [];
+  let resourceSequence = 0;
+  const nextResourceId = () => (
+    `resource:00000000-0000-4000-8000-${(++resourceSequence).toString(16).padStart(12, '0')}`
+  );
   const recorder = new ItemRecorder(threadId, turnId, [], async (notification) => {
     notifications.push(notification);
   });
@@ -4908,7 +4912,7 @@ function createContext(): {
     const dimensions = imageDimensions(bytes);
     return {
       observation: {
-        id: createHash('sha256').update(bytes).digest('hex'),
+        id: nextResourceId(),
         mimeType,
         byteLength: bytes.byteLength,
         fileName: 'tool-output.png',
@@ -4941,7 +4945,7 @@ function createContext(): {
     readResource: async () => null,
     persistOutputImage,
     persistOutputResource: async (bytes, mimeType, fileName) => ({
-      id: createHash('sha256').update(bytes).digest('hex'),
+      id: nextResourceId(),
       mimeType,
       byteLength: bytes.byteLength,
       fileName,

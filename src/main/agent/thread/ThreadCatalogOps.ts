@@ -74,6 +74,8 @@ export class ThreadCatalogOps {
     private readonly resolveRendererStartDefaults: (
       request: AgentCoreRequestByMethod['thread/start'],
     ) => RendererThreadStartDefaults | Promise<RendererThreadStartDefaults>,
+    private readonly resolveRootWorkspace: ((threadId: ThreadId) => string | Promise<string>) | undefined,
+    private readonly cleanupRootWorkspace: ((threadId: ThreadId, cwd: string) => void | Promise<void>) | undefined,
     private readonly validateRendererConfiguration: (configuration: ThreadConfigurationSummary) => void | Promise<void>,
     private readonly onRendererConfigurationCommitted:
       ((configuration: ThreadConfigurationSummary) => void | Promise<void>) | undefined,
@@ -292,19 +294,24 @@ export class ThreadCatalogOps {
       });
     }
   async startThread(requestInput: AgentCoreRequestByMethod['thread/start']): Promise<ThreadStartResponse> {
-      const defaults = requestInput.modelProvider !== undefined && requestInput.cwd !== undefined
+      const rootThreadId = requestInput.id ?? uuidV7(this.now());
+      const managedCwd = requestInput.cwd === undefined
+        ? await this.resolveRootWorkspace?.(rootThreadId)
+        : undefined;
+      const defaults = requestInput.modelProvider !== undefined && (requestInput.cwd !== undefined || managedCwd)
         ? null
-        : await this.resolveRendererStartDefaults(requestInput);
+        : await this.resolveRendererStartDefaults({ ...requestInput, id: rootThreadId });
       const executionSelection = defaults?.executionSelection;
       const request: ThreadStartRequest = {
         ...requestInput,
+        id: rootThreadId,
         source: requestInput.source ?? 'app',
         threadSource: requestInput.threadSource ?? 'user',
         modelProvider: requestInput.modelProvider
           ?? executionSelection?.modelProvider
           ?? defaults?.modelProvider
           ?? '',
-        cwd: requestInput.cwd ?? defaults?.cwd ?? '',
+        cwd: requestInput.cwd ?? managedCwd ?? defaults?.cwd ?? '',
       };
       return this.core.hostRootMutex.run(async () => {
         const configuration = executionSelection
@@ -343,13 +350,16 @@ export class ThreadCatalogOps {
         if (inherited.some((turn) => turn.status === 'inProgress')) throw new Error('Cannot fork through an active Turn');
         const now = this.now();
         const name = request.name ?? this.nextForkName(source);
+        const forkId = uuidV7(now);
+        const forkCwd = await this.resolveRootWorkspace?.(forkId) ?? source.cwd;
         const thread = await this.createThread({
+          id: forkId,
           name,
           ephemeral: source.ephemeral,
           source: 'app',
           threadSource: 'user',
           modelProvider: source.modelProvider,
-          cwd: source.cwd,
+          cwd: forkCwd,
         }, {
           sessionId: uuidV7(now),
           parentThreadId: null,
@@ -420,7 +430,7 @@ export class ThreadCatalogOps {
       }
       for (const item of copiedTurn.items) {
         for (const ref of itemResourceReferences(item)) {
-          const copied = await this.core.payloads.copyResourceToThread(sourceThreadId, targetThreadId, ref);
+          const copied = this.core.resources.linkReference(targetThreadId, ref);
           if (!copied) console.warn(`[agent] Fork retained unavailable managed resource: ${ref.id}`);
         }
         if (item.type === 'contextEvidence' || item.type === 'contextCompaction') {
@@ -523,7 +533,7 @@ export class ThreadCatalogOps {
 
       const references = this.resourceOps.threadStorageReferences(thread.id);
       await Promise.all([
-        this.core.payloads.pruneUnreferencedResources(thread.id, references.resources),
+        this.core.resources.setThreadReferences(thread.id, references.resources),
         this.core.payloads.pruneUnreferencedContexts(thread.id, references.contexts, references.internalTexts),
         this.core.payloads.pruneUnreferencedTurnDiagnostics(thread.id, references.diagnostics),
         this.core.payloads.pruneUnreferencedTextOutputs(thread.id, references.textOutputs),
@@ -616,7 +626,7 @@ export class ThreadCatalogOps {
           ))),
         ];
         await Promise.all([
-          this.core.payloads.pruneUnreferencedResources(thread.id, resurrectable),
+          this.core.resources.setThreadReferences(thread.id, resurrectable),
           this.core.payloads.pruneUnreferencedContexts(thread.id, references.contexts, references.internalTexts),
           this.core.payloads.pruneUnreferencedTurnDiagnostics(thread.id, references.diagnostics),
           this.core.payloads.pruneUnreferencedTextOutputs(thread.id, references.textOutputs),
@@ -688,6 +698,7 @@ export class ThreadCatalogOps {
           this.core.history.deleteThread(descendantId);
           await this.core.rollout.delete(descendantId);
           await this.core.payloads.deleteThread(descendantId);
+          await this.core.resources.deleteThread(descendantId);
         }
         for (const record of [...subtree.records].reverse()) {
           if (this.core.hiddenEphemeralThreads.has(record.thread.id)) continue;
@@ -725,6 +736,11 @@ export class ThreadCatalogOps {
         // land behind the removal and resurrect a transcript the user deleted.
         for (const descendantId of [...subtree.threadIds].reverse()) {
           await this.transcripts.delete(descendantId);
+        }
+        for (const record of subtree.records) {
+          if (record.thread.parentThreadId === null) {
+            await this.cleanupRootWorkspace?.(record.thread.id, record.thread.cwd);
+          }
         }
         await this.transcripts.forgetExclusions(subtree.records.map((record) => record.thread.sessionId));
       } finally {

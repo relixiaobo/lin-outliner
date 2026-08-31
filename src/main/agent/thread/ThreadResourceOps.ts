@@ -1,4 +1,5 @@
 import { lstat,realpath,stat } from 'node:fs/promises';
+import { basename } from 'node:path';
 import { decodeTurn } from '../../../core/agent/codec';
 import { modelCallArgumentSource } from '../../../core/agent/modelCallHistory';
 import type {
@@ -36,10 +37,8 @@ resourceReferenceKey,
 scanThreadItemResourceUsage,
 } from '../context/contextDependencies';
 import { assertCanonicalUserContent } from '../context/userContentIntegrity';
-import {
-referencesSameResourceFile,
-type ThreadImageRetentionInventory,
-} from '../persistence/ToolPayloadStore';
+import type { AgentResourceStore } from '../persistence/AgentResourceStore';
+import { parseReferenceMarkers } from '../../../core/referenceMarkup';
 import type {
 ResolvedThreadAttachmentFile,
 ResolvedThreadImageArtifactFile,
@@ -64,6 +63,7 @@ export class ThreadResourceOps {
   }>();
   constructor(
     private readonly core: ThreadCore,
+    private readonly resources: AgentResourceStore,
     private readonly attachmentScratchRoot: string,
     private readonly resolveUserContent: (
       content: readonly ThreadUserContent[],
@@ -140,7 +140,7 @@ export class ThreadResourceOps {
     readonly fileName: string;
   }): Promise<string> {
     this.core.requireThread(input.threadId);
-    return this.core.payloads.beginResourceUpload(input);
+    return this.resources.beginUpload(input);
   }
   async appendAttachmentUpload(input: {
     readonly threadId: ThreadId;
@@ -149,7 +149,7 @@ export class ThreadResourceOps {
     readonly bytes: Uint8Array;
   }): Promise<void> {
     this.core.requireThread(input.threadId);
-    await this.core.payloads.appendResourceUpload(
+    await this.resources.appendUpload(
       input.threadId,
       input.attachmentId,
       input.uploadId,
@@ -162,14 +162,14 @@ export class ThreadResourceOps {
     readonly uploadId: string;
   }): Promise<ThreadResourceReference> {
     this.core.requireThread(input.threadId);
-    return this.core.payloads.finishResourceUpload(input.threadId, input.attachmentId, input.uploadId);
+    return this.resources.finishUpload(input.threadId, input.attachmentId, input.uploadId);
   }
   async abortAttachmentUpload(input: {
     readonly threadId: ThreadId;
     readonly attachmentId: string;
     readonly uploadId: string;
   }): Promise<void> {
-    await this.core.payloads.abortResourceUpload(input.threadId, input.attachmentId, input.uploadId);
+    await this.resources.abortUpload(input.threadId, input.attachmentId, input.uploadId);
   }
   async writeThreadResource(
     threadId: ThreadId,
@@ -178,7 +178,7 @@ export class ThreadResourceOps {
     fileName: string,
   ): Promise<ThreadResourceReference> {
     this.core.requireThread(threadId);
-    return this.core.payloads.writeResource(threadId, bytes, mimeType, fileName);
+    return (await this.resources.writeBytes(threadId, bytes, mimeType, fileName)).ref;
   }
   async writeThreadResourceWithStatus(
     threadId: ThreadId,
@@ -187,7 +187,7 @@ export class ThreadResourceOps {
     fileName: string,
   ): Promise<{ readonly ref: ThreadResourceReference; readonly created: boolean }> {
     this.core.requireThread(threadId);
-    return this.core.payloads.writeResourceWithStatus(threadId, bytes, mimeType, fileName);
+    return this.resources.writeBytes(threadId, bytes, mimeType, fileName);
   }
 
   async useThreadResourcePath<T>(
@@ -196,14 +196,15 @@ export class ThreadResourceOps {
     use: (path: string) => Promise<T>,
   ): Promise<T | null> {
     this.core.requireThread(threadId);
-    return this.core.payloads.useResourcePath(threadId, ref, use);
+    return this.resources.useExactPath(ref, use);
   }
   async readThreadResource(
     threadId: ThreadId,
     ref: ThreadResourceReference,
   ): Promise<Buffer | null> {
     this.core.requireThread(threadId);
-    return this.core.payloads.readResource(threadId, ref);
+    if (!this.resources.hasThreadLink(threadId, ref)) return null;
+    return this.resources.readExact(ref);
   }
   async readReferencedThreadResource(
     threadId: ThreadId,
@@ -215,7 +216,7 @@ export class ThreadResourceOps {
     ))) {
       return null;
     }
-    return this.core.payloads.readResource(threadId, ref);
+    return this.resources.readExact(ref);
   }
   async discardUnreferencedThreadResource(
     threadId: ThreadId,
@@ -223,10 +224,12 @@ export class ThreadResourceOps {
   ): Promise<boolean> {
     return this.core.threadMutex.run(threadId, async () => {
       this.core.requireThread(threadId);
-      if (this.threadResourceReferences(threadId).some((candidate) => referencesSameResourceFile(candidate, ref))) {
+      if (this.threadResourceReferences(threadId).some((candidate) => (
+        resourceReferenceKey(candidate) === resourceReferenceKey(ref)
+      ))) {
         return false;
       }
-      return this.core.payloads.deleteResource(threadId, ref);
+      return this.resources.discardThreadReference(threadId, ref);
     });
   }
   async resolveAttachmentFile(
@@ -253,7 +256,7 @@ export class ThreadResourceOps {
         ? attachment.source.path
         : await this.detachedResourceObservationPath(threadId, detachedIdentity, attachment.source.ref);
     if (!storedPath) return null;
-    const detached = !!attachment.artifactRef || attachment.source.kind === 'threadPayload';
+    const detached = !!attachment.artifactRef || attachment.source.kind === 'resource';
     if (detached) {
       const storedStats = await lstat(storedPath).catch(() => null);
       if (!storedStats?.isFile() || storedStats.isSymbolicLink() || storedStats.nlink !== 1) {
@@ -336,13 +339,30 @@ export class ThreadResourceOps {
     }
     return { entryKind: 'file', path: canonicalPath, stats: fileStats, ref };
   }
+  async resolveThreadResourceSource(
+    threadId: ThreadId,
+    ref: ThreadResourceReference,
+  ): Promise<ResolvedThreadResourceFile | null> {
+    this.core.requireThread(threadId);
+    if (!this.resources.hasThreadLink(threadId, ref)) return null;
+    const resolution = await this.resources.resolve(ref, 'revealSource');
+    if (resolution.status !== 'resolvedSource') return null;
+    const fileStats = await stat(resolution.path).catch(() => null);
+    if (!fileStats) return null;
+    return {
+      entryKind: resolution.entryKind,
+      path: resolution.path,
+      stats: fileStats,
+      ref,
+    };
+  }
 
   private async detachedResourceObservationPath(
     threadId: ThreadId,
     identity: string,
     ref: ThreadResourceReference,
   ): Promise<string | null> {
-    const available = await this.core.payloads.useResourcePath(threadId, ref, async () => true);
+    const available = await this.resources.useExactPath(ref, async () => true);
     if (!available) {
       await this.discardDetachedResourceObservation(threadId, identity);
       return null;
@@ -414,11 +434,7 @@ export class ThreadResourceOps {
   ): ManagedAttachmentObservation {
     return createManagedAttachmentObservation(
       this.attachmentScratchRoot,
-      (ref, targetDirectory) => this.core.payloads.copyResourceForObservation(
-        threadId,
-        ref,
-        targetDirectory,
-      ),
+      (ref, targetDirectory) => this.resources.copyForObservation(ref, targetDirectory),
       stableProviderPath ? { stableWorkspaceKey: threadId } : {},
     );
   }
@@ -435,18 +451,104 @@ export class ThreadResourceOps {
   threadResourceReferences(threadId: ThreadId): ThreadResourceReference[] {
     return resourceReferencesFromTurns(this.core.allTurns(threadId));
   }
+  async bindFinalCitations(thread: Thread, item: ThreadItem): Promise<ThreadItem> {
+    const scopeId = `execution:${thread.id}`;
+    this.resources.registerScope({
+      scopeId,
+      kind: thread.parentThreadId ? 'managedWorktree' : 'managedWorkspace',
+      rootPath: thread.cwd,
+      editable: thread.parentThreadId === null,
+    });
+    if (
+      item.type !== 'agentMessage'
+      || !item.text
+      || (item.phase !== 'final_answer' && item.phase !== null)
+    ) return item;
+      const markers = parseReferenceMarkers(item.text, ['file']);
+      const finalCitations: NonNullable<typeof item.finalCitations>[number][] = [];
+      for (const [ordinal, marker] of markers.entries()) {
+        if (marker.target.kind !== 'local-file') continue;
+        try {
+          const fileStat = await lstat(marker.target.path);
+          const expectedKind = fileStat.isFile() ? 'file' : fileStat.isDirectory() ? 'directory' : null;
+          if (!expectedKind) throw new Error('unsupportedKind');
+          const source = await this.resources.sourceLocator(scopeId, marker.target.path, expectedKind);
+          if (expectedKind === 'directory') {
+            const ref = this.resources.createSourceReference({
+              threadId: thread.id,
+              displayName: basename(marker.target.path),
+              source,
+            });
+            this.resources.recordCitation({
+              threadId: thread.id,
+              itemId: item.id,
+              markerOrdinal: ordinal,
+              ref,
+              status: 'available',
+              reason: 'sourceOnly',
+            });
+            finalCitations.push({
+              markerOrdinal: ordinal,
+              status: 'available',
+              entryKind: 'directory',
+              resourceRef: ref,
+              openIntent: 'source',
+              sourceAvailable: true,
+              reason: 'sourceOnly',
+            });
+            continue;
+          }
+          const written = await this.resources.capturePath({
+            threadId: thread.id,
+            sourcePath: marker.target.path,
+            mimeType: 'application/octet-stream',
+            fileName: basename(marker.target.path),
+            source,
+          });
+          this.resources.recordCitation({
+            threadId: thread.id,
+            itemId: item.id,
+            markerOrdinal: ordinal,
+            ref: written.ref,
+            status: 'available',
+          });
+          finalCitations.push({
+            markerOrdinal: ordinal,
+            status: 'available',
+            entryKind: 'file',
+            resourceRef: written.ref,
+            openIntent: 'delivered',
+            sourceAvailable: true,
+            reason: null,
+          });
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : 'unavailable';
+          this.resources.recordCitation({
+            threadId: thread.id,
+            itemId: item.id,
+            markerOrdinal: ordinal,
+            ref: null,
+            status: 'unavailable',
+            reason,
+          });
+          finalCitations.push({
+            markerOrdinal: ordinal,
+            status: 'unavailable',
+            entryKind: null,
+            resourceRef: null,
+            openIntent: null,
+            sourceAvailable: false,
+            reason,
+          });
+        }
+      }
+    return { ...item, finalCitations: Object.freeze(finalCitations) };
+  }
   async threadImageArtifactReferences(threadId: ThreadId): Promise<readonly ThreadImageArtifactReference[]> {
     return (await this.scanResourceUsage(
       threadId,
       this.core.allTurns(threadId).flatMap((turn) => turn.items),
     )).artifacts;
-  }
-  async threadImageRetentionInventory(threadId: ThreadId): Promise<ThreadImageRetentionInventory> {
-    const usage = await this.scanResourceUsage(
-      threadId,
-      this.core.allTurns(threadId).flatMap((turn) => turn.items),
-    );
-    return { artifacts: usage.artifacts, protectedResources: usage.genericResources };
   }
   threadContextPayloadReferences(threadId: ThreadId): ThreadContextPayloadReference[] {
     return contextReferencesFromTurns(this.core.allTurns(threadId));
@@ -497,10 +599,10 @@ export class ThreadResourceOps {
     referenced: readonly ThreadResourceReference[],
   ): Promise<void> {
     const unique = resources.filter((ref, index) => (
-      resources.findIndex((candidate) => referencesSameResourceFile(candidate, ref)) === index
-      && !referenced.some((candidate) => referencesSameResourceFile(candidate, ref))
+      resources.findIndex((candidate) => resourceReferenceKey(candidate) === resourceReferenceKey(ref)) === index
+      && !referenced.some((candidate) => resourceReferenceKey(candidate) === resourceReferenceKey(ref))
     ));
-    await Promise.all(unique.map((ref) => this.core.payloads.deleteResource(threadId, ref)));
+    await Promise.all(unique.map((ref) => this.resources.discardThreadReference(threadId, ref)));
   }
 
   private scanResourceUsage(threadId: ThreadId, items: readonly ThreadItem[]) {
@@ -548,7 +650,7 @@ function attachmentSourcesEqual(
   ) return false;
   if (left.source.kind === 'localFile' && right.source.kind === 'localFile') {
     if (left.source.path !== right.source.path) return false;
-  } else if (left.source.kind === 'threadPayload' && right.source.kind === 'threadPayload') {
+  } else if (left.source.kind === 'resource' && right.source.kind === 'resource') {
     if (resourceReferenceKey(left.source.ref) !== resourceReferenceKey(right.source.ref)) return false;
   } else {
     return false;

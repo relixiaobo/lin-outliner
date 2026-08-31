@@ -10,6 +10,8 @@ import { rankTextSearchLabel } from '../../core/textSearchAnalyzer';
 import { buildAgentLocalToolProcessEnv } from '../agent/capabilities/agentToolProcess';
 import { resolveRipgrepCommand } from '../agent/capabilities/agentRipgrep';
 import type { ResolvedThreadAttachmentFile } from '../agent/ThreadService';
+import { decodeThreadResourceReference } from '../../core/agent/codec';
+import type { ThreadResourceReference } from '../../core/agent/protocol';
 import { setBoundedMapEntry } from '../boundedMap';
 import {
   isSafeLocalFileOpenTarget,
@@ -40,6 +42,7 @@ export interface LocalFileOperationInput {
   readonly path?: unknown;
   readonly threadId?: unknown;
   readonly attachmentId?: unknown;
+  readonly resourceRef?: unknown;
 }
 
 export interface NativeLocalFileHostOptions {
@@ -48,6 +51,11 @@ export interface NativeLocalFileHostOptions {
     threadId: string,
     attachmentId: string,
   ) => Promise<ResolvedThreadAttachmentFile | null>;
+  readonly resolveResourceFile: (
+    threadId: string,
+    ref: ThreadResourceReference,
+    intent: 'delivered' | 'source',
+  ) => Promise<TrustedLocalFileReference | null>;
 }
 
 export interface NativeLocalFileHost {
@@ -201,16 +209,27 @@ export function createNativeLocalFileHost(options: NativeLocalFileHostOptions): 
   const resolve = async (
     raw: LocalFileOperationInput | undefined,
     allowAttachmentPathHint = false,
+    resourceIntent: 'delivered' | 'source' = 'delivered',
   ): Promise<TrustedLocalFileReference | null> => {
     const threadId = typeof raw?.threadId === 'string' && raw.threadId.trim() ? raw.threadId : null;
     const attachmentId = typeof raw?.attachmentId === 'string' && raw.attachmentId.trim()
       ? raw.attachmentId
       : null;
-    if (Boolean(threadId) !== Boolean(attachmentId)) return null;
-    if (!threadId || !attachmentId) {
+    let resourceRef: ThreadResourceReference | null = null;
+    if (raw?.resourceRef !== undefined) {
+      try {
+        resourceRef = decodeThreadResourceReference(raw.resourceRef, 'localFile.resourceRef');
+      } catch {
+        return null;
+      }
+    }
+    const scopedIdentityCount = Number(Boolean(attachmentId)) + Number(Boolean(resourceRef));
+    if (threadId ? scopedIdentityCount !== 1 : scopedIdentityCount !== 0) return null;
+    if (!threadId) {
       return resolveTrustedLocalFileReference(raw?.path, options.trustedRoots());
     }
-    const attachment = await options.resolveAttachmentFile(threadId, attachmentId).catch(() => null);
+    if (resourceRef) return options.resolveResourceFile(threadId, resourceRef, resourceIntent);
+    const attachment = await options.resolveAttachmentFile(threadId, attachmentId!).catch(() => null);
     if (!attachment) return null;
     if (attachment.entryKind === 'directory') {
       return resolveTrustedLocalFileReference(raw?.path, [attachment.path]);
@@ -329,7 +348,7 @@ export function createNativeLocalFileHost(options: NativeLocalFileHostOptions): 
     },
     metadata,
     previewReference: async (rawOptions) => {
-      const file = await resolve(rawOptions, true);
+      const file = await resolve(rawOptions, true, 'source');
       if (!file) return { file: null };
       return { file: await metadata(file) };
     },

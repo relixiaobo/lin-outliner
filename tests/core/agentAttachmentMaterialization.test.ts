@@ -139,7 +139,7 @@ describe('agent scratch lifecycle', () => {
       id: 'e'.repeat(64),
       createdAt: 1,
       retention: 'tiered' as const,
-      original: { kind: 'threadPayload' as const, ref: original },
+      original: { kind: 'resource' as const, ref: original },
       observation: prompt,
       geometry: {
         sourceWidth: 4_000,

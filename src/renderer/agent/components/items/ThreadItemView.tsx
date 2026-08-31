@@ -210,6 +210,8 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
               onNodeReferenceOpen={props.onOpenNodeReference}
               streaming={props.streaming}
               text={props.item.text}
+              threadId={props.threadId}
+              finalCitations={props.item.finalCitations}
             />
           </div>
           {props.item.phase === 'final_answer' || props.item.phase === null

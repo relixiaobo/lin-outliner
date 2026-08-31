@@ -3,6 +3,7 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import { renderedMarkdownNodeReferenceIds } from '../../src/core/markdownNodeReferences';
+import type { AgentFinalCitationBinding } from '../../src/core/agent/protocol';
 import { ThreadMarkdown } from '../../src/renderer/agent/components/ThreadMarkdown';
 
 const cleanups: Array<() => void> = [];
@@ -61,16 +62,57 @@ describe('Thread Markdown references', () => {
     expect(document.querySelector(`[data-inline-ref="${NODE_ID}"]`)).toBeNull();
     expect(document.querySelector('a')?.getAttribute('href')).toBe('https://example.test');
   });
+
+  test('projects an opaque final citation without treating the marker path as authority', () => {
+    const resourceRef = {
+      id: 'resource:11111111-1111-4111-8111-111111111111',
+      mimeType: 'text/plain',
+      byteLength: 12,
+      fileName: 'report.txt',
+    } as const;
+    const finalCitations: readonly AgentFinalCitationBinding[] = [{
+      markerOrdinal: 0,
+      status: 'available',
+      entryKind: 'file',
+      resourceRef,
+      openIntent: 'delivered',
+      sourceAvailable: true,
+      reason: null,
+    }];
+    const document = renderThreadMarkdown(
+      'Delivered: [[file:///workspace/report.txt]]',
+      { finalCitations, threadId: 'thread-1' },
+    );
+    const reference = document.querySelector<HTMLElement>('[data-inline-ref-kind="local-file"]');
+
+    expect(reference?.dataset.inlineRefPath).toBe('/workspace/report.txt');
+    expect(reference?.dataset.inlineRefThreadId).toBe('thread-1');
+    expect(reference?.dataset.inlineRefResourceId).toBe(resourceRef.id);
+    expect(reference?.dataset.inlineRefResourceFileName).toBe(resourceRef.fileName);
+  });
 });
 
-function renderThreadMarkdown(text: string): Document {
+function renderThreadMarkdown(
+  text: string,
+  options: {
+    readonly finalCitations?: readonly AgentFinalCitationBinding[];
+    readonly threadId?: string;
+  } = {},
+): Document {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
   const container = document.getElementById('root');
   if (!container) throw new Error('Missing root container');
   const root = createRoot(container);
   act(() => {
-    root.render(<ThreadMarkdown onNodeReferenceOpen={() => undefined} text={text} />);
+    root.render(
+      <ThreadMarkdown
+        finalCitations={options.finalCitations}
+        onNodeReferenceOpen={() => undefined}
+        text={text}
+        threadId={options.threadId}
+      />,
+    );
   });
   cleanups.push(() => act(() => root.unmount()));
   return document;

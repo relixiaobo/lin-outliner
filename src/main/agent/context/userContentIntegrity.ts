@@ -16,7 +16,7 @@ export function assertCanonicalUserContent(content: readonly ThreadUserContent[]
     if (part.artifactRef && JSON.stringify(part.artifactRef.original) !== JSON.stringify(part.source)) {
       throw new Error(`Attachment source does not match its image artifact original: ${part.name}`);
     }
-    if (part.source.kind === 'threadPayload' && (
+    if (part.source.kind === 'resource' && (
       part.source.ref.mimeType !== part.mimeType
       || part.source.ref.byteLength !== part.sizeBytes
     )) {

@@ -59,6 +59,7 @@ export interface ResourcePreviewHostOptions {
   readonly previewRoots: () => readonly string[];
   readonly localFileRoots: () => readonly string[];
   readonly resolveAttachmentFile: NativeLocalFileHostOptions['resolveAttachmentFile'];
+  readonly resolveResourceFile: NativeLocalFileHostOptions['resolveResourceFile'];
   readonly reportError: (report: ErrorReport) => void;
 }
 
@@ -133,6 +134,7 @@ export function createResourcePreviewHost(options: ResourcePreviewHostOptions): 
   const localFiles = createNativeLocalFileHost({
     trustedRoots: options.localFileRoots,
     resolveAttachmentFile: options.resolveAttachmentFile,
+    resolveResourceFile: options.resolveResourceFile,
   });
   const previewGuests = new Set<WebContents>();
   let previewSession: Session | null = null;

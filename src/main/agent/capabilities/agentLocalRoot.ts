@@ -1,11 +1,8 @@
 import path from 'node:path';
+import { rm } from 'node:fs/promises';
 
-// Two app-owned roots, both leaf directories under userData (per clone in dev):
-//   workdir — the agent's default cwd + file_* root; the place its own outputs land.
-//   scratch — ephemeral web-fetch / tool-output / PDF-page data.
-// They are siblings, never nested, so scratch never pollutes the (possibly repo) workdir.
-export const AGENT_WORKDIR_DIR = 'agent-workdir';
-export const AGENT_SCRATCH_DIR = 'agent-scratch';
+export const AGENT_WORKSPACES_DIR = 'workspaces';
+export const AGENT_SCRATCH_DIR = 'scratch';
 
 export interface ResolveAgentWorkdirInput {
   envLocalRoot?: string;
@@ -31,11 +28,38 @@ export function resolveAgentWorkdir(input: ResolveAgentWorkdirInput): string {
   if (envLocalRoot) {
     return path.resolve(envLocalRoot);
   }
-  return path.join(path.resolve(input.userDataPath), AGENT_WORKDIR_DIR);
+  return path.join(path.resolve(input.userDataPath), 'agent', AGENT_WORKSPACES_DIR);
+}
+
+export function resolveAgentConversationWorkspace(input: {
+  readonly userDataPath: string;
+  readonly threadId: string;
+}): string {
+  if (!input.threadId.trim() || /[/\\]/u.test(input.threadId)) {
+    throw new Error('Invalid Agent workspace Thread id.');
+  }
+  return path.join(
+    path.resolve(input.userDataPath),
+    'agent',
+    AGENT_WORKSPACES_DIR,
+    input.threadId,
+  );
+}
+
+export async function removeAgentConversationWorkspace(input: {
+  readonly userDataPath: string;
+  readonly threadId: string;
+  readonly cwd: string;
+}): Promise<void> {
+  const workspace = resolveAgentConversationWorkspace(input);
+  if (path.resolve(input.cwd) !== path.resolve(workspace)) {
+    throw new Error(`Refusing mismatched managed workspace cleanup for ${input.threadId}`);
+  }
+  await rm(workspace, { recursive: true, force: true });
 }
 
 // The agent scratch root is always app-owned under userData, independent of the workdir, so
 // an env-pointed repo workdir never accumulates ephemeral scratch files.
 export function resolveAgentScratchRoot(input: { userDataPath: string }): string {
-  return path.join(path.resolve(input.userDataPath), AGENT_SCRATCH_DIR);
+  return path.join(path.resolve(input.userDataPath), 'agent', AGENT_SCRATCH_DIR);
 }

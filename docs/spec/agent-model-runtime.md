@@ -304,7 +304,7 @@ the error, labels only the path as unavailable, and still includes retained obse
 bytes.
 
 Attachment sources are reference-only. `localFile` records a canonical live
-path; `threadPayload` records a lowercase SHA-256 digest, MIME type, byte length,
+path; `resource` records a lowercase SHA-256 digest, MIME type, byte length,
 and safe display filename. Neither source carries base64 or an unbounded byte
 array. A path-backed regular file is canonicalized without being copied and has
 no shared source-size ceiling. A pathless browser `File` crosses preload in
@@ -323,7 +323,7 @@ recovery restores the complete draft.
 Non-image provider input exposes the readable path through both the file marker and its
 independent attachment block; stable instructions define percent-decoding plus
 `file_read` for files and `file_glob` for directories. A `localFile`
-uses its live canonical user path; a `threadPayload` uses an execution-lifetime copy at
+uses its live canonical user path; a `resource` uses an execution-lifetime copy at
 a deterministic Thread/digest/filename path under Agent scratch. Reprojection across
 Turns and restart therefore preserves the marker bytes and cache prefix. The runtime
 removes that observation when execution ends, and model or tool writes to it cannot

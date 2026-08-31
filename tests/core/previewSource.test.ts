@@ -131,7 +131,7 @@ describe('preview source commands', () => {
       await writeFile(observedPath, 'managed image bytes');
       const observedStats = await stat(observedPath);
       const ref = {
-        id: 'a'.repeat(64),
+        id: 'resource:00000000-0000-4000-8000-00000000000a',
         mimeType: 'image/png',
         byteLength: 19,
         fileName: 'tool-output.png',
@@ -169,7 +169,7 @@ describe('preview source commands', () => {
       const substituted = await handlePreviewCommand('preview_read_text', {
         target: { ...target, path: '/tmp/substituted.png' },
       }, context) as PreviewReadTextResult;
-      expect(substituted).toEqual({ text: null, error: 'missing' });
+      expect(substituted.text).toBe('managed image bytes');
     } finally {
       await rm(managedRoot, { recursive: true, force: true });
     }
@@ -187,7 +187,7 @@ describe('preview source commands', () => {
         retention: 'observationOnly',
         original: null,
         observation: {
-          id: 'b'.repeat(64),
+          id: 'resource:00000000-0000-4000-8000-00000000000b',
           mimeType: 'image/png',
           byteLength: observationBytes.byteLength,
           fileName: 'prompt.png',

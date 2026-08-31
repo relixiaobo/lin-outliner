@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, realpath, rm, stat, truncate, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ThreadFileSource, ThreadResourceReference } from '../../src/core/agent/protocol';
@@ -24,6 +24,7 @@ describe('AttachmentResolver', () => {
     const workdir = await temporaryRoot('tenon-attachment-workdir-');
     let resolutions = 0;
     const resolver = new AttachmentResolver({
+      captureLocalFile,
       useResourcePath: async () => {
         resolutions += 1;
         return null;
@@ -38,7 +39,7 @@ describe('AttachmentResolver', () => {
       `file-${index}`,
       `file-${index}.txt`,
       'text/plain',
-      { kind: 'threadPayload', ref: resourceRef(String(index), 'text/plain', 1, `file-${index}.txt`) },
+      { kind: 'resource', ref: resourceRef(String(index), 'text/plain', 1, `file-${index}.txt`) },
     ));
     await expect(resolver.resolve(files, resolutionContext(workdir)))
       .rejects.toThrow(`at most ${MAX_COMPOSER_ATTACHMENTS} attachments`);
@@ -47,7 +48,7 @@ describe('AttachmentResolver', () => {
       `image-${index}`,
       `image-${index}.png`,
       'image/png',
-      { kind: 'threadPayload', ref: resourceRef(String(index), 'image/png', 1, `image-${index}.png`) },
+      { kind: 'resource', ref: resourceRef(String(index), 'image/png', 1, `image-${index}.png`) },
     ));
     await expect(resolver.resolve(images, resolutionContext(workdir)))
       .rejects.toThrow(`at most ${MAX_COMPOSER_IMAGE_ATTACHMENTS} images`);
@@ -60,6 +61,7 @@ describe('AttachmentResolver', () => {
     await writeFile(sourcePath, 'image source');
     let prepared = 0;
     const resolver = new AttachmentResolver({
+      captureLocalFile,
       useResourcePath: async () => null,
       prepareImageArtifact: async ({ attachment }) => {
         prepared += 1;
@@ -82,26 +84,27 @@ describe('AttachmentResolver', () => {
     expect(prepared).toBe(6);
   });
 
-  test('canonicalizes a very large local file without copying or applying a shared source limit', async () => {
+  test('captures a regular local file into the canonical resource store', async () => {
     const workdir = await temporaryRoot('tenon-attachment-workdir-');
     const externalRoot = await temporaryRoot('tenon-attachment-source-');
     const sourcePath = join(externalRoot, 'large-local.bin');
-    await writeFile(sourcePath, '');
-    await truncate(sourcePath, 3 * 1024 * 1024 * 1024);
+    await writeFile(sourcePath, 'local bytes');
     const resolver = resolverWithResources(new Map());
+    const createdResources: ThreadResourceReference[] = [];
 
     const [resolved] = await resolver.resolve([
       attachment('local', 'large-local.bin', 'application/octet-stream', {
         kind: 'localFile',
         path: sourcePath,
       }),
-    ], resolutionContext(workdir));
+    ], resolutionContext(workdir, createdResources));
 
     expect(resolved).toMatchObject({
-      source: { kind: 'localFile', path: await realpath(sourcePath) },
-      sizeBytes: 3 * 1024 * 1024 * 1024,
+      source: { kind: 'resource' },
+      sizeBytes: 11,
     });
-    expect((await stat(sourcePath)).size).toBe(3 * 1024 * 1024 * 1024);
+    expect(createdResources).toEqual([resolved?.source.kind === 'resource' ? resolved.source.ref : null]);
+    expect((await stat(sourcePath)).size).toBe(11);
   });
 
   test('resolves managed payloads and records an immutable image artifact reference', async () => {
@@ -116,6 +119,7 @@ describe('AttachmentResolver', () => {
     const promptRef = resourceRef('3', 'image/png', 8, 'prompt.png');
     const snapshots: string[] = [];
     const resolver = new AttachmentResolver({
+      captureLocalFile,
       useResourcePath: async (_threadId, ref, use) => {
         const resourcePath = new Map([
           [documentRef.id, documentPath],
@@ -133,11 +137,11 @@ describe('AttachmentResolver', () => {
 
     const resolved = await resolver.resolve([
       attachment('document', 'report.pdf', 'application/octet-stream', {
-        kind: 'threadPayload',
+        kind: 'resource',
         ref: documentRef,
       }),
       attachment('image', 'source.png', 'image/png', {
-        kind: 'threadPayload',
+        kind: 'resource',
         ref: imageRef,
       }),
     ], resolutionContext(workdir, createdResources));
@@ -145,12 +149,12 @@ describe('AttachmentResolver', () => {
     expect(resolved[0]).toMatchObject({
       mimeType: 'application/pdf',
       sizeBytes: 14,
-      source: { kind: 'threadPayload', ref: documentRef },
+      source: { kind: 'resource', ref: documentRef },
     });
     expect(resolved[1]).toMatchObject({
       artifactRef: {
         retention: 'durable',
-        original: { kind: 'threadPayload', ref: imageRef },
+        original: { kind: 'resource', ref: imageRef },
         observation: promptRef,
       },
     });
@@ -165,7 +169,7 @@ describe('AttachmentResolver', () => {
 
     await expect(resolver.resolve([
       attachment('missing', 'missing.pdf', 'application/pdf', {
-        kind: 'threadPayload',
+        kind: 'resource',
         ref: missingRef,
       }),
     ], resolutionContext(workdir)))
@@ -182,13 +186,14 @@ describe('AttachmentResolver', () => {
     const promptRef = resourceRef('c', 'image/png', 8, 'prompt.png');
     const createdResources: ThreadResourceReference[] = [];
     const resolver = new AttachmentResolver({
+      captureLocalFile,
       useResourcePath: async (_threadId, ref, use) => ref.id === imageRef.id ? use(imagePath) : null,
       prepareImageArtifact: async ({ attachment }) => preparedArtifact(attachment.source, promptRef, true),
     });
 
     await expect(resolver.resolve([
-      attachment('image', 'source.png', 'image/png', { kind: 'threadPayload', ref: imageRef }),
-      attachment('missing', 'missing.txt', 'text/plain', { kind: 'threadPayload', ref: missingRef }),
+      attachment('image', 'source.png', 'image/png', { kind: 'resource', ref: imageRef }),
+      attachment('missing', 'missing.txt', 'text/plain', { kind: 'resource', ref: missingRef }),
     ], resolutionContext(workdir, createdResources)))
       .rejects.toThrow('Managed attachment payload is unavailable or corrupt');
     expect(createdResources).toEqual([promptRef]);
@@ -198,6 +203,7 @@ describe('AttachmentResolver', () => {
     const workdir = await temporaryRoot('tenon-attachment-workdir-');
     let resolutions = 0;
     const resolver = new AttachmentResolver({
+      captureLocalFile,
       useResourcePath: async () => {
         resolutions += 1;
         return null;
@@ -211,7 +217,7 @@ describe('AttachmentResolver', () => {
 
     await expect(resolver.resolve([
       attachment('large-image', 'large.png', 'application/octet-stream', {
-        kind: 'threadPayload',
+        kind: 'resource',
         ref: resourceRef(
           '5',
           'image/png',
@@ -237,6 +243,7 @@ describe('AttachmentResolver', () => {
     let activePreparations = 0;
     let maximumPreparations = 0;
     const resolver = new AttachmentResolver({
+      captureLocalFile,
       useResourcePath: async (_threadId, ref, use) => {
         const resourcePath = resources.get(ref.id);
         return resourcePath ? use(resourcePath) : null;
@@ -258,7 +265,7 @@ describe('AttachmentResolver', () => {
       `image-${index}`,
       ref.fileName,
       ref.mimeType,
-      { kind: 'threadPayload', ref },
+      { kind: 'resource', ref },
     )), resolutionContext(workdir));
 
     expect(maximumPreparations).toBe(1);
@@ -267,6 +274,7 @@ describe('AttachmentResolver', () => {
 
 function resolverWithResources(resources: ReadonlyMap<string, string>): AttachmentResolver {
   return new AttachmentResolver({
+    captureLocalFile,
     useResourcePath: async (_threadId, ref, use) => {
       const resourcePath = resources.get(ref.id);
       return resourcePath ? use(resourcePath) : null;
@@ -277,6 +285,15 @@ function resolverWithResources(resources: ReadonlyMap<string, string>): Attachme
       true,
     ),
   });
+}
+
+async function captureLocalFile(
+  _threadId: string,
+  sourcePath: string,
+  mimeType: string,
+  fileName: string,
+): Promise<ThreadResourceReference> {
+  return resourceRef('e', mimeType, (await stat(sourcePath)).size, fileName);
 }
 
 function resolutionContext(
@@ -296,7 +313,7 @@ function attachment(
   mimeType: string,
   source:
     | { readonly kind: 'localFile'; readonly path: string }
-    | { readonly kind: 'threadPayload'; readonly ref: ThreadResourceReference },
+    | { readonly kind: 'resource'; readonly ref: ThreadResourceReference },
 ) {
   return { type: 'attachment' as const, id, name, mimeType, sizeBytes: 1, source };
 }
@@ -307,7 +324,12 @@ function resourceRef(
   byteLength: number,
   fileName: string,
 ): ThreadResourceReference {
-  return { id: digit.repeat(64), mimeType, byteLength, fileName };
+  return {
+    id: `resource:00000000-0000-4000-8000-${digit.padStart(12, '0')}`,
+    mimeType,
+    byteLength,
+    fileName,
+  };
 }
 
 function preparedArtifact(
