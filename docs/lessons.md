@@ -2144,3 +2144,15 @@ spec and codec tests, and carry the required reset into the release gate and
 release note. Do not infer compatibility intent from whether a field looks
 additive, and do not add a fallback that contradicts the ratified storage
 boundary.
+
+## Shared controllers need explicit negative capabilities
+
+PR #605 removed audio's fullscreen button but initially left Media Chrome's
+global `F` shortcut enabled. The visible surface looked audio-only while the
+shared controller could still emit a video-only fullscreen request.
+
+**Removing a control does not remove the capability owned by its controller.**
+When sibling surfaces share a controller but support different commands, encode
+the exclusion in the controller's policy rather than relying on absent UI. Test
+both sides of the asymmetry: the unsupported surface emits no request, and the
+supported surface still emits exactly one request for the same input.

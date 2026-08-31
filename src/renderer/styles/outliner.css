@@ -2806,6 +2806,15 @@ button.outliner-table-column-kind:focus-visible {
   overflow-wrap: anywhere;
 }
 
+/* A long field value must leave a legal break before its non-editable trailing
+   affordances. `overflow-wrap:anywhere` only breaks an otherwise overflowing
+   word, so platform font metrics can still orphan the inline slot. Keep the
+   stronger break policy scoped to field values; ordinary prose and tag rows
+   retain natural word boundaries. */
+.row-editor .ProseMirror p:has(.row-inline-content-slot > .field-value-affordances) {
+  word-break: break-all;
+}
+
 .row-editor .ProseMirror {
   min-height: var(--content-control-height);
   caret-color: var(--text-primary);

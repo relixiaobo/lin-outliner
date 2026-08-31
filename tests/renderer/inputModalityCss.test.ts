@@ -58,6 +58,9 @@ describe('input modality CSS guards', () => {
       /\.row-content-line > \.row-editor \.ProseMirror p\s*\{[^}]*display:\s*inline-block;[^}]*max-width:\s*100%;[^}]*overflow-wrap:\s*anywhere;/s,
     );
     expect(outlinerCss).toMatch(
+      /\.row-editor \.ProseMirror p:has\(\.row-inline-content-slot > \.field-value-affordances\)\s*\{[^}]*word-break:\s*break-all;/s,
+    );
+    expect(outlinerCss).toMatch(
       /\.field-value-affordances\s*\{[^}]*display:\s*inline-flex;[^}]*margin-inline-start:\s*var\(--space-1\);/s,
     );
     expect(outlinerCss).not.toMatch(/\.field-value-affordances\s*\{[^}]*position:\s*absolute;/s);
