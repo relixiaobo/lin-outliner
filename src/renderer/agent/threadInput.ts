@@ -1,4 +1,5 @@
-import type { ThreadUserContent, Turn } from '../../core/agent/protocol';
+import type { ThreadUserContent } from '../../core/agent/protocol';
+import type { Turn } from './projectionTypes';
 
 export function turnUserContent(turn: Turn): ThreadUserContent[] {
   return turn.items

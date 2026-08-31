@@ -28,6 +28,7 @@ import type {
   DynamicToolCallThreadItem,
   ThreadContextPayload,
   ThreadContextPayloadReference,
+  ThreadInternalTextPayloadReference,
   ThreadItem,
   ThreadItemOutputReference,
   ThreadUserContent,
@@ -35,6 +36,10 @@ import type {
   TurnDiagnosticsPayload,
   TurnDiagnosticsPayloadReference,
 } from '../../../core/agent/protocol';
+import {
+  projectLargeTextArgumentsForDisplay,
+  type InternalTextArgumentProjection,
+} from '../runtime/largeTextArguments';
 import {
   dynamicToolImageIdentity,
   toolItemVisibleOutputText,
@@ -55,6 +60,10 @@ import {
  */
 export interface TranscriptPayloadReader {
   readContext(ref: ThreadContextPayloadReference): Promise<ThreadContextPayload | null>;
+  readInternalTextProjection?(
+    ref: ThreadInternalTextPayloadReference,
+    maxPrefixChars: number,
+  ): Promise<InternalTextArgumentProjection | null>;
   readOutput(ref: ThreadItemOutputReference): Promise<string | null>;
   /** Optional: `full` detail renders per-provider-call usage when available. */
   readDiagnostics?(ref: TurnDiagnosticsPayloadReference): Promise<TurnDiagnosticsPayload | null>;
@@ -329,9 +338,13 @@ async function transcriptToolArguments(
   const source = modelCallArgumentSource(item.modelCall);
   if (source.storage === 'inline') return source.value;
   const payload = await reader.readContext(source.ref).catch(() => null);
-  return payload?.kind === 'toolCallArguments'
-    ? payload.value
-    : { unavailablePayloadRef: source.ref.id };
+  if (payload?.kind !== 'toolCallArguments') return { unavailablePayloadRef: source.ref.id };
+  const projected = await projectLargeTextArgumentsForDisplay(
+    payload,
+    source.internalTextRefs,
+    reader.readInternalTextProjection ?? (async () => null),
+  );
+  return projected ?? { unavailablePayloadRef: source.ref.id };
 }
 
 function userContentText(content: readonly ThreadUserContent[]): string {

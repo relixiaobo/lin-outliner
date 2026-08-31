@@ -565,8 +565,8 @@ async function prepareToolCall(
       ? tool.prepareArguments(structuredClone(providerArguments))
       : providerArguments;
     const args = structuredClone(validateExactToolArguments(tool, preparedArguments));
-    const historyArguments = await prepareToolCallArguments(providerArguments ?? null);
-    const displayArguments = await prepareToolCallArguments(args ?? null);
+    const historyArguments = await prepareToolCallArguments(providerArguments ?? null, tool.largeTextArguments);
+    const displayArguments = await prepareToolCallArguments(args ?? null, tool.largeTextArguments);
     let redactedArgumentsReplayable = true;
     if (historyArguments.redactedPaths.length > 0) {
       try {
@@ -592,6 +592,7 @@ async function prepareToolCall(
           displayArguments: displayArguments.redactedArguments,
           schemaDigest: modelToolSchemaDigest(tool.parameters),
           redactedArgumentsReplayable,
+          ...(tool.largeTextArguments === undefined ? {} : { largeTextArguments: tool.largeTextArguments }),
         },
       },
     };

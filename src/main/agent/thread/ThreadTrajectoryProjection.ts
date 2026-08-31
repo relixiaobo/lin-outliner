@@ -43,6 +43,7 @@ import {
   type UserMessageThreadItem,
 } from '../../../core/agent/protocol';
 import { modelCallArgumentSource } from '../../../core/agent/modelCallHistory';
+import { projectLargeTextArgumentsForDisplay } from '../runtime/largeTextArguments';
 import {
   DIAGNOSTIC_SECRET_REDACTION_OMISSION,
   redactSecretLikeContent,
@@ -563,9 +564,15 @@ export class ThreadTrajectoryProjection {
     }
     try {
       const payload = await this.core.payloads.readContext(threadId, source.ref);
-      return payload?.kind === 'toolCallArguments'
-        ? retainedEvidence(await sanitizeJsonEvidenceAsync(payload.value))
-        : unavailableEvidence('payloadUnavailable');
+      if (payload?.kind !== 'toolCallArguments') return unavailableEvidence('payloadUnavailable');
+      const projected = await projectLargeTextArgumentsForDisplay(
+        payload,
+        source.internalTextRefs,
+        (ref, maxPrefixChars) => this.core.payloads.readInternalTextProjection(threadId, ref, maxPrefixChars),
+      );
+      return projected === null
+        ? unavailableEvidence('payloadUnavailable')
+        : retainedEvidence(await sanitizeJsonEvidenceAsync(projected));
     } catch {
       return unavailableEvidence('payloadUnavailable');
     }

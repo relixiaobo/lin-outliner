@@ -6,6 +6,8 @@ import {
   MAX_MODEL_TOOL_CORRECTION_BYTES,
   MAX_MODEL_TOOL_EVIDENCE_SUMMARY_BYTES,
   MAX_MODEL_TOOL_PROVIDER_NAME_BYTES,
+  MAX_TOOL_ARGUMENT_TEXT_BINDINGS,
+  MAX_TOOL_ARGUMENT_TEXT_BYTES,
   MODEL_TOOL_CALL_EVIDENCE_REASONS,
   MAX_THREAD_CONTEXT_PAYLOAD_BYTES,
   MAX_TURN_DIAGNOSTICS_PAYLOAD_BYTES,
@@ -47,10 +49,13 @@ import {
   type RequestUserInputQuestion,
   type RendererTurnStartRequest,
   type RendererTurnSubmitRequest,
+  type RendererAgentCoreNotification,
+  type RendererAgentCoreResponseByMethod,
   type Thread,
   type ThreadAttachmentContent,
   type ThreadContextPayload,
   type ThreadContextPayloadReference,
+  type ThreadInternalTextPayloadReference,
   type ThreadFileSource,
   type ThreadItem,
   type ThreadItemDelta,
@@ -96,6 +101,8 @@ import {
   type ThreadGoal,
 } from './goal';
 import { REASONING_EFFORTS } from './configuration';
+import { compareJsonPointerPaths } from './jsonPointer';
+import { projectAgentCoreNotification, projectAgentCoreResponse } from './rendererProjection';
 
 export class AgentProtocolCodecError extends Error {
   constructor(message: string) {
@@ -515,7 +522,8 @@ function decodeNonMessageThreadItem(
       break;
     case 'contextEvidence':
       exactKeys(record, [
-        'type', 'id', 'provenance', 'kind', 'payloadRef', 'summary', 'contextRefs', 'resourceRefs', 'outputRefs',
+        'type', 'id', 'provenance', 'kind', 'payloadRef', 'summary', 'contextRefs', 'internalTextRefs',
+        'resourceRefs', 'outputRefs',
       ], 'item');
       result = {
         ...base,
@@ -525,6 +533,8 @@ function decodeNonMessageThreadItem(
         summary: stringValue(record.summary, 'item.summary'),
         contextRefs: arrayValue(record.contextRefs, 'item.contextRefs')
           .map((ref, index) => decodeThreadContextPayloadReference(ref, `item.contextRefs[${index}]`)),
+        internalTextRefs: arrayValue(record.internalTextRefs, 'item.internalTextRefs')
+          .map((ref, index) => decodeThreadInternalTextPayloadReference(ref, `item.internalTextRefs[${index}]`)),
         resourceRefs: arrayValue(record.resourceRefs, 'item.resourceRefs')
           .map((ref, index) => decodeThreadResourceReference(ref, `item.resourceRefs[${index}]`)),
         outputRefs: arrayValue(record.outputRefs, 'item.outputRefs')
@@ -538,7 +548,8 @@ function decodeNonMessageThreadItem(
     case 'contextCompaction':
       exactKeys(record, [
         'type', 'id', 'provenance', 'trigger', 'coveredFrom', 'coveredThrough', 'preservedFrom',
-        'summaryRef', 'restoredStateRef', 'instructionsRef', 'contextRefs', 'resourceRefs', 'outputRefs',
+        'summaryRef', 'restoredStateRef', 'instructionsRef', 'contextRefs', 'internalTextRefs',
+        'resourceRefs', 'outputRefs',
       ], 'item');
       result = {
         ...base,
@@ -560,6 +571,8 @@ function decodeNonMessageThreadItem(
           : decodeThreadContextPayloadReference(record.instructionsRef, 'item.instructionsRef'),
         contextRefs: arrayValue(record.contextRefs, 'item.contextRefs')
           .map((ref, index) => decodeThreadContextPayloadReference(ref, `item.contextRefs[${index}]`)),
+        internalTextRefs: arrayValue(record.internalTextRefs, 'item.internalTextRefs')
+          .map((ref, index) => decodeThreadInternalTextPayloadReference(ref, `item.internalTextRefs[${index}]`)),
         resourceRefs: arrayValue(record.resourceRefs, 'item.resourceRefs')
           .map((ref, index) => decodeThreadResourceReference(ref, `item.resourceRefs[${index}]`)),
         outputRefs: arrayValue(record.outputRefs, 'item.outputRefs')
@@ -1005,6 +1018,12 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
   return deepFreeze(result);
 }
 
+export function decodeRendererAgentCoreNotification(value: unknown): RendererAgentCoreNotification {
+  return projectAgentCoreNotification(
+    decodeAgentCoreNotification(inflateRendererNotification(value)),
+  );
+}
+
 function decodeSubagentTurnAdmission(value: unknown): import('./protocol').SubagentTurnAdmission {
   const record = recordValue(value, 'notification.subagentAdmission');
   exactKeys(record, ['kind', 'batchId', 'envelopeDigest'], 'notification.subagentAdmission');
@@ -1096,6 +1115,11 @@ function validateContextItemReferences(item: ThreadItem): void {
       ref.kind,
     ].join('\0')),
     'item.contextRefs',
+    'references',
+  );
+  requireUnique(
+    item.internalTextRefs.map((ref) => [ref.id, ref.encoding, ref.byteLength].join('\0')),
+    'item.internalTextRefs',
     'references',
   );
   requireUnique(
@@ -1212,6 +1236,9 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
     case 'thread/item/output/read':
       decoded = decodeThreadItemOutputReadRequest(value);
       break;
+    case 'thread/item/arguments/read':
+      decoded = decodeThreadItemArgumentsReadRequest(value);
+      break;
     case 'thread/context/read':
       decoded = decodeThreadContextReadRequest(value);
       break;
@@ -1316,6 +1343,9 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
     case 'thread/item/output/read':
       decoded = decodeThreadItemOutputReadResponse(value);
       break;
+    case 'thread/item/arguments/read':
+      decoded = decodeThreadItemArgumentsReadResponse(value);
+      break;
     case 'thread/context/read':
       decoded = decodeThreadContextReadResponse(value);
       break;
@@ -1357,6 +1387,155 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
       return assertNever(method);
   }
   return decoded as AgentCoreResponseByMethod[M];
+}
+
+export function decodeRendererAgentCoreResponse<M extends AgentCoreMethod>(
+  method: M,
+  value: unknown,
+): RendererAgentCoreResponseByMethod[M] {
+  if (method === 'thread/context/read') {
+    return decodeRendererThreadContextReadResponse(value) as RendererAgentCoreResponseByMethod[M];
+  }
+  return projectAgentCoreResponse(method, decodeAgentCoreResponse(
+    method,
+    inflateRendererResponse(method, value),
+  ));
+}
+
+function decodeRendererThreadContextReadResponse(
+  value: unknown,
+): RendererAgentCoreResponseByMethod['thread/context/read'] {
+  const record = recordValue(value, 'thread/context/read response');
+  exactKeys(record, ['context'], 'thread/context/read response');
+  if (record.context === null) return deepFreeze({ context: null });
+  const context = recordValue(record.context, 'thread/context/read response.context');
+  exactKeys(context, ['ref', 'payload'], 'thread/context/read response.context');
+  const ref = decodeThreadContextPayloadReference(context.ref, 'thread/context/read response.context.ref');
+  const payload = decodeThreadContextPayload(inflateRendererContextPayload(context.payload));
+  if (ref.kind !== payload.kind) {
+    fail('thread/context/read response.context.payload.kind', 'must match the context reference kind');
+  }
+  return projectAgentCoreResponse('thread/context/read', { context: { ref, payload } });
+}
+
+function inflateRendererResponse(method: AgentCoreMethod, value: unknown): unknown {
+  switch (method) {
+    case 'thread/list':
+    case 'thread/descendants':
+      return mapRendererField(value, 'data', (data) => mapRendererArray(data, inflateRendererThread));
+    case 'thread/read':
+    case 'thread/start':
+    case 'thread/resume':
+    case 'thread/fork':
+    case 'thread/rollback':
+    case 'thread/configuration/get':
+    case 'thread/configuration/set':
+      return mapRendererField(value, 'thread', inflateRendererThread);
+    case 'thread/turns/list':
+      return mapRendererField(value, 'data', (data) => mapRendererArray(data, inflateRendererTurn));
+    case 'thread/items/list':
+      return mapRendererField(value, 'data', (data) => mapRendererArray(data, inflateRendererItemEntry));
+    case 'thread/turn/details/read':
+    case 'turn/retry':
+      return mapRendererFields(value, {
+        thread: inflateRendererThread,
+        turn: inflateRendererTurn,
+      });
+    case 'turn/submit':
+    case 'turn/start':
+      return mapRendererField(value, 'turn', inflateRendererTurn);
+    default:
+      return value;
+  }
+}
+
+function inflateRendererContextPayload(value: unknown): unknown {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+  if ((value as Readonly<Record<string, unknown>>).kind !== 'inheritedContext') return value;
+  return mapRendererField(value, 'turns', (turns) => mapRendererArray(turns, inflateRendererTurn));
+}
+
+function inflateRendererNotification(value: unknown): unknown {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+  switch ((value as Readonly<Record<string, unknown>>).type) {
+    case 'thread/started':
+      return mapRendererField(value, 'thread', inflateRendererThread);
+    case 'turn/started':
+    case 'turn/completed':
+      return mapRendererField(value, 'turn', inflateRendererTurn);
+    case 'item/started':
+    case 'item/completed':
+      return mapRendererField(value, 'item', inflateRendererItem);
+    case 'items/completed':
+      return mapRendererField(value, 'items', (items) => mapRendererArray(items, inflateRendererItem));
+    default:
+      return value;
+  }
+}
+
+function inflateRendererThread(value: unknown): unknown {
+  return mapRendererField(value, 'turns', (turns) => mapRendererArray(turns, inflateRendererTurn));
+}
+
+function inflateRendererTurn(value: unknown): unknown {
+  return mapRendererField(value, 'items', (items) => mapRendererArray(items, inflateRendererItem));
+}
+
+function inflateRendererItemEntry(value: unknown): unknown {
+  return mapRendererField(value, 'item', inflateRendererItem);
+}
+
+function inflateRendererItem(value: unknown): unknown {
+  return mapRendererField(value, 'modelCall', inflateRendererModelCall);
+}
+
+function inflateRendererModelCall(value: unknown): unknown {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+  const disposition = (value as Readonly<Record<string, unknown>>).disposition;
+  if (disposition === 'replayable') {
+    return mapRendererField(value, 'arguments', inflateRendererModelArguments);
+  }
+  if (disposition === 'redactedReplay') {
+    return mapRendererField(value, 'redactedArguments', inflateRendererModelArguments);
+  }
+  return value;
+}
+
+function inflateRendererModelArguments(value: unknown): unknown {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+  const record = value as Readonly<Record<string, unknown>>;
+  if (record.storage === 'payload') {
+    fail('rendererModelToolCallArguments', 'private payload arguments cannot cross IPC');
+  }
+  if (record.storage !== 'itemBound') return value;
+  exactKeys(record, ['storage'], 'rendererModelToolCallArguments');
+  return {
+    storage: 'payload',
+    ref: {
+      id: '0'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json',
+      byteLength: 0,
+      schemaVersion: 1,
+      kind: 'toolCallArguments',
+    },
+    internalTextRefs: [],
+  };
+}
+
+function mapRendererArray(value: unknown, map: (entry: unknown) => unknown): unknown {
+  return Array.isArray(value) ? value.map(map) : value;
+}
+
+function mapRendererField(value: unknown, field: string, map: (entry: unknown) => unknown): unknown {
+  return mapRendererFields(value, { [field]: map });
+}
+
+function mapRendererFields(
+  value: unknown,
+  fields: Readonly<Record<string, (entry: unknown) => unknown>>,
+): unknown {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, fields[key]?.(entry) ?? entry]));
 }
 
 export function encodeAgentCoreResponse<M extends AgentCoreMethod>(
@@ -1649,6 +1828,18 @@ function decodeThreadContextReadRequest(
     turnId: uuidV7(record.turnId, 'thread/context/read.turnId'),
     itemId: stringValue(record.itemId, 'thread/context/read.itemId'),
     contextId,
+  });
+}
+
+function decodeThreadItemArgumentsReadRequest(
+  value: unknown,
+): AgentCoreRequestByMethod['thread/item/arguments/read'] {
+  const record = recordValue(value, 'thread/item/arguments/read');
+  exactKeys(record, ['threadId', 'turnId', 'itemId'], 'thread/item/arguments/read');
+  return deepFreeze({
+    threadId: uuidV7(record.threadId, 'thread/item/arguments/read.threadId'),
+    turnId: uuidV7(record.turnId, 'thread/item/arguments/read.turnId'),
+    itemId: stringValue(record.itemId, 'thread/item/arguments/read.itemId'),
   });
 }
 
@@ -2022,6 +2213,18 @@ function decodeThreadContextReadResponse(
     fail('thread/context/read response.context.payload', 'byte length must match the context reference');
   }
   return deepFreeze({ context: { ref, payload } });
+}
+
+function decodeThreadItemArgumentsReadResponse(
+  value: unknown,
+): AgentCoreResponseByMethod['thread/item/arguments/read'] {
+  const record = recordValue(value, 'thread/item/arguments/read response');
+  exactKeys(record, ['arguments'], 'thread/item/arguments/read response');
+  return deepFreeze({
+    arguments: record.arguments === null
+      ? null
+      : jsonValue(record.arguments, 'thread/item/arguments/read response.arguments'),
+  });
 }
 
 function decodeThreadTurnDetailsReadResponse(
@@ -3304,6 +3507,23 @@ export function decodeThreadContextPayloadReference(
   });
 }
 
+export function decodeThreadInternalTextPayloadReference(
+  value: unknown,
+  field = 'threadInternalTextPayloadReference',
+): ThreadInternalTextPayloadReference {
+  const record = recordValue(value, field);
+  exactKeys(record, ['id', 'encoding', 'byteLength'], field);
+  const id = stringValue(record.id, `${field}.id`);
+  if (!SHA_256_PATTERN.test(id)) fail(`${field}.id`, 'expected a lowercase SHA-256 digest');
+  const byteLength = nonNegativeInteger(record.byteLength, `${field}.byteLength`);
+  if (byteLength > MAX_TOOL_ARGUMENT_TEXT_BYTES) fail(`${field}.byteLength`, 'exceeds the internal-text budget');
+  return deepFreeze({
+    id,
+    encoding: enumValue(record.encoding, ['utf-8'], `${field}.encoding`),
+    byteLength,
+  });
+}
+
 export function decodeThreadContextPayload(value: unknown): ThreadContextPayload {
   const record = recordValue(value, 'contextPayload');
   const schemaVersion = record.schemaVersion;
@@ -3536,11 +3756,38 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
       return deepFreeze({ schemaVersion: 1, kind, entries });
     }
     case 'toolCallArguments':
-      exactKeys(record, ['schemaVersion', 'kind', 'value'], 'contextPayload');
+      exactKeys(record, ['schemaVersion', 'kind', 'value', 'bindings'], 'contextPayload');
+      const bindings = arrayValue(record.bindings, 'contextPayload.bindings').map((entry, index) => {
+        const binding = recordValue(entry, `contextPayload.bindings[${index}]`);
+        exactKeys(binding, ['kind', 'path', 'ref'], `contextPayload.bindings[${index}]`);
+        const path = stringValue(binding.path, `contextPayload.bindings[${index}].path`);
+        if (!isCanonicalNonRootJsonPointer(path)) {
+          fail(`contextPayload.bindings[${index}].path`, 'expected a canonical non-root RFC 6901 pointer');
+        }
+        return deepFreeze({
+          kind: enumValue(binding.kind, ['internalText'], `contextPayload.bindings[${index}].kind`),
+          path,
+          ref: decodeThreadInternalTextPayloadReference(binding.ref, `contextPayload.bindings[${index}].ref`),
+        });
+      });
+      if (bindings.length > MAX_TOOL_ARGUMENT_TEXT_BINDINGS) {
+        fail('contextPayload.bindings', 'exceeds the binding-count budget');
+      }
+      for (let index = 0; index < bindings.length; index += 1) {
+        const previous = bindings[index - 1];
+        const current = bindings[index]!;
+        if (previous && compareJsonPointerPaths(previous.path, current.path) >= 0) {
+          fail('contextPayload.bindings', 'must be unique and in canonical path order');
+        }
+        if (previous && current.path.startsWith(`${previous.path}/`)) {
+          fail('contextPayload.bindings', 'paths must not overlap');
+        }
+      }
       return deepFreeze({
         schemaVersion: 1,
         kind,
         value: jsonValue(record.value, 'contextPayload.value'),
+        bindings,
       });
     default:
       return assertNever(kind);
@@ -4910,7 +5157,18 @@ function decodeModelToolCallArguments(value: unknown, path: string): ModelToolCa
     }
     return deepFreeze({ storage, value: decoded });
   }
-  exactKeys(record, ['storage', 'ref'], path);
+  exactKeys(record, ['storage', 'ref', 'internalTextRefs'], path);
+  const internalTextRefs = arrayValue(record.internalTextRefs, `${path}.internalTextRefs`).map((ref, index) => (
+    decodeThreadInternalTextPayloadReference(ref, `${path}.internalTextRefs[${index}]`)
+  ));
+  if (internalTextRefs.length > MAX_TOOL_ARGUMENT_TEXT_BINDINGS) {
+    fail(`${path}.internalTextRefs`, 'exceeds the dependency-count budget');
+  }
+  requireUnique(
+    internalTextRefs.map((ref) => `${ref.id}:${ref.byteLength}:${ref.encoding}`),
+    `${path}.internalTextRefs`,
+    'internal-text references',
+  );
   return deepFreeze({
     storage,
     ref: expectContextPayloadKind(
@@ -4918,7 +5176,13 @@ function decodeModelToolCallArguments(value: unknown, path: string): ModelToolCa
       'toolCallArguments',
       `${path}.ref`,
     ),
+    internalTextRefs,
   });
+}
+
+function isCanonicalNonRootJsonPointer(path: string): boolean {
+  return path.startsWith('/')
+    && path.split('/').slice(1).every((token) => !/~(?:[^01]|$)/.test(token));
 }
 
 function decodeRequiredThreadItemOutputReference(value: unknown, field: string): ThreadItemOutputReference {

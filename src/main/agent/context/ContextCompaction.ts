@@ -14,6 +14,10 @@ import type {
   Turn,
 } from '../../../core/agent/protocol';
 import { modelCallArgumentSource } from '../../../core/agent/modelCallHistory';
+import {
+  projectLargeTextArgumentsForDisplay,
+  type ReadInternalTextArgumentProjection,
+} from '../runtime/largeTextArguments';
 import { reduceSkillContext } from './SkillContextReducer';
 import { reduceRoleContext } from './RoleContextReducer';
 import { cursorFor, selectEffectiveContext } from './ContextEpoch';
@@ -49,6 +53,7 @@ export async function planContextCompaction(input: {
   readonly turns: readonly Turn[];
   readonly preserveFrom?: ContextCursor | null;
   readonly readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>;
+  readonly readInternalTextProjection?: ReadInternalTextArgumentProjection;
 }): Promise<ContextCompactionPlan | null> {
   const selected = selectEffectiveContext(input.turns).turns;
   const located = selected.flatMap((turn) => turn.items.map((item) => ({ turn, item })));
@@ -72,7 +77,11 @@ export async function planContextCompaction(input: {
   const restoredTurns = input.preserveFrom
     ? turnsBeforeCursor(input.turns, input.preserveFrom)
     : input.turns;
-  const restoredState = await buildCompactionRestoredState(restoredTurns, input.readContext);
+  const restoredState = await buildCompactionRestoredState(
+    restoredTurns,
+    input.readContext,
+    input.readInternalTextProjection,
+  );
   const contextRefs = uniqueContextRefs([
     ...restoredState.activeSkills.map((entry) => entry.payloadRef),
     ...(restoredState.userViewBaselineRef ? [restoredState.userViewBaselineRef] : []),
@@ -125,6 +134,7 @@ function turnsBeforeCursor(turns: readonly Turn[], cursor: ContextCursor): Turn[
 async function buildCompactionRestoredState(
   turns: readonly Turn[],
   readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
+  readInternalTextProjection: ReadInternalTextArgumentProjection | undefined,
 ): Promise<CompactionRestoredStateContextPayload> {
   const skillState = await reduceSkillContext(turns, readContext);
   const roleState = await reduceRoleContext(turns, readContext);
@@ -171,7 +181,12 @@ async function buildCompactionRestoredState(
       .sort((left, right) => compareStableText(left.name, right.name)),
     userViewBaselineRef,
     additionalContextBaselineRef,
-    activeObservations: await reduceActiveObservations(turns, readContext, degradations),
+    activeObservations: await reduceActiveObservations(
+      turns,
+      readContext,
+      readInternalTextProjection,
+      degradations,
+    ),
     degradations: degradations.sort(compareContextDegradation),
   };
 }
@@ -227,6 +242,7 @@ async function activeSkillPayloadRefs(
 async function reduceActiveObservations(
   turns: readonly Turn[],
   readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
+  readInternalTextProjection: ReadInternalTextArgumentProjection | undefined,
   degradations: ContextDegradationCheckpointEntry[],
 ): Promise<ActiveObservationCheckpointEntry[]> {
   const selected = selectEffectiveContext(turns).turns;
@@ -248,7 +264,12 @@ async function reduceActiveObservations(
           );
           continue;
         }
-        const inheritedActive = await reduceActiveObservations(inherited.turns, readContext, degradations);
+        const inheritedActive = await reduceActiveObservations(
+          inherited.turns,
+          readContext,
+          readInternalTextProjection,
+          degradations,
+        );
         replaceEntries(active, inheritedActive, (entry) => entry.key);
         continue;
       }
@@ -263,7 +284,7 @@ async function reduceActiveObservations(
         continue;
       }
       const resolvedArguments = needsObservationArguments(item)
-        ? await canonicalToolArguments(item, readContext)
+        ? await canonicalToolArguments(item, readContext, readInternalTextProjection)
         : null;
       const invalidation = observationInvalidation(item, resolvedArguments);
       for (const invalidated of invalidation.keys) active.delete(invalidated);
@@ -605,6 +626,7 @@ type CanonicalToolArgumentsResolution =
 async function canonicalToolArguments(
   item: HistoryToolItem,
   readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>,
+  readInternalTextProjection: ReadInternalTextArgumentProjection | undefined,
 ): Promise<CanonicalToolArgumentsResolution> {
   if (item.modelCall.disposition === 'evidenceOnly') {
     return isRecord(item.modelCall.redactedArgumentsSummary)
@@ -617,7 +639,13 @@ async function canonicalToolArguments(
     value = source.value;
   } else {
     const payload = await readContext(source.ref).catch(() => null);
-    value = payload?.kind === 'toolCallArguments' ? payload.value : null;
+    value = payload?.kind === 'toolCallArguments'
+      ? await projectLargeTextArgumentsForDisplay(
+          payload,
+          source.internalTextRefs,
+          readInternalTextProjection ?? (async () => null),
+        )
+      : null;
   }
   return isRecord(value)
     ? { kind: 'canonical', value }

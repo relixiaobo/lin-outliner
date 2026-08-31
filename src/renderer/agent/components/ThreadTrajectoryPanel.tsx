@@ -6,11 +6,12 @@ import {
   useState,
 } from 'react';
 import type {
-  AgentCoreNotification,
+  RendererAgentCoreNotification,
   ThreadTrajectoryReadResponse,
   ThreadTrajectoryRecordSummary,
   ThreadTrajectoryReplacementRange,
 } from '../../../core/agent/protocol';
+type AgentCoreNotification = RendererAgentCoreNotification;
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import { LoaderIcon } from '../../ui/icons';

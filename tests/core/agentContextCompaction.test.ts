@@ -69,6 +69,7 @@ describe('context compaction reducer', () => {
       schemaVersion: 1,
       kind: 'toolCallArguments',
       value: { file_path: '/workspace/stale.md', content: 'updated' },
+      bindings: [],
     });
     store.remove(fileArgumentsRef);
     const fileMutation = payloadBackedToolItem('missing-file-arguments', 'file_write', fileArgumentsRef);
@@ -97,12 +98,13 @@ describe('context compaction reducer', () => {
       schemaVersion: 1,
       kind: 'toolCallArguments',
       value: { file_path: '/workspace/payload.md' },
+      bindings: [],
     });
     const payloadItem = {
       ...file.items[0]!,
       modelCall: {
         ...replayableModelCall('file_read', {}),
-        arguments: { storage: 'payload' as const, ref: argumentsRef },
+        arguments: { storage: 'payload' as const, ref: argumentsRef, internalTextRefs: [] },
       },
     } satisfies ThreadItem;
     let argumentReads = 0;
@@ -125,6 +127,7 @@ describe('context compaction reducer', () => {
       schemaVersion: 1,
       kind: 'toolCallArguments',
       value: { query: 'unrelated tool arguments' },
+      bindings: [],
     });
     const unrelated = payloadBackedToolItem('unrelated-tool', 'unrelated_tool', argumentsRef);
     let argumentReads = 0;
@@ -357,6 +360,7 @@ describe('context compaction reducer', () => {
       restoredStateRef,
       instructionsRef: null,
       contextRefs: [summaryRef, restoredStateRef],
+      internalTextRefs: [],
       resourceRefs: [],
       outputRefs: [],
     };
@@ -438,6 +442,7 @@ describe('context compaction reducer', () => {
       restoredStateRef,
       instructionsRef: null,
       contextRefs: [oldItem.payloadRef],
+      internalTextRefs: [],
       resourceRefs: [],
       outputRefs: [],
     };
@@ -641,6 +646,7 @@ describe('context compaction reducer', () => {
       restoredStateRef,
       instructionsRef: null,
       contextRefs: firstPlan.contextRefs,
+      internalTextRefs: [],
       resourceRefs: [],
       outputRefs: firstPlan.outputRefs,
     };
@@ -674,6 +680,7 @@ function contextEvidence(
     payloadRef,
     summary: payload.kind,
     contextRefs: [],
+    internalTextRefs: [],
     resourceRefs: [],
     outputRefs: [],
   };
@@ -777,6 +784,7 @@ function observation(
     payloadRef: projectionRef,
     summary: `Frozen ${tool} output`,
     contextRefs: [],
+    internalTextRefs: [],
     resourceRefs: [],
     outputRefs: [outputRef],
   };
@@ -822,7 +830,7 @@ function payloadBackedToolItem(
     ...toolItem(id, tool, {}),
     modelCall: {
       ...replayableModelCall(tool, {}),
-      arguments: { storage: 'payload', ref: argumentsRef },
+      arguments: { storage: 'payload', ref: argumentsRef, internalTextRefs: [] },
     },
   };
 }

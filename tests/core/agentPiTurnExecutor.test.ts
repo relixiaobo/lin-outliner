@@ -1430,6 +1430,7 @@ describe('PiTurnExecutor event normalization', () => {
       payloadRef,
       summary: 'Available Skills (1)',
       contextRefs: [],
+      internalTextRefs: [],
       resourceRefs: [],
       outputRefs: [],
     }, {
@@ -1530,6 +1531,7 @@ describe('PiTurnExecutor event normalization', () => {
         payloadRef,
         summary: `Skill catalog ${index + 1}`,
         contextRefs: [],
+        internalTextRefs: [],
         resourceRefs: [],
         outputRefs: [],
       }, userItem];
@@ -1641,6 +1643,7 @@ describe('PiTurnExecutor event normalization', () => {
       payloadRef: projectionRef,
       summary: 'Full tool output projection',
       contextRefs: [],
+      internalTextRefs: [],
       resourceRefs: [],
       outputRefs: [outputRef],
     }], 1_719_999_998_000);
@@ -1738,6 +1741,7 @@ describe('PiTurnExecutor event normalization', () => {
       payloadRef: projectionRef,
       summary: 'Inherited full tool output projection',
       contextRefs: [],
+      internalTextRefs: [],
       resourceRefs: [],
       outputRefs: [outputRef],
     }], 1_719_999_996_010);
@@ -1772,6 +1776,7 @@ describe('PiTurnExecutor event normalization', () => {
       payloadRef: inheritedRef,
       summary: 'Inherited parent context',
       contextRefs: [projectionRef],
+      internalTextRefs: [],
       resourceRefs: [],
       outputRefs: [outputRef],
     }, {
@@ -1892,6 +1897,7 @@ describe('PiTurnExecutor event normalization', () => {
         payloadRef: payloadRefs[index]!,
         summary: `Full tool output projection ${index + 1}`,
         contextRefs: [],
+        internalTextRefs: [],
         resourceRefs: [],
         outputRefs: [outputRef],
       }];
@@ -2057,6 +2063,7 @@ describe('PiTurnExecutor event normalization', () => {
           payloadRef: catalogRef,
           summary: 'Available Skills (1)',
           contextRefs: [],
+          internalTextRefs: [],
           resourceRefs: [],
           outputRefs: [],
         });
@@ -2152,6 +2159,7 @@ describe('PiTurnExecutor event normalization', () => {
         payloadRef,
         summary: payload.kind,
         contextRefs: dependencies.contextRefs ?? [],
+        internalTextRefs: [],
         resourceRefs: [],
         outputRefs: dependencies.outputRefs ?? [],
       };
@@ -2336,6 +2344,7 @@ describe('PiTurnExecutor event normalization', () => {
       restoredStateRef,
       instructionsRef: null,
       contextRefs: [activeSkillItem.payloadRef, viewItem.payloadRef, additionalItem.payloadRef, projectionItem.payloadRef],
+      internalTextRefs: [],
       resourceRefs: [],
       outputRefs: [outputRef],
     }], 1_719_990_100_000);
@@ -2580,6 +2589,7 @@ describe('PiTurnExecutor event normalization', () => {
           restoredStateRef,
           instructionsRef: null,
           contextRefs: [],
+          internalTextRefs: [],
           resourceRefs: [],
           outputRefs: [],
         } as import('../../src/core/agent/protocol').ContextCompactionThreadItem;
@@ -2709,6 +2719,7 @@ describe('PiTurnExecutor event normalization', () => {
           restoredStateRef,
           instructionsRef: null,
           contextRefs: plan.contextRefs,
+          internalTextRefs: [],
           resourceRefs: [],
           outputRefs: plan.outputRefs,
         } as import('../../src/core/agent/protocol').ContextCompactionThreadItem;
@@ -2810,6 +2821,7 @@ describe('PiTurnExecutor event normalization', () => {
           payloadRef: oversizedRef,
           summary: 'Oversized inherited observation',
           contextRefs: [],
+          internalTextRefs: [],
           resourceRefs: [],
           outputRefs: [],
         },
@@ -2858,6 +2870,7 @@ describe('PiTurnExecutor event normalization', () => {
           payloadRef: inheritedRef,
           summary: 'Inherited parent context (1 Turn)',
           contextRefs: [oversizedRef],
+          internalTextRefs: [],
           resourceRefs: [],
           outputRefs: [],
         },
@@ -2869,6 +2882,7 @@ describe('PiTurnExecutor event normalization', () => {
           payloadRef: currentEvidenceRef,
           summary: 'Current admission instruction',
           contextRefs: [],
+          internalTextRefs: [],
           resourceRefs: [],
           outputRefs: [],
         },
@@ -2916,6 +2930,7 @@ describe('PiTurnExecutor event normalization', () => {
           restoredStateRef,
           instructionsRef: null,
           contextRefs: plan.contextRefs,
+          internalTextRefs: [],
           resourceRefs: [],
           outputRefs: plan.outputRefs,
         } as import('../../src/core/agent/protocol').ContextCompactionThreadItem;
@@ -4937,17 +4952,18 @@ function createContext(): {
       return { id, mimeType, byteLength: Buffer.byteLength(text, 'utf8'), summary };
     },
     persistToolCallArguments: async (value) => {
-      const payload = { schemaVersion: 1 as const, kind: 'toolCallArguments' as const, value };
+      const payload = { schemaVersion: 1 as const, kind: 'toolCallArguments' as const, value, bindings: [] };
       const serialized = JSON.stringify(payload);
       const id = createHash('sha256').update(serialized).digest('hex');
       contextPayloads.set(id, payload);
-      return {
+      const ref = {
         id,
         mimeType: 'application/vnd.tenon.agent-context+json',
         byteLength: Buffer.byteLength(serialized),
         schemaVersion: 1,
         kind: 'toolCallArguments',
       };
+      return { storage: 'payload' as const, ref, internalTextRefs: [] };
     },
     persistContextEvidence: async (payload, summary) => {
       const serialized = JSON.stringify(payload);
@@ -4968,6 +4984,7 @@ function createContext(): {
         },
         summary,
         contextRefs: [],
+        internalTextRefs: [],
         resourceRefs: [],
         outputRefs: payload.kind === 'toolOutputProjection' ? [payload.outputRef] : [],
       }) as import('../../src/core/agent/protocol').ContextEvidenceThreadItem;

@@ -230,6 +230,46 @@ describe('Agent tool payload store', () => {
     expect(await store.readContext(targetThreadId, ref)).toEqual(payload);
   });
 
+  test('owns verified internal text across projection, fork copy, pruning, corruption, and source deletion', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const store = new ToolPayloadStore(root);
+    const sourceThreadId = uuidV7(1_720_000_000_000);
+    const targetThreadId = uuidV7(1_720_000_000_001);
+    const text = 'quotes: " slash: \\ newline:\n Unicode:界'.repeat(2_000);
+    const retained = await store.writeInternalText(sourceThreadId, text);
+    const duplicate = await store.writeInternalText(sourceThreadId, text);
+    const orphan = await store.writeInternalText(sourceThreadId, 'orphan');
+    await expect(store.writeInternalText(sourceThreadId, '\ud800'))
+      .rejects.toThrow('well-formed Unicode');
+
+    expect(duplicate).toEqual(retained);
+    expect(await store.readInternalText(sourceThreadId, retained)).toBe(text);
+    expect(await store.readInternalTextProjection(sourceThreadId, retained, 37)).toEqual({
+      textPrefix: text.slice(0, 37),
+      textChars: text.length,
+      jsonStringChars: JSON.stringify(text).length,
+    });
+    const supplementaryText = `\ud83d\ude00${'x'.repeat(1_100_000)}`;
+    const supplementary = await store.writeInternalText(sourceThreadId, supplementaryText);
+    expect(await store.readInternalTextProjection(sourceThreadId, supplementary, 1)).toEqual({
+      textPrefix: '',
+      textChars: supplementaryText.length,
+      jsonStringChars: JSON.stringify(supplementaryText).length,
+    });
+    expect(await store.copyInternalTextToThread(sourceThreadId, targetThreadId, retained)).toBe(true);
+    await store.pruneUnreferencedInternalText(sourceThreadId, [retained]);
+    expect(await store.readInternalText(sourceThreadId, retained)).toBe(text);
+    expect(await store.readInternalText(sourceThreadId, orphan)).toBeNull();
+
+    await store.deleteThread(sourceThreadId);
+    expect(await store.readInternalText(targetThreadId, retained)).toBe(text);
+    const targetPath = join(root, targetThreadId, 'internal-text', `${retained.id}.txt`);
+    await writeFile(targetPath, Buffer.alloc(retained.byteLength, 0x78));
+    expect(await store.readInternalText(targetThreadId, retained)).toBeNull();
+    expect(await store.readInternalTextProjection(targetThreadId, retained, 32)).toBeNull();
+  });
+
   test('owns Turn diagnostics across fork copy, pruning, and source deletion', async () => {
     const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
     roots.push(root);
@@ -288,7 +328,7 @@ describe('Agent tool payload store', () => {
     const retained = await store.writeContext(threadId, retainedPayload);
     const orphan = await store.writeContext(threadId, turnEnvironmentPayload(1_720_000_000_001));
 
-    await store.pruneUnreferencedContexts(threadId, [retained]);
+    await store.pruneUnreferencedContexts(threadId, [retained], []);
     expect(await store.readContext(threadId, retained)).toEqual(retainedPayload);
     expect(await store.readContext(threadId, orphan)).toBeNull();
 
@@ -318,7 +358,7 @@ describe('Agent tool payload store', () => {
     await writeFile(externalFile, '{"keep":true}');
     await mkdir(join(root, unsafeThreadId), { recursive: true });
     await symlink(external, join(root, unsafeThreadId, 'context'));
-    await store.pruneUnreferencedContexts(unsafeThreadId, []);
+    await store.pruneUnreferencedContexts(unsafeThreadId, [], []);
     expect(await readFile(externalFile, 'utf8')).toBe('{"keep":true}');
     await expect(store.writeContext(unsafeThreadId, turnEnvironmentPayload()))
       .rejects.toThrow();
@@ -550,6 +590,23 @@ describe('Agent tool payload store', () => {
 
     await expect(store.writeResource(threadId, Buffer.from('xx'), 'application/octet-stream', 'next.bin'))
       .rejects.toBeInstanceOf(ThreadResourceQuotaError);
+  });
+
+  test('accounts internal text against the Thread quota for writes and fork copies', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const store = retentionTestStore(root, 1_720_000_000_000);
+    const targetThreadId = uuidV7(1_720_000_000_000);
+    const sourceThreadId = uuidV7(1_720_000_000_001);
+
+    await store.writeInternalText(targetThreadId, 'a'.repeat(24));
+    await expect(store.writeInternalText(targetThreadId, 'b'.repeat(17)))
+      .rejects.toBeInstanceOf(ThreadResourceQuotaError);
+
+    const sourceRef = await store.writeInternalText(sourceThreadId, 'c'.repeat(17));
+    await expect(store.copyInternalTextToThread(sourceThreadId, targetThreadId, sourceRef))
+      .rejects.toBeInstanceOf(ThreadResourceQuotaError);
+    expect(await store.readInternalText(targetThreadId, sourceRef)).toBeNull();
   });
 
   test('serializes concurrent upload reservations against the Thread quota', async () => {

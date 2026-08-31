@@ -13,6 +13,7 @@ import {
   transientToolCallAdmission,
   type ToolCallAdmissionRequest,
 } from '../../src/main/agent/runtime/toolCallHistory';
+import type { AgentToolLargeTextArguments } from '../../src/main/agent/runtime/kernel/types';
 
 const SCHEMA_DIGEST = modelToolSchemaDigest({
   type: 'object',
@@ -120,6 +121,46 @@ describe('canonical model tool-call admission', () => {
     expect(JSON.stringify(decision)).not.toContain('s3cr3t-value-1234');
   });
 
+  test('scans selected large text standalone and persists only its redacted durable value', async () => {
+    const secret = 'abcdefghijklmnop';
+    const stdin = `Authorization: Bearer ${secret}\n${'x'.repeat(40_000)}`;
+    const contract: AgentToolLargeTextArguments = {
+      maxBindings: 1,
+      maxAggregateBytes: 64 * 1024 * 1024,
+      select: () => [{
+        kind: 'internalText',
+        path: '/stdin',
+        maxBytes: 64 * 1024 * 1024,
+        historyPolicy: 'secretScanText',
+      }],
+    };
+    const request = await admittedRequest({ command: 'capture-input', stdin }, true, contract);
+    let persistedText = '';
+    const payloadRef: ThreadContextPayloadReference = {
+      id: 'b'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json',
+      byteLength: 128,
+      schemaVersion: 1,
+      kind: 'toolCallArguments',
+    };
+    const decision = await persistToolCallAdmission(request, async (_value, selected) => {
+      persistedText = selected[0]?.value ?? '';
+      return { storage: 'payload', ref: payloadRef, internalTextRefs: [] };
+    });
+
+    expect(request.outcome).toMatchObject({
+      type: 'admitted',
+      arguments: { stdin },
+      redactedPaths: ['/stdin'],
+    });
+    expect(persistedText).toContain('[redacted secret-like content]');
+    expect(persistedText).not.toContain(secret);
+    expect(decision).toMatchObject({
+      execute: true,
+      modelCall: { disposition: 'redactedReplay' },
+    });
+  });
+
   test('keeps an executed secret call as evidence when its redacted copy fails the admission schema', async () => {
     const secret = 'abcdefghijklmnop';
     const decision = await persistToolCallAdmission(
@@ -153,7 +194,7 @@ describe('canonical model tool-call admission', () => {
     const request = await admittedRequest(argumentsValue);
     const durable = await persistToolCallAdmission(request, async (value) => {
       persisted = value;
-      return payloadRef;
+      return { storage: 'payload', ref: payloadRef, internalTextRefs: [] };
     });
 
     expect(persisted).toEqual(argumentsValue);
@@ -209,8 +250,9 @@ describe('canonical model tool-call admission', () => {
 async function admittedRequest(
   argumentsValue: JsonValue,
   redactedArgumentsReplayable = true,
+  largeTextArguments?: AgentToolLargeTextArguments,
 ): Promise<ToolCallAdmissionRequest> {
-  const redacted = await prepareToolCallArguments(argumentsValue);
+  const redacted = await prepareToolCallArguments(argumentsValue, largeTextArguments);
   return {
     toolCallId: 'call-1',
     providerName: 'bash',
@@ -223,6 +265,7 @@ async function admittedRequest(
       displayArguments: redacted.redactedArguments,
       schemaDigest: SCHEMA_DIGEST,
       redactedArgumentsReplayable,
+      ...(largeTextArguments ? { largeTextArguments } : {}),
     },
   };
 }

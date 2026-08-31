@@ -1,6 +1,7 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
-import type { RendererUserViewHints, Thread, ThreadUserContent, Turn } from '../../../core/agent/protocol';
+import type { RendererUserViewHints, ThreadUserContent } from '../../../core/agent/protocol';
+import type { Thread, Turn } from '../projectionTypes';
 import type { AgentProviderSettingsView, AgentSlashCommandView } from '../../api/types';
 import type { DocumentIndexStore } from '../../state/documentIndexStore';
 import { api } from '../../api/client';

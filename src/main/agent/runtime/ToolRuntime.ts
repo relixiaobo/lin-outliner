@@ -403,6 +403,7 @@ export class ToolRuntime {
           && !subagentBashExecutionAllowed(
             activeSubagentPolicy,
             capability.descriptors.map((descriptor) => descriptor.actionKind),
+            capability.bashStdinConsumer,
           );
         const worktreeBashOutlineBlocked = bashPolicyBlocked
           && activeSubagentPolicy.worktree

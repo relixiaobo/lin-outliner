@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
-import type { Thread, ThreadId } from '../../../core/agent/protocol';
+import type { ThreadId } from '../../../core/agent/protocol';
+import type { Thread } from '../projectionTypes';
 import { useT } from '../../i18n/I18nProvider';
 import { AddIcon, HideIcon, ICON_SIZE, InfoIcon, MoreIcon, PencilIcon, ShowIcon, TrashIcon } from '../../ui/icons';
 import { IconButton } from '../../ui/primitives/IconButton';

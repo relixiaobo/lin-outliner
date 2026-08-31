@@ -91,6 +91,10 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
           "minLength": 1,
           "description": "The command to execute."
         },
+        "stdin": {
+          "type": "string",
+          "description": "Literal UTF-8 bytes delivered to the foreground process standard input."
+        },
         "description": {
           "type": "string",
           "description": "Clear, concise description of what this command does in active voice.\\nDo not use vague words like \\"complex\\" or \\"risk\\"; describe the concrete action.\\nFor simple commands such as git, npm, or standard CLI tools, keep it brief.\\nFor piped commands or obscure flags, add enough context to clarify what the command does."

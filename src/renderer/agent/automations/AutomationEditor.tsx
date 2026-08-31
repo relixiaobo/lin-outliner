@@ -6,7 +6,7 @@ import type {
 } from '../../../core/agent/automation';
 import { composeProviderQualifiedModel, parseProviderQualifiedModel } from '../../../core/agentModelId';
 import { REASONING_EFFORTS, type ReasoningEffort } from '../../../core/agent/configuration';
-import type { Thread } from '../../../core/agent/protocol';
+import type { Thread } from '../projectionTypes';
 import type { AgentProviderSettingsView } from '../../api/types';
 import { useT } from '../../i18n/I18nProvider';
 import { AddIcon, TrashIcon } from '../../ui/icons';

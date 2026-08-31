@@ -240,18 +240,11 @@ describe('status is one idiom across every tool kind', () => {
 
 describe('review regressions — each of these shipped broken once', () => {
   test('copy turn resolves payload-backed arguments instead of copying the storage stub', async () => {
-    const ref = {
-      id: 'e'.repeat(64),
-      mimeType: 'application/vnd.tenon.agent-context+json' as const,
-      byteLength: 64,
-      schemaVersion: 1 as const,
-      kind: 'toolCallArguments' as const,
-    };
     const item = {
       ...dynamic('plugin_call', {}, 'completed', { namespace: 'plugin' }),
       modelCall: {
         ...replayableModelCall('plugin__plugin_call', {}),
-        arguments: { storage: 'payload' as const, ref },
+        arguments: { storage: 'itemBound' as const },
       },
     };
     const turn = {
@@ -275,22 +268,14 @@ describe('review regressions — each of these shipped broken once', () => {
 
     expect(copied).toContain('exact payload-backed query');
     expect(copied).not.toContain('storedArguments');
-    expect(copied).not.toContain(ref.id);
   });
 
   test('copy turn bounds a large payload-backed argument before formatting it', async () => {
-    const ref = {
-      id: 'e'.repeat(64),
-      mimeType: 'application/vnd.tenon.agent-context+json' as const,
-      byteLength: 1_000_000,
-      schemaVersion: 1 as const,
-      kind: 'toolCallArguments' as const,
-    };
     const item = {
       ...dynamic('file_write', {}, 'completed'),
       modelCall: {
         ...replayableModelCall('file_write', {}),
-        arguments: { storage: 'payload' as const, ref },
+        arguments: { storage: 'itemBound' as const },
       },
     };
     const turn = {
@@ -307,7 +292,11 @@ describe('review regressions — each of these shipped broken once', () => {
 
     const copied = await buildTurnCopyText(
       turn,
-      async () => ({ content: 'x'.repeat(1_000_000), path: '/workspace/large.txt' }),
+      async () => ({
+        truncated: true,
+        originalChars: 1_000_060,
+        preview: '{\n  "content": "xxxxxxxx',
+      }),
       async () => null,
       'Resource limit reached.',
     );
@@ -317,18 +306,11 @@ describe('review regressions — each of these shipped broken once', () => {
   });
 
   test('copy turn uses typed unavailable arguments for a payload-backed file change', async () => {
-    const ref = {
-      id: 'f'.repeat(64),
-      mimeType: 'application/vnd.tenon.agent-context+json' as const,
-      byteLength: 128_000,
-      schemaVersion: 1 as const,
-      kind: 'toolCallArguments' as const,
-    };
     const item = {
       ...changes('/w/presentation-only.ts'),
       modelCall: {
         ...replayableModelCall('file_edit', {}),
-        arguments: { storage: 'payload' as const, ref },
+        arguments: { storage: 'itemBound' as const },
       },
     };
     const turn = {

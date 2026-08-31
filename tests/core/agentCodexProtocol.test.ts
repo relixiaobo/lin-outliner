@@ -297,6 +297,7 @@ const allItems: readonly ThreadItem[] = [
     payloadRef: contextRef,
     summary: 'Turn environment',
     contextRefs: [],
+    internalTextRefs: [],
     resourceRefs: [],
     outputRefs: [],
   },
@@ -318,6 +319,7 @@ const allItems: readonly ThreadItem[] = [
     restoredStateRef: restoredContextRef,
     instructionsRef: null,
     contextRefs: [],
+    internalTextRefs: [],
     resourceRefs: [],
     outputRefs: [],
   },
@@ -891,6 +893,15 @@ describe('Codex Agent Core protocol codec', () => {
     })).toThrow('coveredFrom must not follow coveredThrough');
   });
 
+  test('rejects context Items without the required internal-text dependency manifest', () => {
+    for (const type of ['contextEvidence', 'contextCompaction'] as const) {
+      const item = { ...allItems.find((candidate) => candidate.type === type)! } as Record<string, unknown>;
+      delete item.internalTextRefs;
+
+      expect(() => decodeThreadItem(item)).toThrow('item.internalTextRefs');
+    }
+  });
+
   test('round-trips every semantic context payload and rejects authority escalation', () => {
     const payloads: readonly ThreadContextPayload[] = [
       {
@@ -1031,6 +1042,7 @@ describe('Codex Agent Core protocol codec', () => {
           command: 'bun run typecheck',
           description: 'Typecheck the project',
         },
+        bindings: [],
       },
       {
         schemaVersion: 1,
@@ -1728,6 +1740,11 @@ describe('Codex Agent Core protocol codec', () => {
         itemId: 'item-5',
         outputId: OUTPUT_ID,
       },
+      'thread/item/arguments/read': {
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        itemId: 'item-5',
+      },
       'thread/context/read': {
         threadId: THREAD_ID,
         turnId: TURN_ID,
@@ -1802,6 +1819,7 @@ describe('Codex Agent Core protocol codec', () => {
           text: 'ok',
         },
       },
+      'thread/item/arguments/read': { arguments: { command: 'bun run typecheck' } },
       'thread/context/read': {
         context: { ref: rpcContextRef, payload: rpcContextPayload },
       },

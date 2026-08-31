@@ -1,9 +1,13 @@
 # Agent Thread Rendering
 
-The Agent dock renders canonical Thread DTOs directly. There is no second event
-projection or UI-only execution model. Presentation-only reductions may collapse
-append-only Items or select the latest canonical DTO, but never invent execution
-state or write it back as history.
+Main owns canonical Thread DTOs. Before Agent Core responses and notifications
+cross main-window IPC, an exhaustive projection replaces only payload-backed
+model-call arguments with the renderer-private `{ storage: 'itemBound' }` marker;
+context references, internal-text references, and binding paths never enter the
+renderer. There is no second event model or UI-only execution model.
+Presentation-only reductions may collapse append-only Items or select the latest
+projected canonical DTO, but never invent execution state or write it back as
+history.
 
 ## Surface Structure
 
@@ -396,11 +400,12 @@ reach it.
 - each tool row derives a readable summary from its canonical fields and exposes
   status plus direct argument/result data. Its readable act may use type-specific
   presentation fields, but the Arguments detail and copy source only the Item's
-  `modelCall` envelope: exact inline arguments, marked redacted arguments, a payload
-  resolved on demand by main, or bounded rejection evidence. The renderer never renders
-  a payload-reference stub as if it were arguments. Expansion and Turn copy request the
-  exact authorized payload, then bound its renderer-facing value to 32,000 characters
-  before caching, formatting, syntax highlighting, or copying. Inline values that fit
+  `modelCall` envelope: exact inline arguments, marked redacted arguments, an Item-bound
+  marker resolved on demand by main, or bounded rejection evidence. The renderer never
+  receives or renders a payload-reference stub as if it were arguments. Expansion and
+  Turn copy authorize the enclosing `(threadId, turnId, itemId)` through
+  `thread/item/arguments/read`; main verifies and projects the complete value to at most
+  32,000 characters before it crosses IPC. Inline values that fit
   the 32 KiB storage contract remain complete even when pretty-printed JSON is longer.
   While a payload read is pending, missing, or mismatched, the disclosure and Turn copy
   show the same typed unavailable value. Neither surface falls back to presentation
@@ -2009,8 +2014,8 @@ The Agent dock follows the shared design system:
 - chrome uses tokenized neutral states and icon controls
 - dialogs and menus use shared overlay primitives
 - the pre-refactor transcript, composer, disclosure, attachment, and message
-  action geometry remains the visual baseline even though canonical DTOs now
-  drive it directly
+  action geometry remains the visual baseline even though renderer-projected
+  canonical DTOs now drive it directly
 - focus remains visible, motion respects user preference, and hover never moves
   layout
 - the minimal header reserves the global rail-toggle zone so its list trigger

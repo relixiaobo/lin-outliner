@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, symlink, truncate, writeFile } 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  classifyBashStdinConsumer,
   directOutlineShellInvocation,
   evaluateAgentToolCapability,
 } from '../../src/main/agent/capabilities/agentCapabilities';
@@ -54,6 +55,56 @@ function recordingArtifactSink() {
 }
 
 describe('agent capabilities', () => {
+  test('classifies stdin consumers from command structure without inspecting payload text', async () => {
+    expect(classifyBashStdinConsumer('printf input', false)).toBe('absent');
+    for (const command of [
+      'outline add --input -',
+      'outline --json commit --input - --message exact',
+      'env OUTLINE_SOCKET=/tmp/outline.sock outline --no-start diff --input - --selector root',
+    ]) expect(classifyBashStdinConsumer(command, true), command).toBe('registered-data');
+
+    for (const command of [
+      'bash -s',
+      'zsh -s --',
+      'python3 -',
+      'python',
+      'node',
+      'deno run -',
+      'bun -',
+      'ruby -',
+      'perl -',
+      'php -',
+      'osascript -',
+    ]) expect(classifyBashStdinConsumer(command, true), command).toBe('executable');
+
+    for (const command of [
+      'capture-input',
+      'sh -c "outline add --input -"',
+      'outline add --input - | cat',
+      'outline add --input - && true',
+      'outline add --input - --input other',
+      'outline add --input - --file other.json',
+      'outline add --input - --input=other',
+      'outline add --input - --file=other.json',
+      'outline show --selector -',
+      'outline show --projection -',
+      'outline apply --input -',
+      'outline asset ingest -',
+      'outline add --input $(printf -- -)',
+    ]) expect(classifyBashStdinConsumer(command, true), command).toBe('unknown');
+
+    const payloads = ['safe data', '$(touch /tmp/never)', '-----BEGIN PRIVATE KEY-----'];
+    for (const stdin of payloads) {
+      const decision = evaluateAgentToolCapability({
+        toolName: 'bash',
+        args: { command: 'outline add --input -', stdin },
+        policy: { workspaceRoot: (await workspaceFixture()).workspace },
+      });
+      expect(decision.descriptors.map((entry) => entry.actionKind)).toEqual(['outline.edit']);
+      expect(decision.bashStdinConsumer).toBe('registered-data');
+    }
+  });
+
   test('allows file, process, external, and unclassified work by default', async () => {
     const { workspace, outside } = await workspaceFixture();
     const cases = [

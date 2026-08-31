@@ -1219,7 +1219,7 @@ describe('canonical context projection', () => {
           ...commandToolItem('missing-arguments', null, 'none'),
           modelCall: {
             ...projectionModelCall('bash', { command: 'pwd' }),
-            arguments: { storage: 'payload', ref: missingArgumentRef },
+            arguments: { storage: 'payload', ref: missingArgumentRef, internalTextRefs: [] },
           },
         }],
       },
@@ -1557,6 +1557,7 @@ describe('canonical context projection', () => {
       restoredStateRef,
       instructionsRef: null,
       contextRefs: [],
+      internalTextRefs: [],
       resourceRefs: [],
       outputRefs: [],
     };
@@ -1662,6 +1663,7 @@ describe('canonical context projection', () => {
       restoredStateRef,
       instructionsRef: null,
       contextRefs: [viewItem.payloadRef, additionalItem.payloadRef],
+      internalTextRefs: [],
       resourceRefs: [],
       outputRefs: [],
     };
@@ -1756,6 +1758,7 @@ describe('canonical context projection', () => {
       restoredStateRef: mismatchedSkillStateRef,
       instructionsRef: null,
       contextRefs: [activeSkillRef],
+      internalTextRefs: [],
       resourceRefs: [],
       outputRefs: [],
     };
@@ -1889,6 +1892,7 @@ function evidence(
     payloadRef,
     summary: payload.kind,
     contextRefs: [],
+    internalTextRefs: [],
     resourceRefs: [],
     outputRefs: payload.kind === 'toolOutputProjection' ? [payload.outputRef] : [],
   };

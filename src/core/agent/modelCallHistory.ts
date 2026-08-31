@@ -3,6 +3,8 @@ import type {
   ModelToolCallArguments,
   ModelToolCallHistory,
   ModelToolIdentity,
+  RendererModelToolCallArguments,
+  RendererModelToolCallHistory,
 } from './protocol';
 
 export const MAX_TOOL_ARGUMENT_DISPLAY_CHARS = 32_000;
@@ -10,24 +12,32 @@ const UNAVAILABLE_STORED_TOOL_ARGUMENTS = { unavailable: 'stored tool arguments'
 
 export function modelCallArgumentSource(
   modelCall: Exclude<ModelToolCallHistory, { readonly disposition: 'evidenceOnly' }>,
-): ModelToolCallArguments {
+): ModelToolCallArguments;
+export function modelCallArgumentSource(
+  modelCall: Exclude<RendererModelToolCallHistory, { readonly disposition: 'evidenceOnly' }>,
+): RendererModelToolCallArguments;
+export function modelCallArgumentSource(
+  modelCall: Exclude<ModelToolCallHistory | RendererModelToolCallHistory, { readonly disposition: 'evidenceOnly' }>,
+): ModelToolCallArguments | RendererModelToolCallArguments {
   return modelCall.disposition === 'replayable'
     ? modelCall.arguments
     : modelCall.redactedArguments;
 }
 
-export function modelCallIdentity(modelCall: ModelToolCallHistory): ModelToolIdentity | null {
+export function modelCallIdentity(modelCall: ModelToolCallHistory | RendererModelToolCallHistory): ModelToolIdentity | null {
   return modelCall.identity;
 }
 
-export function modelCallDisplayArguments(modelCall: ModelToolCallHistory): JsonValue {
+export function modelCallDisplayArguments(modelCall: ModelToolCallHistory | RendererModelToolCallHistory): JsonValue {
   if (modelCall.disposition === 'evidenceOnly') return modelCall.redactedArgumentsSummary;
-  const source = modelCallArgumentSource(modelCall);
+  const source = modelCall.disposition === 'replayable'
+    ? modelCall.arguments
+    : modelCall.redactedArguments;
   if (source.storage === 'inline') return source.value;
   return UNAVAILABLE_STORED_TOOL_ARGUMENTS;
 }
 
-export function modelCallDisplayName(modelCall: ModelToolCallHistory): string {
+export function modelCallDisplayName(modelCall: ModelToolCallHistory | RendererModelToolCallHistory): string {
   if (modelCall.disposition !== 'evidenceOnly' || modelCall.identity) {
     const identity = modelCall.identity!;
     return identity.namespace

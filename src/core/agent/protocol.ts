@@ -16,6 +16,8 @@ export const MAX_INLINE_MODEL_TOOL_ARGUMENT_BYTES = 32 * 1024;
 export const MAX_MODEL_TOOL_EVIDENCE_SUMMARY_BYTES = 32 * 1024;
 export const MAX_MODEL_TOOL_PROVIDER_NAME_BYTES = 1024;
 export const MAX_MODEL_TOOL_CORRECTION_BYTES = 4 * 1024;
+export const MAX_TOOL_ARGUMENT_TEXT_BINDINGS = 256;
+export const MAX_TOOL_ARGUMENT_TEXT_BYTES = 64 * 1024 * 1024;
 
 export interface ModelToolIdentity {
   readonly namespace: string | null;
@@ -35,7 +37,11 @@ export type ModelToolCallEvidenceReason = typeof MODEL_TOOL_CALL_EVIDENCE_REASON
 
 export type ModelToolCallArguments =
   | { readonly storage: 'inline'; readonly value: JsonValue }
-  | { readonly storage: 'payload'; readonly ref: ThreadContextPayloadReference };
+  | {
+      readonly storage: 'payload';
+      readonly ref: ThreadContextPayloadReference;
+      readonly internalTextRefs: readonly ThreadInternalTextPayloadReference[];
+    };
 
 export type ModelToolCallHistory =
   | {
@@ -647,6 +653,20 @@ export interface ThreadContextPayloadReference {
   readonly kind: ContextPayloadKind;
 }
 
+export interface ThreadInternalTextPayloadReference {
+  /** Content-addressed lowercase SHA-256 digest of the exact UTF-8 bytes. */
+  readonly id: string;
+  readonly encoding: 'utf-8';
+  readonly byteLength: number;
+}
+
+export interface ToolCallArgumentInternalTextBinding {
+  readonly kind: 'internalText';
+  /** Canonical RFC 6901 JSON Pointer into `value`. */
+  readonly path: string;
+  readonly ref: ThreadInternalTextPayloadReference;
+}
+
 export interface ContextCursor {
   readonly turnId: TurnId;
   readonly itemId: ThreadItemId;
@@ -920,7 +940,9 @@ export interface CompactionInstructionsContextPayload {
 export interface ToolCallArgumentsContextPayload {
   readonly schemaVersion: 1;
   readonly kind: 'toolCallArguments';
+  /** Canonical arguments with every bound text location replaced by null. */
   readonly value: JsonValue;
+  readonly bindings: readonly ToolCallArgumentInternalTextBinding[];
 }
 
 export type ThreadContextPayload =
@@ -1231,6 +1253,7 @@ export interface ContextEvidenceThreadItem extends ThreadItemBase {
   readonly payloadRef: ThreadContextPayloadReference;
   readonly summary: string;
   readonly contextRefs: readonly ThreadContextPayloadReference[];
+  readonly internalTextRefs: readonly ThreadInternalTextPayloadReference[];
   readonly resourceRefs: readonly ThreadResourceReference[];
   readonly outputRefs: readonly ThreadItemOutputReference[];
 }
@@ -1250,6 +1273,7 @@ export interface ContextCompactionThreadItem extends ThreadItemBase {
   readonly restoredStateRef: ThreadContextPayloadReference;
   readonly instructionsRef: ThreadContextPayloadReference | null;
   readonly contextRefs: readonly ThreadContextPayloadReference[];
+  readonly internalTextRefs: readonly ThreadInternalTextPayloadReference[];
   readonly resourceRefs: readonly ThreadResourceReference[];
   readonly outputRefs: readonly ThreadItemOutputReference[];
 }
@@ -1270,8 +1294,31 @@ export type ThreadItem =
   | ContextResetThreadItem
   | ContextCompactionThreadItem;
 
+export type RendererModelToolCallArguments =
+  | { readonly storage: 'inline'; readonly value: JsonValue }
+  | { readonly storage: 'itemBound' };
+
+type RendererModelToolCallHistoryProjection<History> = History extends infer Entry
+  ? Entry extends { readonly disposition: 'replayable' }
+    ? Omit<Entry, 'arguments'> & { readonly arguments: RendererModelToolCallArguments }
+    : Entry extends { readonly disposition: 'redactedReplay' }
+      ? Omit<Entry, 'redactedArguments'> & { readonly redactedArguments: RendererModelToolCallArguments }
+      : Entry
+  : never;
+export type RendererModelToolCallHistory = RendererModelToolCallHistoryProjection<ModelToolCallHistory>;
+
+export type RendererThreadItem = ThreadItem extends infer Item
+  ? Item extends { readonly modelCall: ModelToolCallHistory }
+    ? Omit<Item, 'modelCall'> & { readonly modelCall: RendererModelToolCallHistory }
+    : Item
+  : never;
+
+export type RendererTurn = Omit<Turn, 'items'> & { readonly items: readonly RendererThreadItem[] };
+export type RendererThread = Omit<Thread, 'turns'> & { readonly turns?: readonly RendererTurn[] };
+export type RendererThreadItemEntry = Omit<ThreadItemEntry, 'item'> & { readonly item: RendererThreadItem };
+
 export function isReaderAuthoredUserMessage(
-  item: ThreadItem,
+  item: ThreadItem | RendererThreadItem,
 ): item is UserMessageThreadItem & { readonly author: { readonly kind: 'reader' } } {
   return item.type === 'userMessage' && item.author.kind === 'reader';
 }
@@ -1477,6 +1524,16 @@ export interface ThreadItemOutputReadResponse {
     readonly ref: ThreadItemOutputReference;
     readonly text: string;
   } | null;
+}
+
+export interface ThreadItemArgumentsReadRequest {
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId;
+  readonly itemId: ThreadItemId;
+}
+
+export interface ThreadItemArgumentsReadResponse {
+  readonly arguments: JsonValue | null;
 }
 
 export interface ThreadContextReadRequest {
@@ -2123,6 +2180,7 @@ export const AGENT_CORE_METHODS = [
   'thread/turns/list',
   'thread/items/list',
   'thread/item/output/read',
+  'thread/item/arguments/read',
   'thread/context/read',
   'thread/turn/details/read',
   'thread/trajectory/read',
@@ -2162,6 +2220,7 @@ export interface AgentCoreRequestByMethod {
   readonly 'thread/turns/list': ThreadTurnsListRequest;
   readonly 'thread/items/list': ThreadItemsListRequest;
   readonly 'thread/item/output/read': ThreadItemOutputReadRequest;
+  readonly 'thread/item/arguments/read': ThreadItemArgumentsReadRequest;
   readonly 'thread/context/read': ThreadContextReadRequest;
   readonly 'thread/turn/details/read': ThreadTurnDetailsReadRequest;
   readonly 'thread/trajectory/read': ThreadTrajectoryReadRequest;
@@ -2199,6 +2258,7 @@ export interface AgentCoreResponseByMethod {
   readonly 'thread/turns/list': ThreadTurnsListResponse;
   readonly 'thread/items/list': ThreadItemsListResponse;
   readonly 'thread/item/output/read': ThreadItemOutputReadResponse;
+  readonly 'thread/item/arguments/read': ThreadItemArgumentsReadResponse;
   readonly 'thread/context/read': ThreadContextReadResponse;
   readonly 'thread/turn/details/read': ThreadTurnDetailsReadResponse;
   readonly 'thread/trajectory/read': ThreadTrajectoryReadResponse;
@@ -2325,6 +2385,50 @@ export type AgentCoreTransientNotification = Extract<AgentCoreNotification, {
 }>;
 
 export type AgentCoreRecordedNotification = Exclude<AgentCoreNotification, AgentCoreTransientNotification>;
+
+export type RendererProjection<T> =
+  T extends Thread ? RendererThread
+    : T extends Turn ? RendererTurn
+      : T extends ThreadItem ? RendererThreadItem
+        : T extends readonly unknown[] ? { readonly [Key in keyof T]: RendererProjection<T[Key]> }
+          : T extends object ? { readonly [Key in keyof T]: RendererProjection<T[Key]> }
+            : T;
+
+type RendererProjectedResponseMethod =
+  | 'thread/list'
+  | 'thread/descendants'
+  | 'thread/read'
+  | 'thread/start'
+  | 'thread/resume'
+  | 'thread/fork'
+  | 'thread/rollback'
+  | 'thread/configuration/get'
+  | 'thread/configuration/set'
+  | 'thread/turns/list'
+  | 'thread/items/list'
+  | 'thread/context/read'
+  | 'thread/turn/details/read'
+  | 'turn/submit'
+  | 'turn/start'
+  | 'turn/retry';
+
+export type RendererAgentCoreResponseByMethod = {
+  readonly [Method in AgentCoreMethod]: Method extends RendererProjectedResponseMethod
+    ? RendererProjection<AgentCoreResponseByMethod[Method]>
+    : AgentCoreResponseByMethod[Method];
+};
+
+type RendererAgentCoreNotificationProjection<Notification> =
+  Notification extends { readonly thread: Thread }
+    ? Omit<Notification, 'thread'> & { readonly thread: RendererThread }
+    : Notification extends { readonly turn: Turn }
+      ? Omit<Notification, 'turn'> & { readonly turn: RendererTurn }
+      : Notification extends { readonly item: ThreadItem }
+        ? Omit<Notification, 'item'> & { readonly item: RendererThreadItem }
+        : Notification extends { readonly items: readonly ThreadItem[] }
+          ? Omit<Notification, 'items'> & { readonly items: readonly RendererThreadItem[] }
+          : Notification;
+export type RendererAgentCoreNotification = RendererAgentCoreNotificationProjection<AgentCoreNotification>;
 
 export interface AgentMutationCausation {
   readonly threadId: ThreadId;

@@ -59,6 +59,7 @@ import type {
   ThreadMessageContextMenuAction,
   ThreadMessageContextMenuRequest,
 } from '../core/agent/protocol';
+import { projectAgentCoreNotification, projectAgentCoreResponse } from '../core/agent/rendererProjection';
 import {
   REASONING_EFFORTS,
   type EffectiveThreadConfiguration,
@@ -644,7 +645,10 @@ agentHost.threads.subscribe((notification) => {
   if (notification.type === 'subagent/execution/changed') {
     notifyTerminalBackgroundAgent(notification.execution);
   }
-  windowApplicationHost.windows.main()?.webContents.send(AGENT_CORE_NOTIFICATION_CHANNEL, notification);
+  windowApplicationHost.windows.main()?.webContents.send(
+    AGENT_CORE_NOTIFICATION_CHANNEL,
+    projectAgentCoreNotification(notification),
+  );
 });
 
 /**
@@ -951,7 +955,8 @@ function registerAgentTransport(ipcMain: OwnedIpcMain): void {
     if (!windowApplicationHost.isMainSender(event)) {
       throw new Error('Agent Core is available only to the main application window.');
     }
-    return agentHost.threads.request(method, input as AgentCoreRequestByMethod[AgentCoreMethod]);
+    const response = await agentHost.threads.request(method, input as AgentCoreRequestByMethod[AgentCoreMethod]);
+    return projectAgentCoreResponse(method, response);
   });
   ipcMain.handle(
     THREAD_MESSAGE_CONTEXT_MENU_CHANNEL,

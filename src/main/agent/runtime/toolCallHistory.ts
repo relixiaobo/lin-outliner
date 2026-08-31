@@ -16,8 +16,14 @@ import {
 import {
   redactSecretLikeContent,
   redactSecretLikeJsonAsync,
+  redactSecretLikeTextAsync,
 } from '../capabilities/agentSecretRedaction';
-import type { AgentTool, AssistantMessage } from './kernel/types';
+import type { AgentTool, AgentToolLargeTextArguments, AssistantMessage } from './kernel/types';
+import {
+  replaceSelectedLargeTextArguments,
+  selectLargeTextArguments,
+  type SelectedLargeTextArgument,
+} from './largeTextArguments';
 
 export interface ToolCallAdmissionRequest {
   readonly toolCallId: string;
@@ -34,6 +40,7 @@ export interface ToolCallAdmissionRequest {
       readonly displayArguments: JsonValue;
       readonly schemaDigest: string;
       readonly redactedArgumentsReplayable: boolean;
+      readonly largeTextArguments?: AgentToolLargeTextArguments;
       }
     | {
         readonly type: 'rejected';
@@ -90,7 +97,10 @@ export function rewriteAssistantToolCallHistory(
 
 export async function persistToolCallAdmission(
   request: ToolCallAdmissionRequest,
-  persistArguments: (value: JsonValue) => Promise<ThreadContextPayloadReference>,
+  persistArguments: (
+    value: JsonValue,
+    selected: readonly SelectedLargeTextArgument[],
+  ) => Promise<ModelToolCallArguments>,
 ): Promise<ToolCallAdmissionDecision> {
   if (request.outcome.type === 'rejected') return rejectedAdmission(request);
   const durableValue = request.outcome.redactedArguments;
@@ -99,7 +109,11 @@ export async function persistToolCallAdmission(
   }
   let source: ModelToolCallArguments;
   try {
-    source = await modelToolCallArguments(durableValue, persistArguments);
+    source = await modelToolCallArguments(
+      durableValue,
+      request.outcome.largeTextArguments,
+      persistArguments,
+    );
   } catch {
     return persistenceRejectedAdmission(request, durableValue);
   }
@@ -168,17 +182,49 @@ export function persistenceFailureAdmission(
   return persistenceRejectedAdmission(request, request.outcome.redactedArguments);
 }
 
-export async function prepareToolCallArguments(value: unknown): Promise<{
+export async function prepareToolCallArguments(
+  value: unknown,
+  contract?: AgentToolLargeTextArguments,
+): Promise<{
   readonly arguments: JsonValue;
   readonly redactedArguments: JsonValue;
   readonly redactedPaths: readonly string[];
 }> {
   const argumentsValue = jsonValue(value);
-  const redacted = await redactSecretLikeJsonAsync(argumentsValue);
+  const selected = selectLargeTextArguments(argumentsValue, contract);
+  if (selected.length === 0) {
+    const redacted = await redactSecretLikeJsonAsync(argumentsValue);
+    return {
+      arguments: argumentsValue,
+      redactedArguments: redacted.value,
+      redactedPaths: redacted.redactedPaths,
+    };
+  }
+  const skeleton = replaceSelectedLargeTextArguments(
+    argumentsValue,
+    selected,
+    selected.map(() => null),
+  );
+  const [redactedSkeleton, ...redactedText] = await Promise.all([
+    redactSecretLikeJsonAsync(skeleton),
+    ...selected.map((binding) => redactSecretLikeTextAsync(binding.value)),
+  ]);
+  const redactedArguments = replaceSelectedLargeTextArguments(
+    redactedSkeleton.value,
+    selected,
+    redactedText.map((result) => result.value),
+    'null',
+  );
+  const redactedPaths = [
+    ...redactedSkeleton.redactedPaths,
+    ...selected.flatMap((binding, index) => (
+      redactedText[index]!.value === binding.value ? [] : [binding.path]
+    )),
+  ].sort();
   return {
     arguments: argumentsValue,
-    redactedArguments: redacted.value,
-    redactedPaths: redacted.redactedPaths,
+    redactedArguments,
+    redactedPaths,
   };
 }
 
@@ -315,11 +361,15 @@ function incompatibleRedactedAdmission(
 
 async function modelToolCallArguments(
   value: JsonValue,
-  persistArguments: (value: JsonValue) => Promise<ThreadContextPayloadReference>,
+  contract: AgentToolLargeTextArguments | undefined,
+  persistArguments: (
+    value: JsonValue,
+    selected: readonly SelectedLargeTextArgument[],
+  ) => Promise<ModelToolCallArguments>,
 ): Promise<ModelToolCallArguments> {
   const inline = inlineModelToolCallArguments(value);
   if (inline) return inline;
-  return { storage: 'payload', ref: await persistArguments(value) };
+  return persistArguments(value, selectLargeTextArguments(value, contract));
 }
 
 function inlineModelToolCallArguments(value: JsonValue): ModelToolCallArguments | null {

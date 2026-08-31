@@ -5,27 +5,28 @@ import {
 } from '../agentReveal';
 import type { ThreadGoal } from '../../../core/agent/goal';
 import type {
-  AgentCoreNotification,
+  RendererAgentCoreNotification,
   ProviderRetryStatus,
   RequestUserInputAnswer,
   RequestUserInputRequest,
   JsonValue,
   RendererUserViewHints,
-  Thread,
+  RendererThread,
   ThreadConfigurationSummary,
-  ThreadForkResponse,
+  ThreadForkResponse as CanonicalThreadForkResponse,
   ThreadId,
-  ThreadItem,
+  RendererThreadItem,
   ThreadItemDelta,
-  ThreadListResponse,
+  ThreadListResponse as CanonicalThreadListResponse,
   SubagentExecutionProjection,
   ThreadSubagentsResponse,
   TurnPlanSnapshot,
   TurnId,
   ThreadUserContent,
-  ThreadTurnsListResponse,
-  Turn,
-  TurnSubmitResponse,
+  ThreadTurnsListResponse as CanonicalThreadTurnsListResponse,
+  RendererTurn,
+  TurnSubmitResponse as CanonicalTurnSubmitResponse,
+  RendererProjection,
 } from '../../../core/agent/protocol';
 import {
   boundedToolArgumentsForDisplay,
@@ -38,6 +39,15 @@ import {
   type AgentIdentityCatalog,
 } from '../agentIdentity';
 import { api } from '../../api/client';
+
+type AgentCoreNotification = RendererAgentCoreNotification;
+type Thread = RendererThread;
+type ThreadItem = RendererThreadItem;
+type Turn = RendererTurn;
+type ThreadForkResponse = RendererProjection<CanonicalThreadForkResponse>;
+type ThreadListResponse = RendererProjection<CanonicalThreadListResponse>;
+type ThreadTurnsListResponse = RendererProjection<CanonicalThreadTurnsListResponse>;
+type TurnSubmitResponse = RendererProjection<CanonicalTurnSubmitResponse>;
 
 export interface ActiveTurnPlan extends TurnPlanSnapshot {
   readonly turnId: TurnId;
@@ -657,20 +667,14 @@ export class ThreadStore {
     }
     const source = modelCallArgumentSource(item.modelCall);
     if (source.storage === 'inline') return Promise.resolve(source.value);
-    const key = `${threadId}:${source.ref.id}`;
+    const key = `${threadId}:${turnId}:${item.id}`;
     let pending = this.toolArgumentsCache.get(key);
     if (!pending) {
-      pending = this.client.agentCoreRequest('thread/context/read', {
+      pending = this.client.agentCoreRequest('thread/item/arguments/read', {
         threadId,
         turnId,
         itemId: item.id,
-        contextId: source.ref.id,
-      }).then((response) => {
-        const context = response.context;
-        return context?.ref.id === source.ref.id && context.payload.kind === 'toolCallArguments'
-          ? boundedToolArgumentsForDisplay(context.payload.value)
-          : null;
-      }).catch(() => {
+      }).then((response) => response.arguments).catch(() => {
         this.toolArgumentsCache.delete(key);
         return null;
       });

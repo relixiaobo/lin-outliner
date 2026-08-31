@@ -12,6 +12,7 @@ import type {
   Thread,
   ThreadContextPayload,
   ThreadContextPayloadReference,
+  ThreadInternalTextPayloadReference,
   ThreadResourceReference,
   ThreadUserContent,
   TurnEnvironmentContextPayload,
@@ -213,6 +214,7 @@ export function contextEvidenceItem(
   resourceRefs: readonly ThreadResourceReference[],
   dependencies: {
     readonly contextRefs?: readonly ThreadContextPayloadReference[];
+    readonly internalTextRefs?: readonly ThreadInternalTextPayloadReference[];
     readonly outputRefs?: readonly import('../../../core/agent/protocol').ThreadItemOutputReference[];
   } = {},
 ): ContextEvidenceThreadItem {
@@ -229,6 +231,7 @@ export function contextEvidenceItem(
     payloadRef,
     summary,
     contextRefs: dependencies.contextRefs ?? [],
+    internalTextRefs: dependencies.internalTextRefs ?? [],
     resourceRefs,
     outputRefs: dependencies.outputRefs ?? [],
   }) as ContextEvidenceThreadItem;

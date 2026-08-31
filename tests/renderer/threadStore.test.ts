@@ -1336,26 +1336,15 @@ describe('renderer Thread store', () => {
     }]);
   });
 
-  test('deduplicates exact payload-backed tool argument reads by immutable context identity', async () => {
+  test('deduplicates Item-bound tool argument reads by immutable Item identity', async () => {
     const owner = thread('thread-1', 1);
-    const payload = {
-      schemaVersion: 1 as const,
-      kind: 'toolCallArguments' as const,
-      value: { query: 'exact payload-backed arguments' },
-    };
-    const ref = {
-      id: 'd'.repeat(64),
-      mimeType: 'application/vnd.tenon.agent-context+json' as const,
-      byteLength: 128,
-      schemaVersion: 1 as const,
-      kind: 'toolCallArguments' as const,
-    };
+    const argumentsValue = { query: 'exact payload-backed arguments' };
     const requests: Array<{ method: string; input: Record<string, unknown> }> = [];
     const client = {
       onAgentCoreNotification: () => () => undefined,
       agentCoreRequest: async (method: string, input: Record<string, unknown>) => {
         requests.push({ method, input });
-        if (method === 'thread/context/read') return { context: { ref, payload } };
+        if (method === 'thread/item/arguments/read') return { arguments: argumentsValue };
         throw new Error(`Unexpected method: ${method}`);
       },
     } as unknown as ThreadStoreClient;
@@ -1364,43 +1353,31 @@ describe('renderer Thread store', () => {
       ...commandTurn('turn-1', 'completed').items[0]!,
       modelCall: {
         ...replayableModelCall('bash', {}),
-        arguments: { storage: 'payload' as const, ref },
+        arguments: { storage: 'itemBound' as const },
       },
     } as ThreadItem;
 
     expect(await Promise.all([
       store.readToolArguments(owner.id, 'turn-1', item),
       store.readToolArguments(owner.id, 'turn-1', item),
-    ])).toEqual([payload.value, payload.value]);
+    ])).toEqual([argumentsValue, argumentsValue]);
     expect(requests).toEqual([{
-      method: 'thread/context/read',
+      method: 'thread/item/arguments/read',
       input: {
         threadId: owner.id,
         turnId: 'turn-1',
         itemId: item.id,
-        contextId: ref.id,
       },
     }]);
   });
 
-  test('bounds payload-backed arguments before caching them for renderer surfaces', async () => {
+  test('caches already-bounded Item arguments for renderer surfaces', async () => {
     const owner = thread('thread-1', 1);
-    const ref = {
-      id: 'e'.repeat(64),
-      mimeType: 'application/vnd.tenon.agent-context+json' as const,
-      byteLength: 1_000_000,
-      schemaVersion: 1 as const,
-      kind: 'toolCallArguments' as const,
-    };
-    const payload = {
-      schemaVersion: 1 as const,
-      kind: 'toolCallArguments' as const,
-      value: { content: 'x'.repeat(1_000_000), path: '/workspace/large.txt' },
-    };
+    const bounded = { truncated: true, originalChars: 1_000_050, preview: '{\n  "content": "xxx' };
     const client = {
       onAgentCoreNotification: () => () => undefined,
       agentCoreRequest: async (method: string) => {
-        if (method === 'thread/context/read') return { context: { ref, payload } };
+        if (method === 'thread/item/arguments/read') return { arguments: bounded };
         throw new Error(`Unexpected method: ${method}`);
       },
     } as unknown as ThreadStoreClient;
@@ -1409,7 +1386,7 @@ describe('renderer Thread store', () => {
       ...commandTurn('turn-1', 'completed').items[0]!,
       modelCall: {
         ...replayableModelCall('bash', {}),
-        arguments: { storage: 'payload' as const, ref },
+        arguments: { storage: 'itemBound' as const },
       },
     } as ThreadItem;
 

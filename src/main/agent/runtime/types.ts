@@ -3,12 +3,14 @@ import type { AgentStartupContextSnapshot } from '../context/AgentStartupContext
 import type {
   Thread,
   JsonValue,
+  ModelToolCallArguments,
   ContextCursor,
   ThreadContextPayload,
   ContextEvidenceThreadItem,
   ContextCompactionThreadItem,
   ContextEvidenceKind,
   ThreadContextPayloadReference,
+  ThreadInternalTextPayloadReference,
   ThreadItem,
   ThreadItemOutputReference,
   ThreadImageArtifactReference,
@@ -22,6 +24,7 @@ import type {
   TurnStatus,
   SkillCatalogContextPayload,
 } from '../../../core/agent/protocol';
+import type { SelectedLargeTextArgument } from './largeTextArguments';
 import type { ItemRecorder } from './ItemRecorder';
 import type { TokenBudgetUsage } from './kernel/types';
 
@@ -71,6 +74,7 @@ export interface TurnExecutionContext {
   readonly signal: AbortSignal;
   readonly recorder: ItemRecorder;
   readContext(ref: ThreadContextPayloadReference): Promise<ThreadContextPayload | null>;
+  readInternalText(ref: ThreadInternalTextPayloadReference): Promise<string | null>;
   readOutput(ref: ThreadItemOutputReference): Promise<string | null>;
   resolveResourceObservationPath(ref: ThreadResourceReference): Promise<string | null>;
   resolveImageArtifactPath(artifact: ThreadImageArtifactReference): Promise<string | null>;
@@ -90,7 +94,10 @@ export interface TurnExecutionContext {
     mimeType: ThreadItemOutputReference['mimeType'],
     summary: string,
   ): Promise<ThreadItemOutputReference>;
-  persistToolCallArguments(value: JsonValue): Promise<ThreadContextPayloadReference>;
+  persistToolCallArguments(
+    value: JsonValue,
+    selected: readonly SelectedLargeTextArgument[],
+  ): Promise<ModelToolCallArguments>;
   persistContextEvidence(
     payload: Extract<ThreadContextPayload, { readonly kind: ContextEvidenceKind }>,
     summary: string,

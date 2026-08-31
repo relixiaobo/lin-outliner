@@ -6,6 +6,7 @@ import {
   assertContextPayloadDependencies,
   contextPayloadReferenceKey,
   itemRequiredContextPayloadReferences,
+  itemInternalTextPayloadReferences,
   itemResourceReferences,
   itemToolArgumentPayloadReferences,
   outputReferenceKey,
@@ -455,6 +456,10 @@ export class ThreadCatalogOps {
             console.warn(`[agent] Fork retained unavailable tool-call arguments: ${ref.id}`);
           }
         }
+        for (const ref of itemInternalTextPayloadReferences(item)) {
+          const copied = await this.core.payloads.copyInternalTextToThread(sourceThreadId, targetThreadId, ref);
+          if (!copied) console.warn(`[agent] Fork retained unavailable internal text: ${ref.id}`);
+        }
         if ('outputRef' in item && item.outputRef) {
           await copyOutput(item.outputRef);
         }
@@ -519,7 +524,7 @@ export class ThreadCatalogOps {
       const references = this.resourceOps.threadStorageReferences(thread.id);
       await Promise.all([
         this.core.payloads.pruneUnreferencedResources(thread.id, references.resources),
-        this.core.payloads.pruneUnreferencedContexts(thread.id, references.contexts),
+        this.core.payloads.pruneUnreferencedContexts(thread.id, references.contexts, references.internalTexts),
         this.core.payloads.pruneUnreferencedTurnDiagnostics(thread.id, references.diagnostics),
         this.core.payloads.pruneUnreferencedTextOutputs(thread.id, references.textOutputs),
       ]).catch(() => undefined);
@@ -612,7 +617,7 @@ export class ThreadCatalogOps {
         ];
         await Promise.all([
           this.core.payloads.pruneUnreferencedResources(thread.id, resurrectable),
-          this.core.payloads.pruneUnreferencedContexts(thread.id, references.contexts),
+          this.core.payloads.pruneUnreferencedContexts(thread.id, references.contexts, references.internalTexts),
           this.core.payloads.pruneUnreferencedTurnDiagnostics(thread.id, references.diagnostics),
           this.core.payloads.pruneUnreferencedTextOutputs(thread.id, references.textOutputs),
         ]).catch(() => undefined);

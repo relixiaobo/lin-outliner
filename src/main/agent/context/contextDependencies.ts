@@ -3,17 +3,20 @@ import type {
   ContextEvidenceThreadItem,
   ThreadContextPayload,
   ThreadContextPayloadReference,
+  ThreadInternalTextPayloadReference,
   ThreadItem,
   ThreadItemOutputReference,
   ThreadImageArtifactReference,
   ThreadResourceReference,
 } from '../../../core/agent/protocol';
+import { modelCallArgumentSource } from '../../../core/agent/modelCallHistory';
 import { imageArtifactResourceReferences } from '../imageArtifacts';
 
 type ContextDependencyOwner = ContextEvidenceThreadItem | ContextCompactionThreadItem;
 
-interface ContextPayloadDependencies {
+export interface ContextPayloadDependencies {
   readonly contexts: readonly ThreadContextPayloadReference[];
+  readonly internalTexts: readonly ThreadInternalTextPayloadReference[];
   readonly resources: readonly ThreadResourceReference[];
   readonly outputs: readonly ThreadItemOutputReference[];
 }
@@ -204,6 +207,15 @@ export function itemToolArgumentPayloadReferences(item: ThreadItem): ThreadConte
   return source.storage === 'payload' ? [...dependencyRefs, source.ref] : dependencyRefs;
 }
 
+export function itemInternalTextPayloadReferences(item: ThreadItem): ThreadInternalTextPayloadReference[] {
+  const dependencyRefs = item.type === 'contextEvidence' || item.type === 'contextCompaction'
+    ? item.internalTextRefs ?? []
+    : [];
+  if (!('modelCall' in item) || item.modelCall.disposition === 'evidenceOnly') return [...dependencyRefs];
+  const source = modelCallArgumentSource(item.modelCall);
+  return source.storage === 'payload' ? [...dependencyRefs, ...source.internalTextRefs] : [...dependencyRefs];
+}
+
 export function itemOutputReferences(item: ThreadItem): ThreadItemOutputReference[] {
   return [
     ...('outputRef' in item && item.outputRef ? [item.outputRef] : []),
@@ -224,6 +236,13 @@ export function assertContextPayloadDependencies(
     (ref) => ref.id,
   );
   assertReferencesIncluded(
+    dependencies.internalTexts,
+    owner.internalTextRefs,
+    internalTextReferenceKey,
+    'internalTextRefs',
+    (ref) => ref.id,
+  );
+  assertReferencesIncluded(
     dependencies.resources,
     owner.resourceRefs,
     resourceReferenceKey,
@@ -239,7 +258,7 @@ export function assertContextPayloadDependencies(
   );
 }
 
-function contextPayloadDependencies(payload: ThreadContextPayload): ContextPayloadDependencies {
+export function contextPayloadDependencies(payload: ThreadContextPayload): ContextPayloadDependencies {
   switch (payload.kind) {
     case 'referencedResources':
       return emptyDependencies({
@@ -249,9 +268,22 @@ function contextPayloadDependencies(payload: ThreadContextPayload): ContextPaylo
       return emptyDependencies({ outputs: [payload.outputRef] });
     case 'inheritedContext':
       return {
-        contexts: payload.turns.flatMap((turn) => turn.items.flatMap(itemContextPayloadReferences)),
-        resources: payload.turns.flatMap((turn) => turn.items.flatMap(itemResourceReferences)),
-        outputs: payload.turns.flatMap((turn) => turn.items.flatMap(itemOutputReferences)),
+        contexts: uniqueReferences(
+          payload.turns.flatMap((turn) => turn.items.flatMap(itemContextPayloadReferences)),
+          contextPayloadReferenceKey,
+        ),
+        internalTexts: uniqueReferences(
+          payload.turns.flatMap((turn) => turn.items.flatMap(itemInternalTextPayloadReferences)),
+          internalTextReferenceKey,
+        ),
+        resources: uniqueReferences(
+          payload.turns.flatMap((turn) => turn.items.flatMap(itemResourceReferences)),
+          resourceReferenceKey,
+        ),
+        outputs: uniqueReferences(
+          payload.turns.flatMap((turn) => turn.items.flatMap(itemOutputReferences)),
+          outputReferenceKey,
+        ),
       };
     case 'compactionRestoredState':
       return {
@@ -261,6 +293,7 @@ function contextPayloadDependencies(payload: ThreadContextPayload): ContextPaylo
           ...(payload.additionalContextBaselineRef ? [payload.additionalContextBaselineRef] : []),
           ...payload.activeObservations.map((observation) => observation.projectionRef),
         ],
+        internalTexts: [],
         resources: [],
         outputs: payload.activeObservations.map((observation) => observation.outputRef),
       };
@@ -282,6 +315,7 @@ function emptyDependencies(
 ): ContextPayloadDependencies {
   return {
     contexts: overrides.contexts ?? [],
+    internalTexts: overrides.internalTexts ?? [],
     resources: overrides.resources ?? [],
     outputs: overrides.outputs ?? [],
   };
@@ -302,6 +336,10 @@ function assertReferencesIncluded<T>(
   }
 }
 
+function uniqueReferences<T>(references: readonly T[], key: (ref: T) => string): T[] {
+  return [...new Map(references.map((ref) => [key(ref), ref])).values()];
+}
+
 export function contextPayloadReferenceKey(ref: ThreadContextPayloadReference): string {
   return JSON.stringify([ref.id, ref.mimeType, ref.byteLength, ref.schemaVersion, ref.kind]);
 }
@@ -312,6 +350,10 @@ export function resourceReferenceKey(ref: ThreadResourceReference): string {
 
 export function outputReferenceKey(ref: ThreadItemOutputReference): string {
   return JSON.stringify([ref.id, ref.mimeType, ref.byteLength, ref.summary]);
+}
+
+export function internalTextReferenceKey(ref: ThreadInternalTextPayloadReference): string {
+  return JSON.stringify([ref.id, ref.encoding, ref.byteLength]);
 }
 
 function emptyMutableResourceUsage(): {
