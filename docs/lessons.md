@@ -2198,3 +2198,23 @@ snapshot. If any root cannot be decoded, reconciled, or scanned, preserve its
 existing links and skip or defer collection; conservative retention is the only
 valid degraded result. Test startup with one readable-but-unreconciled root and
 prove both its canonical reference and exact bytes survive the maintenance pass.
+
+## Truncation and redaction need an explicit transformation order
+
+PR #608 replaced an unbounded historical tool-output read with a verified prefix
+stream, then initially scanned only the retained prefix. Credentials crossing the
+cut leaked partial tokens. A character allow-list missed connection-string
+punctuation, while moving generic tail removal before scanning broke a complete
+private-key terminator and made the scanner miss the whole key.
+
+**At a security-sensitive truncation boundary, order transformations by what
+evidence each one needs.** Preserve complete recognized structures until the
+scanner consumes them, discard unmatched multi-token structures before scanning,
+then conservatively remove the unresolved trailing field after scanning. Do not
+infer credential boundaries from one token alphabet when the scanner recognizes
+multiple grammars.
+
+Regression coverage must place the cut before, inside, and immediately after
+each meaningful delimiter, including punctuation-bearing connection strings and
+both matched and mismatched private-key terminators. A green whole-value scanner
+test does not prove that its bounded projection is safe.

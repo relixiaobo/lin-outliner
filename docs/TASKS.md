@@ -13,9 +13,11 @@ latest published train is `v0.7.0`.
 
 ## In Flight
 
-No implementation PR is open. `agent-result-and-file-lifecycle` shipped in #607,
-so Cross-Thread Reference, root-Turn recovery, and the managed Computer Pilot
-Skill are now eligible under their live collision checks. The public Outline CLI,
+Two PR claims are open: ready PR #609 adds the Skill invocation input
+contract, while draft plan-only PR #610 defines provider tool-call identity and
+must rebase onto the merged #608 Agent baseline before implementation. Cross-Thread
+Reference shipped in #608, so root-Turn recovery and the managed Computer Pilot
+Skill remain eligible under their live collision checks. The public Outline CLI,
 built-in Skill, and shared preview-shell lanes are also clear. Startup Window,
 preview readers, and Skill authoring remain independently eligible. The remaining
 plans from #588/#589 and #591 stay active below until their implementation, spec
@@ -44,14 +46,12 @@ Parallel now eligible:
   file-preview-office
   url-static-reader
   agent-skill-authoring-foundation -> agent-skill-curation-report
-  agent-cross-thread-reference
   agent-root-turn-recovery ~> agent-delegated-failure-truth
   computer-pilot-managed-skill
 ```
 
 | Priority | Plan / PR claim | Status | Eligible after |
 | --- | --- | --- | --- |
-| P1 | [agent-cross-thread-reference](plans/agent-cross-thread-reference.md) | `draft`, ratified in #589 | **Now; Agent resource lifecycle shipped in #607** |
 | P1 | [agent-root-turn-recovery](plans/agent-root-turn-recovery.md) | `draft` | **Now; Agent resource lifecycle shipped in #607**; live collision check required |
 | P1 | [agent-delegated-failure-truth](plans/agent-delegated-failure-truth.md) | `draft` | `agent-root-turn-recovery` claim serialization |
 | P2 | [startup-window-first](plans/startup-window-first.md) | `draft` | **Now; Desktop Host shipped in #603** |
@@ -61,9 +61,9 @@ Parallel now eligible:
 | P3 | [agent-skill-curation-report](plans/agent-skill-curation-report.md) | `draft` | `agent-skill-authoring-foundation` |
 | P3 | [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | `draft` | **Now; Agent resource lifecycle shipped in #607** |
 
-The Host composition, Bash stdin, Outline CLI Skill, and Agent resource
-foundations are complete. Cross-Thread Reference, root-Turn recovery, and the
-managed Computer Pilot Skill may now proceed in parallel, subject to their live
+The Host composition, Bash stdin, Outline CLI Skill, Agent resource, and
+Cross-Thread Reference foundations are complete. Root-Turn recovery and the
+managed Computer Pilot Skill may proceed in parallel, subject to their live
 collision checks; delegated failure truth remains ordered after root-Turn
 recovery. Build-ready work outside this queue remains independently claimable
 under its own collision boundary.
@@ -88,9 +88,8 @@ Collision lanes remain claim-time constraints, not hidden graph edges:
   lifecycle, canonical-to-renderer projection, preload, and Host transport.
   Internal text remains a private Item dependency and never becomes a file
   resource.
-- Cross-Thread Reference and Failure Recovery repeat the live file check against
-  the #607 baseline; a collision serializes claims but does not invent a semantic
-  dependency between the two features.
+- Failure Recovery repeats the live file check against the merged #608 Agent
+  baseline before claiming shared protocol, projection, and Thread surfaces.
 
 ## Other Active Plans
 
@@ -214,6 +213,11 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **agent-cross-thread-reference** (`done`, #608, 2026-09-01) — composers,
+  transcripts, and Agents now share canonical Thread references with bounded
+  same-profile search/read, safe historical citations, and root-Thread navigation;
+  plan archived at
+  [agent-cross-thread-reference](plans/archive/agent-cross-thread-reference.md).
 - **agent-result-and-file-lifecycle** (`done`, #607, 2026-09-01) — Agent files
   now use unified source/exact-revision references, intent-aware final citations,
   isolated root workspaces, and bounded delegated handoff; plan archived at

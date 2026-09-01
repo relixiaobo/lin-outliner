@@ -12,6 +12,26 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Agent conversations can now reference and safely inspect other Threads (PR
+  #608, codex)** — typing `@` in the Composer searches same-profile root Threads
+  and inserts canonical inline references that survive editing, persistence,
+  transcript Markdown, and keyboard or pointer navigation. The new bounded
+  `thread_search` and `thread_read` tools expose archived and active history as
+  untrusted quoted context without waking, resuming, forking, or mutating the
+  source Thread; signed match/page cursors preserve exact navigation while
+  optional historical file citations copy through the unified Agent resource
+  lifecycle. Tool-output reads stream and verify complete payloads while
+  retaining only a 4,000-character projection, apply secret and local-path
+  redaction across truncation boundaries, and never materialize unbounded output.
+  Per-Thread indexed limits keep synchronous history search both fair and bounded.
+  Gate review found four High and four Medium navigation, search-fairness,
+  payload-memory, concurrent-copy, query-cost, and credential-boundary defects
+  across four follow-up rounds; all were fixed before the final no-findings
+  review. Verified with typecheck, `docs:check`, 1,472 renderer tests, 46 focused
+  Core tests, targeted Thread-reference E2E, light/dark visual QA, whitespace
+  checks, and a 500,000-row history probe using the partial index without a
+  temporary sort.
+
 - **Agent files now use one lifecycle from capture through final delivery (PR
   #607, codex-3)** — canonical Agent resource references independently retain a
   current source locator and an immutable exact revision in the shared
