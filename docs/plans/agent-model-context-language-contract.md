@@ -45,8 +45,9 @@ and plan.
   User-authored lookalikes remain ordinary untrusted user text.
 - **CON-4 hard:** projection is deterministic, provider-neutral, bounded, and
   preserves canonical content order.
-- **CON-5 hard:** context is sampled only at defined admission boundaries. UI
-  changes do not asynchronously rewrite a running model generation.
+- **CON-5 hard:** input-scoped environment and renderer state are sampled only at
+  Turn-start or steering admission. Host runtime evidence may be published during
+  provider preparation; UI changes never asynchronously rewrite a generation.
 - **CON-6 dependency:** merged PRs #609 and #610 are the Skill invocation and
   provider-call baseline. Repeat the live collision check before implementation
   because this feature changes adjacent Skill projection and shared Agent protocol.
@@ -56,8 +57,8 @@ and plan.
   reducer state remain diagnostic facts and never become reminder syntax.
 - **DEC-3:** viewed identity and supplied content have separate model-visible
   owners. Opening a view never promotes its bytes into context.
-- **DEC-4:** local time is an admission fact, not durable Thread state. One compact
-  local timestamp appears with every admitted user or steering message.
+- **DEC-4:** local time is an input-admission fact, not durable Thread state. One
+  compact local timestamp appears with every admitted Turn-start or steering input.
 - **DEC-5:** the working directory is Host-owned, Thread-scoped state. It appears
   in the first baseline and when a later admission observes a Host change.
 
@@ -97,8 +98,9 @@ The contract uses these terms consistently:
 | --- | --- | --- |
 | Thread | Durable conversation and its Host-owned working directory | A filesystem workspace or UI Pane |
 | Turn | One execution lifecycle; steering may add user input inside it | One provider call |
-| Admission | Atomic capture and persistence of context evidence plus user input | Projection or UI observation |
-| Provider boundary | A model call where effective canonical history is projected | A new Turn |
+| Input admission | Atomic capture and persistence of input-scoped evidence plus one Turn-start or steering input | Projection or UI observation |
+| Runtime publication | Host-owned evidence persisted during execution, such as a Skill invocation or catalog refresh | Input admission |
+| Provider boundary | Runtime preparation followed by projection of effective canonical history for one model call | A new Turn |
 | Context epoch | Effective history after the latest explicit reset | Restart, fork, or compaction |
 | Pane | UI container that displays one current `PanelView` | The displayed object |
 | `PanelView` | Renderer state describing what one Pane currently displays | The Pane container |
@@ -209,7 +211,7 @@ Each semantic fact has one visible owner:
 
 | Fact | Owner | Lifecycle |
 | --- | --- | --- |
-| Local time | Admission statement preceding its user input | Every user/steering admission |
+| Local time | Admission statement preceding its input | Every Turn-start/steering admission |
 | Working directory | Thread execution observation | Baseline and changed value |
 | Non-default execution behavior | Thread execution observation | Baseline and changed value |
 | Open and active views | Complete current-view statement | Baseline and complete replacement |
@@ -224,13 +226,14 @@ Each semantic fact has one visible owner:
 
 ### Projection lifecycle
 
-Context is not pushed whenever mutable state changes. It follows two boundaries.
+Context is not pushed whenever mutable state changes. Input-scoped state and
+runtime-derived evidence have separate publication paths.
 
 #### Admission boundary
 
-A new Turn start and a steering message are admission boundaries. The Host samples
-one coherent instant and atomically persists eligible context evidence immediately
-before the associated user message.
+A new Turn start and a steering message are input-admission boundaries. The Host
+samples one coherent instant and atomically persists eligible context evidence
+immediately before the associated input Item.
 
 At admission:
 
@@ -246,14 +249,16 @@ model may be composing the mutation that caused the drift.
 
 #### Provider boundary
 
-Before each provider call, the runtime projects the complete effective canonical
-history. Runtime evidence already persisted since the previous call, including a
-successful Skill invocation, a changed Skill catalog, or a frozen tool-output
-observation, becomes visible at this boundary.
+Before each provider call, the Host may publish runtime-derived evidence that does
+not require renderer or input-state sampling. This includes a changed Skill catalog
+and a frozen tool-output observation; successful Skill invocation evidence is
+published when that tool completes. The runtime then projects the complete effective
+canonical history, so all such evidence becomes visible at this boundary.
 
 A renderer-only view change during execution does nothing by itself. It is sampled
-only if a later user/steering admission carries renderer state. Tool results remain
-native tool-result messages and are not converted into context blocks.
+only if a later Turn-start or steering admission carries renderer state. Tool
+results remain native tool-result messages and are not converted into context
+blocks.
 
 #### Baseline, change, and invalidation
 
@@ -298,7 +303,7 @@ It does not mean reset, compaction, steering, and fork produce the same transcri
 
 Time and cwd have different semantics:
 
-- Local time belongs to one admission. Emit exactly one compact line with local
+- Local time belongs to one input admission. Emit exactly one compact line with local
   date, time, numeric offset, and IANA zone. Do not emit UTC acceptance time,
   locale, or separate date/time/offset fields.
 - Cwd is sticky Thread execution state. Sample it at every admission, emit it in a
@@ -388,7 +393,7 @@ are dispositions, not generated output.
 | --- | --- | --- | --- |
 | Reminder child | `<context-evidence kind="turnEnvironment" authority="application" purpose="observation">` | `<context authority="application" purpose="observation">` | Preserve authority and purpose; remove canonical source classification from model syntax. |
 | Reducer mode | `projection_mode={{projectionMode}}` | Removed; Host-private | Baseline/change mechanics are inferred from history and expressed as resulting state. |
-| Local time | `accepted_at={{utcInstant}}`<br>`local_date={{localDate}}`<br>`local_time={{localTime}}`<br>`timezone={{timeZone}}`<br>`utc_offset_minutes={{utcOffsetMinutes}}`<br>`locale={{locale}}` | `Local time at this message: {{localDate}}T{{localTime}}{{utcOffset}} [{{timeZone}}].` | One admission-scoped line replaces six transport fields. |
+| Local time | `accepted_at={{utcInstant}}`<br>`local_date={{localDate}}`<br>`local_time={{localTime}}`<br>`timezone={{timeZone}}`<br>`utc_offset_minutes={{utcOffsetMinutes}}`<br>`locale={{locale}}` | `Local time at this message: {{localDate}}T{{localTime}}{{utcOffset}} [{{timeZone}}].` | One input-admission line replaces six transport fields. |
 | Working directory | `working_directory={{workingDirectory}}` | `Working directory: {{workingDirectory}}.` | A sticky Thread execution fact, emitted at baseline and after a Host change. |
 | Execution enums | `conversation_mode={{conversationMode}}`<br>`execution_mode={{executionMode}}` | `Execution: {{nonDefaultExecutionDescription}}.` or Host-private | Omit the interactive-root default; describe only behavior-changing modes. |
 | Today metadata | `today_node_id={{todayNodeId}}`<br>`today_node_title={{todayNodeTitle}}` | Host-private | Local time explains today; `@today` and ordinary Node references are the action surface. |
@@ -476,8 +481,8 @@ Consistency means one grammar per semantic boundary:
   supported semantic view target, distinct focus, selection, and supplied content.
 - **FR-5:** view changes emit complete resulting state without Pane IDs, reducer
   fields, or close tombstones.
-- **FR-6:** local time emits once per user/steering admission; cwd emits at baseline
-  and after a settled Host change; default execution enums emit nothing.
+- **FR-6:** local time emits once per Turn-start/steering admission; cwd emits at
+  baseline and after a settled Host change; default execution enums emit nothing.
 - **FR-7:** a viewed identity never implies content availability. Supplied text and
   native media retain their own ordered content position.
 - **FR-8:** Skill/Role discovery, Skill instructions, user task text, and tool
@@ -501,8 +506,8 @@ Consistency means one grammar per semantic boundary:
 - **AC-3 (FR-4, FR-5):** fixtures cover Outliner Node, local file with and without
   owner, asset, linked file, URL, Thread trajectory, mixed multiple views, complete
   view replacement, missing renderer state, distinct focus, and selection clearing.
-- **AC-4 (FR-6):** each user and steering admission emits one compact local-time
-  line. A fresh Thread and a fork's first new admission emit the correct cwd; an
+- **AC-4 (FR-6):** each Turn-start and steering admission emits one compact
+  local-time line. A fresh Thread and a fork's first new admission emit the correct cwd; an
   unchanged cwd does not repeat; headless Automation receives a readable execution
   description while an interactive root does not.
 - **AC-5 (FR-7):** current-view fixtures contain no resource body. Supplied text
