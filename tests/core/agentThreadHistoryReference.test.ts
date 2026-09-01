@@ -97,8 +97,21 @@ describe('Thread history references', () => {
         leakedEvidence: 'shortval',
       },
       {
-        partialCredential: `-----BEGIN OPENSSH PRIVATE KEY-----\nMI${'B'.repeat(40)}`,
+        partialCredential: [
+          '-----BEGIN OPENSSH PRIVATE KEY-----',
+          `MI${'B'.repeat(40)}`,
+          '-----END RSA PRIVATE KEY-----',
+          `MI${'C'.repeat(40)}`,
+        ].join('\n'),
         leakedEvidence: `MI${'B'.repeat(12)}`,
+      },
+      {
+        partialCredential: 'postgres://user:secretpass@',
+        leakedEvidence: 'secretpass',
+      },
+      {
+        partialCredential: 'PASSWORD=complete-secret!',
+        leakedEvidence: 'complete-secret',
       },
     ];
     for (const { partialCredential, leakedEvidence } of boundaryCases) {

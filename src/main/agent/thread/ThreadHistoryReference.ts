@@ -553,24 +553,37 @@ function boundedToolOutput(
   value: { readonly textPrefix: string; readonly truncated: boolean } | null,
 ): string | null {
   if (!value) return null;
-  const redacted = redactHistoricalText(value.textPrefix);
-  const boundarySafe = value.truncated ? redactTruncatedCredentialBoundary(redacted) : redacted;
-  const trimmed = boundarySafe.trim();
-  if (!trimmed) return value.truncated ? '...' : null;
-  return value.truncated || trimmed.length > MAX_TOOL_OUTPUT_CHARS
-    ? `${trimmed.slice(0, MAX_TOOL_OUTPUT_CHARS - 3)}...`
-    : trimmed;
+  const boundarySafe = value.truncated
+    ? discardTruncatedCredentialBoundary(value.textPrefix)
+    : value.textPrefix;
+  const redacted = redactHistoricalText(boundarySafe).trim();
+  if (!redacted) return value.truncated ? '...' : null;
+  return value.truncated || redacted.length > MAX_TOOL_OUTPUT_CHARS
+    ? `${redacted.slice(0, MAX_TOOL_OUTPUT_CHARS - 3)}...`
+    : redacted;
 }
 
-function redactTruncatedCredentialBoundary(value: string): string {
-  const unmatchedPrivateKey = value.match(/-----BEGIN [A-Z ]*PRIVATE KEY-----/g)?.at(-1);
-  let boundarySafe = unmatchedPrivateKey
-    ? value.slice(0, value.lastIndexOf(unmatchedPrivateKey)) + '[redacted secret-like content]'
-    : value;
-  if (/[A-Za-z0-9_./+=-]$/u.test(boundarySafe)) {
-    boundarySafe = boundarySafe.replace(/[A-Za-z0-9_./+=-]+$/u, '');
+function discardTruncatedCredentialBoundary(value: string): string {
+  const unmatchedPrivateKeyBegins: Array<{ readonly index: number; readonly label: string }> = [];
+  for (const marker of value.matchAll(/-----(BEGIN|END) ([A-Z ]*PRIVATE KEY)-----/g)) {
+    if (marker.index === undefined) continue;
+    const [, boundary, label] = marker;
+    if (boundary === 'BEGIN') {
+      unmatchedPrivateKeyBegins.push({ index: marker.index, label });
+      continue;
+    }
+    for (let index = unmatchedPrivateKeyBegins.length - 1; index >= 0; index -= 1) {
+      if (unmatchedPrivateKeyBegins[index]?.label === label) {
+        unmatchedPrivateKeyBegins.splice(index, 1);
+        break;
+      }
+    }
   }
-  return boundarySafe;
+  const firstUnmatchedPrivateKey = unmatchedPrivateKeyBegins[0];
+  if (firstUnmatchedPrivateKey) {
+    return value.slice(0, firstUnmatchedPrivateKey.index);
+  }
+  return value.replace(/\S+\s*$/u, '');
 }
 
 function normalizeQuery(value: string): string {

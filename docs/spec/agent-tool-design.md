@@ -870,11 +870,11 @@ real canonical `outputRef`, applies the shared secret scanner, removes bound his
 file markers and local paths, and caps each output at 4,000 characters. The payload reader
 streams the complete file through UTF-8 validation, SHA-256 verification, and stable-file
 identity checks while retaining only that bounded character prefix; it never materializes
-the complete payload as a `Buffer` or string. After ordinary secret scanning, a truncated
-prefix conservatively removes its incomplete trailing credential token or private-key
-block before projection, so the character boundary cannot expose a partial credential.
-Reasoning, diagnostics, system input, provider envelopes, and raw unbounded output never
-enter the result.
+the complete payload as a `Buffer` or string. Before ordinary secret scanning, a truncated
+prefix unconditionally discards its complete trailing non-whitespace field or unmatched
+private-key block; this is independent of any guessed credential character set, so the
+character boundary cannot expose a partial credential. Reasoning, diagnostics, system
+input, provider envelopes, and raw unbounded output never enter the result.
 
 An ordinary page read issues at most 20 display-metadata entries plus opaque page-scoped
 citation keys; their serialized metadata shares the 24,000-character page budget. The
