@@ -112,6 +112,9 @@ export async function persistToolCallAdmission(
   if (request.outcome.redactedPaths.length > 0 && !request.outcome.redactedArgumentsReplayable) {
     return incompatibleRedactedAdmission(request, durableValue);
   }
+  if (!providerCallIsReplayable(request.providerCall)) {
+    return providerReplayUnavailableAdmission(request, durableValue);
+  }
   let source: ModelToolCallArguments;
   try {
     source = await modelToolCallArguments(
@@ -121,9 +124,6 @@ export async function persistToolCallAdmission(
     );
   } catch {
     return persistenceRejectedAdmission(request, durableValue);
-  }
-  if (!providerCallIsReplayable(request.providerCall)) {
-    return providerReplayUnavailableAdmission(request, durableValue);
   }
   if (request.outcome.redactedPaths.length > 0) {
     return {
@@ -160,11 +160,11 @@ export function transientToolCallAdmission(request: ToolCallAdmissionRequest): T
   if (request.outcome.redactedPaths.length > 0 && !request.outcome.redactedArgumentsReplayable) {
     return incompatibleRedactedAdmission(request, durableValue);
   }
-  const source = inlineModelToolCallArguments(durableValue);
-  if (!source) return persistenceRejectedAdmission(request, durableValue);
   if (!providerCallIsReplayable(request.providerCall)) {
     return providerReplayUnavailableAdmission(request, durableValue);
   }
+  const source = inlineModelToolCallArguments(durableValue);
+  if (!source) return persistenceRejectedAdmission(request, durableValue);
   const modelCall = request.outcome.redactedPaths.length > 0
     ? {
         disposition: 'redactedReplay' as const,

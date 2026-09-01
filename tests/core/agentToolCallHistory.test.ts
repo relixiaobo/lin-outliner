@@ -278,6 +278,35 @@ describe('canonical model tool-call admission', () => {
     });
     expect(JSON.stringify(decision)).not.toContain(oversizedSignature);
   });
+
+  test('does not persist payload-sized arguments when provider replay metadata is unavailable', async () => {
+    const argumentsValue = { content: 'x'.repeat(40_000) } as const;
+    const request = await admittedRequest(argumentsValue);
+    const oversizedSignature = 'x'.repeat(MAX_MODEL_PROVIDER_THOUGHT_SIGNATURE_BYTES + 1);
+    const replayUnavailableRequest = {
+      ...request,
+      providerCall: { ...request.providerCall, thoughtSignature: oversizedSignature },
+    };
+    let persistenceAttempted = false;
+
+    const durable = await persistToolCallAdmission(replayUnavailableRequest, async () => {
+      persistenceAttempted = true;
+      throw new Error('Provider-ineligible history must not allocate an argument payload.');
+    });
+    const transient = transientToolCallAdmission(replayUnavailableRequest);
+
+    expect(persistenceAttempted).toBe(false);
+    for (const decision of [durable, transient]) {
+      expect(decision).toMatchObject({
+        execute: true,
+        modelCall: {
+          disposition: 'evidenceOnly',
+          reason: 'providerReplayUnavailable',
+        },
+      });
+      expect(JSON.stringify(decision)).not.toContain(oversizedSignature);
+    }
+  });
 });
 
 async function admittedRequest(
