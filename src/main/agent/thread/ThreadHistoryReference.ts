@@ -553,11 +553,24 @@ function boundedToolOutput(
   value: { readonly textPrefix: string; readonly truncated: boolean } | null,
 ): string | null {
   if (!value) return null;
-  const redacted = redactHistoricalText(value.textPrefix).trim();
-  if (!redacted) return null;
-  return value.truncated || redacted.length > MAX_TOOL_OUTPUT_CHARS
-    ? `${redacted.slice(0, MAX_TOOL_OUTPUT_CHARS - 3)}...`
-    : redacted;
+  const redacted = redactHistoricalText(value.textPrefix);
+  const boundarySafe = value.truncated ? redactTruncatedCredentialBoundary(redacted) : redacted;
+  const trimmed = boundarySafe.trim();
+  if (!trimmed) return value.truncated ? '...' : null;
+  return value.truncated || trimmed.length > MAX_TOOL_OUTPUT_CHARS
+    ? `${trimmed.slice(0, MAX_TOOL_OUTPUT_CHARS - 3)}...`
+    : trimmed;
+}
+
+function redactTruncatedCredentialBoundary(value: string): string {
+  const unmatchedPrivateKey = value.match(/-----BEGIN [A-Z ]*PRIVATE KEY-----/g)?.at(-1);
+  let boundarySafe = unmatchedPrivateKey
+    ? value.slice(0, value.lastIndexOf(unmatchedPrivateKey)) + '[redacted secret-like content]'
+    : value;
+  if (/[A-Za-z0-9_./+=-]$/u.test(boundarySafe)) {
+    boundarySafe = boundarySafe.replace(/[A-Za-z0-9_./+=-]+$/u, '');
+  }
+  return boundarySafe;
 }
 
 function normalizeQuery(value: string): string {

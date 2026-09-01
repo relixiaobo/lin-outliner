@@ -637,10 +637,21 @@ describe('Agent Core persistence', () => {
       await rollout.append(shortThreadId, notification);
     }
     const path = join(root, 'fair-history.sqlite');
-    const store = new ThreadHistoryProjectionStore(path, testDatabase(path));
+    const database = testDatabase(path);
+    const preparedSql: string[] = [];
+    const observedDatabase: SqliteDatabase = {
+      exec: (sql) => database.exec(sql),
+      prepare: (sql) => {
+        preparedSql.push(sql);
+        return database.prepare(sql);
+      },
+      close: () => database.close(),
+    };
+    const store = new ThreadHistoryProjectionStore(path, observedDatabase);
     store.applyMany(await rollout.read(longThreadId));
     store.applyMany(await rollout.read(shortThreadId));
 
+    preparedSql.length = 0;
     const entries = store.visibleHistoryEntries([longThreadId, shortThreadId], {
       maximum: 3,
       newestFirst: true,
@@ -650,6 +661,14 @@ describe('Agent Core persistence', () => {
       type: 'agentMessage',
       text: 'Done',
     });
+    const historyQuery = preparedSql.find((sql) => sql.includes('SELECT * FROM thread_items'));
+    expect(historyQuery).toBeDefined();
+    expect(historyQuery).not.toContain('ROW_NUMBER');
+    const plan = database.prepare(`EXPLAIN QUERY PLAN ${historyQuery!}`)
+      .all(longThreadId, 1) as Array<{ readonly detail: string }>;
+    const planDetails = plan.map((row) => row.detail).join('\n');
+    expect(planDetails).toContain('thread_items_visible_history_idx');
+    expect(planDetails).not.toContain('USE TEMP B-TREE');
     store.close();
   });
 

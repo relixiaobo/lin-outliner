@@ -856,7 +856,9 @@ bounded activity summaries, and resolved reference display metadata. It excludes
 content, reasoning, diagnostics, raw tool output, file locators, and secrets. The bounded
 history-row budget is divided fairly across the candidate Threads before matching, so a
 single long Thread cannot displace every shorter or later candidate from transcript
-search.
+search. Each candidate read applies its share through the visible-history partial ordering
+index and an index-backed `LIMIT` before rows are interleaved, bounding synchronous
+database work without ranking complete histories.
 
 `thread_read` validates a same-profile canonical target, excludes the current Thread,
 and returns the newest page or the page containing a signed search cursor. A page holds
@@ -868,8 +870,11 @@ real canonical `outputRef`, applies the shared secret scanner, removes bound his
 file markers and local paths, and caps each output at 4,000 characters. The payload reader
 streams the complete file through UTF-8 validation, SHA-256 verification, and stable-file
 identity checks while retaining only that bounded character prefix; it never materializes
-the complete payload as a `Buffer` or string. Reasoning, diagnostics, system input,
-provider envelopes, and raw unbounded output never enter the result.
+the complete payload as a `Buffer` or string. After ordinary secret scanning, a truncated
+prefix conservatively removes its incomplete trailing credential token or private-key
+block before projection, so the character boundary cannot expose a partial credential.
+Reasoning, diagnostics, system input, provider envelopes, and raw unbounded output never
+enter the result.
 
 An ordinary page read issues at most 20 display-metadata entries plus opaque page-scoped
 citation keys; their serialized metadata shares the 24,000-character page budget. The

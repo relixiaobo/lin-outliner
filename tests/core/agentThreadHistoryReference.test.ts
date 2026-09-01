@@ -86,6 +86,42 @@ describe('Thread history references', () => {
     })).rejects.toThrow('another profile');
   });
 
+  test('removes partial credentials that cross the bounded tool-output prefix', async () => {
+    const boundaryCases = [
+      {
+        partialCredential: `sk-proj-${'A'.repeat(18)}`,
+        leakedEvidence: `sk-proj-${'A'.repeat(12)}`,
+      },
+      {
+        partialCredential: 'OPENAI_API_KEY=shortvalue',
+        leakedEvidence: 'shortval',
+      },
+      {
+        partialCredential: `-----BEGIN OPENSSH PRIVATE KEY-----\nMI${'B'.repeat(40)}`,
+        leakedEvidence: `MI${'B'.repeat(12)}`,
+      },
+    ];
+    for (const { partialCredential, leakedEvidence } of boundaryCases) {
+      const leading = 'safe historical output\n';
+      const padding = 'x'.repeat(4_000 - leading.length - 1 - partialCredential.length);
+      const fixture = historyFixture({
+        textPrefix: `${leading}${padding}\n${partialCredential}`,
+        truncated: true,
+      });
+
+      const result = await fixture.service.readForAgent({
+        currentThreadId: CURRENT_ID,
+        threadId: TARGET_ID,
+        turnLimit: 1,
+        includeToolOutput: true,
+      });
+      const serialized = JSON.stringify(result.data);
+
+      expect(serialized).toContain('safe historical output');
+      expect(serialized).not.toContain(leakedEvidence);
+    }
+  });
+
   test('links only a selected citation from the same page and rejects a wrong-page key', async () => {
     const fixture = historyFixture();
     const newest = await fixture.service.readForAgent({
@@ -137,7 +173,17 @@ describe('Thread history references', () => {
   });
 });
 
-function historyFixture(): {
+function historyFixture(toolOutputProjection: {
+  readonly textPrefix: string;
+  readonly truncated: boolean;
+} = {
+  textPrefix: [
+    'bounded tool output with ghp_0123456789abcdefghij',
+    'source /Users/alice/private.txt',
+    'bound [[file:///Users/alice/private.txt]]',
+  ].join('\n'),
+  truncated: false,
+}): {
   readonly service: ThreadHistoryReferenceService;
   readonly linked: ThreadResourceReference[];
   readonly advance: (milliseconds: number) => void;
@@ -231,14 +277,7 @@ function historyFixture(): {
       },
     },
     payloads: {
-      readTextReferencePrefix: async () => ({
-        textPrefix: [
-          'bounded tool output with ghp_0123456789abcdefghij',
-          'source /Users/alice/private.txt',
-          'bound [[file:///Users/alice/private.txt]]',
-        ].join('\n'),
-        truncated: false,
-      }),
+      readTextReferencePrefix: async () => toolOutputProjection,
     },
   } as unknown as ThreadCore;
   const linked: ThreadResourceReference[] = [];

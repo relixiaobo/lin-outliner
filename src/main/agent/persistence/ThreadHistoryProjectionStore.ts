@@ -53,10 +53,6 @@ interface ItemRow {
   completed_at: number | null;
 }
 
-interface RankedItemRow extends ItemRow {
-  search_rank: number;
-}
-
 interface RollbackRow {
   rollback_id: string;
   thread_id: string;
@@ -134,6 +130,12 @@ export class ThreadHistoryProjectionStore {
       ) STRICT;
       CREATE INDEX IF NOT EXISTS thread_items_page_idx
         ON thread_items(thread_id, turn_position, item_index, item_id);
+      CREATE INDEX IF NOT EXISTS thread_items_visible_history_idx
+        ON thread_items(thread_id, turn_position, item_index, item_id)
+        WHERE item_type IN (
+          'userMessage', 'agentMessage', 'commandExecution', 'fileChange',
+          'mcpToolCall', 'dynamicToolCall', 'collabAgentToolCall', 'webSearch'
+        );
       CREATE TABLE IF NOT EXISTS rollout_watermarks (
         thread_id TEXT PRIMARY KEY,
         ordinal INTEGER NOT NULL,
@@ -420,35 +422,34 @@ export class ThreadHistoryProjectionStore {
     const maximum = Math.max(1, Math.min(options.maximum ?? 2_000, 5_000));
     const ordering = options.newestFirst === false ? 'ASC' : 'DESC';
     const entries: ThreadHistoryVisibleEntry[] = [];
-    const admittedThreadCount = Math.min(threadIds.length, maximum);
-    const perThreadMaximum = Math.max(1, Math.floor(maximum / Math.max(1, admittedThreadCount)));
-    for (let start = 0; start < threadIds.length && entries.length < maximum; start += 400) {
-      const chunk = threadIds.slice(start, start + 400);
-      if (chunk.length === 0) continue;
-      const rows = this.db.prepare(`
-        SELECT * FROM (
-          SELECT thread_items.*, ROW_NUMBER() OVER (
-            PARTITION BY thread_id
-            ORDER BY turn_position ${ordering}, item_index ${ordering}, item_id ${ordering}
-          ) AS search_rank
-          FROM thread_items
-          WHERE thread_id IN (${chunk.map(() => '?').join(', ')})
-            AND item_type IN (
-              'userMessage', 'agentMessage', 'commandExecution', 'fileChange',
-              'mcpToolCall', 'dynamicToolCall', 'collabAgentToolCall', 'webSearch'
-            )
-        ) ranked_items
-        WHERE search_rank <= ?
-        ORDER BY search_rank, thread_id
-        LIMIT ?
-      `).all(...chunk, perThreadMaximum, maximum - entries.length) as unknown as RankedItemRow[];
-      entries.push(...rows.map((row) => ({
-        threadId: row.thread_id,
-        turnId: row.turn_id,
-        turnPosition: row.turn_position,
-        itemIndex: row.item_index,
-        item: this.itemFromRow(row),
-      })));
+    const admittedThreadIds = [...new Set(threadIds)].slice(0, maximum);
+    if (admittedThreadIds.length === 0) return entries;
+    const perThreadMaximum = Math.max(1, Math.floor(maximum / Math.max(1, admittedThreadIds.length)));
+    const statement = this.db.prepare(`
+      SELECT * FROM thread_items
+      WHERE thread_id = ?
+        AND item_type IN (
+          'userMessage', 'agentMessage', 'commandExecution', 'fileChange',
+          'mcpToolCall', 'dynamicToolCall', 'collabAgentToolCall', 'webSearch'
+        )
+      ORDER BY turn_position ${ordering}, item_index ${ordering}, item_id ${ordering}
+      LIMIT ?
+    `);
+    const rowsByThread = admittedThreadIds.map((threadId) => (
+      statement.all(threadId, perThreadMaximum) as unknown as ItemRow[]
+    ));
+    for (let rank = 0; rank < perThreadMaximum && entries.length < maximum; rank += 1) {
+      for (const rows of rowsByThread) {
+        const row = rows[rank];
+        if (!row) continue;
+        entries.push({
+          threadId: row.thread_id,
+          turnId: row.turn_id,
+          turnPosition: row.turn_position,
+          itemIndex: row.item_index,
+          item: this.itemFromRow(row),
+        });
+      }
     }
     return entries;
   }
