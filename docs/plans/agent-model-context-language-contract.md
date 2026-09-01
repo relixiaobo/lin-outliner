@@ -49,8 +49,9 @@ and plan.
   Turn-start or steering admission. Host runtime evidence may be published during
   provider preparation; UI changes never asynchronously rewrite a generation.
 - **CON-6 dependency:** merged PRs #609 and #610 are the Skill invocation and
-  provider-call baseline. Repeat the live collision check before implementation
-  because this feature changes adjacent Skill projection and shared Agent protocol.
+  provider-call baseline. Open PR #612 concurrently changes Agent protocol,
+  `PiTurnExecutor`, `TurnLifecycle`, and owning specifications; implementation must
+  start from its merged result or re-resolve the overlap if it closes unmerged.
 - **DEC-1:** model-visible `<context>` children have no `kind`. Host-assigned
   `authority` and `purpose` are the complete wrapper protocol.
 - **DEC-2:** canonical source kind, stable key, producer, lifecycle, hashes, and
@@ -532,9 +533,9 @@ Consistency means one grammar per semantic boundary:
 
 ## Execution
 
-- Start from the merged #609/#610 baseline, repeat the open-claim/file-scope
-  collision check, and obtain PM ratification before editing shared protocol
-  surfaces.
+- Wait for PR #612 to settle, then rebase onto its merged result or re-resolve the
+  overlap if it closes unmerged. Repeat the open-claim/file-scope collision check
+  and obtain PM ratification before editing shared protocol surfaces.
 - Extend renderer-to-main canonical evidence to cover all `PanelView` variants
   while preserving Host-private Pane correlation.
 - Remove Today-based synthetic views and retain honest no-view state.
