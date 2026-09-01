@@ -853,7 +853,10 @@ a maximum of 20. Each result contains canonical Thread ID, current title, update
 a maximum 320-character redacted snippet, and an opaque HMAC-signed match cursor when a
 visible history match exists. Searchable history includes visible user/assistant text,
 bounded activity summaries, and resolved reference display metadata. It excludes system
-content, reasoning, diagnostics, raw tool output, file locators, and secrets.
+content, reasoning, diagnostics, raw tool output, file locators, and secrets. The bounded
+history-row budget is divided fairly across the candidate Threads before matching, so a
+single long Thread cannot displace every shorter or later candidate from transcript
+search.
 
 `thread_read` validates a same-profile canonical target, excludes the current Thread,
 and returns the newest page or the page containing a signed search cursor. A page holds
@@ -862,9 +865,11 @@ coverage plus previous/next cursors, and never resumes, forks, wakes, appends to
 changes read state on the target. Visible user/assistant text and concise activity
 summaries are always treated as untrusted quoted context. Optional tool output reads the
 real canonical `outputRef`, applies the shared secret scanner, removes bound historical
-file markers and local paths, and caps each output at 4,000 characters; reasoning,
-diagnostics, system input, provider envelopes, and raw unbounded output never enter the
-result.
+file markers and local paths, and caps each output at 4,000 characters. The payload reader
+streams the complete file through UTF-8 validation, SHA-256 verification, and stable-file
+identity checks while retaining only that bounded character prefix; it never materializes
+the complete payload as a `Buffer` or string. Reasoning, diagnostics, system input,
+provider envelopes, and raw unbounded output never enter the result.
 
 An ordinary page read issues at most 20 display-metadata entries plus opaque page-scoped
 citation keys; their serialized metadata shares the 24,000-character page budget. The
@@ -872,13 +877,15 @@ read creates no current-Thread link, retention anchor, materialization, or tool
 `resourceRefs`. Keys expire after 15 minutes and are valid only for the same current
 Thread, target Thread, page coverage, and still-present canonical resource. Selecting a
 citation requires both `citation_key` and one representation: `reveal`, `replay`, `edit`,
-or `observe`. The runtime revalidates the claim, links only that resource, and returns it
-through the ordinary working-set contract. Reveal uses a validated source; replay and
-observe use the exact revision. Edit reuses a source in the current workspace or an
-admitted external scope, while a source in another managed root is copied from validated
-exact bytes into a new current-workspace source. The old managed root never becomes
-ambient access and its source is never edited. Missing canonical citations do not trigger
-filesystem or profile-wide search.
+or `observe`. A selection batch is validated in full before side effects, rejects repeated
+citation keys, and resolves selections serially. The runtime revalidates each claim, links
+only that resource, and returns it through the ordinary working-set contract. Reveal uses
+a validated source; replay and observe use the exact revision. Edit reuses a source in the
+current workspace or an admitted external scope, while a source in another managed root
+is copied from validated exact bytes into a new current-workspace source. Same-name copies
+claim their destination atomically and retry the next numbered name on an existing-file
+race. The old managed root never becomes ambient access and its source is never edited.
+Missing canonical citations do not trigger filesystem or profile-wide search.
 
 ## Execution And Audit
 

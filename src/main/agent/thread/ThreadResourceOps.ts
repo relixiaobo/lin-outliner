@@ -289,8 +289,7 @@ export class ThreadResourceOps {
 
     const exact = await this.resources.resolve(ref, 'observeExactRevision');
     if (exact.status !== 'resolvedExactRevision') return null;
-    const destination = await availableHistoricalCopyPath(current.cwd, ref.fileName);
-    await copyFile(exact.path, destination, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
+    const destination = await copyHistoricalExactRevision(exact.path, current.cwd, ref.fileName);
     const scopeId = `execution:${currentThreadId}`;
     this.resources.registerScope({
       scopeId,
@@ -708,15 +707,25 @@ export class ThreadResourceOps {
   }
 }
 
-async function availableHistoricalCopyPath(root: string, fileName: string): Promise<string> {
+async function copyHistoricalExactRevision(source: string, root: string, fileName: string): Promise<string> {
   const extension = extname(fileName);
   const stem = extension ? fileName.slice(0, -extension.length) : fileName;
   for (let index = 0; index < 10_000; index += 1) {
     const candidateName = index === 0 ? fileName : `${stem}-${index + 1}${extension}`;
     const candidate = join(root, candidateName);
-    if (!await lstat(candidate).catch(() => null)) return candidate;
+    try {
+      await copyFile(source, candidate, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
+      return candidate;
+    } catch (error) {
+      if (!isAlreadyExists(error)) throw error;
+    }
   }
   throw new Error('Could not allocate a current-workspace historical file copy');
+}
+
+function isAlreadyExists(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error
+    && (error as { readonly code?: unknown }).code === 'EEXIST';
 }
 
 function resourceReferencesFromTurns(turns: readonly Turn[]): ThreadResourceReference[] {

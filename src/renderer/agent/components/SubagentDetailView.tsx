@@ -154,6 +154,7 @@ export function SubagentDetailView({
             onInterruptThread={(target) => threadStore.interruptThread(target)}
             onOpenNodeReference={onOpenNodeReference}
             onOpenThread={openRelated}
+            onOpenThreadReference={onOpenThread}
             onOpenTurnDetails={openTurnDetails}
             onReadToolArguments={readToolArguments}
             onReadToolOutput={readItemOutput}

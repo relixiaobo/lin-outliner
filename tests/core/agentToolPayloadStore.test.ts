@@ -101,6 +101,14 @@ describe('Agent tool payload store', () => {
     const outputId = output.id;
 
     expect(await store.readTextReference(threadId, output)).toBe('full output');
+    expect(await store.readTextReferencePrefix(threadId, output, 4)).toEqual({
+      textPrefix: 'full',
+      truncated: true,
+    });
+    expect(await store.readTextReferencePrefix(threadId, output, 20)).toEqual({
+      textPrefix: 'full output',
+      truncated: false,
+    });
     expect(output).toMatchObject({
       id: expect.stringMatching(/^[a-f0-9]{64}$/),
       mimeType: 'text/plain',
@@ -115,6 +123,23 @@ describe('Agent tool payload store', () => {
     }
     expect(invalidDigestError).toBeInstanceOf(Error);
     expect((invalidDigestError as Error).message).toBe('Invalid tool output digest');
+  });
+
+  test('keeps verified large text projections within the requested character prefix', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const store = new ToolPayloadStore(root);
+    const threadId = uuidV7(1_720_000_000_000);
+    const text = `${'a'.repeat(2 * 1024 * 1024)}tail`;
+    const output = await store.writeText(threadId, 'tool-call', text, 'text/plain', 'Large tool output');
+
+    const projection = await store.readTextReferencePrefix(threadId, output, 4_000);
+
+    expect(projection).toEqual({
+      textPrefix: 'a'.repeat(4_000),
+      truncated: true,
+    });
+    expect(projection?.textPrefix.length).toBe(4_000);
   });
 
   test('verifies complete text references during reads, copies, and reconciliation', async () => {

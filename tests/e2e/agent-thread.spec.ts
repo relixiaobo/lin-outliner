@@ -693,6 +693,9 @@ test.describe('canonical agent Thread surface', () => {
     await pointerOption.click();
     await expect(composer.locator(`[data-thread-thread-ref="${sourceThreadId}"]`))
       .toContainText('Launch archive');
+
+    await page.locator('.thread-user-message').last().getByRole('link', { name: 'Launch archive' }).click();
+    await expect(page.locator('.thread-dock-title')).toHaveText('Launch archive');
   });
 
   test('renders used Memory as an inline Node reference while keeping supporting work in the process', async ({ page }) => {

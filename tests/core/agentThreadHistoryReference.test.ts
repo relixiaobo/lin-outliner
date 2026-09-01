@@ -107,6 +107,17 @@ describe('Thread history references', () => {
     expect(selected.resourceRefs).toEqual([resourceRef]);
     expect(fixture.linked).toEqual([resourceRef]);
 
+    await expect(fixture.service.readForAgent({
+      currentThreadId: CURRENT_ID,
+      threadId: TARGET_ID,
+      turnLimit: 1,
+      citations: [
+        { citationKey: citationKey!, representation: 'replay' },
+        { citationKey: citationKey!, representation: 'edit' },
+      ],
+    })).rejects.toThrow('must be unique');
+    expect(fixture.linked).toEqual([resourceRef]);
+
     fixture.advance(15 * 60_000);
     await expect(fixture.service.readForAgent({
       currentThreadId: CURRENT_ID,
@@ -220,11 +231,14 @@ function historyFixture(): {
       },
     },
     payloads: {
-      readTextReference: async () => [
-        'bounded tool output with ghp_0123456789abcdefghij',
-        'source /Users/alice/private.txt',
-        'bound [[file:///Users/alice/private.txt]]',
-      ].join('\n'),
+      readTextReferencePrefix: async () => ({
+        textPrefix: [
+          'bounded tool output with ghp_0123456789abcdefghij',
+          'source /Users/alice/private.txt',
+          'bound [[file:///Users/alice/private.txt]]',
+        ].join('\n'),
+        truncated: false,
+      }),
     },
   } as unknown as ThreadCore;
   const linked: ThreadResourceReference[] = [];

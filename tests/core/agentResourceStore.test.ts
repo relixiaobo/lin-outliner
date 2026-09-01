@@ -109,14 +109,22 @@ describe('AgentResourceStore', () => {
   test('copies cross-managed-root edits while preserving admitted external sources', async () => {
     const fixture = await createFixture();
     const oldWorkspace = path.join(fixture.root, 'old-workspace');
+    const secondOldWorkspace = path.join(fixture.root, 'second-old-workspace');
     const currentWorkspace = path.join(fixture.root, 'current-workspace');
     const externalRoot = path.join(fixture.root, 'external');
-    await Promise.all([mkdir(oldWorkspace), mkdir(currentWorkspace), mkdir(externalRoot)]);
+    await Promise.all([mkdir(oldWorkspace), mkdir(secondOldWorkspace), mkdir(currentWorkspace), mkdir(externalRoot)]);
     const oldPath = path.join(oldWorkspace, 'report.txt');
+    const secondOldPath = path.join(secondOldWorkspace, 'report.txt');
     const externalPath = path.join(externalRoot, 'shared.txt');
     await writeFile(oldPath, 'historical exact bytes');
+    await writeFile(secondOldPath, 'second historical exact bytes');
     await writeFile(externalPath, 'external bytes');
     fixture.store.registerScope({ scopeId: 'managed:old', kind: 'managedWorkspace', rootPath: oldWorkspace });
+    fixture.store.registerScope({
+      scopeId: 'managed:old-second',
+      kind: 'managedWorkspace',
+      rootPath: secondOldWorkspace,
+    });
     fixture.store.registerScope({ scopeId: 'external:user', kind: 'external', rootPath: externalRoot });
     const oldRef = (await fixture.store.capturePath({
       threadId: '01951d6e-7c25-7c31-8d62-313038616240',
@@ -124,6 +132,13 @@ describe('AgentResourceStore', () => {
       mimeType: 'text/plain',
       fileName: 'report.txt',
       source: await fixture.store.sourceLocator('managed:old', oldPath, 'file'),
+    })).ref;
+    const secondOldRef = (await fixture.store.capturePath({
+      threadId: '01951d6e-7c25-7c31-8d62-313038616240',
+      sourcePath: secondOldPath,
+      mimeType: 'text/plain',
+      fileName: 'report.txt',
+      source: await fixture.store.sourceLocator('managed:old-second', secondOldPath, 'file'),
     })).ref;
     const externalRef = (await fixture.store.capturePath({
       threadId: '01951d6e-7c25-7c31-8d62-313038616240',
@@ -134,7 +149,7 @@ describe('AgentResourceStore', () => {
     })).ref;
     await writeFile(oldPath, 'newer old-workspace bytes');
 
-    const historicalRefs: ThreadResourceReference[] = [oldRef, externalRef];
+    const historicalRefs: ThreadResourceReference[] = [oldRef, secondOldRef, externalRef];
     const core = historicalResourceCore(currentWorkspace, historicalRefs);
     const ops = new ThreadResourceOps(
       core,
@@ -152,6 +167,18 @@ describe('AgentResourceStore', () => {
     expect(copied?.path?.startsWith(`${currentWorkspace}${path.sep}`)).toBe(true);
     expect(await readFile(copied!.path!, 'utf8')).toBe('historical exact bytes');
     expect(await readFile(oldPath, 'utf8')).toBe('newer old-workspace bytes');
+
+    const concurrentCopies = await Promise.all([oldRef, secondOldRef].map((ref) => (
+      ops.selectHistoricalResource(
+        '01951d6e-7c25-7c31-8d62-313038616239',
+        '01951d6e-7c25-7c31-8d62-313038616240',
+        ref,
+        'edit',
+      )
+    )));
+    expect(new Set(concurrentCopies.map((entry) => entry?.path)).size).toBe(2);
+    expect(await Promise.all(concurrentCopies.map((entry) => readFile(entry!.path!, 'utf8'))))
+      .toEqual(['historical exact bytes', 'second historical exact bytes']);
 
     const external = await ops.selectHistoricalResource(
       '01951d6e-7c25-7c31-8d62-313038616239',

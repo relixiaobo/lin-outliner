@@ -568,6 +568,7 @@ export const ThreadDock = memo(function ThreadDock({
               onOpenNodeReference={onOpenNodeReference}
               onOpenSubagentTurnDetails={onOpenTurnDetails}
               onOpenThread={async (threadId) => openSubagent(threadId)}
+              onOpenThreadReference={openThread}
               onOpenTurnDetails={(turn) => onOpenTurnDetails(thread.id, turn.id)}
               onReadToolOutput={(turnId, item) => threadStore.readItemOutput(thread.id, turnId, item)}
               onReadToolArguments={(turnId, item) => threadStore.readToolArguments(thread.id, turnId, item)}

@@ -477,6 +477,28 @@ export class ToolPayloadStore {
     return bytes?.toString('utf8') ?? null;
   }
 
+  async readTextReferencePrefix(
+    threadId: ThreadId,
+    ref: ThreadItemOutputReference,
+    maxChars: number,
+  ): Promise<{ readonly textPrefix: string; readonly truncated: boolean } | null> {
+    validateTextPayloadReference(ref);
+    if (!Number.isSafeInteger(maxChars) || maxChars < 0) {
+      throw new Error('Tool output prefix limit must be a non-negative safe integer.');
+    }
+    const directory = await this.existingManagedDirectory(threadId);
+    if (!directory) return null;
+    const projection = await readVerifiedInternalTextProjection(
+      join(directory, textPayloadFileName(ref)),
+      ref,
+      maxChars,
+    );
+    return projection ? {
+      textPrefix: projection.textPrefix,
+      truncated: projection.textChars > projection.textPrefix.length,
+    } : null;
+  }
+
   async copyTextToThread(
     sourceThreadId: ThreadId,
     targetThreadId: ThreadId,

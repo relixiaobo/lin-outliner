@@ -623,6 +623,36 @@ describe('Agent Core persistence', () => {
     rebuilt.close();
   });
 
+  test('shares bounded visible-history search rows fairly across candidate Threads', async () => {
+    const root = await tempRoot();
+    const rollout = trackedRolloutStore(join(root, 'fair-history-rollouts'));
+    const longThreadId = uuidV7(2_010);
+    const shortThreadId = uuidV7(2_020);
+    for (const seed of [2_011, 2_012, 2_013]) {
+      for (const notification of lifecycle(longThreadId, seed)) {
+        await rollout.append(longThreadId, notification);
+      }
+    }
+    for (const notification of lifecycle(shortThreadId, 2_021)) {
+      await rollout.append(shortThreadId, notification);
+    }
+    const path = join(root, 'fair-history.sqlite');
+    const store = new ThreadHistoryProjectionStore(path, testDatabase(path));
+    store.applyMany(await rollout.read(longThreadId));
+    store.applyMany(await rollout.read(shortThreadId));
+
+    const entries = store.visibleHistoryEntries([longThreadId, shortThreadId], {
+      maximum: 3,
+      newestFirst: true,
+    });
+    expect(entries.map((entry) => entry.threadId)).toEqual([longThreadId, shortThreadId]);
+    expect(entries.find((entry) => entry.threadId === shortThreadId)?.item).toMatchObject({
+      type: 'agentMessage',
+      text: 'Done',
+    });
+    store.close();
+  });
+
   test('keeps streamed Item rows unchanged while read surfaces use the in-memory overlay', async () => {
     const root = await tempRoot();
     const threadId = uuidV7(2_050);

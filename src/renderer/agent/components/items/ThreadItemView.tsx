@@ -127,6 +127,7 @@ interface ThreadItemViewProps {
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenTurnDetails?: () => void;
   readonly onOpenThread: (threadId: string) => Promise<void>;
+  readonly onOpenThreadReference: (threadId: string) => Promise<void>;
   /** Absent where no Stop belongs — a read-only or historical rendering. */
   readonly onInterruptThread?: (threadId: string) => Promise<void>;
   readonly onReadToolArguments: (item: ThreadToolItem) => Promise<JsonValue | null>;
@@ -212,7 +213,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
             <ThreadMarkdown
               index={props.index}
               onNodeReferenceOpen={props.onOpenNodeReference}
-              onThreadReferenceOpen={(threadId) => void props.onOpenThread(threadId)}
+              onThreadReferenceOpen={(threadId) => void props.onOpenThreadReference(threadId)}
               streaming={props.streaming}
               text={props.item.text}
               threadId={props.threadId}
@@ -377,6 +378,7 @@ function UserMessageItem({
   onEditUserMessage,
   onOpenNodeReference,
   onOpenThread,
+  onOpenThreadReference,
   showMessageActions,
   threadId,
   threadReferences,
@@ -447,7 +449,7 @@ function UserMessageItem({
               item.content,
               index,
               onOpenNodeReference,
-              onOpenThread,
+              onOpenThreadReference,
               threadReferences,
               t,
               threadId,
@@ -516,7 +518,7 @@ function renderUserContent(
   content: readonly ThreadUserContent[],
   index: DocumentIndex,
   onOpenNodeReference: ThreadNodeReferenceOpenHandler,
-  onOpenThread: (threadId: string) => Promise<void>,
+  onOpenThreadReference: (threadId: string) => Promise<void>,
   threadReferences: ReadonlyMap<string, ThreadReferenceView>,
   t: Messages,
   threadId: string,
@@ -570,7 +572,7 @@ function renderUserContent(
           key={`thread-${contentIndex}`}
           onClick={(event) => {
             event.preventDefault();
-            void onOpenThread(part.threadId);
+            void onOpenThreadReference(part.threadId);
           }}
           title={t.agent.message.openReferencedThread}
         >

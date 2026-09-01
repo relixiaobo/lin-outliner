@@ -241,6 +241,7 @@ interface ThreadViewProps {
   readonly onConfigurationChange: (configuration: ThreadConfigurationSummary) => Promise<void>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenThread: (threadId: string) => Promise<void>;
+  readonly onOpenThreadReference: (threadId: string) => Promise<void>;
   readonly onOpenTurnDetails: (turn: Turn) => void;
   /** Turn Details for a delegated child, read inside its own run detail. */
   readonly onOpenSubagentTurnDetails?: (threadId: string, turnId: string) => void;
@@ -717,6 +718,7 @@ export function ThreadView({
   onConfigurationChange,
   onOpenNodeReference,
   onOpenThread,
+  onOpenThreadReference,
   onOpenSubagentTurnDetails,
   onOpenTurnDetails,
   onReadToolArguments,
@@ -3176,6 +3178,7 @@ export function ThreadView({
                         selfSpeaker={selfSpeaker}
                         onOpenNodeReference={onOpenNodeReference}
                         onOpenThread={onOpenThread}
+                        onOpenThreadReference={onOpenThreadReference}
                         onOpenTurnDetails={onOpenTurnDetails}
                         onReadToolArguments={onReadToolArguments}
                         onReadToolOutput={onReadToolOutput}
@@ -3313,7 +3316,7 @@ export function ThreadView({
                 onLocalFileSearch={searchLocalFiles}
                 onLocalFileSelect={selectLocalFile}
                 onNodeReferenceClick={onOpenNodeReference}
-                onThreadReferenceClick={(referencedThreadId) => void onOpenThread(referencedThreadId)}
+                onThreadReferenceClick={(referencedThreadId) => void onOpenThreadReference(referencedThreadId)}
                 onThreadReferenceSearch={searchThreadReferences}
                 onTextPasteRejected={rejectTextPaste}
                 onStop={() => void onInterrupt()}
@@ -3455,6 +3458,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   onInterruptThread,
   onOpenNodeReference,
   onOpenThread,
+  onOpenThreadReference,
   onOpenSubagentTurnDetails,
   agentTranscript,
   selfSpeaker,
@@ -3492,6 +3496,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   readonly onInterruptThread: (threadId: string) => Promise<void>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenThread: (threadId: string) => Promise<void>;
+  readonly onOpenThreadReference: (threadId: string) => Promise<void>;
   readonly onOpenSubagentTurnDetails?: (threadId: string, turnId: string) => void;
   /**
    * This transcript belongs to one Agent, read inside its pushed view. It is
@@ -3727,6 +3732,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
         onOpenNodeReference={onOpenNodeReference}
         onOpenTurnDetails={standaloneContextBoundary ? openTurnDetails : undefined}
         onOpenThread={onOpenThread}
+        onOpenThreadReference={onOpenThreadReference}
         onReadToolArguments={readToolArguments}
         onReadToolOutput={readToolOutput}
         showMessageActions={showMessageActions}

@@ -198,7 +198,11 @@ export class ThreadHistoryReferenceService {
         turn,
         (threadId) => this.resolvedThreadLabel(current, threadId),
         Boolean(input.includeToolOutput),
-        (ref) => this.core.payloads.readTextReference(target.thread.id, ref),
+        (ref) => this.core.payloads.readTextReferencePrefix(
+          target.thread.id,
+          ref,
+          MAX_TOOL_OUTPUT_CHARS,
+        ),
       );
       const admitted: Readonly<Record<string, unknown>>[] = [];
       for (const entry of projected) {
@@ -218,7 +222,11 @@ export class ThreadHistoryReferenceService {
         typeof item === 'object' && item !== null && Object.hasOwn(item, 'toolOutput')
       ))
     ));
-    const selected = await Promise.all((input.citations ?? []).map(async (selection) => {
+    const citationSelections = input.citations ?? [];
+    if (new Set(citationSelections.map((selection) => selection.citationKey)).size !== citationSelections.length) {
+      throw new Error('Historical file citation selections must be unique');
+    }
+    const claimedSelections = citationSelections.map((selection) => {
       const claim = this.citations.get(selection.citationKey);
       if (
         !claim
@@ -229,6 +237,10 @@ export class ThreadHistoryReferenceService {
         || claim.newestPosition !== page.newestPosition
         || !pageResourceReferences(page.turns).some((ref) => resourceReferenceKey(ref) === resourceReferenceKey(claim.ref))
       ) throw new Error('Historical file citation is stale or does not belong to this read');
+      return { claim, selection };
+    });
+    const selected = [];
+    for (const { claim, selection } of claimedSelections) {
       const resolved = await this.resourceOps.selectHistoricalResource(
         current.thread.id,
         target.thread.id,
@@ -238,8 +250,8 @@ export class ThreadHistoryReferenceService {
       if (!resolved) {
         throw new Error('Historical file citation is unavailable');
       }
-      return { ...resolved, representation: selection.representation };
-    }));
+      selected.push({ ...resolved, representation: selection.representation });
+    }
     return {
       data: {
         threadId: target.thread.id,
@@ -414,7 +426,7 @@ async function projectTurn(
   includeToolOutput: boolean,
   readToolOutput: (
     ref: import('../../../core/agent/protocol').ThreadItemOutputReference,
-  ) => Promise<string | null>,
+  ) => Promise<{ readonly textPrefix: string; readonly truncated: boolean } | null>,
 ): Promise<readonly Readonly<Record<string, unknown>>[]> {
   const projected: Readonly<Record<string, unknown>>[] = [];
   for (const item of turn.items) {
@@ -537,13 +549,15 @@ function boundedSnippet(value: string): string {
   return compact.length <= MAX_SNIPPET_CHARS ? compact : `${compact.slice(0, MAX_SNIPPET_CHARS - 3)}...`;
 }
 
-function boundedToolOutput(value: string | null): string | null {
+function boundedToolOutput(
+  value: { readonly textPrefix: string; readonly truncated: boolean } | null,
+): string | null {
   if (!value) return null;
-  const redacted = redactHistoricalText(value).trim();
+  const redacted = redactHistoricalText(value.textPrefix).trim();
   if (!redacted) return null;
-  return redacted.length <= MAX_TOOL_OUTPUT_CHARS
-    ? redacted
-    : `${redacted.slice(0, MAX_TOOL_OUTPUT_CHARS - 3)}...`;
+  return value.truncated || redacted.length > MAX_TOOL_OUTPUT_CHARS
+    ? `${redacted.slice(0, MAX_TOOL_OUTPUT_CHARS - 3)}...`
+    : redacted;
 }
 
 function normalizeQuery(value: string): string {

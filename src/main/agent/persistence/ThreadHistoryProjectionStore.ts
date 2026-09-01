@@ -53,6 +53,10 @@ interface ItemRow {
   completed_at: number | null;
 }
 
+interface RankedItemRow extends ItemRow {
+  search_rank: number;
+}
+
 interface RollbackRow {
   rollback_id: string;
   thread_id: string;
@@ -416,19 +420,28 @@ export class ThreadHistoryProjectionStore {
     const maximum = Math.max(1, Math.min(options.maximum ?? 2_000, 5_000));
     const ordering = options.newestFirst === false ? 'ASC' : 'DESC';
     const entries: ThreadHistoryVisibleEntry[] = [];
+    const admittedThreadCount = Math.min(threadIds.length, maximum);
+    const perThreadMaximum = Math.max(1, Math.floor(maximum / Math.max(1, admittedThreadCount)));
     for (let start = 0; start < threadIds.length && entries.length < maximum; start += 400) {
       const chunk = threadIds.slice(start, start + 400);
       if (chunk.length === 0) continue;
       const rows = this.db.prepare(`
-        SELECT * FROM thread_items
-        WHERE thread_id IN (${chunk.map(() => '?').join(', ')})
-          AND item_type IN (
-            'userMessage', 'agentMessage', 'commandExecution', 'fileChange',
-            'mcpToolCall', 'dynamicToolCall', 'collabAgentToolCall', 'webSearch'
-          )
-        ORDER BY turn_position ${ordering}, item_index ${ordering}, item_id ${ordering}
+        SELECT * FROM (
+          SELECT thread_items.*, ROW_NUMBER() OVER (
+            PARTITION BY thread_id
+            ORDER BY turn_position ${ordering}, item_index ${ordering}, item_id ${ordering}
+          ) AS search_rank
+          FROM thread_items
+          WHERE thread_id IN (${chunk.map(() => '?').join(', ')})
+            AND item_type IN (
+              'userMessage', 'agentMessage', 'commandExecution', 'fileChange',
+              'mcpToolCall', 'dynamicToolCall', 'collabAgentToolCall', 'webSearch'
+            )
+        ) ranked_items
+        WHERE search_rank <= ?
+        ORDER BY search_rank, thread_id
         LIMIT ?
-      `).all(...chunk, maximum - entries.length) as unknown as ItemRow[];
+      `).all(...chunk, perThreadMaximum, maximum - entries.length) as unknown as RankedItemRow[];
       entries.push(...rows.map((row) => ({
         threadId: row.thread_id,
         turnId: row.turn_id,
