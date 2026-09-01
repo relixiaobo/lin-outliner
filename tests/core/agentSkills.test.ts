@@ -446,7 +446,7 @@ describe('agent skills', () => {
     });
     expect(first.entries.find((entry) => entry.name === 'demo')).toMatchObject({
       change: 'available',
-      description: 'Demo skill - Use for demo work',
+      description: 'Demo skill - Use for demo work Invoke without args.',
       source: 'project',
     });
     expect(first.catalogHash).toBe(createHash('sha256').update(JSON.stringify(first.entries.map((entry) => ({
@@ -477,8 +477,88 @@ describe('agent skills', () => {
     const withLateSkill = await runtime.buildSkillCatalogSnapshot();
     expect(withLateSkill.entries.find((entry) => entry.name === 'late-skill')).toMatchObject({
       change: 'available',
-      description: 'Added after the first admission',
+      description: 'Added after the first admission Invoke without args.',
     });
+  });
+
+  test('advertises load-only, parameterized, and isolated Skill input contracts', async () => {
+    const root = await createSkillFixture('load-only', {
+      frontmatter: ['description: Load-only skill'],
+      body: 'Follow the loaded workflow.',
+    });
+    await createSkillInRoot(root, 'hinted', {
+      frontmatter: [
+        'description: Hinted skill',
+        'argument-hint: "<PR_NUMBER> [--summary]"',
+        'arguments: ignored fallback',
+      ],
+      body: 'Review $0.',
+    });
+    await createSkillInRoot(root, 'named', {
+      frontmatter: [
+        'description: Named skill',
+        'arguments: target format',
+      ],
+      body: 'Convert $target to $format.',
+    });
+    await createSkillInRoot(root, 'placeholder', {
+      frontmatter: ['description: Placeholder skill'],
+      body: 'Review $ARGUMENTS and $0.',
+    });
+    await createSkillInRoot(root, 'isolated', {
+      frontmatter: [
+        'description: Isolated skill',
+        'execution: isolated',
+      ],
+      body: 'Complete the exact task.',
+    });
+    const runtime = new AgentSkillRuntime({
+      localRoot: root,
+      includeUserSkills: false,
+      builtInSkillDirectories: [],
+      builtInSkills: [],
+    });
+
+    const catalog = await runtime.buildSkillCatalogSnapshot();
+    const placeholderInvocation = await runtime.invokeSkill({
+      skill: 'placeholder',
+      args: '"pull request" extra',
+      trigger: 'agent',
+    });
+
+    expect(catalog.entries.find((entry) => entry.name === 'load-only')?.description)
+      .toBe('Load-only skill Invoke without args.');
+    expect(catalog.entries.find((entry) => entry.name === 'hinted')?.description)
+      .toBe('Hinted skill Args: <PR_NUMBER> [--summary].');
+    expect(catalog.entries.find((entry) => entry.name === 'named')?.description)
+      .toBe('Named skill Args: target format.');
+    expect(catalog.entries.find((entry) => entry.name === 'placeholder')?.description)
+      .toBe('Placeholder skill Args: input.');
+    expect(catalog.entries.find((entry) => entry.name === 'isolated')?.description)
+      .toBe('Isolated skill Isolated; args=user task; no Subagents; parent fans out.');
+    expect(placeholderInvocation.ok).toBe(true);
+    if (placeholderInvocation.ok) {
+      expect(placeholderInvocation.renderedContent)
+        .toContain('Review "pull request" extra and pull request.');
+    }
+  });
+
+  test('keeps Skill args optional and describes their catalog-governed use', () => {
+    const tool = createSkillTool(new AgentSkillRuntime({ includeUserSkills: false }));
+    const parameters = tool.parameters as {
+      required: string[];
+      properties: { args: { description: string } };
+    };
+
+    expect(parameters.required).toEqual(['skill']);
+    expect(parameters.properties.args.description).toContain('Omit for load-only Skills');
+    expect(parameters.properties.args.description).toContain('parameterized inline Skills');
+    expect(parameters.properties.args.description).toContain('exact user task for isolated Skills');
+    expect(tool.description).toContain('The canonical user message already carries the task.');
+    expect(tool.description).toContain('an entry without a full or compact input label is load-only');
+    expect(tool.description).toContain('`[A]` means parameterized inline `args`');
+    expect(tool.description).toContain('`[I+]` and `[I-]`');
+    expect(tool.description).toContain('pass only the declared variable input');
   });
 
   test('applies the Thread Skill ceiling to catalogs, slash choices, and invocation', async () => {
@@ -1172,7 +1252,7 @@ describe('agent skills', () => {
     });
     expect(typeof skill?.contentHash).toBe('string');
     expect(catalog.entries.find((entry) => entry.name === 'bundled-demo')?.description)
-      .toBe('Bundled demo skill - Use for bundled resource tests');
+      .toBe('Bundled demo skill - Use for bundled resource tests Args: target.');
     expect(invocation.ok).toBe(true);
     if (!invocation.ok) return;
     expect(invocation.renderedContent).toContain(`Base directory for this skill: ${skillDir}`);
@@ -1290,7 +1370,7 @@ describe('agent skills', () => {
     });
     expect(skill?.body).toContain('Use bundled instructions.');
     expect(catalog.entries.find((entry) => entry.name === 'floor-skill')?.description)
-      .toBe('Bundled floor skill');
+      .toBe('Bundled floor skill Invoke without args.');
   });
 
   test('keeps path-scoped bundled built-ins available as the immutable floor', async () => {
@@ -1390,11 +1470,14 @@ describe('agent skills', () => {
       },
     });
     const outline = await runtime.getSkill('outline');
+    const outlineCatalogEntry = (await runtime.buildSkillCatalogSnapshot()).entries
+      .find((entry) => entry.name === 'outline');
 
     expect(await runtime.getSkill('data-cleanup')).toBeNull();
     expect(await runtime.getSkill('outline-import')).toBeNull();
     expect(outline?.allowedTools).toEqual([]);
     expect(outline?.execution).toBe('inline');
+    expect(outlineCatalogEntry?.description).toContain('Invoke without args.');
     expect(outline?.body).toContain('# Outline');
     expect(outline?.body).toContain('## Start Every Task');
     expect(outline?.body).toContain('## Choose One Mutation Shape');
@@ -1455,7 +1538,7 @@ describe('agent skills', () => {
       .toBe(path.join(resourcesPath, 'built-in-skills'));
   });
 
-  test('preserves isolated capability contracts when the catalog description budget is shared', async () => {
+  test('preserves isolated invocation contracts when the catalog description budget is shared', async () => {
     const runtime = new AgentSkillRuntime({
       includeUserSkills: false,
       builtInSkills: [
@@ -1482,16 +1565,106 @@ describe('agent skills', () => {
     const isolated = catalog.entries.find((entry) => entry.name === 'isolated-budget');
 
     expect(catalog.entries.length).toBeGreaterThanOrEqual(100);
-    expect(isolated?.description).toContain('Isolated child');
+    expect(isolated?.description).toContain('Isolated; args=user task');
     expect(isolated?.description).toContain('no Subagents');
-    expect(isolated?.description).toContain('parent handles fan-out');
+    expect(isolated?.description).toContain('parent fans out');
     expect(catalog.entries.filter((entry) => entry.name.startsWith('budget-')).every((entry) => (
-      entry.description.includes('no Subagents')
-      && entry.description.includes('parent handles fan-out')
+      entry.description.includes('args=user task')
+      && entry.description.includes('no Subagents')
+      && entry.description.includes('parent fans out')
     ))).toBe(true);
     expect(catalog.entries.reduce((total, entry) => (
       total + entry.name.length + entry.description.length + 4
     ), 0)).toBeLessThanOrEqual(8_000);
+  });
+
+  test('elides repeated load-only contracts before they exceed the catalog budget', async () => {
+    const runtime = new AgentSkillRuntime({
+      includeUserSkills: false,
+      builtInSkillDirectories: [],
+      builtInSkills: Array.from({ length: 300 }, (_, index) => ({
+        name: `s-${String(index).padStart(3, '0')}`,
+        description: `Load-only catalog entry ${index}`,
+        body: 'Follow the loaded workflow.',
+        modelInvocable: true,
+      })),
+    });
+
+    const catalog = await runtime.buildSkillCatalogSnapshot();
+    const pressureEntries = catalog.entries.filter((entry) => entry.name.startsWith('s-'));
+
+    expect(pressureEntries).toHaveLength(300);
+    expect(pressureEntries.every((entry) => entry.description === '')).toBe(true);
+    expect(catalog.entries.reduce((total, entry) => (
+      total + entry.name.length + entry.description.length + 4
+    ), 0)).toBeLessThanOrEqual(8_000);
+  });
+
+  test('uses compact input labels before fixed contracts exceed the catalog budget', async () => {
+    const runtime = new AgentSkillRuntime({
+      includeUserSkills: false,
+      builtInSkillDirectories: [],
+      builtInSkills: [
+        ...Array.from({ length: 400 }, (_, index) => ({
+          name: `param-${String(index).padStart(3, '0')}`,
+          description: `Parameterized catalog entry ${index}`,
+          body: 'Process $target.',
+          argumentNames: ['target'],
+          modelInvocable: true,
+        })),
+        {
+          name: 'z-isolated-minus',
+          description: 'Isolated without Agent fan-out',
+          body: 'Complete the task.',
+          execution: 'isolated' as const,
+          allowedTools: ['file_read'],
+          modelInvocable: true,
+        },
+        {
+          name: 'z-isolated-plus',
+          description: 'Isolated with Agent fan-out',
+          body: 'Complete the task.',
+          execution: 'isolated' as const,
+          allowedTools: ['agent'],
+          modelInvocable: true,
+        },
+      ],
+    });
+
+    const catalog = await runtime.buildSkillCatalogSnapshot();
+    const parameterized = catalog.entries.filter((entry) => entry.name.startsWith('param-'));
+
+    expect(parameterized).toHaveLength(400);
+    expect(parameterized.every((entry) => entry.description === '[A]')).toBe(true);
+    expect(catalog.entries.find((entry) => entry.name === 'z-isolated-minus')?.description).toBe('[I-]');
+    expect(catalog.entries.find((entry) => entry.name === 'z-isolated-plus')?.description).toBe('[I+]');
+    expect(catalog.entries.reduce((total, entry) => (
+      total + entry.name.length + entry.description.length + 4
+    ), 0)).toBeLessThanOrEqual(8_000);
+  });
+
+  test('keeps a deterministic catalog prefix when names and compact labels exceed the budget', async () => {
+    const runtime = new AgentSkillRuntime({
+      includeUserSkills: false,
+      builtInSkillDirectories: [],
+      builtInSkills: Array.from({ length: 600 }, (_, index) => ({
+        name: `param-${String(index).padStart(3, '0')}`,
+        description: `Parameterized overflow entry ${index}`,
+        body: 'Process $target.',
+        argumentNames: ['target'],
+        modelInvocable: true,
+      })),
+    });
+
+    const catalog = await runtime.buildSkillCatalogSnapshot();
+
+    expect(catalog.entries).toHaveLength(500);
+    expect(catalog.entries[0]?.name).toBe('param-000');
+    expect(catalog.entries.at(-1)?.name).toBe('param-499');
+    expect(catalog.entries.every((entry) => entry.description === '[A]')).toBe(true);
+    expect(catalog.entries.reduce((total, entry) => (
+      total + entry.name.length + entry.description.length + 4
+    ), 0)).toBe(8_000);
   });
 
   test('disabled skill gates apply to built-in Skills', async () => {
@@ -1853,7 +2026,7 @@ describe('agent skills', () => {
     });
     expect(skill?.body).toBe('Use built-in instructions.');
     expect(catalog.entries.find((entry) => entry.name === 'floor-skill')?.description)
-      .toBe('Built-in floor skill');
+      .toBe('Built-in floor skill Invoke without args.');
   });
 
   test('re-lists a same-name skill when its resolved file identity changes', async () => {
@@ -1877,9 +2050,9 @@ describe('agent skills', () => {
     const externalCatalog = await runtime.buildSkillCatalogSnapshot();
 
     expect(projectCatalog.entries.find((entry) => entry.name === 'demo')?.description)
-      .toBe('Project demo skill');
+      .toBe('Project demo skill Invoke without args.');
     expect(externalCatalog.entries.find((entry) => entry.name === 'demo')?.description)
-      .toBe('External demo skill');
+      .toBe('External demo skill Invoke without args.');
   });
 
   test('deduplicates the same skill file loaded through symlinked directories', async () => {

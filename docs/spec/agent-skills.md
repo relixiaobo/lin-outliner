@@ -63,6 +63,23 @@ argument values. Their placeholders refer to the separate child user message tha
 carries the exact invocation task, so model-authored arguments cannot acquire developer
 authority merely by appearing after the Skill body.
 
+The model-visible catalog states that distinction before invocation. An inline Skill
+without `argument-hint` or named `arguments` is load-only and tells the model to omit
+`args`, unless its body contains a supported argument placeholder. A parameterized
+inline Skill advertises its compact authored hint, falling back to its ordered argument
+names or a generic input hint derived from `$ARGUMENTS`, `$ARGUMENTS[n]`, or positional
+placeholders in the body. An isolated Skill tells the parent that `args` carries the
+user task. Contracts that require input are reserved ahead of authored descriptions
+inside the bounded catalog budget. Under catalog pressure, repeated load-only contracts
+and authored descriptions are elided; the shared tool rule defines an entry without a
+full or compact input label as load-only. If full input contracts themselves do not fit,
+every retained entry uses a shared compact label: `[A]` for parameterized inline,
+`[I+]` for isolated with Agent fan-out, and `[I-]` for isolated without it. If names plus
+those minimum labels still exceed the budget, the sorted catalog retains the longest
+prefix that fits. Omission affects model discovery only and does not change any Skill's
+existing model- or user-invocation eligibility. The shared tool field remains optional
+because one `skill` tool serves all three forms.
+
 ## Discovery And Invocation
 
 Every ordinary start or steering admission refreshes the current Skill registry and
@@ -105,9 +122,11 @@ instructions remain child-only developer instructions, while the invocation task
 child's canonical user message. Dynamic embedded-shell results are excluded from the
 instruction snapshot and admitted separately as untrusted child observations. The parent
 receives identity, constraints, and the tool result for audit. The model-facing `skill`
-tool requires the parent to preserve the user's task and
-explicit constraints in arguments without inventing an implementation plan or
-overriding the Skill workflow. There is no prompt overlay, private steering queue, or text parser. Restart
+tool follows the catalog-governed input contract: it omits arguments for load-only
+inline Skills, supplies only declared variable input for parameterized inline Skills,
+and preserves the user's exact task and explicit constraints for isolated Skills
+without inventing an implementation plan or overriding the Skill workflow. There is no
+prompt overlay, private steering queue, or text parser. Restart
 replays the same payload bytes from canonical Items. A later invocation of the same
 canonical name is authoritative from that point forward without deleting or rebinding
 older evidence.
@@ -180,15 +199,15 @@ admission, and projection resolves disposable readable observations from opaque 
 references so transient paths are not frozen into canonical history and exact bytes are
 not copied.
 
-Every isolated Skill catalog entry appends a host-derived execution constraint.
-The constraint states that invocation runs once in a single isolated child Thread
-under an explicit tool ceiling. When that ceiling does not include `agent`, the
-catalog explicitly tells the parent that the Skill cannot perform Agent fan-out and
-that parallel orchestration belongs in the parent Thread. This capability fact is
-derived from the effective Skill definition;
-it is not hand-maintained prose in individual Skill bodies. Catalog budgeting
-reserves every isolated execution constraint before allocating space to authored
-descriptions, so pressure cannot silently remove the capability contract.
+Every isolated Skill catalog entry combines its input contract with a host-derived
+execution constraint. The constraint states that invocation runs once in a single
+isolated child Thread under an explicit tool ceiling. When that ceiling does not
+include `agent`, the catalog tells the parent that the Skill cannot perform Agent
+fan-out and that parallel orchestration belongs in the parent Thread. This capability
+fact is derived from the effective Skill definition; it is not hand-maintained prose
+in individual Skill bodies. Catalog budgeting reserves the complete combined contract
+before allocating space to authored descriptions, so pressure cannot silently remove
+either the input or capability boundary.
 
 The isolated Skill tool result records the child Turn outcome separately from the
 Skill execution mode. A completed outcome wraps the child's completed final
