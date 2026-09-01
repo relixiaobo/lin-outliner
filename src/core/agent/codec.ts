@@ -2172,7 +2172,7 @@ function decodeSubagentExecution(value: unknown, path: string): SubagentExecutio
   const record = recordValue(value, path);
   exactKeys(record, [
     'agentId', 'parentThreadId', 'description', 'agentType', 'runMode', 'generation',
-    'currentTurnId', 'stopProvenance', 'terminalStatus', 'notificationState', 'worktree',
+    'currentTurnId', 'parentItemId', 'stopProvenance', 'terminalStatus', 'notificationState', 'worktree',
     'terminalError', 'deliveryTurnId', 'deliveryClass', 'eligibleAfterGeneration',
     'coverageDisposition', 'omittedOutputBytes', 'omittedOutputTokens', 'generationReceipts',
     'notificationCutoff', 'executionMode', 'settlementCoverage', 'createdAt', 'updatedAt',
@@ -2185,6 +2185,7 @@ function decodeSubagentExecution(value: unknown, path: string): SubagentExecutio
     runMode: enumValue(record.runMode, ['foreground', 'background'], `${path}.runMode`),
     generation: positiveInteger(record.generation, `${path}.generation`),
     currentTurnId: uuidV7(record.currentTurnId, `${path}.currentTurnId`),
+    parentItemId: stringValue(record.parentItemId, `${path}.parentItemId`),
     stopProvenance: enumValue(
       record.stopProvenance,
       ['none', 'model', 'user', 'budget', 'hostRestart'],
@@ -2246,16 +2247,22 @@ function decodeSubagentGenerationReceipt(
 ): SubagentExecutionProjection['generationReceipts'][number] {
   const record = recordValue(value, path);
   exactKeys(record, [
-    'generation', 'turnId', 'terminalStatus', 'durationMs', 'error',
+    'generation', 'turnId', 'parentItemId', 'terminalStatus', 'stopProvenance', 'durationMs', 'error',
     'partialOutputAvailable', 'parentThreadId', 'notificationState', 'deliveryTurnId',
   ], path);
   return deepFreeze({
     generation: positiveInteger(record.generation, `${path}.generation`),
     turnId: uuidV7(record.turnId, `${path}.turnId`),
+    parentItemId: stringValue(record.parentItemId, `${path}.parentItemId`),
     terminalStatus: enumValue(
       record.terminalStatus,
       ['finished', 'failed', 'interrupted', 'killed'],
       `${path}.terminalStatus`,
+    ),
+    stopProvenance: enumValue(
+      record.stopProvenance,
+      ['none', 'model', 'user', 'budget', 'hostRestart'],
+      `${path}.stopProvenance`,
     ),
     durationMs: record.durationMs === null
       ? null

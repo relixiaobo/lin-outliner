@@ -74,6 +74,15 @@ export function SubagentReport({
   }, [delivery.agentId, loaded]);
 
   if (!entry) return null;
+  // Stop ownership belongs to this generation receipt. The stable Agent may
+  // already be running again, but that cannot erase who ended this report.
+  if (receipt?.stopProvenance === 'user') {
+    return (
+      <div className="thread-item thread-agent-note">
+        <span>{t.agent.thread.agent.stoppedNote({ name: entry.displayName })}</span>
+      </div>
+    );
+  }
   const reported = receipt === null
     ? undefined
     : turns?.find((candidate) => candidate.id === receipt.turnId);

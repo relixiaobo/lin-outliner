@@ -1215,7 +1215,10 @@ export interface SubagentWorktreeSummary {
 export interface SubagentGenerationReceipt {
   readonly generation: number;
   readonly turnId: TurnId;
+  /** Stable delegating call identity, unchanged by continuation Turns. */
+  readonly parentItemId: ThreadItemId;
   readonly terminalStatus: SubagentTerminalStatus;
+  readonly stopProvenance: SubagentStopProvenance;
   readonly durationMs: number | null;
   readonly error: SubagentTerminalError | null;
   readonly partialOutputAvailable: boolean;
@@ -1243,6 +1246,8 @@ export interface SubagentExecutionProjection {
   readonly runMode: SubagentRunMode;
   readonly generation: number;
   readonly currentTurnId: TurnId;
+  /** Stable delegating call identity for the current generation. */
+  readonly parentItemId: ThreadItemId;
   readonly stopProvenance: SubagentStopProvenance;
   /**
    * How this generation ended, recorded at terminal settlement. Durable, so a

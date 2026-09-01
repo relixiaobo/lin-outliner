@@ -261,6 +261,17 @@ function anchorGenerationIndex(
   const byAgentTurnId = new Map<string, number>();
   const byParentItemId = new Map<ThreadItemId, number>();
   for (const execution of executions.values()) {
+    for (const receipt of execution.generationReceipts) {
+      // User-driven resumes can retain the original tool identity because no
+      // new parent call exists. The oldest receipt owns that historical anchor;
+      // a later generation must not rewrite it.
+      if (!byParentItemId.has(receipt.parentItemId)) {
+        byParentItemId.set(receipt.parentItemId, receipt.generation);
+      }
+    }
+    if (!byParentItemId.has(execution.parentItemId)) {
+      byParentItemId.set(execution.parentItemId, execution.generation);
+    }
     const generationByTurnId = new Map<TurnId, number>(
       execution.generationReceipts.map((receipt) => [receipt.turnId, receipt.generation]),
     );
@@ -348,9 +359,12 @@ function spawnAnchor(
   item: SubAgentActivityThreadItem,
   generationIndex: ReturnType<typeof anchorGenerationIndex>,
 ): SubagentAnchor {
-  const generation = item.agentTurnId === null
+  const generation = (item.spawnItemId === null
     ? null
-    : generationIndex.byAgentTurnId.get(`${item.agentThreadId}\0${item.agentTurnId}`) ?? null;
+    : generationIndex.byParentItemId.get(item.spawnItemId) ?? null)
+    ?? (item.agentTurnId === null
+      ? null
+      : generationIndex.byAgentTurnId.get(`${item.agentThreadId}\0${item.agentTurnId}`) ?? null);
   return { kind: 'spawn', agentId: item.agentThreadId, itemId: item.id, generation };
 }
 
@@ -517,6 +531,7 @@ function recordlessChildren(
         runMode: 'background',
         generation: 1,
         currentTurnId: input.latestTurnByThread.get(thread.id)?.id ?? thread.id,
+        parentItemId: thread.id,
         stopProvenance: 'none',
         terminalStatus: null,
         notificationState: 'none',

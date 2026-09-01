@@ -626,6 +626,14 @@ a thinner one. Uncommitted admissions are absent by construction — the host
 publishes no start for one and may still roll it back, so a chip for it would be
 a delegation the conversation never made.
 
+The current execution and every terminal receipt also name the stable parent
+Item that delegated that generation. Spawn and resume anchors resolve through
+that identity before consulting child Turn provenance, so an internal
+continuation may change the terminal `turnId` without moving the original chip
+to another generation. When a user-driven resume reuses the original call
+identity, its oldest terminal receipt retains ownership of the historical
+anchor.
+
 The conversation is the only narrative, and every lifecycle event leaves an
 ANCHOR in it at the point where it happened:
 
@@ -693,8 +701,10 @@ ANCHOR in it at the point where it happened:
   non-materialized notification cannot shift an older card onto another run.
   History is fetched once per Agent when the first report renders, since a
   message with nothing in it is not a message;
-- a **stopped note** in place of the completion narration for an Agent the user
-  stopped, naming the resume path.
+- a **stopped note** in place of the completion narration for a generation the
+  user stopped, naming the resume path. Its authority is that generation's
+  immutable receipt, not the stable Agent's current stop flag, because the same
+  Agent may already be running again;
 
 Terminal activity Items render nothing. Every spawn and resume chip carries the
 generation identified by child Turn provenance. While that generation is live,

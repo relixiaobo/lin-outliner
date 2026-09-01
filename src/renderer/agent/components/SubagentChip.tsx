@@ -151,7 +151,9 @@ export function generationReceiptStatus(
   t: Messages,
   includeDuration = true,
 ): string {
-  const label = receipt.terminalStatus === 'finished'
+  const label = receipt.stopProvenance === 'user'
+    ? t.agent.thread.agent.runStopped
+    : receipt.terminalStatus === 'finished'
     ? t.agent.thread.agent.runFinished
     : receipt.terminalStatus === 'failed'
       ? t.agent.thread.agent.runFailed

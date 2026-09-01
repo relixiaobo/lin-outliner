@@ -154,7 +154,15 @@ describe('Agent registry projection', () => {
     const spawn = activity('spawn', 'started', null, 'agent-call', 'child-turn-1');
     const spawnTurn = parentTurn('turn-1', [collaborationItem('agent-call', 'agent', 'completed', CHILD_ID), spawn]);
     const resumeTurn = parentTurn('turn-3', [collaborationItem('resume-call', 'agent_message', 'completed', CHILD_ID)]);
-    const firstChildTurn = childTurn('child-turn-1', 'failed', 100);
+    const firstChildTurn = childTurn('child-turn-1', 'completed', 100);
+    const terminalContinuation: Turn = {
+      ...childTurn('child-turn-1-continuation', 'failed', 150),
+      provenance: {
+        originThreadId: CHILD_ID,
+        originTurnId: 'child-turn-1-continuation',
+        trigger: { kind: 'continuation', sourceTurnId: firstChildTurn.id },
+      },
+    };
     const secondChildTurn: Turn = {
       ...childTurn('child-turn-2', 'inProgress', 200),
       provenance: {
@@ -166,7 +174,7 @@ describe('Agent registry projection', () => {
     const projection = projectSubagentConversation(input({
       turnsByThread: new Map([
         [PARENT_ID, [spawnTurn, resumeTurn]],
-        [CHILD_ID, [firstChildTurn, secondChildTurn]],
+        [CHILD_ID, [firstChildTurn, terminalContinuation, secondChildTurn]],
       ]),
       latestTurnByThread: new Map([[CHILD_ID, secondChildTurn]]),
       executions: executionMap([execution({
@@ -174,7 +182,8 @@ describe('Agent registry projection', () => {
         currentTurnId: secondChildTurn.id,
         generationReceipts: [receipt({
           generation: 1,
-          turnId: firstChildTurn.id,
+          turnId: terminalContinuation.id,
+          parentItemId: 'agent-call',
           terminalStatus: 'failed',
         })],
       })]),
@@ -184,7 +193,7 @@ describe('Agent registry projection', () => {
     expect(anchorList(projection, resumeTurn.id)[0]).toMatchObject({ generation: 2 });
     expect(projection.byAgentId.get(CHILD_ID)).toMatchObject({ generation: 2, status: 'running' });
     expect(projection.byAgentId.get(CHILD_ID)?.generationReceipts.get(1))
-      .toMatchObject({ terminalStatus: 'failed', turnId: firstChildTurn.id });
+      .toMatchObject({ terminalStatus: 'failed', turnId: terminalContinuation.id });
   });
 
   test('never reads an Agent\'s own delegated Turn as its own result arriving', () => {
@@ -475,7 +484,9 @@ function receipt(overrides: Partial<SubagentGenerationReceipt> = {}): SubagentGe
   return {
     generation: 1,
     turnId: 'child-turn',
+    parentItemId: 'agent-call',
     terminalStatus: 'finished',
+    stopProvenance: 'none',
     durationMs: 10,
     error: null,
     partialOutputAvailable: true,
@@ -495,6 +506,7 @@ function execution(overrides: Partial<SubagentExecutionProjection> = {}): Subage
     runMode: 'background',
     generation: 1,
     currentTurnId: 'child-turn',
+    parentItemId: 'agent-call',
     stopProvenance: 'none',
     terminalStatus: null,
     notificationState: 'none',

@@ -461,6 +461,7 @@ const subagentExecution: SubagentExecutionProjection = {
   runMode: 'background',
   generation: 2,
   currentTurnId: TURN_ID,
+  parentItemId: 'spawn-item',
   stopProvenance: 'user',
   terminalStatus: 'interrupted',
   notificationState: 'delivered',
@@ -474,7 +475,9 @@ const subagentExecution: SubagentExecutionProjection = {
   generationReceipts: [{
     generation: 2,
     turnId: TURN_ID,
+    parentItemId: 'spawn-item',
     terminalStatus: 'interrupted',
+    stopProvenance: 'user',
     durationMs: 100,
     error: null,
     partialOutputAvailable: true,

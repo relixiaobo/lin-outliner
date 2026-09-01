@@ -3561,7 +3561,7 @@ test.describe('canonical agent Thread surface', () => {
     await page.getByRole('menu', { name: 'Thread actions' }).getByRole('menuitem', { name: 'Thread Details' }).click();
     const details = page.getByRole('dialog', { name: 'Thread Details' });
     await expect(details.locator('.thread-details-subagent')).toHaveCount(3);
-    await expect(details.getByRole('button', { name: 'Open live worker' })).toContainText('Working');
+    await expect(details.getByRole('button', { name: 'Open live worker' })).toContainText('Running');
     await expect(details.getByRole('button', { name: 'Open finished worker' })).toContainText('Idle');
     // Idle is not finished: this child is holding work the parent handed over.
     await expect(details.getByRole('button', { name: 'Open queued worker' })).toContainText('Work queued');
@@ -3583,7 +3583,7 @@ test.describe('canonical agent Thread surface', () => {
     await confirm.getByRole('button', { name: 'Delete Thread' }).click();
     // Nothing was deleted: every child was busy by the time it was confirmed.
     await expect(details.locator('.thread-details-subagent')).toHaveCount(3);
-    await expect(details.getByRole('button', { name: 'Open finished worker' })).toContainText('Working');
+    await expect(details.getByRole('button', { name: 'Open finished worker' })).toContainText('Running');
 
     // Now let it settle and sweep for real.
     await page.evaluate(() => {
@@ -4414,7 +4414,7 @@ test.describe('canonical agent Thread surface', () => {
         deliveryClass: 'ordinary',
         coverageDisposition: 'full',
       });
-      return { childId, childTurnId, deliveryTurnId, parentThreadId, startedAt };
+      return { callId, childId, childTurnId, deliveryTurnId, parentThreadId, startedAt };
     });
 
     // The conversation is still the narrative: the main agent's prose is the
@@ -4632,6 +4632,7 @@ test.describe('canonical agent Thread surface', () => {
       target.__LIN_E2E__?.setMockSubagentExecution(ids.childId, {
         generation: 2,
         currentTurnId: secondTurnId,
+        parentItemId: '01910000-0000-7000-8000-000000004a14',
         terminalStatus: null,
         notificationState: 'none',
         terminalError: null,
@@ -4639,7 +4640,9 @@ test.describe('canonical agent Thread surface', () => {
         generationReceipts: [{
           generation: 1,
           turnId: ids.childTurnId,
+          parentItemId: ids.callId,
           terminalStatus: 'failed',
+          stopProvenance: 'none',
           durationMs: 2_000,
           error: {
             code: 'provider_failure',

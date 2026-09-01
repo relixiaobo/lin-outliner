@@ -1012,7 +1012,9 @@ describe('ThreadItemView Agent chips', () => {
     const receipt = {
       generation: 1,
       turnId: 'child-turn-1',
+      parentItemId: 'chip-historical-failure',
       terminalStatus: 'failed' as const,
+      stopProvenance: 'none' as const,
       durationMs: 2_000,
       error: { code: 'provider_failure', messagePreview: 'Provider unavailable', omittedBytes: 0 },
       partialOutputAvailable: true,
@@ -1040,11 +1042,43 @@ describe('ThreadItemView Agent chips', () => {
       .toBe('Provider unavailable');
   });
 
+  test('keeps a historical user stop factual while the stable Agent works again', async () => {
+    const receipt = {
+      generation: 1,
+      turnId: 'child-turn-1',
+      parentItemId: 'chip-historical-stop',
+      terminalStatus: 'interrupted' as const,
+      stopProvenance: 'user' as const,
+      durationMs: 2_000,
+      error: null,
+      partialOutputAvailable: false,
+      parentThreadId: 'thread-1',
+      notificationState: 'delivered' as const,
+      deliveryTurnId: 'delivery-turn-1',
+    };
+    const rendered = renderItem(spawnActivity('chip-historical-stop'), {
+      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-historical-stop', generation: 1 },
+      registry: registryOf({
+        generation: 2,
+        generationReceipts: new Map([[1, receipt]]),
+        status: 'running',
+        stoppedByUser: false,
+      }),
+    });
+    await flush();
+
+    const chip = rendered.document.querySelector('.thread-agent-chip');
+    expect(chip?.textContent).toContain('This run was stopped · 2s');
+    expect(chip?.textContent).not.toContain('Working');
+  });
+
   test('keeps historical budget failures on bounded product copy', async () => {
     const receipt = {
       generation: 1,
       turnId: 'child-turn-1',
+      parentItemId: 'chip-historical-budget',
       terminalStatus: 'failed' as const,
+      stopProvenance: 'budget' as const,
       durationMs: 2_000,
       error: {
         code: 'subagent_budget_exhausted',
@@ -1073,7 +1107,9 @@ describe('ThreadItemView Agent chips', () => {
     const receipt = {
       generation: 1,
       turnId: 'child-turn-1',
+      parentItemId: 'chip-historical-foreground',
       terminalStatus: 'finished' as const,
+      stopProvenance: 'none' as const,
       durationMs: 2_000,
       error: null,
       partialOutputAvailable: true,

@@ -8821,6 +8821,11 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     expect(fixture.executor.contexts[2]?.configuration.tools).toEqual([]);
     fixture.executor.finish(2);
     await fixture.service.waitForIdle(isolated.thread.id);
+    await waitUntil(() => (
+      fixture.service.listThreadSubagents({ threadId: root.id }).data
+        .find((execution) => execution.agentId === isolated.thread.id)
+        ?.generationReceipts[0]?.terminalStatus === 'finished'
+    ));
 
     expect(fixture.service.listThreadSubagents({ threadId: root.id }).data)
       .toContainEqual(expect.objectContaining({
@@ -9733,6 +9738,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       agentType: 'general-purpose',
       runMode: 'background',
       generation: 1,
+      parentItemId: 'projection-spawn',
       executionMode: 'ordinary',
       stopProvenance: 'none',
       terminalStatus: null,
@@ -9757,7 +9763,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       'deliveryClass', 'deliveryTurnId', 'description', 'eligibleAfterGeneration', 'executionMode', 'generation',
       'generationReceipts',
       'notificationCutoff', 'notificationState', 'omittedOutputBytes', 'omittedOutputTokens',
-      'parentThreadId', 'runMode', 'settlementCoverage', 'stopProvenance', 'terminalError',
+      'parentItemId', 'parentThreadId', 'runMode', 'settlementCoverage', 'stopProvenance', 'terminalError',
       'terminalStatus', 'updatedAt', 'worktree',
     ]);
     expect(notifications.filter((notification) => notification.type === 'subagent/execution/changed'))
@@ -9780,7 +9786,9 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       expect.objectContaining({
         generation: 1,
         turnId: settled?.currentTurnId,
+        parentItemId: 'projection-spawn',
         terminalStatus: 'finished',
+        stopProvenance: 'none',
         durationMs: expect.any(Number),
         error: null,
         partialOutputAvailable: true,

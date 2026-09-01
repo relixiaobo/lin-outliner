@@ -43,6 +43,7 @@ export function projectSubagentExecution(
     runMode: record.runMode,
     generation: record.generation,
     currentTurnId: record.currentTurnId,
+    parentItemId: record.toolUseId,
     stopProvenance: record.stopProvenance,
     terminalStatus: terminal?.status ?? null,
     notificationState,
@@ -76,7 +77,9 @@ export function projectSubagentGenerationReceipt(
   return {
     generation: notification.generation,
     turnId: notification.turnId,
+    parentItemId: notification.toolUseId,
     terminalStatus: notification.status,
+    stopProvenance: notification.stopProvenance,
     durationMs: turn?.durationMs ?? null,
     error: notification.error,
     partialOutputAvailable: turn !== null && turnTerminalAnswer(turn.items).trim().length > 0,

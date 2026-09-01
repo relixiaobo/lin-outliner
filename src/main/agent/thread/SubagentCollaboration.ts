@@ -455,7 +455,10 @@ export class SubagentCollaboration {
     turn: Turn,
     failureOrigin?: 'providerFailure' | 'contextFailure' | 'hostFailure',
   ): void {
-    if (thread.parentThreadId === null || thread.source !== 'collaboration') return;
+    if (
+      thread.parentThreadId === null
+      || (thread.source !== 'collaboration' && thread.source !== 'agent.skill')
+    ) return;
     const execution = this.executions.read(thread.id);
     if (!execution || execution.currentTurnId !== turn.id) return;
     const terminal = this.terminalRouting(execution, turn, failureOrigin);
@@ -1796,17 +1799,19 @@ export class SubagentCollaboration {
       this.pendingSubagentActivities.set(thread.parentThreadId, queued);
       // An isolated Skill has no Agent notification lifecycle, so its terminal
       // transition must not wake a parent blocked on Agent children; the
-      // `skill` call that is already awaiting it owns its outcome.
+      // `skill` call that is already awaiting it owns its outcome. It still
+      // settles its reserved terminal pipeline so presentation gets the same
+      // durable per-generation receipt as every delegated form.
       if (form === 'collaboration') {
         this.signalCollaborationActivity(thread.parentThreadId);
-        const execution = this.executions.read(thread.id);
-        if (execution && execution.currentTurnId === turn.id) {
-          const reservation = this.terminalSettlementReservations.get(
-            executionKey(execution.agentId, execution.generation),
-          );
-          if (reservation) this.startReservedTerminalSettlement(reservation);
-          else this.persistAgentTerminal(thread, turn);
-        }
+      }
+      const execution = this.executions.read(thread.id);
+      if (execution && execution.currentTurnId === turn.id) {
+        const reservation = this.terminalSettlementReservations.get(
+          executionKey(execution.agentId, execution.generation),
+        );
+        if (reservation) this.startReservedTerminalSettlement(reservation);
+        else this.persistAgentTerminal(thread, turn);
       }
     }
 

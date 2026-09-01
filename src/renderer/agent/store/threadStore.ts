@@ -1328,7 +1328,9 @@ function generationReceiptsEqual(
   return left.every((receipt, index) => (
     receipt.generation === right[index]?.generation
     && receipt.turnId === right[index]?.turnId
+    && receipt.parentItemId === right[index]?.parentItemId
     && receipt.terminalStatus === right[index]?.terminalStatus
+    && receipt.stopProvenance === right[index]?.stopProvenance
     && receipt.durationMs === right[index]?.durationMs
     && receipt.error?.code === right[index]?.error?.code
     && receipt.error?.messagePreview === right[index]?.error?.messagePreview
