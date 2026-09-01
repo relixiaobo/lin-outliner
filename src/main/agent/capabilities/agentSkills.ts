@@ -40,6 +40,7 @@ export const SKILL_TOOL_NAME = 'skill';
 const SKILL_FILE_NAME = 'SKILL.md';
 const DEFAULT_SKILL_LISTING_CHAR_BUDGET = 8_000;
 const MAX_LISTING_DESCRIPTION_CHARS = 250;
+const MAX_LISTING_ARGUMENT_HINT_CHARS = 48;
 const MIN_NON_EMPTY_DESCRIPTION_CHARS = 20;
 const requireForElectron = createRequire(import.meta.url);
 const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
@@ -108,7 +109,7 @@ const SKILL_TOOL_PARAMETERS = {
     },
     args: {
       type: 'string',
-      description: 'Optional user task or input for the skill. Preserve the user\'s intent and explicit constraints; do not invent implementation instructions or override the skill workflow.',
+      description: 'Optional input governed by the selected Skill catalog entry. Omit for load-only Skills; pass only declared values for parameterized inline Skills; pass the exact user task for isolated Skills.',
     },
   },
 };
@@ -758,12 +759,13 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
       'When users ask you to perform tasks, check if any available skills match. Skills provide specialized capabilities and domain knowledge.',
       'When users reference a slash skill or "/<something>" (e.g., "/commit", "/review-pr"), they are referring to a skill. Use this tool to invoke it.',
       'How to invoke:',
-      '- Use this tool with the skill name and optional arguments',
-      '- Arguments carry the user task or input. Preserve the user\'s intent and explicit constraints; never use arguments to replace or override the Skill\'s workflow.',
+      '- Use this tool with the Skill name and follow that catalog entry\'s input contract.',
+      '- Omit `args` when the catalog says `Invoke without args.` The canonical user message already carries the task.',
+      '- For `Args: ...`, pass only the declared variable input. For an isolated Skill, pass the exact user task and explicit constraints without adding an implementation plan.',
       '- Examples:',
-      '  - `skill: "pdf"` - invoke the pdf skill',
+      '  - `skill: "outline"` - load an inline Skill without arguments',
       '  - `skill: "commit", args: "-m \'Fix bug\'"` - invoke with arguments',
-      '  - `skill: "review-pr", args: "123"` - invoke with arguments',
+      '  - `skill: "research", args: "Compare the two exact targets"` - pass a task to an isolated Skill',
       'Important:',
       '- Available skills are listed in the current Skill catalog context.',
       `- When a skill matches the user's request, this is a BLOCKING REQUIREMENT: invoke the relevant ${SKILL_TOOL_NAME} tool BEFORE generating any other response about the task.`,
@@ -2171,11 +2173,10 @@ function formatSkillDescription(
   const budget = Math.max(0, Math.min(maxChars, MAX_LISTING_DESCRIPTION_CHARS));
   if (budget === 0) return '';
   const authored = authoredSkillDescription(skill);
-  if (skill.execution !== 'isolated') return truncate(authored, budget);
-  const constraint = isolatedSkillExecutionContract(skill);
-  if (budget <= constraint.length) return truncate(constraint, budget);
-  const authoredBudget = budget - constraint.length - 1;
-  return `${truncate(authored, authoredBudget)} ${constraint}`.trim();
+  const contract = skillInvocationContract(skill);
+  if (budget <= contract.length) return truncate(contract, budget);
+  const authoredBudget = budget - contract.length - 1;
+  return `${truncate(authored, authoredBudget)} ${contract}`.trim();
 }
 
 function boundedSkillCatalogDescriptions(
@@ -2189,23 +2190,19 @@ function boundedSkillCatalogDescriptions(
   const fullLength = full.reduce((total, [name, description]) => total + name.length + description.length + 4, 0);
   if (fullLength <= DEFAULT_SKILL_LISTING_CHAR_BUDGET) return new Map(full);
   const nameOverhead = skills.reduce((total, skill) => total + skill.name.length + 4, 0);
-  const contractOverhead = skills.reduce((total, skill) => (
-    total + (skill.execution === 'isolated'
-      ? isolatedSkillExecutionContract(skill).length + 1
-      : 0)
-  ), 0);
+  const contractOverhead = skills.reduce(
+    (total, skill) => total + skillInvocationContract(skill).length + 1,
+    0,
+  );
   const authoredBudget = Math.max(0, DEFAULT_SKILL_LISTING_CHAR_BUDGET - nameOverhead - contractOverhead);
   const perAuthoredDescription = Math.floor(authoredBudget / skills.length);
   return new Map(skills.map((skill) => [
     skill.name,
-    skill.execution === 'isolated'
-      ? formatSkillDescription(
-          skill,
-          isolatedSkillExecutionContract(skill).length + 1 + perAuthoredDescription,
-        )
-      : perAuthoredDescription < MIN_NON_EMPTY_DESCRIPTION_CHARS
-        ? ''
-        : truncate(authoredSkillDescription(skill), Math.min(perAuthoredDescription, MAX_LISTING_DESCRIPTION_CHARS)),
+    formatSkillDescription(
+      skill,
+      skillInvocationContract(skill).length
+        + (perAuthoredDescription < MIN_NON_EMPTY_DESCRIPTION_CHARS ? 0 : 1 + perAuthoredDescription),
+    ),
   ]));
 }
 
@@ -2215,10 +2212,16 @@ function authoredSkillDescription(skill: SkillDefinition): string {
     : skill.description;
 }
 
-function isolatedSkillExecutionContract(skill: SkillDefinition): string {
-  return skill.allowedTools.includes('agent')
-    ? 'Isolated child; Subagent spawn declared; parent ceiling applies.'
-    : 'Isolated child; no Subagents; parent handles fan-out.';
+function skillInvocationContract(skill: SkillDefinition): string {
+  if (skill.execution === 'isolated') {
+    return skill.allowedTools.includes('agent')
+      ? 'Isolated; args=user task; Subagents allowed; parent ceiling.'
+      : 'Isolated; args=user task; no Subagents; parent fans out.';
+  }
+  const argumentHint = compactInlineText(skill.argumentHint ?? skill.argumentNames.join(' '));
+  return argumentHint
+    ? `Args: ${truncate(argumentHint, MAX_LISTING_ARGUMENT_HINT_CHARS)}.`
+    : 'Invoke without args.';
 }
 
 function codeRegisteredSkillContentHash(skill: SkillDefinition): string {
