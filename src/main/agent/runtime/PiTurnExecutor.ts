@@ -50,6 +50,7 @@ import {
   ContextCapacityError,
   ContextCompactionRequiredError,
   planContextBudget,
+  validateCanonicalProviderHistory,
 } from '../context/ContextBudgetPlanner';
 import { freezePendingToolOutputProjections } from '../context/ToolOutputProjection';
 import { cursorFor, latestContextEpochId, selectEffectiveContext } from '../context/ContextEpoch';
@@ -158,6 +159,17 @@ export interface PiAgentRuntime {
 
 export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
   constructor(private readonly options: PiTurnExecutorOptions = {}) {}
+
+  async planFailureContinuation(context: TurnExecutionContext): Promise<boolean> {
+    const runtime = await (this.options.resolveRuntime ?? resolveDefaultRuntime)(context);
+    const projection = await new CanonicalContextProjector(runtime.model, context, {
+      threadHistoryReadAvailable: context.configuration.tools.includes('thread_read'),
+    }).projectTurnsWithBoundaries([...context.historyBeforeTurn, context.turn]);
+    validateCanonicalProviderHistory(projection.messages);
+    return projection.assistantBoundaries.some((boundary) => (
+      boundary.turnId === context.turn.id && boundary.itemIds.length > 0
+    ));
+  }
 
   async planInputCapacity(
     context: TurnExecutionContext,

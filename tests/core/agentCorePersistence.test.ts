@@ -345,13 +345,13 @@ describe('Agent Core persistence', () => {
     expect((await store.read(threadId)).map((entry) => entry.ordinal)).toEqual([0, 1, 2]);
   });
 
-  test('rejects authorless rollout, restoration, retry, and projection records', async () => {
+  test('rejects authorless rollout, restoration, rerun, and projection records', async () => {
     const root = await tempRoot();
     const threadId = uuidV7(1_050);
     const rollout = trackedRolloutStore(join(root, 'strict-author-rollouts'));
     const original = lifecycle(threadId, 5_000);
     const replacement = lifecycle(threadId, 5_100)[0];
-    if (replacement?.type !== 'turn/started') throw new Error('Missing retry replacement fixture');
+    if (replacement?.type !== 'turn/started') throw new Error('Missing rerun replacement fixture');
 
     await expect(rollout.append(
       threadId,
@@ -365,7 +365,7 @@ describe('Agent Core persistence', () => {
     }])).rejects.toThrow('item.author');
 
     for (const notification of original) await rollout.append(threadId, notification);
-    await rollout.appendHistoryRetry(createThreadHistoryRollbackContext(
+    await rollout.appendHistoryRerun(createThreadHistoryRollbackContext(
       uuidV7(5_200),
       threadId,
       [original[0]!.turnId!],
@@ -816,44 +816,44 @@ describe('Agent Core persistence', () => {
     rebuilt.close();
   });
 
-  test('projects a failed Turn retry as one atomic rollout event', async () => {
+  test('projects a failed Turn rerun as one atomic rollout event', async () => {
     const root = await tempRoot();
-    const rollout = trackedRolloutStore(join(root, 'retry-rollouts'));
+    const rollout = trackedRolloutStore(join(root, 'rerun-rollouts'));
     const threadId = uuidV7(2_200);
     const originalLifecycle = lifecycle(threadId, 4_500);
     for (const notification of originalLifecycle) await rollout.append(threadId, notification);
 
     const incremental = new ThreadHistoryProjectionStore(
-      join(root, 'retry-history.sqlite'),
-      testDatabase(join(root, 'retry-history.sqlite')),
+      join(root, 'rerun-history.sqlite'),
+      testDatabase(join(root, 'rerun-history.sqlite')),
     );
     incremental.applyMany(await rollout.read(threadId));
     const originalTurnId = incremental.listTurns({ threadId }).data[0]!.id;
     const replacementLifecycle = lifecycle(threadId, 4_600);
     const replacementStarted = replacementLifecycle[0];
     if (replacementStarted?.type !== 'turn/started') throw new Error('Missing replacement Turn start');
-    const beforeRetry = incremental.projectionVersion(threadId);
-    const retry = await rollout.appendHistoryRetry(createThreadHistoryRollbackContext(
+    const beforeRerun = incremental.projectionVersion(threadId);
+    const rerun = await rollout.appendHistoryRerun(createThreadHistoryRollbackContext(
       uuidV7(4_700),
       threadId,
       [originalTurnId],
-      beforeRetry,
-      beforeRetry + 1,
+      beforeRerun,
+      beforeRerun + 1,
     ), replacementStarted);
 
-    incremental.apply(retry);
+    incremental.apply(rerun);
     expect(incremental.listTurns({ threadId }).data.map((turn) => ({ id: turn.id, status: turn.status })))
       .toEqual([{ id: replacementStarted.turnId, status: 'inProgress' }]);
-    expect(incremental.rollbackMarker(retry.event.rollbackId)?.omittedTurnIds).toEqual([originalTurnId]);
+    expect(incremental.rollbackMarker(rerun.event.rollbackId)?.omittedTurnIds).toEqual([originalTurnId]);
     for (const notification of replacementLifecycle.slice(1)) {
       incremental.apply(await rollout.append(threadId, notification));
     }
 
     const entries = await rollout.read(threadId);
-    expect(entries.filter((entry) => entry.event.type === 'history/retry')).toHaveLength(1);
+    expect(entries.filter((entry) => entry.event.type === 'history/rerun')).toHaveLength(1);
     const rebuilt = new ThreadHistoryProjectionStore(
-      join(root, 'retry-history-rebuilt.sqlite'),
-      testDatabase(join(root, 'retry-history-rebuilt.sqlite')),
+      join(root, 'rerun-history-rebuilt.sqlite'),
+      testDatabase(join(root, 'rerun-history-rebuilt.sqlite')),
     );
     rebuilt.rebuildThread(threadId, entries);
     expect(rebuilt.listTurns({ threadId })).toEqual(incremental.listTurns({ threadId }));

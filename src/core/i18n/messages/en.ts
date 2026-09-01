@@ -1384,7 +1384,10 @@ export const en = {
       resourceLimitReached: 'Task reached the system resource limit. Results have been preserved.',
       retrying: ({ attempt, maxRetries }: { attempt: number; maxRetries: number }) => `Retrying ${attempt}/${maxRetries}`,
       reconnecting: ({ attempt, maxRetries }: { attempt: number; maxRetries: number }) => `Reconnecting ${attempt}/${maxRetries}`,
-      retryTurn: 'Retry',
+      continueFromFailure: 'Continue from failure',
+      rerunTurn: 'Rerun turn',
+      rerunConfirmTitle: 'Rerun this turn?',
+      rerunConfirmMessage: 'This turn already ran actions. Rerunning starts from the beginning and may repeat them.',
       stopUnavailable: 'That work already finished.',
       stopSubagent: ({ name }: { name: string }) => `Stop ${name}`,
       subagentStatuses: {

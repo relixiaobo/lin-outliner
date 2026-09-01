@@ -479,7 +479,7 @@ export class ThreadCatalogOps {
         ? copiedTurn
         : decodeTurn({ ...copiedTurn, execution: { ...copiedTurn.execution, diagnosticsRef } });
     }
-  async replaceLatestTurnForRetryWithLocksHeld(
+  async replaceLatestTurnForRerunWithLocksHeld(
       threadId: ThreadId,
       target: Turn,
       replacement: Extract<AgentCoreRecordedNotification, { readonly type: 'turn/started' }>,
@@ -487,14 +487,14 @@ export class ThreadCatalogOps {
       const record = this.core.requireThread(threadId);
       const thread = record.thread;
       if (thread.ephemeral || thread.parentThreadId !== null || thread.threadSource !== 'user') {
-        throw new Error('Turn retry is available only for persistent root user Threads');
+        throw new Error('Turn rerun is available only for persistent root user Threads');
       }
       if (replacement.threadId !== thread.id || replacement.turnId === target.id) {
-        throw new Error('Turn retry replacement does not match its target');
+        throw new Error('Turn rerun replacement does not match its target');
       }
       const turns = this.core.allTurns(thread.id);
       if (turns.at(-1)?.id !== target.id || target.status === 'inProgress') {
-        throw this.createThreadBusyError('Turn retry target is no longer the latest terminal Turn');
+        throw this.createThreadBusyError('Turn rerun target is no longer the latest terminal Turn');
       }
       await this.flushThreadNotificationsBestEffort(thread.id);
       const beforeProjectionVersion = this.core.history.projectionVersion(thread.id);
@@ -518,7 +518,7 @@ export class ThreadCatalogOps {
 
       let projectionError: RecordedNotificationProjectionError | null = null;
       try {
-        await this.core.persistHistoryRetry(context, replacement);
+        await this.core.persistHistoryRerun(context, replacement);
       } catch (error) {
         if (error instanceof RecordedNotificationProjectionError) {
           projectionError = error;
@@ -611,7 +611,7 @@ export class ThreadCatalogOps {
         // and must not turn a committed rollback into a reported operation failure.
         //
         // RESOURCES are reclaimed against surviving history plus removed user
-        // messages. Edit/Retry re-sends that exact user content, so its managed
+        // messages. Edit/Rerun re-sends that exact user content, so its managed
         // attachments must remain readable between rollback and admission.
         // Tool outputs and generated context are not re-sent; once their Item
         // owner is removed they are ordinary garbage and must stop consuming the

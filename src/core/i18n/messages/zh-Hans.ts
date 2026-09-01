@@ -1287,7 +1287,10 @@ export const zhHans: PartialMessages = {
       resourceLimitReached: '任务达到系统资源上限，成果已保全。',
       retrying: ({ attempt, maxRetries }) => `正在重试 ${attempt}/${maxRetries}`,
       reconnecting: ({ attempt, maxRetries }) => `正在重新连接 ${attempt}/${maxRetries}`,
-      retryTurn: '重试',
+      continueFromFailure: '从失败处继续',
+      rerunTurn: '重新运行本轮',
+      rerunConfirmTitle: '重新运行本轮？',
+      rerunConfirmMessage: '本轮已经执行过操作。重新运行会从头开始，并可能重复这些操作。',
       stopUnavailable: '该工作已经结束。',
       stopSubagent: ({ name }: { name: string }) => `停止 ${name}`,
       subagentStatuses: {

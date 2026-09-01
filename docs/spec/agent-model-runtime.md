@@ -638,7 +638,7 @@ decoding. Every privileged producer supplies its non-reader author explicitly:
 delegated briefs and Agent messages name their source Thread; child terminal delivery
 names the child; host-only envelopes and budget notices use `host`; and Automation,
 Goal continuation, Memory, and other feature prompts use `feature` with their existing
-stable reference when one exists. Retry and fork preserve the author already recorded
+stable reference when one exists. Rerun and fork preserve the author already recorded
 on each source Item. A direct Skill invocation remains reader-authored because its
 structured input came from the renderer; `request_user_input` remains a control-plane
 record rather than a synthetic `userMessage`.
@@ -891,13 +891,20 @@ it when replacement output begins, recovery settles, cancellation wins, or the T
 terminalizes. Request retries and stream reconnections create neither Items nor persisted
 transcript history; only the final exhausted or non-retryable failure reaches the Turn.
 
-Manual retry is a new Turn, not another transport attempt. Its first provider
-request projects the complete ordered canonical replacement: initial input followed
+Manual recovery is never another transport attempt. Continue appends a new linked Turn
+and projects the failed source through `CanonicalContextProjector`; the
+`ContextBudgetPlanner` protocol-unit validator rejects incomplete tool-call/result
+history, and interrupted assistant tails remain evidence without entering provider
+history. A bounded application directive tells the model that settled assistant/tool
+history is completed evidence and must not be repeated unless the reader explicitly
+asks. The runtime dispatches only the new Turn; historical tool Items are never enqueued.
+
+Rerun instead projects a complete ordered canonical replacement: initial input followed
 by every steering input accepted by the failed Turn, with each input's structured
-content, accepted timestamp, stable client ID, and admission evidence preserved.
-The atomic replacement excludes assistant/tool output and runtime-only evidence
-from the failed attempt, so retry cannot duplicate an effect or flatten steering
-context ahead of the initial request.
+content, accepted timestamp, stable client ID, author, and admission evidence preserved.
+The atomic replacement excludes assistant/tool output and runtime-only evidence from the
+failed attempt. Main requires explicit confirmation when the source contains a settled
+tool because replay starts from the beginning and may repeat effects.
 
 Timeout, maximum transient retries, maximum retry delay, and cache retention are read
 once at Turn execution start and applied consistently to each provider request. Custom

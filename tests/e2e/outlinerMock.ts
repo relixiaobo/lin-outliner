@@ -73,6 +73,8 @@ interface MockFixtureOptions {
   translationDelayMs?: number;
   /** Completes mock Agent Turns as failed without an assistant message. */
   agentTurnFailure?: boolean | string;
+  /** Keeps the normal assistant response when the mock Turn fails. */
+  agentTurnFailureHasResponse?: boolean;
   /** Rejects turn/submit before accepting a Turn. */
   agentTurnSubmitReject?: boolean | string;
   /** Completes a request-time active Turn, then delays before admitting a new Turn. */
@@ -850,7 +852,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       provenance: {
         originThreadId: string;
         originTurnId: string;
-        trigger: { kind: 'user' } | { kind: 'feature'; feature: 'automation'; ref: string };
+        trigger:
+          | { kind: 'user' }
+          | { kind: 'continuation'; sourceTurnId: string }
+          | { kind: 'feature'; feature: 'automation'; ref: string };
       };
       status: 'inProgress' | 'completed' | 'interrupted' | 'failed';
       error: { message: string } | null;
@@ -4185,14 +4190,80 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           thread.updatedAt = ++now;
           return clone({ thread }) as T;
         }
-        if (method === 'turn/retry') {
+        if (method === 'turn/recovery/read') {
+          const thread = threadById(String(input.threadId));
+          const target = (mockTurns.get(thread.id) ?? []).at(-1);
+          const available = target?.id === input.turnId && target.status === 'failed';
+          return clone({
+            canContinue: available && target.items.some((item) => (
+              item.type === 'agentMessage' && item.phase !== 'interrupted' && item.text.length > 0
+            )),
+            canRerun: available,
+            rerunRequiresConfirmation: false,
+          }) as T;
+        }
+        if (method === 'turn/continue') {
           const thread = threadById(String(input.threadId));
           const turns = mockTurns.get(thread.id) ?? [];
           const target = turns.at(-1);
-          if (!target || target.id !== input.turnId) throw new Error('Only the latest Turn can be retried.');
-          if (target.status !== 'failed') throw new Error('This Turn is not retryable.');
+          if (!target || target.id !== input.turnId || target.status !== 'failed') {
+            throw new Error('Only the latest failed Turn can be continued.');
+          }
+          if (!target.items.some((item) => (
+            item.type === 'agentMessage' && item.phase !== 'interrupted' && item.text.length > 0
+          ))) {
+            throw new Error('This Turn cannot continue from failure.');
+          }
+          const turnId = nextCanonicalId();
+          const userItemId = nextCanonicalId();
+          const startedAt = ++now;
+          const continuation: MockTurn = {
+            id: turnId,
+            items: [{
+              type: 'userMessage',
+              id: userItemId,
+              provenance: itemProvenance(thread.id, turnId, userItemId),
+              author: { kind: 'host' },
+              clientId: null,
+              acceptedAt: startedAt,
+              content: [],
+            }],
+            itemsView: 'full',
+            provenance: {
+              originThreadId: thread.id,
+              originTurnId: turnId,
+              trigger: { kind: 'continuation', sourceTurnId: target.id },
+            },
+            status: 'inProgress',
+            error: null,
+            execution: clone(target.execution),
+            startedAt,
+            completedAt: null,
+            durationMs: null,
+            updatedAt: startedAt,
+          };
+          emitAgentCoreNotification({
+            type: 'turn/started',
+            threadId: thread.id,
+            turnId,
+            turn: continuation,
+          });
+          thread.status = { type: 'active', activeFlags: [] };
+          thread.updatedAt = startedAt;
+          emitAgentCoreNotification({ type: 'thread/status/changed', threadId: thread.id, status: thread.status });
+          return clone({ thread, turn: continuation, sourceTurnId: target.id }) as T;
+        }
+        if (method === 'turn/rerun') {
+          const thread = threadById(String(input.threadId));
+          const turns = mockTurns.get(thread.id) ?? [];
+          const target = turns.at(-1);
+          if (!target || target.id !== input.turnId) throw new Error('Only the latest Turn can be rerun.');
+          if (target.status !== 'failed') throw new Error('This Turn cannot be rerun.');
+          if (typeof input.confirmToolReplay !== 'boolean') {
+            throw new Error('Rerun confirmation must be explicit.');
+          }
           const sourceUserItem = target.items.find((item) => item.type === 'userMessage');
-          if (!sourceUserItem) throw new Error('Retry input is missing from the canonical Turn.');
+          if (!sourceUserItem) throw new Error('Rerun input is missing from the canonical Turn.');
           const turnId = nextCanonicalId();
           const userItemId = nextCanonicalId();
           const startedAt = ++now;
@@ -4954,7 +5025,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             : 'Mock provider failure';
           const completedTurn: MockTurn = {
             ...activeTurn,
-            items: options.agentTurnFailure ? [userItem] : [userItem, responseItem],
+            items: options.agentTurnFailure && !options.agentTurnFailureHasResponse
+              ? [userItem]
+              : [userItem, responseItem],
             status: options.agentTurnFailure ? 'failed' : 'completed',
             error: options.agentTurnFailure ? { message: failureMessage } : null,
             completedAt: startedAt + 24,

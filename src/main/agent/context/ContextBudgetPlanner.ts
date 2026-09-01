@@ -136,6 +136,11 @@ export function estimateTextTokens(value: string): number {
   return Math.max(1, Math.ceil(value.length / FALLBACK_CHARS_PER_TOKEN));
 }
 
+/** Validate that provider history contains only complete protocol units. */
+export function validateCanonicalProviderHistory(messages: readonly Message[]): void {
+  contextMessageUnits(messages);
+}
+
 interface ContextMessageUnit {
   readonly start: number;
   readonly end: number;

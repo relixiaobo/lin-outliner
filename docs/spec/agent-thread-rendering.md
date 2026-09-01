@@ -854,46 +854,43 @@ single text-motion owner as the default mode. A failed or interrupted Turn
 with partial response prose keeps its process presentation neutral because the
 response tail already owns the terminal error or stopped state.
 
-A last Turn the user did not end leads its action row with **Retry**, which sends
-only `{threadId, turnId}` through the canonical `turn/retry` command. Main, not
-the renderer, reconstructs the replacement from the sealed Turn's structured
-input batches, stable client IDs, accepted timestamps, admission evidence, and
-original trigger. The initial input and every accepted steering input keep
-their canonical order and evidence/user-message boundary in the replacement;
-failed-attempt assistant/tool output is not replayed. A host-authored subagent
-delivery therefore remains host-authored; Retry never converts its hidden
-notification envelope into reader-authored text. The renderer does not reuse
-Edit's rollback-and-send path or infer replay input from visible prose.
-Without Retry the only way forward would be to edit a reader message — which
-frames a crash as something they mistyped and cannot represent a host-authored
-Turn at all.
+A latest failed persistent root user Turn asks main for recovery capabilities with
+`turn/recovery/read`; renderer does not infer eligibility from visible Items. When both
+are available, its response actions begin with **Continue from failure**, then
+**Rerun turn**, before Copy, Continue in new chat, and Open Trajectory. A failed
+capability read hides both recovery controls without breaking the transcript.
 
-It is offered only where the action can actually run and could end differently.
-Only on the last Turn, because the command replaces exactly one. Only where the
-composer is enabled, since retry admission is available only on a persistent
-root user Thread — anywhere the user cannot type, a Retry could only fail. A failure
-qualifies, including one with no recorded error; an exhausted Agent request budget
-qualifies because spend is request-scoped, so a new user Turn delegates against a
-fresh grant. A structural depth limit does not, because the next attempt from the
-same lineage meets the same wall; a concurrent limit may clear when another Agent
-settles. An interrupt qualifies
-ONLY when the host restarted under the Turn: that is recorded as an interrupt but
-was nobody's decision, unlike a user pressing Stop, which keeps its ruling that
-neither Retry nor Regenerate is offered for a choice they made.
+Continue is available only when main revalidates an idle, latest failed Turn and the
+real model's canonical projection contains at least one complete settled assistant/tool
+unit beyond accepted input. It sends only `{threadId, turnId}` through `turn/continue`.
+Success preserves the failed evidence row and appends a new Turn whose typed
+`continuation` trigger points to the source. Its content-free host input stays hidden,
+while canonical application context tells the model to treat settled history as evidence
+rather than redispatching tools. An interrupted assistant tail, incomplete protocol unit,
+stale source, or projection failure offers no Continue and performs no write.
 
-Main serializes retry with renderer submission and root host admission, then
-prepares every fallible admission step while the failed Turn is still canonical.
-The commit is one internal `history/retry` rollout event: projection removes the
-failed suffix Turn and inserts the replacement `turn/started` inside one SQLite
-transaction. Admission or append failure therefore leaves the old Turn intact;
-restart can observe only the complete old or complete replacement state. Payload
-cleanup and `turn/started` publication happen after that commit. Every restored
-client ID is rebound to its new canonical user Item only after the replacement
-is durable.
+Rerun is the explicit whole-Turn replay path. Main reconstructs the replacement from the
+sealed Turn's structured input batches, stable client IDs, accepted timestamps, admission
+evidence, exact authors, and original trigger. The initial input and every accepted
+steering input retain canonical order and evidence/user-message boundaries; failed-attempt
+assistant/tool output is excluded. A host-authored subagent delivery therefore remains
+host-authored, and renderer never reuses Edit's rollback-and-send path or visible prose.
 
-Retry is latched while the single command round trip is in flight, and a refusal
-is reported in place rather than swallowed, so a Thread the host left in an
-error state says so instead of presenting a button that does nothing.
+Rerun is offered only where replay can run and could end differently: the latest Turn,
+an enabled composer on a persistent root user Thread, and a qualifying failure or
+host-restart interruption. A structural depth limit does not qualify, and user Stop
+remains a decision rather than a failure to replay. If the source contains any settled
+tool, the action first opens a broad confirmation that replay may repeat actions. Cancel
+sends no mutation; Confirm sends `confirmToolReplay: true`. A source without settled
+tools sends `false` directly.
+
+Main serializes Rerun with renderer submission and root host admission, then prepares
+every fallible step while the failed Turn remains canonical. One internal
+`history/rerun` event removes the suffix Turn from current projection and inserts the
+replacement `turn/started` in one SQLite transaction; rollout evidence remains
+append-only. Admission or append failure leaves the old Turn intact, and restart sees
+only the complete old or complete replacement state. Both recovery commands latch while
+their round trip is in flight and report refusal in place rather than swallowing it.
 
 Unknown Item kinds are protocol errors, not generic fallback cards. Item status
 comes from the Item itself; the renderer never infers completion from missing
@@ -943,7 +940,7 @@ reference and preview surfaces
 as the outliner; Cmd/Ctrl-click preserves new-pane navigation, and HTTP links use
 the app preview route. User messages retain Copy and, for the latest terminal
 Turn only, Edit; final agent messages retain Copy, Continue in new chat, and
-Details, preceded by Retry on a last Turn the user did not end. User messages that exceed five reading lines retain the established
+Details, preceded by any main-authorized Continue/Rerun actions. User messages that exceed five reading lines retain the established
 measured Show more / Show less disclosure instead of
 growing the transcript without bound.
 
@@ -1271,9 +1268,9 @@ unreachable. A live refresh without a cursor uses the inclusive
 `startOrderKey` / `endOrderKey` in `replacementRange`. A running fallback outside
 that range is removed only when incoming primary or related evidence identifies
 the same canonical Thread Item; another record from the same Turn is insufficient.
-Each canonical zero-based Turn position has exactly one Turn ID. When retry or
+Each canonical zero-based Turn position has exactly one Turn ID. When Rerun or
 rollback replaces the Turn at a position, a live refresh removes every loaded
-record from the retired Turn ID, including retry activities beyond the incoming
+record from the retired Turn ID, including Rerun activities beyond the incoming
 order-key range, so two different Turns can never render with the same Turn label.
 The same cursorless refresh treats whole-Thread `summary.turnCount` as the
 canonical suffix boundary and removes loaded records whose `turnIndex` is no
@@ -1900,7 +1897,7 @@ stream recovery in the matching Turn's response footer, replacing the rose
 generating indicator in that fixed slot. The initial request is separate from
 request retries `1/5` through `5/5`. The status and every intermediate failure
 disappear when the provider recovers; exhaustion leaves only the terminal Turn
-error and its manual Retry action.
+error and its main-authorized recovery actions.
 
 `update_plan` is an ordinary tool call and is recorded like any other: the
 session shows the complete, actual process, so a Plan update the agent

@@ -11,15 +11,15 @@ export interface ThreadHistoryRollbackMarker extends ThreadHistoryRollbackContex
   readonly type: 'history/rollback';
 }
 
-export interface ThreadHistoryRetryMarker extends ThreadHistoryRollbackContext {
-  readonly type: 'history/retry';
+export interface ThreadHistoryRerunMarker extends ThreadHistoryRollbackContext {
+  readonly type: 'history/rerun';
   readonly replacement: Extract<AgentCoreRecordedNotification, { readonly type: 'turn/started' }>;
 }
 
 export type RolloutEvent =
   | AgentCoreRecordedNotification
   | ThreadHistoryRollbackMarker
-  | ThreadHistoryRetryMarker;
+  | ThreadHistoryRerunMarker;
 
 export interface RolloutRecord {
   readonly ordinal: number;
@@ -113,15 +113,15 @@ export class RolloutStore {
     return this.appendEvent(context.threadId, { type: 'history/rollback', ...context }, recordedAt);
   }
 
-  async appendHistoryRetry(
+  async appendHistoryRerun(
     context: ThreadHistoryRollbackContext,
     replacementInput: Extract<AgentCoreRecordedNotification, { readonly type: 'turn/started' }>,
     recordedAt = Date.now(),
   ): Promise<RolloutEntry> {
     const replacement = decodeAgentCoreRecordedNotification(replacementInput);
-    if (replacement.type !== 'turn/started') throw new Error('History retry replacement must start a Turn');
+    if (replacement.type !== 'turn/started') throw new Error('History rerun replacement must start a Turn');
     return this.appendEvent(context.threadId, {
-      type: 'history/retry',
+      type: 'history/rerun',
       ...context,
       replacement,
     }, recordedAt);
@@ -490,7 +490,7 @@ function decodeEnvelope(encoded: string, byteOffset: number, byteLength: number)
 
 function decodeRolloutEvent(value: unknown): RolloutEvent {
   if (!isRecord(value)) return decodeAgentCoreRecordedNotification(value);
-  if (value.type === 'history/retry') return decodeHistoryRetryMarker(value);
+  if (value.type === 'history/rerun') return decodeHistoryRerunMarker(value);
   if (value.type !== 'history/rollback') return decodeAgentCoreRecordedNotification(value);
   const keys = Object.keys(value).sort();
   if (keys.join(',') !== 'afterProjectionVersion,beforeProjectionVersion,omittedTurnIds,rollbackId,threadId,type') {
@@ -509,16 +509,16 @@ function decodeRolloutEvent(value: unknown): RolloutEvent {
   return Object.freeze({ type: 'history/rollback', ...context });
 }
 
-function decodeHistoryRetryMarker(value: Record<string, unknown>): ThreadHistoryRetryMarker {
+function decodeHistoryRerunMarker(value: Record<string, unknown>): ThreadHistoryRerunMarker {
   const keys = Object.keys(value).sort();
   if (
     keys.join(',')
     !== 'afterProjectionVersion,beforeProjectionVersion,omittedTurnIds,replacement,rollbackId,threadId,type'
   ) {
-    throw new Error('Invalid history retry marker fields');
+    throw new Error('Invalid history rerun marker fields');
   }
   if (!Array.isArray(value.omittedTurnIds) || value.omittedTurnIds.length !== 1) {
-    throw new Error('History retry must replace exactly one Turn');
+    throw new Error('History rerun must replace exactly one Turn');
   }
   assertThreadId(String(value.threadId));
   for (const turnId of value.omittedTurnIds) assertThreadId(String(turnId));
@@ -530,14 +530,14 @@ function decodeHistoryRetryMarker(value: Record<string, unknown>): ThreadHistory
     Number(value.afterProjectionVersion),
   );
   const replacement = decodeAgentCoreRecordedNotification(value.replacement);
-  if (replacement.type !== 'turn/started') throw new Error('History retry replacement must start a Turn');
+  if (replacement.type !== 'turn/started') throw new Error('History rerun replacement must start a Turn');
   if (replacement.threadId !== context.threadId) {
-    throw new Error('History retry replacement Thread does not match its rollback');
+    throw new Error('History rerun replacement Thread does not match its rollback');
   }
   if (context.omittedTurnIds.includes(replacement.turnId)) {
-    throw new Error('History retry replacement must use a new Turn id');
+    throw new Error('History rerun replacement must use a new Turn id');
   }
-  return Object.freeze({ type: 'history/retry', ...context, replacement });
+  return Object.freeze({ type: 'history/rerun', ...context, replacement });
 }
 
 async function fileSize(path: string): Promise<number> {

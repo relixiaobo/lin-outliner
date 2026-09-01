@@ -1812,7 +1812,9 @@ describe('Codex Agent Core protocol codec', () => {
         input: [{ type: 'text', text: 'Steer' }],
       },
       'turn/interrupt': { threadId: THREAD_ID, turnId: TURN_ID },
-      'turn/retry': { threadId: THREAD_ID, turnId: TURN_ID },
+      'turn/recovery/read': { threadId: THREAD_ID, turnId: TURN_ID },
+      'turn/continue': { threadId: THREAD_ID, turnId: TURN_ID },
+      'turn/rerun': { threadId: THREAD_ID, turnId: TURN_ID, confirmToolReplay: false },
       'goal/get': { threadId: THREAD_ID },
       'goal/create': { threadId: THREAD_ID, objective: 'Replace Agent Core' },
       'goal/update': { threadId: THREAD_ID, status: 'complete' },
@@ -1913,7 +1915,13 @@ describe('Codex Agent Core protocol codec', () => {
       'turn/start': { turn: completedTurn, acceptedItemId: 'item-1', deduplicated: false },
       'turn/steer': { turnId: TURN_ID, acceptedItemId: 'item-1', deduplicated: true },
       'turn/interrupt': { turnId: TURN_ID },
-      'turn/retry': { thread, turn: completedTurn, replacedTurnId: TURN_ID },
+      'turn/recovery/read': {
+        canContinue: true,
+        canRerun: true,
+        rerunRequiresConfirmation: false,
+      },
+      'turn/continue': { thread, turn: completedTurn, sourceTurnId: TURN_ID },
+      'turn/rerun': { thread, turn: completedTurn, replacedTurnId: TURN_ID },
       'goal/get': { goal: null },
       'goal/create': { goal },
       'goal/update': { goal: { ...goal, status: 'complete' } },
@@ -1949,6 +1957,18 @@ describe('Codex Agent Core protocol codec', () => {
       numTurns: 1,
       turnId: TURN_ID,
     })).toThrow('unknown fields: turnId');
+  });
+
+  test('requires an explicit settled-tool confirmation decision for Rerun', () => {
+    expect(() => decodeAgentCoreRequest('turn/rerun', {
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+    })).toThrow('confirmToolReplay');
+    expect(decodeAgentCoreRequest('turn/rerun', {
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      confirmToolReplay: true,
+    })).toEqual({ threadId: THREAD_ID, turnId: TURN_ID, confirmToolReplay: true });
   });
 
   test('fails closed when raw Turn diagnostics are absent, mismatched, or malformed', () => {

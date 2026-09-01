@@ -312,6 +312,18 @@ class ControlledExecutor implements TurnExecutor {
   }
 }
 
+class RecoveryExecutor extends ControlledExecutor {
+  readonly recoveryContexts: TurnExecutionContext[] = [];
+  recoveryResult = true;
+  recoveryError: Error | null = null;
+
+  async planFailureContinuation(context: TurnExecutionContext): Promise<boolean> {
+    this.recoveryContexts.push(context);
+    if (this.recoveryError) throw this.recoveryError;
+    return this.recoveryResult;
+  }
+}
+
 class FinalCitationExecutor implements TurnExecutor {
   constructor(private readonly answer: string) {}
 
@@ -5119,7 +5131,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     // The attachment survives the rollback...
     expect(await stores.resources.readExact(ref)).toEqual(Buffer.from('notes bytes'));
     // ...and re-sending the very content that was removed resolves it, which is
-    // what Edit and Retry do. Pruning against the surviving history alone left
+    // what Edit and Rerun do. Pruning against the surviving history alone left
     // this throwing `Managed attachment payload is unavailable or corrupt`.
     const again = await service.startRendererTurn({ threadId: thread.id, input: resent });
     expect(again.turn.id).not.toBe(sent.turn.id);
@@ -5198,7 +5210,279 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     await service.close();
   });
 
-  test('retries every accepted input batch with its evidence and stable client id', async () => {
+  test('continues a projectable failed root Turn as one linked append', async () => {
+    const executor = new RecoveryExecutor();
+    const fixture = await createFixture(undefined, {}, executor);
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Continue after the failure' }],
+    });
+    await executor.waitUntilWaiting(0);
+    executor.finishWithText(0, 'Settled partial result', {
+      status: 'failed',
+      error: { message: 'Provider unavailable' },
+    });
+    await fixture.service.waitForIdle(thread.id);
+
+    expect(await fixture.service.request('turn/recovery/read', {
+      threadId: thread.id,
+      turnId: accepted.turn.id,
+    })).toEqual({ canContinue: true, canRerun: true, rerunRequiresConfirmation: false });
+    const continued = await fixture.service.request('turn/continue', {
+      threadId: thread.id,
+      turnId: accepted.turn.id,
+    });
+
+    expect(continued.sourceTurnId).toBe(accepted.turn.id);
+    expect(continued.turn.provenance.trigger).toEqual({
+      kind: 'continuation',
+      sourceTurnId: accepted.turn.id,
+    });
+    expect(continued.turn.items.some((item) => (
+      item.type === 'userMessage' && item.author.kind === 'host' && item.content.length === 0
+    ))).toBe(true);
+    const currentTurns = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns!;
+    expect(currentTurns.map((turn) => turn.id)).toEqual([accepted.turn.id, continued.turn.id]);
+    expect(currentTurns[0]).toMatchObject({ status: 'failed', error: { message: 'Provider unavailable' } });
+
+    await executor.waitUntilWaiting(1);
+    expect(executor.contexts[1]!.historyBeforeTurn.at(-1)?.id).toBe(accepted.turn.id);
+    expect(executor.contexts[1]!.turn.items.some((item) => item.type === 'commandExecution')).toBe(false);
+    executor.finish(1);
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
+  test('waits through terminal cleanup before answering a recovery probe', async () => {
+    const executor = new RecoveryExecutor();
+    const fixture = await createFixture(undefined, {}, executor);
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Expose recovery only after cleanup' }],
+    });
+    await executor.waitUntilWaiting();
+
+    const prune = fixture.stores.payloads.pruneUnreferencedContexts.bind(fixture.stores.payloads);
+    let markCleanupStarted!: () => void;
+    let releaseCleanup!: () => void;
+    const cleanupStarted = new Promise<void>((resolve) => { markCleanupStarted = resolve; });
+    const cleanupRelease = new Promise<void>((resolve) => { releaseCleanup = resolve; });
+    fixture.stores.payloads.pruneUnreferencedContexts = async (...args) => {
+      markCleanupStarted();
+      await cleanupRelease;
+      return prune(...args);
+    };
+
+    try {
+      executor.finishWithText(0, 'Settled partial result', {
+        status: 'failed',
+        error: { message: 'Provider unavailable' },
+      });
+      await cleanupStarted;
+
+      let readSettled = false;
+      const recovery = fixture.service.request('turn/recovery/read', {
+        threadId: thread.id,
+        turnId: accepted.turn.id,
+      }).finally(() => { readSettled = true; });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(readSettled).toBe(false);
+
+      releaseCleanup();
+      expect(await recovery).toEqual({
+        canContinue: true,
+        canRerun: true,
+        rerunRequiresConfirmation: false,
+      });
+      expect(executor.recoveryContexts).toHaveLength(1);
+    } finally {
+      releaseCleanup();
+      fixture.stores.payloads.pruneUnreferencedContexts = prune;
+      await fixture.service.waitForIdle(thread.id);
+      await fixture.service.close();
+    }
+  });
+
+  test('waits for recovery finalization before taking the root admission lock', async () => {
+    const executor = new RecoveryExecutor();
+    const fixture = await createFixture(undefined, {}, executor);
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.request('goal/create', {
+      threadId: thread.id,
+      objective: 'Continue after each incomplete Turn',
+    });
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Fail before the Goal continues' }],
+    });
+    await executor.waitUntilWaiting();
+
+    const prune = fixture.stores.payloads.pruneUnreferencedContexts.bind(fixture.stores.payloads);
+    let markCleanupStarted!: () => void;
+    let releaseCleanup!: () => void;
+    const cleanupStarted = new Promise<void>((resolve) => { markCleanupStarted = resolve; });
+    const cleanupRelease = new Promise<void>((resolve) => { releaseCleanup = resolve; });
+    fixture.stores.payloads.pruneUnreferencedContexts = async (...args) => {
+      markCleanupStarted();
+      await cleanupRelease;
+      return prune(...args);
+    };
+    let goalCompleted = false;
+    let goalFinished = false;
+
+    try {
+      executor.finishWithText(0, 'Settled partial result', {
+        status: 'failed',
+        error: { message: 'Provider unavailable' },
+      });
+      await cleanupStarted;
+      const continuation = fixture.service.request('turn/continue', {
+        threadId: thread.id,
+        turnId: accepted.turn.id,
+      }).then(
+        (value) => ({ status: 'resolved' as const, value }),
+        (error: unknown) => ({ status: 'rejected' as const, error }),
+      );
+
+      releaseCleanup();
+      await withTimeout(executor.waitUntilWaiting(1), 1_000);
+      expect(await withTimeout(continuation, 1_000)).toEqual({
+        status: 'rejected',
+        error: expect.objectContaining({ message: 'This Turn cannot continue from failure' }),
+      });
+      expect(executor.contexts[1]?.turn.provenance.trigger).toMatchObject({
+        kind: 'feature',
+        feature: 'goal_continuation',
+      });
+      await fixture.service.request('goal/update', { threadId: thread.id, status: 'complete' });
+      goalCompleted = true;
+      executor.finish(1);
+      goalFinished = true;
+    } finally {
+      releaseCleanup();
+      fixture.stores.payloads.pruneUnreferencedContexts = prune;
+      if (!goalCompleted) {
+        await fixture.service.request('goal/update', { threadId: thread.id, status: 'complete' }).catch(() => undefined);
+      }
+      if (!goalFinished && executor.contexts[1]) executor.finish(1);
+      await fixture.service.waitForIdle(thread.id);
+      await fixture.service.close();
+    }
+  });
+
+  test('degrades an unavailable continuation probe without changing canonical history', async () => {
+    const executor = new RecoveryExecutor();
+    executor.recoveryError = new Error('projection unavailable');
+    const fixture = await createFixture(undefined, {}, executor);
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Do not mutate this failure' }],
+    });
+    await executor.waitUntilWaiting(0);
+    executor.finish(0, { status: 'failed', error: { message: 'Provider unavailable' } });
+    await fixture.service.waitForIdle(thread.id);
+    const before = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns;
+
+    expect(await fixture.service.request('turn/recovery/read', {
+      threadId: thread.id,
+      turnId: accepted.turn.id,
+    })).toEqual({ canContinue: false, canRerun: true, rerunRequiresConfirmation: false });
+    await expect(fixture.service.request('turn/continue', {
+      threadId: thread.id,
+      turnId: accepted.turn.id,
+    })).rejects.toThrow('cannot continue from failure');
+    expect(fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns).toEqual(before);
+    expect(executor.contexts).toHaveLength(1);
+    await fixture.service.close();
+  });
+
+  test('requires explicit confirmation before rerunning a Turn with a settled tool', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Run an action' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    const context = fixture.executor.contexts[0]!;
+    const toolId = context.recorder.createItemId();
+    const tool = {
+      type: 'commandExecution' as const,
+      id: toolId,
+      provenance: context.recorder.localProvenance(toolId),
+      command: 'touch output.txt',
+      description: 'Create an output file',
+      cwd: fixture.root,
+      processId: null,
+      status: 'completed' as const,
+      outputRef: null,
+      commandActions: [],
+      aggregatedOutput: '',
+      exitCode: 0,
+      durationMs: 1,
+      modelCall: replayableModelCall('bash', { command: 'touch output.txt' }),
+    };
+    await context.recorder.started({ ...tool, status: 'inProgress', exitCode: null, durationMs: null });
+    await context.recorder.completed(tool);
+    fixture.executor.finish(0, { status: 'failed', error: { message: 'Provider unavailable' } });
+    await fixture.service.waitForIdle(thread.id);
+    const before = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns;
+
+    expect(await fixture.service.request('turn/recovery/read', {
+      threadId: thread.id,
+      turnId: accepted.turn.id,
+    })).toMatchObject({ canRerun: true, rerunRequiresConfirmation: true });
+    await expect(fixture.service.request('turn/rerun', {
+      threadId: thread.id,
+      turnId: accepted.turn.id,
+      confirmToolReplay: false,
+    })).rejects.toThrow('confirmation is required');
+    expect(fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns).toEqual(before);
+    expect((await fixture.stores.rollout.read(thread.id)).some((entry) => (
+      entry.event.type === 'history/rerun'
+    ))).toBe(false);
+
+    const rerun = await fixture.service.request('turn/rerun', {
+      threadId: thread.id,
+      turnId: accepted.turn.id,
+      confirmToolReplay: true,
+    });
+    expect(rerun.replacedTurnId).toBe(accepted.turn.id);
+    await fixture.executor.waitUntilWaiting(1);
+    fixture.executor.finish(1);
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
+  test('reruns every accepted input batch with its evidence and stable client id', async () => {
     const fixture = await createFixture();
     const thread = (await fixture.service.startThread({
       source: 'app',
@@ -5209,14 +5493,14 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     const accepted = await fixture.service.startRendererTurn({
       threadId: thread.id,
       input: [{ type: 'text', text: 'Draft a plan' }],
-      clientUserMessageId: 'retry-initial-input',
+      clientUserMessageId: 'rerun-initial-input',
     });
     await fixture.executor.waitUntilWaiting(0);
     await fixture.service.steerTurn({
       threadId: thread.id,
       expectedTurnId: accepted.turn.id,
       input: [{ type: 'text', text: 'Also include costs' }],
-      clientUserMessageId: 'retry-steering-input',
+      clientUserMessageId: 'rerun-steering-input',
     });
     fixture.executor.finish(0, { status: 'failed', error: { message: 'Provider unavailable' } });
     await fixture.service.waitForIdle(thread.id);
@@ -5241,53 +5525,54 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       }];
       return [];
     });
-    const retried = await fixture.service.request('turn/retry', {
+    const rerun = await fixture.service.request('turn/rerun', {
       threadId: thread.id,
       turnId: failed.id,
+      confirmToolReplay: false,
     });
 
-    expect(retried.replacedTurnId).toBe(failed.id);
-    expect(retried.turn.id).not.toBe(failed.id);
-    expect(retried.turn.provenance.trigger).toEqual({ kind: 'user' });
-    expect(acceptedInputSignature(retried.turn)).toEqual(acceptedInputSignature(failed));
-    const retriedInputs = retried.turn.items.filter((item) => item.type === 'userMessage');
-    expect(retriedInputs.map((item) => ({ clientId: item.clientId, content: item.content }))).toEqual([
-      { clientId: 'retry-initial-input', content: [{ type: 'text', text: 'Draft a plan' }] },
-      { clientId: 'retry-steering-input', content: [{ type: 'text', text: 'Also include costs' }] },
+    expect(rerun.replacedTurnId).toBe(failed.id);
+    expect(rerun.turn.id).not.toBe(failed.id);
+    expect(rerun.turn.provenance.trigger).toEqual({ kind: 'user' });
+    expect(acceptedInputSignature(rerun.turn)).toEqual(acceptedInputSignature(failed));
+    const rerunInputs = rerun.turn.items.filter((item) => item.type === 'userMessage');
+    expect(rerunInputs.map((item) => ({ clientId: item.clientId, content: item.content }))).toEqual([
+      { clientId: 'rerun-initial-input', content: [{ type: 'text', text: 'Draft a plan' }] },
+      { clientId: 'rerun-steering-input', content: [{ type: 'text', text: 'Also include costs' }] },
     ]);
-    expect(fixture.stores.metadata.readClientInput(thread.id, 'retry-initial-input')).toMatchObject({
-      turnId: retried.turn.id,
-      itemId: retriedInputs[0]!.id,
+    expect(fixture.stores.metadata.readClientInput(thread.id, 'rerun-initial-input')).toMatchObject({
+      turnId: rerun.turn.id,
+      itemId: rerunInputs[0]!.id,
     });
-    expect(fixture.stores.metadata.readClientInput(thread.id, 'retry-steering-input')).toMatchObject({
-      turnId: retried.turn.id,
-      itemId: retriedInputs[1]!.id,
+    expect(fixture.stores.metadata.readClientInput(thread.id, 'rerun-steering-input')).toMatchObject({
+      turnId: rerun.turn.id,
+      itemId: rerunInputs[1]!.id,
     });
     expect(fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns
-      ?.map((turn) => turn.id)).toEqual([retried.turn.id]);
+      ?.map((turn) => turn.id)).toEqual([rerun.turn.id]);
 
     await fixture.executor.waitUntilWaiting(1);
     expect(fixture.executor.contexts[1]!.turn.items
       .filter((item) => item.type === 'userMessage')
-      .map((item) => item.content)).toEqual(retriedInputs.map((item) => item.content));
+      .map((item) => item.content)).toEqual(rerunInputs.map((item) => item.content));
     fixture.executor.finish(1);
     await fixture.service.waitForIdle(thread.id);
-    expect(fixture.service.readTurnForHost(thread.id, retried.turn.id)).toMatchObject({
+    expect(fixture.service.readTurnForHost(thread.id, rerun.turn.id)).toMatchObject({
       status: 'completed',
       error: null,
     });
     await fixture.service.close();
   });
 
-  test('keeps the failed Turn intact when retry admission fails before the atomic replacement', async () => {
+  test('keeps the failed Turn intact when Rerun admission fails before the atomic replacement', async () => {
     const registry = new ExtensionRegistry();
     let admissionCount = 0;
     registry.register({
-      id: 'retry-admission-failure',
+      id: 'rerun-admission-failure',
       contributeTurnAdmission: () => {
         admissionCount += 1;
-        if (admissionCount === 2) throw new Error('retry admission failed');
-        return { extensionId: 'retry-admission-failure', snapshotId: 'initial-admission' };
+        if (admissionCount === 2) throw new Error('rerun admission failed');
+        return { extensionId: 'rerun-admission-failure', snapshotId: 'initial-admission' };
       },
     });
     const fixture = await createFixture(registry);
@@ -5300,42 +5585,43 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     const accepted = await fixture.service.startRendererTurn({
       threadId: thread.id,
       input: [{ type: 'text', text: 'Keep this failed Turn' }],
-      clientUserMessageId: 'atomic-retry-input',
+      clientUserMessageId: 'atomic-rerun-input',
     });
     await fixture.executor.waitUntilWaiting();
     fixture.executor.finish(0, { status: 'failed', error: { message: 'Provider unavailable' } });
     await fixture.service.waitForIdle(thread.id);
     const before = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns;
 
-    await expect(fixture.service.request('turn/retry', {
+    await expect(fixture.service.request('turn/rerun', {
       threadId: thread.id,
       turnId: accepted.turn.id,
-    })).rejects.toThrow('retry admission failed');
+      confirmToolReplay: false,
+    })).rejects.toThrow('rerun admission failed');
 
     expect(fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns)
       .toEqual(before);
     expect((await fixture.stores.rollout.read(thread.id)).some((entry) => (
-      entry.event.type === 'history/retry'
+      entry.event.type === 'history/rerun'
     ))).toBe(false);
     await fixture.service.close();
   });
 
-  test('drains retry admission and fences its atomic replacement during shutdown', async () => {
-    let releaseRetryAdmission!: () => void;
-    let retryAdmissionStarted!: () => void;
-    const retryAdmissionRelease = new Promise<void>((resolve) => { releaseRetryAdmission = resolve; });
-    const retryAdmissionStart = new Promise<void>((resolve) => { retryAdmissionStarted = resolve; });
+  test('drains Rerun admission and fences its atomic replacement during shutdown', async () => {
+    let releaseRerunAdmission!: () => void;
+    let rerunAdmissionStarted!: () => void;
+    const rerunAdmissionRelease = new Promise<void>((resolve) => { releaseRerunAdmission = resolve; });
+    const rerunAdmissionStart = new Promise<void>((resolve) => { rerunAdmissionStarted = resolve; });
     let admissionCount = 0;
     const registry = new ExtensionRegistry();
     registry.register({
-      id: 'retry-shutdown-fence',
+      id: 'rerun-shutdown-fence',
       contributeTurnAdmission: async () => {
         admissionCount += 1;
         if (admissionCount === 2) {
-          retryAdmissionStarted();
-          await retryAdmissionRelease;
+          rerunAdmissionStarted();
+          await rerunAdmissionRelease;
         }
-        return { extensionId: 'retry-shutdown-fence', snapshotId: `admission-${admissionCount}` };
+        return { extensionId: 'rerun-shutdown-fence', snapshotId: `admission-${admissionCount}` };
       },
     });
     const fixture = await createFixture(registry);
@@ -5353,27 +5639,28 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     fixture.executor.finish(0, { status: 'failed', error: { message: 'Provider unavailable' } });
     await fixture.service.waitForIdle(thread.id);
 
-    const retried = fixture.service.request('turn/retry', {
+    const rerun = fixture.service.request('turn/rerun', {
       threadId: thread.id,
       turnId: accepted.turn.id,
+      confirmToolReplay: false,
     });
-    await retryAdmissionStart;
+    await rerunAdmissionStart;
 
     let closeSettled = false;
     const closing = fixture.service.close().finally(() => { closeSettled = true; });
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(closeSettled).toBe(false);
-    releaseRetryAdmission();
+    releaseRerunAdmission();
 
-    await expect(retried).rejects.toThrow('Agent service is shutting down');
+    await expect(rerun).rejects.toThrow('Agent service is shutting down');
     await closing;
     expect(fixture.executor.contexts).toHaveLength(1);
     expect((await fixture.stores.rollout.read(thread.id)).some((entry) => (
-      entry.event.type === 'history/retry'
+      entry.event.type === 'history/rerun'
     ))).toBe(false);
   });
 
-  test('keeps the failed Turn intact when the atomic retry append fails', async () => {
+  test('keeps the failed Turn intact when the atomic Rerun append fails', async () => {
     const fixture = await createFixture();
     const thread = (await fixture.service.startThread({
       source: 'app',
@@ -5389,26 +5676,27 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     fixture.executor.finish(0, { status: 'failed', error: { message: 'Provider unavailable' } });
     await fixture.service.waitForIdle(thread.id);
     const before = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns;
-    const appendHistoryRetry = fixture.stores.rollout.appendHistoryRetry.bind(fixture.stores.rollout);
-    fixture.stores.rollout.appendHistoryRetry = async () => {
-      throw new Error('atomic retry append failed');
+    const appendHistoryRerun = fixture.stores.rollout.appendHistoryRerun.bind(fixture.stores.rollout);
+    fixture.stores.rollout.appendHistoryRerun = async () => {
+      throw new Error('atomic rerun append failed');
     };
 
-    await expect(fixture.service.request('turn/retry', {
+    await expect(fixture.service.request('turn/rerun', {
       threadId: thread.id,
       turnId: accepted.turn.id,
-    })).rejects.toThrow('atomic retry append failed');
-    fixture.stores.rollout.appendHistoryRetry = appendHistoryRetry;
+      confirmToolReplay: false,
+    })).rejects.toThrow('atomic rerun append failed');
+    fixture.stores.rollout.appendHistoryRerun = appendHistoryRerun;
 
     expect(fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns)
       .toEqual(before);
     expect((await fixture.stores.rollout.read(thread.id)).some((entry) => (
-      entry.event.type === 'history/retry'
+      entry.event.type === 'history/rerun'
     ))).toBe(false);
     await fixture.service.close();
   });
 
-  test('preserves a host-authored subagent trigger and stable delivery client id on retry', async () => {
+  test('preserves a host-authored subagent trigger and stable delivery client id on Rerun', async () => {
     const fixture = await createFixture();
     const thread = (await fixture.service.startThread({
       source: 'app',
@@ -5432,12 +5720,13 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     fixture.executor.finish(0, { status: 'failed', error: { message: 'Provider unavailable' } });
     await fixture.service.waitForIdle(thread.id);
 
-    const retried = await fixture.service.request('turn/retry', {
+    const rerun = await fixture.service.request('turn/rerun', {
       threadId: thread.id,
       turnId: accepted.turn.id,
+      confirmToolReplay: false,
     });
-    expect(retried.turn.provenance.trigger).toEqual(trigger);
-    expect(retried.turn.items.find((item) => item.type === 'userMessage')).toMatchObject({
+    expect(rerun.turn.provenance.trigger).toEqual(trigger);
+    expect(rerun.turn.items.find((item) => item.type === 'userMessage')).toMatchObject({
       author: { kind: 'host' },
       clientId: 'agent-notification-stable-id',
       content: [{ type: 'text', text: '[Agent finished] Canonical host notice' }],
@@ -5448,7 +5737,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     await fixture.service.close();
   });
 
-  test('refuses active, stale, and non-retryable Turn retry requests without changing history', async () => {
+  test('refuses active, stale, and non-rerunnable Turn Rerun requests without changing history', async () => {
     const fixture = await createFixture();
     const thread = (await fixture.service.startThread({
       source: 'app',
@@ -5461,9 +5750,14 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       input: [{ type: 'text', text: 'First failure' }],
     });
     await fixture.executor.waitUntilWaiting(0);
-    await expect(fixture.service.request('turn/retry', {
+    expect(await fixture.service.request('turn/recovery/read', {
       threadId: thread.id,
       turnId: first.turn.id,
+    })).toEqual({ canContinue: false, canRerun: false, rerunRequiresConfirmation: false });
+    await expect(fixture.service.request('turn/rerun', {
+      threadId: thread.id,
+      turnId: first.turn.id,
+      confirmToolReplay: false,
     })).rejects.toThrow('active work');
     fixture.executor.finish(0, { status: 'failed', error: { message: 'First failure' } });
     await fixture.service.waitForIdle(thread.id);
@@ -5477,14 +5771,24 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     await fixture.service.waitForIdle(thread.id);
     const before = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns!;
 
-    await expect(fixture.service.request('turn/retry', {
+    expect(await fixture.service.request('turn/recovery/read', {
       threadId: thread.id,
       turnId: first.turn.id,
-    })).rejects.toThrow('latest Turn');
-    await expect(fixture.service.request('turn/retry', {
+    })).toEqual({ canContinue: false, canRerun: false, rerunRequiresConfirmation: false });
+    expect(await fixture.service.request('turn/recovery/read', {
       threadId: thread.id,
       turnId: second.turn.id,
-    })).rejects.toThrow('not retryable');
+    })).toEqual({ canContinue: false, canRerun: false, rerunRequiresConfirmation: false });
+    await expect(fixture.service.request('turn/rerun', {
+      threadId: thread.id,
+      turnId: first.turn.id,
+      confirmToolReplay: false,
+    })).rejects.toThrow('latest Turn');
+    await expect(fixture.service.request('turn/rerun', {
+      threadId: thread.id,
+      turnId: second.turn.id,
+      confirmToolReplay: false,
+    })).rejects.toThrow('cannot be rerun');
     expect(fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns)
       .toEqual(before);
     await fixture.service.close();

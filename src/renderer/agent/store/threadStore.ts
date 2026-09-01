@@ -587,8 +587,27 @@ export class ThreadStore {
     this.refreshIdentityCatalogAfterTurnAdmission(threadId);
   }
 
-  async retryTurn(threadId: ThreadId, turnId: TurnId): Promise<void> {
-    const response = await this.client.agentCoreRequest('turn/retry', { threadId, turnId });
+  readTurnRecovery(threadId: ThreadId, turnId: TurnId) {
+    return this.client.agentCoreRequest('turn/recovery/read', { threadId, turnId });
+  }
+
+  async continueTurn(threadId: ThreadId, turnId: TurnId): Promise<void> {
+    let response;
+    try {
+      response = await this.client.agentCoreRequest('turn/continue', { threadId, turnId });
+    } catch (error) {
+      await this.reloadThreads();
+      throw error;
+    }
+    this.applyAppendedRecoveryTurn(threadId, response.thread, response.turn);
+  }
+
+  async rerunTurn(threadId: ThreadId, turnId: TurnId, confirmToolReplay: boolean): Promise<void> {
+    const response = await this.client.agentCoreRequest('turn/rerun', {
+      threadId,
+      turnId,
+      confirmToolReplay,
+    });
     this.loadGenerations.set(threadId, (this.loadGenerations.get(threadId) ?? 0) + 1);
     this.historyRevisions.set(threadId, (this.historyRevisions.get(threadId) ?? 0) + 1);
     const turnsByThread = new Map(this.snapshot.turnsByThread);
@@ -619,6 +638,21 @@ export class ThreadStore {
       turnsByThread,
       latestTurnByThread,
       providerRetryByThread,
+    });
+  }
+
+  private applyAppendedRecoveryTurn(threadId: ThreadId, thread: Thread, turn: Turn): void {
+    const turnsByThread = new Map(this.snapshot.turnsByThread);
+    const currentTurns = turnsByThread.get(threadId) ?? [];
+    const appended = mergeLoadedTurn(turn, currentTurns.find((candidate) => candidate.id === turn.id));
+    turnsByThread.set(threadId, upsertById(currentTurns, appended));
+    const latestTurnByThread = new Map(this.snapshot.latestTurnByThread);
+    latestTurnByThread.set(threadId, newerTurn(latestTurnByThread.get(threadId), appended));
+    const currentThread = this.snapshot.threads.find((candidate) => candidate.id === threadId);
+    this.patch({
+      threads: sortThreads(upsertById(this.snapshot.threads, mergeConfiguredThread(thread, currentThread))),
+      turnsByThread,
+      latestTurnByThread,
     });
   }
 

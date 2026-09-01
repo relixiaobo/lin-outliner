@@ -151,26 +151,26 @@ export class ThreadCore {
       });
     }
 
-  async persistHistoryRetry(
+  async persistHistoryRerun(
     context: ThreadHistoryRollbackContext,
     replacementInput: Extract<AgentCoreRecordedNotification, { readonly type: 'turn/started' }>,
   ): Promise<void> {
     const replacement = decodeAgentCoreRecordedNotification(replacementInput);
-    if (replacement.type !== 'turn/started') throw new Error('History retry replacement must start a Turn');
+    if (replacement.type !== 'turn/started') throw new Error('History rerun replacement must start a Turn');
     if (replacement.threadId !== context.threadId) {
-      throw new Error('History retry replacement Thread does not match its rollback');
+      throw new Error('History rerun replacement Thread does not match its rollback');
     }
     if (this.requireThread(context.threadId).thread.ephemeral) {
-      throw new Error('History retry requires a persistent Thread');
+      throw new Error('History rerun requires a persistent Thread');
     }
     await this.enqueueNotification(context.threadId, async () => {
       await this.flushPendingItemDeltaBestEffort(context.threadId);
       let entry;
       try {
-        entry = await this.rollout.appendHistoryRetry(context, replacement);
+        entry = await this.rollout.appendHistoryRerun(context, replacement);
       } catch (appendError) {
         entry = (await this.rollout.read(context.threadId)).find((candidate) => (
-          candidate.event.type === 'history/retry'
+          candidate.event.type === 'history/rerun'
           && candidate.event.rollbackId === context.rollbackId
         ));
         if (!entry) throw appendError;

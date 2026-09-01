@@ -208,6 +208,7 @@ function triggerLabel(turn: Turn): string {
   const trigger = turn.provenance.trigger;
   switch (trigger.kind) {
     case 'user': return 'user';
+    case 'continuation': return `continuation (source ${trigger.sourceTurnId})`;
     case 'subagent': return `subagent (parent ${trigger.parentThreadId})`;
     case 'feature': return trigger.ref ? `feature ${trigger.feature} (${trigger.ref})` : `feature ${trigger.feature}`;
   }

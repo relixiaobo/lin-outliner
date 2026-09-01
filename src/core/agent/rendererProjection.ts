@@ -91,8 +91,16 @@ export function projectAgentCoreResponse<Method extends AgentCoreMethod>(
       const value = response as AgentCoreResponseByMethod['turn/start'];
       return freezeProjected({ ...value, turn: projectTurn(value.turn) });
     }
-    case 'turn/retry': {
-      const value = response as AgentCoreResponseByMethod['turn/retry'];
+    case 'turn/continue': {
+      const value = response as AgentCoreResponseByMethod['turn/continue'];
+      return freezeProjected({
+        ...value,
+        thread: projectThread(value.thread),
+        turn: projectTurn(value.turn),
+      });
+    }
+    case 'turn/rerun': {
+      const value = response as AgentCoreResponseByMethod['turn/rerun'];
       return freezeProjected({
         ...value,
         thread: projectThread(value.thread),
@@ -115,6 +123,7 @@ export function projectAgentCoreResponse<Method extends AgentCoreMethod>(
     case 'thread/trajectory/export':
     case 'turn/steer':
     case 'turn/interrupt':
+    case 'turn/recovery/read':
     case 'goal/get':
     case 'goal/create':
     case 'goal/update':
