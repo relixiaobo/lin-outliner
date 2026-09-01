@@ -165,7 +165,7 @@ A representative baseline is therefore:
 <system-reminder>
 <context authority="application" purpose="observation">
 Local time: 2026-09-01T11:14:11+08:00 [Asia/Shanghai].
-Runtime: interactive primary-Agent session in /Users/lixiaobo/Coding/lin-outliner-codex-3.
+Working directory: /Users/lixiaobo/Coding/lin-outliner-codex-3.
 </context>
 <context authority="untrusted" purpose="observation">
 Viewing "2026-09-01 #day" [[node://9fbd0994-85dd-4dba-bcf2-1d5a56ced268]] at Tenon / Daily notes / 2026 / W36 / 2026-09-01.
@@ -175,6 +175,12 @@ Viewing "2026-09-01 #day" [[node://9fbd0994-85dd-4dba-bcf2-1d5a56ced268]] at Ten
 
 Available Skill/Role entries use an application-observation child. Only actual
 dynamic instructions use an application-instruction child.
+
+The working directory is Host-owned and Thread-scoped. It appears in the initial
+baseline and again only when the Host changes it, such as for worktree isolation.
+An ordinary interactive root needs no separate execution label. A non-default
+mode appears as `Execution: {{nonDefaultExecutionDescription}}.` only when it
+changes how the model should behave.
 
 ### Attention target contract
 
@@ -321,7 +327,8 @@ and `Unchanged` are explicit dispositions, not generated output.
 | Reminder boundary | `<system-reminder>`<br>`<context-evidence kind="turnEnvironment" authority="application" purpose="observation">`<br>`accepted_at=2026-09-01T03:14:11.592Z`<br>`...`<br>`</context-evidence>`<br>`</system-reminder>` | `<system-reminder>`<br>`<context authority="application" purpose="observation">`<br>`Local time: 2026-09-01T11:14:11+08:00 [Asia/Shanghai].`<br>`</context>`<br>`</system-reminder>` | Keep the meaningful reminder/trust boundary; use one neutral child and remove source classification from model syntax. |
 | Model-visible `kind` | `kind="turnEnvironment"`, `kind="userView"`, `kind="skillCatalog"`, `kind="skillInvocation"`, `kind="compactionSummary"` | Removed; canonical source kind remains only in persistence and diagnostics | The model needs trust and purpose, not a second type system mirroring implementation sources. |
 | Environment time | `accepted_at={{utcInstant}}`<br>`local_date={{localDate}}`<br>`local_time={{localTime}}`<br>`timezone={{timeZone}}`<br>`utc_offset_minutes={{utcOffsetMinutes}}`<br>`locale={{locale}}` | `Local time: {{localDate}}T{{localTime}}{{utcOffset}} [{{timeZone}}].` | One ISO-like local timestamp preserves the current offset and IANA zone. Accepted time and locale remain canonical. |
-| Runtime | `working_directory={{workingDirectory}}`<br>`conversation_mode={{conversationMode}}`<br>`execution_mode={{executionMode}}` | `Runtime: {{runtimeDescription}} in {{workingDirectory}}.` | Raw enums are deterministically translated, for example to `interactive primary-Agent session`. |
+| Working directory | `working_directory={{workingDirectory}}` | `Working directory: {{workingDirectory}}.` | The Host-owned Thread path determines relative tools and project configuration; emit it at baseline and after a Host change. |
+| Execution context | `conversation_mode={{conversationMode}}`<br>`execution_mode={{executionMode}}` | `Execution: {{nonDefaultExecutionDescription}}.` or Host-private | Omit the ordinary interactive-root default; describe only a mode such as headless automation when it changes behavior. |
 | Today | `today_node_id={{todayNodeId}}`<br>`today_node_title={{todayNodeTitle}}` | Host-private; no routine model output | Local date explains "today"; Outline exposes `@today`; a viewed or referenced Today Node follows ordinary Node grammar. |
 | Reply identity | `reply_identity={{replyIdentity}}` | Removed from reminder body; stable prompt owns `You are {{replyIdentity}} ...` | The model receives one persona authority. |
 | Outliner attention | `panel={{panelId}} root_node_id={{rootNodeId}} root_type={{rootType}} order={{order}} active={{active}} focused={{focused}}`<br>`breadcrumb_node_id={{breadcrumbNodeId}}`<br>`node_id={{nodeId}} title={{nodeTitle}}` | `Viewing "{{rootTitle}}" {{rootNodeReference}} at {{breadcrumbTitles}}.`<br>`{{?visibleOutlineExcerpt}}` | The sentence identifies the current view directly; no classification label is needed. |
@@ -358,7 +365,7 @@ Derived presentation variables are deterministic:
 | Variable | Derivation |
 | --- | --- |
 | `{{utcOffset}}` | Format `{{utcOffsetMinutes}}` as `+/-HH:mm`. |
-| `{{runtimeDescription}}` | Translate conversation and execution enums into one stable phrase such as `interactive primary-Agent session`, `headless automation`, or `subagent session`. |
+| `{{nonDefaultExecutionDescription}}` | Translate only a behavior-changing non-default conversation/execution combination, such as `headless automation`; return no fragment for an ordinary interactive root. |
 | `{{rootNodeReference}}`, `{{ownerNodeReference}}`, `{{focusedNodeReference}}` | Convert canonical Node IDs to public Node references. |
 | `{{fileReference}}` | Convert a provider-readable absolute path to its canonical file reference. |
 | `{{breadcrumbTitles}}` | Join resolved titles in display order; never emit a detached ID/title dictionary. |
@@ -394,7 +401,8 @@ existed before.
 | `accepted_at={{utcInstant}}` | Removed from reminder body; host-private | Canonical admission and provider message time already own it. |
 | `local_date`, `local_time`, `timezone`, `utc_offset_minutes` | Merged | Produces one application-observation `Local time` sentence. |
 | `locale` | Removed from routine model text; host-private | The ISO timestamp is unambiguous and user language is stronger evidence than renderer locale. |
-| `working_directory`, `conversation_mode`, `execution_mode` | Merged | Produces one application-observation `Runtime` sentence. |
+| `working_directory` | Merged | Produces one application-observation `Working directory` sentence at baseline and after a Host change. |
+| `conversation_mode`, `execution_mode` | Removed by default; conditionally translated | Produces an `Execution` sentence only when a non-default mode changes model behavior and has no existing owner. |
 | `reply_identity` | Removed from reminder body; host-private | Stable system prompt owns the persona. |
 | `today_node_id`, `today_node_title` | Removed from routine model text; host-private | Local date, `@today`, ordinary attention, and explicit references own the useful meanings. |
 | `active_panel_id`, `focused_panel_id`, `panel_id` | Removed from model text; host-private | Renderer correlation IDs are not Agent targets. |
@@ -454,7 +462,8 @@ remain host-private and are not required to parse the model-visible result.
 - **FR-2:** `<system-reminder>` remains the outer boundary and its children use
   only `<context authority="..." purpose="...">`. Escaping, ordering, and
   provenance behavior remain intact; diagnostics separately retain canonical
-  source kind.
+  source kind. The Host-owned Thread working directory is a standalone
+  observation; default execution enums produce no model text.
 - **FR-3:** canonical renderer-to-main evidence distinguishes every supported
   attention target: Outliner Node, local file, asset, linked file, URL, and Thread
   trajectory.
@@ -491,6 +500,9 @@ remain host-private and are not required to parse the model-visible result.
   explicit host-private/native-tool destination.
 - **AC-2 (FR-2):** exact fixtures contain no `kind` attribute or canonical payload
   kind in a routine model-visible wrapper.
+  Fresh-Thread and Host-changed-cwd fixtures emit `Working directory:`; an ordinary
+  interactive root emits no `Execution:` sentence, while a headless Automation
+  emits one behavior description.
   Literal and closing-tag injection remains escaped and untrusted; renderer or
   document labels never enter an application-instruction block; mixed sentences
   are authority-lowered or split; ordering and diagnostic source provenance remain.
